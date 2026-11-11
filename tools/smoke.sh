@@ -56,7 +56,7 @@ fi
 
 if want automix; then section "one AutoMix transition"
   album=$(mix_album)
-  "$app" set autoMix true >/dev/null
+  "$app" set autoMix smooth >/dev/null
   "$app" play "album:$album" >/dev/null
   sounds 20
   # Songs of one album in order never mix: shuffled, they do.

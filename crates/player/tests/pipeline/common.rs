@@ -158,7 +158,7 @@ pub fn fingerprint(s: &[i16]) -> u64 {
 
 /// What the planner makes of two songs nobody has measured, under a crossfade of `secs`.
 pub fn blind_plan(out_ms: i64, in_ms: i64, secs: f32) -> TransitionPlan {
-    let s = AutoMixSettings { max_transition_s: secs, beat_match: false, bass_swap: false, filter_effects: false, echo_out: false, ..Default::default() };
+    let s = AutoMixSettings { max_transition_s: secs, beat_match: false, bass_swap: false, filter_effects: false, ..Default::default() };
     plan::plan(None, None, out_ms, in_ms, &s)
 }
 

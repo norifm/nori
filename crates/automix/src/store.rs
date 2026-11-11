@@ -36,12 +36,14 @@ macro_rules! column {
 columns! {
     song_id, analysis_version, duration_ms, bpm, bpm_confidence, beat_offset_ms, stability, downbeat_phase,
     downbeat_confidence, lufs, key, key_confidence, silence_start_ms, silence_end_ms, mixramp_start_ms, mixramp_end_ms,
-    intro_end_ms, outro_start_ms, outro_vocal or 0.0, intro_vocal or 0.0, outro_centroid or 0.0, intro_centroid or 0.0,
+    intro_end_ms, outro_start_ms, outro_centroid or 0.0, intro_centroid or 0.0,
     analysed_ms, outro_bpm or 0.0, outro_bpm_confidence or 0.0, outro_beat_offset_ms or 0.0, outro_stability or 0.0,
     outro_downbeat_phase or 0, intro_bpm or 0.0, intro_bpm_confidence or 0.0, intro_beat_offset_ms or 0.0,
-    intro_stability or 0.0, intro_downbeat_phase or 0, beats_per_bar or 0, drop_ms or 0, drop_runup_vocal or 0.0,
-    drop_vocal or 0.0, exit_ms or 0, gap_ms or 0, gap_end_ms or 0, exit_vocal or 0.0, drop_runup_tonal_db or 0.0,
-    intro_beats_per_bar or 0, outro_beats_per_bar or 0, intro_grid_source or 0, outro_grid_source or 0,
+    intro_stability or 0.0, intro_downbeat_phase or 0, beats_per_bar or 0, drop_ms or 0,
+    exit_ms or 0, gap_ms or 0, gap_end_ms or 0, drop_runup_tonal_db or 0.0,
+    intro_beats_per_bar or 0, outro_beats_per_bar or 0, intro_grid_source or 0, outro_grid_source or 0, last_drop_ms or 0, vocal_start_ms or 0, vocal_end_ms or 0,
+    steady_intro_ms or 0, steady_end_ms or 0, steady_exit_ms or 0,
+    intro_grid_from_ms or 0, intro_grid_to_ms or 0, outro_grid_from_ms or 0, outro_grid_to_ms or 0,
 }
 
 pub fn put(c: &Connection, a: &TrackAnalysis) -> rusqlite::Result<()> {
@@ -89,6 +91,38 @@ pub fn get_voice(c: &Connection, song_id: &str) -> rusqlite::Result<Option<Vocal
     Ok(blob.and_then(|b| VocalCurve::decode(&b)))
 }
 
+/// Keeps where song `song_id`'s synced lyrics are sung, ms of the song (`nori_lyrics::sync::sung_span`); true when
+/// that changed.
+pub fn put_sung(c: &Connection, song_id: &str, (start, end): (i64, i64)) -> rusqlite::Result<bool> {
+    let key = sung_key(song_id);
+    let value = format!("{start} {end}");
+    if nori_db::kv_get(c, &key)?.as_deref() == Some(value.as_str()) {
+        return Ok(false);
+    }
+    nori_db::kv_put(c, &key, &value).map(|_| true)
+}
+
+/// Song `song_id`'s analysis, with where it is sung taken from its lyrics when they were heard to fit: their lines
+/// say it better than the voice measured under the band.
+pub fn get_with_lyrics(c: &Connection, song_id: &str) -> rusqlite::Result<Option<TrackAnalysis>> {
+    let Some(mut a) = get(c, song_id)? else { return Ok(None) };
+    let sung = nori_db::kv_get(c, &sung_key(song_id))?.and_then(|v| {
+        let (start, end) = v.split_once(' ')?;
+        Some((start.parse::<i64>().ok()?, end.parse::<i64>().ok()?))
+    });
+    if let Some((start, end)) = sung {
+        let (start, end) = (start.max(0), end.min(a.duration_ms));
+        if start < end {
+            (a.vocal_start_ms, a.vocal_end_ms) = (start, end);
+        }
+    }
+    Ok(Some(a))
+}
+
+fn sung_key(song_id: &str) -> String {
+    format!("sung|{song_id}")
+}
+
 /// The `ids` with a current analysis the beat model has not yet looked at, in order. Songs without a current
 /// analysis are left out.
 pub fn neural_missing(c: &Connection, ids: &[String]) -> rusqlite::Result<Vec<String>> {
@@ -101,18 +135,47 @@ pub fn neural_missing(c: &Connection, ids: &[String]) -> rusqlite::Result<Vec<St
     Ok(out)
 }
 
+/// Each stored row's analysis version and vocal curve.
+const ROWS_AND_CURVES: &str = "SELECT t.analysis_version, v.curve FROM track_analysis t \
+    LEFT JOIN vocal_curve v ON v.server=t.server AND v.song_id=t.song_id WHERE t.server=sid()";
+
+/// A row this version plans from: measured by this analysis version, with a vocal curve it reads.
+fn current(r: &rusqlite::Row) -> rusqlite::Result<bool> {
+    let version: i32 = r.get(0)?;
+    let curve: Option<Vec<u8>> = r.get(1)?;
+    Ok(version >= ANALYSIS_VERSION && curve.as_deref().and_then(VocalCurve::decode).is_some())
+}
+
 /// The `ids` with no row, a row from an older analysis version, or no vocal curve this version reads,
 /// in order.
 pub fn missing(c: &Connection, ids: &[String]) -> rusqlite::Result<Vec<String>> {
-    let mut st = c.prepare_cached("SELECT analysis_version FROM track_analysis WHERE server=sid() AND song_id=?1")?;
+    let mut st = c.prepare_cached(&format!("{ROWS_AND_CURVES} AND t.song_id=?1"))?;
     let mut out = Vec::new();
     for id in ids {
-        let v: Option<i32> = st.query_row([id], |r| r.get(0)).optional()?;
-        if v.is_none_or(|v| v < ANALYSIS_VERSION) || get_voice(c, id)?.is_none() {
+        if !st.query_row([id], current).optional()?.unwrap_or(false) {
             out.push(id.clone());
         }
     }
     Ok(out)
+}
+
+/// The songs measured, and how many of them are measured again when they next play.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct Measured {
+    pub songs: u32,
+    pub outdated: u32,
+}
+
+pub fn measured(c: &Connection) -> rusqlite::Result<Measured> {
+    let mut st = c.prepare_cached(ROWS_AND_CURVES)?;
+    let mut rows = st.query([])?;
+    let mut m = Measured::default();
+    while let Some(r) = rows.next()? {
+        m.songs += 1;
+        m.outdated += u32::from(!current(r)?);
+    }
+    Ok(m)
 }
 
 /// A song measured as it is decoded, fed buffer by buffer.
@@ -160,6 +223,22 @@ mod tests {
         assert_eq!(stored("a"), stored("b"), "written back as read");
     }
 
+    #[test]
+    fn lyrics_say_where_a_song_is_sung() {
+        let c = nori_db::open("", "s").unwrap();
+        put(&c, &TrackAnalysis { song_id: "a".into(), duration_ms: 200_000, vocal_start_ms: 5_000, vocal_end_ms: 150_000, ..Default::default() }).unwrap();
+        let sung = |id: &str| get_with_lyrics(&c, id).unwrap().map(|a| (a.vocal_start_ms, a.vocal_end_ms));
+        assert_eq!(sung("a"), Some((5_000, 150_000)), "the voice measured");
+        assert!(put_sung(&c, "a", (12_000, 190_000)).unwrap());
+        assert!(!put_sung(&c, "a", (12_000, 190_000)).unwrap(), "unchanged");
+        assert_eq!(sung("a"), Some((12_000, 190_000)));
+        put_sung(&c, "a", (-300, 230_000)).unwrap();
+        assert_eq!(sung("a"), Some((0, 200_000)), "within the song");
+        put_sung(&c, "a", (210_000, 230_000)).unwrap();
+        assert_eq!(sung("a"), Some((5_000, 150_000)), "words past its end say nothing");
+        assert_eq!(sung("b"), None);
+    }
+
     /// A song measured before the vocal curve's format changed is measured again, so its lyrics can be
     /// checked against its voice.
     #[test]
@@ -172,5 +251,20 @@ mod tests {
         assert_eq!(missing(&c, &ids).unwrap(), ids, "a curve of an older format");
         put_voice(&c, "a", &VocalCurve { fps: 10.0, t0: 0.0, level: vec![1, 2, 3], loudness: vec![4, 5, 6] }).unwrap();
         assert!(missing(&c, &ids).unwrap().is_empty());
+    }
+
+    #[test]
+    fn outdated_rows_are_counted_apart() {
+        let c = nori_db::open("", "s").unwrap();
+        let curve = VocalCurve { fps: 10.0, t0: 0.0, level: vec![1, 2, 3], loudness: vec![4, 5, 6] };
+        for (id, version, voiced) in [("now", ANALYSIS_VERSION, true), ("old", ANALYSIS_VERSION - 1, true), ("mute", ANALYSIS_VERSION, false)] {
+            put(&c, &TrackAnalysis { song_id: id.into(), analysis_version: version, ..Default::default() }).unwrap();
+            if voiced {
+                put_voice(&c, id, &curve).unwrap();
+            }
+        }
+        assert_eq!(measured(&c).unwrap(), Measured { songs: 3, outdated: 2 });
+        let ids: Vec<String> = ["now", "old", "mute"].map(String::from).into();
+        assert_eq!(missing(&c, &ids).unwrap(), ["old", "mute"], "the same rows missing");
     }
 }

@@ -99,7 +99,7 @@ id=$(long_song)
 if want scrobble; then section scrobble
   remember_settings scrobble
   "$app" set scrobble true >/dev/null
-  "$app" set autoMix false >/dev/null
+  "$app" set autoMix off >/dev/null
   scrobble_first=$(song_id 'Long Track 01'); scrobble_second=$(song_id 'Long Track 02'); scrobble_third=$(song_id 'Long Track 03')
   count() { api getSong "&id=$1" | python3 -c 'import json,sys;print(json.load(sys.stdin)["subsonic-response"]["song"].get("playCount",0))'; }
   scrobble_before_first=$(count "$scrobble_first"); scrobble_before_second=$(count "$scrobble_second")
@@ -364,7 +364,7 @@ WIDGET
   no_web_cookies() { [ "$("$app" webcookies)" = "cookies 0" ]; }
   check "and leaves the WebView no cookies" wait_until 10 no_web_cookies
   remember_settings autoMix autoFill lyricsOnline
-  "$app" set autoMix true >/dev/null
+  "$app" set autoMix smooth >/dev/null
   "$app" set autoFill off >/dev/null
   "$app" set lyricsOnline true >/dev/null
   watch_from_now
@@ -852,7 +852,7 @@ if want dac; then section "a USB DAC, faked"
   # A DAC cannot be plugged into an emulator, so the app is pointed at a mock one (ActionsViewModel,
   # "dac"). Which mode a DAC gets and why one cannot be fed is dac.rs; here what the platform does: offload
   # stands down when the device appears, and the track is opened in the DAC's own format.
-  "$app" set autoMix false >/dev/null; "$app" set crossfadeSec 0 >/dev/null
+  "$app" set autoMix off >/dev/null; "$app" set crossfadeSec 0 >/dev/null
   "$app" set headphoneSound OFF >/dev/null; "$app" set offload true >/dev/null; "$app" set eq false >/dev/null
   "$app" do "dac off" >/dev/null
   "$app" play "$PLAIN" >/dev/null; sounds 20

@@ -2,6 +2,7 @@
 //! setting name and the picked value.
 
 use std::collections::{HashMap, HashSet};
+use nori_core::automix::store::Measured;
 use nori_core::numbers::{self, POINT};
 use nori_core::settings::{season_follow_value, season_of, EqLevel, Level, StoredPrefs, ThemeSeason};
 use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, SettingKind, SettingsState};
@@ -97,7 +98,7 @@ fn appearance_pick(p: &StoredPrefs) -> i32 {
 /// Non-setting facts the pages show (sizes, counts, devices).
 #[derive(Default, Clone)]
 pub struct Facts {
-    pub analysed: u32,
+    pub analysed: Measured,
     pub indexed: (u32, u32, u32),
     pub stream_bytes: u64,
     pub cover_bytes: u64,
@@ -382,6 +383,9 @@ fn option_words(name: &str, v: &str) -> String {
         ("autoFill", "OFF") => "Stop".into(),
         ("autoFill", "SONGS") => "Add songs".into(),
         ("autoFill", "ALBUMS") => "Add albums".into(),
+        ("autoMix", "OFF") => "Off".into(),
+        ("autoMix", "SMOOTH") => "Smooth".into(),
+        ("autoMix", "DJ") => "DJ".into(),
         ("autoFillBasis", "SIMILAR") => "Similar music".into(),
         ("autoFillBasis", "ARTIST") => "The same artist".into(),
         ("autoFillBasis", "GENRE") => "The same genre".into(),
@@ -509,11 +513,10 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
         }
         RowItem::Link { .. } | RowItem::CompressionMeter => return None,
         RowItem::Action { action: a } => {
-            let n = f.analysed;
             let (songs, albums, artists) = f.indexed;
             let bytes = |b: u64| numbers::bytes(b as i64, POINT);
             match a {
-                SettingsAction::MeasureAgain => action("Measured songs", format!("{} measured for tempo and beats.", words::count(n, "song", "songs")), "Measure again", enabled, Chore::MeasureAgain),
+                SettingsAction::MeasureAgain => action("Measured songs", words::measured(f.analysed), "Measure again", enabled, Chore::MeasureAgain),
                 SettingsAction::SyncLibrary => {
                     let counts = format!("{} · {} · {} on this Mac", words::count(songs, "song", "songs"), words::count(albums, "album", "albums"), words::count(artists, "artist", "artists"));
                     action("Offline search", counts, if f.syncing { "Updating…" } else { "Update" }, enabled, Chore::SyncLibrary)
@@ -592,7 +595,7 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
     let facts = PageFacts {
         parts: f.rules.settings.clone(),
         folders: f.folders.iter().map(|(_, id)| id.clone()).collect(),
-        analysed: f.analysed,
+        analysed: f.analysed.songs,
         indexed_songs: f.indexed.0,
         syncing: f.syncing,
         stream_bytes: f.stream_bytes as i64,
@@ -1557,7 +1560,7 @@ mod tests {
 
     #[test]
     fn row_names_resolve() {
-        let p = StoredPrefs { auto_mix: true, auto_fill: Some(nori_core::settings::AutoFillKind::Songs), compressor: Some(nori_core::settings::CompressorPreset::Light), scrobble: true, ..StoredPrefs::default() };
+        let p = StoredPrefs { auto_mix: nori_core::settings::AutoMixMode::Dj, auto_fill: Some(nori_core::settings::AutoFillKind::Songs), compressor: Some(nori_core::settings::CompressorPreset::Light), scrobble: true, ..StoredPrefs::default() };
         let f = Facts::default();
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {

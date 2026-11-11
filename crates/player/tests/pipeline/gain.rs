@@ -49,7 +49,7 @@ fn measured(id: &str, bpm: f64) -> TrackAnalysis {
 }
 
 fn automix() -> TransitionPrefs {
-    TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() }
+    TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() }
 }
 
 /// What the player hears of `songs` under `prefs`, each at the volume `gains` gives it (1 unlisted),

@@ -91,7 +91,7 @@ impl Rig {
     #[allow(clippy::too_many_arguments)]
     fn tagged(name: &str, songs: &[S], auto_mix: bool, crossfade: i32, measured: Measured, shuffle: bool, tags: &Tags) -> Rig {
         let dir = nori_testdir::TempDir::new(name);
-        let (core, client) = common::own_core(&dir, |p| (p.auto_mix, p.crossfade_sec, p.replay_gain) = (auto_mix, crossfade, nori_core::settings::GainMode::Off));
+        let (core, client) = common::own_core(&dir, |p| (p.auto_mix, p.crossfade_sec, p.replay_gain) = (if auto_mix { nori_core::settings::AutoMixMode::Smooth } else { nori_core::settings::AutoMixMode::Off }, crossfade, nori_core::settings::GainMode::Off));
         let prefs = core.session.settings.current().unwrap();
         let store = Store::open(dir.join("music"), 512 << 20).unwrap();
         let mut tracks: HashMap<(&str, u32), u32> = HashMap::new();

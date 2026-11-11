@@ -1278,8 +1278,8 @@ fn mix_lines(app: &App, w: usize, t: &Theme) -> Vec<Line<'static>> {
         if !n.reason.is_empty() {
             lines.push(Line::from(Span::styled(fit(&format!("  {}", n.reason), w).into_owned(), t.dim())));
         }
-    } else if app.prefs.auto_mix || app.prefs.crossfade_sec > 0 {
-        let what = if app.prefs.auto_mix { "AutoMix" } else { "Crossfade" };
+    } else if app.prefs.auto_mix.on() || app.prefs.crossfade_sec > 0 {
+        let what = if app.prefs.auto_mix.on() { "AutoMix" } else { "Crossfade" };
         lines.push(Line::from(Span::styled(fit(&format!("{what} on · planned as this plays"), w).into_owned(), t.dim())));
     }
     lines
@@ -1300,6 +1300,7 @@ fn words_kind(kind: nori_core::automix::planner::TransitionKind) -> &'static str
     match kind {
         K::BeatMatched => "AutoMix: beat-matched mix",
         K::EchoOut => "AutoMix: echo out",
+        K::Cut => "AutoMix: cut",
         K::MixRampFade => "AutoMix: fade",
         K::EqualPowerFade => "Crossfade",
         K::Gapless => "Gapless",

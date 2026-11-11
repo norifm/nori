@@ -391,9 +391,9 @@ async function transition(name, settings, measured = false) {
 }
 
 // AutoMix first: songs a crossfade just played are still held, and so not measured as they come again.
-if (!only || only.includes("automix")) await transition("automix", [["crossfadeSec", "0"], ["autoMix", "true"]], true);
-if (!only || only.includes("crossfade")) await transition("crossfade", [["autoMix", "false"], ["crossfadeSec", "6"]]);
-await ask("setting", "autoMix", "false");
+if (!only || only.includes("automix")) await transition("automix", [["crossfadeSec", "0"], ["autoMix", "SMOOTH"]], true);
+if (!only || only.includes("crossfade")) await transition("crossfade", [["autoMix", "OFF"], ["crossfadeSec", "6"]]);
+await ask("setting", "autoMix", "OFF");
 
 if (!only || only.includes("codecs")) {
   // Apple Lossless: no browser decodes it, so the Rust decoders are loaded beside the player module.

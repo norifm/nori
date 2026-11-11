@@ -544,7 +544,7 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
             val i = pair() ?: return skip(s, "no two songs of different albums, a minute long or more, follow each other in the test queue")
             if (!at(i, 15_000)) return fail(s, "could not play queue place $i")
             val wall = System.currentTimeMillis()
-            set { it.copy(autoMix = true) }
+            set { it.copy(autoMix = dev.nori.music.ffi.settings.AutoMixMode.SMOOTH) }
             try {
                 val ids = listOf(queue[i].id, queue[i + 1].id)
                 // Measured ahead: the song playing and the next, as soon as they are whole on the phone.
@@ -560,7 +560,7 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
                 val problems = j.problems + if (moved) emptyList() else listOf("the song did not end within 45 s")
                 return outcome(s, Judged(j.measured, problems))
             } finally {
-                set { it.copy(autoMix = false) }
+                set { it.copy(autoMix = dev.nori.music.ffi.settings.AutoMixMode.OFF) }
             }
         }
 

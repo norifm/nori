@@ -115,8 +115,11 @@ impl LyricsShown for Screen {
             return;
         }
         pick.lyrics.timing = nori_lyrics::timing::with_yours(pick.lyrics.timing, self.core.lyrics_yours(&self.song_id, &pick));
-        if self.put(pick.clone()) && self.own {
-            self.core.lyrics_shown_here(&self.song_id, pick);
+        if self.put(pick.clone()) {
+            self.core.analysis_sung(&self.song_id, &pick.lyrics);
+            if self.own {
+                self.core.lyrics_shown_here(&self.song_id, pick);
+            }
         }
     }
 }
@@ -855,6 +858,33 @@ pub(crate) mod tests {
         assert_eq!(l.lines[0].start_ms, ((first - 0.2 + 1.2) * 1000.0 / 10.0).round() as i64 * 10, "times unchanged");
     }
 
+    /// Where lyrics heard to fit are sung is what AutoMix mixes around; words not checked against the voice say
+    /// nothing.
+    #[test]
+    fn fitting_lyrics_say_where_the_song_is_sung() {
+        let (c, fake) = setup();
+        let (mut a, first, answer, secs) = late_lyrics();
+        let measured = crate::TrackAnalysis { song_id: "sync1".into(), duration_ms: secs as i64 * 1000, vocal_start_ms: 1, vocal_end_ms: 2, ..Default::default() };
+        let sung = |id: &str| nori_automix::store::get_with_lyrics(&c.core.db.lock(), id).unwrap().map(|a| (a.vocal_start_ms, a.vocal_end_ms));
+        for id in ["sync1", "unheard"] {
+            nori_automix::store::put(&c.core.db.lock(), &crate::TrackAnalysis { song_id: id.into(), ..measured.clone() }).unwrap();
+        }
+        let show = |id: &str| {
+            let s = Song { id: id.into(), title: "Offset".into(), duration: secs, ..song() };
+            c.core.session.register(vec![s]);
+            fake.answer(NONE);
+            fake.answer(&answer);
+            block(c.lyrics_found(id.into(), &lrclib(), Arc::new(Screen::default()))).unwrap();
+        };
+        show("unheard");
+        assert_eq!(sung("unheard"), Some((1, 2)), "no voice to hear the words against");
+        nori_automix::store::put_voice(&c.core.db.lock(), "sync1", &a.take_features().voice_curve()).unwrap();
+        show("sync1");
+        let (start, end) = sung("sync1").unwrap();
+        assert!((start as f64 - first * 1000.0).abs() < 400.0, "sung from {start} ms, the voice from {first} s");
+        assert!(end > secs as i64 * 1000 / 2, "to {end} ms");
+    }
+
     /// Lyrics shown while the playing song is not measured yet are checked against its voice as soon as
     /// it is, with AutoMix off too; a song that leaves the play window is no longer waited for.
     #[test]
@@ -863,7 +893,7 @@ pub(crate) mod tests {
         use std::task::{Context, Waker};
         let (c, fake) = setup();
         c.core.session.settings.open("").unwrap();
-        c.core.session.settings.put(StoredPrefs { auto_mix: false, ..StoredPrefs::default() });
+        c.core.session.settings.put(StoredPrefs { auto_mix: nori_settings::settings::AutoMixMode::Off, ..StoredPrefs::default() });
         let (a, _, answer, secs) = late_lyrics();
         let s = Song { id: "sync2".into(), title: "Offset".into(), duration: secs, ..song() };
         let other = Song { id: "other".into(), ..s.clone() };

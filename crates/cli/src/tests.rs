@@ -634,22 +634,30 @@ fn settings_page() {
     // its own name.
     let lines = SettingsView::lines(&pages);
     assert!(matches!(lines[a.settings.row.at], Line::Row(_)));
-    a.cmds.clear();
-    let at = lines.iter().position(|l| matches!(l, Line::Row(Row::Toggle { switch: Switch::Setting(name), .. }) if name == "autoMix")).unwrap();
+    // ← and → change a choice (AutoMix's mode); here they do not seek.
+    let at = lines.iter().position(|l| matches!(l, Line::Row(Row::Choice { target: Target::Setting(name), .. }) if name == "autoMix")).unwrap();
     while a.settings.row.at < at {
         key(&mut a, KeyCode::Down);
         assert!(matches!(lines[a.settings.row.at], Line::Row(_)), "no stop on a heading");
     }
-    key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.last(), Some(&Cmd::Setting("autoMix".into(), "true".into())));
-    // ← and → change a choice (the crossfade, below AutoMix); here they do not seek.
-    let at = lines.iter().position(|l| matches!(l, Line::Row(Row::Choice { target: Target::Setting(name), .. }) if name == "crossfadeSec")).unwrap();
+    a.cmds.clear();
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Setting("autoMix".into(), "SMOOTH".into())));
+    // A switch further down: enter asks the core to change it by its own name.
+    let (at, name) = lines
+        .iter()
+        .enumerate()
+        .skip(at)
+        .find_map(|(i, l)| match l {
+            Line::Row(Row::Toggle { switch: Switch::Setting(name), on: false, enabled: true, .. }) => Some((i, name.clone())),
+            _ => None,
+        })
+        .unwrap();
     while a.settings.row.at < at {
         key(&mut a, KeyCode::Down);
     }
-    a.cmds.clear();
-    key(&mut a, KeyCode::Right);
-    assert!(matches!(a.cmds.last(), Some(Cmd::Setting(n, _)) if n == "crossfadeSec"), "{:?}", a.cmds);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Setting(name, "true".into())));
     // The output device is the terminal's own: kept for the next start.
     let at = lines.iter().position(|l| matches!(l, Line::Row(Row::Choice { target: Target::Device, .. }))).unwrap();
     key(&mut a, KeyCode::Char('g'));

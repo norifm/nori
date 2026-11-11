@@ -107,7 +107,7 @@ struct Rig {
 impl Rig {
     fn new(name: &str, ids: &[&str]) -> Rig {
         let dir = nori_testdir::TempDir::new(name);
-        let (core, client) = common::own_core(&dir, |p| p.auto_mix = true);
+        let (core, client) = common::own_core(&dir, |p| p.auto_mix = nori_core::settings::AutoMixMode::Smooth);
         let prefs = core.session.settings.current().unwrap();
         let store = Store::open(dir.join("music"), 512 << 20).unwrap();
         let whole = Arc::new(common::Signal::default());

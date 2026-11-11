@@ -14,7 +14,7 @@ pub struct Listen {
 }
 
 // Player types, redeclared below for uniffi.
-pub use nori_player::types::{AutoMixSettings, EqBand, EqKind, FadeCurve, NamedPreset, PresetKind, TrackAnalysis};
+pub use nori_player::types::{AutoMixSettings, EqBand, EqKind, FadeCurve, MixStyle, NamedPreset, PresetKind, TrackAnalysis};
 
 /// `starred` is a timestamp on the wire and a bool once stored.
 fn flag<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
@@ -776,8 +776,6 @@ pub struct TrackAnalysis {
     pub mixramp_end_ms: i64,
     pub intro_end_ms: i64,
     pub outro_start_ms: i64,
-    pub outro_vocal: f32,
-    pub intro_vocal: f32,
     pub outro_centroid: f32,
     pub intro_centroid: f32,
     pub outro_bpm: f64,
@@ -791,17 +789,24 @@ pub struct TrackAnalysis {
     pub intro_stability: f32,
     pub intro_downbeat_phase: i32,
     pub drop_ms: i64,
-    pub drop_runup_vocal: f32,
-    pub drop_vocal: f32,
     pub exit_ms: i64,
     pub gap_ms: i64,
     pub gap_end_ms: i64,
-    pub exit_vocal: f32,
     pub drop_runup_tonal_db: f32,
     pub intro_beats_per_bar: i32,
     pub outro_beats_per_bar: i32,
     pub intro_grid_source: i32,
     pub outro_grid_source: i32,
+    pub last_drop_ms: i64,
+    pub vocal_start_ms: i64,
+    pub vocal_end_ms: i64,
+    pub steady_intro_ms: i64,
+    pub steady_end_ms: i64,
+    pub steady_exit_ms: i64,
+    pub intro_grid_from_ms: i64,
+    pub intro_grid_to_ms: i64,
+    pub outro_grid_from_ms: i64,
+    pub outro_grid_to_ms: i64,
     pub analysed_ms: i64,
 }
 
@@ -813,12 +818,19 @@ pub struct AutoMixSettings {
     pub max_tempo_change_pct: f32,
     pub bass_swap: bool,
     pub filter_effects: bool,
-    pub echo_out: bool,
     pub keep_pitch: bool,
     pub same_album_in_order: bool,
     pub match_loudness: bool,
     pub out_tag_bpm: f32,
     pub in_tag_bpm: f32,
+    pub style: MixStyle,
+}
+
+#[cfg(feature = "ffi")]
+#[uniffi::remote(Enum)]
+pub enum MixStyle {
+    Smooth,
+    Dj,
 }
 
 #[cfg(feature = "ffi")]
@@ -904,10 +916,10 @@ pub struct TransitionPrefs {
     pub max_tempo_change_pct: f32,
     pub bass_swap: bool,
     pub filter_effects: bool,
-    pub echo_out: bool,
     pub keep_pitch: bool,
     pub keep_albums: bool,
     pub replay_gain: bool,
+    pub style: MixStyle,
 }
 
 pub use nori_player::transport::{Dip, Switch};

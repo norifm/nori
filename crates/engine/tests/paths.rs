@@ -2100,7 +2100,7 @@ struct Watched(Arc<Mutex<sim::App>>, Arc<Mutex<i64>>);
 impl Watched {
     fn automix() -> Watched {
         let mut a = sim::App::new();
-        a.prefs = nori_player::transitions::TransitionPrefs { auto_mix: true, auto_mix_max_s: 6, echo_out: false, ..sim::prefs_off() };
+        a.prefs = nori_player::transitions::TransitionPrefs { auto_mix: true, auto_mix_max_s: 6, ..sim::prefs_off() };
         Watched(Arc::new(Mutex::new(a)), Arc::default())
     }
 

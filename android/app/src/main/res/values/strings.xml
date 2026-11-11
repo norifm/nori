@@ -51,6 +51,8 @@
     <string name="settings_held_by_dac">Off in bit-perfect mode.</string>
     <string name="settings_crossfade">Crossfade</string>
     <string name="settings_automix">AutoMix</string>
+    <string name="settings_automix_smooth">Smooth</string>
+    <string name="settings_automix_dj">DJ</string>
     <string name="settings_better_beats">Better beat detection</string>
     <string name="settings_better_beats_cost">Uses more battery while songs are measured</string>
     <string name="settings_better_beats_downloading">Downloading (about %1$d MB)…</string>
@@ -62,6 +64,11 @@
     <plurals name="settings_measured_detail">
         <item quantity="one">%1$d song measured for tempo and beats.</item>
         <item quantity="other">%1$d songs measured for tempo and beats.</item>
+    </plurals>
+    <string name="settings_measured_all_outdated">All are measured again when they next play.</string>
+    <plurals name="settings_measured_outdated">
+        <item quantity="one">%1$d is measured again when it next plays.</item>
+        <item quantity="other">%1$d are measured again when they next play.</item>
     </plurals>
     <string name="settings_measure_again">Measure again</string>
     <string name="settings_keep_albums">Keep albums gapless</string>
@@ -378,7 +385,7 @@
     <!-- What the search also finds a row by: the jargon someone might type, and the rows' own words. -->
     <string name="settings_hint_crossfade">One song fades into the next</string>
     <string name="settings_hint_keep_albums">No mixing between songs of the same album</string>
-    <string name="settings_hint_automix">Blends songs like a DJ, matching the beat</string>
+    <string name="settings_hint_automix">Blends songs matching the beat: smooth, or DJ mixes with loops, tempo bends, risers and double drops</string>
     <string name="settings_hint_better_beats">A neural beat tracker for AutoMix, downloaded once (Beat This!)</string>
     <string name="settings_hint_measured">Tempo and beats, measured on this device</string>
     <string name="settings_hint_skip_explicit">Songs your server marks explicit</string>

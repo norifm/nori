@@ -145,18 +145,13 @@ fn non_music_is_measured() {
 }
 
 #[test]
-fn windows_measure_voice_and_tone() {
-    let sung = analyse("t", &Synth { chords: vec![(0, false), (5, false)], ..Synth::new(128.0) }.render(), 44100).track;
+fn windows_measure_tone() {
+    let chords = analyse("t", &Synth { chords: vec![(0, false), (5, false)], ..Synth::new(128.0) }.render(), 44100).track;
     let drums = analyse("t", &Synth::new(128.0).render(), 44100).track;
-    assert!(sung.outro_vocal > drums.outro_vocal, "{} vs {}", sung.outro_vocal, drums.outro_vocal);
-    assert!(sung.intro_vocal > drums.intro_vocal, "{} vs {}", sung.intro_vocal, drums.intro_vocal);
-    assert!((sung.outro_centroid / drums.outro_centroid).log2().abs() > 0.5, "{} vs {}", sung.outro_centroid, drums.outro_centroid);
-    for t in [&sung, &drums] {
-        assert!((0.0..=1.0).contains(&t.outro_vocal) && (0.0..=1.0).contains(&t.intro_vocal));
-        assert!(t.outro_centroid > 0.0 && t.intro_centroid > 0.0);
-    }
+    assert!((chords.outro_centroid / drums.outro_centroid).log2().abs() > 0.5, "{} vs {}", chords.outro_centroid, drums.outro_centroid);
+    assert!(chords.intro_centroid > 0.0 && drums.intro_centroid > 0.0);
     let silent = analyse("s", &vec![0f32; 44100 * 20], 44100).track;
-    assert_eq!((silent.outro_vocal, silent.intro_vocal, silent.outro_centroid, silent.intro_centroid), (0.0, 0.0, 0.0, 0.0));
+    assert_eq!((silent.outro_centroid, silent.intro_centroid, silent.vocal_end_ms), (0.0, 0.0, 0));
 }
 
 #[test]
@@ -369,3 +364,43 @@ fn plan_from_real_analyses() {
     assert!((p.tempo_ratio - a.bpm / b.bpm).abs() < 1e-6);
 }
 
+
+/// A loud band keeps the voice curve up between lines, and the closing lines are sung quieter than the big chorus
+/// before them (as in "Itch"): the singing still ends with them, not with that chorus. It starts with the first
+/// verse, not with a shout in the intro.
+#[test]
+fn singing_spans_its_lines_over_a_loud_band() {
+    // Two-second bars at ten voice frames a second: an intro with one shout (12), verses (9.5), choruses (16),
+    // closing lines (10.5) and two bars of ringing guitar (1).
+    let mut bars = vec![1.5f32, 12.0, 1.5, 1.5];
+    for _ in 0..3 {
+        bars.extend([9.5; 8]);
+        bars.extend([16.0; 8]);
+    }
+    bars.extend([10.5; 10]);
+    bars.extend([1.0; 2]);
+    let voice: Vec<f32> = bars.iter().flat_map(|&b| [b; 20]).collect();
+    let secs = bars.len() as f64 * 2.0;
+    let f = analysis::Features {
+        fps: 50.0,
+        t0: -0.04,
+        onset: Vec::new(),
+        low_onset: Vec::new(),
+        power: Vec::new(),
+        low_power: Vec::new(),
+        vocal: Vec::new(),
+        centroid: Vec::new(),
+        chroma: Vec::new(),
+        chroma_t0: 0.0,
+        chroma_step: 0.0,
+        pitch: Vec::new(),
+        tuning_cs: (0.0, 0.0),
+        blocks_k: Vec::new(),
+        blocks_raw: Vec::new(),
+        duration_s: secs,
+        voice,
+        voice_loudness: Vec::new(),
+    };
+    let span = vocal_span(&f, 2.0, (0.0, secs));
+    assert_eq!(span, Some((8.0, secs - 4.0)), "the first verse after four bars of intro, the closing lines two bars before the music ends");
+}

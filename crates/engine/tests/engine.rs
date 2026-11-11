@@ -981,7 +981,7 @@ fn mixed_song_said_on_time() {
         assert!(rig.wait_for(60, said), "{:?}", rig.events.lock());
         rig.now_ms()
     };
-    let automix = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() };
+    let automix = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() };
     for (name, prefs, settings) in [("crossfade", crossfade(6), Settings { crossfade_s: 6, ..Settings::default() }), ("automix", automix, Settings { auto_mix: true, ..Settings::default() })] {
         let (on, off) = (said_at(prefs, settings.clone(), true), said_at(prefs, settings, false));
         assert!((on - off).abs() <= 10, "{name}: said at {on} ms with the screen on, {off} ms with it off");
@@ -1434,7 +1434,7 @@ fn replay_gain_per_song() {
     // A stretched AutoMix between songs at 0.5 and 0.8 gain: each at its own gain before mixing.
     let (a, b) = (music(40.0, 44), music(40.0, 45));
     let run = |songs: &[(&str, &[i16])], gains: &[(&str, f32)]| {
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
         {
             let mut app = live.0.lock();
             for t in [measured("a", 120.0, 40_000), measured("b", 123.0, 40_000)] {
@@ -2210,7 +2210,7 @@ fn automix_switched_on() {
         let mut app = live.0.lock();
         app.analyses.insert("a".into(), measured("a", 120.0, 40_000));
         app.analyses.insert("b".into(), measured("b", 120.0, 40_000));
-        app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() };
+        app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() };
     }
     rig.engine.replan();
     assert!(rig.wait_for(30, Rig::ended), "{:?}", rig.events.lock());
@@ -2228,7 +2228,7 @@ fn automix_switched_on() {
         let mut app = live.0.lock();
         app.analyses.insert("a".into(), measured("a", 120.0, 40_000));
         app.analyses.insert("b".into(), measured("b", 120.0, 40_000));
-        app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() };
+        app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() };
     }
     rig.engine.set_settings(Settings { auto_mix: true, ..Settings::default() });
     rig.engine.replan();
@@ -2332,7 +2332,7 @@ fn eq_change_in_a_mix() {
     // Equalizer changes seamlessly in a stretched automix.
     let (a, b) = (music(40.0, 44), music(40.0, 45));
     let songs: [(&str, &[i16]); 2] = [("a", &a), ("b", &b)];
-    let prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() };
+    let prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() };
     let run = |steps: &[(i64, Settings)]| {
         let live = Live::new(prefs);
         for t in [measured("a", 120.0, 40_000), measured("b", 123.0, 40_000)] {
@@ -2801,7 +2801,7 @@ fn next_before_end_changes_once() {
     next_before_the_end(crossfade(6), false, "crossfade");
 
     // Next before automix changes once.
-    let prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() };
+    let prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() };
     next_before_the_end(prefs, true, "automix");
 }
 
@@ -2955,7 +2955,7 @@ enum Queued {
 /// Plays `a` (a minute, AutoMix on; `c` after it if `with_c`) and queues `b` at fraction `at` as `how`
 /// says. Returns the rig, the app and the songs in the order heard.
 fn queued_while_playing(at: f64, with_c: bool, how: Queued) -> (Rig, Measuring, Vec<String>) {
-    queued_while_playing_with(TransitionPrefs { auto_mix: true, auto_mix_max_s: 8, echo_out: false, ..prefs_off() }, at, with_c, how)
+    queued_while_playing_with(TransitionPrefs { auto_mix: true, auto_mix_max_s: 8, ..prefs_off() }, at, with_c, how)
 }
 
 fn queued_while_playing_with(prefs: TransitionPrefs, at: f64, with_c: bool, how: Queued) -> (Rig, Measuring, Vec<String>) {
@@ -3136,7 +3136,7 @@ fn seek_near_the_end_through_the_fade() {
     let songs: Vec<Vec<i16>> = (0..3).map(|k| music(40.0, 90 + k)).collect();
     let files: Vec<(String, Vec<u8>, i64)> = ["a", "b", "c"].iter().zip(&songs).map(|(id, s)| (id.to_string(), wav(s), 40_000)).collect();
     let mut app = sim::App::new();
-    app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, echo_out: false, ..prefs_off() };
+    app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() };
     let extra = Extra::default();
     for id in ["a", "b", "c"] {
         extra.server.slow.lock().push((id.into(), Duration::from_millis(300)));
@@ -3156,7 +3156,7 @@ fn seek_near_the_end_through_the_fade() {
 #[test]
 fn seek_into_distant_mix_plays_on() {
     let (a, b) = (music(40.0, 60), music(40.0, 61));
-    let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() });
+    let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
     {
         let mut app = live.0.lock();
         app.analyses.insert("a".into(), measured("a", 120.0, 40_000));
@@ -3331,7 +3331,7 @@ fn status_current_on_events() {
 fn twice(secs: f64, from_ms: i64) -> (Rig, Live) {
     let a = music(secs, 77);
     let ms = (secs * 1000.0) as i64;
-    let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() });
+    let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
     live.0.lock().analyses.insert("a".into(), measured("a", 120.0, ms));
     let rig = at_pace(&[("a", &a), ("a", &a)], live.clone(), from_ms);
     (rig, live)
@@ -3395,7 +3395,7 @@ fn same_song_twice() {
 #[test]
 fn repeat_one_with_automix_plays_on() {
     let a = music(60.0, 78);
-    let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() });
+    let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
     live.0.lock().analyses.insert("a".into(), measured("a", 120.0, 60_000));
     let rig = at_pace(&[("a", &a)], live.clone(), 30_000);
     rig.engine.set_repeat(nori_player::playlist::REPEAT_ONE);
@@ -3566,7 +3566,7 @@ include!("perf_stage.rs");
 fn analyses_mid_hold_still_mix() {
     let (a, b) = (music(40.0, 70), music(40.0, 71));
     for at_s in [16.0, 20.0, 26.0, 29.0] {
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
         let rig = playing_until(&[("a", &a), ("b", &b)], live.clone(), Settings { auto_mix: true, ..loud_eq() }, at_s);
         {
             let mut app = live.0.lock();
@@ -3592,7 +3592,7 @@ fn shuffle_near_mix_keeps_audio() {
         })
     }) {
         let what = format!("shuffle {when_ms} ms from the mix, holding {hold_ms} ms, seed {seed}, notification delayed {delay_ms} ms");
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, keep_albums: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() });
         for (id, _) in songs {
             live.0.lock().analyses.insert(id.into(), gridless(id, 40_000, if id == "a" { 30_000 } else { 0 }, 0));
         }
@@ -3681,7 +3681,7 @@ enum Meddle {
 #[test]
 fn mixes_keep_their_length() {
     let (a, b) = (common::sine(RATE, 200.0, 40.0, 6_000.0), common::sine(RATE, 900.0, 40.0, 6_000.0));
-    let automix = |on: bool| TransitionPrefs { auto_mix: on, auto_mix_max_s: 12, echo_out: false, keep_albums: false, ..prefs_off() };
+    let automix = |on: bool| TransitionPrefs { auto_mix: on, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() };
     use Meddle::*;
     // (ms heard from the mix's start when it comes (before it: negative), what comes, what the device holds)
     let cases = [
@@ -3801,7 +3801,7 @@ fn mixramp_fades_out_after_seek() {
     for (head_ms, before_ms, hold_ms, end_ms, meanwhile) in cases {
         let what = format!("head {head_ms} ms, seek {before_ms} ms before the mix, the device holding {hold_ms} ms, the music to {end_ms} ms, {meanwhile:?}");
         let a = &a[..end_ms as usize * 48 * 2];
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, keep_albums: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() });
         {
             let mut app = live.0.lock();
             app.analyses.insert("a".into(), gridless("a", 40_000, 30_000, 0));
@@ -3853,7 +3853,7 @@ fn seek_into_ending_lands() {
     let (a, b) = (music(40.0, 80), music(40.0, 81));
     for (to_ms, fade_ms) in [(4_100, 0), (4_100, 150), (12_000, 150), (24_000, 0), (24_000, 150), (31_000, 150)] {
         let what = format!("to {to_ms} ms, a {fade_ms} ms dip");
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, keep_albums: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() });
         {
             let mut app = live.0.lock();
             app.analyses.insert("a".into(), gridless("a", 40_000, 30_000, 0));

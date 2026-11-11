@@ -2052,7 +2052,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 let (index, ms) = match (&f.mix_place, &self.p.engine.plans) {
                     (Some(place), Plans::Led(Some((_, plan))))
                         if place.place_at(at_us) * 1000.0
-                            < (plan.out_start_us() + plan.duration_us()) as f64 =>
+                            < (plan.out_start_us() + plan.held_us()) as f64 =>
                     {
                         (place.index, place.place_at(at_us))
                     }

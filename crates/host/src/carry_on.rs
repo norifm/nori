@@ -33,7 +33,7 @@ mod tests {
             let dir = nori_testdir::TempDir::new("host-carry-on");
             let prefs = nori_core::settings_store::Settings::new();
             let mut p = prefs.open(&dir.join("app.db").to_string_lossy()).unwrap();
-            (p.remote_control, p.auto_fill, p.auto_mix, p.third_party_lookups) = (false, None, false, false);
+            (p.remote_control, p.auto_fill, p.auto_mix, p.third_party_lookups) = (false, None, nori_core::settings::AutoMixMode::Off, false);
             prefs.put(p);
             let queue = Arc::new(nori_core::queue::Session::new(prefs));
             let card = Card::new();

@@ -197,7 +197,7 @@ impl Core {
     /// Whether the beat model reads songs downloaded now: with better beat detection on, in a build
     /// that has it.
     pub fn download_beats(&self) -> bool {
-        nori_player::automix::beats::AVAILABLE && self.session.settings.prefs(|p| p.auto_mix && p.auto_mix_better_beats)
+        nori_player::automix::beats::AVAILABLE && self.session.settings.prefs(|p| p.auto_mix.on() && p.auto_mix_better_beats)
     }
 
     /// What downloaded songs still wait for, for the notification; `now` is the platform clock.

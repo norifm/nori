@@ -65,6 +65,7 @@ pub fn proposed_kind(kind: TransitionKind) -> Proposed {
         TransitionKind::EqualPowerFade | TransitionKind::MixRampFade => Proposed::Crossfade,
         TransitionKind::BeatMatched => Proposed::BeatMatched,
         TransitionKind::EchoOut => Proposed::EchoOut,
+        TransitionKind::Cut => Proposed::Cut,
     }
 }
 
@@ -75,12 +76,15 @@ pub fn proposed_kind(kind: TransitionKind) -> Proposed {
 pub fn adopt(nori: &TransitionPlan, p: Proposal, out_ms: i64, in_ms: i64, max_tempo_pct: f32) -> Option<TransitionPlan> {
     let mut t = nori.clone();
     t.reason = "planned by a plugin".into();
+    // A loop, a bend or a duck nori placed for its own plan doesn't fit another: the bend's tempo change goes after it.
+    t.unbend();
+    (t.out_loop_ms, t.in_loop, t.vocal_duck, t.highs_in) = (None, None, None, None);
     if p.kind == Proposed::Gapless {
         let d = 0;
         t.kind = TransitionKind::Gapless;
         (t.out_start_ms, t.in_start_ms, t.duration_ms, t.tempo_ratio, t.tempo_ramp_beats, t.tempo_ramp_ms) = (out_ms.max(0), 0, d, 1.0, 0, 0);
         (t.out_fade_start_ms, t.out_fade_end_ms, t.in_fade_start_ms, t.in_fade_end_ms) = (0, 0, 0, 0);
-        (t.bass_swap, t.low_pass, t.high_pass, t.echo, t.out_loop_ms, t.vocal_duck) = (None, None, None, None, None, None);
+        (t.bass_swap, t.low_pass, t.high_pass, t.echo) = (None, None, None, None);
         return Some(t);
     }
     let d = if p.kind == Proposed::Cut { CUT_MS } else { p.duration_ms };
@@ -101,6 +105,7 @@ pub fn adopt(nori: &TransitionPlan, p: Proposal, out_ms: i64, in_ms: i64, max_te
     t.kind = match p.kind {
         Proposed::BeatMatched => TransitionKind::BeatMatched,
         Proposed::EchoOut => TransitionKind::EchoOut,
+        Proposed::Cut => TransitionKind::Cut,
         _ => TransitionKind::EqualPowerFade,
     };
     // nori's relative points, stretched to the plugin's length.
@@ -122,8 +127,6 @@ pub fn adopt(nori: &TransitionPlan, p: Proposal, out_ms: i64, in_ms: i64, max_te
     });
     t.high_pass = t.high_pass.map(|s| Sweep { start_ms: scale(s.start_ms), end_ms: scale(s.end_ms), ..s });
     t.echo = if t.kind == TransitionKind::EchoOut { nori.echo } else { None };
-    // A loop or a duck nori placed for its own plan doesn't fit another.
-    (t.out_loop_ms, t.vocal_duck) = (None, None);
     Some(t)
 }
 
@@ -197,6 +200,10 @@ mod tests {
         let matched = adopt(&nori(), Proposal { bass_swap: true, filter: true, ..proposal(Proposed::BeatMatched, 100_000, 8_000, 0, 1.04) }, 200_000, 200_000, 6.0).unwrap();
         assert_eq!(matched.kind, TransitionKind::BeatMatched);
         assert!(matched.bass_swap.is_some() && matched.low_pass.is_some());
+        // nori's loop and bend are for its own window: the plugin's plays both decks at one tempo, ramping after.
+        let dj = TransitionPlan { in_loop: Some(nori_player::types::InLoop { ms: 2_000, repeats: 1 }), bend: Some(nori_player::types::Bend { start_ms: 4_000, end_ms: 8_000 }), ..nori() };
+        let p = adopt(&dj, proposal(Proposed::BeatMatched, 100_000, 8_000, 0, 1.04), 200_000, 200_000, 6.0).unwrap();
+        assert_eq!((p.in_loop, p.bend, p.tempo_ramp_ms), (None, None, 4_000));
         let cut = adopt(&nori(), proposal(Proposed::Cut, 150_000, 9_999, 0, 1.0), 200_000, 200_000, 6.0).unwrap();
         assert_eq!(cut.duration_ms, CUT_MS);
         let gapless = adopt(&nori(), proposal(Proposed::Gapless, 0, 0, 0, 1.0), 200_000, 200_000, 6.0).unwrap();
