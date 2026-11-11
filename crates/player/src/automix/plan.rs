@@ -296,7 +296,7 @@ const KEYS_FAR: &str = "keys far apart";
 /// Voice-band share of an ending too sung to echo out of.
 const ECHO_SUNG: f32 = 0.3;
 /// Mean voice-band share that counts as "sung" in an overlap window.
-pub(super) const VOCAL_MIN: f32 = 0.45;
+pub(crate) const VOCAL_MIN: f32 = 0.45;
 /// A share that may be a voice: both ends at it keep the mix as short as two singers'.
 const VOICED: f32 = 0.25;
 /// Loudness gap that shortens an overlap, dB.

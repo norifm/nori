@@ -369,3 +369,41 @@ fn plan_from_real_analyses() {
     assert!((p.tempo_ratio - a.bpm / b.bpm).abs() < 1e-6);
 }
 
+
+/// A loud band keeps the voice curve up between lines, and the closing lines are sung quieter than the big chorus
+/// before them (as in "Itch"): the singing still ends with them, not with that chorus.
+#[test]
+fn singing_ends_with_its_last_lines_over_a_loud_band() {
+    // Two-second bars at ten voice frames a second: an intro, verses (9.5), choruses (16), closing lines (10.5)
+    // and two bars of ringing guitar (1).
+    let mut bars = vec![1.5f32; 4];
+    for _ in 0..3 {
+        bars.extend([9.5; 8]);
+        bars.extend([16.0; 8]);
+    }
+    bars.extend([10.5; 10]);
+    bars.extend([1.0; 2]);
+    let voice: Vec<f32> = bars.iter().flat_map(|&b| [b; 20]).collect();
+    let secs = bars.len() as f64 * 2.0;
+    let f = analysis::Features {
+        fps: 50.0,
+        t0: -0.04,
+        onset: Vec::new(),
+        low_onset: Vec::new(),
+        power: Vec::new(),
+        low_power: Vec::new(),
+        vocal: Vec::new(),
+        centroid: Vec::new(),
+        chroma: Vec::new(),
+        chroma_t0: 0.0,
+        chroma_step: 0.0,
+        pitch: Vec::new(),
+        tuning_cs: (0.0, 0.0),
+        blocks_k: Vec::new(),
+        blocks_raw: Vec::new(),
+        duration_s: secs,
+        voice,
+    };
+    let end = vocal_end(&f, 2.0, (0.0, secs));
+    assert_eq!(end, Some(secs - 4.0), "the closing lines end two bars before the music does");
+}

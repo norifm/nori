@@ -66,14 +66,13 @@ fn window_mean(curve: &[f32], fps: f64, t0: f64, from_s: f64, to_s: f64) -> f32 
     curve[a..b].iter().sum::<f32>() / (b - a) as f32
 }
 
-/// A sung stretch: four bars whose voice level is this much over the song's quieter four-bar stretches.
-const SUNG_OVER: f32 = 1.3;
-/// Bars under this share of the song's median voice level are silence, left out of its quieter stretches.
-const AUDIBLE: f32 = 0.25;
+/// A bar is still sung when its voice level is this share of the song's median bar. Set on real songs against a
+/// separated vocal: loud bands keep the voice curve high between lines, so a stricter test ends the singing early,
+/// which costs the last chorus; this one is rather late, over an instrumental outro.
+const SUNG_SHARE: f32 = 0.7;
 
-/// Where the last sung bar of `music` ends, from bars of `bar_s` counted back from its end, read off the voice
-/// curve ([`vocal`]). Four bars at a time, so a phrase's breath does not end it; judged against the lowest quarter
-/// of the song's own four-bar stretches, its instrumental level.
+/// Where the singing of `music` ends: the end of its last bar of `bar_s` (counted back from its end) whose level on
+/// the voice curve ([`vocal`]) is [`SUNG_SHARE`] of the song's median bar.
 fn vocal_end(f: &Features, bar_s: f64, music: (f64, f64)) -> Option<f64> {
     let e = vocal::CURVE_EVERY as f64;
     let (fps, t0) = (f.fps / e, f.t0 + (e - 1.0) / 2.0 / f.fps);
@@ -84,14 +83,8 @@ fn vocal_end(f: &Features, bar_s: f64, music: (f64, f64)) -> Option<f64> {
         .collect();
     let mut sorted = bars.clone();
     sorted.sort_by(f32::total_cmp);
-    let audible = AUDIBLE * *sorted.get(n / 2)?;
-    let fours: Vec<Option<f32>> =
-        bars.windows(4).map(|w| w.iter().all(|&b| b >= audible).then(|| w.iter().sum::<f32>() / 4.0)).collect();
-    let mut quiet: Vec<f32> = fours.iter().flatten().copied().collect();
-    quiet.sort_by(f32::total_cmp);
-    let sung = SUNG_OVER * *quiet.get(quiet.len() / 4)?;
-    let w = fours.iter().position(|m| m.is_some_and(|m| m >= sung))?;
-    let last = (w..w + 4).find(|&i| bars[i] >= sung)?;
+    let sung = SUNG_SHARE * *sorted.get(n / 2)?;
+    let last = bars.iter().position(|&b| b >= sung)?;
     Some(music.1 - last as f64 * bar_s)
 }
 
@@ -182,12 +175,14 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
     let last_drop = if silent || !grid_ok { None } else { structure::last_drop(&t, &db, f, music, drop) };
     let last_drop_vocal = last_drop.map_or(0.0, |d| window_mean(&f.vocal, f.fps, f.t0, d, (d + 8.0 * bar_s).min(music.1)));
 
-    let vocal_end = if silent { None } else { vocal_end(f, if bar_s >= 1.0 { bar_s } else { 2.0 }, (music.0, song.1)) };
 
     // Where to leave: a closing breakdown, or the gap before a hidden track.
     let exit = if silent { None } else { structure::breakdown(&t, &db, f, music, song.1, grid_ok) }.or(leave.map(|(g0, _)| g0 as f64 / 1000.0));
     let last = exit.unwrap_or(music.1);
     let exit_vocal = if silent { 0.0 } else { window_mean(&f.vocal, f.fps, f.t0, (last - if bar_s > 0.0 { 8.0 * bar_s } else { 16.0 }).max(music.0), last) };
+    // Only a sung ending has its singing's end; for the rest the planner goes by the ending's voice share.
+    let sung_end = outro_vocal.max(exit_vocal) >= plan::VOCAL_MIN;
+    let vocal_end = if silent || !sung_end { None } else { vocal_end(f, if bar_s >= 1.0 { bar_s } else { 2.0 }, (music.0, song.1)) };
 
     let (outro_grid, intro_grid) = if silent {
         (Grid::default(), Grid::default())
