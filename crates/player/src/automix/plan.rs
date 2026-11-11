@@ -341,6 +341,23 @@ fn separate_in_fade(p: &mut TransitionPlan, s: &AutoMixSettings, sung_both: bool
     p.reason += ", voices kept apart";
 }
 
+/// A plain fade in the DJ style: the bass changes hands once, quickly, where the fades cross, so two kicks that are
+/// not beat-matched never thud together.
+fn hand_over_bass_in_fade(p: &mut TransitionPlan, s: &AutoMixSettings) {
+    if !s.bass_swap || !profile(s.style).fade_swap || p.duration_ms < FADE_SWAP_MIN_MS {
+        return;
+    }
+    let (from, to) = (p.in_fade_start_ms.max(p.out_fade_start_ms), p.in_fade_end_ms.min(p.out_fade_end_ms));
+    let len = (p.duration_ms / 8).clamp(FADE_SWAP_MS.0, FADE_SWAP_MS.1);
+    let at = ((from + to.max(from)) / 2 - len / 2).clamp(0, p.duration_ms - len);
+    p.bass_swap = Some(BassSwap { at_ms: at, len_ms: len, cut_hz: BASS_CUT_HZ });
+    p.reason += ", the bass handed over";
+}
+
+/// A plain fade this long or longer hands the bass over, in this many ms at least and at most.
+const FADE_SWAP_MIN_MS: i64 = 2_000;
+const FADE_SWAP_MS: (i64, i64) = (250, 1_000);
+
 /// A bar of `a`, ms; two seconds without a tempo.
 fn bar_ms(a: &TrackAnalysis) -> f64 {
     if a.bpm > 0.0 && a.bpm.is_finite() { 60_000.0 / a.bpm * bar_beats(a) as f64 } else { 2_000.0 }
@@ -458,12 +475,14 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
     if s.beat_match && (a.is_some_and(grid_ok) || b.is_some_and(grid_ok)) {
         if let Some(mut p) = one_grid(a, b, room, s, short, &why_not) {
             separate_in_fade(&mut p, s, sung_both);
+            hand_over_bass_in_fade(&mut p, s);
             return p;
         }
     }
     if a.is_some() || b.is_some() {
         let mut p = mixramp(a, b, room, s, &why_not);
         separate_in_fade(&mut p, s, sung_both);
+        hand_over_bass_in_fade(&mut p, s);
         return p;
     }
     let dur = max_len.min(MAX_BLIND_FADE_MS);
@@ -522,6 +541,8 @@ struct Profile {
     quick_drop_swap: bool,
     /// The incoming highs come in before the bass ([`HighsIn`]).
     highs_in: bool,
+    /// A plain fade hands the bass over ([`hand_over_bass_in_fade`]).
+    fade_swap: bool,
     /// The outgoing song thins out (a rising high-pass) over the bars before the incoming drop.
     riser: bool,
     /// A pair that cannot blend cuts on a downbeat into the incoming drop ([`drop_cut`]) before a plainer fade.
@@ -544,6 +565,7 @@ const SMOOTH: Profile = Profile {
     swap_bars: 1.0,
     quick_drop_swap: false,
     highs_in: false,
+    fade_swap: false,
     riser: false,
     drop_cut: false,
     loop_cost: 0.1,
@@ -561,6 +583,7 @@ const DJ: Profile = Profile {
     swap_bars: 0.25,
     quick_drop_swap: true,
     highs_in: true,
+    fade_swap: true,
     riser: true,
     drop_cut: true,
     loop_cost: 0.04,
@@ -1839,6 +1862,20 @@ mod tests {
         assert!(p.reason.contains("bars in"), "{}", p.reason);
         check_skip(&p, &a, &b, 240_000);
         assert_eq!(p.in_start_ms, 120);
+    }
+
+    /// A DJ fade between kicks that are not beat-matched hands the bass over once, where the fades cross; Smooth's
+    /// fades keep both.
+    #[test]
+    fn dj_fades_hand_the_bass_over_where_they_cross() {
+        let (a, b) = (track(128.0), TrackAnalysis { bpm_confidence: 0.2, intro_bpm_confidence: 0.2, ..track(97.0) });
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
+        let swap = p.bass_swap.expect(&p.reason);
+        let cross = (p.in_fade_start_ms.max(p.out_fade_start_ms) + p.in_fade_end_ms.min(p.out_fade_end_ms)) / 2;
+        assert!(swap.at_ms < cross && cross < swap.at_ms + swap.len_ms && swap.len_ms <= 1_000, "{p:?}");
+        let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings::default());
+        assert!(smooth.kind == TransitionKind::MixRampFade && smooth.bass_swap.is_none(), "{}", smooth.reason);
     }
 
     #[test]

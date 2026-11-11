@@ -6,7 +6,7 @@
 //! Past the end of the transition the output is the incoming stream untouched. Mixing allocates nothing.
 
 use crate::pcm::Encoding;
-use crate::types::{FadeCurve, TransitionPlan};
+use crate::types::{FadeCurve, TransitionKind, TransitionPlan};
 use std::f64::consts::PI;
 
 const MAX_CHANNELS: usize = 8;
@@ -332,6 +332,8 @@ pub struct Mixer {
     /// The loudness gap the two songs meet across ([`trim`]).
     gap_db: f64,
     swap: Option<Span>,
+    /// The kicks are beat-matched, so the lows of both decks land together and add up.
+    matched: bool,
     low_shelf: Shelf,
     /// Two cascaded sections per deck per channel: [deck][section][channel].
     swap_state: [[[[f64; 2]; MAX_CHANNELS]; 2]; 2],
@@ -372,6 +374,7 @@ impl Mixer {
             out_gain: 1.0,
             gap_db: 0.0,
             swap: None,
+            matched: false,
             low_shelf: Shelf::default(),
             swap_state: [[[[0.0; 2]; MAX_CHANNELS]; 2]; 2],
             hold_shelf: Shelf::default(),
@@ -414,6 +417,7 @@ impl Mixer {
             let start = frames(s.at_ms as f64);
             Span { start: start.min(len), end: (start + frames((s.len_ms as f64).max(1.0))).min(len.max(1)) }
         });
+        self.matched = p.kind == TransitionKind::BeatMatched;
         let cut = p.bass_swap.map_or(180.0, |s| s.cut_hz as f64);
         (self.low_shelf, self.hold_shelf) = (Shelf::at(rate, cut / 2.0), Shelf::at(rate, cut));
         self.highs_in = p.highs_in.filter(|h| h.db < 0.0).map(|h| {
@@ -523,9 +527,16 @@ impl Mixer {
         let (out, inc) = (fade(self.curve, self.out_fade.progress(p), true), fade(self.curve, self.in_fade.progress(p), false));
         let held = 1.0 / (out * out + inc * inc).sqrt().max(1.0);
         let (trim_out, trim_in) = trims(self.gap_db, p as f64 / self.len.max(1) as f64);
-        // The lows change hands at equal gain: beat-matched kicks land together and add up.
-        let lows_in = self.swap.map_or(0.0, |s| raised_cos(s.progress(p)));
-        let lows_out = 1.0 - lows_in;
+        // Beat-matched kicks land together and add up, so their lows change hands at equal gain. Other lows add in
+        // power: they change hands at equal power, held to the power of one song under the fades.
+        let swapped = self.swap.map_or(0.0, |s| raised_cos(s.progress(p)));
+        let (lows_out, lows_in) = if self.matched {
+            (1.0 - swapped, swapped)
+        } else {
+            let (o, i) = ((1.0 - swapped).sqrt(), swapped.sqrt());
+            let k = ((out * out + inc * inc).min(1.0) / (out * out * o * o + inc * inc * i * i).max(f64::MIN_POSITIVE)).sqrt();
+            (k * o, k * i)
+        };
         // All of the incoming voice band is held down until the release, none after.
         let duck = match self.duck {
             Some((span, depth)) if p < span.end => depth * (1.0 - raised_cos(span.progress(p))),
@@ -624,7 +635,7 @@ impl Mixer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Echo, Sweep, TransitionKind, VocalDuck};
+    use crate::types::{Echo, Sweep, VocalDuck};
 
     const RATE: f64 = 48000.0;
 
@@ -881,6 +892,20 @@ mod tests {
         let hi = sine(3000.0, 48000);
         let y = mix(&p, &zeros, &hi);
         assert!((rms(&y[2400..24000]) / rms(&hi) / std::f64::consts::FRAC_1_SQRT_2 - 1.0).abs() < 0.03, "highs pass throughout");
+    }
+
+    /// A fade between kicks that are not beat-matched hands the bass over and holds its level: one song's lows
+    /// at a time, as loud as either song's own, where the fades cross too.
+    #[test]
+    fn a_fade_hands_the_bass_over_at_one_level() {
+        let mut p = plan();
+        p.bass_swap = Some(crate::types::BassSwap { at_ms: 400, len_ms: 200, cut_hz: 400.0 });
+        let (a, b) = (sine(50.0, 48000), sine(80.0, 48000));
+        let y = mix(&p, &a, &b);
+        let db = |at: usize| 20.0 * (rms(&y[at..at + 4800]) / rms(&a)).log10();
+        for at in (2400..43200).step_by(2400) {
+            assert!(db(at).abs() < 1.0, "{:.2} s into the fade: {:+.1} dB", at as f64 / RATE, db(at));
+        }
     }
 
     /// The lows change hands and nothing else: through a bass swap and after it, the mids above the cut keep
