@@ -158,7 +158,7 @@ impl Library for Opened {
     fn synced_lyrics(&self, song: &Song) -> Option<Vec<(u32, String)>> {
         let c = self.0.upgrade()?;
         let kept = Arc::new(Kept::default());
-        nori_tasks::block_on(c.lyrics_for(song.id.clone(), kept.clone())).ok()?;
+        nori_tasks::block_on(c.lyrics_found(song.id.clone(), &c.lyrics_asked(), kept.clone())).ok()?;
         let lyrics = kept.0.lock().take()?;
         Some(lyrics.lines.into_iter().filter(|l| l.start_ms >= 0).map(|l| (l.start_ms as u32, l.text)).collect())
     }

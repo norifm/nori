@@ -460,8 +460,9 @@ pub struct Lyrics {
 
 /// Who set the offset lyrics are shown with, and what it is: the vocal sync check (nori-lyrics sync.rs)
 /// or the listener (nori-lyrics timing.rs).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LyricsTiming {
     /// Not heard against the song's voice: the song is not analysed yet, or the words are the server's.
     #[default]

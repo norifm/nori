@@ -5078,6 +5078,7 @@ dependencies = [
  "async-trait",
  "dispatch2",
  "futures-lite",
+ "futures-util",
  "libc",
  "mdns-sd",
  "nori-core",

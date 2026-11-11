@@ -198,6 +198,9 @@ pub enum Op {
     Decide { request: u64, accept: bool },
     /// The host makes `member` an admin or a guest again.
     Promote { member: String, admin: bool },
+    /// The lyrics shown for song `song` a step sooner (`dir` > 0) or later (< 0), or back to the check's
+    /// timing (0), on the device playing it and so on every device showing them.
+    LyricsTiming { song: String, dir: i32 },
     /// The host sends `member` out of the jam.
     Kick { member: String },
 }
@@ -338,6 +341,21 @@ pub struct DeviceState {
     /// The speakers and such a plugin here can cast to; picked elsewhere, the music goes through here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outputs: Vec<CastOutput>,
+    /// The lyrics shown here for the current song, which every device showing its playback shows.
+    #[serde(deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub lyrics: Option<SongLyrics>,
+}
+
+/// A song's lyrics as the device playing it shows them: the words it picked and their timing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+#[serde(rename_all = "camelCase")]
+pub struct SongLyrics {
+    pub song: String,
+    /// Where the words came from, by its stored name (nori-settings `LyricsOrigin::name`).
+    pub origin: String,
+    pub lyrics: nori_model::Lyrics,
+    pub timing: nori_model::LyricsTiming,
 }
 
 /// What a device a plugin casts to is, for its icon.
@@ -540,6 +558,16 @@ mod tests {
         let running = DeviceState { instance: Some(7), seq: 8, ..st };
         let json = serde_json::to_string(&running).unwrap();
         assert_eq!(serde_json::from_str::<DeviceState>(&json).unwrap(), running);
+
+        // A state carrying its song's lyrics reads back with their timing; one carrying lyrics an older
+        // version wrote differently reads without them.
+        let words = nori_model::Lyrics { synced: true, lines: vec![nori_model::LyricLine { start_ms: 1200, text: "Hi".into(), ..Default::default() }], ..Default::default() };
+        let timing = nori_model::LyricsTiming::Yours { ms: 350, automatic: Some(320) };
+        let sung = DeviceState { lyrics: Some(SongLyrics { song: "s2".into(), origin: "lrclib".into(), lyrics: words, timing }), ..running };
+        let json = serde_json::to_string(&sung).unwrap();
+        assert_eq!(serde_json::from_str::<DeviceState>(&json).unwrap(), sung);
+        let odd: DeviceState = serde_json::from_str(r#"{"seq":2,"lyrics":{"song":"s2","timing":"soon"}}"#).unwrap();
+        assert_eq!((odd.seq, odd.lyrics), (2, None));
 
         let page = Body::Page { id: 2, rev: 9, from: 40, entries: vec![Entry::of(3, 40, &song, None)] };
         let json = serde_json::to_string(&page).unwrap();

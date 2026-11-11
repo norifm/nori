@@ -141,10 +141,7 @@ impl Asked<'_> {
 
     /// Its name in the cache, and as the chosen answer's source.
     fn name(self) -> String {
-        match self {
-            Asked::Service(s) => s.name().to_string(),
-            Asked::Plugin(p) => format!("plugin:{}", p.plugin()),
-        }
+        self.origin().name()
     }
 
     /// Its name in the log.

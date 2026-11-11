@@ -81,7 +81,8 @@ impl Controls {
         match op {
             Op::Play | Op::Pause => self.play_pause,
             Op::Next | Op::Previous | Op::Jump { .. } => self.skip,
-            Op::Seek { .. } => self.seek,
+            // Retiming the lyrics moves them against the music as a seek does.
+            Op::Seek { .. } | Op::LyricsTiming { .. } => self.seek,
             Op::Move { .. }
             | Op::Remove { .. }
             | Op::Restore { .. }
@@ -122,6 +123,8 @@ mod tests {
             (Op::Next, Sender::Member(Role::Guest), Err(Refusal::NotAllowed)),
             (Op::Pause, Sender::Member(Role::Admin), Ok(())),
             (Op::Seek { ms: 5 }, Sender::Member(Role::Admin), Ok(())),
+            (Op::LyricsTiming { song: "s1".into(), dir: 1 }, Sender::Member(Role::Admin), Ok(())),
+            (Op::LyricsTiming { song: "s1".into(), dir: 1 }, Sender::Member(Role::Guest), Err(Refusal::NotAllowed)),
             (Op::Move { from: 0, to: 2, rev: 7 }, Sender::Member(Role::Admin), Ok(())),
             (Op::Move { from: 0, to: 2, rev: 6 }, Sender::Member(Role::Admin), Err(Refusal::Stale)),
             (jump(2, 7), Sender::Member(Role::Admin), Ok(())),

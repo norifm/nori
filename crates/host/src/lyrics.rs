@@ -5,6 +5,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use futures_util::future::{AbortHandle, Abortable};
 use nori_core::lyrics_follow::{LyricsEnd, LyricsHeard, LyricsNow};
 use nori_core::race::{LyricsPick, LyricsShown};
 
@@ -15,6 +16,8 @@ use crate::session::{Handle, Out, Said};
 pub(crate) struct Lyrics {
     heard: Arc<LyricsHeard>,
     viewed: AtomicBool,
+    /// The lookup running, for its song: it follows changes from other devices until let go.
+    lookup: parking_lot::Mutex<Option<(String, AbortHandle)>>,
 }
 
 /// A lookup's answers, handed to what is shown.
@@ -36,6 +39,9 @@ impl Handle {
     /// `song` is the one the player shows: what its lyrics view shows now. Later changes come as
     /// [`Said::Lyrics`].
     pub fn lyrics_heard(&self, song: Option<String>) -> LyricsNow {
+        if self.lyrics.lookup.lock().as_ref().is_some_and(|(of, _)| song.as_ref() != Some(of)) {
+            self.lyrics_stop();
+        }
         let now = self.lyrics.heard.hear(song);
         self.lyrics_fetch();
         now
@@ -46,6 +52,9 @@ impl Handle {
     pub fn lyrics_view(&self, open: bool) {
         self.lyrics.viewed.store(open, Ordering::Relaxed);
         self.client.lyrics_view(open);
+        if !open {
+            self.lyrics_stop();
+        }
         if open {
             let client = self.client.clone();
             self.run(async move { client.lyrics_prefetch().await });
@@ -84,13 +93,24 @@ impl Handle {
         }
     }
 
+    fn lyrics_stop(&self) {
+        if let Some((_, stop)) = self.lyrics.lookup.lock().take() {
+            stop.abort();
+        }
+    }
+
     fn lyrics_look_up(&self, song: String) {
         let (client, heard, out) = (self.client.clone(), self.lyrics.heard.clone(), self.out.clone());
+        let (stop, stopped) = AbortHandle::new_pair();
+        if let Some((_, before)) = self.lyrics.lookup.lock().replace((song.clone(), stop)) {
+            before.abort();
+        }
         self.run(async move {
             let answers = Arc::new(Answers { song: song.clone(), heard: heard.clone(), out: out.clone() });
-            let end = match client.lyrics_for(song.clone(), answers).await {
-                Ok(_) => LyricsEnd::Done,
-                Err(_) => LyricsEnd::Failed,
+            let end = match Abortable::new(client.lyrics_for(song.clone(), answers), stopped).await {
+                Ok(Ok(_)) => LyricsEnd::Done,
+                Ok(Err(_)) => LyricsEnd::Failed,
+                Err(_) => LyricsEnd::Stopped,
             };
             if let Some(now) = heard.ended(song, end) {
                 out(Said::Lyrics(now));

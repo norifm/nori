@@ -34,6 +34,8 @@ nori-plugins = { path = "../plugins", optional = true }
 nori-tasks = { path = "../tasks" }
 parking_lot = "0.12"
 async-trait = "0.1"
+# A lyrics lookup let go once its song or view is.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 # The computer's name (device_name); an RFCOMM socket shut down (bluez.rs).
 [target.'cfg(unix)'.dependencies]

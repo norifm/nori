@@ -16,7 +16,9 @@ use nori_core::library::StarsShown;
 use nori_core::remote::{jam_join, Controls, JamJoin, JamStart, Discovery, Follower, JamControls, Lead, Listening, Playing, Reach, RelaySupport, Remote, RemoteMe, RemotePlayer, RemoteShown, Sight};
 use nori_core::transport::{Exchange, FailureKind, Transport, TransportError, TransportResponse};
 use nori_player::playlist::Hand;
+use nori_core::race::{LyricsPick, LyricsShown};
 use nori_core::{Core, ServerConfig, Song};
+use nori_model::LyricsTiming;
 use nori_remote::clock;
 use nori_remote::wire::{Answer, Body, DeviceKind, DeviceState, Event, Member, Op, Outgoing, Refusal, Role, Room};
 use nori_tasks::{Busy, Native, Tasks};
@@ -144,6 +146,8 @@ struct Relay {
     doors_refuse: std::sync::atomic::AtomicBool,
     /// The devices' network is metered (mobile data).
     metered: std::sync::atomic::AtomicBool,
+    /// LRCLIB's answer for any song.
+    lrclib: Mutex<Option<String>>,
 }
 
 struct LatePoll {
@@ -198,7 +202,7 @@ impl Relay {
             lan: Mutex::default(),
             sim: Arc::new(Native::simulated("nori-remote-test", START_US).unwrap()),
             devices: Mutex::default(),
-            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None), deaf: Mutex::new(None), doors_refuse: Default::default(), metered: Default::default() })
+            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None), deaf: Mutex::new(None), doors_refuse: Default::default(), metered: Default::default(), lrclib: Default::default() })
     }
 
     /// Device `dev`'s times read `skew_us` ahead as the relay passes them on. Its states reach the relay
@@ -527,6 +531,9 @@ impl Transport for Relay {
             return answer;
         }
         let unreachable = || Err(TransportError::Failed { kind: FailureKind::Connect, detail: Some("unreachable".into()) });
+        if let Some(body) = self.lrclib.lock().clone().filter(|_| request.url.starts_with("https://lrclib.net/api/get")) {
+            return Ok(TransportResponse { status: 200, body: body.into_bytes(), headers: Vec::new() });
+        }
         if self.down.load(Ordering::Relaxed) {
             return unreachable();
         }
@@ -2425,6 +2432,125 @@ impl Device {
         self.core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(0), false, None);
         self.remote.clone().played(Playing { playing: false, position_ms: 6_000, ..Default::default() });
     }
+}
+
+/// What a lyrics view was shown, the newest last.
+#[derive(Default)]
+struct LyricsView(Mutex<Vec<LyricsPick>>);
+
+impl LyricsShown for LyricsView {
+    fn show(&self, pick: LyricsPick) {
+        self.0.lock().push(pick);
+    }
+}
+
+impl LyricsView {
+    fn timing(&self) -> Option<LyricsTiming> {
+        self.0.lock().last().map(|p| p.lyrics.timing)
+    }
+}
+
+/// A sung song measured into an analyser, and LRCLIB's answer for it: a line per sung phrase, 1.2 s late.
+fn sung() -> (Song, nori_player::automix::analysis::Analyzer, String) {
+    use nori_player::automix::analysis::Analyzer;
+    use nori_player::automix::eval::{Song as Synthetic, Style, FULL, SUNG};
+    let synthetic = Synthetic { sections: vec![(4, FULL), (12, SUNG), (6, FULL), (12, SUNG), (4, FULL)], ..Synthetic::new("offset", Style::Backbeat, 112.0, 2, false) };
+    let (x, truth) = synthetic.render();
+    let mut a = Analyzer::new(synthetic.rate, 0);
+    a.feed(&x);
+    let mut lrc = String::new();
+    let mut last = f64::MIN;
+    for (i, (start, end)) in truth.voice.iter().enumerate() {
+        if start - last > 0.3 {
+            let t = start - 0.2 + 1.2;
+            lrc.push_str(&format!("[{:02}:{:05.2}]lomira teshvan korupel sumidah {i} netori falquen\n", (t / 60.0) as u32, t % 60.0));
+        }
+        last = *end;
+    }
+    let secs = (x.len() / synthetic.rate as usize) as u32;
+    let song = Song { id: "yt-venom".into(), title: "Offset".into(), artist: "Pink Floyd".into(), duration: secs, ..Default::default() };
+    let answer = serde_json::json!({"syncedLyrics": lrc, "duration": secs, "trackName": "Offset", "artistName": "Pink Floyd"}).to_string();
+    (song, a, answer)
+}
+
+/// A lyrics view of song `id` open on `d`.
+fn lyrics_view(d: &Device, id: &str) -> Arc<LyricsView> {
+    let view = Arc::new(LyricsView::default());
+    let (client, id, shown) = (d.client.clone(), id.to_string(), view.clone());
+    d.sim.spawn(Box::pin(async move { let _ = client.lyrics_for(id, shown).await; }));
+    view
+}
+
+/// A jam's guest shows the host's lyrics as the host times them, looking nothing up; moving them is the
+/// host's and its admins', as seeking is.
+#[test]
+fn a_jam_guest_shows_the_hosts_lyrics() {
+    let relay = Relay::new();
+    let host = Device::account(&relay, DeviceKind::Phone, "Host");
+    let (song, measured, answer) = sung();
+    *relay.lrclib.lock() = Some(answer);
+    host.core.session.register(vec![song.clone()]);
+    host.core.session.set(vec![song.id.clone()], Some(0), false, None);
+    host.core.analysis_finish(&song.id, measured).unwrap().expect("measured");
+    host.remote.clone().played(Playing { playing: true, position_ms: 5_000, ..Default::default() });
+    let link = opened(&host);
+    let pass = joined(&relay, link, "Gus".into());
+    let gus = Device::new(&relay, ServerConfig { url: pass.url, api_key: Some(pass.api_key), ..Default::default() }, DeviceKind::Guest, "Gus");
+    gus.remote.clone().watch(true);
+    gus.until("the host's song", |r| r.jam_playing());
+
+    let at_host = lyrics_view(&host, &song.id);
+    let checked = host.until("the host's lyrics checked", |_| at_host.timing().filter(|t| matches!(t, LyricsTiming::Automatic { .. })));
+    let at_gus = lyrics_view(&gus, &song.id);
+    gus.until("the host's lyrics at Gus", |_| (at_gus.timing() == Some(checked)).then_some(()));
+    assert_eq!(*at_gus.0.lock(), at_host.0.lock().last().cloned().into_iter().collect::<Vec<_>>(), "only the host's, nothing of Gus's own");
+
+    let shown = at_gus.0.lock().last().cloned().unwrap();
+    assert_eq!(gus.core.lyrics_nudge(song.id.clone(), shown, 1).lyrics.timing, checked, "not a guest's to move");
+    relay.close();
+}
+
+/// A device that shows another's playback shows the lyrics that device shows, timed as it times them:
+/// only the device playing hears the song to check them against. A nudge on either reaches both.
+#[test]
+fn lyrics_show_as_the_device_playing_them_times_them() {
+    let relay = Relay::new();
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let (song, measured, answer) = sung();
+    *relay.lrclib.lock() = Some(answer);
+    // The phone queued the song before but never heard it; the desk plays it and measured it.
+    for d in [&desk, &phone] {
+        d.core.session.register(vec![song.clone()]);
+        d.core.session.set(vec![song.id.clone()], Some(0), false, None);
+    }
+    desk.core.analysis_finish(&song.id, measured).unwrap().expect("measured");
+    desk.remote.clone().played(Playing { playing: true, position_ms: 5_000, ..Default::default() });
+    phone.remote.clone().played(Playing { playing: false, position_ms: 0, ..Default::default() });
+    for d in [&desk, &phone] {
+        d.remote.clone().serve(true);
+        d.remote.clone().watch(true);
+    }
+    phone.remote.clone().discover_active(true);
+    phone.until("the desk followed", |r| r.active());
+
+    let at_desk = lyrics_view(&desk, &song.id);
+    let checked = desk.until("the desk's lyrics checked", |_| at_desk.timing().filter(|t| matches!(t, LyricsTiming::Automatic { .. })));
+    assert!(matches!(checked, LyricsTiming::Automatic { ms } if (ms - 1200).abs() < 150), "{checked:?}");
+    let on_phone = lyrics_view(&phone, &song.id);
+    phone.until("the phone's lyrics timed as the desk's", |_| (on_phone.timing() == Some(checked)).then_some(()));
+    assert_eq!(on_phone.0.lock().last(), at_desk.0.lock().last(), "the same words");
+
+    // A step sooner on the phone moves the desk's too, and one later on the desk the phone's.
+    let shown = on_phone.0.lock().last().cloned().unwrap();
+    let sooner = phone.core.lyrics_nudge(song.id.clone(), shown, 1).lyrics.timing;
+    assert!(matches!(sooner, LyricsTiming::Yours { .. }), "{sooner:?}");
+    desk.until("the phone's nudge on the desk", |_| (at_desk.timing() == Some(sooner)).then_some(()));
+    let shown = at_desk.0.lock().last().cloned().unwrap();
+    let later = desk.core.lyrics_nudge(song.id.clone(), shown, -1).lyrics.timing;
+    assert_ne!(later, sooner);
+    phone.until("the desk's nudge on the phone", |_| (on_phone.timing() == Some(later)).then_some(()));
+    relay.close();
 }
 
 /// Picking the phone from the desk moves the active device's playback there: the desk's when the desk
