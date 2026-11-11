@@ -831,8 +831,8 @@ mod tests {
         assert_eq!(k.login_profile(list, edited.clone()), edited);
     }
 
-    /// A login to a saved server keeps that profile's library, music folder and bitrate cap, and makes it
-    /// the active one.
+    /// A login to a saved server keeps that profile's library, music folder, bitrate cap and place in the
+    /// list, and makes it the active one.
     #[test]
     fn a_login_keeps_the_saved_profile_and_makes_it_active() {
         let settings = crate::settings_store::Settings::new();
@@ -850,7 +850,7 @@ mod tests {
         assert_eq!((p.id.as_str(), p.music_folder_ids.as_slice(), p.alt_max_bit_rate, p.password.as_str()), ("a1", &["3".to_string()][..], 96, "pw"));
         let prefs = settings.current().unwrap();
         let ids: Vec<&str> = prefs.servers.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!((ids, prefs.active_server().map(|s| s.id.as_str())), (vec!["b2", "a1"], Some("a1")));
+        assert_eq!((ids, prefs.active_server().map(|s| s.id.as_str())), (vec!["a1", "b2"], Some("a1")));
     }
 
     /// A server's form needs an address, and a user or an API key.

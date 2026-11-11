@@ -215,11 +215,12 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /**
-     * A ranked row (a lyrics service) dragged by its handle and dropped at place [to] of the one list;
-     * whether the core took it. The ranking itself is the core's (`lyricsPlace`).
+     * A ranked row (a profile, a lyrics service) picked up and dropped at place [to] of its list; whether the
+     * core took it. The order itself is the core's (`profilePlace`, `lyricsPlace`).
      */
-    fun placeRanked(id: String, to: Int): Boolean {
-        val change = nori.settings.core.settingSet("lyricsPlace", "$id:$to") ?: return false
+    fun placeRanked(row: SettingRow.Placed, to: Int): Boolean {
+        val name = when (row) { is SettingRow.Server -> "profilePlace"; is SettingRow.Ranked -> "lyricsPlace" }
+        val change = nori.settings.core.settingSet(name, "${row.id}:$to") ?: return false
         apply(change)
         return true
     }

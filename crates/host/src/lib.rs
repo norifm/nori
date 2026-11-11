@@ -104,8 +104,8 @@ pub fn jam_joined(settings: &Settings, pass: JamPass, name: &str) -> SavedServer
     guest
 }
 
-/// Drops the jam's guest profile; the profile to open now: the one open before the jam, else the one
-/// used last (the list is in the order they were opened), else none (the login).
+/// Drops the jam's guest profile; the profile to open now: the one open before the jam, else the first
+/// one saved, else none (the login).
 pub fn jam_left(settings: &Settings) -> Option<SavedServer> {
     let mut prefs = settings.current().unwrap_or_default();
     let list = nori_core::remote::jam_return(settings, nori_core::settings::ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() });
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!((p.servers.len(), p.active_server_id.as_str()), (2, "work"));
     }
 
-    /// Picking an account's profile drops the guest profile open until then and moves the pick last.
+    /// Picking an account's profile drops the guest profile open until then; the others keep their places.
     #[test]
     fn a_picked_profile_replaces_a_jam_guest() {
         let dir = nori_testdir::TempDir::new("host-pick");
@@ -424,7 +424,10 @@ mod tests {
         assert_eq!(profile_picked(&settings, "home"), Some(own("home")));
         let p = settings.current().unwrap();
         let ids: Vec<&str> = p.servers.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!((ids, p.active_server_id.as_str()), (vec!["work", "home"], "home"));
+        assert_eq!((ids, p.active_server_id.as_str()), (vec!["home", "work"], "home"));
+        profile_picked(&settings, "work");
+        let ids: Vec<String> = settings.current().unwrap().servers.into_iter().map(|s| s.id).collect();
+        assert_eq!(ids, ["home", "work"], "switching back moves nothing");
     }
 
     #[test]
@@ -443,15 +446,14 @@ mod tests {
         assert_eq!(jam_left(&settings).unwrap(), own);
     }
 
-    /// With the profile open before the jam gone, leaving opens the one used last, else the login.
+    /// With the profile open before the jam gone, leaving opens the first one saved, else the login.
     #[test]
     fn leaving_a_jam_falls_back_to_the_profile_used_last() {
         let dir = nori_testdir::TempDir::new("host-jam-back");
         let settings = Settings::new();
         let mut prefs = settings.open(&db_path(dir.path())).unwrap();
         let own = |id: &str| SavedServer { id: id.into(), url: format!("http://{id}"), user: "ann".into(), ..Default::default() };
-        // In the order they were opened: "work" last.
-        prefs.servers = vec![own("home"), own("work")];
+        prefs.servers = vec![own("work"), own("home")];
         prefs.active_server_id = "gone".into();
         settings.put(prefs);
         let pass = JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key("key"), kind: ServerKind::Subsonic };

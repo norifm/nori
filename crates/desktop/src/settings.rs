@@ -24,8 +24,8 @@ const CHOICE: i32 = 2;
 const ACTION: i32 = 3;
 const INFO: i32 = 4;
 const SLIDER: i32 = 5;
-const RANKED: i32 = 6;
-const SERVER: i32 = 8;
+pub(crate) const RANKED: i32 = 6;
+pub(crate) const SERVER: i32 = 8;
 /// A server row's Edit: the account sheet of the profile in use.
 const NOTE: i32 = 9;
 const LINK: i32 = 11;
@@ -222,7 +222,8 @@ struct Row {
     value: f32,
     min: f32,
     max: f32,
-    /// A lyrics service's rank among them, and whether it is switched on only once given a key it lacks.
+    /// A ranked row's place (a lyrics service's, a profile's), and whether a lyrics service is switched on
+    /// only once given a key it lacks.
     rank: i32,
     keyed: bool,
     /// A usage row's parts, as fractions of the whole.
@@ -547,7 +548,7 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             // A jam guest switches between the profiles; changing them is not its to do.
             let edits = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
             Row {
-                kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if edits { "Edit".into() } else { "".into() },
+                kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if edits { "Edit".into() } else { "".into() }, rank: index as i32,
                 icon: mark.icon, letter: mark.letter.into(), glyph: mark.glyph, ..Default::default()
             }
         }
@@ -677,7 +678,7 @@ fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Tod
                 appearance_pick(p)
             } else if r.kind == SEASONS {
                 seasons(p, today).worn
-            } else if r.kind == RANKED {
+            } else if r.kind == RANKED || r.kind == SERVER {
                 r.rank
             } else { r.options.iter().position(|o| o.1 == v).map_or(-1, |i| i as i32) };
             let labels: Vec<SharedString> = r.options.iter().map(|o| o.0.as_str().into()).collect();
@@ -1068,6 +1069,21 @@ pub fn profile_mark(p: &Plugged, sv: &SavedServer, label: &str) -> Mark {
         ProfileIcon::Think => MarkGlyph::Think,
     };
     Mark { glyph, ..Default::default() }
+}
+
+/// The profiles menu's lines: every profile in its saved order, the one in use marked where it stands.
+pub fn profile_items(p: &Plugged, prefs: &StoredPrefs, kinds: &Kinds) -> Vec<crate::ProfileItem> {
+    prefs
+        .servers
+        .iter()
+        .map(|sv| {
+            let (who, where_) = words::profile_lines(sv, kinds);
+            let title = words::profile_label(sv, kinds);
+            let mark = profile_mark(p, sv, &title);
+            let detail = if who == title { where_ } else { who };
+            crate::ProfileItem { name: sv.id.as_str().into(), title: title.into(), detail: detail.into(), mark, on: sv.id == prefs.active_server_id }
+        })
+        .collect()
 }
 
 /// The icons `sv`'s circle can show, each as it would show it, named (`provider` names its provider's mark).
@@ -1850,6 +1866,16 @@ mod tests {
         let marks: Vec<(String, MarkGlyph)> = profiles.iter().map(|sv| profile_mark(&p, sv, "home")).map(|m| (m.letter.into(), m.glyph)).collect();
         let want = [("A", MarkGlyph::None), ("H", MarkGlyph::None), ("", MarkGlyph::Server), ("", MarkGlyph::Sing), ("Z", MarkGlyph::None), ("H", MarkGlyph::None), ("", MarkGlyph::Think)];
         assert_eq!(marks, want.map(|(l, g)| (l.to_string(), g)), "the plugin's tile has its own letter without an icon");
+    }
+
+    /// The menu keeps the saved order whichever profile is in use.
+    #[test]
+    fn the_profiles_menu_keeps_the_saved_order() {
+        let sv = |id: &str| SavedServer { id: id.into(), name: id.to_uppercase(), url: format!("http://{id}"), ..Default::default() };
+        let prefs = StoredPrefs { servers: vec![sv("a"), sv("b"), sv("c")], active_server_id: "b".into(), ..Default::default() };
+        let items = profile_items(&Plugged::default(), &prefs, &Kinds::builtin());
+        let lines: Vec<(String, bool)> = items.iter().map(|i| (i.title.to_string(), i.on)).collect();
+        assert_eq!(lines, [("A".into(), false), ("B".into(), true), ("C".into(), false)]);
     }
 
     /// The picker offers every icon in its order, each as the circle would show it, the provider's named for it,

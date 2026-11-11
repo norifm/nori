@@ -139,7 +139,9 @@ pub enum Row {
     Prose { text: String, quiet: bool },
     /// A plugin repo; d removes one the user added.
     Repo { url: String, title: String, detail: String, removable: bool },
-    Server { id: String, label: String, detail: String, active: bool },
+    /// A saved profile: enter switches to it; K J move it to place `up` or `down` where it can go (a jam
+    /// guest's profiles stay put).
+    Server { id: String, label: String, detail: String, active: bool, up: Option<u32>, down: Option<u32> },
     Button { title: String, action: Act },
     /// A lyrics service in the ranked list: enter switches it, ← → move it, `key` adds or changes its key.
     /// `asks_key`: switching it on asks for its key.
@@ -459,6 +461,7 @@ impl SettingsView {
         use crate::text::hints as h;
         match (self.own.stack.last(), self.selected()) {
             (_, Some(Row::Plugin { .. })) => h::PLUGIN_ROW,
+            (_, Some(Row::Server { up, down, .. })) if up.is_some() || down.is_some() => h::PROFILE_ROW,
             (Some((PluginPage::Browser, _)), _) => h::PLUGIN_BROWSER,
             (Some((PluginPage::Plugin(_), _)), _) => h::PLUGIN_PAGE,
             (Some(_), _) => h::PLUGIN_REPOS,
@@ -496,8 +499,17 @@ impl SettingsView {
         self.own.plugins.iter().find(|c| c.id == *id)
     }
 
+    /// K or J on the selection: a profile or a plugin one place up or down, where it can go.
+    pub fn move_here(&self, up: bool) -> Option<Cmd> {
+        if let Some(Row::Server { id, up: above, down: below, .. }) = self.selected() {
+            let to = if up { *above } else { *below }?;
+            return Some(Cmd::Setting("profilePlace".into(), format!("{id}:{to}")));
+        }
+        self.plugin_move(up)
+    }
+
     /// K or J on a plugin: moves it up or down the order.
-    pub fn plugin_move(&self, up: bool) -> Option<Cmd> {
+    fn plugin_move(&self, up: bool) -> Option<Cmd> {
         let c = self.plugin_here()?;
         let index = self.own.plugins.iter().position(|o| o.id == c.id)? as u32;
         let to = if up { index.checked_sub(1)? } else { Some(index + 1).filter(|to| (*to as usize) < self.own.plugins.len())? };
@@ -1320,7 +1332,10 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
                 parts.push("second address");
             }
             let label = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or(words.name);
-            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active }
+            let movable = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
+            let up = index.checked_sub(1).filter(|_| movable);
+            let down = Some(index + 1).filter(|to| movable && (*to as usize) < p.servers.len());
+            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active, up, down }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             Row::Toggle { switch: Switch::Stores("musicFolders".into(), tapped), title: f.folders.get(index as usize)?.name.clone(), detail: String::new(), on, enabled }

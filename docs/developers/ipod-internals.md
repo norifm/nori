@@ -217,7 +217,8 @@ Nori Seasons, with Android as the reference; the layouts are the iPod's own.
   settings model (`nori_ios_settings`, `nori_ios_set`). Phone-only settings (metered network, offload,
   bit-perfect, USB) are left out. Also the equalizer, per-output sound and AutoEQ, servers and the login
   form, credits and licenses. A profile's row shows its mark (its letter, the server's glyph or a face);
-  a tap on the mark opens Icon, the icons in the core's order (`nori_ios_profile_icons`).
+  a tap on the mark opens Icon, the icons in the core's order (`nori_ios_profile_icons`); a row held and
+  dragged moves it in the saved order (`profilePlace`).
 - **Covers**: asked at the view's pixel size and handed to Swift as RGBA that becomes a `CGImage`
   without a copy (`nori_ios_cover_release` lets go). The server is asked for the two renditions only
   (320 and 800 px). `CoverCache` (16 MB) shows the sharpest picture already decoded while a size comes,

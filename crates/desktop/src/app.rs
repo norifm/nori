@@ -1205,7 +1205,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         (None, Some(act)) => a.backup_typed(act, text.to_string()),
         (None, None) => a.setting(&name, &text),
     });
-    on!(ui.on_source_moved, h, |a, id, by| a.source_moved(&id, by));
+    on!(ui.on_row_placed, h, |a, kind, id, by| a.row_placed(kind, &id, by));
     on!(ui.on_eq_set, h, |a, name, value| {
         a.setting(&name, &value);
     });
@@ -4182,32 +4182,20 @@ impl App {
         }
     }
 
-    /// Redraws the settings or equalizer page from the current settings.
-    /// The gear menu's profiles: the one in use at its head, then the others to switch to.
+    /// The gear menu's profiles in their saved order, the one in use checked where it stands, and its mark
+    /// on the top pill.
     fn profiles_shown(&self) {
         let ui = self.ui();
         let prefs = self.root.app.settings.current().unwrap_or_default();
-        let mut others = Vec::new();
-        for p in &prefs.servers {
-            let (who, where_) = words::profile_lines(p, self.kinds());
-            let title = words::profile_label(p, self.kinds());
-            let mark = crate::settings::profile_mark(&self.plugged, p, &title);
-            if p.id == prefs.active_server_id {
-                ui.set_account(who.into());
-                ui.set_server(where_.into());
-                ui.set_account_mark(mark);
-            } else {
-                let detail = if who == title { where_ } else { who };
-                others.push(crate::ProfileItem { name: p.id.as_str().into(), title: title.into(), detail: detail.into(), mark });
-            }
+        let profiles = crate::settings::profile_items(&self.plugged, &prefs, self.kinds());
+        if let (Some(t), Some(on)) = (&self.top, profiles.iter().find(|p| p.on)) {
+            t.set_profile_mark(on.mark.clone());
         }
-        ui.set_other_profiles(ModelRc::new(VecModel::from(others)));
-        if let Some(t) = &self.top {
-            t.set_profile_mark(ui.get_account_mark());
-        }
+        ui.set_profiles(ModelRc::new(VecModel::from(profiles)));
         ui.set_profiles_editable(self.facts.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions));
     }
 
+    /// Redraws the settings or equalizer page from the current settings.
     fn settings_shown(&mut self) {
         self.repaint();
         let ui = self.ui();
@@ -4517,14 +4505,19 @@ impl App {
         self.settings_shown();
     }
 
-    /// Lyrics service `id` dragged `by` places (down +).
-    fn source_moved(&mut self, id: &str, by: i32) {
+    /// Row `id` of a ranked list (`kind`: a lyrics service, a profile) dragged `by` places (down +).
+    fn row_placed(&mut self, kind: i32, id: &str, by: i32) {
         let Some(p) = self.root.app.settings.current() else { return };
-        let s = nori_core::settings_model::state(&p, nori_core::settings_model::Output::default(), &self.root.app.settings.model);
-        let Some(at) = s.lyrics_sources.iter().position(|x| x.id == id) else { return };
-        let to = (at as i32 + by).clamp(0, s.lyrics_sources.len() as i32 - 1) as usize;
+        let (name, order): (&str, Vec<String>) = if kind == crate::settings::SERVER {
+            ("profilePlace", p.servers.iter().map(|s| s.id.clone()).collect())
+        } else {
+            let s = nori_core::settings_model::state(&p, nori_core::settings_model::Output::default(), &self.root.app.settings.model);
+            ("lyricsPlace", s.lyrics_sources.into_iter().map(|x| x.id).collect())
+        };
+        let Some(at) = order.iter().position(|x| x == id) else { return };
+        let to = (at as i32 + by).clamp(0, order.len() as i32 - 1) as usize;
         if to != at {
-            self.setting("lyricsPlace", &format!("{id}:{to}"));
+            self.setting(name, &format!("{id}:{to}"));
         }
     }
 
@@ -5811,7 +5804,7 @@ mod tests {
         ui.set_settings(crate::settings::rows(&Default::default(), &nori_core::settings::StoredPrefs::default(), &facts, &nori_core::providers::Kinds::builtin(), &Default::default(), tab, crate::look::Today { month: 10, day: 19, southern: false }));
         let moved = Rc::new(RefCell::new(Vec::new()));
         let seen = moved.clone();
-        ui.on_source_moved(move |id, by| seen.borrow_mut().push((id.to_string(), by)));
+        ui.on_row_placed(move |kind, id, by| seen.borrow_mut().push((kind, id.to_string(), by)));
         ui.show().unwrap();
         let pass = |ms: u64| {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(ms));
@@ -5830,7 +5823,63 @@ mod tests {
         }
         ui.window().dispatch_event(PointerReleased { position: at(662.0), button: Left });
         pass(16);
-        assert_eq!(*moved.borrow(), [("LYRICS_PLUS".to_string(), 2)]);
+        assert_eq!(*moved.borrow(), [(6, "LYRICS_PLUS".to_string(), 2)]);
+    }
+
+    /// A profile dragged by its handle above the one before it moves one place up, once let go; a jam
+    /// guest's profiles have no handle.
+    #[test]
+    fn a_profile_is_dragged_to_its_place() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.global::<crate::Chrome>().set_top_x(190.0);
+        ui.global::<crate::Chrome>().set_top_w(900.0);
+        ui.set_view(View::Settings);
+        let sv = |id: &str| nori_core::settings::SavedServer { id: id.into(), name: id.into(), user: "ann".into(), ..Default::default() };
+        let prefs = nori_core::settings::StoredPrefs { servers: vec![sv("a"), sv("b"), sv("c")], active_server_id: "a".into(), ..Default::default() };
+        let rows = |guest: bool| {
+            let facts = crate::settings::Facts { rules: nori_core::browse::profile_rules(guest), ..Default::default() };
+            let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers).unwrap() as i32;
+            crate::settings::rows(&Default::default(), &prefs, &facts, &nori_core::providers::Kinds::builtin(), &Default::default(), tab, crate::look::Today { month: 10, day: 19, southern: false })
+        };
+        let moved = Rc::new(RefCell::new(Vec::new()));
+        let seen = moved.clone();
+        ui.on_row_placed(move |kind, id, by| seen.borrow_mut().push((kind, id.to_string(), by)));
+        ui.show().unwrap();
+        let pass = |ms: u64| {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(ms));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        use slint::platform::{PointerEventButton::Left, WindowEvent::*};
+        // Up the handles' column from the foot of the page: each press dragged 70 px up, until one moves a row.
+        let drag = || {
+            let at = |y: f32| slint::LogicalPosition::new(978.0, y);
+            for y in (100..=780).rev().step_by(6) {
+                let y = y as f32;
+                ui.window().dispatch_event(PointerMoved { position: at(y) });
+                ui.window().dispatch_event(PointerPressed { position: at(y), button: Left });
+                ui.window().dispatch_event(PointerMoved { position: at(y - 70.0) });
+                pass(16);
+                ui.window().dispatch_event(PointerReleased { position: at(y - 70.0), button: Left });
+                pass(16);
+                if !moved.borrow().is_empty() {
+                    break;
+                }
+            }
+        };
+        ui.set_settings(rows(false));
+        pass(1000);
+        drag();
+        assert_eq!(moved.borrow().first().map(|m| (m.0, m.2)), Some((8, -1)), "{:?}", moved.borrow());
+        moved.borrow_mut().clear();
+        ui.set_settings(rows(true));
+        pass(1000);
+        drag();
+        assert!(moved.borrow().is_empty(), "{:?}", moved.borrow());
     }
 
     /// A card opens on a click with jams on too, where a right press opens its menu.
@@ -6167,7 +6216,8 @@ mod tests {
         }
     }
 
-    /// A profile picked in the top bar's profiles menu is the one switched to.
+    /// The top bar's profiles menu draws them in the order given, the one in use where it stands and not
+    /// picked again; a profile picked is the one switched to.
     #[test]
     fn the_profiles_menu_switches_to_the_profile_picked() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -6178,22 +6228,23 @@ mod tests {
         let chrome = ui.global::<crate::Chrome>();
         chrome.set_top_x(0.0);
         chrome.set_top_w(1280.0);
-        ui.set_account("Me".into());
-        ui.set_other_profiles(ModelRc::new(VecModel::from(vec![crate::ProfileItem { name: "7".into(), title: "Other".into(), detail: "elsewhere".into(), ..Default::default() }])));
+        let item = |name: &str, on: bool| crate::ProfileItem { name: name.into(), title: name.into(), detail: "elsewhere".into(), on, ..Default::default() };
+        ui.set_profiles(ModelRc::new(VecModel::from(vec![item("1", false), item("2", true), item("3", false)])));
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
         ui.on_setting_action(move |name| seen.borrow_mut().push(name.to_string()));
         ui.show().unwrap();
-        // Down the menu's column, opened again before each click: the profile in use, then the other.
-        for y in (60..200).step_by(4) {
+        // Down the menu's column, opened again before each click.
+        for y in (60..260).step_by(4) {
             ui.invoke_show_profiles();
             let position = slint::LogicalPosition::new(1100.0, y as f32);
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left });
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button: slint::platform::PointerEventButton::Left });
         }
-        let switched: Vec<String> = did.borrow().iter().filter(|n| n.starts_with("server:")).cloned().collect();
-        assert!(!switched.is_empty() && switched.iter().all(|n| n == "server:7"), "{switched:?}");
+        let mut switched: Vec<String> = did.borrow().iter().filter(|n| n.starts_with("server:")).cloned().collect();
+        switched.dedup();
+        assert_eq!(switched, ["server:1", "server:3"]);
     }
 
     /// The first screen sends what its rows and plus do, a quiet row too; the form goes back from there.

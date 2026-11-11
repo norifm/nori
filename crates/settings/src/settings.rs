@@ -1447,6 +1447,8 @@ fn set_special(p: &StoredPrefs, n: &mut StoredPrefs, server: &mut bool, name: &s
             n.lyrics_on = on;
             Some(())
         }
+        // A profile moved to a place in the list (drag and drop): `<id>:<place>`.
+        "profilePlace" => value.rsplit_once(':').and_then(|(id, to)| servers_placed(&p.servers, id, to.trim().parse().ok()?)).map(|s| n.servers = s),
         // One service moved to a rank (drag and drop): `NETEASE:3`.
         "lyricsPlace" => service(value).and_then(|(s, to)| to.parse().ok().map(|to| n.lyrics_order = lyrics_sources::placed(p, s, to))),
         // One service moved by places: `NETEASE:-1`.
@@ -1925,13 +1927,25 @@ pub struct ServerList {
     pub active_server_id: String,
 }
 
-/// `profile` made active: it replaces the saved one with its id, or is appended.
+/// `profile` made active: it replaces the saved one with its id where that one stands, or is appended.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn servers_activated(list: ServerList, profile: SavedServer) -> ServerList {
     let id = profile.id.clone();
-    let mut servers: Vec<SavedServer> = list.servers.into_iter().filter(|s| s.id != id).collect();
-    servers.push(profile);
+    let mut servers = list.servers;
+    match servers.iter_mut().find(|s| s.id == id) {
+        Some(saved) => *saved = profile,
+        None => servers.push(profile),
+    }
     ServerList { servers, active_server_id: id }
+}
+
+/// Profile `id` moved to place `to` (past the end is last); the one in use stays in use.
+fn servers_placed(servers: &[SavedServer], id: &str, to: usize) -> Option<Vec<SavedServer>> {
+    let at = servers.iter().position(|s| s.id == id)?;
+    let mut servers = servers.to_vec();
+    let moved = servers.remove(at);
+    servers.insert(to.min(servers.len()), moved);
+    Some(servers)
 }
 
 /// A saved profile changed in place; an unknown one is not added.
@@ -1941,13 +1955,12 @@ pub fn servers_updated(list: ServerList, profile: SavedServer) -> ServerList {
     ServerList { servers, ..list }
 }
 
-/// A profile removed. Removing the active one activates the one in use before it (the list is in the
-/// order they were activated: the last one left), or none.
+/// A profile removed. Removing the active one activates the first one left, or none.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn servers_removed(list: ServerList, id: String) -> ServerList {
     let was_active = list.active_server_id == id;
     let servers: Vec<SavedServer> = list.servers.into_iter().filter(|s| s.id != id).collect();
-    let active_server_id = if was_active { servers.last().map(|s| s.id.clone()).unwrap_or_default() } else { list.active_server_id };
+    let active_server_id = if was_active { servers.first().map(|s| s.id.clone()).unwrap_or_default() } else { list.active_server_id };
     ServerList { servers, active_server_id }
 }
 
@@ -2478,18 +2491,19 @@ mod tests {
     fn servers() {
         let s = |id: &str, name: &str| SavedServer { id: id.into(), name: name.into(), ..SavedServer::default() };
         let list = ServerList { servers: vec![s("a", "A"), s("b", "B")], active_server_id: "b".into() };
+        let names = |l: &[SavedServer]| l.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
         let l = servers_activated(list.clone(), s("a", "A2"));
-        assert_eq!(l.servers.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["B", "A2"], "replaced, and moved to the end");
+        assert_eq!(names(&l.servers), ["A2", "B"], "replaced where it stands");
         assert_eq!(l.active_server_id, "a");
+        assert_eq!(names(&servers_activated(l, s("c", "C")).servers), ["A2", "B", "C"], "a new one goes last");
         let l = servers_updated(list.clone(), s("a", "A3"));
         assert_eq!((l.servers[0].name.as_str(), l.active_server_id.as_str()), ("A3", "b"));
         assert_eq!(servers_updated(list.clone(), s("z", "Z")).servers.len(), 2, "an unknown profile is not added");
         let l = servers_removed(list.clone(), "b".into());
         assert_eq!((l.servers.len(), l.active_server_id.as_str()), (1, "a"), "the one left takes over");
         assert_eq!(servers_removed(list.clone(), "a".into()).active_server_id, "b");
-        // A jam guest's profile left: the profile in use before joining takes over, not the oldest.
-        let joined = servers_activated(servers_activated(list.clone(), s("c", "C")), s("g", "Jam"));
-        assert_eq!(servers_removed(joined, "g".into()).active_server_id, "c");
+        let three = servers_activated(list.clone(), s("c", "C"));
+        assert_eq!(servers_removed(three, "c".into()).active_server_id, "a", "the first one left takes over");
         assert_eq!(servers_removed(ServerList { servers: vec![s("a", "")], active_server_id: "a".into() }, "a".into()).active_server_id, "");
         assert_eq!((server_db_id(""), server_db_id("x1")), ("default".into(), "x1".into()));
         let id = new_server_id();
@@ -2524,7 +2538,17 @@ mod tests {
         let other = SavedServer { id: "b2".into(), ..SavedServer::default() };
         let list = ServerList { servers: vec![saved.clone(), other], active_server_id: "b2".into() };
         let l = servers_activated(list, SavedServer { password: "new".into(), ..saved });
-        assert_eq!((l.servers.len(), l.active_server_id.as_str(), l.servers[1].password.as_str()), (2, "a1", "new"), "activated, not copied");
+        assert_eq!((l.servers.len(), l.active_server_id.as_str(), l.servers[0].password.as_str()), (2, "a1", "new"), "activated, not copied");
+
+        // A profile dragged to another place; the one in use stays in use.
+        let p = StoredPrefs { servers: vec![s("a", "A"), s("b", "B"), s("c", "C")], active_server_id: "b".into(), ..StoredPrefs::default() };
+        let placed = |value: &str| set_by_name(&p, "profilePlace", value).map(|c| (names(&c.prefs.servers), c.prefs.active_server_id, c.server));
+        let moved = |order: [&str; 3]| Some((order.map(String::from).to_vec(), "b".to_string(), false));
+        assert_eq!(placed("c:0"), moved(["C", "A", "B"]));
+        assert_eq!(placed("a:1"), moved(["B", "A", "C"]));
+        assert_eq!(placed("a:9"), moved(["B", "C", "A"]), "past the end is last");
+        assert_eq!(placed("b:1"), moved(["A", "B", "C"]));
+        assert_eq!((placed("z:0"), placed("a:x"), placed("a")), (None, None, None));
 
         // Login form.
         let h = parse_headers("X-Auth: a:b\n: nope\nno colon\n  CF-Id :  x  \nX-Auth: c");

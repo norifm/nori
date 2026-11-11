@@ -285,6 +285,9 @@ of this; Android's `PlaybackService` calls the same functions.
   ([Providers](providers.md)). A code sign-in is `Client::sign_in_with_code`: the client holds the
   `CodeSignIn` while `SignInFlow::checks_code` says so and hands its events to the flow; a signed-in answer
   is finished as any sign-in (the host's `Handle::signed_in`, Android's `Nori.signedIn`).
+- **The profiles' order**: `StoredPrefs::servers` is the user's order, which switching keeps
+  (`profile_picked`, `settings::servers_activated`). Every list and switcher shows them in it, the one in
+  use marked where it stands; settings move one with `profilePlace` (`<id>:<place>`), not for a jam guest.
 - **A profile's mark**: `SavedServer::icon` (`settings::ProfileIcon`, the picker's order `profile_icons`): its
   letter (`profile_letter`, the default), its provider's mark, or one of Iconoir's faces.
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.

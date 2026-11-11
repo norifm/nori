@@ -492,12 +492,12 @@ pub fn jam_joining(settings: &crate::settings_store::Settings) {
 }
 
 /// `list` once the jam is left: its guest profiles gone, and the profile open before the jam active again,
-/// else the one used last (the list is in the order they were opened), else none (the login).
+/// else the first one saved, else none (the login).
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn jam_return(settings: &crate::settings_store::Settings, list: crate::settings::ServerList) -> crate::settings::ServerList {
     let servers: Vec<_> = list.servers.into_iter().filter(|s| !nori_remote::is_guest_key(&s.api_key)).collect();
     let before = settings.app_value(BEFORE_JAM).filter(|id| servers.iter().any(|s| &s.id == id));
-    let active_server_id = before.or_else(|| servers.last().map(|s| s.id.clone())).unwrap_or_default();
+    let active_server_id = before.or_else(|| servers.first().map(|s| s.id.clone())).unwrap_or_default();
     crate::settings::ServerList { servers, active_server_id }
 }
 
