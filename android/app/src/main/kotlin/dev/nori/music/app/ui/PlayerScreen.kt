@@ -1293,6 +1293,16 @@ private fun SleeveShade(strength: FloatReader) {
     )
 }
 
+/**
+ * The flying cover's top, below the sheet's top edge, at [t] (0 the bar, 1 the player): at the thumbnail's
+ * [thumbTop] in the bar, and on the sheet's edge from [FLIGHT_TOP_HELD] on. Carried down at the sheet's own
+ * rate instead, it left a strip of the page above the cover from the first pixel of a pull.
+ */
+private fun flightTop(thumbTop: Float, t: Float): Float = thumbTop * (1f - smooth(t, 0f, FLIGHT_TOP_HELD))
+
+/** How far up the sheet the flying cover's top has reached its edge. */
+private const val FLIGHT_TOP_HELD = 0.35f
+
 /** 0 up to [from], 1 from [to] on, and a smooth step in between. */
 private fun smooth(x: Float, from: Float, to: Float): Float {
     val t = ((x - from) / (to - from)).coerceIn(0f, 1f)
@@ -1348,7 +1358,7 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
             val t = sheet.progress.value.coerceIn(0f, 1f)
             val from = sheet.miniCover.translate(-sheet.closed())
             fun mix(a: Float, b: Float) = a + (b - a) * t
-            if (mix(from.center.y, h / 2f) + mix(from.height, h) / 2f + reach >= h * stage.softFrom) 1f else 0f
+            if (flightTop(from.top, t) + mix(from.height, h) + reach >= h * stage.softFrom) 1f else 0f
         }
         SoftSleeve(Modifier.fillMaxWidth().height(side), blur = blurred) {
             Box(
@@ -1360,8 +1370,8 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
                         val k = (mix(from.height, h) / h).coerceAtLeast(0.01f)
                         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
                         scaleX = k; scaleY = k
-                        // The square grows about its own middle and travels from the middle of the
-                        // thumbnail to the middle of the screen, which is where the sleeve's middle is.
+                        // Sideways the square grows about its own middle and travels from the middle of
+                        // the thumbnail to the middle of the screen, which is where the sleeve's middle is.
                         // Carrying its left edge instead would leave it hanging in the top left corner of
                         // the sheet for the whole climb, with the page showing down the right hand side,
                         // and it would arrive a little way off the sleeve it hands over to.
@@ -1382,7 +1392,7 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
                         // took over at the end.
                         val overhang = (w - size.width) / 2f
                         translationX = from.center.x + (w / 2f - from.center.x) * across - drawn / 2f - overhang
-                        translationY = mix(from.center.y, size.height / 2f) - size.height * k / 2f
+                        translationY = flightTop(from.top, t)
                         shape = shapes.of(thumbRadius * (1f - t) / k)
                         clip = true
                     },
