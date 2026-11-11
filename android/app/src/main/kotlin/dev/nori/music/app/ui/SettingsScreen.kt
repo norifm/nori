@@ -105,42 +105,89 @@ fun Toggle(title: String, detail: String, value: Boolean, enabled: Boolean = tru
 }
 
 /** One setting with a few values as chips, the one it has lit; a tap chooses another. */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun ChipChoice(row: SettingRow.ChipChoice, divider: Boolean, onChange: (String) -> Unit) {
     Column {
         Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            androidx.compose.foundation.layout.FlowRow(
-                Modifier.padding(top = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) { row.options.forEach { o -> Chip(o.label, o.value == row.chosen) { if (row.enabled && o.value != row.chosen) onChange(o.value) } } }
+            ChipRow(row.options, { o -> o.value == row.chosen }) { o -> if (row.enabled && o.value != row.chosen) onChange(o.value) }
         }
         if (divider) Hairline(startIndent = GROUP_INSET)
     }
 }
 
 /** Conditions that each count on their own, as chips: a tap turns one on or off, any number may be lit. */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun Flags(row: SettingRow.Flags, divider: Boolean, onChange: (String) -> Unit) {
     Column {
         Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            androidx.compose.foundation.layout.FlowRow(
-                Modifier.padding(top = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                row.options.forEach { o ->
-                    Chip(o.label, dev.nori.music.ffi.settings.flagOn(row.value, o.value)) {
-                        if (row.enabled) onChange(dev.nori.music.ffi.settings.flagToggled(row.value, o.value))
-                    }
-                }
+            ChipRow(row.options, { o -> dev.nori.music.ffi.settings.flagOn(row.value, o.value) }) { o ->
+                if (row.enabled) onChange(dev.nori.music.ffi.settings.flagToggled(row.value, o.value))
             }
         }
         if (divider) Hairline(startIndent = GROUP_INSET)
+    }
+}
+
+/** How close a chip's words may come to its sides, where that keeps a row on one line. */
+private val CHIP_TIGHT_PADDING = 10.dp
+
+/**
+ * A setting's choices as chips on one line sharing its width, the narrower ones widened to a common
+ * width, their padding narrowed first if that keeps them on one line; chips whose words don't fit on
+ * one line wrap onto more.
+ */
+@Composable
+private fun ChipRow(options: List<dev.nori.music.app.vm.SettingOption>, lit: (dev.nori.music.app.vm.SettingOption) -> Boolean, onClick: (dev.nori.music.app.vm.SettingOption) -> Unit) {
+    androidx.compose.ui.layout.Layout(
+        { options.forEach { o -> Chip(o.label, lit(o), sidePadding = CHIP_TIGHT_PADDING) { onClick(o) } } },
+        Modifier.padding(top = 10.dp).fillMaxWidth(),
+    ) { measurables, constraints ->
+        val gap = 8.dp.roundToPx()
+        val ease = 2 * (CHIP_SIDE_PADDING - CHIP_TIGHT_PADDING).roundToPx()
+        val tight = IntArray(measurables.size) { measurables[it].maxIntrinsicWidth(androidx.compose.ui.unit.Constraints.Infinity) }
+        val room = constraints.maxWidth - gap * (measurables.size - 1)
+        val shared = shareRow(IntArray(tight.size) { tight[it] + ease }, room) ?: shareRow(tight, room)
+        val placeables = measurables.mapIndexed { i, m ->
+            m.measure(
+                if (shared != null) androidx.compose.ui.unit.Constraints.fixedWidth(shared[i])
+                else androidx.compose.ui.unit.Constraints(minWidth = minOf(tight[i] + ease, constraints.maxWidth), maxWidth = constraints.maxWidth),
+            )
+        }
+        val spots = ArrayList<androidx.compose.ui.unit.IntOffset>(placeables.size)
+        var x = 0
+        var y = 0
+        var lineHeight = 0
+        placeables.forEach { p ->
+            if (x > 0 && x + p.width > constraints.maxWidth) { x = 0; y += lineHeight + gap; lineHeight = 0 }
+            spots += androidx.compose.ui.unit.IntOffset(x, y)
+            x += p.width + gap
+            lineHeight = maxOf(lineHeight, p.height)
+        }
+        layout(constraints.maxWidth, y + lineHeight) { placeables.forEachIndexed { i, p -> p.placeRelative(spots[i]) } }
+    }
+}
+
+/**
+ * The widths that fill [room] with chips no narrower than their [natural] widths, the narrow ones raised
+ * to one common width; null when even their natural widths don't fit.
+ */
+internal fun shareRow(natural: IntArray, room: Int): IntArray? {
+    if (natural.isEmpty() || natural.sum() > room) return null
+    var left = room
+    var raised = natural.size
+    for (w in natural.sortedDescending()) {
+        if (w * raised <= left) break
+        left -= w
+        raised--
+    }
+    val level = left / raised
+    var spare = left - level * raised
+    return IntArray(natural.size) { i ->
+        if (natural[i] > level) natural[i] else level + if (spare > 0) { spare--; 1 } else 0
     }
 }
 

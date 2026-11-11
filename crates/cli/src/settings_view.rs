@@ -1153,9 +1153,9 @@ fn option_words(name: &str, v: &str) -> String {
         ("compressor", "LIGHT") => "Light".into(),
         ("compressor", "CAR") => "Car".into(),
         ("compressor", "NIGHT") => "Night".into(),
-        ("replayGain", "TRACK") => "Per song".into(),
-        ("replayGain", "ALBUM") => "Per album".into(),
-        ("replayGain", "AUTO") => "Automatic".into(),
+        ("replayGain", "TRACK") => "Song".into(),
+        ("replayGain", "ALBUM") => "Album".into(),
+        ("replayGain", "AUTO") => "Auto".into(),
         ("loudnessLevel", "QUIET") => "Quiet".into(),
         ("loudnessLevel", "NORMAL") => "Normal".into(),
         ("loudnessLevel", "LOUD") => "Loud".into(),
@@ -1838,7 +1838,7 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("no {name}"))
         };
-        assert_eq!(shown("replayGain"), "Automatic");
+        assert_eq!(shown("replayGain"), "Auto");
         assert_eq!(shown("wifi"), "Original");
         assert_eq!(shown("crossfadeSec"), "Off");
         assert_eq!((quality("320:mp3"), quality("128:opus")), ("MP3 320".to_string(), "Opus 128".to_string()));

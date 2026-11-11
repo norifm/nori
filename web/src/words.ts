@@ -322,7 +322,7 @@ export const W = {
     autoMix: { OFF: "Off", SMOOTH: "Smooth", DJ: "DJ" },
     autoFillBasis: { SIMILAR: "Similar music", ARTIST: "The same artist", GENRE: "The same genre", ERA: "The same era" },
     compressor: { OFF: "Off", LIGHT: "Light", CAR: "Car", NIGHT: "Night" },
-    replayGain: { OFF: "Off", TRACK: "Per song", ALBUM: "Per album", AUTO: "Automatic" },
+    replayGain: { OFF: "Off", TRACK: "Song", ALBUM: "Album", AUTO: "Auto" },
     loudnessLevel: { QUIET: "Quiet", NORMAL: "Normal", LOUD: "Loud" },
     headphoneSound: { OFF: "Off", NATURAL: "Natural", WIDE: "Wide" },
     theme: { SYSTEM: "System", LIGHT: "Day", DARK: "Night", MIDNIGHT: "Midnight" },

@@ -444,9 +444,9 @@
     <string name="settings_hint_headphone_sound">Crossfeed, bs2b, virtualizer, spatial, surround, out of your head</string>
     <string name="settings_volume_leveling">Volume leveling</string>
     <string name="settings_hint_volume_leveling">ReplayGain, normalization, loudness. Quiet and loud songs play at the same level</string>
-    <string name="settings_leveling_song">Per song</string>
-    <string name="settings_leveling_album">Per album</string>
-    <string name="settings_leveling_auto">Automatic</string>
+    <string name="settings_leveling_song">Song</string>
+    <string name="settings_leveling_album">Album</string>
+    <string name="settings_leveling_auto">Auto</string>
     <string name="settings_level">Level</string>
     <string name="settings_hint_level">LUFS, loudness target, −23, −18, −14</string>
     <string name="settings_level_quiet">Quiet</string>

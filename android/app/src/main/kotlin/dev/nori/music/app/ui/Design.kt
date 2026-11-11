@@ -933,9 +933,12 @@ fun SearchField(
     }
 }
 
+/** How far a [Chip]'s words stand from its sides. */
+internal val CHIP_SIDE_PADDING = 14.dp
+
 /** A choice chip: the selected one raised on the surface with a hairline edge and in ink, the others quiet words. */
 @Composable
-fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, sidePadding: Dp = 14.dp, onClick: () -> Unit) {
+fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, sidePadding: Dp = CHIP_SIDE_PADDING, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     // The pill is 34 dp: Material's 48 dp touch floor would add 7 dp of air above and below it.
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) { Surface(
