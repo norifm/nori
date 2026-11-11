@@ -1,5 +1,6 @@
 //! The terminal client's English: formatted times, sizes, decibels, counts, captions and messages.
 
+use nori_core::automix::store::Measured;
 use nori_core::beat_model::BeatFailure;
 use nori_core::lyrics_sources::LyricsOrigin;
 use nori_core::numbers::{self, POINT};
@@ -612,6 +613,17 @@ pub fn eq_bypass(why: EqBypass) -> &'static str {
     match why {
         EqBypass::BitPerfect => "Bit-perfect USB output is active, so nothing here touches the audio.",
         EqBypass::Output => "No processing on this output: nothing here changes the sound. Turn it off in Settings, under Sound.",
+    }
+}
+
+/// The "Measured songs" line: how many are measured, and how many wait to be measured again.
+pub fn measured(m: Measured) -> String {
+    let all = format!("{} measured for tempo and beats.", count(m.songs.into(), "song", "songs"));
+    match m.outdated {
+        0 => all,
+        n if n == m.songs => format!("{all} All are measured again when they next play."),
+        1 => format!("{all} 1 is measured again when it next plays."),
+        n => format!("{all} {n} are measured again when they next play."),
     }
 }
 

@@ -65,6 +65,11 @@
         <item quantity="one">%1$d song measured for tempo and beats.</item>
         <item quantity="other">%1$d songs measured for tempo and beats.</item>
     </plurals>
+    <string name="settings_measured_all_outdated">All are measured again when they next play.</string>
+    <plurals name="settings_measured_outdated">
+        <item quantity="one">%1$d is measured again when it next plays.</item>
+        <item quantity="other">%1$d are measured again when they next play.</item>
+    </plurals>
     <string name="settings_measure_again">Measure again</string>
     <string name="settings_keep_albums">Keep albums gapless</string>
     <string name="settings_skip_explicit">Skip explicit songs</string>

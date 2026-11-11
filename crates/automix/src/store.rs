@@ -135,18 +135,47 @@ pub fn neural_missing(c: &Connection, ids: &[String]) -> rusqlite::Result<Vec<St
     Ok(out)
 }
 
+/// Each stored row's analysis version and vocal curve.
+const ROWS_AND_CURVES: &str = "SELECT t.analysis_version, v.curve FROM track_analysis t \
+    LEFT JOIN vocal_curve v ON v.server=t.server AND v.song_id=t.song_id WHERE t.server=sid()";
+
+/// A row this version plans from: measured by this analysis version, with a vocal curve it reads.
+fn current(r: &rusqlite::Row) -> rusqlite::Result<bool> {
+    let version: i32 = r.get(0)?;
+    let curve: Option<Vec<u8>> = r.get(1)?;
+    Ok(version >= ANALYSIS_VERSION && curve.as_deref().and_then(VocalCurve::decode).is_some())
+}
+
 /// The `ids` with no row, a row from an older analysis version, or no vocal curve this version reads,
 /// in order.
 pub fn missing(c: &Connection, ids: &[String]) -> rusqlite::Result<Vec<String>> {
-    let mut st = c.prepare_cached("SELECT analysis_version FROM track_analysis WHERE server=sid() AND song_id=?1")?;
+    let mut st = c.prepare_cached(&format!("{ROWS_AND_CURVES} AND t.song_id=?1"))?;
     let mut out = Vec::new();
     for id in ids {
-        let v: Option<i32> = st.query_row([id], |r| r.get(0)).optional()?;
-        if v.is_none_or(|v| v < ANALYSIS_VERSION) || get_voice(c, id)?.is_none() {
+        if !st.query_row([id], current).optional()?.unwrap_or(false) {
             out.push(id.clone());
         }
     }
     Ok(out)
+}
+
+/// The songs measured, and how many of them are measured again when they next play.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct Measured {
+    pub songs: u32,
+    pub outdated: u32,
+}
+
+pub fn measured(c: &Connection) -> rusqlite::Result<Measured> {
+    let mut st = c.prepare_cached(ROWS_AND_CURVES)?;
+    let mut rows = st.query([])?;
+    let mut m = Measured::default();
+    while let Some(r) = rows.next()? {
+        m.songs += 1;
+        m.outdated += u32::from(!current(r)?);
+    }
+    Ok(m)
 }
 
 /// A song measured as it is decoded, fed buffer by buffer.
@@ -222,5 +251,20 @@ mod tests {
         assert_eq!(missing(&c, &ids).unwrap(), ids, "a curve of an older format");
         put_voice(&c, "a", &VocalCurve { fps: 10.0, t0: 0.0, level: vec![1, 2, 3], loudness: vec![4, 5, 6] }).unwrap();
         assert!(missing(&c, &ids).unwrap().is_empty());
+    }
+
+    #[test]
+    fn outdated_rows_are_counted_apart() {
+        let c = nori_db::open("", "s").unwrap();
+        let curve = VocalCurve { fps: 10.0, t0: 0.0, level: vec![1, 2, 3], loudness: vec![4, 5, 6] };
+        for (id, version, voiced) in [("now", ANALYSIS_VERSION, true), ("old", ANALYSIS_VERSION - 1, true), ("mute", ANALYSIS_VERSION, false)] {
+            put(&c, &TrackAnalysis { song_id: id.into(), analysis_version: version, ..Default::default() }).unwrap();
+            if voiced {
+                put_voice(&c, id, &curve).unwrap();
+            }
+        }
+        assert_eq!(measured(&c).unwrap(), Measured { songs: 3, outdated: 2 });
+        let ids: Vec<String> = ["now", "old", "mute"].map(String::from).into();
+        assert_eq!(missing(&c, &ids).unwrap(), ["old", "mute"], "the same rows missing");
     }
 }

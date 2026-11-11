@@ -2,7 +2,7 @@
 
 use nori_automix::beats::{EndGrid, MixEnd};
 use nori_automix::analysis::Analyzer;
-use nori_automix::store::{get, get_voice, measure, missing, neural_missing, put, put_finished, AnalysisStream};
+use nori_automix::store::{get, get_voice, measure, measured, missing, neural_missing, put, put_finished, AnalysisStream, Measured};
 
 use crate::{Core, Result, TrackAnalysis};
 
@@ -40,9 +40,8 @@ impl Core {
         Ok(MeasuredAgain { forgot, effect: crate::settings_store::REPLAN })
     }
 
-    /// Number of stored analyses.
-    pub fn analysis_count(&self) -> Result<u32> {
-        Ok(self.db.lock().query_row("SELECT count(*) FROM track_analysis WHERE server=sid()", [], |r| r.get(0))?)
+    pub fn analysis_measured(&self) -> Result<Measured> {
+        Ok(measured(&self.db.lock())?)
     }
 }
 
