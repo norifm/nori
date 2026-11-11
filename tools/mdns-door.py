@@ -77,14 +77,26 @@ def records(device, deadline):
         zc.close()
 
 
+def kept(database):
+    """The peer's device id and invite, once it has made them (installing a plugin first takes a while)."""
+    try:
+        with sqlite3.connect(database) as db:
+            row = db.execute("SELECT value FROM app_kv WHERE key='remoteDeviceId.terminal.0'").fetchone()
+            invite = db.execute("SELECT value FROM app_kv WHERE key='remoteLanSecret'").fetchone()
+    except sqlite3.OperationalError:
+        return None, None
+    return row, invite
+
+
 def resolve(database, timeout=15):
-    with sqlite3.connect(database) as db:
-        row = db.execute("SELECT value FROM app_kv WHERE key='remoteDeviceId.terminal.0'").fetchone()
-        invite = db.execute("SELECT value FROM app_kv WHERE key='remoteLanSecret'").fetchone()
+    deadline = time.monotonic() + timeout
+    row, invite = kept(database)
+    while not row and time.monotonic() < deadline:
+        time.sleep(0.2)
+        row, invite = kept(database)
     if not row:
         raise RuntimeError("the CLI peer has not created a remote device")
     device = row[0]
-    deadline = time.monotonic() + timeout
     for port, txt in records(device, deadline):
         if port and txt.get("id") == device and txt.get("kind") == "terminal":
             try:
