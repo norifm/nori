@@ -3056,3 +3056,60 @@ fn a_profile_moves_with_k_and_j() {
     assert!(a.cmds.is_empty(), "{:?}", a.cmds);
     assert!(!draw(&mut a, 140, 40).contains("K J move"));
 }
+
+#[test]
+fn paired_devices_are_listed_forgotten_and_paired_with_a_reason_when_not() {
+    use nori_core::remote::{wire::DeviceKind, PairError, PairedDevice};
+    let mut a = app();
+    let code = format!("nori://pair#k={}&d=desk&a=10.0.0.2%3A41234&n=Desk", "ab".repeat(32));
+    a.devices.on = true;
+    a.devices.pairing = Some(code.clone());
+    a.devices.paired = vec![
+        PairedDevice { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, nearby: true, seen_days: 0 },
+        PairedDevice { id: "pixel".into(), name: "Pixel".into(), kind: DeviceKind::Phone, nearby: false, seen_days: 3 },
+    ];
+    key(&mut a, KeyCode::Char('C'));
+    let s = draw(&mut a, 120, 30);
+    dump("paired", &s);
+    let row = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
+    assert!(row(crate::text::PAIRED_TITLE).trim() == crate::text::PAIRED_TITLE, "{s}");
+    assert!(row("Desk").contains("computer · nearby") && row("Pixel").contains("phone · seen 3 days ago"), "{s}");
+    assert!(row(crate::text::PAIR_DEVICE).contains(crate::text::PAIR_DEVICE), "{s}");
+
+    // d on a paired device asks, then forgets that one.
+    let at = a.devices.rows().iter().position(|r| *r == crate::app::DeviceRow::Paired(1)).unwrap();
+    while a.devices.sel.at < at {
+        key(&mut a, KeyCode::Down);
+    }
+    a.cmds.clear();
+    key(&mut a, KeyCode::Char('d'));
+    let s = draw(&mut a, 120, 30);
+    assert!(a.cmds.is_empty() && s.contains("Forget Pixel?"), "{:?}\n{s}", a.cmds);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Forget("pixel".into())));
+
+    // The last row shows this computer's code and takes the other's.
+    key(&mut a, KeyCode::Char('G'));
+    key(&mut a, KeyCode::Enter);
+    let s = draw(&mut a, 120, 40);
+    dump("pair", &s);
+    assert!(matches!(a.overlay, Some(Overlay::Pair { .. })) && s.contains("▀") && s.contains("Scan this code"), "{s}");
+    chars(&mut a, "hello");
+    key(&mut a, KeyCode::Enter);
+    assert!(draw(&mut a, 120, 40).contains("That is not a pairing link") && a.cmds.len() == 1, "nothing sent");
+    a.handle(Msg::Key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)));
+    a.handle(Msg::Paste(code.clone()));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Pair(code.clone())));
+    assert!(draw(&mut a, 120, 40).contains(crate::text::PAIRING));
+    a.handle(Msg::Paired(Err(crate::text::pair_failed(PairError::Unreachable, Some("Desk")))));
+    let s = draw(&mut a, 120, 40);
+    assert!(s.contains("Can't reach Desk") && !s.contains(crate::text::PAIRING), "{s}");
+    key(&mut a, KeyCode::Enter);
+    a.handle(Msg::Paired(Ok("Desk".into())));
+    assert!(a.overlay.is_none() && a.note.as_ref().is_some_and(|n| n.0 == "Paired with Desk"));
+
+    // A code pasted anywhere offers to pair.
+    a.handle(Msg::Paste(code.clone()));
+    assert!(matches!(&a.overlay, Some(Overlay::Pair { text, .. }) if *text == code));
+}

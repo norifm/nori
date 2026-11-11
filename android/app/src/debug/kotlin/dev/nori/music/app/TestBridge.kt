@@ -147,8 +147,10 @@ private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String, c
             "${d.name}${if (d.nearby) " (nearby)" else ""}: $st${d.refused?.let { " refused $it" } ?: ""}"
         }?.ifEmpty { "none" } ?: "no remote"
         "pair-export" -> r()?.pairingLink()?.let { java.io.File(context.cacheDir, "nori-pairing").writeText(it); "saved" } ?: "pairing unavailable"
-        "pair" -> if (kotlinx.coroutines.runBlocking { nori.remotes.pair(value) }) "paired" else "pairing unavailable"
-        "reset-pairing" -> if (kotlinx.coroutines.runBlocking { nori.remotes.resetPairing() }) "reset" else "pairing unavailable"
+        // "pair <link>": "paired <name>", or why not (the core's PairError).
+        "pair" -> runCatching { kotlinx.coroutines.runBlocking { nori.remotes.pair(value) } }.fold({ "paired ${it.name}" }, { "not paired: ${it.javaClass.simpleName}" })
+        "paired" -> r()?.paired()?.joinToString("; ") { "${it.name}${if (it.nearby) " (nearby)" else ""}" }?.ifEmpty { "none" } ?: "no remote"
+        "forget" -> { nori.remotes.forget(value); "forgot" }
         "jam" -> kotlinx.coroutines.runBlocking { nori.remotes.jamOpen() }?.let { java.io.File(context.cacheDir, "nori-jam").writeText(it); "saved" } ?: "nothing started"
         "view" -> r()?.jamView()?.let { v ->
             "hosting=${v.hosting} members=${v.members.joinToString(",") { "${it.name}:${it.role}" }} pending=${v.pending.joinToString(",") { it.song.title }} next=${v.queue?.entries?.joinToString(",") { it.title }} along=${v.along} listening=${v.listening}"

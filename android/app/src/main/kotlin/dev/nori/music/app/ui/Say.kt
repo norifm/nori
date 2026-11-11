@@ -987,6 +987,28 @@ class Say(private val r: Resources) {
     /** The line under "Automatic": whether a known curve is used or offered. */
     fun deviceAutomatic(autoApply: Boolean): String = r.getString(if (autoApply) R.string.device_auto_uses else R.string.device_auto_offers)
 
+    /** A paired device's line: nearby now, or when it last was. */
+    fun pairSeen(d: dev.nori.music.ffi.PairedDevice): String = when {
+        d.nearby -> r.getString(R.string.pair_nearby)
+        d.seenDays == 0u -> r.getString(R.string.pair_seen_today)
+        d.seenDays == 1u -> r.getString(R.string.pair_seen_yesterday)
+        else -> r.getString(R.string.pair_seen_days, d.seenDays.toInt())
+    }
+
+    /** Why pairing with the device [name] (when its code says it) failed. */
+    fun pairFailed(e: Throwable, name: String?): String {
+        val who = name ?: r.getString(R.string.pair_other_device)
+        val first = name ?: r.getString(R.string.pair_other_device_start)
+        return when (e) {
+            is dev.nori.music.ffi.remote.PairException.NotACode -> r.getString(R.string.pair_failed_not_a_code)
+            is dev.nori.music.ffi.remote.PairException.Own -> r.getString(R.string.pair_failed_own)
+            is dev.nori.music.ffi.remote.PairException.Unreachable -> r.getString(R.string.pair_failed_unreachable, who)
+            is dev.nori.music.ffi.remote.PairException.TimedOut -> r.getString(R.string.pair_failed_timed_out, first)
+            is dev.nori.music.ffi.remote.PairException.Refused -> r.getString(R.string.pair_failed_refused, first)
+            else -> r.getString(R.string.pair_failed_unavailable)
+        }
+    }
+
     /** The snackbar about the device that just connected: its words and its one action. */
     fun deviceNotice(offer: Boolean, curve: String): Pair<String, String> =
         if (offer) r.getString(R.string.device_notice_offer, curve) to r.getString(R.string.device_notice_apply)

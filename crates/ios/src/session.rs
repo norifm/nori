@@ -74,6 +74,9 @@ pub const REPORT_CURVE: i32 = 22;
 pub const REPORT_STARRED: i32 = 23;
 /// A song waits for the network (`flag` 1), tried again by itself, or no longer (`flag` 0).
 pub const REPORT_WAITING: i32 = 24;
+/// A device paired (`flag` 1, [`Report::text`] its name) or not (`flag` 0: [`Report::index`] is why, a
+/// `NORI_PAIR_*` code, [`Report::text`] the device's name when its code says it).
+pub const REPORT_PAIRED: i32 = 25;
 
 pub const STATE_IDLE: i32 = 0;
 pub const STATE_PLAYING: i32 = 1;

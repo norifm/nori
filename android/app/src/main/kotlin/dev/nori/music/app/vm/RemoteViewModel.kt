@@ -43,18 +43,30 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
     val outputs: StateFlow<List<dev.nori.music.ffi.ReachedOutput>> = _outputs.asStateFlow()
 
     private val _pairingLink = MutableStateFlow<String?>(null)
+    /** This phone's pairing code; null where this profile doesn't pair, or remote control is off. */
     val pairingLink: StateFlow<String?> = _pairingLink.asStateFlow()
+    private val _paired = MutableStateFlow<List<dev.nori.music.ffi.PairedDevice>>(emptyList())
+    /** The devices paired with this phone, the nearby ones first. */
+    val paired: StateFlow<List<dev.nori.music.ffi.PairedDevice>> = _paired.asStateFlow()
     private val _pairRequest = MutableStateFlow<String?>(null)
+    /** A pairing code opened from outside the app (a link, the system camera), waiting for a yes. */
     val pairRequest: StateFlow<String?> = _pairRequest.asStateFlow()
 
     fun offerPairing(link: String) { _pairRequest.value = link }
     fun dismissPairing() { _pairRequest.value = null }
-    fun pair(link: String, then: (Boolean) -> Unit) = viewModelScope.launch {
-        val paired = remotes.pair(link)
-        if (paired) refresh()
+
+    /** Pairs with the device whose code [link] is; [then] gets the device paired, or why not. */
+    fun pair(link: String, then: (Result<dev.nori.music.ffi.PairedDevice>) -> Unit) = viewModelScope.launch {
+        val paired = runCatching { remotes.pair(link) }
+        if (paired.isSuccess) refresh()
         then(paired)
     }
-    fun resetPairing() = viewModelScope.launch { if (remotes.resetPairing()) refresh() }
+
+    /** Forgets paired device [id]. */
+    fun forget(id: String) {
+        _paired.value = _paired.value.filter { it.id != id }
+        remotes.forget(id)
+    }
 
     private val me = dev.nori.music.ffi.RemoteMe(dev.nori.music.remote.Remotes.deviceName(app), dev.nori.music.ffi.remote.DeviceKind.PHONE)
     private val kinds = app.resources.let { r ->
@@ -102,13 +114,24 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
         viewModelScope.launch { remotes.changes.collect { if (watchers > 0) refresh() } }
     }
 
-    private fun refresh() = remotes.ask({ r -> r.outputs() to r.devices().let { d -> Triple(d, dev.nori.music.ffi.deviceNames(d, me, kinds), r.pairingLink()) } }) { (outputs, shown) ->
-        val (d, n, link) = shown
-        _outputs.value = outputs
-        _devices.value = d
-        _names.value = n
-        _pairingLink.value = link
+    private fun refresh() = remotes.ask({ r ->
+        val link = r.pairingLink()
+        Shown(r.outputs(), r.devices().let { d -> d to dev.nori.music.ffi.deviceNames(d, me, kinds) }, link, if (link != null) r.paired() else emptyList())
+    }) { shown ->
+        _outputs.value = shown.outputs
+        _devices.value = shown.devices.first
+        _names.value = shown.devices.second
+        _pairingLink.value = shown.link
+        _paired.value = shown.paired
     }
+
+    /** What one read of the remote shows. */
+    private class Shown(
+        val outputs: List<dev.nori.music.ffi.ReachedOutput>,
+        val devices: Pair<List<RemoteDevice>, List<String>>,
+        val link: String?,
+        val paired: List<dev.nori.music.ffi.PairedDevice>,
+    )
 
     /** A sheet that shows devices is on screen (true) or gone (false): other devices are followed while it is. */
     fun watch(on: Boolean) {

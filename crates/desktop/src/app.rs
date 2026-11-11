@@ -1103,11 +1103,14 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(jam.on_copy_link, h, |a| a.jam_copy_link());
     on!(ui.on_copy_pairing, h, |a| a.copy(a.ui().get_pairing_link().into(), words::LINK_COPIED));
     on!(jam.on_leave, h, |a| a.leave_jam());
-    on!(ui.on_forget_devices, h, |a| {
-        if let Some(remote) = a.session.as_ref().and_then(|s| s.remote()) { remote.reset_pairing(); }
+    on!(ui.on_forget_device, h, |a, id| {
+        if let Some(remote) = a.session.as_ref().and_then(|s| s.remote()) {
+            remote.forget(id.to_string());
+        }
         a.devices_shown();
         a.jam_shown();
     });
+    on!(ui.on_pair, h, |a, link| a.pair(link.trim().to_string()));
     on!(ui.on_join_jam, h, |a, link| a.join_jam(link.trim().to_string()));
     on!(ui.on_sign_in, h, |a, answer| a.sign_in(answer.to_string()));
     on!(ui.on_sign_in_window, h, |a| a.sign_in_window());
@@ -3470,14 +3473,31 @@ impl App {
         }
     }
 
+    /// Pairs with the device whose code `link` is, on the pairing sheet: [`Msg::Paired`] says how it went.
+    fn pair(&mut self, link: String) {
+        let ui = self.ui();
+        let Some(remote) = self.session.as_ref().and_then(|s| s.remote()) else { return };
+        if !nori_core::remote::pairing_valid(link.clone()) {
+            return ui.set_pair_error(words::pair_failed(nori_core::remote::PairError::NotACode, None).into());
+        }
+        ui.set_pair_busy(true);
+        ui.set_pair_error("".into());
+        let tx = self.tx.clone();
+        nori_host::spawn("nori-pair", move || {
+            let name = nori_core::remote::pairing_name(link.clone());
+            let paired = nori_core::transport::block_on(remote.pair(link)).map(|d| d.name).map_err(|e| words::pair_failed(e, name.as_deref()));
+            tx.send(Msg::Paired(paired))
+        });
+    }
+
     fn join_jam(&mut self, link: String) {
         let ui = self.ui();
+        // A pairing code pasted to join pairs, on the pairing sheet.
         if nori_core::remote::pairing_valid(link.clone()) {
-            let paired = self.session.as_ref().and_then(|s| s.remote()).is_some_and(|r| r.pair(link));
-            ui.set_join_open(!paired);
-            if !paired { ui.set_join_error(words::PAIR_FAILED.into()); }
-            self.devices_shown();
-            return;
+            ui.set_join_open(false);
+            ui.set_pair_link(link.as_str().into());
+            ui.set_pairing_open(true);
+            return self.pair(link);
         }
         if !nori_core::remote::is_invite(&link) {
             return ui.set_join_error(words::NOT_AN_INVITE.into());
@@ -3602,6 +3622,20 @@ impl App {
                 let ui = self.ui();
                 ui.set_join_busy(false);
                 ui.set_join_error(e.into());
+            }
+            Msg::Paired(paired) => {
+                let ui = self.ui();
+                ui.set_pair_busy(false);
+                match paired {
+                    Ok(name) => {
+                        ui.set_pairing_open(false);
+                        ui.set_pair_link("".into());
+                        self.say(&words::paired_with(&name), false);
+                    }
+                    Err(e) => ui.set_pair_error(e.into()),
+                }
+                self.devices_shown();
+                self.jam_shown();
             }
             Msg::JamEnded(host) => self.left(&words::jam_ended(host.as_deref())),
             Msg::Starred => {
@@ -4278,6 +4312,8 @@ impl App {
         if pairing.is_empty() {
             ui.set_pairing_open(false);
         }
+        let paired: Vec<_> = remote.as_ref().filter(|_| !pairing.is_empty()).map(|r| r.paired().iter().map(words::paired_row).collect()).unwrap_or_default();
+        show_in(ui.get_paired(), paired, |m| ui.set_paired(m));
         g.set_on(remote.is_some() && !unsupported && !guest);
         g.set_guest(guest);
         g.set_note(if unsupported { words::JAM_UNSUPPORTED.into() } else { "".into() });
@@ -6790,6 +6826,77 @@ mod tests {
         slint::platform::update_timers_and_animations();
         ui.window().take_snapshot().unwrap();
         assert!(art.borrow().wanted.iter().any(|key| key.id.starts_with("album-19-")), "scrolling reveals the last shelf's covers");
+    }
+
+    #[test]
+    fn a_paired_device_is_forgotten_only_after_asking() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.set_devices_on(true);
+        ui.set_inspector(Panel::Devices);
+        let link = format!("nori://pair#k={}&d=mac&a=10.0.0.2%3A41234&n=Mac", "ab".repeat(32));
+        ui.set_devices(ModelRc::new(VecModel::from(vec![crate::DeviceRow { name: "This computer".into(), active: true, ..Default::default() }])));
+        ui.set_pairing_link(link.as_str().into());
+        ui.set_pairing_qr(crate::jam::qr(&link));
+        let paired = [("pixel", "Pixel", true, 0, nori_core::remote::wire::DeviceKind::Phone), ("desk", "Desk", false, 3, nori_core::remote::wire::DeviceKind::Desktop)]
+            .map(|(id, name, nearby, seen_days, kind)| words::paired_row(&nori_core::remote::PairedDevice { id: id.into(), name: name.into(), kind, nearby, seen_days }));
+        ui.set_paired(ModelRc::new(VecModel::from(paired.to_vec())));
+        let forgot = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let heard = forgot.clone();
+        ui.on_forget_device(move |id| heard.borrow_mut().push(id.to_string()));
+        let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let heard = asked.clone();
+        ui.on_pair(move |link| heard.borrow_mut().push(link.to_string()));
+        ui.show().unwrap();
+        let settle = || {
+            for _ in 0..3 {
+                ui.window().take_snapshot().unwrap();
+                i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+                slint::platform::update_timers_and_animations();
+            }
+        };
+        let click = |label: &str| {
+            settle();
+            let found = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, label).last().unwrap_or_else(|| panic!("{label} shown"));
+            let (at, size) = (found.absolute_position(), found.size());
+            let at = slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0);
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: slint::platform::PointerEventButton::Left });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button: slint::platform::PointerEventButton::Left });
+            settle();
+        };
+        settle();
+        shot(&ui, "after-devices");
+        click("Seen 3 days ago");
+        assert!(ui.get_forget_open() && ui.get_forgetting().id == "desk", "asked first");
+        assert!(forgot.borrow().is_empty());
+        shot(&ui, "after-forget");
+        click("Cancel");
+        assert!(!ui.get_forget_open() && forgot.borrow().is_empty(), "kept");
+        click("Seen 3 days ago");
+        click("Forget");
+        assert_eq!(*forgot.borrow(), ["desk"], "that one only");
+        assert!(!ui.get_forget_open());
+        click("Pair a device…");
+        assert!(ui.get_pairing_open());
+        ui.set_pair_link(link.as_str().into());
+        ui.set_pair_error("Can’t reach Mac. Is it on this network, with remote control on?".into());
+        shot(&ui, "after-pairing");
+        click("Pair");
+        assert_eq!(*asked.borrow(), [link]);
+    }
+
+    /// Saves the window as `name`.raw (its size, then RGBA) under NORI_DESKTOP_SHOTS, when set.
+    fn shot(ui: &AppWindow, name: &str) {
+        let Some(dir) = std::env::var_os("NORI_DESKTOP_SHOTS") else { return };
+        let shot = ui.window().take_snapshot().unwrap();
+        let mut bytes = shot.width().to_le_bytes().to_vec();
+        bytes.extend(shot.height().to_le_bytes());
+        bytes.extend_from_slice(shot.as_bytes());
+        std::fs::write(std::path::Path::new(&dir).join(format!("{name}.raw")), bytes).unwrap();
     }
 
     #[test]

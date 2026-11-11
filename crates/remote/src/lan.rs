@@ -28,23 +28,64 @@ pub fn guest_secret(api_key: &str) -> Option<&str> {
     api_key.strip_prefix("nori-jam-lan-")
 }
 
+/// What a device's pairing code (and QR code) carries: the invite its door pairs a new device with,
+/// never an account's credential, and where that door is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairCode {
+    /// 256 bits, hex.
+    pub invite: String,
+    /// The device showing it.
+    pub id: String,
+    pub name: String,
+    /// Its door's `host:port`.
+    pub door: String,
+}
+
+const PAIR_LINK: &str = "nori://pair#";
+
 /// Device pairing is separate from a jam invitation.
-pub fn pairing_link(secret: &str) -> String {
-    format!("nori://pair#k={secret}")
+pub fn pairing_link(code: &PairCode) -> String {
+    let PairCode { invite, id, name, door } = code;
+    format!("{PAIR_LINK}k={invite}&d={}&a={}&n={}", crate::encode(id), crate::encode(door), crate::encode(name))
 }
 
-/// A pairing link contains a 256-bit secret, never an account identifier.
-pub fn parse_pairing(link: &str) -> Option<String> {
-    let secret = link.trim().strip_prefix("nori://pair#k=")?;
-    (secret.len() == 64 && secret.bytes().all(|b| b.is_ascii_hexdigit())).then(|| secret.to_ascii_lowercase())
+/// The code a pairing link carries; None for anything else, an older nori's code without its door among them.
+pub fn parse_pairing(link: &str) -> Option<PairCode> {
+    let fragment = link.trim().strip_prefix(PAIR_LINK)?;
+    let get = |key: &str| fragment.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).and_then(|(_, v)| crate::decode(v));
+    let invite = get("k").filter(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit()))?.to_ascii_lowercase();
+    let (id, door) = (get("d").filter(|d| !d.is_empty())?, get("a").filter(|a| !a.is_empty())?);
+    Some(PairCode { invite, id, name: get("n").unwrap_or_default(), door })
 }
 
+/// The key a device paired with `invite` signs with: made on both devices from the pairing's nonce, never sent.
+pub fn pair_key(invite: &str, nonce: &str) -> String {
+    hex(&hmac(invite.as_bytes(), format!("nori-pair:{nonce}").as_bytes()))
+}
+
+/// Why a device did not pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Error))]
+pub enum PairError {
+    /// Not a pairing code.
+    NotACode,
+    /// This device's own code.
+    Own,
+    /// This profile does not pair: a server account's devices find each other, and a jam's guest controls none.
+    Unavailable,
+    /// Nothing answered where the code says the device is: it is on another network, or its remote control is off.
+    Unreachable,
+    /// It did not answer in time.
+    TimedOut,
+    /// It turned the code down: it shows another one now.
+    Refused,
+}
 
 /// The door listens on a socket, which a browser cannot.
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 mod door;
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
-pub use door::{Ask, Asker, Door, Handler, Told, Unanswered};
+pub use door::{Access, Ask, Asker, Door, Handler, PairChange, Pairs, Told, Unanswered};
 
 /// The mDNS service type a door is announced as.
 pub const SERVICE: &str = "_nori._tcp";
@@ -130,6 +171,29 @@ mod tests {
         assert_eq!(account_tag("ann", "pw"), account_tag("ann", "pw"));
         assert_ne!(account_tag("ann", "pw"), account_tag("ann", "pw2"));
         assert_ne!(account_tag("ann", "pw"), account_tag("bob", "pw"));
+    }
+
+    #[test]
+    fn pairing_codes_read_back() {
+        let invite = "ab".repeat(32);
+        let code = PairCode { invite: invite.clone(), id: "d3sk".into(), name: "Ann's Mac & co".into(), door: "[fe80::1]:41234".into() };
+        assert_eq!(parse_pairing(&format!(" {} ", pairing_link(&code))), Some(code.clone()));
+        let link = |fragment: &str| format!("nori://pair#{fragment}");
+        let cases = [
+            (link(&format!("k={}&d=d3sk&a=10.0.0.2%3A1", invite.to_uppercase())), Some(PairCode { name: String::new(), door: "10.0.0.2:1".into(), ..code })),
+            (link(&format!("k={invite}")), None),
+            (link(&format!("k={invite}&d=d3sk")), None),
+            (link(&format!("k={invite}&a=10.0.0.2%3A1")), None),
+            (link(&format!("k={}&d=d3sk&a=10.0.0.2%3A1", &invite[1..])), None),
+            (link(&format!("k={}&d=d3sk&a=10.0.0.2%3A1", "zz".repeat(32))), None),
+            (format!("nori://jam?k={invite}&d=d3sk&a=10.0.0.2%3A1"), None),
+            (String::new(), None),
+        ];
+        for (link, code) in cases {
+            assert_eq!(parse_pairing(&link), code, "{link}");
+        }
+        assert_ne!(pair_key(&invite, "n1"), pair_key(&invite, "n2"));
+        assert_ne!(pair_key(&invite, "n1"), pair_key(&"cd".repeat(32), "n1"));
     }
 
 }
