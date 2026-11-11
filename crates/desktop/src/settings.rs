@@ -328,17 +328,15 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "autoMixBetterBeats" => {
             let mb = s.beat_model_mb;
             let detail = match &s.beat_model {
-                BeatModel::Ready => String::new(),
                 BeatModel::Downloading => format!("Downloading (about {mb} MB)…"),
                 BeatModel::Failed { .. } => "The download didn't work. It tries again at the next song.".into(),
-                _ => format!("A download of about {mb} MB"),
+                _ => "Uses more battery while songs are measured".into(),
             };
             return ("Better beat detection".into(), detail);
         }
         "crossfadeKeepAlbums" => ("Keep albums gapless", ""),
         "skipExplicit" => ("Skip explicit songs", ""),
-        "autoFill" => ("Keep playing when the queue ends", ""),
-        "autoFillKind" => ("Carry on with", ""),
+        "autoFill" => ("When the queue ends", ""),
         "autoFillBasis" => ("Chosen by", ""),
         "autoFillRemote" => ("Include remote songs", ""),
         "bridgeOffline" => ("Play downloads when offline", ""),
@@ -348,7 +346,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "soundBypass" => ("No processing on this output", ""),
         "headphoneSound" => ("Headphone sound", ""),
         "compressor" => ("Compressor", ""),
-        "compressorPreset" => ("Compressor type", ""),
         "replayGain" => ("Volume leveling", ""),
         "loudnessLevel" => ("Level", ""),
         "volumeBoostDb" => ("Volume boost", ""),
@@ -382,18 +379,19 @@ fn option_words(name: &str, v: &str) -> String {
         ("season", "SUMMER") => "Summer".into(),
         ("season", "AUTUMN") => "Autumn".into(),
         ("season", "WINTER") => "Winter".into(),
-        ("autoFillKind", "SONGS") => "Songs".into(),
-        ("autoFillKind", "ALBUMS") => "Albums".into(),
+        ("autoFill", "OFF") => "Stop".into(),
+        ("autoFill", "SONGS") => "Add songs".into(),
+        ("autoFill", "ALBUMS") => "Add albums".into(),
         ("autoFillBasis", "SIMILAR") => "Similar music".into(),
         ("autoFillBasis", "ARTIST") => "The same artist".into(),
         ("autoFillBasis", "GENRE") => "The same genre".into(),
         ("autoFillBasis", "ERA") => "The same era".into(),
-        ("headphoneSound" | "replayGain", "OFF") => "Off".into(),
+        ("headphoneSound" | "replayGain" | "compressor", "OFF") => "Off".into(),
         ("headphoneSound", "NATURAL") => "Natural".into(),
         ("headphoneSound", "WIDE") => "Wide".into(),
-        ("compressorPreset", "LIGHT") => "Light".into(),
-        ("compressorPreset", "CAR") => "Car".into(),
-        ("compressorPreset", "NIGHT") => "Night".into(),
+        ("compressor", "LIGHT") => "Light".into(),
+        ("compressor", "CAR") => "Car".into(),
+        ("compressor", "NIGHT") => "Night".into(),
         ("replayGain", "TRACK") => "Per song".into(),
         ("replayGain", "ALBUM") => "Per album".into(),
         ("replayGain", "AUTO") => "Automatic".into(),
@@ -1559,7 +1557,7 @@ mod tests {
 
     #[test]
     fn row_names_resolve() {
-        let p = StoredPrefs { auto_mix: true, auto_fill: true, compressor: true, scrobble: true, ..StoredPrefs::default() };
+        let p = StoredPrefs { auto_mix: true, auto_fill: Some(nori_core::settings::AutoFillKind::Songs), compressor: Some(nori_core::settings::CompressorPreset::Light), scrobble: true, ..StoredPrefs::default() };
         let f = Facts::default();
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {

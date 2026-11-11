@@ -52,7 +52,7 @@
     <string name="settings_crossfade">Crossfade</string>
     <string name="settings_automix">AutoMix</string>
     <string name="settings_better_beats">Better beat detection</string>
-    <string name="settings_better_beats_off">A download of about %1$d MB</string>
+    <string name="settings_better_beats_cost">Uses more battery while songs are measured</string>
     <string name="settings_better_beats_downloading">Downloading (about %1$d MB)…</string>
     <string name="settings_better_beats_network">the network failed</string>
     <string name="settings_better_beats_wrong_file">the file that arrived was not the right one</string>
@@ -66,10 +66,10 @@
     <string name="settings_measure_again">Measure again</string>
     <string name="settings_keep_albums">Keep albums gapless</string>
     <string name="settings_skip_explicit">Skip explicit songs</string>
-    <string name="settings_auto_fill">Keep playing when the queue ends</string>
-    <string name="settings_auto_fill_kind">Carry on with</string>
-    <string name="settings_auto_fill_kind_songs">Songs</string>
-    <string name="settings_auto_fill_kind_albums">Albums</string>
+    <string name="settings_auto_fill">When the queue ends</string>
+    <string name="settings_auto_fill_stop">Stop</string>
+    <string name="settings_auto_fill_songs">Add songs</string>
+    <string name="settings_auto_fill_albums">Add albums</string>
     <string name="settings_auto_fill_basis">Chosen by</string>
     <string name="settings_auto_fill_basis_similar">Similar music</string>
     <string name="settings_auto_fill_basis_artist">The same artist</string>
@@ -97,7 +97,6 @@
     <string name="settings_hint_volume_boost">Louder, gain, amplify, limiter</string>
     <string name="settings_compressor">Compressor</string>
     <string name="settings_compressor_detail">Evens out quiet and loud parts</string>
-    <string name="settings_compressor_preset">Compressor type</string>
     <string name="settings_compressor_light">Light</string>
     <string name="settings_compressor_car">Car</string>
     <string name="settings_compressor_night">Night</string>
@@ -383,8 +382,7 @@
     <string name="settings_hint_better_beats">A neural beat tracker for AutoMix, downloaded once (Beat This!)</string>
     <string name="settings_hint_measured">Tempo and beats, measured on this device</string>
     <string name="settings_hint_skip_explicit">Songs your server marks explicit</string>
-    <string name="settings_hint_auto_fill">Adds more music automatically</string>
-    <string name="settings_hint_auto_fill_kind">Songs, or a whole album at a time</string>
+    <string name="settings_hint_auto_fill">Keep playing, autofill, songs, albums, more music</string>
     <string name="settings_hint_auto_fill_basis">Similar music, the same artist, genre or era</string>
     <string name="settings_hint_auto_fill_remote">Let autoplay pick songs not in your library yet</string>
     <string name="settings_hint_bridge_offline">If the server drops, keep playing from downloads</string>

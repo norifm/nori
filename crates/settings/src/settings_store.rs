@@ -151,7 +151,7 @@ impl SettingsStore {
             prefs.eq_mode = crate::settings::EqMode::Parametric;
         }
         let legacy = crate::settings::legacy(&raw);
-        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || crate::settings::pure_black(&raw) || crate::settings::old_screen_defaults(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") {
+        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || crate::settings::pure_black(&raw) || crate::settings::old_screen_defaults(&raw) || crate::settings::switched(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") {
             write(&mut c, &prefs)?;
         }
         if legacy {
@@ -526,7 +526,7 @@ pub struct BandPoint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{band_from, sound_json, CompressorPreset, EqMode, GainMode, HeadphoneSound, Level, SavedServer, ThemeMode, EQ_MODE_KEY, EQ_RANGES};
+    use crate::settings::{band_from, sound_json, AutoFillKind, CompressorPreset, EqMode, GainMode, HeadphoneSound, Level, SavedServer, ThemeMode, EQ_MODE_KEY, EQ_RANGES};
 
     fn open(dir: &nori_testdir::TempDir) -> SettingsStore {
         SettingsStore::open(&dir.join("nori.db").display().to_string(), Writer::default()).unwrap()
@@ -884,10 +884,33 @@ mod tests {
             let mut raw = old(&[("compressor", flag(true))]);
             raw.extend(knobs.iter().map(|(k, v)| (k.to_string(), decimal(*v))));
             let p = open_old("old-compressor", &raw).0;
-            assert!(p.compressor);
-            assert_eq!(p.compressor_preset, want, "{knobs:?}");
+            assert_eq!(p.compressor, Some(want), "{knobs:?}");
         }
-        assert_eq!(open_old("old-compressor-default", &stored_062(false)).0.compressor_preset, CompressorPreset::Light, "the old default");
+    }
+
+    /// The compressor and autofill were a switch with a pick of their own: on, the pick; off, Off. Stored
+    /// once as the choice, without the old keys, and a sound profile reads the same.
+    #[test]
+    fn a_switch_and_its_pick_become_one_choice() {
+        let cases = [
+            (true, 2, true, 1, Some(CompressorPreset::Night), Some(AutoFillKind::Albums)),
+            (false, 2, false, 1, None, None),
+            (true, 0, true, 0, Some(CompressorPreset::Light), Some(AutoFillKind::Songs)),
+        ];
+        for (on, preset, fill, kind, compressor, auto_fill) in cases {
+            let raw = HashMap::from([
+                ("compressor".to_string(), flag(on)),
+                ("compressorPreset".to_string(), number(preset)),
+                ("autoFill".to_string(), flag(fill)),
+                ("autoFillKind".to_string(), number(kind)),
+            ]);
+            let (p, stored) = open_old("switched", &raw);
+            assert_eq!((p.compressor, p.auto_fill), (compressor, auto_fill), "{raw:?}");
+            assert!(!stored.contains_key("compressorPreset") && !stored.contains_key("autoFillKind"), "{stored:?}");
+            assert!(!crate::settings::switched(&stored), "stored as the choice");
+            let profile = format!(r#"{{"compressor":{on},"compressorPreset":{preset}}}"#);
+            assert_eq!(crate::settings::sound_from(&profile).unwrap().effects.compressor, compressor, "{profile}");
+        }
     }
 
     #[test]
@@ -983,8 +1006,8 @@ mod tests {
         let json: String = db::open_app(&path).unwrap().query_row("SELECT json FROM profiles", [], |r| r.get(0)).unwrap();
         assert!(!crate::settings::legacy_profile(&json), "{json}");
         let s = crate::settings::sound_from(&json).unwrap();
-        assert_eq!((s.effects.headphone, s.effects.compressor_preset), (HeadphoneSound::Natural, CompressorPreset::Car));
-        assert!(s.effects.compressor && s.eq_enabled && s.eq_graphic[0] > 2.0, "the bass boost on the equalizer");
+        assert_eq!((s.effects.headphone, s.effects.compressor), (HeadphoneSound::Natural, Some(CompressorPreset::Car)));
+        assert!(s.eq_enabled && s.eq_graphic[0] > 2.0, "the bass boost on the equalizer");
         assert_eq!(crate::settings::sound_from(profile).unwrap(), s, "read the same before it is stored again");
     }
 }

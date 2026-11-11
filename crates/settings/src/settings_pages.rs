@@ -341,10 +341,9 @@ impl Page<'_> {
         between.push(self.setting("crossfadeKeepAlbums").enabled(live && (p.auto_mix || p.crossfade_sec > 0)));
         let mut queue = vec![
             self.setting("skipExplicit"),
-            self.setting("autoFill"),
-            self.chips("autoFillKind").under().enabled(p.auto_fill),
-            self.setting("autoFillBasis").under().enabled(p.auto_fill),
-            self.setting("autoFillRemote").under().enabled(p.auto_fill),
+            self.chips("autoFill"),
+            self.setting("autoFillBasis").under().enabled(p.auto_fill.is_some()),
+            self.setting("autoFillRemote").under().enabled(p.auto_fill.is_some()),
         ];
         if !self.web() {
             queue.push(self.setting("bridgeOffline"));
@@ -361,7 +360,7 @@ impl Page<'_> {
         ];
         let mut eq = vec![row(RowItem::Link { to: SettingsLink::Equalizer })];
         if self.web() {
-            let effects = vec![self.setting("compressor"), self.chips("compressorPreset").under().enabled(p.compressor)];
+            let effects = vec![self.chips("compressor")];
             return vec![(SectionId::Equalizer, eq), (SectionId::Effects, effects), (SectionId::Volume, volume)];
         }
         if self.windowed() {
@@ -370,9 +369,9 @@ impl Page<'_> {
         if self.phone() {
             eq.push(row(RowItem::Link { to: SettingsLink::SystemEffects }));
         }
-        let mut effects = vec![self.chips("headphoneSound"), self.setting("compressor"), self.chips("compressorPreset").under().enabled(p.compressor)];
+        let mut effects = vec![self.chips("headphoneSound"), self.chips("compressor")];
         if self.phone() {
-            effects.push(row(RowItem::CompressionMeter).under().enabled(p.compressor));
+            effects.push(row(RowItem::CompressionMeter).under().enabled(p.compressor.is_some()));
         }
         let mut output = vec![self.setting("hiRes"), self.setting("maxRate")];
         if self.phone() {
@@ -613,9 +612,8 @@ mod tests {
         assert!(live(&d, "crossfadeSec") && !live(&StoredPrefs { auto_mix: true, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
         let mixing = [StoredPrefs { auto_mix: true, ..d.clone() }, StoredPrefs { crossfade_sec: 4, ..d.clone() }];
         assert!(!live(&d, "crossfadeKeepAlbums") && mixing.iter().all(|p| live(p, "crossfadeKeepAlbums")), "only while songs mix");
-        assert!(!live(&d, "compressorPreset") && live(&StoredPrefs { compressor: true, ..d.clone() }, "compressorPreset"));
+        assert!(!live(&StoredPrefs { auto_fill: None, ..d.clone() }, "autoFillBasis") && live(&d, "autoFillBasis"));
         assert!(live(&d, "loudnessLevel") && !live(&StoredPrefs { replay_gain: GainMode::Off, ..d.clone() }, "loudnessLevel"));
-        assert!(!live(&StoredPrefs { auto_fill: false, ..d.clone() }, "autoFillKind"));
         assert!(!live(&d, "dimLevel") && live(&StoredPrefs { burn_in_protection: true, dim_when_idle: crate::settings::DimIdle::Minute, ..d.clone() }, "dimLevel"));
         assert!(!live(&StoredPrefs { lyrics_online: false, ..d.clone() }, "lyricsPreferWords"));
     }
@@ -624,7 +622,7 @@ mod tests {
     fn a_switch_grays_the_rows_under_it_and_moves_none() {
         let d = StoredPrefs::default();
         let switched = [
-            StoredPrefs { auto_mix: true, compressor: true, auto_fill: false, burn_in_protection: true, replay_gain: GainMode::Off, theme: crate::settings::ThemeMode::Light, lyrics_online: false, ..d.clone() },
+            StoredPrefs { auto_mix: true, compressor: Some(crate::settings::CompressorPreset::Car), auto_fill: None, burn_in_protection: true, replay_gain: GainMode::Off, theme: crate::settings::ThemeMode::Light, lyrics_online: false, ..d.clone() },
             d.clone(),
         ];
         for client in [SettingsClient::Phone, SettingsClient::Desktop, SettingsClient::Terminal, SettingsClient::Web] {

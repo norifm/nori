@@ -70,6 +70,18 @@ impl Choice for CompressorPreset {
     const NAMES: &'static [&'static str] = &["LIGHT", "CAR", "NIGHT"];
 }
 
+/// The compressor: off, or one of its presets.
+impl Choice for Option<CompressorPreset> {
+    const ALL: &'static [Self] = &[None, Some(CompressorPreset::Light), Some(CompressorPreset::Car), Some(CompressorPreset::Night)];
+    const NAMES: &'static [&'static str] = &["OFF", "LIGHT", "CAR", "NIGHT"];
+}
+
+/// Autofill: off, or what it adds.
+impl Choice for Option<AutoFillKind> {
+    const ALL: &'static [Self] = &[None, Some(AutoFillKind::Songs), Some(AutoFillKind::Albums)];
+    const NAMES: &'static [&'static str] = &["OFF", "SONGS", "ALBUMS"];
+}
+
 impl Choice for EqKind {
     const ALL: &'static [Self] = &[
         EqKind::Peaking,
@@ -557,10 +569,9 @@ pub struct StoredPrefs {
     // The queue.
     #[setting("skipExplicit", FLAG, default = false, show = K::Switch)]
     pub skip_explicit: bool,
-    #[setting("autoFill", FLAG, default = true, show = K::Switch)]
-    pub auto_fill: bool,
-    #[setting("autoFillKind", PICK, default = AutoFillKind::Songs, show = K::Choice(AutoFillKind::NAMES))]
-    pub auto_fill_kind: AutoFillKind,
+    /// Stored as a switch and a kind before ([`load`]).
+    #[setting("autoFill", PICK, default = Some(AutoFillKind::Songs), show = K::Choice(<Option<AutoFillKind> as Choice>::NAMES))]
+    pub auto_fill: Option<AutoFillKind>,
     #[setting("autoFillBasis", PICK, default = AutoFillBasis::Similar, show = K::Choice(AutoFillBasis::NAMES))]
     pub auto_fill_basis: AutoFillBasis,
     /// Autofill may queue provider songs (octo-fiesta downloads each one played into the library).
@@ -588,10 +599,9 @@ pub struct StoredPrefs {
     /// Extra gain, dB, with the limiter behind it; 0 is off.
     #[setting("volumeBoostDb", clamped(0.0, VOLUME_BOOST_MAX), default = 0.0, show = level, effect = SOUND, effects)]
     pub volume_boost_db: f32,
-    #[setting("compressor", FLAG, default = false, show = K::Switch, effect = SOUND, effects)]
-    pub compressor: bool,
-    #[setting("compressorPreset", PICK, default = CompressorPreset::Light, show = K::Choice(CompressorPreset::NAMES), effect = SOUND, effects)]
-    pub compressor_preset: CompressorPreset,
+    /// Stored as a switch and a preset before ([`load`]).
+    #[setting("compressor", PICK, default = None, show = K::Choice(<Option<CompressorPreset> as Choice>::NAMES), effect = SOUND, effects)]
+    pub compressor: Option<CompressorPreset>,
     #[setting("mono", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | SOUND, sound)]
     pub mono: bool,
     #[setting("limiter", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | SOUND, sound)]
@@ -833,8 +843,7 @@ pub struct SoundSettings {
 pub struct SoundEffects {
     pub headphone: HeadphoneSound,
     pub volume_boost_db: f32,
-    pub compressor: bool,
-    pub compressor_preset: CompressorPreset,
+    pub compressor: Option<CompressorPreset>,
 }
 
 impl Default for SoundEffects {
@@ -852,7 +861,7 @@ impl SoundEffects {
     /// The chain's effects (crossfeed is the equalizer's, [`HeadphoneSound::crossfeed_db`]).
     pub fn player(&self) -> nori_player::dsp::Effects {
         nori_player::dsp::Effects {
-            compressor: self.compressor.then(|| self.compressor_preset.settings()),
+            compressor: self.compressor.map(CompressorPreset::settings),
             virtualizer: self.headphone.virtualizer() as f64,
             boost_db: self.volume_boost_db as f64,
         }
@@ -991,6 +1000,14 @@ fn opt_f64(o: &Map<String, Value>, k: &str, fallback: f64) -> f64 {
     o.get(k).and_then(Value::as_f64).unwrap_or(fallback)
 }
 
+/// A sound profile's compressor: its choice, or the switch and preset stored before.
+fn compressor_in(o: &Map<String, Value>) -> Option<CompressorPreset> {
+    match o.get("compressor") {
+        Some(Value::Bool(on)) => on.then(|| CompressorPreset::nth(opt_i32(o, "compressorPreset")).unwrap_or(CompressorPreset::Light)),
+        v => v.and_then(Value::as_i64).and_then(|i| <Option<CompressorPreset>>::nth(i as i32)).flatten(),
+    }
+}
+
 fn opt_i32(o: &Map<String, Value>, k: &str) -> i32 {
     o.get(k).and_then(Value::as_i64).map_or(0, |i| i as i32)
 }
@@ -1036,8 +1053,7 @@ pub fn sound_from(json: &str) -> Option<SoundSettings> {
         effects: SoundEffects {
             headphone: HeadphoneSound::nth(opt_i32(o, "headphoneSound")).unwrap_or(d.headphone),
             volume_boost_db: opt_f64(o, "volumeBoostDb", d.volume_boost_db as f64) as f32,
-            compressor: opt_bool(o, "compressor"),
-            compressor_preset: CompressorPreset::nth(opt_i32(o, "compressorPreset")).unwrap_or(d.compressor_preset),
+            compressor: compressor_in(o),
         }
         .held(),
         hi_res: opt_bool(o, "hiRes"),
@@ -1072,8 +1088,7 @@ pub fn sound_json(s: &SoundSettings) -> String {
     let e = &s.effects;
     o.insert("headphoneSound".into(), e.headphone.ordinal().into());
     o.insert("volumeBoostDb".into(), (e.volume_boost_db as f64).into());
-    o.insert("compressor".into(), e.compressor.into());
-    o.insert("compressorPreset".into(), e.compressor_preset.ordinal().into());
+    o.insert("compressor".into(), e.compressor.ordinal().into());
     o.insert("hiRes".into(), s.hi_res.into());
     o.insert("maxRate".into(), s.max_rate.ordinal().into());
     o.insert("bitPerfect".into(), s.bit_perfect.into());
@@ -1186,7 +1201,9 @@ fn migrate_sound(old: &impl Old, s: &mut SoundSettings) {
         makeup_db: knob("compMakeupDb", 4.5),
         knee_db: knob("compKneeDb", 6.0),
     };
-    s.effects.compressor_preset = CompressorPreset::nearest(knobs);
+    if s.effects.compressor.is_some() {
+        s.effects.compressor = Some(CompressorPreset::nearest(knobs));
+    }
     if let Some(db) = old.number("bassBoostDb").filter(|db| *db >= 0.25) {
         *s = with_bass_boost(s.clone(), db.min(12.0));
     }
@@ -1266,6 +1283,13 @@ pub fn load(raw: &HashMap<String, PrefValue>) -> StoredPrefs {
     for row in ROWS {
         (row.load)(&mut p, &r);
     }
+    // The compressor and autofill were each a switch with a pick of its own.
+    if let Some(PrefValue::Flag { v }) = raw.get("compressor") {
+        p.compressor = v.then(|| r.get::<i32>("compressorPreset").and_then(CompressorPreset::nth).unwrap_or(CompressorPreset::Light));
+    }
+    if let Some(PrefValue::Flag { v }) = raw.get("autoFill") {
+        p.auto_fill = v.then(|| r.get::<i32>("autoFillKind").and_then(AutoFillKind::nth).unwrap_or(AutoFillKind::Songs));
+    }
     if let Some(PrefValue::Flag { v: jam }) = raw.get("jam") {
         let remote = matches!(raw.get("remoteControl"), Some(PrefValue::Flag { v: true }));
         p.remote_control = remote || *jam;
@@ -1293,6 +1317,11 @@ pub fn load(raw: &HashMap<String, PrefValue>) -> StoredPrefs {
         }
     }
     p
+}
+
+/// Whether the compressor or autofill is stored as the switch it was before its choice.
+pub(crate) fn switched(raw: &HashMap<String, PrefValue>) -> bool {
+    ["compressor", "autoFill"].iter().any(|k| matches!(raw.get(*k), Some(PrefValue::Flag { .. })))
 }
 
 pub(crate) fn old_screen_defaults(raw: &HashMap<String, PrefValue>) -> bool {
@@ -2235,7 +2264,7 @@ mod tests {
             mono: true,
             limiter: true,
             limiter_threshold_db: -2.0,
-            effects: SoundEffects { headphone: HeadphoneSound::Wide, volume_boost_db: 3.0, compressor: true, compressor_preset: CompressorPreset::Night },
+            effects: SoundEffects { headphone: HeadphoneSound::Wide, volume_boost_db: 3.0, compressor: Some(CompressorPreset::Night) },
             hi_res: true,
             max_rate: MaxRate::Khz96,
             bit_perfect: false,
@@ -2283,7 +2312,8 @@ mod tests {
         }
         assert_eq!(set_by_name(&p, "cacheMb", "10").unwrap().prefs.cache_mb, 256);
         assert_eq!(set_by_name(&p, "limiterThresholdDb", "9").unwrap().prefs.limiter_threshold_db, 0.0);
-        assert_eq!(set_by_name(&p, "autoFillKind", "albums").unwrap().prefs.auto_fill_kind, AutoFillKind::Albums);
+        assert_eq!(set_by_name(&p, "autoFill", "albums").unwrap().prefs.auto_fill, Some(AutoFillKind::Albums));
+        assert_eq!(set_by_name(&p, "autoFill", "off").unwrap().prefs.auto_fill, None);
         assert_eq!(set_by_name(&p, "autoFillBasis", "era").unwrap().prefs.auto_fill_basis, AutoFillBasis::Era);
         assert_eq!(set_by_name(&p, "autoFillBasis", "mood"), None);
         assert_eq!(set_by_name(&p, "nope", "1"), None);
@@ -2351,9 +2381,10 @@ mod tests {
 
         // Effects by name.
         let p = StoredPrefs::default();
-        let c = set_by_name(&set_by_name(&p, "compressor", "true").unwrap().prefs, "compressorPreset", "car").unwrap().prefs;
-        assert!(c.compressor && c.effects().player().compressor == Some(CompressorPreset::Car.settings()) && c.sound_chain_on());
-        assert!(set_by_name(&p, "compressorPreset", "loud").is_none());
+        let c = set_by_name(&p, "compressor", "car").unwrap().prefs;
+        assert!(c.effects().player().compressor == Some(CompressorPreset::Car.settings()) && c.sound_chain_on());
+        assert!(!set_by_name(&c, "compressor", "off").unwrap().prefs.sound_chain_on());
+        assert!(set_by_name(&p, "compressor", "loud").is_none());
         assert_eq!(set_by_name(&p, "volumeBoostDb", "40").unwrap().prefs.volume_boost_db, 12.0);
         let wide = set_by_name(&p, "headphoneSound", "WIDE").unwrap().prefs;
         assert!(wide.sound_chain_on() && wide.effects().player().virtualizer > 0.0);
@@ -2433,11 +2464,11 @@ mod tests {
         assert_eq!(eq_bypass(false, true), Some(EqBypass::Output));
 
         // Sound bypass.
-        let busy = StoredPrefs { eq_enabled: true, headphone: HeadphoneSound::Natural, limiter: true, compressor: true, ..StoredPrefs::default() };
+        let busy = StoredPrefs { eq_enabled: true, headphone: HeadphoneSound::Natural, limiter: true, compressor: Some(CompressorPreset::Light), ..StoredPrefs::default() };
         assert!(busy.sound_chain_on());
         let bypassed = set_by_name(&busy, "soundBypass", "true").unwrap().prefs;
         assert!(!bypassed.sound_chain_on(), "nothing in the chain, so offload may play it");
-        assert!(bypassed.eq_enabled && bypassed.compressor, "the settings are kept for when it is off again");
+        assert!(bypassed.eq_enabled && bypassed.compressor.is_some(), "the settings are kept for when it is off again");
         let s = bypassed.sound();
         assert!(s.bypass);
         assert!(sound_from(&sound_json(&s)).unwrap().bypass, "a profile keeps it");
