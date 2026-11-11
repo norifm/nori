@@ -22,8 +22,9 @@ final class OutputPicker {
 
 /// The player's output button, as Android's sheet and in the song menu's look: this iPod and the account's
 /// other devices with nori, each with what it plays, the one playing ticked; then the iPod's own outputs
-/// (the system's picker), joining someone's jam and pairing. A tap on a device moves the music there. Open,
-/// the other devices are followed.
+/// (the system's picker), joining someone's jam, then the devices paired with this iPod (a tap forgets one,
+/// after asking) and pairing another. A tap on a device moves the music there. Open, the other devices are
+/// followed.
 final class DevicesSheet: Sheet {
     private let outputs = OutputPicker()
     private var pairing: String?
@@ -53,6 +54,7 @@ final class DevicesSheet: Sheet {
         let d = takenJSON(nori_ios_remote_devices()) as? [String: Any] ?? [:]
         let devices = d["devices"] as? [[String: Any]] ?? []
         pairing = taken(nori_ios_pairing())
+        let paired = takenJSON(nori_ios_paired()) as? [[String: Any]] ?? []
         refill {
             add(Say.thisIPod, glyph: Glyph.device(0, 20), checked: d["here"] as? Bool ?? true) { "".withCString { nori_ios_remote_pick($0) } }
             for device in devices {
@@ -68,26 +70,48 @@ final class DevicesSheet: Sheet {
                 if let self { JamJoin.ask(from: self) }
             }
             if pairing != nil {
-                add(Say.pairDevices, glyph: Glyph.draw(Iconoir.smartphoneDevice, 20), more: true, stays: true) { [weak self] in self?.pair() }
-                add(Say.forgetDevices, glyph: Glyph.draw(Iconoir.trash, 20), more: true, stays: true) { [weak self] in
-                    nori_ios_forget_pairs()
-                    self?.read()
+                for device in paired {
+                    let (id, name) = (device["id"] as? String ?? "", device["name"] as? String ?? "")
+                    let seen = Say.seen(nearby: device["nearby"] as? Bool ?? false, days: device["days"] as? Int ?? 0)
+                    add(name, subtitle: Say.paired(seen), glyph: Glyph.device(device["kind"] as? Int ?? 0, 20), more: true, stays: true) { [weak self] in
+                        self?.forget(id, name)
+                    }
                 }
+                add(Say.pairDevice, glyph: Glyph.draw(Iconoir.plus, 20), more: true, stays: true) { [weak self] in self?.pair() }
             }
         }
     }
 
+    /// This iPod's code to copy to the other device, or the other's pasted here; NORI_REPORT_PAIRED says
+    /// how pairing went.
     private func pair() {
         guard let code = pairing else { return }
-        let ask = UIAlertController(title: Say.pairDevices, message: Say.pairHow, preferredStyle: .alert)
-        ask.addTextField { $0.placeholder = "nori://pair…"; $0.autocapitalizationType = .none; $0.autocorrectionType = .no }
-        ask.addAction(UIAlertAction(title: Say.pairCopy, style: .default) { _ in UIPasteboard.general.string = code })
-        ask.addAction(UIAlertAction(title: Say.pairAccept, style: .default) { [weak self, weak ask] _ in
-            let value = ask?.textFields?.first?.text ?? ""
-            if value.withCString({ nori_ios_pair($0) }) == 0 { Toast.show(Say.pairFailed) }
-            self?.read()
+        let ask = UIAlertController(title: Say.pairDevice, message: Say.pairHow, preferredStyle: .alert)
+        ask.addTextField { $0.placeholder = "nori://pair…"; $0.keyboardType = .URL; $0.autocapitalizationType = .none; $0.autocorrectionType = .no }
+        ask.addAction(UIAlertAction(title: Say.pairCopy, style: .default) { _ in
+            UIPasteboard.general.string = code
+            Toast.show(Say.linkCopied)
+        })
+        ask.addAction(UIAlertAction(title: Say.pairAccept, style: .default) { [weak ask] _ in
+            let link = ask?.textFields?.first?.text ?? ""
+            switch link.withCString({ nori_ios_pair($0) }) {
+            case NORI_PAIR_STARTED: Toast.show(Say.pairing)
+            case NORI_PAIR_NOT_A_CODE: Toast.show(Say.pairFailed(NORI_PAIR_FAILED_NOT_A_CODE, name: ""))
+            default: break
+            }
         })
         ask.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
+        present(ask, animated: true)
+    }
+
+    /// Forgets paired device `id`, asked first.
+    private func forget(_ id: String, _ name: String) {
+        let ask = UIAlertController(title: Say.forgetDevice(name), message: Say.forgetHow, preferredStyle: .alert)
+        ask.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
+        ask.addAction(UIAlertAction(title: Say.forget, style: .destructive) { [weak self] _ in
+            id.withCString { nori_ios_forget($0) }
+            self?.read()
+        })
         present(ask, animated: true)
     }
 }

@@ -156,6 +156,17 @@ pub fn qr_code(text: String) -> Option<QrCode> {
     Some(QrCode { size: code.width() as u32, dark })
 }
 
+/// The text of the first QR code found in a greyscale picture `width` × `height`, its rows `stride` bytes
+/// apart (a camera frame's luma plane); None when there is none, or it cannot be read.
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
+pub fn qr_read(luma: &[u8], width: usize, height: usize, stride: usize) -> Option<String> {
+    if width == 0 || height == 0 || stride < width || luma.len() < stride * (height - 1) + width {
+        return None;
+    }
+    let mut picture = rqrr::PreparedImage::prepare_from_greyscale(width, height, |x, y| luma[y * stride + x]);
+    picture.detect_grids().into_iter().find_map(|grid| grid.decode().ok().map(|(_, text)| text))
+}
+
 /// Where `state`'s position is now, `elapsed_ms` after it was received, within the current song.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn position_now(state: &wire::DeviceState, elapsed_ms: i64) -> i64 {
@@ -257,6 +268,25 @@ mod tests {
         // The three finder patterns' corners are dark.
         let at = |x: u32, y: u32| q.dark[(y * q.size + x) as usize];
         assert!(at(0, 0) && at(q.size - 1, 0) && at(0, q.size - 1));
+    }
+
+    #[test]
+    fn a_pairing_code_is_read_back_from_a_camera_frame() {
+        let link = lan::pairing_link(&lan::PairCode { invite: "ab".repeat(32), id: "d3sk".into(), name: "Ann's Mac".into(), door: "192.168.1.20:41234".into() });
+        let q = qr_code(link.clone()).unwrap();
+        // Drawn 4 px a module, off-centre with a quiet zone, on grey paper in a frame whose rows are padded.
+        let (width, height, stride, scale, at) = (320, 240, 336, 4, (40, 20));
+        let mut luma = vec![170u8; stride * height];
+        for y in 0..q.size as usize * scale {
+            for x in 0..q.size as usize * scale {
+                if q.dark[(y / scale) * q.size as usize + x / scale] {
+                    luma[(y + at.1) * stride + x + at.0] = 20;
+                }
+            }
+        }
+        assert_eq!(qr_read(&luma, width, height, stride), Some(link));
+        assert_eq!(qr_read(&vec![170u8; stride * height], width, height, stride), None, "no code");
+        assert_eq!(qr_read(&luma[..stride * 10], width, height, stride), None, "a frame cut short");
     }
 
     #[test]

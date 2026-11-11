@@ -39,10 +39,19 @@ use crate::transport::{self, Exchange, NetError, Transport};
 use crate::{api, db, Param, Song};
 use nori_settings::settings_store::Settings;
 
+mod pairing;
+#[cfg(not(target_arch = "wasm32"))]
+pub use pairing::{pairing_name, pairing_valid, PairedDevice};
+#[cfg(not(target_arch = "wasm32"))]
+pub use nori_remote::lan::PairError;
+
 /// The frames, for clients that speak them (the terminal and desktop host).
 pub use nori_remote::wire;
 /// The invite's QR code, for clients that draw it themselves.
 pub use nori_remote::{is_guest_key, is_home_only, is_invite, parse_invite, position_now, qr_code, QrCode};
+/// Android's pairing scanner reads camera frames with it; a browser has no scanner.
+#[cfg(not(target_arch = "wasm32"))]
+pub use nori_remote::qr_read;
 
 /// Songs before and after the current one a published state lists.
 const ENTRIES_BEFORE: usize = 10;
@@ -467,10 +476,6 @@ pub struct JamPass {
     /// What the host plays from: a LAN jam's guest plays the same provider's songs, through the host.
     pub kind: crate::settings::ServerKind,
 }
-
-/// Whether a link is a device pairing code, separate from a jam invite.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn pairing_valid(link: String) -> bool { lan::parse_pairing(&link).is_some() }
 
 /// The temporary guest profile contains only a scoped room credential.
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -1709,48 +1714,6 @@ impl Remote {
         Remote::with_tasks(client, me, player, shown, discovery, tasks)
     }
 
-    /// The QR/code used to pair this device's YouTube profiles with its other devices.
-    pub fn pairing_link(&self) -> Option<String> {
-        if self.me.kind == DeviceKind::Guest || !self.client.core.serverless() { return None; }
-        lan_secret(&self.client).map(|secret| lan::pairing_link(&secret))
-    }
-
-    /// Accepts a pairing code explicitly chosen by the user, then reannounces the door and looks again: the
-    /// doors already found were turned away under the old secret, and are reported only to a new look.
-    pub fn pair(self: Arc<Self>, link: String) -> bool {
-        let Some(secret) = lan::parse_pairing(&link) else { return false };
-        if self.pairing_link().is_none() { return false; }
-        if !keep_pairing(&self.client.core.session.settings, &secret) { return false; }
-        let (announce, browsing) = {
-            let mut i = self.inner.lock();
-            i.peers.clear();
-            i.active.here();
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(door) = &i.door { door.pair_secret(lan_secret(&self.client).expect("pairing secret")); }
-            #[cfg(not(target_arch = "wasm32"))]
-            let announce = i.door.as_ref().map(|door| self.announcement(door.port()));
-            #[cfg(target_arch = "wasm32")]
-            let announce = None;
-            (announce, i.browsing())
-        };
-        if let Some(discovery) = &self.discovery {
-            discovery.announce(announce);
-            if browsing {
-                discovery.browse(false);
-                discovery.browse(true);
-            }
-        }
-        self.shown.changed();
-        true
-    }
-
-    /// Forgets all paired devices by rotating this device's pairing credential.
-    pub fn reset_pairing(self: Arc<Self>) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Ok(secret) = lan::new_secret() { return self.pair(lan::pairing_link(&secret)); }
-        false
-    }
-
     /// Current library favorites, including changes received from nearby devices.
     pub fn star_marks(&self) -> crate::stars::StarMarks {
         self.client.core.stars.lock().clone()
@@ -2003,9 +1966,12 @@ impl Remote {
     /// A door the platform's discovery found: service `service` at `host`:`port` with TXT `txt`.
     pub fn lan_found(self: Arc<Self>, service: String, host: String, port: u16, txt: Vec<Param>) {
         let get = |k: &str| txt.iter().find(|p| p.key == k).map(|p| p.value.clone()).unwrap_or_default();
-        let Some(tag) = self.account_tag() else { return };
         let id = get("id");
-        if get("acct") != tag || id.is_empty() || id == self.id {
+        let known = match self.account_tag() {
+            Some(tag) => get("acct") == tag,
+            None => pairing::is_paired(&self.client, &id),
+        };
+        if !known || id.is_empty() || id == self.id {
             return;
         }
         let kind = serde_json::from_value(serde_json::Value::String(get("kind"))).unwrap_or_default();
@@ -2023,6 +1989,9 @@ impl Remote {
                 return;
             }
             i.peers.retain(|p| p.service != service && p.member.id != id);
+            if self.account_tag().is_none() {
+                pairing::seen(&self.client, &id);
+            }
             let member = Member { id, name: get("name"), kind, state: None };
             i.peers.push(Peer { library_marks: get("marks") == "1", service, bases: vec![base], failed: 0, member, received: self.now(), since: None, poller: None, lost: false });
         }
@@ -2616,26 +2585,12 @@ impl Running {
     }
 }
 
-/// The paired-device credential; YouTube has no server account credential.
-fn keep_pairing(settings: &Settings, secret: &str) -> bool {
-    settings.app_db().is_some_and(|db| db.lock().execute("INSERT OR REPLACE INTO app_kv(key,value) VALUES('remoteLanSecret',?1)", [secret]).is_ok())
-}
-
-fn lan_secret(client: &Client) -> Option<String> {
-    if let Some((_, secret)) = client.core.lan_jam.read().as_ref() { return Some(secret.clone()); }
-    if let Some(account) = client.core.account.read().as_ref() { return Some(account.proof().to_string()); }
-    let settings = &client.core.session.settings;
-    let db = settings.app_db()?;
-    let db = db.lock();
-    if let Ok(secret) = db.query_row("SELECT value FROM app_kv WHERE key='remoteLanSecret'", [], |r| r.get::<_, String>(0)) { return Some(secret); }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let secret = lan::new_secret().ok()?;
-        db.execute("INSERT INTO app_kv(key,value) VALUES('remoteLanSecret',?1)", [&secret]).ok()?;
-        Some(secret)
-    }
-    #[cfg(target_arch = "wasm32")]
-    None
+/// This device's address on its network: the one a packet to the internet would leave from (nothing is sent).
+#[cfg(not(target_arch = "wasm32"))]
+fn lan_ip() -> Option<std::net::IpAddr> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:9").ok()?;
+    Some(socket.local_addr().ok()?.ip())
 }
 
 /// `endpoint` with `params` at the door of the LAN jam this guest profile is in, signed with its member
@@ -2659,7 +2614,7 @@ async fn deliver(client: &Client, who: &[(String, String)], o: Out) {
             let url = match link {
                 Link::Relay => remote_url(client, "noriRemote.send", who, "POST", json.as_bytes()),
                 Link::Lan(base) => {
-                    let Some(secret) = lan_secret(client) else { return };
+                    let Some(secret) = outgoing.to.as_deref().and_then(|to| pairing::lan_key(client, to)) else { return };
                     let dev = &who[0].1;
                     format!("{base}{}", lan::signed(&secret, "POST", &format!("/rest/noriRemote.send?dev={dev}"), json.as_bytes(), db::now_ms()))
                 }
@@ -2957,9 +2912,11 @@ impl Remote {
         remote_url(&self.client, "noriRemote.poll", &p, "GET", b"")
     }
 
+    /// What the account's devices (or a LAN jam's) announce their doors with; None where devices pair
+    /// one by one and are known by id.
     fn account_tag(&self) -> Option<String> {
         let user = self.client.core.account.read().as_ref().map(|a| a.user.clone()).unwrap_or_else(|| "youtube".into());
-        lan_secret(&self.client).map(|secret| lan::account_tag(&user, &secret))
+        pairing::shared_key(&self.client).map(|secret| lan::account_tag(&user, &secret))
     }
 
     /// Likes this account made on another device: this session's marks, and the cached pages they touch
@@ -3042,8 +2999,7 @@ impl Remote {
     #[cfg(not(target_arch = "wasm32"))]
     fn open_lan_jam(self: &Arc<Self>) -> Result<Option<String>, NetError> {
         let secret = lan::new_secret().map_err(|e| NetError::Parse { reason: e.to_string() })?;
-        let socket = std::net::UdpSocket::bind("0.0.0.0:0").and_then(|s| { s.connect("192.0.2.1:9")?; Ok(s) }).map_err(|e| NetError::Parse { reason: e.to_string() })?;
-        let ip = socket.local_addr().map_err(|e| NetError::Parse { reason: e.to_string() })?.ip();
+        let ip = lan_ip().ok_or_else(|| NetError::Parse { reason: "no network address".into() })?;
         let link = {
             let mut i = self.inner.lock();
             if !matches!(i.host, HostJam::None) || self.me.kind == DeviceKind::Guest { return Ok(None); }
@@ -3104,15 +3060,21 @@ impl Remote {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn open_door(self: &Arc<Self>) -> Option<Door> {
-        let secret = lan_secret(&self.client)?;
+        let access = pairing::door_access(&self.client)?;
         let me = Member { id: self.id.clone(), name: self.me.name.clone(), kind: self.me.kind, state: None };
         let weak = Arc::downgrade(self);
+        let paired = weak.clone();
         let opened = Door::open(
             me,
-            secret,
+            access,
             Box::new(move |from, body| {
                 if let (Some(r), Body::Command { id, op }) = (weak.upgrade(), body) {
                     r.obey(Via::Door, from.to_string(), id, *op, r.now());
+                }
+            }),
+            Box::new(move |change| {
+                if let Some(r) = paired.upgrade() {
+                    r.door_paired(change);
                 }
             }),
             self.tasks.clone(),
@@ -3337,7 +3299,7 @@ impl Remote {
 
     async fn poll_peer(self: Arc<Self>, service: String, poller: u64) {
         loop {
-            let (base, since) = {
+            let (base, since, peer) = {
                 let mut i = self.inner.lock();
                 let Some(at) = i.peers.iter().position(|p| p.service == service) else { return };
                 if i.peers[at].poller != Some(poller) {
@@ -3347,9 +3309,9 @@ impl Remote {
                     i.peers[at].poller = None;
                     return;
                 }
-                (i.peers[at].base(), i.peers[at].since)
+                (i.peers[at].base(), i.peers[at].since, i.peers[at].member.id.clone())
             };
-            let Some(secret) = lan_secret(&self.client) else { return };
+            let Some(secret) = pairing::lan_key(&self.client, &peer) else { return };
             let query = match since {
                 Some(s) => format!("/rest/noriRemote.poll?dev={}&since={s}&hold=1", self.id),
                 None => format!("/rest/noriRemote.poll?dev={}", self.id),
@@ -3616,7 +3578,7 @@ impl Remote {
                     }
                 }
                 (Timed::Device { id, .. }, Some(Link::Lan(base))) => {
-                    let Some(secret) = lan_secret(&self.client) else { return };
+                    let Some(secret) = pairing::lan_key(&self.client, &id) else { return };
                     let t1 = self.now();
                     let url = format!("{base}{}", lan::signed(&secret, "GET", &format!("/rest/noriRemote.time?dev={}&t1={t1}", self.id), b"", db::now_ms()));
                     let Some(got) = self.get(url, 5_000, |_| true).await else { return };
@@ -3750,8 +3712,7 @@ impl Remote {
         let body = match op {
             Op::LibraryMarks { marks } => {
                 let allowed = matches!(via, Via::Door) && !self.inner.lock().stopped
-                    && self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false)
-                    && self.account_tag().is_some();
+                    && self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false);
                 let refusal = if allowed {
                     self.marked(marks);
                     self.publish();

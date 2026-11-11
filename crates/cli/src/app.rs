@@ -198,7 +198,8 @@ pub enum Cmd {
     /// No reminder at start until the account is signed in, and its session ends, again.
     StopReminding,
     Pair(String),
-    ResetPairing,
+    /// Forgets the paired device with this id.
+    Forget(String),
     LeaveJam,
     /// A jam guest listens along (plays the host's music here, in step), or only watches.
     Listen(bool),
@@ -294,8 +295,8 @@ impl Cmd {
             Cmd::SignIn(_) => "sign in with pasted cookies".into(),
             Cmd::SignOut => "sign out".into(),
             Cmd::StopReminding => "stop the sign-in reminder".into(),
-            Cmd::Pair(_) => "pair devices".into(),
-            Cmd::ResetPairing => "forget paired devices".into(),
+            Cmd::Pair(_) => "pair a device".into(),
+            Cmd::Forget(_) => "forget a paired device".into(),
             Cmd::LeaveJam => "leave the jam".into(),
             Cmd::JamAlong(on) => format!("room listening along {on}"),
             Cmd::JamRemoteSongs(on) => format!("room remote songs {on}"),
@@ -766,7 +767,10 @@ pub struct Devices {
     pub on: bool,
     /// Where starting a jam stands, while remote control is on; Unavailable with jams off.
     pub jam_start: Option<JamStart>,
+    /// This computer's pairing code, where its profile pairs device by device.
     pub pairing: Option<String>,
+    /// The devices paired with this one.
+    pub paired: Vec<nori_core::remote::PairedDevice>,
     /// The account's other devices.
     pub list: Vec<RemoteDevice>,
     pub sel: Sel,
@@ -853,8 +857,12 @@ pub enum DeviceRow {
     Jam,
     /// Joins someone's jam.
     Join,
+    /// The title over the paired devices.
+    PairedTitle,
+    /// Index into [`Devices::paired`].
+    Paired(usize),
+    /// Shows this computer's pairing code, and takes the other device's.
     Pair,
-    ResetPairing,
     /// The way on to a controlled device's settings: its plugin's page.
     Settings(usize),
     /// A device a plugin controls, with its battery: index into [`Devices::controlled`].
@@ -902,7 +910,9 @@ impl Devices {
             }
             rows.push(DeviceRow::Join);
             if self.pairing.is_some() {
-                rows.extend([DeviceRow::Pair, DeviceRow::ResetPairing]);
+                rows.push(DeviceRow::PairedTitle);
+                rows.extend((0..self.paired.len()).map(DeviceRow::Paired));
+                rows.push(DeviceRow::Pair);
             }
         }
         for (c, card) in self.plugins.iter().enumerate() {
@@ -921,7 +931,7 @@ impl Devices {
     /// or hint), in direction `down`.
     fn settle(&mut self, down: bool) {
         let rows = self.rows();
-        let picks = |at: &usize| !matches!(rows[*at], DeviceRow::Playing(_) | DeviceRow::Controlled(_) | DeviceRow::PluginName(_) | DeviceRow::PluginHint(..));
+        let picks = |at: &usize| !matches!(rows[*at], DeviceRow::Playing(_) | DeviceRow::Controlled(_) | DeviceRow::PluginName(_) | DeviceRow::PluginHint(..) | DeviceRow::PairedTitle);
         if self.sel.at >= rows.len() || picks(&self.sel.at) {
             return;
         }
@@ -1040,6 +1050,8 @@ pub enum Overlay {
     JamSettings,
     /// An invite link pasted to join someone's jam, and why joining failed.
     Join { text: String, error: Option<String>, busy: bool },
+    /// This computer's pairing code, the other device's pasted under it, and why pairing failed.
+    Pair { text: String, error: Option<String>, busy: bool },
     /// The profile's account with a provider: who is signed in (empty: no one), whether the provider
     /// ended the session, cookies being pasted, why signing in failed, and a sign-in under way.
     /// `ways` are its provider's, in order; `flow` is the core's; `window_failed`, that the sign-in
@@ -1766,6 +1778,19 @@ impl App {
                 self.invite();
             }
             Msg::Jam(Err(e)) => self.say(format!("{} ({e})", crate::text::JAM_FAILED), true),
+            Msg::Paired(Ok(name)) => {
+                if matches!(self.overlay, Some(Overlay::Pair { .. })) {
+                    self.overlay = None;
+                }
+                self.say(crate::text::paired_with(&name), false);
+            }
+            Msg::Paired(Err(e)) => match &mut self.overlay {
+                Some(Overlay::Pair { error, busy, .. }) => {
+                    *error = Some(e.clone());
+                    *busy = false;
+                }
+                _ => self.say(e.clone(), true),
+            },
             Msg::Joined(Err(e)) => match &mut self.overlay {
                 Some(Overlay::Join { error, busy, .. }) => {
                     *error = Some(e.clone());
@@ -2129,6 +2154,8 @@ impl App {
         }
         match self.focus {
             Focus::Panel if self.panel == Panel::Queue => &[Scope::Edit, Scope::List, Scope::Global],
+            // A paired device is forgotten as a song is taken out.
+            Focus::Panel if self.panel == Panel::Devices && matches!(self.devices.rows().get(self.devices.sel.at), Some(DeviceRow::Paired(_))) => &[Scope::Edit, Scope::List, Scope::Global],
             // A plugin's row changes its value as a setting does.
             Focus::Panel if self.plugin_device_row().is_some() => &[Scope::Values, Scope::List, Scope::Global],
             Focus::Panel => &[Scope::List, Scope::Global],
@@ -2172,15 +2199,17 @@ impl App {
 
     fn paste(&mut self, text: &str) {
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
-        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, .. }) = &mut self.overlay {
+        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Pair { text: t, busy: false, .. } | Overlay::Account { text: t, pasting: true, .. }) = &mut self.overlay {
             t.push_str(&text);
         } else if self.view == View::Login {
             if !self.login_choosing() {
                 self.login.fields[self.login.focus].push_str(&text);
             }
-        } else if nori_core::remote::is_invite(&text) || nori_core::remote::pairing_valid(text.clone()) {
-            // An invite pasted anywhere offers to join its jam.
+        } else if nori_core::remote::is_invite(&text) {
+            // An invite pasted anywhere offers to join its jam, a pairing code to pair.
             self.overlay = Some(Overlay::Join { text, error: None, busy: false });
+        } else if nori_core::remote::pairing_valid(text.clone()) {
+            self.overlay = Some(Overlay::Pair { text, error: None, busy: false });
         } else {
             if self.view != View::Search {
                 self.go(View::Search);
@@ -2449,7 +2478,7 @@ impl App {
                 KeyCode::Char('q') => self.overlay = None,
                 _ => {}
             },
-            Overlay::Join { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
+            Overlay::Join { busy: true, .. } | Overlay::Pair { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
             Overlay::Account { flow, .. } if flow.busy() && k.code != KeyCode::Esc => self.dirty = false,
             Overlay::Account { flow, .. } if matches!(flow.shown, SignInShown::Code { .. }) => match k.code {
                 KeyCode::Enter if !flow.checks_code() => self.sign_in_with_code(),
@@ -2503,11 +2532,27 @@ impl App {
                 KeyCode::Esc | KeyCode::Char('q') => self.overlay = None,
                 _ => {}
             },
-            Overlay::Join { text, error, busy } => match k.code {
+            Overlay::Pair { text, error, busy } => match k.code {
                 KeyCode::Enter if nori_core::remote::pairing_valid(text.clone()) => {
-                    self.cmds.push(Cmd::Pair(text.clone()));
-                    self.overlay = None;
+                    *busy = true;
+                    *error = None;
+                    self.cmds.push(Cmd::Pair(text.trim().to_string()));
                 }
+                KeyCode::Enter => *error = Some(crate::text::pair_failed(nori_core::remote::PairError::NotACode, None)),
+                KeyCode::Esc => self.overlay = None,
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => text.clear(),
+                KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
+                _ => self.dirty = false,
+            },
+            Overlay::Join { text, .. } if k.code == KeyCode::Enter && nori_core::remote::pairing_valid(text.clone()) => {
+                let text = text.trim().to_string();
+                self.cmds.push(Cmd::Pair(text.clone()));
+                self.overlay = Some(Overlay::Pair { text, error: None, busy: true });
+            }
+            Overlay::Join { text, error, busy } => match k.code {
                 KeyCode::Enter if nori_core::remote::is_invite(text) => {
                     *busy = true;
                     *error = None;
@@ -2762,6 +2807,10 @@ impl App {
                 None => self.dirty = false,
             },
             Action::Remove if self.home_line() == Some(HomeLine::Offer) => self.take_offer(false),
+            Action::Remove if self.focus == Focus::Panel && self.panel == Panel::Devices => match self.devices.rows().get(self.devices.sel.at).copied() {
+                Some(DeviceRow::Paired(i)) => self.forget_asked(i),
+                _ => self.dirty = false,
+            },
             Action::Remove => self.dirty = false,
             Action::Jam => {
                 let item = if self.focus == Focus::Main { self.selected() } else { None };
@@ -3612,8 +3661,8 @@ impl App {
             Some(DeviceRow::Jam) if d.jam.is_some() => self.invite(),
             Some(DeviceRow::Jam) => self.jam_start(),
             Some(DeviceRow::Join) => self.join(),
-            Some(DeviceRow::Pair) => { if let Some(link) = d.pairing.clone() { self.overlay = Some(Overlay::Invite { link }); } }
-            Some(DeviceRow::ResetPairing) => self.cmds.push(Cmd::ResetPairing),
+            Some(DeviceRow::Pair) => self.overlay = Some(Overlay::Pair { text: String::new(), error: None, busy: false }),
+            Some(DeviceRow::Paired(i)) => self.forget_asked(i),
             Some(DeviceRow::Plugin(c, r)) => match self.devices.plugin_row(c, r).and_then(crate::settings_view::open_row) {
                 Some(Opened::Cmds(c)) => self.cmds.extend(c),
                 Some(Opened::Overlay(o)) => self.overlay = Some(o),
@@ -3631,8 +3680,15 @@ impl App {
                     self.cmds.push(Cmd::Plugin(PluginCmd::Noise(c.id.clone(), next)));
                 }
             }
-            Some(DeviceRow::Controlled(_) | DeviceRow::PluginName(_) | DeviceRow::PluginHint(..)) | None => self.dirty = false,
+            Some(DeviceRow::Controlled(_) | DeviceRow::PluginName(_) | DeviceRow::PluginHint(..) | DeviceRow::PairedTitle) | None => self.dirty = false,
         }
+    }
+
+    /// Asks before forgetting paired device `i`.
+    fn forget_asked(&mut self, i: usize) {
+        let Some(d) = self.devices.paired.get(i) else { return };
+        let lines = vec![crate::text::FORGET_HOW.into()];
+        self.overlay = Some(Overlay::Confirm { title: crate::text::forget_title(&d.name), lines, yes: crate::text::FORGET.into(), cmd: Box::new(Cmd::Forget(d.id.clone())) });
     }
 
     /// The account sheet's code step: a new code asked for, to be shown and checked.

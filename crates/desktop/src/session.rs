@@ -77,6 +77,8 @@ pub enum Msg {
     Cast,
     /// The jam asked for opened, or why not.
     Jam(Result<(), String>),
+    /// A device paired (its name), or what to say of why not.
+    Paired(Result<String, String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.
     Joined(Result<nori_core::remote::JamPass, String>),
     /// The jam this guest is in ended (its host's name, if seen).

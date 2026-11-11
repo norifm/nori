@@ -17,6 +17,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.text.font.FontWeight
@@ -79,12 +80,17 @@ internal fun refusal(r: Refusal): String = words(
  * picker), and the jam: "Start a Jam", or "Your Jam" with End while one is on. Up only while remote control
  * or jams are on.
  */
-/** The devices sheet's page: the devices, a hosted jam's invite or settings, pairing, or a controlled device's page. */
+/**
+ * The devices sheet's page: the devices, a hosted jam's invite or settings, the paired devices, pairing a new
+ * one (the camera on its code, or its link pasted), this phone's code, or a controlled device's page.
+ */
 private sealed interface RoomPage {
     data object Main : RoomPage
     data object Invite : RoomPage
     data object Settings : RoomPage
     data object Pair : RoomPage
+    data object Code : RoomPage
+    data object New : RoomPage
     /** The page of the controlled device [id]. */
     data class Device(val id: String) : RoomPage
 }
@@ -105,6 +111,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         val mirror by vm.mirror.collectAsStateWithLifecycle()
         val destination by vm.destination.collectAsStateWithLifecycle()
         val pairing by vm.pairingLink.collectAsStateWithLifecycle()
+        val paired by vm.paired.collectAsStateWithLifecycle()
         val unsupported = relay == dev.nori.music.ffi.RelaySupport.UNSUPPORTED
         val cast by sound.pluginCast.collectAsStateWithLifecycle()
         val targets by sound.pluginTargets.collectAsStateWithLifecycle()
@@ -125,11 +132,11 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         // What is showing: a page whose reason for being is gone is the main one.
         val showing = when {
             pageDevice != null -> page
-            page == RoomPage.Pair && pairing != null -> page
+            (page == RoomPage.Pair || page == RoomPage.Code || page == RoomPage.New) && pairing != null -> page
             hosted != null && (page == RoomPage.Invite || page == RoomPage.Settings) -> page
             else -> RoomPage.Main
         }
-        BackHandler(showing != RoomPage.Main) { page = RoomPage.Main }
+        BackHandler(showing != RoomPage.Main) { page = if (showing == RoomPage.Code || showing == RoomPage.New) RoomPage.Pair else RoomPage.Main }
         // One page fades into the next, as the sheet takes the new one's height.
         androidx.compose.animation.AnimatedContent(
             showing,
@@ -156,7 +163,13 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 ControlledDevicePage(plugins, shownDevice)
             } else if (p == RoomPage.Pair && pairing != null) {
                 SheetTitle(words(R.string.pair_devices))
-                PairingBody(pairing!!, vm) { page = RoomPage.Main }
+                PairedPage(vm, paired, { page = RoomPage.New }, { page = RoomPage.Code })
+            } else if (p == RoomPage.Code && pairing != null) {
+                SheetTitle(words(R.string.pair_show))
+                LinkCode(pairing!!, words(R.string.pair_hint))
+            } else if (p == RoomPage.New && pairing != null) {
+                SheetTitle(words(R.string.pair_new))
+                NewDevicePage(vm) { page = RoomPage.Pair }
             } else if (hosted != null && (p == RoomPage.Invite || p == RoomPage.Settings)) {
                 SheetTitle(words(if (p == RoomPage.Invite) R.string.jam_invite_title else R.string.settings))
                 if (p == RoomPage.Invite) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)
@@ -209,7 +222,10 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 // player's button has it idle: a filled glyph is one lit in the accent.
                 GroupCard {
                     SheetRow(words(R.string.devices_output), Iconoir.SoundHigh, divider = pairing != null || offered || (jams && hosted != null), onClick = onOutput)
-                    if (pairing != null) SheetRow(words(R.string.pair_devices), Iconoir.SmartphoneDevice, divider = offered || (jams && hosted != null), onClick = { page = RoomPage.Pair })
+                    if (pairing != null) GroupRow(
+                        words(R.string.pair_devices), { page = RoomPage.Pair }, icon = Iconoir.SmartphoneDevice, chevron = true,
+                        subtitle = paired.joinToString(", ") { it.name }.ifEmpty { words(R.string.pair_none) }, divider = offered || (jams && hosted != null),
+                    )
                     if (offered) SheetRow(words(R.string.jam_start), Iconoir.Community, divider = false, onClick = vm::jamStart)
                     if (jams && hosted != null) YourJam(hosted.members.count { it.role != Role.HOST }, { onDismiss(); nav.player(Panel.QUEUE) }, vm::jamEnd)
                 }
@@ -236,44 +252,141 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
 /** What a sheet's handle and foot take, kept out of how tall a page of the devices sheet may be. */
 private val SHEET_ROOM = 48.dp
 
-/** An incoming pairing code waits for an explicit choice. */
+/** An incoming pairing code (a link opened, the system camera's scan) waits for an explicit choice. */
 @Composable
 internal fun PairingRequest(vm: RemoteViewModel = viewModel()) {
     val request by vm.pairRequest.collectAsStateWithLifecycle()
     val tell = LocalMessages.current
-    val paired = words(R.string.pair_done)
-    val failed = words(R.string.pair_failed)
+    val r = LocalContext.current.resources
     NoriDialog(request, vm::dismissPairing) { link ->
+        val name = remember(link) { dev.nori.music.ffi.pairingName(link) }
         AlertCard(
-            title = { Text(words(R.string.pair_confirm)) },
-            text = { Text(words(R.string.pair_hint)) },
-            confirmButton = { TextAction(words(R.string.pair_action), { vm.pair(link) { ok -> tell(if (ok) paired else failed); vm.dismissPairing() } }) },
+            title = { Text(if (name != null) words(R.string.pair_confirm, name) else words(R.string.pair_confirm_unnamed)) },
+            text = { Text(words(R.string.pair_confirm_hint)) },
+            confirmButton = {
+                TextAction(words(R.string.pair_action), {
+                    vm.pair(link) { result -> tell(result.fold({ r.getString(R.string.pair_done, it.name) }, { say.pairFailed(it, name) })) }
+                    vm.dismissPairing()
+                })
+            },
             dismissButton = { TextAction(words(R.string.cancel), vm::dismissPairing) },
         )
     }
 }
 
+/**
+ * The devices paired with this phone, each with Forget (asked first); then pairing another, and this phone's
+ * own code for another to scan.
+ */
 @Composable
-private fun PairingBody(link: String, vm: RemoteViewModel, onPaired: () -> Unit) {
-    var entered by remember { mutableStateOf("") }
-    var resetting by remember { mutableStateOf(false) }
-    val tell = LocalMessages.current
-    val paired = words(R.string.pair_done)
-    val failed = words(R.string.pair_failed)
-    LinkCode(link, words(R.string.pair_hint))
-    GroupCard { GroupField(entered, { entered = it }, placeholder = words(R.string.pair_link), divider = false) }
-    Column(Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        PillButton(words(R.string.pair_action), Iconoir.SmartphoneDevice, {
-            vm.pair(entered) { ok -> tell(if (ok) paired else failed); if (ok) onPaired() }
-        }, enabled = dev.nori.music.ffi.pairingValid(entered))
-        TextAction(words(R.string.pair_reset), { resetting = true })
+private fun PairedPage(vm: RemoteViewModel, paired: List<dev.nori.music.ffi.PairedDevice>, onNew: () -> Unit, onCode: () -> Unit) {
+    var forgetting by remember { mutableStateOf<dev.nori.music.ffi.PairedDevice?>(null) }
+    val scheme = MaterialTheme.colorScheme
+    if (paired.isNotEmpty()) GroupCard {
+        paired.forEachIndexed { k, d ->
+            GroupRow(
+                d.name, subtitle = say.pairSeen(d), icon = kindIcon(d.kind), divider = k < paired.lastIndex,
+                trailing = {
+                    IconButton({ forgetting = d }) { Icon(Iconoir.Xmark, words(R.string.pair_forget), Modifier.size(20.dp), tint = scheme.onSurfaceVariant) }
+                },
+            )
+        }
     }
-    NoriDialog(resetting, { resetting = false }) {
+    GroupCard {
+        SheetRow(words(R.string.pair_new), Iconoir.ScanQrCode, divider = true, onClick = onNew)
+        SheetRow(words(R.string.pair_show), Iconoir.SmartphoneDevice, divider = false, onClick = onCode)
+    }
+    Spacer(Modifier.height(24.dp))
+    NoriDialog(forgetting, { forgetting = null }) { d ->
         AlertCard(
-            title = { Text(words(R.string.pair_reset)) }, text = { Text(words(R.string.pair_reset_hint)) },
-            confirmButton = { TextAction(words(R.string.pair_reset), { vm.resetPairing(); resetting = false }, destructive = true) },
-            dismissButton = { TextAction(words(R.string.cancel), { resetting = false }) },
+            title = { Text(words(R.string.pair_forget_title, d.name)) }, text = { Text(words(R.string.pair_forget_hint)) },
+            confirmButton = { TextAction(words(R.string.pair_forget), { vm.forget(d.id); forgetting = null }, destructive = true) },
+            dismissButton = { TextAction(words(R.string.cancel), { forgetting = null }) },
         )
+    }
+}
+
+/** Why this page opens on the pasted link: no camera, the camera refused, or asked for. */
+private enum class Pasting { NO_CAMERA, DENIED, ASKED }
+
+/**
+ * Pairing a new device: the camera on its code, its permission asked for here, at the tap that opened it;
+ * "Paste a link instead" turns it into a field for the other device's link. Without a camera, or with the
+ * camera refused, the field shows at once. Paired, [onPaired] goes back to the list.
+ */
+@Composable
+private fun NewDevicePage(vm: RemoteViewModel, onPaired: () -> Unit) {
+    val context = LocalContext.current
+    val scheme = MaterialTheme.colorScheme
+    val tell = LocalMessages.current
+    val camera = remember { context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY) }
+    var allowed by remember { mutableStateOf(androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) }
+    var pasting by remember { mutableStateOf(if (camera) null else Pasting.NO_CAMERA) }
+    val ask = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        allowed = granted
+        if (!granted) pasting = Pasting.DENIED
+    }
+    LaunchedEffect(Unit) { if (camera && !allowed) ask.launch(android.Manifest.permission.CAMERA) }
+    val paired = { device: dev.nori.music.ffi.PairedDevice -> tell(context.getString(R.string.pair_done, device.name)); onPaired() }
+    val way = pasting
+    if (way != null) {
+        PastePage(vm, way, paired)
+        return
+    }
+    // What to say of what the camera read last, the code being paired with now, and the last one tried: a
+    // code turned down is not tried again while it stays in sight.
+    var said by remember { mutableStateOf<String?>(null) }
+    var pairing by remember { mutableStateOf<String?>(null) }
+    var tried by remember { mutableStateOf<String?>(null) }
+    val other = words(R.string.pair_scan_other)
+    Column(Modifier.fillMaxWidth().padding(horizontal = Space.gutter), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (allowed) QrScanner(
+            onFound = { text ->
+                if (pairing != null || text == tried) return@QrScanner
+                if (!dev.nori.music.ffi.pairingValid(text)) { said = other; return@QrScanner }
+                pairing = text
+                tried = text
+                said = context.getString(R.string.pair_busy)
+                vm.pair(text) { result ->
+                    result.onSuccess(paired)
+                    result.onFailure { said = say.pairFailed(it, dev.nori.music.ffi.pairingName(text)); pairing = null }
+                }
+            },
+            noCamera = { LaunchedEffect(Unit) { pasting = Pasting.NO_CAMERA } },
+        )
+        Text(
+            said ?: words(R.string.pair_scan_hint), Modifier.padding(top = 16.dp),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodyMedium,
+            color = if (said != null && pairing == null) scheme.error else scheme.onSurfaceVariant,
+        )
+        TextAction(words(R.string.pair_paste_instead), { pasting = Pasting.ASKED }, Modifier.padding(top = 8.dp, bottom = 16.dp))
+    }
+}
+
+/** The other device's pairing link pasted, and Pair; why pairing failed shows under the field. */
+@Composable
+private fun PastePage(vm: RemoteViewModel, way: Pasting, onPaired: (dev.nori.music.ffi.PairedDevice) -> Unit) {
+    var entered by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var failure by remember { mutableStateOf<String?>(null) }
+    val scheme = MaterialTheme.colorScheme
+    Text(
+        words(when (way) { Pasting.NO_CAMERA -> R.string.pair_no_camera; Pasting.DENIED -> R.string.pair_camera_denied; Pasting.ASKED -> R.string.pair_paste_hint }),
+        Modifier.padding(horizontal = Space.gutter), style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant,
+    )
+    GroupCard { GroupField(entered, { entered = it; failure = null }, placeholder = words(R.string.pair_link), divider = false, autofocus = way == Pasting.ASKED) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 16.dp), Arrangement.spacedBy(16.dp), Alignment.CenterHorizontally) {
+        failure?.let { Text(it, color = scheme.error, style = MaterialTheme.typography.bodyMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
+        PillButton(words(if (busy) R.string.pair_busy else R.string.pair_action), Iconoir.SmartphoneDevice, {
+            busy = true
+            failure = null
+            val link = entered.trim()
+            vm.pair(link) { result ->
+                busy = false
+                result.onSuccess(onPaired)
+                result.onFailure { failure = say.pairFailed(it, dev.nori.music.ffi.pairingName(link)) }
+            }
+        }, prominent = true, enabled = !busy && dev.nori.music.ffi.pairingValid(entered.trim()))
     }
 }
 

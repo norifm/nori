@@ -5,12 +5,12 @@ use std::ffi::{c_char, CString};
 use std::sync::{Arc, Mutex};
 
 use nori_core::remote::wire::Refusal;
-use nori_core::remote::{Announcement, Discovery, Remote, RemoteDevice};
+use nori_core::remote::{Announcement, Discovery, PairError, Remote, RemoteDevice};
 use nori_core::Param;
 use serde_json::{json, Map, Value};
 
 use crate::pages::owned;
-use crate::session::{c_text, with_session};
+use crate::session::{c_text, report, with_session, REPORT_PAIRED};
 
 /// Announces this device's door: `name`, `port` and its TXT record as a JSON object of strings; `name`
 /// NULL withdraws it.
@@ -156,18 +156,66 @@ pub extern "C" fn nori_ios_pairing() -> *mut c_char {
     remote().and_then(|r| r.pairing_link()).map(|link| c(&link).into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
-/// Accepts a pairing code the user confirmed.
+/// The devices paired with this iPod, as JSON to free; NULL where pairing is unavailable:
+/// `[{"id", "name", "kind", "nearby", "days"}]`, `kind` a `DeviceKind`, `days` whole days since it was last
+/// nearby.
+#[no_mangle]
+pub extern "C" fn nori_ios_paired() -> *mut c_char {
+    let Some(r) = remote().filter(|r| r.pairing_link().is_some()) else { return std::ptr::null_mut() };
+    let paired: Vec<Value> = r.paired().iter().map(|d| json!({ "id": d.id, "name": d.name, "kind": d.kind as u8, "nearby": d.nearby, "days": d.seen_days })).collect();
+    owned(&Value::Array(paired))
+}
+
+/// [`nori_ios_pair`]: pairing started; its answer is a `REPORT_PAIRED`.
+pub const PAIR_STARTED: i32 = 0;
+/// The link is no pairing code.
+pub const PAIR_NOT_A_CODE: i32 = 1;
+/// No session is open, or remote control is off.
+pub const PAIR_CLOSED: i32 = 2;
+
+/// Why pairing failed, as a `REPORT_PAIRED` says it.
+fn pair_error_code(e: PairError) -> i32 {
+    match e {
+        PairError::NotACode => 0,
+        PairError::Own => 1,
+        PairError::Unavailable => 2,
+        PairError::Unreachable => 3,
+        PairError::TimedOut => 4,
+        PairError::Refused => 5,
+    }
+}
+
+/// Pairs with the device whose code `link` is, on a thread of its own: a [`PAIR_STARTED`] answer comes as
+/// a `REPORT_PAIRED`: flag 1 paired (text: its name), 0 not (index: why, a `NORI_PAIR_*` code; text: its
+/// name, when its code says it).
 ///
 /// # Safety
 /// `link` is NUL-terminated UTF-8, or NULL.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_pair(link: *const c_char) -> i32 {
-    let link = c_text(link);
-    i32::from(remote().is_some_and(|r| r.pair(link)))
+    let link = c_text(link).trim().to_string();
+    if !nori_core::remote::pairing_valid(link.clone()) {
+        return PAIR_NOT_A_CODE;
+    }
+    let Some(r) = remote() else { return PAIR_CLOSED };
+    nori_host::spawn("nori-ios-pair", move || {
+        let name = nori_core::remote::pairing_name(link.clone()).unwrap_or_default();
+        match nori_core::transport::block_on(r.pair(link)) {
+            Ok(device) => report(REPORT_PAIRED, 1, 0, &device.name),
+            Err(e) => report(REPORT_PAIRED, 0, pair_error_code(e), &name),
+        }
+    });
+    PAIR_STARTED
 }
 
-/// Forgets all paired devices by rotating this device's pairing credential.
+/// Forgets paired device `id`: neither controls the other any more.
+///
+/// # Safety
+/// `id` is NUL-terminated UTF-8, or NULL.
 #[no_mangle]
-pub extern "C" fn nori_ios_forget_pairs() -> i32 {
-    i32::from(remote().is_some_and(|r| r.reset_pairing()))
+pub unsafe extern "C" fn nori_ios_forget(id: *const c_char) {
+    let id = c_text(id);
+    if let Some(r) = remote() {
+        r.forget(id);
+    }
 }
