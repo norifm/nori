@@ -2852,7 +2852,7 @@ mod tests {
         let queue = nori_engine::SharedQueue::default();
         queue.0.lock().set(vec!["a".into(), "b".into()], Some(0), false, 0);
         let mut app = nori_player::sim::App::new();
-        app.prefs = nori_player::transitions::TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..nori_player::sim::prefs_off() };
+        app.prefs = nori_player::transitions::TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..nori_player::sim::prefs_off() };
         // Measured only as given: measuring ahead on the engine's thread would measure the songs whose
         // loaders happened to finish first (the app's measurer, not the engine, measures ahead).
         app.measure_ahead = false;

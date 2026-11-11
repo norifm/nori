@@ -915,7 +915,6 @@ impl StoredPrefs {
             max_tempo_change_pct: self.auto_mix.style().tempo_pct(),
             bass_swap: true,
             filter_effects: true,
-            echo_out: true,
             keep_pitch: true,
             keep_albums: self.crossfade_keep_albums,
             // AutoMix skips its loudness matching under volume leveling.

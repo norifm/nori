@@ -232,6 +232,12 @@ impl Ending {
         e
     }
 
+    /// The ring-out after the song's stop, ms: a closing breakdown short enough to be its last hit or chord dying away.
+    pub fn ring_out(&self) -> Option<f64> {
+        let ring = self.music_end - self.exit;
+        (self.breakdown && ring <= RING_OUT_MS).then_some(ring)
+    }
+
     /// Music (not silence) after `heard_end`, ms.
     pub fn skipped(&self, heard_end: f64) -> f64 {
         let total = (self.music_end - heard_end).max(0.0);
@@ -263,6 +269,28 @@ impl Ending {
         let end = self.gap.map_or(self.music_end, |(g0, _)| if g0 > self.exit { g0 } else { self.music_end });
         (t1.min(end) - t0.max(self.exit)).max(0.0)
     }
+}
+
+/// The longest closing breakdown that is a song's stop ringing out rather than a coda, ms.
+const RING_OUT_MS: f64 = 6_000.0;
+
+/// A song that stops cold ends on its stop when the pair cannot blend: the next song starts there at once, under the
+/// ring-out, rather than over a fade of the bars before it.
+fn on_its_stop(a: &TrackAnalysis, b: Option<&TrackAnalysis>, room: Room, s: &AutoMixSettings, why_not: &str) -> Option<TransitionPlan> {
+    let Room { out_dur, in_dur, max_len } = room;
+    let ending = Ending::of(a, out_dur);
+    let ring = ending.ring_out()?;
+    let dur = (ring.round() as i64).min(max_len);
+    if dur < MIN_FADE_MS {
+        return None;
+    }
+    let in_start = b.map_or(0, |b| b.silence_start_ms.clamp(0, in_dur / 3));
+    let mut p = blank(TransitionKind::MixRampFade, ending.exit.round() as i64, in_start, dur, String::new());
+    p.in_fade_end_ms = MIN_FADE_MS;
+    p.in_gain_db = loudness_trim(Some(a), b, s);
+    let tail = if why_not.is_empty() { String::new() } else { format!(" ({why_not})") };
+    p.reason = format!("on its stop, the next song under the ring-out{tail}");
+    Some(p)
 }
 
 fn loudness_trim(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, s: &AutoMixSettings) -> f32 {
@@ -354,53 +382,6 @@ fn pair_gate(a: &TrackAnalysis, b: &TrackAnalysis, out_dur: i64) -> Verdict {
     v
 }
 
-/// Echo-out for a clashing pair: four outgoing beats from a downbeat, the outgoing track into a beat-synced echo
-/// while the incoming one fades in. No tempo change, no bass swap.
-fn echo_out(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSettings, cause: &str) -> Option<TransitionPlan> {
-    let Room { out_dur, in_dur, max_len } = room;
-    let beat = 60_000.0 / a.bpm;
-    if !beat.is_finite() || beat <= 0.0 {
-        return None;
-    }
-    let delay = beat.clamp(250.0, 1000.0).round() as i64;
-    let beats = 4i64;
-    let dur = (beats as f64 * beat).round() as i64;
-    if dur > max_len || dur < MIN_FADE_MS {
-        return None;
-    }
-    let ending = Ending::of(a, out_dur);
-    // The last downbeat as the song leaves whose echo ends inside its music: on a stop, its last hit.
-    let last = (ending.leave(0.0) + 0.25 * beat).min(ending.music_end - dur as f64);
-    let n = downbeat_before(last, a.beat_offset_ms, beat, bar_beats(a), a.downbeat_phase as i64);
-    let start = (a.beat_offset_ms + n as f64 * beat).round() as i64;
-    // A sung line echoed over the next song sounds like the last one again.
-    if start < a.silence_start_ms || ending.skipped((start + dur) as f64) > MAX_SKIP_MS as f64 || sings_after(a, start as f64 - bar_beats(a) as f64 * beat) {
-        return None;
-    }
-    // The incoming song's first downbeat at full level as the echo ends.
-    let beat_b = 60_000.0 / b.bpm;
-    let in_start = if grid_ok(b) && beat_b.is_finite() {
-        let n = downbeat_from((b.silence_start_ms + dur) as f64, b.beat_offset_ms, beat_b, bar_beats(b), b.downbeat_phase as i64);
-        (b.beat_offset_ms + n as f64 * beat_b).round() as i64 - dur
-    } else {
-        b.silence_start_ms
-    }
-    .clamp(0, in_dur / 3);
-    if dur > in_dur - in_start || in_start - b.silence_start_ms > MAX_SKIP_MS {
-        return None;
-    }
-    let beat_ms = beat.round() as i64;
-    let mut p = blank(TransitionKind::EchoOut, start, in_start, dur, String::new());
-    p.fade_curve = FadeCurve::SineSquared;
-    // Outgoing out in two beats; incoming in over the last three while the repeats decay.
-    (p.out_fade_start_ms, p.out_fade_end_ms) = (0, (2 * beat_ms).min(dur));
-    (p.in_fade_start_ms, p.in_fade_end_ms) = ((dur - 3 * beat_ms).max(0), dur);
-    p.echo = Some(Echo { delay_ms: delay, feedback: 0.45, wet_db: -7.0 });
-    p.in_gain_db = loudness_trim(Some(a), Some(b), s);
-    p.reason = format!("echo-out over {beats} beats, {cause}");
-    Some(p)
-}
-
 /// Camelot distance when both keys are trusted.
 fn camelot_dist(a: &TrackAnalysis, b: &TrackAnalysis) -> Option<i32> {
     (a.key_confidence >= KEY_MIN_CONFIDENCE && b.key_confidence >= KEY_MIN_CONFIDENCE).then(|| key_distance(a.key, b.key)).flatten()
@@ -447,13 +428,8 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
                 MIN_BPM_CONFIDENCE, MIN_STABILITY
             );
         } else if let Some(v) = verdict {
-            // Far keys echo out of an instrumental ending, in the DJ style.
+            // Keys far apart, in the DJ style: a cut rather than four bars of clash.
             let prof = profile(s.style);
-            let echo = prof.echo && s.echo_out && v.cause == KEYS_FAR;
-            if let Some(p) = echo.then(|| echo_out(a, b, room, s, v.cause)).flatten() {
-                return p;
-            }
-            // Keys far apart over a sung ending, in the DJ style: a cut rather than four bars of clash.
             if let Some(p) = (prof.drop_cut && v.cause == KEYS_FAR).then(|| drop_cut(a, b, room, s, v.cause)).flatten() {
                 return p;
             }
@@ -473,6 +449,9 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
                 return p;
             }
         }
+    }
+    if let Some(p) = a.and_then(|a| on_its_stop(a, b, room, s, &why_not)) {
+        return p;
     }
     let sung_both = verdict.is_some_and(|v| v.cause == VOCALS_OVERLAP);
     if s.beat_match && (a.is_some_and(grid_ok) || b.is_some_and(grid_ok)) {
@@ -535,8 +514,6 @@ struct Profile {
     bend: bool,
     /// The incoming drop may land on the outgoing song's last one.
     double_drop: bool,
-    /// Far keys over an instrumental ending echo out before a quick mix is tried.
-    echo: bool,
     /// Bars the bass takes to change hands, but for a sixteenth into a drop when `quick_drop_swap`.
     swap_bars: f64,
     quick_drop_swap: bool,
@@ -559,7 +536,6 @@ const SMOOTH: Profile = Profile {
     in_loop: false,
     bend: false,
     double_drop: false,
-    echo: false,
     swap_bars: 1.0,
     quick_drop_swap: false,
     riser: false,
@@ -576,7 +552,6 @@ const DJ: Profile = Profile {
     in_loop: true,
     bend: true,
     double_drop: true,
-    echo: true,
     swap_bars: 0.25,
     quick_drop_swap: true,
     riser: true,
@@ -1087,20 +1062,24 @@ fn drop_cut(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSetting
     if dur > max_len {
         return None;
     }
-    // The cut: the last downbeat before the song leaves, moved back to a four-bar line of the outro within four
-    // bars, or else to the bar where its singing ends, when either is after the singing.
+    // The cut: where an unsung closing breakdown (a coda, or the song's stop) begins; else the last downbeat
+    // before the song leaves, moved back to a four-bar line of the outro within four bars, or else to the bar where
+    // its singing ends, when either is after the singing.
     let ending = Ending::of(a, out_dur);
-    let last = a.beat_offset_ms + downbeat_before(ending.leave(0.0), a.beat_offset_ms, beat, bpb, a.downbeat_phase as i64) as f64 * beat;
+    let leave = ending.leave(0.0);
+    let downbeat = |t: f64| a.beat_offset_ms + downbeat_before(t, a.beat_offset_ms, beat, bpb, a.downbeat_phase as i64) as f64 * beat;
+    let last = downbeat(leave);
     let on_line = |t: f64| a.outro_start_ms > 0 && t >= a.outro_start_ms as f64 - 0.5 * beat && {
         let x = (t - a.outro_start_ms as f64) / (4.0 * bar);
         (x - x.round()).abs() * 4.0 < 0.05
     };
     let sung_until = (a.vocal_end_ms > 0)
         .then(|| a.beat_offset_ms + downbeat_before(a.vocal_end_ms as f64 + 0.5 * beat, a.beat_offset_ms, beat, bpb, a.downbeat_phase as i64) as f64 * beat);
-    let cut = (0..4)
+    let breakdown = (ending.breakdown && leave == ending.exit && !sings_after(a, ending.exit - 0.5 * beat)).then(|| downbeat(ending.exit + 0.25 * beat));
+    let cut = breakdown.or_else(|| (0..4)
         .map(|n| last - n as f64 * bar)
         .find(|&t| on_line(t) && sung_until.is_none_or(|v| t >= v - 0.5 * beat))
-        .or(sung_until.filter(|&v| v <= last + 0.5 * beat && v >= last - 3.5 * bar))
+        .or(sung_until.filter(|&v| v <= last + 0.5 * beat && v >= last - 3.5 * bar)))
         .unwrap_or(last);
     let start = cut - riser;
     if start < a.silence_start_ms as f64 || ending.skipped(cut) > MAX_SKIP_MS as f64 {
@@ -1886,43 +1865,58 @@ mod tests {
     }
 
     #[test]
-    fn far_keys_mix_quick_or_echo_out() {
+    fn far_keys_mix_quick_or_cut() {
         let a = track(128.0);
         let b = TrackAnalysis { key: camelot(6, false), ..track(128.0) };
         let bar = 4.0 * 60_000.0 / 128.0;
-        let with = |style, echo_out| AutoMixSettings { max_transition_s: 40.0, style, echo_out, ..Default::default() };
+        let with = |style| AutoMixSettings { max_transition_s: 40.0, style, ..Default::default() };
         // Smooth: a quick beat-matched mix.
-        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Smooth, true));
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Smooth));
         assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
         assert!(p.duration_ms as f64 <= 4.25 * bar + 1.0 && p.reason.contains("keys far apart"), "{}", p.reason);
         check_skip(&p, &a, &b, 240_000);
-        // DJ: an echo-out, the incoming song's downbeat at full level as it ends.
-        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Dj, true));
-        assert_eq!(p.kind, TransitionKind::EchoOut, "{}", p.reason);
-        assert_eq!(p.echo, Some(Echo { delay_ms: (60_000.0_f64 / 128.0).round() as i64, feedback: 0.45, wet_db: -7.0 }));
-        assert_eq!((p.bass_swap, p.tempo_ratio), (None, 1.0), "no bass swap or tempo change on an echo-out");
-        assert!(on_downbeat(&b, (p.in_start_ms + p.duration_ms) as f64 + 0.5) || on_downbeat(&b, (p.in_start_ms + p.duration_ms) as f64), "{p:?}");
-        check_skip(&p, &a, &b, 240_000);
-        // A song that stops on a last hit echoes that hit as it rings out, not the bar before it.
-        let stops = TrackAnalysis { exit_ms: (120.0 + 125.0 * bar) as i64, ..a.clone() };
-        let p = plan(Some(&stops), Some(&b), 240_000, 240_000, &with(MixStyle::Dj, true));
-        assert_eq!((p.kind, p.out_start_ms), (TransitionKind::EchoOut, stops.exit_ms), "{}", p.reason);
-        // Echo off: Smooth's quick mix, DJ's cut on a downbeat after a riser, its last beats echoing.
-        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Smooth, false));
-        assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
-        assert!(p.duration_ms as f64 <= 4.25 * bar + 1.0, "{}", p.reason);
-        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Dj, false));
+        // DJ: a cut on a downbeat after a riser, its last beats echoing.
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Dj));
         assert_eq!(p.kind, TransitionKind::Cut, "{}", p.reason);
         let riser = (RISER_BARS as f64 * bar).round() as i64;
         assert_eq!((p.out_fade_start_ms, p.in_fade_end_ms), (riser, riser), "{p:?}");
         assert!(on_downbeat(&a, (p.out_start_ms + riser) as f64) && on_downbeat(&b, (p.in_start_ms + riser) as f64), "on both downbeats: {p:?}");
         assert!(p.high_pass.is_some_and(|h| h.end_ms == riser) && p.echo.is_some(), "{p:?}");
+        assert_eq!((p.bass_swap, p.tempo_ratio), (None, 1.0), "no bass swap or tempo change on a cut");
         check_skip(&p, &a, &b, 240_000);
-        // No mix fits (tempos too far apart): Smooth still fades, an echo being a DJ's effect.
+        // A song that leaves at a closing breakdown is cut where the breakdown starts, not on an earlier line.
+        let coda = TrackAnalysis { exit_ms: (120.0 + 121.0 * bar) as i64, ..a.clone() };
+        let p = plan(Some(&coda), Some(&b), 240_000, 240_000, &with(MixStyle::Dj));
+        assert_eq!((p.kind, p.out_start_ms + riser), (TransitionKind::Cut, coda.exit_ms), "{}", p.reason);
+        // No mix fits (tempos too far apart): Smooth fades.
         let b = TrackAnalysis { bpm: 150.0, intro_bpm: 150.0, ..b };
-        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Smooth, true));
-        assert!(p.kind != TransitionKind::EchoOut && p.echo.is_none(), "{}", p.reason);
-        assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Smooth));
+        assert_eq!((p.kind, p.echo), (TransitionKind::MixRampFade, None), "{}", p.reason);
+    }
+
+    /// A song that stops cold, its last hit ringing out, ends on its stop: a mix that cannot blend starts the next
+    /// song there under the ring-out instead of fading the bars before it, and a DJ cut lands on it.
+    #[test]
+    fn a_song_that_stops_ends_on_its_stop() {
+        let bar = 4.0 * 60_000.0 / 128.0;
+        let stop = (120.0 + 125.0 * bar) as i64;
+        let a = TrackAnalysis { exit_ms: stop, ..track(128.0) };
+        let far_tempo = track(150.0);
+        let far_keys = TrackAnalysis { key: camelot(6, false), ..far_tempo.clone() };
+        for (b, style) in [(&far_tempo, MixStyle::Smooth), (&far_keys, MixStyle::Smooth), (&far_tempo, MixStyle::Dj)] {
+            for beat_match in [true, false] {
+                let s = AutoMixSettings { max_transition_s: 40.0, style, beat_match, ..Default::default() };
+                let p = plan(Some(&a), Some(b), 240_000, 240_000, &s);
+                if p.kind == TransitionKind::Cut {
+                    assert_eq!(p.out_start_ms + p.out_fade_start_ms, stop, "{style:?}: {p:?}");
+                    continue;
+                }
+                assert_eq!((p.kind, p.out_start_ms, p.in_start_ms), (TransitionKind::MixRampFade, stop, b.silence_start_ms), "{style:?}: {p:?}");
+                assert_eq!(p.out_start_ms + p.duration_ms, a.silence_end_ms, "the ring-out is heard to its end: {p:?}");
+                assert!(p.in_fade_end_ms <= MIN_FADE_MS && p.low_pass.is_none(), "the next song comes in at once: {p:?}");
+                check_skip(&p, &a, b, 240_000);
+            }
+        }
     }
 
     /// The bass changes hands in a sixteenth only as a DJ mix lands on a drop; elsewhere over a beat (DJ) or a bar

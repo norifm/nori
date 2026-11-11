@@ -1380,7 +1380,6 @@ pub struct MixTotals {
     pub loops: usize,
     pub bends: usize,
     pub beat_matched: usize,
-    pub echo: usize,
     pub cuts: usize,
     pub drops: usize,
     pub drop_hit: usize,
@@ -1416,7 +1415,6 @@ pub fn mix_totals(scores: &[MixScore]) -> MixTotals {
         t.loops += s.looped as usize;
         t.bends += s.bent as usize;
         t.beat_matched += (s.kind == K::BeatMatched) as usize;
-        t.echo += (s.kind == K::EchoOut) as usize;
         t.cuts += (s.kind == K::Cut) as usize;
         if s.has_drop {
             t.drops += 1;

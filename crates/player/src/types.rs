@@ -187,8 +187,6 @@ pub struct AutoMixSettings {
     pub max_tempo_change_pct: f32,
     pub bass_swap: bool,
     pub filter_effects: bool,
-    /// Beat-synced echo-out for clashing pairs (two vocals, far keys); a plain fade when off.
-    pub echo_out: bool,
     /// Time-stretch (true) or varispeed (moves pitch, so held to 2 %).
     pub keep_pitch: bool,
     /// The tracks are consecutive on one album played in order: no transition.
@@ -210,7 +208,6 @@ impl Default for AutoMixSettings {
             max_tempo_change_pct: 6.0,
             bass_swap: true,
             filter_effects: true,
-            echo_out: true,
             keep_pitch: true,
             same_album_in_order: false,
             match_loudness: false,

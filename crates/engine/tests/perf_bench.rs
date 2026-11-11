@@ -185,7 +185,7 @@ fn perf_report() {
     perf_case("crossfade", &three, perf_app(crossfade(6)), Settings { crossfade_s: 6, ..Settings::default() }, 4);
     // Beat-matched mixes 4 % apart (stretched), and the last song analysed as it plays (the app's
     // measurer, not the engine, would analyse it ahead).
-    let mut mixing = perf_app(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() });
+    let mut mixing = perf_app(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
     mixing.measure_playing = true;
     mixing.measure_ahead = false;
     mixing.analyses.insert("a".into(), measured("a", 120.0, 90_000));
