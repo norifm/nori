@@ -9,7 +9,6 @@ enum Say {
     static let pairAccept = "Pair"
     static let pairing = "Pairing…"
     static let linkCopied = "Link copied"
-    static let forget = "Forget"
     static let forgetHow = "It stops controlling this iPod, and this iPod it. Pair again to undo."
     static func forgetDevice(_ name: String) -> String { "Forget \(name)?" }
     static func pairedWith(_ name: String) -> String { "Paired with \(name)" }
