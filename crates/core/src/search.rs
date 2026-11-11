@@ -5,11 +5,15 @@ use crate::{Core, Result, SearchResult};
 pub use nori_library::search::*;
 
 /// Live search state: each keystroke is answered from the index, and the server (which also knows
-/// provider items) once typing pauses. Answers for a stale query are dropped, and an index answer never
+/// provider items) once typing pauses. An ask for a query typed over stops, and an index answer never
 /// replaces the server's for the same query.
 #[derive(Default)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Object))]
-pub struct SearchSession(parking_lot::Mutex<Session>);
+pub struct SearchSession {
+    session: parking_lot::Mutex<Session>,
+    /// The asks waiting on the server for the query the field holds, woken once it holds another.
+    asking: parking_lot::Mutex<Vec<std::task::Waker>>,
+}
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl SearchSession {
@@ -20,9 +24,12 @@ impl SearchSession {
 
     /// The field now holds `text`; blank shows the recent searches. The same query keeps its answer.
     pub fn typed(&self, text: String) -> SearchView {
-        let mut s = self.0.lock();
+        let mut s = self.session.lock();
         let same = s.query() == text.trim();
         s.text = text;
+        if !same {
+            self.asking.lock().drain(..).for_each(std::task::Waker::wake);
+        }
         if s.query().is_empty() {
             s.answer = Answer::Blank;
         } else if !same {
@@ -34,7 +41,7 @@ impl SearchSession {
     /// Applies the index's answer to `query` unless stale or the server already answered.
     pub fn local(&self, core: std::sync::Arc<Core>, query: String, limit: u32) -> Result<Option<SearchView>> {
         let split = core.local_search_split(query.clone(), limit)?;
-        let mut s = self.0.lock();
+        let mut s = self.session.lock();
         if s.query() != query {
             return Ok(None);
         }
@@ -48,7 +55,7 @@ impl SearchSession {
     /// Applies the server's answer to `query`; None if stale.
     pub fn server(&self, query: String, result: SearchResult) -> Option<SearchView> {
         let split = search_split(result, &query);
-        let mut s = self.0.lock();
+        let mut s = self.session.lock();
         if s.query() != query {
             return None;
         }
@@ -57,17 +64,25 @@ impl SearchSession {
     }
 
     /// Asks the server and applies the answer ([`SearchSession::server`]); an error when the request fails.
+    /// None as soon as the field holds another query: the request is dropped, so a provider skips it if
+    /// it has not begun it.
     pub async fn ask(&self, client: std::sync::Arc<crate::client::Client>, query: String) -> crate::client::NetResult<Option<SearchView>> {
+        use futures_util::future::{select, Either};
         let sizes = crate::browse::library_sizes();
         let read = crate::cache_policy::Read::Search { query: query.clone(), songs: sizes.search_songs, albums: sizes.search_albums, artists: sizes.search_artists };
-        let crate::cache_policy::Page::Found { v } = client.read_now(read).await? else { return Ok(None) };
+        let read = std::pin::pin!(client.read_now(read));
+        let page = match select(std::pin::pin!(self.typed_over(&query)), read).await {
+            Either::Left(_) => return Ok(None),
+            Either::Right((page, _)) => page?,
+        };
+        let crate::cache_policy::Page::Found { v } = page else { return Ok(None) };
         Ok(self.server(query, v))
     }
 
     /// The server failed for `query`: keeps the index answer and reports the fallback. None if stale, or
     /// another ask for it was answered.
     pub fn failed(&self, query: String, reason: Option<String>) -> Option<SearchView> {
-        let mut s = self.0.lock();
+        let mut s = self.session.lock();
         if s.query() != query || matches!(s.answer, Answer::Blank | Answer::Server(_)) {
             return None;
         }
@@ -77,13 +92,28 @@ impl SearchSession {
     }
 
     pub fn scope(&self, scope: SearchScope) -> SearchView {
-        let mut s = self.0.lock();
+        let mut s = self.session.lock();
         s.scope = scope;
         s.view()
     }
 }
 
 impl SearchSession {
+    /// Ready once the field holds a query other than `query`.
+    fn typed_over<'a>(&'a self, query: &'a str) -> impl std::future::Future<Output = ()> + 'a {
+        std::future::poll_fn(move |cx| {
+            let s = self.session.lock();
+            if s.query() != query {
+                return std::task::Poll::Ready(());
+            }
+            let mut asking = self.asking.lock();
+            if !asking.iter().any(|w| w.will_wake(cx.waker())) {
+                asking.push(cx.waker().clone());
+            }
+            std::task::Poll::Pending
+        })
+    }
+
     /// [`SearchSession::typed`], then the index's answer to the query at once ([`SearchSession::local`]).
     pub fn typed_with_index(&self, core: std::sync::Arc<Core>, text: String) -> SearchView {
         let view = self.typed(text);
@@ -193,6 +223,36 @@ pub(crate) mod tests {
         assert!(s.failed("dogs".into(), Some("timeout".into())).is_none());
         let v = s.scope(SearchScope::Everything);
         assert!(matches!(&v.answer, SearchShown::Found { result } if result.songs.len() == 3));
+    }
+
+    /// Typing over a query stops its ask at once: its request is dropped, not waited for, so a provider
+    /// working one request at a time goes on to the newer query.
+    #[test]
+    fn a_query_typed_over_stops_its_ask() {
+        use std::future::Future;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::task::{Context, Poll, Wake, Waker};
+        struct Count(AtomicUsize);
+        impl Wake for Count {
+            fn wake(self: std::sync::Arc<Self>) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let (c, net) = crate::client::tests::client(crate::client::NetProfile { url: "http://s".into(), ..Default::default() });
+        *net.pends.lock() = true;
+        net.answer(crate::client::tests::OK);
+        let s = SearchSession::new();
+        s.typed("dog".into());
+        let woken = std::sync::Arc::new(Count(AtomicUsize::new(0)));
+        let waker = Waker::from(woken.clone());
+        let mut cx = Context::from_waker(&waker);
+        let mut ask = std::pin::pin!(s.ask(c, "dog".into()));
+        assert!(ask.as_mut().poll(&mut cx).is_pending(), "on its way");
+        let before = woken.0.load(Ordering::Relaxed);
+        s.typed("dogs".into());
+        assert!(woken.0.load(Ordering::Relaxed) > before, "typing over wakes it");
+        assert!(matches!(ask.as_mut().poll(&mut cx), Poll::Ready(Ok(None))));
+        assert_eq!(net.answers.lock().len(), 1, "its answer was never waited for");
     }
 
     #[test]
