@@ -73,12 +73,14 @@ pub struct Features {
     pub duration_s: f64,
     /// Raw vocal activity, one value per `vocal::CURVE_EVERY` onset frames (`voice_curve`).
     pub voice: Vec<f32>,
+    /// The voice band's loudness, dBFS, at the same frames.
+    pub voice_loudness: Vec<f32>,
 }
 
 impl Features {
     /// The song's vocal activity curve, as stored.
     pub fn voice_curve(&self) -> vocal::VocalCurve {
-        vocal::VocalCurve::from_raw(&self.voice, self.fps, self.t0)
+        vocal::VocalCurve::from_raw(&self.voice, &self.voice_loudness, self.fps, self.t0)
     }
 }
 
@@ -259,6 +261,7 @@ impl Analyzer {
                 blocks_raw: Vec::new(),
                 duration_s: 0.0,
                 voice: Vec::new(),
+                voice_loudness: Vec::new(),
             },
         }
     }
@@ -501,9 +504,10 @@ impl Analyzer {
                 blocks_raw: Vec::new(),
                 duration_s: 0.0,
                 voice: Vec::new(),
+                voice_loudness: Vec::new(),
             },
         );
-        f.voice = self.voice.take();
+        (f.voice, f.voice_loudness) = self.voice.take();
         f.blocks_k = std::mem::take(&mut self.meter.blocks_k);
         f.blocks_raw = std::mem::take(&mut self.meter.blocks_raw);
         f.duration_s = self.samples as f64 / self.rate;

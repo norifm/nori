@@ -6,7 +6,10 @@
 //! how far each lasting peak's frequency moved (vibrato, glides; a held note does not move). On real songs it
 //! is weak on level (AUC about 0.75) but good on timing; the band, peak test and series were tuned there.
 //! A stereo song is measured on the middle of its image only, gating out panned guitars
-//! ([`centre`]). One byte per [`CURVE_EVERY`] frames, about a kilobyte a minute.
+//! ([`centre`]). Beside it, the loudness of the band's loudest sixth of an octave: a rapped voice over a
+//! melodic beat, whose series the tracker loses to the beat's, is still the band's loudest sound (nori-lyrics
+//! reads it where the movement places no line). Two bytes per [`CURVE_EVERY`] frames, about two kilobytes a
+//! minute.
 
 use rustfft::num_complex::Complex32;
 
@@ -43,11 +46,16 @@ const CENTRE_FLOOR: f32 = 0.6;
 /// Analysis frames per curve frame: about 17 a second, 58 ms each.
 pub(crate) const CURVE_EVERY: usize = 5;
 /// The stored form's version: a curve in another is measured again.
-pub(crate) const CURVE_VERSION: u8 = 3;
+pub(crate) const CURVE_VERSION: u8 = 4;
 /// Bytes of the stored form before the levels: the version, the frame rate and the time of frame 0.
 const HEADER: usize = 9;
 /// A curve frame's movement `m` is stored as `ln(1 + m) * LEVEL_SCALE`, clamped to a byte.
 const LEVEL_SCALE: f32 = 40.0;
+/// The loudness is the loudest of the band's bands this many octaves wide...
+const LOUD_BAND_OCTAVES: f64 = 1.0 / 6.0;
+/// ...stored as `(dBFS + LOUD_FLOOR_DB) * LOUD_STEPS_PER_DB`, clamped to a byte.
+const LOUD_FLOOR_DB: f32 = 120.0;
+const LOUD_STEPS_PER_DB: f32 = 2.0;
 
 /// Builds the curve from each analysis frame's spectrum.
 pub struct Tracker {
@@ -72,6 +80,11 @@ pub struct Tracker {
     peaks: Vec<Peak>,
     /// The series' fundamental range, bins.
     f0_bins: (f32, f32),
+    /// Where each [`LOUD_BAND_OCTAVES`] band starts in the band (bins from `lo`), then where the last ends.
+    loud_bands: Vec<usize>,
+    /// The loudest band's power summed over the curve frame so far, and the loudness of each curve frame, dBFS.
+    loud_acc: f32,
+    loudness: Vec<f32>,
 }
 
 /// A clear spectral peak of one frame.
@@ -121,6 +134,9 @@ impl Tracker {
             before: [Vec::with_capacity(w), Vec::with_capacity(w)],
             peaks: Vec::with_capacity(w),
             f0_bins: ((F0_LO_HZ / bin_hz) as f32, (F0_HI_HZ / bin_hz) as f32),
+            loud_bands: loud_bands(lo, w, bin_hz),
+            loud_acc: 0.0,
+            loudness: Vec::with_capacity(frames / CURVE_EVERY + 2),
         }
     }
 
@@ -184,10 +200,13 @@ impl Tracker {
         self.before[0].extend(self.peaks.iter().map(|p| p.at));
         self.prev.copy_from_slice(&self.pow[3..3 + w]);
         self.acc += moved;
+        self.loud_acc += self.loud_bands.windows(2).map(|b| self.pow[3 + b[0]..3 + b[1]].iter().sum::<f32>()).fold(0.0, f32::max);
         self.n += 1;
         if self.n == CURVE_EVERY {
             self.curve.push(self.acc / CURVE_EVERY as f32);
-            (self.acc, self.n) = (0.0, 0);
+            let power = self.loud_acc / CURVE_EVERY as f32 * self.amp_norm * self.amp_norm;
+            self.loudness.push(10.0 * (power + 1e-12).log10());
+            (self.acc, self.loud_acc, self.n) = (0.0, 0.0, 0);
         }
     }
 
@@ -212,9 +231,10 @@ impl Tracker {
         .map(|b| b.0)
     }
 
-    /// The curve so far, one value per [`CURVE_EVERY`] analysis frames; the tracker starts again.
-    pub fn take(&mut self) -> Vec<f32> {
-        let out = std::mem::take(&mut self.curve);
+    /// The curve so far and the loudness at its frames, one value each per [`CURVE_EVERY`] analysis frames;
+    /// the tracker starts again.
+    pub fn take(&mut self) -> (Vec<f32>, Vec<f32>) {
+        let out = (std::mem::take(&mut self.curve), std::mem::take(&mut self.loudness));
         self.reset();
         out
     }
@@ -225,8 +245,26 @@ impl Tracker {
         self.mid_pow.fill(0.0);
         self.side_pow.fill(0.0);
         self.curve.clear();
-        (self.acc, self.n) = (0.0, 0);
+        self.loudness.clear();
+        (self.acc, self.loud_acc, self.n) = (0.0, 0.0, 0);
     }
+}
+
+/// The [`LOUD_BAND_OCTAVES`] bands of a band `w` bins wide from bin `lo`: where each starts, then where the
+/// last ends.
+fn loud_bands(lo: usize, w: usize, bin_hz: f64) -> Vec<usize> {
+    let mut edges = vec![0];
+    let mut hz = LO_HZ;
+    while hz < HI_HZ {
+        hz *= 2f64.powf(LOUD_BAND_OCTAVES);
+        let edge = ((hz / bin_hz).round() as usize).saturating_sub(lo).min(w);
+        if edge > edges[edges.len() - 1] {
+            edges.push(edge);
+        }
+    }
+    let last = edges.len() - 1;
+    edges[last] = w;
+    edges
 }
 
 /// The share of a bin's power counted, from its time-averaged mid and side power. `(mid - side) / (mid + side)` is
@@ -247,17 +285,21 @@ fn centre(mid: f32, side: f32) -> f32 {
 pub struct VocalCurve {
     pub fps: f32,
     pub t0: f32,
+    /// How far the voice moved.
     pub level: Vec<u8>,
+    /// The voice band's loudness at the same frames, [`LOUD_STEPS_PER_DB`] a dB.
+    pub loudness: Vec<u8>,
 }
 
 impl VocalCurve {
-    /// From the raw curve of an analysis at `fps` frames a second, frame 0 at `t0`.
-    pub fn from_raw(raw: &[f32], fps: f64, t0: f64) -> Self {
+    /// From the raw curve and loudness (dBFS) of an analysis at `fps` frames a second, frame 0 at `t0`.
+    pub fn from_raw(raw: &[f32], loudness: &[f32], fps: f64, t0: f64) -> Self {
         let e = CURVE_EVERY as f64;
         VocalCurve {
             fps: (fps / e) as f32,
             t0: (t0 + (e - 1.0) / 2.0 / fps) as f32,
             level: raw.iter().map(|m| ((1.0 + m.max(0.0)).ln() * LEVEL_SCALE).round().clamp(0.0, 255.0) as u8).collect(),
+            loudness: loudness.iter().map(|db| ((db + LOUD_FLOOR_DB) * LOUD_STEPS_PER_DB).round().clamp(0.0, 255.0) as u8).collect(),
         }
     }
 
@@ -270,24 +312,26 @@ impl VocalCurve {
         }
     }
 
-    /// Stored form: [`CURVE_VERSION`], fps and t0 (f32 LE), the levels.
+    /// Stored form: [`CURVE_VERSION`], fps and t0 (f32 LE), the levels, the loudness.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(HEADER + self.level.len());
         out.push(CURVE_VERSION);
         out.extend_from_slice(&self.fps.to_le_bytes());
         out.extend_from_slice(&self.t0.to_le_bytes());
         out.extend_from_slice(&self.level);
+        out.extend_from_slice(&self.loudness);
         out
     }
 
     /// None for another version or a malformed blob.
     pub fn decode(b: &[u8]) -> Option<Self> {
-        if b.len() < HEADER || b[0] != CURVE_VERSION {
+        if b.len() < HEADER || b[0] != CURVE_VERSION || !(b.len() - HEADER).is_multiple_of(2) {
             return None;
         }
         let fps = f32::from_le_bytes(b[1..5].try_into().ok()?);
         let t0 = f32::from_le_bytes(b[5..9].try_into().ok()?);
-        (fps.is_finite() && fps > 0.0 && t0.is_finite()).then(|| VocalCurve { fps, t0, level: b[HEADER..].to_vec() })
+        let (level, loudness) = b[HEADER..].split_at((b.len() - HEADER) / 2);
+        (fps.is_finite() && fps > 0.0 && t0.is_finite()).then(|| VocalCurve { fps, t0, level: level.to_vec(), loudness: loudness.to_vec() })
     }
 }
 
@@ -324,14 +368,19 @@ mod tests {
         let song = Song { sections: vec![(4, FULL), (8, SUNG), (4, FULL), (8, SUNG)], ..Song::new("sung", Style::Backbeat, 110.0, 2, false) };
         let a = separation(&song);
         assert!(a > 0.95, "sung told from unsung frames with an AUC of {a:.3}");
+        let (c, truth, _) = curve_of(&song);
+        let loud = VocalCurve { level: c.loudness.clone(), ..c };
+        let a = separation_of(&loud, &|t| (t >= truth.music.0 + 1.0 && t <= truth.music.1 - 1.0).then(|| truth.sung_at(t)));
+        assert!(a > 0.9, "by its loudness, with an AUC of {a:.3}");
     }
 
     #[test]
     fn curve_is_small_and_round_trips() {
         let song = Song { sections: vec![(24, SUNG)], ..Song::new("sung", Style::House, 120.0, 2, false) };
         let (c, _, secs) = curve_of(&song);
-        let per_min = c.level.len() as f64 / secs * 60.0;
-        assert!((1000.0..1100.0).contains(&per_min), "{per_min} bytes a minute");
+        let per_min = c.encode().len() as f64 / secs * 60.0;
+        assert!((2000.0..2200.0).contains(&per_min), "{per_min} bytes a minute");
+        assert_eq!(c.loudness.len(), c.level.len());
         assert!((c.fps - 17.2).abs() < 0.1, "{}", c.fps);
         assert_eq!(VocalCurve::decode(&c.encode()), Some(c.clone()));
         assert_eq!(VocalCurve::decode(&[2, 0, 0]), None);
@@ -501,10 +550,11 @@ mod tests {
         let twice: Vec<f32> = x.iter().flat_map(|v| [*v, *v]).collect();
         a.feed_interleaved(&twice, 2, |v| v);
         let same = a.take_features();
-        assert_eq!(same.voice, mono.voice);
+        assert_eq!((&same.voice, &same.voice_loudness), (&mono.voice, &mono.voice_loudness));
         assert_eq!((&same.onset, &same.power, &same.vocal, &same.chroma, &same.blocks_k), (&mono.onset, &mono.power, &mono.vocal, &mono.chroma, &mono.blocks_k));
         a.feed_interleaved(&x, 1, |v| v);
-        assert_eq!(a.take_features().voice, mono.voice, "one channel");
+        let one = a.take_features();
+        assert_eq!((one.voice, one.voice_loudness), (mono.voice.clone(), mono.voice_loudness.clone()), "one channel");
 
         // The same mid with a side: right 6 dB down, left made up.
         let panned: Vec<f32> = x.iter().flat_map(|v| [*v * 4.0 / 3.0, *v * 2.0 / 3.0]).collect();

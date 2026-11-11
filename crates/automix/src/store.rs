@@ -170,7 +170,7 @@ mod tests {
         assert_eq!(missing(&c, &ids).unwrap(), ids, "no curve");
         c.execute("INSERT INTO vocal_curve(server, song_id, curve) VALUES('s', 'a', ?1)", [vec![0u8; 16]]).unwrap();
         assert_eq!(missing(&c, &ids).unwrap(), ids, "a curve of an older format");
-        put_voice(&c, "a", &VocalCurve { fps: 10.0, t0: 0.0, level: vec![1, 2, 3] }).unwrap();
+        put_voice(&c, "a", &VocalCurve { fps: 10.0, t0: 0.0, level: vec![1, 2, 3], loudness: vec![4, 5, 6] }).unwrap();
         assert!(missing(&c, &ids).unwrap().is_empty());
     }
 }
