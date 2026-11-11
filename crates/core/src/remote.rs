@@ -29,7 +29,8 @@ use nori_remote::lan::Door;
 use nori_player::engine::Plan;
 use nori_player::transitions::engine_plan;
 use nori_player::types::TransitionPlan;
-use nori_remote::wire::{Along, Answer, Body, CastOutput, DeviceKind, DeviceState, Entry, JamLyrics, JamMember, JamState, Member, Mix, Obeyed, Op, Outgoing, Pending, Refusal, Role, Room, HOLD_MS};
+use crate::race::LyricsPick;
+use nori_remote::wire::{Along, Answer, Body, CastOutput, DeviceKind, DeviceState, Entry, JamLyrics, JamMember, JamState, Member, Mix, Obeyed, Op, Outgoing, Pending, Refusal, Role, Room, SongLyrics, HOLD_MS};
 use parking_lot::Mutex;
 use serde::Deserialize;
 
@@ -1352,6 +1353,16 @@ impl Inner {
     }
 
     /// The jam this device is a guest in, and its host.
+    /// The device whose playback this one shows, and its state: the account's active device mirrored here,
+    /// else the host of the jam joined.
+    fn followed(&self) -> Option<(&str, &DeviceState)> {
+        if let Some(m) = self.active.mirror() {
+            return self.state_of(&m.id).map(|(st, _)| (m.id.as_str(), st));
+        }
+        let host = self.hosted().is_none().then(|| self.joined()).flatten()?.1?;
+        Some((host.id.as_str(), host.state.as_ref()?))
+    }
+
     fn joined(&self) -> Option<(&Room, Option<&Member>)> {
         let room = self.rooms.iter().find(|r| r.jam && Some(r.room.as_str()) != self.jam_room())?;
         Some((room, room.members.iter().find(|m| m.state.as_ref().is_some_and(|s| s.jam.is_some()))))
@@ -2776,12 +2787,43 @@ impl Remote {
         Some(JamLyrics { song: id, service })
     }
 
-    /// Lyrics were chosen here: a jam this device hosts names them.
-    pub(crate) fn lyrics_chose(self: &Arc<Self>) {
-        let hosting = self.inner.lock().hosted().is_some();
-        if hosting {
-            self.publish();
+    /// The lyrics shown here changed: the state says them.
+    pub(crate) fn lyrics_changed(self: &Arc<Self>) {
+        self.publish();
+    }
+
+    /// Song `id`'s lyrics as the device whose playback this one shows shows them: Some while it shows
+    /// another device playing `id`, with its lyrics once that device sent them.
+    pub(crate) fn lyrics_followed(&self, id: &str) -> Option<Option<LyricsPick>> {
+        let i = self.inner.lock();
+        let (_, st) = i.followed()?;
+        (song_at(st) == Some(id)).then(|| st.lyrics.as_ref().filter(|l| l.song == id).and_then(lyrics_pick))
+    }
+
+    /// Asks the device whose playback this one shows to move song `id`'s lyrics a step (`dir`, as
+    /// [`Op::LyricsTiming`]): None when they are not that device's, else whether it was asked (a jam's
+    /// guest may not).
+    pub(crate) fn lyrics_nudge_sent(self: Arc<Self>, id: &str, dir: i32) -> Option<bool> {
+        let op = Op::LyricsTiming { song: id.to_string(), dir };
+        let (device, jam) = {
+            let i = self.inner.lock();
+            let (device, st) = i.followed()?;
+            st.lyrics.as_ref().filter(|l| l.song == id && song_at(st) == Some(id))?;
+            (device.to_string(), i.active.mirror().is_none())
+        };
+        if jam {
+            return Some(self.jam_press(op) == Reach::Jam);
         }
+        self.send(device, op);
+        Some(true)
+    }
+
+    /// The lyrics shown here for the song at list index `index`.
+    fn lyrics_shown(&self, index: u32) -> Option<SongLyrics> {
+        let core = &self.client.core;
+        let song = core.session.playlist(|p| p.ids().get(index as usize).cloned())?;
+        let pick = core.lyrics_here(&song)?;
+        Some(SongLyrics { song, origin: pick.origin.name(), timing: pick.lyrics.timing, lyrics: pick.lyrics })
     }
 
     /// The lyrics service the host of the jam joined chose for song `id`.
@@ -3609,6 +3651,8 @@ impl Remote {
     /// Takes the mirrored device's newest state, follows it on to the device it handed its playback to,
     /// lets it go once it is gone, and asks for the next page of its queue.
     fn follow_active(self: &Arc<Self>) {
+        // Other devices' states arrived: a lyrics view following one looks again.
+        self.client.core.lyrics_moved();
         let gone = {
             let mut i = self.inner.lock();
             let gone = i.active.taking().is_some_and(|t| !i.listed(&t.from));
@@ -3803,6 +3847,7 @@ impl Remote {
                 let transfer = (to == from).then_some(id);
                 self.transfer(via, from, to, transfer, listen_handoff);
             }
+            Op::LyricsTiming { song, dir } => self.client.core.lyrics_retime(song, dir),
             Op::Clear => {
                 for index in self.client.core.session.playlist(|p| p.after_current()) {
                     self.player.apply(Op::Remove { index: index as u32, rev });
@@ -4050,6 +4095,7 @@ impl Remote {
             rate: Some(p.rate),
             source: Some(self.client.core.kind().id().to_string()),
             outputs: i.outputs.clone(),
+            lyrics: q.index.and_then(|at| self.lyrics_shown(at)),
         };
         let now = self.now();
         st.position_ms = i.position_at_of(&st, now);
@@ -4108,6 +4154,12 @@ struct QueueRead {
     len: u32,
     shuffle: bool,
     repeat: u8,
+}
+
+/// The lyrics another device sent, as shown here; none from an origin this version does not know.
+fn lyrics_pick(l: &SongLyrics) -> Option<LyricsPick> {
+    let origin = nori_settings::lyrics_sources::LyricsOrigin::named(&l.origin)?;
+    Some(LyricsPick { lyrics: nori_model::Lyrics { timing: l.timing, ..l.lyrics.clone() }, origin })
 }
 
 /// The transition planned out of list index `from`, as a jam's guests get it.
@@ -4190,7 +4242,7 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         (a, b) => a == b,
     };
     // Each field named, so a new one is compared too.
-    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed, source, outputs } = last;
+    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed, source, outputs, lyrics } = last;
     let ran = |rate: Option<f32>| if *playing && !*buffering { (elapsed_ms as f64 * rate.unwrap_or(1.0) as f64) as i64 } else { 0 };
     let jam_same = match (jam, &now.jam) {
         (Some(a), Some(b)) => jam_same_but_time(a, b, ran),
@@ -4216,6 +4268,7 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         && *source == now.source
         && *outputs == now.outputs
         && *entries == now.entries
+        && *lyrics == now.lyrics
 }
 
 /// Whether jam state `now` is `last` with only its mix's position run on, `ran(rate)` ms at the mix's rate.

@@ -257,10 +257,14 @@ of this; Android's `PlaybackService` calls the same functions.
   answered twice (stored, then the server's) taken again, and a page that failed read again with the next
   ask rather than ending the list. A list read again from the top (`reset`) drops the page on its way.
 - **Lyrics**: `Client::lyrics_for(id, LyricsShown)` is the whole order: the server's, the services'
-  race, then none. What a lyrics view shows for the song heard is `lyrics_follow::LyricsHeard`'s
-  `LyricsNow` (no song, looking, shown, failed): the client says which song is heard (`hear`), runs the
-  lookup it is told to (`fetch`) while a view is open and hands its answers in (`answer`, `ended`); it
-  keeps only a better answer for the song heard, and the last few songs' words, so a song come back to
+  race, then none. While remote control is on it runs until it is dropped: a device showing another
+  device's playback shows the lyrics that device sends with its state, timed as it times them (only it
+  hears the song to check them against), and looks nothing up itself; a nudge there goes to the device
+  playing (`Op::LyricsTiming`), and one made where it plays comes back. A client drops the lookup when
+  the song heard changes or the view closes. What a lyrics view shows for the song heard is
+  `lyrics_follow::LyricsHeard`'s `LyricsNow` (no song, looking, shown, failed): the client says which
+  song is heard (`hear`), runs the lookup it is told to (`fetch`) while a view is open and hands its
+  answers in (`answer`, `ended`); it keeps only a better answer for the song heard, and the last few songs' words, so a song come back to
   starts from them and one whose lookup ended is not looked up again. On the host this is
   `Handle::lyrics_heard`, `lyrics_view`, `lyrics_refresh` and `lyrics_nudge`, each change a
   `Said::Lyrics`. `nori_look::lyrics::matching_line` handles a better answer arriving. Lyrics carry

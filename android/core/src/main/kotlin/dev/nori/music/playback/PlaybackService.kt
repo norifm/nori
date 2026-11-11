@@ -560,8 +560,8 @@ class PlaybackService : MediaLibraryService() {
                 is dev.nori.music.ffi.remote.Op.Star -> scope.launch {
                     runCatching { nori.library.star(StarKind.SONG, op.id, op.on) }.onFailure { dev.nori.music.NoriLog.w("star from another device failed: $it") }
                 }
-                // The core keeps transfers, pages, time exchanges and jam ops to itself, and sends a clear as removes.
-                is dev.nori.music.ffi.remote.Op.LibraryMarks, dev.nori.music.ffi.remote.Op.Clear, is dev.nori.music.ffi.remote.Op.Transfer, is dev.nori.music.ffi.remote.Op.Page, is dev.nori.music.ffi.remote.Op.Clock, is dev.nori.music.ffi.remote.Op.Request,
+                // The core keeps transfers, pages, time exchanges, lyrics timing and jam ops to itself, and sends a clear as removes.
+                is dev.nori.music.ffi.remote.Op.LibraryMarks, dev.nori.music.ffi.remote.Op.Clear, is dev.nori.music.ffi.remote.Op.Transfer, is dev.nori.music.ffi.remote.Op.Page, is dev.nori.music.ffi.remote.Op.Clock, is dev.nori.music.ffi.remote.Op.LyricsTiming, is dev.nori.music.ffi.remote.Op.Request,
                 is dev.nori.music.ffi.remote.Op.Decide, is dev.nori.music.ffi.remote.Op.Promote, is dev.nori.music.ffi.remote.Op.Kick -> {}
             }
             remoteState()

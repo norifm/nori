@@ -154,6 +154,31 @@ impl LyricsService {
     }
 }
 
+impl LyricsOrigin {
+    /// Its stored name: the server's, a service's, or `plugin:` and the plugin's id.
+    pub fn name(&self) -> String {
+        match self {
+            LyricsOrigin::Server => SERVER_NAME.to_string(),
+            LyricsOrigin::Plugin { id } => format!("{PLUGIN_PREFIX}{id}"),
+            other => LyricsService::ALL.iter().find(|s| s.origin() == *other).map_or_else(String::new, |s| s.name().to_string()),
+        }
+    }
+
+    /// The origin stored under `name` ([`LyricsOrigin::name`]).
+    pub fn named(name: &str) -> Option<LyricsOrigin> {
+        if name == SERVER_NAME {
+            return Some(LyricsOrigin::Server);
+        }
+        if let Some(id) = name.strip_prefix(PLUGIN_PREFIX) {
+            return Some(LyricsOrigin::Plugin { id: id.to_string() });
+        }
+        LyricsService::named(name).map(LyricsService::origin)
+    }
+}
+
+const SERVER_NAME: &str = "server";
+const PLUGIN_PREFIX: &str = "plugin:";
+
 /// Every service in default rank order.
 pub fn default_order() -> Vec<LyricsService> {
     LyricsService::ALL.to_vec()
@@ -267,6 +292,16 @@ mod tests {
 
     fn named(v: &[&str]) -> Vec<LyricsService> {
         v.iter().map(|s| LyricsService::named(s).unwrap()).collect()
+    }
+
+    #[test]
+    fn origins_read_back_from_their_names() {
+        let all = LyricsService::ALL.iter().map(|s| s.origin()).chain([LyricsOrigin::Server, LyricsOrigin::Plugin { id: "fm.nori.yt".into() }]);
+        for origin in all {
+            assert_eq!(LyricsOrigin::named(&origin.name()), Some(origin.clone()), "{}", origin.name());
+        }
+        assert_eq!(LyricsOrigin::Plugin { id: "fm.nori.yt".into() }.name(), "plugin:fm.nori.yt");
+        assert_eq!(LyricsOrigin::named("nobody"), None);
     }
 
     #[test]

@@ -158,6 +158,8 @@ pub struct Core {
     /// The server starts a transcode at the second asked for (Navidrome's `timeOffset`), as its answers
     /// said ([`Core::heard_from_server`]).
     starts_transcodes: std::sync::atomic::AtomicBool,
+    /// The lyrics shown here for this device's playback (race.rs).
+    lyrics_here: race::ShownHere,
 }
 
 #[derive(Deserialize, Default)]
@@ -268,6 +270,7 @@ impl Core {
             kinds: RwLock::new(providers::Kinds::builtin()),
             saved_queue: Mutex::new(None),
             starts_transcodes: std::sync::atomic::AtomicBool::new(false),
+            lyrics_here: Default::default(),
         });
         core.session.db.set(&core.db);
         Ok(core)

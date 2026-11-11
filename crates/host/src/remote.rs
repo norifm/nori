@@ -134,8 +134,8 @@ impl RemotePlayer for HostPlayer {
             Op::CastTo { output } => return h.cast_from_afar(output),
             // The devices see it once the core has marked it.
             Op::Star { id, on } => return h.star_from_afar(id, on),
-            // The core keeps transfers, pages, time exchanges and jam ops to itself.
-            Op::Transfer { .. } | Op::Clear | Op::LibraryMarks { .. } | Op::Page { .. } | Op::Clock { .. } | Op::Request { .. } | Op::Decide { .. } | Op::Promote { .. } | Op::Kick { .. } => {}
+            // The core keeps transfers, pages, time exchanges, lyrics timing and jam ops to itself.
+            Op::Transfer { .. } | Op::Clear | Op::LibraryMarks { .. } | Op::Page { .. } | Op::Clock { .. } | Op::LyricsTiming { .. } | Op::Request { .. } | Op::Decide { .. } | Op::Promote { .. } | Op::Kick { .. } => {}
         }
         h.remotes.played(&h.engine);
     }

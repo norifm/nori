@@ -1,6 +1,7 @@
 //! Lyrics calls: the server and enabled lyrics services together, through the client's transport
 //! and the response cache. Service logic and ranking are nori-lyrics'.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::client::{Client, NetResult};
@@ -78,19 +79,80 @@ struct Screen {
     last: parking_lot::Mutex<Option<LyricsPick>>,
     core: Arc<Core>,
     song_id: String,
+    /// The view is of this device's own playback: what it shows is what devices following it show.
+    own: bool,
+    /// It shows the lyrics another device sent: its own lookup's answers are passed over.
+    sent: AtomicBool,
+}
+
+impl Screen {
+    fn new(to: Arc<dyn LyricsShown>, core: Arc<Core>, song_id: String, own: bool) -> Screen {
+        Screen { to, last: parking_lot::Mutex::new(None), core, song_id, own, sent: AtomicBool::new(false) }
+    }
+
+    /// Passes `pick` on as it is, unless it is what is shown or none after some; true when it was.
+    fn put(&self, pick: LyricsPick) -> bool {
+        let mut last = self.last.lock();
+        if last.as_ref().is_some_and(|p| !p.lyrics.lines.is_empty() && pick.lyrics.lines.is_empty()) || !lyrics_replaces(last.as_ref(), &pick) {
+            return false;
+        }
+        *last = Some(pick.clone());
+        drop(last);
+        self.to.show(pick);
+        true
+    }
+
+    /// Shows the lyrics the device playing the song sent, from now on instead of its own lookup's.
+    fn sent(&self, pick: LyricsPick) {
+        self.sent.store(true, Ordering::Relaxed);
+        self.put(pick);
+    }
 }
 
 impl LyricsShown for Screen {
     fn show(&self, mut pick: LyricsPick) {
-        pick.lyrics.timing = nori_lyrics::timing::with_yours(pick.lyrics.timing, self.core.lyrics_yours(&self.song_id, &pick));
-        let mut last = self.last.lock();
-        if last.as_ref().is_some_and(|p| !p.lyrics.lines.is_empty() && pick.lyrics.lines.is_empty()) {
+        if self.sent.load(Ordering::Relaxed) {
             return;
         }
-        if lyrics_replaces(last.as_ref(), &pick) {
-            *last = Some(pick.clone());
-            drop(last);
-            self.to.show(pick);
+        pick.lyrics.timing = nori_lyrics::timing::with_yours(pick.lyrics.timing, self.core.lyrics_yours(&self.song_id, &pick));
+        if self.put(pick.clone()) && self.own {
+            self.core.lyrics_shown_here(&self.song_id, pick);
+        }
+    }
+}
+
+/// The lyrics a view here showed last for its own playback, sent with this device's state to those
+/// following it, and the notice that lyrics may have changed on another device.
+#[derive(Default)]
+pub(crate) struct ShownHere {
+    last: parking_lot::Mutex<Option<(String, LyricsPick)>>,
+    moved: nori_tasks::Notify,
+}
+
+impl Core {
+    /// The lyrics a view here showed last for song `id`.
+    pub(crate) fn lyrics_here(&self, id: &str) -> Option<LyricsPick> {
+        self.lyrics_here.last.lock().as_ref().filter(|(song, _)| song == id).map(|(_, pick)| pick.clone())
+    }
+
+    /// Lyrics may have changed on another device: views following them look again.
+    pub(crate) fn lyrics_moved(&self) {
+        self.lyrics_here.moved.notify();
+    }
+
+    fn lyrics_shown_here(&self, id: &str, pick: LyricsPick) {
+        *self.lyrics_here.last.lock() = Some((id.to_string(), pick));
+        self.lyrics_moved();
+        if let Some(remote) = self.remote.lock().upgrade() {
+            remote.lyrics_changed();
+        }
+    }
+
+    /// Song `id`'s lyrics shown here a step sooner (`dir` > 0) or later (< 0), or back to the check's
+    /// timing (0), as another device following them asked.
+    pub(crate) fn lyrics_retime(&self, id: String, dir: i32) {
+        if let Some(pick) = self.lyrics_here(&id) {
+            self.lyrics_nudge(id, pick, dir);
         }
     }
 }
@@ -160,30 +222,70 @@ impl Client {
     /// when those are not timed, and an empty server answer last if nobody had any. No pick is shown
     /// twice. A service's timed lyrics shown before the song playing is measured are shown again once
     /// it is, checked against its voice. Dropping the future cancels its requests.
+    ///
+    /// With remote control on it runs until dropped. Shown here while another device plays the song,
+    /// the lyrics are that device's as it sends them, timed there (only it hears the song); shown for
+    /// this device's own playback, they are what it sends, and move with a nudge made elsewhere.
     pub async fn lyrics_for(&self, id: String, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
-        // A jam's members ask the service its host chose, so everyone reads the same words.
+        use futures_util::future::{select, Either};
         let remote = self.core.remote.lock().upgrade();
-        let asked = match remote.and_then(|r| r.jam_lyrics(&id)) {
+        let followed = remote.as_ref().and_then(|r| r.lyrics_followed(&id));
+        let sent = matches!(followed, Some(Some(_)));
+        let screen = Screen::new(shown, self.core.clone(), id.clone(), followed.is_none());
+        // A jam's members ask the service its host chose, so everyone reads the same words.
+        let asked = match remote.as_ref().and_then(|r| r.jam_lyrics(&id)) {
             Some(service) => self.lyrics_asked().only(&service),
             None => self.lyrics_asked(),
         };
-        self.lyrics_for_with(id, &asked, shown).await
+        // The device playing the song sent its lyrics: nothing is looked up here.
+        let lookup = async { if sent { Ok(()) } else { self.lyrics_for_with(id.clone(), &asked, &screen).await } };
+        let Some(remote) = remote else { return lookup.await };
+        // Until let go: the lyrics the device playing the song sends, or these retimed on another device.
+        let elsewhere = async {
+            loop {
+                let moved = self.core.lyrics_here.moved.notified();
+                match remote.lyrics_followed(&id) {
+                    Some(Some(pick)) => screen.sent(pick),
+                    Some(None) => {}
+                    None if screen.own => {
+                        if let Some(pick) = self.core.lyrics_here(&id) {
+                            screen.put(pick);
+                        }
+                    }
+                    None => {}
+                }
+                moved.await;
+            }
+        };
+        let ended = match select(Box::pin(lookup), Box::pin(elsewhere)).await {
+            Either::Left((Ok(()), elsewhere)) => elsewhere.await,
+            Either::Left((Err(e), _)) => Err(e),
+            Either::Right((never, _)) => never,
+        };
+        ended
     }
 }
 
 impl Client {
-    fn lyrics_asked(&self) -> LyricsLookup {
+    pub(crate) fn lyrics_asked(&self) -> LyricsLookup {
         self.settings().with_prefs(lyrics_lookup).unwrap_or_else(|| lyrics_lookup(&StoredPrefs::default()))
     }
 
     /// Song `id`'s lyrics looked up and cached, shown nowhere.
     async fn lyrics_warm(&self, id: String) -> NetResult<()> {
-        self.lyrics_look_up(id, &self.lyrics_asked(), Arc::new(Unseen)).await.map(drop)
+        let screen = Screen::new(Arc::new(Unseen), self.core.clone(), id.clone(), false);
+        self.lyrics_look_up(id, &self.lyrics_asked(), &screen).await
     }
 
-    /// [`Client::lyrics_for`] with the services given.
-    async fn lyrics_for_with(&self, id: String, asked: &LyricsLookup, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
-        let screen = self.lyrics_look_up(id.clone(), asked, shown).await?;
+    /// Song `id`'s lyrics looked up with the services `asked` and shown to `shown` up to the check against
+    /// its voice, as no other device's.
+    pub(crate) async fn lyrics_found(&self, id: String, asked: &LyricsLookup, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
+        self.lyrics_for_with(id.clone(), asked, &Screen::new(shown, self.core.clone(), id, false)).await
+    }
+
+    /// [`Client::lyrics_for`]'s lookup with the services given.
+    async fn lyrics_for_with(&self, id: String, asked: &LyricsLookup, screen: &Screen) -> NetResult<()> {
+        self.lyrics_look_up(id.clone(), asked, screen).await?;
         let last = screen.last.lock().clone();
         let Some(mut pick) = last.filter(|p| p.origin != nori_settings::lyrics_sources::LyricsOrigin::Server && p.lyrics.synced) else { return Ok(()) };
         if !matches!(pick.lyrics.timing, nori_model::LyricsTiming::NotChecked | nori_model::LyricsTiming::Yours { automatic: None, .. }) {
@@ -196,10 +298,9 @@ impl Client {
         Ok(())
     }
 
-    /// The lookup of [`Client::lyrics_for`], up to its last answer; returns where they were shown.
-    async fn lyrics_look_up(&self, id: String, asked: &LyricsLookup, shown: Arc<dyn LyricsShown>) -> NetResult<Arc<Screen>> {
+    /// The lookup of [`Client::lyrics_for`], up to its last answer, shown on `screen`.
+    async fn lyrics_look_up(&self, id: String, asked: &LyricsLookup, screen: &Screen) -> NetResult<()> {
         use crate::cache_policy::{Page, Read};
-        let screen = Arc::new(Screen { to: shown, last: parking_lot::Mutex::new(None), core: self.core.clone(), song_id: id.clone() });
         let read = || Read::LyricsBySong { song_id: id.clone() };
         let show_server = |v: &crate::Lyrics| {
             let timed = screen.last.lock().as_ref().is_some_and(|pick| pick.lyrics.synced);
@@ -245,11 +346,11 @@ impl Client {
         };
         let services = async {
             let song = match song { Some(song) => song, None => self.song_of(id.clone()).await? };
-            if let Some(line) = lookup(&*self.transport, &*self.core, &song, has_lines, synced, asked, &*screen, &self.lyrics, &plugins).await {
+            if let Some(line) = lookup(&*self.transport, &*self.core, &song, has_lines, synced, asked, screen, &self.lyrics, &plugins).await {
                 nori_perf::perf_log::note_core("lyrics", line.trim_start_matches("lyrics: "));
                 let remote = self.core.remote.lock().upgrade();
                 if let Some(remote) = remote {
-                    remote.lyrics_chose();
+                    remote.lyrics_changed();
                 }
             }
             Ok::<(), crate::transport::NetError>(())
@@ -268,7 +369,7 @@ impl Client {
                 }
             }
         }
-        Ok(screen)
+        Ok(())
     }
 }
 
@@ -289,15 +390,31 @@ impl Core {
     /// check's timing (0); the listener's timing is kept for these words and given them whenever they
     /// are shown again.
     pub fn lyrics_nudge(&self, song_id: String, mut pick: LyricsPick, dir: i32) -> LyricsPick {
+        let remote = self.remote.lock().upgrade();
+        // Another device's lyrics are timed where they play, and come back from there as nudged here.
+        match remote.and_then(|r| r.lyrics_nudge_sent(&song_id, dir)) {
+            Some(true) => {
+                pick.lyrics.timing = nori_lyrics::timing::nudged(pick.lyrics.timing, dir);
+                return pick;
+            }
+            Some(false) => return pick,
+            None => {}
+        }
         pick.lyrics.timing = nori_lyrics::timing::nudged(pick.lyrics.timing, dir);
         let key = nori_lyrics::timing::key(&song_id, &pick.origin, &pick.lyrics);
-        let c = self.db.lock();
-        let kept = match pick.lyrics.timing {
-            nori_model::LyricsTiming::Yours { ms, .. } => crate::db::kv_put(&c, &key, &ms.to_string()),
-            _ => crate::db::kv_delete(&c, &key),
+        let kept = {
+            let c = self.db.lock();
+            match pick.lyrics.timing {
+                nori_model::LyricsTiming::Yours { ms, .. } => crate::db::kv_put(&c, &key, &ms.to_string()),
+                _ => crate::db::kv_delete(&c, &key),
+            }
         };
         if let Err(e) = kept {
             crate::alog::info(&format!("lyrics: timing not kept: {e}"));
+        }
+        let shown_here = self.lyrics_here(&song_id).is_some_and(|p| p.origin == pick.origin && p.lyrics.lines == pick.lyrics.lines);
+        if shown_here {
+            self.lyrics_shown_here(&song_id, pick.clone());
         }
         pick
     }
@@ -408,7 +525,7 @@ pub(crate) mod tests {
         fake.answer(r#"[{"duration":1024,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
         let screen = Arc::new(Screen::default());
         let asked = lrclib();
-        let mut lookup = Box::pin(c.lyrics_for_with(s.id, &asked, screen.clone()));
+        let mut lookup = Box::pin(c.lyrics_found(s.id, &asked, screen.clone()));
         assert!(lookup.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
         assert_eq!(screen.0.lock().last().map(|p| p.origin.clone()), Some(LyricsOrigin::Lrclib));
     }
@@ -614,7 +731,7 @@ pub(crate) mod tests {
         let before = fake.asked().len();
         fake.fail(FailureKind::Timeout);
         let screen = Arc::new(Immediate { fake: fake.clone(), shown: Mutex::new(Vec::new()) });
-        block(c.lyrics_for_with(s.id, &lrclib(), screen.clone())).unwrap();
+        block(c.lyrics_found(s.id, &lrclib(), screen.clone())).unwrap();
         let shown = screen.shown.lock();
         assert_eq!(shown[0].0.origin, LyricsOrigin::Lrclib);
         assert_eq!(shown[0].1, before, "cached words must arrive before attempting the slow server request");
@@ -632,10 +749,10 @@ pub(crate) mod tests {
         fake.answer(r#"{"statusCode":404}"#);
         fake.answer(r#"[{"duration":1024,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
         let first = Arc::new(Screen::default());
-        block(c.lyrics_for_with(s.id.clone(), &lrclib(), first.clone())).unwrap();
+        block(c.lyrics_found(s.id.clone(), &lrclib(), first.clone())).unwrap();
         assert_eq!(first.0.lock().last().map(|p| p.origin.clone()), Some(LyricsOrigin::Lrclib));
         let again = Arc::new(Screen::default());
-        block(c.lyrics_for_with(s.id, &lrclib(), again.clone())).unwrap();
+        block(c.lyrics_found(s.id, &lrclib(), again.clone())).unwrap();
         let origins: Vec<_> = again.0.lock().iter().map(|p| p.origin.clone()).collect();
         assert_eq!(origins, [LyricsOrigin::Lrclib], "the server's plain words must not show first");
     }
@@ -651,7 +768,7 @@ pub(crate) mod tests {
         c.core.cache_put(format!("page:lyrics/{}", s.id), NONE.as_bytes().to_vec()).unwrap();
         let shown = || {
             let screen = Arc::new(Screen::default());
-            block(c.lyrics_for_with(s.id.clone(), &lrclib(), screen.clone())).unwrap();
+            block(c.lyrics_found(s.id.clone(), &lrclib(), screen.clone())).unwrap();
             let first = screen.0.lock()[0].clone();
             assert_eq!(first.origin, LyricsOrigin::Lrclib);
             first
@@ -757,7 +874,7 @@ pub(crate) mod tests {
         let screen = Arc::new(Screen::default());
         let asked = lrclib();
         let mut cx = Context::from_waker(Waker::noop());
-        let mut lookup = Box::pin(c.lyrics_for_with(s.id.clone(), &asked, screen.clone()));
+        let mut lookup = Box::pin(c.lyrics_found(s.id.clone(), &asked, screen.clone()));
         assert!(lookup.as_mut().poll(&mut cx).is_pending(), "waits for the measurement");
         assert_eq!(screen.0.lock().last().map(|p| p.lyrics.timing), Some(LyricsTiming::NotChecked));
         c.core.analysis_finish(&s.id, a).unwrap().expect("stored");
@@ -769,7 +886,7 @@ pub(crate) mod tests {
         c.core.session.window();
         fake.answer(NONE);
         fake.answer(&answer);
-        let mut lookup = Box::pin(c.lyrics_for_with(other.id.clone(), &asked, screen.clone()));
+        let mut lookup = Box::pin(c.lyrics_found(other.id.clone(), &asked, screen.clone()));
         assert!(lookup.as_mut().poll(&mut cx).is_pending());
         c.core.session.set(vec![s.id.clone()], Some(0), false, None);
         c.core.session.window();
@@ -862,7 +979,7 @@ pub(crate) mod tests {
 
     fn open(c: &Client, fake: &Arc<Fake>, id: &str, asked: &LyricsLookup) -> Vec<(usize, LyricsPick)> {
         let seen = Arc::new(Seen { fake: fake.clone(), picks: Mutex::new(Vec::new()) });
-        block(c.lyrics_for_with(id.into(), asked, seen.clone())).unwrap();
+        block(c.lyrics_found(id.into(), asked, seen.clone())).unwrap();
         let picks = seen.picks.lock().clone();
         picks
     }
