@@ -11,7 +11,7 @@ use crate::client::Client;
 use crate::db;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{pairing_name, pairing_valid, PairedDevice};
+pub use native::{pairing_name, pairing_valid, PairedDevice, PairedReach};
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) use native::door_access;
 
@@ -87,25 +87,40 @@ mod native {
     /// The `app_kv` key of the invite this device's code carries.
     const INVITE: &str = "remoteLanSecret";
 
-    /// A device paired with this one, as a list of them shows it.
+    /// A device paired with this one, as a list of them shows it: picked, it is played on or followed
+    /// ([`Remote::pick`]) while it answers.
     #[derive(Debug, Clone, PartialEq)]
     #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
     pub struct PairedDevice {
         pub id: String,
         pub name: String,
         pub kind: DeviceKind,
-        /// Its door is on this network now (known while devices are looked for).
-        pub nearby: bool,
+        pub reach: PairedReach,
+        /// The music plays there, or it is followed: [`Remote::active`] is it.
+        pub active: bool,
         /// Whole days since it was last found on this network, or paired.
         pub seen_days: u32,
+    }
+
+    /// Whether a paired device can be picked now (known while devices are looked for).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+    pub enum PairedReach {
+        /// Its door answered on this network, though what plays there may not be known yet (as just
+        /// after the music moved there).
+        Answers,
+        /// Found on this network, its door not answering (yet).
+        Silent,
+        /// Not found on this network.
+        Away,
     }
 
     const DAY_MS: i64 = 86_400_000;
 
     impl Kept {
-        fn shown(self, nearby: bool, now_ms: i64) -> PairedDevice {
+        fn shown(self, reach: PairedReach, active: bool, now_ms: i64) -> PairedDevice {
             let seen_days = ((now_ms - self.seen_ms).max(0) / DAY_MS) as u32;
-            PairedDevice { id: self.id, name: self.name, kind: self.kind, nearby, seen_days }
+            PairedDevice { id: self.id, name: self.name, kind: self.kind, reach, active, seen_days }
         }
     }
 
@@ -176,13 +191,24 @@ mod native {
             Some(lan::pairing_link(&lan::PairCode { invite, id: self.id.clone(), name: self.me.name.clone(), doors }))
         }
 
-        /// The devices paired with this one, the nearby ones first, then by when each was last seen.
+        /// The devices paired with this one, those answering first, then those found, then by when each
+        /// was last seen.
         pub fn paired(&self) -> Vec<PairedDevice> {
-            let near: Vec<String> = self.inner.lock().peers.iter().filter(|p| !p.lost).map(|p| p.member.id.clone()).collect();
-            let mut list = kept(&self.client.core.session.settings);
-            list.sort_by_key(|k| (!near.contains(&k.id), -k.seen_ms));
+            let list = kept(&self.client.core.session.settings);
             let now = db::now_ms();
-            list.into_iter().map(|k| { let nearby = near.contains(&k.id); k.shown(nearby, now) }).collect()
+            let i = self.inner.lock();
+            let active = i.active.mirror().map(|m| m.id.clone());
+            let reach = |id: &str| match i.peers.iter().find(|p| p.member.id == id && !p.lost) {
+                Some(p) if p.since.is_some() => PairedReach::Answers,
+                Some(_) => PairedReach::Silent,
+                None => PairedReach::Away,
+            };
+            let mut shown: Vec<(i64, PairedDevice)> = list.into_iter().map(|k| {
+                let (reach, active, seen) = (reach(&k.id), active.as_deref() == Some(k.id.as_str()), k.seen_ms);
+                (seen, k.shown(reach, active, now))
+            }).collect();
+            shown.sort_by_key(|(seen, d)| (d.reach as u8, -seen));
+            shown.into_iter().map(|(_, d)| d).collect()
         }
 
         /// Pairs with the device whose code `link` is: sends the code back to that device's door, which
@@ -220,7 +246,7 @@ mod native {
             let now = db::now_ms();
             let device = Kept { id: other.id, name: other.name, kind: other.kind, key: lan::pair_key(&code.invite, &nonce), seen_ms: now };
             self.keep_pair(device.clone());
-            Ok(device.shown(false, now))
+            Ok(device.shown(PairedReach::Away, false, now))
         }
 
         /// Forgets paired device `id`: it no longer controls this one, nor this one it. It is told so when
@@ -317,7 +343,7 @@ mod native {
             let kept = |seen_ms| Kept { id: "d".into(), name: "D".into(), kind: DeviceKind::Phone, key: String::new(), seen_ms };
             let now = 10 * DAY_MS;
             for (seen, days) in [(now, 0), (now - DAY_MS + 1, 0), (now - DAY_MS, 1), (now - 3 * DAY_MS - 5, 3), (now + 5, 0)] {
-                assert_eq!(kept(seen).shown(false, now).seen_days, days, "seen at {seen}");
+                assert_eq!(kept(seen).shown(PairedReach::Away, false, now).seen_days, days, "seen at {seen}");
             }
         }
 

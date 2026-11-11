@@ -484,10 +484,12 @@
     <string name="pair_busy">Pairing…</string>
     <string name="pair_done">Paired with %1$s</string>
     <string name="pair_nearby">Nearby</string>
-    <string name="pair_seen_today">Seen today</string>
-    <string name="pair_seen_yesterday">Seen yesterday</string>
-    <string name="pair_seen_days">Seen %1$d days ago</string>
+    <string name="pair_cant_reach">Can’t reach it</string>
+    <string name="pair_seen_today">Not nearby · seen today</string>
+    <string name="pair_seen_yesterday">Not nearby · seen yesterday</string>
+    <string name="pair_seen_days">Not nearby · seen %1$d days ago</string>
     <string name="pair_forget">Forget</string>
+    <string name="pair_forget_device">Forget %1$s</string>
     <string name="pair_forget_title">Forget %1$s?</string>
     <string name="pair_forget_hint">It stops controlling this phone, and this phone it. Pair again to undo.</string>
     <string name="pair_other_device">the other device</string>

@@ -6860,7 +6860,7 @@ mod tests {
     }
 
     #[test]
-    fn a_paired_device_is_forgotten_only_after_asking() {
+    fn a_paired_device_is_picked_and_forgotten_only_with_its_cross() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
@@ -6872,12 +6872,16 @@ mod tests {
         ui.set_devices(ModelRc::new(VecModel::from(vec![crate::DeviceRow { name: "This computer".into(), active: true, ..Default::default() }])));
         ui.set_pairing_link(link.as_str().into());
         ui.set_pairing_qr(crate::jam::qr(&link));
-        let paired = [("pixel", "Pixel", true, 0, nori_core::remote::wire::DeviceKind::Phone), ("desk", "Desk", false, 3, nori_core::remote::wire::DeviceKind::Desktop)]
-            .map(|(id, name, nearby, seen_days, kind)| words::paired_row(&nori_core::remote::PairedDevice { id: id.into(), name: name.into(), kind, nearby, seen_days }));
+        use nori_core::remote::{wire::DeviceKind, PairedReach};
+        let paired = [("pixel", "Pixel", PairedReach::Answers, 0, DeviceKind::Phone), ("desk", "Desk", PairedReach::Away, 3, DeviceKind::Desktop)]
+            .map(|(id, name, reach, seen_days, kind)| words::paired_row(&nori_core::remote::PairedDevice { id: id.into(), name: name.into(), kind, reach, active: false, seen_days }));
         ui.set_paired(ModelRc::new(VecModel::from(paired.to_vec())));
         let forgot = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let heard = forgot.clone();
         ui.on_forget_device(move |id| heard.borrow_mut().push(id.to_string()));
+        let picked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let heard = picked.clone();
+        ui.on_pick_device(move |id| heard.borrow_mut().push(id.to_string()));
         let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let heard = asked.clone();
         ui.on_pair(move |link| heard.borrow_mut().push(link.to_string()));
@@ -6901,13 +6905,18 @@ mod tests {
         };
         settle();
         shot(&ui, "after-devices");
-        click("Seen 3 days ago");
+        click("Nearby");
+        assert_eq!(*picked.borrow(), ["pixel"], "a paired device that answers is picked, as a device above");
+        assert!(!ui.get_forget_open());
+        click("Not nearby · seen 3 days ago");
+        assert!(!ui.get_forget_open() && picked.borrow().len() == 1, "one out of reach is neither picked nor forgotten");
+        click("Forget Desk");
         assert!(ui.get_forget_open() && ui.get_forgetting().id == "desk", "asked first");
         assert!(forgot.borrow().is_empty());
         shot(&ui, "after-forget");
         click("Cancel");
         assert!(!ui.get_forget_open() && forgot.borrow().is_empty(), "kept");
-        click("Seen 3 days ago");
+        click("Forget Desk");
         click("Forget");
         assert_eq!(*forgot.borrow(), ["desk"], "that one only");
         assert!(!ui.get_forget_open());

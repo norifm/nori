@@ -106,10 +106,14 @@ export struct LyricPiece {
 export struct PairedRow {
     id: string,
     name: string,
-    // Whether it is nearby now, or when it last was.
+    // Whether it answers now, or when it was last nearby.
     line: string,
     // As DeviceRow's.
     kind: int,
+    // It answers: a click picks it.
+    reachable: bool,
+    // The music plays there, or it is followed.
+    active: bool,
 }
 
 export struct DeviceRow {
@@ -3054,13 +3058,16 @@ component PanelRow inherits Rectangle {
     in property <string> title;
     in property <string> line;
     in property <bool> lit;
+    // Off, the row is quiet and takes no click (what it holds after its words still does).
+    in property <bool> enabled: true;
     callback clicked;
     height: 52px;
     border-radius: 10px;
-    background: rt.has-hover ? Theme.hover : transparent;
+    background: rt.has-hover && root.enabled ? Theme.hover : transparent;
     animate background { duration: Motion.reduced ? 0ms : 140ms; enabled: !Motion.reduced; easing: ease-out; }
     rt := TouchArea {
-        mouse-cursor: pointer;
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
         clicked => { root.clicked(); }
     }
     HorizontalLayout {
@@ -3076,7 +3083,7 @@ component PanelRow inherits Rectangle {
             animate background { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
             Icon {
                 glyph: root.icon;
-                colour: root.lit ? Theme.accent : Theme.text;
+                colour: root.lit ? Theme.accent : root.enabled ? Theme.text : Theme.dim;
                 width: 18px;
                 height: 18px;
             }
@@ -3087,7 +3094,7 @@ component PanelRow inherits Rectangle {
             min-width: 0;
             Text {
                 text: root.title;
-                color: root.lit ? Theme.accent : Theme.text;
+                color: root.lit ? Theme.accent : root.enabled ? Theme.text : Theme.dim;
                 font-size: 13px;
                 font-weight: 600;
                 overflow: elide;
@@ -3161,7 +3168,8 @@ component DevicesView inherits Rectangle {
                     }
                 }
             }
-            // The devices paired with this one, each forgotten on its own, and pairing another.
+            // The devices paired with this one: a click picks one that answers, as a device above; the ×
+            // forgets it. Then pairing another.
             if root.pairing-link != "": PanelRule {}
             if root.pairing-link != "": HorizontalLayout {
                 padding-left: 6px;
@@ -3178,8 +3186,12 @@ component DevicesView inherits Rectangle {
                 icon: Glyphs.device(p.kind);
                 title: p.name;
                 line: p.line;
-                clicked => { root.forget(p); }
+                lit: p.active;
+                enabled: p.reachable;
+                clicked => { root.pick(p.id); }
                 IconButton {
+                    accessible-role: button;
+                    accessible-label: "Forget " + p.name;
                     y: (parent.height - self.height) / 2;
                     glyph: Icons.xmark;
                     size: 28px;

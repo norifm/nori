@@ -41,7 +41,7 @@ use nori_settings::settings_store::Settings;
 
 mod pairing;
 #[cfg(not(target_arch = "wasm32"))]
-pub use pairing::{pairing_name, pairing_valid, PairedDevice};
+pub use pairing::{pairing_name, pairing_valid, PairedDevice, PairedReach};
 #[cfg(not(target_arch = "wasm32"))]
 pub use nori_remote::lan::PairError;
 

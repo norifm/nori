@@ -179,11 +179,20 @@ fn paired_devices_control_each_other_and_can_be_forgotten() {
     let announced = discovery.0.lock().unwrap().clone().unwrap();
     assert!(announced.txt.iter().all(|param| !param.value.contains(&invite)), "discovery does not contain the pairing credential");
     b.clone().watch(true);
-    assert!(!b.paired()[0].nearby);
+    assert_eq!(b.paired()[0].reach, remote::PairedReach::Away);
+    // Found where its door does not answer: it is not offered to pick.
+    let shut = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    b.clone().lan_found("shut".into(), vec!["127.0.0.1".into()], shut, announced.txt.clone());
+    assert_ne!(b.paired()[0].reach, remote::PairedReach::Answers, "found, not answering");
+    wait(&b_changed, || b.paired()[0].reach == remote::PairedReach::Away);
     // Found at each of its addresses: its link-local IPv6 one, where its door does not listen, is passed over.
     b.clone().lan_found("host".into(), vec!["fe80::1".into(), "fe80::1%en0".into(), "127.0.0.1".into()], announced.port, announced.txt);
     wait(&b_changed, || b.devices().len() == 1);
-    assert!(b.paired()[0].nearby, "found on this network");
+    assert_eq!(b.paired()[0].reach, remote::PairedReach::Answers, "its door answers");
+    assert!(!b.paired()[0].active);
+    // Picked in the paired list, as in the devices list: nothing plays here, so it is followed.
+    b.clone().pick(Some(b.paired()[0].id.clone()));
+    assert!(b.paired()[0].active, "the device this one follows");
     b.clone().send(a.id(), Op::Pause);
     assert!(matches!(a_commands.recv_timeout(Duration::from_secs(5)).unwrap(), Op::Pause));
     b.clone().forget(a.id());

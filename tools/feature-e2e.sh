@@ -465,9 +465,11 @@ PY
   "$app" remote watch on >/dev/null
   "$app" remote found "$ytdoor" >/dev/null
   check "the paired YouTube peer is listed" wait_until 15 bash -c "'$app' remote devices | grep -Fq '$ytname'"
+  check "the paired list offers it to pick" bash -c "'$app' remote paired | grep -Fq '$ytname (answers)'"
   "$app" remote watch off >/dev/null
   "$app" remote pick "$ytpeer_id" >/dev/null
   check "the phone hands its YouTube queue to the terminal" wait_for playingOn "$ytname" 15
+  check "the paired list shows it as the one playing" bash -c "'$app' remote paired | grep -Fq '$ytname (answers) active'"
   check "this phone's output is let go" silent 10
   check "the terminal resolves and plays the YouTube song" wait_until 45 bash -c "'$app' remote devices | grep -Fq '$ytname (nearby): playing'"
   "$app" remote pick here >/dev/null

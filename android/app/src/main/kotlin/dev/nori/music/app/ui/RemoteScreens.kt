@@ -163,7 +163,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 ControlledDevicePage(plugins, shownDevice)
             } else if (p == RoomPage.Pair && pairing != null) {
                 SheetTitle(words(R.string.pair_devices))
-                PairedPage(vm, paired, { page = RoomPage.New }, { page = RoomPage.Code })
+                PairedPage(vm, paired, { pick(it) }, { page = RoomPage.New }, { page = RoomPage.Code })
             } else if (p == RoomPage.Code && pairing != null) {
                 SheetTitle(words(R.string.pair_show))
                 LinkCode(pairing!!, words(R.string.pair_hint))
@@ -275,21 +275,20 @@ internal fun PairingRequest(vm: RemoteViewModel = viewModel()) {
 }
 
 /**
- * The devices paired with this phone, each with Forget (asked first); then pairing another, and this phone's
- * own code for another to scan.
+ * The devices paired with this phone: a tap on one that answers picks it ([pick]), as on the devices page; its
+ * × forgets it (asked first). Then pairing another, and this phone's own code for another to scan.
  */
 @Composable
-private fun PairedPage(vm: RemoteViewModel, paired: List<dev.nori.music.ffi.PairedDevice>, onNew: () -> Unit, onCode: () -> Unit) {
+private fun PairedPage(vm: RemoteViewModel, paired: List<dev.nori.music.ffi.PairedDevice>, pick: (String) -> Unit, onNew: () -> Unit, onCode: () -> Unit) {
     var forgetting by remember { mutableStateOf<dev.nori.music.ffi.PairedDevice?>(null) }
     val scheme = MaterialTheme.colorScheme
     if (paired.isNotEmpty()) GroupCard {
         paired.forEachIndexed { k, d ->
-            GroupRow(
-                d.name, subtitle = say.pairSeen(d), icon = kindIcon(d.kind), divider = k < paired.lastIndex,
-                trailing = {
-                    IconButton({ forgetting = d }) { Icon(Iconoir.Xmark, words(R.string.pair_forget), Modifier.size(20.dp), tint = scheme.onSurfaceVariant) }
-                },
-            )
+            DeviceRow(
+                d.name, kindIcon(d.kind), say.pairSeen(d), d.active, divider = k < paired.lastIndex,
+                enabled = d.reach == dev.nori.music.ffi.PairedReach.ANSWERS,
+                action = { IconButton({ forgetting = d }) { Icon(Iconoir.Xmark, words(R.string.pair_forget_device, d.name), Modifier.size(20.dp), tint = scheme.onSurfaceVariant) } },
+            ) { pick(d.id) }
         }
     }
     GroupCard {
@@ -439,20 +438,30 @@ private fun SheetRow(name: String, icon: ImageVector, divider: Boolean, onClick:
 
 /** A place the music can play: the one playing has its name and glyph in the accent, the rest are ink. */
 @Composable
-private fun DeviceRow(name: String, icon: ImageVector, subtitle: String?, active: Boolean, divider: Boolean, trailing: String? = null, onClick: () -> Unit) {
+/** Off ([enabled] false), the row is in the quiet ink and takes no tap; its [action] still does. */
+private fun DeviceRow(
+    name: String, icon: ImageVector, subtitle: String?, active: Boolean, divider: Boolean, trailing: String? = null,
+    enabled: Boolean = true, action: (@Composable () -> Unit)? = null, onClick: () -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
+    val ink = when {
+        active -> scheme.primary
+        enabled -> scheme.onSurface
+        else -> scheme.onSurfaceVariant
+    }
     Column(Modifier.semantics { selected = active }) {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 52.dp).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().heightIn(min = 52.dp).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(icon, null, Modifier.size(24.dp), tint = if (active) scheme.primary else scheme.onSurface)
+            Icon(icon, null, Modifier.size(24.dp), tint = ink)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(name, style = MaterialTheme.typography.bodyLarge, color = if (active) scheme.primary else scheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(name, style = MaterialTheme.typography.bodyLarge, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (!subtitle.isNullOrEmpty()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (trailing != null) Text(trailing, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp), color = scheme.onSurfaceVariant)
+            action?.invoke()
         }
         if (divider) Hairline(startIndent = 52.dp)
     }

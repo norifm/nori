@@ -988,9 +988,10 @@ class Say(private val r: Resources) {
     /** The line under "Automatic": whether a known curve is used or offered. */
     fun deviceAutomatic(autoApply: Boolean): String = r.getString(if (autoApply) R.string.device_auto_uses else R.string.device_auto_offers)
 
-    /** A paired device's line: nearby now, or when it last was. */
+    /** A paired device's line: whether it answers now, or when it was last nearby. */
     fun pairSeen(d: dev.nori.music.ffi.PairedDevice): String = when {
-        d.nearby -> r.getString(R.string.pair_nearby)
+        d.reach == dev.nori.music.ffi.PairedReach.ANSWERS -> r.getString(R.string.pair_nearby)
+        d.reach == dev.nori.music.ffi.PairedReach.SILENT -> r.getString(R.string.pair_cant_reach)
         d.seenDays == 0u -> r.getString(R.string.pair_seen_today)
         d.seenDays == 1u -> r.getString(R.string.pair_seen_yesterday)
         else -> r.getString(R.string.pair_seen_days, d.seenDays.toInt())
