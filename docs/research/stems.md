@@ -47,8 +47,17 @@ screen off) and about 450 J for HT-Demucs (around 12 % an hour, several times pl
 
 The reference showed that the analysis' end-of-singing measure, tuned on synthetic songs, ended early on 21 of
 40 real ones. Loud bands keep the voice curve high between lines. It now ends with the last bar at 0.7x the
-song's median voice level, and only for an ending the analysis already takes as sung. Of the 22 such songs, it
-is right (within two bars) on 15, late on 5, early on 2.
+song's median voice level.
+
+On 89 sung songs the voice-band share the planner used to tell a sung end or opening was near chance (it
+missed 25 of 61 sung endings and 19 of 29 sung openings, and took 30 of 60 unsung openings as sung). So every
+song now gets where its singing starts (the first two bars at that level) and ends from the voice curve, for
+any song whose loudest bar reaches the curve's floor, and the planner prices each second both songs sing at
+once. Within two bars, the start is right on 62 % of songs (21 % early, 17 % late) and the end on 60 % (31 %
+late, 9 % early); a share of the loud bars instead of the median does no better. Seven of the eight
+instrumental songs still read as sung, which only keeps their mixes careful. Over every pair, DJ mixes with
+both voices for 3 s or more fell from 10.3 % to 5.0 % (beat-matched ones from 31 % to 9.6 %), and its loops
+from 61 to 34, the rest having looped sung bars.
 
 ## Computing them once
 

@@ -8,7 +8,7 @@
 
 use std::f64::consts::PI;
 
-use super::plan::{at_end, at_start, grid_ok, VOCAL_MIN};
+use super::plan::{at_end, at_start, grid_ok};
 use super::structure::camelot;
 use super::*;
 
@@ -193,14 +193,6 @@ impl Truth {
     /// Whether a voice sounds at `t`.
     pub fn sung_at(&self, t: f64) -> bool {
         self.voice.iter().any(|(a, b)| t >= *a && t < *b)
-    }
-
-    /// Share of `[from, to)` with a voice sounding.
-    fn voice_share(&self, from: f64, to: f64) -> f64 {
-        if to <= from {
-            return 0.0;
-        }
-        self.voice.iter().map(|(a, b)| (b.min(to) - a.max(from)).max(0.0)).sum::<f64>() / (to - from)
     }
 }
 
@@ -885,8 +877,8 @@ pub struct SongScore {
     /// At most one step from the true key on the Camelot wheel (relative or a fifth away): what the planner
     /// treats as compatible anyway. A key further off can make it refuse a good pair or blend a clashing one.
     pub key_near: Option<bool>,
-    /// (truth, claimed) for the incoming and outgoing overlap windows.
-    pub vocal: Vec<(bool, bool)>,
+    /// (sung, the singing found holds every sung note, or none is found in a song not sung).
+    pub vocal: (bool, bool),
     pub intro_cue_ok: Option<bool>,
     pub outro_cue_ok: Option<bool>,
     pub meter_ok: bool,
@@ -917,12 +909,15 @@ pub fn score(a: &Analysis, truth: &Truth, with_key: bool) -> SongScore {
             .filter(|(i, _)| i % 8 == 0)
             .any(|(_, d)| (outro_cue - d).abs() <= beat),
     });
-    let intro_w = (music.0, (t.intro_end_ms as f64 / 1000.0).max(music.0 + 1.0));
-    let outro_w = ((t.outro_start_ms as f64 / 1000.0).min(music.1 - 1.0), music.1);
-    let vocal = vec![
-        (truth.voice_share(intro_w.0, intro_w.1) >= 0.3, t.intro_vocal >= VOCAL_MIN),
-        (truth.voice_share(outro_w.0, outro_w.1) >= 0.3, t.outro_vocal >= VOCAL_MIN),
-    ];
+    // The singing found must hold every sung note, to a bar: a mix laid over a note it missed is two voices.
+    let bar = truth.meter as f64 * beat;
+    let notes = truth.voice.first().zip(truth.voice.last()).map(|(f, l)| (f.0, l.1));
+    let span = (t.vocal_end_ms > 0).then(|| (t.vocal_start_ms as f64 / 1000.0, t.vocal_end_ms as f64 / 1000.0));
+    let vocal = (notes.is_some(), match (notes, span) {
+        (Some(n), Some(s)) => s.0 <= n.0 + bar && s.1 >= n.1 - bar,
+        (None, None) => true,
+        _ => false,
+    });
     SongScore {
         tracked_f: f_measure(&rb, &tracked),
         grid_f: f_measure(&rb, &gb),
@@ -961,8 +956,9 @@ pub struct Totals {
     pub key_ok: usize,
     pub key_mirex: f64,
     pub key_near: usize,
-    pub vocal_windows: usize,
-    pub vocal_ok: usize,
+    /// Sung songs, those whose singing found holds every note, and songs not sung given singing.
+    pub sung: usize,
+    pub sung_held: usize,
     pub vocal_false_alarm: usize,
     pub cues: usize,
     pub cue_ok: usize,
@@ -997,11 +993,10 @@ pub fn totals(scores: &[SongScore]) -> Totals {
             tot.key_mirex += m;
             tot.key_near += s.key_near.unwrap_or(false) as usize;
         }
-        for (truth, claim) in &s.vocal {
-            tot.vocal_windows += 1;
-            tot.vocal_ok += (truth == claim) as usize;
-            tot.vocal_false_alarm += (!truth && *claim) as usize;
-        }
+        let (sung, ok) = s.vocal;
+        tot.sung += sung as usize;
+        tot.sung_held += (sung && ok) as usize;
+        tot.vocal_false_alarm += (!sung && !ok) as usize;
         for c in [s.intro_cue_ok, s.outro_cue_ok].into_iter().flatten() {
             tot.cues += 1;
             tot.cue_ok += c as usize;
@@ -1474,7 +1469,7 @@ fn analysis_holds_its_scores() {
     assert!(t.acc1 >= 16 && t.acc2 == t.songs && t.meter_ok == t.songs, "{t:?}");
     assert!(t.bar_locked >= 28 && t.wrong == 0 && t.wrong_bar <= 2, "no mix window beat-matched wrong: {t:?}");
     assert!(t.key_ok >= 14 && t.key_near == t.keys, "{t:?}");
-    assert!(t.vocal_ok >= 33 && t.vocal_false_alarm <= 2 && t.cue_ok >= 29, "{t:?}");
+    assert!(t.sung_held == t.sung && t.vocal_false_alarm == 0 && t.cue_ok >= 29, "{t:?}");
 }
 
 #[test]
@@ -1483,17 +1478,18 @@ fn transitions_hold_their_scores() {
     assert!(t.drop_hit >= 7 && t.drop_skipped == 0, "{t:?}");
     assert!(t.swap_on_bar == t.swaps && t.swap_on_phrase == t.swaps && t.start_on_phrase >= 10, "swaps and starts on the bar and phrase: {t:?}");
     assert!(t.cap_broken == 0 && t.coda_s == 0.0 && t.dead_runup_s == 0.0, "{t:?}");
-    assert!(t.dead_air_s <= 38.0 && t.clash_s <= 12.5 && t.bump_max_lu <= 1.0, "{t:?}");
-    assert!(t.sung_lost_s <= 25.0, "{t:?}");
-    // DJ: longer mixes that land more drops and skip less of the incoming intro, without more harm; a pair that
-    // cannot blend cuts into its drop.
+    assert!(t.dead_air_s <= 38.0 && t.clash_s <= 1.0 && t.both_sung_s <= 5.0 && t.bump_max_lu <= 1.0, "{t:?}");
+    assert!(t.sung_lost_s <= 18.0, "{t:?}");
+    // DJ: longer mixes that land more drops, without more harm; a pair that cannot blend cuts into its drop. The
+    // singing found runs past the sung notes of these sparsely sung songs (a mix must not miss a note), so DJ
+    // also skips sung intros, loops only unsung bars, and twice waits for a last line off the phrase.
     let dj = mix_totals(&run_mixes(crate::types::MixStyle::Dj));
-    assert!(dj.duration_s >= 1.7 * t.duration_s && dj.drop_hit >= 10 && dj.drop_skipped == 0 && dj.double_drops >= 1, "{dj:?}");
-    assert!(dj.cuts >= 1 && dj.skip_in_s <= 10.0 && dj.dip_s <= 0.6 * t.dip_s && dj.loops >= 4 && dj.bends >= 6, "{dj:?}");
-    assert!(dj.swap_on_bar == dj.swaps && dj.swap_on_phrase == dj.swaps, "{dj:?}");
-    assert!(dj.cap_broken == 0 && dj.coda_s == 0.0 && dj.dead_runup_s == 0.0, "{dj:?}");
-    assert!(dj.dead_air_s <= 38.0 && dj.clash_s <= 14.0 && dj.bump_max_lu <= 1.0, "{dj:?}");
-    assert!(dj.sung_lost_s <= 28.0 && dj.sung_under_s <= 56.0, "{dj:?}");
+    assert!(dj.duration_s >= 1.5 * t.duration_s && dj.drop_hit >= 10 && dj.drop_skipped == 0 && dj.double_drops >= 1, "{dj:?}");
+    assert!(dj.cuts >= 1 && dj.skip_in_s <= 40.0 && dj.dip_s <= 0.6 * t.dip_s && dj.loops >= 1 && dj.bends >= 6, "{dj:?}");
+    assert!(dj.swap_on_bar == dj.swaps && dj.swap_on_phrase + 2 >= dj.swaps, "{dj:?}");
+    assert!(dj.cap_broken == 0 && dj.coda_s == 0.0 && dj.dead_runup_s <= 4.0, "{dj:?}");
+    assert!(dj.dead_air_s <= 38.0 && dj.clash_s <= 1.0 && dj.both_sung_s <= 5.0 && dj.bump_max_lu <= 1.0, "{dj:?}");
+    assert!(dj.sung_lost_s <= 15.0 && dj.sung_under_s <= 30.0, "{dj:?}");
 }
 
 /// Drops and exits within a beat are found; one where the song has none is a false alarm.
@@ -1542,5 +1538,7 @@ fn landmarks_are_found() {
     }
     assert!(found >= 2, "the sung endings have their singing's end: {found}");
 }
+
+
 
 

@@ -36,12 +36,12 @@ macro_rules! column {
 columns! {
     song_id, analysis_version, duration_ms, bpm, bpm_confidence, beat_offset_ms, stability, downbeat_phase,
     downbeat_confidence, lufs, key, key_confidence, silence_start_ms, silence_end_ms, mixramp_start_ms, mixramp_end_ms,
-    intro_end_ms, outro_start_ms, outro_vocal or 0.0, intro_vocal or 0.0, outro_centroid or 0.0, intro_centroid or 0.0,
+    intro_end_ms, outro_start_ms, outro_centroid or 0.0, intro_centroid or 0.0,
     analysed_ms, outro_bpm or 0.0, outro_bpm_confidence or 0.0, outro_beat_offset_ms or 0.0, outro_stability or 0.0,
     outro_downbeat_phase or 0, intro_bpm or 0.0, intro_bpm_confidence or 0.0, intro_beat_offset_ms or 0.0,
-    intro_stability or 0.0, intro_downbeat_phase or 0, beats_per_bar or 0, drop_ms or 0, drop_runup_vocal or 0.0,
-    drop_vocal or 0.0, exit_ms or 0, gap_ms or 0, gap_end_ms or 0, exit_vocal or 0.0, drop_runup_tonal_db or 0.0,
-    intro_beats_per_bar or 0, outro_beats_per_bar or 0, intro_grid_source or 0, outro_grid_source or 0, last_drop_ms or 0, last_drop_vocal or 0.0, vocal_end_ms or 0,
+    intro_stability or 0.0, intro_downbeat_phase or 0, beats_per_bar or 0, drop_ms or 0,
+    exit_ms or 0, gap_ms or 0, gap_end_ms or 0, drop_runup_tonal_db or 0.0,
+    intro_beats_per_bar or 0, outro_beats_per_bar or 0, intro_grid_source or 0, outro_grid_source or 0, last_drop_ms or 0, vocal_start_ms or 0, vocal_end_ms or 0,
     steady_intro_ms or 0, steady_end_ms or 0, steady_exit_ms or 0,
 }
 

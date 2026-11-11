@@ -94,9 +94,7 @@ pub struct TrackAnalysis {
     /// `intro_end_ms == silence_start_ms`: the track starts at full energy.
     pub intro_end_ms: i64,
     pub outro_start_ms: i64,
-    /// Mean voice-band power share (0..1) and spectral centroid (Hz) over the outro and intro; 0 unknown.
-    pub outro_vocal: f32,
-    pub intro_vocal: f32,
+    /// Spectral centroid (Hz) over the outro and intro; 0 unknown.
     pub outro_centroid: f32,
     pub intro_centroid: f32,
     /// Beat grids of only the last and first `automix::GRID_WINDOW_S` seconds, where mixes happen (live
@@ -111,19 +109,15 @@ pub struct TrackAnalysis {
     pub intro_beat_offset_ms: f64,
     pub intro_stability: f32,
     pub intro_downbeat_phase: i32,
-    /// The drop: first four-bar line where level, lows and chords reach the song's body; with the
-    /// voice-band share over the eight bars before and after it. 0 when the song starts full or has no grid.
+    /// The drop: first four-bar line where level, lows and chords reach the song's body. 0 when the song starts
+    /// full or has no grid.
     pub drop_ms: i64,
-    pub drop_runup_vocal: f32,
-    pub drop_vocal: f32,
     /// Where the ending stops being worth playing (a closing breakdown in the last 24 s, or the silence
     /// before a short hidden track). 0: play to the end.
     pub exit_ms: i64,
     /// The last silence of 6 s or more inside the music; 0 when none.
     pub gap_ms: i64,
     pub gap_end_ms: i64,
-    /// Voice-band share over the eight bars before the exit (or the music's end).
-    pub exit_vocal: f32,
     /// Tonal energy of the drop's run-up (most chordal four bars) relative to the body, dB; a drum
     /// intro reads far below 0.
     pub drop_runup_tonal_db: f32,
@@ -135,11 +129,11 @@ pub struct TrackAnalysis {
     pub intro_grid_source: i32,
     pub outro_grid_source: i32,
     /// The last drop: the last four-bar line in the closing minute where the song comes back to its body
-    /// from bars that lacked it (a last chorus after a breakdown), with the voice-band share of the eight
-    /// bars after it. 0 when there is none, or the song has no grid.
+    /// from bars that lacked it (a last chorus after a breakdown). 0 when there is none, or the song has no grid.
     pub last_drop_ms: i64,
-    pub last_drop_vocal: f32,
-    /// Where the song's last sung bar ends, before any hidden track: 0 when nothing is sung.
+    /// Where the song's singing starts (the first of two sung bars) and where its last sung bar ends, before any
+    /// hidden track: 0 when nothing is sung.
+    pub vocal_start_ms: i64,
     pub vocal_end_ms: i64,
     /// How far the opening's bars keep within 3 dB of each other, from the first bar line: a loop of the opening
     /// ends by it. 0 unknown.
