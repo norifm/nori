@@ -38,12 +38,4 @@
   .seal.on {
     color: var(--accent);
   }
-  .seal.stamp :global(.icon) {
-    animation: stamp 420ms cubic-bezier(0.3, 1.6, 0.5, 1);
-  }
-  @keyframes stamp {
-    from {
-      transform: scale(1.5);
-    }
-  }
 </style>

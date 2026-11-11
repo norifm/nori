@@ -524,6 +524,9 @@ if (!only || only.includes("edit")) {
   await hash(`#/album/${blue}`, "album");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
   await menu(first.starred ? "Remove from favorites" : "Add to favorites");
+  // The menu stays open, its seal turned the other way.
+  const turned = first.starred ? "Add to favorites" : "Remove from favorites";
+  const stayed = await page.waitForSelector(`dialog.menu .glyph[aria-label='${turned}'], .popover .glyph[aria-label='${turned}']`, { timeout: 5000 }).then(() => true, () => false);
   await hash("#/favorites", "favorites");
   await page.waitForFunction(async (t) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "starred" }))).songs.some((s) => s.title === t), { timeout: 30000, polling: 250 }, first.title);
   const favorited = await page.$$eval(".songs li .title", (e, t) => e.some((x) => x.textContent === t), first.title);
@@ -539,8 +542,8 @@ if (!only || only.includes("edit")) {
   await page.waitForSelector("#confirm-yes");
   await page.click("#confirm-yes");
   await page.waitForFunction(async (id) => !JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlists" }))).playlists.some((p) => p.id === id), { timeout: 30000, polling: 250 }, made.id);
-  report.edit = { added, reordered, removed, favorited, deleted: true };
-  expect(added.length === 3 && reordered[1] === added[0] && reordered[0] === added[1] && removed.length === 2 && favorited, "playlists are made, filled, renamed, reordered, emptied and deleted, and hearts show on Favorites");
+  report.edit = { added, reordered, removed, favorited, stayed, deleted: true };
+  expect(added.length === 3 && reordered[1] === added[0] && reordered[0] === added[1] && removed.length === 2 && favorited && stayed, "playlists are made, filled, renamed, reordered, emptied and deleted, and hearts show on Favorites with the menu left open");
 }
 
 if (!only || only.includes("crash")) {

@@ -1802,7 +1802,7 @@ impl App {
             Data::Page(PageGot::Favorites(v)) => {
                 self.songs = v.songs;
                 ui.set_more_songs(false);
-                ui.set_songs(self.rows(&self.songs, false));
+                self.show_songs();
             }
             Data::Page(PageGot::Songs { songs: v, exhausted }) => {
                 let Req::Page(PageAsk::Songs { offset }) = req else { return };
@@ -1812,7 +1812,7 @@ impl App {
                 self.songs.truncate(offset as usize);
                 self.songs.extend(v);
                 ui.set_more_songs(self.song_pages.more());
-                ui.set_songs(self.rows(&self.songs, false));
+                self.show_songs();
             }
             // Page details apply only if that page is still shown.
             Data::Page(PageGot::Album(d)) if shown => {
@@ -2056,7 +2056,7 @@ impl App {
         let ui = self.ui();
         let all = self.page_songs_all || ui.get_page_kind() != PageLayout::Artist;
         let n = nori_core::browse::songs_shown(self.page_songs.len() as u32, all) as usize;
-        ui.set_page_songs(self.rows(&self.page_songs[..n], ui.get_page_kind() != PageLayout::Artist));
+        show_in(ui.get_page_songs(), self.rows(&self.page_songs[..n], ui.get_page_kind() != PageLayout::Artist), |m| ui.set_page_songs(m));
         ui.set_page_songs_more(n < self.page_songs.len());
     }
 
@@ -2064,12 +2064,18 @@ impl App {
     fn show_search_songs(&self) {
         let ui = self.ui();
         let n = nori_core::browse::songs_shown(self.search_songs.len() as u32, self.search_songs_all) as usize;
-        ui.set_search_songs(self.rows(&self.search_songs[..n], false));
+        show_in(ui.get_search_songs(), self.rows(&self.search_songs[..n], false), |m| ui.set_search_songs(m));
         ui.set_search_songs_more(n < self.search_songs.len());
     }
 
+    /// The Songs tab's or Favorites' songs.
+    fn show_songs(&self) {
+        let ui = self.ui();
+        show_in(ui.get_songs(), self.rows(&self.songs, false), |m| ui.set_songs(m));
+    }
+
     /// `page`: the songs are a page's, whose head says when every one is downloaded.
-    fn rows(&self, songs: &[Song], page: bool) -> ModelRc<SongRow> {
+    fn rows(&self, songs: &[Song], page: bool) -> Vec<SongRow> {
         use nori_core::menus::DownloadGlyph;
         let heard = self.heard.as_deref();
         let find = nori_core::pages::Find::new(&self.find);
@@ -2086,7 +2092,7 @@ impl App {
             sealed: stars && self.starred(s),
             ..row(s, i, heard == Some(s.id.as_str()))
         };
-        ModelRc::new(VecModel::from(songs.iter().enumerate().filter(|(_, s)| find.keeps_song(s)).map(row).collect::<Vec<_>>()))
+        songs.iter().enumerate().filter(|(_, s)| find.keeps_song(s)).map(row).collect()
     }
 
     /// Re-applies the find filter to every list.
@@ -2109,7 +2115,7 @@ impl App {
         ui.set_albums(cards(albums.iter().map(album_card)));
         ui.set_artists(pick(&self.lists.artists));
         ui.set_playlists(pick(&self.lists.playlists.iter().map(playlist_card).collect::<Vec<_>>()));
-        ui.set_songs(self.rows(&self.songs, false));
+        self.show_songs();
         self.show_page_songs();
     }
 
@@ -2198,11 +2204,10 @@ impl App {
 
     /// Refreshes the lists' marks: the song playing, downloads and seals.
     fn mark_playing(&self) {
-        let ui = self.ui();
         self.show_page_songs();
         self.show_search_songs();
         if !self.songs.is_empty() {
-            ui.set_songs(self.rows(&self.songs, false));
+            self.show_songs();
         }
     }
 
@@ -4907,10 +4912,15 @@ fn devices_open(ui: &AppWindow) -> bool {
 }
 
 fn devices_set(ui: &AppWindow, rows: Vec<crate::DeviceRow>) {
-    let model = ui.get_devices();
-    match model.as_any().downcast_ref::<VecModel<crate::DeviceRow>>() {
-        Some(model) => renew(model, rows),
-        None => ui.set_devices(ModelRc::new(VecModel::from(rows))),
+    show_in(ui.get_devices(), rows, |m| ui.set_devices(m));
+}
+
+/// Shows `rows` in a list whose model is `shown`: in place where it is a [`VecModel`], so the rows drawn
+/// stay (and a menu open on one stays open), else as a new model through `set`.
+fn show_in<T: Clone + PartialEq + 'static>(shown: ModelRc<T>, rows: Vec<T>, set: impl FnOnce(ModelRc<T>)) {
+    match shown.as_any().downcast_ref::<VecModel<T>>() {
+        Some(m) => renew(m, rows),
+        None => set(ModelRc::new(VecModel::from(rows))),
     }
 }
 
@@ -5349,8 +5359,9 @@ mod tests {
         assert_ne!(drawn(song), drawn(SongRow::default()), "the row draws its song");
     }
 
-    /// A song's menu does what its entries say: the seal beside the title stars the song, the album's line
-    /// opens it, Play plays it, and Details beside the seal is told by its kind.
+    /// A song's menu does what its entries say: the seal beside the title stars the song and the menu stays
+    /// open on it while the row takes its seal, the album's line opens it, Play plays it, and Details beside
+    /// the seal is told by its kind.
     #[test]
     fn a_songs_menu_entries_act() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -5359,16 +5370,32 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_view(View::Page);
-        let menu = vec![
-            crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into(), place: SongPlace::Names, enabled: true, ..Default::default() },
-            crate::SongGo { kind: 0, title: "Favorite".into(), place: SongPlace::Title, enabled: true, ..Default::default() },
-            crate::SongGo { kind: 14, title: "Details".into(), place: SongPlace::Title, enabled: true, ..Default::default() },
-        ];
-        ui.on_song_menu(move |_, _| ModelRc::new(VecModel::from(menu.clone())));
-        ui.set_page_songs(ModelRc::new(VecModel::from(vec![SongRow { title: "Glass Harbour".into(), ..Default::default() }])));
+        let sealed = Rc::new(std::cell::Cell::new(false));
+        let menu = {
+            let sealed = sealed.clone();
+            move || {
+                vec![
+                    crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into(), place: SongPlace::Names, enabled: true, ..Default::default() },
+                    crate::SongGo { kind: 0, title: "Favorite".into(), place: SongPlace::Title, enabled: true, filled: sealed.get(), ..Default::default() },
+                    crate::SongGo { kind: 14, title: "Details".into(), place: SongPlace::Title, enabled: true, ..Default::default() },
+                ]
+            }
+        };
+        ui.on_song_menu(move |_, _| ModelRc::new(VecModel::from(menu())));
+        let row = |sealed| vec![SongRow { title: "Glass Harbour".into(), sealed, ..Default::default() }];
+        ui.set_page_songs(ModelRc::new(VecModel::from(row(false))));
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
-        ui.on_song(move |list, i, how| seen.borrow_mut().push(format!("song {list} {i} {how}")));
+        let weak = ui.as_weak();
+        // As the app does: the seal flips and the rows are shown again.
+        ui.on_song(move |list, i, how| {
+            seen.borrow_mut().push(format!("song {list} {i} {how}"));
+            if how == 0 {
+                sealed.set(!sealed.get());
+                let ui = weak.unwrap();
+                show_in(ui.get_page_songs(), row(sealed.get()), |m| ui.set_page_songs(m));
+            }
+        });
         let seen = did.clone();
         ui.global::<crate::Go>().on_album(move |id| seen.borrow_mut().push(format!("album {id}")));
         ui.show().unwrap();
@@ -5396,13 +5423,15 @@ mod tests {
         let album = play + 32.0 + 7.0;
         press(row.0, row.1, Right);
         press(glyph(0.0).0, glyph(0.0).1, Left);
+        press(glyph(0.0).0, glyph(0.0).1, Left);
+        press(row.0 + 40.0, play, Left);
+        assert_eq!(*did.borrow(), ["song 0 0 0", "song 0 0 0", "song 0 0 -1"], "the menu stays open on the seal");
+        did.borrow_mut().clear();
         press(row.0, row.1, Right);
         press(row.0 + 40.0, album, Left);
         press(row.0, row.1, Right);
-        press(row.0 + 40.0, play, Left);
-        press(row.0, row.1, Right);
         press(glyph(1.0).0, glyph(1.0).1, Left);
-        assert_eq!(*did.borrow(), ["song 0 0 0", "album al", "song 0 0 -1", "song 0 0 14"]);
+        assert_eq!(*did.borrow(), ["album al", "song 0 0 14"]);
     }
 
     /// The player's menu opens above the pill with the lines it is given, and a line reaches the app by

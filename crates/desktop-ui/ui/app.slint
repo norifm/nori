@@ -2137,8 +2137,14 @@ component PickCard inherits Rectangle {
 
 // A song in a list, as Music lists them: the number (or the small artwork), the title, the artist and
 // album, and the length, over a hairline. Double click plays; a right click offers the rest.
-// A song menu line's icon, by its kind (`SongGo`).
-global SongIcons {
+// A song menu's lines (`SongGo`).
+global SongLines {
+    // A line that switches a state (the seal, leaving out of mixes): chosen, it turns into the line that
+    // switches it back and the menu stays open.
+    public pure function turns(go: SongGo) -> bool {
+        return go.kind == 0 || go.kind == 12 || go.kind == 19;
+    }
+    // Its icon, by its kind.
     public pure function song-icon(go: SongGo) -> Glyph {
         let kind = go.kind;
         if kind == 0 { return go.filled ? Icons.seal : Icons.seal-outline; }
@@ -2172,7 +2178,8 @@ component SongMenuBody inherits Popover {
     // Play first, where the menu is a row's.
     in property <bool> playable;
     callback play;
-    callback chosen(SongGo);
+    // Line `i` chosen.
+    callback chosen(SongGo, int);
     property <bool> glyphs: root.lines.length > 0 && (root.lines[root.lines.length - 1].place == SongPlace.glyphs || root.lines[root.lines.length - 1].place == SongPlace.note);
     pure function is-row(m: SongGo) -> bool {
         return m.place == SongPlace.main || m.place == SongPlace.names || m.place == SongPlace.rest;
@@ -2185,14 +2192,19 @@ component SongMenuBody inherits Popover {
             line: root.line;
             HorizontalLayout {
                 alignment: center;
-                for m in root.lines: HorizontalLayout {
+                for m[i] in root.lines: HorizontalLayout {
                     alignment: center;
-                    if m.place == SongPlace.title: IconButton {
-                        glyph: SongIcons.song-icon(m);
-                        lit: m.filled;
-                        quiet: !m.filled;
+                    if m.place == SongPlace.title && m.kind == 0: Seal {
+                        size: 20px;
+                        muted: Theme.dim;
+                        liked: m.filled;
+                        clicked => { root.chosen(m, i); }
+                    }
+                    if m.place == SongPlace.title && m.kind != 0: IconButton {
+                        glyph: SongLines.song-icon(m);
+                        quiet: true;
                         enabled: m.enabled;
-                        clicked => { root.chosen(m); }
+                        clicked => { root.chosen(m, i); }
                     }
                 }
             }
@@ -2212,12 +2224,12 @@ component SongMenuBody inherits Popover {
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                for m in root.lines: HorizontalLayout {
+                for m[i] in root.lines: HorizontalLayout {
                     if m.place == SongPlace.glyphs: IconButton {
-                        glyph: SongIcons.song-icon(m);
+                        glyph: SongLines.song-icon(m);
                         quiet: true;
                         enabled: m.enabled;
-                        clicked => { root.chosen(m); }
+                        clicked => { root.chosen(m, i); }
                     }
                 }
             }
@@ -2242,11 +2254,11 @@ component SongMenuBody inherits Popover {
                     }
                 }
                 if root.is-row(m): MenuLine {
-                    icon: SongIcons.song-icon(m);
+                    icon: SongLines.song-icon(m);
                     text: m.title;
                     enabled: m.enabled;
                     divider: i < root.lines.length - 1 && root.lines[i + 1].place == m.place;
-                    clicked => { root.chosen(m); }
+                    clicked => { root.chosen(m, i); }
                 }
             }
         }
@@ -2308,7 +2320,7 @@ component SongLine inherits Rectangle {
                 song-menu.close();
             }
             // The menu closes after: closed, it can no longer reach the row.
-            chosen(m) => {
+            chosen(m, i) => {
                 if m.kind == 1 {
                     Go.album(m.id);
                 } else if m.kind == 2 {
@@ -2316,7 +2328,11 @@ component SongLine inherits Rectangle {
                 } else {
                     root.act(m.kind, m.id);
                 }
-                song-menu.close();
+                if SongLines.turns(m) {
+                    root.lines[i] = root.menu()[i];
+                } else {
+                    song-menu.close();
+                }
             }
         }
     }
@@ -8194,7 +8210,7 @@ export component AppWindow inherits Window {
                 line: root.now-album != "" ? root.now-artist + " · " + root.now-album : root.now-artist;
                 lines: root.player-lines;
                 // The menu closes after: closed, it can no longer reach the window.
-                chosen(m) => {
+                chosen(m, i) => {
                     if m.kind == 1 {
                         Go.album(m.id);
                     } else if m.kind == 2 {
@@ -8202,7 +8218,11 @@ export component AppWindow inherits Window {
                     } else {
                         root.player-act(m.kind, m.id);
                     }
-                    player-pop.close();
+                    if SongLines.turns(m) {
+                        root.player-lines[i] = root.player-menu()[i];
+                    } else {
+                        player-pop.close();
+                    }
                 }
             }
         }
@@ -8245,7 +8265,12 @@ export component AppWindow inherits Window {
                     root.song(root.row-list, root.row-index, -1);
                     row-pop.close();
                 }
-                chosen(m) => {
+                chosen(m, i) => {
+                    if SongLines.turns(m) {
+                        root.song(root.row-list, root.row-index, m.kind);
+                        root.row-lines[i] = root.song-menu(root.row-list, root.row-index)[i];
+                        return;
+                    }
                     root.search-preview-open = false;
                     if m.kind == 1 {
                         Go.album(m.id);

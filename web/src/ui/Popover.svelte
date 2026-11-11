@@ -30,6 +30,8 @@
   });
   $effect(() => menu?.querySelector<HTMLElement>("button:not(:disabled)")?.focus({ preventScroll: true }));
   const close = () => (ui.open = null);
+  // The seal just pressed on: it is stamped down.
+  let stamped = $state<Item>();
 </script>
 
 <svelte:window onpointerdown={(e) => !menu?.contains(e.target as Node) && close()} onkeydown={(e) => e.key === "Escape" && close()} onhashchange={close} onresize={close} />
@@ -39,10 +41,7 @@
     class="popover-item menu-item"
     role="menuitem"
     disabled={it.disabled}
-    onclick={() => {
-      close();
-      void it.run();
-    }}>{#if it.icon}<Icon name={it.icon} />{/if}<span class="clip">{it.label}</span>{#if it.chosen}<Icon name="check" />{/if}</button
+    onclick={() => ui.choose(it)}>{#if it.icon}<Icon name={it.icon} />{/if}<span class="clip">{it.label}</span>{#if it.chosen}<Icon name="check" />{/if}</button
   >
 {/snippet}
 
@@ -50,13 +49,11 @@
   <button
     class="glyph quiet small"
     class:on={it.lit}
+    class:stamp={it === stamped && it.lit}
     aria-label={it.label}
     title={it.label}
     disabled={it.disabled}
-    onclick={() => {
-      close();
-      void it.run();
-    }}><Icon name={it.icon ?? "more-horiz"} /></button
+    onclick={() => (stamped = ui.choose(it))}><Icon name={it.icon ?? "more-horiz"} /></button
   >
 {/snippet}
 
