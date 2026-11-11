@@ -398,6 +398,9 @@ pub(crate) fn mdns_daemon() -> Option<mdns_sd::ServiceDaemon> {
 impl Mdns {
     pub(crate) fn start() -> Option<Arc<Mdns>> {
         let daemon = mdns_daemon()?;
+        // A door listens on IPv4: over IPv6 the daemon would announce it at every interface's link-local
+        // address, on each link, where it does not answer.
+        let _ = daemon.disable_interface(mdns_sd::IfKind::IPv6);
         Some(Arc::new(Mdns { daemon, remote: Default::default(), announced: Mutex::new(None) }))
     }
 
@@ -441,9 +444,9 @@ impl Discovery for Mdns {
                 let Some(r) = remote.upgrade() else { return };
                 match e {
                     mdns_sd::ServiceEvent::ServiceResolved(s) => {
-                        let Some(ip) = address_of(&s) else { continue };
+                        let hosts = s.addresses.iter().map(|a| a.to_ip_addr().to_string()).collect();
                         let txt = s.txt_properties.iter().map(|p| nori_core::Param { key: p.key().to_string(), value: p.val_str().to_string() }).collect();
-                        r.lan_found(s.fullname.clone(), ip.to_string(), s.port, txt);
+                        r.lan_found(s.fullname.clone(), hosts, s.port, txt);
                     }
                     mdns_sd::ServiceEvent::ServiceRemoved(_, name) => r.lan_lost(name),
                     mdns_sd::ServiceEvent::SearchStopped(_) => return,

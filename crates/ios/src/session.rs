@@ -1372,7 +1372,7 @@ mod tests {
         let me = RemoteMe { name: "Phone".into(), kind: DeviceKind::Phone };
         let phone = Remote::new(client, me, Arc::new(Obeys), Arc::new(News(Mutex::new(news_to))), None);
         phone.clone().watch(true);
-        phone.clone().lan_found(door.name.clone(), "127.0.0.1".into(), door.port, door.txt.clone());
+        phone.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, door.txt.clone());
         let until = |what: &str, ready: &dyn Fn(&Remote) -> bool| {
             let deadline = Instant::now() + Duration::from_secs(20);
             while !ready(&phone) {

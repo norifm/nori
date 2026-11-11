@@ -43,7 +43,7 @@ class NsdDiscovery(context: Context, private val remote: () -> Remote?) : Discov
     override fun browse(on: Boolean) {
         browsing?.stop()
         browsing = if (on) dev.nori.music.net.NsdBrowse(nsd, SERVICE, { f ->
-            remote()?.lanFound(f.name, f.host, f.port.toUShort(), f.txt.map { (k, v) -> Param(k, v) })
+            remote()?.lanFound(f.name, f.hosts, f.port.toUShort(), f.txt.map { (k, v) -> Param(k, v) })
         }, { name -> remote()?.lanLost(name) }) else null
     }
 

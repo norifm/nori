@@ -61,6 +61,10 @@ sha2 = { version = "0.10", optional = true }
 # The cover loader's net forwards the async Transport trait.
 async-trait = "0.1"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# This device's networks: its door is named at each, and another's tried on a shared one first.
+if-addrs = "0.15"
+
 [dev-dependencies]
 nori-player = { path = "../player", features = ["synth"] }
 # A test's own directory, for a settings database.

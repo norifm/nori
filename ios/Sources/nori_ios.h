@@ -148,8 +148,9 @@ void nori_ios_set_volume(float fraction);
 typedef void (*NoriAnnounceFn)(const char *name, uint16_t port, const char *txt);
 typedef void (*NoriBrowseFn)(int32_t on);
 void nori_ios_on_bonjour(NoriAnnounceFn announce, NoriBrowseFn browse);
-/// A door found: `service` at `host`:`port`, TXT record as a JSON object of strings.
-void nori_ios_lan_found(const char *service, const char *host, uint16_t port, const char *txt);
+/// A door found: `service` at `port` on each of `hosts` (a JSON array of addresses), TXT record as a JSON
+/// object of strings.
+void nori_ios_lan_found(const char *service, const char *hosts, uint16_t port, const char *txt);
 void nori_ios_lan_lost(const char *service);
 /// The devices list is in sight (1) or not (0).
 void nori_ios_remote_watch(int32_t on);

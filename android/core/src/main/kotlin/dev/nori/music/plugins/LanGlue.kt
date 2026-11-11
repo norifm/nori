@@ -32,7 +32,7 @@ internal class LanGlue(context: Context, private val plugins: () -> Plugins) {
     fun browse(kind: String, on: Boolean) {
         browsing.remove(kind)?.stop()
         if (on) browsing[kind] = NsdBrowse(nsd, kind, { f ->
-            plugins().discovered(kind, Service(f.name, f.host, f.port.toUShort(), f.txt.map { (k, v) -> TxtEntry(k, v) }))
+            plugins().discovered(kind, Service(f.name, f.hosts.first(), f.port.toUShort(), f.txt.map { (k, v) -> TxtEntry(k, v) }))
         }, {})
     }
 
