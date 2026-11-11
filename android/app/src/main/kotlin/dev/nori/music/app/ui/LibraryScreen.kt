@@ -157,8 +157,8 @@ fun LibraryScreen(actions: ActionsViewModel) {
         LazyRow(Modifier.bleedsToEdges(), strip, contentPadding = edgePadding(horizontal = Space.gutter, vertical = LIST_GAP), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(chips, key = { it.name }) { s -> Chip(say.librarySection(s), s == shown) { picked = s.name } }
         }
-        // A profile with no library (a provider's, signed out) is found through search.
-        if (rules.sections.isEmpty()) EmptyNote(say.searchIsTheWayIn, icon = Iconoir.Search)
+        // A profile with no section here (a provider's, signed out) is found through search.
+        if (chips.isEmpty()) EmptyNote(say.searchIsTheWayIn, icon = Iconoir.Search)
         when (shown) {
             LibrarySection.ALBUMS -> Albums(albums!!) { actions.shuffleAlbums() }
             LibrarySection.ARTISTS -> Artists()
