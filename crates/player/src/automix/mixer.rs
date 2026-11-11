@@ -297,6 +297,8 @@ struct Fades {
     low_in: Coef,
     /// The shelf holding the swapped highs to one song's power.
     shelf: Coef,
+    /// The incoming highs' shelf.
+    highs_in: Coef,
     /// How much of the incoming voice band is held down.
     duck: f64,
     /// How much of the echo's repeats is still heard.
@@ -336,6 +338,10 @@ pub struct Mixer {
     /// Holds the highs both decks play at the swap's cut, per deck per channel.
     hold_shelf: Shelf,
     hold_state: [[[f64; 2]; MAX_CHANNELS]; 2],
+    /// The incoming highs' return, and how far down they are held before it.
+    highs_in: Option<(Span, f64)>,
+    highs_shelf: Shelf,
+    highs_state: [[f64; 2]; MAX_CHANNELS],
     high_pass: Option<SweepFilter>,
     low_pass: Option<SweepFilter>,
     sweep_entry: u64,
@@ -370,6 +376,9 @@ impl Mixer {
             swap_state: [[[[0.0; 2]; MAX_CHANNELS]; 2]; 2],
             hold_shelf: Shelf::default(),
             hold_state: [[[0.0; 2]; MAX_CHANNELS]; 2],
+            highs_in: None,
+            highs_shelf: Shelf::default(),
+            highs_state: [[0.0; 2]; MAX_CHANNELS],
             high_pass: None,
             low_pass: None,
             sweep_entry: 1,
@@ -407,6 +416,11 @@ impl Mixer {
         });
         let cut = p.bass_swap.map_or(180.0, |s| s.cut_hz as f64);
         (self.low_shelf, self.hold_shelf) = (Shelf::at(rate, cut / 2.0), Shelf::at(rate, cut));
+        self.highs_in = p.highs_in.filter(|h| h.db < 0.0).map(|h| {
+            let start = frames(h.at_ms as f64).min(len);
+            self.highs_shelf = Shelf::at(rate, h.hz as f64);
+            (Span { start, end: (start + frames((h.len_ms as f64).max(1.0))).min(len.max(1)) }, db_to_gain((h.db as f64).clamp(-30.0, 0.0)))
+        });
         let sweep = |s: crate::types::Sweep, low| SweepFilter::new(rate, span(s.start_ms, s.end_ms), s.from_hz as f64, s.to_hz as f64, low);
         self.high_pass = p.high_pass.map(|s| sweep(s, false));
         self.low_pass = p.low_pass.map(|s| sweep(s, true));
@@ -433,6 +447,7 @@ impl Mixer {
         }
         self.swap_state = [[[[0.0; 2]; MAX_CHANNELS]; 2]; 2];
         self.hold_state = [[[0.0; 2]; MAX_CHANNELS]; 2];
+        self.highs_state = [[0.0; 2]; MAX_CHANNELS];
         self.duck_state = [[0.0; 2]; MAX_CHANNELS];
     }
 
@@ -523,6 +538,7 @@ impl Mixer {
             low_out: self.swap_section(lows_out),
             low_in: self.swap_section(lows_in),
             shelf: self.hold_shelf.high(held),
+            highs_in: self.highs_in.map_or_else(Coef::default, |(span, floor)| self.highs_shelf.high(floor + (1.0 - floor) * raised_cos(span.progress(p)))),
             duck,
             echo: 1.0 - raised_cos(self.echo_out.progress(p)),
         }
@@ -533,7 +549,8 @@ impl Mixer {
     fn fade_run(&self, p: u64) -> FadeRun {
         let (o, i) = (self.out_fade, self.in_fade);
         let (s, d, e) = (self.swap.unwrap_or_default(), self.duck.map_or_else(Span::default, |d| d.0), self.echo_out);
-        let bends = [o.start, o.start + 1, o.end, i.start, i.start + 1, i.end, s.start, s.end, d.start, d.end, e.start, e.end];
+        let h = self.highs_in.map_or_else(Span::default, |h| h.0);
+        let bends = [o.start, o.start + 1, o.end, i.start, i.start + 1, i.end, s.start, s.end, d.start, d.end, e.start, e.end, h.start, h.end];
         let end = bends.into_iter().filter(|&b| b > p).fold((p + FADE_RUN).min(self.len), u64::min);
         FadeRun { start: p, end, from: self.fades_at(p), to: self.fades_at(end) }
     }
@@ -559,6 +576,13 @@ impl Mixer {
                 for (c, x) in o[..ch].iter_mut().enumerate() {
                     *x = f.run(c, *x, wet);
                 }
+            }
+        }
+        // Run on to the end once the highs are back: the shelf then passes its input, and its state settles.
+        if self.highs_in.is_some() {
+            let shelf = run.from.highs_in.lerp(&run.to.highs_in, t);
+            for (x, s) in i[..ch].iter_mut().zip(&mut self.highs_state) {
+                *x = shelf.run(s, *x);
             }
         }
         let duck = if self.duck.is_some() { run.get(t, |f| f.duck) } else { 0.0 };
@@ -622,6 +646,7 @@ mod tests {
             out_gain_db: 0.0,
             in_gain_db: 0.0,
             bass_swap: None,
+            highs_in: None,
             low_pass: None,
             high_pass: None,
             echo: None,
@@ -860,6 +885,19 @@ mod tests {
 
     /// The lows change hands and nothing else: through a bass swap and after it, the mids above the cut keep
     /// the level they had before it.
+    #[test]
+    fn incoming_highs_come_in_at_their_own_time() {
+        let mut p = plan();
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (0, 0, 0, 0);
+        p.highs_in = Some(crate::types::HighsIn { at_ms: 400, len_ms: 200, db: -15.0, hz: 3000.0 });
+        let zeros = vec![0f32; 48000];
+        let (hats, mids) = (sine(10_000.0, 48000), sine(400.0, 48000));
+        let level = |x: &[f32], a: usize, b: usize| rms(&mix(&p, &zeros, x)[a..b]) / rms(&x[a..b]);
+        assert!(level(&hats, 4800, 19200) < 0.2, "hats held down before: {}", level(&hats, 4800, 19200));
+        assert!((level(&hats, 30000, 48000) - 1.0).abs() < 0.02, "whole after");
+        assert!((level(&mids, 4800, 19200) - 1.0).abs() < 0.05, "the mids untouched: {}", level(&mids, 4800, 19200));
+    }
+
     #[test]
     fn bass_swap_leaves_the_mids() {
         let mut p = plan();

@@ -21,7 +21,7 @@
 
 use super::structure::key_distance;
 use super::tempo::{fold, match_ratio};
-use crate::types::{AutoMixSettings, BassSwap, Bend, Echo, FadeCurve, InLoop, MixStyle, Sweep, TrackAnalysis, TransitionKind, TransitionPlan, VocalDuck};
+use crate::types::{AutoMixSettings, BassSwap, Bend, Echo, FadeCurve, HighsIn, InLoop, MixStyle, Sweep, TrackAnalysis, TransitionKind, TransitionPlan, VocalDuck};
 
 pub(crate) const MAX_SKIP_MS: i64 = 15_000;
 /// The outgoing music a double drop may leave unplayed: the outro after its last drop.
@@ -66,6 +66,7 @@ fn blank(kind: TransitionKind, out_start: i64, in_start: i64, duration: i64, rea
         out_gain_db: 0.0,
         in_gain_db: 0.0,
         bass_swap: None,
+        highs_in: None,
         low_pass: None,
         high_pass: None,
         echo: None,
@@ -519,6 +520,8 @@ struct Profile {
     /// Bars the bass takes to change hands, but for a sixteenth into a drop when `quick_drop_swap`.
     swap_bars: f64,
     quick_drop_swap: bool,
+    /// The incoming highs come in before the bass ([`HighsIn`]).
+    highs_in: bool,
     /// The outgoing song thins out (a rising high-pass) over the bars before the incoming drop.
     riser: bool,
     /// A pair that cannot blend cuts on a downbeat into the incoming drop ([`drop_cut`]) before a plainer fade.
@@ -540,6 +543,7 @@ const SMOOTH: Profile = Profile {
     double_drop: false,
     swap_bars: 1.0,
     quick_drop_swap: false,
+    highs_in: false,
     riser: false,
     drop_cut: false,
     loop_cost: 0.1,
@@ -556,6 +560,7 @@ const DJ: Profile = Profile {
     double_drop: true,
     swap_bars: 0.25,
     quick_drop_swap: true,
+    highs_in: true,
     riser: true,
     drop_cut: true,
     loop_cost: 0.04,
@@ -975,6 +980,10 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     if s.bass_swap {
         let len = swap_len(k, w.landing).round() as i64;
         p.bass_swap = Some(BassSwap { at_ms: (swap - len).max(0), len_ms: len, cut_hz: BASS_CUT_HZ });
+        if k.profile.highs_in && w.runup_bars >= HIGHS_IN_MIN_BARS {
+            let back = (w.swap - (w.runup_bars as f64 / 4.0 + 1.0) * k.bar).max(0.0);
+            p.highs_in = Some(HighsIn { at_ms: back.round() as i64, len_ms: k.bar.round() as i64, db: HIGHS_IN_DB, hz: HIGHS_IN_HZ });
+        }
     }
     // Same key: no filter. Neighbours: soft low-pass. Distance 2: high-pass "filter open". Else: low-pass after
     // the swap.
@@ -1024,6 +1033,9 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     if riser {
         bits.push("a riser into it".to_string());
     }
+    if p.highs_in.is_some() {
+        bits.push("highs before the bass".to_string());
+    }
     if w.runup_bars > 0 && p.out_loop_ms.is_none() {
         bits.push(format!("{}-bar run-up", w.runup_bars));
     }
@@ -1058,6 +1070,12 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     );
     p
 }
+
+/// The incoming highs over a run-up of this many bars or more: held this far down above this shelf, dB and Hz, back
+/// over the bar ending a quarter of the run-up before the swap.
+const HIGHS_IN_MIN_BARS: i64 = 4;
+const HIGHS_IN_DB: f32 = -15.0;
+const HIGHS_IN_HZ: f32 = 3_000.0;
 
 /// Bars of rising high-pass on the outgoing song before the incoming drop, and its sweep, Hz.
 const RISER_BARS: i64 = 2;
@@ -1179,6 +1197,11 @@ fn bend(p: &mut TransitionPlan, k: &Lock, from: f64) {
         let end = at(sw.at_ms + sw.len_ms);
         sw.at_ms = at(sw.at_ms);
         sw.len_ms = end - sw.at_ms;
+    }
+    if let Some(h) = p.highs_in.as_mut() {
+        let end = at(h.at_ms + h.len_ms);
+        h.at_ms = at(h.at_ms);
+        h.len_ms = end - h.at_ms;
     }
     for sw in [p.low_pass.as_mut(), p.high_pass.as_mut()].into_iter().flatten() {
         (sw.start_ms, sw.end_ms) = (at(sw.start_ms), at(sw.end_ms));
@@ -1982,6 +2005,22 @@ mod tests {
             assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
             assert_eq!(p.bass_swap.expect(&p.reason).len_ms, len.round() as i64, "{:?}: {}", s.style, p.reason);
         }
+    }
+
+    /// In a DJ run-up the incoming highs come back a quarter of it before the bass swaps; Smooth leaves them be.
+    #[test]
+    fn dj_brings_the_incoming_highs_in_before_the_bass() {
+        let beat: f64 = 60_000.0 / 128.0;
+        let (a, b) = (track(128.0), TrackAnalysis { drop_ms: (120.0 + 32.0 * beat) as i64, ..track(128.0) });
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        let (h, swap) = (p.highs_in.expect(&p.reason), p.bass_swap.expect(&p.reason));
+        let runup = swap_at(&p) as f64 / (4.0 * beat);
+        assert!(runup >= 4.0, "{}", p.reason);
+        assert_eq!(h.at_ms + h.len_ms, (swap_at(&p) as f64 - runup / 4.0 * 4.0 * beat).round() as i64, "{p:?}");
+        assert!(h.at_ms + h.len_ms < swap.at_ms && h.db < 0.0, "{p:?}");
+        let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
+        assert!(smooth.bass_swap.is_some() && smooth.highs_in.is_none(), "{}", smooth.reason);
+        assert!(plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings { bass_swap: false, ..dj() }).highs_in.is_none());
     }
 
     /// An echo-out repeats the outgoing song's last beat: over a sung line that is a stutter. It is never planned over

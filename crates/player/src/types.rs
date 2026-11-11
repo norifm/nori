@@ -265,6 +265,17 @@ pub struct BassSwap {
     pub cut_hz: f32,
 }
 
+/// The incoming highs are held `db` down above `hz` until `at_ms`; over `len_ms` they come in. Two songs' hats
+/// together sound busy, so the incoming ones wait, and come in before the bass changes hands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct HighsIn {
+    pub at_ms: i64,
+    pub len_ms: i64,
+    pub db: f32,
+    pub hz: f32,
+}
+
 /// Beat-synced echo on the outgoing deck: `delay_ms` is one outgoing beat, `feedback` (0..1) what each repeat
 /// keeps, `wet_db` the repeats' level.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -337,6 +348,9 @@ pub struct TransitionPlan {
     pub in_gain_db: f32,
     /// Relative.
     pub bass_swap: Option<BassSwap>,
+    /// Relative.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub highs_in: Option<HighsIn>,
     /// Relative. Low-pass sweep on the outgoing track.
     pub low_pass: Option<Sweep>,
     /// Relative. High-pass sweep on the outgoing track (DJ "filter open").
@@ -369,6 +383,10 @@ impl TransitionPlan {
             at(&mut s.at_ms);
             at(&mut s.len_ms);
         }
+        if let Some(h) = self.highs_in.as_mut() {
+            at(&mut h.at_ms);
+            at(&mut h.len_ms);
+        }
         for s in [self.low_pass.as_mut(), self.high_pass.as_mut()].into_iter().flatten() {
             at(&mut s.start_ms);
             at(&mut s.end_ms);
@@ -384,12 +402,12 @@ impl TransitionPlan {
     /// Whether both plans mix the same audio: equal but for `kind`, `reason` and `tempo_ramp_beats`
     /// (`tempo_ramp_ms` is what runs).
     pub fn sounds_same(&self, o: &TransitionPlan) -> bool {
-        let TransitionPlan { kind: _, reason: _, tempo_ramp_beats: _, out_start_ms, in_start_ms, duration_ms, tempo_ratio, tempo_ramp_ms, keep_pitch, fade_curve, out_fade_start_ms, out_fade_end_ms, in_fade_start_ms, in_fade_end_ms, out_gain_db, in_gain_db, bass_swap, low_pass, high_pass, echo, out_loop_ms, vocal_duck, in_loop, bend } = self;
+        let TransitionPlan { kind: _, reason: _, tempo_ramp_beats: _, out_start_ms, in_start_ms, duration_ms, tempo_ratio, tempo_ramp_ms, keep_pitch, fade_curve, out_fade_start_ms, out_fade_end_ms, in_fade_start_ms, in_fade_end_ms, out_gain_db, in_gain_db, bass_swap, highs_in, low_pass, high_pass, echo, out_loop_ms, vocal_duck, in_loop, bend } = self;
         (*out_start_ms, *in_start_ms, *duration_ms, *tempo_ramp_ms, *out_fade_start_ms, *out_fade_end_ms, *in_fade_start_ms, *in_fade_end_ms, *out_loop_ms)
             == (o.out_start_ms, o.in_start_ms, o.duration_ms, o.tempo_ramp_ms, o.out_fade_start_ms, o.out_fade_end_ms, o.in_fade_start_ms, o.in_fade_end_ms, o.out_loop_ms)
             && (*tempo_ratio, *keep_pitch, *fade_curve, *out_gain_db, *in_gain_db) == (o.tempo_ratio, o.keep_pitch, o.fade_curve, o.out_gain_db, o.in_gain_db)
             && (*bass_swap, *low_pass, *high_pass, *echo, *vocal_duck) == (o.bass_swap, o.low_pass, o.high_pass, o.echo, o.vocal_duck)
-            && (*in_loop, *bend) == (o.in_loop, o.bend)
+            && (*in_loop, *bend, *highs_in) == (o.in_loop, o.bend, o.highs_in)
     }
 
     /// Where the tempo changes: from `tempo_ratio` to 1 over (start, length) ms of the transition, the bend or

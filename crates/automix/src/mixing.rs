@@ -78,7 +78,7 @@ pub fn adopt(nori: &TransitionPlan, p: Proposal, out_ms: i64, in_ms: i64, max_te
     t.reason = "planned by a plugin".into();
     // A loop, a bend or a duck nori placed for its own plan doesn't fit another: the bend's tempo change goes after it.
     t.unbend();
-    (t.out_loop_ms, t.in_loop, t.vocal_duck) = (None, None, None);
+    (t.out_loop_ms, t.in_loop, t.vocal_duck, t.highs_in) = (None, None, None, None);
     if p.kind == Proposed::Gapless {
         let d = 0;
         t.kind = TransitionKind::Gapless;
