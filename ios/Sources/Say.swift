@@ -666,6 +666,7 @@ enum Say {
         case ("autoFillBasis", "ARTIST"): return "The same artist"
         case ("autoFillBasis", "GENRE"): return "The same genre"
         case ("autoFillBasis", "ERA"): return "The same era"
+        case ("autoMix", "DJ"), ("autoMix", "Dj"): return "DJ"
         case ("swipeRight", "NONE"), ("swipeLeft", "NONE"): return "Nothing"
         case ("swipeRight", "QUEUE"), ("swipeLeft", "QUEUE"): return addToQueue
         case ("swipeRight", "PLAY_NEXT"), ("swipeLeft", "PLAY_NEXT"): return playNext

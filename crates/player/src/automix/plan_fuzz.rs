@@ -4,7 +4,7 @@
 use crate::automix::eval::Rng;
 use crate::automix::plan::plan;
 use crate::transitions::engine_plan;
-use crate::types::{AutoMixSettings, TrackAnalysis};
+use crate::types::{AutoMixSettings, MixStyle, TrackAnalysis};
 
 /// One of `xs`, seeded: the same rows every run.
 fn pick<T: Copy>(r: &mut Rng, xs: &[T]) -> T {
@@ -54,8 +54,6 @@ fn row(r: &mut Rng, dur: i64, how: Rows) -> TrackAnalysis {
         mixramp_end_ms: ms(r),
         intro_end_ms: ms(r),
         outro_start_ms: ms(r),
-        outro_vocal: c(r),
-        intro_vocal: c(r),
         outro_centroid: c(r) * 3000.0,
         intro_centroid: c(r) * 3000.0,
         outro_bpm: f(r),
@@ -69,17 +67,24 @@ fn row(r: &mut Rng, dur: i64, how: Rows) -> TrackAnalysis {
         intro_stability: c(r),
         intro_downbeat_phase: i(r),
         drop_ms: ms(r),
-        drop_runup_vocal: c(r),
-        drop_vocal: c(r),
         exit_ms: ms(r),
         gap_ms: ms(r),
         gap_end_ms: ms(r),
-        exit_vocal: c(r),
         drop_runup_tonal_db: c(r) * -20.0,
         intro_beats_per_bar: i(r),
         outro_beats_per_bar: i(r),
         intro_grid_source: i(r),
         outro_grid_source: i(r),
+        last_drop_ms: ms(r),
+        vocal_start_ms: ms(r),
+        vocal_end_ms: ms(r),
+        steady_intro_ms: ms(r),
+        steady_end_ms: ms(r),
+        steady_exit_ms: ms(r),
+        intro_grid_from_ms: ms(r),
+        intro_grid_to_ms: ms(r),
+        outro_grid_from_ms: ms(r),
+        outro_grid_to_ms: ms(r),
         analysed_ms: 0,
     }
 }
@@ -92,7 +97,7 @@ fn planned(how: Rows, seed: u64, n: usize) {
         let durations = [240_000i64, 900_000, 60_000, 31_000, 0, 1_200_000];
         let (d1, d2) = (pick(&mut r, &durations), pick(&mut r, &durations));
         let (a, b) = (row(&mut r, d1, how), row(&mut r, d2, how));
-        let s = AutoMixSettings { max_transition_s: pick(&mut r, &[16.0f32, 8.0, 30.0, 1.0]), keep_pitch: pick(&mut r, &[true, false]), beat_match: pick(&mut r, &[true, false]), ..AutoMixSettings::default() };
+        let s = AutoMixSettings { max_transition_s: pick(&mut r, &[16.0f32, 8.0, 30.0, 1.0]), keep_pitch: pick(&mut r, &[true, false]), beat_match: pick(&mut r, &[true, false]), style: pick(&mut r, &[MixStyle::Smooth, MixStyle::Dj]), ..AutoMixSettings::default() };
         let (told1, told2) = (pick(&mut r, &[d1, d1 + 2000, 0]), pick(&mut r, &[d2, d2 - 2000, 0]));
         let made = std::panic::catch_unwind(|| {
             let t = plan(Some(&a), Some(&b), told1, told2, &s);

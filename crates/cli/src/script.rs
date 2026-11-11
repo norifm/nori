@@ -22,7 +22,7 @@ use nori_core::cache_policy::{Page, Read};
 use nori_host::desktop::Root;
 use nori_core::client::{Client, NetProfile};
 use nori_core::overrides::Layer;
-use nori_core::settings::{GainMode, SavedServer, ServerKind, StoredPrefs};
+use nori_core::settings::{AutoMixMode, GainMode, SavedServer, ServerKind, StoredPrefs};
 use nori_core::settings_store::{APPLY_AUDIO, APPLY_GAIN, REPLAN, SOUND};
 use nori_core::{Core, Song};
 use nori_engine::core::{resolving, settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer};
@@ -33,7 +33,7 @@ use nori_output_cpal::CpalOutput;
 use crate::backend::{block_on, Audio};
 use crate::text::clock;
 
-const HELP: &str = "play, pause, next, prev, seek <s>, crossfade <s>|off, automix on|off, gain off|track|album|auto, pos, positions on|off, set <name> <value>, tuning on|off, band <i> <dB>, search <q>, queue, quit";
+const HELP: &str = "play, pause, next, prev, seek <s>, crossfade <s>|off, automix off|smooth|dj, gain off|track|album|auto, pos, positions on|off, set <name> <value>, tuning on|off, band <i> <dB>, search <q>, queue, quit";
 
 struct Args {
     /// The kind of profile: a server's unless another is named.
@@ -50,7 +50,7 @@ struct Args {
     songs: usize,
     start_s: f64,
     crossfade: Option<i32>,
-    automix: bool,
+    automix: AutoMixMode,
     /// Crossfade within an album played in order too (by default albums stay gapless).
     mix_albums: bool,
     replay_gain: Option<GainMode>,
@@ -69,7 +69,7 @@ struct Args {
 fn usage() -> ! {
     eprintln!(
         "usage: nori-cli --script --url URL --user USER --password PASSWORD [--search|--play QUERY] [--songs N] [--start SECONDS]\n\
-         \x20               [--crossfade SECONDS] [--automix] [--mix-albums] [--replay-gain off|track|album|auto] [--hi-res]\n\
+         \x20               [--crossfade SECONDS] [--automix smooth|dj] [--mix-albums] [--replay-gain off|track|album|auto] [--hi-res]\n\
          \x20               [--download] [--offline] [--mpris]\n\
          \x20               [--wav OUT.wav [--pace X]] [--device NAME] [--devices]\n\
          \x20      nori-cli --script --provider KIND [the same, without the server] [--sign-in FILE] [--home]\n\
@@ -79,6 +79,10 @@ fn usage() -> ! {
          updates) a .noriplugin package or plugin folder into DIR and turns it on first."
     );
     std::process::exit(2)
+}
+
+fn auto_mix_mode(v: &str) -> Option<AutoMixMode> {
+    [("off", AutoMixMode::Off), ("smooth", AutoMixMode::Smooth), ("dj", AutoMixMode::Dj)].into_iter().find(|(n, _)| *n == v).map(|(_, m)| m)
 }
 
 fn gain_mode(v: &str) -> Option<GainMode> {
@@ -99,7 +103,7 @@ fn args(argv: Vec<String>) -> (Args, Root) {
         songs: usize::MAX,
         start_s: 0.0,
         crossfade: None,
-        automix: false,
+        automix: AutoMixMode::Off,
         mix_albums: false,
         replay_gain: None,
         hi_res: false,
@@ -127,7 +131,7 @@ fn args(argv: Vec<String>) -> (Args, Root) {
             "--songs" => a.songs = v().parse().unwrap_or_else(|_| usage()),
             "--start" => a.start_s = v().parse().unwrap_or_else(|_| usage()),
             "--crossfade" => a.crossfade = Some(v().parse().unwrap_or_else(|_| usage())),
-            "--automix" => a.automix = true,
+            "--automix" => a.automix = auto_mix_mode(&v()).unwrap_or_else(|| usage()),
             "--mix-albums" => a.mix_albums = true,
             "--replay-gain" => a.replay_gain = Some(gain_mode(&v()).unwrap_or_else(|| usage())),
             "--hi-res" => a.hi_res = true,
@@ -342,7 +346,7 @@ pub fn main(argv: Vec<String>) {
     let mut cli = Cli { core, client, prefs, engine: Arc::new(engine), songs: Arc::default(), downloader };
     let how = if a.offline { "offline" } else { "logged in" };
     let to = if a.url.is_empty() { crate::text::provider_of(&kinds, &a.kind).name } else { format!("{} as {}", a.url, a.user) };
-    println!("{how} to {to}; crossfade {} s, AutoMix {}", cli.prefs.crossfade_sec, if cli.prefs.auto_mix { "on" } else { "off" });
+    println!("{how} to {to}; crossfade {} s, AutoMix {}", cli.prefs.crossfade_sec, format!("{:?}", cli.prefs.auto_mix).to_lowercase());
 
     let found = match (&a.search, a.offline) {
         (_, true) => Ok(cli.core.downloads(true).unwrap_or_default()),
@@ -457,10 +461,13 @@ pub fn main(argv: Vec<String>) {
                 }
                 None => println!("gain off|track|album|auto"),
             },
-            "automix" => {
-                cli.put(StoredPrefs { auto_mix: rest != "off", ..cli.kept() });
-                println!("AutoMix {}", if cli.prefs.auto_mix { "on" } else { "off" });
-            }
+            "automix" => match auto_mix_mode(rest) {
+                Some(m) => {
+                    cli.put(StoredPrefs { auto_mix: m, ..cli.kept() });
+                    println!("AutoMix {rest}");
+                }
+                None => println!("automix off|smooth|dj"),
+            },
             "pos" => {
                 let s = cli.engine.status();
                 let name = s.index.map_or_else(|| "nothing".into(), &title_at);

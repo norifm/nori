@@ -47,7 +47,7 @@ fn late_autofill_respects_playback_and_new_queues() {
         let mut p = prefs.open(&dir.join("app.db").to_string_lossy()).unwrap();
         p.remote_control = false;
         p.auto_fill = Some(nori_core::settings::AutoFillKind::Songs);
-        p.auto_mix = false;
+        p.auto_mix = nori_core::settings::AutoMixMode::Off;
         p.third_party_lookups = false;
         prefs.put(p);
         let queue = Arc::new(nori_core::queue::Session::new(prefs));
@@ -124,7 +124,7 @@ fn session_of_songs(dir: &nori_testdir::TempDir, url: &str, card: &Card, clock: 
     let mut p = prefs.open(&db_path(dir.path())).unwrap();
     p.remote_control = false;
     p.auto_fill = None;
-    p.auto_mix = false;
+    p.auto_mix = nori_core::settings::AutoMixMode::Off;
     prefs.put(p);
     let queue = Arc::new(nori_core::queue::Session::new(prefs));
     let profile = SavedServer { id: "test".into(), url: url.into(), user: "ann".into(), password: "pw".into(), ..Default::default() };

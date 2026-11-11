@@ -319,6 +319,7 @@ export const W = {
   /** A setting's value in words, by setting and value. */
   choices: {
     autoFill: { OFF: "Stop", SONGS: "Add songs", ALBUMS: "Add albums" },
+    autoMix: { OFF: "Off", SMOOTH: "Smooth", DJ: "DJ" },
     autoFillBasis: { SIMILAR: "Similar music", ARTIST: "The same artist", GENRE: "The same genre", ERA: "The same era" },
     compressor: { OFF: "Off", LIGHT: "Light", CAR: "Car", NIGHT: "Night" },
     replayGain: { OFF: "Off", TRACK: "Per song", ALBUM: "Per album", AUTO: "Automatic" },

@@ -200,7 +200,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             )
     }
 
-    private fun factsOf(d: DacState, s: SyncUi, st: StorageUi, analysed: Int, folders: List<MusicFolder>) = SettingsFacts(
+    private fun factsOf(d: DacState, s: SyncUi, st: StorageUi, analysed: dev.nori.music.ffi.automix.Measured, folders: List<MusicFolder>) = SettingsFacts(
         dac = d,
         analysed = analysed,
         sync = s,
@@ -868,12 +868,10 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         }
     }
 
-    private val _analysed = MutableStateFlow(0)
-    /** How many tracks AutoMix has measured. */
-    val analysed: StateFlow<Int> = _analysed
+    private val _analysed = MutableStateFlow(dev.nori.music.ffi.automix.Measured(0u, 0u))
 
     fun refreshAnalysed() = viewModelScope.launch {
-        _analysed.value = withContext(Dispatchers.IO) { runCatching { nori.core.analysisCount() }.getOrDefault(0u).toInt() }
+        _analysed.value = withContext(Dispatchers.IO) { runCatching { nori.core.analysisMeasured() }.getOrDefault(dev.nori.music.ffi.automix.Measured(0u, 0u)) }
     }
 
     fun clearAnalyses() = viewModelScope.launch {

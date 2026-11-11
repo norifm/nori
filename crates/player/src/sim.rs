@@ -708,10 +708,10 @@ pub fn prefs_off() -> TransitionPrefs {
         max_tempo_change_pct: 6.0,
         bass_swap: true,
         filter_effects: true,
-        echo_out: true,
         keep_pitch: true,
         keep_albums: true,
         replay_gain: false,
+        style: crate::types::MixStyle::Smooth,
     }
 }
 

@@ -278,7 +278,7 @@ impl Session {
                 _ => Vec::new(),
             };
             send(Msg::Facts(Box::new(crate::settings::Facts {
-                analysed: core.analysis_count().unwrap_or(0),
+                analysed: core.analysis_measured().unwrap_or_default(),
                 indexed: (index.songs, index.albums, index.artists),
                 stream_bytes: store.as_ref().map_or(0, |s| s.cache_bytes()),
                 cover_bytes,

@@ -184,11 +184,15 @@ fn perf_report() {
     let three = [("a", &a[..]), ("b", &b[..]), ("c", &c[..])];
     perf_case("crossfade", &three, perf_app(crossfade(6)), Settings { crossfade_s: 6, ..Settings::default() }, 4);
     // Beat-matched mixes 4 % apart (stretched), and the last song analysed as it plays (the app's
-    // measurer, not the engine, would analyse it ahead).
-    let mut mixing = perf_app(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, ..prefs_off() });
-    mixing.measure_playing = true;
-    mixing.measure_ahead = false;
-    mixing.analyses.insert("a".into(), measured("a", 120.0, 90_000));
-    mixing.analyses.insert("b".into(), measured("b", 125.0, 90_000));
-    perf_case("automix", &three, mixing, Settings { auto_mix: true, ..Settings::default() }, 4);
+    // measurer, not the engine, would analyse it ahead). Smooth, then DJ: longer mixes, every effect.
+    let mixing = |style: nori_player::types::MixStyle| {
+        let mut app = perf_app(TransitionPrefs { auto_mix: true, auto_mix_max_s: style.longest_s(), max_tempo_change_pct: style.tempo_pct(), style, ..prefs_off() });
+        app.measure_playing = true;
+        app.measure_ahead = false;
+        app.analyses.insert("a".into(), measured("a", 120.0, 90_000));
+        app.analyses.insert("b".into(), measured("b", 125.0, 90_000));
+        app
+    };
+    perf_case("automix", &three, mixing(nori_player::types::MixStyle::Smooth), Settings { auto_mix: true, ..Settings::default() }, 4);
+    perf_case("automix-dj", &three, mixing(nori_player::types::MixStyle::Dj), Settings { auto_mix: true, ..Settings::default() }, 4);
 }

@@ -1271,7 +1271,7 @@ const LISTEN_AHEAD: usize = 2;
 
 /// The songs of `ids` for the beat model; none when it is off or not built.
 fn listen_to(core: &Core, ids: &[String], missing: &[String]) -> Vec<String> {
-    let wanted = beats::AVAILABLE && core.session.settings.with_prefs(|p| p.auto_mix && p.auto_mix_better_beats).unwrap_or(false);
+    let wanted = beats::AVAILABLE && core.session.settings.with_prefs(|p| p.auto_mix.on() && p.auto_mix_better_beats).unwrap_or(false);
     if !wanted {
         return Vec::new();
     }
@@ -1554,7 +1554,7 @@ pub fn settings(stored: &StoredPrefs, layer: Layer) -> Settings {
         max_rate: if s.bit_perfect { 0 } else { s.max_rate.hz() },
         offload: s.offload,
         crossfade_s: s.crossfade_sec,
-        auto_mix: s.auto_mix,
+        auto_mix: s.auto_mix.on(),
         gain_boost_db: if s.gain_prefs().boosts() { nori_player::gain::BOOST_MAX_DB } else { 0.0 },
         speed: t.speed,
         pitch: t.pitch,

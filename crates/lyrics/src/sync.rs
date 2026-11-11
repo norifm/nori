@@ -137,6 +137,20 @@ pub(crate) fn timing(check: Option<SyncCheck>) -> nori_model::LyricsTiming {
     }
 }
 
+/// Where `l`'s words are sung in the song's own time, ms: the first sung line's start to the last one's end, less
+/// the offset `timing` shows them with. None unless they are synced and `timing` was heard against the voice to fit
+/// (or set by the listener); a line of no letters or digits (a "♪") sings nothing.
+pub fn sung_span(l: &Lyrics, timing: nori_model::LyricsTiming) -> Option<(i64, i64)> {
+    use nori_model::LyricsTiming::{Automatic, Yours};
+    if !l.synced || !matches!(timing, Automatic { .. } | Yours { .. }) {
+        return None;
+    }
+    let sung = |x: &&nori_model::LyricLine| x.start_ms >= 0 && x.text.chars().any(char::is_alphanumeric);
+    let (first, last) = (l.lines.iter().find(sung)?, l.lines.iter().rev().find(sung)?);
+    let off = timing.offset_ms();
+    Some((first.start_ms - off, last.end_ms.max(last.start_ms) - off))
+}
+
 /// The timing `lyrics` are shown with against the song's `voice`.
 pub fn timing_against(lyrics: &Lyrics, voice: &VocalCurve) -> nori_model::LyricsTiming {
     timing(check(lyrics, voice))
@@ -616,7 +630,20 @@ pub(crate) mod tests {
     //! placeholders.
 
     use super::*;
-    use nori_model::{LyricLine, LyricWord};
+    use nori_model::{LyricLine, LyricWord, LyricsTiming};
+
+    #[test]
+    fn words_are_sung_from_the_first_line_to_the_last_where_they_fit() {
+        let line = |start_ms, end_ms, text: &str| LyricLine { start_ms, end_ms, text: text.into(), ..Default::default() };
+        let l = Lyrics { synced: true, lines: vec![line(1_000, 3_000, "♪"), line(12_000, 15_000, "lomira teshvan"), line(80_000, 83_500, "korupel"), line(90_000, 95_000, "...")], ..Default::default() };
+        // Shown 500 ms later than the playhead: the song sings them 500 ms sooner.
+        assert_eq!(sung_span(&l, LyricsTiming::Automatic { ms: 500 }), Some((11_500, 83_000)));
+        assert_eq!(sung_span(&l, LyricsTiming::Yours { ms: -200, automatic: None }), Some((12_200, 83_700)));
+        for unheard in [LyricsTiming::NotChecked, LyricsTiming::DoesNotFit, LyricsTiming::Unsure] {
+            assert_eq!(sung_span(&l, unheard), None, "{unheard:?}");
+        }
+        assert_eq!(sung_span(&Lyrics { synced: false, ..l }, LyricsTiming::Automatic { ms: 0 }), None);
+    }
     use nori_player::automix::analysis::Analyzer;
     use nori_player::automix::eval::{Rng, Song, Style, FULL, SUNG};
 

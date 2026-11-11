@@ -302,6 +302,11 @@ struct Bars {
     units: Vec<f64>,
 }
 
+/// The first bar line and the bar's length, seconds, as the bar features count them.
+pub(crate) fn bar_grid(t: &Tempo, db: &Downbeat, music: (f64, f64)) -> Option<(f64, f64)> {
+    bar_lines(t, db, music).map(|b| (b.start, b.bar))
+}
+
 fn bar_lines(t: &Tempo, db: &Downbeat, music: (f64, f64)) -> Option<Bars> {
     if t.period_s.is_nan() || t.period_s <= 0.0 {
         return None;
@@ -335,41 +340,97 @@ const DROP_REACH_S: f64 = 75.0;
 const DROP_BODY_DB: [f64; 3] = [2.0, 3.0, 3.0];
 const DROP_LACK_DB: [f64; 3] = [3.0, 3.0, 3.0];
 
+/// A song's bars as [`bar_vector`]s, and its body: the median bar's level, low end and tonal energy.
+struct Body {
+    b: Bars,
+    v: Vec<[f64; 6]>,
+    body: [f64; 3],
+}
+
+impl Body {
+    fn of(t: &Tempo, db: &Downbeat, f: &Features, music: (f64, f64)) -> Option<Body> {
+        let b = bar_lines(t, db, music)?;
+        let v: Vec<[f64; 6]> = b.units.windows(2).map(|w| bar_vector(f, w[0], w[1])).collect();
+        let median = |d: usize| {
+            let mut x: Vec<f64> = v.iter().map(|r| r[d]).collect();
+            x.sort_by(|a, b| a.total_cmp(b));
+            x[x.len() / 2]
+        };
+        let body = [median(0), median(1), median(2)];
+        Some(Body { b, v, body })
+    }
+
+    /// Bars in the song.
+    fn bars(&self) -> usize {
+        self.v.len()
+    }
+
+    /// Level, low end and tonal energy over bars `[m0, m1)`.
+    fn mean(&self, m0: usize, m1: usize) -> [f64; 3] {
+        let rows = &self.v[m0..m1];
+        let k = rows.len().max(1) as f64;
+        [0, 1, 2].map(|d| rows.iter().map(|r| r[d]).sum::<f64>() / k)
+    }
+
+    fn arrives(&self, at: [f64; 3]) -> bool {
+        (0..3).all(|d| at[d] >= self.body[d] - DROP_BODY_DB[d])
+    }
+
+    fn lacks(&self, at: [f64; 3]) -> bool {
+        (0..3).any(|d| at[d] < self.body[d] - DROP_LACK_DB[d])
+    }
+
+    /// The four bars from bar `m` reach the body from four that lacked it.
+    fn drops_at(&self, m: usize) -> bool {
+        self.arrives(self.mean(m, m + SECTION_SPAN)) && self.lacks(self.mean(m - SECTION_SPAN, m))
+    }
+}
+
 /// The drop: the first early four-bar line where the song reaches its body (level, low end and chords) from bars
 /// that lacked one. A beatless opening into the full band drops on the first downbeat.
 pub(crate) fn drop_point(t: &Tempo, db: &Downbeat, f: &Features, music: (f64, f64)) -> Option<Drop> {
-    let b = bar_lines(t, db, music)?;
-    let n = b.units.len() - 1;
-    let v: Vec<[f64; 6]> = b.units.windows(2).map(|w| bar_vector(f, w[0], w[1])).collect();
-    let median = |d: usize| {
-        let mut x: Vec<f64> = v.iter().map(|r| r[d]).collect();
-        x.sort_by(|a, b| a.total_cmp(b));
-        x[x.len() / 2]
-    };
-    let body = [median(0), median(1), median(2)];
-    let mean = |rows: &[[f64; 6]]| -> [f64; 3] {
-        let k = rows.len().max(1) as f64;
-        [0, 1, 2].map(|d| rows.iter().map(|r| r[d]).sum::<f64>() / k)
-    };
-    let arrives = |after: [f64; 3]| (0..3).all(|d| after[d] >= body[d] - DROP_BODY_DB[d]);
-    let lacked = |before: [f64; 3]| (0..3).any(|d| before[d] < body[d] - DROP_LACK_DB[d]);
+    let s = Body::of(t, db, f, music)?;
+    let (b, n) = (&s.b, s.bars());
     let reach = music.0 + (0.4 * (music.1 - music.0)).min(DROP_REACH_S);
-    if b.beatless && arrives(mean(&v[..SECTION_SPAN.min(n)])) {
+    if b.beatless && s.arrives(s.mean(0, SECTION_SPAN.min(n))) {
         let opening = bar_vector(f, music.0, b.start);
-        if lacked([opening[0], opening[1], opening[2]]) {
-            return Some(Drop { at: b.start, runup_tonal_db: (opening[2] - body[2]) as f32 });
+        if s.lacks([opening[0], opening[1], opening[2]]) {
+            return Some(Drop { at: b.start, runup_tonal_db: (opening[2] - s.body[2]) as f32 });
         }
     }
     (SECTION_SPAN..=n.saturating_sub(SECTION_SPAN))
         .step_by(SECTION_SPAN)
         .take_while(|&m| b.units[m] <= reach)
-        .find(|&m| arrives(mean(&v[m..m + SECTION_SPAN])) && lacked(mean(&v[m - SECTION_SPAN..m])))
+        .find(|&m| s.drops_at(m))
         .map(|m| {
             // The most chordal four bars of the run-up, beatless opening included.
             let opening = if b.beatless { bar_vector(f, music.0, b.start)[2] } else { f64::MIN };
-            let most = (0..m).step_by(SECTION_SPAN).map(|i| mean(&v[i..(i + SECTION_SPAN).min(m)])[2]).fold(opening, f64::max);
-            Drop { at: b.units[m], runup_tonal_db: (most - body[2]) as f32 }
+            let most = (0..m).step_by(SECTION_SPAN).map(|i| s.mean(i, (i + SECTION_SPAN).min(m))[2]).fold(opening, f64::max);
+            Drop { at: b.units[m], runup_tonal_db: (most - s.body[2]) as f32 }
         })
+}
+
+/// How far before the end of the music a last drop may be.
+const LAST_DROP_REACH_S: f64 = 60.0;
+/// Bars a last drop is at least after the first, and before the end.
+const LAST_DROP_AFTER_BARS: f64 = 16.0;
+const LAST_DROP_BEFORE_BARS: usize = 8;
+/// The bars before a last drop are a breakdown, not a silence (a hidden track's start is no drop): their level
+/// within this of the body, dB.
+const LAST_DROP_FLOOR_DB: f64 = 20.0;
+
+/// The last drop: the latest four-bar line in the closing minute where the song comes back to its body from four
+/// bars that lacked it (as [`drop_point`] measures it), sixteen bars or more after the first drop.
+pub(crate) fn last_drop(t: &Tempo, db: &Downbeat, f: &Features, music: (f64, f64), first: Option<f64>) -> Option<f64> {
+    let s = Body::of(t, db, f, music)?;
+    let b = &s.b;
+    let earliest = first.map_or(b.start, |d| d + LAST_DROP_AFTER_BARS * b.bar).max(music.1 - LAST_DROP_REACH_S);
+    (1..=s.bars().saturating_sub(LAST_DROP_BEFORE_BARS) / SECTION_SPAN)
+        .rev()
+        .map(|i| i * SECTION_SPAN)
+        .take_while(|&m| b.units[m] >= earliest - 0.5 * b.bar)
+        .find(|&m| s.drops_at(m) && s.mean(m - SECTION_SPAN, m)[0] >= s.body[0] - LAST_DROP_FLOOR_DB)
+        .map(|m| b.units[m])
 }
 
 /// A drop, and the tonal energy of the most chordal four bars before it relative to the body, dB.

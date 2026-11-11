@@ -46,7 +46,7 @@ impl Rig {
     /// not playing.
     fn new(name: &str, ids: &[&str], one_album: bool) -> Rig {
         let dir = nori_testdir::TempDir::new(name);
-        let (core, client) = common::own_core(&dir, |p| p.auto_mix = true);
+        let (core, client) = common::own_core(&dir, |p| p.auto_mix = nori_core::settings::AutoMixMode::Smooth);
         let prefs = core.session.settings.current().unwrap();
         let store = Store::open(dir.join("music"), 256 << 20).unwrap();
         let songs: Vec<Song> = ids
@@ -145,7 +145,7 @@ fn keep_albums_off() {
 #[test]
 fn each_setting_change_is_planned_with() {
     let rig = Rig::new("replan-each", &["b1", "b2", "b3", "b4", "b5"], false);
-    rig.set("autoMix", "false");
+    rig.set("autoMix", "OFF");
     rig.set("crossfadeSec", "6");
     rig.engine.play_at(0, 0);
     assert!(rig.until(20, |r| r.engine.status().index == Some(0) && r.engine.status().position_ms > 2_000));
@@ -154,7 +154,7 @@ fn each_setting_change_is_planned_with() {
     let cases: [Case; 3] = [
         ("crossfadeSec", "3", |n| n.duration_ms > 0 && n.duration_ms <= 3_000),
         ("crossfadeSec", "5", |n| n.duration_ms > 3_000 && n.duration_ms <= 5_000),
-        ("autoMix", "true", |n| n.kind != nori_player::types::TransitionKind::Gapless),
+        ("autoMix", "SMOOTH", |n| n.kind != nori_player::types::TransitionKind::Gapless),
     ];
     for (k, (name, value, ok)) in cases.into_iter().enumerate() {
         rig.set(name, value);
@@ -168,7 +168,7 @@ fn each_setting_change_is_planned_with() {
 #[test]
 fn play_after_change_uses_it() {
     let rig = Rig::new("replan-play", &["c1", "c2"], false);
-    rig.set("autoMix", "false");
+    rig.set("autoMix", "OFF");
     rig.set("crossfadeSec", "4");
     rig.engine.play_at(0, 0);
     assert!(rig.mixes_into(1), "the play right after the change mixes");
@@ -180,12 +180,12 @@ fn play_after_change_uses_it() {
 fn automix_on_before_play_mixes() {
     let rig = Rig::new("replan-smoke", &["e1", "e2", "e3"], false);
     let mut prefs = rig.core.session.settings.current().unwrap();
-    prefs.auto_mix = false;
+    prefs.auto_mix = nori_core::settings::AutoMixMode::Off;
     rig.core.session.settings.put(prefs.clone());
     rig.engine.set_settings(settings(&prefs, Default::default()));
     rig.engine.play_at(2, 0);
     assert!(rig.until(20, |r| r.engine.status().index == Some(2) && r.engine.status().position_ms > 2_000));
-    let effect = rig.set_only("autoMix", "true");
+    let effect = rig.set_only("autoMix", "SMOOTH");
     rig.engine.play_at(0, 0);
     rig.relay(effect);
     assert!(rig.until(20, |r| r.engine.status().index == Some(0) && r.engine.status().position_ms > 1_000));
@@ -217,7 +217,7 @@ fn measure_again_plans_the_ending_again() {
 #[test]
 fn a_handed_mix_plays_on() {
     let rig = Rig::new("replan-handed", &["g1", "g2"], false);
-    rig.set("autoMix", "false");
+    rig.set("autoMix", "OFF");
     let t = nori_player::automix::plan::plan(None, None, SECS as i64 * 1000, SECS as i64 * 1000, &Default::default());
     assert!(t.duration_ms >= 2_000, "a crossfade to hand over: {t:?}");
     rig.core.session.planner.handed("g1", "g2", &t);

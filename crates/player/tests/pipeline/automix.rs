@@ -47,9 +47,7 @@ fn measured(id: &str, bpm: f64) -> TrackAnalysis {
 }
 
 fn automix() -> TransitionPrefs {
-    // Echo-out takes the place of a beat-matched mix where two voices would clash; these tests are
-    // about the beat-matched one.
-    TransitionPrefs { auto_mix: true, auto_mix_max_s: 16, echo_out: false, ..prefs_off() }
+    TransitionPrefs { auto_mix: true, auto_mix_max_s: 16, ..prefs_off() }
 }
 
 #[test]
@@ -203,7 +201,7 @@ fn page_changes_once_per_song() {
     // next song at about the same moment. Whichever comes first, the page must not go back to the song
     // it has left for the moment in between: that is the old cover flashing up after the new one.
     for (measured_ahead, max_s) in [(true, 16), (false, 12)] {
-        let prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: max_s, echo_out: false, ..prefs_off() };
+        let prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: max_s, ..prefs_off() };
         let mut p = Player::with_prefs(vec![song("a", 120.0), song("b", 120.0), song("c", 120.0)], prefs);
         p.measure_on_move = false;
         if measured_ahead {

@@ -376,14 +376,14 @@ fun plan(o: Options): List<Step> {
  */
 data class Knobs(
     val eq: Boolean, val headphone: dev.nori.music.ffi.settings.HeadphoneSound, val balance: Float, val mono: Boolean, val limiter: Boolean,
-    val offload: Boolean, val crossfadeSec: Int, val autoMix: Boolean,
+    val offload: Boolean, val crossfadeSec: Int, val autoMix: dev.nori.music.ffi.settings.AutoMixMode,
     val replayGain: GainMode, val scrobble: Boolean, val autoFill: dev.nori.music.ffi.settings.AutoFillKind?, val skipExplicit: Boolean,
 )
 
 /** What the test starts from: the plain CPU path, nothing mixing, nothing reported, nothing added. */
 fun testKnobs(user: Knobs): Knobs = user.copy(
     eq = false, headphone = dev.nori.music.ffi.settings.HeadphoneSound.OFF, balance = 0f, mono = false, limiter = false,
-    offload = false, crossfadeSec = 0, autoMix = false, scrobble = false, autoFill = null,
+    offload = false, crossfadeSec = 0, autoMix = dev.nori.music.ffi.settings.AutoMixMode.OFF, scrobble = false, autoFill = null,
     skipExplicit = false,
 )
 

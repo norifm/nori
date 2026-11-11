@@ -361,9 +361,106 @@ pub(crate) fn fit_grid(beats: &[f64], period: f64) -> (f64, f64, f64) {
     (a, b, 1.4826 * median(&mut abs))
 }
 
+/// Beats this far off one straight grid at most, seconds, still beat-match as one run: about what a mixed kick
+/// can be late before it flams.
+const RUN_MAX_OFF_S: f64 = 0.030;
+/// The fewest beats in a run with its own grid: four bars.
+pub(crate) const MIN_RUN_BEATS: usize = 16;
+
+/// How much stronger the onsets are on a grid's beats than between them (a quarter, half and three quarters of a
+/// beat on) over `span`, seconds: about 2 on a song's own grid, near 1 on one that misses its beats. `onset` is an
+/// envelope of `fps` frames from `t0`.
+pub(crate) fn on_beat(onset: &[f32], fps: f64, t0: f64, period: f64, offset: f64, span: (f64, f64)) -> f64 {
+    if !(period > 0.0 && fps > 0.0) || span.1 <= span.0 {
+        return 0.0;
+    }
+    // The strongest onset within two frames of `t`.
+    let peak = |t: f64| {
+        let i = ((t - t0) * fps).round() as isize;
+        (i - 2..=i + 2).filter_map(|j| usize::try_from(j).ok().and_then(|j| onset.get(j))).fold(0f32, |m, v| m.max(*v)) as f64
+    };
+    let first = offset + ((span.0 - offset) / period).ceil() * period;
+    let n = ((span.1 - first) / period).floor().max(0.0) as usize + 1;
+    let at = |phase: f64| (0..n).map(|k| peak(first + (k as f64 + phase) * period)).sum::<f64>() / n as f64;
+    let between = (at(0.25) + at(0.5) + at(0.75)) / 3.0;
+    if between > 0.0 { at(0.0) / between } else { 0.0 }
+}
+
+/// A grid fitted to a run of beats only counts when the music's onsets fall on its beats this much more than
+/// between them ([`on_beat`]): a tracker can keep time steadily through soft bars on beats that are not there.
+pub(crate) const RUN_MIN_ON_BEAT: f64 = 1.6;
+
+/// The longest stretch of `beats` (first, past last) that one straight grid holds, each beat within
+/// [`RUN_MAX_OFF_S`] of it, so a live band's steady bars mix though looser ones around them do not; a tie goes to
+/// the later one when `late`. None under [`MIN_RUN_BEATS`].
+pub(crate) fn clean_run(beats: &[f64], period: f64, late: bool) -> Option<(usize, usize)> {
+    let n = beats.len();
+    if n < MIN_RUN_BEATS || period.is_nan() || period <= 0.0 {
+        return None;
+    }
+    // Beat numbers, a dropped beat skipping one.
+    let mut k = vec![0.0; n];
+    for i in 1..n {
+        k[i] = k[i - 1] + ((beats[i] - beats[i - 1]) / period).round().max(1.0);
+    }
+    let holds = |a: usize, b: usize| {
+        let m = (b - a) as f64;
+        let (sk, st) = (k[a..b].iter().sum::<f64>() / m, beats[a..b].iter().sum::<f64>() / m);
+        let (mut skk, mut skt) = (0.0, 0.0);
+        for i in a..b {
+            skk += (k[i] - sk).powi(2);
+            skt += (k[i] - sk) * (beats[i] - st);
+        }
+        let slope = if skk > 0.0 { skt / skk } else { period };
+        (a..b).all(|i| (beats[i] - st - slope * (k[i] - sk)).abs() <= RUN_MAX_OFF_S)
+    };
+    let mut best: Option<(usize, usize)> = None;
+    let mut end = 0;
+    for start in 0..n {
+        end = end.max(start + 2).min(n);
+        while end < n && holds(start, end + 1) {
+            end += 1;
+        }
+        let longer = best.is_none_or(|(a, b)| end - start > b - a || (late && end - start == b - a));
+        if end - start >= MIN_RUN_BEATS && longer && holds(start, end) {
+            best = Some((start, end));
+        }
+    }
+    best
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Onsets on every beat: strong on the song's grid, weak on one half a beat off it.
+    #[test]
+    fn onsets_fall_on_a_right_grid_only() {
+        let (fps, period) = (100.0, 0.5);
+        let onset: Vec<f32> = (0..3000).map(|i| if i % 50 == 10 { 1.0 } else { 0.05 }).collect();
+        let span = (5.0, 25.0);
+        assert!(on_beat(&onset, fps, 0.0, period, 0.1, span) > 5.0);
+        assert!(on_beat(&onset, fps, 0.0, period, 0.35, span) < RUN_MIN_ON_BEAT);
+        assert_eq!(on_beat(&onset, fps, 0.0, period, 0.1, (25.0, 5.0)), 0.0);
+    }
+
+    /// A live band's steady bars between loose ones: the run is the steady stretch, whichever side it is on, and a
+    /// late tie goes to the later one; loose beats throughout have none.
+    #[test]
+    fn a_clean_run_is_the_steady_stretch() {
+        let p = 0.5;
+        let loose = |i: usize| if i.is_multiple_of(2) { 0.06 } else { -0.05 };
+        let beats = |steady: std::ops::Range<usize>| -> Vec<f64> { (0..60).map(|i| i as f64 * p + if steady.contains(&i) { 0.0 } else { loose(i) }).collect() };
+        assert_eq!(clean_run(&beats(20..48), p, false), Some((20, 48)));
+        // A tempo drift of 2 % over the run is still within the grid's reach only over its steady part.
+        let drifting: Vec<f64> = (0..60).map(|i| i as f64 * p * (1.0 + 0.0004 * i as f64)).collect();
+        let (a, b) = clean_run(&drifting, p, true).unwrap();
+        assert!(b - a >= MIN_RUN_BEATS && b - a < 60, "{a}..{b}");
+        let two: Vec<f64> = (0..40).map(|i| i as f64 * p + if (18..22).contains(&i) { loose(i) } else { 0.0 }).collect();
+        assert_eq!(clean_run(&two, p, false), Some((0, 18)));
+        assert_eq!(clean_run(&two, p, true), Some((22, 40)));
+        assert_eq!(clean_run(&beats(0..0), p, false), None);
+    }
 
     #[test]
     fn fold_and_match_ratio_ignore_octaves() {

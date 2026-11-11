@@ -1,5 +1,6 @@
 //! User-facing wording for numbers and errors (mirrors the terminal's text.rs).
 
+use nori_core::automix::store::Measured;
 use nori_core::numbers;
 use nori_core::pages::{ReleaseGroup, ReleaseKind};
 use nori_core::profiles::CurveNotice;
@@ -1014,6 +1015,17 @@ pub const AUTOEQ_NO_CURVE: &str = "AutoEQ has no curve for these headphones.";
 /// A saved profile's line: the devices it is used on by itself.
 pub fn profile_use(outputs: &[String]) -> String {
     if outputs.is_empty() { String::new() } else { format!("Used on {}", outputs.join(", ")) }
+}
+
+/// The "Measured songs" line: how many are measured, and how many wait to be measured again.
+pub fn measured(m: Measured) -> String {
+    let all = format!("{} measured for tempo and beats.", count(m.songs, "song", "songs"));
+    match m.outdated {
+        0 => all,
+        n if n == m.songs => format!("{all} All are measured again when they next play."),
+        1 => format!("{all} 1 is measured again when it next plays."),
+        n => format!("{all} {n} are measured again when they next play."),
+    }
 }
 
 #[cfg(test)]

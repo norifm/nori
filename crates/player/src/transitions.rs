@@ -2,7 +2,7 @@
 //! planner's answer (`automix::plan`) into the engine's [`Plan`].
 
 use crate::engine::Plan;
-use crate::types::{AutoMixSettings, TransitionKind, TransitionPlan};
+use crate::types::{AutoMixSettings, MixStyle, TransitionKind, TransitionPlan};
 
 /// A song in the planner's window.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -31,12 +31,12 @@ pub struct TransitionPrefs {
     pub max_tempo_change_pct: f32,
     pub bass_swap: bool,
     pub filter_effects: bool,
-    pub echo_out: bool,
     pub keep_pitch: bool,
     /// Songs of one album in order stay gapless ([`follows_on_album`]).
     pub keep_albums: bool,
     /// ReplayGain is on, so AutoMix does not match loudness.
     pub replay_gain: bool,
+    pub style: MixStyle,
 }
 
 /// `b` plays right after `a` on their album however they were queued: same album, not shuffled, and not
@@ -120,12 +120,12 @@ pub fn pick(prefs: &TransitionPrefs, transitions_off: bool, window: &[WindowSong
         max_tempo_change_pct: prefs.max_tempo_change_pct,
         bass_swap: m && prefs.bass_swap,
         filter_effects: m && prefs.filter_effects,
-        echo_out: m && prefs.echo_out,
         keep_pitch: prefs.keep_pitch,
         same_album_in_order: prefs.keep_albums && follows_on_album(o, n, shuffling),
         match_loudness: m && !prefs.replay_gain,
         out_tag_bpm: o.tag_bpm,
         in_tag_bpm: n.tag_bpm,
+        style: prefs.style,
     };
     Ok(Pick { out, next, settings })
 }
@@ -160,10 +160,10 @@ mod tests {
             max_tempo_change_pct: 6.0,
             bass_swap: true,
             filter_effects: true,
-            echo_out: true,
             keep_pitch: true,
             keep_albums: true,
             replay_gain: false,
+            style: MixStyle::Smooth,
         }
     }
 
@@ -238,7 +238,7 @@ mod tests {
         let w = [song("a", None, 1), song("b", None, 2)];
         let s = pick(&TransitionPrefs { auto_mix: false, crossfade_s: 5, ..prefs() }, false, &w, "a", false).unwrap().settings;
         assert_eq!(s.max_transition_s, 5.0);
-        assert!(!s.beat_match && !s.bass_swap && !s.filter_effects && !s.echo_out && !s.match_loudness);
+        assert!(!s.beat_match && !s.bass_swap && !s.filter_effects && !s.match_loudness);
         let s = pick(&TransitionPrefs { replay_gain: true, ..prefs() }, false, &w, "a", false).unwrap().settings;
         assert!(!s.match_loudness, "replaygain already levels them");
 

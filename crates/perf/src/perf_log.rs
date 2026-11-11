@@ -363,7 +363,7 @@ fn config(p: &nori_settings::settings::StoredPrefs) -> String {
     format!(
         "engine rust, eq {}, automix {}, crossfade {} s, offload {}, hi-res {}, bit-perfect {}",
         on(p.eq_enabled),
-        on(p.auto_mix),
+        format!("{:?}", p.auto_mix).to_lowercase(),
         p.crossfade_sec,
         on(p.offload),
         on(p.hi_res),
@@ -1335,7 +1335,7 @@ pub(crate) fn offload_reason() -> Option<&'static str> {
         skip_silence: false,
         offload: s.offload,
         crossfade_s: s.crossfade_sec,
-        auto_mix: s.auto_mix,
+        auto_mix: s.auto_mix.on(),
         speed: 1.0,
         pitch: 1.0,
     };
@@ -1805,14 +1805,14 @@ mod tests {
     fn line_formats() {
         let p = nori_settings::settings::StoredPrefs {
             eq_enabled: true,
-            auto_mix: false,
+            auto_mix: nori_settings::settings::AutoMixMode::Dj,
             crossfade_sec: 6,
             offload: true,
             hi_res: false,
             bit_perfect: false,
             ..Default::default()
         };
-        assert_eq!(config(&p), "engine rust, eq on, automix off, crossfade 6 s, offload on, hi-res off, bit-perfect off");
+        assert_eq!(config(&p), "engine rust, eq on, automix dj, crossfade 6 s, offload on, hi-res off, bit-perfect off");
 
         // Output line format.
         assert_eq!(

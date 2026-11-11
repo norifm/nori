@@ -3,6 +3,7 @@
 //! draws them. Rows send back a setting name and value (`setting_set`) or a level edit (`edit_level`).
 
 use crate::text;
+use nori_core::automix::store::Measured;
 use nori_core::settings::{season_follow_value, EqLevel, EqMode, SoundBand, StoredPrefs, ThemeSeason, EQ_RANGES};
 use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, LyricsSource, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsPart};
@@ -189,7 +190,7 @@ pub struct Storage {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Facts {
     /// Songs AutoMix has measured.
-    pub analysed: u32,
+    pub analysed: Measured,
     /// Offline index counts: songs, albums, artists.
     pub indexed: (u32, u32, u32),
     pub storage: Storage,
@@ -583,7 +584,7 @@ fn page_facts(f: &Facts) -> PageFacts {
     PageFacts {
         parts: f.rules.settings.clone(),
         folders: f.folders.iter().map(|m| m.id.clone()).collect(),
-        analysed: f.analysed,
+        analysed: f.analysed.songs,
         indexed_songs: f.indexed.0,
         stream_bytes: f.storage.stream,
         cover_bytes: f.storage.covers,
@@ -1139,6 +1140,9 @@ fn option_words(name: &str, v: &str) -> String {
         ("autoFill", "OFF") => "Stop".into(),
         ("autoFill", "SONGS") => "Add songs".into(),
         ("autoFill", "ALBUMS") => "Add albums".into(),
+        ("autoMix", "OFF") => "Off".into(),
+        ("autoMix", "SMOOTH") => "Smooth".into(),
+        ("autoMix", "DJ") => "DJ".into(),
         ("autoFillBasis", "SIMILAR") => "Similar music".into(),
         ("autoFillBasis", "ARTIST") => "The same artist".into(),
         ("autoFillBasis", "GENRE") => "The same genre".into(),
@@ -1268,7 +1272,7 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             let (indexed_songs, albums, artists) = f.indexed;
             let chore = |title: &str, detail: String, button: &str, chore| Row::Action { title: format!("{indent}{title}"), detail, button: button.into(), enabled, action: Act::Chore(chore) };
             match action {
-                SettingsAction::MeasureAgain => chore("Measured songs", format!("{} measured for tempo and beats.", counted(f.analysed, "song", "songs")), "Measure again", Chore::MeasureAgain),
+                SettingsAction::MeasureAgain => chore("Measured songs", text::measured(f.analysed), "Measure again", Chore::MeasureAgain),
                 SettingsAction::SyncLibrary => {
                     let counts = format!("{} · {} · {} on this device", counted(indexed_songs, "song", "songs"), counted(albums, "album", "albums"), counted(artists, "artist", "artists"));
                     chore("Offline search", counts, "Update", Chore::SyncLibrary)
@@ -1774,7 +1778,7 @@ mod tests {
     fn everything_on() -> StoredPrefs {
         let server = nori_core::settings::SavedServer { id: "a".into(), url: "https://a".into(), alt_url: "https://b".into(), ..Default::default() };
         StoredPrefs {
-            auto_mix: true,
+            auto_mix: nori_core::settings::AutoMixMode::Dj,
             auto_fill: Some(nori_core::settings::AutoFillKind::Songs),
             compressor: Some(nori_core::settings::CompressorPreset::Light),
             replay_gain: nori_core::settings::GainMode::Track,

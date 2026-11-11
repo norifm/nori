@@ -317,6 +317,29 @@ pub enum SwipeAction {
     Download,
 }
 
+/// AutoMix: off, short blends, or phrase-long DJ mixes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum AutoMixMode {
+    Off,
+    Smooth,
+    Dj,
+}
+
+impl AutoMixMode {
+    pub fn on(self) -> bool {
+        self != AutoMixMode::Off
+    }
+
+    /// How it mixes; Smooth's limits while off, for a crossfade's beat matching.
+    pub fn style(self) -> nori_player::types::MixStyle {
+        match self {
+            AutoMixMode::Off | AutoMixMode::Smooth => nori_player::types::MixStyle::Smooth,
+            AutoMixMode::Dj => nori_player::types::MixStyle::Dj,
+        }
+    }
+}
+
 /// What autofill adds when the last song starts: songs, or one whole album.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -555,9 +578,10 @@ pub struct StoredPrefs {
     /// Seconds; 0 is off. Equal power.
     #[setting("crossfadeSec", clamped(0, 12), default = 0, show = K::Choice(&["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]), effect = APPLY_AUDIO | REPLAN)]
     pub crossfade_sec: i32,
-    /// Beat-matched transitions with every part of them on ([`StoredPrefs::transition_prefs`]).
-    #[setting("autoMix", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | REPLAN)]
-    pub auto_mix: bool,
+    /// Beat-matched transitions with every part of them on, in a style ([`StoredPrefs::transition_prefs`]).
+    /// Stored as a switch before the styles: on reads as Smooth ([`load`]).
+    #[setting("autoMix", PICK, default = AutoMixMode::Off, show = K::Choice(AutoMixMode::NAMES), effect = APPLY_AUDIO | REPLAN)]
+    pub auto_mix: AutoMixMode,
     /// "Better beat detection": the Beat This! model on each upcoming song's ends, for AutoMix's beat
     /// grids. Needs the `neural-beats` feature and a one-time model download; downloaded
     /// songs are analyzed with it as they arrive.
@@ -884,18 +908,18 @@ impl StoredPrefs {
     /// with every part of it on, and mixes up to [`AUTO_MIX_MAX_S`].
     pub fn transition_prefs(&self) -> TransitionPrefs {
         TransitionPrefs {
-            auto_mix: self.auto_mix,
+            auto_mix: self.auto_mix.on(),
             crossfade_s: self.crossfade_sec,
-            auto_mix_max_s: AUTO_MIX_MAX_S,
+            auto_mix_max_s: self.auto_mix.style().longest_s(),
             beat_match: true,
-            max_tempo_change_pct: AUTO_MIX_MAX_TEMPO_PCT,
+            max_tempo_change_pct: self.auto_mix.style().tempo_pct(),
             bass_swap: true,
             filter_effects: true,
-            echo_out: true,
             keep_pitch: true,
             keep_albums: self.crossfade_keep_albums,
             // AutoMix skips its loudness matching under volume leveling.
             replay_gain: self.replay_gain != GainMode::Off,
+            style: self.auto_mix.style(),
         }
     }
 
@@ -904,11 +928,6 @@ impl StoredPrefs {
         self.servers.iter().find(|s| s.id == self.active_server_id)
     }
 }
-
-/// The longest AutoMix transition, seconds.
-const AUTO_MIX_MAX_S: i32 = 12;
-/// The most AutoMix changes a song's tempo to match the beat, percent.
-const AUTO_MIX_MAX_TEMPO_PCT: f32 = 6.0;
 
 /// A failed sound edit. Messages are for the log.
 #[derive(Debug, thiserror::Error)]
@@ -1283,7 +1302,10 @@ pub fn load(raw: &HashMap<String, PrefValue>) -> StoredPrefs {
     for row in ROWS {
         (row.load)(&mut p, &r);
     }
-    // The compressor and autofill were each a switch with a pick of its own.
+    // AutoMix, the compressor and autofill were each a switch, the last two with a pick of their own.
+    if let Some(PrefValue::Flag { v }) = raw.get("autoMix") {
+        p.auto_mix = if *v { AutoMixMode::Smooth } else { AutoMixMode::Off };
+    }
     if let Some(PrefValue::Flag { v }) = raw.get("compressor") {
         p.compressor = v.then(|| r.get::<i32>("compressorPreset").and_then(CompressorPreset::nth).unwrap_or(CompressorPreset::Light));
     }
@@ -1319,9 +1341,9 @@ pub fn load(raw: &HashMap<String, PrefValue>) -> StoredPrefs {
     p
 }
 
-/// Whether the compressor or autofill is stored as the switch it was before its choice.
+/// Whether AutoMix, the compressor or autofill is stored as the switch it was before its choice.
 pub(crate) fn switched(raw: &HashMap<String, PrefValue>) -> bool {
-    ["compressor", "autoFill"].iter().any(|k| matches!(raw.get(*k), Some(PrefValue::Flag { .. })))
+    ["autoMix", "compressor", "autoFill"].iter().any(|k| matches!(raw.get(*k), Some(PrefValue::Flag { .. })))
 }
 
 pub(crate) fn old_screen_defaults(raw: &HashMap<String, PrefValue>) -> bool {
