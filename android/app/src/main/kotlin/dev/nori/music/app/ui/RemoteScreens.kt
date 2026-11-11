@@ -20,10 +20,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.semantics.contentDescription
-import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
@@ -50,7 +46,6 @@ import dev.nori.music.app.vm.RemoteViewModel
 import dev.nori.music.ffi.remote.DeviceKind
 import dev.nori.music.ffi.remote.Refusal
 import dev.nori.music.ffi.remote.Role
-import dev.nori.music.look.CoverLook
 
 /** A device's glyph. */
 internal fun kindIcon(kind: DeviceKind): ImageVector = when (kind) {
@@ -460,65 +455,5 @@ private fun DeviceRow(name: String, icon: ImageVector, subtitle: String?, active
             if (trailing != null) Text(trailing, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp), color = scheme.onSurfaceVariant)
         }
         if (divider) Hairline(startIndent = 52.dp)
-    }
-}
-
-/** How long the other device's volume stays up after the last press of a volume key. */
-private const val VOLUME_SHOWN_MS = 1_500L
-
-/**
- * The volume of the device playing elsewhere, as the volume keys move it (RemoteViewModel.volumeKey): a pill
- * with the device's glyph and name over its level, shown on a press and gone a moment after the last.
- */
-@Composable
-fun RemoteVolume(remote: RemoteViewModel, look: Look, modifier: Modifier = Modifier) {
-    var pressed by remember { mutableStateOf(false) }
-    LaunchedEffect(remote) {
-        remote.volumeKeys.collectLatest {
-            pressed = true
-            kotlinx.coroutines.delay(VOLUME_SHOWN_MS)
-            pressed = false
-        }
-    }
-    val mirror by remote.mirror.collectAsStateWithLifecycle()
-    // Kept through the fade out, which may outlast the device.
-    var shown by remember { mutableStateOf<dev.nori.music.ffi.Mirror?>(null) }
-    mirror?.takeIf { it.volume != null }?.let { shown = it }
-    AnimatedVisibility(pressed && mirror?.volume != null, modifier, enter = AppMotion.appear(), exit = AppMotion.vanish()) {
-        val m = shown ?: return@AnimatedVisibility
-        val level = (m.volume?.toInt() ?: 0) / 100f
-        val ink = androidx.compose.ui.graphics.ColorProducer { look.color(CoverLook.CHROME_CONTENT) }
-        val description = words(R.string.remote_volume, m.name, m.volume?.toInt() ?: 0)
-        Row(
-            Modifier.widthIn(max = 360.dp).fillMaxWidth()
-                .semantics { contentDescription = description }
-                .drawBehind {
-                    val round = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
-                    drawRoundRect(look.color(CoverLook.SURFACE_CONTAINER), cornerRadius = round)
-                    drawRoundRect(look.color(CoverLook.OUTLINE_VARIANT), cornerRadius = round, style = androidx.compose.ui.graphics.drawscope.Stroke(HAIRLINE.toPx()))
-                }
-                .padding(start = 18.dp, end = 22.dp, top = 10.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val glyph = when {
-                level <= 0f -> Iconoir.SoundOff
-                level < 0.5f -> Iconoir.SoundLow
-                else -> Iconoir.SoundHigh
-            }
-            LookIcon(glyph, null, Modifier.size(22.dp), ink)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                LookText(m.name, { look.color(CoverLook.CHROME_CONTENT_65) }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(6.dp))
-                androidx.compose.foundation.layout.Box(
-                    Modifier.fillMaxWidth().height(4.dp).drawBehind {
-                        val color = look.color(CoverLook.CHROME_CONTENT)
-                        val round = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
-                        drawRoundRect(color.copy(alpha = color.alpha * 0.22f), cornerRadius = round)
-                        drawRoundRect(color, size = size.copy(width = size.width * level), cornerRadius = round)
-                    },
-                )
-            }
-        }
     }
 }

@@ -625,10 +625,6 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
               }
               PlayerLayer(sheet) { CompositionLocalProvider(LocalStarMarks provides marks, LocalDrifting provides protecting) { PlayerScreen(player, actions) } }
               }
-              RemoteVolume(
-                  remote, chromeLook,
-                  Modifier.align(Alignment.TopCenter).windowInsetsPadding(statusBarRoom).padding(top = 8.dp, start = 12.dp, end = 12.dp).coversPage(),
-              )
               // Top: less in the way of the now-playing bar; swipe or the X dismisses.
               SnackbarHost(
                   snackbar,

@@ -1013,10 +1013,11 @@ fi
 remote_checks() {
   section "playing on another device: the terminal client on this computer"
   # Who plays, the queue, the place, the volume and a transfer's order are the core's (crates/core
-  # tests/remote.rs), and that the system's media controls never show another device's playback
-  # (destination.rs), and a volume key's step (Mirror::volume_key). Here: the media session showing nothing
-  # while the other device plays, the volume keys in front moving its volume, this phone's own output let
-  # go while it plays there, and the music coming back.
+  # tests/remote.rs), as are a volume key's step (Mirror::volume_key) and what a Bluetooth press does
+  # (Mirror::system_press). Here: the media session handed to the other device (a remote session: its
+  # song, the notification's seal, the volume keys in front and behind moving its volume through Android's
+  # panel), the system's output switcher naming it and bringing the music back, this phone's own output
+  # let go while it plays there, and the music coming back.
   if [ "$NORI_E2E_SERVER" != local ]; then
     echo "  NOTE  needs the local server: the terminal client signs in to it as the other device"
   else
@@ -1044,10 +1045,9 @@ PY
     echo "     the peer's door: $door"
     "$app" set remoteControl true >/dev/null
     "$app" play "album:$(mix_album)" >/dev/null; sounds 20
-    # Below the top while it plays here, so a volume key the peer misses would show on it. The shell's own
-    # volume commands do not reach the stream on recent Android; a key does.
+    # Midway, so a volume key the peer misses, up or down, would show on it.
     phone_volume() { adb shell cmd media_session volume --stream 3 --get 2>/dev/null | grep -oE 'volume is [0-9]+' | grep -oE '[0-9]+'; }
-    if [ "$(phone_volume)" = 15 ]; then adb shell input keyevent KEYCODE_VOLUME_DOWN; fi
+    adb shell cmd audio set-volume 3 8 >/dev/null
     check "the transfer starts with the album's first song" wait_for title "Long Track 01" 10
     "$app" open player >/dev/null; "$app" remote watch on >/dev/null
     "$app" remote found "$door" >/dev/null
@@ -1055,11 +1055,11 @@ PY
     "$app" remote watch off >/dev/null
     "$app" remote pick "$peer_id" >/dev/null
     check "the player shows the peer playing" wait_for playingOn "$name" 15 || return 1
-    # This app's media session: its state line and its volume, which a session showing another device would make remote.
-    session_line() { adb shell dumpsys media_session | awk -v p="package=$pkg" '$1 == p { on = 1 } on && /^ *state=/ { s = $0 } on && /volumeType=/ { print s " " $1; exit }'; }
-    session_quiet() { local l; l=$(session_line); [[ "$l" == *"volumeType=LOCAL"* && "$l" != *"PLAYING("* && "$l" != *"BUFFERING("* ]]; }
+    # This app's media session as the system has it: its state, volume type and song.
+    session_block() { adb shell dumpsys media_session | awk -v p="package=$pkg" '$1 == p { on = 1; next } on && /^ *package=/ { exit } on'; }
+    remote_session() { local b; b=$(session_block); [[ "$b" == *"volumeType=REMOTE"* && "$b" == *"state=PLAYING("* && "$b" == *"description=$(field title)"* ]]; }
+    check "the media session is the peer's: remote, playing its song" wait_until 10 remote_session
     check "this phone's output is let go" silent 10
-    check "the media session shows nothing of the peer" session_quiet
     check "the peer's engine is playing before the phone closes" wait_until 10 bash -c "'$app' remote devices | grep -Fq '$name (nearby): playing'" || return 1
     adb shell am force-stop "$pkg"
     "$app" launch >/dev/null
@@ -1071,18 +1071,45 @@ PY
     check "the foreground starts its remote controller" wait_until 10 remote_started || return 1
     "$app" remote found "$door" >/dev/null
     check "reopening follows the peer without the device picker" wait_for playingOn "$name" 15 || return 1
+    check "the remote media session returns after reopening" wait_until 10 remote_session
     check "reopening does not play the saved queue on this phone" silent 10
-    check "nor does its media session show the peer" session_quiet
-    # In front, the volume keys move the peer's volume, not this phone's (RemoteViewModel.volumeKey).
+    # The volume keys reach the peer through the remote session (its volume provider), in front and from
+    # the home screen; this phone's music volume stays. Android's volume panel names the peer.
+    shots="$here/../build/e2e/$ANDROID_SERIAL/remote"; mkdir -p "$shots"
     peer_volume() { tmux capture-pane -p -t "$peer" | perl -CS -Mutf8 -ne 'if (/Volume (━*)/) { $n = length $1 } END { print $n // "" }'; }
     phone=$(phone_volume)
     before=$(peer_volume)
     check "the peer shows its volume" test -n "$before"
     adb shell input keyevent KEYCODE_VOLUME_UP; adb shell input keyevent KEYCODE_VOLUME_UP
-    adb exec-out screencap -p > "$here/../build/e2e/$ANDROID_SERIAL/remote-volume.png"   # the level shown in the app
+    adb exec-out screencap -p > "$shots/volume-keys.png"   # the remote slider the keys move
     louder() { [ "$(peer_volume)" -gt "$before" ]; }
-    check "the volume keys turn the peer up (from $before)" wait_until 10 louder
+    check "the volume keys in front turn the peer up (from $before)" wait_until 10 louder
     check "and leave this phone's volume ($phone)" test "$(phone_volume)" = "$phone"
+    # Android's full volume panel names the device its media plays on (the routing session, RemoteRoute).
+    adb shell am start -a android.settings.panel.action.VOLUME >/dev/null
+    panel_names() { [[ "$(ui | grep -F "text=\"$1\"")" == *'package="com.android'* ]]; }
+    check "Android's volume panel names the peer" wait_until 10 panel_names "$name"
+    adb exec-out screencap -p > "$shots/volume-panel.png"
+    adb shell input keyevent KEYCODE_BACK
+    adb shell input keyevent KEYCODE_HOME
+    before=$(peer_volume)
+    adb shell input keyevent KEYCODE_VOLUME_DOWN; adb shell input keyevent KEYCODE_VOLUME_DOWN
+    quieter() { [ "$(peer_volume)" -lt "$before" ]; }
+    check "the volume keys from the home screen turn the peer down (from $before)" wait_until 10 quieter
+    check "and leave this phone's volume ($phone)" test "$(phone_volume)" = "$phone"
+    adb shell cmd statusbar expand-notifications; song_in_shade() { on_screen "$(field title)"; }
+    check "the notification shows the peer's song" wait_until 10 song_in_shade
+    adb exec-out screencap -p > "$shots/notification.png"
+    adb shell cmd statusbar collapse
+    "$app" launch >/dev/null; "$app" open player >/dev/null
+    # A media key from this phone reaches the peer (RemoteDevicePlayer.mediaButton); one from the Bluetooth
+    # stack would not (Mirror::system_press), which needs a real headset to send.
+    # The peer's play button: ▶ while paused, ⏸ while playing.
+    peer_shows() { tmux capture-pane -p -t "$peer" | grep -q "$1"; }
+    adb shell cmd media_session dispatch pause >/dev/null
+    check "a media key on this phone pauses the peer" wait_until 10 peer_shows '▶'
+    adb shell cmd media_session dispatch play >/dev/null
+    check "and plays it again" wait_until 10 peer_shows '⏸'
     for track in 02 03 04; do
       "$app" do next >/dev/null
       check "the remote queue reaches song $track" wait_for title "Long Track $track" 10
@@ -1098,11 +1125,39 @@ PY
     "$app" play "search:Long Track 04" >/dev/null
     check "a new remote play clears the mix indicator" wait_for displayMixing False 10
     check "the peer returns to the selected song" wait_for title "Long Track 04" 10
-    check "the media session still shows nothing of the peer" session_quiet
+    check "the media session follows the peer's song" wait_until 10 remote_session
+    # The notification's seal stands for the peer's song: its star is the one the peer's queue holds.
+    was=$(field starred); flip=$([ "$was" = True ] && echo False || echo True)
+    "$app" do "notification favourite" >/dev/null
+    check "the notification's seal stars the peer's song ($was -> $flip)" wait_for starred "$flip" 10
+    peer_seal() { local b; b=$(field notification); [[ "$flip" == True && "$b" == *sealed* ]] || [[ "$flip" == False && "$b" != *sealed* ]]; }
+    check "the notification's seal redraws for the peer's song" wait_until 10 peer_seal
+    "$app" do "notification favourite" >/dev/null; wait_for starred "$was" 10 >/dev/null   # put it back
+    adb shell am broadcast -a com.android.systemui.action.LAUNCH_MEDIA_OUTPUT_DIALOG -p com.android.systemui --es package_name "$pkg" >/dev/null
+    check "the system's output switcher opens" wait_until 10 on_screen 'package="com.android.systemui"'
+    check "it lists the peer" wait_until 10 on_screen "text=\"$name\""
+    check "and this phone" wait_until 10 on_screen 'text="This phone"'
+    adb exec-out screencap -p > "$shots/output-switcher.png"
+    check "the switcher's \"This phone\" can be picked" tapnode text "This phone"
+    check "it brings the music back here" wait_for playingOn "" 15
+    check "with the peer's latest song" wait_for title "Long Track 04" 10
+    if on_screen 'text="Done"'; then tapnode text Done; fi
+    check "and it sounds here" sounds 15
+    check "the media session is this phone's again" wait_until 10 bash -c "adb shell dumpsys media_session | awk -v p='package=$pkg' '\$1 == p { on = 1 } on && /volumeType=/ { print; exit }' | grep -q volumeType=LOCAL"
+    adb shell am broadcast -a com.android.systemui.action.LAUNCH_MEDIA_OUTPUT_DIALOG -p com.android.systemui --es package_name "$pkg" >/dev/null
+    check "the output switcher opens again" wait_until 10 on_screen 'text="This phone"'
+    check "without the peer" bash -c "! '$here/ui-dump.sh' | grep -Fq 'text=\"$name\"'"
+    if on_screen 'text="Done"'; then tapnode text Done; else adb shell input keyevent KEYCODE_BACK; fi
+    # The peer's door again: the emulator hears no mDNS, and the app forgot it while away.
+    "$app" remote watch on >/dev/null; "$app" remote found "$door" >/dev/null
+    check "the peer is listed again" wait_until 15 bash -c "'$app' remote devices | grep -Fq '$name'"
+    "$app" remote watch off >/dev/null
+    "$app" remote pick "$peer_id" >/dev/null
+    check "the app's device sheet hands it to the peer again" wait_for playingOn "$name" 15
     "$app" remote pick here >/dev/null
     check "\"This phone\" brings it back" wait_for playingOn "" 15
-    check "with the peer's latest song" wait_for title "Long Track 04" 10
-    check "and it sounds here" sounds 15
+    check "with the peer's latest song again" wait_for title "Long Track 04" 10
+    check "and it sounds here again" sounds 15
     check "the peer paused" wait_until 10 bash -c "tmux capture-pane -p -t $peer | grep -q '▶'"
     "$app" remote pick "$peer_id" >/dev/null
     check "the phone can hand playback back to the peer" wait_for playingOn "$name" 10

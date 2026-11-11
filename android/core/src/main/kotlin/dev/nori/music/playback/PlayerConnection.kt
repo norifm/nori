@@ -421,7 +421,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     private var radioShown: String? = null
 
     private fun publish(p: Player, queueChanged: Boolean) {
-        // The page shows the mirrored device then, read from the core; the session's player is this phone's, idle.
+        // The session follows the mirrored device then; the page reads it from the core instead.
         if (mirror != null) return
         val old = _state.value
         val item = p.currentMediaItem

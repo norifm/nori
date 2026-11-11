@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.Looper
-import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -113,22 +112,6 @@ class MainActivity : ComponentActivity() {
         "dev.nori.music.SHORTCUT_SHUFFLE_ALBUMS" -> LaunchRoute.ShuffleAlbums
         ACTION_WIDGET -> intent.getStringExtra(EXTRA_ROUTE)?.let(LaunchRoute::ofWidget)
         else -> null
-    }
-
-    /** Whether the volume key held now went to another device (onKeyDown): its release is then this app's too. */
-    private var volumeKeyTaken = false
-
-    /** In front, the volume keys set the volume of another device playing (RemoteViewModel.volumeKey); otherwise the system's. */
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode != KeyEvent.KEYCODE_VOLUME_UP && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) return super.onKeyDown(keyCode, event)
-        volumeKeyTaken = remote.volumeKey(keyCode == KeyEvent.KEYCODE_VOLUME_UP)
-        return volumeKeyTaken || super.onKeyDown(keyCode, event)
-    }
-
-    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode != KeyEvent.KEYCODE_VOLUME_UP && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN || !volumeKeyTaken) return super.onKeyUp(keyCode, event)
-        volumeKeyTaken = false
-        return true
     }
 
     override fun onStart() {
