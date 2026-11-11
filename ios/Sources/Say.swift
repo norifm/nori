@@ -662,6 +662,7 @@ enum Say {
         case ("autoFill", "OFF"): return "Stop"
         case ("autoFill", "SONGS"): return "Add songs"
         case ("autoFill", "ALBUMS"): return "Add albums"
+        case ("replayGain", "TRACK"): return "Song"
         case ("autoFillBasis", "SIMILAR"): return "Similar music"
         case ("autoFillBasis", "ARTIST"): return "The same artist"
         case ("autoFillBasis", "GENRE"): return "The same genre"
