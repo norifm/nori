@@ -302,6 +302,11 @@ struct Bars {
     units: Vec<f64>,
 }
 
+/// The first bar line and the bar's length, seconds, as the bar features count them.
+pub(crate) fn bar_grid(t: &Tempo, db: &Downbeat, music: (f64, f64)) -> Option<(f64, f64)> {
+    bar_lines(t, db, music).map(|b| (b.start, b.bar))
+}
+
 fn bar_lines(t: &Tempo, db: &Downbeat, music: (f64, f64)) -> Option<Bars> {
     if t.period_s.is_nan() || t.period_s <= 0.0 {
         return None;

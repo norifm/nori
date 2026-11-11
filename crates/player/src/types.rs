@@ -141,6 +141,13 @@ pub struct TrackAnalysis {
     pub last_drop_vocal: f32,
     /// Where the song's last sung bar ends, before any hidden track: 0 when nothing is sung.
     pub vocal_end_ms: i64,
+    /// How far the opening's bars keep within 3 dB of each other, from the first bar line: a loop of the opening
+    /// ends by it. 0 unknown.
+    pub steady_intro_ms: i64,
+    /// Where the bars that keep together before the last bar line of the music start, and those before the exit's
+    /// (0 without an exit): a loop of the ending starts at or after it. 0 unknown.
+    pub steady_end_ms: i64,
+    pub steady_exit_ms: i64,
     /// Analysis time, ms since the epoch.
     pub analysed_ms: i64,
 }

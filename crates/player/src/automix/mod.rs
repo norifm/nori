@@ -39,8 +39,8 @@ use crate::types::TrackAnalysis;
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 15: the end of the singing.
-pub const ANALYSIS_VERSION: i32 = 15;
+/// Bump when stored rows should be measured again. 16: the steady ends, for loops.
+pub const ANALYSIS_VERSION: i32 = 16;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -184,6 +184,15 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
     let sung_end = outro_vocal.max(exit_vocal) >= plan::VOCAL_MIN;
     let vocal_end = if silent || !sung_end { None } else { vocal_end(f, if bar_s >= 1.0 { bar_s } else { 2.0 }, (music.0, song.1)) };
 
+    // How far each end holds its level, in bars from the first bar line (two-second blocks without a grid).
+    let (steady_intro, steady_end, steady_exit) = if silent {
+        (0, 0, 0)
+    } else {
+        let ms = |t: f64| (t * 1000.0).round() as i64;
+        let (first, bar) = structure::bar_grid(&t, &db, music).unwrap_or((music.0, 2.0));
+        loudness::steady_ends(&f.blocks_raw, (s0, s1), ms(first), ms(bar), exit.map(ms))
+    };
+
     let (outro_grid, intro_grid) = if silent {
         (Grid::default(), Grid::default())
     } else {
@@ -243,6 +252,9 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         last_drop_ms: last_drop.map_or(0, |d| (d * 1000.0).round() as i64),
         last_drop_vocal,
         vocal_end_ms: vocal_end.map_or(0, |t| (t * 1000.0).round() as i64),
+        steady_intro_ms: steady_intro,
+        steady_end_ms: steady_end,
+        steady_exit_ms: steady_exit,
     };
     Analysis { track, tempo: t }
 }

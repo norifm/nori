@@ -805,6 +805,9 @@ pub struct TrackAnalysis {
     pub last_drop_ms: i64,
     pub last_drop_vocal: f32,
     pub vocal_end_ms: i64,
+    pub steady_intro_ms: i64,
+    pub steady_end_ms: i64,
+    pub steady_exit_ms: i64,
     pub analysed_ms: i64,
 }
 

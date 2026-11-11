@@ -358,9 +358,9 @@ fn echo_out(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSetting
         return None;
     }
     let ending = Ending::of(a, out_dur);
-    let end_a = ending.leave(0.0);
-    let bpb = bar_beats(a);
-    let n = downbeat_before(end_a - dur as f64, a.beat_offset_ms, beat, bpb, a.downbeat_phase as i64);
+    // The last downbeat as the song leaves whose echo ends inside its music: on a stop, its last hit.
+    let last = (ending.leave(0.0) + 0.25 * beat).min(ending.music_end - dur as f64);
+    let n = downbeat_before(last, a.beat_offset_ms, beat, bar_beats(a), a.downbeat_phase as i64);
     let start = (a.beat_offset_ms + n as f64 * beat).round() as i64;
     if start < a.silence_start_ms || ending.skipped((start + dur) as f64) > MAX_SKIP_MS as f64 {
         return None;
@@ -435,10 +435,10 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
                 MIN_BPM_CONFIDENCE, MIN_STABILITY
             );
         } else if let Some(v) = verdict {
-            // Far keys echo out of an instrumental ending: first in the DJ style, else when no mix fits.
-            let echo = s.echo_out && v.cause == KEYS_FAR && a.outro_vocal.max(a.exit_vocal) < ECHO_SUNG;
+            // Far keys echo out of an instrumental ending, in the DJ style.
             let prof = profile(s.style);
-            if let Some(p) = echo.then(|| echo_out(a, b, room, s, v.cause)).flatten().filter(|_| prof.echo_first) {
+            let echo = prof.echo && s.echo_out && v.cause == KEYS_FAR && a.outro_vocal.max(a.exit_vocal) < ECHO_SUNG;
+            if let Some(p) = echo.then(|| echo_out(a, b, room, s, v.cause)).flatten() {
                 return p;
             }
             // Keys far apart over a sung ending, in the DJ style: a cut rather than four bars of clash.
@@ -448,9 +448,6 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
             match beat_matched(a, b, room, s, short_cause) {
                 Ok(p) => return p,
                 Err(e) => why_not = e,
-            }
-            if let Some(p) = echo.then(|| echo_out(a, b, room, s, v.cause)).flatten() {
-                return p;
             }
             if let Some(p) = prof.drop_cut.then(|| drop_cut(a, b, room, s, &why_not)).flatten() {
                 return p;
@@ -527,7 +524,10 @@ struct Profile {
     /// The incoming drop may land on the outgoing song's last one.
     double_drop: bool,
     /// Far keys over an instrumental ending echo out before a quick mix is tried.
-    echo_first: bool,
+    echo: bool,
+    /// Bars the bass takes to change hands, but for a sixteenth into a drop when `quick_drop_swap`.
+    swap_bars: f64,
+    quick_drop_swap: bool,
     /// The outgoing song thins out (a rising high-pass) over the bars before the incoming drop.
     riser: bool,
     /// A pair that cannot blend cuts on a downbeat into the incoming drop ([`drop_cut`]) before a plainer fade.
@@ -547,7 +547,9 @@ const SMOOTH: Profile = Profile {
     in_loop: false,
     bend: false,
     double_drop: false,
-    echo_first: false,
+    echo: false,
+    swap_bars: 1.0,
+    quick_drop_swap: false,
     riser: false,
     drop_cut: false,
     loop_cost: 0.1,
@@ -562,7 +564,9 @@ const DJ: Profile = Profile {
     in_loop: true,
     bend: true,
     double_drop: true,
-    echo_first: true,
+    echo: true,
+    swap_bars: 0.25,
+    quick_drop_swap: true,
     riser: true,
     drop_cut: true,
     loop_cost: 0.04,
@@ -762,7 +766,8 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                         continue;
                     }
                     let lead = ((d - first) / bar_in).round() as i64;
-                    let fits = |l: i64| l <= lead && runup > lead && (runup - lead) % l == 0 && runup - lead <= MAX_IN_LOOPED_BARS;
+                    let steady = |l: i64| b.steady_intro_ms == 0 || first + l as f64 * bar_in <= b.steady_intro_ms as f64 + 0.5 * beat_n;
+                    let fits = |l: i64| l <= lead && runup > lead && (runup - lead) % l == 0 && runup - lead <= MAX_IN_LOOPED_BARS && steady(l);
                     match [8i64, 4].into_iter().find(|&l| fits(l)) {
                         Some(l) => (in_start, in_loop) = (first, Some((l, (runup - lead) / l))),
                         None => continue,
@@ -779,12 +784,15 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                 // looped when they are not sung (a looped sung line sounds like a broken record): when its own bars are too
                 // few, or would lay the run-up over its singing.
                 let plain = at - runup as f64 * bar;
-                let at_end = back == 0 || (exit < ending.music_end && (at - exit).abs() <= 0.5 * beat);
+                let at_exit = exit < ending.music_end && (at - exit).abs() <= 0.5 * beat;
+                let at_end = back == 0 || at_exit;
+                // A loop's bars keep their level, or it jumps each time round: only bars of the steady run before it.
+                let steady_from = if at_exit { a.steady_exit_ms } else { a.steady_end_ms } as f64 - 0.5 * beat;
                 let fits = plain >= a.silence_start_ms as f64;
                 let looped = [8i64, 4]
                     .into_iter()
                     .map(|lb| at - lb as f64 * bar)
-                    .find(|&from| at_end && from > plain && from >= a.silence_start_ms as f64 && unsung_from(from))
+                    .find(|&from| at_end && from > plain && from >= a.silence_start_ms as f64 && from >= steady_from && unsung_from(from))
                     .map(|from| (from, at - from));
                 let over_singing = vocal_end.is_some_and(|v| plain < v) && prof.sung_under_cost > 0.0;
                 let outs = [fits.then_some((plain, 0.0)), looped.filter(|_| !fits || over_singing)];
@@ -934,9 +942,14 @@ fn beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSet
     Ok(finish_beat_matched(a, b, s, &k, &w, short_cause, &bits))
 }
 
-/// How long the bass takes to change hands: the sixteenth before the swap.
-fn swap_len(beat: f64) -> f64 {
-    (beat / 4.0).clamp(40.0, 150.0)
+/// How long the bass takes to change hands: a sixteenth as the drop hits, which brings its own; elsewhere eased
+/// over the profile's bars.
+fn swap_len(k: &Lock, landing: Landing) -> f64 {
+    if k.profile.quick_drop_swap && landing == Landing::Drop {
+        (k.beat / 4.0).clamp(40.0, 150.0)
+    } else {
+        k.profile.swap_bars * k.bar
+    }
 }
 
 fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings, k: &Lock, w: &Window, short_cause: &str, notes: &[&str]) -> TransitionPlan {
@@ -955,7 +968,7 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     (p.in_fade_start_ms, p.in_fade_end_ms) = (0, if swap > 0 { swap } else { (beat_ms / 8).clamp(1, dur_ms.max(1)) });
     (p.out_fade_start_ms, p.out_fade_end_ms) = (swap.min(dur_ms - 1).max(0), dur_ms);
     if s.bass_swap {
-        let len = swap_len(k.beat).round() as i64;
+        let len = swap_len(k, w.landing).round() as i64;
         p.bass_swap = Some(BassSwap { at_ms: (swap - len).max(0), len_ms: len, cut_hz: BASS_CUT_HZ });
     }
     // Same key: no filter. Neighbours: soft low-pass. Distance 2: high-pass "filter open". Else: low-pass after
@@ -1312,6 +1325,9 @@ mod tests {
             last_drop_ms: 0,
             last_drop_vocal: 0.0,
             vocal_end_ms: 0,
+            steady_intro_ms: 0,
+            steady_end_ms: 0,
+            steady_exit_ms: 0,
         }
     }
 
@@ -1359,6 +1375,10 @@ mod tests {
         assert_eq!(p.in_loop, None, "{}", p.reason);
         // Smooth never loops it.
         assert_eq!(smooth.in_loop, None, "{}", smooth.reason);
+        // An opening that builds after two bars would drop back each time round: not looped.
+        let building = TrackAnalysis { steady_intro_ms: (120.0 + 8.0 * beat) as i64, ..b };
+        let p = plan(Some(&a), Some(&building), 240_000, 240_000, &dj());
+        assert_eq!(p.in_loop, None, "{}", p.reason);
     }
 
     /// Into a drop, DJ thins the outgoing song out with a rising high-pass over the two bars before the swap;
@@ -1398,7 +1418,7 @@ mod tests {
         let swap_in_a = |a: &TrackAnalysis, s: &AutoMixSettings| {
             let p = plan(Some(a), Some(&b), 238_500, 240_000, s);
             assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
-            p.out_start_ms as f64 + p.out_song_ms(p.bass_swap.expect(&p.reason).at_ms as f64)
+            p.out_start_ms as f64 + p.out_song_ms(swap_at(&p) as f64)
         };
         let half_beat = 30_000.0 / 128.0;
         for s in [AutoMixSettings { max_transition_s: 40.0, ..Default::default() }, dj()] {
@@ -1423,8 +1443,12 @@ mod tests {
         let smooth = plan(Some(&a), Some(&b), 238_500, 240_000, &AutoMixSettings::default());
         assert_eq!(smooth.out_loop_ms, None, "{}", smooth.reason);
         // Without the singing's end, a sung ending never loops.
-        let unknown = plan(Some(&TrackAnalysis { vocal_end_ms: 0, ..a }), Some(&b), 238_500, 240_000, &dj());
+        let unknown = plan(Some(&TrackAnalysis { vocal_end_ms: 0, ..a.clone() }), Some(&b), 238_500, 240_000, &dj());
         assert_eq!(unknown.out_loop_ms, None, "{}", unknown.reason);
+        // Bars that fade out jump back up each time round: an ending steady over only its last two bars is not looped.
+        let fading = TrackAnalysis { steady_end_ms: vocal_end + (3.0 * bar) as i64, ..a };
+        let p = plan(Some(&fading), Some(&b), 238_500, 240_000, &dj());
+        assert_eq!(p.out_loop_ms, None, "{}", p.reason);
     }
 
     #[test]
@@ -1538,7 +1562,7 @@ mod tests {
         assert!((p.duration_ms as f64 - 8.0 * bar - beat).abs() <= 1.0, "{}: {}", p.duration_ms, p.reason);
         assert!((lands(&p, b.intro_end_ms) - swap_at(&p) as f64).abs() <= 2.0, "{}", p.reason);
         assert!(on_downbeat(&a, p.out_start_ms as f64) && on_downbeat(&a, (p.out_start_ms + swap_at(&p)) as f64), "{}", p.out_start_ms);
-        assert_eq!(p.bass_swap.unwrap().len_ms, (beat / 4.0).round() as i64);
+        assert_eq!(p.bass_swap.unwrap().len_ms, bar.round() as i64, "Smooth hands the bass over across a bar");
         assert_eq!((p.in_fade_start_ms, p.in_fade_end_ms), (0, swap_at(&p)));
         assert_eq!((p.out_fade_start_ms, p.out_fade_end_ms), (swap_at(&p), p.duration_ms));
         assert_eq!(p.fade_curve, FadeCurve::SineSquared);
@@ -1875,6 +1899,10 @@ mod tests {
         assert_eq!((p.bass_swap, p.tempo_ratio), (None, 1.0), "no bass swap or tempo change on an echo-out");
         assert!(on_downbeat(&b, (p.in_start_ms + p.duration_ms) as f64 + 0.5) || on_downbeat(&b, (p.in_start_ms + p.duration_ms) as f64), "{p:?}");
         check_skip(&p, &a, &b, 240_000);
+        // A song that stops on a last hit echoes that hit as it rings out, not the bar before it.
+        let stops = TrackAnalysis { exit_ms: (120.0 + 125.0 * bar) as i64, ..a.clone() };
+        let p = plan(Some(&stops), Some(&b), 240_000, 240_000, &with(MixStyle::Dj, true));
+        assert_eq!((p.kind, p.out_start_ms), (TransitionKind::EchoOut, stops.exit_ms), "{}", p.reason);
         // Echo off: Smooth's quick mix, DJ's cut on a downbeat after a riser, its last beats echoing.
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Smooth, false));
         assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
@@ -1886,10 +1914,26 @@ mod tests {
         assert!(on_downbeat(&a, (p.out_start_ms + riser) as f64) && on_downbeat(&b, (p.in_start_ms + riser) as f64), "on both downbeats: {p:?}");
         assert!(p.high_pass.is_some_and(|h| h.end_ms == riser) && p.echo.is_some(), "{p:?}");
         check_skip(&p, &a, &b, 240_000);
-        // No mix fits (tempos too far apart): the echo-out in Smooth too.
+        // No mix fits (tempos too far apart): Smooth still fades, an echo being a DJ's effect.
         let b = TrackAnalysis { bpm: 150.0, intro_bpm: 150.0, ..b };
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Smooth, true));
-        assert_eq!(p.kind, TransitionKind::EchoOut, "{}", p.reason);
+        assert!(p.kind != TransitionKind::EchoOut && p.echo.is_none(), "{}", p.reason);
+        assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
+    }
+
+    /// The bass changes hands in a sixteenth only as a DJ mix lands on a drop; elsewhere over a beat (DJ) or a bar
+    /// (Smooth).
+    #[test]
+    fn bass_swaps_are_quick_only_into_a_drop() {
+        let beat: f64 = 60_000.0 / 128.0;
+        let a = track(128.0);
+        let drop = TrackAnalysis { drop_ms: (120.0 + 32.0 * beat) as i64, ..track(128.0) };
+        let smooth = AutoMixSettings { max_transition_s: 40.0, ..Default::default() };
+        for (b, s, len) in [(&drop, dj(), beat / 4.0), (&a, dj(), beat), (&drop, smooth.clone(), 4.0 * beat), (&a, smooth, 4.0 * beat)] {
+            let p = plan(Some(&a), Some(b), 240_000, 240_000, &s);
+            assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
+            assert_eq!(p.bass_swap.expect(&p.reason).len_ms, len.round() as i64, "{:?}: {}", s.style, p.reason);
+        }
     }
 
     /// An echo-out repeats the outgoing song's last beat: over a sung line that is a stutter. It is never planned over

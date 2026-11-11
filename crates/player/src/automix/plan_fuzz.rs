@@ -83,6 +83,9 @@ fn row(r: &mut Rng, dur: i64, how: Rows) -> TrackAnalysis {
         last_drop_ms: ms(r),
         last_drop_vocal: c(r),
         vocal_end_ms: ms(r),
+        steady_intro_ms: ms(r),
+        steady_end_ms: ms(r),
+        steady_exit_ms: ms(r),
         analysed_ms: 0,
     }
 }
