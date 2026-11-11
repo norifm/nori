@@ -1183,15 +1183,22 @@ pub fn paired_with(name: &str) -> String {
     format!("Paired with {name}")
 }
 
-/// A paired device's kind, and whether it is on this network now or when it last was.
+/// A paired device's kind, and whether it answers now or when it was last nearby.
 pub fn paired_line(d: &nori_core::remote::PairedDevice) -> String {
-    let seen = match (d.nearby, d.seen_days) {
-        (true, _) => "nearby".to_string(),
-        (false, 0) => "seen today".into(),
-        (false, 1) => "seen yesterday".into(),
-        (false, n) => format!("seen {n} days ago"),
+    use nori_core::remote::PairedReach;
+    let seen = match (d.reach, d.seen_days) {
+        (PairedReach::Answers, _) => "nearby".to_string(),
+        (PairedReach::Silent, _) => "can't reach it".into(),
+        (PairedReach::Away, 0) => "not nearby · seen today".into(),
+        (PairedReach::Away, 1) => "not nearby · seen yesterday".into(),
+        (PairedReach::Away, n) => format!("not nearby · seen {n} days ago"),
     };
     format!("{} · {seen}", device_kind(d.kind))
+}
+
+/// Enter on a paired device that does not answer.
+pub fn cant_reach(name: &str) -> String {
+    format!("Can't reach {name}. Is it on this network, with remote control on?")
 }
 
 /// Why pairing with the device `name` (when its code says it) failed.

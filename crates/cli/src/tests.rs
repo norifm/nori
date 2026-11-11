@@ -3066,30 +3066,43 @@ fn a_profile_moves_with_k_and_j() {
 }
 
 #[test]
-fn paired_devices_are_listed_forgotten_and_paired_with_a_reason_when_not() {
-    use nori_core::remote::{wire::DeviceKind, PairError, PairedDevice};
+fn paired_devices_are_listed_picked_forgotten_and_paired_with_a_reason_when_not() {
+    use nori_core::remote::{wire::DeviceKind, PairError, PairedDevice, PairedReach};
     let mut a = app();
     let code = format!("nori://pair#k={}&d=desk&a=10.0.0.2%3A41234&n=Desk", "ab".repeat(32));
     a.devices.on = true;
     a.devices.pairing = Some(code.clone());
     a.devices.paired = vec![
-        PairedDevice { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, nearby: true, seen_days: 0 },
-        PairedDevice { id: "pixel".into(), name: "Pixel".into(), kind: DeviceKind::Phone, nearby: false, seen_days: 3 },
+        PairedDevice { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, reach: PairedReach::Answers, active: false, seen_days: 0 },
+        PairedDevice { id: "pixel".into(), name: "Pixel".into(), kind: DeviceKind::Phone, reach: PairedReach::Away, active: false, seen_days: 3 },
     ];
     key(&mut a, KeyCode::Char('C'));
     let s = draw(&mut a, 120, 30);
     dump("paired", &s);
     let row = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
     assert!(row(crate::text::PAIRED_TITLE).trim() == crate::text::PAIRED_TITLE, "{s}");
-    assert!(row("Desk").contains("computer · nearby") && row("Pixel").contains("phone · seen 3 days ago"), "{s}");
+    assert!(row("Desk").contains("computer · nearby") && row("Pixel").contains("phone · not nearby · seen 3 days ago"), "{s}");
     assert!(row(crate::text::PAIR_DEVICE).contains(crate::text::PAIR_DEVICE), "{s}");
 
-    // d on a paired device asks, then forgets that one.
-    let at = a.devices.rows().iter().position(|r| *r == crate::app::DeviceRow::Paired(1)).unwrap();
-    while a.devices.sel.at < at {
-        key(&mut a, KeyCode::Down);
-    }
+    // Enter on a paired device that answers picks it, as on a device above; on one that does not, says so.
+    let to = |a: &mut crate::app::App, row| {
+        let at = a.devices.rows().iter().position(|r| *r == row).unwrap();
+        while a.devices.sel.at < at {
+            key(a, KeyCode::Down);
+        }
+    };
+    to(&mut a, crate::app::DeviceRow::Paired(0));
     a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds, [Cmd::Pick(Some("desk".into()))]);
+    assert!(a.overlay.is_none(), "not asked to forget it");
+    to(&mut a, crate::app::DeviceRow::Paired(1));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    let s = draw(&mut a, 120, 30);
+    assert!(a.cmds.is_empty() && a.overlay.is_none() && s.contains("Can't reach Pixel"), "{:?}\n{s}", a.cmds);
+
+    // d on a paired device asks, then forgets that one.
     key(&mut a, KeyCode::Char('d'));
     let s = draw(&mut a, 120, 30);
     assert!(a.cmds.is_empty() && s.contains("Forget Pixel?"), "{:?}\n{s}", a.cmds);

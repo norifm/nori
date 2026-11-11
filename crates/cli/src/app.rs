@@ -3662,7 +3662,20 @@ impl App {
             Some(DeviceRow::Jam) => self.jam_start(),
             Some(DeviceRow::Join) => self.join(),
             Some(DeviceRow::Pair) => self.overlay = Some(Overlay::Pair { text: String::new(), error: None, busy: false }),
-            Some(DeviceRow::Paired(i)) => self.forget_asked(i),
+            // Picked as a device above while it answers; `d` forgets it.
+            Some(DeviceRow::Paired(i)) => match d.paired.get(i) {
+                Some(p) if p.reach == nori_core::remote::PairedReach::Answers => {
+                    if d.cast.is_some() {
+                        self.cmds.push(Cmd::Plugin(PluginCmd::EndCast));
+                    }
+                    self.cmds.push(Cmd::Pick(Some(p.id.clone())));
+                }
+                Some(p) => {
+                    let said = crate::text::cant_reach(&p.name);
+                    self.say(said, true);
+                }
+                None => self.dirty = false,
+            },
             Some(DeviceRow::Plugin(c, r)) => match self.devices.plugin_row(c, r).and_then(crate::settings_view::open_row) {
                 Some(Opened::Cmds(c)) => self.cmds.extend(c),
                 Some(Opened::Overlay(o)) => self.overlay = Some(o),

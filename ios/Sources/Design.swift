@@ -428,6 +428,8 @@ final class GlyphButton: UIButton {
     var lit = false { didSet { paint() } }
     var quiet = false { didSet { paint() } }
     var look = Theme.page { didSet { paint() } }
+    /// What a tap does, for a button without a target of its own.
+    var tapped: (() -> Void)?
 
     /// `side`: the target's, 48 pt unless the place gives it more (the player's transport).
     init(_ glyph: UIImage, _ words: String, quiet q: Bool = false, side: CGFloat = 48) {
@@ -437,10 +439,13 @@ final class GlyphButton: UIButton {
         quiet = q
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([widthAnchor.constraint(equalToConstant: side), heightAnchor.constraint(equalToConstant: side)])
+        addTarget(self, action: #selector(fire), for: .touchUpInside)
         paint()
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func fire() { tapped?() }
 
     private func paint() {
         tintColor = lit ? look.accent : quiet ? look.quiet : look.ink
@@ -466,6 +471,8 @@ class Sheet: UIViewController {
         let subtitle: String?
         /// The line does its work with the sheet still up (it puts something over it).
         let stays: Bool
+        /// A × at its end, its words for VoiceOver and what it does (with the sheet still up).
+        let remove: (words: String, run: () -> Void)?
         let run: () -> Void
     }
 
@@ -501,8 +508,9 @@ class Sheet: UIViewController {
     required init?(coder: NSCoder) { fatalError() }
 
     func add(_ words: String, subtitle: String? = nil, glyph: UIImage? = nil, checked: Bool = false, destructive: Bool = false, enabled: Bool = true,
-             more: Bool = false, stays: Bool = false, run: @escaping () -> Void) {
-        lines.append(Line(words: words, glyph: glyph, checked: checked, destructive: destructive, enabled: enabled, more: more, subtitle: subtitle, stays: stays, run: run))
+             more: Bool = false, stays: Bool = false, remove: (words: String, run: () -> Void)? = nil, run: @escaping () -> Void) {
+        lines.append(Line(words: words, glyph: glyph, checked: checked, destructive: destructive, enabled: enabled, more: more, subtitle: subtitle, stays: stays,
+                          remove: remove, run: run))
     }
 
     /// The lines `fill` adds in place of the ones shown: a list that changes while it is open.
@@ -623,7 +631,10 @@ class Sheet: UIViewController {
 
     private func row(_ l: Line) -> GroupRow {
         let check = l.checked ? UIImageView(image: Glyph.check).then { $0.tintColor = Theme.secondary } : nil
-        let r = GroupRow(l.words, subtitle: l.subtitle, icon: l.glyph, trailing: check, minHeight: 48) { [weak self] in
+        let cross = l.remove.map { remove in
+            GlyphButton(Glyph.xmark, remove.words, quiet: true, side: 44).then { $0.tapped = remove.run }
+        }
+        let r = GroupRow(l.words, subtitle: l.subtitle, icon: l.glyph, trailing: check ?? cross, minHeight: 48) { [weak self] in
             if l.stays { l.run() } else { self?.close(then: l.run) }
         }
         if l.destructive { r.title.textColor = UIColor(argb: 0xFFC6_3A3A) }

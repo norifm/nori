@@ -1225,7 +1225,8 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
         DeviceRow::PairedTitle => Line::from(Span::styled(format!("  {}", crate::text::PAIRED_TITLE), t.dim())),
         DeviceRow::Paired(k) => {
             let x = &d.paired[k];
-            spread(vec![Span::raw("  "), name(&x.name, false)], Span::styled(crate::text::paired_line(x), t.dim()), w)
+            let title = if x.reach == nori_core::remote::PairedReach::Answers { name(&x.name, x.active) } else { Span::styled(x.name.clone(), t.dim()) };
+            spread(vec![tick(x.active), title], Span::styled(crate::text::paired_line(x), t.dim()), w)
         }
         DeviceRow::Pair => Line::from(vec![Span::raw("  "), Span::styled(crate::text::PAIR_DEVICE, Style::default().fg(t.ink))]),
         DeviceRow::Controlled(k) => {

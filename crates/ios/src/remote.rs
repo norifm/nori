@@ -159,12 +159,12 @@ pub extern "C" fn nori_ios_pairing() -> *mut c_char {
 }
 
 /// The devices paired with this iPod, as JSON to free; NULL where pairing is unavailable:
-/// `[{"id", "name", "kind", "nearby", "days"}]`, `kind` a `DeviceKind`, `days` whole days since it was last
-/// nearby.
+/// `[{"id", "name", "kind", "reach", "active", "days"}]`, `kind` a `DeviceKind`, `reach` a `PairedReach` (0 answers,
+/// 1 found, not answering, 2 not found), `active` it plays or is followed, `days` whole days since it was last nearby.
 #[no_mangle]
 pub extern "C" fn nori_ios_paired() -> *mut c_char {
     let Some(r) = remote().filter(|r| r.pairing_link().is_some()) else { return std::ptr::null_mut() };
-    let paired: Vec<Value> = r.paired().iter().map(|d| json!({ "id": d.id, "name": d.name, "kind": d.kind as u8, "nearby": d.nearby, "days": d.seen_days })).collect();
+    let paired: Vec<Value> = r.paired().iter().map(|d| json!({ "id": d.id, "name": d.name, "kind": d.kind as u8, "reach": d.reach as u8, "active": d.active, "days": d.seen_days })).collect();
     owned(&Value::Array(paired))
 }
 

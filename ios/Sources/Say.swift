@@ -13,13 +13,15 @@ enum Say {
     static func forgetDevice(_ name: String) -> String { "Forget \(name)?" }
     static func pairedWith(_ name: String) -> String { "Paired with \(name)" }
     static func paired(_ seen: String) -> String { "Paired · \(seen)" }
-    /// Whether a paired device is nearby now, or when it last was.
-    static func seen(nearby: Bool, days: Int) -> String {
-        if nearby { return "nearby" }
-        switch days {
-        case 0: return "seen today"
-        case 1: return "seen yesterday"
-        default: return "seen \(days) days ago"
+    /// Whether a paired device answers now (`reach` 0; 1 found, not answering; 2 not found), or when it was
+    /// last nearby.
+    static func seen(reach: Int, days: Int) -> String {
+        switch (reach, days) {
+        case (0, _): return "nearby"
+        case (1, _): return "can’t reach it"
+        case (_, 0): return "not nearby · seen today"
+        case (_, 1): return "not nearby · seen yesterday"
+        default: return "not nearby · seen \(days) days ago"
         }
     }
     /// Why pairing with the device `name` (empty when its code doesn't say) failed, by its NORI_PAIR_FAILED_* code.

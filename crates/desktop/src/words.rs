@@ -880,15 +880,18 @@ pub fn paired_with(name: &str) -> String {
     format!("Paired with {name}")
 }
 
-/// A paired device's row: whether it is nearby now, or when it last was.
+/// A paired device's row: whether it answers now, or when it was last nearby.
 pub fn paired_row(d: &nori_core::remote::PairedDevice) -> crate::PairedRow {
-    let line = match (d.nearby, d.seen_days) {
-        (true, _) => "Nearby".to_string(),
-        (false, 0) => "Seen today".into(),
-        (false, 1) => "Seen yesterday".into(),
-        (false, n) => format!("Seen {n} days ago"),
+    use nori_core::remote::PairedReach;
+    let line = match (d.reach, d.seen_days) {
+        (PairedReach::Answers, _) => "Nearby".to_string(),
+        (PairedReach::Silent, _) => "Can’t reach it".into(),
+        (PairedReach::Away, 0) => "Not nearby · seen today".into(),
+        (PairedReach::Away, 1) => "Not nearby · seen yesterday".into(),
+        (PairedReach::Away, n) => format!("Not nearby · seen {n} days ago"),
     };
-    crate::PairedRow { id: d.id.clone().into(), name: d.name.clone().into(), line: line.into(), kind: device_glyph(d.kind) }
+    let reachable = d.reach == PairedReach::Answers;
+    crate::PairedRow { id: d.id.clone().into(), name: d.name.clone().into(), line: line.into(), kind: device_glyph(d.kind), reachable, active: d.active }
 }
 
 /// Why pairing with the device `name` (when its code says it) failed.

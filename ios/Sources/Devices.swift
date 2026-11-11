@@ -22,8 +22,8 @@ final class OutputPicker {
 
 /// The player's output button, as Android's sheet and in the song menu's look: this iPod and the account's
 /// other devices with nori, each with what it plays, the one playing ticked; then the iPod's own outputs
-/// (the system's picker), joining someone's jam, then the devices paired with this iPod (a tap forgets one,
-/// after asking) and pairing another. A tap on a device moves the music there. Open, the other devices are
+/// (the system's picker), joining someone's jam, then the devices paired with this iPod (a tap picks one that
+/// answers, its × forgets it after asking) and pairing another. A tap on a device moves the music there. Open, the other devices are
 /// followed.
 final class DevicesSheet: Sheet {
     private let outputs = OutputPicker()
@@ -72,9 +72,12 @@ final class DevicesSheet: Sheet {
             if pairing != nil {
                 for device in paired {
                     let (id, name) = (device["id"] as? String ?? "", device["name"] as? String ?? "")
-                    let seen = Say.seen(nearby: device["nearby"] as? Bool ?? false, days: device["days"] as? Int ?? 0)
-                    add(name, subtitle: Say.paired(seen), glyph: Glyph.device(device["kind"] as? Int ?? 0, 20), more: true, stays: true) { [weak self] in
-                        self?.forget(id, name)
+                    let reach = device["reach"] as? Int ?? 2
+                    let seen = Say.seen(reach: reach, days: device["days"] as? Int ?? 0)
+                    // Picked as a device above while it answers; the × forgets it.
+                    add(name, subtitle: Say.paired(seen), glyph: Glyph.device(device["kind"] as? Int ?? 0, 20), checked: device["active"] as? Bool == true,
+                        enabled: reach == 0, more: true, remove: (Say.forgetDevice(name), { [weak self] in self?.forget(id, name) })) {
+                        id.withCString { nori_ios_remote_pick($0) }
                     }
                 }
                 add(Say.pairDevice, glyph: Glyph.draw(Iconoir.plus, 20), more: true, stays: true) { [weak self] in self?.pair() }

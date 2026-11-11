@@ -163,7 +163,8 @@ void nori_ios_remote_pick(const char *id);
 /// This iPod's pairing code, to free; NULL where pairing is unavailable.
 char *nori_ios_pairing(void);
 /// The devices paired with this iPod, as JSON to free; NULL where pairing is unavailable:
-/// [{id, name, kind, nearby, days}], days whole days since it was last nearby.
+/// [{id, name, kind, reach, active, days}], reach 0 answers (a pick moves the music there), 1 found, not
+/// answering, 2 not found; active it plays or is followed; days whole days since it was last nearby.
 char *nori_ios_paired(void);
 /// Pairs with the device whose code `link` is. NORI_PAIR_STARTED: NORI_REPORT_PAIRED says how it went.
 int32_t nori_ios_pair(const char *link);
