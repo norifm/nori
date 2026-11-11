@@ -24,6 +24,8 @@
   const GLIDE_MS = 240;
   const CUBIC_OUT = "cubic-bezier(0.33, 1, 0.68, 1)";
   const still = () => document.documentElement.classList.contains("still");
+  /** The list's top padding, px, which rows scrolled up fade out across; a row resting below it is whole. */
+  const FADE_TOP = 20;
   /** The rows and their captions, each kept by what it is (a song by its id and which copy of it), so a
    * song moved is the same row moved. "Playing next" is kept by the song it follows: a new song brings a
    * new caption rather than gliding one through the rows. */
@@ -56,8 +58,8 @@
     if (!list || !el || !pinned) return;
     // Where it is laid out, not where a glide draws it just now. Followed to the next song, the rows in
     // sight glide up from where they were drawn rather than the list jumping.
-    const by = el.offsetTop - list.scrollTop;
-    list.scrollTop = el.offsetTop;
+    const by = el.offsetTop - FADE_TOP - list.scrollTop;
+    list.scrollTop = el.offsetTop - FADE_TOP;
     if (placed && by && !still()) glide(list, by);
     placed = true;
   });
@@ -76,7 +78,7 @@
   function rested() {
     const el = playing();
     if (!list || !el) return;
-    pinned = Math.abs(el.offsetTop - list.scrollTop) < el.offsetHeight / 2;
+    pinned = Math.abs(el.offsetTop - FADE_TOP - list.scrollTop) < el.offsetHeight / 2;
   }
   const jump = (q: QueueSong) => {
     pinned = true;
@@ -87,7 +89,7 @@
 
 <JamQueue />
 <div class="box">
-<ol class="queue" id="queue" bind:this={list} onscrollend={rested} use:sortable={{ moved: (from, to) => move(rows[from].index, rows[to].index), whole: true }}>
+<ol class="queue" id="queue" style:--fade-top="{FADE_TOP}px" bind:this={list} onscrollend={rested} use:sortable={{ moved: (from, to) => move(rows[from].index, rows[to].index), whole: true }}>
   {#each items as item (item.key)}
     {@const q = item.q}
     {@const at = item.at}
@@ -159,14 +161,17 @@
     font-weight: 600;
     font-size: 15px;
   }
+  /* Rows go soft at both ends, as the lyrics do: a mask, since a colour laid over the cover's wash meets it
+     in a line. */
   .queue {
     position: relative;
     list-style: none;
     margin: 0;
-    padding: 0;
+    padding: var(--fade-top) 0 0;
     overflow-y: auto;
     flex: 1;
     min-height: 0;
+    mask-image: linear-gradient(transparent, #000 var(--fade-top), #000 calc(100% - 64px), transparent);
   }
   /* Room after the last song, so any song, the last too, can be the list's first row. */
   .queue::after {
