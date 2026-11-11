@@ -33,6 +33,7 @@ impl Core {
             let c = self.db.lock();
             let n = c.execute("DELETE FROM track_analysis WHERE server=sid()", [])? as u32;
             c.execute("DELETE FROM vocal_curve WHERE server=sid()", [])?;
+            c.execute("DELETE FROM kv WHERE server=sid() AND key LIKE 'sung|%'", [])?;
             n
         };
         self.session.planner.analyses_changed();
@@ -78,6 +79,24 @@ impl Core {
     /// The song's vocal activity curve (checked against synced lyrics).
     pub(crate) fn analysis_voice(&self, song_id: &str) -> Result<Option<nori_player::automix::vocal::VocalCurve>> {
         Ok(get_voice(&self.db.lock(), song_id)?)
+    }
+
+    /// Keeps where `lyrics` of song `song_id`, as shown, are sung, for AutoMix to mix around; only when their timing
+    /// was heard to fit the voice. Server lyrics are shown unchecked, so they are checked here.
+    pub(crate) fn analysis_sung(&self, song_id: &str, lyrics: &crate::Lyrics) {
+        let timing = match lyrics.timing {
+            nori_model::LyricsTiming::NotChecked if lyrics.synced => match self.analysis_voice(song_id).ok().flatten() {
+                Some(voice) => nori_lyrics::sync::timing_against(lyrics, &voice),
+                None => return,
+            },
+            timing => timing,
+        };
+        let Some(span) = nori_lyrics::sync::sung_span(lyrics, timing) else { return };
+        match nori_automix::store::put_sung(&self.db.lock(), song_id, span) {
+            Ok(true) => self.session.planner.analyses_changed(),
+            Ok(false) => {}
+            Err(e) => crate::alog::info(&format!("lyrics: where {song_id} is sung not kept: {e}")),
+        }
     }
 
     /// The song's vocal curve once it is measured; None once it will not be while it plays (a profile

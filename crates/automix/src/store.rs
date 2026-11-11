@@ -90,6 +90,38 @@ pub fn get_voice(c: &Connection, song_id: &str) -> rusqlite::Result<Option<Vocal
     Ok(blob.and_then(|b| VocalCurve::decode(&b)))
 }
 
+/// Keeps where song `song_id`'s synced lyrics are sung, ms of the song (`nori_lyrics::sync::sung_span`); true when
+/// that changed.
+pub fn put_sung(c: &Connection, song_id: &str, (start, end): (i64, i64)) -> rusqlite::Result<bool> {
+    let key = sung_key(song_id);
+    let value = format!("{start} {end}");
+    if nori_db::kv_get(c, &key)?.as_deref() == Some(value.as_str()) {
+        return Ok(false);
+    }
+    nori_db::kv_put(c, &key, &value).map(|_| true)
+}
+
+/// Song `song_id`'s analysis, with where it is sung taken from its lyrics when they were heard to fit: their lines
+/// say it better than the voice measured under the band.
+pub fn get_with_lyrics(c: &Connection, song_id: &str) -> rusqlite::Result<Option<TrackAnalysis>> {
+    let Some(mut a) = get(c, song_id)? else { return Ok(None) };
+    let sung = nori_db::kv_get(c, &sung_key(song_id))?.and_then(|v| {
+        let (start, end) = v.split_once(' ')?;
+        Some((start.parse::<i64>().ok()?, end.parse::<i64>().ok()?))
+    });
+    if let Some((start, end)) = sung {
+        let (start, end) = (start.max(0), end.min(a.duration_ms));
+        if start < end {
+            (a.vocal_start_ms, a.vocal_end_ms) = (start, end);
+        }
+    }
+    Ok(Some(a))
+}
+
+fn sung_key(song_id: &str) -> String {
+    format!("sung|{song_id}")
+}
+
 /// The `ids` with a current analysis the beat model has not yet looked at, in order. Songs without a current
 /// analysis are left out.
 pub fn neural_missing(c: &Connection, ids: &[String]) -> rusqlite::Result<Vec<String>> {
@@ -159,6 +191,22 @@ mod tests {
             c.query_row(&format!("SELECT {} FROM track_analysis WHERE song_id=?1", names.join(" || ',' || ")), [id], |r| r.get(0)).unwrap()
         };
         assert_eq!(stored("a"), stored("b"), "written back as read");
+    }
+
+    #[test]
+    fn lyrics_say_where_a_song_is_sung() {
+        let c = nori_db::open("", "s").unwrap();
+        put(&c, &TrackAnalysis { song_id: "a".into(), duration_ms: 200_000, vocal_start_ms: 5_000, vocal_end_ms: 150_000, ..Default::default() }).unwrap();
+        let sung = |id: &str| get_with_lyrics(&c, id).unwrap().map(|a| (a.vocal_start_ms, a.vocal_end_ms));
+        assert_eq!(sung("a"), Some((5_000, 150_000)), "the voice measured");
+        assert!(put_sung(&c, "a", (12_000, 190_000)).unwrap());
+        assert!(!put_sung(&c, "a", (12_000, 190_000)).unwrap(), "unchanged");
+        assert_eq!(sung("a"), Some((12_000, 190_000)));
+        put_sung(&c, "a", (-300, 230_000)).unwrap();
+        assert_eq!(sung("a"), Some((0, 200_000)), "within the song");
+        put_sung(&c, "a", (210_000, 230_000)).unwrap();
+        assert_eq!(sung("a"), Some((5_000, 150_000)), "words past its end say nothing");
+        assert_eq!(sung("b"), None);
     }
 
     /// A song measured before the vocal curve's format changed is measured again, so its lyrics can be

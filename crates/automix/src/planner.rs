@@ -15,7 +15,7 @@ use nori_player::types::TransitionPlan;
 use parking_lot::Mutex;
 
 use super::mixing::{adopt, refined, Mixing};
-use super::store::{get, missing};
+use super::store::{get, get_with_lyrics, missing};
 
 /// How many recent plans are kept for screens.
 const NOTES_KEPT: usize = 4;
@@ -201,7 +201,7 @@ impl Planner {
         let (a, b) = if prefs.auto_mix {
             self.db.get().map_or((None, None), |db| {
                 let c = db.lock();
-                (get(&c, &o.id).ok().flatten(), get(&c, &n.id).ok().flatten())
+                (get_with_lyrics(&c, &o.id).ok().flatten(), get_with_lyrics(&c, &n.id).ok().flatten())
             })
         } else {
             (None, None)

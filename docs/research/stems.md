@@ -59,6 +59,10 @@ instrumental songs still read as sung, which only keeps their mixes careful. Ove
 both voices for 3 s or more fell from 10.3 % to 5.0 % (beat-matched ones from 31 % to 9.6 %), and its loops
 from 61 to 34, the rest having looped sung bars.
 
+Synced lyrics say it better still. Once lyrics shown for a song are heard to fit its voice (or the listener set
+their timing), their first and last sung lines replace both ends (`store::put_sung`, kept per server). Only
+lyrics already looked up for a screen count; AutoMix fetches none.
+
 ## Computing them once
 
 Separation depends on the song alone, not on the pair, so it can be done once per song, like the analysis, and
