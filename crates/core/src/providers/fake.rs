@@ -64,7 +64,10 @@ impl Provider for Fake {
                 Moment::default().await;
                 let mut n = self.feeds.lock();
                 *n += 1;
-                Some(Page::Feed { v: vec![crate::FeedShelf { title: format!("feed {n}"), ..Default::default() }] })
+                // As a service's may, it lists a song twice, and part of its shelf again under the same title.
+                let [one, two] = <[Song; 2]>::try_from(album().songs).expect("two songs");
+                let shelf = |songs: Vec<Song>| crate::FeedShelf { title: format!("feed {n}"), songs, ..Default::default() };
+                Some(Page::Feed { v: vec![shelf(vec![one.clone(), one]), shelf(vec![two])] })
             }
             _ => None,
         }
@@ -209,6 +212,16 @@ mod tests {
         assert_eq!(*fake.feeds.lock(), 1);
         c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
         assert_eq!(shown(), [vec!["feed 1"], vec!["feed 1", "feed 2"]], "a refresh asks again and keeps what was shown");
+    }
+
+    /// A feed that lists an item twice, or a shelf's title twice, shows one shelf of each title with each
+    /// item once.
+    #[test]
+    fn home_shows_each_shelf_and_item_once() {
+        let (c, _) = fake();
+        let Ok(Some(Page::Feed { v })) = block(c.cached_or_fetched(Read::HomeFeed)) else { panic!("a feed") };
+        let shown: Vec<(&str, Vec<&str>)> = v.iter().map(|s| (s.title.as_str(), s.songs.iter().map(|s| s.id.as_str()).collect())).collect();
+        assert_eq!(shown, [("feed 1", vec!["f-1", "f-2"])]);
     }
 
     /// The last session's Home shows at once in the next, and the feed asked again replaces it.
