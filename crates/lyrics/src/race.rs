@@ -439,10 +439,14 @@ struct Kept {
     source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     score: Option<f64>,
+    /// The chosen lyrics only: whether they were chosen against the song's vocal curve.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    measured: bool,
 }
 
-fn kept(lyrics: &Lyrics, named: &Named, chosen: Option<(Asked, f64)>) -> Vec<u8> {
-    let k = Kept { lyrics: lyrics.clone(), named: named.clone(), source: chosen.map(|c| c.0.name()), score: chosen.map(|c| c.1) };
+/// An answer's cache entry; the chosen one's also with its service, its score and whether the song was measured.
+fn kept(lyrics: &Lyrics, named: &Named, chosen: Option<(Asked, f64, bool)>) -> Vec<u8> {
+    let k = Kept { lyrics: lyrics.clone(), named: named.clone(), source: chosen.map(|c| c.0.name()), score: chosen.map(|c| c.1), measured: chosen.is_some_and(|c| c.2) };
     format!("{ANSWER_MARK}{}", serde_json::to_string(&k).unwrap_or_default()).into_bytes()
 }
 
@@ -450,7 +454,7 @@ fn read_kept(body: &[u8]) -> Option<Kept> {
     let text = String::from_utf8_lossy(body);
     match text.strip_prefix(ANSWER_MARK) {
         Some(json) => serde_json::from_str(json).ok(),
-        None => Some(Kept { lyrics: from_cache(&text), named: Named::default(), source: None, score: None }),
+        None => Some(Kept { lyrics: from_cache(&text), named: Named::default(), source: None, score: None, measured: false }),
     }
 }
 
@@ -479,11 +483,11 @@ fn remembered(cache: &dyn LyricsCache, key: &str, song: &Song) -> Remembered {
     }
 }
 
-/// Last time's choice for `song`, while its service is still asked: rank, words, what it named, score.
-fn chosen_before(cache: &dyn LyricsCache, song: &Song, asked: &[Asked]) -> Option<(usize, Lyrics, Named, f64)> {
+/// Last time's choice for `song`, while its service is still asked, with its rank.
+fn chosen_before(cache: &dyn LyricsCache, song: &Song, asked: &[Asked]) -> Option<(usize, Kept)> {
     let k = read_kept(&cache.get(&best_key(song))?)?;
     let rank = asked.iter().position(|a| Some(a.name()) == k.source)?;
-    plausible(&k.lyrics, song).then(|| (rank, k.lyrics, k.named, k.score.unwrap_or(0.0)))
+    plausible(&k.lyrics, song).then_some((rank, k))
 }
 
 /// The name of the service whose lyrics were chosen for `song` last.
@@ -508,7 +512,7 @@ fn ranks<'a>(lookup: &LyricsLookup, plugins: &'a [Arc<dyn PluginLyrics>]) -> Vec
 pub fn cached_pick(cache: &dyn LyricsCache, song: &Song, server_has_lines: bool, server_synced: bool, lookup: &LyricsLookup, plugins: &[Arc<dyn PluginLyrics>]) -> Option<LyricsPick> {
     if server_has_lines && server_synced { return None; }
     let asked = ranks(lookup, plugins);
-    let (rank, mut lyrics, _, _) = chosen_before(cache, song, &asked)?;
+    let (rank, Kept { mut lyrics, .. }) = chosen_before(cache, song, &asked)?;
     let server_timing = if server_has_lines { Timing::Untimed } else { Timing::Empty };
     if timing(&lyrics) <= server_timing { return None; }
     lyrics.timing = sync::timing(cache.voice(song).and_then(|voice| sync::check(&lyrics, &voice)));
@@ -585,9 +589,11 @@ pub async fn lookup(
         race.hear(v);
     }
     // Last time's choice: shown at once, and final unless it scored low (or no longer fits the voice)
-    // and a few days passed.
+    // and a few days passed, or it was chosen before the song was measured and the check moves it now: then
+    // at once, the check weighed in.
     let mut before: Option<(usize, f64)> = None;
-    if let Some((rank, lyrics, named, was)) = chosen_before(cache, song, &services).filter(|c| timing(&c.1) > server_timing) {
+    if let Some((rank, Kept { lyrics, named, score, measured, .. })) = chosen_before(cache, song, &services).filter(|c| timing(&c.1.lyrics) > server_timing) {
+        let was = score.unwrap_or(0.0);
         let check = voice.as_ref().and_then(|v| sync::check(&lyrics, v));
         let mut on_screen = lyrics.clone();
         on_screen.timing = sync::timing(check);
@@ -597,7 +603,8 @@ pub async fn lookup(
             line.push_str(&format!(", {}", sync_words(c)));
         }
         let misfit = check.is_some_and(|c| matches!(c.kind, SyncKind::Drifts | SyncKind::Poor));
-        if (was >= LOW && !misfit) || cache.fresh(&best_key(song), LOW_RETRY_MS) {
+        let moved_unheard = !measured && check.is_some_and(|c| c.kind == SyncKind::Shifted);
+        if !moved_unheard && ((was >= LOW && !misfit) || cache.fresh(&best_key(song), LOW_RETRY_MS)) {
             nori_model::alog::info(&line);
             return Some(line);
         }
@@ -630,7 +637,7 @@ pub async fn lookup(
         }
         return None;
     };
-    cache.put(&best_key(song), kept(lyrics, named, Some((services[rank], trust.score))));
+    cache.put(&best_key(song), kept(lyrics, named, Some((services[rank], trust.score, voice.is_some()))));
     let mut line = format!("lyrics: chose {} ({:.2}, {})", services[rank].title(), trust.score, timing(lyrics).words());
     if let Some((r, s)) = race.runner_up() {
         line.push_str(&format!(", runner-up {} ({s:.2})", services[r].title()));
@@ -967,11 +974,55 @@ mod tests {
         assert!(lyrics_replaces(Some(&pick(shown.clone())), &pick(Lyrics { timing: Default::default(), ..shown })), "another offset is other lyrics to show");
     }
 
+    /// Venom (testdata/rap/venom): its curve, the song, what each answer named, and the answers of LyricsPlus and
+    /// BetterLyrics (Apple's line timing, on time), and LRCLIB (timed loosely: its lines start a little early and
+    /// its words are squeezed, so the check moves it a second late, where it is not).
+    fn venom() -> (nori_player::automix::vocal::VocalCurve, Song, Named, [Lyrics; 3]) {
+        let (curve, answers) = crate::sync::tests::real_song("rap/venom");
+        let of = |service: &str| answers.iter().find(|a| a.0 == service).unwrap().1.clone();
+        let s = Song { title: "Venom".into(), artist: "Eminem".into(), duration: 270, ..Default::default() };
+        (curve, s, Named::new("Venom", "Eminem", "", 270.0), [of("LyricsPlus"), of("BetterLyrics"), of("Lrclib")])
+    }
+
+    #[test]
+    fn lyrics_on_time_beat_lyrics_the_check_moves() {
+        let (curve, s, named, [plus, better, lrclib]) = venom();
+        let mut r = Race::new(&s, vec![Entry::of(LyricsService::LyricsPlus), Entry::of(LyricsService::BetterLyrics), Entry::of(LyricsService::Lrclib)], true, Timing::Empty);
+        r.hear(curve);
+        r.next(0, 6);
+        // On screen first: it answered first, or was chosen before the song was measured.
+        r.shown_already(2, lrclib, named.clone());
+        assert_eq!(r.check(2).map(|c| (c.kind, c.offset_ms > 500)), Some((SyncKind::Shifted, true)), "{:?}", r.check(2));
+        r.answer(0, Some((plus, named.clone())));
+        r.answer(1, Some((better, named)));
+        assert_eq!(r.check(1).map(|c| c.kind), Some(SyncKind::Fits));
+        let shown = r.choose_shown(true).map(|x| x.0);
+        assert!(matches!(shown, Some(0 | 1)), "on time as they are, Apple's lines replace it: {shown:?}, {:?}", r.scores());
+    }
+
+    #[test]
+    fn a_choice_made_unmeasured_is_made_again_once_the_check_moves_it() {
+        let (curve, s, named, [plus, better, lrclib]) = venom();
+        let l = asked(&[LyricsService::LyricsPlus, LyricsService::BetterLyrics, LyricsService::Lrclib]);
+        let cache = Kept(Default::default(), Default::default(), Some(curve));
+        for (service, lyrics) in [(LyricsService::LyricsPlus, &plus), (LyricsService::BetterLyrics, &better), (LyricsService::Lrclib, &lrclib)] {
+            cache.put(&cache_key(Asked::Service(service), &s, &l), super::kept(lyrics, &named, None));
+        }
+        // Chosen by its word timing before the song was measured.
+        cache.put(&best_key(&s), super::kept(&lrclib, &named, Some((Asked::Service(LyricsService::Lrclib), 0.95, false))));
+        let (picks, said) = run_saying(&Web::default(), &cache, &s, (false, false), &l);
+        assert_ne!(picks.last().map(|p| p.origin.clone()), Some(LyricsOrigin::Lrclib), "{said:?}");
+        let best = read_kept(&cache.get(&best_key(&s)).unwrap()).unwrap();
+        assert!(best.measured && best.source.as_deref() != Some("LRCLIB"), "{said:?}");
+        let (again, kept) = run_saying(&Web::default(), &cache, &s, (false, false), &l);
+        assert_eq!((again.len(), kept.is_some_and(|k| k.starts_with("lyrics: kept"))), (1, true), "chosen measured, kept from then on");
+    }
+
     // ---- the lookup, through the fake web and cache ----------------------------------------------------
 
-    /// The response cache in memory; keys in the second set count as old.
+    /// The response cache in memory, keys in the second set counting as old, and the song's vocal curve.
     #[derive(Default)]
-    struct Kept(Mutex<HashMap<String, Vec<u8>>>, Mutex<HashSet<String>>);
+    struct Kept(Mutex<HashMap<String, Vec<u8>>>, Mutex<HashSet<String>>, Option<nori_player::automix::vocal::VocalCurve>);
 
     impl LyricsCache for Kept {
         fn get(&self, key: &str) -> Option<Vec<u8>> {
@@ -983,6 +1034,9 @@ mod tests {
         fn put(&self, key: &str, body: Vec<u8>) {
             self.1.lock().remove(key);
             self.0.lock().insert(key.to_string(), body);
+        }
+        fn voice(&self, _: &Song) -> Option<nori_player::automix::vocal::VocalCurve> {
+            self.2.clone()
         }
     }
 
@@ -1137,7 +1191,7 @@ mod tests {
         let s = Song { title: "Glass Harbour".into(), id: "low".into(), ..song() };
         let l = asked(&[LyricsService::Lrclib, LyricsService::Unison]);
         let lines = crate::lyrics::from_lrc(&lrc(&OURS, false));
-        cache.put(&best_key(&s), super::kept(&lines, &Named::default(), Some((Asked::Service(LyricsService::Lrclib), 0.5))));
+        cache.put(&best_key(&s), super::kept(&lines, &Named::default(), Some((Asked::Service(LyricsService::Lrclib), 0.5, false))));
         unison(&web, &lrc(&OURS, true));
         let picks = run(&web, &cache, &s, (false, false), &l);
         assert_eq!(picks.iter().map(|p| p.origin.clone()).collect::<Vec<_>>(), [LyricsOrigin::Lrclib], "shown at once");

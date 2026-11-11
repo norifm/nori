@@ -871,7 +871,7 @@ pub(crate) mod tests {
 
     /// A real song's vocal curve (testdata/`path`) and each service's answer: the service, its lines with the words
     /// left out, and how late it truly runs.
-    fn real_song(path: &str) -> (VocalCurve, Vec<(String, Lyrics, i64)>) {
+    pub(crate) fn real_song(path: &str) -> (VocalCurve, Vec<(String, Lyrics, i64)>) {
         let curve = VocalCurve::decode(&std::fs::read(format!("{TESTDATA}/{path}.curve")).unwrap()).unwrap();
         let answers: Vec<serde_json::Value> = serde_json::from_str(&std::fs::read_to_string(format!("{TESTDATA}/{path}.json")).unwrap()).unwrap();
         let answers = answers.iter().map(|a| {
