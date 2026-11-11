@@ -3768,6 +3768,11 @@ component QueueView inherits Rectangle {
     }
     // The row of the song playing: songs land after it.
     property <int> playing-row: -1;
+    // As Android's queue, rows go soft at both ends: a row scrolled up is gone once 20 px of it are, one
+    // going down fades over the last 64 px. `top` is where it is in sight, `h` its height.
+    pure function edge(top: length, h: length) -> float {
+        return clamp(1 + top / 20px, 0, 1) * clamp((queue-scroll.height - top - h / 2) / 64px, 0, 1);
+    }
     property <int> drag-to: root.drag-from < 0 ? -1 : max(root.playing-row + 1, min(root.queue.length - 1, root.drag-from + round(root.drag-dy / 54px)));
     VerticalLayout {
         padding-left: 12px;
@@ -3866,6 +3871,7 @@ component QueueView inherits Rectangle {
                     height: 20px;
                     text: qrow.caption;
                     vertical-alignment: center;
+                    opacity: root.edge(qrow.top + self.y, self.height);
                 }
                 Rectangle {
                     y: qrow.caption-h + qrow.shift;
@@ -3875,7 +3881,7 @@ component QueueView inherits Rectangle {
                     border-radius: 15px;
                     background: i == root.drag-from && (root.dragging || root.dropping) ? Theme.chosen : qt.has-hover ? Theme.hover : transparent;
                     // Already played: quieter.
-                    opacity: s.played ? 0.45 : 1;
+                    opacity: (s.played ? 0.45 : 1) * root.edge(qrow.top + self.y, self.height);
                     // The row's content inside it, so the row stays hovered over its links and buttons.
                     // A song still to come is dragged to another place: pressed, it follows the pointer once it
                     // has moved a few pixels, and lands on the row it is let go over.

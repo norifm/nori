@@ -2927,14 +2927,16 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
     // and those few pixels are the ones that flickered as a panel came or went: a row half drawn, over
     // a title arriving in the same place. It goes soft over the last stretch instead, the way the
     // lyrics do, and a mask is used rather than a colour laid on top because the page behind is the
-    // cover's blur and any flat colour meeting it draws a line of its own.
+    // cover's blur and any flat colour meeting it draws a line of its own. The top goes soft the same
+    // way over the list's top padding, so a row at rest there is whole and one scrolled past it fades.
+    val fadeIn = with(androidx.compose.ui.platform.LocalDensity.current) { QUEUE_FADE_IN.toPx() }
     val fadeOut = with(androidx.compose.ui.platform.LocalDensity.current) { 64.dp.toPx() }
     val unfaded = remember { android.graphics.Rect() }
     LazyColumn(
         Modifier.fillMaxSize().weight(1f)
             .onGloballyPositioned { c ->
                 val b = c.boundsInWindow()
-                unfaded.set(b.left.toInt(), b.top.toInt(), b.right.toInt(), (b.bottom - fadeOut).toInt())
+                unfaded.set(b.left.toInt(), (b.top + fadeIn).toInt(), b.right.toInt(), (b.bottom - fadeOut).toInt())
             }
             // The layer clips to the list, so it runs [QUEUE_LIFT_ROOM] past the panel's sides, where the
             // held row's plate reaches; the rows take it back as padding.
@@ -2949,20 +2951,23 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
             .drawWithCache {
                 // One brush per size, not one per frame of a scroll.
                 val mask = androidx.compose.ui.graphics.Brush.verticalGradient(
-                    listOf(androidx.compose.ui.graphics.Color.Black, androidx.compose.ui.graphics.Color.Transparent),
-                    startY = size.height - fadeOut, endY = size.height,
+                    0f to androidx.compose.ui.graphics.Color.Transparent,
+                    fadeIn / size.height to androidx.compose.ui.graphics.Color.Black,
+                    (size.height - fadeOut) / size.height to androidx.compose.ui.graphics.Color.Black,
+                    1f to androidx.compose.ui.graphics.Color.Transparent,
+                    startY = 0f, endY = size.height,
                 )
                 // A pixel past each edge: the layer is clipped to whole pixels and a mask drawn to
                 // the exact height leaves the last fractional row of it untouched.
-                val at = Offset(-1f, size.height - fadeOut)
-                val area = androidx.compose.ui.geometry.Size(size.width + 2f, fadeOut + 2f)
+                val at = Offset(-1f, -1f)
+                val area = androidx.compose.ui.geometry.Size(size.width + 2f, size.height + 2f)
                 onDrawWithContent {
                     drawContent()
                     drawRect(mask, topLeft = at, size = area, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
                 }
             },
         state = list,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = QUEUE_LIFT_ROOM),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = QUEUE_LIFT_ROOM, end = QUEUE_LIFT_ROOM, top = QUEUE_FADE_IN),
     ) {
         items(
             entries.size,
@@ -3179,6 +3184,9 @@ private const val QUEUE_PLAYED_ALPHA = 0.45f
 /** The shade over the playing song's cover, under its bars. */
 /** How far the held queue row's plate reaches past the row on either side. */
 private val QUEUE_LIFT_ROOM = 8.dp
+
+/** The queue's top padding, which rows scrolled up fade out across. */
+private val QUEUE_FADE_IN = 20.dp
 
 private val QUEUE_NOW_VEIL = Color.Black.copy(alpha = 0.4f)
 
