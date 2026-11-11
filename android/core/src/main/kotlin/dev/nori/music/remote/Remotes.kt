@@ -411,6 +411,14 @@ class Remotes(private val context: Context, private val nori: Nori) {
         mirrorNow()
     }
 
+    /** Undoes this phone's clear of the mirrored device's queue: the songs it took out go back where they were there. */
+    fun putBackCleared() = work {
+        val r = remote
+        val device = _mirror.value?.id
+        if (r != null && device != null) r.putBackCleared(device)
+        mirrorNow()
+    }
+
     /**
      * A heart pressed for song [id]: sent to the mirrored device when its queue has the song (the core's
      * `star_where_playing`), so the server hears it once. False when this phone stars it itself.

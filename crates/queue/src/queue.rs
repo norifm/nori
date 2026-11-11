@@ -67,7 +67,7 @@ impl Session {
 
     fn songs_at(&self, ids: Vec<String>, now: i64) -> Vec<Song> {
         // The queue's ids are looked at in place (the playlist's lock, then the store's, as elsewhere).
-        let undo = self.undoable_at(now).map(|u| u.id);
+        let undo = self.undoable_at(now).map(|u| u.ids).unwrap_or_default();
         self.playlist(|p| {
             let kept: std::collections::HashSet<&str> = ids.iter().chain(p.ids()).chain(&undo).map(String::as_str).collect();
             self.store(|s| {

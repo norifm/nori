@@ -89,6 +89,8 @@ export const W = {
   addToQueue: "Add to queue",
   remove: "Remove",
   removed: (title: string) => `Removed “${title}”`,
+  clear: "Clear",
+  cleared: (n: number) => (n === 1 ? "Cleared 1 song" : `Cleared ${n} songs`),
   undo: "Undo",
   more: "More",
   cancel: "Cancel",

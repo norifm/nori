@@ -3724,7 +3724,7 @@ component QueueView inherits Rectangle {
     in property <bool> editable: true;
     // Rows move up and down: the list plays in its order (not shuffled).
     in property <bool> movable;
-    // "Removed “Song”" for a few seconds after a song is taken out, with Undo beside it.
+    // "Removed “Song”" or "Cleared 3 songs" for a few seconds after, with Undo beside it.
     in property <string> undo-text;
     pure callback art(string, int, int) -> image;
     callback jump(int);
@@ -3769,6 +3769,8 @@ component QueueView inherits Rectangle {
     }
     // The row of the song playing: songs land after it.
     property <int> playing-row: -1;
+    // Songs follow the one playing: the last row is neither played nor playing.
+    property <bool> clearable: root.editable && root.queue.length > 0 && !root.queue[root.queue.length - 1].played && !root.queue[root.queue.length - 1].playing;
     // As Android's queue, rows go soft at both ends: a row scrolled up is gone once 20 px of it are, one
     // going down fades over the last 64 px. `top` is where it is in sight, `h` its height.
     pure function edge(top: length, h: length) -> float {
@@ -3784,7 +3786,7 @@ component QueueView inherits Rectangle {
             covers-rev: root.covers-rev;
             art(a, s, r) => { return root.art(a, s, r); }
         }
-        if root.from != "" || (root.editable && root.queue.length > 0): HorizontalLayout {
+        if root.from != "" || root.clearable: HorizontalLayout {
             vertical-stretch: 0;
             padding-left: 8px;
             padding-bottom: 4px;
@@ -3796,7 +3798,7 @@ component QueueView inherits Rectangle {
                 vertical-alignment: center;
                 overflow: elide;
             }
-            if root.editable && root.queue.length > 0: TextButton {
+            if root.clearable: TextButton {
                 y: (parent.height - self.height) / 2;
                 text: "Clear";
                 clicked => { root.clear(); }

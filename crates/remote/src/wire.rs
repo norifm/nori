@@ -142,6 +142,9 @@ pub enum Op {
     Move { from: u32, to: u32, rev: u64 },
     /// Removes every song after the current one in play order.
     Clear,
+    /// Undoes the last [`Op::Clear`]: the songs it took out go back where they were in the device's
+    /// queue, if it still offers their undo.
+    RestoreCleared,
     /// Undoes a [`Op::Remove`]: `song` goes back where it was in the device's queue (its turn under
     /// shuffle too), or at list index `index` if the device no longer has it as taken out.
     Restore { song: Song, index: u32 },

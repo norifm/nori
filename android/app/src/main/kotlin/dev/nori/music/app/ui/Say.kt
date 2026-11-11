@@ -104,6 +104,7 @@ class Say(private val r: Resources) {
     val remove: String = r.getString(R.string.remove)
     val undo: String = r.getString(R.string.undo)
     fun queueRemoved(title: String): String = r.getString(R.string.queue_removed, title)
+    fun queueCleared(n: Int): String = r.getQuantityString(R.plurals.queue_cleared, n, n)
     val cancel: String = r.getString(R.string.cancel)
     val done: String = r.getString(R.string.done)
     val close: String = r.getString(R.string.close)

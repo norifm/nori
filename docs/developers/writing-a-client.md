@@ -272,6 +272,10 @@ of this; Android's `PlaybackService` calls the same functions.
 - **A song taken out of the queue**: the last one taken out on its own goes back where it was for
   `nori_queue::undo::UNDO_MS` (`Stage::undo_ms`); `Session::put_back` (`playlist_restore`) refuses it
   after that. A client offering the undo shows it that long; one that shows none calls `Session::undo`.
+- **Clearing the queue**: `Session::clear_upcoming` (`playlist_clear_upcoming`, `Op::Clear` on the device
+  playing) takes the songs after the one playing in play order; for the same `UNDO_MS`,
+  `Session::put_back_cleared` (`playlist_restore_all`, `Op::RestoreCleared`) puts them back where they
+  were. Clear shows only while songs follow the one playing, and not to a jam guest.
 - **Search**: `SearchSession` answers each keystroke from the offline index and the server once typing
   pauses (`typed_with_index`, `answer`); its `SearchView` says where the answer stands as one
   `SearchShown` (blank, asking, failed, found, nothing found). An ask typed over ends at once with

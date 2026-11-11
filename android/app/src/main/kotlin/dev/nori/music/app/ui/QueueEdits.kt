@@ -104,13 +104,14 @@ internal class QueueDrag {
 }
 
 /**
- * The undo for a song taken out of the queue: the last one only, offered for a few seconds. [T] is the
- * song. [shown] is what the undo offers; [returning] is the row coming back, which slides in from the
- * side it left by ([Taken.side]: -1 left, 1 right, 0 it fades in, as after the × button).
+ * The undo for what was taken out of the queue: the last removal only, offered for a few seconds. [T] is
+ * what it took. [shown] is what the undo offers; [returning] is the row coming back, which slides in from
+ * the side it left by ([Taken.side]: -1 left, 1 right, 0 it fades in, as after the × button). A removal
+ * with no row of its own (a clear) has no [Taken.key] and slides nothing in.
  */
 @Stable
 internal class QueueUndo<T> {
-    class Taken<T>(val item: T, val index: Int, val key: String, val side: Float)
+    class Taken<T>(val item: T, val index: Int, val key: String?, val side: Float)
 
     var shown by mutableStateOf<Taken<T>?>(null)
         private set
@@ -118,13 +119,13 @@ internal class QueueUndo<T> {
         private set
 
     /** [item], at list [index] and with row [key], was taken out; it replaces any undo still offered. */
-    fun took(item: T, index: Int, key: String, side: Float): Taken<T> = Taken(item, index, key, side).also { shown = it; returning = null }
+    fun took(item: T, index: Int, key: String?, side: Float): Taken<T> = Taken(item, index, key, side).also { shown = it; returning = null }
 
     /** The undo pressed: what to put back, once; its row is then [returning] until it has [arrived]. */
     fun undo(): Taken<T>? {
         val t = shown ?: return null
         shown = null
-        returning = t
+        returning = t.takeIf { it.key != null }
         return t
     }
 

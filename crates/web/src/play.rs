@@ -455,6 +455,18 @@ impl Nori {
         self.with(|h| h.put_back(&id));
     }
 
+    /// Takes the songs after the one heard out; answers how long their undo is offered, ms
+    /// ([`Nori::put_back_cleared`]).
+    pub fn clear_upcoming(&self) -> f64 {
+        self.with(|h| h.clear_upcoming());
+        nori_core::undo::UNDO_MS as f64
+    }
+
+    /// Puts back what the last clear took out, where it was.
+    pub fn put_back_cleared(&self) {
+        self.with(|h| h.put_back_cleared());
+    }
+
     pub fn move_song(&self, from: usize, to: usize) {
         self.with(|h| h.move_song(from, to));
     }

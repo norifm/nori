@@ -69,6 +69,8 @@ pub enum Action {
     // Queue, downloads and equalizer band editing
     Remove,
     Undo,
+    /// Takes the songs after the one playing out of the queue.
+    Clear,
     MoveUp,
     MoveDown,
     // Lyrics
@@ -199,7 +201,8 @@ pub const BINDINGS: &[Binding] = &[
     b!(List, "[ ]", Action::GroupBack, "The library's section, or the settings' group, before or after", [(Char('['), N)]),
     b!(List, "", Action::GroupOn, "", [(Char(']'), N)]),
     b!(Edit, "d / delete", Action::Remove, "Take it out (of the queue, or off this computer); refuse a jam request (enter accepts)", [(Char('d'), N), (Delete, N)]),
-    b!(Edit, "u", Action::Undo, "Put back the song just taken out of the queue", [(Char('u'), N)]),
+    b!(Edit, "u", Action::Undo, "Put back what was just taken out of the queue", [(Char('u'), N)]),
+    b!(Edit, "c", Action::Clear, "Clear the queue: the songs after the one playing go", [(Char('c'), N)]),
     b!(Edit, "K / J", Action::MoveUp, "Move it up or down", [(Char('K'), S), (Char('K'), N)]),
     b!(Edit, "", Action::MoveDown, "", [(Char('J'), S), (Char('J'), N)]),
     b!(Lyrics, "[ ]", Action::Later, "Words later or sooner, for lyrics timed wrong", [(Char('['), N)]),

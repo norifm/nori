@@ -737,6 +737,11 @@ pub extern "C" fn nori_ios_clear_upcoming() {
     with_session(|s| s.clear_upcoming());
 }
 
+#[no_mangle]
+pub extern "C" fn nori_ios_put_back_cleared() {
+    with_session(|s| s.put_back_cleared());
+}
+
 /// # Safety
 /// `id` is NUL-terminated UTF-8, or `NULL`.
 #[no_mangle]

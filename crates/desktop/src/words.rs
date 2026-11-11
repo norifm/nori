@@ -864,6 +864,14 @@ pub fn removed(title: &str) -> String {
     format!("Removed “{title}”")
 }
 
+/// The undo pill after the queue is cleared.
+pub fn cleared(songs: usize) -> String {
+    match songs {
+        1 => "Cleared 1 song".into(),
+        n => format!("Cleared {n} songs"),
+    }
+}
+
 pub const LINK_COPIED: &str = "Link copied";
 
 pub const PAIR_FAILED: &str = "Pairing failed";

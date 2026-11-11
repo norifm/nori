@@ -117,6 +117,8 @@ pub enum Cmd {
     Volume(f32),
     Jump(usize),
     Remove(usize),
+    /// Takes the songs after the one playing out of the queue.
+    Clear,
     /// Undo the last removal while it is on offer (`Session::undo`).
     Undo,
     Move(usize, usize),
@@ -1179,6 +1181,7 @@ pub enum Button {
     Next,
     Shuffle,
     Repeat,
+    Clear,
     Panel(Panel),
     Full,
     PlayAll,
@@ -2611,7 +2614,7 @@ impl App {
             Action::SeekBack | Action::SeekForward | Action::SeekBackLong | Action::SeekForwardLong if !self.offers(|c| c.seek) => self.dirty = false,
             Action::Shuffle | Action::Repeat if self.guest() => self.dirty = false,
             Action::MoveUp | Action::MoveDown if self.queue_in_focus() && !self.offers(|c| c.reorder) => self.dirty = false,
-            Action::Remove | Action::Undo if self.guest() && self.queue_in_focus() => self.dirty = false,
+            Action::Remove | Action::Undo | Action::Clear if self.guest() && self.queue_in_focus() => self.dirty = false,
             Action::TogglePlay => {
                 self.pressed(Button::Toggle);
                 self.cmds.push(Cmd::Toggle);
@@ -2771,6 +2774,8 @@ impl App {
             Action::Menu => self.open_menu(),
             Action::Undo if self.queue_in_focus() => self.cmds.push(Cmd::Undo),
             Action::Undo => self.dirty = false,
+            Action::Clear if self.queue_in_focus() => self.clear_queue(),
+            Action::Clear => self.dirty = false,
             Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.move_here(a == Action::MoveUp) {
                 Some(c) => self.cmds.push(c),
                 None => self.dirty = false,
@@ -3476,6 +3481,20 @@ impl App {
         self.queue.as_ref().map_or_else(Vec::new, |q| q.order.iter().map(|&i| i as usize).collect())
     }
 
+    /// Songs after the one playing, in play order: what a clear takes.
+    pub fn upcoming(&self) -> usize {
+        self.queue.as_ref().and_then(|q| Some(q.order.len() - 1 - q.order.iter().position(|&i| i as i32 == q.index)?)).unwrap_or(0)
+    }
+
+    /// Clears the queue, its undo on u; nothing for a jam guest, whose queue is the host's.
+    fn clear_queue(&mut self) {
+        if self.guest() || self.upcoming() == 0 {
+            self.dirty = false;
+        } else {
+            self.cmds.push(Cmd::Clear);
+        }
+    }
+
     fn queue_in_focus(&self) -> bool {
         self.focus == Focus::Panel && self.panel == Panel::Queue
     }
@@ -3986,6 +4005,7 @@ impl App {
             Button::Next => self.do_action(Action::Next),
             Button::Shuffle => self.do_action(Action::Shuffle),
             Button::Repeat => self.do_action(Action::Repeat),
+            Button::Clear => self.clear_queue(),
             Button::Panel(p) => self.set_panel(p),
             Button::Full => self.toggle_full(),
             Button::PlayAll => self.play_all(false),

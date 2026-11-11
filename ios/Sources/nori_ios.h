@@ -95,6 +95,8 @@ void nori_ios_shuffle(int32_t on);
 
 void nori_ios_remove(int32_t index);
 void nori_ios_clear_upcoming(void);
+/// Puts back what the last clear took out.
+void nori_ios_put_back_cleared(void);
 
 /// Puts back a removed song. `id` is NUL-terminated.
 void nori_ios_put_back(const char *id);
