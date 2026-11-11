@@ -227,16 +227,22 @@ pub fn score(song: &Song, l: &Lyrics, named: &Named, prior: f64, others: &[Other
 const W_SYNC: f64 = 0.25;
 /// Taken off lyrics timed for another version...
 const DRIFTS: f64 = 0.1;
-/// ...and off lyrics that fit the voice at no offset.
+/// ...and off lyrics that fit the voice at no offset...
 const POOR_FIT: f64 = 0.1;
+/// ...and off lyrics the check moves, this much a second of the move, up to [`MOVED_MAX_S`]: they fit only where
+/// the check put them, which lyrics timed right as they stand do not need. A second's move costs more than the
+/// race's [`MARGIN`](crate::race::MARGIN) for replacing what is shown.
+const MOVED_PER_S: f64 = 0.05;
+const MOVED_MAX_S: f64 = 2.0;
 
-/// `t` with the sync check weighed in ([`W_SYNC`], less [`DRIFTS`] or [`POOR_FIT`]); no or an unsure
-/// check leaves it as it was.
+/// `t` with the sync check weighed in ([`W_SYNC`], less [`DRIFTS`], [`POOR_FIT`] or the move's cost); no or an
+/// unsure check leaves it as it was.
 pub(crate) fn with_sync(mut t: Trust, check: Option<&SyncCheck>) -> Trust {
     let Some(c) = check.filter(|c| c.kind != SyncKind::Unsure) else { return t };
     let off = match c.kind {
         SyncKind::Drifts => DRIFTS,
         SyncKind::Poor => POOR_FIT,
+        SyncKind::Shifted => MOVED_PER_S * (c.offset_ms.abs() as f64 / 1000.0).min(MOVED_MAX_S),
         _ => 0.0,
     };
     t.sync = Some(c.score);
@@ -310,6 +316,17 @@ mod tests {
         assert!(odd.penalty >= OTHER_SCRIPT);
         let alone = score(&s, &japanese, &n, 0.8, &[], false, true);
         assert!(alone.penalty < OTHER_SCRIPT, "alone, a script is no evidence");
+    }
+
+    /// Lyrics the check had to move score below the same fit as they stand, the more the further it moved them,
+    /// never more than lyrics timed for another version.
+    #[test]
+    fn a_move_costs_by_its_size() {
+        let t = Trust { score: 0.9, ..Default::default() };
+        let at = |kind, offset_ms| with_sync(t, Some(&SyncCheck { kind, score: 0.85, best_score: 0.85, offset_ms, confidence: 1.0, drift_ms: 0 })).score;
+        let moved: Vec<f64> = [300, 1000, 2000, 5000].map(|ms| at(SyncKind::Shifted, ms)).to_vec();
+        assert!(at(SyncKind::Fits, 120) > moved[0] && moved[0] > moved[1] && moved[1] > moved[2], "{moved:?}");
+        assert!(moved[3] >= at(SyncKind::Drifts, 0), "{moved:?}");
     }
 
     #[test]
