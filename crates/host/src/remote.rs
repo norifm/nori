@@ -124,6 +124,10 @@ impl RemotePlayer for HostPlayer {
                 h.engine.play_at(index as usize, 0);
             }
             Op::Remove { index, .. } => h.remove_here(index as usize),
+            Op::Clear => h.clear_here(),
+            Op::RestoreCleared => {
+                h.restore_all_here();
+            }
             Op::Move { from, to, .. } => h.move_here(from as usize, to as usize),
             Op::Restore { song, index } => h.put_back_from_afar(song, index as usize),
             Op::Add { songs, next } => h.enqueue_here(songs, next),
@@ -135,7 +139,7 @@ impl RemotePlayer for HostPlayer {
             // The devices see it once the core has marked it.
             Op::Star { id, on } => return h.star_from_afar(id, on),
             // The core keeps transfers, pages, time exchanges, lyrics timing and jam ops to itself.
-            Op::Transfer { .. } | Op::Clear | Op::LibraryMarks { .. } | Op::Page { .. } | Op::Clock { .. } | Op::LyricsTiming { .. } | Op::Request { .. } | Op::Decide { .. } | Op::Promote { .. } | Op::Kick { .. } => {}
+            Op::Transfer { .. } | Op::LibraryMarks { .. } | Op::Page { .. } | Op::Clock { .. } | Op::LyricsTiming { .. } | Op::Request { .. } | Op::Decide { .. } | Op::Promote { .. } | Op::Kick { .. } => {}
         }
         h.remotes.played(&h.engine);
     }
@@ -238,6 +242,11 @@ impl Elsewhere {
     /// Puts song `id`, removed here, back where it was in the device's queue; false when it was not.
     pub(crate) fn put_back(&self, id: &str) -> bool {
         self.remote.clone().put_back(self.mirror.id.clone(), id.to_string())
+    }
+
+    /// Puts back what the last clear from here took out of the device's queue; false when there was none.
+    pub(crate) fn put_back_cleared(&self) -> bool {
+        self.remote.clone().put_back_cleared(self.mirror.id.clone())
     }
 
     /// This jam guest's control `op`, by its role ([`Remote::jam_press`]).

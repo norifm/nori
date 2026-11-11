@@ -683,7 +683,7 @@ pub mod hints {
     pub const EQUALIZER: Hints = &[("← →", "choose"), ("↑ ↓", "change"), ("enter", "switch"), ("d", "remove a band"), ("?", "keys")];
     pub const DOWNLOADS: Hints = &[("enter", "play"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const PLAYING: Hints = &[("space", "play"), ("n p", "next, previous"), ("m", "menu"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
-    pub const QUEUE: Hints = &[("enter", "play"), ("d", "remove"), ("K J", "move"), ("s r", "shuffle, repeat"), ("tab", "panel"), ("esc", "back")];
+    pub const QUEUE: Hints = &[("enter", "play"), ("d", "remove"), ("c", "clear"), ("K J", "move"), ("s r", "shuffle, repeat"), ("tab", "panel"), ("esc", "back")];
     pub const LYRICS: Hints = &[("enter", "play from the line"), ("[ ]", "timing"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
     pub const DEVICES: Hints = &[("enter", "play there"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
 }
@@ -692,6 +692,7 @@ pub const LISTEN_NOW: &str = "Listen now";
 pub const SHOW_ALL: &str = "Show all";
 pub const PLAY: &str = "Play";
 pub const SHUFFLE: &str = "Shuffle";
+pub const CLEAR: &str = "Clear";
 pub const UP_NEXT: &str = "Playing next";
 pub const BACK: &str = "Back";
 pub const VOLUME: &str = "Volume";

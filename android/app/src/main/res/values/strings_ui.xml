@@ -24,6 +24,11 @@
     <string name="undo">Undo</string>
     <!-- The queue: a song just taken out, offered back for a few seconds. -->
     <string name="queue_removed">Removed “%1$s”</string>
+    <!-- The queue: what its Clear took, offered back for a few seconds. -->
+    <plurals name="queue_cleared">
+        <item quantity="one">Cleared %1$d song</item>
+        <item quantity="other">Cleared %1$d songs</item>
+    </plurals>
     <string name="cancel">Cancel</string>
     <string name="done">Done</string>
     <string name="close">Close</string>

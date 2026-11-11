@@ -107,6 +107,13 @@ class QueueEditsTest {
         assertNull(u.returning)
     }
 
+    @Test fun `a clear's undo brings no row back sliding`() {
+        val u = QueueUndo<String>()
+        u.took("cleared", -1, null, 0f)
+        assertEquals("cleared", u.undo()!!.item)
+        assertNull(u.returning)
+    }
+
     @Test fun `an undo not taken runs out`() {
         val u = QueueUndo<String>()
         val t = u.took("one", 0, "one#1", -1f)

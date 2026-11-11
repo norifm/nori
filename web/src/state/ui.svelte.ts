@@ -48,8 +48,9 @@ class Ui {
   /** The browser is wide enough for the top bar and the player bar (below it: the phone's layout). */
   wide = $state(matchMedia("(min-width: 720px)").matches);
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The song just taken out of the queue, while its undo is offered. */
-  undo = $state.raw<{ id: string; title: string } | null>(null);
+  /** What was just taken out of the queue, while its undo is offered: what it says, and the song's id
+   * (null: what a clear took). */
+  undo = $state.raw<{ text: string; id: string | null } | null>(null);
   private undoTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
@@ -63,9 +64,10 @@ class Ui {
     if (text) this.toastTimer = setTimeout(() => (this.toast = ""), 4000);
   }
 
-  /** Offers the undo of song `id` taken out of the queue for `ms`, the core's window; a later one replaces it. */
-  offerUndo(id: string, title: string, ms: number) {
-    this.undo = { id, title };
+  /** Offers the undo of song `id` taken out of the queue (null: a clear), saying `text`, for `ms`, the
+   * core's window; a later one replaces it. */
+  offerUndo(text: string, id: string | null, ms: number) {
+    this.undo = { text, id };
     clearTimeout(this.undoTimer);
     this.undoTimer = setTimeout(() => (this.undo = null), ms);
   }

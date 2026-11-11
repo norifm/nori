@@ -392,6 +392,7 @@ enum Say {
     static let remove = "Remove"
     static let undo = "Undo"
     static func queueRemoved(_ title: String) -> String { "Removed “\(title)”" }
+    static func queueCleared(_ count: Int) -> String { count == 1 ? "Cleared 1 song" : "Cleared \(count) songs" }
 
     // About, from Android's strings.xml.
     static let licences = "Licenses"

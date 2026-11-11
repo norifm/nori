@@ -4,6 +4,7 @@
   // another place (only while play order is list order). As the desktop's, rows glide to where a move or
   // the next song puts them, and come and go folding.
   import { player } from "../state/player.svelte";
+  import { remote } from "../state/remote.svelte";
   import { songMenu } from "../state/menus";
   import { beside, pointer, ui } from "../state/ui.svelte";
   import { W } from "../words";
@@ -19,6 +20,8 @@
   const n = $derived(player.now);
   const rows = $derived(n?.queue ?? []);
   const current = $derived(n?.current ?? -1);
+  /** Songs follow the one heard, and this is no jam guest, whose queue is the host's to change. */
+  const after = $derived(current >= 0 && !remote.jam?.guest ? rows.length - current - 1 : 0);
   let list = $state<HTMLOListElement>();
   /** A row's glide, ms, on one curve for both ways rows move at once ([cubicOut] in CSS), so they keep step. */
   const GLIDE_MS = 240;
@@ -89,6 +92,9 @@
 
 <JamQueue />
 <div class="box">
+{#if after > 0}
+  <div class="top"><button class="clear" onclick={() => void player.clear(after)}>{W.clear}</button></div>
+{/if}
 <ol class="queue" id="queue" style:--fade-top="{FADE_TOP}px" bind:this={list} onscrollend={rested} use:sortable={{ moved: (from, to) => move(rows[from].index, rows[to].index), whole: true }}>
   {#each items as item (item.key)}
     {@const q = item.q}
@@ -126,9 +132,9 @@
   {/each}
 </ol>
 {#if ui.undo}
-  <!-- The song just taken out, while the core still puts it back. -->
+  <!-- What was just taken out, while the core still puts it back. -->
   <div class="undo" role="status" in:fade={{ duration: still() ? 0 : 180 }} out:fade={{ duration: still() ? 0 : 120 }}>
-    <span class="clip">{W.removed(ui.undo.title)}</span>
+    <span class="clip">{ui.undo.text}</span>
     <button onclick={() => void player.putBack()}>{W.undo}</button>
   </div>
 {/if}
@@ -141,6 +147,22 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
+  }
+  /* The queue's head: Clear in the quiet ink, as the desktop's. */
+  .top {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .clear {
+    min-height: 32px;
+    padding: 0 12px;
+    border-radius: 999px;
+    color: var(--ink2);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .clear:hover {
+    background: var(--hover);
   }
   .undo {
     position: absolute;

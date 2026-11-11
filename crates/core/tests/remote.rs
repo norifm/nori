@@ -1942,7 +1942,7 @@ fn a_page_past_the_end_of_a_queue_that_shrank_is_empty() {
 }
 
 #[test]
-fn a_mirrored_queue_is_cleared_and_a_removed_song_put_back_in_its_place() {
+fn a_mirrored_queue_is_cleared_and_put_back_in_its_place() {
     let relay = Relay::new();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
@@ -1970,14 +1970,13 @@ fn a_mirrored_queue_is_cleared_and_a_removed_song_put_back_in_its_place() {
     assert_eq!(phone.core.session.playlist(|p| p.ids().to_vec()), ["s1", "s2", "s3", "s4", "s5"]);
     assert!(!desk.remote.clone().put_back(phone_id.clone(), "s3".into()), "put back once");
 
-    // Clear: the phone's player removes what plays after the current song, from the end.
+    // Clear: the phone's player clears its queue, and the desk's undo has it put back what it took.
+    assert!(!desk.remote.clone().put_back_cleared(phone_id.clone()), "only a clear from here");
     desk.remote.clone().send(phone_id.clone(), Op::Clear);
-    let removed: Vec<u32> = (0..3).map(|_| match phone.told() {
-        Op::Remove { index, .. } => index,
-        op => panic!("{op:?}"),
-    }).collect();
-    assert_eq!(removed, [4, 3, 2]);
-    assert!({ relay.sim.pass(Duration::from_millis(300)); phone.ops.try_recv().is_err() }, "the song playing stays");
+    assert_eq!(phone.told(), Op::Clear);
+    assert!(desk.remote.clone().put_back_cleared(phone_id.clone()));
+    assert_eq!(phone.told(), Op::RestoreCleared);
+    assert!(!desk.remote.clone().put_back_cleared(phone_id.clone()), "put back once");
     relay.close();
 }
 

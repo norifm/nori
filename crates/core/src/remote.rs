@@ -90,8 +90,7 @@ const FORESEEN_US: i64 = 3_000_000;
 /// What the platform's player does for the remote control.
 #[cfg_attr(feature = "ffi", uniffi::export(with_foreign))]
 pub trait RemotePlayer: Send + Sync {
-    /// Carries out an op the core admitted: never a jam op, a transfer or [`Op::Clear`] (the core sends
-    /// that as one [`Op::Remove`] a song).
+    /// Carries out an op the core admitted: never a jam op or a transfer.
     fn apply(&self, op: Op);
 }
 
@@ -631,6 +630,8 @@ struct Mirrored {
     asking: Option<u32>,
     /// Songs this device removed there, and the list index each had, for [`Remote::put_back`].
     taken: Vec<(Song, u32)>,
+    /// This device cleared the queue there, for [`Remote::put_back_cleared`].
+    cleared: bool,
     /// This device's commands the device has not said it carried out yet, oldest first.
     foreseen: Vec<Foreseen>,
     presence: Presence,
@@ -702,7 +703,7 @@ fn song_at(state: &DeviceState) -> Option<&str> {
 
 impl Mirrored {
     fn new(id: String, now: i64) -> Mirrored {
-        Mirrored { id, known: Known::Nothing, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new(), presence: Presence::Answering { unanswered: 0 }, handed_at: None }
+        Mirrored { id, known: Known::Nothing, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), cleared: false, foreseen: Vec::new(), presence: Presence::Answering { unanswered: 0 }, handed_at: None }
     }
 
     /// A state arrived from the device (`at`: when, on this device's clock). It ends the foresight of
@@ -1971,6 +1972,20 @@ impl Remote {
         };
         let (song, index) = taken;
         self.send(device, Op::Restore { song, index });
+        true
+    }
+
+    /// Undoes this device's clear of the mirrored device `device`'s queue: the songs it took out go back
+    /// where they were there ([`Op::RestoreCleared`]). False when this device did not clear it.
+    pub fn put_back_cleared(self: Arc<Self>, device: String) -> bool {
+        {
+            let mut i = self.inner.lock();
+            let Some(m) = i.active.mirror_mut().filter(|m| m.id == device) else { return false };
+            if !std::mem::take(&mut m.cleared) {
+                return false;
+            }
+        }
+        self.send(device, Op::RestoreCleared);
         true
     }
 
@@ -3848,11 +3863,6 @@ impl Remote {
                 self.transfer(via, from, to, transfer, listen_handoff);
             }
             Op::LyricsTiming { song, dir } => self.client.core.lyrics_retime(song, dir),
-            Op::Clear => {
-                for index in self.client.core.session.playlist(|p| p.after_current()) {
-                    self.player.apply(Op::Remove { index: index as u32, rev });
-                }
-            }
             op => {
                 // A queue sent here plays here: this is the active device.
                 if let Op::Replace { listen, songs, mix, .. } = &op {
@@ -3884,10 +3894,14 @@ impl Remote {
         let link = {
             let mut i = self.inner.lock();
             if let Some(m) = i.active.mirror_mut().filter(|m| m.id == device) {
-                if let Op::Remove { index, .. } = op {
-                    if let Some(e) = m.rows().into_iter().find(|e| e.index == index) {
-                        m.taken.push((e.song(), index));
+                match op {
+                    Op::Remove { index, .. } => {
+                        if let Some(e) = m.rows().into_iter().find(|e| e.index == index) {
+                            m.taken.push((e.song(), index));
+                        }
                     }
+                    Op::Clear => m.cleared = true,
+                    _ => {}
                 }
                 m.foresee(id, &op, self.now());
                 // A play foreseen starts the time keeper, and a foresight ends on time.

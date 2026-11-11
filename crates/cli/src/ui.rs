@@ -1302,7 +1302,7 @@ fn words_kind(kind: nori_core::automix::planner::TransitionKind) -> &'static str
     }
 }
 
-/// The queue: its head with how much is left and shuffle and repeat, then the jam's rows and the songs.
+/// The queue: its head with how much is left, clear, shuffle and repeat, then the jam's rows and the songs.
 fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     let rows = app.queue_rows();
     if rows.is_empty() {
@@ -1315,14 +1315,18 @@ fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
         let head = row_of(area, 0);
         let left = vec![Span::styled(crate::text::UP_NEXT, bold().fg(t.ink)), Span::styled(format!("  {}", crate::text::songs_caption(q.len, secs)), t.dim())];
         put(f, Paragraph::new(Line::from(left)), head);
-        // Shuffle and repeat are the queue's, the host's in a jam.
+        // Clear, shuffle and repeat are the queue's, the host's in a jam; Clear while songs follow the one playing.
         if !app.guest() {
             let (shuffle, repeat) = (q.shuffle, q.repeat);
             let lit = |on: bool| if on { t.current() } else { t.dim() };
-            let words = [
-                (Span::styled(crate::text::SHUFFLE, lit(shuffle)), Button::Shuffle),
-                (Span::styled(crate::text::repeat_word(repeat), lit(repeat != nori_core::rules::REPEAT_OFF)), Button::Repeat),
-            ];
+            let clear = (app.upcoming() > 0).then(|| (Span::styled(crate::text::CLEAR, t.dim()), Button::Clear));
+            let words: Vec<_> = clear
+                .into_iter()
+                .chain([
+                    (Span::styled(crate::text::SHUFFLE, lit(shuffle)), Button::Shuffle),
+                    (Span::styled(crate::text::repeat_word(repeat), lit(repeat != nori_core::rules::REPEAT_OFF)), Button::Repeat),
+                ])
+                .collect();
             let w: u16 = words.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>() - 3;
             buttons(f, &mut app.hits, Rect { x: head.x + head.width.saturating_sub(w + 1), width: w, ..head }, &words);
         }

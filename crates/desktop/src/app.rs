@@ -415,6 +415,14 @@ enum PageShown {
     Mix(Option<(String, String)>),
 }
 
+/// What the queue's undo would put back.
+enum Taken {
+    /// A song taken out, by id.
+    Song(String),
+    /// What a clear took.
+    Cleared,
+}
+
 pub struct App {
     me: AppHandle,
     ui: slint::Weak<AppWindow>,
@@ -537,8 +545,8 @@ pub struct App {
     queue_rows: Rc<VecModel<SongRow>>,
     queue_next: Option<Vec<SongRow>>,
     queue_timer: Timer,
-    /// The song last taken out of the queue, while its undo is offered.
-    removed: Option<String>,
+    /// What was last taken out of the queue, while its undo is offered.
+    taken: Option<Taken>,
     undo_timer: Timer,
     note: Timer,
     search: Timer,
@@ -779,7 +787,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             queue_rows: Rc::new(VecModel::default()),
             queue_next: None,
             queue_timer: Timer::default(),
-            removed: None,
+            taken: None,
             undo_timer: Timer::default(),
             note: Timer::default(),
             search: Timer::default(),
@@ -1151,18 +1159,17 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.ui().set_settings_tab(accounts.unwrap_or(0) as i32);
         a.go(View::Settings);
     });
-    on!(ui.on_clear_queue, h, |a| {
-        a.on_session(|s| s.clear_upcoming());
-        a.follow();
-    });
+    on!(ui.on_clear_queue, h, |a| a.clear_queue());
     on!(ui.on_remove_queued, h, |a, i| a.remove_queued(i.max(0) as usize));
     on!(ui.on_move_queued, h, |a, from, to| {
         a.on_session(|s| s.move_song(from.max(0) as usize, to.max(0) as usize));
         a.follow();
     });
     on!(ui.on_undo_removed, h, |a| {
-        if let Some(id) = a.removed.take() {
-            a.on_session(|s| s.put_back(&id));
+        match a.taken.take() {
+            Some(Taken::Song(id)) => a.on_session(|s| s.put_back(&id)),
+            Some(Taken::Cleared) => a.on_session(|s| s.put_back_cleared()),
+            None => {}
         }
         a.undo_timer.stop();
         a.ui().set_queue_undo("".into());
@@ -3984,12 +3991,28 @@ impl App {
             }
         }
         self.on_session(|s| s.remove(index));
-        self.ui().set_queue_undo(words::removed(&song.title).into());
-        self.removed = Some(song.id);
+        self.offer_undo(words::removed(&song.title), Taken::Song(song.id));
+    }
+
+    /// Takes the songs after the one playing out of the queue shown (here, or on the device playing), and
+    /// offers their undo for a few seconds.
+    fn clear_queue(&mut self) {
+        let count = self.queue.as_ref().map_or(0, |q| q.upcoming().count());
+        if count == 0 {
+            return;
+        }
+        self.on_session(|s| s.clear_upcoming());
+        self.offer_undo(words::cleared(count), Taken::Cleared);
+    }
+
+    /// Shows `text` with Undo beside it for as long as the core offers to put `taken` back.
+    fn offer_undo(&mut self, text: String, taken: Taken) {
+        self.ui().set_queue_undo(text.into());
+        self.taken = Some(taken);
         let weak = self.me.clone();
         self.undo_timer.start(TimerMode::SingleShot, Duration::from_millis(nori_core::undo::UNDO_MS as u64), move || {
             weak.with(|a| {
-                a.removed = None;
+                a.taken = None;
                 a.ui().set_queue_undo("".into());
             })
         });
@@ -6010,6 +6033,28 @@ mod tests {
         for panel in [Panel::Lyrics, Panel::Queue] {
             assert_eq!(tabs(panel), devices, "panel {panel:?}");
         }
+    }
+
+    #[test]
+    fn clear_shows_only_with_songs_after_the_one_playing() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.show().unwrap();
+        ui.set_inspector(Panel::Queue);
+        let row = |index: i32, played: bool, playing: bool| SongRow { index, title: format!("Song {index}").into(), played, playing, ..Default::default() };
+        let clear = |rows: Vec<SongRow>| {
+            ui.set_queue(ModelRc::new(VecModel::from(rows)));
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "QueueView")
+                .flat_map(|q| q.query_descendants().match_predicate(|e| e.accessible_label().is_some_and(|l| l == "Clear")).find_all())
+                .count()
+        };
+        assert_eq!(clear(vec![row(0, true, false), row(1, false, true)]), 0, "nothing after the song playing");
+        assert_eq!(clear(vec![row(0, true, false), row(1, false, true), row(2, false, false)]), 1);
     }
 
     #[test]

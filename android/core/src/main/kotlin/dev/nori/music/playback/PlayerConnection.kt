@@ -717,10 +717,16 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         c.repeatMode = mode
     }
 
-    /** Everything after the song playing leaves the queue. */
-    private fun clearUpcoming() = with { c ->
+    /** Everything after the song playing in play order leaves the queue, here or on the mirrored device. */
+    fun clearUpcoming() = with { c ->
         mirror?.let { m -> press(m, Press.Clear); return@with }
-        if (c.currentMediaItemIndex + 1 < c.mediaItemCount) c.removeMediaItems(c.currentMediaItemIndex + 1, c.mediaItemCount)
+        c.sendCustomCommand(SessionCommand(PlaybackService.CMD_CLEAR, Bundle.EMPTY), Bundle.EMPTY)
+    }
+
+    /** Undo of [clearUpcoming]: the songs it took out go back where they were, where it was made. */
+    fun putBackCleared() = with { c ->
+        if (mirror != null) return@with run { nori.remotes.putBackCleared() }
+        c.sendCustomCommand(SessionCommand(PlaybackService.CMD_PUT_BACK_CLEARED, Bundle.EMPTY), Bundle.EMPTY)
     }
 
     /** What a plugin asked of the player (crates/plugins session.rs), through the same controls a press uses. */

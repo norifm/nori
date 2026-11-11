@@ -973,6 +973,7 @@ impl Runner {
             Cmd::Jump(i) => s.jump(i),
             Cmd::Remove(i) => s.remove(i),
             Cmd::Undo => s.undo(),
+            Cmd::Clear => s.clear_upcoming(),
             Cmd::Move(from, to) => s.move_song(from, to),
             Cmd::Shuffle(on) => s.shuffle(on),
             Cmd::CycleRepeat => {

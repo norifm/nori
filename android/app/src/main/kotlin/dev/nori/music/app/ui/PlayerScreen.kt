@@ -2818,7 +2818,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
     // and cancel it, which is why a row could only ever be moved one place at a time. All of it is read
     // where the rows are drawn (QueueDrag), so a frame of the drag recomposes no row.
     val drag = remember { QueueDrag() }
-    val undo = remember { QueueUndo<Song>() }
+    val undo = remember { QueueUndo<Removal>() }
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val plain = AppMotion.reduce
@@ -2858,17 +2858,23 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                 remember { say.queue }, ink, Modifier.padding(top = 4.dp, bottom = 8.dp),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
             )
-            if (state.offersReorder) Row(Modifier, Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
-                val shuffleOn = state.shuffle
-                val repeatOn = state.repeat != Repeat.OFF
-                IconButton(vm::toggleShuffle, Modifier.size(44.dp)) {
-                    LookIcon(Iconoir.Shuffle, say.shuffle, Modifier.size(22.dp)) { look.color(if (shuffleOn) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
-                }
-                IconButton(vm::cycleRepeat, Modifier.size(44.dp)) {
-                    LookIcon(
-                        if (state.repeat == Repeat.ONE) Iconoir.RepeatOnce else Iconoir.Repeat, say.repeat,
-                        Modifier.size(22.dp),
-                    ) { look.color(if (repeatOn) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+            Row(Modifier, Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
+                // Clear, as Apple Music's and Spotify's queues have it: what plays after the song playing
+                // goes at once, and the undo below puts it back.
+                val after = if (now >= 0) order.size - now - 1 else 0
+                if (edits && after > 0) LookTextAction(say.clear, quiet, { undo.took(Removal.Cleared(after), -1, null, 0f); vm.clearUpcoming() })
+                if (state.offersReorder) {
+                    val shuffleOn = state.shuffle
+                    val repeatOn = state.repeat != Repeat.OFF
+                    IconButton(vm::toggleShuffle, Modifier.size(44.dp)) {
+                        LookIcon(Iconoir.Shuffle, say.shuffle, Modifier.size(22.dp)) { look.color(if (shuffleOn) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+                    }
+                    IconButton(vm::cycleRepeat, Modifier.size(44.dp)) {
+                        LookIcon(
+                            if (state.repeat == Repeat.ONE) Iconoir.RepeatOnce else Iconoir.Repeat, say.repeat,
+                            Modifier.size(22.dp),
+                        ) { look.color(if (repeatOn) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+                    }
                 }
             }
         }
@@ -3013,7 +3019,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                 val now = vm.state.value.queue
                 val index = queueKeys(now.map { it.id }).indexOf(key)
                 if (index >= 0) {
-                    undo.took(now[index], index, key, -1f)
+                    undo.took(Removal.One(now[index]), index, key, -1f)
                     swipe.leaving = Pending(Unit, vm.remove(index))
                 }
             }
@@ -3092,7 +3098,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                         }
                         // The rows a swipe leaves (the song playing) have no × either; its room stays, so the × line up.
                         if (edits && i in kept) Spacer(Modifier.size(38.dp))
-                        else if (edits) IconButton({ undo.took(s, i, key, 0f); vm.remove(i) }, Modifier.size(38.dp)) {
+                        else if (edits) IconButton({ undo.took(Removal.One(s), i, key, 0f); vm.remove(i) }, Modifier.size(38.dp)) {
                             LookIcon(Iconoir.Xmark, say.remove, Modifier.size(19.dp), quiet)
                         }
                         // The handle's room is kept on every row while the list can be reordered, so every ×
@@ -3162,9 +3168,18 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
     }
     }
     UndoPill(undo, plain, Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp)) { t ->
-        vm.restore(t.item, t.index)
+        when (val r = t.item) {
+            is Removal.One -> vm.restore(r.song, t.index)
+            is Removal.Cleared -> vm.putBackCleared()
+        }
     }
   }
+}
+
+/** What the queue's undo puts back: one song taken out, or the [Cleared.count] songs a clear took. */
+private sealed interface Removal {
+    data class One(val song: Song) : Removal
+    data class Cleared(val count: Int) : Removal
 }
 
 /** The caption above the songs played, among the queue's [queueEntries]. */
@@ -3192,12 +3207,12 @@ private val QUEUE_NOW_VEIL = Color.Black.copy(alpha = 0.4f)
 
 
 /**
- * "Removed “song” · Undo", a small pill over the foot of the queue for a few seconds after a song is taken
- * out. It rises and fades in, and sinks and fades out showing what it said, taking no taps as it goes. A
- * second song taken out while it is up replaces the words in place.
+ * "Removed “song” · Undo" or "Cleared 12 songs · Undo", a small pill over the foot of the queue for a few
+ * seconds after songs are taken out. It rises and fades in, and sinks and fades out showing what it said,
+ * taking no taps as it goes. A second removal while it is up replaces the words in place.
  */
 @Composable
-private fun UndoPill(undo: QueueUndo<Song>, plain: Boolean, modifier: Modifier, restore: (QueueUndo.Taken<Song>) -> Unit) {
+private fun UndoPill(undo: QueueUndo<Removal>, plain: Boolean, modifier: Modifier, restore: (QueueUndo.Taken<Removal>) -> Unit) {
     val now = undo.shown
     val shown = remember { Animatable(0f) }
     var last by remember { mutableStateOf(now) }
@@ -3218,7 +3233,11 @@ private fun UndoPill(undo: QueueUndo<Song>, plain: Boolean, modifier: Modifier, 
     if (now == null && !present) return
     val rise = with(androidx.compose.ui.platform.LocalDensity.current) { 12.dp.toPx() }
     MessagePill(
-        say.queueRemoved(t.item.title), LocalLook.current,
+        when (val r = t.item) {
+            is Removal.One -> say.queueRemoved(r.song.title)
+            is Removal.Cleared -> say.queueCleared(r.count)
+        },
+        LocalLook.current,
         modifier
             .widthIn(max = 320.dp)
             .graphicsLayer {

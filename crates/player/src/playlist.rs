@@ -69,8 +69,9 @@ pub struct Playlist {
     rev: u64,
     /// Bumped only when the list's songs change.
     list_rev: u64,
-    /// The last single song the user removed, for undo; cleared by a new list.
-    taken: Option<Taken>,
+    /// What the user's last removal took out, for undo, in the order taken: one song, or what a clear
+    /// took. Forgotten with a new list.
+    taken: Vec<Taken>,
 }
 
 /// Moves `v[from..to]` to start at `at` (an index once they are taken out).
@@ -96,7 +97,7 @@ impl Playlist {
             repeat: REPEAT_OFF,
             rev: 0,
             list_rev: 0,
-            taken: None,
+            taken: Vec::new(),
         }
     }
 
@@ -226,11 +227,18 @@ impl Playlist {
         (from..self.len()).filter_map(move |p| self.at_position(p))
     }
 
-    /// What clearing the queue removes: the songs after the current one in play order, as list indexes
-    /// highest first, so each still names its song while those before it go one by one.
-    pub fn after_current(&self) -> Vec<usize> {
+    /// Clears the queue by the user: the songs after the current one in play order go, remembered for
+    /// [`Playlist::restore_all_taken`]. Returns their list indexes in the order removed, highest first, so
+    /// each still names its song while those after it in the list go one by one.
+    pub fn clear_upcoming(&mut self) -> Vec<usize> {
         let mut after: Vec<usize> = self.upcoming().skip(1).collect();
         after.sort_unstable_by(|a, b| b.cmp(a));
+        let mut taken = Vec::with_capacity(after.len());
+        for &i in &after {
+            taken.extend(self.taken(i));
+            self.remove(i, i + 1);
+        }
+        self.taken = taken;
         after
     }
 
@@ -245,7 +253,7 @@ impl Playlist {
             self.seqs[s] = seq;
         }
         self.list_rev += 1;
-        self.taken = None;
+        self.taken.clear();
         self.hand = vec![Hand::No; n];
         self.parked = None;
         self.lit = shuffling;
@@ -383,19 +391,26 @@ impl Playlist {
 
     /// [`Playlist::remove`] by the user; a single song is remembered for [`Playlist::restore_taken`].
     pub fn remove_undoably(&mut self, from: usize, to: usize) {
-        self.taken = if to == from + 1 { self.taken(from) } else { None };
+        self.taken = if to == from + 1 { self.taken(from).into_iter().collect() } else { Vec::new() };
         self.remove(from, to);
     }
 
-    /// The song an undo would put back ([`Playlist::restore_taken`]), if any.
-    pub fn undoable(&self) -> Option<&str> {
-        self.taken.as_ref().map(|t| t.id.as_str())
+    /// The songs an undo would put back, in the order they were taken out.
+    pub fn undoable(&self) -> impl DoubleEndedIterator<Item = &str> {
+        self.taken.iter().map(|t| t.id.as_str())
     }
 
-    /// Undoes the last [`Playlist::remove_undoably`] if it removed `id`; returns the list index.
+    /// Puts back `id`, if the last removal took it out; returns the list index. Songs a clear took go
+    /// back exactly where they were when put back last taken first, as another device's undo sends them.
     pub fn restore_taken(&mut self, id: &str) -> Option<usize> {
-        let t = self.taken.take_if(|t| t.id == id)?;
+        let t = self.taken.remove(self.taken.iter().rposition(|t| t.id == id)?);
         Some(self.restore(&t))
+    }
+
+    /// Puts back everything the last removal took out, last taken first; returns the list index of
+    /// each as it went back.
+    pub fn restore_all_taken(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.taken).iter().rev().map(|t| self.restore(t)).collect()
     }
 
     /// Snapshot of the song at `at` for [`Playlist::restore`].
@@ -708,7 +723,36 @@ mod tests {
         let at = order.iter().position(|&i| i == 2).unwrap();
         let mut want = order[at + 1..].to_vec();
         want.sort_unstable_by(|a, b| b.cmp(a));
-        assert_eq!(p.after_current(), want);
+        assert_eq!(p.clone().clear_upcoming(), want);
+    }
+
+    #[test]
+    fn a_clear_comes_back_in_place() {
+        for shuffling in [false, true] {
+            let mut p = Playlist::default();
+            p.set(ids(&["a", "b", "c", "d", "e", "f"]), Some(2), shuffling, 7);
+            let was = p.clone();
+            let gone = p.clear_upcoming();
+            assert_eq!(p.play_order().last(), p.current(), "the song playing ends the queue");
+            assert_eq!(p.current().map(|c| &p.ids()[c]), was.current().map(|c| &was.ids()[c]));
+            assert_eq!(p.undoable().count(), gone.len());
+            let back = p.restore_all_taken();
+            assert_eq!(back, gone.iter().rev().copied().collect::<Vec<_>>(), "each at its own index");
+            assert_eq!((p.ids(), p.play_order().collect::<Vec<_>>(), p.current()), (was.ids(), was.play_order().collect(), was.current()), "shuffling {shuffling}");
+            assert!(p.restore_all_taken().is_empty(), "once");
+        }
+    }
+
+    #[test]
+    fn a_clear_comes_back_song_by_song_last_taken_first() {
+        let mut p = Playlist::default();
+        p.set(ids(&["a", "b", "c", "d"]), Some(0), true, 3);
+        let was = p.clone();
+        let gone: Vec<String> = p.clear_upcoming().iter().map(|&i| was.ids()[i].clone()).collect();
+        for id in gone.iter().rev() {
+            assert!(p.restore_taken(id).is_some(), "{id}");
+        }
+        assert_eq!((p.ids(), p.play_order().collect::<Vec<_>>()), (was.ids(), was.play_order().collect()));
     }
 
     #[test]
@@ -717,7 +761,7 @@ mod tests {
         assert_eq!(p.set(ids(&["a", "b", "c"]), Some(1), false, 0), Some(1));
         assert_eq!((p.next(), p.previous(), p.songs_after()), (Some(2), Some(0), 1));
         assert_eq!(p.upcoming().collect::<Vec<_>>(), [1, 2]);
-        assert_eq!(p.after_current(), [2], "clearing keeps the song playing");
+        assert_eq!(p.clone().clear_upcoming(), [2], "clearing keeps the song playing");
         p.set_repeat(REPEAT_ALL);
         p.moved_to(2);
         assert_eq!(p.next(), Some(0));

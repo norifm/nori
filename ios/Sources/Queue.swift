@@ -18,10 +18,10 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
     private var followed: String?
     private let shuffle = UIButton(type: .system)
     private let repeatButton = UIButton(type: .system)
-    /// After a swipe: the song's name and Undo, for a few seconds.
+    /// After a swipe or Clear: what went and Undo, for a few seconds.
     private let undoBar = UIView()
     private let undoText = UILabel()
-    private var undoID = ""
+    private var taken: Taken?
     private var undoTimer: Timer?
     private var token: UInt64 = 0
     private var history: [Item] = []
@@ -228,8 +228,10 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
     }
 
     @objc private func clearTapped() {
+        let count = upcoming.count
         nori_ios_clear_upcoming()
         read()
+        offerUndo(Say.queueCleared(count), .cleared)
     }
 
     // MARK: the list
@@ -355,26 +357,37 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
             nori_ios_remove(Int32(item.index))
             done(true)
             self?.read()
-            self?.offerUndo(item)
+            self?.offerUndo(Say.queueRemoved(item.title.isEmpty ? item.id : item.title), .song(item.id))
         }
         return UISwipeActionsConfiguration(actions: [remove])
     }
 
     // MARK: taking a removal back
 
-    private func offerUndo(_ item: Item) {
-        undoID = item.id
-        undoText.text = Say.queueRemoved(item.title.isEmpty ? item.id : item.title)
+    /// What the undo puts back: a song taken out, by id, or what a clear took.
+    private enum Taken {
+        case song(String)
+        case cleared
+    }
+
+    private func offerUndo(_ text: String, _ what: Taken) {
+        taken = what
+        undoText.text = text
         undoBar.isHidden = false
         undoTimer?.invalidate()
         undoTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(nori_ios_undo_ms()) / 1000, repeats: false) { [weak self] _ in self?.undoBar.isHidden = true }
     }
 
-    /// The core puts the song back where it was (`put_back`).
+    /// The core puts the songs back where they were (`put_back`, `put_back_cleared`).
     @objc private func undoTapped() {
         undoTimer?.invalidate()
         undoBar.isHidden = true
-        undoID.withCString { nori_ios_put_back($0) }
+        switch taken {
+        case .song(let id): id.withCString { nori_ios_put_back($0) }
+        case .cleared: nori_ios_put_back_cleared()
+        case nil: break
+        }
+        taken = nil
         read()
     }
 

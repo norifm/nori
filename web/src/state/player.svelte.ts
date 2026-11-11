@@ -158,14 +158,22 @@ class Player {
     if (!rpc.player) return;
     const ms = await ask<number>("remove", q.index);
     await this.refresh();
-    if (q.id) ui.offerUndo(q.id, q.title ?? q.id, ms);
+    if (q.id) ui.offerUndo(W.removed(q.title ?? q.id), q.id, ms);
   }
 
-  /** The undo offered: the song goes back where it was. */
+  /** Takes the `count` songs after the one heard out of the queue and offers their undo. */
+  async clear(count: number) {
+    if (!rpc.player) return;
+    const ms = await ask<number>("clear_upcoming");
+    await this.refresh();
+    ui.offerUndo(W.cleared(count), null, ms);
+  }
+
+  /** The undo offered: the songs go back where they were. */
   async putBack() {
     const u = ui.takeUndo();
     if (!u || !rpc.player) return;
-    await ask("put_back", u.id);
+    await (u.id ? ask("put_back", u.id) : ask("put_back_cleared"));
     await this.refresh();
   }
 

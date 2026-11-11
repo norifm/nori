@@ -827,15 +827,29 @@ impl Handle {
         }
     }
 
-    /// Removes everything after the current song, on the device playing.
+    /// Removes everything after the current song, on the device playing; [`Handle::put_back_cleared`]
+    /// undoes it.
     pub fn clear_upcoming(&self) {
-        if self.there(Press::Clear) {
-            return;
+        if !self.there(Press::Clear) {
+            self.clear_here();
         }
-        for i in self.core.session.playlist(|p| p.after_current()) {
-            self.core.session.remove(i as u32, i as u32 + 1);
-        }
+    }
+
+    pub(crate) fn clear_here(&self) {
+        self.core.session.clear_upcoming();
         self.edited();
+    }
+
+    /// Undoes the last clear where it was made (here, or on the device playing): the songs it took out
+    /// go back where they were; the playing song is unchanged.
+    pub fn put_back_cleared(&self) {
+        let back = match self.elsewhere() {
+            Some(e) => e.put_back_cleared(),
+            None => self.restore_all_here(),
+        };
+        if !back {
+            self.note(Note::NothingToPutBack);
+        }
     }
 
     /// Undoes the removal of `id` where it was removed (here, or on the device playing); the playing
@@ -853,9 +867,8 @@ impl Handle {
     /// Undoes the last removal here while its undo is on offer (`nori_queue::undo`), for a client that
     /// shows no undo of its own.
     pub fn undo(&self) {
-        match self.core.session.undoable().filter(|_| self.elsewhere().is_none()) {
-            Some(u) => self.put_back(&u.id),
-            None => self.note(Note::NothingToPutBack),
+        if self.elsewhere().is_some() || !self.restore_all_here() {
+            self.note(Note::NothingToPutBack);
         }
     }
 
@@ -1531,6 +1544,21 @@ impl Handle {
         true
     }
 
+    /// Puts back everything the last removal here took out while its undo is on offer; false when
+    /// nothing went back.
+    pub(crate) fn restore_all_here(&self) -> bool {
+        let q = &self.core.session;
+        let was_empty = q.playlist(|p| p.is_empty());
+        if q.restore_all().is_empty() {
+            return false;
+        }
+        self.edited();
+        if was_empty {
+            self.engine.go_to(0, 0);
+        }
+        true
+    }
+
     /// Another device's undo: `song` back where it was taken out, else at list index `index`.
     pub(crate) fn put_back_from_afar(&self, song: Song, index: usize) {
         if self.restore_here(&song.id) {
@@ -1867,6 +1895,28 @@ mod tests {
             queue.playlist(|p| p.repeat())
         }).collect();
         assert_eq!(modes, [nori_core::rules::REPEAT_ALL, nori_core::rules::REPEAT_ONE, nori_core::rules::REPEAT_OFF]);
+        s.close();
+    }
+
+    /// A clear keeps the song playing and takes the rest; its undo, the client's or the terminal's, puts
+    /// them back in place once.
+    #[test]
+    fn a_clear_is_undone_in_place() {
+        let dir = nori_testdir::TempDir::new("host-clear");
+        let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
+        let profile = SavedServer { id: "own".into(), url: "http://own".into(), user: "ann".into(), ..Default::default() };
+        let s = Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        let songs: Vec<Song> = ["a", "b", "c", "d"].map(|id| Song { id: id.into(), ..Default::default() }).into();
+        s.play(songs, 1, false, None);
+        let ids = || queue.playlist(|p| (p.ids().to_vec(), p.current()));
+        for undo in [Handle::put_back_cleared as fn(&Handle), Handle::undo] {
+            s.clear_upcoming();
+            assert_eq!(ids(), (vec!["a".to_string(), "b".into()], Some(1)));
+            undo(&s);
+            assert_eq!(ids(), (vec!["a".to_string(), "b".into(), "c".into(), "d".into()], Some(1)));
+            undo(&s);
+            assert_eq!(queue.playlist(|p| p.len()), 4, "once");
+        }
         s.close();
     }
 

@@ -272,6 +272,8 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     fun skipTo(index: Int) = player.skipTo(index)
     fun remove(index: Int): Long { player.remove(index); return player.ticket() }
     fun restore(song: dev.nori.music.ffi.model.Song, index: Int) = player.restore(song, index)
+    fun clearUpcoming() = player.clearUpcoming()
+    fun putBackCleared() = player.putBackCleared()
     fun move(from: Int, to: Int): Long { player.move(from, to); return player.ticket() }
     fun toggleShuffle() = player.setShuffle(!state.value.shuffle)
     fun cycleRepeat() = player.cycleRepeat()

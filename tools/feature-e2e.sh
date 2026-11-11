@@ -953,6 +953,23 @@ PY
   check "the playing row's bars move while it plays" wait_until 5 bars_moved
   "$app" do pause >/dev/null; check "paused again" wait_for playing False 5
   check "and stand still while paused" wait_until 5 bars_still
+  # Clear and its Undo: which songs go and where they come back are the core's (crates/queue undo.rs);
+  # here, the session command the service carries out, and media3's list following the core's both ways.
+  remember_settings autoFill
+  "$app" set autoFill false >/dev/null
+  check "Clear is offered with a song after the one playing" wait_until 5 on_screen 'text="Clear"'
+  playing_title=$(field title)
+  adb exec-out screencap -p > "$shots/clear-before.png"
+  tapnode text Clear
+  check "the songs after the one playing go" wait_for queue 1 5
+  check "the song playing stays" test "$(field title)" = "$playing_title"
+  check "the undo says what went" wait_until 5 on_screen 'text="Cleared 1 song"'
+  check "and Clear goes with them" wait_until 5 off_screen 'text="Clear"'
+  adb exec-out screencap -p > "$shots/clear-after.png"
+  tapnode text Undo
+  check "Undo puts them back" wait_for queue 2 5
+  check "after the song playing" test "$(field index) $(field title)" = "0 $playing_title"
+  restore_settings
   # A list scrolled so that "Playing next" is its first row, away from the song playing, stays where it was
   # put when the next song starts: a caption carried down to the new song took the list along with it.
   if [ "$NORI_E2E_SERVER" = local ]; then

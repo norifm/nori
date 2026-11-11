@@ -74,6 +74,9 @@ class PlaybackService : MediaLibraryService() {
         /** The car's own now-playing buttons: repeat, turned on round (off, all, one), and a radio from the song playing. */
         const val CMD_REPEAT = "nori.repeat"
         const val CMD_RADIO = "nori.radio"
+        /** The queue's Clear, and its undo: the songs after the one playing go, or come back where they were. */
+        const val CMD_CLEAR = "nori.clear"
+        const val CMD_PUT_BACK_CLEARED = "nori.putBackCleared"
         /** Broadcast inside the package on every track or play-state change while a home-screen widget is placed (PlacedWidgets). */
         const val ACTION_STATE = "dev.nori.music.STATE"
         const val EXTRA_TITLE = "title"
@@ -540,6 +543,8 @@ class PlaybackService : MediaLibraryService() {
                 dev.nori.music.ffi.remote.Op.Previous -> controls.seekToPrevious()
                 is dev.nori.music.ffi.remote.Op.Jump -> { controls.seekToDefaultPosition(op.index.toInt()); if (controls.playbackState == Player.STATE_IDLE) controls.prepare(); controls.play() }
                 is dev.nori.music.ffi.remote.Op.Remove -> controls.removeMediaItem(op.index.toInt())
+                dev.nori.music.ffi.remote.Op.Clear -> controls.clearUpcoming()
+                dev.nori.music.ffi.remote.Op.RestoreCleared -> controls.restoreAll()
                 is dev.nori.music.ffi.remote.Op.Move -> controls.moveMediaItem(op.from.toInt(), op.to.toInt())
                 // Where it was, if the core still has it as taken out (MediaItems.restored), else at its index.
                 is dev.nori.music.ffi.remote.Op.Restore -> {
@@ -560,8 +565,8 @@ class PlaybackService : MediaLibraryService() {
                 is dev.nori.music.ffi.remote.Op.Star -> scope.launch {
                     runCatching { nori.library.star(StarKind.SONG, op.id, op.on) }.onFailure { dev.nori.music.NoriLog.w("star from another device failed: $it") }
                 }
-                // The core keeps transfers, pages, time exchanges, lyrics timing and jam ops to itself, and sends a clear as removes.
-                is dev.nori.music.ffi.remote.Op.LibraryMarks, dev.nori.music.ffi.remote.Op.Clear, is dev.nori.music.ffi.remote.Op.Transfer, is dev.nori.music.ffi.remote.Op.Page, is dev.nori.music.ffi.remote.Op.Clock, is dev.nori.music.ffi.remote.Op.LyricsTiming, is dev.nori.music.ffi.remote.Op.Request,
+                // The core keeps transfers, pages, time exchanges, lyrics timing and jam ops to itself.
+                is dev.nori.music.ffi.remote.Op.LibraryMarks, is dev.nori.music.ffi.remote.Op.Transfer, is dev.nori.music.ffi.remote.Op.Page, is dev.nori.music.ffi.remote.Op.Clock, is dev.nori.music.ffi.remote.Op.LyricsTiming, is dev.nori.music.ffi.remote.Op.Request,
                 is dev.nori.music.ffi.remote.Op.Decide, is dev.nori.music.ffi.remote.Op.Promote, is dev.nori.music.ffi.remote.Op.Kick -> {}
             }
             remoteState()
@@ -698,6 +703,19 @@ class PlaybackService : MediaLibraryService() {
             super.clearMediaItems()
             onQueueSet?.invoke()
         }
+        /** Everything after the song playing in play order leaves (the core's `playlist_clear_upcoming`), and the player's same songs. */
+        fun clearUpcoming() {
+            for (i in nori.session.playlistClearUpcoming()) super.removeMediaItem(i.toInt())
+        }
+
+        /** The undo of the last removal: its songs back where they were (the core's `playlist_restore_all`). */
+        fun restoreAll() {
+            val back = nori.session.playlistRestoreAll()
+            if (back.isEmpty()) return
+            for ((b, item) in back.zip(items(back.map { it.song }))) super.addMediaItem(b.at.toInt(), item)
+            if (playbackState == Player.STATE_IDLE) prepare()
+        }
+
         override fun removeMediaItem(index: Int) = removeMediaItems(index, index + 1)
         override fun removeMediaItems(fromIndex: Int, toIndex: Int) {
             // The player drops removed songs from its play order and keeps the rest as it was, as the core does.
@@ -933,6 +951,7 @@ class PlaybackService : MediaLibraryService() {
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon().add(SessionCommand(CMD_SLEEP, Bundle.EMPTY)).add(SessionCommand(CMD_TUNING, Bundle.EMPTY))
                 .add(SessionCommand(CMD_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_UNFAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
                 .add(SessionCommand(CMD_FILL_NEXT, Bundle.EMPTY)).add(SessionCommand(CMD_REPEAT, Bundle.EMPTY)).add(SessionCommand(CMD_RADIO, Bundle.EMPTY))
+                .add(SessionCommand(CMD_CLEAR, Bundle.EMPTY)).add(SessionCommand(CMD_PUT_BACK_CLEARED, Bundle.EMPTY))
                 .add(SessionCommand(CarTree.CMD_ITEM_NEXT, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_QUEUE, Bundle.EMPTY))
                 .add(SessionCommand(CarTree.CMD_ITEM_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_DOWNLOAD, Bundle.EMPTY)).build()
             val result = MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(commands)
@@ -965,6 +984,8 @@ class PlaybackService : MediaLibraryService() {
             }
             if (command.customAction == CMD_SHUFFLE) shown.shuffleModeEnabled = !shown.shuffleModeEnabled
             if (command.customAction == CMD_FILL_NEXT) fillThenNext()
+            if (command.customAction == CMD_CLEAR) controls.clearUpcoming()
+            if (command.customAction == CMD_PUT_BACK_CLEARED) controls.restoreAll()
             if (command.customAction == CMD_TUNING) tuning(controller, args.getBoolean(ARG_ON))
             if (command.customAction == CMD_REPEAT) shown.repeatMode = when (shown.repeatMode) {
                 Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL

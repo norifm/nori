@@ -795,17 +795,21 @@ fun MessagePill(
                 text, ink, Modifier.weight(1f, fill = false).padding(vertical = 10.dp),
                 style = MaterialTheme.typography.bodyMedium, maxLines = maxLines, overflow = TextOverflow.Ellipsis,
             )
-            if (action != null) {
-                androidx.compose.material3.TextButton(onAction, enabled = actionEnabled) {
-                    LookText(action, ink, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
-                }
-            }
+            if (action != null) LookTextAction(action, ink, onAction, enabled = actionEnabled)
             if (onDismiss != null) {
                 IconButton(onDismiss) { LookIcon(Iconoir.Xmark, words(R.string.close), Modifier.size(20.dp)) { look.color(CoverLook.CHROME_CONTENT_75) } }
             } else if (action == null) {
                 Spacer(Modifier.width(14.dp))
             }
         }
+    }
+}
+
+/** A word that does something, in a look's [color] read while drawing: the undo pill's Undo, the queue's Clear. */
+@Composable
+fun LookTextAction(label: String, color: ColorProducer, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    androidx.compose.material3.TextButton(onClick, modifier, enabled = enabled) {
+        LookText(label, color, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
     }
 }
 

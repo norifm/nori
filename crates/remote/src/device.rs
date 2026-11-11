@@ -129,6 +129,7 @@ mod tests {
             (Op::Move { from: 0, to: 2, rev: 6 }, Sender::Member(Role::Admin), Err(Refusal::Stale)),
             (jump(2, 7), Sender::Member(Role::Admin), Ok(())),
             (Op::Clear, Sender::Member(Role::Admin), Err(Refusal::NotAllowed)),
+            (Op::RestoreCleared, Sender::Member(Role::Admin), Err(Refusal::NotAllowed)),
             (Op::Volume { percent: 5 }, Sender::Member(Role::Admin), Err(Refusal::NotAllowed)),
         ];
         for (op, from, want) in cases {

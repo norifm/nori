@@ -403,6 +403,22 @@ impl Session {
         self.restore_at(&id, nori_db::now_ms())
     }
 
+    /// Clears the queue: the songs after the current one in play order go, kept for
+    /// [`Session::restore_all`]. Returns their list indexes in the order removed, for the player to
+    /// remove the same.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_clear_upcoming"))]
+    pub fn clear_upcoming(&self) -> Vec<u32> {
+        self.clear_upcoming_at(nori_db::now_ms())
+    }
+
+    /// Undo: puts back everything the last removal took out (a clear's songs, or one song) if less than
+    /// [`crate::undo::UNDO_MS`] ago, each where it was. Returns them in the order put back, for the
+    /// player to insert the same; empty when there is nothing to put back.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_restore_all"))]
+    pub fn restore_all(&self) -> Vec<crate::undo::PutBack> {
+        self.restore_all_at(nori_db::now_ms())
+    }
+
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_move"))]
     pub fn move_range(&self, from: u32, to: u32, new_index: u32) -> QueueChange {
         self.edit(|p| {
