@@ -81,6 +81,7 @@ pub fn profile_waits(name: &str, wait: nori_core::providers::ProfileWait) -> Str
     use nori_core::providers::ProfileWait as W;
     match wait {
         W::Install => format!("This profile plays from {name}, a plugin that isn’t installed."),
+        W::Update => format!("This profile plays from {name}, a plugin being updated for this version of nori."),
         W::TurnOn => format!("This profile plays from {name}, a plugin that’s off."),
         W::PluginsOn => format!("This profile plays from {name}, a plugin, and plugins are off."),
         W::NoPlugins => format!("This profile plays from {name}, a plugin, which can’t run here."),

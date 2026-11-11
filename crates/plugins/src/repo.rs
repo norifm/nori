@@ -278,18 +278,19 @@ impl Plugins {
     /// Whether a day has passed since updates were last looked for, at `now_ms` (device ms), or a plugin
     /// built for another API waits for its update.
     pub fn updates_due(&self, now_ms: i64) -> bool {
-        now_ms - self.checked_ms() >= UPDATE_EVERY_MS || now_ms < self.checked_ms() || self.installed().iter().any(|i| i.manifest.api != API)
+        now_ms - self.checked_ms() >= UPDATE_EVERY_MS || now_ms < self.checked_ms() || self.installed().iter().any(|i| !i.runs_here())
     }
 
-    /// Updates each plugin not held to the newest version its own repo offers; what was updated.
+    /// Updates each plugin not held to the newest version its own repo offers; what was updated. One
+    /// built for another API, which can't run here, takes the newest this host runs, held or not.
     pub async fn update(&self, now_ms: i64) -> Vec<Updated> {
         let offers = self.offers().await;
         self.keep_checked(now_ms);
         let mut done = Vec::new();
-        for i in self.installed().into_iter().filter(|i| !i.held) {
+        for i in self.installed().into_iter().filter(|i| !i.held || !i.runs_here()) {
             let Some(repo) = &i.repo else { continue };
             let newest = offers.offers.iter().find(|o| o.id == i.manifest.id && o.repo.url == *repo).and_then(|o| o.versions.first());
-            let Some(v) = newest.filter(|v| older(&i.manifest.version, &v.version)) else { continue };
+            let Some(v) = newest.filter(|v| !i.runs_here() || older(&i.manifest.version, &v.version)) else { continue };
             match self.install_version(v.clone()).await {
                 Ok(_) => done.push(Updated { id: i.manifest.id.clone(), from: i.manifest.version.clone(), to: v.version.clone() }),
                 Err(e) => nori_model::alog::info(&format!("plugin {}: not updated to {}: {e}", i.manifest.id, v.version)),
@@ -308,9 +309,9 @@ mod tests {
         let repo = Repo { url: "https://example.com/nori/index.json".into(), official: false };
         let text = br#"{"plugins": [
             {"id": "a.b", "name": "A", "source": "https://git.example/a", "versions": [
-                {"version": "0.9.0", "api": 3, "url": "a-0.9.0.noriplugin", "sha256": "AB"},
-                {"version": "0.10.0", "api": 3, "url": "https://cdn.example/a-0.10.0.noriplugin", "sha256": "cd", "released": "2026-11-02"},
-                {"version": "2.0.0", "api": 2, "url": "a-2.0.0.noriplugin", "sha256": "ef"}
+                {"version": "0.9.0", "api": 4, "url": "a-0.9.0.noriplugin", "sha256": "AB"},
+                {"version": "0.10.0", "api": 4, "url": "https://cdn.example/a-0.10.0.noriplugin", "sha256": "cd", "released": "2026-11-02"},
+                {"version": "2.0.0", "api": 3, "url": "a-2.0.0.noriplugin", "sha256": "ef"}
             ]},
             {"id": "c.d", "name": "C", "versions": [{"version": "1.0.0", "api": 9, "url": "c.noriplugin", "sha256": "00"}]}
         ]}"#;

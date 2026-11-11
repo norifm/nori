@@ -1333,7 +1333,9 @@ impl App {
         self.profiles_shown();
         self.waiting = self.kinds().waits(profile.clone()).map(|_| profile.clone());
         if self.waiting.is_some() {
-            // The first screen, where its plugin's row installs it or turns it on.
+            // The first screen, where its plugin's row installs it or turns it on; one built for an older
+            // nori is updated now, and the profile opens once it is (`open_waiting`).
+            self.update_plugins();
             return self.choose_provider();
         }
         match Session::open(&self.root, self.http.clone(), profile, self.tx.clone(), self.mpris.clone()) {

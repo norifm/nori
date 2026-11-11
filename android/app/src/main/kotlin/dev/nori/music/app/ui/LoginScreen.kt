@@ -382,7 +382,7 @@ fun WaitingProfile(vm: SettingsViewModel, wait: dev.nori.music.ffi.ProfileWait) 
                             dev.nori.music.ffi.ProfileWait.INSTALL -> installing = true
                             dev.nori.music.ffi.ProfileWait.TURN_ON -> plugins.turn(id, true)
                             dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> plugins.allOff(vm, false)
-                            dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> {}
+                            dev.nori.music.ffi.ProfileWait.UPDATE, dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> {}
                         }
                     }, Modifier.fillMaxWidth().padding(top = 4.dp).testTag("profile-wait"), prominent = true)
                 }

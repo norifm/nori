@@ -19,7 +19,7 @@ use crate::client::{Client, NetResult, Starrable, Write};
 use crate::settings::{SavedServer, ServerKind};
 use crate::stream::{StreamQuality, StreamTarget};
 use crate::transport::{block_on, NetError, Transport};
-use crate::{Album, AlbumDetail, ArtistDetail, ArtistInfo, Core, FeedShelf, PlaylistDetail, Song, Starred};
+use crate::{Album, AlbumDetail, ArtistDetail, ArtistInfo, Core, FeedShelf, PlaylistDetail, SearchResult, Song, Starred};
 
 /// An artist's picture on its about page, px.
 const ABOUT_PX: u32 = 800;
@@ -147,6 +147,8 @@ fn request(read: &Read) -> Option<w::Request> {
         Read::PlaylistList => w::Request::Playlists,
         Read::AlbumList { kind, size, offset, .. } => w::Request::Albums((sort(*kind), n(*size), n(*offset))),
         Read::FavouriteAlbums { size } => w::Request::Albums((w::AlbumSort::Starred, n(*size), 0)),
+        Read::ArtistIndex => w::Request::Artists,
+        Read::SongPage { offset, count } => w::Request::Songs((n(*count), n(*offset))),
         Read::StarredItems => w::Request::Starred,
         Read::SimilarSongs { id, count } => w::Request::SimilarSongs((id.clone(), n(*count))),
         Read::SongById { id } => w::Request::Song(id.clone()),
@@ -176,6 +178,7 @@ fn page(read: &Read, p: w::Page) -> Option<Page> {
             let f = found(f);
             Page::StarredPage { v: Starred { artists: f.artists, albums: f.albums, songs: f.songs, ..Default::default() } }
         }
+        (Read::SongPage { .. }, w::Page::Songs(v)) => Page::Found { v: SearchResult { songs: v.into_iter().map(song).collect(), ..Default::default() } },
         (_, w::Page::Songs(v)) => Page::Songs { v: v.into_iter().map(song).collect() },
         (_, w::Page::OneSong(v)) => Page::OneSong { v: v.map(song) },
         (_, w::Page::Albums(v)) => Page::Albums { v: v.into_iter().map(album).collect() },

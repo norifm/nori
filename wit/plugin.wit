@@ -1,4 +1,4 @@
-package nori:plugin@3.0.0;
+package nori:plugin@4.0.0;
 
 /// The plugin's page. Its rows are declared in its manifest, so nori draws them while it is not
 /// running; values are kept by nori in the plugin's store.
@@ -173,6 +173,10 @@ interface provider {
         playlists,
         /// Sort, count, offset.
         albums(tuple<album-sort, u32, u32>),
+        /// The library's artists (Library's Artists), whole.
+        artists,
+        /// The library's songs (Library's Songs), in the source's order: count, offset.
+        songs(tuple<u32, u32>),
         starred,
         similar-songs(tuple<string, u32>),
         song(string),

@@ -98,6 +98,13 @@ pub struct Installed {
     pub key: Option<String>,
 }
 
+impl Installed {
+    /// Built for this host's plugin API. One left by an older nori runs nothing until its update.
+    pub fn runs_here(&self) -> bool {
+        self.manifest.api == API
+    }
+}
+
 /// The open profile's transport, which plugins' HTTP goes through; None before one is open.
 pub(crate) type Transported = Arc<Mutex<Option<Arc<dyn nori_net::transport::Transport>>>>;
 
@@ -290,14 +297,14 @@ impl Plugins {
         self.laying()
     }
 
-    /// The plugins whose overrides and stages are laid over the settings: those on, unless this is a
-    /// safe start. The settings leave the layer out themselves while the switch turns every plugin off,
-    /// so it is whole again when the switch goes back.
+    /// The plugins whose overrides and stages are laid over the settings: those on and built for this
+    /// API, unless this is a safe start. The settings leave the layer out themselves while the switch
+    /// turns every plugin off, so it is whole again when the switch goes back.
     fn laying(&self) -> Vec<Installed> {
         if self.safe_off() {
             return Vec::new();
         }
-        self.installed().into_iter().filter(|i| i.enabled).collect()
+        self.installed().into_iter().filter(|i| i.enabled && i.runs_here()).collect()
     }
 
     /// Every plugin is off for this start (a safe start).
