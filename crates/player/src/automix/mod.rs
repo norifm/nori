@@ -39,8 +39,9 @@ use crate::types::TrackAnalysis;
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 17: where the singing starts and ends, from the voice curve.
-pub const ANALYSIS_VERSION: i32 = 17;
+/// Bump when stored rows should be measured again. 18: an end's grid over its steady run when one grid does not hold
+/// over all of it.
+pub const ANALYSIS_VERSION: i32 = 18;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -104,10 +105,13 @@ pub struct Grid {
     pub offset_ms: f64,
     pub stability: f32,
     pub downbeat_phase: i32,
+    /// Where it holds, ms, when only over a run of the stretch ([`tempo::clean_run`]).
+    pub span_ms: Option<(i64, i64)>,
 }
 
-/// The beat grid of `[from_s, to_s)` alone, its offset in track time.
-pub(crate) fn window_grid(f: &Features, from_s: f64, to_s: f64, meter: i64) -> Grid {
+/// The beat grid of `[from_s, to_s)` alone, its offset in track time. When one grid does not hold over all of it,
+/// the grid of its longest steady run (the later one for an ending, `late`).
+pub(crate) fn window_grid(f: &Features, from_s: f64, to_s: f64, meter: i64, late: bool) -> Grid {
     if f.fps.is_nan() || f.fps <= 0.0 || to_s - from_s < GRID_WINDOW_S / 2.0 {
         return Grid::default();
     }
@@ -120,8 +124,30 @@ pub(crate) fn window_grid(f: &Features, from_s: f64, to_s: f64, meter: i64) -> G
     if !(t.bpm > 0.0 && t.bpm.is_finite()) {
         return Grid::default();
     }
-    let db = structure::downbeat(&t, f, (from_s, to_s), Some(meter));
-    Grid { bpm: t.bpm, confidence: t.confidence, offset_ms: t.offset_s * 1000.0, stability: t.stability, downbeat_phase: db.phase }
+    let (t, span) = match steady_run(&t, late).filter(|(r, span)| tempo::on_beat(&f.onset, f.fps, f.t0, r.period_s, r.offset_s, *span) >= tempo::RUN_MIN_ON_BEAT) {
+        Some((run, span)) => (run, Some(span)),
+        None => (t, None),
+    };
+    let window = span.unwrap_or((from_s, to_s));
+    let db = structure::downbeat(&t, f, window, Some(meter));
+    let ms = |s: f64| (s * 1000.0).round() as i64;
+    Grid { bpm: t.bpm, confidence: t.confidence, offset_ms: t.offset_s * 1000.0, stability: t.stability, downbeat_phase: db.phase, span_ms: span.map(|(a, b)| (ms(a), ms(b))) }
+}
+
+/// `t` over its longest steady run, and the run's first and last beat, seconds: when `t` does not hold as one grid
+/// and the run does better.
+fn steady_run(t: &tempo::Tempo, late: bool) -> Option<(tempo::Tempo, (f64, f64))> {
+    if t.stability >= plan::MIN_STABILITY {
+        return None;
+    }
+    let (a, b) = tempo::clean_run(&t.beats, t.period_s, late)?;
+    let beats = &t.beats[a..b];
+    let (first, period, rms) = tempo::fit_grid(beats, t.period_s);
+    let stability = tempo::stability(beats, period, rms);
+    (period > 0.0 && stability > t.stability).then(|| {
+        let run = tempo::Tempo { bpm: 60.0 / period, offset_s: first.rem_euclid(period), stability, beats: beats.to_vec(), period_s: period, ..t.clone() };
+        (run, (beats[0], beats[beats.len() - 1]))
+    })
 }
 
 /// Wall-clock ms since the epoch.
@@ -183,8 +209,8 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         (Grid::default(), Grid::default())
     } else {
         (
-            window_grid(f, (song.1 - GRID_WINDOW_S).max(music.0), song.1, meter),
-            window_grid(f, music.0, (music.0 + GRID_WINDOW_S).min(music.1), meter),
+            window_grid(f, (song.1 - GRID_WINDOW_S).max(music.0), song.1, meter, true),
+            window_grid(f, music.0, (music.0 + GRID_WINDOW_S).min(music.1), meter, false),
         )
     };
 
@@ -236,6 +262,10 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         steady_intro_ms: steady_intro,
         steady_end_ms: steady_end,
         steady_exit_ms: steady_exit,
+        intro_grid_from_ms: intro_grid.span_ms.map_or(0, |s| s.0),
+        intro_grid_to_ms: intro_grid.span_ms.map_or(0, |s| s.1),
+        outro_grid_from_ms: outro_grid.span_ms.map_or(0, |s| s.0),
+        outro_grid_to_ms: outro_grid.span_ms.map_or(0, |s| s.1),
     };
     Analysis { track, tempo: t }
 }

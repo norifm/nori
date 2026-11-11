@@ -286,12 +286,30 @@ pub struct NeuralGrid {
     pub other_phase: Option<i32>,
     /// A beat mid-window, seconds, where two grids are compared.
     pub anchor_s: f64,
+    /// Where it holds, seconds, when only over a run of the window.
+    pub span_s: Option<(f64, f64)>,
 }
 
 /// The grid through beats and downbeats: metre from the usual downbeat gap (3 or 4), phase by vote, `other_phase`
-/// when the runner-up has over half the votes. `None` for fewer than 8 beats.
-pub fn grid(tracked: &Tracked) -> Option<NeuralGrid> {
-    let beats = &tracked.beats;
+/// when the runner-up has over half the votes. When one grid does not hold over the whole window, the grid of its
+/// longest steady run (the later one for an ending, `late`) when `heard` finds its beats in the music. `None` for
+/// fewer than 8 beats.
+pub fn grid(tracked: &Tracked, late: bool, heard: impl Fn(&NeuralGrid) -> bool) -> Option<NeuralGrid> {
+    let whole = grid_of(&tracked.beats, &tracked.downbeats)?;
+    if whole.stability >= super::plan::MIN_STABILITY {
+        return Some(whole);
+    }
+    let period = 60.0 / whole.bpm;
+    let run = tempo::clean_run(&tracked.beats, period, late).and_then(|(a, b)| {
+        let beats = &tracked.beats[a..b];
+        let (from, to) = (beats[0] - 0.5 * period, beats[beats.len() - 1] + 0.5 * period);
+        let downbeats: Vec<f64> = tracked.downbeats.iter().copied().filter(|d| (from..=to).contains(d)).collect();
+        grid_of(beats, &downbeats).map(|g| NeuralGrid { span_s: Some((beats[0], beats[beats.len() - 1])), ..g })
+    });
+    Some(run.filter(|r| r.stability > whole.stability && heard(r)).unwrap_or(whole))
+}
+
+fn grid_of(beats: &[f64], downbeats: &[f64]) -> Option<NeuralGrid> {
     if beats.len() < 8 {
         return None;
     }
@@ -304,11 +322,11 @@ pub fn grid(tracked: &Tracked) -> Option<NeuralGrid> {
     }
     let offset = a.rem_euclid(period);
     let index = |t: f64| ((t - offset) / period).round() as i64;
-    let mut gaps: Vec<i64> = tracked.downbeats.windows(2).map(|w| index(w[1]) - index(w[0])).filter(|g| *g > 0).collect();
+    let mut gaps: Vec<i64> = downbeats.windows(2).map(|w| index(w[1]) - index(w[0])).filter(|g| *g > 0).collect();
     gaps.sort_unstable();
     let meter = gaps.get(gaps.len() / 2).copied().filter(|g| *g == 3).unwrap_or(4);
     let mut votes = [0usize; 4];
-    for d in &tracked.downbeats {
+    for d in downbeats {
         votes[index(*d).rem_euclid(meter) as usize] += 1;
     }
     // Most votes first; a tie goes to the earlier phase.
@@ -327,6 +345,7 @@ pub fn grid(tracked: &Tracked) -> Option<NeuralGrid> {
         beats_per_bar: meter as i32,
         other_phase: other.map(|p| p as i32),
         anchor_s: beats[beats.len() / 2],
+        span_s: None,
     })
 }
 
@@ -382,17 +401,32 @@ mod tests {
         // Grid from beats and downbeats.
         let beats: Vec<f64> = (0..40).map(|i| 0.3 + i as f64 * 0.5).collect();
         let t = Tracked { downbeats: beats.iter().skip(2).step_by(3).copied().collect(), beats };
-        let g = grid(&t).unwrap();
+        let g = grid(&t, false, |_| true).unwrap();
         assert!((g.bpm - 120.0).abs() < 1e-6 && (g.offset_s - 0.3).abs() < 1e-6);
         assert_eq!((g.beats_per_bar, g.downbeat_phase, g.other_phase), (3, 2, None));
         assert!(g.stability > 0.9 && g.confidence > 0.9);
+    }
+
+    /// Beats a grid holds only over a steady run between loose bars: the grid of the run, and where it holds; the
+    /// later run for an ending. A steady window has no span.
+    #[test]
+    fn a_loose_window_grids_its_steady_run() {
+        let loose = |i: usize| if i % 2 == 0 { 0.07 } else { -0.06 };
+        let beats: Vec<f64> = (0..60).map(|i| 0.3 + i as f64 * 0.5 + if (10..14).contains(&i) || i >= 44 { loose(i) } else { 0.0 }).collect();
+        let t = Tracked { downbeats: beats.iter().step_by(4).copied().collect(), beats: beats.clone() };
+        let g = grid(&t, true, |_| true).unwrap();
+        assert!(g.stability >= crate::automix::plan::MIN_STABILITY && (g.bpm - 120.0).abs() < 0.1, "{g:?}");
+        assert_eq!(g.span_s, Some((beats[14], beats[43])), "{g:?}");
+        assert_eq!(grid(&t, true, |_| false).unwrap().span_s, None, "a run whose beats the music does not have");
+        let steady: Vec<f64> = (0..60).map(|i| 0.3 + i as f64 * 0.5).collect();
+        assert_eq!(grid(&Tracked { downbeats: steady.iter().step_by(4).copied().collect(), beats: steady }, true, |_| true).unwrap().span_s, None);
     }
 
     #[test]
     fn alternate_beats_give_two_bars() {
         let beats: Vec<f64> = (0..40).map(|i| 0.3 + i as f64 * 0.5).collect();
         let t = Tracked { downbeats: beats.iter().skip(1).step_by(2).copied().collect(), beats };
-        let g = grid(&t).unwrap();
+        let g = grid(&t, false, |_| true).unwrap();
         assert_eq!(g.beats_per_bar, 4);
         let mut both = [g.downbeat_phase, g.other_phase.unwrap()];
         both.sort();

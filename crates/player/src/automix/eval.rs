@@ -894,8 +894,12 @@ pub fn score(a: &Analysis, truth: &Truth, with_key: bool) -> SongScore {
     let intro_t = at_start(t);
     let outro_t = at_end(t);
     let first_beat = truth.beats.first().copied().unwrap_or(truth.music.0);
-    let intro = score_window(&intro_t, truth, first_beat.max(music.0), first_beat.max(music.0) + MIX_S);
-    let outro = score_window(&outro_t, truth, music.1 - MIX_S, music.1);
+    // A grid that holds over a run of its end only is mixed inside the run, so it is scored there.
+    let within = |(from, to): (f64, f64), (a, b): (i64, i64)| if b > 0 { (from.max(a as f64 / 1000.0), to.min(b as f64 / 1000.0)) } else { (from, to) };
+    let (i0, i1) = within((first_beat.max(music.0), first_beat.max(music.0) + MIX_S), (intro_t.intro_grid_from_ms, intro_t.intro_grid_to_ms));
+    let (o0, o1) = within((music.1 - MIX_S, music.1), (outro_t.outro_grid_from_ms, outro_t.outro_grid_to_ms));
+    let intro = score_window(&intro_t, truth, i0, i1);
+    let outro = score_window(&outro_t, truth, o0, o1);
     let beat = 60.0 / truth.bpm.max(1.0);
     let intro_cue_ok = Some((t.intro_end_ms as f64 / 1000.0 - truth.intro_end).abs() <= beat);
     let outro_cue = t.outro_start_ms as f64 / 1000.0;
@@ -1465,7 +1469,7 @@ fn analysis_holds_its_scores() {
     let n = t.songs as f64;
     assert!(t.tracked_f / n >= 0.95 && t.grid_f / n >= 0.83, "beat F {:.3}, grid F {:.3}", t.tracked_f / n, t.grid_f / n);
     assert!(t.acc1 >= 16 && t.acc2 == t.songs && t.meter_ok == t.songs, "{t:?}");
-    assert!(t.bar_locked >= 28 && t.wrong == 0 && t.wrong_bar <= 2, "no mix window beat-matched wrong: {t:?}");
+    assert!(t.bar_locked >= 32 && t.wrong == 0 && t.wrong_bar <= 2, "no mix window beat-matched wrong: {t:?}");
     assert!(t.key_ok >= 14 && t.key_near == t.keys, "{t:?}");
     assert!(t.sung_held == t.sung && t.vocal_false_alarm == 0 && t.cue_ok >= 29, "{t:?}");
 }

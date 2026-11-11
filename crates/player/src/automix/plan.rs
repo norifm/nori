@@ -153,23 +153,31 @@ pub(super) fn grid_ok(a: &TrackAnalysis) -> bool {
 }
 
 /// `a` with its grid replaced by the one measured over one end: live bands drift and songs change tempo, so
-/// the whole-song grid is wrong at the ends. The end's grid wins unless only the whole-song grid is usable.
-/// `meter` is the end's own metre (Beat This!), 0 for none.
-fn with_grid(a: &TrackAnalysis, bpm: f64, confidence: f32, offset_ms: f64, stability: f32, phase: i32, meter: i32) -> TrackAnalysis {
+/// the whole-song grid is wrong at the ends. The end's grid wins unless only the whole-song grid is usable; `None`
+/// keeps the whole-song grid. `meter` is the end's own metre (Beat This!), 0 for none.
+fn with_grid(a: &TrackAnalysis, bpm: f64, confidence: f32, offset_ms: f64, stability: f32, phase: i32, meter: i32) -> Option<TrackAnalysis> {
     let beats_per_bar = if meter > 0 { meter } else { a.beats_per_bar };
     let w = TrackAnalysis { bpm, bpm_confidence: confidence, beat_offset_ms: offset_ms, stability, downbeat_phase: phase, beats_per_bar, ..a.clone() };
     let measured = bpm > 0.0 && bpm.is_finite();
-    if measured && (grid_ok(&w) || !grid_ok(a)) { w } else { a.clone() }
+    (measured && (grid_ok(&w) || !grid_ok(a))).then_some(w)
 }
 
-/// The outgoing song, gridded over its last seconds.
+/// The outgoing song, gridded over its last seconds. Gridded over the whole song, the end's span says nothing.
 pub(super) fn at_end(a: &TrackAnalysis) -> TrackAnalysis {
     with_grid(a, a.outro_bpm, a.outro_bpm_confidence, a.outro_beat_offset_ms, a.outro_stability, a.outro_downbeat_phase, a.outro_beats_per_bar)
+        .unwrap_or_else(|| TrackAnalysis { outro_grid_from_ms: 0, outro_grid_to_ms: 0, ..a.clone() })
 }
 
 /// The incoming song, gridded over its first seconds.
 pub(super) fn at_start(b: &TrackAnalysis) -> TrackAnalysis {
     with_grid(b, b.intro_bpm, b.intro_bpm_confidence, b.intro_beat_offset_ms, b.intro_stability, b.intro_downbeat_phase, b.intro_beats_per_bar)
+        .unwrap_or_else(|| TrackAnalysis { intro_grid_from_ms: 0, intro_grid_to_ms: 0, ..b.clone() })
+}
+
+/// Whether song time `from` to `to` lies in the stretch `(start, end)` ms an end's grid holds over (both 0: all of
+/// it), give or take half a `beat`.
+fn in_grid((start, end): (i64, i64), from: f64, to: f64, beat: f64) -> bool {
+    end <= 0 || (from >= start as f64 - 0.5 * beat && to <= end as f64 + 0.5 * beat)
 }
 
 /// The analysis BPM, halved or doubled when that lands within 4 % of the tag BPM.
@@ -835,6 +843,11 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                         if (in_dur as f64 - in_start) < 2.0 * dur * ratio {
                             continue;
                         }
+                        // Where an end's grid holds over a run of it only, the mix plays inside the run.
+                        let in_end = in_start + (dur - loop_wall) * ratio;
+                        if !in_grid((a.outro_grid_from_ms, a.outro_grid_to_ms), start, heard_end, beat) || !in_grid((b.intro_grid_from_ms, b.intro_grid_to_ms), in_start, in_end, beat_n) {
+                            continue;
+                        }
                         let sung_skip_in = vocal_start.map_or(0.0, |v| (in_start - v.max(b.silence_start_ms as f64)).max(0.0));
                         let mut score = landing.worth() - (SKIP_COST * (skip_out + skip_in) + (SKIP_SUNG_COST - SKIP_COST) * sung_skip_in) / 1000.0;
                         if let Some(arr) = arrival {
@@ -1381,6 +1394,10 @@ mod tests {
             steady_intro_ms: 0,
             steady_end_ms: 0,
             steady_exit_ms: 0,
+            intro_grid_from_ms: 0,
+            intro_grid_to_ms: 0,
+            outro_grid_from_ms: 0,
+            outro_grid_to_ms: 0,
         }
     }
 
@@ -1623,6 +1640,31 @@ mod tests {
     fn on_downbeat(a: &TrackAnalysis, t: f64) -> bool {
         let beats = (t - a.beat_offset_ms) / (60_000.0 / a.bpm);
         (beats - beats.round()).abs() < 0.01 && (beats.round() as i64).rem_euclid(4) == a.downbeat_phase as i64
+    }
+
+    /// An end whose grid holds over a run of it only (a live band's steady bars) is mixed inside the run.
+    #[test]
+    fn mixes_play_where_the_end_grids_hold() {
+        let (beat, bar) = (60_000.0 / 128.0, 4.0 * 60_000.0 / 128.0);
+        let (a, b) = (track(128.0), TrackAnalysis { drop_ms: (120.0 + 32.0 * 60_000.0 / 128.0) as i64, ..track(128.0) });
+        let heard = |p: &TransitionPlan| (p.out_start_ms as f64, p.out_start_ms as f64 + p.out_loop_ms.map_or(p.out_song_ms(p.duration_ms as f64), |l| l as f64));
+        let played = |p: &TransitionPlan| (p.in_start_ms as f64, p.in_start_ms as f64 + p.in_song_ms(p.duration_ms as f64));
+        let free = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        assert_eq!(free.kind, TransitionKind::BeatMatched, "{}", free.reason);
+        // The outgoing grid holds up to 2 bars before where the free mix ends, the incoming one from 2 bars in.
+        let to = (heard(&free).1 - 2.0 * bar) as i64;
+        let a_held = TrackAnalysis { outro_grid_from_ms: to - (24.0 * bar) as i64, outro_grid_to_ms: to, ..a.clone() };
+        let from = (120.0 + 2.0 * bar) as i64;
+        let b_held = TrackAnalysis { intro_grid_from_ms: from, intro_grid_to_ms: from + (24.0 * bar) as i64, ..b.clone() };
+        let p = plan(Some(&a_held), Some(&b_held), 240_000, 240_000, &dj());
+        assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
+        let ((o0, o1), (i0, i1)) = (heard(&p), played(&p));
+        assert!(o0 >= a_held.outro_grid_from_ms as f64 - beat / 2.0 && o1 <= to as f64 + beat / 2.0, "outgoing {o0}..{o1} past {to}: {p:?}");
+        assert!(i0 >= from as f64 - beat / 2.0 && i1 <= b_held.intro_grid_to_ms as f64 + beat / 2.0, "incoming {i0}..{i1}: {p:?}");
+        check_skip(&p, &a_held, &b_held, 240_000);
+        // Gridded over the whole song instead, the span says nothing.
+        let weak = TrackAnalysis { outro_bpm_confidence: 0.1, ..a_held.clone() };
+        assert_eq!(at_end(&weak).outro_grid_to_ms, 0);
     }
 
     #[test]

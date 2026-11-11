@@ -142,6 +142,12 @@ pub struct TrackAnalysis {
     /// (0 without an exit): a loop of the ending starts at or after it. 0 unknown.
     pub steady_end_ms: i64,
     pub steady_exit_ms: i64,
+    /// Where each end's grid holds, ms, when it holds over only part of the end (a live band's run of steady bars
+    /// between loose ones): a beat-matched mix plays inside it. Both 0: the whole end.
+    pub intro_grid_from_ms: i64,
+    pub intro_grid_to_ms: i64,
+    pub outro_grid_from_ms: i64,
+    pub outro_grid_to_ms: i64,
     /// Analysis time, ms since the epoch.
     pub analysed_ms: i64,
 }

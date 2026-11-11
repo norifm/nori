@@ -43,6 +43,7 @@ columns! {
     exit_ms or 0, gap_ms or 0, gap_end_ms or 0, drop_runup_tonal_db or 0.0,
     intro_beats_per_bar or 0, outro_beats_per_bar or 0, intro_grid_source or 0, outro_grid_source or 0, last_drop_ms or 0, vocal_start_ms or 0, vocal_end_ms or 0,
     steady_intro_ms or 0, steady_end_ms or 0, steady_exit_ms or 0,
+    intro_grid_from_ms or 0, intro_grid_to_ms or 0, outro_grid_from_ms or 0, outro_grid_to_ms or 0,
 }
 
 pub fn put(c: &Connection, a: &TrackAnalysis) -> rusqlite::Result<()> {

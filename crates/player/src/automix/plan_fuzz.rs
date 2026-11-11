@@ -81,6 +81,10 @@ fn row(r: &mut Rng, dur: i64, how: Rows) -> TrackAnalysis {
         steady_intro_ms: ms(r),
         steady_end_ms: ms(r),
         steady_exit_ms: ms(r),
+        intro_grid_from_ms: ms(r),
+        intro_grid_to_ms: ms(r),
+        outro_grid_from_ms: ms(r),
+        outro_grid_to_ms: ms(r),
         analysed_ms: 0,
     }
 }
