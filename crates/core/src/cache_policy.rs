@@ -237,22 +237,25 @@ fn page_digest(page: &Page) -> u64 {
 }
 
 /// `shown` with what `fresh` adds: items new to a shelf at its end, new shelves at the end, so nothing
-/// shown moves or leaves.
+/// shown moves or leaves. One shelf of each title, each item in it once, whatever the source lists.
 fn merged(mut shown: Vec<FeedShelf>, fresh: Vec<FeedShelf>) -> Vec<FeedShelf> {
     fn add<T>(to: &mut Vec<T>, from: Vec<T>, id: impl Fn(&T) -> &str) {
-        let new: Vec<T> = from.into_iter().filter(|f| !to.iter().any(|t| id(t) == id(f))).collect();
-        to.extend(new);
+        for f in from {
+            if !to.iter().any(|t| id(t) == id(&f)) {
+                to.push(f);
+            }
+        }
     }
     for f in fresh {
-        match shown.iter_mut().find(|s| s.title == f.title) {
-            Some(s) => {
-                add(&mut s.songs, f.songs, |x| &x.id);
-                add(&mut s.albums, f.albums, |x| &x.id);
-                add(&mut s.playlists, f.playlists, |x| &x.id);
-                add(&mut s.artists, f.artists, |x| &x.id);
-            }
-            None => shown.push(f),
-        }
+        let at = shown.iter().position(|s| s.title == f.title).unwrap_or_else(|| {
+            shown.push(FeedShelf { title: f.title.clone(), ..Default::default() });
+            shown.len() - 1
+        });
+        let s = &mut shown[at];
+        add(&mut s.songs, f.songs, |x| &x.id);
+        add(&mut s.albums, f.albums, |x| &x.id);
+        add(&mut s.playlists, f.playlists, |x| &x.id);
+        add(&mut s.artists, f.artists, |x| &x.id);
     }
     shown
 }
@@ -512,10 +515,7 @@ impl Client {
         let Page::Feed { v } = self.read_now(Read::HomeFeed).await? else { return Ok(None) };
         let v = {
             let mut home = self.core.home.lock();
-            let v = match home.take() {
-                Some(shown) => merged(shown, v),
-                None => v,
-            };
+            let v = merged(home.take().unwrap_or_default(), v);
             *home = Some(v.clone());
             v
         };
