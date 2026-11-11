@@ -2,8 +2,9 @@
 
 import type { PlaylistChoice } from "./types";
 
-/** A menu's line, or a bare glyph (`lit`: in the accent, a favorite's seal). */
-export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean; lit?: boolean };
+/** A menu's line, or a bare glyph (`lit`: in the accent, a favorite's seal). One that switches a state (the seal)
+ * `turns` into the line that switches it back, and the menu stays open. */
+export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean; lit?: boolean; turns?: () => Item };
 /** What the full player shows beside the cover (on a phone: in its place). */
 export type Pane = "lyrics" | "queue" | "devices";
 /** A menu's head: what it is about (a song: its cover, title and line), the bare glyphs beside its title, and
@@ -82,6 +83,21 @@ class Ui {
   menu(head: Head, groups: Item[][], at: Anchor | undefined = this.last, tools: Item[] = []) {
     this.last = at;
     this.open = { head, tools, groups: groups.filter((g) => g.length), at: at ?? { left: innerWidth / 2, top: innerHeight / 3, right: innerWidth / 2, bottom: innerHeight / 3, point: true } };
+  }
+
+  /** Does the open menu's `it`: a line that switches a state turns in place and the menu stays open, any other
+   * closes it. The line it turned into, if any. */
+  choose(it: Item): Item | undefined {
+    const next = it.turns?.();
+    const m = this.open;
+    if (next && m) {
+      const swap = (items: Item[]) => items.map((x) => (x === it ? next : x));
+      this.open = { ...m, head: m.head && { ...m.head, glyphs: m.head.glyphs && swap(m.head.glyphs) }, tools: swap(m.tools), groups: m.groups.map(swap) };
+    } else {
+      this.open = null;
+    }
+    void it.run();
+    return next;
   }
 
   /** A menu of `items` dropped from the button `e` came from. */

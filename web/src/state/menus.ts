@@ -63,12 +63,23 @@ async function sleepMenu() {
   ui.menu({ title: W.sleepTimer }, [choices.map((c) => ({ label: W.sleepChoice(c.minutes, c.end, c.songs), run: () => ask("sleep_pick", c.minutes, c.end, c.songs) }))]);
 }
 
+/** The seal on song `s`'s menu, `on` what pressing it sets; pressed, it turns and the menu stays open. */
+function seal(s: Song, on: boolean): Item {
+  return {
+    label: on ? W.addToFavorites : W.removeFromFavorites,
+    icon: on ? "seal" : "sealed",
+    lit: !on,
+    run: () => library.change({ kind: "star", what: "song", id: s.id, on }).then(() => player.refresh()),
+    turns: () => seal(s, !on),
+  };
+}
+
 /** What a song menu's action is, or null for one a browser has nothing for (downloads, sharing,
  * details). */
 function item(a: MenuAction, s: Song): Item | null {
   switch (a.action) {
     case "Favourite":
-      return { label: a.on ? W.addToFavorites : W.removeFromFavorites, icon: a.on ? "seal" : "sealed", lit: !a.on, run: () => library.change({ kind: "star", what: "song", id: s.id, on: !!a.on }).then(() => player.refresh()) };
+      return seal(s, !!a.on);
     case "PlayNext":
       return { label: W.playNext, icon: "playlist-play", run: () => player.enqueue([s], true) };
     case "AddToQueue":

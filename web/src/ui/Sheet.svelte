@@ -12,6 +12,8 @@
   const sheet = $derived(ui.open!);
   $effect(() => dialog?.showModal());
   const close = () => (ui.open = null);
+  // The seal just pressed on: it is stamped down.
+  let stamped = $state<Item>();
   /** A click on the backdrop, not on the sheet's own padding (both target the dialog). */
   function backdrop(e: MouseEvent) {
     const r = dialog!.getBoundingClientRect();
@@ -23,10 +25,7 @@
   <button
     class="group-row menu-item"
     disabled={it.disabled}
-    onclick={() => {
-      close();
-      void it.run();
-    }}>{#if it.icon}<Icon name={it.icon} />{/if}<span class="words">{it.label}</span></button
+    onclick={() => ui.choose(it)}>{#if it.icon}<Icon name={it.icon} />{/if}<span class="words">{it.label}</span></button
   >
 {/snippet}
 
@@ -34,13 +33,11 @@
   <button
     class="glyph quiet"
     class:on={it.lit}
+    class:stamp={it === stamped && it.lit}
     aria-label={it.label}
     title={it.label}
     disabled={it.disabled}
-    onclick={() => {
-      close();
-      void it.run();
-    }}><Icon name={it.icon ?? "more-horiz"} /></button
+    onclick={() => (stamped = ui.choose(it))}><Icon name={it.icon ?? "more-horiz"} /></button
   >
 {/snippet}
 

@@ -480,6 +480,17 @@ dialog.card .end {
   position: relative;
 }
 
+/* A seal pressed on is stamped down: it lands from half as big again. */
+.glyph.stamp .icon {
+  animation: stamp 420ms cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+
+@keyframes stamp {
+  from {
+    transform: scale(1.5);
+  }
+}
+
 /* A search or text field: a capsule on the surface with a hairline edge, in the accent while focused. */
 .field {
   width: 100%;
