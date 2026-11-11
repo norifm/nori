@@ -490,6 +490,7 @@ class Say(private val r: Resources) {
     fun profileWaits(name: String, wait: dev.nori.music.ffi.ProfileWait): String = r.getString(
         when (wait) {
             dev.nori.music.ffi.ProfileWait.INSTALL -> R.string.profile_waits_install
+            dev.nori.music.ffi.ProfileWait.UPDATE -> R.string.profile_waits_update
             dev.nori.music.ffi.ProfileWait.TURN_ON -> R.string.profile_waits_turn_on
             dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> R.string.profile_waits_plugins_on
             dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> R.string.profile_waits_no_plugins
@@ -501,7 +502,7 @@ class Say(private val r: Resources) {
         dev.nori.music.ffi.ProfileWait.INSTALL -> r.getString(R.string.profile_wait_install, name)
         dev.nori.music.ffi.ProfileWait.TURN_ON -> r.getString(R.string.profile_wait_turn_on, name)
         dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> r.getString(R.string.profile_wait_plugins_on)
-        dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> null
+        dev.nori.music.ffi.ProfileWait.UPDATE, dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> null
     }
     val addProfile: String get() = r.getString(R.string.settings_add_server)
     val profileIcon: String get() = r.getString(R.string.profile_icon)

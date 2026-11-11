@@ -73,3 +73,49 @@ pub fn fixture(features: &str) -> PathBuf {
     std::fs::copy(here.join("strings/en.toml"), folder.join("strings/en.toml")).unwrap();
     folder
 }
+
+/// The test plugin as nori 0.8 built it, for plugin API 3 (tests/data/test-api3.noriplugin): fixture/ at
+/// d9ac50703, built with `--release --target wasm32-wasip2` and `profile.release` opt-level "z", strip,
+/// LTO and one codegen unit, so it stays small. Its exports are the `@3.0.0` interfaces; it can't run here.
+pub fn older_api_package() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/test-api3.noriplugin")
+}
+
+/// Lays out [`older_api_package`] under plugins folder `dir` as an older nori left it installed: on, from
+/// `repo`, held or not, with a key in its store. Installing refuses it here, so it is written as is.
+pub fn installed_by_an_older_nori(dir: &Path, repo: Option<&str>, held: bool) {
+    let folder = dir.join(FIXTURE);
+    std::fs::create_dir_all(folder.join("strings")).unwrap();
+    let files = crate::package::files(&older_api_package()).unwrap();
+    for (name, bytes) in &files {
+        std::fs::write(folder.join(name), bytes).unwrap();
+    }
+    let wasm = &files.iter().find(|(n, _)| n == "plugin.wasm").unwrap().1;
+    std::fs::write(folder.join(crate::package::MANIFEST), nori_plugin_index::section::custom_section(wasm, "nori:plugin").unwrap()).unwrap();
+    crate::store::Store::new(folder.join("store")).set("kept", b"yes");
+    let entry = crate::IndexEntry { id: FIXTURE.into(), enabled: true, repo: repo.map(Into::into), held, key: None };
+    let index = crate::Index { plugin: vec![entry], repos: repo.into_iter().map(Into::into).collect(), checked_ms: 0 };
+    std::fs::write(dir.join("index.json"), serde_json::to_vec(&index).unwrap()).unwrap();
+}
+
+/// The test plugin built with `features`, as a `.noriplugin`.
+pub fn package(features: &str) -> Vec<u8> {
+    use std::io::Write;
+    let folder = fixture(features);
+    let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for name in ["plugin.wasm", "strings/en.toml"] {
+        z.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        z.write_all(&std::fs::read(folder.join(name)).unwrap()).unwrap();
+    }
+    z.finish().unwrap().into_inner()
+}
+
+/// A repo whose index is at `index` (under https://own.example/), offering the test plugin built now as
+/// `version`, for this API: each URL it answers, with its body.
+pub fn repo_offering(index: &str, version: &str) -> Vec<(String, Vec<u8>)> {
+    use sha2::Digest;
+    let pkg = package("");
+    let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
+    let listed = format!(r#"{{"plugins": [{{"id": "{FIXTURE}", "name": "Test", "versions": [{{"version": "{version}", "api": {}, "url": "t.noriplugin", "sha256": "{sha}"}}]}}]}}"#, crate::API);
+    vec![(index.to_string(), listed.into_bytes()), (nori_plugin_index::resolved(index, "t.noriplugin"), pkg)]
+}

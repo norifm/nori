@@ -352,6 +352,9 @@ pub enum SignInResult {
 pub enum ProfileWait {
     /// Its plugin installed.
     Install,
+    /// Its plugin, built for another nori's plugin API, updated to a version this one runs (looked for
+    /// at once: [`nori_plugins::Plugins::updates_due`]).
+    Update,
     /// Its plugin, installed, turned on.
     TurnOn,
     /// The switch over every plugin turned back on.
@@ -485,11 +488,12 @@ impl Kinds {
         #[cfg(feature = "plugins")]
         if let Some(p) = &self.plugins {
             let has = |list: Vec<nori_plugins::Installed>| list.iter().any(|i| i.manifest.id == id);
-            return match has(p.installed()) {
-                false => Some(ProfileWait::Install),
-                true if has(p.running()) => None,
-                true if p.all_off() => Some(ProfileWait::PluginsOn),
-                true => Some(ProfileWait::TurnOn),
+            return match p.installed().into_iter().find(|i| i.manifest.id == id) {
+                None => Some(ProfileWait::Install),
+                Some(i) if !i.runs_here() => Some(ProfileWait::Update),
+                Some(_) if has(p.running()) => None,
+                Some(_) if p.all_off() => Some(ProfileWait::PluginsOn),
+                Some(_) => Some(ProfileWait::TurnOn),
             };
         }
         let _ = id;

@@ -72,7 +72,9 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
   new case in a variant, breaks every plugin built before it: raise `API` (crates/plugins and the SDK) and
   the package version in `wit/`, then release every plugin. A repo keeps each plugin's older versions, so
   an older nori stays on the ones it runs. An installed plugin built for an older API stays listed, with
-  its store, and updates are looked for at once.
+  its store, but runs nothing (`Installed::runs_here`): its profile waits (`ProfileWait::Update`, which
+  each client says), its update is looked for at once and replaces it even when held, and the profile then
+  opens with it. Tests have the fixture as nori 0.8 built it for API 3 (`testing::older_api_package`).
 - **Install checks first.** A package is unpacked beside the old version and refused when its manifest
   can't be read, its API version is not this host's, its id isn't reverse DNS, it
   overrides a key nori doesn't have, or it imports calls of an interface this host doesn't link
@@ -502,7 +504,7 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
 ```json
 {"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "about": "…", "source": "https://github.com/…",
   "readme": "orbit/README.md", "icon": "orbit/icon.png", "points": ["sound-stage"],
-  "versions": [{"version": "1.2.0", "api": 3, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
+  "versions": [{"version": "1.2.0", "api": 4, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
     "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
 ```
 
@@ -566,6 +568,11 @@ A plugin with a `provider` export adds a kind of profile: `ServerKind::Plugin { 
 A client asks a `Kinds` (`Kinds::with_plugins`, or `Kinds::builtin` without plugins) for the kinds it
 offers, their forms and sign-in, and hands it to each `Core` it opens (`Core::use_kinds`) and its
 transport (`Kinds::set_transport`). See [Providers](providers.md).
+
+Its `rules` name the Library sections it fills, and each is a `read`: Albums `albums` (sort, count,
+offset), Artists `artists` (whole), Songs `songs` (count, offset, in its own order; fewer than asked ends
+the list), Playlists `playlists`, Favorites `starred` (its `found`'s songs, albums and artists). A read
+it has nothing for answers `none`, the empty page.
 
 A provider whose sign-in ways include `code` answers `start-code` with a code, the page the user allows it
 on in any browser where they are signed in, the seconds between checks and, if it knows, how long it lasts,

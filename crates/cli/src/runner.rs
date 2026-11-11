@@ -276,7 +276,9 @@ impl Runner {
         (self.playback, self.queue) = (Playback::Here, None);
         self.waiting = self.root.plugins().kinds.waits(profile.clone()).map(|_| profile.clone());
         if self.waiting.is_some() {
-            // The first screen, where its plugin's line installs it or turns it on.
+            // The first screen, where its plugin's line installs it or turns it on; one built for an older
+            // nori is updated now, and the profile opens once it is (`waited`).
+            self.update_plugins();
             return app.session_ended();
         }
         let name = nori_core::settings::label(&profile.name, &profile.url);

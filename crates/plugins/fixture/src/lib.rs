@@ -19,7 +19,7 @@ use nori_plugin_sdk::sound_stage::{Format, Inputs};
 use nori_plugin_sdk::types::Value;
 use nori_plugin_sdk::slots::{InfoLine, Motion, Sleeve};
 use nori_plugin_sdk::provider;
-use nori_plugin_sdk::types::{Error, Explicit, Found, Item, Song};
+use nori_plugin_sdk::types::{Artist, Error, Explicit, Found, Item, Song};
 use nori_plugin_sdk::{settings, state, store, Glyph, Hooks, ItemKind, Lifecycle, Manifest, MenuAction, Place, Provider, Row, Slot, Slots, SoundStage};
 
 #[derive(Default)]
@@ -145,34 +145,45 @@ impl SoundStage for Test {
     }
 }
 
-/// A profile with no Subsonic server, whose search finds one song named after what was searched and
-/// whose songs stream from allowed.example in parts.
+/// A song titled `title`, starred.
+fn song(title: String) -> Song {
+    Song {
+        id: format!("test-{title}"),
+        title,
+        artist: String::new(),
+        artist_id: None,
+        artists: Vec::new(),
+        album: String::new(),
+        album_id: None,
+        cover: None,
+        duration: 0,
+        track: 0,
+        disc: 0,
+        year: 0,
+        genre: None,
+        // The host's own favorite.
+        starred: true,
+        external: false,
+        explicit: Explicit::Unknown,
+        replay_gain: None,
+        bpm: 0,
+        rating: 0,
+    }
+}
+
+/// The library's songs, in its order.
+const LIBRARY: [&str; 3] = ["one", "two", "three"];
+
+/// A profile with no Subsonic server, whose search finds one song named after what was searched, whose
+/// library is two artists and three songs, and whose songs stream from allowed.example in parts.
 impl Provider for Test {
     fn read(&mut self, request: provider::Request) -> Result<provider::Page, Error> {
-        let provider::Request::Search((query, ..)) = request else { return Ok(provider::Page::None) };
-        let song = Song {
-            id: format!("test-{query}"),
-            title: query,
-            artist: String::new(),
-            artist_id: None,
-            artists: Vec::new(),
-            album: String::new(),
-            album_id: None,
-            cover: None,
-            duration: 0,
-            track: 0,
-            disc: 0,
-            year: 0,
-            genre: None,
-            // The host's own favorite.
-            starred: true,
-            external: false,
-            explicit: Explicit::Unknown,
-            replay_gain: None,
-            bpm: 0,
-            rating: 0,
-        };
-        Ok(provider::Page::Found(Found { songs: vec![song], albums: Vec::new(), artists: Vec::new(), playlists: Vec::new() }))
+        Ok(match request {
+            provider::Request::Search((query, ..)) => provider::Page::Found(Found { songs: vec![song(query)], albums: Vec::new(), artists: Vec::new(), playlists: Vec::new() }),
+            provider::Request::Artists => provider::Page::Artists(["Followed", "Subscribed"].map(|name| Artist { id: format!("test-{name}"), name: name.into(), cover: None, image_url: None, album_count: None, starred: true, external: false }).into()),
+            provider::Request::Songs((count, offset)) => provider::Page::Songs(LIBRARY.iter().skip(offset as usize).take(count as usize).map(|t| song(t.to_string())).collect()),
+            _ => provider::Page::None,
+        })
     }
 
     fn source(&mut self, id: String, _: Option<u32>, _: provider::StreamUse) -> Result<provider::StreamSource, Error> {

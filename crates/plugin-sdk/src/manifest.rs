@@ -262,7 +262,7 @@ pub struct Asset {
 }
 
 /// The plugin API this SDK speaks.
-pub const API: u32 = 3;
+pub const API: u32 = 4;
 /// The section's own format.
 const FORMAT: u8 = 2;
 

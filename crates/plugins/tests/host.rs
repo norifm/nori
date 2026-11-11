@@ -259,14 +259,7 @@ fn a_plugin_needing_what_this_host_lacks_is_refused() {
 
 /// The fixture as a `.noriplugin`.
 fn package() -> Vec<u8> {
-    use std::io::Write;
-    let folder = fixture("");
-    let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    for name in ["plugin.wasm", "strings/en.toml"] {
-        z.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
-        z.write_all(&std::fs::read(folder.join(name)).unwrap()).unwrap();
-    }
-    z.finish().unwrap().into_inner()
+    nori_plugins::testing::package("")
 }
 
 #[test]
@@ -284,8 +277,8 @@ fn a_repo_offers_and_installs_the_version_asked() {
     // Two versions: the newer one's package is not the one listed.
     let index = format!(
         r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [
-            {{"version": "0.2.0", "api": 3, "url": "test-0.2.0.noriplugin", "sha256": "{}"}},
-            {{"version": "0.1.0", "api": 3, "url": "test-0.1.0.noriplugin", "sha256": "{sha}"}}]}}]}}"#,
+            {{"version": "0.2.0", "api": 4, "url": "test-0.2.0.noriplugin", "sha256": "{}"}},
+            {{"version": "0.1.0", "api": 4, "url": "test-0.1.0.noriplugin", "sha256": "{sha}"}}]}}]}}"#,
         "0".repeat(64)
     );
     *session.web.serves.lock().unwrap() = vec![(repo.into(), index.into_bytes()), ("https://friend.example/nori/test-0.2.0.noriplugin".into(), pkg.clone()), ("https://friend.example/nori/test-0.1.0.noriplugin".into(), pkg)];
@@ -315,7 +308,7 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     plugins.add_repo(other.into());
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
-    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "about": "Loud covers", "readme": "t.md", "icon": "t.png", "points": ["provider"], "versions": [{{"version": "{v}", "api": 3, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
+    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "about": "Loud covers", "readme": "t.md", "icon": "t.png", "points": ["provider"], "versions": [{{"version": "{v}", "api": 4, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
     let serve = |mine: &str| {
         *session.web.serves.lock().unwrap() = vec![
             (own.to_string(), index(mine)),
@@ -369,7 +362,7 @@ fn offers_read_earlier_follow_what_is_installed() {
     plugins.add_repo(own.into());
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
-    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{{"version": "{v}", "api": 3, "url": "t.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
+    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{{"version": "{v}", "api": 4, "url": "t.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
     *session.web.serves.lock().unwrap() = vec![(other.to_string(), index("9.0.0")), (own.to_string(), index("9.0.0")), ("https://own.example/t.noriplugin".to_string(), pkg.clone())];
 
     let mut offers = nori_tasks::block_on(plugins.offers()).offers;
@@ -394,28 +387,36 @@ fn offers_read_earlier_follow_what_is_installed() {
     assert!(offers.iter().all(|o| o.installed.is_none()));
 }
 
+/// A plugin an older nori installed, built for its API (the real build, `testing::older_api_package`),
+/// stays listed with its store but runs nothing: no instance of it is tried. Its update is looked for at
+/// once and replaces it, though it is held, with the newest version its repo has for this API, even one
+/// numbered as it is; then it runs.
 #[test]
-fn a_plugin_built_for_an_older_api_stays_listed_and_asks_for_its_update() {
+fn a_plugin_built_for_an_older_api_runs_nothing_until_its_update_replaces_it() {
     let dir = nori_testdir::TempDir::new("plugins-old-api");
-    let open = || {
-        nori_plugins::testing::marks_released(dir.path());
-        Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()))
-    };
-    let plugins = open();
-    plugins.install(&fixture("")).unwrap();
-    let (at, api) = (ID.len() + plugins.installed()[0].manifest.version.len() + 5, plugins.installed()[0].manifest.api);
-    assert!(!plugins.updates_due(0), "nothing waits");
-    drop(plugins);
-
-    let file = dir.path().join(ID).join("manifest.bin");
-    let mut manifest = std::fs::read(&file).unwrap();
-    assert_eq!(manifest[at..at + 4], api.to_le_bytes(), "the format, id and version come first");
-    manifest[at..at + 4].copy_from_slice(&(api - 1).to_le_bytes());
-    std::fs::write(&file, manifest).unwrap();
-
-    let plugins = open();
-    assert_eq!(plugins.installed().iter().map(|i| i.manifest.id.as_str()).collect::<Vec<_>>(), [ID], "its store isn't lost");
+    let repo = "https://own.example/index.json";
+    nori_plugins::testing::installed_by_an_older_nori(dir.path(), Some(repo), true);
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    let listed = plugins.installed();
+    assert_eq!(listed.iter().map(|i| (i.manifest.id.as_str(), i.manifest.api, i.enabled, i.held)).collect::<Vec<_>>(), [(ID, 3, true, true)], "listed as it was");
+    assert!(!listed[0].runs_here());
+    assert!(plugins.running().is_empty() && plugins.worker(ID).is_none(), "it runs nothing");
     assert!(plugins.updates_due(0), "looked for at once, not within a day");
+
+    let version = listed[0].manifest.version.clone();
+    *session.web.serves.lock().unwrap() = nori_plugins::testing::repo_offering(repo, &version);
+    plugins.set_transport(Some(session.web.clone()));
+    let updated = nori_tasks::block_on(plugins.update(0));
+    assert_eq!(updated.iter().map(|u| (u.id.as_str(), u.to.as_str())).collect::<Vec<_>>(), [(ID, version.as_str())]);
+    let now = plugins.installed();
+    assert!(now[0].runs_here() && now[0].held && now[0].enabled, "still held, still on");
+    assert_eq!(std::fs::read_dir(dir.path().join(ID).join("store")).unwrap().count(), 1, "its store kept");
+    assert_eq!(plugins.running().len(), 1);
+    let w = plugins.worker(ID).expect("it runs");
+    let page = nori_tasks::block_on(w.call(|s, x| x.nori_plugin_provider().call_read(s, &nori_plugins::wit::provider::Request::Artists)));
+    assert!(matches!(page, Some(Ok(nori_plugins::wit::provider::Page::Artists(a))) if a.len() == 2), "it answers");
+    assert!(!plugins.updates_due(0), "nothing waits now");
 }
 
 #[test]
@@ -431,7 +432,7 @@ fn updates_come_daily_from_a_plugins_own_repo_unless_held() {
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
     let index = |versions: &[&str]| {
-        let v: Vec<String> = versions.iter().map(|v| format!(r#"{{"version": "{v}", "api": 3, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}"#)).collect();
+        let v: Vec<String> = versions.iter().map(|v| format!(r#"{{"version": "{v}", "api": 4, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}"#)).collect();
         format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{}]}}]}}"#, v.join(",")).into_bytes()
     };
     let serve = |own_versions: &[&str]| {
@@ -565,8 +566,8 @@ fn the_key_a_plugin_is_first_signed_by_signs_every_update() {
     plugins.add_repo(repo.into());
     let pkg = package();
     let ((sha, a, by_a), (_, b, by_b)) = (signed(&pkg, 1), signed(&pkg, 2));
-    let listed = |v: &str, key: &str, signature: &str| format!(r#"{{"version": "{v}", "api": 3, "url": "t-{v}.noriplugin", "sha256": "{sha}", "key": "{key}", "signature": "{signature}"}}"#);
-    let versions = [listed("0.1.0", &a, &by_a), listed("0.2.0", &a, &by_b), listed("0.3.0", &b, &by_b), format!(r#"{{"version": "0.4.0", "api": 3, "url": "t-0.4.0.noriplugin", "sha256": "{sha}"}}"#)];
+    let listed = |v: &str, key: &str, signature: &str| format!(r#"{{"version": "{v}", "api": 4, "url": "t-{v}.noriplugin", "sha256": "{sha}", "key": "{key}", "signature": "{signature}"}}"#);
+    let versions = [listed("0.1.0", &a, &by_a), listed("0.2.0", &a, &by_b), listed("0.3.0", &b, &by_b), format!(r#"{{"version": "0.4.0", "api": 4, "url": "t-0.4.0.noriplugin", "sha256": "{sha}"}}"#)];
     let mut serves = vec![(repo.to_string(), format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{}]}}]}}"#, versions.join(",")).into_bytes())];
     serves.extend(["0.1.0", "0.2.0", "0.3.0", "0.4.0"].map(|v| (format!("https://friend.example/t-{v}.noriplugin"), pkg.clone())));
     *session.web.serves.lock().unwrap() = serves;
