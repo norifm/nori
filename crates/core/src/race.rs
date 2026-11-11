@@ -279,6 +279,7 @@ impl Client {
 
     /// Song `id`'s lyrics looked up with the services `asked` and shown to `shown` up to the check against
     /// its voice, as no other device's.
+    #[cfg(any(test, feature = "plugins"))]
     pub(crate) async fn lyrics_found(&self, id: String, asked: &LyricsLookup, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
         self.lyrics_for_with(id.clone(), asked, &Screen::new(shown, self.core.clone(), id, false)).await
     }
