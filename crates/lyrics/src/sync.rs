@@ -4,6 +4,8 @@
 //! better) with its confidence, put where the line starts sit nearest the voice's onsets, and drift (two
 //! parts of the song wanting different offsets: another version's timing). The result is a
 //! [`SyncKind`]; trust.rs weighs the score and a sure offset is applied when the lyrics are shown.
+//! Lines the voice's movement places nowhere (a rapped voice the curve loses to a melodic beat) may still be
+//! moved by the voice band's loudness ([`LOUD_SCORE`]).
 
 use nori_model::Lyrics;
 use nori_player::automix::vocal::VocalCurve;
@@ -32,7 +34,7 @@ const PART_GAIN: f64 = 0.1;
 const NEAR_TIE: f64 = 0.75;
 /// Word-timed lyrics are moved only when it raises their words' contrast (activity 0 to 1 inside them less
 /// around them) by this much: the rise at the line starts alone follows a band that comes in a beat before
-/// the voice. Line-timed spans are guessed, too loosely to say.
+/// the voice. Line-timed spans are guessed, too loosely to say: those are moved only when it raises the score.
 const SPAN_GAIN: f64 = 0.02;
 /// Any move must lift the fit by this many times its spread at shifts over [`NOISE_APART_S`] from the best:
 /// less is within the noise of a busy band. Both tuned on 22 songs of real audio (testdata/sync).
@@ -75,6 +77,10 @@ const QUIET: f32 = 0.2;
 const SUNG: f32 = 0.5;
 /// Stretches of singing with no line count against the lyrics only when at least this long.
 const UNCOVERED_S: f64 = 3.0;
+/// Lines the voice's movement leaves unsure are moved by the loudness only to where they score this much: the
+/// loudness hears a busy band as well as the voice. Over 36 songs (testdata/sync's and 14 rap songs) another
+/// song's lines score this on 7 % of 2520 pairs, a song's own lines on two thirds.
+const LOUD_SCORE: f64 = 0.8;
 
 /// What the check made of the lyrics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,12 +182,13 @@ fn percentile(v: &[f32], p: f64) -> f32 {
 }
 
 impl Voice {
-    fn new(c: &VocalCurve) -> Option<Self> {
+    /// One of the curve's rows, its movement or its loudness.
+    fn new(c: &VocalCurve, row: &[u8]) -> Option<Self> {
         let fps = c.fps as f64;
-        if fps.is_nan() || fps <= 0.0 || c.level.len() < (fps * 20.0) as usize {
+        if fps.is_nan() || fps <= 0.0 || row.len() < (fps * 20.0) as usize {
             return None;
         }
-        let raw: Vec<f32> = c.level.iter().map(|v| *v as f32).collect();
+        let raw: Vec<f32> = row.iter().map(|v| *v as f32).collect();
         let smooth = box_mean(&raw, (0.08 * fps).round() as usize);
         // 0 is the song's quiet stretches, 1 its busiest singing; saturating lower makes a busy band fit anywhere.
         let (lo, hi) = (percentile(&smooth, 0.15), percentile(&smooth, 0.9));
@@ -533,24 +540,35 @@ struct Drift {
     gain: f64,
 }
 
-/// Checks timed lyrics against a song's vocal curve; none for untimed lyrics or a curve too short or
+/// Checks timed lyrics against a song's vocal curve; none for untimed lyrics. Unsure for a curve too short or
 /// too flat to say anything.
 pub fn check(l: &Lyrics, curve: &VocalCurve) -> Option<SyncCheck> {
     if !l.synced {
         return None;
     }
-    let unsure = SyncCheck { kind: SyncKind::Unsure, score: 0.0, best_score: 0.0, offset_ms: 0, confidence: 0.0, drift_ms: 0 };
-    let Some(v) = Voice::new(curve) else { return Some(unsure) };
-    let spans = spans(l, &v);
-    let starts = starts(l, &spans, &v);
+    let against = |row: &[u8]| Voice::new(curve, row).map_or(UNSURE, |v| check_voice(l, &v));
+    let moved = against(&curve.level);
+    if moved.kind != SyncKind::Unsure {
+        return Some(moved);
+    }
+    let loud = against(&curve.loudness);
+    Some(if loud.kind == SyncKind::Shifted && loud.score >= LOUD_SCORE { loud } else { moved })
+}
+
+const UNSURE: SyncCheck = SyncCheck { kind: SyncKind::Unsure, score: 0.0, best_score: 0.0, offset_ms: 0, confidence: 0.0, drift_ms: 0 };
+
+/// [`check`] against one of the curve's rows.
+fn check_voice(l: &Lyrics, v: &Voice) -> SyncCheck {
+    let spans = spans(l, v);
+    let starts = starts(l, &spans, v);
     if starts.len() < MIN_LINES {
-        return Some(unsure);
+        return UNSURE;
     }
     let frames = |ms: i64| (ms as f64 / 1000.0 * v.fps).round() as i64;
-    let fits = slide(&v, &spans, &starts, frames(WIDE_REACH_MS));
-    let (near, _, near_sure) = peak(&v, &fits, frames(REACH_MS) as usize);
-    let (wide, _, wide_sure) = peak(&v, &fits, fits.len() / 2);
-    let onsets = onsets(&v);
+    let fits = slide(v, &spans, &starts, frames(WIDE_REACH_MS));
+    let (near, _, near_sure) = peak(v, &fits, frames(REACH_MS) as usize);
+    let (wide, _, wide_sure) = peak(v, &fits, fits.len() / 2);
+    let onsets = onsets(v);
     let rested: Vec<f64> = starts.iter().filter(|(_, run_on)| !run_on).map(|(f, _)| *f).collect();
     let refine = |coarse| refine(v.fps, &onsets, &rested, coarse);
     // Beyond the reach only when it clearly fits better and the lines start at the voice's onsets there;
@@ -564,31 +582,31 @@ pub fn check(l: &Lyrics, curve: &VocalCurve) -> Option<SyncCheck> {
         }
     };
     // Neither is sure when a smaller move fits nearly as well.
-    let (shift, confidence) = nearer_peak(&v, &fits, shift).map_or((shift, confidence), |s| (refine(s).0, 0.0));
+    let (shift, confidence) = nearer_peak(v, &fits, shift).map_or((shift, confidence), |s| (refine(s).0, 0.0));
     // Lines in place sit later than the fit by the curve's lag, and line-timed ones also lead the voice.
     let bias_ms = LAG_MS + if l.word_timed { 0 } else { LINE_LEAD_MS };
     let offset_ms = bias_ms - (shift / v.fps * 1000.0).round() as i64;
     let at = bias_ms as f64 / 1000.0 * v.fps;
-    let given = score_at(&v, &spans, &starts, at);
-    let clear_move = (!l.word_timed || cues(&v, &spans, &starts, shift).0 - cues(&v, &spans, &starts, at).0 >= SPAN_GAIN) && lift(&v, &fits, &spans, &starts, at, shift) >= MIN_LIFT_SD;
-    let best_score = score_at(&v, &spans, &starts, shift).max(given);
+    let given = score_at(v, &spans, &starts, at);
+    let clear_move = (!l.word_timed || cues(v, &spans, &starts, shift).0 - cues(v, &spans, &starts, at).0 >= SPAN_GAIN) && lift(v, &fits, &spans, &starts, at, shift) >= MIN_LIFT_SD;
+    let best_score = score_at(v, &spans, &starts, shift).max(given);
     // What any timing scores here: the lines slid 7 to 23 s off.
     let far = [-23.0, -19.0, -17.0, -13.0, -11.0, -7.0, 7.0, 11.0, 13.0, 17.0, 19.0, 23.0];
-    let null = far.iter().map(|s| score_at(&v, &spans, &starts, shift + s * v.fps)).sum::<f64>() / far.len() as f64;
-    let drift_ms = drift(&v, &spans, &starts, shift).filter(|d| d.sure >= PART_SURE && d.gain >= PART_GAIN).map_or(0, |d| d.ms);
+    let null = far.iter().map(|s| score_at(v, &spans, &starts, shift + s * v.fps)).sum::<f64>() / far.len() as f64;
+    let drift_ms = drift(v, &spans, &starts, shift).filter(|d| d.sure >= PART_SURE && d.gain >= PART_GAIN).map_or(0, |d| d.ms);
     let kind = if best_score < POOR || best_score - null < LIFT {
         SyncKind::Poor
     } else if drift_ms.abs() >= DRIFT_MS {
         SyncKind::Drifts
-    } else if offset_ms.abs() >= OFFSET_MIN_MS && confidence >= OFFSET_SURE && best_score > given && clear_move {
+    } else if offset_ms.abs() >= OFFSET_MIN_MS && confidence >= OFFSET_SURE && (l.word_timed || best_score > given) && clear_move {
         SyncKind::Shifted
-    } else if fit(&v, &spans, &starts, at) > noise(&v, &fits, at).0 {
+    } else if fit(v, &spans, &starts, at) > noise(v, &fits, at).0 {
         SyncKind::Fits
     } else {
         SyncKind::Unsure
     };
     let score = if kind == SyncKind::Shifted { best_score } else { given };
-    Some(SyncCheck { kind, score, best_score, offset_ms, confidence, drift_ms })
+    SyncCheck { kind, score, best_score, offset_ms, confidence, drift_ms }
 }
 
 #[cfg(test)]
@@ -713,7 +731,7 @@ pub(crate) mod tests {
         assert_eq!(check(&plain, &curve), None, "untimed words are not checked");
         let few = Lyrics { lines: plain.lines[..3].to_vec(), synced: true, ..plain.clone() };
         assert_eq!(check(&few, &curve).map(|c| c.kind), Some(SyncKind::Unsure), "three lines say too little");
-        let flat = VocalCurve { fps: curve.fps, t0: curve.t0, level: vec![40; curve.level.len()] };
+        let flat = VocalCurve { fps: curve.fps, t0: curve.t0, level: vec![40; curve.level.len()], ..Default::default() };
         let unsure = check(&lyrics(&phrases, false, false, &|t| t), &flat);
         assert_eq!(unsure.map(|c| c.kind), Some(SyncKind::Unsure), "a curve with no voice in it says nothing");
         assert_eq!(timing(unsure), nori_model::LyricsTiming::Unsure, "checked, not left as not checked yet");
@@ -750,6 +768,11 @@ pub(crate) mod tests {
             let (curve, phrases, _) = sung(song);
             let exact = lyrics(&phrases, false, false, &|t| t);
             let heard = check(&exact, &curve).unwrap().offset_ms;
+            // Lines the movement leaves unsure are moved by the loudness, which hears this voice (no consonant)
+            // sooner: such a move is measured from where the loudness hears the exact lines.
+            let movement = VocalCurve { loudness: Vec::new(), ..curve.clone() };
+            let loudness = VocalCurve { level: curve.loudness.clone(), loudness: Vec::new(), ..curve.clone() };
+            let heard_loud = check(&exact, &loudness).unwrap().offset_ms;
             if song.name == "pop" {
                 assert!((-150..=0).contains(&heard), "the pop song's curve hears the voice at most 150 ms late (see `fits`): {heard}");
             }
@@ -784,7 +807,8 @@ pub(crate) mod tests {
                 // The busy band may pass a move up: left as it is, unsure where the lines fit no better than slid off.
                 let passed_up = song.name == "busy" && want == SyncKind::Shifted && matches!(c.kind, SyncKind::Fits | SyncKind::Unsure);
                 assert!(c.kind == want || passed_up, "{}, {name}: {c:?}", song.name);
-                assert!(passed_up || (c.offset_ms - heard - late).abs() <= within, "{}, {name}: {late} ms late read as {c:?}", song.name);
+                let from = if check(&l, &movement).unwrap().kind == SyncKind::Unsure { heard_loud } else { heard };
+                assert!(passed_up || (c.offset_ms - from - late).abs() <= within, "{}, {name}: {late} ms late read as {c:?}", song.name);
             }
             let mid = phrases[phrases.len() / 2][0].0;
             for late in [-1.2, 1.5] {
@@ -811,7 +835,7 @@ pub(crate) mod tests {
             LyricLine { start_ms, end_ms: start_ms + 3_600, text: "lomira teshvan korupel".into(), ..Default::default() }
         };
         let late = Lyrics { synced: true, lines: (0..lines).map(line).collect(), ..Default::default() };
-        let c = check(&late, &VocalCurve { fps: fps as f32, t0: 0.0, level }).unwrap();
+        let c = check(&late, &VocalCurve { fps: fps as f32, t0: 0.0, level, ..Default::default() }).unwrap();
         assert!((0..=500).contains(&c.applied_ms()), "half a second late, not a line early: {c:?}");
     }
 
@@ -835,7 +859,7 @@ pub(crate) mod tests {
             let words = (0..5).map(|w| LyricWord { start_ms: start_ms + w * 900, end_ms: start_ms + w * 900 + 800, start: 7 * w as u32, end: 7 * w as u32 + 6 }).collect();
             lines.push(LyricLine { start_ms, end_ms: start_ms + 4_400, text: "lomira teshva korupe sumida netori".into(), words, ..Default::default() });
         }
-        let c = check(&Lyrics { synced: true, word_timed: true, lines, ..Default::default() }, &VocalCurve { fps: fps as f32, t0: 0.0, level }).unwrap();
+        let c = check(&Lyrics { synced: true, word_timed: true, lines, ..Default::default() }, &VocalCurve { fps: fps as f32, t0: 0.0, level, ..Default::default() }).unwrap();
         assert_eq!(c.applied_ms(), 0, "{c:?}");
     }
 
@@ -862,14 +886,18 @@ pub(crate) mod tests {
         (curve, answers.collect())
     }
 
-    /// On X Gon' Give It To Ya (testdata/unheard/xgon, YouTube Music's Opus stream) the band reads as loud on the curve
-    /// as the rapped voice (its instrumental and its vocals, apart through HT-Demucs, about alike), so Kugou's lines,
-    /// about 450 ms late against the vocals alone, fit no better where they are than slid off: not on time, unsure.
+    /// On X Gon' Give It To Ya (testdata/rap/xgon, YouTube Music's Opus stream) the curve's movement follows the
+    /// beat's riff more often than the rapped voice, so Kugou's lines (about 450 ms late against the vocals alone,
+    /// through HT-Demucs, word onset by word onset) fit no better where they are than slid off: unsure. The voice
+    /// band's loudness places them.
     #[test]
-    fn lines_the_voice_does_not_place_are_unsure() {
-        let (curve, answers) = real_song("unheard/xgon");
-        let (_, kugou, _) = &answers[0];
-        assert_eq!(timing(check(kugou, &curve)), nori_model::LyricsTiming::Unsure, "{:?}", check(kugou, &curve));
+    fn rap_the_movement_cannot_place_is_placed_by_the_loudness() {
+        let (curve, answers) = real_song("rap/xgon");
+        let (_, kugou, truth) = &answers[0];
+        let moved = VocalCurve { loudness: Vec::new(), ..curve.clone() };
+        assert_eq!(timing(check(kugou, &moved)), nori_model::LyricsTiming::Unsure, "by the movement alone: {:?}", check(kugou, &moved));
+        let c = check(kugou, &curve).unwrap();
+        assert!(c.kind == SyncKind::Shifted && (c.offset_ms - truth).abs() <= 150, "{truth} ms late read as {c:?}");
     }
 
     /// 22 real songs (testdata/sync): each one's vocal curve, and every lyrics service's answer for it as
