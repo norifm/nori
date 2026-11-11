@@ -79,7 +79,8 @@ const UNCOVERED_S: f64 = 3.0;
 /// What the check made of the lyrics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncKind {
-    /// Too little to go on: few timed lines, or a song with no voice the curve could find.
+    /// Too little to go on: few timed lines, a song with no voice the curve could find, or lines that fit no
+    /// better where they are than slid off (a band the curve hears as loud as the voice).
     Unsure,
     /// The lines start where the voice does.
     Fits,
@@ -347,14 +348,20 @@ fn peak(v: &Voice, fits: &[f64], within: usize) -> (f64, f64, f64) {
     (i as f64 - reach as f64 + frac, best, confidence)
 }
 
+/// The mean and spread of `fits` (from [`slide`]) at the shifts more than [`NOISE_APART_S`] from `around` (frames):
+/// what the lines score slid off.
+fn noise(v: &Voice, fits: &[f64], around: f64) -> (f64, f64) {
+    let center = (fits.len() / 2) as f64;
+    let far: Vec<f64> = fits.iter().enumerate().filter(|(i, _)| (*i as f64 - center - around).abs() > NOISE_APART_S * v.fps).map(|(_, f)| *f).collect();
+    let n = far.len().max(1) as f64;
+    let mean = far.iter().sum::<f64>() / n;
+    (mean, (far.iter().map(|f| (f - mean).powi(2)).sum::<f64>() / n).sqrt())
+}
+
 /// How much better `spans` fit at `shift` than at `at` (frames), in standard deviations of `fits` (from
 /// [`slide`]) more than [`NOISE_APART_S`] from `shift`.
 fn lift(v: &Voice, fits: &[f64], spans: &[Span], starts: &[(f64, bool)], at: f64, shift: f64) -> f64 {
-    let center = (fits.len() / 2) as f64;
-    let far: Vec<f64> = fits.iter().enumerate().filter(|(i, _)| (*i as f64 - center - shift).abs() > NOISE_APART_S * v.fps).map(|(_, f)| *f).collect();
-    let n = far.len().max(1) as f64;
-    let mean = far.iter().sum::<f64>() / n;
-    let sd = (far.iter().map(|f| (f - mean).powi(2)).sum::<f64>() / n).sqrt();
+    let (_, sd) = noise(v, fits, shift);
     (fit(v, spans, starts, shift) - fit(v, spans, starts, at)) / sd.max(1e-9)
 }
 
@@ -575,8 +582,10 @@ pub fn check(l: &Lyrics, curve: &VocalCurve) -> Option<SyncCheck> {
         SyncKind::Drifts
     } else if offset_ms.abs() >= OFFSET_MIN_MS && confidence >= OFFSET_SURE && best_score > given && clear_move {
         SyncKind::Shifted
-    } else {
+    } else if fit(&v, &spans, &starts, at) > noise(&v, &fits, at).0 {
         SyncKind::Fits
+    } else {
+        SyncKind::Unsure
     };
     let score = if kind == SyncKind::Shifted { best_score } else { given };
     Some(SyncCheck { kind, score, best_score, offset_ms, confidence, drift_ms })
@@ -772,7 +781,8 @@ pub(crate) mod tests {
             for (name, l, late, within) in cases {
                 let c = check(&l, &curve).unwrap();
                 let want = if c.offset_ms.abs() >= OFFSET_MIN_MS { SyncKind::Shifted } else { SyncKind::Fits };
-                let passed_up = song.name == "busy" && want == SyncKind::Shifted && c.kind == SyncKind::Fits;
+                // The busy band may pass a move up: left as it is, unsure where the lines fit no better than slid off.
+                let passed_up = song.name == "busy" && want == SyncKind::Shifted && matches!(c.kind, SyncKind::Fits | SyncKind::Unsure);
                 assert!(c.kind == want || passed_up, "{}, {name}: {c:?}", song.name);
                 assert!(passed_up || (c.offset_ms - heard - late).abs() <= within, "{}, {name}: {late} ms late read as {c:?}", song.name);
             }
@@ -833,27 +843,47 @@ pub(crate) mod tests {
     /// about 400 ms late against this recording's voice.
     const DOUBTFUL: [&str; 1] = ["teardrop"];
 
+    const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata");
+
+    /// A real song's vocal curve (testdata/`path`) and each service's answer: the service, its lines with the words
+    /// left out, and how late it truly runs.
+    fn real_song(path: &str) -> (VocalCurve, Vec<(String, Lyrics, i64)>) {
+        let curve = VocalCurve::decode(&std::fs::read(format!("{TESTDATA}/{path}.curve")).unwrap()).unwrap();
+        let answers: Vec<serde_json::Value> = serde_json::from_str(&std::fs::read_to_string(format!("{TESTDATA}/{path}.json")).unwrap()).unwrap();
+        let answers = answers.iter().map(|a| {
+            let lines = a["lines"].as_array().unwrap().iter().map(|l| {
+                let ms = |v: &serde_json::Value| v.as_i64().unwrap();
+                let words = l[4].as_array().unwrap().iter().map(|w| LyricWord { start_ms: ms(&w[0]), end_ms: ms(&w[1]), start: 0, end: 0 }).collect();
+                LyricLine { start_ms: ms(&l[0]), end_ms: ms(&l[1]), text: "x".repeat(l[2].as_u64().unwrap() as usize), background: l[3].as_bool().unwrap(), words, ..Default::default() }
+            });
+            let lyrics = Lyrics { synced: true, word_timed: a["word_timed"].as_bool().unwrap(), lines: lines.collect(), ..Default::default() };
+            (a["service"].as_str().unwrap().to_string(), lyrics, a["truth_ms"].as_i64().unwrap())
+        });
+        (curve, answers.collect())
+    }
+
+    /// On X Gon' Give It To Ya (testdata/unheard/xgon, YouTube Music's Opus stream) the band reads as loud on the curve
+    /// as the rapped voice (its instrumental and its vocals, apart through HT-Demucs, about alike), so Kugou's lines,
+    /// about 450 ms late against the vocals alone, fit no better where they are than slid off: not on time, unsure.
+    #[test]
+    fn lines_the_voice_does_not_place_are_unsure() {
+        let (curve, answers) = real_song("unheard/xgon");
+        let (_, kugou, _) = &answers[0];
+        assert_eq!(timing(check(kugou, &curve)), nori_model::LyricsTiming::Unsure, "{:?}", check(kugou, &curve));
+    }
+
     /// 22 real songs (testdata/sync): each one's vocal curve, and every lyrics service's answer for it as
     /// line and word times with the words left out, with how late it truly runs (its lines against Apple
     /// Music's word timing of the same words; on Smells Like Teen Spirit, Unison's, as BiniLyrics' runs a second
     /// before the voice the spectrogram shows). A move more than 300 ms from the truth is wrong.
     #[test]
     fn real_songs_are_moved_only_when_right() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/sync");
-        let mut keys: Vec<String> = std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok()?.file_name().to_str()?.strip_suffix(".curve").map(str::to_string)).collect();
+        let mut keys: Vec<String> = std::fs::read_dir(format!("{TESTDATA}/sync")).unwrap().filter_map(|e| e.ok()?.file_name().to_str()?.strip_suffix(".curve").map(str::to_string)).collect();
         keys.sort();
         let (mut errors, mut wrong, mut doubtful_wrong, mut right, mut missed) = (Vec::new(), Vec::new(), 0, 0, 0);
         for key in &keys {
-            let curve = VocalCurve::decode(&std::fs::read(format!("{dir}/{key}.curve")).unwrap()).unwrap();
-            let answers: Vec<serde_json::Value> = serde_json::from_str(&std::fs::read_to_string(format!("{dir}/{key}.json")).unwrap()).unwrap();
-            for a in &answers {
-                let lines = a["lines"].as_array().unwrap().iter().map(|l| {
-                    let ms = |v: &serde_json::Value| v.as_i64().unwrap();
-                    let words = l[4].as_array().unwrap().iter().map(|w| LyricWord { start_ms: ms(&w[0]), end_ms: ms(&w[1]), start: 0, end: 0 }).collect();
-                    LyricLine { start_ms: ms(&l[0]), end_ms: ms(&l[1]), text: "x".repeat(l[2].as_u64().unwrap() as usize), background: l[3].as_bool().unwrap(), words, ..Default::default() }
-                });
-                let lyrics = Lyrics { synced: true, word_timed: a["word_timed"].as_bool().unwrap(), lines: lines.collect(), ..Default::default() };
-                let truth = a["truth_ms"].as_i64().unwrap();
+            let (curve, answers) = real_song(&format!("sync/{key}"));
+            for (service, lyrics, truth) in answers {
                 let c = check(&lyrics, &curve);
                 let applied = c.map_or(0, |c| c.applied_ms());
                 let off = (applied - truth).abs();
@@ -863,7 +893,7 @@ pub(crate) mod tests {
                 }
                 match c.map(|c| c.kind) {
                     Some(SyncKind::Shifted) if off > 300 && DOUBTFUL.contains(&key.as_str()) => doubtful_wrong += 1,
-                    Some(SyncKind::Shifted) if off > 300 => wrong.push(format!("{key} {}: {truth} ms late, moved {applied}", a["service"])),
+                    Some(SyncKind::Shifted) if off > 300 => wrong.push(format!("{key} {service}: {truth} ms late, moved {applied}")),
                     Some(SyncKind::Shifted) if truth.abs() > 300 => right += 1,
                     Some(SyncKind::Shifted) => {}
                     _ if truth.abs() > 300 && truth.abs() <= WIDE_REACH_MS => missed += 1,
