@@ -1,7 +1,7 @@
 //! The app's four themes, one per season, each a small palette of traditional Japanese colors in light
 //! and dark, and the rule that follows the calendar from one to the next.
 
-use crate::color::{calculate_contrast, color_to_hsl, hsl_to_color, luminance, Oklab, BLACK};
+use crate::color::{blue, calculate_contrast, from_floats, green, hsl_of, luminance, red, rgb_of, Oklab, BLACK};
 use crate::compose::{blend, veil};
 use crate::dress::ink_on;
 
@@ -277,21 +277,63 @@ impl Dye {
         self.palette
     }
 
-    /// A color of the cover's wash dyed as the page is ([`dyed`]), or the page where its quiet text would
-    /// not read on it.
+    /// A color of the cover's wash dyed as the page is ([`dyed`]).
     pub fn wash(&self, c: u32) -> u32 {
-        let w = dyed(c, self.paper, self.dark, &self.ok);
-        if calculate_contrast(self.quiet, w) >= 4.5 { w } else { self.palette.page }
+        to_color(self.wash_of(channels(c)))
+    }
+
+    /// The cover's wash ([`crate::cover::WASH_OUT`] pixels a side) dyed as the page is, in place. It is
+    /// dyed on the wash's own grid at full precision and dithered once: rounded pixel by pixel, the dye
+    /// falls into bands, and the wash's dither turns a near grey's hue into speckles.
+    pub fn dye_wash(&self, wash: &mut [u32]) {
+        let grid: Vec<[f32; 3]> = crate::cover::grid_of(wash)
+            .into_iter()
+            .map(|c| self.wash_of(c.map(|v| v / 255.0)).map(|v| v * 255.0))
+            .collect();
+        wash.copy_from_slice(&crate::cover::smooth(&grid));
+    }
+
+    /// [`Dye::wash`] of channels 0..1: where the page's quiet text would not read on it, moved towards the
+    /// page just as far as it must, so the wash eases into the page instead of breaking into patches of it.
+    fn wash_of(&self, c: [f32; 3]) -> [f32; 3] {
+        let w = dyed_of(c, self.paper, self.dark, &self.ok);
+        let page = channels(self.palette.page);
+        let towards = |t: f32| -> [f32; 3] { std::array::from_fn(|i| w[i] + (page[i] - w[i]) * t) };
+        let reads = |t: f32| calculate_contrast(self.quiet, to_color(towards(t))) >= 4.5;
+        if reads(0.0) {
+            return w;
+        }
+        let (mut short, mut far) = (0f32, 1f32);
+        for _ in 0..12 {
+            let t = (short + far) / 2.0;
+            if reads(t) { far = t } else { short = t }
+        }
+        towards(far)
     }
 }
 
+/// An opaque color's channels, 0..1.
+fn channels(c: u32) -> [f32; 3] {
+    [red(c), green(c), blue(c)].map(|v| v as f32 / 255.0)
+}
+
+fn to_color([r, g, b]: [f32; 3]) -> u32 {
+    from_floats(r, g, b)
+}
+
 /// `c` brought to the depth of the `paper` (`dark` or light), keeping its hue and some of its saturation,
-/// and mixed into it. A grey's hue is noise, so it gives no saturation ([`crate::cover::own_tint`]).
+/// and mixed into it.
 fn dyed(c: u32, paper: u32, dark: bool, ok: &Oklab) -> u32 {
-    let [h, s, _] = color_to_hsl(c);
-    let own = crate::cover::own_tint(ok.lightness_chroma(c).1);
-    let toned = if dark { [h, (s * own).min(0.45), 0.11] } else { [h, (s * own).clamp(0.2 * own, 0.5), 0.86] };
-    blend(paper, hsl_to_color(toned), DYE)
+    to_color(dyed_of(channels(c), paper, dark, ok))
+}
+
+/// [`dyed`] of channels 0..1. A grey's hue is noise, so it gives no saturation ([`crate::cover::own_tint`]).
+fn dyed_of(c: [f32; 3], paper: u32, dark: bool, ok: &Oklab) -> [f32; 3] {
+    let [h, s, _] = hsl_of(c);
+    let own = crate::cover::own_tint(ok.lightness_chroma_of(c).1);
+    let toned = rgb_of(if dark { [h, (s * own).min(0.45), 0.11] } else { [h, (s * own).clamp(0.2 * own, 0.5), 0.86] });
+    let paper = channels(paper);
+    std::array::from_fn(|i| paper[i] + (toned[i] - paper[i]) * DYE)
 }
 
 /// How much of the ink secondary text is over the page: the least that reads at 4.5:1 in every palette.
@@ -472,6 +514,62 @@ mod tests {
         }
         assert_eq!(accent_on(0xFF10_1010, WHITE, light, dark), dark);
         assert_eq!(accent_on(WHITE, 0xFF11_1111, light, dark), light);
+    }
+
+    #[test]
+    fn a_dyed_wash_stays_smooth() {
+        use crate::color::{blue, green, red, rgb};
+        use crate::cover::{derive, WASH_OUT};
+        let side = 96;
+        let cover = |f: &dyn Fn(f32, f32) -> [f32; 3]| -> Vec<u32> {
+            (0..side * side)
+                .map(|i| {
+                    let [r, g, b] = f((i % side) as f32 / side as f32, (i / side) as f32 / side as f32);
+                    rgb(r as i32, g as i32, b as i32)
+                })
+                .collect()
+        };
+        let mix = |a: [f32; 3], b: [f32; 3], t: f32| std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t);
+        // Whether the dyed wash is all gradient, where a pixel matching its neighbours is a band.
+        let covers = [
+            // A muted pink running into beige across the cover.
+            ("gradient", true, cover(&|x, _| mix([180.0, 150.0, 165.0], [196.0, 160.0, 140.0], x))),
+            // A soft grey figure on black, which the dither on the wash leaves a few levels off black.
+            ("figure", false, cover(&|x, y| {
+                let d = ((x - 0.5).powi(2) + (y - 0.5).powi(2)).sqrt();
+                [(1.0 - d * 3.0).max(0.0) * 140.0; 3]
+            })),
+        ];
+        let n = WASH_OUT;
+        for (name, graded, pixels) in covers {
+            let c = derive(&pixels, side, side, false);
+            for season in SEASONS {
+                for dark in [false, true] {
+                    let mut w = c.wash.clone().expect("a wash");
+                    Dye::new(c.edge, season.palette(false), season.palette(true), dark).dye_wash(&mut w);
+                    let at = format!("{name}, {season:?} dark {dark}");
+                    // No speckles: neighbours are never further apart than the dither and the slope.
+                    for f in [red, green, blue] {
+                        for y in 0..n {
+                            for x in 1..n {
+                                let step = (f(w[y * n + x]) - f(w[y * n + x - 1])).abs();
+                                assert!(step <= 2, "{at}: a step of {step} at {x}, {y}");
+                            }
+                        }
+                    }
+                    // No bands: dithered, few pixels match both the next one and the one below (over half
+                    // did when each pixel was rounded on its own).
+                    if graded {
+                        let flat = (0..(n - 1) * (n - 1))
+                            .map(|i| (i % (n - 1), i / (n - 1)))
+                            .filter(|&(x, y)| w[y * n + x] == w[y * n + x + 1] && w[y * n + x] == w[(y + 1) * n + x])
+                            .count();
+                        let share = flat as f32 / ((n - 1) * (n - 1)) as f32;
+                        assert!(share < 0.2, "{at}: {:.0} % of the wash is flat", share * 100.0);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

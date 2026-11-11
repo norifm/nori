@@ -356,9 +356,13 @@ pub(crate) fn mosaic(images: &[Image]) -> Option<Image> {
 fn wash(c: &CoverColours, dye: Option<&nori_look::theme::Dye>) -> Image {
     let Some(w) = &c.wash else { return Image::default() };
     let side = (w.len() as f64).sqrt() as u32;
+    let mut w = w.clone();
+    if let Some(d) = dye {
+        d.dye_wash(&mut w);
+    }
     let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(side, side);
-    for (px, argb) in buf.make_mut_slice().iter_mut().zip(w) {
-        let [a, r, g, b] = dye.map_or(*argb, |d| d.wash(*argb)).to_be_bytes();
+    for (px, argb) in buf.make_mut_slice().iter_mut().zip(&w) {
+        let [a, r, g, b] = argb.to_be_bytes();
         *px = Rgba8Pixel { r, g, b, a };
     }
     Image::from_rgba8(buf)
