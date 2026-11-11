@@ -32,7 +32,11 @@ pub fn round(x: f32) -> i32 {
 
 /// `ColorUtils.RGBToHSL`: hue in degrees, saturation and lightness 0..1.
 pub(crate) fn rgb_to_hsl(r: i32, g: i32, b: i32) -> [f32; 3] {
-    let (rf, gf, bf) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    hsl_of([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0])
+}
+
+/// [`rgb_to_hsl`] of channels 0..1.
+pub(crate) fn hsl_of([rf, gf, bf]: [f32; 3]) -> [f32; 3] {
     let max = rf.max(gf.max(bf));
     let min = rf.min(gf.min(bf));
     let delta = max - min;
@@ -64,21 +68,26 @@ pub fn color_to_hsl(c: u32) -> [f32; 3] {
 
 /// `ColorUtils.HSLToColor`.
 pub(crate) fn hsl_to_color(hsl: [f32; 3]) -> u32 {
+    let q = |v: f32| round(255.0 * v).clamp(0, 255);
+    let [r, g, b] = rgb_of(hsl);
+    rgb(q(r), q(g), q(b))
+}
+
+/// [`hsl_to_color`] unrounded, channels 0..1.
+pub(crate) fn rgb_of(hsl: [f32; 3]) -> [f32; 3] {
     let [h, s, l] = hsl;
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let m = l - 0.5 * c;
     let x = c * (1.0 - ((h / 60.0 % 2.0) - 1.0).abs());
-    let segment = (h as i32) / 60;
-    let (r, g, b) = match segment {
-        0 => (round(255.0 * (c + m)), round(255.0 * (x + m)), round(255.0 * m)),
-        1 => (round(255.0 * (x + m)), round(255.0 * (c + m)), round(255.0 * m)),
-        2 => (round(255.0 * m), round(255.0 * (c + m)), round(255.0 * (x + m))),
-        3 => (round(255.0 * m), round(255.0 * (x + m)), round(255.0 * (c + m))),
-        4 => (round(255.0 * (x + m)), round(255.0 * m), round(255.0 * (c + m))),
-        5 | 6 => (round(255.0 * (c + m)), round(255.0 * m), round(255.0 * (x + m))),
-        _ => (0, 0, 0),
-    };
-    rgb(r.clamp(0, 255), g.clamp(0, 255), b.clamp(0, 255))
+    match (h as i32) / 60 {
+        0 => [c + m, x + m, m],
+        1 => [x + m, c + m, m],
+        2 => [m, c + m, x + m],
+        3 => [m, x + m, c + m],
+        4 => [x + m, m, c + m],
+        5 | 6 => [c + m, m, x + m],
+        _ => [0.0; 3],
+    }
 }
 
 /// `ColorUtils.calculateLuminance`: relative luminance 0..1.
@@ -171,6 +180,13 @@ impl Oklab {
         let lin = |v: i32| self.linear[v as usize];
         let (l, a, b) = crate::compose::linear_to_oklab(lin(red(c)), lin(green(c)), lin(blue(c)), f32::cbrt);
         [l, a, b]
+    }
+
+    /// [`Oklab::lightness_chroma`] of channels 0..1.
+    pub(crate) fn lightness_chroma_of(&self, [r, g, b]: [f32; 3]) -> (f32, f32) {
+        let lin = crate::compose::eotf;
+        let (l, a, b) = crate::compose::linear_to_oklab(lin(r), lin(g), lin(b), f32::cbrt);
+        (l, (a * a + b * b).sqrt())
     }
 }
 

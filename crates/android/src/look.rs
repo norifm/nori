@@ -244,11 +244,18 @@ extern "system" fn dyed(env: JNIEnv, _: JClass, table: JIntArray, palettes: JInt
     #[cfg(target_os = "android")]
     {
         let Some(mut w) = bitmap::Locked::new(&env, &wash) else { return 1 };
+        if (w.width, w.height) != (nori_look::cover::WASH_OUT, nori_look::cover::WASH_OUT) {
+            return 1;
+        }
+        // The wash is opaque, so its premultiplied channels are its colour.
+        let mut argb = Vec::with_capacity(w.width * w.height);
         for y in 0..w.height {
-            for px in w.row_mut(y).chunks_exact_mut(4) {
-                // The wash is opaque, so its premultiplied channels are its colour.
-                let argb = u32::from(px[3]) << 24 | u32::from(px[0]) << 16 | u32::from(px[1]) << 8 | u32::from(px[2]);
-                premultiplied(dye.wash(argb), px);
+            argb.extend(w.row_mut(y).chunks_exact(4).map(|px| u32::from(px[3]) << 24 | u32::from(px[0]) << 16 | u32::from(px[1]) << 8 | u32::from(px[2])));
+        }
+        dye.dye_wash(&mut argb);
+        for (y, row) in argb.chunks_exact(w.width).enumerate() {
+            for (px, &c) in w.row_mut(y).chunks_exact_mut(4).zip(row) {
+                premultiplied(c, px);
             }
         }
         2

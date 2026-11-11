@@ -243,7 +243,8 @@ fn wash_of(pixels: &[u32], w: usize, h: usize, background: u32, on: u32, paper: 
         }
     }
     let n = ((WASH - first) * WASH * 255) as f32;
-    (smooth(&px), from_floats(r / n, g / n, b / n))
+    let grid: Vec<[f32; 3]> = px.iter().map(|&p| [red(p), green(p), blue(p)].map(|v| v as f32)).collect();
+    (smooth(&grid), from_floats(r / n, g / n, b / n))
 }
 
 /// Skia's `Bitmap.createScaledBitmap(..., filter = true)`, pixel-exact: 16.16 fixed-point positions
@@ -270,27 +271,50 @@ fn scale_bilinear(pixels: &[u32], w: usize, h: usize, dw: usize, dh: usize) -> V
     out
 }
 
-/// Upsamples [`WASH`] to [`WASH_OUT`]: bilinear, two box passes, then ±0.5 level dither against banding.
-fn smooth(px: &[u32]) -> Vec<u32> {
+/// Where [`WASH_OUT`] pixel `i` falls on the [`WASH`] grid: the cell before it and how far towards the next.
+fn on_grid(i: usize) -> (usize, f32) {
+    let f = i as f32 * ((WASH - 1) as f32 / (WASH_OUT - 1) as f32);
+    let i0 = (f as usize).min(WASH - 2);
+    (i0, f - i0 as f32)
+}
+
+/// A [`WASH_OUT`]² wash back on the [`WASH`] grid (channels 0..255): each cell the mean of the 5 x 5
+/// pixels at its place, which leaves out [`smooth`]'s dither.
+pub(crate) fn grid_of(wash: &[u32]) -> Vec<[f32; 3]> {
+    assert_eq!(wash.len(), WASH_OUT * WASH_OUT, "a wash is WASH_OUT pixels a side");
+    let at = |i: usize| (i as f32 * ((WASH_OUT - 1) as f32 / (WASH - 1) as f32)).round() as isize;
+    let near = |c: isize| (c - 2..=c + 2).map(|v| v.clamp(0, WASH_OUT as isize - 1) as usize);
+    (0..WASH * WASH)
+        .map(|i| {
+            let mut sum = [0f32; 3];
+            for y in near(at(i / WASH)) {
+                for x in near(at(i % WASH)) {
+                    let p = wash[y * WASH_OUT + x];
+                    for (s, v) in sum.iter_mut().zip([red(p), green(p), blue(p)]) {
+                        *s += v as f32;
+                    }
+                }
+            }
+            sum.map(|s| s / 25.0)
+        })
+        .collect()
+}
+
+/// Upsamples the [`WASH`] grid (channels 0..255) to [`WASH_OUT`]: bilinear, two box passes, then ±0.5
+/// level dither against banding.
+pub(crate) fn smooth(grid: &[[f32; 3]]) -> Vec<u32> {
     let n = WASH_OUT;
     let (mut r, mut g, mut b) = (vec![0f32; n * n], vec![0f32; n * n], vec![0f32; n * n]);
-    let scale = (WASH - 1) as f32 / (n - 1) as f32;
     for y in 0..n {
-        let fy = y as f32 * scale;
-        let y0 = (fy as usize).min(WASH - 2);
-        let ty = fy - y0 as f32;
+        let (y0, ty) = on_grid(y);
         for x in 0..n {
-            let fx = x as f32 * scale;
-            let x0 = (fx as usize).min(WASH - 2);
-            let tx = fx - x0 as f32;
-            let (a, bb, c, d) = (px[y0 * WASH + x0], px[y0 * WASH + x0 + 1], px[(y0 + 1) * WASH + x0], px[(y0 + 1) * WASH + x0 + 1]);
-            let lerp = |f: fn(u32) -> i32| {
-                (f(a) as f32 * (1.0 - tx) + f(bb) as f32 * tx) * (1.0 - ty) + (f(c) as f32 * (1.0 - tx) + f(d) as f32 * tx) * ty
-            };
+            let (x0, tx) = on_grid(x);
+            let (a, bb, c, d) = (grid[y0 * WASH + x0], grid[y0 * WASH + x0 + 1], grid[(y0 + 1) * WASH + x0], grid[(y0 + 1) * WASH + x0 + 1]);
+            let lerp = |k: usize| (a[k] * (1.0 - tx) + bb[k] * tx) * (1.0 - ty) + (c[k] * (1.0 - tx) + d[k] * tx) * ty;
             let i = y * n + x;
-            r[i] = lerp(red);
-            g[i] = lerp(green);
-            b[i] = lerp(blue);
+            r[i] = lerp(0);
+            g[i] = lerp(1);
+            b[i] = lerp(2);
         }
     }
     for _ in 0..2 {

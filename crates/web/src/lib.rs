@@ -383,7 +383,11 @@ impl Nori {
         });
         let rgba = |dyed: bool| {
             c.wash.as_ref().map_or(JsValue::NULL, |w| {
-                let bytes: Vec<u8> = w.iter().flat_map(|&p| { let [a, r, g, b] = if dyed { dye.wash(p) } else { p }.to_be_bytes(); [r, g, b, a] }).collect();
+                let mut w = w.clone();
+                if dyed {
+                    dye.dye_wash(&mut w);
+                }
+                let bytes: Vec<u8> = w.iter().flat_map(|&p| { let [a, r, g, b] = p.to_be_bytes(); [r, g, b, a] }).collect();
                 js_sys::Uint8ClampedArray::from(bytes.as_slice()).into()
             })
         };
