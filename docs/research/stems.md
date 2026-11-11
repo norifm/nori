@@ -6,19 +6,27 @@ could run. Both models were exported to ONNX and timed through tract 0.23, nori'
 
 ## Does it help
 
-Ten pairs of songs, planned and mixed by nori's own analysis, planner and mixer (both styles, 20 transitions),
-then mixed again with stems: one voice at a time, the outgoing vocal out and the incoming one in at the bass
-swap.
+Every ordered pair of 98 songs, both styles (18,309 transitions inside the separated edges), planned by nori's
+analysis and planner, each deck's level taken through the mixer, against HT-Demucs' vocal level at that point
+of each song. Eight instrumental songs (vocals 45 to 71 dB down) count as never singing. Stems here hand the
+voice over at the bass swap (the middle of a fade): the outgoing vocal out, the incoming one in.
 
-- With nori's plans, stems change nothing. No pair had both songs singing in the mix: nori fades in the last
-  5 to 14 s (the rock tempos are not steady enough to beat-match), where the outgoing song has stopped singing
-  or the incoming one is still in its intro. Stems only cut 0.3 to 1.7 s of a line short in 4 transitions.
-- Moved into both songs' singing (4 pairs, as a control), the plain mix has two voices competing for 1.7 to
-  2.5 s per transition. With stems: 0 to 0.8 s. The removed vocal is 13 to 55 dB down, but 1 to 2 s of each
-  song's line is cut at the handoff.
+| | Smooth | DJ |
+|---|---|---|
+| two voices within 10 dB for 1 s or more | 11 % | 11 % |
+| for 3 s or more | 2 % | 5 % |
+| beat-matched blends with 1 s or more | 22 % | 35 % (1.8 s on average) |
+| the swap rule cuts 1 s or more of a line sung alone | 47 % | 40 % |
 
-Stems would pay only if AutoMix mixed long over singing, which it avoids by design (and on this library
-cannot do, without a steady beat).
+- The overlaps are mostly DJ's long beat-matched blends (up to 39 s), where the incoming song starts singing
+  before the swap. Fades rarely overlap: the outgoing song has usually stopped or the incoming one is in its
+  intro (a first sample of ten pairs had none).
+- On the 12 worst transitions, Open-Unmix cuts the overlap from 3.6 to 11 s down to 0 to 1.8 s; the removed
+  vocal is 10 to 52 dB down (HT-Demucs: nearly gone).
+- A fixed handoff costs more than it gives: it removes singing that had nothing to clash with in about 4 of
+  10 transitions. Stems would have to duck a voice only while the other one sings, and mostly for DJ blends.
+
+Clips of these transitions were rendered for listening (Today, Open-Unmix, HT-Demucs).
 
 ## What it costs
 
@@ -41,3 +49,12 @@ The reference showed that the analysis' end-of-singing measure, tuned on synthet
 40 real ones. Loud bands keep the voice curve high between lines. It now ends with the last bar at 0.7x the
 song's median voice level, and only for an ending the analysis already takes as sung. Of the 22 such songs, it
 is right (within two bars) on 15, late on 5, early on 2.
+
+## Computing them once
+
+Separation depends on the song alone, not on the pair, so it can be done once per song, like the analysis, and
+mixing with it is only a gain on the vocal stem. A song needs only its edges: the first and last 45 s (a DJ
+blend reaches 40 s). With UMX-L that is about 3 s of one emulator core per song. Kept as audio, a 16-bit
+stereo vocal stem of 90 s is 16 MB; a mask instead (64 bands every 46 ms, 8 bits) is about 125 KB, applied
+when the mix plays. Separating while the next song is queued, as AutoMix already measures songs coming up,
+would need no store at all.
