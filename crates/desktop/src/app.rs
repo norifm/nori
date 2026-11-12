@@ -653,6 +653,13 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
     bar.on_search_step(to_main_with(ui, |m, by| m.invoke_search_step(by)));
     bar.on_search_accepted(to_main(ui, |m| m.invoke_search_accepted()));
     bar.on_search_escaped(to_main(ui, |m| m.set_search_preview_open(false)));
+    let (pill, main) = (bar.as_weak(), ui.as_weak());
+    bar.on_search_placed(move || {
+        let (Some(bar), Some(ui)) = (pill.upgrade(), main.upgrade()) else { return };
+        let chrome = ui.global::<crate::Chrome>();
+        chrome.set_search_end(bar.get_search_end());
+        chrome.set_search_w(bar.get_search_width());
+    });
     Some(bar)
 }
 
@@ -5847,6 +5854,9 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.global::<crate::Chrome>().set_top_x(190.0);
         ui.global::<crate::Chrome>().set_top_w(900.0);
+        // The field as the top pill reports it: 360 px, ending 84 px in from the pill's end.
+        ui.global::<crate::Chrome>().set_search_end(84.0);
+        ui.global::<crate::Chrome>().set_search_w(360.0);
         let card = |kind: i32, id: &str| Card { id: id.into(), title: id.into(), kind, ..Default::default() };
         ui.set_search_preview(ModelRc::new(VecModel::from(vec![card(-1, "Albums"), card(0, "al1"), card(3, "s1")])));
         ui.set_search_preview_open(true);
@@ -6342,6 +6352,77 @@ mod tests {
         settle();
         assert_eq!(*said.borrow(), ["step 1", "step -1", "enter", "escape"]);
         assert!(!typing.get(), "Escape gives the keys back to the page");
+    }
+
+    /// While the search field is open, it takes the room the pill has: the settings and the profile's mark stay
+    /// inside the pill at its right end, and the field does not run over the tabs, narrow or wide.
+    #[test]
+    fn the_top_pill_keeps_its_ends_inside_it_while_searching() {
+        use i_slint_backend_testing::ElementHandle;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let all = LibraryTabs { albums: true, artists: true, songs: true, playlists: true, favorites: true };
+        let mut off = Vec::new();
+        // An 800 px window's pill on macOS, up to the widest pill; the current tab is named even while the
+        // others are not.
+        for room in [616.0f32, 700.0, 879.0, 880.0, 960.0, 1040.0] {
+            for (focused, previewing) in [(false, false), (true, false), (true, true)] {
+                let bar = TopBar::new().unwrap();
+                bar.window().set_size(slint::LogicalSize::new(room, 48.0));
+                bar.set_room(room);
+                bar.set_tabs(all.clone());
+                bar.set_view(View::Favorites);
+                bar.show().unwrap();
+                if focused {
+                    bar.invoke_focus_search();
+                }
+                bar.set_previewing(previewing);
+                for _ in 0..3 {
+                    i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(300));
+                    slint::platform::update_timers_and_animations();
+                    bar.window().take_snapshot().unwrap();
+                }
+                let case = format!("room {room}, focused {focused}, previewing {previewing}");
+                let span = |e: &ElementHandle| (e.absolute_position().x, e.absolute_position().x + e.size().width);
+                let last_tab = ElementHandle::find_by_element_type_name(&bar, "TabButton").map(|e| span(&e).1).fold(0.0, f32::max);
+                // The field: its words start 35 px in from its left edge, and it is as wide as the bar says.
+                let input_left = span(&ElementHandle::find_by_element_type_name(&bar, "TextInput").next().unwrap()).0;
+                let field = (input_left - 35.0, input_left - 35.0 + bar.get_search_width());
+                if (room - field.1 - bar.get_search_end()).abs() > 0.5 {
+                    off.push(format!("{case}: the field ends at {}, the bar says {}", field.1, room - bar.get_search_end()));
+                }
+                let settings = span(&ElementHandle::find_by_element_type_name(&bar, "IconButton").next().unwrap());
+                let mark = span(&ElementHandle::find_by_element_type_name(&bar, "PluginTile").next().unwrap());
+                if (mark.1 - (room - 12.0)).abs() > 0.5 {
+                    off.push(format!("{case}: the mark ends at {}, not {}", mark.1, room - 12.0));
+                }
+                if (field.1 + 2.0 - settings.0).abs() > 0.5 || settings.1 + 2.0 + 4.0 > mark.0 + 0.5 {
+                    off.push(format!("{case}: field {field:?}, settings {settings:?}, mark {mark:?} are not side by side"));
+                }
+                if field.0 < last_tab + 2.0 - 0.5 {
+                    off.push(format!("{case}: the field {field:?} runs over the tabs, which end at {last_tab}"));
+                }
+            }
+        }
+        assert!(off.is_empty(), "{off:#?}");
+        // The preview under the field, in the main window, hangs where the field is.
+        let ui = window();
+        let bar = top(&ui).unwrap();
+        bar.window().set_size(slint::LogicalSize::new(700.0, 48.0));
+        bar.set_room(700.0);
+        bar.set_tabs(all);
+        bar.show().unwrap();
+        bar.invoke_focus_search();
+        bar.set_previewing(true);
+        for _ in 0..3 {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(300));
+            slint::platform::update_timers_and_animations();
+            bar.window().take_snapshot().unwrap();
+        }
+        let chrome = ui.global::<crate::Chrome>();
+        assert!(bar.get_search_width() > 36.0 && bar.get_search_width() < 300.0, "the field takes what room there is: {}", bar.get_search_width());
+        assert_eq!((chrome.get_search_end(), chrome.get_search_w()), (bar.get_search_end(), bar.get_search_width()));
     }
 
     #[test]
