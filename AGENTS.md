@@ -232,7 +232,8 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
 - Post anything on GitHub (an issue or PR comment, a review, a new issue, closing or labeling one) unless
   the owner asked for that post or approved its text. "Do it all" is not approval; show the draft and ask.
 - Queue or prefetch provider (`ext-`) tracks the user didn't ask to play: a stream request makes the
-  server download them. Provider items are never indexed.
+  server download them. The next song in the queue plays anyway, so the engine fetches it ahead whatever
+  it is; songs further ahead are never a provider's. Provider items are never indexed.
 - Use raw Material widgets (`Button`, `FilterChip`, `OutlinedTextField`, `Divider`) in screens; use the
   shapes in the app's `ui/Design.kt`. No liquid-glass imitation on Android; nothing animates unless the
   user touched it or a newer answer moves a page's items; measure before adding blur or per-frame effects.

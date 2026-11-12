@@ -265,10 +265,6 @@ impl Library for CoreLibrary {
         about(self.client.session(), id)
     }
 
-    fn fetch_ahead(&self, id: &str) -> bool {
-        fetch_ahead(self.client.session(), id)
-    }
-
     /// Fetches the core's precache targets except `next` into the store.
     fn ahead(&mut self, next: &str) {
         let Some(store) = &self.store else { return };
@@ -509,11 +505,6 @@ pub fn measuring_ahead(analyses: &Arc<Analyses>, session: Arc<Session>) -> Taker
 /// What the planner and seek bar know of `id`, from `session`'s songs.
 pub fn about(session: &Session, id: &str) -> WindowSong {
     nori_core::queue::window_song_of(session.song(id).as_ref(), id)
-}
-
-/// Whether `id` may be fetched unasked (never a provider's song).
-pub fn fetch_ahead(session: &Session, id: &str) -> bool {
-    !session.fetchable(vec![id.to_string()]).is_empty()
 }
 
 /// Runs the core's download queue: fetches pending songs whole into the store, a few at a time, oldest

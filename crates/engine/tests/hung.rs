@@ -178,10 +178,6 @@ impl Library for Songs {
     fn about(&self, id: &str) -> WindowSong {
         WindowSong { id: id.into(), title: id.into(), duration_ms: SECS as i64 * 1000, ..Default::default() }
     }
-
-    fn fetch_ahead(&self, id: &str) -> bool {
-        !Server::hangs(id)
-    }
 }
 
 struct Rig {
