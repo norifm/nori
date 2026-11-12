@@ -236,6 +236,16 @@ fn repeat_all_and_one_gapless() {
     assert!(p.sink.gaps.is_empty() && p.sink.timestamp_jumps == 0);
 }
 
+/// The client sets repeat on the queue, then tells the player: a press told late leaves the newer one.
+#[test]
+fn a_repeat_told_late_keeps_the_queues_newer_one() {
+    let s = songs(2, 3.0);
+    let mut p = Player::new(queue(&s));
+    p.queue.live.set_repeat(REPEAT_ONE);
+    p.set_repeat(REPEAT_ALL);
+    assert_eq!(p.queue.live.repeat(), REPEAT_ONE);
+}
+
 #[test]
 fn shuffle_plays_each_song_once() {
     let s = songs(6, 2.0);

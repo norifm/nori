@@ -63,8 +63,4 @@ impl Queue for SharedQueue {
     fn moved_to(&mut self, index: usize) {
         self.0.lock().moved_to(index);
     }
-
-    fn set_repeat(&mut self, mode: u8) {
-        self.0.lock().set_repeat(mode);
-    }
 }
