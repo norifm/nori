@@ -363,6 +363,10 @@ export global Chrome {
     // The top pill's and the player pill's places in the window (app.rs fills them from the compositor).
     in property <length> top-x;
     in property <length> top-w;
+    // The top pill's search field: how far its right edge is from the pill's, and its width (app.rs fills them
+    // from the top pill).
+    in property <length> search-end;
+    in property <length> search-w;
     in property <length> player-x;
     in property <length> player-w;
     out property <length> top-radius: 24px;
@@ -6011,6 +6015,9 @@ component TopContent inherits Rectangle {
     property <bool> named: root.room >= 880px;
     // The field's preview shows under it: the field is as wide as the preview.
     in property <bool> previewing;
+    // Where the field is: its width, and how far its right edge is from the pill's.
+    out property <length> field-width: field.width;
+    out property <length> field-end: root.width - field.x - field.width;
     public function focus-search() {
         input.focus();
     }
@@ -6081,11 +6088,15 @@ component TopContent inherits Rectangle {
             horizontal-stretch: 1;
         }
         // The search field, a filled capsule 6 px in from the pill (its corner the pill's less that). It widens
-        // while typed in; typing shows what it finds in a preview under it.
-        Rectangle {
+        // while typed in, as far as the pill has room beside the tabs; typing shows what it finds in a preview
+        // under it.
+        field := Rectangle {
+            property <length> wanted: input.has-focus ? (root.previewing ? (root.named ? SearchShape.wide : SearchShape.narrow) : root.named ? 280px : 220px) : root.named ? 180px : 36px;
+            animate wanted { duration: Motion.reduced ? 0ms : 200ms; enabled: !Motion.reduced; easing: ease-out; }
             y: (parent.height - self.height) / 2;
-            width: input.has-focus ? (root.previewing ? (root.named ? SearchShape.wide : SearchShape.narrow) : root.named ? 280px : 220px) : root.named ? 180px : 36px;
-            animate width { duration: Motion.reduced ? 0ms : 200ms; enabled: !Motion.reduced; easing: ease-out; }
+            min-width: 36px;
+            preferred-width: self.wanted;
+            max-width: self.wanted;
             height: 36px;
             border-radius: 18px;
             clip: true;
@@ -9639,10 +9650,10 @@ export component AppWindow inherits Window {
         }
         Rectangle {
             property <bool> shown: root.search-preview-shown;
-            x: Chrome.top-x + Chrome.top-w - 46px - self.width;
+            x: Chrome.top-x + Chrome.top-w - Chrome.search-end - self.width;
             y: Chrome.top-room - 12px + (self.shown ? 0px : -6px);
             animate y { duration: Motion.reduced ? 0ms : 160ms; enabled: !Motion.reduced; easing: ease-out; }
-            width: Chrome.top-w >= 880px ? SearchShape.wide : SearchShape.narrow;
+            width: Chrome.search-w;
             border-radius: Chrome.top-radius;
             // The pill's paper where nothing under it is blurred (Chrome's 88 %), and its outline.
             background: Theme.ground.with-alpha(0.88);
@@ -10034,6 +10045,12 @@ export component TopBar inherits Window {
     callback search-step(int);
     callback search-accepted();
     callback search-escaped();
+    // The search field moved or changed its width (`search-end`, `search-width`): its preview follows it.
+    callback search-placed();
+    out property <length> search-end: content.field-end;
+    out property <length> search-width: content.field-width;
+    changed search-end => { root.search-placed(); }
+    changed search-width => { root.search-placed(); }
     public function focus-search() {
         content.focus-search();
     }
