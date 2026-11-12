@@ -388,7 +388,13 @@ impl Client {
     pub fn sign_in_due(&self, added: Option<AfterAdding>) -> Option<SignInEvent> {
         let step = match added {
             Some(after) => self.core.provider().info().after_adding(after),
-            None => self.reminds_to_sign_in().then_some(SignInStep::Offer),
+            None => {
+                let reminds = self.reminds_to_sign_in();
+                if reminds {
+                    crate::alog::info("sign-in: offered again at start, the provider ended the session");
+                }
+                reminds.then_some(SignInStep::Offer)
+            }
         }?;
         match step {
             SignInStep::Offer => Some(SignInEvent::Offer { ended: added.is_none() && self.account() == AccountState::Ended }),
