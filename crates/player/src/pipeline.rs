@@ -92,6 +92,11 @@ pub trait App: Host {
     }
     /// The output forbids touching samples, so the planner disables transitions.
     fn transitions_off(&mut self, _off: bool) {}
+    /// Other devices play in step with this one (a hosted jam's guests listening along): its place is
+    /// said wherever the music written moves it a few ms.
+    fn listened_along(&self) -> bool {
+        false
+    }
     /// What to do about a failed song when the app tracks the failure run itself; `None` uses the
     /// player's [`ErrorRun`].
     fn on_error(&mut self, _kind: PlaybackError, _has_next: bool) -> Option<OnError> {

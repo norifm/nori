@@ -3,6 +3,7 @@
 //! counting (scrobble.rs), play actions (actions.rs), the buffer while sound pages are tuned (tuning.rs) and
 //! the undo of a song taken out (undo.rs).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use nori_automix::planner::Planner;
@@ -41,6 +42,8 @@ pub struct Session {
     decided: Mutex<deciders::Decided>,
     /// Where plays go besides the profile's server; None without plugins.
     scrobbles: Mutex<Option<Arc<dyn scrobble::Scrobbles>>>,
+    /// A jam hosted here lets its guests listen along ([`Session::listened_along`]).
+    along: AtomicBool,
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -50,7 +53,18 @@ impl Session {
         let db = Arc::new(nori_db::Profile::default());
         let read = settings.clone();
         let planner = Planner::new(db.clone(), Box::new(move || read.with_prefs(nori_settings::settings::StoredPrefs::transition_prefs)));
-        Session { settings, db, planner, queue: Default::default(), store: Default::default(), controls: Default::default(), refill: Default::default(), scrobbler: Default::default(), deciders: Default::default(), decided: Default::default(), scrobbles: Default::default() }
+        Session { settings, db, planner, queue: Default::default(), store: Default::default(), controls: Default::default(), refill: Default::default(), scrobbler: Default::default(), deciders: Default::default(), decided: Default::default(), scrobbles: Default::default(), along: AtomicBool::new(false) }
+    }
+}
+
+impl Session {
+    /// Guests play in step with this device: its player says its place to the ms.
+    pub fn listened_along(&self) -> bool {
+        self.along.load(Ordering::Relaxed)
+    }
+
+    pub fn set_listened_along(&self, on: bool) {
+        self.along.store(on, Ordering::Relaxed);
     }
 }
 

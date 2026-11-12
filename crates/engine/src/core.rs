@@ -200,6 +200,10 @@ impl App for CoreApp {
         self.session.planner.transition_setup(off);
     }
 
+    fn listened_along(&self) -> bool {
+        self.session.listened_along()
+    }
+
     fn loudness(&mut self, id: &str) -> Option<f32> {
         self.session.loudness(id)
     }
