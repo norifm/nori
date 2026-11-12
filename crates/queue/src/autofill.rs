@@ -398,8 +398,8 @@ mod tests {
         let s = crate::playlist::tests::session(&["em0", "em1", "em2"], 1);
         assert!(s.autofill_start());
         let after = s.end_entry();
-        // Add to queue inserts after the current song, so the end is still em2.
-        s.take(3, vec!["mine".into()], vec![nori_player::playlist::Hand::Last]);
+        // Play next inserts after the current song, so the end is still em2.
+        s.take(2, vec!["mine".into()], vec![nori_player::playlist::Hand::Next]);
         assert_eq!(s.autofill_seed().as_deref(), Some("em2"));
         assert!(s.autofill_arrived(15, after));
         s.take(4, vec!["em3".into()], vec![nori_player::playlist::Hand::No]);

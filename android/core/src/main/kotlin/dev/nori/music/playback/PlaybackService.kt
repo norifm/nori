@@ -825,7 +825,7 @@ class PlaybackService : MediaLibraryService() {
         val fresh = runCatching { nori.library.autofill() }.getOrNull() ?: dev.nori.music.ffi.Refill(emptyList(), null, null, null)
         // Player work stays on this scope's main dispatcher.
         if (nori.library.autofillArrived(fresh)) {
-            controls.addMediaItems(held(fresh.songs))
+            controls.addMediaItems(held(fresh.songs).map { it.queued(Hand.AUTO) })
         }
         // A next pressed at the end while these were on the way is taken now, if the user is still there
         // and pressed it moments ago; a press the user has long since settled after is not.
@@ -837,7 +837,7 @@ class PlaybackService : MediaLibraryService() {
         val fresh = runCatching { nori.library.queueEnded() }.getOrNull() ?: return@launch
         // Something else started meanwhile: that plays.
         if (fresh.songs.isEmpty() || player.playbackState != Player.STATE_ENDED) return@launch
-        controls.addMediaItems(held(fresh.songs))
+        controls.addMediaItems(held(fresh.songs).map { it.queued(Hand.AUTO) })
         player.seekToNextMediaItem()
         player.prepare()
         player.play()

@@ -1394,7 +1394,7 @@ impl Handle {
                 return;
             }
             let n = ids.len();
-            q.take(len as u32, ids, vec![Hand::No; n]);
+            q.take(len as u32, ids, vec![Hand::Auto; n]);
             me.edited();
             if let Some(end) = end {
                 me.engine.resume_after_refill(end);
@@ -1421,7 +1421,7 @@ impl Handle {
         let q = &self.core.session;
         let (len, end) = q.playlist(|p| (p.len(), p.play_order().last().map(|at| p.seqs()[at])));
         let n = ids.len();
-        q.take(len as u32, ids, vec![Hand::No; n]);
+        q.take(len as u32, ids, vec![Hand::Auto; n]);
         self.edited();
         if q.autofill_landed() {
             self.engine.next();

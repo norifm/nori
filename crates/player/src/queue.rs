@@ -10,12 +10,12 @@ pub struct Placement {
     pub order: Option<Vec<usize>>,
 }
 
-/// Play next (`last` false: right after `cur`) and Add to queue (`last`: after the run of hand-added
-/// songs following `cur`), as Apple does. Under shuffle the new songs are placed in the play order the
-/// same way. `hand(i)`: song i was added by hand; `count`: songs being added.
-pub fn place(n: usize, cur: usize, hand: impl Fn(usize) -> bool, order: Option<&[usize]>, last: bool, count: usize) -> Placement {
-    // The last of the hand-added run that follows `cur` along `walk` (`cur` itself for play next).
-    let run_end = |walk: &mut dyn Iterator<Item = usize>| if last { walk.take_while(|&i| hand(i)).last().unwrap_or(cur) } else { cur };
+/// Play next (`last` false: right after `cur`) and Add to queue (`last`: after the run of chosen songs
+/// following `cur`, ahead of what the queue added itself). Under shuffle the new songs are placed in the
+/// play order the same way. `chosen(i)`: song i was played or added by the user; `count`: songs being added.
+pub fn place(n: usize, cur: usize, chosen: impl Fn(usize) -> bool, order: Option<&[usize]>, last: bool, count: usize) -> Placement {
+    // The last of the chosen run that follows `cur` along `walk` (`cur` itself for play next).
+    let run_end = |walk: &mut dyn Iterator<Item = usize>| if last { walk.take_while(|&i| chosen(i)).last().unwrap_or(cur) } else { cur };
     let at = run_end(&mut (cur + 1..n)) + 1;
     let Some(order) = order else { return Placement { at, order: None } };
     let from = order.iter().position(|&o| o == cur).map_or(order.len(), |p| p + 1);

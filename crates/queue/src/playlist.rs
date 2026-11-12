@@ -78,6 +78,7 @@ pub enum Hand {
     Next,
     Last,
     Bridge,
+    Auto,
 }
 
 #[cfg(feature = "ffi")]
@@ -472,7 +473,7 @@ impl Session {
         let mut seen = vec![false; len];
         let permutation = order.len() == len && order.iter().all(|&i| seen.get_mut(i as usize).is_some_and(|s| !std::mem::replace(s, true)));
         let order = if permutation { order } else { (0..len as u32).collect() };
-        let queued = (0..len as u32).filter(|&i| hands.get(i as usize).is_some_and(|h| *h != Hand::No)).collect();
+        let queued = (0..len as u32).filter(|&i| hands.get(i as usize).is_some_and(|h| !matches!(h, Hand::No | Hand::Auto))).collect();
         let (shuffle, repeat, bridging) = self.playlist(|p| (p.lit(), p.repeat(), p.bridging()));
         let songs = if ids.is_empty() { Vec::new() } else { self.songs(ids) };
         PlaylistView { songs, len: len as u32, list_rev: 0, order, queued, index: -1, shuffle, repeat, bridging, rev: u64::MAX }

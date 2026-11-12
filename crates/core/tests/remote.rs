@@ -1318,7 +1318,7 @@ fn a_jam_takes_requests_through_its_host() {
     let said_before = relay.sim.now_us();
     host.remote.clone().played(Playing { playing: true, position_ms: 9_000, index: Some(0), ..Default::default() });
     let m = gus.until("the host's queue in Gus's player", |r| r.jam_playing().filter(|m| m.rows.len() == 3));
-    assert_eq!(m.rows.iter().map(|r| r.song.id.as_str()).collect::<Vec<_>>(), ["s1", "s5", "s2"], "in play order: what was asked for plays next");
+    assert_eq!(m.rows.iter().map(|r| r.song.id.as_str()).collect::<Vec<_>>(), ["s1", "s2", "s5"], "in play order: what was asked for plays after what the host played");
     assert_eq!((m.name.as_str(), m.at, m.playing), ("Host", Some(0), true));
     assert_eq!((m.next, m.previous), (None, None), "a guest's skips reach nowhere");
     let admin = dee.until("the host's queue in Dee's player", |r| r.jam_playing().filter(|m| m.rows.len() == 3));
