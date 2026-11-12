@@ -1,5 +1,5 @@
 name: Apt packages
-description: Installs Debian packages with their .debs cached per OS and package list, so apt downloads only what changed; downloads retry and fall back to the main Ubuntu archive.
+description: Installs Debian packages with their .debs cached per OS and package list, so apt downloads only what changed; downloads retry and fall back to the main Ubuntu archive, then to a mirror off ubuntu.com.
 inputs:
   packages:
     required: true
@@ -27,13 +27,22 @@ runs:
         sudo rm -f /var/lib/man-db/auto-update
         sources=(/etc/apt/sources.list.d)
         [ -f /etc/apt/sources.list ] && sources+=(/etc/apt/sources.list)
+        # Every ubuntu.com name has failed to resolve on the runners for hours, so the last mirror tried is
+        # off ubuntu.com. The image names its mirrors in a list (mirror+file:), or one in its sources.
+        case "$RUNNER_ARCH" in
+          ARM*) archive=http://ports.ubuntu.com/ubuntu-ports/ offsite=http://mirrors.ocf.berkeley.edu/ubuntu-ports/ ;;
+          *) archive=http://archive.ubuntu.com/ubuntu/ offsite=http://mirrors.edge.kernel.org/ubuntu/ ;;
+        esac
+        lists=$(grep -rhoE 'mirror\+file:[^ ]+' "${sources[@]}" | sed 's/^mirror+file://' | sort -u || true)
         mirror=$(grep -rhoE 'https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu/?|https?://ports\.ubuntu\.com/ubuntu-ports/?' "${sources[@]}" | head -1 || true)
-        if [ -n "$mirror" ]; then
-          fallback=http://archive.ubuntu.com/ubuntu/
-          case "$mirror" in *ports*) fallback=http://ports.ubuntu.com/ubuntu-ports/ ;; esac
-          printf '%s\n%s\n' "${mirror%/}/" "$fallback" | sudo tee /etc/apt/mirrors.txt >/dev/null
+        if [ -z "$lists" ] && [ -n "$mirror" ]; then
+          printf '%s\tpriority:1\n%s\tpriority:2\n' "${mirror%/}/" "$archive" | sudo tee /etc/apt/mirrors.txt >/dev/null
           grep -rlF "$mirror" "${sources[@]}" | xargs -r sudo sed -i "s|${mirror%/}/\?|mirror+file:/etc/apt/mirrors.txt|g"
+          lists=/etc/apt/mirrors.txt
         fi
+        for list in $lists; do
+          printf '%s\tpriority:9\n' "$offsite" | sudo tee -a "$list" >/dev/null
+        done
         debs="$HOME/apt-debs"
         mkdir -p "$debs/partial"
         apt=(sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Dir::Cache::Archives="$debs")
