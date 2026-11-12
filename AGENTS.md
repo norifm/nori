@@ -229,6 +229,8 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
 ## Never
 
 - Run `tools/bench.sh` (the owner's real-phone comparison) unless the owner asks.
+- Post anything on GitHub (an issue or PR comment, a review, a new issue, closing or labeling one) unless
+  the owner asked for that post or approved its text. "Do it all" is not approval; show the draft and ask.
 - Queue or prefetch provider (`ext-`) tracks the user didn't ask to play: a stream request makes the
   server download them. Provider items are never indexed.
 - Use raw Material widgets (`Button`, `FilterChip`, `OutlinedTextField`, `Divider`) in screens; use the
