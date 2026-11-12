@@ -48,10 +48,6 @@ impl Queue for CoreQueue {
         self.0.moved_to(index as i32);
     }
 
-    fn set_repeat(&mut self, mode: u8) {
-        self.0.repeat(mode);
-    }
-
     /// An explicit song with "skip explicit songs" on.
     fn skips(&self, list: &Playlist, index: usize) -> bool {
         self.0.skips(list, index)

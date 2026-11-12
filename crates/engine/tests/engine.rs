@@ -219,10 +219,6 @@ impl nori_engine::Queue for TestQueue {
         self.list.lock().moved_to(index);
     }
 
-    fn set_repeat(&mut self, mode: u8) {
-        self.list.lock().set_repeat(mode);
-    }
-
     fn skips(&self, list: &Playlist, index: usize) -> bool {
         self.skip.contains(&list.ids()[index]) && list.next_of(index, list.repeat()).is_some()
     }
@@ -3955,8 +3951,8 @@ fn seek_while_paused_plays_on_from_there() {
 fn a_song_without_audio_on_repeat_fails() {
     for repeat in [nori_player::playlist::REPEAT_ONE, nori_player::playlist::REPEAT_ALL] {
         let rig = Rig::new(&[("e", &[])], prefs_off(), Settings::default());
-        rig.engine.set_repeat(repeat);
         rig.queue.lock().set(vec!["e".into()], Some(0), false, 0);
+        rig.queue.lock().set_repeat(repeat);
         rig.engine.queue_changed();
         rig.engine.play_at(0, 0);
         assert!(rig.wait_for(10, |r| r.events.lock().iter().any(|e| matches!(e, Event::Error { id, .. } if id == "e"))), "repeat {repeat}: {:?}", rig.events.lock());

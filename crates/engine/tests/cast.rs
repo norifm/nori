@@ -380,9 +380,6 @@ impl nori_engine::Queue for Queue {
     fn moved_to(&mut self, index: usize) {
         self.0.lock().moved_to(index);
     }
-    fn set_repeat(&mut self, mode: u8) {
-        self.0.lock().set_repeat(mode);
-    }
     fn skips(&self, _: &Playlist, _: usize) -> bool {
         false
     }

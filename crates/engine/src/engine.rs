@@ -710,7 +710,7 @@ impl Engine {
         self.send(Command::Refilled(entry));
     }
 
-    /// Repeat off, one or all (`nori_player::playlist::REPEAT_*`).
+    /// Repeat off, one or all (`nori_player::playlist::REPEAT_*`), set on the queue first.
     pub fn set_repeat(&self, mode: u8) {
         self.send(Command::Repeat(mode));
     }

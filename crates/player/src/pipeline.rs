@@ -131,7 +131,6 @@ pub trait Queue {
     fn read<R>(&self, f: impl FnOnce(&Playlist) -> R) -> R;
     /// The player moved to `index` by itself.
     fn moved_to(&mut self, index: usize);
-    fn set_repeat(&mut self, mode: u8);
     /// Arriving on index `index` of `list` would skip it (explicit song, skip setting on).
     fn skips(&self, _list: &Playlist, _index: usize) -> bool {
         false
@@ -164,9 +163,9 @@ impl<Q: Queue> Known<Q> {
         self.live.moved_to(index);
     }
 
+    /// The client already set `mode` on the live queue; a press told late must not overwrite a newer one.
     fn set_repeat(&mut self, mode: u8) {
         self.list.set_repeat(mode);
-        self.live.set_repeat(mode);
     }
 
     pub fn skips(&self, index: usize) -> bool {
@@ -181,10 +180,6 @@ impl Queue for Playlist {
 
     fn moved_to(&mut self, index: usize) {
         Playlist::moved_to(self, index);
-    }
-
-    fn set_repeat(&mut self, mode: u8) {
-        Playlist::set_repeat(self, mode);
     }
 }
 
@@ -1113,7 +1108,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         r != cur && Some(r) != self.next_of(cur)
     }
 
-    /// Sets the repeat mode (`playlist::REPEAT_*`) and replans.
+    /// The repeat mode (`playlist::REPEAT_*`) the client set on the queue; replans.
     pub fn set_repeat(&mut self, mode: u8) {
         self.queue.set_repeat(mode);
         self.sync_queue();
