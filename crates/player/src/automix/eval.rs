@@ -1482,12 +1482,12 @@ fn transitions_hold_their_scores() {
     assert!(t.cap_broken == 0 && t.coda_s == 0.0 && t.dead_runup_s == 0.0, "{t:?}");
     assert!(t.dead_air_s <= 38.0 && t.clash_s <= 1.0 && t.both_sung_s <= 5.0 && t.bump_max_lu <= 1.0, "{t:?}");
     assert!(t.sung_lost_s <= 18.0, "{t:?}");
-    // DJ: longer mixes that land more drops, without more harm; a pair that cannot blend cuts into its drop. The
+    // DJ: longer mixes that land more drops, without more harm, and no cuts. The
     // singing found runs past the sung notes of these sparsely sung songs (a mix must not miss a note), so DJ
     // also skips sung intros, loops only unsung bars, and twice waits for a last line off the phrase.
     let dj = mix_totals(&run_mixes(crate::types::MixStyle::Dj));
     assert!(dj.duration_s >= 1.5 * t.duration_s && dj.drop_hit >= 10 && dj.drop_skipped == 0 && dj.double_drops >= 1, "{dj:?}");
-    assert!(dj.cuts >= 1 && dj.skip_in_s <= 40.0 && dj.dip_s <= 0.6 * t.dip_s && dj.loops >= 1 && dj.bends >= 6, "{dj:?}");
+    assert!(dj.cuts == 0 && dj.skip_in_s <= 40.0 && dj.dip_s <= 0.6 * t.dip_s && dj.loops >= 1 && dj.bends >= 6, "{dj:?}");
     assert!(dj.swap_on_bar == dj.swaps && dj.swap_on_phrase + 2 >= dj.swaps, "{dj:?}");
     assert!(dj.cap_broken == 0 && dj.coda_s == 0.0 && dj.dead_runup_s <= 4.0, "{dj:?}");
     assert!(dj.dead_air_s <= 38.0 && dj.clash_s <= 1.0 && dj.both_sung_s <= 5.0 && dj.bump_max_lu <= 1.0, "{dj:?}");

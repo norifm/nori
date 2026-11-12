@@ -94,7 +94,7 @@ fn automix_prefs() -> TransitionPrefs {
 fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
     let (a, b) = (measured("a", 120.0, lufs_a), measured("b", 123.0, lufs_b));
     let same_tempo = measured("b", 120.0, lufs_b);
-    // Far-apart keys: the DJ style cuts between them instead of blending.
+    // Far-apart keys: a quick mix.
     let keyed = |t: &TrackAnalysis, key: i32| TrackAnalysis { key, key_confidence: 0.9, ..t.clone() };
     // Five bars of music at the end of the outgoing song after a long quiet stretch, and the incoming
     // song's intro twelve bars long: the run-up reads the outgoing song's last four bars round.
@@ -132,11 +132,11 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
             logged: &["BeatMatched", "remix"],
         },
         Kind {
-            name: "a cut",
+            name: "beat-matched, keys far apart (DJ)",
             prefs: TransitionPrefs { style: MixStyle::Dj, ..automix_prefs() },
             a: keyed(&a, 1),
             b: keyed(&same_tempo, 7),
-            logged: &["Cut"],
+            logged: &["BeatMatched", "keys far apart"],
         },
         Kind {
             name: "MixRamp fade",
@@ -396,15 +396,14 @@ fn tiny_stretch_keeps_level() {
     assert!(step <= 1.0, "{}: {step:.2} dB in 100 ms, {:.1} s into the second half of the mix", kind.name, i as f64 * WIN_S);
 }
 
-/// Two different songs at one loudness: every kind of mix but a cut (its riser thins the outgoing song) holds that
-/// level while both play, never louder or quieter than the songs themselves, as heard: over 400 ms, the window
-/// momentary loudness is measured over.
+/// Two different songs at one loudness: every kind of mix holds that level while both play, never louder or quieter
+/// than the songs themselves, as heard: over 400 ms, the window momentary loudness is measured over.
 #[test]
 fn level_holds_through_each_mix() {
     let (a, b) = (steady(SONG_S, 31, 0.3), steady(SONG_S, 32, 0.3));
     let own = db(rms(&left(&a)[frames(10.0)..frames(20.0)]));
     let mut bad = Vec::new();
-    for kind in kinds(-14.0, -14.0).into_iter().filter(|k| k.name != "a cut") {
+    for kind in kinds(-14.0, -14.0) {
         let got = run(&kind, &a, &b, &[], true);
         let (s, n) = got.mix;
         let x = left(&got.out);
@@ -426,7 +425,7 @@ fn level_glides_across_a_loudness_gap() {
     let (a, b) = (steady(SONG_S, 31, 0.4), steady(SONG_S, 32, 0.2));
     let own = |s: &[i16]| db(rms(&left(s)[frames(10.0)..frames(20.0)]));
     let (la, lb) = (own(&a), own(&b));
-    for kind in kinds(-8.0, -14.0).into_iter().filter(|k| k.name != "a cut" && k.name != "equal-power crossfade") {
+    for kind in kinds(-8.0, -14.0).into_iter().filter(|k| k.name != "equal-power crossfade") {
         let got = run(&kind, &a, &b, &[], false);
         let (s, n) = got.mix;
         let mid = db(rms(&left(&got.out)[s + n / 2 - frames(0.5)..s + n / 2 + frames(0.5)]));
