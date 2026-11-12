@@ -140,7 +140,7 @@
               <span class="art"><Cover src={a.cover} radius="var(--inner-art)" fallback="compact-disc" /></span><span class="words"><span class="clip">{a.name}</span><span class="sub clip">{a.artist}</span></span>
             {:else if l.line === "playlist"}
               {@const p = found.playlists[l.at]}
-              <span class="art"><Cover src={p.cover} radius="var(--inner-art)" fallback="playlist" /></span><span class="words"><span class="clip">{p.name}</span><span class="sub clip">{W.songCount(p.songCount)}</span></span>
+              <span class="art"><Cover src={p.cover} radius="var(--inner-art)" fallback="playlist" /></span><span class="words"><span class="clip">{p.name}</span><span class="sub clip">{p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")}</span></span>
             {:else if l.line === "song"}
               {@const s = found.songs[l.at]}
               <span class="art"><Cover src={s.cover} radius="var(--inner-art)" /></span><span class="words"><span class="clip">{s.title}</span><span class="sub clip">{s.artist}</span></span>
