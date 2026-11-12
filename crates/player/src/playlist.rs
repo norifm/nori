@@ -15,12 +15,19 @@ pub enum Hand {
     Last,
     /// A download played by the offline bridge while the server is unreachable.
     Bridge,
+    /// Added by the queue itself: autofill past the end, or what plays when the queue ended.
+    Auto,
 }
 
 impl Hand {
     /// Added by the user (Play next, Add to queue).
     pub fn by_user(self) -> bool {
         matches!(self, Hand::Next | Hand::Last)
+    }
+
+    /// Chosen by the user: added by hand, or part of what they played. Add to queue goes after these.
+    pub fn chosen(self) -> bool {
+        matches!(self, Hand::No | Hand::Next | Hand::Last)
     }
 }
 
@@ -294,7 +301,7 @@ impl Playlist {
             }
             return at;
         };
-        let p = place(self.ids.len(), cur, |i| self.hand[i].by_user(), self.order.as_deref(), hand == Hand::Last, count);
+        let p = place(self.ids.len(), cur, |i| self.hand[i].chosen(), self.order.as_deref(), hand == Hand::Last, count);
         self.splice(p.at, ids, hand);
         if let Some(o) = p.order {
             self.order = Some(o);
@@ -304,13 +311,16 @@ impl Playlist {
     }
 
     /// Songs from a controller at `at`, with a mark per song. If all are hand-added (and the queue is not
-    /// empty) they go where [`Playlist::add`] puts them (the first mark decides); otherwise at `at`.
+    /// empty) they go where [`Playlist::add`] puts them (the first mark decides); otherwise at `at`, marked
+    /// [`Hand::Auto`] if all are the queue's own.
     pub fn take(&mut self, at: usize, ids: Vec<String>, hands: &[Hand]) -> usize {
         if !self.ids.is_empty() && !hands.is_empty() && hands.iter().all(|h| h.by_user()) {
             return self.add(ids, hands[0]);
         }
         let at = at.min(self.ids.len());
-        self.insert(at, ids, Hand::No);
+        // A controller's insert of the queue's own songs stays the queue's; anything else is the list's.
+        let hand = if !hands.is_empty() && hands.iter().all(|&h| h == Hand::Auto) { Hand::Auto } else { Hand::No };
+        self.insert(at, ids, hand);
         at
     }
 
@@ -855,9 +865,10 @@ mod tests {
         p.add(ids(&["x"]), Hand::Last);
         p.add(ids(&["y"]), Hand::Last);
         p.add(ids(&["z"]), Hand::Next);
-        assert_eq!(&played(&p)[..4], ["b", "z", "x", "y"]);
-        assert_eq!(list(&p)[..5], ["a", "b", "z", "x", "y"]);
-        assert_eq!(p.by_hand().collect::<Vec<_>>(), [2, 3, 4]);
+        assert_eq!(&played(&p)[..2], ["b", "z"]);
+        assert_eq!(&played(&p)[5..], ["x", "y"], "add to queue: after the rest of what was played");
+        assert_eq!(list(&p), ["a", "b", "z", "c", "d", "x", "y"]);
+        assert_eq!(p.by_hand().collect::<Vec<_>>(), [2, 5, 6]);
         assert_eq!(p.current_id(), Some("b"));
 
         // Insert under shuffle plays last.
@@ -873,9 +884,9 @@ mod tests {
     fn take_places_by_mark() {
         let mut p = Playlist::default();
         p.set(ids(&["a", "b", "c"]), Some(0), false, 0);
-        assert_eq!(p.take(99, ids(&["x", "y"]), &[Hand::Last, Hand::Last]), 1, "added by hand: after the playing song");
-        assert_eq!(p.take(99, ids(&["n"]), &[Hand::Next]), 1, "play next: right after it, ahead of the others");
-        assert_eq!(p.take(99, ids(&["l"]), &[Hand::Last]), 4, "add to queue: after the ones added before");
+        assert_eq!(p.take(99, ids(&["x", "y"]), &[Hand::Last, Hand::Last]), 3, "add to queue: after the rest of what was played");
+        assert_eq!(p.take(99, ids(&["n"]), &[Hand::Next]), 1, "play next: right after the playing song");
+        assert_eq!(p.take(99, ids(&["l"]), &[Hand::Last]), 6, "add to queue: after the ones added before");
         assert_eq!(p.take(1, ids(&["m"]), &[Hand::Next, Hand::No]), 1, "not all by hand: the controller's own insert");
         assert_eq!(p.take(99, ids(&["e"]), &[Hand::No]), 8, "an insert past the end lands at the end");
         let mut empty = Playlist::default();
@@ -886,6 +897,18 @@ mod tests {
         let mut p = Playlist::default();
         assert_eq!(p.add(ids(&["a", "b"]), Hand::Last), 0);
         assert_eq!((list(&p), p.current()), (vec!["a", "b"], Some(0)));
+    }
+
+    #[test]
+    fn add_to_queue_goes_after_the_album_and_ahead_of_autofill() {
+        let album: Vec<String> = (1..=11).map(|n| format!("t{n}")).collect();
+        let mut p = Playlist::default();
+        p.set(album, Some(9), false, 0);
+        assert_eq!(p.take(11, ids(&["f1", "f2"]), &[Hand::Auto, Hand::Auto]), 11, "autofill past the end");
+        assert_eq!(p.add(ids(&["mine"]), Hand::Last), 11, "after song 11, ahead of what autofill added");
+        assert_eq!(p.add(ids(&["more"]), Hand::Last), 12, "and after what was added before it");
+        assert_eq!(list(&p)[10..], ["t11", "mine", "more", "f1", "f2"]);
+        assert_eq!(p.hand(13), Hand::Auto);
     }
 
     #[test]

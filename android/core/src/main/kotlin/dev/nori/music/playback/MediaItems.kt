@@ -72,8 +72,8 @@ val MediaItem.isRadio get() = mediaId.startsWith(RADIO_PREFIX)
 
 /**
  * Songs added by hand carry how they came across the controller: [Hand.NEXT] (Play next) or [Hand.LAST]
- * (Add to queue). Where that puts them is the core's (nori_player::playlist::Playlist::take); once in,
- * both count alike as hand-added.
+ * (Add to queue), and songs the queue added itself [Hand.AUTO]. Where that puts them is the core's
+ * (nori_player::playlist::Playlist::take); once in, both by hand count alike as hand-added.
  */
 private const val QUEUED = "queued"
 fun MediaItem.queuedAs(): Hand? = mediaMetadata.extras?.getString(QUEUED)?.let { runCatching { Hand.valueOf(it) }.getOrNull() }

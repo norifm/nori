@@ -3003,16 +3003,15 @@ fn made_again(app: &Measuring) -> bool {
 #[test]
 fn songs_queued_near_end() {
     // At 30 % nothing of a's ending is made: replanned, nothing remade.
-    for how in [Queued::PlayNext, Queued::AddToQueue] {
-        for with_c in [false, true] {
-            let (_rig, app, order) = queued_while_playing(0.3, with_c, how);
-            mixed(&app, "a", "b");
-            assert_eq!(order, if with_c { vec!["a", "b", "c"] } else { vec!["a", "b"] }, "{:?}", app.log());
-            if with_c {
-                mixed(&app, "b", "c");
-            }
-            assert!(!made_again(&app), "{:?}", app.log());
+    // Add to queue puts b after c, so only play next has a song ahead of it.
+    for (how, with_c) in [(Queued::PlayNext, false), (Queued::PlayNext, true), (Queued::AddToQueue, false)] {
+        let (_rig, app, order) = queued_while_playing(0.3, with_c, how);
+        mixed(&app, "a", "b");
+        assert_eq!(order, if with_c { vec!["a", "b", "c"] } else { vec!["a", "b"] }, "{:?}", app.log());
+        if with_c {
+            mixed(&app, "b", "c");
         }
+        assert!(!made_again(&app), "{:?}", app.log());
     }
 
     // Song queued late remakes ending.
@@ -3026,8 +3025,8 @@ fn songs_queued_near_end() {
 
     // Song queued ahead of next is mixed into.
     // Before a's mix into c is made: b takes c's place.
-    for how in [Queued::PlayNext, Queued::AddToQueue] {
-        let (_rig, app, order) = queued_while_playing(0.65, true, how);
+    {
+        let (_rig, app, order) = queued_while_playing(0.65, true, Queued::PlayNext);
         mixed(&app, "a", "b");
         mixed(&app, "b", "c");
         assert_eq!(order, vec!["a", "b", "c"], "{:?}", app.log());
