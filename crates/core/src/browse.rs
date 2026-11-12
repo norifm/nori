@@ -101,8 +101,11 @@ impl Core {
     }
 
     /// The `limit` genres with most indexed songs, most first, each with a cover of its songs (tag case
-    /// aside, one genre).
+    /// aside, one genre); none for a profile that keeps no index.
     pub fn genre_tiles(&self, limit: u32) -> Result<Vec<GenreTile>> {
+        if !self.rules().indexed {
+            return Ok(Vec::new());
+        }
         let c = self.db.lock();
         let mut st = c.prepare_cached(&genres_sql())?;
         let rows = st.query_map(params![limit], |r| Ok(GenreTile { name: r.get(0)?, song_count: r.get(1)?, cover_art: r.get(2)? }))?;
@@ -117,8 +120,11 @@ impl Core {
         Ok(cover)
     }
 
-    /// Decades with indexed songs, newest first, with song counts.
+    /// Decades with indexed songs, newest first, with song counts; none for a profile that keeps no index.
     pub fn browse_decades(&self) -> Result<Vec<Decade>> {
+        if !self.rules().indexed {
+            return Ok(Vec::new());
+        }
         let c = self.db.lock();
         let mut st = c.prepare_cached(&decades_sql())?;
         let rows = st.query_map([], |r| {
@@ -335,6 +341,18 @@ pub(crate) mod tests {
         assert_eq!(core.genre_cover("JAZZ".into()).unwrap().as_deref(), Some("jazz-cover"), "a genre's page has its tile's cover");
         assert_eq!(core.genre_cover("Rock".into()).unwrap(), tiles[0].cover_art);
         assert_eq!(core.genre_cover("Polka".into()).unwrap(), None);
+    }
+
+    #[test]
+    fn a_profile_without_an_index_offers_none_of_it() {
+        // Its rows are only the songs its pages showed: a tile's page would ask the provider, and
+        // downloading the library would fetch every song browsed.
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        db::index(&mut core.db.lock(), &[], &[], &[song("a", "T", "A", "B", "Lo-fi", 2023)]).unwrap();
+        core.set_rules(ProfileRules { indexed: false, ..core.rules() });
+        assert_eq!(core.genre_tiles(10).unwrap(), []);
+        assert_eq!(core.browse_decades().unwrap(), []);
+        assert_eq!(core.index_size().unwrap().songs, 0);
     }
 
     #[test]

@@ -280,7 +280,12 @@ impl Core {
         Ok(db::search(&self.db.lock(), &query, limit)?)
     }
 
+    /// What the offline index holds: nothing for a profile that keeps none, whose rows are only what its
+    /// pages showed.
     pub fn index_size(&self) -> Result<IngestStats> {
+        if !self.rules().indexed {
+            return Ok(IngestStats::default());
+        }
         let c = self.db.lock();
         Ok(IngestStats { artists: db::count(&c, db::ItemKind::Artist)?, albums: db::count(&c, db::ItemKind::Album)?, songs: db::count(&c, db::ItemKind::Song)? })
     }
