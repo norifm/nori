@@ -6,6 +6,18 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-11-12
+
+### Fixed
+
+- Starring a song no longer flashes the Favorites card's color
+- Add to queue goes after what you played, ahead of autofill
+- DJ mixes never cut and come in on the instruments (#148)
+- Beat-matched mixes fade in rather than skip the intro (#148)
+- Fades let a song finish its last line before it falls (#148)
+- A provider's next song is fetched ahead, so it mixes in (#148)
+- The volume keys move another device a whole step per press
+
 ## [0.8.3] - 2026-11-12
 
 ### Added
