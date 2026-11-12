@@ -330,7 +330,8 @@ pub(super) struct Draw {
     buffer: glow::NativeBuffer,
     vertices: glow::NativeVertexArray,
     pyramid: Option<Pyramid>,
-    page_blurred: bool,
+    /// The pyramid holds the page as last rendered, with these shapes left out.
+    blurred: Option<Vec<Raised>>,
 }
 
 struct Pyramid {
@@ -522,10 +523,10 @@ impl Draw {
             gl,
             vertex,
             shader(
-                include_str!(concat!(env!("OUT_DIR"), "/fs_focus_opaque.glsl")),
-                include_str!(concat!(env!("OUT_DIR"), "/fs_focus_opaque_es.glsl")),
+                include_str!(concat!(env!("OUT_DIR"), "/fs_focus.glsl")),
+                include_str!(concat!(env!("OUT_DIR"), "/fs_focus_es.glsl")),
             ),
-            include!(concat!(env!("OUT_DIR"), "/fs_focus_opaque.bindings")),
+            include!(concat!(env!("OUT_DIR"), "/fs_focus.bindings")),
         )?;
         let (buffer, vertices) = unsafe {
             let buffer = gl.create_buffer()?;
@@ -551,7 +552,7 @@ impl Draw {
             buffer,
             vertices,
             pyramid: None,
-            page_blurred: false,
+            blurred: None,
         })
     }
 
@@ -561,7 +562,7 @@ impl Draw {
     pub(super) fn resize(&mut self, width: u32, height: u32) {
         self.size = PhysicalSize::new(width.max(1), height.max(1));
         self.pyramid = None;
-        self.page_blurred = false;
+        self.blurred = None;
     }
 
     pub(super) fn frame(&mut self, shared: &Shared, mut win: LogicalSize) -> Result<(), String> {
@@ -622,7 +623,7 @@ impl Draw {
             if fresh || layer.dirty.get() {
                 layer.dirty.set(false);
                 if role == Role::Page {
-                    self.page_blurred = false;
+                    self.blurred = None;
                 }
                 let mut texture = layer.texture.borrow_mut();
                 if let Some(texture) = texture.as_mut() {
@@ -647,7 +648,7 @@ impl Draw {
         let (w, h) = (self.size.width as f32, self.size.height as f32);
         let focus = shared.focus();
         if shared.top_shown.get() || shared.player_shown.get() || focus.is_some() {
-            self.blur_page(page)?;
+            self.blur_page(page, focus.as_ref().map_or(&[], |f| &f.raised), scale)?;
         }
         let pyramid = self.pyramid.as_ref().map_or(page, |p| p.texture);
         let full = uniforms(
@@ -666,7 +667,7 @@ impl Draw {
             false,
             false,
         );
-        if let Some(f) = focus {
+        if let Some(f) = &focus {
             let rect = [
                 f.region[0] * scale,
                 f.region[1] * scale,
@@ -681,6 +682,7 @@ impl Draw {
                 [f.band_top * scale, f.band_h * scale, f.pitch * scale, scale],
                 [0.0; 4],
             );
+            let u = with_raised(u, &f.raised, scale);
             self.pass(
                 (None, [w as i32, h as i32]),
                 &self.focus,
@@ -775,12 +777,15 @@ impl Draw {
         }
     }
 
-    fn blur_page(&mut self, page: glow::NativeTexture) -> Result<(), String> {
+    /// Draws the page's blur pyramid, the first level leaving out what is `raised` over the page, unless it
+    /// already holds the page as last rendered with those left out.
+    fn blur_page(&mut self, page: glow::NativeTexture, raised: &[Raised], scale: f32) -> Result<(), String> {
         let size = PhysicalSize::new((self.size.width / 2).max(1), (self.size.height / 2).max(1));
         if self.pyramid.as_ref().is_none_or(|p| p.size != size) {
             self.pyramid = Some(Pyramid::new(self.native.clone(), size)?);
+            self.blurred = None;
         }
-        if self.page_blurred {
+        if self.blurred.as_deref() == Some(raised) {
             return Ok(());
         }
         let pyramid = self.pyramid.as_ref().unwrap();
@@ -799,6 +804,7 @@ impl Draw {
                 [0.0; 4],
                 [0.0; 4],
             );
+            let u = if level == 0 { with_raised(u, raised, scale) } else { u };
             unsafe {
                 self.native
                     .gl
@@ -835,7 +841,7 @@ impl Draw {
                 );
             }
         }
-        self.page_blurred = true;
+        self.blurred = Some(raised.to_vec());
         Ok(())
     }
 }
@@ -1355,7 +1361,7 @@ mod tests {
                         .unwrap();
                     let mut draw = draw.borrow_mut();
                     draw.resize(size.width, size.height);
-                    draw.blur_page(texture.texture).unwrap();
+                    draw.blur_page(texture.texture, &[], 1.0).unwrap();
                     let u = uniforms(
                         [0.0, 0.0, 72.0, 64.0],
                         [72.0, 64.0, 72.0, 64.0],

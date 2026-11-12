@@ -1194,17 +1194,35 @@ component MenuSheet inherits Rectangle {
     border-color: Theme.hairline;
 }
 
+// A rounded rectangle in the window.
+export struct Pane {
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+    radius: length,
+}
+
+// Where the dialog shown last has its pane, for the compositor (app.rs reads it while a dialog is open): the
+// lyrics' focus blur leaves it sharp.
+export global DialogPane {
+    in-out property <Pane> at;
+}
+
 // A dialog over the dimmed page: its title, then what it holds (groups, a field, its buttons at the end).
 // A press beside it dismisses it.
 component Dialog inherits Rectangle {
     in property <string> title;
     in property <length> sheet-width: 380px;
     callback dismissed;
+    property <Pane> pane: { x: sheet.absolute-position.x, y: sheet.absolute-position.y, width: sheet.width, height: sheet.height, radius: sheet.border-radius };
+    init => { DialogPane.at = self.pane; }
+    changed pane => { DialogPane.at = self.pane; }
     background: Theme.ground.with-alpha(0.6);
     TouchArea {
         clicked => { root.dismissed(); }
     }
-    MenuSheet {
+    sheet := MenuSheet {
         x: (parent.width - self.width) / 2;
         y: 80px;
         width: min(root.sheet-width, parent.width - 32px);

@@ -24,7 +24,7 @@ use nori_http::Http;
 use nori_look::cover::CoverColours;
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
 
-use crate::compositor::{Compositor, Focus};
+use crate::compositor::{Compositor, Focus, Raised};
 use crate::session::{self, CoverKey, CoverSize, Data, Fetch, Msg, PlaylistChange, Req, Session, Tx};
 use nori_host::pages::{HomePart, PageAsk, PageGot, ShelfItems};
 use nori_host::player::{Playback, QueueShown};
@@ -886,18 +886,20 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
 }
 
 /// Where Now Playing's synced lyrics are sharp: the band of the line they are scrolled to, the next one before the
-/// first is sung and the last once all are. None while they are not shown, scrolled by hand or under a dialog (the
-/// blur is drawn over all the page holds).
+/// first is sung and the last once all are, and an open dialog's pane. None while they are not shown or scrolled
+/// by hand.
 fn lyrics_focus(ui: &AppWindow) -> Option<Focus> {
-    if !ui.get_full_player() || ui.get_full_panel() != Panel::Lyrics || ui.get_lyrics_lines().row_count() == 0 || !ui.get_lyrics_synced() || ui.get_full_lyrics_browsed() || ui.get_dialog_open() {
+    if !ui.get_full_player() || ui.get_full_panel() != Panel::Lyrics || ui.get_lyrics_lines().row_count() == 0 || !ui.get_lyrics_synced() || ui.get_full_lyrics_browsed() {
         return None;
     }
+    let pane = ui.global::<crate::DialogPane>().get_at();
+    let raised = ui.get_dialog_open().then_some(Raised { rect: [pane.x, pane.y, pane.width, pane.height], radius: pane.radius });
     let size = ui.window().size().to_logical(ui.window().scale_factor());
     let x = size.width / 2.0;
     // Clear of the volume pill above and the lyrics/queue pill below.
     // The band where the line sung is now, moving with it as the lyrics scroll; a step a line of 44 px
     // text and its 36 px gap.
-    Some(Focus { region: [x, 48.0, size.width - x - 100.0, size.height - 48.0 - 56.0], band_top: ui.get_full_lyric_top() - 8.0, band_h: ui.get_full_lyric_h() + 16.0, pitch: 90.0 })
+    Some(Focus { region: [x, 48.0, size.width - x - 100.0, size.height - 48.0 - 56.0], band_top: ui.get_full_lyric_top() - 8.0, band_h: ui.get_full_lyric_h() + 16.0, pitch: 90.0, raised: raised.into_iter().collect() })
 }
 
 /// Menu bar items do what the window's buttons and keys do.
@@ -5310,7 +5312,12 @@ mod tests {
         assert_eq!(sung(2), first, "each line sung is scrolled to the same place");
         assert_eq!(band(6), Some(first), "once all are over, the last line is aimed at and the rest stay blurred");
         ui.set_details_open(true);
-        assert_eq!(band(2), None, "a dialog over the lyrics is not blurred with them");
+        assert_eq!(band(2), Some(first), "under a dialog the lyrics stay in focus");
+        let raised = lyrics_focus(&ui).unwrap().raised;
+        // Details' pane: 440 px wide, centered, 80 px down, with its 30 px corners.
+        assert!(matches!(raised[..], [Raised { rect: [420.0, 80.0, 440.0, h], radius: 30.0 }] if h > 0.0), "the dialog's pane stays sharp: {raised:?}");
+        ui.set_details_open(false);
+        assert_eq!(lyrics_focus(&ui).unwrap().raised, [], "a closed dialog leaves nothing sharp");
     }
 
     #[test]

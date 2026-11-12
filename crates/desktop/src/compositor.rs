@@ -40,6 +40,8 @@ const PLAYER_H: f32 = 64.0;
 const PLAYER_BOTTOM: f32 = 12.0;
 const PLAYER_RADIUS: f32 = 20.0;
 const PILL_MAX_W: f32 = 1040.0;
+/// A menu's corner (`MenuShape.radius`).
+const MENU_RADIUS: f32 = 14.0;
 /// The window's side margin, and at the top left what the traffic lights take.
 const SIDE: f32 = 16.0;
 #[cfg(target_os = "macos")]
@@ -232,14 +234,26 @@ impl FrameSchedule {
 }
 
 /// A page region drawn blurred except for a sharp horizontal band (logical pixels).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Focus {
     pub region: [f32; 4],
     pub band_top: f32,
     pub band_h: f32,
     /// A line and the gap after it: each step further from the band blurs a point more.
     pub pitch: f32,
+    /// What sits over the page there (a dialog's pane, the page's menus): left sharp and out of the blur.
+    pub raised: Vec<Raised>,
 }
+
+/// A rounded rectangle drawn over the page (logical pixels).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Raised {
+    pub rect: [f32; 4],
+    pub radius: f32,
+}
+
+/// How many raised shapes the shaders take; more are drawn blurred.
+const RAISED_MAX: usize = 4;
 
 impl Shared {
     fn shown(&self, role: Role) -> bool {
@@ -250,13 +264,15 @@ impl Shared {
         }
     }
 
-    /// The lyrics focus blur to draw this frame. It is drawn over all the page holds, so not while a menu is open on it.
+    /// The lyrics focus blur to draw this frame, with the page's open menus raised over it.
     fn focus(&self) -> Option<Focus> {
-        let menu_open = self.layers.borrow().iter().any(|(layer, role)| {
-            role.get() == Some(Role::Page) && !i_slint_core::window::WindowInner::from_pub(&layer.window).active_popups().is_empty()
-        });
-        if menu_open { return None; }
-        self.focus.borrow().as_ref().and_then(|f| f())
+        let mut focus = self.focus.borrow().as_ref().and_then(|f| f())?;
+        for (layer, role) in self.layers.borrow().iter() {
+            if role.get() == Some(Role::Page) {
+                focus.raised.extend(popups(&layer.window));
+            }
+        }
+        Some(focus)
     }
 }
 
@@ -963,6 +979,16 @@ impl ApplicationHandler<Wake> for Runner {
 struct Draw {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    glass: Glass,
+    /// Surface must be reconfigured before the next frame.
+    stale: bool,
+}
+
+/// glass.wgsl's pipelines, their bind groups, and the page's blur pyramid.
+#[cfg(not(target_os = "linux"))]
+struct Glass {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
     copy: wgpu::RenderPipeline,
     over: wgpu::RenderPipeline,
     down: wgpu::RenderPipeline,
@@ -974,17 +1000,15 @@ struct Draw {
     groups: RefCell<Vec<Group>>,
     next_group: Cell<usize>,
     pyramid: Option<Pyramid>,
-    /// The pyramid holds the page as last rendered.
-    page_blurred: bool,
-    /// Surface must be reconfigured before the next frame.
-    stale: bool,
+    /// The pyramid holds the page as last rendered, with these shapes left out.
+    blurred: Option<Vec<Raised>>,
 }
 
 #[cfg(not(target_os = "linux"))]
 struct Group {
     buffer: wgpu::Buffer,
     /// What the buffer holds, so an unchanged frame writes nothing.
-    uniforms: [u8; 96],
+    uniforms: Uniforms,
     a: wgpu::TextureView,
     b: wgpu::TextureView,
     binding: wgpu::BindGroup,
@@ -1020,88 +1044,20 @@ impl Draw {
             config.present_mode = wgpu::PresentMode::Immediate;
         }
         surface.configure(d, &config);
-        let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("glass"), source: wgpu::ShaderSource::Wgsl(include_str!("glass.wgsl").into()) });
-        let tex = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
-            count: None,
-        };
-        let bind = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("glass"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
-                    count: None,
-                },
-                tex(1),
-                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
-                tex(3),
-            ],
-        });
-        let layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("glass"), bind_group_layouts: &[Some(&bind)], immediate_size: 0 });
-        let premultiplied = wgpu::BlendState {
-            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
-            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
-        };
-        let pipeline = |entry: &str, blend: Option<wgpu::BlendState>, format: wgpu::TextureFormat| {
-            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
-                primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleStrip, ..Default::default() },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
-        let sampler = d.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("glass"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        Ok(Draw {
-            surface,
-            config,
-            copy: pipeline("fs_copy", None, FORMAT),
-            over: pipeline("fs_copy", Some(premultiplied), FORMAT),
-            down: pipeline("fs_down", None, PYRAMID_FORMAT),
-            pill: pipeline("fs_pill", Some(premultiplied), FORMAT),
-            fade: pipeline("fs_fade", Some(premultiplied), FORMAT),
-            focus: pipeline("fs_focus", None, FORMAT),
-            bind,
-            sampler,
-            groups: RefCell::new(Vec::new()),
-            next_group: Cell::new(0),
-            pyramid: None,
-            page_blurred: false,
-            stale: false,
-        })
+        Ok(Draw { surface, config, glass: Glass::new(d, &gpu.queue), stale: false })
     }
 
     fn resize(&mut self, w: u32, h: u32) {
         self.config.width = w.max(1);
         self.config.height = h.max(1);
-        self.pyramid = None;
-        self.groups.borrow_mut().clear();
+        self.glass.pyramid = None;
+        self.glass.groups.borrow_mut().clear();
         self.stale = true;
     }
 
     /// Renders dirty layers, then composites the page, the fades, and the pills on top.
     fn frame(&mut self, s: &Shared, mut win: LogicalSize) {
-        self.next_group.set(0);
+        self.glass.next_group.set(0);
         let gpu = s.gpu.clone();
         let d = &gpu.device;
         let scale = s.window.borrow().as_ref().map_or(1.0, |w| w.scale_factor() as f32);
@@ -1154,7 +1110,7 @@ impl Draw {
             if fresh || layer.dirty.get() {
                 layer.dirty.set(false);
                 if role == Role::Page {
-                    self.page_blurred = false;
+                    self.glass.blurred = None;
                 }
                 if let Some((t, _)) = layer.texture.borrow().as_ref() {
                     prepare_layer(&gpu, t, fresh);
@@ -1173,76 +1129,162 @@ impl Draw {
         let focus = s.focus();
         let glass_needed = s.top_shown.get() || s.player_shown.get() || focus.is_some();
         if glass_needed {
-            self.blur_page(d, &gpu.queue, &mut enc, &page);
+            self.glass.blur_page(&mut enc, &page, self.size(), focus.as_ref().map_or(&[], |f| &f.raised), scale);
         }
-        let pyramid = self.pyramid.as_ref().map(|p| p.all.clone());
-        let full = uniforms([0.0, 0.0, w, h], [w, h, w, h], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
+        let g = &self.glass;
+        let pyramid = g.pyramid.as_ref().map(|p| p.all.clone());
         // One pass for the whole composite: every draw reads the layers and the pyramid, never the target.
-        let mut draws = vec![(&self.copy, self.group(d, &gpu.queue, &full, &page, pyramid.as_ref().unwrap_or(&page)))];
-        if let (Some(f), Some(py)) = (focus, &pyramid) {
-            let r = [f.region[0] * scale, f.region[1] * scale, f.region[2] * scale, f.region[3] * scale];
-            let u = uniforms(r, [w, h, w, h], [0.0; 4], [0.0; 4], [f.band_top * scale, f.band_h * scale, f.pitch * scale, scale], [0.0; 4]);
-            draws.push((&self.focus, self.group(d, &gpu.queue, &u, &page, py)));
+        let mut draws = vec![g.copy_draw(&page, pyramid.as_ref().unwrap_or(&page), [w, h])];
+        if let (Some(f), Some(py)) = (&focus, &pyramid) {
+            draws.push(g.focus_draw(f, &page, py, [w, h], scale));
         }
         let [red, green, blue] = s.page_colour.get();
         for role in [Role::Top, Role::Player] {
             let (Some(view), Some(py), true) = (find(role), &pyramid, s.shown(role)) else { continue };
             let f = fade_of(role, win);
             let u = uniforms(f.strip.scaled(scale), [w, h, w, h], [0.0; 4], [red, green, blue, 0.0], [f.at, f.top as u8 as f32, 0.0, 0.0], [0.0; 4]);
-            draws.push((&self.fade, self.group(d, &gpu.queue, &u, &page, py)));
+            draws.push((&g.fade, g.group(&u, &page, py)));
             let rect = pill_rect(role, win).scaled(scale);
             let u = uniforms(rect, [w, h, w, h], [pill_radius(role) * scale, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, blur_level(scale)], [0.0; 4], [0.0; 4]);
-            draws.push((&self.pill, self.group(d, &gpu.queue, &u, &page, py)));
+            draws.push((&g.pill, g.group(&u, &page, py)));
             let u = uniforms(rect, [w, h, w, h], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
-            draws.push((&self.over, self.group(d, &gpu.queue, &u, &view, &view)));
+            draws.push((&g.over, g.group(&u, &view, &view)));
         }
         pass(&mut enc, &target, &draws, true);
         drop((draws, layers));
         gpu.queue.submit([enc.finish()]);
         gpu.queue.present(frame);
-        self.groups.borrow_mut().truncate(self.next_group.get());
+        self.glass.groups.borrow_mut().truncate(self.glass.next_group.get());
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+impl Glass {
+    fn new(d: &wgpu::Device, q: &wgpu::Queue) -> Glass {
+        let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("glass"), source: wgpu::ShaderSource::Wgsl(include_str!("glass.wgsl").into()) });
+        let tex = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+            count: None,
+        };
+        let bind = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("glass"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+                tex(1),
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+                tex(3),
+            ],
+        });
+        let layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("glass"), bind_group_layouts: &[Some(&bind)], immediate_size: 0 });
+        let premultiplied = wgpu::BlendState {
+            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+        };
+        let pipeline = |entry: &str, blend: Option<wgpu::BlendState>, format: wgpu::TextureFormat| {
+            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+                primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleStrip, ..Default::default() },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let sampler = d.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("glass"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        Glass {
+            device: d.clone(),
+            queue: q.clone(),
+            copy: pipeline("fs_copy", None, FORMAT),
+            over: pipeline("fs_copy", Some(premultiplied), FORMAT),
+            down: pipeline("fs_down", None, PYRAMID_FORMAT),
+            pill: pipeline("fs_pill", Some(premultiplied), FORMAT),
+            fade: pipeline("fs_fade", Some(premultiplied), FORMAT),
+            focus: pipeline("fs_focus", None, FORMAT),
+            bind,
+            sampler,
+            groups: RefCell::new(Vec::new()),
+            next_group: Cell::new(0),
+            pyramid: None,
+            blurred: None,
+        }
     }
 
-    /// Draws the page's blur pyramid, each level a 13-tap downsample of the one above it, unless it
-    /// already holds the page as last rendered.
-    fn blur_page(&mut self, d: &wgpu::Device, q: &wgpu::Queue, enc: &mut wgpu::CommandEncoder, page: &wgpu::TextureView) {
-        let (w, h) = ((self.config.width / 2).max(1), (self.config.height / 2).max(1));
+    /// Draws the page's blur pyramid, each level a 13-tap downsample of the one above it, the first leaving
+    /// out what is `raised` over the page, unless it already holds the page as last rendered with those left out.
+    fn blur_page(&mut self, enc: &mut wgpu::CommandEncoder, page: &wgpu::TextureView, size: PhysicalSize, raised: &[Raised], scale: f32) {
+        let (w, h) = ((size.width / 2).max(1), (size.height / 2).max(1));
         let sized = self.pyramid.as_ref().is_some_and(|p| p.texture.width() == w && p.texture.height() == h);
-        if sized && self.page_blurred {
+        if sized && self.blurred.as_deref() == Some(raised) {
             return;
         }
         if !sized {
-            self.pyramid = Some(pyramid(d, w, h));
+            self.pyramid = Some(pyramid(&self.device, w, h));
         }
-        self.page_blurred = true;
+        self.blurred = Some(raised.to_vec());
         let Some(p) = &self.pyramid else { return };
         for (k, target) in p.mips.iter().enumerate() {
             let from = if k == 0 { page } else { &p.mips[k - 1] };
             let (tw, th) = ((w >> k).max(1) as f32, (h >> k).max(1) as f32);
             let u = uniforms([0.0, 0.0, tw, th], [tw, th, tw, th], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
-            let g = self.group(d, q, &u, from, from);
+            let u = if k == 0 { with_raised(u, raised, scale) } else { u };
+            let g = self.group(&u, from, from);
             pass(enc, target, &[(&self.down, g)], false);
         }
     }
 
-    fn group(&self, d: &wgpu::Device, q: &wgpu::Queue, u: &[u8; 96], a: &wgpu::TextureView, b: &wgpu::TextureView) -> wgpu::BindGroup {
+    /// The page as it is, over a `view` sized target.
+    fn copy_draw(&self, page: &wgpu::TextureView, pyramid: &wgpu::TextureView, [w, h]: [f32; 2]) -> (&wgpu::RenderPipeline, wgpu::BindGroup) {
+        let u = uniforms([0.0, 0.0, w, h], [w, h, w, h], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
+        (&self.copy, self.group(&u, page, pyramid))
+    }
+
+    /// The lyrics' focus over the page, on a `view` sized target.
+    fn focus_draw(&self, f: &Focus, page: &wgpu::TextureView, pyramid: &wgpu::TextureView, [w, h]: [f32; 2], scale: f32) -> (&wgpu::RenderPipeline, wgpu::BindGroup) {
+        let r = [f.region[0] * scale, f.region[1] * scale, f.region[2] * scale, f.region[3] * scale];
+        let u = uniforms(r, [w, h, w, h], [0.0; 4], [0.0; 4], [f.band_top * scale, f.band_h * scale, f.pitch * scale, scale], [0.0; 4]);
+        (&self.focus, self.group(&with_raised(u, &f.raised, scale), page, pyramid))
+    }
+
+    fn group(&self, u: &Uniforms, a: &wgpu::TextureView, b: &wgpu::TextureView) -> wgpu::BindGroup {
         let slot = self.next_group.get();
         self.next_group.set(slot + 1);
         let mut groups = self.groups.borrow_mut();
         if let Some(group) = groups.get_mut(slot) {
             if &group.a == a && &group.b == b {
                 if &group.uniforms != u {
-                    q.write_buffer(&group.buffer, 0, u);
+                    self.queue.write_buffer(&group.buffer, 0, u);
                     group.uniforms = *u;
                 }
                 return group.binding.clone();
             }
         }
-        let buf = groups.get(slot).map(|group| group.buffer.clone()).unwrap_or_else(|| d.create_buffer(&wgpu::BufferDescriptor {
+        let buf = groups.get(slot).map(|group| group.buffer.clone()).unwrap_or_else(|| self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glass"), size: u.len() as u64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
         }));
-        q.write_buffer(&buf, 0, u);
-        let group = d.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.queue.write_buffer(&buf, 0, u);
+        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("glass"),
             layout: &self.bind,
             entries: &[
@@ -1342,14 +1384,41 @@ fn pass(enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, draws: &[(&w
     }
 }
 
-/// Uniforms as glass.wgsl lays them out (six vec4s).
-fn uniforms(rect: [f32; 4], view: [f32; 4], shape: [f32; 4], face: [f32; 4], light: [f32; 4], mut gather: [f32; 4]) -> [u8; 96] {
+/// The bytes of glass.wgsl's uniforms: six vec4s, then the raised shapes.
+type Uniforms = [u8; 96 + 16 * (RAISED_MAX + 1)];
+
+/// Uniforms as glass.wgsl lays them out, with nothing raised.
+fn uniforms(rect: [f32; 4], view: [f32; 4], shape: [f32; 4], face: [f32; 4], light: [f32; 4], mut gather: [f32; 4]) -> Uniforms {
     gather[2] = PYRAMID_LEVELS as f32;
-    let mut bytes = [0; 96];
+    let mut bytes = [0; size_of::<Uniforms>()];
     for (out, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip([rect, view, shape, face, light, gather].iter().flatten()) {
         out.copy_from_slice(&value.to_ne_bytes());
     }
     bytes
+}
+
+/// Where a window's menus are open (each fills its popup with a menu's corners).
+fn popups(window: &slint::Window) -> Vec<Raised> {
+    i_slint_core::window::WindowInner::from_pub(window).active_popups().iter().filter_map(|p| {
+        let i_slint_core::window::PopupWindowLocation::ChildWindow(at) = p.location else { return None };
+        let size = i_slint_core::item_tree::ItemRc::new_root(p.component.clone()).geometry().size;
+        Some(Raised { rect: [at.x, at.y, size.width, size.height], radius: MENU_RADIUS })
+    }).collect()
+}
+
+/// `u` with the raised shapes (logical pixels) at `scale`, as glass.wgsl lays them out after the six vec4s.
+fn with_raised(mut u: Uniforms, raised: &[Raised], scale: f32) -> Uniforms {
+    let mut values = [0.0f32; 4 * RAISED_MAX + 4];
+    for (i, r) in raised.iter().take(RAISED_MAX).enumerate() {
+        for (k, v) in r.rect.iter().enumerate() {
+            values[4 * i + k] = v * scale;
+        }
+        values[4 * RAISED_MAX + i] = r.radius * scale;
+    }
+    for (out, value) in u[96..].as_chunks_mut::<4>().0.iter_mut().zip(values) {
+        out.copy_from_slice(&value.to_ne_bytes());
+    }
+    u
 }
 
 /// Adds an empty unified toolbar so the traffic lights sit lower, level with the page's toolbar.
@@ -1724,6 +1793,65 @@ mod tests {
         assert_eq!(ui.get_room(), 1000.0);
         fit_layer(&layer, LogicalSize::new(500.0, 350.0), 2.0);
         assert_eq!(ui.get_room(), 500.0);
+    }
+
+    /// The lyrics' focus leaves a menu over them sharp, and the lines blurred around it take nothing of it.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn the_focus_leaves_what_is_raised_over_the_page_sharp_and_out_of_the_blur() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (d, q) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+        let (w, h) = (256u32, 128u32);
+        let made = |label, usage| d.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label), size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: FORMAT, usage, view_formats: &[],
+        });
+        // Lines of ink four pixels apart, and a red menu over them.
+        let menu = Raised { rect: [64.0, 40.0, 96.0, 48.0], radius: 12.0 };
+        let red = [0, 0, 255, 255];
+        let mut pixels = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                // Within the menu's rounded corners, pixel centers.
+                let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                let (cx, cy) = (px.clamp(76.0, 148.0), py.clamp(52.0, 76.0));
+                let inside = (64.0..160.0).contains(&px) && (40.0..88.0).contains(&py) && (px - cx).hypot(py - cy) <= 12.0;
+                pixels.extend(if inside { red } else if y / 4 % 2 == 0 { [0, 0, 0, 255] } else { [255; 4] });
+            }
+        }
+        let page = made("page", wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
+        q.write_texture(page.as_image_copy(), &pixels, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) }, page.size());
+        let page = page.create_view(&Default::default());
+        let target = made("target", wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        let mut glass = Glass::new(&d, &q);
+        // The band far above: every line is blurred all it can be.
+        let focus = Focus { region: [0.0, 0.0, w as f32, h as f32], band_top: -1000.0, band_h: 1.0, pitch: 4.0, raised: vec![menu] };
+        let mut enc = d.create_command_encoder(&Default::default());
+        glass.blur_page(&mut enc, &page, PhysicalSize::new(w, h), &focus.raised, 1.0);
+        let pyramid = glass.pyramid.as_ref().unwrap().all.clone();
+        let size = [w as f32, h as f32];
+        let draws = [glass.copy_draw(&page, &pyramid, size), glass.focus_draw(&focus, &page, &pyramid, size, 1.0)];
+        pass(&mut enc, &target.create_view(&Default::default()), &draws, true);
+        let buffer = d.create_buffer(&wgpu::BufferDescriptor {
+            label: None, size: (w * h * 4) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+        });
+        enc.copy_texture_to_buffer(target.as_image_copy(), wgpu::TexelCopyBufferInfo {
+            buffer: &buffer, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
+        }, target.size());
+        q.submit([enc.finish()]);
+        buffer.slice(..).map_async(wgpu::MapMode::Read, |_| ());
+        d.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let drawn = buffer.slice(..).get_mapped_range().unwrap().to_vec();
+        let at = |x: u32, y: u32| -> [u8; 4] { drawn[((y * w + x) * 4) as usize..][..4].try_into().unwrap() };
+        for (x, y) in [(70, 46), (112, 64), (154, 82), (66, 64)] {
+            assert_eq!(at(x, y), red, "the menu is sharp at ({x}, {y})");
+        }
+        // Beside the menu, above it, and in its rounded corner: the lines blurred grey, with no red in them.
+        for (x, y) in [(60, 64), (112, 37), (165, 64), (112, 91), (65, 41)] {
+            let [b, g, r, _] = at(x, y);
+            assert!((70..190).contains(&g) && r.abs_diff(g) <= 3 && b.abs_diff(g) <= 3, "the lines are blurred and take no red at ({x}, {y}): {:?}", [r, g, b]);
+        }
     }
 
     #[test]
