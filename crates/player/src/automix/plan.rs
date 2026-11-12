@@ -347,6 +347,35 @@ fn separate_in_fade(p: &mut TransitionPlan, s: &AutoMixSettings, sung_both: bool
     p.reason += ", voices kept apart";
 }
 
+/// A plain fade out of a song still singing once it would fall: the song holds until its last line ends, then falls
+/// over what is left, a bar at least, as the incoming song, risen under it, takes over; that one's voice band is cut
+/// until then so the line stays clear, and the outgoing song is darkened only once it has sung.
+fn hold_through_line(p: &mut TransitionPlan, a: Option<&TrackAnalysis>, s: &AutoMixSettings) {
+    let Some(a) = a.filter(|a| a.vocal_end_ms > 0) else {
+        return;
+    };
+    let hold = (a.vocal_end_ms - p.out_start_ms).min(p.duration_ms - bar_ms(a).round() as i64);
+    if hold <= p.out_fade_start_ms {
+        return;
+    }
+    p.out_fade_start_ms = hold;
+    if let Some(l) = p.low_pass.as_mut() {
+        l.start_ms = l.start_ms.max(hold);
+    }
+    if s.filter_effects && p.vocal_duck.is_none_or(|d| d.until_ms < hold) {
+        p.vocal_duck = Some(VocalDuck { until_ms: hold, release_ms: (p.duration_ms - hold).min(500), db: VOCAL_DUCK_DB, hz: VOCAL_DUCK_HZ });
+    }
+    p.reason += ", held through its last line";
+}
+
+/// A plain fade's voices and bass.
+fn shape_fade(mut p: TransitionPlan, a: Option<&TrackAnalysis>, s: &AutoMixSettings, sung_both: bool) -> TransitionPlan {
+    separate_in_fade(&mut p, s, sung_both);
+    hold_through_line(&mut p, a, s);
+    hand_over_bass_in_fade(&mut p, s);
+    p
+}
+
 /// A plain fade in the DJ style: the bass changes hands once, quickly, where the fades cross, so two kicks that are
 /// not beat-matched never thud together.
 fn hand_over_bass_in_fade(p: &mut TransitionPlan, s: &AutoMixSettings) {
@@ -463,17 +492,12 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
     }
     let sung_both = verdict.is_some_and(|v| v.cause == VOCALS_OVERLAP);
     if s.beat_match && (a.is_some_and(grid_ok) || b.is_some_and(grid_ok)) {
-        if let Some(mut p) = one_grid(a, b, room, s, short, &why_not) {
-            separate_in_fade(&mut p, s, sung_both);
-            hand_over_bass_in_fade(&mut p, s);
-            return p;
+        if let Some(p) = one_grid(a, b, room, s, short, &why_not) {
+            return shape_fade(p, a, s, sung_both);
         }
     }
     if a.is_some() || b.is_some() {
-        let mut p = mixramp(a, b, room, s, &why_not);
-        separate_in_fade(&mut p, s, sung_both);
-        hand_over_bass_in_fade(&mut p, s);
-        return p;
+        return shape_fade(mixramp(a, b, room, s, &why_not), a, s, sung_both);
     }
     let dur = max_len.min(MAX_BLIND_FADE_MS);
     blank(TransitionKind::EqualPowerFade, out_dur - dur, 0, dur, "not analysed: equal-power fade".into())
@@ -2079,6 +2103,29 @@ mod tests {
         check_skip(&p, &a, &b, 240_000);
     }
 
+    /// A fade out of a song singing near its end holds it whole until the line ends (or a bar before the fade does),
+    /// the incoming voice band cut until then, and falls over a bar at least.
+    #[test]
+    fn fades_hold_through_the_last_line() {
+        let bar = 4.0 * 60_000.0 / 128.0;
+        let (a, vocal_end) = sung_until(1.5);
+        let gridless = |t: TrackAnalysis| TrackAnalysis { bpm_confidence: 0.1, intro_bpm_confidence: 0.1, outro_bpm_confidence: 0.1, ..t };
+        // Tempos too far apart to mix, no grid on the incoming song, or none on either.
+        let slow = TrackAnalysis { bpm: 95.0, intro_bpm: 95.0, ..track(95.0) };
+        let pairs = [(a.clone(), slow), (a.clone(), gridless(track(128.0))), (gridless(a), gridless(track(128.0)))];
+        for (a, b) in &pairs {
+            for s in [dj(), AutoMixSettings { max_transition_s: 40.0, ..Default::default() }] {
+                let p = plan(Some(a), Some(b), 240_000, 240_000, &s);
+                assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
+                let held_to = (vocal_end - p.out_start_ms).min(p.duration_ms - bar as i64);
+                assert!(p.out_fade_start_ms >= held_to - 1, "{:?}: falls at {} of {held_to}: {}", s.style, p.out_fade_start_ms, p.reason);
+                assert!((p.out_fade_end_ms - p.out_fade_start_ms) as f64 >= bar - 1.0, "{:?}: {p:?}", s.style);
+                assert!(p.vocal_duck.is_some_and(|d| d.until_ms >= p.out_fade_start_ms), "{:?}: {p:?}", s.style);
+                check_skip(&p, a, b, 240_000);
+            }
+        }
+    }
+
     /// A song that stops cold, its last hit ringing out, ends on its stop: a mix that cannot blend starts the next
     /// song there under the ring-out instead of fading the bars before it.
     #[test]
@@ -2189,11 +2236,15 @@ mod tests {
         assert!(p.reason.contains("vocals overlap"), "{}", p.reason);
         let p = plan(Some(&track(128.0)), Some(&b), 240_000, 240_000, &AutoMixSettings::default());
         assert_eq!((p.vocal_duck, p.high_pass), (None, None), "{}", p.reason);
-        // No grid: a fade with the incoming voice ducked through its first half.
+        // No grid: a fade, the outgoing song (sung to its end) held whole, the incoming voice ducked until it falls.
         let (a, b) = (TrackAnalysis { bpm: 0.0, outro_bpm: 0.0, ..a }, TrackAnalysis { bpm: 0.0, intro_bpm: 0.0, ..b });
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings::default());
         assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
-        assert_eq!(p.vocal_duck.map(|d| d.until_ms), Some(p.duration_ms / 2), "{}", p.reason);
+        assert!(p.out_fade_start_ms > p.duration_ms / 2, "{}", p.reason);
+        assert_eq!(p.vocal_duck.map(|d| d.until_ms), Some(p.out_fade_start_ms), "{}", p.reason);
+        // Only one sings: the incoming voice is ducked under the outgoing line all the same.
+        let p = plan(Some(&a), Some(&TrackAnalysis { vocal_end_ms: 0, ..b }), 240_000, 240_000, &AutoMixSettings::default());
+        assert_eq!(p.vocal_duck.map(|d| d.until_ms), Some(p.out_fade_start_ms), "{}", p.reason);
         // Loudness gap: short.
         let b = TrackAnalysis { lufs: -2.0, ..track(128.0) };
         let p = plan(Some(&track(128.0)), Some(&b), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
