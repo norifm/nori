@@ -42,6 +42,17 @@ class FrameFadesTest {
         assertFalse(f.moving)
     }
 
+    @Test fun `a piece leaving under stays whole until the new one is in`() {
+        val f = FrameFades("old", { it }, FadeTimes(inMs = 200f, outMs = 200f, under = true))
+        f.show("new")
+        f.step(100f)
+        assertEquals("nothing shows between them half way", 1f, f.pieces.first { it.value == "old" }.level)
+        f.step(100f)
+        f.step(16.7f)
+        assertEquals(listOf("new" to 1f), f.levels())
+        assertFalse(f.moving)
+    }
+
     @Test fun `a piece asked for again while leaving turns round where it is`() {
         val f = FrameFades("a", { it }, times)
         f.show("loading")

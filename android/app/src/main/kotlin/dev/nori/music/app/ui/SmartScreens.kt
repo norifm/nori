@@ -75,15 +75,13 @@ private fun tileColours(id: String) =
     tileColours[id] ?: dev.nori.music.ffi.library.mixTileColours(id).map { androidx.compose.ui.graphics.Color(it.toInt()) }.also { tileColours.put(id, it) }
 
 /**
- * The covers of what is in a mix as a square: four in a mosaic, one alone, or nothing. They cross-fade
- * in and out, so a tile never changes in one frame.
+ * The covers of what is in a mix as a square: four in a mosaic, one alone, or nothing. New covers fade in
+ * over the old ones, which stay whole under them: fading both at once let the mix's colour behind them
+ * show through half way, a flash of it on every change (a song starred adds itself to Favorites).
  */
 @Composable
 private fun MixCovers(urls: List<String>, size: androidx.compose.ui.unit.Dp) {
-    androidx.compose.animation.Crossfade(
-        urls, Modifier.size(size),
-        animationSpec = AppMotion.fadeIn(), label = "mix art",
-    ) { covers ->
+    FrameCrossfade(urls, MIX_COVERS_FADE, Modifier.size(size)) { covers ->
         // Cells share the square by weight: halves rounded one by one left a pixel gap that showed at the seam.
         val cell = Modifier.fillMaxSize()
         when {
@@ -117,6 +115,8 @@ private fun MixArt(card: MixCard, size: androidx.compose.ui.unit.Dp) {
         }
     }
 }
+
+private val MIX_COVERS_FADE = FadeTimes(inMs = stage.fadeMs.toFloat(), outMs = stage.fadeMs.toFloat(), under = true)
 
 private val MIX_CARD_WIDTH = 150.dp
 private val ART_FADE = androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to androidx.compose.ui.graphics.Color.Black, 1f to androidx.compose.ui.graphics.Color.Transparent)
