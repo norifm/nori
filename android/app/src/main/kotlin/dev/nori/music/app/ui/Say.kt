@@ -600,8 +600,8 @@ class Say(private val r: Resources) {
 
     // ---- captions ----
 
-    /** A list's caption: "12 songs · 48:10". */
-    fun listCaption(count: Int, seconds: Long): String = songs(count) + " · " + Fmt.duration(seconds)
+    /** A list's caption: "12 songs · 48:10", each part only if known (a provider's card may say neither). */
+    fun listCaption(count: Int, seconds: Long): String = listOfNotNull(count.takeIf { it > 0 }?.let(::songs), seconds.takeIf { it > 0 }?.let(Fmt::duration)).joinToString(" · ")
 
     /** What is known of an album before its songs are: "2019 · 12 songs · 48:10", each part only if known. */
     fun albumHintCaption(year: Int, songCount: Int, seconds: Long): String = listOfNotNull(
