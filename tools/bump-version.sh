@@ -63,3 +63,6 @@ for lock in ["Cargo.lock", "crates/plugins/fixture/Cargo.lock"]:
 EOF
 # The Bazel BUILD files carry each crate's version.
 python3 "$(dirname "$0")/bazel/generate.py" >/dev/null && echo "  crates/*/BUILD.bazel"
+if [[ "$new" != *-* ]] && ! "$root/tools/changelog.py" --notes "$new" >/dev/null 2>&1; then
+  echo "CHANGELOG.md has no [$new] section yet, and publishing needs one: tools/changelog.py --update && tools/changelog.py --release $new"
+fi

@@ -33,6 +33,16 @@ jobs:
           ref: ${{ inputs.source }}
       - id: sha
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        if: inputs.publish
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tooling
+      # Publishing needs the version's notes: missing, the run stops here, not after the builds.
+      - if: inputs.publish
+        run: release-tooling/tools/release.sh --check-notes
+        env:
+          NORI_RELEASE_WORKSPACE: ${{ github.workspace }}
   hosts:
     needs: resolve
     permissions:
