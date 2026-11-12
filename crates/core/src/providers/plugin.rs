@@ -365,13 +365,17 @@ impl Provider for PluginProvider {
 impl PluginProvider {
     /// `said`'s answer as nori's; an account the source refused may have ended, so its rules are asked
     /// anew (the library and likes go while signed out).
+    /// What a read or write said; the account asked anew when it was refused, or when it went through
+    /// while the session stood ended (the plugin may have taken the session up again).
     fn heard<T>(&self, client: &Client, said: Result<T, t::Error>) -> NetResult<T> {
-        said.map_err(|e| {
-            if e.kind == t::ErrorKind::Unauthorized {
-                client.core.set_rules(self.ask_rules(&self.open.read().clone(), false));
-            }
-            net_error(e)
-        })
+        let changed = match &said {
+            Err(e) => e.kind == t::ErrorKind::Unauthorized,
+            Ok(_) => *self.account.read() == AccountState::Ended,
+        };
+        if changed {
+            client.core.set_rules(self.ask_rules(&self.open.read().clone(), false));
+        }
+        said.map_err(net_error)
     }
 
     /// How a sign-in went, from what the plugin said; its rules asked anew, since its account may have changed.
