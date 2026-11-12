@@ -903,7 +903,8 @@ struct Told {
     title: Option<(String, i64)>,
     /// While playing, the place last said (song, ms, engine ms when, the pace said), which clients run on.
     said: Option<(usize, i64, i64, f64)>,
-    /// When the music written takes the place heard [`PLACE_DUE_MS`] from the one said (engine ms).
+    /// When the music written takes the place heard [`PLACE_DUE_MS`] or [`PLACE_NEAR_MS`] from the one
+    /// said (engine ms).
     due: Option<i64>,
     /// The place last read (song, ms).
     read: Option<(usize, i64)>,
@@ -940,8 +941,10 @@ const PLACE_STARTING_MS: i64 = 250;
 /// A place heard this far from the one said jumped (a skipped silence): it is said at once.
 const PLACE_LEAP_MS: i64 = 50;
 /// The music written moving the place this far from the one said (speed, a mix's tempo, a skipped
-/// silence) is said where that happens.
+/// silence) is said where that happens, while other devices play in step ([`App::listened_along`]).
 const PLACE_DUE_MS: i64 = 4;
+/// The same for a seek bar or a notification alone: a mix's tempo gliding is not said every second.
+const PLACE_NEAR_MS: i64 = 100;
 /// Music ready for a start: it plays only with this much made.
 const READY_US: i64 = 100_000;
 /// After a start, how far its place is from the leader's is looked at this much later, µs.
@@ -3129,10 +3132,11 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let moving = self.told.read.replace((i, ms)).is_some_and(|(at, read)| at == i && ms > read);
         let off = |said: Option<(usize, i64, i64, f64)>| said.filter(|s| s.0 == i).map(|(_, said, when, pace)| ms as f64 - (said as f64 + (now - when) as f64 * pace));
         let due = std::mem::take(&mut self.told.due).is_some_and(|t| now >= t);
+        let near = if self.p.app.listened_along() { PLACE_DUE_MS } else { PLACE_NEAR_MS } as f64;
         let left = moving
             && off(self.told.said).is_some_and(|o| {
                 let age = self.told.said.map_or(0, |s| now - s.2);
-                let jumped = age >= PLACE_STARTING_MS && (o > PLACE_LEAP_MS as f64 || (due && o.abs() > PLACE_DUE_MS as f64));
+                let jumped = age >= PLACE_STARTING_MS && (o > PLACE_LEAP_MS as f64 || (due && o.abs() > near));
                 jumped || (age >= PLACE_SETTLE_MS && o.abs() > PLACE_LEFT_MS as f64)
             });
         let placed = std::mem::take(&mut self.told.placed) || (left && !other && !looped);
@@ -3153,7 +3157,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             let within = self.p.until_next_song_us().map_or(i64::MAX, |u| (u as f64 / self.p.speed().0.max(0.1) as f64) as i64);
             let said_pace = self.told.said.map_or(1.0, |s| s.3);
             let starting = self.told.said.map_or(now, |s| s.2 + PLACE_STARTING_MS);
-            self.told.due = self.p.sink.track.leaves(o, said_pace, PLACE_DUE_MS as f64, within).map(|us| (now + us / 1000 + 1).max(starting));
+            self.told.due = self.p.sink.track.leaves(o, said_pace, near, within).map(|us| (now + us / 1000 + 1).max(starting));
         }
     }
 

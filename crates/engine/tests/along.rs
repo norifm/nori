@@ -136,8 +136,9 @@ fn mix(at_ms: i64, secs: f64, tempo: f32, ramp_s: f64) -> Plan {
     Plan { incoming_id: "b".into(), mixer: t }
 }
 
-/// The simulated app, planning a fixed mix out of `a` (or none), keeping the engine's log lines.
-struct Planned(sim::App, Option<Plan>, Arc<Mutex<Vec<String>>>);
+/// The simulated app, planning a fixed mix out of `a` (or none), keeping the engine's log lines, and
+/// whether a device plays in step with it.
+struct Planned(sim::App, Option<Plan>, Arc<Mutex<Vec<String>>>, Arc<AtomicBool>);
 
 impl Host for Planned {
     fn plan_for(&mut self, id: &str) -> Option<Plan> {
@@ -170,6 +171,9 @@ impl App for Planned {
     }
     fn transitions_off(&mut self, off: bool) {
         self.0.transitions_off(off)
+    }
+    fn listened_along(&self) -> bool {
+        self.3.load(Ordering::Relaxed)
     }
     fn gain(&mut self, list: &Playlist, index: usize) -> f32 {
         self.0.gain(list, index)
@@ -422,6 +426,8 @@ struct Rig {
     events: Arc<Mutex<Vec<(i64, Event)>>>,
     net: Arc<Net>,
     logs: Arc<Mutex<Vec<String>>>,
+    /// A device plays in step with this one (on unless a test turns it off).
+    along: Arc<AtomicBool>,
 }
 
 impl Rig {
@@ -440,7 +446,8 @@ impl Rig {
         let library = Songs::new(songs, clock.clone());
         let net = library.1.clone();
         let logs: Arc<Mutex<Vec<String>>> = Arc::default();
-        let engine = Engine::start_on(library, Planned(app, plan, logs.clone()), queue, Box::new(card.clone()), None, config, clock.clone(), move |e| {
+        let along = Arc::new(AtomicBool::new(true));
+        let engine = Engine::start_on(library, Planned(app, plan, logs.clone(), along.clone()), queue, Box::new(card.clone()), None, config, clock.clone(), move |e| {
             let ns = e_clock.now_ns();
             // As a host tells its remote: the status on the events that move the place.
             if matches!(e, Event::Placed { .. } | Event::Position { .. } | Event::Song { .. } | Event::State(_)
@@ -461,7 +468,7 @@ impl Rig {
         let engine = Arc::new(engine);
         let _ = slot.set(engine.clone());
         engine.queue_changed();
-        Rig { engine, time: Stepper::new(clock, card.0.clone()), card, said, events, net, logs }
+        Rig { engine, time: Stepper::new(clock, card.0.clone()), card, said, events, net, logs, along }
     }
 
     fn now_ns(&self) -> i64 {
@@ -540,22 +547,30 @@ fn a_follower_keeps_up_with_another_speed() {
     assert!(gaps.within(300, 4.0, 15.0), "{gaps}");
 }
 
+/// Played in step, the place is said to the ms through a mix's tempo gliding back; for a seek bar alone,
+/// it is said only once it is a tenth of a second out.
 #[test]
 fn a_follower_keeps_up_through_a_mix_tempo() {
     let (a, b) = (song(30.0, 1, None), song(40.0, 2, None));
-    // Into b 4 % fast for 3 s, back over 4 s.
-    let rig = Rig::new(&[("a", &a), ("b", &b)], Some(mix(20_000, 3.0, 1.04, 4.0)), Settings::default());
-    rig.engine.play_at(0, 18_000);
-    let into_b = || rig.followed(rig.now_ns()).is_some_and(|(i, ms)| i == 1 && ms > 3_200.0);
-    for _ in 0..200 {
-        if into_b() {
-            break;
+    for (along, words, mean_ms, worst_ms) in [(true, 12, 3.0, 6.0), (false, 2, 60.0, 101.0)] {
+        // Into b 8 % fast for 3 s, back over 8 s.
+        let rig = Rig::new(&[("a", &a), ("b", &b)], Some(mix(20_000, 3.0, 1.08, 8.0)), Settings::default());
+        rig.along.store(along, Ordering::Relaxed);
+        rig.engine.play_at(0, 18_000);
+        let into_b = || rig.followed(rig.now_ns()).is_some_and(|(i, ms)| i == 1 && ms > 3_200.0);
+        for _ in 0..200 {
+            if into_b() {
+                break;
+            }
+            rig.run(50);
         }
-        rig.run(50);
+        assert!(into_b(), "b heard after the mix");
+        let before = rig.placed();
+        let gaps = rig.follow_for(10_000);
+        let placed = rig.placed() - before;
+        assert!(placed <= words, "along {along}: {placed} words through the ramp");
+        assert!(gaps.within(150, mean_ms, worst_ms), "along {along}: through the tempo's ramp: {gaps}");
     }
-    assert!(into_b(), "b heard after the mix");
-    let gaps = rig.follow_for(8_000);
-    assert!(gaps.within(100, 3.0, 6.0), "through the tempo's ramp: {gaps}");
 }
 
 #[test]

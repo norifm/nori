@@ -2842,10 +2842,12 @@ impl Remote {
         }
     }
 
-    /// While a jam lets its guests listen along, each transition planned here is published at once.
+    /// While a jam lets its guests listen along, each transition planned here is published at once, and
+    /// the player says its place to the ms.
     fn hear_plans(self: &Arc<Self>) {
         let along = self.inner.lock().hosted().is_some_and(|h| h.along);
         let me = Arc::downgrade(self);
+        self.client.core.session.set_listened_along(along);
         self.client.core.session.planner.on_plan(along.then(|| {
             Box::new(move || {
                 if let Some(r) = me.upgrade() {
