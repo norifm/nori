@@ -21,14 +21,17 @@ jobs:
       rust: ${{ steps.touched.outputs.rust }}
       web: ${{ steps.touched.outputs.web }}
       android: ${{ steps.touched.outputs.android }}
+      ipod: ${{ steps.touched.outputs.ipod }}
     steps:
+      # The crates the iPod app links are read from the workspace (tools/affected.py).
+      - uses: actions/checkout@v7
       - id: touched
         env:
           GH_TOKEN: ${{ github.token }}
           BEFORE: ${{ github.event.before }}
         run: |
           all() {
-            printf 'rust=true\nweb=true\nandroid=true\n' >> "$GITHUB_OUTPUT"
+            printf 'rust=true\nweb=true\nandroid=true\nipod=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           }
           case "$BEFORE" in ''|*[!0]*) ;; *) all ;; esac
@@ -40,10 +43,17 @@ jobs:
           # Rust's tests and builds also read these: core's native calls, the fonts, licenses, icons, the map.
           read_by_rust='^(android/core/|AGENTS\.md|android/app/src/main/assets/|android/app/src/main/res/font/|docs/brand/)'
           touches() { grep -qE "$1" <<< "$files" && echo true || echo false; }
+          # The crates a change reaches; nothing when it is every crate.
+          crates=$(tools/affected.py <<< "$files") || all
           {
             echo "rust=$(touches "$shared|$read_by_rust")"
             echo "web=$(touches "$shared|^web/")"
             echo "android=$(touches "$shared|^(android/|gradle|gradlew|build\.gradle\.kts|settings\.gradle\.kts)")"
+            if [ "$(touches '^(ios/|tools/ipod\.sh|tools/ios-build/)')" = true ] || [ -z "$crates" ] || grep -qE '(^| )nori-ios( |$)' <<< "$crates"; then
+              echo ipod=true
+            else
+              echo ipod=false
+            fi
           } >> "$GITHUB_OUTPUT"
   rust:
     needs: changes
@@ -141,3 +151,12 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - uses: ./.github/actions/android-toolchain
       - run: ./gradlew :app:compileDebugKotlin :core:testDebugUnitTest :app:testDebugUnitTest -PrustTargets=arm64-v8a
+  # The iPod's Swift is compiled only here and by the release builds.
+  ipod:
+    needs: changes
+    if: needs.changes.outputs.ipod == 'true'
+    timeout-minutes: 40
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: tools/with-resource.py build tools/ipod.sh build
