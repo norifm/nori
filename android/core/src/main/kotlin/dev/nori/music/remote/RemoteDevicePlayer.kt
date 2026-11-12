@@ -17,7 +17,10 @@ import dev.nori.music.Nori
 import dev.nori.music.ffi.Mirror
 import dev.nori.music.ffi.Press
 import dev.nori.music.ffi.mirrorOp
+import dev.nori.music.ffi.mirrorStepVolume
 import dev.nori.music.ffi.mirrorVolumeKey
+import dev.nori.music.ffi.mirrorVolumeStep
+import dev.nori.music.ffi.mirrorVolumeSteps
 import dev.nori.music.ffi.mirrorSystemPress
 import dev.nori.music.ffi.PressedOn
 import dev.nori.music.ffi.queue.Hand
@@ -60,7 +63,7 @@ class RemoteDevicePlayer(private val context: Context, private val nori: Nori) :
     override fun getState(): State {
         val m = mirror
         val b = State.Builder().setAvailableCommands(COMMANDS).setAudioAttributes(AudioAttributes.DEFAULT)
-            .setDeviceInfo(DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE).setMaxVolume(if (m?.volume != null) 100 else 0).setRoutingControllerId(routeId).build())
+            .setDeviceInfo(DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE).setMaxVolume(if (m?.volume != null) mirrorVolumeSteps().toInt() else 0).setRoutingControllerId(routeId).build())
         if (m == null) return b.setPlaybackState(Player.STATE_IDLE).build()
         val list = rows(m)
         val at = m.at?.toInt()
@@ -79,7 +82,7 @@ class RemoteDevicePlayer(private val context: Context, private val nori: Nori) :
             .setShuffleModeEnabled(m.shuffle)
             .setRepeatMode(m.repeat.toInt())
             .setContentPositionMs(PositionSupplier.getExtrapolating(m.positionMs + elapsed, if (m.playing) m.rate.toFloat() else 0f))
-            .setDeviceVolume(m.volume?.toInt() ?: 0)
+            .setDeviceVolume(mirrorVolumeStep(m)?.toInt() ?: 0)
             .build()
     }
 
@@ -136,8 +139,9 @@ class RemoteDevicePlayer(private val context: Context, private val nori: Nori) :
 
     override fun handleSetRepeatMode(repeatMode: Int): ListenableFuture<*> = send(Op.Repeat(repeatMode.toUByte()))
 
-    /** Android's volume panel dragged to [deviceVolume], 0 to 100. */
-    override fun handleSetDeviceVolume(deviceVolume: Int, flags: Int): ListenableFuture<*> = volume(deviceVolume)
+    /** Android's volume panel dragged to [deviceVolume], a notch of the core's `mirror_volume_steps`. */
+    override fun handleSetDeviceVolume(deviceVolume: Int, flags: Int): ListenableFuture<*> =
+        volume(mirrorStepVolume(deviceVolume.coerceIn(0, 255).toUByte()).toInt())
 
     /** A volume key: the device's next step (the core's `mirror_volume_key`). */
     override fun handleIncreaseDeviceVolume(flags: Int): ListenableFuture<*> = volumeKey(true)

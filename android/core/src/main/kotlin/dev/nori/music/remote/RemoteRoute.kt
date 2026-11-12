@@ -15,12 +15,15 @@ import dev.nori.music.Nori
 import dev.nori.music.core.R
 import dev.nori.music.ffi.Mirror
 import dev.nori.music.ffi.RemoteDevice
+import dev.nori.music.ffi.mirrorStepVolume
+import dev.nori.music.ffi.mirrorVolumeStep
+import dev.nori.music.ffi.mirrorVolumeSteps
 import dev.nori.music.ffi.remote.Op
 
 /** The mirrored device and transfer choices in Android's output picker, while the media session is engaged. */
 object RemoteRoute {
     /**
-     * What the picker shows. [refused] is the device's refusal of the last command: a session released in
+     * What the picker shows; [volume] is a notch of the core's `mirror_volume_steps`. [refused] is the device's refusal of the last command: a session released in
      * the picker asks for the music here, and when the device refuses, the changed value brings the session back.
      */
     internal data class Shown(val id: String, val name: String, val volume: Int?, val refused: dev.nori.music.ffi.remote.Refusal?, val devices: List<Pair<String, String>>)
@@ -41,7 +44,7 @@ object RemoteRoute {
     /** Shows the device mirrored now and the account's other devices. Main thread. */
     fun show(context: Context, device: Mirror?, devices: List<RemoteDevice> = emptyList()) {
         if (Build.VERSION.SDK_INT < 30) return
-        val next = device?.let { Shown(it.id, it.name, it.volume?.toInt(), it.refused, devices.map { d -> d.id to d.name }) }
+        val next = device?.let { Shown(it.id, it.name, mirrorVolumeStep(it)?.toInt(), it.refused, devices.map { d -> d.id to d.name }) }
         if (next == shown) return
         shown = next
         provider?.show(next)
@@ -103,7 +106,7 @@ object RemoteRoute {
             val builder = RoutingSessionInfo.Builder(SESSION, packageName).addSelectedRoute(selected).setName(device.name)
                 .addTransferableRoute(HERE)
             device.devices.forEach { (id, _) -> if (id != device.id) builder.addTransferableRoute(nativeId(id)) }
-            device.volume?.let { builder.setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE).setVolumeMax(100).setVolume(it) }
+            device.volume?.let { builder.setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE).setVolumeMax(mirrorVolumeSteps().toInt()).setVolume(it) }
             return builder.build()
         }
 
@@ -111,7 +114,7 @@ object RemoteRoute {
             val builder = MediaRoute2Info.Builder(id, name).addFeature(FEATURE).addFeature(MediaRoute2Info.FEATURE_LIVE_AUDIO)
                 .setType(if (local) MediaRoute2Info.TYPE_BUILTIN_SPEAKER else MediaRoute2Info.TYPE_REMOTE_SPEAKER)
                 .setConnectionState(if (selected) MediaRoute2Info.CONNECTION_STATE_CONNECTED else MediaRoute2Info.CONNECTION_STATE_DISCONNECTED)
-            volume?.let { builder.setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE).setVolumeMax(100).setVolume(it) }
+            volume?.let { builder.setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE).setVolumeMax(mirrorVolumeSteps().toInt()).setVolume(it) }
             return builder.build()
         }
 
@@ -159,7 +162,7 @@ object RemoteRoute {
 
         private fun setVolume(requestId: Long, volume: Int) {
             if (shown?.volume == null) return notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
-            Nori.get(this).remotes.command(Op.Volume(volume.coerceIn(0, 100).toUByte()))
+            Nori.get(this).remotes.command(Op.Volume(mirrorStepVolume(volume.coerceIn(0, 255).toUByte())))
         }
 
         override fun onSetRouteVolume(requestId: Long, routeId: String, volume: Int) {

@@ -254,6 +254,8 @@ pub struct Mirror {
 
 /// The volume keys' step over a mirrored device's 0 to 100.
 const VOLUME_KEY_STEP: u8 = 5;
+/// The steps a system volume panel shows a mirrored device's volume in: one per volume key press.
+const VOLUME_STEPS: u8 = 100 / VOLUME_KEY_STEP;
 
 /// [`Mirror::next`] and [`Mirror::previous`] from row `at` of `rows` known, of `len` songs: repeat-one
 /// skips like repeat-all (`Playlist::next`), and they wrap only once every row is known.
@@ -289,6 +291,11 @@ impl Mirror {
         let now = self.volume?.min(100);
         let below = now - now % VOLUME_KEY_STEP;
         Some(if up { (below + VOLUME_KEY_STEP).min(100) } else if below == now { now.saturating_sub(VOLUME_KEY_STEP) } else { below })
+    }
+
+    /// The device's volume as the nearest of [`VOLUME_STEPS`]; None when its volume cannot be set.
+    pub fn volume_step(&self) -> Option<u8> {
+        self.volume.map(|v| (v.min(100) + VOLUME_KEY_STEP / 2) / VOLUME_KEY_STEP)
     }
 
     /// What a press of the system's media controls showing the device asks of it. A Bluetooth play or
@@ -330,6 +337,24 @@ impl Mirror {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn mirror_volume_key(mirror: Mirror, up: bool) -> Option<u8> {
     mirror.volume_key(up)
+}
+
+/// [`VOLUME_STEPS`].
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn mirror_volume_steps() -> u8 {
+    VOLUME_STEPS
+}
+
+/// [`Mirror::volume_step`].
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn mirror_volume_step(mirror: Mirror) -> Option<u8> {
+    mirror.volume_step()
+}
+
+/// The volume, 0 to 100, of `step` of [`VOLUME_STEPS`] set on a system volume panel.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn mirror_step_volume(step: u8) -> u8 {
+    step.min(VOLUME_STEPS) * VOLUME_KEY_STEP
 }
 
 /// [`Mirror::op`]: what a press of the player's controls asks of the mirrored device.
@@ -4447,6 +4472,19 @@ mod tests {
             m.volume = Some(now);
             assert_eq!((m.volume_key(true), m.volume_key(false)), (Some(up), Some(down)), "from {now}");
         }
+    }
+
+    #[test]
+    fn a_system_volume_panel_sees_the_devices_volume_one_key_step_a_notch() {
+        let mut m = Mirror { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, rows: Vec::new(), at: None, len: 0, rev: 0, playing: true, buffering: false, mixing: false, position_ms: 0, rate: 1.0, at_us: 0, shuffle: false, repeat: 0, next: None, previous: None, volume: None, refused: None };
+        assert_eq!(m.volume_step(), None, "a volume the device does not offer");
+        // volume now: the notch shown, the volume of the notch above
+        for (now, step, above) in [(0, 0, 5), (2, 0, 5), (3, 1, 10), (45, 9, 50), (47, 9, 50), (100, 20, 100)] {
+            m.volume = Some(now);
+            assert_eq!(m.volume_step(), Some(step), "{now}");
+            assert_eq!(mirror_step_volume(step + 1), above, "above {now}");
+        }
+        assert_eq!(mirror_step_volume(u8::MAX), 100, "beyond the panel's notches");
     }
 
     #[test]
