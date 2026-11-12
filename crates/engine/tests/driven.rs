@@ -9,7 +9,7 @@ use std::task::{Context, Poll, Waker};
 
 use common::card::Card;
 use common::{Device, Virtual};
-use nori_engine::{Body, ByteSource, Config, Engine, Filling, Library, Located, Next, OpenError, SharedQueue, Source};
+use nori_engine::{Body, ByteSource, Config, Engine, Filling, Library, Located, Next, OpenError, SharedQueue, Source, State};
 use nori_player::sim;
 use nori_player::transitions::WindowSong;
 use parking_lot::Mutex;
@@ -96,4 +96,26 @@ fn a_driven_engine_plays_songs_as_their_bytes_come() {
     assert_eq!(heard.len(), want.len(), "both songs whole, after {turns} turns");
     assert!(heard.iter().zip(&want).all(|(h, w)| (h - w).abs() < 1e-4), "the songs as they are, gaplessly");
     assert_eq!(card.pull.lock().dry, 0, "the card never ran dry");
+}
+
+/// A press shows in the status before the engine takes it: read at once (a device answering a
+/// transfer right after it was handed the music), the status says what was asked, not what was.
+#[test]
+fn a_press_shows_in_the_status_before_the_engine_takes_it() {
+    let queue = SharedQueue::default();
+    queue.0.lock().set(vec!["a".into(), "b".into()], Some(0), false, 0);
+    let (clock, card, bytes) = (Virtual::default(), Card::new(), Arc::new(Pushes::default()));
+    let (engine, mut driven) = Engine::driven(Songs { bytes }, sim::App::new(), queue, Box::new(card), Config::default(), clock, || {}, |_| {});
+    let shown = |e: &Engine| e.status_with(|s| (s.state, s.index, s.position_ms));
+    engine.play_at(1, 2_000);
+    assert_eq!(shown(&engine), (State::Playing, Some(1), 2_000), "played");
+    driven.turn();
+    engine.pause();
+    assert_eq!(shown(&engine).0, State::Paused, "paused");
+    engine.go_to(0, 500);
+    assert_eq!(shown(&engine), (State::Paused, Some(0), 500), "moved, still paused");
+    engine.play();
+    assert_eq!(shown(&engine).0, State::Playing, "played again");
+    driven.turn();
+    assert_eq!(shown(&engine).1, Some(0), "the engine took them all");
 }
