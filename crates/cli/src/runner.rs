@@ -317,6 +317,7 @@ impl Runner {
                         self.offer_sign_in(app, SignInEvent::Offer { ended: false });
                         app.sign_in_with_code();
                     }
+                    Some(SignInEvent::Close) => {}
                     Some(_) => {
                         self.offer_sign_in(app, SignInEvent::Offer { ended: false });
                         self.carry(app, Cmd::SignInWindow);

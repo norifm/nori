@@ -383,18 +383,13 @@ pub fn sign_in_flow_on(flow: SignInFlow, event: SignInEvent) -> SignInStepped {
 impl Client {
     /// What to show about the account now: `added` says how a profile just opened was added; otherwise
     /// (a saved profile opened, or its account changed under it) signing in again is offered when the
-    /// provider ended its session, until told to stop reminding. A profile added as a guest stops the
-    /// reminder here.
+    /// provider ended its session, until told to stop reminding, and closed once it is signed in again.
+    /// A profile added as a guest stops the reminder here.
     pub fn sign_in_due(&self, added: Option<AfterAdding>) -> Option<SignInEvent> {
         let step = match added {
             Some(after) => self.core.provider().info().after_adding(after),
-            None => {
-                let reminds = self.reminds_to_sign_in();
-                if reminds {
-                    crate::alog::info("sign-in: offered again at start, the provider ended the session");
-                }
-                reminds.then_some(SignInStep::Offer)
-            }
+            None if self.account() == AccountState::SignedIn => return Some(SignInEvent::Close),
+            None => self.reminds_to_sign_in().then_some(SignInStep::Offer),
         }?;
         match step {
             SignInStep::Offer => Some(SignInEvent::Offer { ended: added.is_none() && self.account() == AccountState::Ended }),

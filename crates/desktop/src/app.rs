@@ -1387,6 +1387,7 @@ impl App {
                         self.offer_sign_in(SignInEvent::Offer { ended: false });
                         self.sign_in_code();
                     }
+                    Some(SignInEvent::Close) => {}
                     Some(_) => {
                         self.offer_sign_in(SignInEvent::Offer { ended: false });
                         self.sign_in_window();
@@ -2913,16 +2914,12 @@ impl App {
         ui.set_favorites_offered(rules.stars);
         ui.set_library_tabs(library_tabs(&rules));
         self.mirror();
-        match state {
-            nori_core::providers::AccountState::Ended => {
-                if let Some(offer) = offer {
-                    self.offer_sign_in(offer);
-                }
-            }
-            nori_core::providers::AccountState::SignedIn => {
+        match offer {
+            Some(SignInEvent::Close) => {
                 self.sign_in_on(SignInEvent::Close);
             }
-            nori_core::providers::AccountState::SignedOut => {}
+            Some(offer) if state == nori_core::providers::AccountState::Ended => self.offer_sign_in(offer),
+            _ => {}
         }
     }
 

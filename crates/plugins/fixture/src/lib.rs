@@ -35,6 +35,9 @@ struct Test {
     prepared: Option<(u64, Option<u64>, u64)>,
     /// Samples of a song being analysed.
     analysed: Option<u64>,
+    /// The open profile named "ended" starts with its session ended (true) and takes it up again at its
+    /// first read (false); any other profile has no account.
+    ended: Option<bool>,
 }
 
 fn fetch(url: &str) -> String {
@@ -177,7 +180,30 @@ const LIBRARY: [&str; 3] = ["one", "two", "three"];
 /// A profile with no Subsonic server, whose search finds one song named after what was searched, whose
 /// library is two artists and three songs, and whose songs stream from allowed.example in parts.
 impl Provider for Test {
+    fn open(&mut self, profile: provider::Profile) {
+        self.ended = (profile.name == "ended").then_some(true);
+    }
+
+    fn rules(&mut self, profile: provider::Profile, _: bool) -> Option<provider::ProfileRules> {
+        (profile.name == "ended").then(|| {
+            let account = self.ended == Some(false);
+            provider::ProfileRules { account, downloads: false, radio: false, feed: false, stars: account, scrobbles: false, sections: Vec::new(), measures: false, ahead: None }
+        })
+    }
+
+    fn account(&mut self) -> Option<provider::AccountState> {
+        self.ended.map(|e| if e { provider::AccountState::Ended } else { provider::AccountState::SignedIn })
+    }
+
+    fn reminds(&mut self) -> bool {
+        self.ended == Some(true)
+    }
+
     fn read(&mut self, request: provider::Request) -> Result<provider::Page, Error> {
+        // As a provider whose session still works once asked again.
+        if self.ended.is_some() {
+            self.ended = Some(false);
+        }
         Ok(match request {
             provider::Request::Search((query, ..)) => provider::Page::Found(Found { songs: vec![song(query)], albums: Vec::new(), artists: Vec::new(), playlists: Vec::new() }),
             provider::Request::Artists => provider::Page::Artists(["Followed", "Subscribed"].map(|name| Artist { id: format!("test-{name}"), name: name.into(), cover: None, image_url: None, album_count: None, starred: true, external: false }).into()),

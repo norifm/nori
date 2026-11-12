@@ -502,7 +502,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     // Each time the open profile's rules change (it opened, or its account changed under it), a session the
-    // provider ended offers to sign in again, until told not to (the core's `sign_in_due`).
+    // provider ended offers to sign in again, until told not to, and closes once it is back (the core's `sign_in_due`).
     init {
         viewModelScope.launch {
             nori.reportedRules.collect { reported ->
