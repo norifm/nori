@@ -1284,10 +1284,6 @@ impl Library for AndroidLibrary {
         nori_engine::core::about(&self.queue, id)
     }
 
-    fn fetch_ahead(&self, id: &str) -> bool {
-        nori_engine::core::fetch_ahead(&self.queue, id)
-    }
-
     /// Fetches the core's precache targets except `next` (the engine loads that) into media3's cache.
     fn ahead(&mut self, next: &str) {
         let client = self.current.get();

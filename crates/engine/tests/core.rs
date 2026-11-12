@@ -170,6 +170,7 @@ fn downloads_and_measuring_over_core() {
         _ => panic!("a song that is not downloaded streams"),
     }
     metered_and_ahead(&client, &net, &store, &analyses);
+    provider_next_fetched_ahead(&client, &store, &analyses);
     downloads_read_back(&core, &net, &store, &analyses);
 
     // AutoMix on: upcoming songs on disk are measured.
@@ -494,6 +495,24 @@ fn metered_and_ahead(client: &Arc<Client>, network: &NoApi, store: &Arc<Store>, 
     assert!(opened.iter().any(|u| u.ends_with("&id=p-5&maxBitRate=192&format=opus")), "the next song fetched streams at the metered quality: {opened:?}");
     assert!(store.peek("p-6:0").is_none() && store.peek("p-6:192opus").is_none(), "one ahead on mobile data: the engine's own next song, none more");
     network.metered.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The next song is fetched as soon as it is next, a provider's too: it plays anyway, and the server takes
+/// a while to fetch it from the provider, too long for a mix into it otherwise.
+fn provider_next_fetched_ahead(client: &Arc<Client>, store: &Arc<Store>, analyses: &Arc<Analyses>) {
+    use nori_player::pipeline::Songs;
+    let ids = ["q-1", "ext-deezer-song-2"];
+    client.session().register(ids.iter().map(|id| Song { id: (*id).into(), title: (*id).into(), duration: 3, suffix: "mp3".into(), ..Default::default() }).collect());
+    client.session().set(ids.iter().map(|id| id.to_string()).collect(), Some(0), false, None);
+    let net = Arc::new(Plain::default());
+    let library = CoreLibrary { client: client.clone(), bytes: net.clone(), store: Some(store.clone()), analyses: analyses.clone() };
+    let mut sources = nori_engine::Sources::new(library, nori_player::transport::load_control(256), Default::default(), Default::default(), std::thread::current(), Default::default());
+    let _playing = sources.open("q-1", 0).unwrap();
+    sources.upcoming(ids[1]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut asked = net.0.lock();
+    while !asked.iter().any(|u| u.contains(&format!("&id={}", ids[1]))) && !net.1.wait_until(&mut asked, deadline).timed_out() {}
+    assert!(asked.iter().any(|u| u.contains(&format!("&id={}", ids[1]))), "the provider's song is not fetched until it plays: {asked:?}");
 }
 
 /// Serves the Beat This! checkpoint at its URL; anything else is 404.

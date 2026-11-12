@@ -57,11 +57,6 @@ pub trait Library: Send + 'static {
     fn locate(&mut self, id: &str) -> Result<Located, String>;
     /// Length, album and track number of `id`, for the planner and seek bar.
     fn about(&self, id: &str) -> WindowSong;
-    /// Whether `id` may be fetched unasked. Never a provider's song (octo-fiesta downloads it on request).
-    fn fetch_ahead(&self, _id: &str) -> bool {
-        true
-    }
-
     /// `next` is being fetched (a song started, or the queue changed): the moment to fetch later songs
     /// to disk in the same network wake ([`crate::ahead`]).
     fn ahead(&mut self, _next: &str) {}
@@ -247,9 +242,6 @@ impl<L: Library> Songs for Sources<L> {
 
     fn upcoming(&mut self, id: &str) {
         self.library.ahead(id);
-        if !self.library.fetch_ahead(id) {
-            return;
-        }
         match self.library.locate(id) {
             Ok(Located { source: Source::Url { url, bytes }, duration_ms, hint, .. }) => {
                 let budget = self.left_for(id);

@@ -306,9 +306,11 @@ of this; Android's `PlaybackService` calls the same functions.
 - **A profile's mark**: `SavedServer::icon` (`settings::ProfileIcon`, the picker's order `profile_icons`): its
   letter (`profile_letter`, the default), its provider's mark, or one of Iconoir's faces.
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.
-- **Fetching ahead**: `Client::precache_targets` names the songs after the next (the `songs_ahead_wifi`
-  and `songs_ahead_mobile` settings; never a provider's song). The engine fetches them whole, one after
-  another, then leaves the network alone.
+- **Fetching ahead**: the engine fetches the next song as soon as it is next, a provider's too: it plays
+  anyway, and the server takes a while to fetch one from its provider, too long for a mix into it.
+  `Client::precache_targets` names the songs after it (the `songs_ahead_wifi` and `songs_ahead_mobile`
+  settings; never a provider's song). The engine fetches them whole, one after another, then leaves the
+  network alone.
 - **A new output's AutoEQ curve**: `Core::device_arrive`, then `Client::device_curve`; the client words
   the offer and answers it (`Session::curve_answer`).
 - **A sound page's shallow buffer**: `tuning::SoundTuning` counts the sound pages in sight (the
