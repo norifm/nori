@@ -20,9 +20,10 @@ import kotlinx.coroutines.flow.collectLatest
 /**
  * How the pieces of a [FrameCrossfade] come and go, in milliseconds: the one arriving waits [delayMs],
  * then fades in over [inMs] and rises into place over [riseMs] (0: it does not move); the one leaving
- * fades out over [outMs] where it stands.
+ * fades out over [outMs] where it stands. [under]: the one leaving stays whole under the one arriving
+ * and goes once that is in, for opaque pieces over a colour that must not show between them.
  */
-internal class FadeTimes(val inMs: Float, val outMs: Float, val delayMs: Float = 0f, val riseMs: Float = 0f)
+internal class FadeTimes(val inMs: Float, val outMs: Float, val delayMs: Float = 0f, val riseMs: Float = 0f, val under: Boolean = false)
 
 /**
  * The pieces of a cross-fade and how far each has come, moved on by [step] a frame at a time. Kept apart
@@ -80,7 +81,12 @@ internal class FrameFades<T>(
     /** Moves every piece on by [ms]; ones that have faded out are dropped. */
     fun step(ms: Float) {
         val gone = ArrayList<Piece>(0)
+        val covered = current?.let { it.level >= 1f } ?: true
         for (p in pieces) {
+            if (p.leaving && p.times.under) {
+                if (covered) gone += p
+                continue
+            }
             if (p.leaving) {
                 p.level = (p.level - ms / p.times.outMs).coerceAtLeast(0f)
                 if (p.level == 0f) gone += p
