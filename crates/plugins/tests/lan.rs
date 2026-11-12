@@ -2,7 +2,7 @@
 //! mDNS browsing, its endpoints at the door, songs' URLs for another device, and a cast's audio.
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream, UdpSocket};
+use std::net::{Ipv6Addr, SocketAddrV6, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
 
 use nori_net::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
@@ -221,7 +221,7 @@ fn udp_reaches_the_lan_only_and_a_group_holds_the_lock() {
 #[test]
 fn an_ipv6_group_on_the_link_reaches_the_plugin_and_it_answers_the_sender() {
     let rig = Rig::new("plugins-lan-multicast6");
-    let group = "ff02::4e:4f52";
+    let group: Ipv6Addr = "ff02::4e:4f52".parse().unwrap();
     let us = UdpSocket::bind("[::]:0").unwrap();
     us.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
     rig.web.serve("multicast", format!("{group} ::1:{}", us.local_addr().unwrap().port()));
@@ -229,11 +229,35 @@ fn an_ipv6_group_on_the_link_reaches_the_plugin_and_it_answers_the_sender() {
     let mut b = [0; 16];
     let (n, plugin) = us.recv_from(&mut b).unwrap();
     assert_eq!(&b[..n], b"ready");
-    us.send_to(b"hello", (group, plugin.port())).unwrap();
+    us.send_to(b"hello", SocketAddrV6::new(group, plugin.port(), 0, multicast_link())).unwrap();
     let (n, _) = us.recv_from(&mut b).unwrap();
     assert_eq!(&b[..n], b"ack", "answered at its link-local address and zone");
     rig.settle();
     assert_eq!(rig.said("multicast"), Some(vec!["hello".into()]));
+}
+
+/// An interface that carries IPv6 multicast back to this machine's sockets, by index: the loopback where
+/// it takes multicast (Apple's does, Linux's doesn't), else the first that is up, takes multicast and has
+/// an IPv6 address. A group on the link sent without one goes by the routing table, which may have no
+/// route for it (a Mac whose default routes are a VPN's tunnels).
+fn multicast_link() -> u32 {
+    let mut links = Vec::new();
+    // SAFETY: getifaddrs hands a list ended by a null `ifa_next`, freed with freeifaddrs.
+    unsafe {
+        let mut list = std::ptr::null_mut();
+        assert_eq!(libc::getifaddrs(&mut list), 0);
+        let mut at = list;
+        while let Some(a) = at.as_ref() {
+            let flags = a.ifa_flags as libc::c_int;
+            let v6 = !a.ifa_addr.is_null() && libc::c_int::from((*a.ifa_addr).sa_family) == libc::AF_INET6;
+            if v6 && flags & libc::IFF_UP != 0 && flags & libc::IFF_MULTICAST != 0 && flags & libc::IFF_POINTOPOINT == 0 {
+                links.push((flags & libc::IFF_LOOPBACK == 0, libc::if_nametoindex(a.ifa_name)));
+            }
+            at = a.ifa_next;
+        }
+        libc::freeifaddrs(list);
+    }
+    links.into_iter().min().expect("an interface that takes IPv6 multicast").1
 }
 
 #[test]
