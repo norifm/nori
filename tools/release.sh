@@ -9,6 +9,7 @@
 #   tools/release.sh --abi arm64-v8a    the phones' APK alone
 #   tools/release.sh --jni-libs DIR     the APK around a core already built, DIR/<abi>/ (the release workflow)
 #   tools/release.sh --no-test          skip cargo test first
+#   tools/release.sh --check-notes      only check CHANGELOG.md has this version's section (a beta needs none)
 #   tools/release.sh --no-hosts        build no desktop and CLI packages (those built already still go)
 #   tools/release.sh --allow-untested-macos  acknowledge skipped Mac execution checks on Linux
 #   tools/release.sh --docker-macos     build Mac packages in Docker even on a Mac
@@ -66,6 +67,7 @@ GUIDED=1
 DRAFT=--draft
 BETA=0
 FROM=""
+CHECK_NOTES=0
 JNI_LIBS=()
 HOST_FLAGS=()
 while [ $# -gt 0 ]; do
@@ -80,9 +82,10 @@ while [ $# -gt 0 ]; do
     --live) DRAFT="" ;;
     --beta) BETA=1 ;;
     --from) FROM="$2"; shift ;;
+    --check-notes) CHECK_NOTES=1 ;;
     --allow-untested-macos) HOST_FLAGS+=(--allow-untested-macos) ;;
     --docker-macos) HOST_FLAGS+=(--docker-macos) ;;
-    -h|--help) sed -n 2,42p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,43p "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -113,6 +116,16 @@ PY
 }
 is_beta() { [[ "$1" == *-beta.* ]]; }
 VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]?)?$'
+# A release's notes are its CHANGELOG section; a beta's are written from the commits.
+notes_ready() {
+  is_beta "$1" || ./tools/changelog.py --notes "$1" >/dev/null ||
+    die "CHANGELOG.md has no section for $1.
+write one, or generate it:  tools/changelog.py --update && tools/changelog.py --release $1"
+}
+if [ "$CHECK_NOTES" = 1 ]; then
+  notes_ready "$(code_version)"
+  exit 0
+fi
 
 # --- the guided release ------------------------------------------------------------
 if [ "$GUIDED" = 1 ]; then
@@ -246,9 +259,7 @@ if [ "$PUBLISH" = 1 ]; then
   git remote get-url origin >/dev/null 2>&1 || die "this repository has no 'origin' remote to publish to"
   [ -z "$dirty" ] || die "refusing to publish from a dirty tree: commit or stash first"
   [ -n "$FROM" ] || [ -f keystore.properties ] || die "no keystore.properties: run tools/release.sh --build once to create the key, and back it up"
-  is_beta "$version" || ./tools/changelog.py --notes "$version" >/dev/null ||
-    die "CHANGELOG.md has no section for $version.
-write one, or generate it:  tools/changelog.py --update && tools/changelog.py --release $version"
+  notes_ready "$version"
   # A release of this very commit only gets the files a failed build left out.
   if gh release view "v$version" >/dev/null 2>&1; then
     [ "$(git rev-parse -q --verify "v$version^{commit}")" = "$(git rev-parse HEAD)" ] ||
