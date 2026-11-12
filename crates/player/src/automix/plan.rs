@@ -765,7 +765,8 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
             let on_phrase = a.outro_start_ms > 0 && at >= a.outro_start_ms as f64 - 0.5 * beat && on_line(at, a.outro_start_ms as f64);
             let after_line = vocal_end.is_some_and(|v| (downbeat_at(v) - at).abs() <= 0.5 * beat);
             for &runup in prof.runups {
-                if landing == Landing::Start && runup > 0 {
+                // Only the song's first bar comes in without a run-up: anywhere else that skips its opening.
+                if (landing == Landing::Start) != (runup == 0) {
                     continue;
                 }
                 let mut in_start = d - runup as f64 * bar_in;
@@ -1009,8 +1010,8 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
         p.tempo_ramp_ms = (p.tempo_ramp_beats as f64 * (60_000.0 / k.b_bpm) / ((1.0 + k.ratio) / 2.0)).round() as i64;
     }
     p.fade_curve = FadeCurve::SineSquared;
-    // Incoming rises over the run-up (at once without one); outgoing falls over the tail after the swap.
-    (p.in_fade_start_ms, p.in_fade_end_ms) = (0, if swap > 0 { swap } else { (beat_ms / 8).clamp(1, dur_ms.max(1)) });
+    // Incoming rises over the run-up (over its first bar without one); outgoing falls over the tail after the swap.
+    (p.in_fade_start_ms, p.in_fade_end_ms) = (0, if swap > 0 { swap } else { (k.bar.round() as i64).min(dur_ms / 2).max(1) });
     (p.out_fade_start_ms, p.out_fade_end_ms) = (swap.min(dur_ms - 1).max(0), dur_ms);
     if s.bass_swap {
         let len = swap_len(k, w.landing).round() as i64;
@@ -2040,6 +2041,26 @@ mod tests {
         assert!(p.in_start_ms < sung.vocal_start_ms, "it comes in singing: {}", p.reason);
         assert!(lands(&p, sung.vocal_start_ms) >= swap_at(&p) as f64 - 1.0, "its voice comes in under the run-up: {}", p.reason);
         check_skip(&p, &a, &sung, 240_000);
+    }
+
+    #[test]
+    fn beat_matched_mixes_bring_the_incoming_song_in_over_a_bar() {
+        let bar = 4.0 * 60_000.0 / 128.0;
+        // Every singing layout of the two ends: the outgoing voice ending 0 to 8 bars from the end, the incoming one
+        // starting 0 to 16 bars in.
+        for out_bars in 0..=8 {
+            let (a, _) = sung_until(out_bars as f64);
+            for in_bars in [0, 1, 2, 4, 8, 16] {
+                let b = TrackAnalysis { vocal_start_ms: (120.0 + in_bars as f64 * bar) as i64, vocal_end_ms: 200_000, ..track(128.0) };
+                for s in [dj(), AutoMixSettings { max_transition_s: 40.0, ..Default::default() }] {
+                    let p = plan(Some(&a), Some(&b), 240_000, 240_000, &s);
+                    if p.kind == TransitionKind::BeatMatched {
+                        let rise = (p.in_fade_end_ms - p.in_fade_start_ms) as f64;
+                        assert!(rise >= bar - 1.0, "{:?}, sung to {out_bars} bars from the end, from bar {in_bars}: in over {rise} ms: {}", s.style, p.reason);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
