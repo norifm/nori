@@ -11,7 +11,7 @@
 //! [`REMAKE_LEAD_MS`] ahead first so the handover is never a gap.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -336,6 +336,16 @@ impl Status {
         )
     }
 
+    /// Paused where it is now.
+    fn paused(&mut self) {
+        if self.state == State::Playing {
+            let now = Instant::now();
+            self.position_ms = self.positions_at(now, self.buffering).0;
+            self.at = now;
+            self.state = State::Paused;
+        }
+    }
+
     /// The position for a seek bar, and whether the reading is old enough to [`Engine::look`] again.
     pub fn screen_now(&self) -> (i64, bool) {
         nori_player::heard::screen_place(self.position_ms, self.at.elapsed().as_millis() as i64, self.pace, self.state == State::Playing)
@@ -401,6 +411,13 @@ enum Command {
     Stop,
 }
 
+impl Command {
+    /// Sent by [`Engine::press`]: the status shows it until the worker takes it.
+    fn pressed(&self) -> bool {
+        matches!(self, Command::PlayAt(..) | Command::GoTo(..) | Command::Play | Command::Pause(_) | Command::Seek(_))
+    }
+}
+
 /// What a switch does at the bottom of its dip.
 #[derive(Debug, Clone, Copy)]
 enum Switched {
@@ -436,6 +453,8 @@ pub struct Engine {
     tx: Sender<Command>,
     join: Mutex<Option<JoinHandle<()>>>,
     status: Arc<Mutex<Status>>,
+    /// Presses the status shows and the engine has not taken yet ([`Engine::press`]).
+    pressed: Arc<AtomicU32>,
     /// Jumps and plays asked for so far ([`Event::Song`], [`Event::Stopped`]).
     jumps: AtomicU64,
     plays: AtomicU64,
@@ -473,19 +492,20 @@ impl Engine {
     {
         let (tx, rx) = channel();
         let status = Arc::new(Mutex::new(Status::default()));
+        let pressed = Arc::new(AtomicU32::new(0));
         let fetching = Arc::new(fetching_on(&clock));
-        let (shared, devices, loading, hook, own, timer) = (status.clone(), tx.clone(), fetching.clone(), clock.clone(), clock.clone(), clock.clone());
+        let (shared, taken, devices, loading, hook, own, timer) = (status.clone(), pressed.clone(), tx.clone(), fetching.clone(), clock.clone(), clock.clone(), clock.clone());
         let join = std::thread::Builder::new()
             .name("nori-engine".into())
             .spawn(move || {
                 let me = std::thread::current();
                 let woken = Box::new(move || own.wake(&me));
-                worker(library, app, queue, output, offload, config, clock, rx, devices, woken, events, shared, loading).run();
+                worker(library, app, queue, output, offload, config, clock, rx, devices, woken, events, (shared, taken), loading).run();
             })
             .expect("a thread for the engine");
         let thread = join.thread().clone();
         let wake = Box::new(move || hook.wake(&thread));
-        Engine { tx, join: Mutex::new(Some(join)), status, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake, fetching, now_us: Box::new(move || timer.now_us()) }
+        Engine { tx, join: Mutex::new(Some(join)), status, pressed, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake, fetching, now_us: Box::new(move || timer.now_us()) }
     }
 
     /// The engine on the caller's thread, for a platform without threads (the web): the caller runs
@@ -501,10 +521,11 @@ impl Engine {
     {
         let (tx, rx) = channel();
         let status = Arc::new(Mutex::new(Status::default()));
+        let pressed = Arc::new(AtomicU32::new(0));
         let fetching = Arc::new(fetching_on(&clock));
         let timer = clock.clone();
-        let w = worker(library, app, queue, output, None, config, clock, rx, tx.clone(), Box::new(wake.clone()), events, status.clone(), fetching.clone());
-        let engine = Engine { tx, join: Mutex::new(None), status, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake: Box::new(wake), fetching, now_us: Box::new(move || timer.now_us()) };
+        let w = worker(library, app, queue, output, None, config, clock, rx, tx.clone(), Box::new(wake.clone()), events, (status.clone(), pressed.clone()), fetching.clone());
+        let engine = Engine { tx, join: Mutex::new(None), status, pressed, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake: Box::new(wake), fetching, now_us: Box::new(move || timer.now_us()) };
         (engine, Driven(w))
     }
 
@@ -521,20 +542,44 @@ impl Engine {
         n
     }
 
+    /// Sends press `c` with the status showing at once what it asks for (`show`): read before the
+    /// engine takes it (a remote answering from it), the status says what was asked, not what was.
+    fn press(&self, c: Command, show: impl FnOnce(&mut Status)) {
+        let mut s = self.status.lock();
+        show(&mut s);
+        self.pressed.fetch_add(1, Ordering::AcqRel);
+        drop(s);
+        self.send(c);
+    }
+
+    /// [`Engine::press`] of a jump to `index` at `ms`; `play`: it plays, else as before.
+    fn press_jump(&self, c: Command, index: usize, ms: i64, play: bool) -> u64 {
+        let n = self.jumps.fetch_add(1, Ordering::AcqRel) + 1;
+        self.press(c, |s| {
+            s.index = Some(index);
+            s.position_ms = ms.max(0);
+            s.at = Instant::now();
+            if play {
+                s.state = State::Playing;
+            }
+        });
+        n
+    }
+
     /// Plays queue index `index` from `ms`.
     pub fn play_at(&self, index: usize, ms: i64) -> u64 {
-        self.jump(Command::PlayAt(index, ms))
+        self.press_jump(Command::PlayAt(index, ms), index, ms, true)
     }
 
     /// Goes to queue index `index` at `ms`, playing or paused as before; paused, nothing is fetched
     /// until play.
     pub fn go_to(&self, index: usize, ms: i64) -> u64 {
-        self.jump(Command::GoTo(index, ms, Switch::ToSong))
+        self.press_jump(Command::GoTo(index, ms, Switch::ToSong), index, ms, false)
     }
 
     /// A next or previous command with the target index already chosen by the controller.
     pub fn skip_to(&self, index: usize, ms: i64) -> u64 {
-        self.jump(Command::GoTo(index, ms, Switch::Skip))
+        self.press_jump(Command::GoTo(index, ms, Switch::Skip), index, ms, false)
     }
 
     /// Pauses at the end of the current song, on the next one at its start (the sleep timer); nothing
@@ -546,7 +591,12 @@ impl Engine {
     /// Returns the play's number ([`Event::Stopped`]).
     pub fn play(&self) -> u64 {
         let n = self.plays.fetch_add(1, Ordering::AcqRel) + 1;
-        self.send(Command::Play);
+        self.press(Command::Play, |s| {
+            if s.index.is_some() && s.state != State::Playing {
+                s.state = State::Playing;
+                s.at = Instant::now();
+            }
+        });
         n
     }
 
@@ -559,12 +609,12 @@ impl Engine {
     }
 
     pub fn pause(&self) {
-        self.send(Command::Pause(None));
+        self.press(Command::Pause(None), Status::paused);
     }
 
     /// Pauses at once whatever the fade setting (headphones pulled out), cutting a fade short.
     pub fn pause_now(&self) {
-        self.send(Command::Pause(Some(0)));
+        self.press(Command::Pause(Some(0)), Status::paused);
     }
 
     /// Pauses at once and lets the output and the song's bytes go now, not after the idle time: the
@@ -625,14 +675,12 @@ impl Engine {
 
     /// Seeks the current song; the status shows the place asked for at once.
     pub fn seek(&self, ms: i64) {
-        {
-            let mut s = self.status.lock();
+        self.press(Command::Seek(ms), |s| {
             if s.index.is_some() {
                 s.position_ms = ms.max(0);
                 s.at = Instant::now();
             }
-        }
-        self.send(Command::Seek(ms));
+        });
     }
 
     pub fn set_settings(&self, settings: Settings) {
@@ -928,7 +976,7 @@ fn fetching_on<C: Clock + Sync>(clock: &C) -> Fetching {
 /// The engine's worker over `library`, `app` and `queue`, taking commands from `rx`; `woken` wakes it
 /// for a device change sent through `devices`.
 #[allow(clippy::too_many_arguments)]
-fn worker<L, A, Q, E, C>(library: L, app: A, queue: Q, output: Box<dyn AudioOutput>, offload: Option<Box<dyn OffloadOutput>>, config: Config, clock: C, rx: Receiver<Command>, devices: Sender<Command>, woken: Box<dyn Fn() + Send + Sync>, events: E, status: Arc<Mutex<Status>>, fetching: Arc<Fetching>) -> Worker<L, A, Q, E, C>
+fn worker<L, A, Q, E, C>(library: L, app: A, queue: Q, output: Box<dyn AudioOutput>, offload: Option<Box<dyn OffloadOutput>>, config: Config, clock: C, rx: Receiver<Command>, devices: Sender<Command>, woken: Box<dyn Fn() + Send + Sync>, events: E, status: (Arc<Mutex<Status>>, Arc<AtomicU32>), fetching: Arc<Fetching>) -> Worker<L, A, Q, E, C>
 where
     L: Library,
     A: App,
@@ -973,6 +1021,8 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     rx: Receiver<Command>,
     events: E,
     status: Arc<Mutex<Status>>,
+    /// The handle's count of presses the status shows ahead of this worker.
+    pressed: Arc<AtomicU32>,
     clock: C,
     settings: Settings,
     applied: Option<Applied>,
@@ -1024,7 +1074,7 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
 
 impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E, C> {
     #[allow(clippy::too_many_arguments)]
-    fn new(p: Player<Sources<L>, RingTrack, A, Q>, off: Option<Offload>, rx: Receiver<Command>, events: E, status: Arc<Mutex<Status>>, config: Config, clock: C, prepared: Arc<dyn Fn() + Send + Sync>) -> Self {
+    fn new(p: Player<Sources<L>, RingTrack, A, Q>, off: Option<Offload>, rx: Receiver<Command>, events: E, (status, pressed): (Arc<Mutex<Status>>, Arc<AtomicU32>), config: Config, clock: C, prepared: Arc<dyn Fn() + Send + Sync>) -> Self {
         let seqs = p.queue.read(|q| q.seqs().to_vec());
         let (idle_release_ms, watch) = (config.idle_release_ms, config.watch);
         let mut w = Worker {
@@ -1033,6 +1083,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             rx,
             events,
             status,
+            pressed,
             clock,
             settings: Settings::default(),
             applied: None,
@@ -1124,6 +1175,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             match self.rx.try_recv() {
                 Ok(Command::Stop) | Err(TryRecvError::Disconnected) => return None,
                 Ok(c) => {
+                    if c.pressed() {
+                        self.pressed.fetch_sub(1, Ordering::AcqRel);
+                    }
                     // Kept awake for the command's work; `follow_awake` may let go at the end.
                     self.say_awake(true);
                     self.command(c)
@@ -3037,13 +3091,16 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let id = self.told.heard.as_ref().map(|h| h.1.as_str());
         let mut s = self.status.lock();
         let was = s.mixing;
-        s.state = self.state();
-        if s.index != Some(i) || s.id.as_deref() != id {
-            s.index = Some(i);
-            s.id = id.map(str::to_owned);
+        // A press not taken yet shows what it asks for: this reading is from before it.
+        if self.pressed.load(Ordering::Acquire) == 0 {
+            s.state = self.state();
+            if s.index != Some(i) || s.id.as_deref() != id {
+                s.index = Some(i);
+                s.id = id.map(str::to_owned);
+            }
+            s.position_ms = ms;
+            s.at = at;
         }
-        s.position_ms = ms;
-        s.at = at;
         s.releases = self.releases;
         more(&mut s);
         was
