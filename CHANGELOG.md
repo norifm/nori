@@ -6,6 +6,27 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-12
+
+### Added
+
+- AutoMix is Off, Smooth or DJ, with loops and drop cuts (#145)
+- SoundCloud and YouTube Music fill Library: albums, artists, songs, playlists and likes; their plugins update themselves for this version
+- Another device playing shows in Android's media controls again, and the volume keys move its volume
+
+### Fixed
+
+- Pulling the player leaves no strip above its cover
+- A setting's few choices sit on one line
+- Library shows only a profile's own sections, or says to search
+- Devices on two networks pair and are found on each of them
+- Clicking a paired device plays on it instead of forgetting it
+- A song menu's seal and Details sit at its end, centered on its head
+- The lyrics stay in focus under the desktop's menus and dialogs
+- The desktop's profile button stays in the top bar while searching
+- Music handed back at once from a device plays on where it was
+- A repeat press told late no longer undoes a newer one
+
 ## [0.8.2] - 2026-11-11
 
 ### Added
