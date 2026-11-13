@@ -20,8 +20,8 @@ pub const GRID_NEURAL: i32 = 2;
 pub(crate) const WINDOW_MS: i64 = 30_000;
 /// Less music than this at an end is not worth a run.
 const MIN_WINDOW_MS: i64 = 8_000;
-/// How much of each end [`Ends`] keeps: the window plus room for leading or trailing silence.
-pub(crate) const ENDS_MS: i64 = 35_000;
+/// How much of each end [`Ends`] keeps: the window plus room for a closing breakdown after it and trailing silence.
+pub(crate) const ENDS_MS: i64 = 60_000;
 
 /// One end of a song, where a mix happens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,7 +163,11 @@ pub fn window(row: &TrackAnalysis, end: MixEnd, have: (i64, i64)) -> Option<(i64
     }
     let (from, to) = match end {
         MixEnd::Intro => (start, (start + WINDOW_MS).min(stop)),
-        MixEnd::Outro => ((stop - WINDOW_MS).max(start), stop),
+        MixEnd::Outro => {
+            // Before a closing breakdown, as the classical end grid.
+            let stop = if row.exit_ms - start >= WINDOW_MS { row.exit_ms } else { stop };
+            ((stop - WINDOW_MS).max(start), stop)
+        }
     };
     let (from, to) = (from.max(have.0), to.min(have.1));
     (to - from >= MIN_WINDOW_MS).then_some((from, to))

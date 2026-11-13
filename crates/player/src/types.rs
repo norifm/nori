@@ -290,6 +290,81 @@ pub struct Echo {
     pub delay_ms: i64,
     pub feedback: f32,
     pub wet_db: f32,
+    /// Relative. What is sent into the echo; the whole transition when absent.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub send: Option<Window>,
+    /// The repeats kept inside this band.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub band: Option<Band>,
+    /// Relative. The repeats held down as the incoming song lands.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub duck: Option<Duck>,
+}
+
+/// Relative. A stretch of a transition, ms.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Window {
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
+
+/// A band of frequencies, Hz.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Band {
+    pub low_hz: f32,
+    pub high_hz: f32,
+}
+
+/// Relative. A level held `db` down from `at_ms`, reached over `len_ms`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Duck {
+    pub at_ms: i64,
+    pub len_ms: i64,
+    pub db: f32,
+}
+
+/// Relative. A peaking cut of `db` at `hz` on the decks named, shaped as a half sine over `window`: none at its
+/// ends, all of it in its middle. Mids dipped where two songs' bodies would crowd each other.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MidDip {
+    pub window: Window,
+    pub db: f32,
+    pub hz: f32,
+    pub outgoing: bool,
+    pub incoming: bool,
+}
+
+/// Relative. A reverb on the outgoing deck: what goes through its fader in `send` rings on for `decay_s` (to 60 dB
+/// down) at `wet_db`, its lows below `low_cut_hz` taken out.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Reverb {
+    pub send: Window,
+    pub decay_s: f32,
+    pub wet_db: f32,
+    pub low_cut_hz: f32,
+}
+
+/// Relative. The outgoing track's tempo, alone of the two: its speed goes from 1 to `to` linearly over `window`
+/// (wall-clock), then holds `to` to the end of the transition. Pitch as `keep_pitch`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Glide {
+    pub window: Window,
+    pub to: f64,
+}
+
+/// Relative. A tape stop on the outgoing track: from `start_ms` its read speed falls as `(1 - t)^1.8` to nothing
+/// over `len_ms`, its pitch with it; after it the outgoing deck is silent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Brake {
+    pub start_ms: i64,
+    pub len_ms: i64,
 }
 
 /// The incoming voice band (centred on `hz`) is held `db` down until `until_ms`, released over the
@@ -371,6 +446,23 @@ pub struct TransitionPlan {
     /// With a bend there is no ramp after the overlap (`tempo_ramp_ms` is 0).
     #[cfg_attr(feature = "serde", serde(default))]
     pub bend: Option<Bend>,
+    /// Relative. Low-pass and high-pass sweeps on the incoming track.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub in_low_pass: Option<Sweep>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub in_high_pass: Option<Sweep>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub mid_dip: Option<MidDip>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub reverb: Option<Reverb>,
+    /// The incoming track starts this far into the transition, ms; silence on its deck before.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub in_delay_ms: i64,
+    /// Never with a `bend`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub out_glide: Option<Glide>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub brake: Option<Brake>,
     /// Why this plan, for logs.
     pub reason: String,
 }
@@ -408,12 +500,47 @@ impl TransitionPlan {
     /// Whether both plans mix the same audio: equal but for `kind`, `reason` and `tempo_ramp_beats`
     /// (`tempo_ramp_ms` is what runs).
     pub fn sounds_same(&self, o: &TransitionPlan) -> bool {
-        let TransitionPlan { kind: _, reason: _, tempo_ramp_beats: _, out_start_ms, in_start_ms, duration_ms, tempo_ratio, tempo_ramp_ms, keep_pitch, fade_curve, out_fade_start_ms, out_fade_end_ms, in_fade_start_ms, in_fade_end_ms, out_gain_db, in_gain_db, bass_swap, highs_in, low_pass, high_pass, echo, out_loop_ms, vocal_duck, in_loop, bend } = self;
+        let TransitionPlan {
+            kind: _,
+            reason: _,
+            tempo_ramp_beats: _,
+            out_start_ms,
+            in_start_ms,
+            duration_ms,
+            tempo_ratio,
+            tempo_ramp_ms,
+            keep_pitch,
+            fade_curve,
+            out_fade_start_ms,
+            out_fade_end_ms,
+            in_fade_start_ms,
+            in_fade_end_ms,
+            out_gain_db,
+            in_gain_db,
+            bass_swap,
+            highs_in,
+            low_pass,
+            high_pass,
+            echo,
+            out_loop_ms,
+            vocal_duck,
+            in_loop,
+            bend,
+            in_low_pass,
+            in_high_pass,
+            mid_dip,
+            reverb,
+            in_delay_ms,
+            out_glide,
+            brake,
+        } = self;
         (*out_start_ms, *in_start_ms, *duration_ms, *tempo_ramp_ms, *out_fade_start_ms, *out_fade_end_ms, *in_fade_start_ms, *in_fade_end_ms, *out_loop_ms)
             == (o.out_start_ms, o.in_start_ms, o.duration_ms, o.tempo_ramp_ms, o.out_fade_start_ms, o.out_fade_end_ms, o.in_fade_start_ms, o.in_fade_end_ms, o.out_loop_ms)
             && (*tempo_ratio, *keep_pitch, *fade_curve, *out_gain_db, *in_gain_db) == (o.tempo_ratio, o.keep_pitch, o.fade_curve, o.out_gain_db, o.in_gain_db)
             && (*bass_swap, *low_pass, *high_pass, *echo, *vocal_duck) == (o.bass_swap, o.low_pass, o.high_pass, o.echo, o.vocal_duck)
             && (*in_loop, *bend, *highs_in) == (o.in_loop, o.bend, o.highs_in)
+            && (*in_low_pass, *in_high_pass, *mid_dip, *reverb) == (o.in_low_pass, o.in_high_pass, o.mid_dip, o.reverb)
+            && (*in_delay_ms, *out_glide, *brake) == (o.in_delay_ms, o.out_glide, o.brake)
     }
 
     /// Where the tempo changes: from `tempo_ratio` to 1 over (start, length) ms of the transition, the bend or
