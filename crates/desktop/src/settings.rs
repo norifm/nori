@@ -1114,8 +1114,8 @@ fn plugin_list(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
     }
     let installed = p.cards.iter().map(|c| {
         let kinds = words::plugin_is(&c.points, !c.overrides.is_empty());
-        let line = [c.version.clone(), kinds].into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" · ");
-        Row { control: PluginAct::Turn(c.id.clone()).name(), on: c.enabled, enabled: !all_off, ..plugin_line(p, &c.id, &c.name, c.about.as_deref(), line) }
+        let line = [kinds, c.version.clone()].into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" · ");
+        Row { control: PluginAct::Turn(c.id.clone()).name(), on: c.enabled, enabled: !all_off, ..plugin_line(p, &c.id, &c.name, None, line) }
     });
     groups.push((words::INSTALLED_LIST.to_string(), installed.collect()));
     groups
@@ -1330,7 +1330,7 @@ fn plugin_row(plugin: &str, r: &PluginRow, off: bool) -> Row {
     let said = |value: String| [value, hint.clone()].into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" · ");
     match r.kind {
         RowKind::Switch => Row { kind: TOGGLE, on: r.value == Some(Value::Switch(true)), ..base },
-        RowKind::Choice => {
+        RowKind::Choice | RowKind::Segments => {
             let chosen = match r.value {
                 Some(Value::Choice(i)) => i as i32,
                 _ => 0,
@@ -1360,11 +1360,19 @@ fn plugin_row(plugin: &str, r: &PluginRow, off: bool) -> Row {
         RowKind::Action => Row { kind: BUTTON, ..base },
         RowKind::Flags => Row { kind: INFO, ..base },
         RowKind::Status => Row { kind: INFO, detail: said(r.value.as_ref().map(|v| words::plugin_value(v, &r.options)).unwrap_or_default()), ..base },
+        RowKind::Meter => {
+            let shown = match r.value {
+                Some(Value::Level(v)) => words::plugin_level(v, r.decimals, r.unit.as_deref()),
+                _ => String::new(),
+            };
+            Row { kind: INFO, detail: said(shown), ..base }
+        }
         RowKind::Link => match &r.url {
             Some(url) => Row { kind: LINK, name: PluginAct::Open(url.clone()).name(), ..base },
             None => Row { kind: INFO, ..base },
         },
-        RowKind::Note | RowKind::Section => note(&r.label),
+        // Pages are laid out as headings by `one_page`.
+        RowKind::Note | RowKind::Section | RowKind::Page => note(&r.label),
     }
 }
 
@@ -1390,7 +1398,7 @@ fn plugin_lines(plugin: &str, r: &PluginRow, off: bool) -> Vec<Row> {
 fn card_groups(title: String, c: &PluginCard, head: Vec<Row>, off: &HashSet<(String, String)>, shown: impl Fn(&PluginRow) -> bool) -> Vec<(String, Vec<Row>)> {
     let mut groups = Vec::new();
     let (mut title, mut rows) = (title, head);
-    for r in c.rows.iter().filter(|r| shown(r)) {
+    for r in nori_plugins::one_page(&c.rows).iter().filter(|r| shown(r)) {
         match r.kind {
             RowKind::Section => groups.push((std::mem::replace(&mut title, r.label.clone()), std::mem::take(&mut rows))),
             _ => rows.extend(plugin_lines(&c.id, r, off.contains(&(c.id.clone(), r.id.clone())))),
@@ -1603,7 +1611,7 @@ mod tests {
     }
 
     fn row(id: &str, kind: RowKind, value: Option<Value>) -> PluginRow {
-        PluginRow { id: id.into(), kind, label: id.into(), options: vec!["a".into(), "b".into()], min: Some(0.0), max: Some(2.0), step: Some(0.5), value, hint: None, unit: None, decimals: 1, url: None }
+        PluginRow { id: id.into(), kind, label: id.into(), options: vec!["a".into(), "b".into()], min: Some(0.0), max: Some(2.0), step: Some(0.5), value, hint: None, unit: None, decimals: 1, url: None, page: None, glyph: None }
     }
 
     fn read(offers: Vec<Offer>) -> Shelf {
@@ -1933,11 +1941,15 @@ mod tests {
             unit: unit.map(Into::into),
             decimals: 2,
             url: url.map(Into::into),
+            page: None,
+            glyph: None,
         };
         let level = plugin_row("p", &row(RowKind::Level, Some(Value::Level(1.5)), Some("Before the limiter"), Some("dB"), None), false);
         assert_eq!((level.title.as_str(), level.detail.as_str()), ("Gain: 1.50 dB", "Before the limiter"));
         let status = plugin_row("p", &row(RowKind::Status, Some(Value::Text("Fine".into())), Some("Checked hourly"), None, None), false);
         assert_eq!(status.detail, "Fine · Checked hourly");
+        let meter = plugin_row("p", &row(RowKind::Meter, Some(Value::Level(8.0)), None, Some("%"), None), false);
+        assert_eq!(meter.detail, "8.00 %");
         let link = plugin_row("p", &row(RowKind::Link, None, None, None, Some("https://x.example/help")), false);
         assert_eq!((link.kind, PluginAct::of(&link.name)), (LINK, Some(PluginAct::Open("https://x.example/help".into()))));
     }
@@ -1947,7 +1959,7 @@ mod tests {
     #[test]
     fn a_controlled_device_leads_the_devices_panel() {
         use nori_plugins::{Battery, Noise};
-        let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None }] };
+        let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None, page: None, glyph: None }] };
         let d = ControlledDevice { id: "AA".into(), name: "WH-1000XM5".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Canceling), noise_modes: vec![Noise::Off, Noise::Canceling], noise_cycle: vec![Noise::Off, Noise::Canceling], card: card("dev.sony") };
         let on = PluginRow { id: "on".into(), label: "Touch".into(), kind: RowKind::Switch, ..row_blank() };
         let d = ControlledDevice { card: PluginCard { rows: vec![on], ..d.card.clone() }, ..d };
@@ -1977,6 +1989,6 @@ mod tests {
     }
 
     fn row_blank() -> PluginRow {
-        PluginRow { id: String::new(), label: String::new(), kind: RowKind::Note, options: Vec::new(), value: None, hint: None, min: None, max: None, step: None, decimals: 0, unit: None, url: None }
+        PluginRow { id: String::new(), label: String::new(), kind: RowKind::Note, options: Vec::new(), value: None, hint: None, min: None, max: None, step: None, decimals: 0, unit: None, url: None, page: None, glyph: None }
     }
 }

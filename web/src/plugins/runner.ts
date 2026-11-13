@@ -111,6 +111,7 @@ function imports(start: Start) {
         const v = row && valueOf(row, values);
         return row && v !== undefined ? witValue(row, v) : undefined;
       },
+      set: (shown: [string, { val: unknown }][]) => told({ now: shown.map(([row, v]) => [row, Number(v.val)]) }),
       setStatus: (row: string, words: string, args: string[]) => told({ status: { row, words, args } }),
       setShown: (row: string, shown: boolean, enabled: boolean) => told({ shown: { row, shown, enabled } }),
     },

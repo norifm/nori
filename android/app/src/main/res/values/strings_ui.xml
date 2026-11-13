@@ -836,7 +836,8 @@
     <string name="plugins_add_repo">Add repo</string>
     <string name="plugins_repo_url">Repo address</string>
     <string name="plugins_repo_warning">This repo isn’t nori’s. Its plugins can do what their pages say. Add it only if you trust it.</string>
-    <string name="plugins_may">It may:</string>
+    <string name="plugins_may">What it may do</string>
+    <string name="plugins_not_set">Not set</string>
     <string name="plugins_may_reach">Reach %1$s</string>
     <string name="plugins_may_reach_lan">Reach devices on your network</string>
     <string name="plugins_may_play">Play music as a music source</string>

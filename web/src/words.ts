@@ -221,7 +221,7 @@ export const W = {
   pluginRemoveTitle: (name: string) => `Remove ${name}?`,
   pluginRemoveText: "Its own settings go with it.",
   pluginLevel: (label: string, value: string) => `${label} · ${value}`,
-  pluginMayTitle: "It may:",
+  pluginMayTitle: "What it may do",
   /** What a plugin is: its extension points and whether it changes nori's values. */
   pluginKinds(points: string[], overrides: boolean) {
     const kinds: Record<string, string> = {

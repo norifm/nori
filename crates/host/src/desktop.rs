@@ -510,7 +510,7 @@ mod tests {
         w.status("p".into(), "state".into(), "Fine {0}".into(), vec!["now".into()]);
         w.shown("p".into(), "gone".into(), false, true);
         w.shown("p".into(), "dim".into(), true, false);
-        let row = |id: &str| PluginRow { id: id.into(), kind: RowKind::Status, label: id.into(), options: Vec::new(), min: None, max: None, step: None, value: None, hint: None, unit: None, decimals: 0, url: None };
+        let row = |id: &str| PluginRow { id: id.into(), kind: RowKind::Status, label: id.into(), options: Vec::new(), min: None, max: None, step: None, value: None, hint: None, unit: None, decimals: 0, url: None, page: None, glyph: None };
         let mut cards = [PluginCard { id: "p".into(), version: "1.0.0".into(), name: "P".into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: false, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![row("state"), row("gone"), row("dim")] }];
         let off = w.as_said(&mut cards);
         let rows: Vec<(&str, Option<&Value>)> = cards[0].rows.iter().map(|r| (r.id.as_str(), r.value.as_ref())).collect();

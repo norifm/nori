@@ -50,8 +50,15 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
   The manifest says only what code can't: its id, the hosts and Bluetooth devices it may reach, the
   keys it overrides, its rows, a stage's slot, and its permissions, hooks, wakes, commands, cache quota
   and assets.
+- Rows are what nori draws for the plugin, in the client's own look: a switch, a choice (a list to
+  pick from) or segments (a few options side by side), flags (chips, any number on), a level (a
+  slider), text and secret fields, an action, a status line, a meter (a read-only bar from `min` to
+  `max`, its value given with `rows.set`), a section heading, a note and a link. A page row opens a
+  page of its own holding the rows placed `.on(id)` it; a client that draws one long page (the
+  desktop, the terminal, the web) puts each page's rows under its name (`nori_plugins::one_page`).
+  `.glyph(..)` puts one of nori's glyphs before a row's label.
 - Words are files: `strings/<lang>.toml`, key = text, English required: `name`, `about`, each row's id
-  and each choice or flags option's key.
+  and each choice, segments or flags option's key.
 - A plugin depends on the SDK from this repository, `nori-plugin-sdk = { git = "https://github.com/norifm/nori" }`,
   its commit pinned by the plugin's `Cargo.lock`.
 - Build with `cargo build --release --target wasm32-wasip2`; a `.noriplugin` is a zip of `plugin.wasm`,

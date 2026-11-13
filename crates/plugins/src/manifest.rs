@@ -158,6 +158,18 @@ pub enum Glyph {
     Add,
     Play,
     Tune,
+    Headphones,
+    Speaker,
+    Battery,
+    Touch,
+    Timer,
+    Gauge,
+    Wave,
+    Bluetooth,
+    Gear,
+    Globe,
+    Key,
+    Person,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,6 +215,10 @@ pub struct RowSpec {
     pub decimals: u8,
     /// A link row's address.
     pub url: Option<String>,
+    /// The id of the page row it sits on; none for the plugin's own page.
+    pub page: Option<String>,
+    /// A glyph before its label.
+    pub glyph: Option<Glyph>,
 }
 
 impl RowSpec {
@@ -211,7 +227,7 @@ impl RowSpec {
         let d = self.default?;
         Some(match self.kind {
             RowKind::Switch => crate::Value::Switch(d != 0.0),
-            RowKind::Choice => crate::Value::Choice(d as u32),
+            RowKind::Choice | RowKind::Segments => crate::Value::Choice(d as u32),
             RowKind::Flags => crate::Value::Flags(d as u64),
             _ => crate::Value::Level(d),
         })
@@ -235,14 +251,23 @@ pub enum RowKind {
     Link,
     /// Any number of its options on, as pills; its value's bits are their places.
     Flags,
+    /// Opens a page of its own: the rows whose `page` is its id.
+    Page,
+    /// A choice of a few options drawn side by side.
+    Segments,
+    /// A bar between `min` and `max` for a value the plugin shows, with its unit.
+    Meter,
 }
 
 impl RowKind {
-    const ALL: [RowKind; 11] = [RowKind::Switch, RowKind::Choice, RowKind::Level, RowKind::Secret, RowKind::Text, RowKind::Action, RowKind::Status, RowKind::Section, RowKind::Note, RowKind::Link, RowKind::Flags];
+    const ALL: [RowKind; 14] = [
+        RowKind::Switch, RowKind::Choice, RowKind::Level, RowKind::Secret, RowKind::Text, RowKind::Action, RowKind::Status, RowKind::Section, RowKind::Note, RowKind::Link, RowKind::Flags, RowKind::Page,
+        RowKind::Segments, RowKind::Meter,
+    ];
 
     /// Whether its value is a number a sound stage reads.
     pub fn numeric(self) -> bool {
-        matches!(self, RowKind::Switch | RowKind::Choice | RowKind::Level)
+        matches!(self, RowKind::Switch | RowKind::Choice | RowKind::Level | RowKind::Segments)
     }
 }
 
@@ -320,6 +345,10 @@ impl Manifest {
             2 => Some(Slot::Master),
             _ => None,
         };
+        const GLYPHS: [Glyph; 22] = [
+            Glyph::Sparkle, Glyph::Info, Glyph::Share, Glyph::Link, Glyph::Search, Glyph::Heart, Glyph::Download, Glyph::Add, Glyph::Play, Glyph::Tune, Glyph::Headphones, Glyph::Speaker,
+            Glyph::Battery, Glyph::Touch, Glyph::Timer, Glyph::Gauge, Glyph::Wave, Glyph::Bluetooth, Glyph::Gear, Glyph::Globe, Glyph::Key, Glyph::Person,
+        ];
         let rows = w
             .rows
             .iter()
@@ -336,10 +365,12 @@ impl Manifest {
                     unit: r.unit.clone(),
                     decimals: r.decimals,
                     url: r.url.clone(),
+                    page: r.page.clone(),
+                    // A glyph a newer SDK adds is left out.
+                    glyph: r.glyph.and_then(|g| GLYPHS.get(g as usize).copied()),
                 })
             })
             .collect::<Option<Vec<_>>>()?;
-        const GLYPHS: [Glyph; 10] = [Glyph::Sparkle, Glyph::Info, Glyph::Share, Glyph::Link, Glyph::Search, Glyph::Heart, Glyph::Download, Glyph::Add, Glyph::Play, Glyph::Tune];
         const KINDS: [ItemKind; 4] = [ItemKind::Song, ItemKind::Album, ItemKind::Artist, ItemKind::Playlist];
         const PLACES: [Place; 4] = [Place::Artwork, Place::SongInfo, Place::PlayerStatus, Place::Devices];
         let menu = w
@@ -429,16 +460,26 @@ mod tests {
 
     #[test]
     fn what_the_sdk_writes_reads_back() {
-        const ROWS: [sdk::Row; 3] = [sdk::Row::level("speed", 0.02, 1.0, 0.01, 0.12).hint("speed_hint").unit("turns"), sdk::Row::choice("mode", &["a", "b"], 1), sdk::Row::link("site", "https://nori.fm")];
+        const ROWS: [sdk::Row; 6] = [
+            sdk::Row::level("speed", 0.02, 1.0, 0.01, 0.12).hint("speed_hint").unit("turns"),
+            sdk::Row::choice("mode", &["a", "b"], 1),
+            sdk::Row::link("site", "https://nori.fm"),
+            sdk::Row::page("touch").glyph(sdk::Glyph::Touch),
+            sdk::Row::segments("hold", &["off", "on"], 1).on("touch"),
+            sdk::Row::meter("charge", 0.0, 100.0).on("touch").unit("%"),
+        ];
         const MENU: [sdk::MenuAction; 1] = [sdk::MenuAction { id: "look_up", glyph: sdk::Glyph::Search, kinds: &[sdk::ItemKind::Song, sdk::ItemKind::Album] }];
         let m = sdk::Manifest { stage: Some(sdk::Slot::Master), net: &["music.youtube.com"], overrides: &["playback.speed"], rows: &ROWS, menu: &MENU, places: &[sdk::Place::Artwork, sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.orbit") };
         let read = written(&m, 1 << 3);
         assert_eq!((read.id.as_str(), read.version.as_str(), read.api, read.stage), ("fm.nori.orbit", "1.2.3", API, Some(Slot::Master)));
         assert_eq!(read.points, vec!["sound-stage"]);
         assert_eq!((&read.net, &read.overrides), (&vec!["music.youtube.com".to_string()], &vec!["playback.speed".to_string()]));
-        assert_eq!(read.rows[0], RowSpec { id: "speed".into(), kind: RowKind::Level, options: Vec::new(), min: Some(0.02), max: Some(1.0), step: Some(0.01), default: Some(0.12), hint: Some("speed_hint".into()), unit: Some("turns".into()), decimals: 2, url: None });
+        assert_eq!(read.rows[0], RowSpec { id: "speed".into(), kind: RowKind::Level, options: Vec::new(), min: Some(0.02), max: Some(1.0), step: Some(0.01), default: Some(0.12), hint: Some("speed_hint".into()), unit: Some("turns".into()), decimals: 2, url: None, page: None, glyph: None });
+        assert_eq!((read.rows[3].kind, read.rows[3].glyph, read.rows[3].page.as_deref()), (RowKind::Page, Some(Glyph::Touch), None));
+        assert_eq!((read.rows[4].kind, read.rows[4].page.as_deref(), read.rows[4].glyph), (RowKind::Segments, Some("touch"), None));
+        assert_eq!((read.rows[5].kind, read.rows[5].max, read.rows[5].unit.as_deref()), (RowKind::Meter, Some(100.0), Some("%")));
         assert_eq!((read.rows[1].kind, read.rows[1].options.len(), read.rows[1].default, read.rows[1].min), (RowKind::Choice, 2, Some(1.0), None));
-        assert_eq!(read.row_numbers(&BTreeMap::from([("speed".to_string(), 0.5)])), vec![0.5, 1.0]);
+        assert_eq!(read.row_numbers(&BTreeMap::from([("speed".to_string(), 0.5)])), vec![0.5, 1.0, 1.0]);
         assert_eq!((read.rows[2].kind, read.rows[2].url.as_deref()), (RowKind::Link, Some("https://nori.fm")));
         assert_eq!(read.menu, vec![MenuSpec { id: "look_up".into(), glyph: Glyph::Search, kinds: vec![ItemKind::Song, ItemKind::Album] }]);
         assert_eq!(read.places, vec![Place::Artwork, Place::Devices]);
@@ -501,14 +542,16 @@ mod tests {
     fn manifests_of_each_older_sdk_read_with_none_of_what_came_after() {
         const FILTERS: [sdk::DeviceFilter; 1] = [sdk::DeviceFilter::ANY.name("WH-*")];
         // The bytes an empty group takes: the devices' count, then the permissions', hooks' and wakes'
-        // counts, the commands' count, the cache quota and the assets' count.
-        let (devices, session) = (2, 2 * 3 + 2 + 4 + 2);
+        // counts, the commands' count, the cache quota and the assets' count; the rows' pages' count.
+        let (devices, session, pages) = (2, 2 * 3 + 2 + 4 + 2, 2);
         let full = sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, hooks: &[sdk::Hook::SongChanged], ..sdk::Manifest::new("fm.nori.new") };
         for (m, cut, has_devices, has_hooks) in [
             // Released plugins: nothing after the places.
-            (sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") }, devices + session, false, false),
+            (sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") }, devices + session + pages, false, false),
             // Built with devices, before the session's fields.
-            (sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, ..sdk::Manifest::new("fm.nori.devices") }, session, true, false),
+            (sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, ..sdk::Manifest::new("fm.nori.devices") }, session + pages, true, false),
+            // Built before the rows' pages.
+            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, pages, true, true),
             (full, 0, true, true),
         ] {
             let bytes: [u8; 1024] = sdk::encode::<1024>(&m, "1.0.0", 1 << 1);

@@ -33,6 +33,8 @@ class Running {
   private startFailed!: (e: Error) => void;
   status = $state<Record<string, string>>({});
   shown = $state<Record<string, { shown: boolean; enabled: boolean }>>({});
+  /** What the plugin says is true now, by row: a device's settings, a meter's level. */
+  now = $state<Record<string, number>>({});
   overrides: [string, string][];
 
   constructor(
@@ -61,6 +63,7 @@ class Running {
         else if (m.notice) ui.say(m.notice.words);
         else if (m.status) this.status[m.status.row] = m.status.words;
         else if (m.shown) this.shown[m.shown.row] = m.shown;
+        else if (m.now) for (const [row, v] of m.now as [string, number][]) this.now[row] = v;
         else if (m.overrides) {
           this.overrides = m.overrides;
           overridden();

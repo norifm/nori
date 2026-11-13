@@ -480,6 +480,7 @@ class Say(private val r: Resources) {
     val pluginRepoUrl: String get() = r.getString(R.string.plugins_repo_url)
     val pluginRepoWarning: String get() = r.getString(R.string.plugins_repo_warning)
     val pluginMayTitle: String get() = r.getString(R.string.plugins_may)
+    val notSet: String get() = r.getString(R.string.plugins_not_set)
     fun pluginRemoveTitle(name: String): String = r.getString(R.string.plugins_remove_title, name)
     val pluginRemoveText: String get() = r.getString(R.string.plugins_remove_text)
     fun pluginLevel(label: String, value: String): String = r.getString(R.string.plugins_level, label, value)

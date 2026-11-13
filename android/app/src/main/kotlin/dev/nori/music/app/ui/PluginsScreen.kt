@@ -21,7 +21,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -68,6 +70,7 @@ import dev.nori.music.ffi.plugins.PluginCard
 import dev.nori.music.ffi.plugins.PluginRow
 import dev.nori.music.ffi.plugins.RowKind
 import dev.nori.music.ffi.plugins.Value
+import dev.nori.music.ffi.plugins.Glyph
 import dev.nori.music.plugins.RowRef
 import dev.nori.music.text.Fmt
 
@@ -154,8 +157,8 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, pages: PluginP
             GroupLabel(say.pluginsInstalled)
             GroupCard(Modifier.alpha(strength)) {
                 cards.forEachIndexed { i, c ->
-                    val line = listOfNotNull(c.version, c.kinds().takeIf { it.isNotEmpty() }).joinToString(" · ")
-                    PluginLine(vm, c.id, remember(offers, c) { vm.offerOf(c.id, c) }, c.name, c.about, line, i < cards.lastIndex, Modifier.testTag("plugin-${c.id}"), { pages.open(c.id) }) {
+                    val line = listOfNotNull(c.kinds().takeIf { it.isNotEmpty() }, c.version).joinToString(" · ")
+                    PluginLine(vm, c.id, remember(offers, c) { vm.offerOf(c.id, c) }, c.name, null, line, i < cards.lastIndex, Modifier.testTag("plugin-${c.id}"), { pages.open(c.id) }) {
                         NoriSwitch(c.enabled, { on -> vm.turn(c.id, on) }, Modifier.testTag("plugin-on-${c.id}"), enabled = !off)
                     }
                 }
@@ -419,6 +422,7 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
                 val repo = (card?.repo ?: offer?.repo?.url.takeIf { card == null })?.let { repoName(it, repos) }
                 Quiet(listOfNotNull(card?.version ?: newest?.version, card?.kinds()?.takeIf { it.isNotEmpty() }, repo, say.pluginFromFile.takeIf { card != null && card.repo == null }).joinToString(" · "))
             }
+            if (card != null) NoriSwitch(card.enabled, { on -> vm.turn(id, on) }, Modifier.testTag("plugin-on").semantics { contentDescription = say.pluginOn })
             if (card != null) MoreButton(listOfNotNull(
                 (say.pluginMoveUp to { vm.move(id, -1) }).takeIf { at > 0 },
                 (say.pluginMoveDown to { vm.move(id, 1) }).takeIf { at < cards.lastIndex },
@@ -439,10 +443,6 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
             refused?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("plugin-refused")) }
         }
         if (card != null) {
-            GroupCard {
-                Toggle(say.pluginOn, "", card.enabled, key = "plugin-on", divider = card.repo != null) { on -> vm.turn(id, on) }
-                if (card.repo != null) Toggle(say.pluginKeepVersion, "", card.held, divider = false) { held -> vm.hold(id, held) }
-            }
             if (vm.needsBluetooth(card) && card.enabled) BluetoothAsk(vm, Modifier.padding(top = Space.section))
             // A device's settings are on the device's own page.
             PluginRows(vm, card, null) { "device-control" !in card.points || !it.onDevicePage() }
@@ -453,22 +453,27 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
         if (may.isNotEmpty()) {
             GroupLabel(say.pluginMayTitle)
             GroupCard {
-                may.forEachIndexed { i, line -> GroupRow(line, minHeight = 44.dp, divider = i < may.lastIndex) }
+                may.forEachIndexed { i, line ->
+                    Text(line, Modifier.padding(horizontal = GROUP_INSET, vertical = 12.dp), style = MaterialTheme.typography.bodyMedium)
+                    if (i < may.lastIndex) Hairline(startIndent = GROUP_INSET)
+                }
             }
         }
-        if (offer != null) {
+        if (offer != null || card?.repo != null) {
             val uri = androidx.compose.ui.platform.LocalUriHandler.current
+            val versions = offer?.versions.orEmpty()
             GroupLabel(say.pluginVersions)
             GroupCard {
-                offer.versions.forEachIndexed { i, v ->
+                if (card?.repo != null) Toggle(say.pluginKeepVersion, "", card.held, divider = versions.isNotEmpty() || offer?.source != null) { held -> vm.hold(id, held) }
+                versions.forEachIndexed { i, v ->
                     GroupRow(
-                        v.version, minHeight = 44.dp, value = v.released, divider = i < offer.versions.lastIndex || offer.source != null,
+                        v.version, minHeight = 44.dp, value = v.released, divider = i < versions.lastIndex || offer?.source != null,
                         trailing = {
                             if (v.version != (card?.version ?: newest?.version)) TextAction(say.pluginInstall, { vm.previewVersion(v) }, Modifier.padding(start = 8.dp))
                         },
                     )
                 }
-                offer.source?.let { src -> GroupRow(say.pluginSource, { runCatching { uri.openUri(src) } }, minHeight = 44.dp, value = android.net.Uri.parse(src).host, chevron = true, divider = false) }
+                offer?.source?.let { src -> GroupRow(say.pluginSource, { runCatching { uri.openUri(src) } }, minHeight = 44.dp, value = android.net.Uri.parse(src).host, chevron = true, divider = false) }
             }
         }
         Spacer(Modifier.height(Space.section + LocalChromeInset.current))
@@ -541,11 +546,12 @@ fun PluginDeviceSections(vm: PluginsViewModel, sound: SettingsViewModel) {
 internal fun PluginRow.onDevicePage() = dev.nori.music.ffi.plugins.rowOnDevicePage(kind)
 
 @Composable
-fun PluginRows(vm: PluginsViewModel, card: PluginCard, title: String?, only: (PluginRow) -> Boolean = { true }) {
+fun PluginRows(vm: PluginsViewModel, card: PluginCard, title: String?, page: String? = null, only: (PluginRow) -> Boolean = { true }) {
     val status by vm.status.collectAsStateWithLifecycle()
     val shown by vm.shown.collectAsStateWithLifecycle()
+    var opened by remember { mutableStateOf<String?>(null) }
     val groups = mutableListOf<Pair<String?, MutableList<PluginRow>>>(title to mutableListOf())
-    card.rows.filter { only(it) && shown[RowRef(card.id, it.id)]?.shown != false }.forEach { r ->
+    card.rows.filter { it.page == page && only(it) && shown[RowRef(card.id, it.id)]?.shown != false }.forEach { r ->
         if (r.kind == RowKind.SECTION) groups += (title?.let { say.pluginSection(it, r.label) } ?: r.label) to mutableListOf() else groups.last().second += r
     }
     groups.filter { it.second.isNotEmpty() }.forEach { (label, rows) ->
@@ -553,23 +559,64 @@ fun PluginRows(vm: PluginsViewModel, card: PluginCard, title: String?, only: (Pl
         GroupCard {
             rows.forEachIndexed { i, r ->
                 val enabled = shown[RowRef(card.id, r.id)]?.enabled != false
-                PluginRowView(card, r, status[RowRef(card.id, r.id)], enabled, i < rows.lastIndex, vm)
+                PluginRowView(card, r, status[RowRef(card.id, r.id)], enabled, i < rows.lastIndex, vm) { opened = r.id }
             }
+        }
+    }
+    NoriDialog(opened?.let { o -> card.rows.firstOrNull { it.id == o } }, { opened = null }, DialogStyle.Page) { p -> PluginSubpage(vm, card, p) }
+}
+
+/** One of a plugin's pages ([RowKind.PAGE]) over the whole screen: its name, its hint, the rows on it. */
+@Composable
+private fun PluginSubpage(vm: PluginsViewModel, card: PluginCard, page: PluginRow) {
+    androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
+        Column(Modifier.systemBarsPadding().verticalScroll(rememberScrollState())) {
+            LargeTitle(page.label, Modifier.padding(top = 16.dp))
+            page.hint?.let { Quiet(it, Modifier.padding(horizontal = Space.gutter, vertical = 4.dp)) }
+            PluginRows(vm, card, null, page.id)
+            Spacer(Modifier.height(Space.section))
         }
     }
 }
 
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+/** A plugin's glyph as the app's own icon. */
 @Composable
-private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabled: Boolean, divider: Boolean, vm: PluginsViewModel) {
+internal fun pluginGlyph(g: Glyph): ImageVector = when (g) {
+    Glyph.SPARKLE -> Iconoir.Sparks
+    Glyph.INFO -> Iconoir.InfoCircle
+    Glyph.SHARE -> Iconoir.ShareIos
+    Glyph.LINK -> Iconoir.ShareAndroid
+    Glyph.SEARCH -> Iconoir.Search
+    Glyph.HEART -> Kanji.Seal
+    Glyph.DOWNLOAD -> Iconoir.Download
+    Glyph.ADD -> Iconoir.PlusCircle
+    Glyph.PLAY -> Iconoir.Play
+    Glyph.TUNE -> Iconoir.ControlSlider
+    Glyph.HEADPHONES -> Iconoir.Headset
+    Glyph.SPEAKER -> Iconoir.SoundHigh
+    Glyph.BATTERY -> Iconoir.Battery
+    Glyph.TOUCH -> Iconoir.Tap
+    Glyph.TIMER -> Iconoir.Timer
+    Glyph.GAUGE -> Iconoir.DashboardSpeed
+    Glyph.WAVE -> Iconoir.SineWave
+    Glyph.BLUETOOTH -> Iconoir.Bluetooth
+    Glyph.GEAR -> Iconoir.Settings
+    Glyph.GLOBE -> Iconoir.Globe
+    Glyph.KEY -> Iconoir.Key
+    Glyph.PERSON -> Iconoir.User
+}
+
+@Composable
+private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabled: Boolean, divider: Boolean, vm: PluginsViewModel, open: () -> Unit) {
     val dim = Modifier.alpha(if (enabled) 1f else DIMMED)
+    val icon = r.glyph?.let { pluginGlyph(it) }
     when (r.kind) {
         RowKind.SWITCH -> Toggle(r.label, r.hint.orEmpty(), (r.value as? Value.Switch)?.v1 == true, enabled = enabled, divider = divider) { vm.set(card.id, r.id, Value.Switch(it)) }
         RowKind.CHOICE -> {
             var open by remember { mutableStateOf(false) }
             val chosen = (r.value as? Value.Choice)?.v1?.toInt()
             GroupRow(
-                r.label, if (enabled) ({ open = true }) else null, dim, subtitle = r.hint, value = chosen?.let(r.options::getOrNull), chevron = true, divider = divider,
+                r.label, if (enabled) ({ open = true }) else null, dim, subtitle = r.hint, value = chosen?.let(r.options::getOrNull), icon = icon, chevron = true, divider = divider,
                 trailing = {
                     NoriPopover(open, { open = false }) {
                         r.options.forEachIndexed { i, o -> PopoverItem(o, chosen = i == chosen) { vm.set(card.id, r.id, Value.Choice(i.toUInt())); open = false } }
@@ -579,21 +626,23 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
         }
         RowKind.FLAGS -> {
             val on = (r.value as? Value.Flags)?.v1 ?: 0uL
-            Column(dim.fillMaxWidth().padding(horizontal = GROUP_INSET, vertical = 12.dp)) {
-                Text(r.label, style = MaterialTheme.typography.bodyLarge)
-                r.hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                androidx.compose.foundation.layout.FlowRow(
-                    Modifier.padding(top = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    r.options.forEachIndexed { i, o ->
-                        val bit = 1uL shl i
-                        Chip(o, on and bit != 0uL) { if (enabled) vm.switchFlag(card.id, r.id, i.toUInt()) }
-                    }
-                }
-            }
-            if (divider) Hairline(startIndent = GROUP_INSET)
+            Chips(r, dim, divider, { i -> on and (1uL shl i) != 0uL }) { i -> if (enabled) vm.switchFlag(card.id, r.id, i.toUInt()) }
         }
+        RowKind.SEGMENTS -> {
+            val chosen = (r.value as? Value.Choice)?.v1?.toInt()
+            Chips(r, dim, divider, { it == chosen }) { i -> if (enabled && i != chosen) vm.set(card.id, r.id, Value.Choice(i.toUInt())) }
+        }
+        RowKind.METER -> {
+            val v = (r.value as? Value.Level)?.v1
+            val (min, max) = (r.min ?: 0.0) to (r.max ?: 1.0)
+            val shownValue = v?.let { Fmt.fixed(it, r.decimals.toInt()).let { t -> r.unit?.let { u -> say.pluginUnit(t, u) } ?: t } }
+            GroupRow(r.label, modifier = dim, subtitle = r.hint, value = shownValue, icon = icon, divider = v == null && divider)
+            if (v != null) {
+                Meter(((v - min) / (max - min).takeIf { it > 0.0 }.let { it ?: 1.0 }).toFloat(), dim.padding(start = if (icon != null) GROUP_INSET * 2 + GROUP_ICON else GROUP_INSET, end = GROUP_INSET, bottom = 12.dp))
+                if (divider) Hairline(startIndent = GROUP_INSET)
+            }
+        }
+        RowKind.PAGE -> GroupRow(r.label, if (enabled) open else null, dim.testTag("page-${r.id}"), subtitle = r.hint, icon = icon, chevron = true, divider = divider)
         RowKind.LEVEL -> {
             val min = (r.min ?: 0.0).toFloat()
             val max = (r.max ?: 1.0).toFloat()
@@ -614,7 +663,7 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
             val changed = text != stored
             Column(dim) {
                 GroupField(
-                    text, { text = it }, label = r.label, supporting = r.hint, enabled = enabled, divider = divider && !changed,
+                    text, { text = it }, label = r.label, placeholder = say.notSet, supporting = r.hint, enabled = enabled, divider = divider && !changed,
                     visualTransformation = if (r.kind == RowKind.SECRET) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
                     onDone = { if (changed) vm.set(card.id, r.id, Value.Text(text)) },
                 )
@@ -624,8 +673,8 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
                 }
             }
         }
-        RowKind.ACTION -> GroupRow(r.label, if (enabled) ({ vm.act(card.id, r.id) }) else null, dim, subtitle = r.hint, divider = divider)
-        RowKind.STATUS -> GroupRow(r.label, modifier = dim, subtitle = r.hint, value = status, divider = divider)
+        RowKind.ACTION -> GroupRow(r.label, if (enabled) ({ vm.act(card.id, r.id) }) else null, dim, subtitle = r.hint, icon = icon, divider = divider)
+        RowKind.STATUS -> GroupRow(r.label, modifier = dim, subtitle = r.hint, value = status, icon = icon, divider = divider)
         RowKind.NOTE -> {
             Text(r.label, Modifier.padding(horizontal = GROUP_INSET, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (divider) Hairline(startIndent = GROUP_INSET)
@@ -634,9 +683,29 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
             val uri = androidx.compose.ui.platform.LocalUriHandler.current
             GroupRow(
                 r.label, r.url?.takeIf { enabled }?.let { u -> { runCatching { uri.openUri(u) } } }, dim,
-                subtitle = r.hint, value = r.url?.let { android.net.Uri.parse(it).host }, chevron = true, divider = divider,
+                subtitle = r.hint, value = r.url?.let { android.net.Uri.parse(it).host }, icon = icon, chevron = true, divider = divider,
             )
         }
         RowKind.SECTION -> {}
+    }
+}
+
+/** A row whose options are chips sharing its width ([RowKind.FLAGS], [RowKind.SEGMENTS]), [lit] the ones on. */
+@Composable
+private fun Chips(r: PluginRow, modifier: Modifier, divider: Boolean, lit: (Int) -> Boolean, onClick: (Int) -> Unit) {
+    Column(modifier.fillMaxWidth().padding(horizontal = GROUP_INSET, vertical = 12.dp)) {
+        Text(r.label, style = MaterialTheme.typography.bodyLarge)
+        r.hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        ChipRow(r.options, lit, onClick)
+    }
+    if (divider) Hairline(startIndent = GROUP_INSET)
+}
+
+/** How full a [RowKind.METER] is, 0 to 1: the seek bar's track and fill. */
+@Composable
+private fun Meter(full: Float, modifier: Modifier) {
+    val ink = MaterialTheme.colorScheme.onSurface
+    Box(modifier.fillMaxWidth().height(4.dp).background(ink.copy(alpha = 0.22f), PillShape)) {
+        Box(Modifier.fillMaxWidth(full.coerceIn(0f, 1f)).height(4.dp).background(ink, PillShape))
     }
 }

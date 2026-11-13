@@ -1107,11 +1107,11 @@ impl Target {
                 use nori_plugins::{RowKind, Value};
                 let v = match kind {
                     RowKind::Switch => Value::Switch(value.parse().ok()?),
-                    RowKind::Choice => Value::Choice(value.parse().ok()?),
+                    RowKind::Choice | RowKind::Segments => Value::Choice(value.parse().ok()?),
                     RowKind::Level => Value::Level(value.parse().ok()?),
                     RowKind::Flags => Value::Flags(value.parse().ok()?),
                     RowKind::Text | RowKind::Secret => Value::Text(value),
-                    RowKind::Action | RowKind::Status | RowKind::Section | RowKind::Note | RowKind::Link => return None,
+                    RowKind::Action | RowKind::Status | RowKind::Section | RowKind::Note | RowKind::Link | RowKind::Page | RowKind::Meter => return None,
                 };
                 Some(Cmd::Plugin(PluginCmd::Set(plugin, row, v)))
             }

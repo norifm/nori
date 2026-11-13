@@ -549,7 +549,7 @@ internal val GROUP_MARGIN = 16.dp
 internal val GROUP_INSET = 14.dp
 /** How far a sheet's group cards stand in from its sides, and from each other: their words start on the gutter. */
 internal val SHEET_SIDE = Space.gutter - GROUP_INSET
-private val GROUP_ICON = 20.dp
+internal val GROUP_ICON = 20.dp
 
 /**
  * A row of a [GroupCard]: an optional [icon] in ink, a title and maybe a quiet line under it, a quiet [value],

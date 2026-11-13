@@ -792,7 +792,7 @@ fn plugin_page(own: &Own, id: &str) -> Page {
         sections.push(section("", rows));
         sections.extend(own.controlled.iter().filter(|d| d.card.id == c.id).map(|d| Section { title: d.name.clone(), rows: device_controls(d) }).filter(|s| !s.rows.is_empty()));
         let (mut title, mut rows) = (String::new(), Vec::new());
-        for r in &c.rows {
+        for r in &nori_plugins::one_page(&c.rows) {
             match r.kind {
                 RowKind::Section => sections.push(Section { title: std::mem::replace(&mut title, r.label.clone()), rows: std::mem::take(&mut rows) }),
                 _ => rows.extend(plugin_rows(&c.id, r, own.off.contains(&(c.id.clone(), r.id.clone())))),
@@ -991,7 +991,7 @@ pub fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
     let title = r.label.clone();
     match r.kind {
         RowKind::Switch => Row::Toggle { switch: Switch::Plugin { plugin: plugin.into(), row: r.id.clone() }, title, detail: String::new(), on: r.value == Some(Value::Switch(true)), enabled: true },
-        RowKind::Choice => {
+        RowKind::Choice | RowKind::Segments => {
             let options: Vec<(String, String)> = r.options.iter().enumerate().map(|(i, o)| (o.clone(), i.to_string())).collect();
             let at = match r.value {
                 Some(Value::Choice(i)) => i as usize,
@@ -1023,11 +1023,12 @@ pub fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
             Row::Text { title, shown, secret, target }
         }
         RowKind::Action => Row::Button { title, action: Act::PluginAction { plugin: plugin.into(), row: r.id.clone() } },
-        RowKind::Status => Row::Info { title, detail: shown_value(r) },
+        RowKind::Status | RowKind::Meter => Row::Info { title, detail: shown_value(r) },
         RowKind::Flags => Row::Info { title, detail: r.chosen().join(", ") },
         // A link shows where it goes: the terminal opens no pages.
         RowKind::Link => Row::Info { title, detail: r.url.clone().unwrap_or_default() },
-        RowKind::Note | RowKind::Section => Row::Note { text: title },
+        // Pages are laid out as headings by `one_page`.
+        RowKind::Note | RowKind::Section | RowKind::Page => Row::Note { text: title },
     }
 }
 

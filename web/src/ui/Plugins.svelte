@@ -68,11 +68,12 @@
   const lines = (o: Offer) => (o.fit.state === "Blocked" ? o.fit.blocks.map((b) => W.webBlocks[b] ?? b) : o.fit.state === "Unknown" ? [W.pluginFit.Unknown] : []);
   const blocked = (o?: Offer) => o?.fit.state === "Blocked";
   const dotted = (...parts: (string | false | undefined | null)[]) => parts.filter(Boolean).join(" · ");
-  const number = (i: Installed, r: Row) => Number(valueOf(r, i.values) ?? 0);
+  const number = (i: Installed, r: Row) => running?.now[r.id] ?? Number(valueOf(r, i.values) ?? 0);
   const letter = (name: string) => name.slice(0, 1).toUpperCase();
   const host_ = (url: string) => URL.parse(url)?.hostname ?? url;
-  const levelShown = (i: Installed, r: Row) => {
-    const v = number(i, r).toFixed(r.decimals);
+  const levelShown = (i: Installed, r: Row) => shownLevel(r, number(i, r));
+  const shownLevel = (r: Row, n: number) => {
+    const v = n.toFixed(r.decimals);
     return r.unit ? `${v} ${r.unit}` : v;
   };
 
@@ -125,10 +126,14 @@
     ]);
   }
 
-  /** A card's rows as nori's own settings pages draw theirs: each section the label over the group after it. */
+  /** A card's rows as nori's own settings pages draw theirs: each section the label over the group after it,
+   * then each of its pages under its name. */
   function groups(i: Installed) {
     const out: { label: string | null; rows: Row[] }[] = [{ label: null, rows: [] }];
-    for (const r of i.plugin.rows) {
+    const on = (page: string | null) => i.plugin.rows.filter((r) => r.page === page);
+    const pages = on(null).filter((r) => r.kind === "Page");
+    const laid = [...on(null).filter((r) => r.kind !== "Page"), ...pages.flatMap((p) => [{ ...p, kind: "Section" as const }, ...on(p.id)])];
+    for (const r of laid) {
       if (running?.shown[r.id]?.shown === false) continue;
       if (r.kind === "Section") out.push({ label: r.label, rows: [] });
       else out[out.length - 1].rows.push(r);
@@ -180,7 +185,7 @@
     <div class="group" class:off={host.allOff}>
       {#each host.installed as i (i.plugin.id)}
         <div class="group-row plugin">
-          {@render line(i.plugin.id, i.plugin.name, i.icon, i.plugin.about, dotted(i.plugin.version, W.pluginKinds(i.plugin.points, i.plugin.overrides.length > 0)), { "data-installed": i.plugin.id })}
+          {@render line(i.plugin.id, i.plugin.name, i.icon, null, dotted(W.pluginKinds(i.plugin.points, i.plugin.overrides.length > 0), i.plugin.version), { "data-installed": i.plugin.id })}
           <input type="checkbox" class="switch" aria-label={i.plugin.name} data-plugin-switch disabled={host.allOff} checked={i.on} onchange={(e) => void host!.setOn(i.plugin.id, e.currentTarget.checked)} />
         </div>
       {/each}
@@ -234,6 +239,25 @@
       onclick={(e) => ui.drop(e, r.options.map((o, n) => ({ label: o, chosen: n === number(i, r), run: () => set(i, r, n) })))}
       ><span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span><span class="value">{r.options[number(i, r)]}</span><Icon name="nav-arrow-right" /></button
     >
+  {:else if r.kind === "Segments"}
+    <div class="group-row level" class:off data-row={r.id}>
+      <span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span>
+      <span class="segments" role="radiogroup" aria-label={r.label}>
+        {#each r.options as o, n (n)}
+          <button role="radio" aria-checked={n === number(i, r)} class:chosen={n === number(i, r)} disabled={off} onclick={() => set(i, r, n)}>{o}</button>
+        {/each}
+      </span>
+    </div>
+  {:else if r.kind === "Meter"}
+    {@const [min, max] = [r.min ?? 0, r.max ?? 1]}
+    {@const v = running?.now[r.id]}
+    <div class="group-row level" class:off data-row={r.id}>
+      <span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span>
+      {#if v !== undefined}
+        <span class="value">{shownLevel(r, v)}</span>
+        <span class="meter" role="meter" aria-label={r.label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={v}><span style:width="{Math.min(1, Math.max(0, (v - min) / (max - min || 1))) * 100}%"></span></span>
+      {/if}
+    </div>
   {:else if r.kind === "Level"}
     {@const [min, max] = [r.min ?? 0, r.max ?? 1]}
     <div class="group-row level" class:off data-row={r.id}>
@@ -354,6 +378,41 @@
 {/if}
 
 <style>
+  .segments {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+  }
+  .segments button {
+    flex: 1;
+    min-height: 32px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--ink2);
+    font: inherit;
+    font-size: 13.5px;
+  }
+  .segments button.chosen {
+    background: var(--surface);
+    color: var(--ink);
+    outline: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+    outline-offset: -1px;
+  }
+  .meter {
+    display: block;
+    height: 4px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--ink) 22%, transparent);
+    overflow: hidden;
+  }
+  .meter > span {
+    display: block;
+    height: 100%;
+    background: var(--ink);
+  }
   .tools {
     display: flex;
     align-items: center;

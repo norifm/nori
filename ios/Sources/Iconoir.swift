@@ -84,6 +84,27 @@ enum Iconoir {
         GlyphPart("M6.758 17.243 L12.001 12 M17.244 6.757 L12.001 12 M12.001 12 L6.758 6.757 M12.001 12 L17.244 17.243"),
     ]
 
+    /// scan-qr-code
+    static let scanQrCode = [
+        GlyphPart("M9 6.6 L9 8.4 C9 8.731 8.731 9 8.4 9 L6.6 9 C6.269 9 6 8.731 6 8.4 L6 6.6 C6 6.269 6.269 6 6.6 6 L8.4 6 C8.731 6 9 6.269 9 6.6 Z"),
+        GlyphPart("M6 12 L9 12"),
+        GlyphPart("M15 12 L15 15"),
+        GlyphPart("M12 18 L15 18"),
+        GlyphPart("M12 12.011 L12.01 12"),
+        GlyphPart("M18 12.011 L18.01 12"),
+        GlyphPart("M12 15.011 L12.01 15"),
+        GlyphPart("M18 15.011 L18.01 15"),
+        GlyphPart("M18 18.011 L18.01 18"),
+        GlyphPart("M12 9.011 L12.01 9"),
+        GlyphPart("M12 6.011 L12.01 6"),
+        GlyphPart("M9 15.6 L9 17.4 C9 17.731 8.731 18 8.4 18 L6.6 18 C6.269 18 6 17.731 6 17.4 L6 15.6 C6 15.269 6.269 15 6.6 15 L8.4 15 C8.731 15 9 15.269 9 15.6 Z"),
+        GlyphPart("M18 6.6 L18 8.4 C18 8.731 17.731 9 17.4 9 L15.6 9 C15.269 9 15 8.731 15 8.4 L15 6.6 C15 6.269 15.269 6 15.6 6 L17.4 6 C17.731 6 18 6.269 18 6.6 Z"),
+        GlyphPart("M18 3 L21 3 L21 6"),
+        GlyphPart("M18 21 L21 21 L21 18"),
+        GlyphPart("M6 3 L3 3 L3 6"),
+        GlyphPart("M6 21 L3 21 L3 18"),
+    ]
+
     /// plus
     static let plus = [
         GlyphPart("M6 12 L12 12 M18 12 L12 12 M12 12 L12 6 M12 12 L12 18"),
@@ -456,6 +477,44 @@ enum Iconoir {
     /// bluetooth
     static let bluetooth = [
         GlyphPart("M7.275 8.4 L16.73 16.05 L11.78 21 L11.78 3 L16.73 7.95 L7.275 15.6"),
+    ]
+
+    /// battery-75
+    static let battery = [
+        GlyphPart("M23 10 L23 14"),
+        GlyphPart("M1 16 L1 8 C1 6.895 1.895 6 3 6 L18 6 C19.105 6 20 6.895 20 8 L20 16 C20 17.105 19.105 18 18 18 L3 18 C1.895 18 1 17.105 1 16 Z", round: false),
+        GlyphPart("M4 14.4 L4 9.6 C4 9.269 4.269 9 4.6 9 L13.4 9 C13.731 9 14 9.269 14 9.6 L14 14.4 C14 14.731 13.731 15 13.4 15 L4.6 15 C4.269 15 4 14.731 4 14.4 Z", round: false),
+    ]
+
+    /// single-tap-gesture
+    static let tap = [
+        GlyphPart("M12 20.5 C15.866 20.5 19 17.366 19 13.5 C19 9.634 15.866 6.5 12 6.5 C8.134 6.5 5 9.634 5 13.5 C5 17.366 8.134 20.5 12 20.5 Z"),
+        GlyphPart("M4 7.29 C5.496 5.039 8.517 3.5 12 3.5 C15.483 3.5 18.504 5.039 20 7.29"),
+    ]
+
+    /// globe
+    static let globe = [
+        GlyphPart("M12 22 C17.523 22 22 17.523 22 12 C22 6.477 17.523 2 12 2 C6.477 2 2 6.477 2 12 C2 17.523 6.477 22 12 22 Z"),
+        GlyphPart("M2.5 12.5 L8 14.5 L7 18 L8 21"),
+        GlyphPart("M17 20.5 L16.5 18 L14 17 L14 13.5 L17 12.5 L21.5 13"),
+        GlyphPart("M19 5.5 L18.5 7 L15 7.5 L15 10.5 L17.5 9.5 L19.5 9.5 L21.5 10.5"),
+        GlyphPart("M2.5 10.5 L5 8.5 L7.5 8 L9.5 5 L8.5 3"),
+    ]
+
+    /// timer
+    static let timer = [
+        GlyphPart("M9 2 L15 2"),
+        GlyphPart("M12 10 L12 14"),
+        GlyphPart("M12 22 C16.418 22 20 18.418 20 14 C20 9.582 16.418 6 12 6 C7.582 6 4 9.582 4 14 C4 18.418 7.582 22 12 22 Z"),
+    ]
+
+    /// sine-wave
+    static let sineWave = [
+        GlyphPart("M3 12 C3 8.143 4.286 3 6.857 3 C10.714 3 13.286 21 17.143 21 C19.714 21 21 15.857 21 12"),
+        GlyphPart("M3 12 L5 12"),
+        GlyphPart("M19 12 L21 12"),
+        GlyphPart("M15.5 12 L16.5 12"),
+        GlyphPart("M7.5 12 L8.5 12"),
     ]
 
     /// airplay

@@ -54,7 +54,7 @@ pub use safe::SafeStart;
 pub use readme::ReadmeBlock;
 pub use repo::{offer_for, offer_of, offers_found, offers_to_update, plugin_display_name, provider_offers, updates_waiting, Offer, OfferState, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
-pub use view::{row_on_device_page, PluginCard, PluginPreview, PluginRow};
+pub use view::{one_page, page_rows, row_on_device_page, PluginCard, PluginPreview, PluginRow};
 pub use assets::{AssetLine, AssetState};
 pub use cast::{Card, Cards, Media, Service, TxtEntry};
 pub use hooks::Press;
