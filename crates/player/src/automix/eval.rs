@@ -1526,6 +1526,12 @@ fn end_bars_read_what_plays() {
     assert!(all(&outro[12..20], |b| b.pulse >= 0.75 && b.voice < 0.4 && b.low_db > -6.0), "the band: {:?}", &outro[12..20]);
     assert!(all(&outro[20..], |b| b.pulse <= 0.3 && b.low_db < -20.0 && b.level_db < -6.0), "pads: {:?}", &outro[20..]);
     assert!(outro.windows(2).all(|w| w[1].start_ms > w[0].start_ms), "in time order");
+    // A section starts where the change peaks: the band after the drums, the pads after the band (bar 20 of the
+    // ending), each the largest change near it; nothing near it within a steady section.
+    let peak = |bars: &[BarProfile], at: usize| (at.saturating_sub(3)..(at + 4).min(bars.len())).all(|i| i == at || bars[i].change < bars[at].change);
+    assert!(peak(intro, 8) && intro[8].change >= 0.1, "the band after the drums: {:?}", intro.iter().map(|b| b.change).collect::<Vec<_>>());
+    assert!(peak(outro, 20) && outro[20].change >= 0.8, "the pads after the band: {:?}", outro.iter().map(|b| b.change).collect::<Vec<_>>());
+    assert!(intro[14..30].iter().chain(&outro[24..29]).all(|b| b.change < 0.05), "steady sections change nothing");
 }
 
 /// Drops and exits within a beat are found; one where the song has none is a false alarm.

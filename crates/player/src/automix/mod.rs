@@ -39,8 +39,8 @@ use crate::types::{BarProfile, TrackAnalysis};
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 19: the end's grid measured before a closing breakdown.
-pub const ANALYSIS_VERSION: i32 = 19;
+/// Bump when stored rows should be measured again. 20: each end profiled in bars, with where its sections start.
+pub const ANALYSIS_VERSION: i32 = 20;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -108,6 +108,15 @@ fn sung_level(bars: &[f32]) -> Option<f32> {
 
 /// Bars profiled at each end of a song.
 const END_BARS: usize = 32;
+/// Bars each side a bar's change is read over.
+const CHANGE_SPAN: usize = 4;
+/// A level or lows change this many dB counts as much as a full change of beat or singing.
+const CHANGE_DB: f32 = 12.0;
+/// Lows quieter than this are as good as gone.
+const CHANGE_LOWS_DB: f32 = 24.0;
+/// The summed change at which a bar reads 1, about the band giving way to pads: below it every change is a peak on
+/// its own bar, not a plateau.
+const CHANGE_FULL: f32 = 4.5;
 /// Without a grid an end is profiled in blocks this long, seconds.
 const BLOCK_S: f64 = 2.0;
 /// A beat pulses when its onset is this share of the song's strong onsets (its 90th percentile).
@@ -137,12 +146,13 @@ fn end_bars(f: &Features, grid: &Grid, meter: i64, beat_s: f64, music: (f64, f64
     } else {
         music.1 - BLOCK_S
     };
-    let starts = (0..END_BARS).map(|i| if intro { first + i as f64 * bar_s } else { first - i as f64 * bar_s });
+    // A few bars further in than kept, for the change at the innermost ones.
+    let starts = (0..END_BARS + CHANGE_SPAN).map(|i| if intro { first + i as f64 * bar_s } else { first - i as f64 * bar_s });
     let song = (window_mean(&f.power, f.fps, f.t0, music.0, music.1) as f64).max(1e-12);
     let song_low = (window_mean(&f.low_power, f.fps, f.t0, music.0, music.1) as f64).max(1e-12);
     let db = |v: f32, of: f64| (10.0 * ((v as f64).max(1e-12) / of).log10()) as f32;
     let frame = |t: f64| ((t - f.t0) * f.fps).round();
-    let mut bars: Vec<BarProfile> = starts
+    let mut bars: Vec<(BarProfile, [f32; 12])> = starts
         .take_while(|&s| s >= music.0 - 0.5 * bar_s && s + 0.5 * bar_s <= music.1)
         .map(|s| {
             let e = s + bar_s;
@@ -165,19 +175,57 @@ fn end_bars(f: &Features, grid: &Grid, meter: i64, beat_s: f64, music: (f64, f64
                 let part = &f.voice[a.min(f.voice.len())..b.min(f.voice.len())];
                 if part.is_empty() { 0.0 } else { part.iter().filter(|v| **v >= level).count() as f32 / part.len() as f32 }
             });
-            BarProfile {
+            let bar = BarProfile {
                 start_ms: (s * 1000.0).round() as i64,
                 level_db: db(window_mean(&f.power, f.fps, f.t0, s, e), song),
                 low_db: db(window_mean(&f.low_power, f.fps, f.t0, s, e), song_low),
                 pulse,
                 voice: voice_frames,
-            }
+                change: 0.0,
+            };
+            (bar, chroma_of(f, s, e))
         })
         .collect();
     if !intro {
         bars.reverse();
     }
-    bars
+    // How much the music changes as each bar starts: the bars after it against the bars before.
+    let change: Vec<f32> = (0..bars.len())
+        .map(|i| {
+            let (before, after) = (&bars[i.saturating_sub(CHANGE_SPAN)..i], &bars[i..(i + CHANGE_SPAN).min(bars.len())]);
+            if before.len() < 2 || after.len() < 2 {
+                return 0.0;
+            }
+            let mean = |side: &[(BarProfile, [f32; 12])], f: &dyn Fn(&(BarProfile, [f32; 12])) -> f32| side.iter().map(f).sum::<f32>() / side.len() as f32;
+            let chords: f32 = (0..12).map(|k| (mean(before, &|b| b.1[k]) - mean(after, &|b| b.1[k])).abs()).sum();
+            let level = (mean(before, &|b| b.0.level_db) - mean(after, &|b| b.0.level_db)).abs() / CHANGE_DB;
+            let lows = (mean(before, &|b| b.0.low_db.max(-CHANGE_LOWS_DB)) - mean(after, &|b| b.0.low_db.max(-CHANGE_LOWS_DB))).abs() / CHANGE_DB;
+            let beat = (mean(before, &|b| b.0.pulse) - mean(after, &|b| b.0.pulse)).abs();
+            let voice = (mean(before, &|b| b.0.voice) - mean(after, &|b| b.0.voice)).abs();
+            ((chords + level + lows + beat + voice) / CHANGE_FULL).min(1.0)
+        })
+        .collect();
+    let keep = bars.len().min(END_BARS);
+    let from = if intro { 0 } else { bars.len() - keep };
+    bars[from..from + keep].iter().zip(&change[from..from + keep]).map(|((b, _), c)| BarProfile { change: *c, ..*b }).collect()
+}
+
+/// The mean pitch-class profile of `[from_s, to_s)`, its classes summing to 1.
+fn chroma_of(f: &Features, from_s: f64, to_s: f64) -> [f32; 12] {
+    let mut sum = [0f32; 12];
+    if f.chroma_step > 0.0 {
+        let at = |t: f64| (((t - f.chroma_t0) / f.chroma_step).round().max(0.0) as usize).min(f.chroma.len());
+        for frame in &f.chroma[at(from_s)..at(to_s)] {
+            for (s, v) in sum.iter_mut().zip(frame) {
+                *s += v;
+            }
+        }
+    }
+    let total: f32 = sum.iter().sum();
+    if total > 0.0 {
+        sum.iter_mut().for_each(|v| *v /= total);
+    }
+    sum
 }
 
 /// One stretch of music's beat grid; all zeros when it could not be measured.

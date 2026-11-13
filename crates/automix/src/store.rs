@@ -70,8 +70,8 @@ pub fn get(c: &Connection, song_id: &str) -> rusqlite::Result<Option<TrackAnalys
         .optional()
 }
 
-/// Bytes per stored bar: its start (ms, i32), level and lows (half dB, i8), pulse and voice (0..255).
-const BAR_BYTES: usize = 8;
+/// Bytes per stored bar: its start (ms, i32), level and lows (half dB, i8), pulse, voice and change (0..255).
+const BAR_BYTES: usize = 9;
 
 fn encode_bars(bars: &[BarProfile]) -> Vec<u8> {
     let half_db = |db: f32| (db * 2.0).round().clamp(-128.0, 127.0) as i8 as u8;
@@ -79,7 +79,7 @@ fn encode_bars(bars: &[BarProfile]) -> Vec<u8> {
     bars.iter()
         .flat_map(|b| {
             let s = (b.start_ms.clamp(i32::MIN as i64, i32::MAX as i64) as i32).to_le_bytes();
-            [s[0], s[1], s[2], s[3], half_db(b.level_db), half_db(b.low_db), share(b.pulse), share(b.voice)]
+            [s[0], s[1], s[2], s[3], half_db(b.level_db), half_db(b.low_db), share(b.pulse), share(b.voice), share(b.change)]
         })
         .collect()
 }
@@ -92,6 +92,7 @@ fn decode_bars(b: &[u8]) -> Vec<BarProfile> {
             low_db: x[5] as i8 as f32 / 2.0,
             pulse: x[6] as f32 / 255.0,
             voice: x[7] as f32 / 255.0,
+            change: x[8] as f32 / 255.0,
         })
         .collect()
 }
@@ -246,7 +247,7 @@ mod tests {
     #[test]
     fn bar_profiles_come_back() {
         let c = nori_db::open("", "s").unwrap();
-        let bar = |i: i64| BarProfile { start_ms: 1_000 + 2_000 * i, level_db: -3.5 - i as f32, low_db: -40.0, pulse: 0.25 * i as f32, voice: 1.0 - 0.25 * i as f32 };
+        let bar = |i: i64| BarProfile { start_ms: 1_000 + 2_000 * i, level_db: -3.5 - i as f32, low_db: -40.0, pulse: 0.25 * i as f32, voice: 1.0 - 0.25 * i as f32, change: 0.1 * i as f32 };
         let a = TrackAnalysis { song_id: "a".into(), intro_bars: (0..4).map(bar).collect(), outro_bars: vec![bar(2)], ..TrackAnalysis::default() };
         put(&c, &a).unwrap();
         let got = get(&c, "a").unwrap().expect("the row");
@@ -254,7 +255,7 @@ mod tests {
         for (g, w) in got.intro_bars.iter().chain(&got.outro_bars).zip(a.intro_bars.iter().chain(&a.outro_bars)) {
             assert_eq!(g.start_ms, w.start_ms);
             assert!((g.level_db - w.level_db).abs() <= 0.25 && (g.low_db - w.low_db).abs() <= 0.25, "{g:?} {w:?}");
-            assert!((g.pulse - w.pulse).abs() <= 1.0 / 255.0 && (g.voice - w.voice).abs() <= 1.0 / 255.0, "{g:?} {w:?}");
+            assert!([(g.pulse, w.pulse), (g.voice, w.voice), (g.change, w.change)].iter().all(|(g, w)| (g - w).abs() <= 1.0 / 255.0), "{g:?} {w:?}");
         }
     }
 

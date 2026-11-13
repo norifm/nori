@@ -68,6 +68,9 @@ pub struct BarProfile {
     pub pulse: f32,
     /// Its share that is sung, 0..1.
     pub voice: f32,
+    /// How much the music changes as the bar starts, 0..1: the four bars after it against the four before, in chords,
+    /// level, lows, beat and singing. A section starts where it peaks.
+    pub change: f32,
 }
 
 /// AutoMix analysis of one track (a `track_analysis` row). Times are ms from the file's start. Beat `n`
