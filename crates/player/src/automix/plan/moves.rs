@@ -572,8 +572,8 @@ const RAMP_MIN_GAP_PCT: f64 = 8.0;
 const RAMP_MAX_GAP_PCT: f64 = 45.0;
 /// The outgoing glide's rate (DJs ride 2 to 3 % a bar; BitChord 2.5 BPM a bar), and the incoming ease back after
 /// (BitChord: below about 1 % a beat it reads as the groove, not the song changing speed).
-const RAMP_PCT_PER_BAR: f64 = 2.0;
-const EASE_PCT_PER_BEAT: f64 = 0.75;
+pub(super) const RAMP_PCT_PER_BAR: f64 = 2.0;
+pub(super) const EASE_PCT_PER_BEAT: f64 = 0.75;
 const RAMP_BLEND_BARS: f64 = 8.0;
 const RAMP_DRAIN_BARS: f64 = 2.0;
 const RAMP_DRAIN_FROM_HZ: f32 = 30.0;
