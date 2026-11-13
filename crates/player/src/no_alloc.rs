@@ -220,6 +220,7 @@ fn transition_effects() {
     let duck = Some(Duck { at_ms: 6_000, len_ms: 500, db: -12.0 });
     t.echo = Some(Echo { delay_ms: 500, feedback: 0.5, wet_db: -6.0, send: Some(w(2_000, 5_000)), band: Some(Band { low_hz: 250.0, high_hz: 3_500.0 }), duck });
     t.reverb = Some(Reverb { send: w(3_000, 6_000), decay_s: 2.0, wet_db: -6.0, low_cut_hz: 250.0 });
+    t.brake = Some(crate::types::Brake { start_ms: 6_000, len_ms: 1_500 });
     let mut m = Mixer::new(RATE, 2);
     m.prepare(&t);
     let (inc, mut out) = (tone(8.0, 330.0), tone(8.0, 440.0));
