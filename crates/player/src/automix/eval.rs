@@ -1099,6 +1099,8 @@ pub fn mix_songs() -> Vec<Song> {
         // Silence the file carries at the ends: 24 s after the music, 8 s before the next.
         Song { tail_silence: 24.0, sections: vec![(8, FULL), (32, FULL), (8, DRUMS)], ..s("tail-silence-128", Style::House, 128.0, 0, false) },
         Song { lead_silence: 8.0, sections: vec![(4, DRUMS), (32, FULL), (8, FULL)], ..s("lead-silence-128", Style::House, 128.0, 7, false) },
+        // Twelve bars of pads after the last chorus (23 s): a coda the end's grid must not be measured over.
+        Song { sections: vec![(8, DRUMS), (32, FULL), (16, SUNG), (8, FULL), (12, PADS)], ..s("long-coda-124", Style::Backbeat, 124.0, 5, false) },
         // A breakdown on pads and the last drop after it, 16 bars before the end: where a double drop lands.
         Song { sections: vec![(8, DRUMS), (32, FULL), (8, PADS), (8, FULL), (8, DRUMS)], ..s("breakdown-124", Style::House, 124.0, 4, true) },
     ]
@@ -1385,6 +1387,7 @@ pub struct MixTotals {
     pub bends: usize,
     pub beat_matched: usize,
     pub cuts: usize,
+    pub echo_outs: usize,
     pub drops: usize,
     pub drop_hit: usize,
     pub drop_skipped: usize,
@@ -1420,6 +1423,7 @@ pub fn mix_totals(scores: &[MixScore]) -> MixTotals {
         t.bends += s.bent as usize;
         t.beat_matched += (s.kind == K::BeatMatched) as usize;
         t.cuts += (s.kind == K::Cut) as usize;
+        t.echo_outs += (s.kind == K::EchoOut) as usize;
         if s.has_drop {
             t.drops += 1;
             t.drop_hit += s.drop_hit as usize;
@@ -1481,17 +1485,28 @@ fn transitions_hold_their_scores() {
     assert!(t.swap_on_bar == t.swaps && t.swap_on_phrase == t.swaps && t.start_on_phrase >= 10, "swaps and starts on the bar and phrase: {t:?}");
     assert!(t.cap_broken == 0 && t.coda_s == 0.0 && t.dead_runup_s == 0.0, "{t:?}");
     assert!(t.dead_air_s <= 38.0 && t.clash_s <= 1.0 && t.both_sung_s <= 5.0 && t.bump_max_lu <= 1.0, "{t:?}");
-    assert!(t.sung_lost_s <= 18.0, "{t:?}");
+    assert!(t.sung_lost_s <= 18.0 && t.echo_outs == 0, "{t:?}");
     // DJ: longer mixes that land more drops, without more harm, and no cuts. The
     // singing found runs past the sung notes of these sparsely sung songs (a mix must not miss a note), so DJ
     // also skips sung intros, loops only unsung bars, and twice waits for a last line off the phrase.
     let dj = mix_totals(&run_mixes(crate::types::MixStyle::Dj));
     assert!(dj.duration_s >= 1.5 * t.duration_s && dj.drop_hit >= 10 && dj.drop_skipped == 0 && dj.double_drops >= 1, "{dj:?}");
-    assert!(dj.cuts == 0 && dj.skip_in_s <= 40.0 && dj.dip_s <= 0.6 * t.dip_s && dj.loops >= 1 && dj.bends >= 6, "{dj:?}");
+    eprintln!("{dj:?}");
+    assert!(dj.cuts == 0 && dj.echo_outs >= 1 && dj.skip_in_s <= 40.0 && dj.dip_s <= 0.6 * t.dip_s && dj.loops >= 1 && dj.bends >= 6, "{dj:?}");
     assert!(dj.swap_on_bar == dj.swaps && dj.swap_on_phrase + 2 >= dj.swaps, "{dj:?}");
     assert!(dj.cap_broken == 0 && dj.coda_s == 0.0 && dj.dead_runup_s <= 4.0, "{dj:?}");
     assert!(dj.dead_air_s <= 38.0 && dj.clash_s <= 1.0 && dj.both_sung_s <= 5.0 && dj.bump_max_lu <= 1.0, "{dj:?}");
     assert!(dj.sung_lost_s <= 15.0 && dj.sung_under_s <= 30.0, "{dj:?}");
+}
+
+/// A song ending on a long beatless coda keeps a usable grid at its end: measured over the bars before the coda,
+/// where a mix leaves it.
+#[test]
+fn end_grids_hold_before_a_coda() {
+    let (a, truth) = analysed("long-coda-124");
+    let end = plan::at_end(&a.track);
+    assert!(plan::grid_ok(&end), "{:.1} bpm conf {:.2} stab {:.2}", end.bpm, end.bpm_confidence, end.stability);
+    assert!((end.bpm - truth.bpm).abs() < 0.5, "{} against {}", end.bpm, truth.bpm);
 }
 
 /// Drops and exits within a beat are found; one where the song has none is a false alarm.

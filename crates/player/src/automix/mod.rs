@@ -39,9 +39,8 @@ use crate::types::TrackAnalysis;
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 18: an end's grid over its steady run when one grid does not hold
-/// over all of it.
-pub const ANALYSIS_VERSION: i32 = 18;
+/// Bump when stored rows should be measured again. 19: the end's grid measured before a closing breakdown.
+pub const ANALYSIS_VERSION: i32 = 19;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -205,11 +204,13 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         loudness::steady_ends(&f.blocks_raw, (s0, s1), ms(first), ms(bar), exit.map(ms))
     };
 
+    // The end's grid is measured where a mix leaves: before a closing breakdown, whose beat has dropped away.
+    let outro_to = exit.filter(|e| e - music.0 >= GRID_WINDOW_S).unwrap_or(song.1);
     let (outro_grid, intro_grid) = if silent {
         (Grid::default(), Grid::default())
     } else {
         (
-            window_grid(f, (song.1 - GRID_WINDOW_S).max(music.0), song.1, meter, true),
+            window_grid(f, (outro_to - GRID_WINDOW_S).max(music.0), outro_to, meter, true),
             window_grid(f, music.0, (music.0 + GRID_WINDOW_S).min(music.1), meter, false),
         )
     };

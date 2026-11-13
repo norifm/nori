@@ -665,6 +665,13 @@ mod tests {
             vocal_duck: None,
             in_loop: None,
             bend: None,
+            in_low_pass: None,
+            in_high_pass: None,
+            mid_dip: None,
+            reverb: None,
+            in_delay_ms: 0,
+            out_glide: None,
+            brake: None,
             reason: String::new(),
         }
     }
@@ -840,7 +847,7 @@ mod tests {
         let mut p = plan();
         p.duration_ms = 2000;
         (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (0, 500, 2000, 2000);
-        p.echo = Some(Echo { delay_ms: 250, feedback: 0.45, wet_db: -7.0 });
+        p.echo = Some(Echo { delay_ms: 250, feedback: 0.45, wet_db: -7.0, send: None, band: None, duck: None });
         let tone = sine(440.0, 96000);
         let y = mix(&p, &tone, &vec![0f32; 96000]);
         let ring = |ms: usize| rms(&y[ms * 48..(ms + 250) * 48]) / rms(&tone);
@@ -851,7 +858,7 @@ mod tests {
         // Echo fades out by end.
         let mut p = plan();
         (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (0, 500, 1000, 1000);
-        p.echo = Some(Echo { delay_ms: 250, feedback: 0.45, wet_db: -7.0 });
+        p.echo = Some(Echo { delay_ms: 250, feedback: 0.45, wet_db: -7.0, send: None, band: None, duck: None });
         let tone = sine(440.0, 48000);
         let y = mix(&p, &tone, &vec![0f32; 48000]);
         let ring = |a: usize, b: usize| rms(&y[a..b]) / rms(&tone);
@@ -862,7 +869,7 @@ mod tests {
         // Echo repeats on the beat.
         let mut p = plan();
         (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (0, 480, 480, 960);
-        p.echo = Some(Echo { delay_ms: 240, feedback: 0.5, wet_db: 0.0 });
+        p.echo = Some(Echo { delay_ms: 240, feedback: 0.5, wet_db: 0.0, send: None, band: None, duck: None });
         let mut click = vec![0f32; 48000];
         click[0] = 1.0;
         let y = mix(&p, &click, &vec![0f32; 48000]);
@@ -986,7 +993,7 @@ mod tests {
             ("fade, trimmed", trimmed.clone()),
             ("bass swap, trimmed", TransitionPlan { bass_swap: Some(crate::types::BassSwap { at_ms: 4_000, len_ms: 2_000, cut_hz: 180.0 }), ..trimmed.clone() }),
             ("vocal duck", TransitionPlan { vocal_duck: Some(VocalDuck { until_ms: 8_000, release_ms: 3_000, db: -9.0, hz: 1_500.0 }), ..trimmed.clone() }),
-            ("echo", TransitionPlan { echo: Some(Echo { delay_ms: 500, feedback: 0.4, wet_db: -6.0 }), ..trimmed.clone() }),
+            ("echo", TransitionPlan { echo: Some(Echo { delay_ms: 500, feedback: 0.4, wet_db: -6.0, send: None, band: None, duck: None }), ..trimmed.clone() }),
             ("sweeps", TransitionPlan { low_pass: Some(Sweep { start_ms: 2_000, end_ms: 10_000, from_hz: 18_000.0, to_hz: 300.0 }), high_pass: Some(Sweep { start_ms: 0, end_ms: 12_000, from_hz: 20.0, to_hz: 400.0 }), ..trimmed }),
         ];
         let frames = 44_100 * 12;
