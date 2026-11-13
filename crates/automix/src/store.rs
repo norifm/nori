@@ -1,6 +1,6 @@
 //! The `track_analysis` and `vocal_curve` tables, and the streaming analyser that feeds them.
 
-use nori_model::{BarProfile, TrackAnalysis};
+use nori_model::{BarProfile, Beat, TrackAnalysis};
 use nori_player::automix::vocal::VocalCurve;
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -46,12 +46,12 @@ columns! {
     intro_grid_from_ms or 0, intro_grid_to_ms or 0, outro_grid_from_ms or 0, outro_grid_to_ms or 0,
 }
 
-/// The bar profile columns, after [`COLUMNS`].
-const BARS: [&str; 2] = ["intro_bars", "outro_bars"];
+/// The bar profile and beat columns, after [`COLUMNS`].
+const BARS: [&str; 4] = ["intro_bars", "outro_bars", "intro_beats", "outro_beats"];
 
 pub fn put(c: &Connection, a: &TrackAnalysis) -> rusqlite::Result<()> {
     let marks: Vec<String> = (1..=COLUMNS.len() + BARS.len()).map(|i| format!("?{i}")).collect();
-    let bars = [encode_bars(&a.intro_bars), encode_bars(&a.outro_bars)];
+    let bars = [encode_bars(&a.intro_bars), encode_bars(&a.outro_bars), encode_beats(&a.intro_beats), encode_beats(&a.outro_beats)];
     let mut all: Vec<&dyn rusqlite::ToSql> = values(a).to_vec();
     all.extend(bars.iter().map(|b| b as &dyn rusqlite::ToSql));
     c.prepare_cached(&format!("INSERT OR REPLACE INTO track_analysis(server, {}, {}) VALUES(sid(), {})", COLUMNS.join(", "), BARS.join(", "), marks.join(",")))?
@@ -65,6 +65,8 @@ pub fn get(c: &Connection, song_id: &str) -> rusqlite::Result<Option<TrackAnalys
             let mut a = row(r)?;
             let blob = |i: usize| r.get::<_, Vec<u8>>(COLUMNS.len() + i).map(|b| decode_bars(&b)).unwrap_or_default();
             (a.intro_bars, a.outro_bars) = (blob(0), blob(1));
+            let beats = |i: usize| r.get::<_, Vec<u8>>(COLUMNS.len() + i).map(|b| decode_beats(&b)).unwrap_or_default();
+            (a.intro_beats, a.outro_beats) = (beats(2), beats(3));
             Ok(a)
         })
         .optional()
@@ -82,6 +84,23 @@ fn encode_bars(bars: &[BarProfile]) -> Vec<u8> {
             [s[0], s[1], s[2], s[3], half_db(b.level_db), half_db(b.low_db), share(b.pulse), share(b.voice), share(b.change)]
         })
         .collect()
+}
+
+/// Bytes per stored beat: its time (ms, i32) and flags (bit 0 downbeat, bit 1 sure).
+const BEAT_BYTES: usize = 5;
+
+fn encode_beats(beats: &[Beat]) -> Vec<u8> {
+    beats
+        .iter()
+        .flat_map(|b| {
+            let t = (b.at_ms.clamp(i32::MIN as i64, i32::MAX as i64) as i32).to_le_bytes();
+            [t[0], t[1], t[2], t[3], b.downbeat as u8 | (b.sure as u8) << 1]
+        })
+        .collect()
+}
+
+fn decode_beats(b: &[u8]) -> Vec<Beat> {
+    b.as_chunks::<BEAT_BYTES>().0.iter().map(|x| Beat { at_ms: i32::from_le_bytes([x[0], x[1], x[2], x[3]]) as i64, downbeat: x[4] & 1 != 0, sure: x[4] & 2 != 0 }).collect()
 }
 
 fn decode_bars(b: &[u8]) -> Vec<BarProfile> {
@@ -248,10 +267,12 @@ mod tests {
     fn bar_profiles_come_back() {
         let c = nori_db::open("", "s").unwrap();
         let bar = |i: i64| BarProfile { start_ms: 1_000 + 2_000 * i, level_db: -3.5 - i as f32, low_db: -40.0, pulse: 0.25 * i as f32, voice: 1.0 - 0.25 * i as f32, change: 0.1 * i as f32 };
-        let a = TrackAnalysis { song_id: "a".into(), intro_bars: (0..4).map(bar).collect(), outro_bars: vec![bar(2)], ..TrackAnalysis::default() };
+        let beat = |i: i64| Beat { at_ms: 500 * i - 250, downbeat: i % 4 == 0, sure: i % 3 != 0 };
+        let a = TrackAnalysis { song_id: "a".into(), intro_bars: (0..4).map(bar).collect(), outro_bars: vec![bar(2)], intro_beats: (0..9).map(beat).collect(), outro_beats: vec![beat(7)], ..TrackAnalysis::default() };
         put(&c, &a).unwrap();
         let got = get(&c, "a").unwrap().expect("the row");
         assert_eq!((got.intro_bars.len(), got.outro_bars.len()), (4, 1));
+        assert_eq!((&got.intro_beats, &got.outro_beats), (&a.intro_beats, &a.outro_beats), "beats come back as they went in");
         for (g, w) in got.intro_bars.iter().chain(&got.outro_bars).zip(a.intro_bars.iter().chain(&a.outro_bars)) {
             assert_eq!(g.start_ms, w.start_ms);
             assert!((g.level_db - w.level_db).abs() <= 0.25 && (g.low_db - w.low_db).abs() <= 0.25, "{g:?} {w:?}");

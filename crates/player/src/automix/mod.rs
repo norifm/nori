@@ -34,13 +34,13 @@ mod tests;
 #[cfg(test)]
 mod plan_fuzz;
 
-use crate::types::{BarProfile, TrackAnalysis};
+use crate::types::{BarProfile, Beat, TrackAnalysis};
 #[cfg(any(test, feature = "synth"))]
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 20: each end profiled in bars, with where its sections start.
-pub const ANALYSIS_VERSION: i32 = 20;
+/// Bump when stored rows should be measured again. 21: each end keeps its beats, on the attacks heard.
+pub const ANALYSIS_VERSION: i32 = 21;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -210,6 +210,86 @@ fn end_bars(f: &Features, grid: &Grid, meter: i64, beat_s: f64, music: (f64, f64
     bars[from..from + keep].iter().zip(&change[from..from + keep]).map(|((b, _), c)| BarProfile { change: *c, ..*b }).collect()
 }
 
+/// The music at each end whose beats are kept, seconds.
+const END_BEATS_S: f64 = 60.0;
+/// A beat moves onto an attack at most this far from where a tracker put it, seconds, weighed toward it over the
+/// spread: a network's beats are right about which beat, not exactly when.
+const REFINE_REACH_S: f64 = 0.04;
+const REFINE_SPREAD_S: f64 = 0.02;
+/// An attack a beat is sure of stands this many deviations (MAD) over the onsets of the second around it.
+const REFINE_SURE_MADS: f32 = 3.0;
+
+/// `beats` (seconds) each moved onto the attack it stands for in the onset curve (`onset` at `fps`, frame 0 at
+/// `t0`): the strongest peak within [`REFINE_REACH_S`], weighed toward the beat, placed between frames by a parabola;
+/// sure when it stands out of the onsets around it and hits at least [`PULSE_HIT`] as hard as the beats' usual
+/// attack: a pad's slow swell peaks well after its note starts. The others move by the sure ones' median shift.
+pub(crate) fn refine(beats: &[f64], onset: &[f32], fps: f64, t0: f64) -> Vec<(f64, bool)> {
+    let n = onset.len();
+    if n < 3 || fps.is_nan() || fps <= 0.0 {
+        return beats.iter().map(|&b| (b, false)).collect();
+    }
+    let reach = (REFINE_REACH_S * fps).ceil() as usize;
+    let around = fps.round() as usize;
+    let found: Vec<Option<(f64, f32)>> = beats
+        .iter()
+        .map(|&b| {
+            let c = (b - t0) * fps;
+            if !(c >= 0.0 && c < n as f64) {
+                return None;
+            }
+            let j0 = c.round() as usize;
+            let (lo, hi) = (j0.saturating_sub(reach).max(1), (j0 + reach).min(n - 2));
+            let mut best: Option<(f64, f64, usize)> = None;
+            for j in lo..=hi {
+                let (y0, y1, y2) = (onset[j - 1] as f64, onset[j] as f64, onset[j + 1] as f64);
+                if !(y1 > y0 && y1 >= y2) {
+                    continue;
+                }
+                let curve = y0 - 2.0 * y1 + y2;
+                let pos = j as f64 + if curve < 0.0 { (0.5 * (y0 - y2) / curve).clamp(-0.5, 0.5) } else { 0.0 };
+                let dt = (pos - c) / fps;
+                let w = y1 * (-0.5 * (dt / REFINE_SPREAD_S).powi(2)).exp();
+                if best.is_none_or(|b| w > b.1) {
+                    best = Some((pos, w, j));
+                }
+            }
+            let (pos, _, j) = best?;
+            let mut local: Vec<f32> = onset[j.saturating_sub(around)..(j + around).min(n)].to_vec();
+            local.sort_by(f32::total_cmp);
+            let median = local[local.len() / 2];
+            let mut dev: Vec<f32> = local.iter().map(|v| (v - median).abs()).collect();
+            dev.sort_by(f32::total_cmp);
+            let mad = dev[dev.len() / 2].max(1e-6);
+            (onset[j] > median + REFINE_SURE_MADS * mad).then_some((t0 + pos / fps, onset[j]))
+        })
+        .collect();
+    let mut hits: Vec<f32> = found.iter().flatten().map(|f| f.1).collect();
+    hits.sort_by(f32::total_cmp);
+    let usual = hits.get(hits.len() / 2).copied().unwrap_or(0.0);
+    let found: Vec<Option<f64>> = found.into_iter().map(|f| f.filter(|f| f.1 >= PULSE_HIT * usual).map(|f| f.0)).collect();
+    let mut shifts: Vec<f64> = beats.iter().zip(&found).filter_map(|(b, r)| r.map(|r| r - b)).collect();
+    shifts.sort_by(f64::total_cmp);
+    let shift = shifts.get(shifts.len() / 2).copied().unwrap_or(0.0);
+    beats.iter().zip(found).map(|(&b, r)| r.map_or((b + shift, false), |r| (r, true))).collect()
+}
+
+/// Refined beats as stored, every `meter`-th one starting a bar: counted along the beats themselves from the one in
+/// the middle, whose place on `grid` gives the bar's phase, so a drifting tempo does not move the bars.
+fn end_beats(refined: &[(f64, bool)], grid: &Grid, meter: i64) -> Vec<Beat> {
+    let beat_s = if grid.bpm > 0.0 && grid.bpm.is_finite() { 60.0 / grid.bpm } else { 0.0 };
+    let mid = refined.len() / 2;
+    let phase = refined.get(mid).filter(|_| beat_s > 0.0).map(|&(t, _)| ((t - grid.offset_ms / 1000.0) / beat_s).round() as i64 - grid.downbeat_phase as i64);
+    refined
+        .iter()
+        .enumerate()
+        .map(|(i, &(t, sure))| Beat {
+            at_ms: (t * 1000.0).round() as i64,
+            downbeat: phase.is_some_and(|p| (p + i as i64 - mid as i64).rem_euclid(meter) == 0),
+            sure,
+        })
+        .collect()
+}
+
 /// A bar and its pitch-class profile, while an end's changes are read.
 type ProfiledBar = (BarProfile, [f32; 12]);
 
@@ -352,8 +432,8 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
 
     // Each end in bars on its own grid (the whole song's when it has none); the ending's runs to the music's end, its
     // closing breakdown included.
-    let (intro_bars, outro_bars) = if silent {
-        (Vec::new(), Vec::new())
+    let (intro_bars, outro_bars, intro_beats, outro_beats) = if silent {
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
     } else {
         let bar_s = if bar_s >= 1.0 { bar_s } else { BLOCK_S };
         let n = ((music.1 - music.0) / bar_s).floor() as usize;
@@ -369,7 +449,16 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         let pick = |g: &Grid| if g.bpm > 0.0 && g.bpm.is_finite() { *g } else { whole };
         let beat = |g: &Grid| if g.bpm > 0.0 && g.bpm.is_finite() { 60.0 / g.bpm } else { 0.0 };
         let (gi, go) = (pick(&intro_grid), pick(&outro_grid));
-        (end_bars(f, &gi, meter, beat(&gi), music, true, sung, strong), end_bars(f, &go, meter, beat(&go), song, false, sung, strong))
+        let beats_of = |g: &Grid, from: f64, to: f64| {
+            let these: Vec<f64> = t.beats.iter().copied().filter(|b| (from..to).contains(b)).collect();
+            end_beats(&refine(&these, &f.onset, f.fps, f.t0), g, meter)
+        };
+        (
+            end_bars(f, &gi, meter, beat(&gi), music, true, sung, strong),
+            end_bars(f, &go, meter, beat(&go), song, false, sung, strong),
+            beats_of(&gi, music.0, music.0 + END_BEATS_S),
+            beats_of(&go, song.1 - END_BEATS_S, song.1),
+        )
     };
 
     let track = TrackAnalysis {
@@ -396,6 +485,8 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         intro_centroid,
         intro_bars,
         outro_bars,
+        intro_beats,
+        outro_beats,
         analysed_ms: now_ms(),
         outro_bpm: outro_grid.bpm,
         outro_bpm_confidence: outro_grid.confidence,
