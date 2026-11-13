@@ -75,7 +75,7 @@ fn bar_at(bars: &[BarProfile], t: f64) -> Option<&BarProfile> {
 }
 
 /// The mean of `f` over the bars of `bars` that start in `[from, to)`; None when none do.
-fn mean_over(bars: &[BarProfile], from: f64, to: f64, f: fn(&BarProfile) -> f32) -> Option<f32> {
+pub(super) fn mean_over(bars: &[BarProfile], from: f64, to: f64, f: fn(&BarProfile) -> f32) -> Option<f32> {
     let v: Vec<f32> = bars.iter().filter(|b| (from..to).contains(&(b.start_ms as f64))).map(f).collect();
     (!v.is_empty()).then(|| v.iter().sum::<f32>() / v.len() as f32)
 }
@@ -97,7 +97,7 @@ fn beatless(b: &BarProfile) -> bool {
     b.pulse <= BEATLESS_PULSE && b.level_db >= AUDIBLE_DB
 }
 
-fn kick(b: &BarProfile) -> bool {
+pub(super) fn kick(b: &BarProfile) -> bool {
     b.low_db >= KICK_LOW_DB && b.pulse >= KICK_PULSE
 }
 
