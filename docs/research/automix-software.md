@@ -578,7 +578,10 @@ tail. B starts on its first downbeat and rises over a bar. Each song keeps its t
   double drops in a row.
 - **Needs:** both grids, tempo within the stretch limit (heydavidf ±8 %, BitChord 5 % for a blend, musicmix ±8 %
   citing discomfort beyond ±10 %).
-- **nori:** yes (`BeatMatched`, `drop_aligned`, double drop, `highs_in`, swap of 0.25 bar in DJ).
+- **nori:** yes (`BeatMatched`, `drop_aligned`, double drop, `highs_in`, swap of 0.25 bar in DJ). DJ also hands the
+  layers over one at a time: the incoming voice band waits for the swap, and away from a drop, into an opening with a
+  kick, the bass goes first, a quarter into the run-up, then the instruments as the incoming low-pass opens and the
+  outgoing song thins to its voice band (14 % of DJ's beat-matched mixes on the owner's songs).
 
 ## B6. Complementary filter ride for unmatched tempos (BitChord `DJ_FILTER` + `SWEEP`)
 - **Who:**
