@@ -26,6 +26,7 @@ mod warp;
 use moves::{Move, Pair};
 use super::structure::key_distance;
 use super::curve::Curve;
+use super::phrase;
 use super::tempo::{fold, match_ratio};
 use crate::types::{AutoMixSettings, BassSwap, Bend, Echo, FadeCurve, Glide, HighsIn, InLoop, MixStyle, Sweep, TrackAnalysis, TransitionKind, TransitionPlan, VocalDuck};
 
@@ -742,6 +743,8 @@ enum Landing {
     Drop,
     /// The end of the intro, when it is not the drop.
     IntroEnd,
+    /// Where a phrase of the opening starts ([`super::phrase`]), past its first bar and before its singing.
+    Section,
     /// A four-bar line from the first downbeat.
     Phrase,
     /// The first downbeat: no run-up.
@@ -753,6 +756,7 @@ impl Landing {
         match self {
             Landing::Drop => 4.0,
             Landing::IntroEnd => 3.0,
+            Landing::Section => 2.0,
             Landing::Phrase => 1.0,
             Landing::Start => 0.0,
         }
@@ -762,6 +766,7 @@ impl Landing {
         match self {
             Landing::Drop => "in on the drop",
             Landing::IntroEnd => "in at the end of the intro",
+            Landing::Section => "in on a new section",
             Landing::Phrase => "on a phrase line",
             Landing::Start => "straight in",
         }
@@ -859,6 +864,8 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
         anchors.retain(|(t, ..)| (t - at).abs() > 0.5 * beat);
         anchors.push((at, back, true));
     }
+    // Where the outgoing song's phrases start ([`super::phrase`]): a swap there sounds like the song moving on.
+    let a_phrases: Vec<f64> = phrase::starts(&a.outro_bars, false).into_iter().map(|i| a.outro_bars[i].start_ms as f64).collect();
     let on_line = |t: f64, from: f64| {
         let x = (t - from) / (4.0 * bar);
         (x - x.round()).abs() * 4.0 < 0.05
@@ -884,6 +891,14 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
     if let Some(d) = intro_end.filter(|i| drop.is_none_or(|d| (d - i).abs() > 0.5 * bar_in)) {
         landings.push((d, Landing::IntroEnd));
     }
+    // A new section of the opening, before its singing starts: one where it starts brings two voices together.
+    for i in phrase::sections(&b.intro_bars, true) {
+        let d = snap(b.intro_bars[i].start_ms as f64);
+        let unsung = b.vocal_end_ms == 0 || d <= b.vocal_start_ms as f64 - 0.5 * beat_n;
+        if unsung && d > first + 0.5 * bar_in && landings.iter().all(|(t, ..)| (t - d).abs() > 0.5 * bar_in) {
+            landings.push((d, Landing::Section));
+        }
+    }
     for m in 1..=prof.most_bars[0] / 4 {
         let d = first + (4 * m) as f64 * bar_in;
         if landings.iter().all(|(t, ..)| (t - d).abs() > 0.5 * bar_in) {
@@ -905,7 +920,8 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
             if double && landing != Landing::Drop {
                 continue;
             }
-            let on_phrase = a.outro_start_ms > 0 && at >= a.outro_start_ms as f64 - 0.5 * beat && on_line(at, a.outro_start_ms as f64);
+            let on_phrase = (a.outro_start_ms > 0 && at >= a.outro_start_ms as f64 - 0.5 * beat && on_line(at, a.outro_start_ms as f64))
+                || a_phrases.iter().any(|t| (t - at).abs() <= 0.5 * beat);
             let after_line = vocal_end.is_some_and(|v| (downbeat_at(v) - at).abs() <= 0.5 * beat);
             for &runup in prof.runups {
                 // Only the song's first bar comes in without a run-up: anywhere else that skips its opening.
@@ -2121,6 +2137,19 @@ mod tests {
         let bar = 4.0 * 60_000.0 / t.bpm;
         let last = t.beat_offset_ms + ((t.silence_end_ms as f64 - t.beat_offset_ms) / bar).floor() * bar - bar;
         TrackAnalysis { outro_bars: bars(last - 31.0 * bar, bar, 32, f), intro_bars: bars(t.beat_offset_ms, bar, 32, f), ..t }
+    }
+
+    /// The incoming band comes in six bars into a quiet opening, off its four-bar lines and before any singing: the mix
+    /// lands there, on the new section (DJ's longer run-ups may prefer a later phrase line).
+    #[test]
+    fn mixes_land_on_a_new_section() {
+        let opening = |i: usize| if i < 6 { BarProfile { level_db: -12.0, low_db: -24.0, pulse: 0.0, ..band(i) } } else { BarProfile { change: if i == 6 { 1.0 } else { 0.0 }, ..band(i) } };
+        let b = TrackAnalysis { intro_end_ms: 0, ..profiled(track(120.0), opening) };
+        let a = profiled(track(120.0), band);
+        let section = b.intro_bars[6].start_ms;
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings::default());
+        let lands = p.in_start_ms + p.in_song_ms(swap_at(&p) as f64).round() as i64;
+        assert!(p.reason.contains("in on a new section") && (lands - section).abs() <= 2, "lands at {lands}, not {section}: {}", p.reason);
     }
 
     fn after(previous: TransitionKind) -> AutoMixSettings {
