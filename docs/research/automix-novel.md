@@ -534,6 +534,38 @@ SALAMI's live recordings and Harmonix to check that tuning on the library does n
 
 ## Ranked build list
 
+Built on the `dj-effects` branch (November 2026), in `crates/player/src/automix`:
+
+- 1: the harness's level, Lock@10/Lock@20, bar-start and true-beat mix error numbers (`eval.rs`, held by
+  `beats_and_mixes_are_accurate`) on the synthetic songs; the lab measures the same on real songs against final0. The
+  hand-tapped gold set is not made.
+- 2: the model reads 60 s of each end in overlapping chunks, its constant grid fitted on the 30 s next to the mix
+  (`beats.rs`).
+- 3: sub-frame refinement onto the attacks heard (`refine` in `mod.rs`), sure only on attacks as strong as the beats'.
+- 4: beat cleaning (a dynamic program filling and dropping beats) and the Whittaker tempo curve, its stiffness by
+  generalized cross-validation, and the slowing ending (`curve.rs`); an end whose constant grid fails but whose curve
+  holds is mixed on its beats.
+- 5 and 6 in part: the warp follows each beat under the 0.4 %-a-beat limit, every pair checked within 20 ms, windows
+  tried best first with the warp's strain as a cost (`plan/warp.rs`, `beat_matched`); level is the model's where it
+  counts the beats differently from the measured grid, three against two refused. Not built: the QP in place of the
+  rate follower, and the weighted level arbitration (it waits for references to fit its weights against).
+- 7: the phrase dynamic program over each end's bars with the 4/8/16-bar prior (`phrase.rs`): swaps on the outgoing
+  song's phrase starts, landings on the incoming song's sections before its singing.
+- 9: the shared clock, each song taking half the tempo difference, where the outgoing tempo moves faster within bars
+  than one song may follow (`plan/warp.rs`, the engine's outgoing rates).
+- 8 and 10 are not built.
+
+Measured in the lab against final0 (149 of the owner's and popular songs, and 161 Harmonix songs):
+
+- The stored beats count at final0's level on 90 % of the owner's ends and 94 % of Harmonix's; of the rest, octave
+  differences outnumber three against two about five to one, so the weighted arbitration (6) would gain little.
+- 82 % (Harmonix 85 %) of final0's beats have a stored beat within 20 ms, 92 % (95 %) within 40 ms; the median offset is
+  1 to 2 ms. The refinement onto attacks raises the 20 ms share from 78 % to 82 % on the same songs. Lock@20 over whole
+  16-beat runs stays low (0.4) against final0, whose own timing is the limit here (see section 2): a hand-tapped set
+  is needed to judge 10 ms locks. A mix is safe either way: every pair of beats is checked within 20 ms as planned.
+- Over every ordered pair of the owner's songs, Smooth beat-matches 19 % (7.5 % before) and fades 72 % (92 %); DJ
+  beat-matches 31 % (17 %), fades 24.5 % (38 %), and hands the rest over by moves.
+
 1. **Evaluation harness in Rust** over the library: level accuracy, Lock@10/Lock@20, downbeat phase,
    end-to-end mix error (Section 2). Refine final0's beats with Step 1 and hand-tap a 20-song gold set.
    Everything below is measured against it.
