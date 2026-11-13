@@ -563,8 +563,10 @@ Measured in the lab against final0 (149 of the owner's and popular songs, and 16
   1 to 2 ms. The refinement onto attacks raises the 20 ms share from 78 % to 82 % on the same songs. Lock@20 over whole
   16-beat runs stays low (0.4) against final0, whose own timing is the limit here (see section 2): a hand-tapped set
   is needed to judge 10 ms locks. A mix is safe either way: every pair of beats is checked within 20 ms as planned.
-- Over every ordered pair of the owner's songs, Smooth beat-matches 19 % (7.5 % before) and fades 72 % (92 %); DJ
-  beat-matches 31 % (17 %), fades 24.5 % (38 %), and hands the rest over by moves.
+- Over every ordered pair of the owner's songs, Smooth beat-matches 19 % (7.5 % before) and fades 11 % (92 %): the
+  rest it melts, rises under a last line, or glows out off a downbeat, a last word or a cold stop; in shuffled runs,
+  where it varies the moves, 13 % are plain fades and 6 % dry stops. The fades left are sung fade-outs and openings
+  that sing at once. DJ beat-matches 31 % (17 %), fades 24.5 % (38 %), and hands the rest over by moves.
 
 1. **Evaluation harness in Rust** over the library: level accuracy, Lock@10/Lock@20, downbeat phase,
    end-to-end mix error (Section 2). Refine final0's beats with Step 1 and hand-tap a 20-song gold set.

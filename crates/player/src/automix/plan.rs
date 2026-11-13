@@ -601,7 +601,7 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
         candidates.extend(moves::beatless_blend(&pair));
         match s.style {
             MixStyle::Dj => candidates.extend([moves::loop_ramp(&pair), moves::filter_ride(&pair), moves::echo_out(&pair), moves::filter_out(&pair), moves::brake(&pair), moves::reverb_wash(&pair)].into_iter().flatten()),
-            MixStyle::Smooth => candidates.extend([moves::melt(&pair), moves::afterglow(&pair)].into_iter().flatten()),
+            MixStyle::Smooth => candidates.extend([moves::melt(&pair), moves::afterglow(&pair), moves::rise(&pair)].into_iter().flatten()),
         }
     }
     let sung_both = verdict.is_some_and(|v| v.cause == VOCALS_OVERLAP);
@@ -613,7 +613,7 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
         moves::dip_mids(&mut fade, s);
     }
     candidates.push(Move { plan: fade, worth: moves::FADE_WORTH });
-    let net = |m: &Move| m.worth - if s.previous == Some(m.plan.kind) { moves::repeat_cost(m.plan.kind) } else { 0.0 };
+    let net = |m: &Move| m.worth - if s.previous == Some(m.plan.kind) { moves::repeat_cost(m.plan.kind, s.style) } else { 0.0 };
     candidates.into_iter().fold(None::<Move>, |best, m| match best {
         Some(b) if net(&b) >= net(&m) => Some(b),
         _ => Some(m),
@@ -2674,23 +2674,65 @@ mod tests {
     }
 
     /// A song that stops cold, its last hit ringing out, ends on its stop: a mix that cannot blend starts the next
-    /// song there under the ring-out instead of fading the bars before it.
+    /// song there under the ring-out instead of fading the bars before it. Smooth lets the last hit glow into a
+    /// reverb from a beat before the stop, dry again right after a glow.
     #[test]
     fn a_song_that_stops_ends_on_its_stop() {
-        let bar = 4.0 * 60_000.0 / 128.0;
-        let stop = (120.0 + 125.0 * bar) as i64;
+        let beat: f64 = 60_000.0 / 128.0;
+        let stop = (120.0 + 500.0 * beat) as i64;
         let a = TrackAnalysis { exit_ms: stop, ..track(128.0) };
         let far_tempo = track(150.0);
         let far_keys = TrackAnalysis { key: camelot(6, false), ..far_tempo.clone() };
-        for (b, style) in [(&far_tempo, MixStyle::Smooth), (&far_keys, MixStyle::Smooth), (&far_tempo, MixStyle::Dj), (&far_keys, MixStyle::Dj)] {
-            for beat_match in [true, false] {
-                let s = AutoMixSettings { max_transition_s: 40.0, style, beat_match, ..Default::default() };
+        let glow = beat.round() as i64;
+        for (style, previous, lead) in [(MixStyle::Smooth, None, glow), (MixStyle::Smooth, Some(TransitionKind::ReverbWash), 0), (MixStyle::Dj, None, 0)] {
+            for (b, beat_match) in [(&far_tempo, true), (&far_keys, true), (&far_tempo, false), (&far_keys, false)] {
+                let s = AutoMixSettings { max_transition_s: 40.0, style, beat_match, previous, ..Default::default() };
                 let p = plan(Some(&a), Some(b), 240_000, 240_000, &s);
-                assert_eq!((p.kind, p.out_start_ms, p.in_start_ms), (TransitionKind::MixRampFade, stop, b.silence_start_ms), "{style:?}: {p:?}");
+                let kind = if lead > 0 { TransitionKind::ReverbWash } else { TransitionKind::MixRampFade };
+                assert_eq!((p.kind, p.out_start_ms + lead, p.in_start_ms, p.in_delay_ms), (kind, stop, b.silence_start_ms, lead), "{style:?}: {p:?}");
                 assert_eq!(p.out_start_ms + p.duration_ms, a.silence_end_ms, "the ring-out is heard to its end: {p:?}");
-                assert!(p.in_fade_end_ms <= MIN_FADE_MS && p.low_pass.is_none(), "the next song comes in at once: {p:?}");
+                assert!(p.in_fade_end_ms - p.in_fade_start_ms <= MIN_FADE_MS && p.low_pass.is_none(), "the next song comes in at once: {p:?}");
+                assert_eq!(p.out_fade_start_ms, lead, "the hit is heard whole: {p:?}");
+                assert_eq!(p.reverb.map(|r| r.send.end_ms), (lead > 0).then_some(2 * lead), "{p:?}");
                 check_skip(&p, &a, b, 240_000);
             }
+        }
+    }
+
+    /// Sung to its end, into a song too far off in tempo to match: Smooth leaves off the last word, which rings into
+    /// a reverb as the next song rises, or, where the file ends on the word, throws the last line in up to a bar early;
+    /// after a glow the next song rises from below under the last line instead, low-passed, and has the bass before the
+    /// outgoing song falls.
+    #[test]
+    fn sung_endings_glow_or_rise_off_the_last_word() {
+        let beat: f64 = 60_000.0 / 128.0;
+        let stop = 120.0 + 480.0 * beat;
+        let ring_out = |at: f64| -> Vec<BarProfile> {
+            (0..64).map(|i| {
+                let start = at - 48.0 * 4.0 * beat + i as f64 * 4.0 * beat;
+                BarProfile { start_ms: start as i64, level_db: if start < at { 0.0 } else { -24.0 }, low_db: 0.0, pulse: 1.0, voice: if start < at { 1.0 } else { 0.0 }, change: 0.0 }
+            }).collect()
+        };
+        let to_stop = TrackAnalysis { vocal_start_ms: 20_000, vocal_end_ms: stop as i64, outro_bars: ring_out(stop), ..track(128.0) };
+        let to_end = TrackAnalysis { vocal_start_ms: 20_000, vocal_end_ms: 239_900, silence_end_ms: 240_000, outro_bars: ring_out(240_000.0), ..track(128.0) };
+        let b = track(170.0);
+        for (a, cross) in [(&to_stop, stop), (&to_end, 240_000.0 - 3.0 * beat)] {
+            let smooth = AutoMixSettings { max_transition_s: 40.0, ..Default::default() };
+            let p = plan(Some(a), Some(&b), 240_000, 240_000, &smooth);
+            assert!(p.kind == TransitionKind::ReverbWash && p.reason.contains("off its last word"), "{}", p.reason);
+            let at = p.out_start_ms as f64 + p.out_fade_start_ms as f64;
+            assert!((at - cross).abs() <= 1.0 && a.vocal_end_ms as f64 - at <= 4.0 * beat, "{p:?}");
+            assert_eq!((p.in_fade_start_ms, p.in_fade_end_ms), (p.out_fade_start_ms, p.out_fade_end_ms), "one crossing");
+            let send = p.reverb.expect(&p.reason).send;
+            assert!(send.start_ms <= p.out_fade_start_ms - (2.0 * beat) as i64 && p.out_start_ms + p.duration_ms <= 240_000, "{p:?}");
+            let r = plan(Some(a), Some(&b), 240_000, 240_000, &AutoMixSettings { previous: Some(TransitionKind::ReverbWash), ..smooth });
+            assert!(r.kind == TransitionKind::FilterRide && r.reason.starts_with("rise"), "{}", r.reason);
+            let (lp, swap) = (r.in_low_pass.expect(&r.reason), r.bass_swap.expect(&r.reason));
+            assert!(lp.from_hz <= 300.0 && lp.start_ms == 0 && lp.end_ms == r.duration_ms, "{r:?}");
+            assert!(r.in_fade_end_ms <= r.out_fade_start_ms && swap.at_ms + swap.len_ms <= r.out_fade_start_ms, "{r:?}");
+            assert!((r.out_start_ms as f64 + r.out_fade_start_ms as f64 - cross).abs() <= 1.0, "{r:?}");
+            check_skip(&p, a, &b, 240_000);
+            check_skip(&r, a, &b, 240_000);
         }
     }
 
