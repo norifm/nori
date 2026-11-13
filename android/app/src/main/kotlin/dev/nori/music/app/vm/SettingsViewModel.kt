@@ -901,9 +901,12 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         _analysed.value = withContext(Dispatchers.IO) { runCatching { nori.core.analysisMeasured() }.getOrDefault(dev.nori.music.ffi.automix.Measured(0u, 0u)) }
     }
 
+    /** Forgets every measurement; the downloaded songs are measured again now, under the download service and its
+     *  notification, the others when they next play. */
     fun clearAnalyses() = viewModelScope.launch {
         withContext(Dispatchers.IO) { runCatching { nori.core.measureAgain() } }.getOrNull()?.let { nori.settings.asked(it.effect) }
         refreshAnalysed()
+        nori.downloads.analyse { refreshAnalysed() }
     }
 
     // ---- downloads ----
