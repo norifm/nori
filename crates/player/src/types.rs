@@ -272,6 +272,9 @@ pub enum TransitionKind {
     ReverbWash,
     /// A long overlap where one side has no beat (a pad, a held chord, a rubato intro), at any tempo.
     BeatlessBlend,
+    /// Tempos too far apart to stretch to one another: the outgoing track loops its last clean bars and glides
+    /// partway, the incoming one comes in at that tempo, locked, then eases back to its own.
+    LoopRamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

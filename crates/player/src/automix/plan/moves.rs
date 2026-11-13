@@ -3,7 +3,7 @@
 //! docs/research/automix-dj.md and automix-software.md (B6 to B14).
 
 use super::*;
-use crate::types::{Band, BarProfile, Brake, Duck, MidDip, Reverb, Window};
+use crate::types::{Band, BarProfile, Brake, Duck, Glide, HighsIn, MidDip, Reverb, Window};
 
 /// A plan and its worth; the higher wins.
 pub(super) struct Move {
@@ -24,6 +24,7 @@ pub(super) struct Pair<'a> {
 /// Worth of each move before what it costs, roughly how good it sounds when it fits: a blend over a beatless end
 /// above an effect handover, the marked effects (brake, reverb) below the plain ones so they come up only where they
 /// fit best or for variety.
+const LOOP_RAMP_WORTH: f64 = 2.4;
 const BEATLESS_WORTH: f64 = 2.0;
 const STOP_WORTH: f64 = 1.6;
 const HANDOFF_WORTH: f64 = 1.5;
@@ -43,6 +44,7 @@ pub(super) fn repeat_cost(kind: TransitionKind) -> f64 {
     match kind {
         TransitionKind::Brake | TransitionKind::ReverbWash => 2.0,
         TransitionKind::EchoOut | TransitionKind::FilterOut | TransitionKind::FilterRide => 0.6,
+        TransitionKind::LoopRamp => 0.8,
         TransitionKind::BeatlessBlend => 0.2,
         _ => 0.0,
     }
@@ -477,3 +479,107 @@ pub(super) fn dip_mids(m: &mut TransitionPlan, s: &AutoMixSettings) {
 
 const MID_DIP_DB: f32 = -6.0;
 const MID_DIP_HZ: f32 = 1_000.0;
+
+/// The loop tempo ramp (automix-software.md B8, BitChord's loop mix done the Ishizaki way): for tempos too far apart
+/// to stretch one to the other, the outgoing song loops its last clean bars (instrumental, steady, with drums) and,
+/// alone, glides at most [`RAMP_PCT_PER_BAR`] a bar to a tempo between the two, where neither is more than half the
+/// gap from its own; the incoming song comes in on a downbeat of the loop at that tempo, locked, over
+/// [`RAMP_BLEND_BARS`], the lows changing hands on a downbeat at the middle and the loop draining through a
+/// rising high-pass; after it, the incoming song eases back to its own tempo at [`EASE_PCT_PER_BEAT`].
+pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
+    let (a, b, s) = (p.a, p.b?, p.s);
+    if !grid_ok(a) || !grid_ok(b) || !s.keep_pitch || !s.beat_match || bar_beats(a) != bar_beats(b) {
+        return None;
+    }
+    // Two tempos in one octave, far enough apart that a stretch cannot meet them and near enough to glide.
+    let ratio = b.bpm / a.bpm;
+    let gap = (ratio - 1.0).abs() * 100.0;
+    if !(RAMP_MIN_GAP_PCT..=RAMP_MAX_GAP_PCT).contains(&gap) || camelot_dist(a, b).is_some_and(|d| d > 2) {
+        return None;
+    }
+    let meet = (a.bpm * b.bpm).sqrt();
+    let (to_a, to_b) = (meet / a.bpm, meet / b.bpm);
+    let (beat, bpb) = (60_000.0 / a.bpm, bar_beats(a));
+    let bar = bpb as f64 * beat;
+    // The latest clean loop of 4 bars after the last line, before the song leaves or turns quiet; else of 2, else 1
+    // (a shorter loop repeats more).
+    let ending = Ending::of(a, p.room.out_dur);
+    let quiet = (a.mixramp_end_ms > a.silence_start_ms).then_some(a.mixramp_end_ms as f64);
+    let end = quiet.map_or(ending.leave(0.0), |q| q.min(ending.leave(0.0)));
+    let last = a.beat_offset_ms + downbeat_before(end, a.beat_offset_ms, beat, bpb, a.downbeat_phase as i64) as f64 * beat;
+    let clean = |from: f64, bars: usize| {
+        (0..bars).all(|i| {
+            bar_at(&a.outro_bars, from + (i as f64 + 0.5) * bar).is_some_and(|x| x.voice < LOOP_VOICE && x.pulse >= KICK_PULSE && x.level_db >= LOOP_LEVEL_DB)
+        }) && !sings_after(a, from)
+    };
+    let (start, looped) = [4usize, 2, 1]
+        .into_iter()
+        .flat_map(|l| (l..=EXIT_BARS_BACK as usize + l).map(move |back| (last - back as f64 * bar, l)))
+        .find(|&(from, l)| from >= a.silence_start_ms as f64 && clean(from, l))?;
+    let loop_ms = looped as f64 * bar;
+    if ending.skipped(start + loop_ms) > MAX_SKIP_MS as f64 {
+        return None;
+    }
+    // The glide, in whole bars at the outgoing tempo; then the first downbeat of the loop after it.
+    let glide_bars = ((to_a - 1.0).abs() * 100.0 / RAMP_PCT_PER_BAR).ceil().max(2.0);
+    let glide_ms = glide_bars * bar;
+    let (music, at) = entry(Some(b), p.room.in_dur);
+    if at - music > MAX_SKIP_MS as f64 {
+        return None;
+    }
+    let mut m = blank(TransitionKind::LoopRamp, start.round() as i64, at.round() as i64, 0, String::new());
+    m.out_loop_ms = Some(loop_ms.round() as i64);
+    m.out_glide = Some(Glide { window: Window { start_ms: 0, end_ms: glide_ms.round() as i64 }, to: to_a });
+    let downbeat = (m.out_song_ms(glide_ms) / bar).ceil() * bar;
+    let delay = glide_ms + (downbeat - m.out_song_ms(glide_ms)) / to_a;
+    let bar_wall = bar / to_a;
+    let blend = RAMP_BLEND_BARS * bar_wall;
+    let dur = delay + blend;
+    if dur > p.room.max_len as f64 || (p.room.in_dur as f64) - at < 2.0 * dur {
+        return None;
+    }
+    m.duration_ms = dur.round() as i64;
+    m.in_delay_ms = delay.round() as i64;
+    (m.tempo_ratio, m.keep_pitch) = (to_b, true);
+    // Back to its own tempo after the mix, no faster than the ease.
+    let beats_back = ((to_b - 1.0).abs() * 100.0 / EASE_PCT_PER_BEAT).ceil();
+    (m.tempo_ramp_beats, m.tempo_ramp_ms) = (beats_back as i32, (beats_back * 60_000.0 / b.bpm).round() as i64);
+    m.fade_curve = FadeCurve::SineSquared;
+    let half = delay + 0.5 * blend;
+    (m.in_fade_start_ms, m.in_fade_end_ms) = (m.in_delay_ms, (half - bar_wall).round() as i64);
+    (m.out_fade_start_ms, m.out_fade_end_ms) = (half.round() as i64, m.duration_ms);
+    if s.bass_swap {
+        m.bass_swap = Some(BassSwap { at_ms: (half - 0.25 * beat / to_a).round() as i64, len_ms: (0.5 * beat / to_a).round() as i64, cut_hz: BASS_CUT_HZ });
+        m.highs_in = Some(HighsIn { at_ms: m.in_delay_ms, len_ms: (half - bar_wall - delay).max(0.0).round() as i64, db: RAMP_HIGHS_DB, hz: RAMP_HIGHS_HZ });
+    }
+    if s.filter_effects {
+        let drain = RAMP_DRAIN_BARS * bar_wall;
+        m.high_pass = Some(Sweep { start_ms: (dur - drain).round() as i64, end_ms: m.duration_ms, from_hz: RAMP_DRAIN_FROM_HZ, to_hz: RAMP_DRAIN_TO_HZ });
+    }
+    m.in_gain_db = loudness_trim(Some(a), Some(b), s);
+    m.reason = format!(
+        "loop ramp: {looped}-bar loop gliding {:.1} -> {:.1} BPM over {glide_bars:.0} bars, in locked for {RAMP_BLEND_BARS:.0}, back to {:.1} over {beats_back:.0} beats{}",
+        a.bpm,
+        meet,
+        b.bpm,
+        tail(p.why_not)
+    );
+    Some(Move { plan: m, worth: LOOP_RAMP_WORTH })
+}
+
+/// Tempo gaps a loop ramp crosses, percent; under the lower a stretch meets them.
+const RAMP_MIN_GAP_PCT: f64 = 8.0;
+const RAMP_MAX_GAP_PCT: f64 = 45.0;
+/// The outgoing glide's rate (DJs ride 2 to 3 % a bar; BitChord 2.5 BPM a bar), and the incoming ease back after
+/// (BitChord: below about 1 % a beat it reads as the groove, not the song changing speed).
+const RAMP_PCT_PER_BAR: f64 = 2.0;
+const EASE_PCT_PER_BEAT: f64 = 0.75;
+const RAMP_BLEND_BARS: f64 = 8.0;
+const RAMP_DRAIN_BARS: f64 = 2.0;
+const RAMP_DRAIN_FROM_HZ: f32 = 30.0;
+const RAMP_DRAIN_TO_HZ: f32 = 1_500.0;
+const RAMP_HIGHS_DB: f32 = -15.0;
+const RAMP_HIGHS_HZ: f32 = 3_000.0;
+/// A loopable bar: unsung, with its beat, and no quieter than this against the song.
+const LOOP_VOICE: f32 = 0.4;
+const LOOP_LEVEL_DB: f32 = -8.0;

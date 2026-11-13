@@ -514,7 +514,7 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
         candidates.extend(moves::stop(&pair));
         candidates.extend(moves::beatless_blend(&pair));
         if profile(s.style).handovers {
-            candidates.extend([moves::filter_ride(&pair), moves::echo_out(&pair), moves::filter_out(&pair), moves::brake(&pair), moves::reverb_wash(&pair)].into_iter().flatten());
+            candidates.extend([moves::loop_ramp(&pair), moves::filter_ride(&pair), moves::echo_out(&pair), moves::filter_out(&pair), moves::brake(&pair), moves::reverb_wash(&pair)].into_iter().flatten());
         }
     }
     let sung_both = verdict.is_some_and(|v| v.cause == VOCALS_OVERLAP);
@@ -1966,11 +1966,11 @@ mod tests {
         assert_eq!(smooth.kind, TransitionKind::MixRampFade, "{}", smooth.reason);
     }
 
-    /// Both songs carrying a kick at the join: the bass hand-off, a shorter ride whose outgoing song darkens only
-    /// after the lows have changed hands.
+    /// Both songs carrying a kick at the join, keys too far apart to loop together: the bass hand-off, a shorter ride
+    /// whose outgoing song darkens only after the lows have changed hands.
     #[test]
     fn two_kicks_hand_the_bass_off() {
-        let (a, b) = (profiled(track(128.0), band), profiled(track(170.0), band));
+        let (a, b) = (profiled(track(128.0), band), profiled(TrackAnalysis { key: camelot(6, false), ..track(170.0) }, band));
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
         assert!(p.kind == TransitionKind::FilterRide && p.reason.contains("bass hand-off"), "{}", p.reason);
         let (lp, swap) = (p.low_pass.expect(&p.reason), p.bass_swap.expect(&p.reason));
@@ -2003,12 +2003,13 @@ mod tests {
         }
     }
 
-    /// A loud outgoing song into an opening that hits brakes, after a ride; into a calmer one it washes out in a
-    /// reverb; a brake never twice in a row.
+    /// A loud outgoing song into an opening that hits (keys too far apart to loop together) brakes, after a ride;
+    /// into a calmer one it washes out in a reverb; a brake never twice in a row.
     #[test]
     fn marked_moves_where_they_fit() {
         let beat: f64 = 60_000.0 / 128.0;
-        let (a, hit) = (profiled(track(128.0), band), profiled(track(170.0), band));
+        let far = TrackAnalysis { key: camelot(6, false), ..track(170.0) };
+        let (a, hit) = (profiled(track(128.0), band), profiled(far.clone(), band));
         let p = plan(Some(&a), Some(&hit), 240_000, 240_000, &after(TransitionKind::FilterRide));
         assert_eq!(p.kind, TransitionKind::Brake, "{}", p.reason);
         let brake = p.brake.expect(&p.reason);
@@ -2016,11 +2017,41 @@ mod tests {
         assert!(p.in_delay_ms > brake.start_ms && p.in_delay_ms < brake.start_ms + brake.len_ms && p.in_fade_end_ms > p.in_delay_ms, "B bursts in under its last beat, not at once: {p:?}");
         assert_ne!(plan(Some(&a), Some(&hit), 240_000, 240_000, &after(TransitionKind::Brake)).kind, TransitionKind::Brake);
 
-        let calm = profiled(track(170.0), |_| BarProfile { level_db: -10.0, low_db: -20.0, pulse: 0.6, voice: 0.0, ..Default::default() });
+        let calm = profiled(far, |_| BarProfile { level_db: -10.0, low_db: -20.0, pulse: 0.6, voice: 0.0, ..Default::default() });
         let p = plan(Some(&a), Some(&calm), 240_000, 240_000, &after(TransitionKind::FilterRide));
         assert_eq!(p.kind, TransitionKind::ReverbWash, "{}", p.reason);
         let r = p.reverb.expect(&p.reason);
         assert!(r.send.end_ms <= p.out_fade_end_ms && p.in_delay_ms >= p.out_fade_start_ms && r.low_cut_hz >= 150.0, "{p:?}");
+    }
+
+    /// Tempos a third apart, both steady, with clean bars to loop: the outgoing song loops them and glides alone, two
+    /// percent a bar at most, to a tempo between the two; the incoming one comes in on a downbeat of the loop at that
+    /// tempo, locked; neither is more than half the gap from its own; after it the incoming one eases back. Not a
+    /// sung bar looped; not in Smooth.
+    #[test]
+    fn dj_loops_and_ramps_across_a_wide_tempo_gap() {
+        let (a, b) = (profiled(track(128.0), band), profiled(track(170.0), band));
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        assert_eq!(p.kind, TransitionKind::LoopRamp, "{}", p.reason);
+        check_skip(&p, &a, &b, 240_000);
+        let (bar, g) = (4.0 * 60_000.0 / 128.0, p.out_glide.expect(&p.reason));
+        let looped = p.out_loop_ms.expect(&p.reason) as f64 / bar;
+        assert!((looped - 4.0).abs() < 0.01, "four clean bars looped: {looped}");
+        assert!((g.to - 1.0).abs() * 100.0 / ((g.window.end_ms - g.window.start_ms) as f64 / bar) <= 2.0 + 1e-6, "{g:?}");
+        let at = p.out_song_ms(p.in_delay_ms as f64) / bar;
+        assert!((at - at.round()).abs() < 0.01 && p.in_delay_ms >= g.window.end_ms, "in on a downbeat of the loop after the glide: {at}");
+        assert!((128.0 * g.to - 170.0 * p.tempo_ratio).abs() < 0.05, "both at one tempo when it comes in: {p:?}");
+        let half_gap = ((170.0f64 / 128.0).sqrt() - 1.0) * 100.0 + 0.1;
+        assert!((g.to - 1.0).abs() * 100.0 <= half_gap && (p.tempo_ratio - 1.0).abs() * 100.0 <= half_gap, "{p:?}");
+        assert!(p.tempo_ramp_ms as f64 >= (p.tempo_ratio - 1.0).abs() * 100.0 / 0.75 * 60_000.0 / 170.0 - 1.0, "eased back: {p:?}");
+        let swap = p.bass_swap.expect(&p.reason);
+        assert!(swap.at_ms > p.in_fade_start_ms && swap.at_ms < p.out_fade_start_ms + 1, "{p:?}");
+
+        let sung = profiled(track(128.0), |i| BarProfile { voice: if i >= 16 { 1.0 } else { 0.0 }, ..band(i) });
+        let p = plan(Some(&TrackAnalysis { vocal_start_ms: 10_000, vocal_end_ms: 237_000, ..sung }), Some(&b), 240_000, 240_000, &dj());
+        assert_ne!(p.kind, TransitionKind::LoopRamp, "{}", p.reason);
+        let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
+        assert_ne!(smooth.kind, TransitionKind::LoopRamp, "{}", smooth.reason);
     }
 
     /// Where one end has no beat a blend runs long at any tempo, the beatless side carrying it, in both styles.
