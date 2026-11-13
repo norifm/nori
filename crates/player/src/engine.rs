@@ -77,7 +77,7 @@ impl Plan {
         self.mixer.out_loop_ms.unwrap_or(0) * 1000
     }
     fn stretching(&self) -> bool {
-        (self.tempo_ratio() - 1.0).abs() > 1e-4
+        (self.tempo_ratio() - 1.0).abs() > 1e-4 || self.mixer.in_rates.iter().any(|k| (k.speed - 1.0).abs() > 1e-4)
     }
 }
 
@@ -375,6 +375,8 @@ struct Flight {
 pub struct TransitionEngine {
     /// The output format; `None` before the first stream.
     out: Option<Format>,
+    /// The incoming stretcher's schedule as the mix starts, sized once so building it allocates nothing.
+    knots: Vec<(u64, f64)>,
     /// Applied to the output once what is queued has drained.
     pending_format: Option<Format>,
 
@@ -465,6 +467,7 @@ impl TransitionEngine {
     pub fn new() -> Self {
         TransitionEngine {
             out: None,
+            knots: Vec::with_capacity(crate::automix::stretch::MAX_KNOTS + 1),
             pending_format: None,
             current_id: None,
             playing_id: None,
@@ -1157,7 +1160,17 @@ impl TransitionEngine {
                 None => (p.duration_us(), p.ramp_us()),
             };
             let frames = |us: i64| (us * s_fmt.rate as i64 / 1_000_000).max(0) as u64;
-            s.configure(p.tempo_ratio() as f64, frames(glide_us - repeats_us - late), frames(ramp_us));
+            if m.in_rates.is_empty() {
+                s.configure(p.tempo_ratio() as f64, frames(glide_us - repeats_us - late), frames(ramp_us));
+            } else {
+                // The plan's knots in the stretcher's output frames, from where the incoming song starts.
+                let from_ms = (m.in_delay_ms as f64).max(late as f64 / 1000.0);
+                let at = |ms: f64| ((ms - from_ms).max(0.0) * s_fmt.rate as f64 / 1000.0).round() as u64;
+                self.knots.clear();
+                self.knots.push((0, m.in_ratio_at(from_ms)));
+                self.knots.extend(m.in_rates.iter().filter(|k| k.at_ms > from_ms).map(|k| (at(k.at_ms), k.speed)));
+                s.follow(&self.knots);
+            }
             self.flight.stretch = Some(Stretch { s, format: s_fmt });
             self.stretch_pace = p.tempo_ratio() as f64;
         }
@@ -2015,6 +2028,21 @@ mod tests {
         Plan { incoming_id: to.into(), mixer: t }
     }
 
+    /// Beat-locked rates rule the incoming tempo: rising to 1.1 and back over two seconds plays 2.1 s of the song,
+    /// after a half-second delay, and each song time maps back to the wall time it is heard at.
+    #[test]
+    fn rates_rule_the_incoming_time() {
+        let mut p = fade("b", 1_000_000);
+        p.mixer.in_delay_ms = 500;
+        p.mixer.in_rates = [(500.0, 1.0), (1500.0, 1.1), (2500.0, 1.0)].map(|(at_ms, speed)| crate::types::Rate { at_ms, speed }).to_vec();
+        let m = &p.mixer;
+        assert_eq!(m.in_played_ms(400.0), 0.0, "nothing before the delay");
+        assert!((m.in_played_ms(1500.0) - 1050.0).abs() < 1e-6 && (m.in_played_ms(2500.0) - 2100.0).abs() < 1e-6, "{}", m.in_played_ms(2500.0));
+        assert!((m.in_played_ms(3500.0) - 3100.0).abs() < 1e-6, "its own speed after the last knot");
+        assert!((m.in_ratio_at(1000.0) - 1.05).abs() < 1e-9);
+        assert!((m.wall_of_in_song(2100.0) - 2500.0).abs() < 0.01, "{}", m.wall_of_in_song(2100.0));
+    }
+
     #[test]
     fn plans_equal_when_sounding_same() {
         // The engine rebuilds an ending when its plan is not equal to the new one.
@@ -2244,6 +2272,37 @@ mod tests {
         assert!(pts.windows(2).all(|w| w[0] <= w[1]), "the clock never steps back: {pts:?}");
         let (last, at) = d.taken.last().expect("b played");
         assert!((at + FMT.us(last.len()) - 6_000_000).abs() < 2_000, "b ends at its own time: {at}");
+    }
+
+    /// The incoming song follows its rates (varispeed): 440 Hz at speed 1, 484 Hz over the second it plays at 1.1.
+    #[test]
+    fn the_incoming_song_follows_its_rates() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        let mut p = fade("b", 1_000_000);
+        p.mixer.keep_pitch = false;
+        p.mixer.in_rates = [(0.0, 1.0), (800.0, 1.0), (1000.0, 1.1), (2000.0, 1.1), (2200.0, 1.0)].map(|(at_ms, speed)| crate::types::Rate { at_ms, speed }).to_vec();
+        p.mixer.tempo_ratio = 1.0;
+        h.plans.insert("a".into(), p);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        feed(&mut e, &mut d, &mut h, &tone(0, 3.0), 0);
+        let passed = d.samples().len() / 2;
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+        let b: Vec<u8> = (0..4 * RATE as usize)
+            .flat_map(|i| {
+                let v = ((i as f64 * 440.0 * std::f64::consts::TAU / RATE as f64).sin() * 8000.0) as i16;
+                [v, v]
+            })
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        feed(&mut e, &mut d, &mut h, &b, 3_000_000);
+        let s: Vec<i16> = d.samples().iter().step_by(2).copied().collect();
+        let crossings = |from: f64, to: f64| {
+            let w = &s[passed + (from * RATE as f64) as usize..passed + (to * RATE as f64) as usize];
+            w.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count() as i64
+        };
+        assert!((crossings(0.2, 0.7) - 440).abs() <= 6, "its own speed first: {}", crossings(0.2, 0.7));
+        assert!((crossings(1.0, 2.0) - 968).abs() <= 8, "then 1.1: {}", crossings(1.0, 2.0));
     }
 
     /// The outgoing song alone glides to 5 % faster over the mix's second second (varispeed), and holds it: more of
