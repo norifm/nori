@@ -213,6 +213,48 @@ impl Span {
     }
 }
 
+/// What each deck's own processing (its sweeps, the duck, the mid dip, the held-back highs) leaves of it: its power
+/// before and after, smoothed, over the band the hold acts on. Two decks add up to more than one song only as far as
+/// each is heard.
+#[derive(Clone, Copy, Default)]
+struct Meter {
+    /// A high-pass at the bass swap's cut, when there is one: only the highs are held then.
+    band: Option<Coef>,
+    /// Outgoing before and after, incoming before and after.
+    state: [[f64; 2]; 4],
+    power: [f64; 4],
+    /// The smoothing's step per frame.
+    k: f64,
+}
+
+impl Meter {
+    fn new(rate: f64, cut: Option<f64>) -> Self {
+        Meter { band: cut.map(|hz| Coef::pass(rate, hz, false)), state: [[0.0; 2]; 4], power: [0.0; 4], k: 1.0 - (-1.0 / (METER_S * rate)).exp() }
+    }
+
+    /// Feeds one frame of one deck, before (`at` 0 outgoing, 2 incoming) or after (1, 3) its processing.
+    #[inline]
+    fn feed(&mut self, at: usize, x: &[f64]) {
+        let mono: f64 = x.iter().sum();
+        let y = match &self.band {
+            Some(c) => c.run(&mut self.state[at], mono),
+            None => mono,
+        };
+        self.power[at] += self.k * (y * y - self.power[at]);
+    }
+
+    /// The share of each deck's power heard, (outgoing, incoming); all of it while too quiet to tell.
+    fn shares(&self) -> (f64, f64) {
+        let share = |before: f64, after: f64| if before > METER_FLOOR { (after / before).min(1.0) } else { 1.0 };
+        (share(self.power[0], self.power[1]), share(self.power[2], self.power[3]))
+    }
+}
+
+/// How long the meter's power is smoothed over, s.
+const METER_S: f64 = 0.03;
+/// Below this power a deck is too quiet to measure.
+const METER_FLOOR: f64 = 1e-8;
+
 /// A low- or high-pass sweep on one deck, two cascaded Butterworth sections per channel.
 #[derive(Clone, Copy)]
 struct SweepFilter {
@@ -528,6 +570,8 @@ pub struct Mixer {
     brake_buf: Vec<f64>,
     /// The run of frames the fades are interpolated over; empty after a (re)start.
     fades: FadeRun,
+    /// Present while a deck is processed before the decks are summed.
+    meter: Option<Meter>,
 }
 
 impl Mixer {
@@ -571,6 +615,7 @@ impl Mixer {
             brake: None,
             brake_buf: Vec::new(),
             fades: FadeRun::default(),
+            meter: None,
         }
     }
 
@@ -652,6 +697,8 @@ impl Mixer {
             coef: Coef::band_pass(rate, d.hz as f64, VOX_Q),
             decks: [d.outgoing, d.incoming],
         });
+        let processed = [&self.high_pass, &self.low_pass, &self.in_high_pass, &self.in_low_pass].iter().any(|f| f.is_some()) || self.highs_in.is_some() || self.duck.is_some() || self.mid_dip.is_some();
+        self.meter = processed.then(|| Meter::new(rate, p.bass_swap.map(|_| cut)));
         self.send_ramp = frames(SEND_RAMP_MS).max(1);
         self.echo = p.echo.and_then(|e| {
             let delay = self.echo_delay(e.delay_ms)?;
@@ -759,11 +806,12 @@ impl Mixer {
     }
 
     /// The fade gains at frame `p`, and how much what both decks play together is held down to one song's
-    /// power: where both are up at once, two songs would otherwise play louder than either. Lows a bass
-    /// swap gives to one deck at a time are not held down.
+    /// power: where both are up at once, two songs would otherwise play louder than either, each as far as its own
+    /// processing leaves it heard. Lows a bass swap gives to one deck at a time are not held down.
     fn fades_at(&self, p: u64) -> Fades {
         let (out, inc) = (fade(self.curve, self.out_fade.progress(p), true), fade(self.curve, self.in_fade.progress(p), false));
-        let held = 1.0 / (out * out + inc * inc).sqrt().max(1.0);
+        let (heard_out, heard_in) = self.meter.as_ref().map_or((1.0, 1.0), Meter::shares);
+        let held = 1.0 / (out * out * heard_out + inc * inc * heard_in).sqrt().max(1.0);
         let (trim_out, trim_in) = trims(self.gap_db, p as f64 / self.len.max(1) as f64);
         // Beat-matched kicks land together and add up, so their lows change hands at equal gain. Other lows add in
         // power: they change hands at equal power, held to the power of one song under the fades.
@@ -860,6 +908,10 @@ impl Mixer {
         }
         let t = self.fades.t(p);
         let (g_out, g_in, held) = (self.fades.get(t, |f| f.out), self.fades.get(t, |f| f.inc), self.fades.get(t, |f| f.held));
+        if let Some(m) = self.meter.as_mut() {
+            m.feed(0, &o[..ch]);
+            m.feed(2, &i[..ch]);
+        }
         let (rate, entry) = (self.rate, self.sweep_entry);
         for f in [&mut self.high_pass, &mut self.low_pass].into_iter().flatten() {
             f.apply(rate, entry, p, &mut o[..ch]);
@@ -891,6 +943,10 @@ impl Mixer {
                     }
                 }
             }
+        }
+        if let Some(m) = self.meter.as_mut() {
+            m.feed(1, &o[..ch]);
+            m.feed(3, &i[..ch]);
         }
         // The lows go to one deck at a time, so only the highs are held to one song's power, by a shelf
         // that is no filter at all once nothing is held.
@@ -1366,18 +1422,35 @@ mod tests {
         p.in_high_pass = Some(Sweep { start_ms: 0, end_ms: 600, from_hz: 1_200.0, to_hz: 20.0 });
         let (hats, bass) = (sine(4_000.0, 48000), sine(60.0, 48000));
         let y = mix(&p, &hats, &bass);
-        // Both decks up hold one song's power.
+        // Both decks up hold one song's power, each as far as it is heard: once the outgoing highs are filtered
+        // away, the incoming bass plays at its own level.
         let full = 0.5 * std::f64::consts::FRAC_1_SQRT_2;
         let (early, late) = (&y[4800..7200], &y[43200..48000]);
         assert!(tone_level(early, 4_000.0) > 0.3 * full && tone_level(early, 60.0) < 0.01 * full, "the outgoing highs, no incoming bass");
-        assert!(tone_level(late, 4_000.0) < 0.01 * full && (tone_level(late, 60.0) / full - 1.0).abs() < 0.02, "the incoming bass, no outgoing highs");
+        let bass = tone_level(late, 60.0) / (full * std::f64::consts::SQRT_2);
+        assert!(tone_level(late, 4_000.0) < 0.01 * full && (bass - 1.0).abs() < 0.02, "the incoming bass at its own level ({bass:.3}), no outgoing highs");
         let zeros = vec![0f32; 48000];
         for (hz, incoming) in [(300.0, true), (700.0, true), (1_200.0, true), (2_500.0, true), (300.0, false), (1_000.0, false), (3_000.0, false), (6_000.0, false)] {
             let tone = sine(hz, 48000);
             let y = if incoming { mix(&p, &zeros, &tone) } else { mix(&p, &tone, &zeros) };
             let most = y.chunks(480).map(rms).fold(0.0, f64::max) / (rms(&tone) * std::f64::consts::FRAC_1_SQRT_2);
-            assert!(most < 1.01, "{hz} Hz on the {} deck rises to {most:.3}", if incoming { "incoming" } else { "outgoing" });
+            // The meter follows a filter's change some milliseconds late: at most 0.35 dB over, for as long.
+            assert!(most < 1.04, "{hz} Hz on the {} deck rises to {most:.3}", if incoming { "incoming" } else { "outgoing" });
         }
+    }
+
+    /// Both decks up are held to one song's power as far as each is heard: an incoming deck low-passed to its bass
+    /// barely adds to the outgoing song, so the outgoing song is barely held down.
+    #[test]
+    fn a_filtered_deck_counts_as_far_as_it_is_heard() {
+        let mut p = plan();
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (1000, 1000, 0, 0);
+        p.in_low_pass = Some(Sweep { start_ms: 0, end_ms: 1000, from_hz: 200.0, to_hz: 200.0 });
+        let x = noise(48000);
+        let rev: Vec<f32> = x.iter().rev().copied().collect();
+        let y = mix(&p, &x, &rev);
+        let level = rms(&y[9600..43200]) / rms(&x[9600..43200]);
+        assert!((20.0 * level.log10()).abs() < 0.3, "{:.2} dB against the outgoing song alone", 20.0 * level.log10());
     }
 
     #[test]
