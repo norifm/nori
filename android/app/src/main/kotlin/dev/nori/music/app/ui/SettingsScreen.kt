@@ -112,7 +112,7 @@ private fun ChipChoice(row: SettingRow.ChipChoice, divider: Boolean, onChange: (
         Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            ChipRow(row.options, { o -> o.value == row.chosen }) { o -> if (row.enabled && o.value != row.chosen) onChange(o.value) }
+            ChipRow(row.options.map { it.label }, { i -> row.options[i].value == row.chosen }) { i -> if (row.enabled && row.options[i].value != row.chosen) onChange(row.options[i].value) }
         }
         if (divider) Hairline(startIndent = GROUP_INSET)
     }
@@ -125,8 +125,8 @@ private fun Flags(row: SettingRow.Flags, divider: Boolean, onChange: (String) ->
         Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            ChipRow(row.options, { o -> dev.nori.music.ffi.settings.flagOn(row.value, o.value) }) { o ->
-                if (row.enabled) onChange(dev.nori.music.ffi.settings.flagToggled(row.value, o.value))
+            ChipRow(row.options.map { it.label }, { i -> dev.nori.music.ffi.settings.flagOn(row.value, row.options[i].value) }) { i ->
+                if (row.enabled) onChange(dev.nori.music.ffi.settings.flagToggled(row.value, row.options[i].value))
             }
         }
         if (divider) Hairline(startIndent = GROUP_INSET)
@@ -142,9 +142,9 @@ private val CHIP_TIGHT_PADDING = 10.dp
  * one line wrap onto more.
  */
 @Composable
-private fun ChipRow(options: List<dev.nori.music.app.vm.SettingOption>, lit: (dev.nori.music.app.vm.SettingOption) -> Boolean, onClick: (dev.nori.music.app.vm.SettingOption) -> Unit) {
+internal fun ChipRow(labels: List<String>, lit: (Int) -> Boolean, onClick: (Int) -> Unit) {
     androidx.compose.ui.layout.Layout(
-        { options.forEach { o -> Chip(o.label, lit(o), sidePadding = CHIP_TIGHT_PADDING) { onClick(o) } } },
+        { labels.forEachIndexed { i, l -> Chip(l, lit(i), sidePadding = CHIP_TIGHT_PADDING) { onClick(i) } } },
         Modifier.padding(top = 10.dp).fillMaxWidth(),
     ) { measurables, constraints ->
         val gap = 8.dp.roundToPx()

@@ -28,6 +28,12 @@ pub enum RowKind {
     Link,
     /// Any number of its options on, as pills; its value's bits are their places.
     Flags,
+    /// Opens a page of its own: the rows placed `on` its id.
+    Page,
+    /// A choice of two to four options drawn side by side.
+    Segments,
+    /// A bar between `min` and `max` for a value the plugin shows (`rows::show`), with its unit: a battery.
+    Meter,
 }
 
 /// One row of its page; `id` is its key in the plugin's strings.
@@ -50,11 +56,38 @@ pub struct Row {
     pub decimals: u8,
     /// A link row's address.
     pub url: Option<&'static str>,
+    /// The id of the page row it sits on; none for the plugin's own page.
+    pub page: Option<&'static str>,
+    /// A glyph before its label.
+    pub glyph: Option<Glyph>,
 }
 
 impl Row {
     pub const fn new(id: &'static str, kind: RowKind) -> Row {
-        Row { id, kind, options: &[], min: None, max: None, step: None, default: None, hint: None, unit: None, decimals: 0, url: None }
+        Row { id, kind, options: &[], min: None, max: None, step: None, default: None, hint: None, unit: None, decimals: 0, url: None, page: None, glyph: None }
+    }
+
+    /// A row opening a page of its own, for the rows placed [`Row::on`] it.
+    pub const fn page(id: &'static str) -> Row {
+        Row::new(id, RowKind::Page)
+    }
+
+    pub const fn segments(id: &'static str, options: &'static [&'static str], default: u32) -> Row {
+        Row { options, default: Some(default as f64), ..Row::new(id, RowKind::Segments) }
+    }
+
+    pub const fn meter(id: &'static str, min: f64, max: f64) -> Row {
+        Row { min: Some(min), max: Some(max), ..Row::new(id, RowKind::Meter) }
+    }
+
+    /// On the page that page row `page` opens.
+    pub const fn on(self, page: &'static str) -> Row {
+        Row { page: Some(page), ..self }
+    }
+
+    /// With `glyph` before its label.
+    pub const fn glyph(self, glyph: Glyph) -> Row {
+        Row { glyph: Some(glyph), ..self }
     }
 
     pub const fn level(id: &'static str, min: f64, max: f64, step: f64, default: f64) -> Row {
@@ -121,6 +154,18 @@ pub enum Glyph {
     Add,
     Play,
     Tune,
+    Headphones,
+    Speaker,
+    Battery,
+    Touch,
+    Timer,
+    Gauge,
+    Wave,
+    Bluetooth,
+    Gear,
+    Globe,
+    Key,
+    Person,
 }
 
 /// An action in nori's menus of `kinds`; `id` is its label's key in the plugin's strings.
@@ -402,6 +447,17 @@ const fn write<const N: usize>(m: &Manifest, version: &str, points: u32) -> Out<
     while k < m.assets.len() {
         let a = &m.assets[k];
         o = o.str(a.name).str(a.url).all(&a.size.to_le_bytes()).str(a.sha256);
+        k += 1;
+    }
+    // Each row's page and glyph (255 for none), in its order.
+    o = o.u16(m.rows.len());
+    k = 0;
+    while k < m.rows.len() {
+        let r = &m.rows[k];
+        o = o.opt_str(r.page).byte(match r.glyph {
+            Some(g) => g as u8,
+            None => u8::MAX,
+        });
         k += 1;
     }
     o

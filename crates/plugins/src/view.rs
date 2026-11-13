@@ -67,6 +67,10 @@ pub struct PluginRow {
     pub decimals: u8,
     /// A link row's address.
     pub url: Option<String>,
+    /// The id of the page row it sits on; none for the plugin's own page.
+    pub page: Option<String>,
+    /// A glyph before its label.
+    pub glyph: Option<crate::Glyph>,
 }
 
 impl PluginRow {
@@ -91,6 +95,22 @@ impl PluginRow {
 /// Option `at`'s bit; none past the 64 a value holds.
 pub(crate) fn bit(at: usize) -> u64 {
     1u64.checked_shl(at as u32).unwrap_or(0)
+}
+
+/// The rows of `rows` on `page` (a page row's id; none for the plugin's own page), in their order.
+pub fn page_rows<'a>(rows: &'a [PluginRow], page: Option<&'a str>) -> impl Iterator<Item = &'a PluginRow> {
+    rows.iter().filter(move |r| r.page.as_deref() == page)
+}
+
+/// `rows` for a client that draws one long page: the plugin's own rows, then each page's under a heading
+/// of its name (a section row in its place).
+pub fn one_page(rows: &[PluginRow]) -> Vec<PluginRow> {
+    let mut out: Vec<PluginRow> = page_rows(rows, None).filter(|r| r.kind != RowKind::Page).cloned().collect();
+    for p in page_rows(rows, None).filter(|r| r.kind == RowKind::Page) {
+        out.push(PluginRow { kind: RowKind::Section, ..p.clone() });
+        out.extend(page_rows(rows, Some(&p.id)).cloned());
+    }
+    out
 }
 
 /// Whether a device-controlling plugin's row of `kind` is a setting of the device, rather than about the
@@ -166,6 +186,8 @@ fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Va
                 unit: r.unit.as_deref().and_then(said),
                 decimals: r.decimals,
                 url: r.url.clone(),
+                page: r.page.clone(),
+                glyph: r.glyph,
             })
             .collect(),
     }
@@ -233,5 +255,22 @@ impl Plugins {
     /// Plugin `id`'s word `key` in `lang`.
     pub fn word(&self, id: String, key: String, lang: String) -> Option<String> {
         words(&self.folder(&id), &lang).remove(&key)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: &str, kind: RowKind, page: Option<&str>) -> PluginRow {
+        PluginRow { id: id.into(), kind, label: id.into(), options: Vec::new(), min: None, max: None, step: None, value: None, hint: None, unit: None, decimals: 0, url: None, page: page.map(Into::into), glyph: None }
+    }
+
+    #[test]
+    fn one_page_puts_each_page_under_its_heading_after_the_own_rows() {
+        let rows = [row("touch", RowKind::Page, None), row("hold", RowKind::Switch, Some("touch")), row("eq", RowKind::Choice, None), row("sound", RowKind::Page, None), row("bass", RowKind::Level, Some("sound"))];
+        let laid: Vec<_> = one_page(&rows).into_iter().map(|r| (r.id, r.kind)).collect();
+        let want = [("eq", RowKind::Choice), ("touch", RowKind::Section), ("hold", RowKind::Switch), ("sound", RowKind::Section), ("bass", RowKind::Level)];
+        assert_eq!(laid, want.map(|(id, k)| (id.to_string(), k)));
     }
 }

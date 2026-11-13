@@ -1,6 +1,6 @@
 // A plugin as the page holds it. `WebPlugin` is the core's `read_web_plugin`.
 
-export type RowKind = "Switch" | "Choice" | "Level" | "Secret" | "Text" | "Action" | "Status" | "Section" | "Note" | "Link" | "Flags";
+export type RowKind = "Switch" | "Choice" | "Level" | "Secret" | "Text" | "Action" | "Status" | "Section" | "Note" | "Link" | "Flags" | "Page" | "Segments" | "Meter";
 
 export type Row = {
   id: string;
@@ -16,6 +16,8 @@ export type Row = {
   unit: string | null;
   decimals: number;
   url: string | null;
+  /** The id of the page row it sits on; null for the plugin's own page. */
+  page: string | null;
 };
 
 export type WebPlugin = {
@@ -92,7 +94,7 @@ export type Code = { js: string; cores: Record<string, Uint8Array> };
 /** A row's value as the plugin API's `value`. */
 export function witValue(row: Row, v: Value) {
   if (row.kind === "Switch") return { tag: "switch", val: v !== 0 };
-  if (row.kind === "Choice") return { tag: "choice", val: Number(v) };
+  if (row.kind === "Choice" || row.kind === "Segments") return { tag: "choice", val: Number(v) };
   if (row.kind === "Level") return { tag: "level", val: Number(v) };
   return { tag: "text", val: String(v) };
 }

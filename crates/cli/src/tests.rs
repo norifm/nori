@@ -2177,7 +2177,7 @@ fn card(id: &str, name: &str, rows: Vec<nori_plugins::PluginRow>) -> nori_plugin
 }
 
 fn plugin_row(id: &str, kind: nori_plugins::RowKind, value: Option<nori_plugins::Value>) -> nori_plugins::PluginRow {
-    nori_plugins::PluginRow { id: id.into(), kind, label: format!("{kind:?} row"), options: Vec::new(), min: None, max: None, step: None, value, hint: None, unit: None, decimals: 0, url: None }
+    nori_plugins::PluginRow { id: id.into(), kind, label: format!("{kind:?} row"), options: Vec::new(), min: None, max: None, step: None, value, hint: None, unit: None, decimals: 0, url: None, page: None, glyph: None }
 }
 
 /// Selects a link of the page by its title and opens it.

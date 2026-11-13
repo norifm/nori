@@ -214,6 +214,8 @@ pub struct WebRow {
     pub unit: Option<String>,
     pub decimals: u8,
     pub url: Option<String>,
+    /// The id of the page row it sits on; none for the plugin's own page.
+    pub page: Option<String>,
 }
 
 /// A package as the web client installs it.
@@ -259,7 +261,7 @@ pub fn web_plugin(section: &Section, imports: &[String], strings: &str, proxied:
                 WebRow {
                     id: r.id.clone(),
                     kind,
-                    numeric: matches!(kind, "Switch" | "Choice" | "Level"),
+                    numeric: matches!(kind, "Switch" | "Choice" | "Level" | "Segments"),
                     label: said(&r.id).unwrap_or_else(|| r.id.clone()),
                     options: r.options.iter().map(|o| said(o).unwrap_or_else(|| o.clone())).collect(),
                     min: r.min,
@@ -270,6 +272,7 @@ pub fn web_plugin(section: &Section, imports: &[String], strings: &str, proxied:
                     unit: r.unit.as_deref().and_then(said),
                     decimals: r.decimals,
                     url: r.url.clone(),
+                    page: r.page.clone(),
                 }
             })
             .collect(),
@@ -409,9 +412,9 @@ mod tests {
             signin: vec![],
             overrides: vec![],
             rows: vec![
-                section::Row { id: "on".into(), kind: 0, options: vec![], min: None, max: None, step: None, default: Some(1.0), hint: None, unit: None, decimals: 0, url: None },
-                section::Row { id: "shape".into(), kind: 1, options: vec!["round".into(), "flat".into()], min: None, max: None, step: None, default: None, hint: Some("shape_hint".into()), unit: None, decimals: 0, url: None },
-                section::Row { id: "about".into(), kind: 8, options: vec![], min: None, max: None, step: None, default: None, hint: None, unit: None, decimals: 0, url: None },
+                section::Row { id: "on".into(), kind: 0, options: vec![], min: None, max: None, step: None, default: Some(1.0), hint: None, unit: None, decimals: 0, url: None, page: None, glyph: None },
+                section::Row { id: "shape".into(), kind: 1, options: vec!["round".into(), "flat".into()], min: None, max: None, step: None, default: None, hint: Some("shape_hint".into()), unit: None, decimals: 0, url: None, page: None, glyph: None },
+                section::Row { id: "about".into(), kind: 8, options: vec![], min: None, max: None, step: None, default: None, hint: None, unit: None, decimals: 0, url: None, page: None, glyph: None },
             ],
             menu: vec![],
             places: vec![],

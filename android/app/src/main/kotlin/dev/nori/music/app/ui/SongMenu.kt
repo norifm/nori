@@ -239,24 +239,9 @@ private fun PluginItems(actions: ActionsViewModel, kind: dev.nori.music.ffi.plug
     val entries = menus[kind].orEmpty()
     if (entries.isNotEmpty()) SheetGroup {
         entries.forEachIndexed { i, e ->
-            Item(e.label, glyphIcon(e.glyph), divider = i < entries.lastIndex) { actions.runPluginMenu(e, items); onDismiss() }
+            Item(e.label, pluginGlyph(e.glyph), divider = i < entries.lastIndex) { actions.runPluginMenu(e, items); onDismiss() }
         }
     }
-}
-
-/** A plugin's glyph as the app's own icon. */
-@Composable
-private fun glyphIcon(g: dev.nori.music.ffi.plugins.Glyph): ImageVector = when (g) {
-    dev.nori.music.ffi.plugins.Glyph.SPARKLE -> Iconoir.Sparks
-    dev.nori.music.ffi.plugins.Glyph.INFO -> Iconoir.InfoCircle
-    dev.nori.music.ffi.plugins.Glyph.SHARE -> Iconoir.ShareIos
-    dev.nori.music.ffi.plugins.Glyph.LINK -> Iconoir.ShareAndroid
-    dev.nori.music.ffi.plugins.Glyph.SEARCH -> Iconoir.Search
-    dev.nori.music.ffi.plugins.Glyph.HEART -> Kanji.Seal
-    dev.nori.music.ffi.plugins.Glyph.DOWNLOAD -> Iconoir.Download
-    dev.nori.music.ffi.plugins.Glyph.ADD -> Iconoir.PlusCircle
-    dev.nori.music.ffi.plugins.Glyph.PLAY -> Iconoir.Play
-    dev.nori.music.ffi.plugins.Glyph.TUNE -> Iconoir.ControlSlider
 }
 
 /**

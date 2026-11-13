@@ -9,7 +9,7 @@ pub const API: u32 = 5;
 pub const POINTS: [&str; 11] = ["lifecycle", "hooks", "provider", "sound-stage", "preparation", "automix", "deciders", "slots", "device-control", "lyrics", "scrobbler"];
 
 /// A row's kinds, in the order the SDK writes them.
-pub const ROW_KINDS: [&str; 10] = ["Switch", "Choice", "Level", "Secret", "Text", "Action", "Status", "Section", "Note", "Link"];
+pub const ROW_KINDS: [&str; 14] = ["Switch", "Choice", "Level", "Secret", "Text", "Action", "Status", "Section", "Note", "Link", "Flags", "Page", "Segments", "Meter"];
 
 /// A row as written.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +26,10 @@ pub struct Row {
     pub unit: Option<String>,
     pub decimals: u8,
     pub url: Option<String>,
+    /// The id of the page row it sits on.
+    pub page: Option<String>,
+    /// A glyph before its label, as the menu's glyphs count.
+    pub glyph: Option<u8>,
 }
 
 /// A menu action as written: its id, glyph and the kinds it shows on.
@@ -134,7 +138,7 @@ impl Section {
         let stage = i.byte()?;
         (stage <= 2).then_some(())?;
         let (net, signin, overrides) = (i.strs()?, i.strs()?, i.strs()?);
-        let rows = (0..i.u16()?)
+        let mut rows = (0..i.u16()?)
             .map(|_| {
                 Some(Row {
                     id: i.str()?,
@@ -148,6 +152,8 @@ impl Section {
                     unit: i.opt_str()?,
                     decimals: i.byte()?,
                     url: i.opt_str()?,
+                    page: None,
+                    glyph: None,
                 })
             })
             .collect::<Option<Vec<_>>>()?;
@@ -172,6 +178,13 @@ impl Section {
                 assets: (0..i.u16()?).map(|_| Some(Asset { name: i.str()?, url: i.str()?, size: u64::from_le_bytes(i.take(8)?.try_into().ok()?), sha256: i.str()? })).collect::<Option<Vec<_>>>()?,
             })
         };
+        // Each row's page and glyph, from the SDK of API 5 on.
+        if !i.0.is_empty() {
+            (i.u16()? as usize == rows.len()).then_some(())?;
+            for r in &mut rows {
+                (r.page, r.glyph) = (i.opt_str()?, Some(i.byte()?).filter(|g| *g != u8::MAX));
+            }
+        }
         Some(Section { id, version, api, bits, stage, net, signin, overrides, rows, menu, places, devices, later })
     }
 
