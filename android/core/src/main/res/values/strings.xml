@@ -6,8 +6,9 @@
     <string name="notice_waiting">Waiting for a network</string>
     <string name="notice_downloading_named">Downloading “%1$s”</string>
     <string name="notice_downloading_one">Downloading 1 song</string>
-    <string name="notice_downloading_of">Downloading: %1$d of %2$d</string>
-    <string name="notice_album">“%1$s”</string>
+    <string name="notice_downloading_of">Downloading %1$d of %2$d</string>
+    <string name="notice_chip_of">%1$d of %2$d</string>
+    <string name="notice_chip_percent">%1$d %%</string>
     <string name="notice_complete">Downloads complete</string>
     <string name="notice_cancel">Cancel</string>
 

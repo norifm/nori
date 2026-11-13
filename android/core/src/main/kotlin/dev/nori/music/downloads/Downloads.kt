@@ -507,7 +507,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
             NoticeChange.BATCH_OVER -> processingNow()?.let { return workingNotification(it, DOWNLOAD_NOTIFICATION, SystemClock.elapsedRealtime()) } ?: return complete ?: NotificationCompat.Builder(context, CHANNEL)
                 // Nothing left: the service is on its way out, and the batch's own summary (its own id,
                 // so stopping the service does not take it) says how it went. No bar here.
-                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setSmallIcon(R.drawable.ic_stat_done)
                 .setContentTitle(context.getString(R.string.notice_complete))
                 .setContentIntent(openDownloads(context))
                 .setAutoCancel(true)
@@ -516,54 +516,100 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
                 .setShowWhen(false)
                 .build().also { complete = it }
         }
-        val names = DownloadsJni.noticeFacts(DownloadsJni.h, noticeFacts) ?: "\n"
-        val cut = names.indexOf('\n')
+        val (current, album, artist, cover) = (DownloadsJni.noticeFacts(DownloadsJni.h, noticeFacts) ?: "\n\n\n").split('\n', limit = 4)
         val kind = NoticeKind.entries[noticeFacts[0].toInt()]
-        val (title, text) = noticeWords(context.resources, kind, names.substring(0, cut), names.substring(cut + 1), noticeFacts)
+        val res = context.resources
+        val words = noticeWords(res, kind, current, album, artist, noticeFacts)
         val permille = noticeFacts[3].toInt()
-        lastProgress?.let { if (title == lastTitle && text == lastText && permille == lastPermille) return it }
-        lastTitle = title; lastText = text; lastPermille = permille
-        return NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(title)
-            .setContentText(text.ifEmpty { null })
-            .setProgress(1000, permille, false)
-            .setContentIntent(openDownloads(context))
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, context.getString(R.string.notice_cancel), cancelIntent(context))
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setSilent(true)
-            .setShowWhen(false)
-            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+        val picture = cover(cover)
+        lastProgress?.let { if (words == lastWords && permille == lastPermille && picture === lastPicture) return it }
+        lastWords = words; lastPermille = permille; lastPicture = picture
+        downloadedThisBatch = true
+        val chip = if (kind == NoticeKind.MANY) res.getString(R.string.notice_chip_of, noticeFacts[1].toInt(), noticeFacts[2].toInt()) else percent(permille)
+        return working(context, R.drawable.ic_stat_download, words, picture)
+            .stages(1, 0, permille, chip)
+            .addAction(R.drawable.ic_stat_cancel, res.getString(R.string.notice_cancel), cancelIntent(context))
             .build().also { lastProgress = it }
     }
 
     private var lastProgress: Notification? = null
-    private var lastTitle = ""
-    private var lastText = ""
+    private var lastWords: NoticeWords? = null
     private var lastPermille = -1
+    private var lastPicture: android.graphics.Bitmap? = null
+    /** The batch downloaded something: the work on its saved songs is drawn as its second stage. Main thread. */
+    private var downloadedThisBatch = false
+
+    /** The cover with id [id] for the notification, once loaded; asked for when it changes. Main thread. */
+    private fun cover(id: String): android.graphics.Bitmap? {
+        if (id.isEmpty()) return null
+        val shown = noticeCover
+        if (shown?.first == id) return shown.second
+        noticeCover = id to null
+        val px = context.resources.getDimensionPixelSize(android.R.dimen.notification_large_icon_width)
+        val url = runCatching { Nori.get(context).library.coverUrl(id, px) }.getOrNull() ?: return null
+        dev.nori.music.data.CoverLoader.get(context).load(url, px, px) { b ->
+            // A notification takes software pixels; it is drawn again when the next second's facts come.
+            if (noticeCover?.first == id) noticeCover = id to b?.let { if (it.config == android.graphics.Bitmap.Config.HARDWARE) it.copy(android.graphics.Bitmap.Config.ARGB_8888, false) else it }
+        }
+        return null
+    }
+    private var noticeCover: Pair<String, android.graphics.Bitmap?>? = null
     /** The notification's facts, `[kind, position, total, permille, speed_bps, eta_s]`. */
     private val noticeFacts = LongArray(6)
     private var complete: Notification? = null
 
     /**
-     * The notification's title ([kind], the song in flight [current]) and text from the core's facts: the
-     * song in flight, the batch's album, how fast and how long, each only when there is one.
+     * The notification's words from the core's facts ([kind], the song in flight [current] by [artist], the
+     * batch's [album]): what downloads as the title, the song and where it is in the batch below, and how
+     * long and how fast in the header, each only when there is one.
      */
-    private fun noticeWords(res: Resources, kind: NoticeKind, current: String, album: String, facts: LongArray): Pair<String, String> {
-        val title = when (kind) {
-            NoticeKind.WAITING -> res.getString(R.string.notice_waiting)
-            NoticeKind.ONE_NAMED -> res.getString(R.string.notice_downloading_named, current)
-            NoticeKind.ONE -> res.getString(R.string.notice_downloading_one)
-            NoticeKind.MANY -> res.getString(R.string.notice_downloading_of, facts[1].toInt(), facts[2].toInt())
+    private fun noticeWords(res: Resources, kind: NoticeKind, current: String, album: String, artist: String, facts: LongArray): NoticeWords {
+        val (position, total) = facts[1].toInt() to facts[2].toInt()
+        val title = when {
+            kind == NoticeKind.WAITING -> res.getString(R.string.notice_waiting)
+            kind == NoticeKind.ONE_NAMED -> res.getString(R.string.notice_downloading_named, current)
+            kind == NoticeKind.ONE -> res.getString(R.string.notice_downloading_one)
+            album.isNotEmpty() -> res.getString(R.string.notice_downloading_named, album)
+            else -> res.getString(R.string.notice_downloading_of, position, total)
         }
         val text = StringBuilder()
-        if (current.isNotEmpty()) text.part { it.append(current) }
-        if (album.isNotEmpty()) text.part { it.append(res.getString(R.string.notice_album, album)) }
-        text.part { it.append(Fmt.speed(facts[4])) }
-        text.part { appendEta(res, it, facts[5]) }
-        return title to text.toString()
+        if (kind == NoticeKind.WAITING || album.isNotEmpty() && kind == NoticeKind.MANY) text.part { it.append(res.getString(R.string.notice_chip_of, position, total)) }
+        if (kind != NoticeKind.ONE_NAMED && current.isNotEmpty()) text.part { it.append(current) }
+        if (artist.isNotEmpty()) text.part { it.append(artist) }
+        val header = StringBuilder()
+        header.part { appendEta(res, it, facts[5]) }
+        if (kind != NoticeKind.WAITING) header.part { it.append(Fmt.speed(facts[4])) }
+        return NoticeWords(title, text.toString(), header.toString())
     }
+
+    /** "42 %": the bar's share as the status bar's chip says it. */
+    private fun percent(permille: Int) = context.getString(R.string.notice_chip_percent, permille / 10)
+
+    /** A notification of work under way: [icon] in the status bar, [words], and the [picture] of what it works on. */
+    private fun working(context: Context, icon: Int, words: NoticeWords, picture: android.graphics.Bitmap?) =
+        NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(icon)
+            .setContentTitle(words.title)
+            .setContentText(words.text.ifEmpty { null })
+            .setSubText(words.header.ifEmpty { null })
+            .setLargeIcon(picture)
+            .setContentIntent(openDownloads(context))
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setShowWhen(false)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+
+    /**
+     * The bar: [count] stages of equal length, [stage] of them over and the next [permille] done. On Android 16 a
+     * Live Update, its [chip] in the status bar; before it, a plain bar over the whole.
+     */
+    private fun NotificationCompat.Builder.stages(count: Int, stage: Int, permille: Int, chip: String): NotificationCompat.Builder =
+        setStyle(
+            NotificationCompat.ProgressStyle()
+                .setProgressSegments(List(count) { NotificationCompat.ProgressStyle.Segment(1000) })
+                .setProgress(stage * 1000 + permille.coerceIn(0, 1000)),
+        ).setRequestPromotedOngoing(true).setShortCriticalText(chip)
 
     /**
      * What the downloads say once their bytes are in, asked again as the marks change. While saved songs are
@@ -603,6 +649,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         val wasWorking = summaryWaits
         summaryWaits = false
         working = null
+        downloadedThisBatch = false
         // Nothing is processing: the service goes, and its notification with it.
         worker?.release()
         val facts = IntArray(4)
@@ -630,7 +677,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
             .setAutoCancel(true)
             .setSilent(true)
             .setOnlyAlertOnce(true)
-            .setSmallIcon(if (failed) android.R.drawable.stat_notify_error else android.R.drawable.stat_sys_download_done)
+            .setSmallIcon(if (failed) R.drawable.ic_stat_failed else R.drawable.ic_stat_done)
             .setContentText(text)
         if (!failed) b.setTimeoutAfter(RESULT_TIMEOUT_MS)
         runCatching { nm.notify(DOWNLOAD_RESULT_NOTIFICATION, b.build()) }
@@ -652,21 +699,15 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         val text = StringBuilder()
         if (p.lyrics > 0 && p.analysing > 0) text.part { it.append(res.getQuantityString(R.plurals.processing_analysing, p.analysing, p.analysing)) }
         if ((p.lyrics > 0 || p.analysing > 0) && p.beats > 0) text.part { it.append(res.getQuantityString(R.plurals.processing_beats, p.beats, p.beats)) }
-        text.part { appendEta(res, it, p.etaS) }
-        val words = title + "\n" + text + "\n" + p.permille
-        working?.let { if (words == it.words) { working = Working(id, now, words, it.notification); return it.notification } }
-        return NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(title)
-            .setContentText(text.ifEmpty { null })
-            .setProgress(1000, p.permille, false)
-            .setContentIntent(openDownloads(context))
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setSilent(true)
-            .setShowWhen(false)
-            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            .build().also { working = Working(id, now, words, it) }
+        val header = StringBuilder().also { h -> h.part { appendEta(res, it, p.etaS) } }
+        val words = NoticeWords(title, text.toString(), header.toString())
+        val key = "$words\n${p.permille}\n$downloadedThisBatch"
+        working?.let { if (key == it.words) { working = Working(id, now, key, it.notification); return it.notification } }
+        // After a batch's downloads the bar keeps them as its first stage, done.
+        val stages = if (downloadedThisBatch) 2 else 1
+        return working(context, if (p.lyrics > 0) R.drawable.ic_stat_lyrics else R.drawable.ic_stat_measure, words, null)
+            .stages(stages, stages - 1, p.permille, percent(p.permille))
+            .build().also { working = Working(id, now, key, it) }
     }
 
     /** Saved songs are processing and the notification says so: [summarise] again as the marks change. Main thread. */
@@ -729,6 +770,9 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     }
 }
 
+/** A work notification's words: its title, the line under it and the header's (how long, how fast). */
+private data class NoticeWords(val title: String, val text: String, val header: String)
+
 /** The core's side of the downloads; see crates/transfers/src/transfers.rs. */
 internal object DownloadsJni {
     init { System.loadLibrary("norimusic") }
@@ -775,7 +819,8 @@ internal object DownloadsJni {
     @JvmStatic @CriticalNative external fun notice(h: Long, listed: Int, waiting: Int, now: Long): Int
     /**
      * The notification's facts, `[kind, position, total, permille, speed_bps, eta_s]` into [out], and the
-     * song in flight's title and the batch's album as "title\nalbum": one crossing for all of it.
+     * song in flight's title, the batch's album, the song's artist and cover id as "title\nalbum\nartist\ncover":
+     * one crossing for all of it.
      */
     @JvmStatic @FastNative external fun noticeFacts(h: Long, out: LongArray): String?
     /**

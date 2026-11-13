@@ -97,7 +97,7 @@ extern "system" fn notice(h: jlong, listed: jint, waiting: jint, now: jlong) -> 
 }
 
 /// The notification's facts: `out` gets `[kind, position, total, permille, speed_bps, eta_s]` (kind: the
-/// `NoticeKind` ordinal); returns "title\nalbum".
+/// `NoticeKind` ordinal); returns "title\nalbum\nartist\ncover id".
 extern "system" fn notice_facts(env: JNIEnv, _: JClass, h: jlong, out: JLongArray) -> jstring {
     // Copied out first: JNI calls under the tracker's lock can stall a collection that waits on `note`.
     let words = |n: &Notice| {
@@ -108,7 +108,7 @@ extern "system" fn notice_facts(env: JNIEnv, _: JClass, h: jlong, out: JLongArra
             NoticeKind::Many => 3,
         };
         let facts = [kind, n.position as jlong, n.total as jlong, n.permille as jlong, n.speed_bps, n.eta_s];
-        (facts, format!("{}\n{}", n.current, n.label))
+        (facts, format!("{}\n{}\n{}\n{}", n.current, n.label, n.artist, n.cover))
     };
     let (facts, names) = with(h, |t| words(t.notice_facts())).unwrap_or_else(|| words(&Notice::default()));
     if env.set_long_array_region(&out, 0, &facts).is_err() {
