@@ -160,7 +160,7 @@ mod tests {
     #[async_trait::async_trait]
     impl Provider for Coded {
         fn info(&self) -> ProviderInfo {
-            ProviderInfo { kind: ServerKind::default(), fields: Vec::new(), sign_in: vec![SignIn::Code] }
+            ProviderInfo { kind: ServerKind::default(), fields: Vec::new(), sign_in: vec![SignIn::Code], identities: None }
         }
         fn ready(&self, _: &SavedServer) -> bool {
             true

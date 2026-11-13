@@ -277,8 +277,14 @@ class Nori private constructor(private val context: Context) {
     }
 
     /** A profile's [icon] chosen: only what its circle shows changes. */
-    fun setProfileIcon(profile: SavedServer, icon: dev.nori.music.ffi.settings.ProfileIcon) {
-        settings.update { p -> p.withServers(dev.nori.music.ffi.settings.serversUpdated(p.serverList(), profile.copy(icon = icon))) }
+    fun setProfileIcon(profile: SavedServer, icon: dev.nori.music.ffi.settings.ProfileIcon) = setProfileLook(profile.copy(icon = icon))
+
+    /** A profile renamed; blank, it is called after its provider again. */
+    fun renameProfile(profile: SavedServer, name: String) = setProfileLook(profile.copy(name = name.trim()))
+
+    /** [profile] saved with nothing its connection reads changed, so nothing reconnects. */
+    private fun setProfileLook(profile: SavedServer) {
+        settings.update { p -> p.withServers(dev.nori.music.ffi.settings.serversUpdated(p.serverList(), profile)) }
     }
 
     fun removeServer(id: String) {
@@ -306,7 +312,10 @@ class Nori private constructor(private val context: Context) {
 
     /** How a sign-in went, whichever way it went (a page, pasting, a code). Main thread. */
     fun signedIn(r: dev.nori.music.ffi.SignInResult) {
-        if (r is dev.nori.music.ffi.SignInResult.SignedIn) settings.value.server?.let { updateServer(it.copy(user = r.name)) }
+        if (r is dev.nori.music.ffi.SignInResult.SignedIn) settings.value.server?.let {
+            updateServer(it.copy(user = r.name))
+            pluginScope.launch { keepAccountPicture() }
+        }
     }
 
     /**
@@ -325,10 +334,29 @@ class Nori private constructor(private val context: Context) {
     /** Signs the profile in use's account out here. Main thread. */
     fun signOut() {
         client.signOut()
-        settings.value.server?.let { updateServer(it.copy(user = "")) }
+        settings.value.server?.let { updateServer(it.copy(user = "", picture = null)) }
+    }
+
+    /** Keeps the picture of the account as it acts now on the profile in use, for its circle (the core's `Client::account_picture`). */
+    suspend fun keepAccountPicture() {
+        val id = settings.value.activeServerId
+        val picture = withContext(Dispatchers.IO) { client.accountPicture() }
+        withContext(Dispatchers.Main) {
+            settings.value.server?.takeIf { it.id == id && it.picture != picture }?.let { setProfileLook(it.copy(picture = picture)) }
+        }
     }
 
     suspend fun account(): dev.nori.music.ffi.AccountState = withContext(Dispatchers.IO) { client.account() }
+
+    /** Those the signed-in account may act as, the account's own first (the core's `Client::identities`). */
+    suspend fun identities(): List<dev.nori.music.ffi.Identity> = withContext(Dispatchers.IO) { lifted { client.identities() } }
+
+    /** Acts as [identities]' entry [index] from now on: the library's lists and hearts are read again as its. */
+    suspend fun chooseIdentity(index: Int) {
+        withContext(Dispatchers.IO) { lifted { client.chooseIdentity(index.toUInt()) } }
+        library.onAccountChanged()
+        keepAccountPicture()
+    }
 
     /**
      * What to show about the account now (the core's `Client::sign_in_due`): [added] says how a profile

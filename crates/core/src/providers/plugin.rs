@@ -12,7 +12,7 @@ use nori_plugins::{CallResult, Plugins, Store, Worker};
 use parking_lot::RwLock;
 
 use super::code::{CodeCheck, SignInCode, StartedCode};
-use super::{resolved_song, resolved_stream, sized, AccountState, Answer, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
+use super::{resolved_song, resolved_stream, sized, AccountState, Answer, FieldSpec, FormField, Identity, IdentityKind, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
 use crate::browse::{AlbumSort, LibrarySection, ProfileRules, SettingsPart};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
@@ -247,7 +247,7 @@ impl Provider for PluginProvider {
         }
         match self.ask_info() {
             Some(info) => self.info.get_or_init(|| info).clone(),
-            None => ProviderInfo { kind: self.kind(), fields: Vec::new(), sign_in: Vec::new() },
+            None => ProviderInfo { kind: self.kind(), fields: Vec::new(), sign_in: Vec::new(), identities: None },
         }
     }
 
@@ -360,6 +360,23 @@ impl Provider for PluginProvider {
     fn stop_reminding(&self, _client: &Client) {
         self.worker.post(|s, x| x.nori_plugin_provider().call_stop_reminding(s));
     }
+
+    async fn account_picture(&self, _client: &Client) -> Option<String> {
+        self.worker.call(|s, x| x.nori_plugin_provider().call_account_picture(s)).await.flatten()
+    }
+
+    async fn identities(&self, client: &Client) -> NetResult<Vec<Identity>> {
+        let said = self.worker.call(|s, x| x.nori_plugin_provider().call_identities(s)).await.ok_or_else(stopped)?;
+        let said = self.heard(client, said)?;
+        Ok(said.into_iter().map(|i| Identity { name: i.name, detail: i.detail, picture: i.picture, chosen: i.chosen }).collect())
+    }
+
+    async fn choose_identity(&self, client: &Client, index: u32) -> NetResult<()> {
+        let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_choose_identity(s, index)).await.ok_or_else(stopped)?;
+        self.heard(client, said)?;
+        client.core.set_rules(self.ask_rules(&self.open.read().clone(), false));
+        Ok(())
+    }
 }
 
 impl PluginProvider {
@@ -394,7 +411,7 @@ impl PluginProvider {
     /// Its form and sign-in as it says; None when it didn't answer. A provider saying nothing asks nothing.
     fn ask_info(&self) -> Option<ProviderInfo> {
         let said = self.now(|s, x| x.nori_plugin_provider().call_info(s))?;
-        let said = said.unwrap_or(w::ProviderInfo { fields: Vec::new(), sign_in: Vec::new() });
+        let said = said.unwrap_or(w::ProviderInfo { fields: Vec::new(), sign_in: Vec::new(), identities: None });
         let field = |f: w::Field| match f {
             w::Field::Name => FormField::Name,
             w::Field::Address => FormField::Address,
@@ -412,6 +429,9 @@ impl PluginProvider {
                 w::SignInWay::Paste => SignIn::Paste,
                 w::SignInWay::Code => SignIn::Code,
             }).collect(),
+            identities: said.identities.map(|k| match k {
+                w::IdentityKind::Channel => IdentityKind::Channel,
+            }),
         })
     }
 }

@@ -57,6 +57,8 @@ private const val CACHE_LIMIT = 32u
  */
 data class AccountUi(
     val account: dev.nori.music.ffi.AccountState? = null,
+    /** Those the signed-in account may act as, when its provider has them; empty until read. */
+    val identities: List<dev.nori.music.ffi.Identity> = emptyList(),
     val flow: dev.nori.music.ffi.SignInFlow = dev.nori.music.ffi.SignInFlow(dev.nori.music.ffi.SignInShown.Closed, dev.nori.music.ffi.SignInAttempt.Idle),
 ) {
     val busy: Boolean get() = flow.attempt == dev.nori.music.ffi.SignInAttempt.Busy
@@ -502,11 +504,15 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     // Each time the open profile's rules change (it opened, or its account changed under it), a session the
-    // provider ended offers to sign in again, until told not to, and closes once it is back (the core's `sign_in_due`).
+    // provider ended offers to sign in again, until told not to, and closes once it is back (the core's `sign_in_due`);
+    // the profile keeps the account's picture as it is now.
     init {
         viewModelScope.launch {
             nori.reportedRules.collect { reported ->
-                if (reported != null) nori.signInDue(null)?.let(::signInOn)
+                if (reported != null) {
+                    nori.signInDue(null)?.let(::signInOn)
+                    nori.keepAccountPicture()
+                }
             }
         }
     }
@@ -518,7 +524,26 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     fun lookAtAccount() {
-        viewModelScope.launch { _account.update { it.copy(account = runCatching { nori.account() }.getOrNull()) } }
+        viewModelScope.launch {
+            val account = runCatching { nori.account() }.getOrNull()
+            _account.update { it.copy(account = account) }
+            if (account == dev.nori.music.ffi.AccountState.SIGNED_IN) readIdentities()
+        }
+    }
+
+    private suspend fun readIdentities() {
+        val identities = runCatching { nori.identities() }.getOrDefault(emptyList())
+        _account.update { it.copy(identities = identities) }
+    }
+
+    /** The account acts as [identities]' entry [index] from now on. */
+    fun chooseIdentity(index: Int) {
+        // Chosen at once on the page; the provider's list says so once it has switched.
+        _account.update { a -> a.copy(identities = a.identities.mapIndexed { i, id -> id.copy(chosen = i == index) }) }
+        viewModelScope.launch {
+            runCatching { nori.chooseIdentity(index) }
+            readIdentities()
+        }
     }
 
     /** Signs the profile in use in with [answer]: a sign-in page's cookies, or what was pasted. */
@@ -528,6 +553,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             val r = nori.signIn(answer)
             val account = nori.account()
             _account.update { it.copy(account = account, flow = dev.nori.music.ffi.signInFlowOn(it.flow, dev.nori.music.ffi.SignInEvent.Answered(r)).flow) }
+            if (account == dev.nori.music.ffi.AccountState.SIGNED_IN) readIdentities()
         }
     }
 
@@ -602,6 +628,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun switchServer(profile: SavedServer) = nori.activate(profile)
     fun updateServer(profile: SavedServer) = nori.updateServer(profile)
     fun setProfileIcon(profile: SavedServer, icon: dev.nori.music.ffi.settings.ProfileIcon) = nori.setProfileIcon(profile, icon)
+    fun renameProfile(profile: SavedServer, name: String) = nori.renameProfile(profile, name)
     fun removeServer(id: String) = nori.removeServer(id)
 
     /** Copies a picked PKCS#12 file into the app and returns the profile that uses it. */

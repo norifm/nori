@@ -239,6 +239,12 @@ impl Core {
         let listed = self.listed.lock().starred(kind, id, listed);
         self.stars.lock().starred(kind, id, listed)
     }
+
+    /// Drops this session's star marks and the favourites listed: they were another account's.
+    pub(crate) fn forget_marks(&self) {
+        *self.stars.lock() = Default::default();
+        *self.listed.lock() = Default::default();
+    }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]

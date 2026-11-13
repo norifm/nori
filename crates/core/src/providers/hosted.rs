@@ -32,7 +32,7 @@ pub(crate) struct HostedProvider {
 impl Provider for HostedProvider {
     /// Never offered: a guest profile is made by joining.
     fn info(&self) -> ProviderInfo {
-        ProviderInfo { kind: self.kind.clone(), fields: Vec::new(), sign_in: Vec::new() }
+        ProviderInfo { kind: self.kind.clone(), fields: Vec::new(), sign_in: Vec::new(), identities: None }
     }
 
     fn ready(&self, _: &SavedServer) -> bool {

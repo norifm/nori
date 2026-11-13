@@ -423,6 +423,7 @@ mod tests {
             kind: ServerKind::Plugin { id: kind.into() },
             fields: fields.iter().map(|&what| FieldSpec { what, advanced: false }).collect(),
             sign_in: if page { vec![SignIn::WebPage { start_url: "https://x".into() }] } else { Vec::new() },
+            identities: None,
         }
     }
 

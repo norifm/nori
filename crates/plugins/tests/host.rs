@@ -277,8 +277,8 @@ fn a_repo_offers_and_installs_the_version_asked() {
     // Two versions: the newer one's package is not the one listed.
     let index = format!(
         r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [
-            {{"version": "0.2.0", "api": 4, "url": "test-0.2.0.noriplugin", "sha256": "{}"}},
-            {{"version": "0.1.0", "api": 4, "url": "test-0.1.0.noriplugin", "sha256": "{sha}"}}]}}]}}"#,
+            {{"version": "0.2.0", "api": 5, "url": "test-0.2.0.noriplugin", "sha256": "{}"}},
+            {{"version": "0.1.0", "api": 5, "url": "test-0.1.0.noriplugin", "sha256": "{sha}"}}]}}]}}"#,
         "0".repeat(64)
     );
     *session.web.serves.lock().unwrap() = vec![(repo.into(), index.into_bytes()), ("https://friend.example/nori/test-0.2.0.noriplugin".into(), pkg.clone()), ("https://friend.example/nori/test-0.1.0.noriplugin".into(), pkg)];
@@ -308,7 +308,7 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     plugins.add_repo(other.into());
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
-    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "about": "Loud covers", "readme": "t.md", "icon": "t.png", "points": ["provider"], "versions": [{{"version": "{v}", "api": 4, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
+    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "about": "Loud covers", "readme": "t.md", "icon": "t.png", "points": ["provider"], "versions": [{{"version": "{v}", "api": 5, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
     let serve = |mine: &str| {
         *session.web.serves.lock().unwrap() = vec![
             (own.to_string(), index(mine)),
@@ -362,7 +362,7 @@ fn offers_read_earlier_follow_what_is_installed() {
     plugins.add_repo(own.into());
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
-    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{{"version": "{v}", "api": 4, "url": "t.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
+    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{{"version": "{v}", "api": 5, "url": "t.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
     *session.web.serves.lock().unwrap() = vec![(other.to_string(), index("9.0.0")), (own.to_string(), index("9.0.0")), ("https://own.example/t.noriplugin".to_string(), pkg.clone())];
 
     let mut offers = nori_tasks::block_on(plugins.offers()).offers;
@@ -432,7 +432,7 @@ fn updates_come_daily_from_a_plugins_own_repo_unless_held() {
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
     let index = |versions: &[&str]| {
-        let v: Vec<String> = versions.iter().map(|v| format!(r#"{{"version": "{v}", "api": 4, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}"#)).collect();
+        let v: Vec<String> = versions.iter().map(|v| format!(r#"{{"version": "{v}", "api": 5, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}"#)).collect();
         format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{}]}}]}}"#, v.join(",")).into_bytes()
     };
     let serve = |own_versions: &[&str]| {
@@ -566,8 +566,8 @@ fn the_key_a_plugin_is_first_signed_by_signs_every_update() {
     plugins.add_repo(repo.into());
     let pkg = package();
     let ((sha, a, by_a), (_, b, by_b)) = (signed(&pkg, 1), signed(&pkg, 2));
-    let listed = |v: &str, key: &str, signature: &str| format!(r#"{{"version": "{v}", "api": 4, "url": "t-{v}.noriplugin", "sha256": "{sha}", "key": "{key}", "signature": "{signature}"}}"#);
-    let versions = [listed("0.1.0", &a, &by_a), listed("0.2.0", &a, &by_b), listed("0.3.0", &b, &by_b), format!(r#"{{"version": "0.4.0", "api": 4, "url": "t-0.4.0.noriplugin", "sha256": "{sha}"}}"#)];
+    let listed = |v: &str, key: &str, signature: &str| format!(r#"{{"version": "{v}", "api": 5, "url": "t-{v}.noriplugin", "sha256": "{sha}", "key": "{key}", "signature": "{signature}"}}"#);
+    let versions = [listed("0.1.0", &a, &by_a), listed("0.2.0", &a, &by_b), listed("0.3.0", &b, &by_b), format!(r#"{{"version": "0.4.0", "api": 5, "url": "t-0.4.0.noriplugin", "sha256": "{sha}"}}"#)];
     let mut serves = vec![(repo.to_string(), format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{}]}}]}}"#, versions.join(",")).into_bytes())];
     serves.extend(["0.1.0", "0.2.0", "0.3.0", "0.4.0"].map(|v| (format!("https://friend.example/t-{v}.noriplugin"), pkg.clone())));
     *session.web.serves.lock().unwrap() = serves;

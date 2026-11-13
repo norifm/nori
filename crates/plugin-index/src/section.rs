@@ -3,7 +3,7 @@
 
 /// The plugin API major version this host speaks. A component's types must match exactly, so a plugin
 /// built for another can't run: any change to a type in `wit/` raises it.
-pub const API: u32 = 4;
+pub const API: u32 = 5;
 
 /// The extension points in the order of `wit/`'s `plugin` world exports: a section's bits, in turn.
 pub const POINTS: [&str; 11] = ["lifecycle", "hooks", "provider", "sound-stage", "preparation", "automix", "deciders", "slots", "device-control", "lyrics", "scrobbler"];

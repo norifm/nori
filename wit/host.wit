@@ -1,4 +1,4 @@
-package nori:plugin@4.0.0;
+package nori:plugin@5.0.0;
 
 /// The plugin's line in nori's log. Secrets never go here.
 interface log {

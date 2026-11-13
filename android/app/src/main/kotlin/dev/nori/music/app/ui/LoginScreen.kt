@@ -57,34 +57,51 @@ fun providerWords(vm: SettingsViewModel, kind: dev.nori.music.ffi.settings.Serve
 
 /**
  * The account of a profile whose provider signs it in apart from the form (the core's
- * `ProviderInfo.sign_in`), as Spotify's and Apple Music's account rows read: who is signed in, or a
- * button for each way the provider signs in elsewhere, its page or a code (SignInPage.kt), with pasting
- * folded under them. The sign-in itself, and what each answer means, are the core's (`Client::sign_in`);
- * [signed] hands the account's name to the form being edited.
+ * `ProviderInfo.sign_in`), as Spotify's and Apple Music's account rows read: who is signed in, and those
+ * the account may act as (its channels), the one it acts as checked; or a button for each way the
+ * provider signs in elsewhere, its page or a code (SignInPage.kt), with pasting folded under them. The
+ * sign-in itself, and what each answer means, are the core's (`Client::sign_in`); [signed] hands the
+ * account's name to the form being edited.
  */
 @Composable
 private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (String) -> Unit) {
     val ui by vm.account.collectAsStateWithLifecycle()
-    val words = providerWords(vm, info.kind).account
     val name = vm.prefs.collectAsStateWithLifecycle().value.server?.user.orEmpty()
+    LaunchedEffect(Unit) { vm.lookAtAccount() }
+    LaunchedEffect(name) { signed(name) }
+    GroupLabel(say.account)
+    if (ui.account == AccountState.SIGNED_IN) {
+        GroupCard {
+            IdentityLine(vm, name, say.signedIn, ui.identities.firstOrNull()?.picture, chosen = false, divider = true, Modifier.testTag("signed-in"), null)
+            GroupRow(say.signOut, vm::signOut, Modifier.testTag("sign-out"), divider = false)
+        }
+        val kind = info.identities
+        if (kind != null && ui.identities.size > 1) {
+            GroupLabel(say.identities(kind))
+            GroupCard {
+                ui.identities.forEachIndexed { i, id ->
+                    IdentityLine(vm, id.name, id.detail, id.picture, id.chosen, i < ui.identities.lastIndex, Modifier.testTag("identity-$i")) { if (!id.chosen) vm.chooseIdentity(i) }
+                }
+            }
+        }
+        return
+    }
+    Column(Modifier.padding(horizontal = GROUP_MARGIN), Arrangement.spacedBy(12.dp)) { SignInWays(vm, info, ui) }
+}
+
+/** The ways [info]'s provider signs in, for an account that is not signed in, or whose session [ui] says ended. */
+@Composable
+private fun SignInWays(vm: SettingsViewModel, info: ProviderInfo, ui: dev.nori.music.app.vm.AccountUi) {
+    val words = providerWords(vm, info.kind).account
     var answer by remember { mutableStateOf("") }
     val page = info.signIn.any { it is SignIn.WebPage }
     val code = SignIn.Code in info.signIn
     val pastes = info.signIn.any { it is SignIn.Paste }
     var pasting by remember { mutableStateOf(!page && !code) }
-    LaunchedEffect(Unit) { vm.lookAtAccount() }
-    LaunchedEffect(name) { signed(name) }
-    Caption(say.account)
-    when (ui.account) {
-        AccountState.SIGNED_IN -> {
-            Text(say.signedInAs(name), Modifier.testTag("signed-in"))
-            PillButton(say.signOut, null, vm::signOut, Modifier.fillMaxWidth().testTag("sign-out"))
-            return
-        }
-        AccountState.ENDED -> Text(words.signedOutAgain, color = MaterialTheme.colorScheme.error)
-        else -> {}
-    }
-    Text(words.signInHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    // Words in line with the label above, the buttons as wide as a card.
+    val inLine = Modifier.padding(horizontal = GROUP_MARGIN)
+    if (ui.account == AccountState.ENDED) Text(words.signedOutAgain, inLine, color = MaterialTheme.colorScheme.error)
+    Text(words.signInHint, inLine, color = MaterialTheme.colorScheme.onSurfaceVariant)
     // The ways in the provider's order, the first prominent.
     for (way in info.signIn) when (way) {
         SignIn.Code -> PillButton(words.code.button, null, vm::signInWithCode, Modifier.fillMaxWidth().testTag("sign-in-code"), prominent = way == info.signIn.first(), enabled = !ui.busy)
@@ -92,19 +109,42 @@ private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (Stri
         SignIn.Paste -> {}
     }
     if (pastes && !pasting) {
-        TextAction(words.pasteInstead, { pasting = true }, Modifier.testTag("paste-instead"))
+        TextAction(words.pasteInstead, { pasting = true }, Modifier.padding(start = GROUP_MARGIN - 12.dp).testTag("paste-instead"))
     } else if (pastes) {
-        Text(words.pasteHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FormField(answer, { answer = it }, label = { Text(words.pasteLabel) }, minLines = 3, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().testTag("pasted"))
+        Text(words.pasteHint, inLine, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FormField(answer, { answer = it }, label = { Text(words.pasteLabel) }, minLines = 3, maxLines = 6, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().testTag("pasted"))
         // The sign-in page shows its own failures.
-        ui.failed?.takeIf { ui.flow.shown !is dev.nori.music.ffi.SignInShown.Page && ui.flow.shown !is dev.nori.music.ffi.SignInShown.Code }?.let { Text(say.signIn(words, it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sign-in-failed")) }
+        ui.failed?.takeIf { ui.flow.shown !is dev.nori.music.ffi.SignInShown.Page && ui.flow.shown !is dev.nori.music.ffi.SignInShown.Code }?.let { Text(say.signIn(words, it), inLine.testTag("sign-in-failed"), color = MaterialTheme.colorScheme.error) }
         PillButton(
             if (ui.busy) say.connecting else say.signInAction, null, { vm.signIn(answer) },
             Modifier.fillMaxWidth().testTag("sign-in"), enabled = !ui.busy && answer.isNotBlank(),
         )
     }
-    Text(words.risk, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(words.risk, inLine, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
+
+/** One the account is or may act as: its picture, its name and what tells it apart, a check in the accent on the one it acts as. */
+@Composable
+private fun IdentityLine(vm: SettingsViewModel, name: String, detail: String?, picture: String?, chosen: Boolean, divider: Boolean, modifier: Modifier, onClick: (() -> Unit)?) {
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .padding(start = GROUP_INSET, end = 4.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Cover(remember(picture) { vm.cover(picture, CoverSize.ROW) }, IDENTITY_PICTURE, radius = IDENTITY_PICTURE / 2)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                if (!detail.isNullOrEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+            if (chosen) Icon(Iconoir.Check, say.inUse, Modifier.padding(horizontal = 10.dp).size(20.dp), tint = MaterialTheme.colorScheme.primary)
+        }
+        if (divider) Hairline(startIndent = GROUP_INSET + IDENTITY_PICTURE + 12.dp)
+    }
+}
+
+private val IDENTITY_PICTURE = 40.dp
 
 /** A kind as tests tag it: `subsonic`, or `plugin:<id>`. */
 fun kindTag(kind: dev.nori.music.ffi.settings.ServerKind): String = when (kind) {
@@ -134,7 +174,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
     val providers by vm.providers.collectAsStateWithLifecycle()
     val info = providers.firstOrNull { it.kind == p.kind }
     val words = providerWords(vm, p.kind)
-    var advanced by remember { mutableStateOf(initial != null) }
+    var advanced by remember { mutableStateOf(false) }
     var headers by remember { mutableStateOf(dev.nori.music.ffi.settings.serverHeadersText(p.headers)) }
     var certPassword by remember { mutableStateOf("") }
     val pickCert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) p = vm.importClientCert(p, uri, certPassword) }
@@ -166,8 +206,11 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
         if (switches.isNotEmpty()) GroupCard(Modifier.padding(top = 12.dp)) { switches.forEachIndexed { i, f -> Switch(f, i < switches.lastIndex) } }
     }
 
-    /** The text fields among [fields] the form asks now: user and password step aside for an API key. */
-    fun asked(fields: List<Field>) = fields.filter { it !in SWITCHES && !(p.apiKey.isNotEmpty() && (it == Field.USER || it == Field.PASSWORD)) }
+    /** The text fields among [fields] the form asks now: user and password step aside for an API key, and a
+     *  saved profile is renamed from its menu. */
+    fun asked(fields: List<Field>) = fields.filter {
+        it !in SWITCHES && !(p.apiKey.isNotEmpty() && (it == Field.USER || it == Field.PASSWORD)) && !(it == Field.NAME && !adding)
+    }
 
     /** One field of the form, a row of its card. */
     @Composable
@@ -238,33 +281,12 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
                 trailing = onClose?.let { close -> { GlyphButton(Iconoir.Xmark, say.cancel, Modifier.testTag("close"), onClick = close) } },
             )
             if (adding && words.hint.isNotEmpty()) Text(words.hint, Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val main = info?.fields?.filter { !it.advanced }.orEmpty().map { it.what }
+            val folded = info?.fields?.filter { it.advanced }.orEmpty().map { it.what }
             if (!asksNothing) {
-                val main = info?.fields?.filter { !it.advanced }.orEmpty().map { it.what }
                 Fields(main)
                 Switches(main)
             }
-            Column(Modifier.padding(horizontal = GROUP_MARGIN, vertical = 12.dp), Arrangement.spacedBy(12.dp)) {
-                (add.send as? dev.nori.music.ffi.AddSend.Failed)?.why?.let { Text(say.addFailure(it), color = MaterialTheme.colorScheme.error) }
-                if (signsIn) {
-                    PillButton(
-                        if (busy) say.connecting else words.account.pageButton, null,
-                        { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.SIGN_IN) },
-                        Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect-sign-in"), prominent = true, enabled = !busy && ready,
-                    )
-                    PillButton(
-                        say.providerGuest, null, { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.GUEST) },
-                        Modifier.fillMaxWidth().testTag("connect-guest"), enabled = !busy && ready,
-                    )
-                } else PillButton(
-                    if (busy) say.connecting else if (adding) words.add else say.save, null,
-                    { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers)) },
-                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect"), prominent = true,
-                    enabled = !busy && ready,
-                )
-                // Signing in is the profile in use's: its core asks the provider.
-                if (info != null && info.signIn.isNotEmpty() && !adding && p.id == vm.prefs.value.activeServerId) AccountPart(vm, info) { name -> p = p.copy(user = name) }
-            }
-            val folded = info?.fields?.filter { it.advanced }.orEmpty().map { it.what }
             if (folded.isNotEmpty()) {
                 GroupCard(Modifier.padding(top = 8.dp)) {
                     GroupRow(say.advanced, { advanced = !advanced }, Modifier.testTag("advanced"), divider = false) {
@@ -276,6 +298,30 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
                     Switches(folded)
                 }
             }
+            // A saved profile with nothing to edit here has no button: it is renamed from its menu.
+            val saves = adding || (main + folded).any { it != Field.NAME }
+            val failed = (add.send as? dev.nori.music.ffi.AddSend.Failed)?.why
+            if (signsIn || saves || failed != null) Column(Modifier.padding(horizontal = GROUP_MARGIN, vertical = 12.dp), Arrangement.spacedBy(12.dp)) {
+                failed?.let { Text(say.addFailure(it), color = MaterialTheme.colorScheme.error) }
+                if (signsIn) {
+                    PillButton(
+                        if (busy) say.connecting else words.account.pageButton, null,
+                        { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.SIGN_IN) },
+                        Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect-sign-in"), prominent = true, enabled = !busy && ready,
+                    )
+                    PillButton(
+                        say.providerGuest, null, { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.GUEST) },
+                        Modifier.fillMaxWidth().testTag("connect-guest"), enabled = !busy && ready,
+                    )
+                } else if (saves) PillButton(
+                    if (busy) say.connecting else if (adding) words.add else say.save, null,
+                    { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers)) },
+                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect"), prominent = true,
+                    enabled = !busy && ready,
+                )
+            }
+            // Signing in is the profile in use's: its core asks the provider.
+            if (info != null && info.signIn.isNotEmpty() && !adding && p.id == vm.prefs.value.activeServerId) AccountPart(vm, info) { name -> p = p.copy(user = name) }
             Spacer(Modifier.height(24.dp))
         }
     }

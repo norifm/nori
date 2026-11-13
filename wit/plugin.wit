@@ -1,4 +1,4 @@
-package nori:plugin@4.0.0;
+package nori:plugin@5.0.0;
 
 /// The plugin's page. Its rows are declared in its manifest, so nori draws them while it is not
 /// running; values are kept by nori in the plugin's store.
@@ -111,9 +111,28 @@ interface provider {
         code,
     }
 
+    /// What a signed-in account may act as besides itself.
+    enum identity-kind {
+        /// A Google account's YouTube channels.
+        channel,
+    }
+
     record provider-info {
         fields: list<field-spec>,
         sign-in: list<sign-in-way>,
+        /// The account may act as one of several (`identities`), and what they are.
+        identities: option<identity-kind>,
+    }
+
+    /// One the account may act as.
+    record identity {
+        name: string,
+        /// What tells it apart from one of the same name ("@handle").
+        detail: option<string>,
+        /// A URL; `{size}` in it is replaced by the pixels asked for.
+        picture: option<string>,
+        /// The one the account acts as now.
+        chosen: bool,
     }
 
     /// What the add form filled in.
@@ -297,6 +316,13 @@ interface provider {
     reminds: func() -> bool;
     /// No reminder until the account is signed in, and its session ends, again.
     stop-reminding: func();
+    /// The signed-in account's picture as it acts now (its chosen identity's): a URL, `{size}` in it
+    /// replaced by the pixels asked for.
+    account-picture: func() -> option<string>;
+    /// Those the signed-in account may act as, the account's own first.
+    identities: func() -> result<list<identity>, error>;
+    /// Acts as `identities`' entry `index` from now on: its library, likes and playlists are served.
+    choose-identity: func(index: u32) -> result<_, error>;
 }
 
 /// A stage in nori's sound chain. Its instance is its own: every import traps there, so it can never

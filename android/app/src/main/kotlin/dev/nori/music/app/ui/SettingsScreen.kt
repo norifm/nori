@@ -51,6 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -411,6 +412,18 @@ private fun BackupPasswordDialog(restore: Boolean, onDismiss: () -> Unit, onDone
     )
 }
 
+/** A profile's new [name]; left blank, it goes back to [shown], its provider's. */
+@Composable
+private fun RenameDialog(name: String, shown: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf(name) }
+    AlertCard(
+        title = { Text(say.rename) },
+        text = { FormField(text, { text = it }, Modifier.fillMaxWidth().testTag("rename"), placeholder = { Text(shown) }, singleLine = true, autofocus = true, onDone = { onSave(text) }) },
+        confirmButton = { TextAction(say.save, { onSave(text) }) },
+        dismissButton = { TextAction(say.cancel, onDismiss) },
+    )
+}
+
 /** A lyrics service's key, asked on its row: saved, the service is on; a cleared PaxSenix key turns off every
  *  service that needs it; cancelled, nothing changes. */
 @Composable
@@ -616,7 +629,9 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                     val options = dev.nori.music.ffi.settings.SettingsPart.SERVER_OPTIONS in LocalRules.current.settings
                     var removing by remember(row.id) { mutableStateOf(false) }
                     var picking by remember(row.id) { mutableStateOf(false) }
+                    var renaming by remember(row.id) { mutableStateOf(false) }
                     ProfileIconPicker(vm, profile.takeIf { picking }) { picking = false }
+                    NoriDialog(renaming, { renaming = false }) { RenameDialog(profile.name, profileLabel(vm, profile), { renaming = false }) { renaming = false; vm.renameProfile(profile, it) } }
                     NoriDialog(removing, { removing = false }) {
                         AlertCard(
                             title = { Text(say.removeProfileTitle(row.label)) },
@@ -629,7 +644,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                         ProfileLine(
                             vm, profile, row.active, divider = divider && row.libraries.isEmpty(), pickUp, detail = row.detail,
                             onMark = if (options) ({ picking = true }) else null,
-                            trailing = { if (options) MoreButton(listOf(say.edit to { editing = profile.also(vm::openLogin) }, say.remove to { removing = true })) },
+                            trailing = { if (options) MoreButton(listOf(say.rename to { renaming = true }, say.edit to { editing = profile.also(vm::openLogin) }, say.remove to { removing = true })) },
                             onClick = if (row.active) null else ({ vm.switchServer(profile) }),
                         )
                         // The server's own libraries, under it: which of them the app shows.

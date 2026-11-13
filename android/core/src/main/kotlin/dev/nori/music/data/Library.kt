@@ -391,4 +391,11 @@ class Library(
     fun onProfileChanged() {
         _starMarks.value = StarMarks(emptyMap(), emptyMap(), emptyMap())
     }
+
+    /** The account acts as another (the core dropped what it kept of the one before): hearts and lists are read again. */
+    fun onAccountChanged() {
+        onProfileChanged()
+        _starsVersion.update { it + 1 }
+        _playlistsVersion.update { it + 1 }
+    }
 }

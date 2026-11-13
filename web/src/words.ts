@@ -21,7 +21,7 @@ export const W = {
   signIn: "Sign In",
   signingIn: "Signing In",
   signInFailed: (why: string) => `Could not sign in: ${why}`,
-  signOut: "Sign Out",
+  signOut: "Sign out",
   home: "Home",
   library: "Library",
   search: "Search",

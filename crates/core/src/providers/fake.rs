@@ -36,7 +36,7 @@ fn album() -> AlbumDetail {
 #[async_trait::async_trait]
 impl Provider for Fake {
     fn info(&self) -> ProviderInfo {
-        ProviderInfo { kind: ServerKind::default(), fields: vec![FieldSpec { what: FormField::Name, advanced: false }], sign_in: vec![SignIn::Paste] }
+        ProviderInfo { kind: ServerKind::default(), fields: vec![FieldSpec { what: FormField::Name, advanced: false }], sign_in: vec![SignIn::Paste], identities: None }
     }
 
     fn ready(&self, _: &SavedServer) -> bool {
