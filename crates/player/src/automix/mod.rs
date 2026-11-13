@@ -34,7 +34,7 @@ mod tests;
 #[cfg(test)]
 mod plan_fuzz;
 
-use crate::types::TrackAnalysis;
+use crate::types::{BarProfile, TrackAnalysis};
 #[cfg(any(test, feature = "synth"))]
 use analysis::Analyzer;
 use analysis::Features;
@@ -78,22 +78,106 @@ const SUNG_FLOOR: f32 = 4.0;
 /// the first of two bars in a row, and the end of the last bar, whose level on the voice curve ([`vocal`]) is
 /// [`SUNG_SHARE`] of the song's median bar. None when no bar reaches [`SUNG_FLOOR`].
 fn vocal_span(f: &Features, bar_s: f64, music: (f64, f64)) -> Option<(f64, f64)> {
-    let e = vocal::CURVE_EVERY as f64;
-    let (fps, t0) = (f.fps / e, f.t0 + (e - 1.0) / 2.0 / f.fps);
+    let level = |from: f64| voice_level(f, from, from + bar_s);
     let n = ((music.1 - music.0) / bar_s).floor() as usize;
-    let level = |from: f64| window_mean(&f.voice, fps, t0, from, from + bar_s);
     let back: Vec<f32> = (1..=n).map(|i| level(music.1 - i as f64 * bar_s)).collect();
-    let mut sorted = back.clone();
-    sorted.sort_by(f32::total_cmp);
-    if *sorted.last()? < SUNG_FLOOR {
-        return None;
-    }
-    let sung = SUNG_SHARE * *sorted.get(n / 2)?;
+    let sung = sung_level(&back)?;
     let last = back.iter().position(|&b| b >= sung)?;
     let end = music.1 - last as f64 * bar_s;
     let sung_at = |i: usize| level(music.0 + i as f64 * bar_s) >= sung;
     let first = (0..n.saturating_sub(1)).find(|&i| sung_at(i) && sung_at(i + 1)).map_or(end - bar_s, |i| music.0 + i as f64 * bar_s);
     Some((first.min(end - bar_s).max(music.0), end))
+}
+
+/// The mean of the voice curve over `[from_s, to_s)`.
+fn voice_level(f: &Features, from_s: f64, to_s: f64) -> f32 {
+    let e = vocal::CURVE_EVERY as f64;
+    window_mean(&f.voice, f.fps / e, f.t0 + (e - 1.0) / 2.0 / f.fps, from_s, to_s)
+}
+
+/// The voice level a bar is sung at, from every bar's level: [`SUNG_SHARE`] of the median bar. None when no bar
+/// reaches [`SUNG_FLOOR`].
+fn sung_level(bars: &[f32]) -> Option<f32> {
+    let mut sorted = bars.to_vec();
+    sorted.sort_by(f32::total_cmp);
+    if *sorted.last()? < SUNG_FLOOR {
+        return None;
+    }
+    Some(SUNG_SHARE * *sorted.get(sorted.len() / 2)?)
+}
+
+/// Bars profiled at each end of a song.
+const END_BARS: usize = 32;
+/// Without a grid an end is profiled in blocks this long, seconds.
+const BLOCK_S: f64 = 2.0;
+/// A beat pulses when its onset is this share of the song's strong onsets (its 90th percentile).
+const PULSE_HIT: f32 = 0.5;
+
+/// The bars at one end of the music: the first [`END_BARS`] from its start, or the last back from its end, on
+/// `grid` (`meter` beats to the bar), else in [`BLOCK_S`] blocks. A bar's pulse is the share of its beats (on
+/// `beat_s`) that hit at [`PULSE_HIT`] of `strong`; its voice the share of its voice curve at `sung` or over.
+#[allow(clippy::too_many_arguments)]
+fn end_bars(f: &Features, grid: &Grid, meter: i64, beat_s: f64, music: (f64, f64), intro: bool, sung: Option<f32>, strong: f32) -> Vec<BarProfile> {
+    let gridded = grid.bpm > 0.0 && grid.bpm.is_finite();
+    let bar_s = if gridded { 60.0 / grid.bpm * meter as f64 } else { BLOCK_S };
+    // The first bar line at or after the music's start, or the last whole bar's before its end.
+    let first = if gridded {
+        let beat = 60.0 / grid.bpm;
+        let off = grid.offset_ms / 1000.0;
+        let edge = if intro { music.0 } else { music.1 - bar_s + 0.25 * beat };
+        let mut n = ((edge - off) / beat).ceil() as i64;
+        if intro {
+            n += (grid.downbeat_phase as i64 - n).rem_euclid(meter);
+        } else {
+            n -= (n - grid.downbeat_phase as i64).rem_euclid(meter);
+        }
+        off + n as f64 * beat
+    } else if intro {
+        music.0
+    } else {
+        music.1 - BLOCK_S
+    };
+    let starts = (0..END_BARS).map(|i| if intro { first + i as f64 * bar_s } else { first - i as f64 * bar_s });
+    let song = (window_mean(&f.power, f.fps, f.t0, music.0, music.1) as f64).max(1e-12);
+    let song_low = (window_mean(&f.low_power, f.fps, f.t0, music.0, music.1) as f64).max(1e-12);
+    let db = |v: f32, of: f64| (10.0 * ((v as f64).max(1e-12) / of).log10()) as f32;
+    let frame = |t: f64| ((t - f.t0) * f.fps).round();
+    let mut bars: Vec<BarProfile> = starts
+        .take_while(|&s| s >= music.0 - 0.5 * bar_s && s + 0.5 * bar_s <= music.1)
+        .map(|s| {
+            let e = s + bar_s;
+            // The strongest onset within two frames of each beat.
+            let pulse = if beat_s > 0.0 && strong > 0.0 {
+                let k0 = ((s - grid.offset_ms / 1000.0) / beat_s).ceil() as i64;
+                let beats: Vec<f64> = (k0..).map(|k| grid.offset_ms / 1000.0 + k as f64 * beat_s).take_while(|&b| b < e).collect();
+                let peak = |b: f64| {
+                    let j = frame(b) as i64;
+                    (j - 2..=j + 2).filter_map(|i| usize::try_from(i).ok().and_then(|i| f.onset.get(i))).fold(0f32, |m, v| m.max(*v))
+                };
+                beats.iter().filter(|&&b| peak(b) >= PULSE_HIT * strong).count() as f32 / beats.len().max(1) as f32
+            } else {
+                0.0
+            };
+            let voice_frames = sung.map_or(0.0, |level| {
+                let e_every = vocal::CURVE_EVERY as f64;
+                let (fps, t0) = (f.fps / e_every, f.t0 + (e_every - 1.0) / 2.0 / f.fps);
+                let (a, b) = (((s - t0) * fps).round().max(0.0) as usize, ((e - t0) * fps).round().max(0.0) as usize);
+                let part = &f.voice[a.min(f.voice.len())..b.min(f.voice.len())];
+                if part.is_empty() { 0.0 } else { part.iter().filter(|v| **v >= level).count() as f32 / part.len() as f32 }
+            });
+            BarProfile {
+                start_ms: (s * 1000.0).round() as i64,
+                level_db: db(window_mean(&f.power, f.fps, f.t0, s, e), song),
+                low_db: db(window_mean(&f.low_power, f.fps, f.t0, s, e), song_low),
+                pulse,
+                voice: voice_frames,
+            }
+        })
+        .collect();
+    if !intro {
+        bars.reverse();
+    }
+    bars
 }
 
 /// One stretch of music's beat grid; all zeros when it could not be measured.
@@ -215,6 +299,28 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         )
     };
 
+    // Each end in bars on its own grid (the whole song's when it has none); the ending's runs to the music's end, its
+    // closing breakdown included.
+    let (intro_bars, outro_bars) = if silent {
+        (Vec::new(), Vec::new())
+    } else {
+        let bar_s = if bar_s >= 1.0 { bar_s } else { BLOCK_S };
+        let n = ((music.1 - music.0) / bar_s).floor() as usize;
+        // A sung bar's frames reach the floor real singing reaches, whatever the song's median.
+        let sung = sung_level(&(0..n).map(|i| voice_level(f, music.0 + i as f64 * bar_s, music.0 + (i + 1) as f64 * bar_s)).collect::<Vec<_>>()).map(|l| l.max(SUNG_FLOOR));
+        let strong = {
+            let (a, b) = (((music.0 - f.t0) * f.fps).max(0.0) as usize, ((music.1 - f.t0) * f.fps).max(0.0) as usize);
+            let mut on = f.onset[a.min(f.onset.len())..b.min(f.onset.len())].to_vec();
+            on.sort_by(f32::total_cmp);
+            on.get(on.len() * 9 / 10).copied().unwrap_or(0.0)
+        };
+        let whole = Grid { bpm: t.bpm, offset_ms: t.offset_s * 1000.0, downbeat_phase: db.phase, ..Grid::default() };
+        let pick = |g: &Grid| if g.bpm > 0.0 && g.bpm.is_finite() { *g } else { whole };
+        let beat = |g: &Grid| if g.bpm > 0.0 && g.bpm.is_finite() { 60.0 / g.bpm } else { 0.0 };
+        let (gi, go) = (pick(&intro_grid), pick(&outro_grid));
+        (end_bars(f, &gi, meter, beat(&gi), music, true, sung, strong), end_bars(f, &go, meter, beat(&go), song, false, sung, strong))
+    };
+
     let track = TrackAnalysis {
         song_id: song_id.to_string(),
         analysis_version: ANALYSIS_VERSION,
@@ -237,6 +343,8 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         outro_start_ms: (outro * 1000.0).round() as i64,
         outro_centroid,
         intro_centroid,
+        intro_bars,
+        outro_bars,
         analysed_ms: now_ms(),
         outro_bpm: outro_grid.bpm,
         outro_bpm_confidence: outro_grid.confidence,

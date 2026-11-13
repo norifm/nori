@@ -361,14 +361,16 @@ mod tests {
         assert_eq!(window(&r, MixEnd::Outro, (160_000, 200_000)), Some((168_000, 198_000)));
         assert_eq!(window(&r, MixEnd::Intro, (0, 20_000)), Some((1_500, 20_000)));
         assert_eq!(window(&r, MixEnd::Outro, (0, 30_000)), None);
+        // Before a closing breakdown, where a mix leaves.
+        assert_eq!(window(&TrackAnalysis { exit_ms: 180_000, ..r.clone() }, MixEnd::Outro, (140_000, 200_000)), Some((150_000, 180_000)));
         assert_eq!(window(&TrackAnalysis { silence_end_ms: 0, ..r }, MixEnd::Intro, (0, 40_000)), None);
 
         // Ends keep head and tail mono decimated.
         let rate = 44_100u32;
         let mut e = Ends::new(rate);
         assert_eq!(e.rate(), 22_050);
-        // 50 s of stereo whose mono is always 1.
-        let frames = 50 * rate as usize;
+        // 80 s of stereo whose mono is always 1.
+        let frames = 80 * rate as usize;
         let x: Vec<f32> = (0..frames).flat_map(|i| [i as f32, 2.0 - i as f32]).collect();
         // Buffers that split a pair of frames.
         for piece in x.chunks(2 * 1001) {

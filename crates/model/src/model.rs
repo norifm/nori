@@ -14,7 +14,7 @@ pub struct Listen {
 }
 
 // Player types, redeclared below for uniffi.
-pub use nori_player::types::{AutoMixSettings, EqBand, EqKind, FadeCurve, MixStyle, NamedPreset, PresetKind, TrackAnalysis};
+pub use nori_player::types::{AutoMixSettings, BarProfile, EqBand, EqKind, FadeCurve, MixStyle, NamedPreset, PresetKind, TrackAnalysis};
 
 /// `starred` is a timestamp on the wire and a bool once stored.
 fn flag<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
@@ -807,7 +807,19 @@ pub struct TrackAnalysis {
     pub intro_grid_to_ms: i64,
     pub outro_grid_from_ms: i64,
     pub outro_grid_to_ms: i64,
+    pub intro_bars: Vec<BarProfile>,
+    pub outro_bars: Vec<BarProfile>,
     pub analysed_ms: i64,
+}
+
+#[cfg(feature = "ffi")]
+#[uniffi::remote(Record)]
+pub struct BarProfile {
+    pub start_ms: i64,
+    pub level_db: f32,
+    pub low_db: f32,
+    pub pulse: f32,
+    pub voice: f32,
 }
 
 #[cfg(feature = "ffi")]

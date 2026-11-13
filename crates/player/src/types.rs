@@ -56,6 +56,20 @@ pub struct NamedPreset {
     pub bands: Vec<EqBand>,
 }
 
+/// One bar at an end of a song. Levels are dB against the whole song's.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BarProfile {
+    /// Where it starts, ms from the file's start.
+    pub start_ms: i64,
+    pub level_db: f32,
+    /// The lows' level (the kick and bass), against the song's lows.
+    pub low_db: f32,
+    /// How clearly a beat pulses through it: 0 for none (a pad, a held chord), 1 for drums on every beat.
+    pub pulse: f32,
+    /// Its share that is sung, 0..1.
+    pub voice: f32,
+}
+
 /// AutoMix analysis of one track (a `track_analysis` row). Times are ms from the file's start. Beat `n`
 /// is at `beat_offset_ms + n * 60000 / bpm`; beats with `n % beats_per_bar == downbeat_phase` start a bar.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -148,6 +162,10 @@ pub struct TrackAnalysis {
     pub intro_grid_to_ms: i64,
     pub outro_grid_from_ms: i64,
     pub outro_grid_to_ms: i64,
+    /// The first and last bars of the music (the end's, its closing breakdown included), as the planner reads them;
+    /// on the end's grid, else in two-second blocks.
+    pub intro_bars: Vec<BarProfile>,
+    pub outro_bars: Vec<BarProfile>,
     /// Analysis time, ms since the epoch.
     pub analysed_ms: i64,
 }
