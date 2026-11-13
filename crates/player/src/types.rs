@@ -536,6 +536,15 @@ impl TransitionPlan {
             at(&mut d.at_ms);
             at(&mut d.len_ms);
         }
+        at(&mut self.in_delay_ms);
+        if let Some(g) = self.out_glide.as_mut() {
+            at(&mut g.window.start_ms);
+            at(&mut g.window.end_ms);
+        }
+        if let Some(b) = self.brake.as_mut() {
+            at(&mut b.start_ms);
+            at(&mut b.len_ms);
+        }
         self.unbend();
         self.in_loop = None;
     }
@@ -609,15 +618,18 @@ impl TransitionPlan {
     }
 
     /// Incoming song time the deck plays in the first `t_ms` of the transition, the loop's repeats counted
-    /// as played.
+    /// as played; none before `in_delay_ms`.
     pub fn in_played_ms(&self, t_ms: f64) -> f64 {
         let (r, (from, len)) = (self.tempo_ratio, self.glide());
-        let t = t_ms.max(0.0);
-        if t <= from {
-            return t * r;
-        }
-        let ramp = (t - from).min(len);
-        from * r + ramp * (r + self.in_ratio_at(from + ramp)) / 2.0 + (t - from - ramp)
+        let played = |t: f64| {
+            if t <= from {
+                return t * r;
+            }
+            let ramp = (t - from).min(len);
+            from * r + ramp * (r + self.in_ratio_at(from + ramp)) / 2.0 + (t - from - ramp)
+        };
+        let delay = self.in_delay_ms.max(0) as f64;
+        (played(t_ms.max(delay)) - played(delay)).max(0.0)
     }
 
     /// The loop's repeats, wall-clock ms.
@@ -629,7 +641,7 @@ impl TransitionPlan {
     /// loop's repeats (it stands at the loop's end while they play).
     pub fn in_song_ms(&self, t_ms: f64) -> f64 {
         let looped = match self.in_loop {
-            Some(l) => (t_ms - l.ms as f64).clamp(0.0, self.repeats_ms() as f64),
+            Some(l) => (t_ms - self.in_delay_ms.max(0) as f64 - l.ms as f64).clamp(0.0, self.repeats_ms() as f64),
             None => 0.0,
         };
         self.in_played_ms(t_ms) - looped * self.tempo_ratio
@@ -640,7 +652,7 @@ impl TransitionPlan {
     pub fn wall_of_in_song(&self, song_ms: f64) -> f64 {
         let looped = self.in_loop.filter(|l| song_ms >= l.ms as f64 * self.tempo_ratio).map_or(0.0, |_| self.repeats_ms() as f64 * self.tempo_ratio);
         let played = song_ms + looped;
-        let (mut lo, mut hi) = (0.0, played.max(0.0) / self.tempo_ratio.clamp(0.01, 1.0) + 1.0);
+        let (mut lo, mut hi) = (0.0, self.in_delay_ms.max(0) as f64 + played.max(0.0) / self.tempo_ratio.clamp(0.01, 1.0) + 1.0);
         for _ in 0..48 {
             let mid = (lo + hi) / 2.0;
             if self.in_played_ms(mid) < played {
@@ -655,16 +667,33 @@ impl TransitionPlan {
     /// Outgoing song time played in the first `t_ms` of the transition: under a bend its speed is the
     /// incoming one over `tempo_ratio`.
     pub fn out_song_ms(&self, t_ms: f64) -> f64 {
-        match self.bend {
-            Some(_) if self.tempo_ratio > 0.0 => self.in_played_ms(t_ms) / self.tempo_ratio,
-            _ => t_ms.max(0.0),
+        let t = t_ms.max(0.0);
+        match (self.bend, self.out_glide) {
+            (Some(_), _) if self.tempo_ratio > 0.0 => self.in_played_ms(t_ms) / self.tempo_ratio,
+            (None, Some(g)) => {
+                let (a, b) = (g.window.start_ms as f64, g.window.end_ms.max(g.window.start_ms) as f64);
+                let ramp = (t.clamp(a, b) - a).max(0.0);
+                let speed = |x: f64| if b > a { 1.0 + (g.to - 1.0) * x / (b - a) } else { g.to };
+                t.min(a) + ramp * (1.0 + speed(ramp)) / 2.0 + (t - b).max(0.0) * g.to
+            }
+            _ => t,
         }
     }
 
     /// The outgoing speed `t_ms` into the transition.
     pub fn out_ratio_at(&self, t_ms: f64) -> f64 {
-        match self.bend {
-            Some(_) if self.tempo_ratio > 0.0 => self.in_ratio_at(t_ms) / self.tempo_ratio,
+        match (self.bend, self.out_glide) {
+            (Some(_), _) if self.tempo_ratio > 0.0 => self.in_ratio_at(t_ms) / self.tempo_ratio,
+            (None, Some(g)) => {
+                let (a, b) = (g.window.start_ms as f64, g.window.end_ms as f64);
+                if t_ms <= a {
+                    1.0
+                } else if t_ms >= b {
+                    g.to
+                } else {
+                    1.0 + (g.to - 1.0) * (t_ms - a) / (b - a)
+                }
+            }
             _ => 1.0,
         }
     }

@@ -1175,7 +1175,8 @@ fn loudness_bump(p: &crate::types::TransitionPlan, xa: &[f32], xb: &[f32], rate:
             None => sample(xa, o0 as f64 + p.out_song_ms(wall_ms(k)) * rate / 1000.0),
         })
         .collect();
-    let seg_b: Vec<f32> = (0..n).map(|k| sample(xb, i0 as f64 + p.in_song_ms(wall_ms(k)) * rate / 1000.0)).collect();
+    // Nothing of the incoming song before its delay.
+    let seg_b: Vec<f32> = (0..n).map(|k| if wall_ms(k) < p.in_delay_ms as f64 { 0.0 } else { sample(xb, i0 as f64 + p.in_song_ms(wall_ms(k)) * rate / 1000.0) }).collect();
     let mut m = mixer::Mixer::new(rate as u32, 1);
     m.configure(p);
     let mut mixed = seg_a;

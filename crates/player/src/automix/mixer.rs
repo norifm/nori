@@ -523,6 +523,9 @@ pub struct Mixer {
     echo_band_state: [[[f64; 2]; MAX_CHANNELS]; 2],
     reverb: Option<ReverbFx>,
     room: Room,
+    /// The brake's frames (start, length), and the outgoing audio it has taken, read back ever slower.
+    brake: Option<(u64, u64)>,
+    brake_buf: Vec<f64>,
     /// The run of frames the fades are interpolated over; empty after a (re)start.
     fades: FadeRun,
 }
@@ -565,6 +568,8 @@ impl Mixer {
             echo_band_state: [[[0.0; 2]; MAX_CHANNELS]; 2],
             reverb: None,
             room: Room::default(),
+            brake: None,
+            brake_buf: Vec::new(),
             fades: FadeRun::default(),
         }
     }
@@ -589,6 +594,12 @@ impl Mixer {
         if p.reverb.is_some() {
             self.room.size(self.rate);
         }
+        if let Some(b) = p.brake {
+            let need = (self.frames(b.len_ms as f64) as usize + 1) * self.ch;
+            if self.brake_buf.len() < need {
+                self.brake_buf.resize(need, 0.0);
+            }
+        }
     }
 
     /// Takes a plan and restarts the clock.
@@ -609,6 +620,7 @@ impl Mixer {
         self.pos = 0;
         self.fades = FadeRun::default();
         self.len = len;
+        self.brake = p.brake.filter(|b| b.len_ms > 0).map(|b| (frames(b.start_ms as f64), frames(b.len_ms as f64).max(1)));
         self.curve = p.fade_curve;
         self.out_fade = span(p.out_fade_start_ms, p.out_fade_end_ms);
         self.in_fade = span(p.in_fade_start_ms, p.in_fade_end_ms);
@@ -812,6 +824,25 @@ impl Mixer {
         FadeRun { start: p, end, from: self.fades_at(p), to: self.fades_at(end) }
     }
 
+    /// Frame `k` of a `len`-frame brake on the outgoing deck: the frame is kept, and what plays is the outgoing audio
+    /// where a read slowing as `(1 - t)^1.8` has reached (its integral), between frames; nothing after it.
+    #[inline]
+    fn brake_frame(&mut self, k: u64, len: u64, o: &mut [f64; MAX_CHANNELS]) {
+        let ch = self.ch;
+        if k >= len {
+            o[..ch].fill(0.0);
+            return;
+        }
+        let kept = k as usize * ch;
+        self.brake_buf[kept..kept + ch].copy_from_slice(&o[..ch]);
+        let x = len as f64 / 2.8 * (1.0 - (1.0 - k as f64 / len as f64).powf(2.8));
+        let (j, f) = (x.floor() as usize, x - x.floor());
+        let next = (j + 1).min(k as usize);
+        for (c, v) in o[..ch].iter_mut().enumerate() {
+            *v = self.brake_buf[j * ch + c] * (1.0 - f) + self.brake_buf[next * ch + c] * f;
+        }
+    }
+
     /// Mixes one frame: outgoing `o` and incoming `i` in, the mix out in `o`.
     #[inline]
     fn mix_frame(&mut self, o: &mut [f64; MAX_CHANNELS], i: &mut [f64; MAX_CHANNELS]) {
@@ -823,6 +854,9 @@ impl Mixer {
         }
         if !(self.fades.start..self.fades.end).contains(&p) {
             self.fades = self.fade_run(p);
+        }
+        if let Some((start, len)) = self.brake.filter(|(start, _)| p >= *start) {
+            self.brake_frame(p - start, len, o);
         }
         let t = self.fades.t(p);
         let (g_out, g_in, held) = (self.fades.get(t, |f| f.out), self.fades.get(t, |f| f.inc), self.fades.get(t, |f| f.held));
@@ -1110,6 +1144,26 @@ mod tests {
             let k = (ms / 100 - 1) as usize;
             assert!(out[0].abs() < 0.01 && (out[k] + gap * k as f64 * 100.0 / ms as f64).abs() < 0.05, "{ms} ms, {db} dB: the outgoing song turned towards the incoming one: {out:.2?}");
         }
+    }
+
+    /// A brake slows the outgoing song to a stop: its pitch falls each quarter, the first by the curve's integral, with
+    /// no jump where it starts, and nothing of it plays after.
+    #[test]
+    fn brake_slows_to_a_stop() {
+        let mut p = plan();
+        p.duration_ms = 2000;
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (0, 2000, 2000, 2000);
+        p.brake = Some(crate::types::Brake { start_ms: 500, len_ms: 1000 });
+        let tone = sine(440.0, 96000);
+        let y = mix(&p, &tone, &vec![0f32; 96000]);
+        let crossings = |a: usize, b: usize| y[a * 48..b * 48].windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count() as i64;
+        assert!((crossings(0, 500) - 440).abs() <= 3, "at its own speed before: {}", crossings(0, 500));
+        let q: Vec<i64> = (0..4).map(|k| crossings(500 + 250 * k, 750 + 250 * k)).collect();
+        // A quarter of the way the read has gone (1 - 0.75^2.8) / 2.8 of the brake's length: 0.198 of a second.
+        assert!((q[0] - 174).abs() <= 4 && q.windows(2).all(|w| w[1] < w[0]), "slower each quarter: {q:?}");
+        let step = y[499 * 48..501 * 48].windows(2).map(|w| (w[1] - w[0]).abs()).fold(0f32, f32::max);
+        assert!(step < 0.1, "no jump where it starts: {step}");
+        assert!(y[1500 * 48..2000 * 48].iter().all(|v| *v == 0.0), "nothing after it");
     }
 
     #[test]
