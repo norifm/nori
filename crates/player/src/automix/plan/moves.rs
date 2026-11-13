@@ -37,8 +37,9 @@ const REVERB_WORTH: f64 = 1.3;
 const ECHO_WORTH: f64 = 1.2;
 const FILTER_OUT_WORTH: f64 = 1.0;
 const MELT_WORTH: f64 = 1.0;
-const AFTERGLOW_WORTH: f64 = 0.9;
-const RISE_WORTH: f64 = 0.85;
+/// Each of Smooth's crossings (afterglow, rise), and more for the one that suits the pair ([`Suits`]).
+const CROSSING_WORTH: f64 = 0.85;
+const SUITS_WORTH: f64 = 0.15;
 pub(super) const FADE_WORTH: f64 = 0.4;
 /// Per second of beatless overlap, up to [`BEATLESS_MAX_MS`].
 const BEATLESS_LENGTH_WORTH: f64 = 0.03;
@@ -441,46 +442,71 @@ fn last_word(a: &TrackAnalysis, out_dur: i64, beat: f64) -> Option<f64> {
     (a.vocal_end_ms > a.silence_start_ms && heard && fits).then_some(cross)
 }
 
-/// Afterglow, Smooth's dissolve (B13, softened): at the crossing the outgoing song falls away over two beats into a
-/// long, soft reverb while the incoming song rises over the same two beats, equal-power, and the tail washes on over
-/// it: the grooves overlap only as one falls and the other comes up. Off a last word, the word rings into the reverb.
-/// The transition is centred on the crossing, so a loudness match glides through it evenly.
-pub(super) fn afterglow(p: &Pair) -> Option<Move> {
-    let (a, b, s) = (p.a, p.b?, p.s);
-    if !s.filter_effects {
-        return None;
-    }
-    let (beat, on_grid) = beat_of(a)?;
-    let bar = bar_beats(a) as f64 * beat;
-    let x = crossing(a, p.room.out_dur, beat, on_grid)?;
-    let (_, at) = entry(Some(b), p.room.in_dur);
-    // The tail after the crossing's middle, within the outgoing song, and as much before it.
+/// Which of Smooth's crossings suits a pair: into an opening on a kick, the next song rises from below; into a softer
+/// one, the outgoing song glows into a reverb whose tail is heard over it.
+#[derive(Clone, Copy, PartialEq)]
+enum Suits {
+    Rise,
+    Glow,
+}
+
+fn suits(b: &TrackAnalysis, at: f64) -> Suits {
+    let opens_on_kick = mean_over(&b.intro_bars, at - 0.5 * bar_ms(b), at + 2.0 * bar_ms(b), |x| if kick(x) { 1.0 } else { 0.0 }).is_some_and(|k| k >= 0.5);
+    if opens_on_kick { Suits::Rise } else { Suits::Glow }
+}
+
+/// What one of Smooth's crossings is worth for a pair, `fit` the one that suits it.
+fn crossing_worth(fit: bool, x: &Crossing) -> f64 {
+    CROSSING_WORTH + if fit { SUITS_WORTH } else { 0.0 } - x.cost
+}
+
+/// A transition centred on the crossing `x`: the outgoing song falls over its two beats as the incoming one, coming in
+/// at `at`, rises over them, equal-power, with a tail after them within the outgoing song and as much before, so a
+/// loudness match glides through evenly. Also what an effect takes in: the last word, or the groove's last beat, and
+/// the fall. None where it does not fit.
+fn centred(p: &Pair, kind: TransitionKind, x: &Crossing, beat: f64, at: f64) -> Option<(TransitionPlan, Window)> {
+    let a = p.a;
     let middle = x.at + beat;
-    let ring = AFTERGLOW_TAIL_MS.max(bar).min(p.room.out_dur as f64 - middle);
+    let ring = CROSSING_TAIL_MS.max(bar_beats(a) as f64 * beat).min(p.room.out_dur as f64 - middle);
     let (start, dur) = (middle - ring, 2.0 * ring);
     if ring < 2.0 * beat || dur > p.room.max_len as f64 || (p.room.in_dur as f64) - at < 2.0 * dur || start < a.silence_start_ms as f64 {
         return None;
     }
     let ms = |t: f64| (t - start).round() as i64;
-    let mut m = handover(TransitionKind::ReverbWash, start, x.at - start, at, dur);
-    // The reverb takes in the last word, or the groove's last beat before the crossing.
-    let sent = if x.word { 2.0 * beat } else { beat };
-    m.reverb = Some(Reverb { send: Window { start_ms: ms(x.at - sent), end_ms: ms(x.at + 2.0 * beat) }, decay_s: AFTERGLOW_DECAY_S, wet_db: AFTERGLOW_WET_DB, low_cut_hz: REVERB_LOW_CUT_HZ });
+    let mut m = handover(kind, start, x.at - start, at, dur);
     (m.out_fade_start_ms, m.out_fade_end_ms) = (ms(x.at), ms(x.at + 2.0 * beat));
     (m.in_fade_start_ms, m.in_fade_end_ms) = (ms(x.at), ms(x.at + 2.0 * beat));
-    m.in_gain_db = loudness_trim(Some(a), Some(b), s);
+    m.in_gain_db = loudness_trim(Some(a), p.b, p.s);
+    let sent = if x.word { 2.0 * beat } else { beat };
+    Some((m, Window { start_ms: ms(x.at - sent), end_ms: ms(x.at + 2.0 * beat) }))
+}
+
+/// The tail heard after a centred crossing.
+const CROSSING_TAIL_MS: f64 = 4_000.0;
+
+/// Afterglow, Smooth's dissolve (B13, softened): a centred crossing whose outgoing song falls into a long, soft reverb
+/// that washes on over the incoming one: the grooves overlap only as one falls and the other comes up. Off a last
+/// word, the word rings into the reverb.
+pub(super) fn afterglow(p: &Pair) -> Option<Move> {
+    let (a, b) = (p.a, p.b?);
+    if !p.s.filter_effects {
+        return None;
+    }
+    let (beat, on_grid) = beat_of(a)?;
+    let x = crossing(a, p.room.out_dur, beat, on_grid)?;
+    let (_, at) = entry(Some(b), p.room.in_dur);
+    let (mut m, send) = centred(p, TransitionKind::ReverbWash, &x, beat, at)?;
+    m.reverb = Some(Reverb { send, decay_s: AFTERGLOW_DECAY_S, wet_db: AFTERGLOW_WET_DB, low_cut_hz: REVERB_LOW_CUT_HZ });
     m.reason = format!("afterglow into the next song{}{}", x.reason(), tail(p.why_not));
-    Some(Move { plan: m, worth: AFTERGLOW_WORTH - x.cost })
+    Some(Move { plan: m, worth: crossing_worth(suits(b, at) == Suits::Glow, &x) })
 }
 
 const AFTERGLOW_DECAY_S: f32 = 4.5;
 const AFTERGLOW_WET_DB: f32 = -8.0;
-/// The reverb's tail heard after the outgoing song falls.
-const AFTERGLOW_TAIL_MS: f64 = 4_000.0;
 
 /// Rise, Smooth's way under a last line: the incoming song comes up from below, low-passed, while the outgoing song
-/// sings on; the lows change hands over a bar at the middle, and at the crossing the
-/// outgoing song falls over two beats as the incoming one opens out. Never into an opening that sings.
+/// sings on; the lows change hands over a bar at the middle, and at the crossing the outgoing song falls over two
+/// beats as the incoming one opens out. Never into an opening that sings.
 pub(super) fn rise(p: &Pair) -> Option<Move> {
     let (a, b, s) = (p.a, p.b?, p.s);
     if !s.filter_effects {
@@ -489,7 +515,7 @@ pub(super) fn rise(p: &Pair) -> Option<Move> {
     let (beat, on_grid) = beat_of(a)?;
     let bar = bar_beats(a) as f64 * beat;
     let x = crossing(a, p.room.out_dur, beat, on_grid)?;
-    let (music, _) = entry(Some(b), p.room.in_dur);
+    let (music, at) = entry(Some(b), p.room.in_dur);
     let len = (RISE_BEATS * beat).min(RISE_MAX_MS).min(p.room.max_len as f64 - 2.0 * beat);
     let (start, dur) = (x.at - len, len + 2.0 * beat);
     if len < RISE_MIN_MS || start < a.silence_start_ms as f64 || sings_before(b, music + dur) || (p.room.in_dur as f64) - music < 2.0 * dur {
@@ -504,7 +530,7 @@ pub(super) fn rise(p: &Pair) -> Option<Move> {
     (m.out_fade_start_ms, m.out_fade_end_ms) = (ms(len), ms(dur));
     m.in_gain_db = loudness_trim(Some(a), Some(b), s);
     m.reason = format!("rise over {:.0} s{}{}", dur / 1000.0, x.reason(), tail(p.why_not));
-    Some(Move { plan: m, worth: RISE_WORTH - x.cost })
+    Some(Move { plan: m, worth: crossing_worth(suits(b, at) == Suits::Rise, &x) })
 }
 
 /// A rise's length before its crossing: 16 beats, within 5 to 10 s.
