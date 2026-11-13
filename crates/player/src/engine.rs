@@ -964,7 +964,7 @@ impl TransitionEngine {
         if bytes > 0 && self.tail.len() < bytes {
             self.tail.resize(bytes, 0);
         }
-        self.ensure_mixer(out);
+        self.ensure_mixer(out).prepare(&p.mixer);
         let keep = p.mixer.keep_pitch;
         if p.mixer.bend.is_some() && !self.out_stretch.as_ref().is_some_and(|(_, k, f)| *k == keep && *f == out) {
             self.out_stretch = Some((ByteStretcher::new(out.rate, out.channels, keep), keep, out));

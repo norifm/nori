@@ -284,7 +284,8 @@ pub enum FadeCurve {
     SineSquared,
 }
 
-/// A filter sweep on the outgoing deck over `[start_ms, end_ms]` of the transition, exponential in frequency.
+/// A filter sweep (two Butterworth sections) over `[start_ms, end_ms]` of the transition, exponential in frequency.
+/// One that ends open, a low-pass at 18 kHz or more or a high-pass at 25 Hz or less, is switched off after it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Sweep {
@@ -325,7 +326,7 @@ pub struct Echo {
     /// Relative. What is sent into the echo; the whole transition when absent.
     #[cfg_attr(feature = "serde", serde(default))]
     pub send: Option<Window>,
-    /// The repeats kept inside this band.
+    /// The repeats kept inside this band: a high- and a low-pass in the feedback loop, so each repeat is narrower.
     #[cfg_attr(feature = "serde", serde(default))]
     pub band: Option<Band>,
     /// Relative. The repeats held down as the incoming song lands.
@@ -478,7 +479,8 @@ pub struct TransitionPlan {
     /// With a bend there is no ramp after the overlap (`tempo_ramp_ms` is 0).
     #[cfg_attr(feature = "serde", serde(default))]
     pub bend: Option<Bend>,
-    /// Relative. Low-pass and high-pass sweeps on the incoming track.
+    /// Relative. Low-pass and high-pass sweeps on the incoming track. The incoming track plays dry after the
+    /// transition, so these end open before it ends.
     #[cfg_attr(feature = "serde", serde(default))]
     pub in_low_pass: Option<Sweep>,
     #[cfg_attr(feature = "serde", serde(default))]
@@ -517,13 +519,22 @@ impl TransitionPlan {
             at(&mut h.at_ms);
             at(&mut h.len_ms);
         }
-        for s in [self.low_pass.as_mut(), self.high_pass.as_mut()].into_iter().flatten() {
+        for s in [self.low_pass.as_mut(), self.high_pass.as_mut(), self.in_low_pass.as_mut(), self.in_high_pass.as_mut()].into_iter().flatten() {
             at(&mut s.start_ms);
             at(&mut s.end_ms);
         }
         if let Some(d) = self.vocal_duck.as_mut() {
             at(&mut d.until_ms);
             at(&mut d.release_ms);
+        }
+        let windows = [self.mid_dip.as_mut().map(|d| &mut d.window), self.reverb.as_mut().map(|r| &mut r.send), self.echo.as_mut().and_then(|e| e.send.as_mut())];
+        for w in windows.into_iter().flatten() {
+            at(&mut w.start_ms);
+            at(&mut w.end_ms);
+        }
+        if let Some(d) = self.echo.as_mut().and_then(|e| e.duck.as_mut()) {
+            at(&mut d.at_ms);
+            at(&mut d.len_ms);
         }
         self.unbend();
         self.in_loop = None;
