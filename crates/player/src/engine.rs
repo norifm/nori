@@ -76,6 +76,11 @@ impl Plan {
     pub fn out_loop_us(&self) -> i64 {
         self.mixer.out_loop_ms.unwrap_or(0) * 1000
     }
+    /// Whether the outgoing song changes speed: a bend, a glide or rates.
+    fn out_stretching(&self) -> bool {
+        self.mixer.bend.is_some() || self.mixer.out_glide.is_some() || !self.mixer.out_rates.is_empty()
+    }
+
     fn stretching(&self) -> bool {
         (self.tempo_ratio() - 1.0).abs() > 1e-4 || self.mixer.in_rates.iter().any(|k| (k.speed - 1.0).abs() > 1e-4)
     }
@@ -377,6 +382,8 @@ pub struct TransitionEngine {
     out: Option<Format>,
     /// The incoming stretcher's schedule as the mix starts, sized once so building it allocates nothing.
     knots: Vec<(u64, f64)>,
+    /// The outgoing stretcher's, under the plan's `out_rates`; empty for none.
+    out_knots: Vec<(u64, f64)>,
     /// Applied to the output once what is queued has drained.
     pending_format: Option<Format>,
 
@@ -468,6 +475,7 @@ impl TransitionEngine {
         TransitionEngine {
             out: None,
             knots: Vec::with_capacity(crate::automix::stretch::MAX_KNOTS + 1),
+            out_knots: Vec::with_capacity(crate::automix::stretch::MAX_KNOTS + 1),
             pending_format: None,
             current_id: None,
             playing_id: None,
@@ -973,7 +981,7 @@ impl TransitionEngine {
         }
         self.ensure_mixer(out).prepare(&p.mixer);
         let keep = p.mixer.keep_pitch;
-        if (p.mixer.bend.is_some() || p.mixer.out_glide.is_some()) && !self.out_stretch.as_ref().is_some_and(|(_, k, f)| *k == keep && *f == out) {
+        if p.out_stretching() && !self.out_stretch.as_ref().is_some_and(|(_, k, f)| *k == keep && *f == out) {
             self.out_stretch = Some((ByteStretcher::new(out.rate, out.channels, keep), keep, out));
         }
         if let Some(l) = p.mixer.in_loop {
@@ -1076,11 +1084,16 @@ impl TransitionEngine {
                         self.heard.audible_us = from - self.held_offset_us + self.flight.takeover_out_us;
                     }
                 }
-                // A bend or glide needs the outgoing stretcher made for it; without one both decks keep one speed.
+                // A bend, glide or rates need the outgoing stretcher made for them; without one both decks keep one speed
+                // (rates on one clock come in pairs).
                 let keep = p.mixer.keep_pitch;
-                if (p.mixer.bend.is_some() || p.mixer.out_glide.is_some()) && !self.out_stretch.as_ref().is_some_and(|(_, k, f)| *k == keep && *f == out) {
+                if p.out_stretching() && !self.out_stretch.as_ref().is_some_and(|(_, k, f)| *k == keep && *f == out) {
                     p.mixer.unbend();
                     p.mixer.out_glide = None;
+                    if !p.mixer.out_rates.is_empty() {
+                        p.mixer.out_rates.clear();
+                        p.mixer.in_rates.clear();
+                    }
                 }
                 let m = self.ensure_mixer(out);
                 m.configure(&p.mixer);
@@ -1100,18 +1113,26 @@ impl TransitionEngine {
                 let frames_of = |ms: i64| (ms.max(0) * out.rate as i64 / 1000) as usize;
                 self.flight.out_glide = None;
                 let loop_frames = ((p.out_loop_us() * out.rate as i64 / 1_000_000) as usize).max(1);
-                // Under a bend the outgoing speed glides to the incoming tempo, under a glide to its own target.
+                // Under a bend the outgoing speed glides to the incoming tempo, under a glide to its own target, under
+                // rates from where they leave 1 along them.
+                let rates = &p.mixer.out_rates;
                 let glide = match (p.mixer.bend, p.mixer.out_glide) {
                     (Some(b), _) => Some((b.start_ms, b.end_ms, 1.0 / p.mixer.tempo_ratio)),
                     (None, Some(g)) => Some((g.window.start_ms, g.window.end_ms, g.to)),
-                    _ => None,
+                    _ => rates.iter().position(|k| (k.speed - 1.0).abs() > 1e-9).zip(rates.last()).map(|(i, last)| {
+                        (rates[i.saturating_sub(1)].at_ms.max(0.0) as i64, last.at_ms.max(0.0) as i64, last.speed)
+                    }),
                 };
+                self.out_knots.clear();
                 let mix_out = if let (Some((start_ms, end_ms, to)), Some((st, ..))) = (glide, self.out_stretch.as_ref()) {
                     // The stretcher takes over early enough to cross in at ratio 1, warmed on the bars before.
                     let start = frames_of(start_ms);
                     let from = start.saturating_sub(st.entry_frames()).max(st.latency_frames().min(start));
                     let ramp = frames_of(end_ms - start_ms) as u64;
                     self.flight.out_glide = Some(OutGlide { from, hold: (start - from) as u64, ramp, to, started: false });
+                    // The rates in the stretcher's own output frames, from where it takes over.
+                    let at = |ms: f64| ((ms.max(0.0) * out.rate as f64 / 1000.0) as u64).saturating_sub(from as u64);
+                    self.out_knots.extend(rates.iter().map(|k| (at(k.at_ms), k.speed)));
                     let loop_bytes = if p.out_loop_us() > 0 { loop_frames * out.frame_bytes() } else { 0 };
                     MixOut::Bent { read: 0, frame: 0, frames: frames_of(p.mixer.duration_ms), loop_bytes }
                 } else if p.out_loop_us() > 0 {
@@ -1415,6 +1436,9 @@ impl TransitionEngine {
                     v += k;
                 }
                 st.glide(g.to, g.hold, g.ramp, &runs, enc);
+                if !self.out_knots.is_empty() {
+                    st.along(&self.out_knots);
+                }
                 started = true;
             } else if *frame < g.from {
                 let (at, end) = ending_run(*read, len, lp);
@@ -2338,6 +2362,40 @@ mod tests {
         let glided = &s[passed + RATE as usize..passed + RATE as usize * 19 / 10];
         let crossings = glided.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count();
         assert!((crossings as i64 - 810).abs() <= 6, "the ending speeds up: {crossings} zero crossings");
+    }
+
+    /// The outgoing song follows its rates (varispeed): 1 for a second, rising to 1.1 by 1.5 s and holding it, so
+    /// 2.075 s of it is held, played with no jump, and at 484 Hz over the last half second.
+    #[test]
+    fn an_ending_follows_its_rates() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        let mut p = fade("b", 1_000_000);
+        p.mixer.keep_pitch = false;
+        p.mixer.out_rates = [(0.0, 1.0), (1000.0, 1.0), (1500.0, 1.1), (2000.0, 1.1)].map(|(at_ms, speed)| crate::types::Rate { at_ms, speed }).to_vec();
+        let held = p.held_us();
+        assert!((held - 2_075_000).abs() < 1000, "{held}");
+        h.plans.insert("a".into(), p);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        let a: Vec<u8> = (0..RATE as usize + FMT.bytes(held) / 4)
+            .flat_map(|i| {
+                let v = ((i as f64 * 440.0 * std::f64::consts::TAU / RATE as f64).sin() * 8000.0) as i16;
+                [v, v]
+            })
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        feed(&mut e, &mut d, &mut h, &a, 0);
+        let passed = d.samples().len() / 2;
+        assert!(matches!(e.flight.phase, Phase::Hold(h) if h.len == FMT.bytes(held)), "the rates' song time is held");
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+        feed(&mut e, &mut d, &mut h, &tone(0, 3.0), 3_000_000);
+        let s: Vec<i16> = d.samples().iter().step_by(2).copied().collect();
+        let mix = &s[passed - 100..passed + 2 * RATE as usize];
+        let step = mix.windows(2).map(|w| (w[1] as i32 - w[0] as i32).abs()).max().unwrap_or(0);
+        assert!(step < 700, "no jump in the ending, at most {step}");
+        let fast = &s[passed + RATE as usize * 3 / 2..passed + RATE as usize * 19 / 10];
+        let crossings = fast.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count();
+        assert!((crossings as i64 - 387).abs() <= 6, "the ending speeds up to 1.1: {crossings} zero crossings");
     }
 
     /// A bent mix over a looped ending (varispeed): the half-second slice, 220 periods of 440 Hz, repeats with no

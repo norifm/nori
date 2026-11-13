@@ -82,9 +82,12 @@ pub fn proposed_kind(kind: TransitionKind) -> Proposed {
 pub fn adopt(nori: &TransitionPlan, p: Proposal, out_ms: i64, in_ms: i64, max_tempo_pct: f32) -> Option<TransitionPlan> {
     let mut t = nori.clone();
     t.reason = "planned by a plugin".into();
-    // A loop, a bend or a duck nori placed for its own plan doesn't fit another: the bend's tempo change goes after it.
+    // A loop, a bend, a duck or beat-by-beat rates nori placed for its own plan don't fit another: the bend's tempo
+    // change goes after it.
     t.unbend();
     (t.out_loop_ms, t.in_loop, t.vocal_duck, t.highs_in) = (None, None, None, None);
+    t.in_rates.clear();
+    t.out_rates.clear();
     if p.kind == Proposed::Gapless {
         let d = 0;
         t.kind = TransitionKind::Gapless;
@@ -207,10 +210,15 @@ mod tests {
         let matched = adopt(&nori(), Proposal { bass_swap: true, filter: true, ..proposal(Proposed::BeatMatched, 100_000, 8_000, 0, 1.04) }, 200_000, 200_000, 6.0).unwrap();
         assert_eq!(matched.kind, TransitionKind::BeatMatched);
         assert!(matched.bass_swap.is_some() && matched.low_pass.is_some());
-        // nori's loop and bend are for its own window: the plugin's plays both decks at one tempo, ramping after.
+        // nori's loop, bend and beat-by-beat rates are for its own window: the plugin's plays both decks at one tempo,
+        // ramping after, and a gapless one at their own.
+        let rates = vec![nori_player::types::Rate { at_ms: 0.0, speed: 1.0 }, nori_player::types::Rate { at_ms: 4_000.0, speed: 1.02 }];
         let dj = TransitionPlan { in_loop: Some(nori_player::types::InLoop { ms: 2_000, repeats: 1 }), bend: Some(nori_player::types::Bend { start_ms: 4_000, end_ms: 8_000 }), ..nori() };
         let p = adopt(&dj, proposal(Proposed::BeatMatched, 100_000, 8_000, 0, 1.04), 200_000, 200_000, 6.0).unwrap();
         assert_eq!((p.in_loop, p.bend, p.tempo_ramp_ms), (None, None, 4_000));
+        let warped = TransitionPlan { in_rates: rates.clone(), out_rates: rates, ..nori() };
+        let p = adopt(&warped, proposal(Proposed::Gapless, 0, 0, 0, 1.0), 200_000, 200_000, 6.0).unwrap();
+        assert!(p.in_rates.is_empty() && p.out_rates.is_empty(), "{p:?}");
         // nori's effects keep their place in the plugin's length; the echo's delay is a beat, so it stays.
         use nori_player::types::{Duck, Echo, MidDip, Reverb, Window};
         let w = |start_ms, end_ms| Window { start_ms, end_ms };
