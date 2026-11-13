@@ -19,6 +19,7 @@
 //! before a hidden track (`Ending`) within that cap.
 
 mod moves;
+mod warp;
 
 use moves::{Move, Pair};
 use super::structure::key_distance;
@@ -560,6 +561,9 @@ struct Lock {
     max_bars: i64,
     /// A tempo gap past the limit, met halfway ([`meet_halfway`]).
     split: bool,
+    /// The incoming opening may loop ([`Profile::in_loop`] permitting): not when its beats drift from the outgoing
+    /// song's, since the repeats keep the speed they were played at and the rates must follow each beat.
+    in_loops: bool,
     /// Filters are on, so two voices can be kept apart.
     separate: bool,
     profile: &'static Profile,
@@ -831,7 +835,7 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                 let mut in_loop = None;
                 if in_start < (first - 0.5 * beat_n).max(0.0) {
                     // Too short an opening: loop its first bars to make up the rest, unless it is sung.
-                    if !prof.in_loop || runup_sung {
+                    if !prof.in_loop || !k.in_loops || runup_sung {
                         continue;
                     }
                     let lead = ((d - first) / bar_in).round() as i64;
@@ -976,7 +980,6 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
 }
 
 fn beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSettings, short_cause: &str) -> Result<TransitionPlan, String> {
-    let out_dur = room.out_dur;
     let bpm_a = bpm_with_tag(a.bpm, s.out_tag_bpm);
     let bpm_b = bpm_with_tag(b.bpm, s.in_tag_bpm);
     let mut ratio = match_ratio(bpm_a, bpm_b);
@@ -1016,8 +1019,16 @@ fn beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSet
     } else {
         prof.most_bars[0]
     };
-    let k = Lock { ratio, pct, bpm_a, b_bpm, bpb, beat: beat_a, bar, dist, mild_clash, far, max_bars, split, separate: s.filter_effects, profile: prof };
-    let w = drop_aligned(a, b, room, bpm_b, &k).ok_or("no bar-aligned window fits")?;
+    let k = Lock { ratio, pct, bpm_a, b_bpm, bpb, beat: beat_a, bar, dist, mild_clash, far, max_bars, split, in_loops: true, separate: s.filter_effects, profile: prof };
+    // A window whose incoming loop the drifting beats would leave apart is looked for again without one.
+    finish_window(a, b, room, bpm_b, s, &k, short_cause).or_else(|e| finish_window(a, b, room, bpm_b, s, &Lock { in_loops: false, ..k }, short_cause).map_err(|e2| format!("{e}; {e2}")))
+}
+
+/// The best window under `k`, finished: locked, met halfway when `k` says so.
+fn finish_window(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, s: &AutoMixSettings, k: &Lock, short_cause: &str) -> Result<TransitionPlan, String> {
+    let (pct, out_dur) = (k.pct, room.out_dur);
+    let max_pct = (s.max_tempo_change_pct as f64).clamp(0.0, 12.0);
+    let w = drop_aligned(a, b, room, bpm_b, k).ok_or("no bar-aligned window fits")?;
     let ending = Ending::of(a, out_dur);
     let left = ending.exit < ending.music_end && (w.start + w.swap - ending.exit).abs() <= 0.5 * k.beat;
     let leaving = match (left, ending.breakdown) {
@@ -1034,8 +1045,8 @@ fn beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSet
         if w.out_loop > 0.0 { "intro/outro remix" } else { "" },
         if neutral { "run-up without chords" } else { "" },
     ];
-    let mut p = finish_beat_matched(a, b, s, &k, &w, short_cause, &bits);
-    if split && !meet_halfway(&mut p, a, b, &k) {
+    let mut p = finish_beat_matched(a, b, s, k, &w, short_cause, &bits)?;
+    if k.split && !meet_halfway(&mut p, a, b, k) {
         return Err(format!("tempo gap {pct:.1} % over the {max_pct:.1} % limit, and no room to meet it halfway"));
     }
     Ok(p)
@@ -1106,7 +1117,7 @@ fn swap_len(k: &Lock, landing: Landing) -> f64 {
     }
 }
 
-fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings, k: &Lock, w: &Window, short_cause: &str, notes: &[&str]) -> TransitionPlan {
+fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings, k: &Lock, w: &Window, short_cause: &str, notes: &[&str]) -> Result<TransitionPlan, String> {
     let dur_ms = w.dur.round() as i64;
     let swap = (w.swap.round() as i64).clamp(0, dur_ms);
     let beat_ms = k.beat.round() as i64;
@@ -1167,7 +1178,10 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     p.in_loop = w.in_loop.map(|(l, n)| InLoop { ms: (l as f64 * k.bar).round() as i64, repeats: n as i32 });
     p.in_gain_db = loudness_trim(Some(a), Some(b), s);
     let loop_end = w.in_loop.map_or(0.0, |(l, n)| (l * (n + 1)) as f64 * k.bar);
-    if k.profile.bend && !k.split {
+    // Locked beat by beat where both ends' beats are known: the incoming tempo then follows them, and eases back to
+    // its own after the mix, so it needs no bend.
+    let warped = !k.split && warp::lock(&mut p, a, b, w.swap)?;
+    if k.profile.bend && !k.split && !warped {
         bend(&mut p, k, loop_end);
     }
     let mut bits: Vec<String> = notes.iter().filter(|n| !n.is_empty()).map(|n| n.to_string()).collect();
@@ -1188,6 +1202,9 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     }
     if let Some(b) = p.bend {
         bits.push(format!("tempo bending over the last {:.0} bars", k.profile_bars(b)));
+    }
+    if warped {
+        bits.push("locked beat by beat".to_string());
     }
     if k.far {
         bits.push(format!("{KEYS_FAR}: quick"));
@@ -1211,7 +1228,7 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
         (k.ratio - 1.0) * 100.0,
         bits.join(", ")
     );
-    p
+    Ok(p)
 }
 
 /// The incoming highs over a run-up of this many bars or more: held this far down above this shelf, dB and Hz, back
@@ -2100,6 +2117,42 @@ mod tests {
         assert_ne!(p.kind, TransitionKind::LoopRamp, "{}", p.reason);
         let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
         assert_ne!(smooth.kind, TransitionKind::LoopRamp, "{}", smooth.reason);
+    }
+
+    /// A band that drifts (its beats pushed and pulled up to 60 ms around one tempo) into a steady song: one ratio
+    /// would leave the beats apart, so the incoming tempo follows them beat by beat, every beat of the mix within 20 ms
+    /// of its partner, in both styles; a beat dropped from one list breaks the pairing, and nothing is warped.
+    #[test]
+    fn a_drifting_band_is_followed_beat_by_beat() {
+        use crate::types::Beat;
+        let beat = 60_000.0 / 120.0;
+        let grid = |from: f64, to: f64, drift: f64| -> Vec<Beat> {
+            let (k0, k1) = (((from - 120.0) / beat).ceil() as i64, ((to - 120.0) / beat).floor() as i64);
+            (k0..=k1).map(|k| Beat { at_ms: (120.0 + k as f64 * beat + drift * (std::f64::consts::TAU * k as f64 / 60.0).sin()).round() as i64, downbeat: k % 4 == 0, sure: true }).collect()
+        };
+        let a = TrackAnalysis { outro_beats: grid(178_000.0, 238_000.0, 60.0), ..track(120.0) };
+        let b = TrackAnalysis { intro_beats: grid(100.0, 60_000.0, 0.0), ..track(120.0) };
+        for s in [dj(), AutoMixSettings { max_transition_s: 40.0, ..Default::default() }] {
+            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &s);
+            assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
+            assert!(!p.in_rates.is_empty() && p.reason.contains("locked beat by beat"), "{:?}: {}", s.style, p.reason);
+            let mut paired = 0;
+            for x in &a.outro_beats {
+                let at = (x.at_ms - p.out_start_ms) as f64;
+                if !(0.0..=p.duration_ms as f64).contains(&at) {
+                    continue;
+                }
+                // Its partner: the incoming beat the outgoing one is heard against.
+                let partner = b.intro_beats.iter().map(|y| (p.wall_of_in_song((y.at_ms - p.in_start_ms) as f64) - at).abs()).fold(f64::MAX, f64::min);
+                assert!(partner <= 20.0, "{:?}: the beat at {} ms is {partner:.1} ms from its partner", s.style, x.at_ms);
+                paired += 1;
+            }
+            assert!(paired >= 8, "{paired} beats in the mix");
+            check_skip(&p, &a, &b, 240_000);
+        }
+        let dropped: Vec<Beat> = b.intro_beats.iter().enumerate().filter(|(i, _)| i % 7 != 3).map(|(_, x)| *x).collect();
+        let p = plan(Some(&a), Some(&TrackAnalysis { intro_beats: dropped, ..b.clone() }), 240_000, 240_000, &dj());
+        assert!(p.in_rates.is_empty(), "{}", p.reason);
     }
 
     /// Where one end has no beat a blend runs long at any tempo, the beatless side carrying it, in both styles.
