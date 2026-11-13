@@ -1332,6 +1332,7 @@ fn words_kind(kind: nori_core::automix::planner::TransitionKind) -> &'static str
         K::Brake => "AutoMix: brake",
         K::ReverbWash => "AutoMix: reverb wash",
         K::BeatlessBlend => "AutoMix: blend",
+        K::LoopRamp => "AutoMix: loop ramp",
         K::EqualPowerFade => "Crossfade",
         K::Gapless => "Gapless",
     }

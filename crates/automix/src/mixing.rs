@@ -69,7 +69,7 @@ pub fn proposed_kind(kind: TransitionKind) -> Proposed {
         | TransitionKind::Brake
         | TransitionKind::ReverbWash
         | TransitionKind::BeatlessBlend => Proposed::Crossfade,
-        TransitionKind::BeatMatched => Proposed::BeatMatched,
+        TransitionKind::BeatMatched | TransitionKind::LoopRamp => Proposed::BeatMatched,
         TransitionKind::EchoOut => Proposed::EchoOut,
         TransitionKind::Cut => Proposed::Cut,
     }

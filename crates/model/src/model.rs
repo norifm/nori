@@ -853,6 +853,7 @@ pub enum TransitionKind {
     Brake,
     ReverbWash,
     BeatlessBlend,
+    LoopRamp,
 }
 
 #[cfg(feature = "ffi")]
