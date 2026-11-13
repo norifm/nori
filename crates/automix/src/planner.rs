@@ -179,7 +179,8 @@ impl Planner {
             self.measured_lengths();
             p = self.state.lock();
         }
-        let chosen = match pick(&prefs, p.transitions_off, &p.window, outgoing_id, p.shuffling) {
+        let previous = p.made.iter().rev().find(|(n, _)| n.incoming_id == outgoing_id).map(|(n, _)| n.kind);
+        let chosen = match pick(&prefs, p.transitions_off, &p.window, outgoing_id, p.shuffling, previous) {
             Ok(chosen) => chosen,
             Err(skip) => {
                 if !p.none.as_ref().is_some_and(|(id, _, s)| *s == Some(skip) && id == outgoing_id) {

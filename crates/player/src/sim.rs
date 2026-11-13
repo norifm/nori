@@ -15,7 +15,7 @@ use crate::pcm::{Encoding, Format};
 use crate::pipeline::{self, Reading as _, Remake, Sink, Songs};
 use crate::playlist::Playlist;
 use crate::transitions::{engine_plan, pick, whole_song, Skip, TransitionPrefs, WindowSong};
-use crate::types::TrackAnalysis;
+use crate::types::{TrackAnalysis, TransitionKind};
 
 pub use crate::pipeline::Sound;
 
@@ -682,6 +682,8 @@ pub struct App {
     pub shuffling: bool,
     pub analyses: std::collections::HashMap<String, TrackAnalysis>,
     pub log: Vec<String>,
+    /// The kind of the last transition planned into each song.
+    pub kinds_into: std::collections::HashMap<String, TransitionKind>,
     /// Every sound change, as [`pipeline::App::spliced`] said it.
     pub splices: Vec<pipeline::Splice>,
     pub now_ms: i64,
@@ -724,6 +726,7 @@ impl App {
             shuffling: false,
             analyses: Default::default(),
             log: Vec::new(),
+            kinds_into: Default::default(),
             splices: Vec::new(),
             now_ms: 0,
             none: None,
@@ -762,7 +765,8 @@ impl Default for App {
 
 impl Host for App {
     fn plan_for(&mut self, outgoing_id: &str) -> Option<Plan> {
-        let chosen = match pick(&self.prefs, self.transitions_off, &self.window, outgoing_id, self.shuffling) {
+        let previous = self.kinds_into.get(outgoing_id).copied();
+        let chosen = match pick(&self.prefs, self.transitions_off, &self.window, outgoing_id, self.shuffling, previous) {
             Err(skip) => {
                 let repeated = self.none.as_ref().is_some_and(|(id, s)| *s == Some(skip) && id == outgoing_id);
                 if !repeated {
@@ -776,6 +780,7 @@ impl Host for App {
         let (o, n) = (&self.window[chosen.out], &self.window[chosen.next]);
         let (a, b) = if self.prefs.auto_mix { (self.analyses.get(&o.id), self.analyses.get(&n.id)) } else { (None, None) };
         let t = plan::plan(a, b, o.duration_ms, n.duration_ms, &chosen.settings);
+        self.kinds_into.insert(n.id.clone(), t.kind);
         let p = engine_plan(&t, &n.id);
         let line = match &p {
             None => format!("planFor: gapless ({})", t.reason),

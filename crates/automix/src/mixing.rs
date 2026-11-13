@@ -62,7 +62,13 @@ const MAX_MS: i64 = 60_000;
 pub fn proposed_kind(kind: TransitionKind) -> Proposed {
     match kind {
         TransitionKind::Gapless => Proposed::Gapless,
-        TransitionKind::EqualPowerFade | TransitionKind::MixRampFade => Proposed::Crossfade,
+        TransitionKind::EqualPowerFade
+        | TransitionKind::MixRampFade
+        | TransitionKind::FilterRide
+        | TransitionKind::FilterOut
+        | TransitionKind::Brake
+        | TransitionKind::ReverbWash
+        | TransitionKind::BeatlessBlend => Proposed::Crossfade,
         TransitionKind::BeatMatched => Proposed::BeatMatched,
         TransitionKind::EchoOut => Proposed::EchoOut,
         TransitionKind::Cut => Proposed::Cut,

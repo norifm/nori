@@ -10,7 +10,6 @@ use std::f64::consts::PI;
 
 use super::plan::{at_end, at_start, grid_ok};
 use super::structure::camelot;
-use crate::types::BarProfile;
 use super::*;
 
 /// Beat and downbeat tolerance, seconds (the standard ±70 ms).
@@ -1388,7 +1387,8 @@ pub struct MixTotals {
     pub bends: usize,
     pub beat_matched: usize,
     pub cuts: usize,
-    pub echo_outs: usize,
+    /// DJ moves for pairs that are not locked: rides, echoes, filters, brakes, washes.
+    pub handovers: usize,
     pub drops: usize,
     pub drop_hit: usize,
     pub drop_skipped: usize,
@@ -1424,7 +1424,7 @@ pub fn mix_totals(scores: &[MixScore]) -> MixTotals {
         t.bends += s.bent as usize;
         t.beat_matched += (s.kind == K::BeatMatched) as usize;
         t.cuts += (s.kind == K::Cut) as usize;
-        t.echo_outs += (s.kind == K::EchoOut) as usize;
+        t.handovers += matches!(s.kind, K::EchoOut | K::FilterRide | K::FilterOut | K::Brake | K::ReverbWash) as usize;
         if s.has_drop {
             t.drops += 1;
             t.drop_hit += s.drop_hit as usize;
@@ -1486,14 +1486,13 @@ fn transitions_hold_their_scores() {
     assert!(t.swap_on_bar == t.swaps && t.swap_on_phrase == t.swaps && t.start_on_phrase >= 10, "swaps and starts on the bar and phrase: {t:?}");
     assert!(t.cap_broken == 0 && t.coda_s == 0.0 && t.dead_runup_s == 0.0, "{t:?}");
     assert!(t.dead_air_s <= 38.0 && t.clash_s <= 1.0 && t.both_sung_s <= 5.0 && t.bump_max_lu <= 1.0, "{t:?}");
-    assert!(t.sung_lost_s <= 18.0 && t.echo_outs == 0, "{t:?}");
+    assert!(t.sung_lost_s <= 18.0 && t.handovers == 0, "{t:?}");
     // DJ: longer mixes that land more drops, without more harm, and no cuts. The
     // singing found runs past the sung notes of these sparsely sung songs (a mix must not miss a note), so DJ
     // also skips sung intros, loops only unsung bars, and twice waits for a last line off the phrase.
     let dj = mix_totals(&run_mixes(crate::types::MixStyle::Dj));
     assert!(dj.duration_s >= 1.5 * t.duration_s && dj.drop_hit >= 10 && dj.drop_skipped == 0 && dj.double_drops >= 1, "{dj:?}");
-    eprintln!("{dj:?}");
-    assert!(dj.cuts == 0 && dj.echo_outs >= 1 && dj.skip_in_s <= 40.0 && dj.dip_s <= 0.6 * t.dip_s && dj.loops >= 1 && dj.bends >= 6, "{dj:?}");
+    assert!(dj.cuts == 0 && dj.handovers >= 1 && dj.skip_in_s <= 40.0 && dj.dip_s <= 0.6 * t.dip_s && dj.loops >= 1 && dj.bends >= 6, "{dj:?}");
     assert!(dj.swap_on_bar == dj.swaps && dj.swap_on_phrase + 2 >= dj.swaps, "{dj:?}");
     assert!(dj.cap_broken == 0 && dj.coda_s == 0.0 && dj.dead_runup_s <= 4.0, "{dj:?}");
     assert!(dj.dead_air_s <= 38.0 && dj.clash_s <= 1.0 && dj.both_sung_s <= 5.0 && dj.bump_max_lu <= 1.0, "{dj:?}");
@@ -1513,6 +1512,7 @@ fn end_grids_hold_before_a_coda() {
 /// Each end's bars read what plays in them: a beat or none, singing or none, the bass or none.
 #[test]
 fn end_bars_read_what_plays() {
+    use crate::types::BarProfile;
     // Eight bars of drums, 32 of the band, 16 sung, 8 of the band, 12 of pads: the profiles' 32 bars at each end.
     let (a, _) = analysed("long-coda-124");
     let (intro, outro) = (&a.track.intro_bars, &a.track.outro_bars);

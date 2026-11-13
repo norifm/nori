@@ -222,6 +222,8 @@ pub struct AutoMixSettings {
     /// Server/tag BPM for the incoming track (0 unknown).
     pub in_tag_bpm: f32,
     pub style: MixStyle,
+    /// The kind of the transition before this one: a marked move is not heard twice in a row.
+    pub previous: Option<TransitionKind>,
 }
 
 impl Default for AutoMixSettings {
@@ -238,6 +240,7 @@ impl Default for AutoMixSettings {
             out_tag_bpm: 0.0,
             in_tag_bpm: 0.0,
             style: MixStyle::Smooth,
+            previous: None,
         }
     }
 }
@@ -258,6 +261,17 @@ pub enum TransitionKind {
     /// The outgoing track stops on a downbeat and the incoming one comes in at full there, after a riser; an
     /// instrumental ending's last beats echo over it.
     Cut,
+    /// Tempos too far apart to lock: the outgoing track darkens through a low-pass while the incoming one rises
+    /// through a high-pass, one kick at a time.
+    FilterRide,
+    /// The outgoing track thins out through a rising high-pass to a downbeat, where the incoming one starts.
+    FilterOut,
+    /// The outgoing track slows to a stop like a turntable switched off; the incoming one comes in as it stops.
+    Brake,
+    /// The outgoing track rings out in a reverb into a calmer incoming one.
+    ReverbWash,
+    /// A long overlap where one side has no beat (a pad, a held chord, a rubato intro), at any tempo.
+    BeatlessBlend,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
