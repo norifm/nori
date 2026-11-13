@@ -3,7 +3,7 @@
 use nori_player::automix::ANALYSIS_VERSION;
 use nori_player::sim::{prefs_off, Player};
 use nori_player::transitions::TransitionPrefs;
-use nori_player::types::{MixStyle, TrackAnalysis};
+use nori_player::types::{BarProfile, MixStyle, TrackAnalysis, TransitionKind};
 
 use crate::common::*;
 
@@ -84,6 +84,8 @@ struct Kind {
     a: TrackAnalysis,
     b: TrackAnalysis,
     logged: &'static [&'static str],
+    /// The kind of the transition into the outgoing song.
+    after: Option<TransitionKind>,
 }
 
 fn automix_prefs() -> TransitionPrefs {
@@ -108,63 +110,91 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
         ..a.clone()
     };
     let long_intro = TrackAnalysis { intro_end_ms: 250 + 12 * bar, silence_start_ms: 100, ..same_tempo.clone() };
+    // Sung to two seconds before its end, every bar loud.
+    let sung_to = (SONG_S * 1000.0) as i64 - 2_000;
+    let outro_bars = (10..30).map(|i| BarProfile { start_ms: 250 + i * bar, level_db: 0.0, low_db: 0.0, pulse: 1.0, voice: if 250 + i * bar < sung_to { 1.0 } else { 0.0 }, change: 0.0 }).collect();
+    let sung = TrackAnalysis { vocal_start_ms: 300, vocal_end_ms: sung_to, outro_bars, ..a.clone() };
+    // Stopping cold three seconds before its end.
+    let stops = TrackAnalysis { exit_ms: (SONG_S * 1000.0) as i64 - 3_000, ..a.clone() };
     vec![
-        Kind { name: "equal-power crossfade", prefs: crossfade(6), a: a.clone(), b: b.clone(), logged: &["EqualPowerFade"] },
+        Kind { name: "equal-power crossfade", prefs: crossfade(6), a: a.clone(), b: b.clone(), logged: &["EqualPowerFade"], after: None },
         Kind {
             name: "beat-matched, stretched, bass swap",
             prefs: automix_prefs(),
             a: a.clone(),
             b: b.clone(),
-            logged: &["BeatMatched", "tempo x0.976"],
+            logged: &["BeatMatched", "tempo x0.976"], after: None,
         },
         Kind {
             name: "beat-matched, no bass swap, no filters",
             prefs: TransitionPrefs { bass_swap: false, filter_effects: false, ..automix_prefs() },
             a: a.clone(),
             b: same_tempo.clone(),
-            logged: &["BeatMatched", "tempo x1.000"],
+            logged: &["BeatMatched", "tempo x1.000"], after: None,
         },
         Kind {
             name: "beat-matched, the outro looped",
             prefs: automix_prefs(),
             a: short_outro,
             b: long_intro,
-            logged: &["BeatMatched", "remix"],
+            logged: &["BeatMatched", "remix"], after: None,
         },
         Kind {
             name: "beat-matched, keys far apart (DJ)",
             prefs: TransitionPrefs { style: MixStyle::Dj, ..automix_prefs() },
             a: keyed(&a, 1),
             b: keyed(&same_tempo, 7),
-            logged: &["BeatMatched", "keys far apart"],
+            logged: &["BeatMatched", "keys far apart"], after: None,
         },
         Kind {
             name: "MixRamp fade",
             prefs: TransitionPrefs { beat_match: false, filter_effects: false, ..automix_prefs() },
             a: a.clone(),
             b: b.clone(),
-            logged: &["MixRampFade", "mixramp fade"],
+            logged: &["MixRampFade", "mixramp fade"], after: None,
         },
         Kind {
             name: "downbeat-aligned fade",
             prefs: TransitionPrefs { filter_effects: false, ..automix_prefs() },
             a: a.clone(),
             b: TrackAnalysis { bpm_confidence: 0.1, intro_bpm_confidence: 0.1, ..b.clone() },
-            logged: &["MixRampFade", "downbeat-aligned"],
+            logged: &["MixRampFade", "downbeat-aligned"], after: None,
         },
         Kind {
             name: "melt",
             prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
             a: a.clone(),
             b: b.clone(),
-            logged: &["FilterRide", "melt"],
+            logged: &["FilterRide", "melt"], after: None,
         },
         Kind {
             name: "afterglow",
             prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
             a: a.clone(),
             b: TrackAnalysis { vocal_start_ms: 300, vocal_end_ms: 20_000, ..b.clone() },
-            logged: &["ReverbWash", "afterglow"],
+            logged: &["ReverbWash", "afterglow"], after: None,
+        },
+        Kind {
+            name: "afterglow off the last word",
+            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            a: sung.clone(),
+            b: b.clone(),
+            logged: &["ReverbWash", "last word"], after: None,
+        },
+        Kind {
+            name: "rise",
+            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            a: sung,
+            b: b.clone(),
+            logged: &["FilterRide", "rise"],
+            after: Some(TransitionKind::ReverbWash),
+        },
+        Kind {
+            name: "glowing stop",
+            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            a: stops,
+            b: b.clone(),
+            logged: &["ReverbWash", "glowing"], after: None,
         },
     ]
 }
@@ -184,6 +214,7 @@ fn run_listed(kind: &Kind, a: nori_player::sim::Track, b: &[i16], gains: &[(&str
     let prefs = TransitionPrefs { replay_gain, ..kind.prefs };
     let mut p = Player::with_prefs(vec![a, track("b", b)], prefs);
     p.measure_on_move = false;
+    p.app.kinds_into.extend(kind.after.map(|k| ("a".to_string(), k)));
     for t in [&kind.a, &kind.b] {
         if !t.song_id.is_empty() {
             p.app.analyses.insert(t.song_id.clone(), t.clone());
@@ -308,7 +339,7 @@ fn no_level_step() {
         prefs: TransitionPrefs { auto_mix_max_s: 12, ..automix_prefs() },
         a: TrackAnalysis::default(),
         b: TrackAnalysis::default(),
-        logged: &["EqualPowerFade", "not analysed"],
+        logged: &["EqualPowerFade", "not analysed"], after: None,
     });
     let mut bad = Vec::new();
     let mut cut = 0;
@@ -394,10 +425,10 @@ fn tiny_stretch_keeps_level() {
         prefs: TransitionPrefs { bass_swap: false, filter_effects: false, ..automix_prefs() },
         a: measured("a", 120.0, -14.0),
         b: measured("b", 120.09, -14.0),
-        logged: &["BeatMatched", "tempo x0.999"],
+        logged: &["BeatMatched", "tempo x0.999"], after: None,
     };
     let got = run(&kind, &quiet, &b, &[], true);
-    let plain = run(&Kind { b: measured("b", 120.0, -14.0), logged: &["BeatMatched", "tempo x1.000"], ..kind.clone() }, &quiet, &b, &[], true);
+    let plain = run(&Kind { b: measured("b", 120.0, -14.0), logged: &["BeatMatched", "tempo x1.000"], after: None, ..kind.clone() }, &quiet, &b, &[], true);
     assert_eq!(got.mix, plain.mix, "{} against {}", got.line, plain.line);
     let (s, n) = got.mix;
     // From where the incoming song is fully in (the second half of the mix) to twenty seconds past it.
