@@ -138,7 +138,7 @@ fn measure(model: &BeatThis, secs: usize) -> [isize; 3] {
         let n = (30 * rate as usize).min(x.len());
         let piece = if end == MixEnd::Intro { &x[..n] } else { &x[x.len() - n..] };
         let g = beats::read(model, piece, rate, end, start_ms).expect("the model runs");
-        assert!(g.is_some_and(|g| (g.bpm - 120.0).abs() < 2.0), "a click every half second is 120 bpm: {g:?}");
+        assert!(g.grid.is_some_and(|g| (g.bpm - 120.0).abs() < 2.0), "a click every half second is 120 bpm: {g:?}");
         windows += 1;
     }
     assert_eq!(windows, 2);
