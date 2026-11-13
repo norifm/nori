@@ -3,7 +3,8 @@
 //! - `analysis`, `tempo`, `structure`, `loudness`: one streamed pass over a track's PCM gives a `TrackAnalysis`.
 //! - `beats` (+ `neural`, `weights`, `checkpoint` with `neural-beats`): the optional Beat This! tracker, whose
 //!   grids replace the classical intro and outro grids where it is sure.
-//! - `plan`: two analyses and the settings to a `TransitionPlan`; `curve`: an end's beats as a tempo curve for it.
+//! - `plan`: two analyses and the settings to a `TransitionPlan`; `curve`: an end's beats as a tempo curve for it;
+//!   `phrase`: where an end's phrases start.
 //! - `mixer`, `stretch`, `resample`: per-buffer rendering of a plan.
 //! - `vocal`: the vocal activity curve synced lyrics are checked against.
 //! - `synth`, `eval` (tests and `synth`): synthetic songs the analysis and plans are scored on.
@@ -15,6 +16,7 @@ pub mod checkpoint;
 mod curve;
 pub mod loudness;
 pub mod mixer;
+mod phrase;
 #[cfg(feature = "neural-beats")]
 pub mod neural;
 pub mod plan;
