@@ -152,6 +152,14 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
             logged: &["BeatMatched", "keys far apart"], after: None,
         },
         Kind {
+            name: "beat-matched, EQ blend (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, auto_mix_max_s: 40, ..automix_prefs() },
+            a: a.clone(),
+            b: same_tempo.clone(),
+            logged: &["BeatMatched", "run-up"],
+            after: None,
+        },
+        Kind {
             name: "beat-matched, bass first (DJ)",
             prefs: TransitionPrefs { style: MixStyle::Dj, auto_mix_max_s: 40, ..automix_prefs() },
             a: kicking(&a),

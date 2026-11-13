@@ -681,8 +681,8 @@ struct Profile {
     riser: bool,
     /// The outgoing song fades over a bar at least after the swap, unless its music ends sooner.
     bar_tail: bool,
-    /// The incoming song's layers come in one at a time: into a drop its voice band waits for the drop, and elsewhere
-    /// now and then its bass goes first ([`TransitionKind::LayeredMix`]).
+    /// A DJ's blend: the incoming fader up within a bar and its layers brought in one at a time by the EQ, now and
+    /// then its bass first ([`TransitionKind::LayeredMix`]).
     layers: bool,
     /// Per bar of looped outgoing slice heard again.
     loop_cost: f64,
@@ -1261,13 +1261,17 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
         p.tempo_ramp_ms = (p.tempo_ramp_beats as f64 * (60_000.0 / k.b_bpm) / ((1.0 + k.ratio) / 2.0)).round() as i64;
     }
     p.fade_curve = FadeCurve::SineSquared;
-    // Incoming rises over the run-up (over its first bar without one); outgoing falls over the tail after the swap.
-    (p.in_fade_start_ms, p.in_fade_end_ms) = (0, if swap > 0 { swap } else { (k.bar.round() as i64).min(dur_ms / 2).max(1) });
+    // Incoming: over an instrumental run-up a DJ has its fader up within a bar and lets the EQ bring it in; a sung
+    // run-up, and Smooth, rise over it. Without a run-up, over its first bar. Outgoing falls over the tail after the
+    // swap.
+    let bar_len = k.bar.round() as i64;
+    let rise = if k.profile.layers && !w.runup_sung { bar_len.min(swap) } else { swap };
+    (p.in_fade_start_ms, p.in_fade_end_ms) = (0, if swap > 0 { rise.max(1) } else { bar_len.min(dur_ms / 2).max(1) });
     (p.out_fade_start_ms, p.out_fade_end_ms) = (swap.min(dur_ms - 1).max(0), dur_ms);
     if s.bass_swap {
         let len = swap_len(k, w.landing).round() as i64;
         p.bass_swap = Some(BassSwap { at_ms: (swap - len).max(0), len_ms: len, cut_hz: BASS_CUT_HZ });
-        if k.profile.highs_in && w.runup_bars >= HIGHS_IN_MIN_BARS {
+        if k.profile.highs_in && w.runup_bars >= HIGHS_IN_MIN_BARS && (!k.profile.layers || w.landing == Landing::Drop) {
             let back = (w.swap - (w.runup_bars as f64 / 4.0 + 1.0) * k.bar).max(0.0);
             p.highs_in = Some(HighsIn { at_ms: back.round() as i64, len_ms: k.bar.round() as i64, db: HIGHS_IN_DB, hz: HIGHS_IN_HZ });
         }
@@ -1300,10 +1304,16 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
             apart = true;
         }
     }
-    // Into a drop the voices land with the bass.
+    // The incoming layers, the fader up: into a drop its body first, its highs before the drop, and the bass and the
+    // voices on it; elsewhere its highs first, its mids and voices halfway (once the outgoing voice is done), and the
+    // bass at the landing.
     let layers = k.profile.layers && s.filter_effects && swap > 0;
-    if layers && w.landing == Landing::Drop && p.vocal_duck.is_none() {
-        p.vocal_duck = Some(VocalDuck { until_ms: swap, release_ms: beat_ms.min(swap), db: VOCAL_DUCK_DB, hz: VOCAL_DUCK_HZ });
+    if layers && p.vocal_duck.is_none() {
+        let half = ((w.runup_bars / 2) as f64 * k.bar).round() as i64;
+        let mids = if w.landing == Landing::Drop || sings_after(a, w.start + half as f64) { swap } else { half };
+        if mids > 0 {
+            p.vocal_duck = Some(VocalDuck { until_ms: mids, release_ms: bar_len.min(mids), db: VOCAL_DUCK_DB, hz: VOCAL_DUCK_HZ });
+        }
     }
     // Bass first, a layered mix: the incoming kick and bass take over a quarter into the run-up, its instruments come
     // up after as the outgoing song thins to its voice band, and the voices change hands last, at the landing. Not
@@ -1316,11 +1326,11 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     if layered {
         p.kind = TransitionKind::LayeredMix;
         p.vocal_duck = Some(VocalDuck { until_ms: swap, release_ms: beat_ms.min(swap), db: VOCAL_DUCK_DB, hz: VOCAL_DUCK_HZ });
-        let (bar_ms, len) = (k.bar.round() as i64, swap_len(k, w.landing).round() as i64);
+        let len = swap_len(k, w.landing).round() as i64;
         p.bass_swap = Some(BassSwap { at_ms: (bass - len).max(0), len_ms: len, cut_hz: BASS_CUT_HZ });
         p.highs_in = None;
-        (p.in_fade_start_ms, p.in_fade_end_ms) = ((bass - bar_ms).max(0), bass);
-        p.in_low_pass = Some(Sweep { start_ms: (bass - bar_ms).max(0), end_ms: swap, from_hz: LAYER_BASS_HZ, to_hz: SWEEP_FROM_HZ });
+        (p.in_fade_start_ms, p.in_fade_end_ms) = ((bass - bar_len).max(0), bass);
+        p.in_low_pass = Some(Sweep { start_ms: (bass - bar_len).max(0), end_ms: swap, from_hz: LAYER_BASS_HZ, to_hz: SWEEP_FROM_HZ });
         p.high_pass = Some(Sweep { start_ms: bass, end_ms: swap, from_hz: BASS_CUT_HZ, to_hz: LAYER_VOICE_FROM_HZ });
         p.low_pass = Some(Sweep { start_ms: bass, end_ms: swap, from_hz: SWEEP_FROM_HZ, to_hz: LAYER_VOICE_TO_HZ });
     }
@@ -1353,6 +1363,10 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     }
     if layered {
         bits.push("layered: bass first, then the instruments, the voices last".to_string());
+    } else if layers && w.landing == Landing::Drop {
+        bits.push("built up: its body, its highs, then the bass and the voices on the drop".to_string());
+    } else if layers {
+        bits.push("EQ blend: its highs, then its voices, then the bass".to_string());
     }
     if p.highs_in.is_some() {
         bits.push("highs before the bass".to_string());
@@ -2198,8 +2212,8 @@ mod tests {
     /// A DJ mix away from a drop, into an opening that carries a kick, hands the layers over one at a time: the
     /// incoming kick and bass on a downbeat a quarter into the run-up, then its instruments as its low-pass opens and
     /// the outgoing song thins to its voice band, and the voices last, at the landing. Into a drop the bass waits for
-    /// the drop, the voices with it; an opening with no kick has no bass to lead with; right after a layered mix, and in
-    /// Smooth, a plain blend.
+    /// the drop, the voices with it; an opening with no kick has no bass to lead with, so its highs come first, its
+    /// voices halfway, its bass at the landing; right after a layered mix, the same; Smooth fades in as before.
     #[test]
     fn dj_hands_the_layers_over_bass_first() {
         let beat: f64 = 60_000.0 / 128.0;
@@ -2208,7 +2222,7 @@ mod tests {
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
         assert!(p.kind == TransitionKind::LayeredMix && p.reason.contains("bass first"), "{}", p.reason);
         let again = plan(Some(&a), Some(&b), 240_000, 240_000, &after(TransitionKind::LayeredMix));
-        assert!(again.kind == TransitionKind::BeatMatched && again.vocal_duck.is_none(), "not twice in a row: {}", again.reason);
+        assert!(again.kind == TransitionKind::BeatMatched && again.in_low_pass.is_none(), "not twice in a row: {}", again.reason);
         let (bass, landing) = (swap_at(&p), p.out_fade_start_ms);
         assert!(bass > 0 && bass as f64 <= landing as f64 - 3.0 * 4.0 * beat + 1.0 && on_downbeat(&a, p.out_start_ms as f64 + p.out_song_ms(bass as f64)), "{p:?}");
         let lp = p.in_low_pass.expect(&p.reason);
@@ -2220,10 +2234,13 @@ mod tests {
 
         let drop = TrackAnalysis { drop_ms: (b.beat_offset_ms + 32.0 * beat) as i64, ..b.clone() };
         let quiet = profiled(track(128.0), |i| BarProfile { low_db: -24.0, pulse: 0.2, ..band(i) });
-        for (b, voices_wait) in [(&drop, true), (&quiet, false)] {
+        // The fader up within a bar either way; the voices on the drop, or halfway along the run-up.
+        for (b, voices_on_drop) in [(&drop, true), (&quiet, false)] {
             let p = plan(Some(&a), Some(b), 240_000, 240_000, &dj());
             assert!(p.kind == TransitionKind::BeatMatched && !p.reason.contains("bass first") && p.in_low_pass.is_none(), "{}", p.reason);
-            assert_eq!((swap_at(&p), p.vocal_duck.map(|d| d.until_ms)), (p.out_fade_start_ms, voices_wait.then_some(p.out_fade_start_ms)), "{p:?}");
+            let (landing, bar) = (p.out_fade_start_ms, (4.0 * beat).round() as i64);
+            let voices = if voices_on_drop { landing } else { landing / 2 / bar * bar };
+            assert_eq!((swap_at(&p), p.in_fade_end_ms, p.vocal_duck.map(|d| d.until_ms)), (landing, bar, Some(voices)), "{p:?}");
         }
         let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
         assert!(smooth.kind == TransitionKind::BeatMatched && smooth.vocal_duck.is_none() && smooth.in_low_pass.is_none(), "{}", smooth.reason);
