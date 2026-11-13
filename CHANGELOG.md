@@ -6,6 +6,30 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-13
+
+### Added
+
+- A profile shows its account's picture, and its Edit page switches the YouTube channel
+- A profile's Edit page is tidier: Rename is in its menu, advanced settings fold away
+- Measuring again re-measures the downloads in the background, with a progress notification
+- The download notification shows the song, its cover and its stages
+- Plugin settings are tidier: pages of their own, choices side by side, meters and icons
+
+### Changed
+
+- Plugins move to plugin API 5: update them from Settings › Plugins
+
+### Fixed
+
+- A session the provider takes up again is signed in at once
+- A provider's search no longer offers genres that play nothing
+- A playlist of unknown length no longer says 0 songs
+
+### Performance
+
+- A mix's gliding tempo no longer wakes the player every second
+
 ## [0.8.4] - 2026-11-12
 
 ### Fixed
