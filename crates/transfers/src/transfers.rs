@@ -180,6 +180,8 @@ struct Info {
     title: String,
     album: String,
     artist: String,
+    /// The cover's id, or empty.
+    cover: String,
     /// Expected size, bytes (0 unknown).
     estimate: i64,
 }
@@ -293,8 +295,10 @@ pub struct Notice {
     /// Bytes a second, and seconds left (-1 unknown).
     pub speed_bps: i64,
     pub eta_s: i64,
-    /// The in-flight song's title, or empty.
+    /// The in-flight song's title, artist and cover id, each empty when unknown.
     pub current: String,
+    pub artist: String,
+    pub cover: String,
     /// The batch's shared album when it has several songs, or empty.
     pub label: String,
 }
@@ -639,6 +643,7 @@ impl Tracker {
             title: s.title.replace('\n', " "),
             album: s.album.replace('\n', " "),
             artist: s.artist.replace('\n', " "),
+            cover: s.cover_art.clone().unwrap_or_default(),
         });
         self.info.insert(id.to_string(), info);
     }
@@ -1153,7 +1158,8 @@ impl Tracker {
         self.eta_s = self.countdown.next(if waiting { -1.0 } else { time_left(download_s, &after) }, now);
         // The notification says how long the bytes take; the lyrics and analysis after them have their own.
         let download_eta = self.download_countdown.next(if waiting { -1.0 } else { download_s.unwrap_or(-1.0) }, now);
-        let current = current.and_then(|i| self.slots[i].as_ref()).and_then(|s| self.info.get(&s.id)).map_or("", |i| i.title.as_str());
+        let song = current.and_then(|i| self.slots[i].as_ref()).and_then(|s| self.info.get(&s.id));
+        let (current, artist, cover) = song.map_or(("", "", ""), |i| (i.title.as_str(), i.artist.as_str(), i.cover.as_str()));
         let kind = match (waiting, total) {
             (true, _) => NoticeKind::Waiting,
             (false, 1) if !current.is_empty() => NoticeKind::OneNamed,
@@ -1163,17 +1169,15 @@ impl Tracker {
         let label = if total != 1 { self.batch.label().unwrap_or("") } else { "" };
         let n = &mut self.notice;
         let facts = (kind, position, total, permille, self.speed_bps, download_eta);
-        if (n.kind, n.position, n.total, n.permille, n.speed_bps, n.eta_s) == facts && n.current == current && n.label == label {
+        if (n.kind, n.position, n.total, n.permille, n.speed_bps, n.eta_s) == facts && (n.current.as_str(), n.artist.as_str(), n.cover.as_str(), n.label.as_str()) == (current, artist, cover, label) {
             return NoticeChange::Same;
         }
         // Reuse the kept strings' buffers.
-        if n.current != current {
-            n.current.clear();
-            n.current.push_str(current);
-        }
-        if n.label != label {
-            n.label.clear();
-            n.label.push_str(label);
+        for (kept, now) in [(&mut n.current, current), (&mut n.artist, artist), (&mut n.cover, cover), (&mut n.label, label)] {
+            if kept != now {
+                kept.clear();
+                kept.push_str(now);
+            }
         }
         (n.kind, n.position, n.total, n.permille, n.speed_bps, n.eta_s) = facts;
         NoticeChange::Changed
@@ -1858,6 +1862,17 @@ mod tests {
             t.info.insert(id.to_string(), Info { estimate: size, ..Info::default() });
         }
         t
+    }
+
+    #[test]
+    fn the_notice_names_the_song_in_flight() {
+        let mut t = tracker(&["ext-n"], 1_000_000);
+        t.info.get_mut("ext-n").unwrap().clone_from(&Info { title: "Blue".into(), artist: "Ada".into(), cover: "al-7".into(), estimate: 1_000_000, ..Info::default() });
+        t.followed("ext-n", QUEUED, 0);
+        t.open("ext-n", 0);
+        assert_eq!(t.notice(1, false, 0), NoticeChange::Changed);
+        let n = t.notice_facts();
+        assert_eq!((n.kind, n.current.as_str(), n.artist.as_str(), n.cover.as_str()), (NoticeKind::OneNamed, "Blue", "Ada", "al-7"));
     }
 
     #[test]
