@@ -468,8 +468,7 @@ pub(super) fn stop(p: &Pair) -> Option<Move> {
     on_its_stop(p.a, p.b, p.room, p.s, p.why_not).map(|plan| Move { plan, worth: STOP_WORTH })
 }
 
-/// A natural fade as Smooth hears it, and the three-band one under every fade: the mids dipped on both decks where
-/// two songs' bodies would crowd each other.
+/// The mids dipped on both decks, where two songs' bodies would crowd each other (the three-band blend's mid cut).
 pub(super) fn dip_mids(m: &mut TransitionPlan, s: &AutoMixSettings) {
     if s.filter_effects && m.duration_ms >= 2 * MIN_FADE_MS {
         m.mid_dip = Some(MidDip { window: Window { start_ms: 0, end_ms: m.duration_ms }, db: MID_DIP_DB, hz: MID_DIP_HZ, outgoing: true, incoming: true });

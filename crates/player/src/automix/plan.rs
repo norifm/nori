@@ -341,6 +341,7 @@ const LOUD_GAP_DB: f32 = 6.0;
 const TIMBRE_OCTAVES: f64 = 1.0;
 
 const VOCALS_OVERLAP: &str = "vocals overlap";
+const TIMBRE_MISMATCH: &str = "timbre mismatch";
 /// Incoming voice-band cut while the outgoing song sings: 18 dB at 1 kHz, about 6 dB at 500 Hz and 2 kHz.
 const VOCAL_DUCK_DB: f32 = -18.0;
 const VOCAL_DUCK_HZ: f32 = 1_000.0;
@@ -440,7 +441,7 @@ fn pair_gate(a: &TrackAnalysis, b: &TrackAnalysis, out_dur: i64) -> Verdict {
         && (a.outro_centroid as f64 / b.intro_centroid as f64).log2().abs() > TIMBRE_OCTAVES
     {
         v.shorten = true;
-        v.short_cause = "timbre mismatch";
+        v.short_cause = TIMBRE_MISMATCH;
     }
     v
 }
@@ -450,14 +451,12 @@ fn camelot_dist(a: &TrackAnalysis, b: &TrackAnalysis) -> Option<i32> {
     (a.key_confidence >= KEY_MIN_CONFIDENCE && b.key_confidence >= KEY_MIN_CONFIDENCE).then(|| key_distance(a.key, b.key)).flatten()
 }
 
-/// A fade's filters, the natural three-band blend: the mids dipped on both decks where the two bodies would crowd
-/// each other, and a soft low-pass on the outgoing song over the second half only where confident keys clash, so
-/// its chords give way. No sweep down to a muffle: that "underwater" fade is what Apple dropped in iOS 27.
+/// A fade's filter: a soft low-pass on the outgoing song over the second half only where confident keys clash, so its
+/// chords give way. No sweep down to a muffle: that "underwater" fade is what Apple dropped in iOS 27.
 fn apply_fade_filter(p: &mut TransitionPlan, a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, s: &AutoMixSettings, dur: i64) {
     if !s.filter_effects || dur < 2000 {
         return;
     }
-    moves::dip_mids(p, s);
     if a.zip(b).is_some_and(|(a, b)| camelot_dist(a, b).is_some_and(|d| d >= KEY_CLASH)) {
         p.low_pass = Some(low_pass(dur / 2, dur, SWEEP_TO_HZ_SOFT));
     }
@@ -521,7 +520,12 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
     let sung_both = verdict.is_some_and(|v| v.cause == VOCALS_OVERLAP);
     let gridded = s.beat_match && (a.is_some_and(grid_ok) || b.is_some_and(grid_ok));
     let fade = gridded.then(|| one_grid(a, b, room, s, short, &why_not)).flatten().unwrap_or_else(|| mixramp(a, b, room, s, &why_not));
-    candidates.push(Move { plan: shape_fade(fade, a, s, sung_both), worth: moves::FADE_WORTH });
+    let mut fade = shape_fade(fade, a, s, sung_both);
+    // The mids dipped only where the two bodies would crowd each other: two voices, or timbres far apart.
+    if sung_both || verdict.is_some_and(|v| v.short_cause == TIMBRE_MISMATCH) {
+        moves::dip_mids(&mut fade, s);
+    }
+    candidates.push(Move { plan: fade, worth: moves::FADE_WORTH });
     let net = |m: &Move| m.worth - if s.previous == Some(m.plan.kind) { moves::repeat_cost(m.plan.kind) } else { 0.0 };
     candidates.into_iter().fold(None::<Move>, |best, m| match best {
         Some(b) if net(&b) >= net(&m) => Some(b),
@@ -608,7 +612,7 @@ const SMOOTH: Profile = Profile {
     swap_bars: 1.0,
     quick_drop_swap: false,
     highs_in: false,
-    fade_swap: true,
+    fade_swap: false,
     riser: false,
     bar_tail: false,
     handovers: false,
@@ -2034,21 +2038,20 @@ mod tests {
         }
     }
 
-    /// A fade between kicks that are not beat-matched (out of a song sung to its end, which no handover leaves) hands
-    /// the bass over once, where the fades cross, and dips both songs' mids, in both styles.
+    /// A DJ fade between kicks that are not beat-matched (out of a song sung to its end, which no handover leaves)
+    /// hands the bass over once, where the fades cross; Smooth's fades keep both, and their level.
     #[test]
-    fn fades_hand_the_bass_over_where_they_cross() {
+    fn dj_fades_hand_the_bass_over_where_they_cross() {
         let a = TrackAnalysis { vocal_start_ms: 10_000, vocal_end_ms: 238_000, ..track(128.0) };
         let b = TrackAnalysis { bpm_confidence: 0.2, intro_bpm_confidence: 0.2, ..track(97.0) };
-        for s in [dj(), AutoMixSettings::default()] {
-            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &s);
-            assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
-            let swap = p.bass_swap.expect(&p.reason);
-            let cross = (p.in_fade_start_ms.max(p.out_fade_start_ms) + p.in_fade_end_ms.min(p.out_fade_end_ms)) / 2;
-            assert!(swap.at_ms < cross && cross < swap.at_ms + swap.len_ms && swap.len_ms <= 1_000, "{p:?}");
-            let dip = p.mid_dip.expect(&p.reason);
-            assert!(dip.outgoing && dip.incoming && dip.db < 0.0 && p.low_pass.is_none(), "{p:?}");
-        }
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
+        let swap = p.bass_swap.expect(&p.reason);
+        let cross = (p.in_fade_start_ms.max(p.out_fade_start_ms) + p.in_fade_end_ms.min(p.out_fade_end_ms)) / 2;
+        assert!(swap.at_ms < cross && cross < swap.at_ms + swap.len_ms && swap.len_ms <= 1_000, "{p:?}");
+        assert!(p.mid_dip.is_none() && p.low_pass.is_none(), "one voice, timbres alike: nothing dipped or swept: {p:?}");
+        let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings::default());
+        assert!(smooth.kind == TransitionKind::MixRampFade && smooth.bass_swap.is_none(), "{}", smooth.reason);
     }
 
     #[test]
@@ -2060,7 +2063,7 @@ mod tests {
         assert_eq!(p.kind, TransitionKind::MixRampFade);
         assert_eq!((p.out_start_ms, p.in_start_ms, p.duration_ms), (224_000, 1_000, 6_000));
         assert_eq!(p.in_fade_end_ms, 2_000, "the incoming fade follows its own ramp");
-        assert!(p.low_pass.is_none() && p.mid_dip.is_some(), "same key: no low-pass, the mids dipped: {p:?}");
+        assert!(p.low_pass.is_none(), "same key: no low-pass: {p:?}");
         assert_eq!(p.in_gain_db, 6.0, "incoming 6 dB quieter gets 6 dB");
         check_skip(&p, &a, &b, 240_000);
 
