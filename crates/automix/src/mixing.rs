@@ -85,6 +85,7 @@ pub fn adopt(nori: &TransitionPlan, p: Proposal, out_ms: i64, in_ms: i64, max_te
         (t.out_start_ms, t.in_start_ms, t.duration_ms, t.tempo_ratio, t.tempo_ramp_beats, t.tempo_ramp_ms) = (out_ms.max(0), 0, d, 1.0, 0, 0);
         (t.out_fade_start_ms, t.out_fade_end_ms, t.in_fade_start_ms, t.in_fade_end_ms) = (0, 0, 0, 0);
         (t.bass_swap, t.low_pass, t.high_pass, t.echo) = (None, None, None, None);
+        (t.in_low_pass, t.in_high_pass, t.mid_dip, t.reverb) = (None, None, None, None);
         return Some(t);
     }
     let d = if p.kind == Proposed::Cut { CUT_MS } else { p.duration_ms };
@@ -109,24 +110,24 @@ pub fn adopt(nori: &TransitionPlan, p: Proposal, out_ms: i64, in_ms: i64, max_te
         _ => TransitionKind::EqualPowerFade,
     };
     // nori's relative points, stretched to the plugin's length.
-    let nd = nori.duration_ms;
-    let scale = |v: i64| if nd > 0 { (v as f64 * d as f64 / nd as f64).round() as i64 } else { v };
-    let fades = (scale(nori.out_fade_start_ms), scale(nori.out_fade_end_ms), scale(nori.in_fade_start_ms), scale(nori.in_fade_end_ms));
-    (t.out_fade_start_ms, t.out_fade_end_ms, t.in_fade_start_ms, t.in_fade_end_ms) = if nd > 0 { fades } else { (0, d, 0, d) };
-    (t.out_start_ms, t.in_start_ms, t.duration_ms, t.tempo_ratio) = (p.out_start_ms, p.in_start_ms, d, tempo);
+    if nori.duration_ms > 0 {
+        t.squeeze(d);
+    } else {
+        t.duration_ms = d;
+        (t.out_fade_start_ms, t.out_fade_end_ms, t.in_fade_start_ms, t.in_fade_end_ms) = (0, d, 0, d);
+    }
+    (t.out_start_ms, t.in_start_ms, t.tempo_ratio) = (p.out_start_ms, p.in_start_ms, tempo);
     if tempo == 1.0 {
         (t.tempo_ramp_beats, t.tempo_ramp_ms) = (0, 0);
     }
-    t.bass_swap = p.bass_swap.then(|| match nori.bass_swap {
-        Some(b) => BassSwap { at_ms: scale(b.at_ms), len_ms: scale(b.len_ms).max(1), cut_hz: b.cut_hz },
+    t.bass_swap = p.bass_swap.then(|| match t.bass_swap {
+        Some(b) => BassSwap { len_ms: b.len_ms.max(1), ..b },
         None => BassSwap { at_ms: d * 3 / 8, len_ms: (d / 4).max(1), cut_hz: 200.0 },
     });
-    t.low_pass = p.filter.then(|| match nori.low_pass {
-        Some(s) => Sweep { start_ms: scale(s.start_ms), end_ms: scale(s.end_ms), ..s },
-        None => Sweep { start_ms: 0, end_ms: d, from_hz: 20_000.0, to_hz: 300.0 },
-    });
-    t.high_pass = t.high_pass.map(|s| Sweep { start_ms: scale(s.start_ms), end_ms: scale(s.end_ms), ..s });
-    t.echo = if t.kind == TransitionKind::EchoOut { nori.echo } else { None };
+    t.low_pass = p.filter.then(|| t.low_pass.unwrap_or(Sweep { start_ms: 0, end_ms: d, from_hz: 20_000.0, to_hz: 300.0 }));
+    if t.kind != TransitionKind::EchoOut {
+        t.echo = None;
+    }
     Some(t)
 }
 
@@ -204,6 +205,23 @@ mod tests {
         let dj = TransitionPlan { in_loop: Some(nori_player::types::InLoop { ms: 2_000, repeats: 1 }), bend: Some(nori_player::types::Bend { start_ms: 4_000, end_ms: 8_000 }), ..nori() };
         let p = adopt(&dj, proposal(Proposed::BeatMatched, 100_000, 8_000, 0, 1.04), 200_000, 200_000, 6.0).unwrap();
         assert_eq!((p.in_loop, p.bend, p.tempo_ramp_ms), (None, None, 4_000));
+        // nori's effects keep their place in the plugin's length; the echo's delay is a beat, so it stays.
+        use nori_player::types::{Duck, Echo, MidDip, Reverb, Window};
+        let w = |start_ms, end_ms| Window { start_ms, end_ms };
+        let fx = TransitionPlan {
+            kind: TransitionKind::EchoOut,
+            echo: Some(Echo { delay_ms: 500, feedback: 0.5, wet_db: -6.0, send: Some(w(2_000, 4_000)), band: None, duck: Some(Duck { at_ms: 6_000, len_ms: 400, db: -12.0 }) }),
+            in_high_pass: Some(Sweep { start_ms: 0, end_ms: 4_000, from_hz: 1_200.0, to_hz: 20.0 }),
+            in_low_pass: Some(Sweep { start_ms: 2_000, end_ms: 8_000, from_hz: 300.0, to_hz: 18_000.0 }),
+            mid_dip: Some(MidDip { window: w(2_000, 6_000), db: -6.0, hz: 1_000.0, outgoing: true, incoming: true }),
+            reverb: Some(Reverb { send: w(4_000, 8_000), decay_s: 3.0, wet_db: -6.0, low_cut_hz: 250.0 }),
+            ..nori()
+        };
+        let half = adopt(&fx, proposal(Proposed::EchoOut, 180_000, 4_000, 2_000, 1.0), 200_000, 200_000, 6.0).unwrap();
+        let echo = half.echo.unwrap();
+        assert_eq!((echo.delay_ms, echo.send, echo.duck.map(|d| (d.at_ms, d.len_ms))), (500, Some(w(1_000, 2_000)), Some((3_000, 200))));
+        assert_eq!((half.in_high_pass.map(|s| s.end_ms), half.in_low_pass.map(|s| (s.start_ms, s.end_ms))), (Some(2_000), Some((1_000, 4_000))));
+        assert_eq!((half.mid_dip.map(|d| d.window), half.reverb.map(|r| r.send)), (Some(w(1_000, 3_000)), Some(w(2_000, 4_000))));
         let cut = adopt(&nori(), proposal(Proposed::Cut, 150_000, 9_999, 0, 1.0), 200_000, 200_000, 6.0).unwrap();
         assert_eq!(cut.duration_ms, CUT_MS);
         let gapless = adopt(&nori(), proposal(Proposed::Gapless, 0, 0, 0, 1.0), 200_000, 200_000, 6.0).unwrap();

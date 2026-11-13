@@ -1,9 +1,10 @@
 //! The transition mixer: the outgoing track's tail and the incoming track's start (already time-stretched) in,
 //! one stream out, mixed as a `TransitionPlan` says: gain curves and loudness trim, bass swap (4th-order
-//! Linkwitz-Riley high-pass crossfaded in on both decks), low- and high-pass sweeps and echo on the outgoing deck,
-//! vocal duck on the incoming deck.
+//! Linkwitz-Riley high-pass crossfaded in on both decks), low- and high-pass sweeps on either deck, a mid dip, vocal
+//! duck on the incoming deck, and an echo and a reverb on the outgoing deck's post-fader send.
 //!
-//! Past the end of the transition the output is the incoming stream untouched. Mixing allocates nothing.
+//! Past the end of the transition the output is the incoming stream untouched. Buffers are sized by
+//! [`Mixer::prepare`]; mixing allocates nothing.
 
 use crate::pcm::Encoding;
 use crate::types::{FadeCurve, TransitionKind, TransitionPlan};
@@ -14,10 +15,21 @@ const MAX_CHANNELS: usize = 8;
 pub(crate) const TRIM_GLIDE_MS_PER_DB: f64 = 150.0;
 /// Frames between sweep coefficient updates.
 const SWEEP_STEP: u64 = 16;
-/// A sweep's filter is faded in over this long so switching it on does not click.
+/// A sweep's filter is faded in over this long so switching it on does not click, and out as long once it ends open.
 const SWEEP_ENTRY_MS: f64 = 50.0;
-/// Q of the vocal duck's band-pass: 3 dB down at about 300 Hz and 3.3 kHz around 1 kHz.
+/// A sweep ending at or past these is open: its filter is switched off after it.
+const OPEN_LOW_PASS_HZ: f64 = 18_000.0;
+const OPEN_HIGH_PASS_HZ: f64 = 25.0;
+/// Q of the band-pass the vocal duck and the mid dip subtract: 3 dB down at about 300 Hz and 3.3 kHz around 1 kHz.
 const VOX_Q: f64 = 0.35;
+/// An echo's or reverb's send window opens and closes over this long, so the repeats do not click.
+const SEND_RAMP_MS: f64 = 10.0;
+/// Freeverb's comb and all-pass lengths at 44.1 kHz, scaled to the rate.
+const COMB_FRAMES: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+const ALLPASS_FRAMES: [usize; 4] = [556, 441, 341, 225];
+const ALLPASS_GAIN: f64 = 0.5;
+/// How much of the combs' highs each pass keeps back (Freeverb's default damping).
+const COMB_DAMP: f64 = 0.2;
 
 /// Where in a transition the incoming song becomes the louder of the two, ms from its start, in 10 ms steps
 /// (from the gain curves only); the whole transition when it never does.
@@ -201,7 +213,7 @@ impl Span {
     }
 }
 
-/// A low- or high-pass sweep on the outgoing deck, two cascaded sections per channel.
+/// A low- or high-pass sweep on one deck, two cascaded Butterworth sections per channel.
 #[derive(Clone, Copy)]
 struct SweepFilter {
     span: Span,
@@ -212,36 +224,177 @@ struct SweepFilter {
     state: [[[f64; 2]; MAX_CHANNELS]; 2],
     /// Where the filter's fade-in is measured from: the sweep's start, or a seek that landed inside it.
     entry_from: u64,
+    /// A sweep that ends open fades its filter out from its end, and is off after that.
+    open_from: Option<u64>,
 }
 
 impl SweepFilter {
     fn new(rate: f64, span: Span, from: f64, to: f64, low: bool) -> Self {
+        let opens = if low { to >= OPEN_LOW_PASS_HZ } else { to <= OPEN_HIGH_PASS_HZ };
         let (from, to) = (from.min(rate * 0.45), to.min(rate * 0.45));
-        SweepFilter { span, from, to, low, coef: Coef::pass(rate, from, low), state: [[[0.0; 2]; MAX_CHANNELS]; 2], entry_from: span.start }
+        SweepFilter {
+            span,
+            from,
+            to,
+            low,
+            coef: Coef::pass(rate, from, low),
+            state: [[[0.0; 2]; MAX_CHANNELS]; 2],
+            entry_from: span.start,
+            open_from: opens.then_some(span.end),
+        }
     }
 
     fn retune(&mut self, rate: f64, p: u64) {
         self.coef = Coef::pass(rate, self.from * (self.to / self.from).powf(self.span.progress(p)), self.low);
     }
 
-    /// How much of the filtered signal is heard at frame `p`; retunes every [`SWEEP_STEP`] frames.
+    /// How much of the filtered signal is heard at frame `p`; retunes every [`SWEEP_STEP`] frames until the sweep
+    /// ends.
     #[inline]
     fn wet(&mut self, rate: f64, entry: u64, p: u64) -> f64 {
-        if p < self.span.start {
+        if p < self.span.start || self.open_from.is_some_and(|o| p >= o + entry) {
             return 0.0;
         }
-        if (p - self.span.start).is_multiple_of(SWEEP_STEP) {
+        if (p - self.span.start).is_multiple_of(SWEEP_STEP) && p < self.span.end + SWEEP_STEP {
             self.retune(rate, p);
         }
-        ((p - self.entry_from.min(p)) as f64 / entry as f64).min(1.0)
+        let fade_in = (p - self.entry_from.min(p)) as f64 / entry as f64;
+        let fade_out = self.open_from.map_or(1.0, |o| 1.0 - p.saturating_sub(o) as f64 / entry as f64);
+        fade_in.min(fade_out).min(1.0)
+    }
+
+    /// Filters one deck's frame.
+    #[inline]
+    fn apply(&mut self, rate: f64, entry: u64, p: u64, x: &mut [f64]) {
+        let wet = self.wet(rate, entry, p);
+        if wet > 0.0 {
+            for (c, x) in x.iter_mut().enumerate() {
+                let y = self.coef.run2(&mut self.state, c, *x);
+                *x = *x * (1.0 - wet) + y * wet;
+            }
+        }
+    }
+}
+
+/// A peaking cut on either deck: a band-pass subtracted, `depth` of it in the window's middle, none at its ends.
+struct MidDip {
+    span: Span,
+    depth: f64,
+    coef: Coef,
+    /// Outgoing, incoming.
+    decks: [bool; 2],
+}
+
+/// The echo on the outgoing deck's post-fader send.
+struct EchoFx {
+    delay: usize,
+    feedback: f64,
+    wet: f64,
+    /// What is sent into the delay; all of it without a window.
+    send: Option<Span>,
+    /// The repeats are held down over the span, to `floor` at its end and after.
+    duck: Option<(Span, f64)>,
+    /// High- and low-pass in the feedback loop.
+    band: Option<(Coef, Coef)>,
+    /// Repeats still ringing fade out over the transition's last delay.
+    tail: Span,
+}
+
+/// The reverb on the outgoing deck's post-fader send.
+struct ReverbFx {
+    send: Span,
+    /// The wet level fades out over this.
+    tail: Span,
+    wet: f64,
+    /// Each comb's feedback (to 60 dB down in the decay time) and input gain (an even share of the send's power).
+    feedback: [f64; 8],
+    input: [f64; 8],
+    low_cut: Coef,
+}
+
+/// A delay line of one channel.
+#[derive(Default)]
+struct Line {
+    buf: Vec<f32>,
+    pos: usize,
+}
+
+impl Line {
+    #[inline]
+    fn read(&self) -> f64 {
+        self.buf[self.pos] as f64
     }
 
     #[inline]
-    fn run(&mut self, c: usize, x: f64, wet: f64) -> f64 {
-        let y = self.coef.run(&mut self.state[0][c], x);
-        let y = self.coef.run(&mut self.state[1][c], y);
-        x * (1.0 - wet) + y * wet
+    fn write(&mut self, v: f64) {
+        self.buf[self.pos] = v as f32;
+        self.pos += 1;
+        if self.pos == self.buf.len() {
+            self.pos = 0;
+        }
     }
+}
+
+/// A small Schroeder reverb (Chowning's JCRev layout with Freeverb's lengths and damping): four all-passes in series
+/// diffuse a mono send, eight damped combs in parallel ring it, and two sign patterns over the combs make two
+/// decorrelated outputs.
+#[derive(Default)]
+struct Room {
+    allpasses: [Line; 4],
+    combs: [Line; 8],
+    damp: [f64; 8],
+    low_state: [f64; 2],
+}
+
+impl Room {
+    /// Sizes the lines for `rate`, once.
+    fn size(&mut self, rate: f64) {
+        let frames = |n: usize| ((n as f64 * rate / 44_100.0).round() as usize).max(1);
+        for (l, n) in self.allpasses.iter_mut().zip(ALLPASS_FRAMES).chain(self.combs.iter_mut().zip(COMB_FRAMES)) {
+            if l.buf.is_empty() {
+                l.buf = vec![0.0; frames(n)];
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        for l in self.allpasses.iter_mut().chain(&mut self.combs) {
+            l.buf.fill(0.0);
+            l.pos = 0;
+        }
+        (self.damp, self.low_state) = ([0.0; 8], [0.0; 2]);
+    }
+
+    /// One frame of the mono send in, the two outputs.
+    #[inline]
+    fn run(&mut self, fx: &ReverbFx, x: f64) -> (f64, f64) {
+        let mut x = fx.low_cut.run(&mut self.low_state, x);
+        for a in &mut self.allpasses {
+            let w = a.read();
+            let v = x + ALLPASS_GAIN * w;
+            a.write(v);
+            x = w - ALLPASS_GAIN * v;
+        }
+        let (mut l, mut r) = (0.0, 0.0);
+        for (k, c) in self.combs.iter_mut().enumerate() {
+            let y = c.read();
+            self.damp[k] = y * (1.0 - COMB_DAMP) + self.damp[k] * COMB_DAMP;
+            c.write(x * fx.input[k] + self.damp[k] * fx.feedback[k]);
+            l += y;
+            r += if k % 2 == 0 { y } else { -y };
+        }
+        (l, r)
+    }
+}
+
+/// 0 outside `span`, 1 inside, ramped over `ramp` frames at both ends.
+#[inline]
+fn window_gain(span: Span, ramp: u64, p: u64) -> f64 {
+    if p <= span.start || p >= span.end {
+        return 0.0;
+    }
+    let r = ramp.max(1) as f64;
+    ((p - span.start) as f64 / r).min((span.end - p) as f64 / r).min(1.0)
 }
 
 /// A sample type the mixer reads and writes.
@@ -276,7 +429,7 @@ impl Sample for i16 {
 const FADE_RUN: u64 = 32;
 
 /// The gains at the two ends of a run of frames, linear in between. A run never crosses the start or end
-/// of a fade, the bass swap, the duck's release or the echo's, where a curve bends or steps.
+/// of a fade, the bass swap, the duck's release, a send's ramps or an effect's tail, where a curve bends or steps.
 #[derive(Clone, Copy, Debug, Default)]
 struct FadeRun {
     start: u64,
@@ -301,8 +454,14 @@ struct Fades {
     highs_in: Coef,
     /// How much of the incoming voice band is held down.
     duck: f64,
-    /// How much of the echo's repeats is still heard.
+    /// How much of the mid band is dipped.
+    dip: f64,
+    /// How much of the outgoing deck goes into the echo, and how much of its repeats is heard.
+    echo_send: f64,
     echo: f64,
+    /// How much of the outgoing deck goes into the reverb, and how much of its tail is heard.
+    verb_send: f64,
+    verb: f64,
 }
 
 impl FadeRun {
@@ -346,17 +505,24 @@ pub struct Mixer {
     highs_state: [[f64; 2]; MAX_CHANNELS],
     high_pass: Option<SweepFilter>,
     low_pass: Option<SweepFilter>,
+    in_high_pass: Option<SweepFilter>,
+    in_low_pass: Option<SweepFilter>,
     sweep_entry: u64,
     /// The duck's release span and how much of the band-pass is subtracted before it.
     duck: Option<(Span, f64)>,
     duck_coef: Coef,
     duck_state: [[f64; 2]; MAX_CHANNELS],
-    /// Delay frames, feedback, wet gain.
-    echo: Option<(usize, f64, f64)>,
-    /// Repeats still ringing fade out over the transition's last delay.
-    echo_out: Span,
+    mid_dip: Option<MidDip>,
+    /// [deck][channel].
+    dip_state: [[[f64; 2]; MAX_CHANNELS]; 2],
+    send_ramp: u64,
+    echo: Option<EchoFx>,
     echo_buf: Vec<f64>,
     echo_pos: usize,
+    /// The band's high- and low-pass: [filter][channel].
+    echo_band_state: [[[f64; 2]; MAX_CHANNELS]; 2],
+    reverb: Option<ReverbFx>,
+    room: Room,
     /// The run of frames the fades are interpolated over; empty after a (re)start.
     fades: FadeRun,
 }
@@ -384,26 +550,61 @@ impl Mixer {
             highs_state: [[0.0; 2]; MAX_CHANNELS],
             high_pass: None,
             low_pass: None,
+            in_high_pass: None,
+            in_low_pass: None,
             sweep_entry: 1,
             duck: None,
             duck_coef: Coef::default(),
             duck_state: [[0.0; 2]; MAX_CHANNELS],
+            mid_dip: None,
+            dip_state: [[[0.0; 2]; MAX_CHANNELS]; 2],
+            send_ramp: 1,
             echo: None,
-            echo_out: Span::default(),
             echo_buf: Vec::new(),
             echo_pos: 0,
+            echo_band_state: [[[0.0; 2]; MAX_CHANNELS]; 2],
+            reverb: None,
+            room: Room::default(),
             fades: FadeRun::default(),
+        }
+    }
+
+    fn frames(&self, ms: f64) -> u64 {
+        (ms.max(0.0) * self.rate / 1000.0).round() as u64
+    }
+
+    /// An echo's delay in frames, capped at a second.
+    fn echo_delay(&self, ms: i64) -> Option<usize> {
+        (ms >= 1).then(|| self.frames(ms as f64).clamp(1, self.rate as u64) as usize)
+    }
+
+    /// Sizes the buffers `p` needs, kept for later transitions: configuring and mixing it then allocate nothing.
+    pub fn prepare(&mut self, p: &TransitionPlan) {
+        if let Some(d) = p.echo.and_then(|e| self.echo_delay(e.delay_ms)) {
+            let need = d * self.ch;
+            if self.echo_buf.len() < need {
+                self.echo_buf.resize(need, 0.0);
+            }
+        }
+        if p.reverb.is_some() {
+            self.room.size(self.rate);
         }
     }
 
     /// Takes a plan and restarts the clock.
     pub fn configure(&mut self, p: &TransitionPlan) {
+        self.prepare(p);
         let rate = self.rate;
         let frames = |ms: f64| (ms.max(0.0) * rate / 1000.0).round() as u64;
         let len = frames(p.duration_ms as f64);
         let span = |a: i64, b: i64| {
             let (a, b) = span_ms(a, b, p.duration_ms.max(0) as f64);
             Span { start: frames(a), end: frames(b) }
+        };
+        // A change that starts at `at_ms` and takes `len_ms`, inside the transition.
+        let from = |at_ms: i64, len_ms: i64| {
+            let start = frames(at_ms as f64).min(len);
+            Span { start, end: (start + frames((len_ms as f64).max(1.0))).min(len.max(1)) }
         };
         self.pos = 0;
         self.fades = FadeRun::default();
@@ -413,21 +614,19 @@ impl Mixer {
         self.in_fade = span(p.in_fade_start_ms, p.in_fade_end_ms);
         self.out_gain = db_to_gain((p.out_gain_db as f64).clamp(-24.0, 12.0));
         self.gap_db = trim(p.duration_ms as f64, p.in_gain_db as f64);
-        self.swap = p.bass_swap.map(|s| {
-            let start = frames(s.at_ms as f64);
-            Span { start: start.min(len), end: (start + frames((s.len_ms as f64).max(1.0))).min(len.max(1)) }
-        });
+        self.swap = p.bass_swap.map(|s| from(s.at_ms, s.len_ms));
         self.matched = p.kind == TransitionKind::BeatMatched;
         let cut = p.bass_swap.map_or(180.0, |s| s.cut_hz as f64);
         (self.low_shelf, self.hold_shelf) = (Shelf::at(rate, cut / 2.0), Shelf::at(rate, cut));
         self.highs_in = p.highs_in.filter(|h| h.db < 0.0).map(|h| {
-            let start = frames(h.at_ms as f64).min(len);
             self.highs_shelf = Shelf::at(rate, h.hz as f64);
-            (Span { start, end: (start + frames((h.len_ms as f64).max(1.0))).min(len.max(1)) }, db_to_gain((h.db as f64).clamp(-30.0, 0.0)))
+            (from(h.at_ms, h.len_ms), db_to_gain((h.db as f64).clamp(-30.0, 0.0)))
         });
         let sweep = |s: crate::types::Sweep, low| SweepFilter::new(rate, span(s.start_ms, s.end_ms), s.from_hz as f64, s.to_hz as f64, low);
         self.high_pass = p.high_pass.map(|s| sweep(s, false));
         self.low_pass = p.low_pass.map(|s| sweep(s, true));
+        self.in_high_pass = p.in_high_pass.map(|s| sweep(s, false));
+        self.in_low_pass = p.in_low_pass.map(|s| sweep(s, true));
         self.sweep_entry = frames(SWEEP_ENTRY_MS).max(1);
         self.duck = p.vocal_duck.filter(|d| d.db < 0.0).map(|d| {
             let end = frames(d.until_ms as f64).min(len);
@@ -435,24 +634,51 @@ impl Mixer {
             self.duck_coef = Coef::band_pass(rate, d.hz as f64, VOX_Q);
             (Span { start, end }, 1.0 - db_to_gain((d.db as f64).clamp(-30.0, 0.0)))
         });
-        // Delay capped at a second; the buffer is reused across transitions.
-        self.echo = p.echo.filter(|e| e.delay_ms >= 1).map(|e| {
-            let d = frames(e.delay_ms as f64).clamp(1, rate as u64) as usize;
-            (d, (e.feedback as f64).clamp(0.0, 0.9), db_to_gain((e.wet_db as f64).clamp(-24.0, 0.0)))
+        self.mid_dip = p.mid_dip.filter(|d| d.db < 0.0 && (d.outgoing || d.incoming)).map(|d| MidDip {
+            span: span(d.window.start_ms, d.window.end_ms),
+            depth: 1.0 - db_to_gain((d.db as f64).clamp(-30.0, 0.0)),
+            coef: Coef::band_pass(rate, d.hz as f64, VOX_Q),
+            decks: [d.outgoing, d.incoming],
         });
-        if let Some((d, _, _)) = self.echo {
-            self.echo_out = Span { start: len.saturating_sub(d as u64), end: len };
-            let need = d * self.ch;
-            if self.echo_buf.len() < need {
-                self.echo_buf.resize(need, 0.0);
-            }
-            self.echo_buf[..need].fill(0.0);
+        self.send_ramp = frames(SEND_RAMP_MS).max(1);
+        self.echo = p.echo.and_then(|e| {
+            let delay = self.echo_delay(e.delay_ms)?;
+            Some(EchoFx {
+                delay,
+                feedback: (e.feedback as f64).clamp(0.0, 0.9),
+                wet: db_to_gain((e.wet_db as f64).clamp(-24.0, 0.0)),
+                send: e.send.map(|w| span(w.start_ms, w.end_ms)),
+                duck: e.duck.filter(|d| d.db < 0.0).map(|d| (from(d.at_ms, d.len_ms), db_to_gain((d.db as f64).clamp(-48.0, 0.0)))),
+                band: e.band.map(|b| (Coef::pass(rate, b.low_hz as f64, false), Coef::pass(rate, b.high_hz as f64, true))),
+                tail: Span { start: len.saturating_sub(delay as u64), end: len },
+            })
+        });
+        if let Some(e) = &self.echo {
+            self.echo_buf[..e.delay * self.ch].fill(0.0);
             self.echo_pos = 0;
+        }
+        let combs: [usize; 8] = std::array::from_fn(|k| self.room.combs[k].buf.len());
+        self.reverb = p.reverb.map(|r| {
+            let decay = (r.decay_s as f64).clamp(0.1, 20.0);
+            let feedback = combs.map(|n| 10f64.powf(-3.0 * n as f64 / (rate * decay)));
+            ReverbFx {
+                send: span(r.send.start_ms, r.send.end_ms),
+                tail: Span { start: len.saturating_sub(frames(decay * 250.0)), end: len },
+                wet: db_to_gain((r.wet_db as f64).clamp(-30.0, 0.0)),
+                input: feedback.map(|g| ((1.0 - g * g) / 8.0).sqrt()),
+                feedback,
+                low_cut: Coef::pass(rate, r.low_cut_hz as f64, false),
+            }
+        });
+        if self.reverb.is_some() {
+            self.room.clear();
         }
         self.swap_state = [[[[0.0; 2]; MAX_CHANNELS]; 2]; 2];
         self.hold_state = [[[0.0; 2]; MAX_CHANNELS]; 2];
         self.highs_state = [[0.0; 2]; MAX_CHANNELS];
         self.duck_state = [[0.0; 2]; MAX_CHANNELS];
+        self.dip_state = [[[0.0; 2]; MAX_CHANNELS]; 2];
+        self.echo_band_state = [[[0.0; 2]; MAX_CHANNELS]; 2];
     }
 
     pub fn position(&self) -> u64 {
@@ -465,7 +691,7 @@ impl Mixer {
         self.pos = frames.min(self.len);
         self.fades = FadeRun::default();
         let (rate, pos) = (self.rate, self.pos);
-        for f in [&mut self.low_pass, &mut self.high_pass].into_iter().flatten() {
+        for f in [&mut self.low_pass, &mut self.high_pass, &mut self.in_low_pass, &mut self.in_high_pass].into_iter().flatten() {
             if pos >= f.span.start {
                 f.retune(rate, pos);
                 f.entry_from = pos;
@@ -542,6 +768,16 @@ impl Mixer {
             Some((span, depth)) if p < span.end => depth * (1.0 - raised_cos(span.progress(p))),
             _ => 0.0,
         };
+        let dip = match &self.mid_dip {
+            Some(d) if p > d.span.start && p < d.span.end => d.depth * (PI * d.span.progress(p)).sin(),
+            _ => 0.0,
+        };
+        let tail = |s: Span| 1.0 - raised_cos(s.progress(p));
+        let (echo_send, echo) = self.echo.as_ref().map_or((0.0, 0.0), |e| {
+            let ducked = e.duck.map_or(1.0, |(s, floor)| 1.0 - (1.0 - floor) * raised_cos(s.progress(p)));
+            (e.send.map_or(1.0, |s| window_gain(s, self.send_ramp, p)), tail(e.tail) * ducked)
+        });
+        let (verb_send, verb) = self.reverb.as_ref().map_or((0.0, 0.0), |r| (window_gain(r.send, self.send_ramp, p), tail(r.tail)));
         Fades {
             out: out * self.out_gain * db_to_gain(trim_out),
             inc: inc * db_to_gain(trim_in),
@@ -551,7 +787,11 @@ impl Mixer {
             shelf: self.hold_shelf.high(held),
             highs_in: self.highs_in.map_or_else(Coef::default, |(span, floor)| self.highs_shelf.high(floor + (1.0 - floor) * raised_cos(span.progress(p)))),
             duck,
-            echo: 1.0 - raised_cos(self.echo_out.progress(p)),
+            dip,
+            echo_send,
+            echo,
+            verb_send,
+            verb,
         }
     }
 
@@ -559,10 +799,16 @@ impl Mixer {
     /// start or end. A fade with no length steps from its start to the frame after, so that is an end too.
     fn fade_run(&self, p: u64) -> FadeRun {
         let (o, i) = (self.out_fade, self.in_fade);
-        let (s, d, e) = (self.swap.unwrap_or_default(), self.duck.map_or_else(Span::default, |d| d.0), self.echo_out);
+        let (s, d) = (self.swap.unwrap_or_default(), self.duck.map_or_else(Span::default, |d| d.0));
         let h = self.highs_in.map_or_else(Span::default, |h| h.0);
-        let bends = [o.start, o.start + 1, o.end, i.start, i.start + 1, i.end, s.start, s.end, d.start, d.end, e.start, e.end, h.start, h.end];
-        let end = bends.into_iter().filter(|&b| b > p).fold((p + FADE_RUN).min(self.len), u64::min);
+        let m = self.mid_dip.as_ref().map_or_else(Span::default, |d| d.span);
+        let none = Span::default();
+        let (es, et, ed) = self.echo.as_ref().map_or((None, none, none), |e| (e.send, e.tail, e.duck.map_or(none, |d| d.0)));
+        let (rs, rt) = self.reverb.as_ref().map_or((None, none), |r| (Some(r.send), r.tail));
+        let ramp = self.send_ramp;
+        let ramps = |w: Option<Span>| w.map_or([0; 4], |w| [w.start, w.start + ramp, w.end.saturating_sub(ramp), w.end]);
+        let bends = [o.start, o.start + 1, o.end, i.start, i.start + 1, i.end, s.start, s.end, d.start, d.end, h.start, h.end, m.start, m.end, et.start, et.end, ed.start, ed.end, rt.start, rt.end];
+        let end = bends.into_iter().chain(ramps(es)).chain(ramps(rs)).filter(|&b| b > p).fold((p + FADE_RUN).min(self.len), u64::min);
         FadeRun { start: p, end, from: self.fades_at(p), to: self.fades_at(end) }
     }
 
@@ -578,56 +824,81 @@ impl Mixer {
         if !(self.fades.start..self.fades.end).contains(&p) {
             self.fades = self.fade_run(p);
         }
-        let (run, t) = (self.fades, self.fades.t(p));
-        let (g_out, g_in, held) = (run.get(t, |f| f.out), run.get(t, |f| f.inc), run.get(t, |f| f.held));
+        let t = self.fades.t(p);
+        let (g_out, g_in, held) = (self.fades.get(t, |f| f.out), self.fades.get(t, |f| f.inc), self.fades.get(t, |f| f.held));
         let (rate, entry) = (self.rate, self.sweep_entry);
         for f in [&mut self.high_pass, &mut self.low_pass].into_iter().flatten() {
-            let wet = f.wet(rate, entry, p);
-            if wet > 0.0 {
-                for (c, x) in o[..ch].iter_mut().enumerate() {
-                    *x = f.run(c, *x, wet);
-                }
-            }
+            f.apply(rate, entry, p, &mut o[..ch]);
+        }
+        for f in [&mut self.in_high_pass, &mut self.in_low_pass].into_iter().flatten() {
+            f.apply(rate, entry, p, &mut i[..ch]);
         }
         // Run on to the end once the highs are back: the shelf then passes its input, and its state settles.
         if self.highs_in.is_some() {
-            let shelf = run.from.highs_in.lerp(&run.to.highs_in, t);
+            let shelf = self.fades.from.highs_in.lerp(&self.fades.to.highs_in, t);
             for (x, s) in i[..ch].iter_mut().zip(&mut self.highs_state) {
                 *x = shelf.run(s, *x);
             }
         }
-        let duck = if self.duck.is_some() { run.get(t, |f| f.duck) } else { 0.0 };
+        let duck = if self.duck.is_some() { self.fades.get(t, |f| f.duck) } else { 0.0 };
         if duck > 0.0 {
             for (x, s) in i[..ch].iter_mut().zip(&mut self.duck_state) {
                 *x -= duck * self.duck_coef.run(s, *x);
             }
         }
-        if let Some((d, fb, wet)) = self.echo {
-            // Post-fader send: the repeats are of what went through the fader, so they decay once it is down.
-            let left = run.get(t, |f| f.echo);
-            for c in 0..ch {
-                let idx = self.echo_pos * ch + c;
-                let rep = self.echo_buf[idx];
-                self.echo_buf[idx] = o[c] * g_out * held + rep * fb;
-                o[c] = o[c] * g_out * held + rep * wet * left + i[c] * g_in * held;
+        if let Some(m) = &self.mid_dip {
+            let dip = self.fades.get(t, |f| f.dip);
+            if dip > 0.0 {
+                for ((deck, x), state) in [&mut *o, &mut *i].into_iter().enumerate().zip(&mut self.dip_state) {
+                    if m.decks[deck] {
+                        for (x, s) in x[..ch].iter_mut().zip(state) {
+                            *x -= dip * m.coef.run(s, *x);
+                        }
+                    }
+                }
             }
-            self.echo_pos = (self.echo_pos + 1) % d;
-            return;
         }
         // The lows go to one deck at a time, so only the highs are held to one song's power, by a shelf
         // that is no filter at all once nothing is held.
-        let swap = self.swap.map(|_| (run.from.low_out.lerp(&run.to.low_out, t), run.from.low_in.lerp(&run.to.low_in, t), run.from.shelf.lerp(&run.to.shelf, t)));
+        let swap = self.swap.map(|_| (self.fades.from.low_out.lerp(&self.fades.to.low_out, t), self.fades.from.low_in.lerp(&self.fades.to.low_in, t), self.fades.from.shelf.lerp(&self.fades.to.shelf, t)));
+        // The outgoing deck after its fader: what the echo and the reverb are sent.
+        let mut sent = [0f64; MAX_CHANNELS];
         for c in 0..ch {
             let (x, y) = (o[c], i[c]);
             o[c] = match swap {
                 Some((low_out, low_in, shelf)) => {
                     let (s, h) = (&mut self.swap_state, &mut self.hold_state);
-                    let x = shelf.run(&mut h[0][c], low_out.run2(&mut s[0], c, x));
-                    let y = shelf.run(&mut h[1][c], low_in.run2(&mut s[1], c, y));
-                    x * g_out + y * g_in
+                    sent[c] = shelf.run(&mut h[0][c], low_out.run2(&mut s[0], c, x)) * g_out;
+                    sent[c] + shelf.run(&mut h[1][c], low_in.run2(&mut s[1], c, y)) * g_in
                 }
-                None => (x * g_out + y * g_in) * held,
+                None => {
+                    sent[c] = x * g_out * held;
+                    (x * g_out + y * g_in) * held
+                }
             };
+        }
+        // Until the send opens the delay line holds silence, so it need not run.
+        if let Some(e) = self.echo.as_ref().filter(|e| p >= e.send.map_or(0, |s| s.start)) {
+            let (send, level) = (self.fades.get(t, |f| f.echo_send), self.fades.get(t, |f| f.echo) * e.wet);
+            let line = &mut self.echo_buf[self.echo_pos * ch..(self.echo_pos + 1) * ch];
+            for (c, (fed, x)) in line.iter_mut().zip(&mut o[..ch]).enumerate() {
+                let rep = *fed;
+                *fed = sent[c] * send + rep * e.feedback;
+                if let Some((hp, lp)) = &e.band {
+                    let [high, low] = &mut self.echo_band_state;
+                    *fed = lp.run(&mut low[c], hp.run(&mut high[c], *fed));
+                }
+                *x += rep * level;
+            }
+            self.echo_pos = (self.echo_pos + 1) % e.delay;
+        }
+        if let Some(r) = self.reverb.as_ref().filter(|r| p >= r.send.start) {
+            let send = self.fades.get(t, |f| f.verb_send) / ch as f64;
+            let (l, rr) = self.room.run(r, sent[..ch].iter().sum::<f64>() * send);
+            let level = self.fades.get(t, |f| f.verb) * r.wet;
+            for (c, x) in o[..ch].iter_mut().enumerate() {
+                *x += level * if c % 2 == 0 { l } else { rr };
+            }
         }
     }
 }
@@ -635,7 +906,7 @@ impl Mixer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Echo, Sweep, VocalDuck};
+    use crate::types::{Band, BassSwap, Duck, Echo, MidDip, Reverb, Sweep, VocalDuck, Window};
 
     const RATE: f64 = 48000.0;
 
@@ -979,6 +1250,256 @@ mod tests {
         }
     }
 
+    /// The amplitude of `hz` in `x`.
+    fn tone_level(x: &[f32], hz: f64) -> f64 {
+        let (s, c) = x.iter().enumerate().fold((0.0, 0.0), |(s, c), (k, v)| {
+            let (sin, cos) = (2.0 * PI * hz * k as f64 / RATE).sin_cos();
+            (s + *v as f64 * sin, c + *v as f64 * cos)
+        });
+        2.0 * (s * s + c * c).sqrt() / x.len() as f64
+    }
+
+    /// Deterministic white noise, ±0.5.
+    fn noise(frames: usize) -> Vec<f32> {
+        let mut x = 0x2545_f491_u32;
+        (0..frames)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                (x as f64 / u32::MAX as f64 - 0.5) as f32
+            })
+            .collect()
+    }
+
+    /// `x` for its first `ms`, silent after.
+    fn burst(mut x: Vec<f32>, ms: usize) -> Vec<f32> {
+        x[ms * 48..].fill(0.0);
+        x
+    }
+
+    /// The outgoing deck at full level to the end, the incoming one silent, so only the effects act.
+    fn outgoing_only(ms: i64) -> TransitionPlan {
+        let mut p = plan();
+        p.duration_ms = ms;
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (ms, ms, ms, ms);
+        p
+    }
+
+    #[test]
+    fn incoming_high_pass_lets_the_lows_in_and_switches_off() {
+        let mut p = plan();
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (0, 0, 0, 0);
+        p.in_high_pass = Some(Sweep { start_ms: 0, end_ms: 600, from_hz: 1_200.0, to_hz: 20.0 });
+        let (zeros, bass) = (vec![0f32; 48000], sine(60.0, 48000));
+        let y = mix(&p, &zeros, &bass);
+        assert!(rms(&y[4800..9600]) / rms(&bass) < 0.01, "60 Hz held out early: {}", rms(&y[4800..9600]) / rms(&bass));
+        // Open at 600 ms, faded out by 650 ms: the deck is then untouched.
+        assert_eq!(&y[31200..], &bass[31200..]);
+        let jump = y.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0f32, f32::max);
+        assert!(jump < 0.5 * 2.0 * std::f32::consts::PI * 60.0 / 48000.0 * 1.2, "no clicks: {jump}");
+    }
+
+    /// BitChord's ride: the outgoing deck low-passed from 7 kHz to 300 Hz while the incoming one is high-passed from
+    /// 1.2 kHz open, both at once. Each deck's band leaves or arrives, and no tone near a moving corner is lifted.
+    #[test]
+    fn filter_ride_runs_both_decks_without_a_lift() {
+        let mut p = plan();
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (1000, 1000, 0, 0);
+        p.low_pass = Some(Sweep { start_ms: 0, end_ms: 800, from_hz: 7_000.0, to_hz: 300.0 });
+        p.in_high_pass = Some(Sweep { start_ms: 0, end_ms: 600, from_hz: 1_200.0, to_hz: 20.0 });
+        let (hats, bass) = (sine(4_000.0, 48000), sine(60.0, 48000));
+        let y = mix(&p, &hats, &bass);
+        // Both decks up hold one song's power.
+        let full = 0.5 * std::f64::consts::FRAC_1_SQRT_2;
+        let (early, late) = (&y[4800..7200], &y[43200..48000]);
+        assert!(tone_level(early, 4_000.0) > 0.3 * full && tone_level(early, 60.0) < 0.01 * full, "the outgoing highs, no incoming bass");
+        assert!(tone_level(late, 4_000.0) < 0.01 * full && (tone_level(late, 60.0) / full - 1.0).abs() < 0.02, "the incoming bass, no outgoing highs");
+        let zeros = vec![0f32; 48000];
+        for (hz, incoming) in [(300.0, true), (700.0, true), (1_200.0, true), (2_500.0, true), (300.0, false), (1_000.0, false), (3_000.0, false), (6_000.0, false)] {
+            let tone = sine(hz, 48000);
+            let y = if incoming { mix(&p, &zeros, &tone) } else { mix(&p, &tone, &zeros) };
+            let most = y.chunks(480).map(rms).fold(0.0, f64::max) / (rms(&tone) * std::f64::consts::FRAC_1_SQRT_2);
+            assert!(most < 1.01, "{hz} Hz on the {} deck rises to {most:.3}", if incoming { "incoming" } else { "outgoing" });
+        }
+    }
+
+    #[test]
+    fn mid_dip_is_a_half_sine_on_the_named_decks() {
+        let zeros = vec![0f32; 48000];
+        let tone = sine(1_000.0, 48000);
+        for (outgoing, incoming, on_outgoing) in [(false, true, false), (true, false, true), (true, true, false)] {
+            let mut p = plan();
+            // One deck at full level throughout.
+            let ms = if on_outgoing { 1000 } else { 0 };
+            (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (ms, ms, ms, ms);
+            p.mid_dip = Some(MidDip { window: Window { start_ms: 0, end_ms: 1000 }, db: -6.0, hz: 1_000.0, outgoing, incoming });
+            let y = if on_outgoing { mix(&p, &tone, &zeros) } else { mix(&p, &zeros, &tone) };
+            let db = |a: usize, b: usize| 20.0 * (rms(&y[a..b]) / rms(&tone[a..b])).log10();
+            let dipped = if (on_outgoing && outgoing) || (!on_outgoing && incoming) { -6.0 } else { 0.0 };
+            assert!((db(22800, 25200) - dipped).abs() < 0.3, "{outgoing} {incoming}: {:.2} dB in the middle", db(22800, 25200));
+            assert!(db(0, 240).abs() < 0.2 && db(47760, 48000).abs() < 0.2, "{outgoing} {incoming}: none at the ends");
+        }
+    }
+
+    /// One delay, a little feedback, the repeats at full level.
+    fn echo(send: Option<Window>, band: Option<Band>, duck: Option<Duck>) -> Option<Echo> {
+        Some(Echo { delay_ms: 250, feedback: 0.5, wet_db: 0.0, send, band, duck })
+    }
+
+    #[test]
+    fn echo_repeats_only_what_its_window_sends() {
+        let mut p = outgoing_only(2000);
+        p.echo = echo(Some(Window { start_ms: 0, end_ms: 300 }), None, None);
+        let click = |ms: usize| {
+            let mut x = vec![0f32; 96000];
+            x[ms * 48] = 1.0;
+            x
+        };
+        let y = mix(&p, &click(100), &vec![0f32; 96000]);
+        assert!((y[16800] - 1.0).abs() < 1e-6 && (y[28800] - 0.5).abs() < 1e-6, "sent inside: repeated at 350 and 600 ms");
+        let y = mix(&p, &click(500), &vec![0f32; 96000]);
+        assert!(y[24001..].iter().all(|v| *v == 0.0), "sent outside: never repeated");
+    }
+
+    /// The repeats of a 250 ms tone, against an echo with no band.
+    fn kept_by_band(hz: f64, band: Band) -> f64 {
+        let p = outgoing_only(2000);
+        let tone = burst(sine(hz, 96000), 250);
+        let repeats = |band| rms(&mix(&TransitionPlan { echo: echo(None, band, None), ..p.clone() }, &tone, &vec![0f32; 96000])[14400..62400]);
+        repeats(Some(band)) / repeats(None)
+    }
+
+    #[test]
+    fn band_keeps_the_repeats_in_the_mids() {
+        let band = Band { low_hz: 250.0, high_hz: 3_500.0 };
+        for (hz, kept) in [(60.0, false), (1_000.0, true), (10_000.0, false)] {
+            let k = kept_by_band(hz, band);
+            assert!(if kept { k > 0.9 } else { k < 0.1 }, "{hz} Hz: {k:.3} of the repeats kept");
+        }
+    }
+
+    #[test]
+    fn duck_holds_the_repeats_down() {
+        let mut p = outgoing_only(3000);
+        p.echo = Some(Echo { feedback: 0.8, ..echo(None, None, None).unwrap() });
+        let tone = burst(sine(1_000.0, 144000), 250);
+        let zeros = vec![0f32; 144000];
+        let free = mix(&p, &tone, &zeros);
+        p.echo = Some(Echo { duck: Some(Duck { at_ms: 1000, len_ms: 100, db: -12.0 }), ..p.echo.unwrap() });
+        let ducked = mix(&p, &tone, &zeros);
+        let ratio = |a: usize, b: usize| rms(&ducked[a * 48..b * 48]) / rms(&free[a * 48..b * 48]);
+        assert!((ratio(500, 950) - 1.0).abs() < 1e-6, "untouched before: {}", ratio(500, 950));
+        assert!((ratio(1100, 2500) - db_to_gain(-12.0)).abs() < 0.005, "12 dB down after: {}", ratio(1100, 2500));
+    }
+
+    /// An echo-out hands the bass over like any other mix: the incoming bass comes in at the swap, and the outgoing
+    /// lows taken away before the echo are not repeated, while its mids are.
+    #[test]
+    fn echo_and_bass_swap_work_together() {
+        let mut p = plan();
+        p.duration_ms = 2000;
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (0, 500, 0, 0);
+        p.echo = echo(None, None, None);
+        p.bass_swap = Some(BassSwap { at_ms: 1000, len_ms: 100, cut_hz: 200.0 });
+        let zeros = vec![0f32; 96000];
+        let bass = sine(50.0, 96000);
+        let y = mix(&p, &zeros, &bass);
+        assert!(rms(&y[9600..43200]) / rms(&bass) < 0.03, "the incoming bass waits for the swap");
+        assert!((rms(&y[57600..91200]) / rms(&bass) - 1.0).abs() < 0.02, "and comes in after it");
+        // The swap at the start: the outgoing lows are gone before they reach the echo, its mids are not.
+        let swapped = TransitionPlan { bass_swap: Some(BassSwap { at_ms: 0, len_ms: 1, cut_hz: 200.0 }), ..p.clone() };
+        let unswapped = TransitionPlan { bass_swap: None, ..p };
+        let kept = |x: &[f32]| rms(&mix(&swapped, x, &zeros)[28800..43200]) / rms(&mix(&unswapped, x, &zeros)[28800..43200]);
+        assert!(kept(&bass) < 0.05, "{} of the outgoing bass repeated", kept(&bass));
+        assert!(kept(&sine(1_000.0, 96000)) > 0.9, "{} of the outgoing mids repeated", kept(&sine(1_000.0, 96000)));
+    }
+
+    fn reverb(send: Window, decay_s: f32) -> Option<Reverb> {
+        Some(Reverb { send, decay_s, wet_db: 0.0, low_cut_hz: 100.0 })
+    }
+
+    /// `x` through a band-pass around `hz`, about an octave wide.
+    fn band_of(x: &[f32], hz: f64) -> Vec<f32> {
+        let (c, mut s) = (Coef::band_pass(RATE, hz, 1.4), [0.0; 2]);
+        x.iter().map(|v| c.run(&mut s, *v as f64) as f32).collect()
+    }
+
+    /// An impulse's reverb falls 60 dB in the decay time, in the octave around 1 kHz (the highs are damped, so they
+    /// fall sooner): the Schroeder integral of its tail, from 5 to 25 dB down, tripled.
+    #[test]
+    fn reverb_decays_60_db_in_its_decay_time() {
+        for decay in [1.0f32, 2.5] {
+            let mut p = outgoing_only(6000);
+            p.reverb = reverb(Window { start_ms: 0, end_ms: 6000 }, decay);
+            let mut click = vec![0f32; 288000];
+            click[1000] = 1.0;
+            let mut y = mix(&p, &click, &vec![0f32; 288000]);
+            y[1000] = 0.0;
+            // Up to the tail's fade.
+            let y = band_of(&y[..288000 - (decay as f64 * 250.0 * 48.0) as usize], 1_000.0);
+            let tail = &y[1000..];
+            let mut left: Vec<f64> = tail.iter().rev().scan(0.0, |e, v| {
+                *e += (*v as f64).powi(2);
+                Some(*e)
+            }).collect();
+            left.reverse();
+            let at = |db: f64| left.iter().position(|e| 10.0 * (e / left[0]).log10() <= db).unwrap() as f64 / RATE;
+            let rt60 = 3.0 * (at(-25.0) - at(-5.0));
+            assert!((rt60 / decay as f64 - 1.0).abs() < 0.15, "{decay} s: {rt60:.2} s to 60 dB down");
+        }
+    }
+
+    #[test]
+    fn reverb_rings_on_past_its_send_and_fades_by_the_end() {
+        let mut p = outgoing_only(3000);
+        p.reverb = reverb(Window { start_ms: 0, end_ms: 300 }, 2.0);
+        let hit = burst(noise(144000), 300);
+        let y = mix(&p, &hit, &vec![0f32; 144000]);
+        let level = |a: usize, b: usize| rms(&y[a * 48..b * 48]) / rms(&hit[..14400]);
+        assert!(level(1000, 1100) > 0.01, "rings on after the send closes: {}", level(1000, 1100));
+        assert!(level(2995, 3000) < 1e-3 * level(1000, 1100), "faded out by the end: {}", level(2995, 3000));
+        // What was played after the send closed is not in it: the same ring with the deck playing on.
+        let on = mix(&p, &noise(144000), &vec![0f32; 144000]);
+        let dry = noise(144000);
+        let ring_on: Vec<f32> = on[48000..52800].iter().zip(&dry[48000..52800]).map(|(y, x)| y - x).collect();
+        assert!((rms(&ring_on) / rms(&y[48000..52800]) - 1.0).abs() < 1e-3, "only the send is reverberated");
+    }
+
+    #[test]
+    fn reverb_is_wet_db_under_a_steady_send_without_its_lows() {
+        let mut p = outgoing_only(6000);
+        p.reverb = Some(Reverb { send: Window { start_ms: 0, end_ms: 6000 }, decay_s: 1.0, wet_db: -6.0, low_cut_hz: 250.0 });
+        let zeros = vec![0f32; 288000];
+        let wet = |x: &[f32]| {
+            let y = mix(&p, x, &zeros);
+            let ring: Vec<f32> = y[96000..192000].iter().zip(&x[96000..192000]).map(|(y, x)| y - x).collect();
+            rms(&ring) / rms(&x[96000..192000])
+        };
+        // Mids, which the damping hardly touches.
+        let db = 20.0 * wet(&band_of(&noise(288000), 1_000.0)).log10();
+        assert!((db + 6.0).abs() < 1.0, "noise reverberated at {db:.1} dB");
+        let (low, mid) = (wet(&sine(50.0, 288000)), wet(&sine(1_000.0, 288000)));
+        assert!(low < 0.1 * mid, "50 Hz rings {low:.3}, 1 kHz {mid:.3}");
+    }
+
+    /// One send in, two outputs that hardly correlate: the reverb is wide.
+    #[test]
+    fn reverb_is_stereo() {
+        let mut p = outgoing_only(3000);
+        p.reverb = reverb(Window { start_ms: 0, end_ms: 300 }, 2.0);
+        let mono = burst(noise(144000), 300);
+        let stereo: Vec<f32> = mono.iter().flat_map(|v| [*v, *v]).collect();
+        let mut m = Mixer::new(RATE as u32, 2);
+        m.configure(&p);
+        let mut y = stereo.clone();
+        m.process(&mut y, &vec![0f32; 288000]);
+        let (l, r): (Vec<f64>, Vec<f64>) = y[48000 * 2..96000 * 2].chunks(2).map(|f| (f[0] as f64, f[1] as f64)).unzip();
+        let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>();
+        let corr = dot(&l, &r) / (dot(&l, &l) * dot(&r, &r)).sqrt();
+        assert!(corr.abs() < 0.3 && dot(&l, &l) > 0.0, "left and right correlate {corr:.2}");
+    }
+
     /// Mixing time of a 12 s stereo transition of each kind (`cargo test --release -p nori-player --lib
     /// mixer::tests::mixing_perf -- --ignored --nocapture`); `NORI_DUMP=dir` writes each mix, to compare
     /// two builds' output.
@@ -991,10 +1512,14 @@ mod tests {
         let kinds = [
             ("fade", base.clone()),
             ("fade, trimmed", trimmed.clone()),
-            ("bass swap, trimmed", TransitionPlan { bass_swap: Some(crate::types::BassSwap { at_ms: 4_000, len_ms: 2_000, cut_hz: 180.0 }), ..trimmed.clone() }),
+            ("bass swap, trimmed", TransitionPlan { bass_swap: Some(BassSwap { at_ms: 4_000, len_ms: 2_000, cut_hz: 180.0 }), ..trimmed.clone() }),
             ("vocal duck", TransitionPlan { vocal_duck: Some(VocalDuck { until_ms: 8_000, release_ms: 3_000, db: -9.0, hz: 1_500.0 }), ..trimmed.clone() }),
             ("echo", TransitionPlan { echo: Some(Echo { delay_ms: 500, feedback: 0.4, wet_db: -6.0, send: None, band: None, duck: None }), ..trimmed.clone() }),
-            ("sweeps", TransitionPlan { low_pass: Some(Sweep { start_ms: 2_000, end_ms: 10_000, from_hz: 18_000.0, to_hz: 300.0 }), high_pass: Some(Sweep { start_ms: 0, end_ms: 12_000, from_hz: 20.0, to_hz: 400.0 }), ..trimmed }),
+            ("sweeps", TransitionPlan { low_pass: Some(Sweep { start_ms: 2_000, end_ms: 10_000, from_hz: 18_000.0, to_hz: 300.0 }), high_pass: Some(Sweep { start_ms: 0, end_ms: 12_000, from_hz: 20.0, to_hz: 400.0 }), ..trimmed.clone() }),
+            ("filter ride", TransitionPlan { low_pass: Some(Sweep { start_ms: 0, end_ms: 12_000, from_hz: 7_000.0, to_hz: 300.0 }), in_high_pass: Some(Sweep { start_ms: 0, end_ms: 9_000, from_hz: 1_200.0, to_hz: 20.0 }), ..trimmed.clone() }),
+            ("mid dip", TransitionPlan { mid_dip: Some(MidDip { window: Window { start_ms: 0, end_ms: 12_000 }, db: -6.0, hz: 1_000.0, outgoing: true, incoming: true }), ..trimmed.clone() }),
+            ("echo, band, duck, swap", TransitionPlan { echo: Some(Echo { delay_ms: 500, feedback: 0.5, wet_db: -6.0, send: None, band: Some(Band { low_hz: 250.0, high_hz: 3_500.0 }), duck: Some(Duck { at_ms: 8_000, len_ms: 500, db: -12.0 }) }), bass_swap: Some(BassSwap { at_ms: 4_000, len_ms: 2_000, cut_hz: 180.0 }), ..trimmed.clone() }),
+            ("reverb", TransitionPlan { reverb: Some(Reverb { send: Window { start_ms: 0, end_ms: 12_000 }, decay_s: 3.5, wet_db: -3.0, low_cut_hz: 250.0 }), ..trimmed }),
         ];
         let frames = 44_100 * 12;
         let stereo = |f: f64| -> Vec<f32> { sine(f, frames).iter().flat_map(|v| [*v, -*v]).collect() };

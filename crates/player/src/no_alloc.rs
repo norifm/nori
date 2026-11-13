@@ -12,7 +12,7 @@ use crate::heard::{HeardTracker, PlayerNow};
 use crate::pcm::{Encoding, Format};
 use crate::silence::SilenceSkipper;
 use crate::speed::SpeedPitch;
-use crate::types::AutoMixSettings;
+use crate::types::{AutoMixSettings, TransitionPlan};
 
 struct Counting;
 
@@ -149,28 +149,88 @@ fn rate_conversion() {
     assert_eq!(feed(&mut e, &mut d, &mut h, &tone(10.0, 300.0), 1_000_000, 8), 0);
 }
 
+/// A 6 s transition out of a minute's song at 4 s.
+fn short_plan() -> TransitionPlan {
+    let s = AutoMixSettings { max_transition_s: 6.0, ..Default::default() };
+    let mut t = plan::plan(None, None, 60_000, 60_000, &s);
+    (t.out_start_ms, t.tempo_ratio, t.keep_pitch) = (4_000, 1.0, true);
+    t
+}
+
+/// Song "a" held at gain `a` up to `t`, then "b" mixed in at gain `b`: the allocations while holding (after 16
+/// buffers) and switching to "b", and the mixing buffers after the first `warm` that allocated.
+fn hold_and_mix(t: &TransitionPlan, a: f32, b: f32, warm: usize) -> (u64, u64, Vec<(usize, u64)>) {
+    let p = Plan { incoming_id: "b".into(), mixer: t.clone() };
+    let (mut e, mut d, mut h) = (TransitionEngine::new(), Sink { bytes: 0 }, App { plan: Some(p), analyse: false });
+    e.configure(&mut d, &mut h, stream("a", FMT));
+    e.set_gain(a);
+    feed(&mut e, &mut d, &mut h, &tone(4.0, 440.0), 0, 0);
+    let held = feed(&mut e, &mut d, &mut h, &tone(6.0, 440.0), 4_000_000, 16);
+    let switch = allocations(|| {
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+    });
+    e.set_gain(b);
+    (held, switch, allocating(&mut e, &mut d, &mut h, &tone(12.0, 330.0), 10_000_000, warm))
+}
+
+/// The engine sizes a transition's echo and reverb when the plan arrives: starting the mix allocates no more with
+/// them than without.
+#[test]
+fn transition_effects_are_prepared_with_the_plan() {
+    use crate::types::{Echo, Reverb, Window};
+    let plain = short_plan();
+    let echo = Some(Echo { delay_ms: 500, feedback: 0.5, wet_db: -6.0, send: None, band: None, duck: None });
+    let reverb = Some(Reverb { send: Window { start_ms: 0, end_ms: 3_000 }, decay_s: 2.0, wet_db: -6.0, low_cut_hz: 200.0 });
+    let effects = TransitionPlan { echo, reverb, ..plain.clone() };
+    let at_start = |t: &TransitionPlan| {
+        let (_, switch, mixed) = hold_and_mix(t, 1.0, 1.0, 0);
+        switch + mixed.iter().filter(|&&(i, _)| i == 0).map(|&(_, a)| a).sum::<u64>()
+    };
+    assert_eq!(at_start(&effects), at_start(&plain));
+}
+
 #[test]
 fn holding_and_mixing() {
     // Equal gains, and each song at its own gain.
     for (a, b) in [(1.0, 1.0), (0.5, 0.8)] {
-        let s = AutoMixSettings { max_transition_s: 6.0, ..Default::default() };
-        let mut t = plan::plan(None, None, 60_000, 60_000, &s);
-        (t.out_start_ms, t.tempo_ratio, t.keep_pitch) = (4_000, 1.0, true);
-        let p = Plan { incoming_id: "b".into(), mixer: t.clone() };
-        let (mut e, mut d, mut h) = (TransitionEngine::new(), Sink { bytes: 0 }, App { plan: Some(p), analyse: false });
-        e.configure(&mut d, &mut h, stream("a", FMT));
-        e.set_gain(a);
-        feed(&mut e, &mut d, &mut h, &tone(4.0, 440.0), 0, 0);
-        let held = feed(&mut e, &mut d, &mut h, &tone(6.0, 440.0), 4_000_000, 16);
-        e.configure(&mut d, &mut h, stream("b", FMT));
-        e.handle_discontinuity(&mut d, &mut h);
-        e.set_gain(b);
-        let mixed = allocating(&mut e, &mut d, &mut h, &tone(12.0, 330.0), 10_000_000, 16);
+        let t = short_plan();
+        let (held, _, mixed) = hold_and_mix(&t, a, b, 16);
         assert_eq!(held, 0, "holding");
         // The buffer the mix ends in may allocate a few times, once per transition.
         let end = (t.duration_ms as usize * RATE as usize / 1000 * FMT.frame_bytes()) / CHUNK;
         assert!(mixed.iter().all(|&(i, a)| i.abs_diff(end) <= 1 && a <= 8), "allocating buffers {mixed:?}, the mix ends in {end}");
     }
+}
+
+/// Every transition effect at once: once the plan is prepared, configuring and mixing it allocate nothing.
+#[test]
+fn transition_effects() {
+    use crate::automix::mixer::Mixer;
+    use crate::types::{Band, BassSwap, Duck, Echo, MidDip, Reverb, Sweep, Window};
+    let mut t = plan::plan(None, None, 60_000, 60_000, &AutoMixSettings::default());
+    let w = |start_ms, end_ms| Window { start_ms, end_ms };
+    t.duration_ms = 8_000;
+    (t.out_fade_start_ms, t.out_fade_end_ms, t.in_fade_start_ms, t.in_fade_end_ms) = (0, 8_000, 0, 8_000);
+    t.bass_swap = Some(BassSwap { at_ms: 4_000, len_ms: 500, cut_hz: 200.0 });
+    t.low_pass = Some(Sweep { start_ms: 0, end_ms: 6_000, from_hz: 7_000.0, to_hz: 300.0 });
+    t.in_high_pass = Some(Sweep { start_ms: 0, end_ms: 4_000, from_hz: 1_200.0, to_hz: 20.0 });
+    t.in_low_pass = Some(Sweep { start_ms: 1_000, end_ms: 3_000, from_hz: 300.0, to_hz: 18_000.0 });
+    t.mid_dip = Some(MidDip { window: w(1_000, 7_000), db: -6.0, hz: 1_000.0, outgoing: true, incoming: true });
+    let duck = Some(Duck { at_ms: 6_000, len_ms: 500, db: -12.0 });
+    t.echo = Some(Echo { delay_ms: 500, feedback: 0.5, wet_db: -6.0, send: Some(w(2_000, 5_000)), band: Some(Band { low_hz: 250.0, high_hz: 3_500.0 }), duck });
+    t.reverb = Some(Reverb { send: w(3_000, 6_000), decay_s: 2.0, wet_db: -6.0, low_cut_hz: 250.0 });
+    let mut m = Mixer::new(RATE, 2);
+    m.prepare(&t);
+    let (inc, mut out) = (tone(8.0, 330.0), tone(8.0, 440.0));
+    let n = allocations(|| {
+        m.configure(&t);
+        for (o, i) in out.chunks_mut(CHUNK).zip(inc.chunks(CHUNK)) {
+            m.process_bytes(o, i, Encoding::Pcm16);
+        }
+    });
+    assert!(m.done());
+    assert_eq!(n, 0);
 }
 
 #[test]
