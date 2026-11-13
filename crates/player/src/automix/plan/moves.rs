@@ -35,6 +35,8 @@ const BRAKE_WORTH: f64 = 1.3;
 const REVERB_WORTH: f64 = 1.3;
 const ECHO_WORTH: f64 = 1.2;
 const FILTER_OUT_WORTH: f64 = 1.0;
+const MELT_WORTH: f64 = 1.0;
+const AFTERGLOW_WORTH: f64 = 0.9;
 pub(super) const FADE_WORTH: f64 = 0.4;
 /// Per second of beatless overlap, up to [`BEATLESS_MAX_MS`].
 const BEATLESS_LENGTH_WORTH: f64 = 0.03;
@@ -353,6 +355,85 @@ const HANDOFF_OUT_HZ: f32 = 1_600.0;
 /// A high-pass this low has opened.
 const OPEN_HP_HZ: f32 = 20.0;
 const RIDE_SWAP_HZ: f32 = 200.0;
+
+/// Melt, Smooth's filter ride (automix-software.md B6, softened): over the outgoing song's last bars it darkens
+/// slowly through a low-pass while the incoming song comes up thin through a high-pass that opens, the lows changing
+/// hands over a bar in the middle, so two grooves at different tempos overlap only in bands that do not crowd each
+/// other, and nothing moves quickly. Not over two voices.
+pub(super) fn melt(p: &Pair) -> Option<Move> {
+    let (a, b, s) = (p.a, p.b?, p.s);
+    if !s.filter_effects {
+        return None;
+    }
+    let (beat, on_grid) = beat_of(a)?;
+    let x = exits(a, p.room.out_dur, beat, 0.0, 0.0).into_iter().next()?;
+    let (music, _) = entry(Some(b), p.room.in_dur);
+    let len = (MELT_BEATS * beat).min(MELT_MAX_MS).min(p.room.max_len as f64);
+    if len < MELT_MIN_MS || (p.room.in_dur as f64) - music < 2.0 * len {
+        return None;
+    }
+    // The outgoing singing done before its low-pass closes far, the incoming one not yet started.
+    let start = x.at - len;
+    if start < a.silence_start_ms as f64 || sings_after(a, start + MELT_SUNG_SHARE * len) || sings_before(b, music + 0.5 * len) {
+        return None;
+    }
+    let mut m = blank(TransitionKind::FilterRide, start.round() as i64, music.round() as i64, len.round() as i64, String::new());
+    let ms = |f: f64| (f * len).round() as i64;
+    m.in_high_pass = Some(Sweep { start_ms: 0, end_ms: ms(0.6), from_hz: MELT_IN_HZ, to_hz: OPEN_HP_HZ });
+    m.low_pass = Some(Sweep { start_ms: ms(0.25), end_ms: ms(1.0), from_hz: SWEEP_FROM_HZ, to_hz: MELT_OUT_HZ });
+    let bar = bar_beats(a) as f64 * beat;
+    let swap = (0.5 * len - 0.5 * bar).max(0.0);
+    m.bass_swap = Some(BassSwap { at_ms: swap.round() as i64, len_ms: bar.min(len - swap).round() as i64, cut_hz: BASS_CUT_HZ });
+    (m.out_fade_start_ms, m.out_fade_end_ms) = (ms(0.3), ms(1.0));
+    (m.in_fade_start_ms, m.in_fade_end_ms) = (0, ms(0.6));
+    m.in_gain_db = loudness_trim(Some(a), Some(b), s);
+    m.reason = format!("melt over {:.0} s{}", len / 1000.0, tail(p.why_not));
+    Some(Move { plan: m, worth: MELT_WORTH - if on_grid { 0.0 } else { OFF_GRID_COST } })
+}
+
+const MELT_BEATS: f64 = 16.0;
+const MELT_MAX_MS: f64 = 10_000.0;
+const MELT_MIN_MS: f64 = 5_000.0;
+/// The share of a melt the outgoing song may still sing over.
+const MELT_SUNG_SHARE: f64 = 0.3;
+const MELT_IN_HZ: f32 = 600.0;
+const MELT_OUT_HZ: f32 = 500.0;
+
+/// Afterglow, Smooth's dissolve (B13, softened): around a downbeat after its last line the outgoing song falls away
+/// over two beats into a long, soft reverb from its last bar while the incoming song rises over the same two beats, an
+/// equal-power crossing, and the tail washes on over it: the grooves overlap only as one falls and the other comes up.
+/// The transition is centred on the crossing, so a loudness match glides through it evenly.
+pub(super) fn afterglow(p: &Pair) -> Option<Move> {
+    let (a, b, s) = (p.a, p.b?, p.s);
+    if !s.filter_effects {
+        return None;
+    }
+    let (beat, on_grid) = beat_of(a)?;
+    let bar = bar_beats(a) as f64 * beat;
+    let x = exits(a, p.room.out_dur, beat, beat, 2.0 * beat).into_iter().next()?;
+    let (_, at) = entry(Some(b), p.room.in_dur);
+    // The tail after the exit, within the outgoing song, and as much before it: the exit, where they cross, in the
+    // middle.
+    let ring = AFTERGLOW_TAIL_MS.max(bar).min(p.room.out_dur as f64 - x.at);
+    let (exit, dur) = (ring, 2.0 * ring);
+    if ring < 2.0 * beat || dur > p.room.max_len as f64 || (p.room.in_dur as f64) - at < 2.0 * dur || x.at - exit < a.silence_start_ms as f64 {
+        return None;
+    }
+    let ms = |t: f64| t.round() as i64;
+    let mut m = handover(TransitionKind::ReverbWash, x.at - exit, exit - beat, at, dur);
+    m.reverb = Some(Reverb { send: Window { start_ms: ms(exit - 2.0 * beat), end_ms: ms(exit + beat) }, decay_s: AFTERGLOW_DECAY_S, wet_db: AFTERGLOW_WET_DB, low_cut_hz: REVERB_LOW_CUT_HZ });
+    (m.out_fade_start_ms, m.out_fade_end_ms) = (ms(exit - beat), ms(exit + beat));
+    (m.in_fade_start_ms, m.in_fade_end_ms) = (ms(exit - beat), ms(exit + beat));
+    m.in_gain_db = loudness_trim(Some(a), Some(b), s);
+    let line = if x.on_line { ", on the outro phrase" } else { "" };
+    m.reason = format!("afterglow into the next song{line}{}", tail(p.why_not));
+    Some(Move { plan: m, worth: AFTERGLOW_WORTH - if on_grid { 0.0 } else { OFF_GRID_COST } })
+}
+
+const AFTERGLOW_DECAY_S: f32 = 4.5;
+const AFTERGLOW_WET_DB: f32 = -8.0;
+/// The reverb's tail heard after the outgoing song falls.
+const AFTERGLOW_TAIL_MS: f64 = 4_000.0;
 
 /// Brake (B14): a loud outgoing song stops like a turntable switched off, on a downbeat after its last line, over
 /// four beats, and the incoming song bursts in under its last one. Only into an opening that hits.

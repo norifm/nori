@@ -1497,7 +1497,7 @@ fn transitions_hold_their_scores() {
     assert!(t.swap_on_bar == t.swaps && t.swap_on_phrase == t.swaps && t.start_on_phrase >= 10, "swaps and starts on the bar and phrase: {t:?}");
     assert!(t.cap_broken == 0 && t.coda_s == 0.0 && t.dead_runup_s == 0.0, "{t:?}");
     assert!(t.dead_air_s <= 38.0 && t.clash_s <= 1.0 && t.both_sung_s <= 5.0 && t.bump_max_lu <= 1.0, "{t:?}");
-    assert!(t.sung_lost_s <= 18.0 && t.handovers == 0, "{t:?}");
+    assert!(t.sung_lost_s <= 18.0 && t.cuts == 0, "{t:?}");
     // DJ: longer mixes that land more drops, without more harm, and no cuts. The
     // singing found runs past the sung notes of these sparsely sung songs (a mix must not miss a note), so DJ
     // also skips sung intros, loops only unsung bars, and twice waits for a last line off the phrase.
