@@ -2,7 +2,7 @@
 //! where it is sure. Each end records which grid it holds (`*_grid_source`) so a later run and a fresh classical
 //! measurement keep the model's work (`carry`). Only [`read`] needs the `neural-beats` feature.
 
-use crate::types::TrackAnalysis;
+use crate::types::{Beat, TrackAnalysis};
 
 use super::plan::{MIN_BPM_CONFIDENCE, MIN_STABILITY};
 
@@ -93,10 +93,27 @@ pub(crate) fn settle_bar(row: &TrackAnalysis, end: MixEnd, g: EndGrid) -> Option
     }
 }
 
-/// Puts the model's result for one end into `row`: its grid when confident and settled (`GRID_NEURAL`), else only
-/// the `GRID_CHECKED` mark. Returns whether the grid was adopted.
-pub fn merge(row: &mut TrackAnalysis, end: MixEnd, grid: Option<EndGrid>) -> bool {
-    let adopted = grid.filter(confident).and_then(|g| settle_bar(row, end, g));
+/// What the model reads at one end: its grid, when it fits one, and its beats, each on the attack heard.
+#[derive(Debug, Clone, Default)]
+pub struct EndRead {
+    pub grid: Option<EndGrid>,
+    pub beats: Vec<Beat>,
+}
+
+/// The fewest beats of the model's that replace an end's.
+const MIN_MODEL_BEATS: usize = 8;
+
+/// Puts the model's result for one end into `row`: its beats, which know which beat better than the classical
+/// tracker's; its grid when confident and settled (`GRID_NEURAL`), else only the `GRID_CHECKED` mark. Returns whether
+/// the grid was adopted.
+pub fn merge(row: &mut TrackAnalysis, end: MixEnd, read: &EndRead) -> bool {
+    if read.beats.len() >= MIN_MODEL_BEATS {
+        match end {
+            MixEnd::Intro => row.intro_beats = read.beats.clone(),
+            MixEnd::Outro => row.outro_beats = read.beats.clone(),
+        }
+    }
+    let adopted = read.grid.filter(confident).and_then(|g| settle_bar(row, end, g));
     match (end, adopted) {
         (MixEnd::Intro, Some(g)) => {
             (row.intro_bpm, row.intro_bpm_confidence, row.intro_beat_offset_ms, row.intro_stability, row.intro_downbeat_phase) =
@@ -140,6 +157,13 @@ pub fn carry(old: &TrackAnalysis, fresh: &mut TrackAnalysis) {
     let kept = |source: i32| if source == GRID_NEURAL || old.analysis_version >= super::ANALYSIS_VERSION { source } else { 0 };
     fresh.intro_grid_source = fresh.intro_grid_source.max(kept(old.intro_grid_source));
     fresh.outro_grid_source = fresh.outro_grid_source.max(kept(old.outro_grid_source));
+    // The beats of an end the model has read (and will not read again) are its.
+    if fresh.intro_grid_source >= GRID_CHECKED && !old.intro_beats.is_empty() {
+        fresh.intro_beats = old.intro_beats.clone();
+    }
+    if fresh.outro_grid_source >= GRID_CHECKED && !old.outro_beats.is_empty() {
+        fresh.outro_beats = old.outro_beats.clone();
+    }
 }
 
 /// Whether the model has yet to look at `end` of `row`.
@@ -246,22 +270,26 @@ impl Ends {
 
 /// Beat This! over one end of a song: `x` (mono at `rate`, cut by [`window`]) starts `from_ms` into the file.
 #[cfg(feature = "neural-beats")]
-pub fn read(model: &super::neural::BeatThis, x: &[f32], rate: u32, end: MixEnd, from_ms: i64) -> Result<Option<EndGrid>, String> {
+pub fn read(model: &super::neural::BeatThis, x: &[f32], rate: u32, end: MixEnd, from_ms: i64) -> Result<EndRead, String> {
     let mut t = model.track_window(x, rate, end == MixEnd::Intro).map_err(|e| format!("running the beat model: {e}"))?;
     // To track time before the grid is fitted.
     let from_s = from_ms as f64 / 1000.0;
     t.beats.iter_mut().chain(t.downbeats.iter_mut()).for_each(|v| *v += from_s);
-    // A run's beats are checked against the window's onsets, measured only when there is a run.
-    let onsets = std::cell::OnceCell::new();
+    // The window's onsets: the attacks its beats are moved onto, and what a run's beats are checked against.
+    let f = {
+        let mut a = super::analysis::Analyzer::new(rate, (x.len() as u64 * 1000) / rate.max(1) as u64);
+        a.feed(x);
+        a.take_features()
+    };
+    let beats = super::refine(&t.beats, &f.onset, f.fps, f.t0 + from_s)
+        .into_iter()
+        .zip(&t.beats)
+        .map(|((at, sure), b)| Beat { at_ms: (at * 1000.0).round() as i64, downbeat: t.downbeats.iter().any(|d| (d - b).abs() < 1e-6), sure })
+        .collect();
     let heard = |g: &super::neural::NeuralGrid| {
-        let f = onsets.get_or_init(|| {
-            let mut a = super::analysis::Analyzer::new(rate, (x.len() as u64 * 1000) / rate.max(1) as u64);
-            a.feed(x);
-            a.take_features()
-        });
         g.span_s.is_some_and(|(a, b)| super::tempo::on_beat(&f.onset, f.fps, f.t0 + from_s, 60.0 / g.bpm, g.offset_s, (a, b)) >= super::tempo::RUN_MIN_ON_BEAT)
     };
-    Ok(super::neural::grid(&t, end == MixEnd::Outro, heard).map(|g| EndGrid {
+    let grid = super::neural::grid(&t, end == MixEnd::Outro, heard).map(|g| EndGrid {
         bpm: g.bpm,
         offset_ms: g.offset_s * 1000.0,
         confidence: g.confidence,
@@ -271,12 +299,31 @@ pub fn read(model: &super::neural::BeatThis, x: &[f32], rate: u32, end: MixEnd, 
         other_phase: g.other_phase,
         anchor_ms: g.anchor_s * 1000.0,
         span_ms: g.span_s.map(|(a, b)| ((a * 1000.0).round() as i64, (b * 1000.0).round() as i64)),
-    }))
+    });
+    Ok(EndRead { grid, beats })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn grid_only(grid: Option<EndGrid>) -> EndRead {
+        EndRead { grid, beats: Vec::new() }
+    }
+
+    /// The model's beats replace an end's when it read enough of them, and a fresh classical measurement of the same
+    /// file keeps them.
+    #[test]
+    fn the_models_beats_are_kept() {
+        let beats: Vec<Beat> = (0..12).map(|i| Beat { at_ms: 1_000 + 500 * i, downbeat: i % 4 == 0, sure: true }).collect();
+        let mut r = row();
+        merge(&mut r, MixEnd::Intro, &EndRead { grid: None, beats: beats.clone() });
+        merge(&mut r, MixEnd::Outro, &EndRead { grid: None, beats: beats[..4].to_vec() });
+        assert_eq!((&r.intro_beats, r.outro_beats.is_empty()), (&beats, true), "too few beats change nothing");
+        let mut fresh = TrackAnalysis { intro_beats: vec![Beat::default()], ..row() };
+        carry(&r, &mut fresh);
+        assert_eq!(fresh.intro_beats, beats);
+    }
 
     fn row() -> TrackAnalysis {
         TrackAnalysis {
@@ -299,15 +346,15 @@ mod tests {
     fn grids_combined() {
         let mut r = row();
         let sure = EndGrid { bpm: 128.0, offset_ms: 120.0, confidence: 0.9, stability: 0.8, downbeat_phase: 2, beats_per_bar: 3, other_phase: None, anchor_ms: 0.0, span_ms: None };
-        assert!(merge(&mut r, MixEnd::Intro, Some(sure)));
+        assert!(merge(&mut r, MixEnd::Intro, &grid_only(Some(sure))));
         assert_eq!((r.intro_bpm, r.intro_beat_offset_ms, r.intro_downbeat_phase, r.intro_beats_per_bar), (128.0, 120.0, 2, 3));
         assert_eq!(r.intro_grid_source, GRID_NEURAL);
         let unsure = EndGrid { stability: 0.2, ..sure };
-        assert!(!merge(&mut r, MixEnd::Outro, Some(unsure)));
+        assert!(!merge(&mut r, MixEnd::Outro, &grid_only(Some(unsure))));
         assert_eq!((r.outro_bpm, r.outro_grid_source, r.outro_beats_per_bar), (101.0, GRID_CHECKED, 0));
         assert!(!needs_model(&r));
         // Looking again without an answer never demotes a model grid.
-        assert!(!merge(&mut r, MixEnd::Intro, None));
+        assert!(!merge(&mut r, MixEnd::Intro, &grid_only(None)));
         assert_eq!(r.intro_grid_source, GRID_NEURAL);
 
         // Unsettled bar is settled by classical grid or dropped.
@@ -317,13 +364,13 @@ mod tests {
         let g = EndGrid { bpm: 120.2, offset_ms: 250.0, confidence: 1.0, stability: 1.0, downbeat_phase: 3, beats_per_bar: 4, other_phase: Some(1), anchor_ms: 15_250.0, span_ms: None };
         assert_eq!(settle_bar(&r, MixEnd::Intro, g).map(|g| (g.downbeat_phase, g.other_phase)), Some((1, None)));
         let mut merged = r.clone();
-        assert!(merge(&mut merged, MixEnd::Intro, Some(g)));
+        assert!(merge(&mut merged, MixEnd::Intro, &grid_only(Some(g))));
         assert_eq!((merged.intro_bpm, merged.intro_downbeat_phase, merged.intro_grid_source), (120.2, 1, GRID_NEURAL));
         // Another tempo, or bars on neither candidate: cannot tell.
         assert!(settle_bar(&TrackAnalysis { intro_bpm: 90.0, ..r.clone() }, MixEnd::Intro, g).is_none());
         assert!(settle_bar(&TrackAnalysis { intro_downbeat_phase: 2, ..r.clone() }, MixEnd::Intro, g).is_none());
         let mut kept = r.clone();
-        assert!(!merge(&mut kept, MixEnd::Intro, Some(EndGrid { other_phase: Some(2), downbeat_phase: 0, ..g })));
+        assert!(!merge(&mut kept, MixEnd::Intro, &grid_only(Some(EndGrid { other_phase: Some(2), downbeat_phase: 0, ..g }))));
         assert_eq!((kept.intro_bpm, kept.intro_grid_source), (120.0, GRID_CHECKED));
         // A settled bar needs nothing from the classical grid.
         assert_eq!(settle_bar(&TrackAnalysis { intro_bpm: 0.0, ..r }, MixEnd::Intro, EndGrid { other_phase: None, ..g }).map(|g| g.downbeat_phase), Some(3));
@@ -332,8 +379,8 @@ mod tests {
     #[test]
     fn remeasure_keeps_model_work() {
         let mut old = row();
-        merge(&mut old, MixEnd::Intro, Some(EndGrid { bpm: 128.0, offset_ms: 50.0, confidence: 1.0, stability: 1.0, downbeat_phase: 1, beats_per_bar: 4, other_phase: None, anchor_ms: 0.0, span_ms: None }));
-        merge(&mut old, MixEnd::Outro, None);
+        merge(&mut old, MixEnd::Intro, &grid_only(Some(EndGrid { bpm: 128.0, offset_ms: 50.0, confidence: 1.0, stability: 1.0, downbeat_phase: 1, beats_per_bar: 4, other_phase: None, anchor_ms: 0.0, span_ms: None })));
+        merge(&mut old, MixEnd::Outro, &grid_only(None));
         let mut fresh = row();
         carry(&old, &mut fresh);
         assert_eq!((fresh.intro_bpm, fresh.intro_beat_offset_ms, fresh.intro_grid_source), (128.0, 50.0, GRID_NEURAL));
@@ -344,7 +391,7 @@ mod tests {
         carry(&older, &mut fresh);
         assert_eq!((fresh.intro_grid_source, fresh.outro_grid_source), (GRID_NEURAL, GRID_CLASSICAL));
         let mut spanned = row();
-        merge(&mut spanned, MixEnd::Outro, Some(EndGrid { bpm: 101.0, offset_ms: 0.0, confidence: 1.0, stability: 1.0, downbeat_phase: 0, beats_per_bar: 4, other_phase: None, anchor_ms: 0.0, span_ms: Some((170_000, 190_000)) }));
+        merge(&mut spanned, MixEnd::Outro, &grid_only(Some(EndGrid { bpm: 101.0, offset_ms: 0.0, confidence: 1.0, stability: 1.0, downbeat_phase: 0, beats_per_bar: 4, other_phase: None, anchor_ms: 0.0, span_ms: Some((170_000, 190_000)) })));
         let mut fresh = row();
         carry(&spanned, &mut fresh);
         assert_eq!((fresh.outro_grid_from_ms, fresh.outro_grid_to_ms, fresh.outro_grid_source), (170_000, 190_000, GRID_NEURAL));

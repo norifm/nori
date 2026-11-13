@@ -1306,21 +1306,21 @@ pub(crate) fn listen(core: &Core, id: &str, model: &Model, ends: &mut Ends) -> b
         };
         let have = (start_ms, start_ms + x.len() as i64 * 1000 / rate as i64);
         let t0 = nori_time::Instant::now();
-        let grid = match beats::window(&row, end, have) {
+        let read = match beats::window(&row, end, have) {
             Some((from, to)) => {
                 let at = |ms: i64| ((ms - start_ms) * rate as i64 / 1000).clamp(0, x.len() as i64) as usize;
                 match beats_model.read(&x[at(from)..at(to)], rate, end, from) {
-                    Ok(g) => g,
+                    Ok(r) => r,
                     Err(e) => {
                         nori_core::alog::info(&format!("beat model on the {end:?} of {id}: {e}"));
                         continue;
                     }
                 }
             }
-            None => None,
+            None => beats::EndRead::default(),
         };
-        let used = core.analysis_neural_store(id, end, grid).unwrap_or(false);
-        nori_core::alog::info(&match grid {
+        let used = core.analysis_neural_store(id, end, &read).unwrap_or(false);
+        nori_core::alog::info(&match read.grid {
             Some(g) => format!(
                 "beat model on the {end:?} of {id}: {:.2} bpm (conf {:.2}, stab {:.2}), {} to the bar, {}, {} ms",
                 g.bpm,
@@ -1427,7 +1427,7 @@ impl BeatModel {
         }
     }
 
-    fn read(&self, x: &[f32], rate: u32, end: MixEnd, from_ms: i64) -> Result<Option<beats::EndGrid>, String> {
+    fn read(&self, x: &[f32], rate: u32, end: MixEnd, from_ms: i64) -> Result<beats::EndRead, String> {
         beats::read(&self.0, x, rate, end, from_ms)
     }
 }
@@ -1442,8 +1442,8 @@ impl BeatModel {
         None
     }
 
-    fn read(&self, _: &[f32], _: u32, _: MixEnd, _: i64) -> Result<Option<beats::EndGrid>, String> {
-        Ok(None)
+    fn read(&self, _: &[f32], _: u32, _: MixEnd, _: i64) -> Result<beats::EndRead, String> {
+        Ok(beats::EndRead::default())
     }
 }
 

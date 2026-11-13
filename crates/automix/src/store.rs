@@ -72,17 +72,28 @@ pub fn get(c: &Connection, song_id: &str) -> rusqlite::Result<Option<TrackAnalys
         .optional()
 }
 
-/// Bytes per stored bar: its start (ms, i32), level and lows (half dB, i8), pulse, voice and change (0..255).
-const BAR_BYTES: usize = 9;
+/// Bytes per stored bar: its start (ms, i32) and its level, lows, pulse, voice and change (f32 each), as measured.
+const BAR_BYTES: usize = 24;
 
 fn encode_bars(bars: &[BarProfile]) -> Vec<u8> {
-    let half_db = |db: f32| (db * 2.0).round().clamp(-128.0, 127.0) as i8 as u8;
-    let share = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
     bars.iter()
         .flat_map(|b| {
-            let s = (b.start_ms.clamp(i32::MIN as i64, i32::MAX as i64) as i32).to_le_bytes();
-            [s[0], s[1], s[2], s[3], half_db(b.level_db), half_db(b.low_db), share(b.pulse), share(b.voice), share(b.change)]
+            let mut x = [0u8; BAR_BYTES];
+            x[..4].copy_from_slice(&(b.start_ms.clamp(i32::MIN as i64, i32::MAX as i64) as i32).to_le_bytes());
+            for (i, v) in [b.level_db, b.low_db, b.pulse, b.voice, b.change].into_iter().enumerate() {
+                x[4 + 4 * i..8 + 4 * i].copy_from_slice(&v.to_le_bytes());
+            }
+            x
         })
+        .collect()
+}
+
+fn decode_bars(b: &[u8]) -> Vec<BarProfile> {
+    let f = |x: &[u8], i: usize| f32::from_le_bytes([x[4 + 4 * i], x[5 + 4 * i], x[6 + 4 * i], x[7 + 4 * i]]);
+    b.as_chunks::<BAR_BYTES>()
+        .0
+        .iter()
+        .map(|x| BarProfile { start_ms: i32::from_le_bytes([x[0], x[1], x[2], x[3]]) as i64, level_db: f(x, 0), low_db: f(x, 1), pulse: f(x, 2), voice: f(x, 3), change: f(x, 4) })
         .collect()
 }
 
@@ -103,18 +114,6 @@ fn decode_beats(b: &[u8]) -> Vec<Beat> {
     b.as_chunks::<BEAT_BYTES>().0.iter().map(|x| Beat { at_ms: i32::from_le_bytes([x[0], x[1], x[2], x[3]]) as i64, downbeat: x[4] & 1 != 0, sure: x[4] & 2 != 0 }).collect()
 }
 
-fn decode_bars(b: &[u8]) -> Vec<BarProfile> {
-    b.as_chunks::<BAR_BYTES>().0.iter()
-        .map(|x| BarProfile {
-            start_ms: i32::from_le_bytes([x[0], x[1], x[2], x[3]]) as i64,
-            level_db: x[4] as i8 as f32 / 2.0,
-            low_db: x[5] as i8 as f32 / 2.0,
-            pulse: x[6] as f32 / 255.0,
-            voice: x[7] as f32 / 255.0,
-            change: x[8] as f32 / 255.0,
-        })
-        .collect()
-}
 
 /// Stores a fresh classical analysis, keeping the Beat This! grids and "model has looked" marks of the stored row
 /// (`beats::carry`). Returns the row as stored.
@@ -273,11 +272,7 @@ mod tests {
         let got = get(&c, "a").unwrap().expect("the row");
         assert_eq!((got.intro_bars.len(), got.outro_bars.len()), (4, 1));
         assert_eq!((&got.intro_beats, &got.outro_beats), (&a.intro_beats, &a.outro_beats), "beats come back as they went in");
-        for (g, w) in got.intro_bars.iter().chain(&got.outro_bars).zip(a.intro_bars.iter().chain(&a.outro_bars)) {
-            assert_eq!(g.start_ms, w.start_ms);
-            assert!((g.level_db - w.level_db).abs() <= 0.25 && (g.low_db - w.low_db).abs() <= 0.25, "{g:?} {w:?}");
-            assert!([(g.pulse, w.pulse), (g.voice, w.voice), (g.change, w.change)].iter().all(|(g, w)| (g - w).abs() <= 1.0 / 255.0), "{g:?} {w:?}");
-        }
+        assert_eq!((&got.intro_bars, &got.outro_bars), (&a.intro_bars, &a.outro_bars), "bars come back as measured");
     }
 
     #[test]

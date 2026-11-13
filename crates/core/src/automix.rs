@@ -1,6 +1,6 @@
 //! Analysis store calls on the core's database. AutoMix itself is nori-automix's.
 
-use nori_automix::beats::{EndGrid, MixEnd};
+use nori_automix::beats::{EndRead, MixEnd};
 use nori_automix::analysis::Analyzer;
 use nori_automix::store::{get, get_voice, measure, measured, missing, neural_missing, put, put_finished, AnalysisStream, Measured};
 
@@ -122,10 +122,10 @@ impl Core {
 
     /// Stores the beat model's `grid` for `end` (adopted if confident) and marks the end checked. Returns
     /// whether it was adopted; false without an analysis.
-    pub fn analysis_neural_store(&self, song_id: &str, end: MixEnd, grid: Option<EndGrid>) -> Result<bool> {
+    pub fn analysis_neural_store(&self, song_id: &str, end: MixEnd, read: &EndRead) -> Result<bool> {
         let c = self.db.lock();
         let Some(mut row) = get(&c, song_id)? else { return Ok(false) };
-        let adopted = nori_automix::beats::merge(&mut row, end, grid);
+        let adopted = nori_automix::beats::merge(&mut row, end, read);
         put(&c, &row)?;
         if adopted {
             self.session.planner.analyses_changed();
