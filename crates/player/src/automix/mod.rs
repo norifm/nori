@@ -3,7 +3,7 @@
 //! - `analysis`, `tempo`, `structure`, `loudness`: one streamed pass over a track's PCM gives a `TrackAnalysis`.
 //! - `beats` (+ `neural`, `weights`, `checkpoint` with `neural-beats`): the optional Beat This! tracker, whose
 //!   grids replace the classical intro and outro grids where it is sure.
-//! - `plan`: two analyses and the settings to a `TransitionPlan`.
+//! - `plan`: two analyses and the settings to a `TransitionPlan`; `curve`: an end's beats as a tempo curve for it.
 //! - `mixer`, `stretch`, `resample`: per-buffer rendering of a plan.
 //! - `vocal`: the vocal activity curve synced lyrics are checked against.
 //! - `synth`, `eval` (tests and `synth`): synthetic songs the analysis and plans are scored on.
@@ -12,6 +12,7 @@ pub mod analysis;
 pub mod beats;
 #[cfg(any(test, feature = "neural-beats"))]
 pub mod checkpoint;
+mod curve;
 pub mod loudness;
 pub mod mixer;
 #[cfg(feature = "neural-beats")]
@@ -39,8 +40,8 @@ use crate::types::{BarProfile, Beat, TrackAnalysis};
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 21: each end keeps its beats, on the attacks heard.
-pub const ANALYSIS_VERSION: i32 = 21;
+/// Bump when stored rows should be measured again. 22: each end's beats are cleaned, their bars found on them.
+pub const ANALYSIS_VERSION: i32 = 22;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -273,21 +274,18 @@ pub(crate) fn refine(beats: &[f64], onset: &[f32], fps: f64, t0: f64) -> Vec<(f6
     beats.iter().zip(found).map(|(&b, r)| r.map_or((b + shift, false), |r| (r, true))).collect()
 }
 
-/// Refined beats as stored, every `meter`-th one starting a bar: counted along the beats themselves from the one in
-/// the middle, whose place on `grid` gives the bar's phase, so a drifting tempo does not move the bars.
-fn end_beats(refined: &[(f64, bool)], grid: &Grid, meter: i64) -> Vec<Beat> {
-    let beat_s = if grid.bpm > 0.0 && grid.bpm.is_finite() { 60.0 / grid.bpm } else { 0.0 };
-    let mid = refined.len() / 2;
-    let phase = refined.get(mid).filter(|_| beat_s > 0.0).map(|&(t, _)| ((t - grid.offset_ms / 1000.0) / beat_s).round() as i64 - grid.downbeat_phase as i64);
-    refined
-        .iter()
-        .enumerate()
-        .map(|(i, &(t, sure))| Beat {
-            at_ms: (t * 1000.0).round() as i64,
-            downbeat: phase.is_some_and(|p| (p + i as i64 - mid as i64).rem_euclid(meter) == 0),
-            sure,
-        })
-        .collect()
+/// Refined beats as stored: cleaned ([`curve::cleaned`]), every `meter`-th one starting a bar, counted along the beats
+/// themselves from the phase their kick and chords give ([`structure::bar_phase`]), so a drifting tempo does not move
+/// the bars.
+fn end_beats(refined: &[(f64, bool)], f: &Features, meter: i64) -> Vec<Beat> {
+    let heard: Vec<Beat> = refined.iter().map(|&(t, sure)| Beat { at_ms: (t * 1000.0).round() as i64, downbeat: false, sure }).collect();
+    let mut beats = curve::cleaned(&heard);
+    let times: Vec<f64> = beats.iter().map(|b| b.at_ms as f64 / 1000.0).collect();
+    let phase = structure::bar_phase(f, &times, meter as usize);
+    for (i, b) in beats.iter_mut().enumerate() {
+        b.downbeat = i % meter as usize == phase;
+    }
+    beats
 }
 
 /// A bar and its pitch-class profile, while an end's changes are read.
@@ -449,15 +447,15 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         let pick = |g: &Grid| if g.bpm > 0.0 && g.bpm.is_finite() { *g } else { whole };
         let beat = |g: &Grid| if g.bpm > 0.0 && g.bpm.is_finite() { 60.0 / g.bpm } else { 0.0 };
         let (gi, go) = (pick(&intro_grid), pick(&outro_grid));
-        let beats_of = |g: &Grid, from: f64, to: f64| {
+        let beats_of = |from: f64, to: f64| {
             let these: Vec<f64> = t.beats.iter().copied().filter(|b| (from..to).contains(b)).collect();
-            end_beats(&refine(&these, &f.onset, f.fps, f.t0), g, meter)
+            end_beats(&refine(&these, &f.onset, f.fps, f.t0), f, meter)
         };
         (
             end_bars(f, &gi, meter, beat(&gi), music, true, sung, strong),
             end_bars(f, &go, meter, beat(&go), song, false, sung, strong),
-            beats_of(&gi, music.0, music.0 + END_BEATS_S),
-            beats_of(&go, song.1 - END_BEATS_S, song.1),
+            beats_of(music.0, music.0 + END_BEATS_S),
+            beats_of(song.1 - END_BEATS_S, song.1),
         )
     };
 

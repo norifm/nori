@@ -104,6 +104,30 @@ fn lag_similarity(rows: &[Vec<f64>], lag: usize) -> f64 {
     total / (centred.len() - lag) as f64
 }
 
+/// Which of every `meter` of `beats` (seconds, in order) starts a bar: the one the kick rises on and the chords change
+/// on most, as [`downbeat`] reads them on a grid. A list of beats keeps its bars where a band drifts off any grid.
+pub(crate) fn bar_phase(f: &Features, beats: &[f64], meter: usize) -> usize {
+    if meter < 2 || beats.len() < 2 * meter + 2 {
+        return 0;
+    }
+    let rise = low_rise(f);
+    let (mut kick, mut change) = (Vec::with_capacity(beats.len()), Vec::with_capacity(beats.len()));
+    for i in 1..beats.len() - 1 {
+        let reach = (((beats[i + 1] - beats[i]) / 8.0) * f.fps).round().max(1.0) as isize;
+        kick.push(peak_near(&rise, frame_of(f, beats[i]), reach));
+        let (before, after) = (chroma_between(f, beats[i - 1], beats[i]), chroma_between(f, beats[i], beats[i + 1]));
+        change.push(1.0 - after.iter().zip(&before).map(|(a, b)| a * b).sum::<f64>());
+    }
+    z(&mut kick);
+    z(&mut change);
+    let mut score = vec![(0.0, 0usize); meter];
+    for (k, (a, b)) in kick.iter().zip(&change).enumerate() {
+        let s = &mut score[(k + 1) % meter];
+        (s.0, s.1) = (s.0 + a + b, s.1 + 1);
+    }
+    (0..meter).max_by(|x, y| (score[*x].0 / score[*x].1.max(1) as f64).total_cmp(&(score[*y].0 / score[*y].1.max(1) as f64))).unwrap_or(0)
+}
+
 /// Downbeat phase and metre over `music` (seconds). `meter` is the bar length when already known.
 pub fn downbeat(t: &Tempo, f: &Features, music: (f64, f64), meter: Option<i64>) -> Downbeat {
     if t.period_s <= 0.0 || t.bpm <= 0.0 {
