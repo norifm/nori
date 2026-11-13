@@ -1243,7 +1243,7 @@ private class SleeveFade {
         half4 main(float2 p) {
             half4 c = content.eval(p);
             float t = clamp((p.y - top) / (bottom - top), 0.0, 1.0);
-            c *= pow(1.0 - t, power);
+            c *= pow(1.0 - t, power) * (1.0 + power * t);
             float n = fract(sin(dot(floor(p), float2(12.9898, 78.233))) * 43758.5453);
             c.rgb = max(c.rgb + (n - 0.5) / 255.0, 0.0);
             c.a = max(c.a, max(c.r, max(c.g, c.b)));
