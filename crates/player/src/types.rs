@@ -281,6 +281,16 @@ pub enum TransitionKind {
     /// Tempos too far apart to stretch to one another: the outgoing track loops its last clean bars and glides
     /// partway, the incoming one comes in at that tempo, locked, then eases back to its own.
     LoopRamp,
+    /// Beat-matched, the incoming track's layers in one at a time: its kick and bass first, then its instruments as
+    /// the outgoing track thins to its voice band, and the voices last.
+    LayeredMix,
+}
+
+impl TransitionKind {
+    /// Both tracks on one beat through the overlap.
+    pub fn beat_matched(self) -> bool {
+        matches!(self, TransitionKind::BeatMatched | TransitionKind::LayeredMix)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

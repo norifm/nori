@@ -1433,7 +1433,7 @@ pub fn mix_totals(scores: &[MixScore]) -> MixTotals {
         t.double_drops += s.double_drop as usize;
         t.loops += s.looped as usize;
         t.bends += s.bent as usize;
-        t.beat_matched += (s.kind == K::BeatMatched) as usize;
+        t.beat_matched += s.kind.beat_matched() as usize;
         t.cuts += (s.kind == K::Cut) as usize;
         t.handovers += matches!(s.kind, K::LoopRamp | K::EchoOut | K::FilterRide | K::FilterOut | K::Brake | K::ReverbWash) as usize;
         if s.has_drop {
@@ -1442,7 +1442,7 @@ pub fn mix_totals(scores: &[MixScore]) -> MixTotals {
             t.drop_skipped += s.drop_skipped as usize;
         }
         t.dip_s += s.dip_s;
-        if s.kind == K::BeatMatched {
+        if s.kind.beat_matched() {
             t.swaps += 1;
             t.swap_on_bar += s.swap_on_bar as usize;
             t.swap_on_phrase += s.swap_on_phrase as usize;
@@ -1665,7 +1665,7 @@ pub fn end_accuracy(beats: &[crate::types::Beat], truth: &Truth, jitter_s: f64) 
 /// speed), how far the nearest incoming true beat is, ms: (the most, the RMS). None for a plan not beat-matched or over
 /// a looped ending.
 pub fn mix_error(p: &crate::types::TransitionPlan, ta: &Truth, tb: &Truth) -> Option<(f64, f64)> {
-    if p.kind != crate::types::TransitionKind::BeatMatched || p.out_loop_ms.is_some() {
+    if !p.kind.beat_matched() || p.out_loop_ms.is_some() {
         return None;
     }
     let looped = p.in_loop.map_or(0.0, |l| (p.in_delay_ms + l.ms * (l.repeats as i64 + 1)) as f64);

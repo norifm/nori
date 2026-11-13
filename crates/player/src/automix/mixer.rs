@@ -7,7 +7,7 @@
 //! [`Mixer::prepare`]; mixing allocates nothing.
 
 use crate::pcm::Encoding;
-use crate::types::{FadeCurve, TransitionKind, TransitionPlan};
+use crate::types::{FadeCurve, TransitionPlan};
 use std::f64::consts::PI;
 
 const MAX_CHANNELS: usize = 8;
@@ -683,7 +683,7 @@ impl Mixer {
         self.gap_db = trim(glide.1 - glide.0, p.in_gain_db as f64);
         self.trim_span = Span { start: frames(glide.0), end: frames(glide.1) };
         self.swap = p.bass_swap.map(|s| from(s.at_ms, s.len_ms));
-        self.matched = p.kind == TransitionKind::BeatMatched;
+        self.matched = p.kind.beat_matched();
         let cut = p.bass_swap.map_or(180.0, |s| s.cut_hz as f64);
         (self.low_shelf, self.hold_shelf) = (Shelf::at(rate, cut / 2.0), Shelf::at(rate, cut));
         self.highs_in = p.highs_in.filter(|h| h.db < 0.0).map(|h| {
@@ -1007,7 +1007,7 @@ impl Mixer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Band, BassSwap, Duck, Echo, MidDip, Reverb, Sweep, VocalDuck, Window};
+    use crate::types::{Band, BassSwap, Duck, Echo, MidDip, Reverb, Sweep, TransitionKind, VocalDuck, Window};
 
     const RATE: f64 = 48000.0;
 

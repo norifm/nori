@@ -681,8 +681,8 @@ struct Profile {
     riser: bool,
     /// The outgoing song fades over a bar at least after the swap, unless its music ends sooner.
     bar_tail: bool,
-    /// The incoming song's layers come in one at a time: its voice band held until the swap, and away from a drop
-    /// its bass first ([`LAYER_MIN_BARS`]).
+    /// The incoming song's layers come in one at a time: into a drop its voice band waits for the drop, and elsewhere
+    /// now and then its bass goes first ([`TransitionKind::LayeredMix`]).
     layers: bool,
     /// Per bar of looped outgoing slice heard again.
     loop_cost: f64,
@@ -1300,19 +1300,22 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
             apart = true;
         }
     }
-    // The voices change hands last, at the swap.
-    if k.profile.layers && s.filter_effects && swap > 0 && p.vocal_duck.is_none() {
+    // Into a drop the voices land with the bass.
+    let layers = k.profile.layers && s.filter_effects && swap > 0;
+    if layers && w.landing == Landing::Drop && p.vocal_duck.is_none() {
         p.vocal_duck = Some(VocalDuck { until_ms: swap, release_ms: beat_ms.min(swap), db: VOCAL_DUCK_DB, hz: VOCAL_DUCK_HZ });
     }
-    // Bass first: the incoming kick and bass take over a quarter into the run-up, its instruments come up after as
-    // the outgoing song thins to its voice band, and the voices change hands last, at the landing. Into a drop the
-    // bass waits for the drop.
+    // Bass first, a layered mix: the incoming kick and bass take over a quarter into the run-up, its instruments come
+    // up after as the outgoing song thins to its voice band, and the voices change hands last, at the landing. Not
+    // twice in a row, which would make it a habit; into a drop the bass waits for the drop.
     let ratio = k.ratio;
     let bass = ((w.runup_bars / 4) as f64 * k.bar).round() as i64;
     let kicks = |x: &crate::types::BarProfile| if moves::kick(x) { 1.0 } else { 0.0 };
     let kicking = moves::mean_over(&b.intro_bars, w.in_start + bass as f64 * ratio - 0.5 * bar_ms(b), w.in_start + w.swap * ratio, kicks).is_some_and(|share| share >= LAYER_KICK_SHARE);
-    let layered = s.bass_swap && s.filter_effects && k.profile.layers && !k.far && !w.double && w.landing != Landing::Drop && w.runup_bars >= LAYER_MIN_BARS && kicking;
+    let layered = layers && s.bass_swap && s.previous != Some(TransitionKind::LayeredMix) && !k.far && !w.double && w.landing != Landing::Drop && w.runup_bars >= LAYER_MIN_BARS && kicking;
     if layered {
+        p.kind = TransitionKind::LayeredMix;
+        p.vocal_duck = Some(VocalDuck { until_ms: swap, release_ms: beat_ms.min(swap), db: VOCAL_DUCK_DB, hz: VOCAL_DUCK_HZ });
         let (bar_ms, len) = (k.bar.round() as i64, swap_len(k, w.landing).round() as i64);
         p.bass_swap = Some(BassSwap { at_ms: (bass - len).max(0), len_ms: len, cut_hz: BASS_CUT_HZ });
         p.highs_in = None;
@@ -1349,7 +1352,7 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
         bits.push("a riser into it".to_string());
     }
     if layered {
-        bits.push("bass first, then the instruments, the voices last".to_string());
+        bits.push("layered: bass first, then the instruments, the voices last".to_string());
     }
     if p.highs_in.is_some() {
         bits.push("highs before the bass".to_string());
@@ -2195,14 +2198,17 @@ mod tests {
     /// A DJ mix away from a drop, into an opening that carries a kick, hands the layers over one at a time: the
     /// incoming kick and bass on a downbeat a quarter into the run-up, then its instruments as its low-pass opens and
     /// the outgoing song thins to its voice band, and the voices last, at the landing. Into a drop the bass waits for
-    /// the drop, the voices with it; an opening with no kick has no bass to lead with; Smooth blends as before.
+    /// the drop, the voices with it; an opening with no kick has no bass to lead with; right after a layered mix, and in
+    /// Smooth, a plain blend.
     #[test]
     fn dj_hands_the_layers_over_bass_first() {
         let beat: f64 = 60_000.0 / 128.0;
         let a = profiled(track(128.0), band);
         let b = profiled(track(128.0), band);
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
-        assert!(p.kind == TransitionKind::BeatMatched && p.reason.contains("bass first"), "{}", p.reason);
+        assert!(p.kind == TransitionKind::LayeredMix && p.reason.contains("bass first"), "{}", p.reason);
+        let again = plan(Some(&a), Some(&b), 240_000, 240_000, &after(TransitionKind::LayeredMix));
+        assert!(again.kind == TransitionKind::BeatMatched && again.vocal_duck.is_none(), "not twice in a row: {}", again.reason);
         let (bass, landing) = (swap_at(&p), p.out_fade_start_ms);
         assert!(bass > 0 && bass as f64 <= landing as f64 - 3.0 * 4.0 * beat + 1.0 && on_downbeat(&a, p.out_start_ms as f64 + p.out_song_ms(bass as f64)), "{p:?}");
         let lp = p.in_low_pass.expect(&p.reason);
@@ -2214,10 +2220,10 @@ mod tests {
 
         let drop = TrackAnalysis { drop_ms: (b.beat_offset_ms + 32.0 * beat) as i64, ..b.clone() };
         let quiet = profiled(track(128.0), |i| BarProfile { low_db: -24.0, pulse: 0.2, ..band(i) });
-        for b in [&drop, &quiet] {
+        for (b, voices_wait) in [(&drop, true), (&quiet, false)] {
             let p = plan(Some(&a), Some(b), 240_000, 240_000, &dj());
             assert!(p.kind == TransitionKind::BeatMatched && !p.reason.contains("bass first") && p.in_low_pass.is_none(), "{}", p.reason);
-            assert_eq!((swap_at(&p), p.vocal_duck.map(|d| d.until_ms)), (p.out_fade_start_ms, Some(p.out_fade_start_ms)), "{p:?}");
+            assert_eq!((swap_at(&p), p.vocal_duck.map(|d| d.until_ms)), (p.out_fade_start_ms, voices_wait.then_some(p.out_fade_start_ms)), "{p:?}");
         }
         let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
         assert!(smooth.kind == TransitionKind::BeatMatched && smooth.vocal_duck.is_none() && smooth.in_low_pass.is_none(), "{}", smooth.reason);

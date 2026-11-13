@@ -865,6 +865,7 @@ pub enum TransitionKind {
     ReverbWash,
     BeatlessBlend,
     LoopRamp,
+    LayeredMix,
 }
 
 #[cfg(feature = "ffi")]
