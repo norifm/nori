@@ -130,6 +130,8 @@ const BEATLESS_MAX_MS: f64 = 30_000.0;
 struct Exit {
     at: f64,
     on_line: bool,
+    /// Off the last word ([`last_word`]), not a downbeat.
+    word: bool,
 }
 
 /// Downbeats of `a` to leave on, best first: the latest before its music ends or turns quiet (an effect on a dying
@@ -153,7 +155,16 @@ fn exits(a: &TrackAnalysis, out_dur: i64, beat: f64, fall: f64, unsung: f64) -> 
     let fits = |x: f64| x - beat >= a.silence_start_ms as f64 && !sings_after(a, x - unsung) && ending.skipped(x + fall) <= MAX_SKIP_MS as f64 && alive(x);
     let all: Vec<f64> = (0..=EXIT_BARS_BACK).map(|n| last - n as f64 * bar).filter(|&x| fits(x)).collect();
     let lined = all.iter().take(4).copied().find(|&x| on_line(x));
-    lined.into_iter().chain(all.iter().copied().filter(|&x| Some(x) != lined)).map(|x| Exit { at: x, on_line: on_line(x) }).collect()
+    lined.into_iter().chain(all.iter().copied().filter(|&x| Some(x) != lined)).map(|x| Exit { at: x, on_line: on_line(x), word: false }).collect()
+}
+
+/// Where a handover leaves: the best of [`exits`] that `fits`, else, where the singing runs to the song's stop or
+/// end, off its last word ([`last_word`]).
+fn leave(a: &TrackAnalysis, out_dur: i64, beat: f64, fall: f64, unsung: f64, fits: impl Fn(f64) -> bool) -> Option<Exit> {
+    exits(a, out_dur, beat, fall, unsung)
+        .into_iter()
+        .find(|x| fits(x.at))
+        .or_else(|| last_word(a, out_dur, beat).filter(|&at| fits(at)).map(|at| Exit { at, on_line: false, word: true }))
 }
 
 /// Bars back from the end a handover may leave on.
@@ -219,7 +230,8 @@ pub(super) fn echo_out(p: &Pair) -> Option<Move> {
     if dur > p.room.max_len as f64 {
         return None;
     }
-    let x = exits(a, p.room.out_dur, beat, fall, beat).into_iter().next()?;
+    // Off a last word only with nothing sung after it: repeats under a voice still singing stutter.
+    let x = leave(a, p.room.out_dur, beat, fall, beat, |x| !sings_after(a, x) && x - beat + dur <= p.room.out_dur as f64)?;
     let (_, at) = entry(p.b, p.room.in_dur);
     if (p.room.in_dur as f64) - at < 2.0 * dur {
         return None;
@@ -244,7 +256,7 @@ pub(super) fn echo_out(p: &Pair) -> Option<Move> {
         m.high_pass = Some(Sweep { start_ms: 0, end_ms: (beat + bar).round() as i64, from_hz: ECHO_HP_FROM_HZ, to_hz: ECHO_HP_TO_HZ });
     }
     m.in_gain_db = loudness_trim(Some(a), p.b, s);
-    let line = if x.on_line { "on the outro phrase" } else if a.vocal_end_ms > 0 { "after its last line" } else { "on its last bars" };
+    let line = if x.word { "off its last word" } else if x.on_line { "on the outro phrase" } else if a.vocal_end_ms > 0 { "after its last line" } else { "on its last bars" };
     let by = if on_grid { "on its downbeat" } else { "by its tempo" };
     m.reason = format!("echo-out {by}, {line}{}", tail(p.why_not));
     Some(Move { plan: m, worth: ECHO_WORTH - if on_grid { 0.0 } else { OFF_GRID_COST } })
@@ -261,8 +273,8 @@ const ECHO_HP_FROM_HZ: f32 = 80.0;
 const ECHO_HP_TO_HZ: f32 = 1_500.0;
 
 /// Filter out (B11): the outgoing song thins through a high-pass rising over two bars to a downbeat after its last
-/// line, where it falls over a beat and the incoming music starts, rising over a bar. The dry move for an ending
-/// whose last beat is sung, where an echo would stutter the word.
+/// line, or to its last word where it sings to its end, where it falls over a beat as the incoming music starts on
+/// it, clean. The dry move for an ending whose last beat is sung, where an echo would stutter the word.
 pub(super) fn filter_out(p: &Pair) -> Option<Move> {
     let (a, s) = (p.a, p.s);
     if !s.filter_effects {
@@ -271,22 +283,24 @@ pub(super) fn filter_out(p: &Pair) -> Option<Move> {
     let (beat, on_grid) = beat_of(a)?;
     let bar = bar_beats(a) as f64 * beat;
     let rise = FILTER_OUT_BARS * bar;
-    let dur = rise + bar;
+    let dur = rise + beat;
     if dur > p.room.max_len as f64 {
         return None;
     }
-    let x = exits(a, p.room.out_dur, beat, beat, 0.0).into_iter().find(|x| x.at - rise >= a.silence_start_ms as f64)?;
+    let x = leave(a, p.room.out_dur, beat, beat, 0.0, |x| x - rise >= a.silence_start_ms as f64 && x + beat <= p.room.out_dur as f64)?;
     let (_, at) = entry(p.b, p.room.in_dur);
     if (p.room.in_dur as f64) - at < 2.0 * dur {
         return None;
     }
+    // The incoming song clean on its downbeat, the thinned outgoing one gone over the same beat.
     let mut m = handover(TransitionKind::FilterOut, x.at - rise, rise, at, dur);
-    (m.out_fade_start_ms, m.out_fade_end_ms) = (rise.round() as i64, (rise + beat).round() as i64);
+    (m.out_fade_start_ms, m.out_fade_end_ms) = (rise.round() as i64, dur.round() as i64);
     (m.in_fade_start_ms, m.in_fade_end_ms) = (rise.round() as i64, dur.round() as i64);
     m.high_pass = Some(Sweep { start_ms: 0, end_ms: (rise + beat).round() as i64, from_hz: FILTER_OUT_FROM_HZ, to_hz: FILTER_OUT_TO_HZ });
     m.in_gain_db = loudness_trim(Some(a), p.b, s);
-    m.reason = format!("filter-out over {FILTER_OUT_BARS} bars{}{}", if x.on_line { ", on the outro phrase" } else { "" }, tail(p.why_not));
-    Some(Move { plan: m, worth: FILTER_OUT_WORTH - if on_grid { 0.0 } else { OFF_GRID_COST } })
+    let place = if x.word { ", off its last word" } else if x.on_line { ", on the outro phrase" } else { "" };
+    m.reason = format!("filter-out over {FILTER_OUT_BARS} bars{place}{}", tail(p.why_not));
+    Some(Move { plan: m, worth: FILTER_OUT_WORTH - if on_grid || x.word { 0.0 } else { OFF_GRID_COST } })
 }
 
 const FILTER_OUT_BARS: f64 = 2.0;
@@ -415,10 +429,12 @@ struct Crossing {
 }
 
 fn crossing(a: &TrackAnalysis, out_dur: i64, beat: f64, on_grid: bool) -> Option<Crossing> {
-    match exits(a, out_dur, beat, beat, 2.0 * beat).first() {
-        Some(x) => Some(Crossing { at: x.at - beat, word: false, on_line: x.on_line, cost: if on_grid { 0.0 } else { OFF_GRID_COST } }),
-        None => last_word(a, out_dur, beat).map(|at| Crossing { at, word: true, on_line: false, cost: 0.0 }),
-    }
+    let x = leave(a, out_dur, beat, beat, 2.0 * beat, |_| true)?;
+    Some(if x.word {
+        Crossing { at: x.at, word: true, on_line: false, cost: 0.0 }
+    } else {
+        Crossing { at: x.at - beat, word: false, on_line: x.on_line, cost: if on_grid { 0.0 } else { OFF_GRID_COST } }
+    })
 }
 
 impl Crossing {
@@ -653,12 +669,12 @@ pub(super) fn beatless_blend(p: &Pair) -> Option<Move> {
 /// The shortest beatless overlap worth it.
 const BEATLESS_MIN_MS: f64 = 6_000.0;
 
-/// A song that stops cold ([`on_its_stop`]) as a move: the radio's and the rock DJ's answer, end to end. Smooth may
-/// also let the stop glow: from a beat before it, its last hit rings into the afterglow's reverb under the next song.
+/// A song that stops cold ([`on_its_stop`]) as a move: the radio's and the rock DJ's answer, end to end. It may also
+/// glow: from a beat before it, its last hit rings into the afterglow's reverb under the next song.
 pub(super) fn stop(p: &Pair) -> Vec<Move> {
     let Some(dry) = on_its_stop(p.a, p.b, p.room, p.s, p.why_not) else { return Vec::new() };
     let lead = beat_of(p.a).map_or(STOP_LEAD_MS, |(beat, _)| beat);
-    let glows = p.s.style == MixStyle::Smooth && p.s.filter_effects && dry.out_start_ms as f64 - lead >= p.a.silence_start_ms as f64;
+    let glows = p.s.filter_effects && dry.out_start_ms as f64 - lead >= p.a.silence_start_ms as f64;
     let glow = glows.then(|| {
         let ms = |t: f64| t.round() as i64;
         let mut m = dry.clone();
