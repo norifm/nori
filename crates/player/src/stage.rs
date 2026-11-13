@@ -403,7 +403,7 @@ impl SongStages {
 }
 
 /// `x` bent smoothly down above [`CEILING_KNEE`], never past full scale.
-fn ceiling(x: f32) -> f32 {
+pub(crate) fn ceiling(x: f32) -> f32 {
     let a = x.abs();
     if a <= CEILING_KNEE {
         return x;

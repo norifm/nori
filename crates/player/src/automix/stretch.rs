@@ -394,6 +394,11 @@ impl Stretcher {
                                 }
                             }
                         }
+                        // A pitch-keeping stretch loosens how the partials line up, so a master limited to full
+                        // scale peaks over it: rounded off under it, as the song itself peaks.
+                        for v in &mut self.pend[..m * ch] {
+                            *v = crate::stage::ceiling(*v);
+                        }
                         if let State::Entering(done) = self.state {
                             let done = done + m.saturating_sub(self.drop.min(m));
                             self.state = if done >= XFADE { State::Active } else { State::Entering(done) };
@@ -604,14 +609,12 @@ mod tests {
         out
     }
 
-    /// Noise through a stretch of `ratio` held for `hold` s and ramped back over `ramp` s, then handed over: its
-    /// level every 100 ms against the noise's own, dB.
-    fn noise_levels(keep: bool, ratio: f64, hold: f64, ramp: f64) -> Vec<f64> {
+    /// `x` (stereo, 44.1 kHz) through a stretch of `ratio` held for `hold` s and ramped back over `ramp` s, then
+    /// handed over.
+    fn stretched(x: &[f32], keep: bool, ratio: f64, hold: f64, ramp: f64) -> Vec<f32> {
         let rate = 44100;
         let mut s = Stretcher::new(rate, 2, keep);
         s.configure(ratio, (hold * rate as f64) as u64, (ramp * rate as f64) as u64);
-        let mut r = crate::automix::eval::Rng(5);
-        let x: Vec<f32> = (0..((hold + ramp + 3.0) * rate as f64) as usize * 2).map(|_| (r.signed() * 0.3) as f32).collect();
         let mut out = Vec::new();
         let mut buf = vec![0f32; 2048 * 2];
         let mut pos = 0;
@@ -635,9 +638,44 @@ mod tests {
                 }
             }
         }
-        let power = |v: &[f32]| v.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / v.len() as f64;
+        out
+    }
+
+    fn power(v: &[f32]) -> f64 {
+        v.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / v.len() as f64
+    }
+
+    /// Noise through [`stretched`]: its level every 100 ms against the noise's own, dB.
+    fn noise_levels(keep: bool, ratio: f64, hold: f64, ramp: f64) -> Vec<f64> {
+        let mut r = crate::automix::eval::Rng(5);
+        let x: Vec<f32> = (0..((hold + ramp + 3.0) * 44100.0) as usize * 2).map(|_| (r.signed() * 0.3) as f32).collect();
         let own = power(&x);
-        out.chunks(4410 * 2).filter(|c| c.len() == 4410 * 2).map(|c| 10.0 * (power(c) / own).log10()).collect()
+        stretched(&x, keep, ratio, hold, ramp).chunks(4410 * 2).filter(|c| c.len() == 4410 * 2).map(|c| 10.0 * (power(c) / own).log10()).collect()
+    }
+
+    /// A master limited to full scale, stretched: the stretch loosens how its partials line up, which raised its peaks
+    /// 1.5 dB over full scale, so a limiter after pulled the song down and pumped while it was stretched. Its peaks stay
+    /// under full scale and its level holds.
+    #[test]
+    fn a_loud_master_stays_under_full_scale() {
+        // Partials and a little noise, driven into full scale: a few hundredths of the samples flattened there.
+        let mut r = crate::automix::eval::Rng(9);
+        let parts = [(110.0, 0.5), (220.0, 0.35), (330.0, 0.3), (523.0, 0.25), (1250.0, 0.15), (2900.0, 0.1)];
+        let x: Vec<f32> = (0..44100 * 8)
+            .flat_map(|i| {
+                let t = i as f64 / 44100.0;
+                let tone: f64 = parts.iter().enumerate().map(|(k, (hz, a))| a * (core::f64::consts::TAU * hz * t + k as f64).sin()).sum();
+                let v = ((tone + 0.15 * r.signed()) * 0.75).clamp(-0.99, 0.99) as f32;
+                [v, v]
+            })
+            .collect();
+        for ratio in [0.95, 1.002, 1.08] {
+            let y = stretched(&x, true, ratio, 10.0, 0.0);
+            let held = &y[44100 * 2..44100 * 7 * 2];
+            let peak = held.iter().fold(0f32, |m, v| m.max(v.abs()));
+            let level = 10.0 * (power(held) / power(&x)).log10();
+            assert!(peak <= 1.0 && level > -0.5, "ratio {ratio}: peaks at {:+.2} dBFS, level {level:+.2} dB", 20.0 * peak.log10());
+        }
     }
 
     #[test]
