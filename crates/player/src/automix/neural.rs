@@ -257,18 +257,12 @@ impl BeatThis {
         Ok(Tracked { beats, downbeats })
     }
 
-    /// Beats and downbeats of one end of a song (`x` mono at `rate`), seconds from its first sample: the first
-    /// `WINDOW` frames of an intro or the last of an outro; the cut edge counts as the song's edge.
-    pub fn track_window(&self, x: &[f32], rate: u32, intro: bool) -> TractResult<Tracked> {
+    /// Beats and downbeats of one end of a song (`x` mono at `rate`, any length: read in overlapping chunks), seconds
+    /// from its first sample; the song's own edge is the start of an intro, the cut edge of an outro counts as one.
+    pub fn track_end(&self, x: &[f32], rate: u32, intro: bool) -> TractResult<Tracked> {
         let (y, sr) = decimate(x, rate);
         let mel = LogMel::new(sr).frames(&y);
-        let n = mel.len();
-        let from = if intro { 0 } else { n.saturating_sub(WINDOW) };
-        let whole = n <= WINDOW;
-        let mut t = self.track(&mel[from..(from + WINDOW).min(n)], intro || whole, !intro || whole)?;
-        let shift = from as f64 / FPS;
-        t.beats.iter_mut().chain(t.downbeats.iter_mut()).for_each(|v| *v += shift);
-        Ok(t)
+        self.track(&mel, intro, !intro)
     }
 }
 

@@ -42,8 +42,8 @@ use crate::types::{BarProfile, Beat, TrackAnalysis};
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 22: each end's beats are cleaned, their bars found on them.
-pub const ANALYSIS_VERSION: i32 = 22;
+/// Bump when stored rows should be measured again. 23: the beat model reads a minute of each end.
+pub const ANALYSIS_VERSION: i32 = 23;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;

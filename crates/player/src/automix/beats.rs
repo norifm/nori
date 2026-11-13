@@ -16,12 +16,17 @@ pub const GRID_CHECKED: i32 = 1;
 /// The grid is Beat This!'s.
 pub const GRID_NEURAL: i32 = 2;
 
-/// How much of each end the model reads (its training window).
-pub(crate) const WINDOW_MS: i64 = 30_000;
+/// How much of each end the model reads: its beats over a minute (a tempo curve and 16-bar phrases need more than its
+/// 30 s training window, which it reads in overlapping chunks).
+pub(crate) const READ_MS: i64 = 60_000;
+/// The stretch next to the mix its constant grid is fitted over (its training window).
+pub(crate) const GRID_MS: i64 = 30_000;
 /// Less music than this at an end is not worth a run.
 const MIN_WINDOW_MS: i64 = 8_000;
-/// How much of each end [`Ends`] keeps: the window plus room for a closing breakdown after it and trailing silence.
-pub(crate) const ENDS_MS: i64 = 60_000;
+/// How much of each end [`Ends`] keeps: the read plus room for a closing breakdown after it and trailing silence.
+pub(crate) const ENDS_MS: i64 = 90_000;
+/// The analysis version since which the model reads [`READ_MS`]: its work on rows measured before is done again.
+const MODEL_READS_SINCE: i32 = 23;
 
 /// One end of a song, where a mix happens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +143,7 @@ pub fn merge(row: &mut TrackAnalysis, end: MixEnd, read: &EndRead) -> bool {
 /// Keeps the model's grids and marks from `old` in a fresh classical measurement of the same file (lengths within
 /// a second).
 pub fn carry(old: &TrackAnalysis, fresh: &mut TrackAnalysis) {
-    if (old.duration_ms - fresh.duration_ms).abs() > 1000 {
+    if (old.duration_ms - fresh.duration_ms).abs() > 1000 || old.analysis_version < MODEL_READS_SINCE {
         return;
     }
     if old.intro_grid_source == GRID_NEURAL {
@@ -179,18 +184,18 @@ pub fn needs_model(row: &TrackAnalysis) -> bool {
     needs_end(row, MixEnd::Intro) || needs_end(row, MixEnd::Outro)
 }
 
-/// The stretch the model reads at `end`, ms: the first or last `WINDOW_MS` of the music, clipped to `have`.
+/// The stretch the model reads at `end`, ms: the first or last [`READ_MS`] of the music, clipped to `have`.
 pub fn window(row: &TrackAnalysis, end: MixEnd, have: (i64, i64)) -> Option<(i64, i64)> {
     let (start, stop) = (row.silence_start_ms.max(0), row.silence_end_ms);
     if stop <= start {
         return None;
     }
     let (from, to) = match end {
-        MixEnd::Intro => (start, (start + WINDOW_MS).min(stop)),
+        MixEnd::Intro => (start, (start + READ_MS).min(stop)),
         MixEnd::Outro => {
             // Before a closing breakdown, as the classical end grid.
-            let stop = if row.exit_ms - start >= WINDOW_MS { row.exit_ms } else { stop };
-            ((stop - WINDOW_MS).max(start), stop)
+            let stop = if row.exit_ms - start >= GRID_MS { row.exit_ms } else { stop };
+            ((stop - READ_MS).max(start), stop)
         }
     };
     let (from, to) = (from.max(have.0), to.min(have.1));
@@ -268,10 +273,11 @@ impl Ends {
     }
 }
 
-/// Beat This! over one end of a song: `x` (mono at `rate`, cut by [`window`]) starts `from_ms` into the file.
+/// Beat This! over one end of a song: `x` (mono at `rate`, cut by [`window`]) starts `from_ms` into the file. Its
+/// beats are kept over all of it, its grid fitted over the [`GRID_MS`] next to the mix.
 #[cfg(feature = "neural-beats")]
 pub fn read(model: &super::neural::BeatThis, x: &[f32], rate: u32, end: MixEnd, from_ms: i64) -> Result<EndRead, String> {
-    let mut t = model.track_window(x, rate, end == MixEnd::Intro).map_err(|e| format!("running the beat model: {e}"))?;
+    let mut t = model.track_end(x, rate, end == MixEnd::Intro).map_err(|e| format!("running the beat model: {e}"))?;
     // To track time before the grid is fitted.
     let from_s = from_ms as f64 / 1000.0;
     t.beats.iter_mut().chain(t.downbeats.iter_mut()).for_each(|v| *v += from_s);
@@ -289,7 +295,13 @@ pub fn read(model: &super::neural::BeatThis, x: &[f32], rate: u32, end: MixEnd, 
     let heard = |g: &super::neural::NeuralGrid| {
         g.span_s.is_some_and(|(a, b)| super::tempo::on_beat(&f.onset, f.fps, f.t0 + from_s, 60.0 / g.bpm, g.offset_s, (a, b)) >= super::tempo::RUN_MIN_ON_BEAT)
     };
-    let grid = super::neural::grid(&t, end == MixEnd::Outro, heard).map(|g| EndGrid {
+    let span = x.len() as f64 / rate as f64;
+    let near = if end == MixEnd::Intro { from_s..from_s + GRID_MS as f64 / 1000.0 } else { from_s + span - GRID_MS as f64 / 1000.0..from_s + span };
+    let near = super::neural::Tracked {
+        beats: t.beats.iter().copied().filter(|b| near.contains(b)).collect(),
+        downbeats: t.downbeats.iter().copied().filter(|b| near.contains(b)).collect(),
+    };
+    let grid = super::neural::grid(&near, end == MixEnd::Outro, heard).map(|g| EndGrid {
         bpm: g.bpm,
         offset_ms: g.offset_s * 1000.0,
         confidence: g.confidence,
@@ -386,10 +398,16 @@ mod tests {
         assert_eq!((fresh.intro_bpm, fresh.intro_beat_offset_ms, fresh.intro_grid_source), (128.0, 50.0, GRID_NEURAL));
         assert_eq!((fresh.outro_bpm, fresh.outro_grid_source), (101.0, GRID_CHECKED));
         // An end the model could not grid under an older analysis is looked at again; its grid's span is carried.
-        let older = TrackAnalysis { analysis_version: super::super::ANALYSIS_VERSION - 1, ..old.clone() };
+        let older = TrackAnalysis { analysis_version: MODEL_READS_SINCE.max(super::super::ANALYSIS_VERSION - 1), ..old.clone() };
         let mut fresh = row();
         carry(&older, &mut fresh);
-        assert_eq!((fresh.intro_grid_source, fresh.outro_grid_source), (GRID_NEURAL, GRID_CLASSICAL));
+        let checked = if older.analysis_version < super::super::ANALYSIS_VERSION { GRID_CLASSICAL } else { GRID_CHECKED };
+        assert_eq!((fresh.intro_grid_source, fresh.outro_grid_source), (GRID_NEURAL, checked));
+        // Rows the model read before it read a minute of each end are read again, beats and all.
+        let before = TrackAnalysis { analysis_version: MODEL_READS_SINCE - 1, intro_beats: vec![Beat::default(); 12], ..old.clone() };
+        let mut fresh = row();
+        carry(&before, &mut fresh);
+        assert_eq!((fresh.intro_bpm, fresh.intro_grid_source, fresh.outro_grid_source, fresh.intro_beats.len()), (100.0, GRID_CLASSICAL, GRID_CLASSICAL, 0));
         let mut spanned = row();
         merge(&mut spanned, MixEnd::Outro, &grid_only(Some(EndGrid { bpm: 101.0, offset_ms: 0.0, confidence: 1.0, stability: 1.0, downbeat_phase: 0, beats_per_bar: 4, other_phase: None, anchor_ms: 0.0, span_ms: Some((170_000, 190_000)) })));
         let mut fresh = row();
@@ -404,20 +422,20 @@ mod tests {
     #[test]
     fn windows_and_ends() {
         let r = row();
-        assert_eq!(window(&r, MixEnd::Intro, (0, 40_000)), Some((1_500, 31_500)));
-        assert_eq!(window(&r, MixEnd::Outro, (160_000, 200_000)), Some((168_000, 198_000)));
+        assert_eq!(window(&r, MixEnd::Intro, (0, 90_000)), Some((1_500, 61_500)));
+        assert_eq!(window(&r, MixEnd::Outro, (100_000, 200_000)), Some((138_000, 198_000)));
         assert_eq!(window(&r, MixEnd::Intro, (0, 20_000)), Some((1_500, 20_000)));
         assert_eq!(window(&r, MixEnd::Outro, (0, 30_000)), None);
         // Before a closing breakdown, where a mix leaves.
-        assert_eq!(window(&TrackAnalysis { exit_ms: 180_000, ..r.clone() }, MixEnd::Outro, (140_000, 200_000)), Some((150_000, 180_000)));
+        assert_eq!(window(&TrackAnalysis { exit_ms: 180_000, ..r.clone() }, MixEnd::Outro, (110_000, 200_000)), Some((120_000, 180_000)));
         assert_eq!(window(&TrackAnalysis { silence_end_ms: 0, ..r }, MixEnd::Intro, (0, 40_000)), None);
 
         // Ends keep head and tail mono decimated.
         let rate = 44_100u32;
         let mut e = Ends::new(rate);
         assert_eq!(e.rate(), 22_050);
-        // 80 s of stereo whose mono is always 1.
-        let frames = 80 * rate as usize;
+        // 100 s of stereo whose mono is always 1.
+        let frames = 100 * rate as usize;
         let x: Vec<f32> = (0..frames).flat_map(|i| [i as f32, 2.0 - i as f32]).collect();
         // Buffers that split a pair of frames.
         for piece in x.chunks(2 * 1001) {
