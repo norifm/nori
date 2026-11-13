@@ -600,7 +600,7 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
         candidates.extend(moves::stop(&pair));
         candidates.extend(moves::beatless_blend(&pair));
         match s.style {
-            MixStyle::Dj => candidates.extend([moves::loop_ramp(&pair), moves::filter_ride(&pair), moves::echo_out(&pair), moves::filter_out(&pair), moves::brake(&pair), moves::reverb_wash(&pair)].into_iter().flatten()),
+            MixStyle::Dj => candidates.extend([moves::loop_ramp(&pair), moves::filter_ride(&pair), moves::echo_out(&pair), moves::filter_out(&pair), moves::brake(&pair), moves::reverb_wash(&pair), moves::rise(&pair)].into_iter().flatten()),
             MixStyle::Smooth => candidates.extend([moves::melt(&pair), moves::afterglow(&pair), moves::rise(&pair)].into_iter().flatten()),
         }
     }
@@ -2750,8 +2750,11 @@ mod tests {
         let slow = TrackAnalysis { bpm: 95.0, intro_bpm: 95.0, ..track(95.0) };
         let pairs = [(a.clone(), slow), (a.clone(), gridless(track(128.0))), (gridless(a), gridless(track(128.0)))];
         for (a, b) in &pairs {
+            // DJ leaves once the line is sung: an echo-out from its downbeat, or a filter-out thinning it to there, the
+            // whole of either inside the song.
             let p = plan(Some(a), Some(b), 240_000, 240_000, &dj());
-            assert!(p.kind == TransitionKind::EchoOut && p.out_start_ms >= vocal_end, "{}", p.reason);
+            assert!(matches!(p.kind, TransitionKind::EchoOut | TransitionKind::FilterOut) && p.out_start_ms + p.out_fade_start_ms >= vocal_end, "{}", p.reason);
+            assert!(p.out_start_ms + p.duration_ms <= 240_000, "{p:?}");
             let p = plan(Some(a), Some(b), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
             if p.kind == TransitionKind::ReverbWash {
                 assert!(p.out_start_ms + p.out_fade_start_ms >= vocal_end, "glows out over the singing: {}", p.reason);
@@ -2767,8 +2770,8 @@ mod tests {
     }
 
     /// A song that stops cold, its last hit ringing out, ends on its stop: a mix that cannot blend starts the next
-    /// song there under the ring-out instead of fading the bars before it. Smooth lets the last hit glow into a
-    /// reverb from a beat before the stop, dry again right after a glow.
+    /// song there under the ring-out instead of fading the bars before it. The last hit glows into a reverb from a beat
+    /// before the stop, dry again right after a glow.
     #[test]
     fn a_song_that_stops_ends_on_its_stop() {
         let beat: f64 = 60_000.0 / 128.0;
@@ -2777,7 +2780,7 @@ mod tests {
         let far_tempo = track(150.0);
         let far_keys = TrackAnalysis { key: camelot(6, false), ..far_tempo.clone() };
         let glow = beat.round() as i64;
-        for (style, previous, lead) in [(MixStyle::Smooth, None, glow), (MixStyle::Smooth, Some(TransitionKind::ReverbWash), 0), (MixStyle::Dj, None, 0)] {
+        for (style, previous, lead) in [(MixStyle::Smooth, None, glow), (MixStyle::Smooth, Some(TransitionKind::ReverbWash), 0), (MixStyle::Dj, None, glow), (MixStyle::Dj, Some(TransitionKind::ReverbWash), 0)] {
             for (b, beat_match) in [(&far_tempo, true), (&far_keys, true), (&far_tempo, false), (&far_keys, false)] {
                 let s = AutoMixSettings { max_transition_s: 40.0, style, beat_match, previous, ..Default::default() };
                 let p = plan(Some(&a), Some(b), 240_000, 240_000, &s);
@@ -2795,7 +2798,7 @@ mod tests {
     /// Sung to its end, into a song too far off in tempo to match: Smooth leaves off the last word, which rings into
     /// a reverb as the next song rises, or, where the file ends on the word, throws the last line in up to a bar early;
     /// after a glow the next song rises from below under the last line instead, low-passed, and has the bass before the
-    /// outgoing song falls.
+    /// outgoing song falls. A DJ leaves off the last word as well.
     #[test]
     fn sung_endings_glow_or_rise_off_the_last_word() {
         let beat: f64 = 60_000.0 / 128.0;
@@ -2826,6 +2829,10 @@ mod tests {
             assert!((r.out_start_ms as f64 + r.out_fade_start_ms as f64 - cross).abs() <= 1.0, "{r:?}");
             check_skip(&p, a, &b, 240_000);
             check_skip(&r, a, &b, 240_000);
+            // DJ leaves off the last word too, the whole move inside the song.
+            let d = plan(Some(a), Some(&b), 240_000, 240_000, &dj());
+            assert!(d.reason.contains("off its last word") && d.out_start_ms + d.duration_ms <= 240_000, "{}", d.reason);
+            check_skip(&d, a, &b, 240_000);
         }
     }
 
