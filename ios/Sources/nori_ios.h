@@ -127,6 +127,8 @@ char *nori_ios_servers(const char *data_dir);
 char *nori_ios_profile_icons(void);
 /// Server `id`'s circle shows `icon`, one of nori_ios_profile_icons' ids.
 void nori_ios_set_server_icon(const char *data_dir, const char *id, const char *icon);
+/// Renames saved server `id`; blank, it is called after its provider again.
+void nori_ios_rename_server(const char *data_dir, const char *id, const char *name);
 /// Makes server `id` the active one: 1, or 0 for an unknown id. Takes effect at nori_ios_reopen.
 int32_t nori_ios_pick_server(const char *data_dir, const char *id);
 void nori_ios_remove_server(const char *data_dir, const char *id);

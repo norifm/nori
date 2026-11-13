@@ -140,9 +140,9 @@ pub enum Row {
     Prose { text: String, quiet: bool },
     /// A plugin repo; d removes one the user added.
     Repo { url: String, title: String, detail: String, removable: bool },
-    /// A saved profile: enter switches to it; K J move it to place `up` or `down` where it can go (a jam
-    /// guest's profiles stay put).
-    Server { id: String, label: String, detail: String, active: bool, up: Option<u32>, down: Option<u32> },
+    /// A saved profile: enter switches to it; K J move it to place `up` or `down` where it can go, and e
+    /// renames it from `name` where it may be (a jam guest's profiles stay as they are).
+    Server { id: String, label: String, detail: String, active: bool, up: Option<u32>, down: Option<u32>, name: Option<String> },
     Button { title: String, action: Act },
     /// A lyrics service in the ranked list: enter switches it, ← → move it, `key` adds or changes its key.
     /// `asks_key`: switching it on asks for its key.
@@ -202,6 +202,8 @@ pub struct Facts {
     pub unsent: (u32, u32),
     /// What the open profile offers: a jam guest's settings are this device's own.
     pub rules: nori_core::browse::ProfileRules,
+    /// Those the profile in use's account may act as, its own first.
+    pub identities: Vec<nori_core::providers::Identity>,
 }
 
 /// A page line: group heading, section title or row.
@@ -462,7 +464,7 @@ impl SettingsView {
         use crate::text::hints as h;
         match (self.own.stack.last(), self.selected()) {
             (_, Some(Row::Plugin { .. })) => h::PLUGIN_ROW,
-            (_, Some(Row::Server { up, down, .. })) if up.is_some() || down.is_some() => h::PROFILE_ROW,
+            (_, Some(Row::Server { name: Some(_), .. })) => h::PROFILE_ROW,
             (Some((PluginPage::Browser, _)), _) => h::PLUGIN_BROWSER,
             (Some((PluginPage::Plugin(_), _)), _) => h::PLUGIN_PAGE,
             (Some(_), _) => h::PLUGIN_REPOS,
@@ -480,9 +482,10 @@ impl SettingsView {
         self.selected().cloned().map_or_else(Vec::new, |row| step_row(row, up))
     }
 
-    /// The selected lyrics service's key, to add or change.
+    /// The selected lyrics service's key, to add or change, or the selected profile's new name.
     pub fn key(&self) -> Option<Overlay> {
         match self.selected()? {
+            Row::Server { id, name: Some(name), .. } => Some(Overlay::Input { title: text::RENAME_PROFILE.into(), text: name.clone(), secret: false, target: Target::ProfileName(id.clone()) }),
             Row::Ranked { id, title, enabled: true, key: KeyAction::Add | KeyAction::Change, .. } => match key_input(id, title) {
                 Opened::Overlay(o) => Some(o),
                 _ => None,
@@ -617,7 +620,9 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
                         sections.push(section(SEASON, seasons));
                         continue;
                     }
+                    let identities = identity_row(&r, p, f, &own.kinds);
                     rows.extend(flag_rows(&r, p, s).unwrap_or_else(|| row_of(r, p, s, f, &own.kinds).into_iter().collect()));
+                    rows.extend(identities);
                 }
                 sections.push(section(section_title(sec.id), rows));
             }
@@ -1226,6 +1231,20 @@ fn flag_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState
     Some(std::iter::once(Row::Info { title, detail }).chain(switches).collect())
 }
 
+/// Under the profile in use, which of its account's identities it acts as, where it has several; None
+/// for any other row.
+fn identity_row(r: &settings_pages::SettingsRow, p: &StoredPrefs, f: &Facts, kinds: &Kinds) -> Option<Row> {
+    let RowItem::Server { index } = r.item else { return None };
+    let sv = p.servers.get(index as usize).filter(|sv| sv.id == p.active_server_id)?;
+    let kind = kinds.providers().into_iter().find(|i| i.kind == sv.kind)?.identities?;
+    if f.identities.len() < 2 {
+        return None;
+    }
+    let options: Vec<(String, String)> = f.identities.iter().enumerate().map(|(i, id)| (text::identity_line(id), i.to_string())).collect();
+    let shown = f.identities.iter().find(|i| i.chosen).map(text::identity_line).unwrap_or_default();
+    Some(Row::Choice { target: Target::Identity, title: format!("  {}", text::identities_title(kind)), options, shown, enabled: true, chips: false })
+}
+
 /// "12 songs", "1 song".
 fn counted(n: u32, one: &str, many: &str) -> String {
     text::count(n as u64, one, many)
@@ -1336,7 +1355,7 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             let movable = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
             let up = index.checked_sub(1).filter(|_| movable);
             let down = Some(index + 1).filter(|to| movable && (*to as usize) < p.servers.len());
-            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active, up, down }
+            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active, up, down, name: movable.then(|| sv.name.clone()) }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             Row::Toggle { switch: Switch::Stores("musicFolders".into(), tapped), title: f.folders.get(index as usize)?.name.clone(), detail: String::new(), on, enabled }

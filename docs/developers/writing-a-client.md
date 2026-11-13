@@ -71,8 +71,11 @@ What the session then does for the client:
   change and for a session opened out of sight); the search takes up again by itself when this device's
   music stops or the device shown goes.
 - Reports through `Said`: engine events, lyrics, search answers, notes for a status line (`Note`),
-  reachability, remote and jam changes, another device's volume, an AutoEQ offer (`Curve`) and changed
-  favorites. The client words each one.
+  reachability, remote and jam changes, another device's volume, an AutoEQ offer (`Curve`), changed
+  favorites, a new account picture (`Pictured`) and downloads or their work starting (`Working`: read
+  `progress` once a second until it answers `None`). The client words each one.
+- Lists and switches the account's identities (`identities`, `choose_identity`; reopen the session
+  after) and keeps a profile's name and look (`profile_renamed`, `profile_look`).
 
 The `desktop` feature (on by default) adds what the terminal and desktop share: the cpal sound card,
 ureq's HTTP, MPRIS on Linux and Now Playing on macOS (`nori-mpris`), mdns-sd, and `desktop::open` and

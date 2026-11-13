@@ -4,7 +4,7 @@ use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 
 use nori_core::providers::{log_in, FormField, Kinds};
-use nori_core::settings::{profile_icons, profile_letter, servers_removed, servers_updated, ProfileIcon, SavedServer, ServerKind, ServerList, StoredPrefs};
+use nori_core::settings::{profile_icons, profile_letter, servers_removed, ProfileIcon, SavedServer, ServerKind, ServerList, StoredPrefs};
 use nori_core::settings_store::Settings;
 use nori_core::transport::{block_on, FailureKind, NetError};
 use nori_http::Http;
@@ -83,14 +83,19 @@ fn list_of(prefs: &mut StoredPrefs) -> ServerList {
     }
 }
 
-/// The saved list changed by `change`: through the open session's settings when one is open, as the
-/// session writes the list back from its own copy (an account's name).
+/// The settings to change the saved list through: the open session's when one is open, as the session
+/// writes the list back from its own copy (an account's name).
+fn live_settings(dir: &Path) -> Result<std::sync::Arc<Settings>, String> {
+    match crate::session::with_session(|s| s.core.session.settings.clone()).filter(|s| s.current().is_some()) {
+        Some(live) => Ok(live),
+        None => opened(dir).map(|(settings, _)| settings),
+    }
+}
+
+/// The saved list changed by `change` ([`live_settings`]).
 fn edit_servers(dir: &Path, change: impl FnOnce(ServerList) -> ServerList) -> Result<(), String> {
-    let live = crate::session::with_session(|s| s.core.session.settings.clone()).and_then(|settings| Some((settings.current()?, settings)));
-    let (mut prefs, settings) = match live {
-        Some(found) => found,
-        None => opened(dir).map(|(settings, prefs)| (prefs, settings))?,
-    };
+    let settings = live_settings(dir)?;
+    let mut prefs = settings.current().unwrap_or_default();
     let list = change(list_of(&mut prefs));
     (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
     settings.put(prefs);
@@ -98,8 +103,9 @@ fn edit_servers(dir: &Path, change: impl FnOnce(ServerList) -> ServerList) -> Re
     Ok(())
 }
 
-/// The saved servers as `{id, label, url, active, kind, waits, icon, letter}`, in the order they were
-/// saved; `icon` as the settings store it, `letter` what its circle shows for the letter.
+/// The saved servers as `{id, label, name, url, active, kind, waits, icon, letter}`, in the order they were
+/// saved; `name` as it was given (empty for none), `icon` as the settings store it, `letter` what its circle
+/// shows for the letter.
 pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
     let (_, prefs) = opened(dir)?;
     Ok(prefs
@@ -110,7 +116,7 @@ pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
             // A plugin's profile never opens here: the iPod runs none.
             let waits = Kinds::builtin().waits(s.clone()).is_some();
             let letter = profile_letter(s.clone(), nori_core::settings::label(&s.name, &s.url));
-            serde_json::json!({ "id": s.id, "label": label(s), "url": s.url, "active": active, "kind": s.kind.id(), "waits": waits,
+            serde_json::json!({ "id": s.id, "label": label(s), "name": s.name, "url": s.url, "active": active, "kind": s.kind.id(), "waits": waits,
                 "icon": s.icon.id(), "letter": letter })
         })
         .collect())
@@ -118,10 +124,18 @@ pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
 
 /// Saved server `id`'s circle shows `icon`; an unknown id changes nothing.
 pub(crate) fn set_icon(dir: &Path, id: &str, icon: ProfileIcon) -> Result<(), String> {
-    edit_servers(dir, |list| {
-        let Some(profile) = list.servers.iter().find(|s| s.id == id).cloned() else { return list };
-        servers_updated(list, SavedServer { icon, ..profile })
-    })
+    let settings = live_settings(dir)?;
+    nori_host::profile_look(&settings, id, |p| p.icon = icon);
+    settings.writer.flush();
+    Ok(())
+}
+
+/// Saved server `id` renamed; blank, it is called after its provider again. An unknown id changes nothing.
+pub(crate) fn rename(dir: &Path, id: &str, name: &str) -> Result<(), String> {
+    let settings = live_settings(dir)?;
+    nori_host::profile_renamed(&settings, id, name);
+    settings.writer.flush();
+    Ok(())
 }
 
 /// Makes saved server `id` the active one. False when no server has that id.
@@ -308,7 +322,7 @@ pub unsafe extern "C" fn nori_ios_login(
     code
 }
 
-/// The saved servers as JSON to free: `[{id, label, url, active, kind, waits, icon, letter}]`. NULL for an
+/// The saved servers as JSON to free: `[{id, label, name, url, active, kind, waits, icon, letter}]`. NULL for an
 /// unreadable path.
 ///
 /// # Safety
@@ -342,6 +356,15 @@ pub unsafe extern "C" fn nori_ios_set_server_icon(data_dir: *const c_char, id: *
     if let Some(icon) = ProfileIcon::from_id(&text(icon)) {
         let _ = set_icon(Path::new(&text(data_dir)), &text(id), icon);
     }
+}
+
+/// Renames saved server `id`; blank, it is called after its provider again.
+///
+/// # Safety
+/// The strings are NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_rename_server(data_dir: *const c_char, id: *const c_char, name: *const c_char) {
+    let _ = rename(Path::new(&text(data_dir)), &text(id), &text(name));
 }
 
 /// The icons a profile's circle can show, in the picker's order, as JSON to free: `["letter", ...]`.
@@ -419,6 +442,16 @@ mod tests {
         let rows: Vec<_> = servers(dir.path()).unwrap().iter().map(|s| (s["id"].clone(), s["icon"].clone(), s["letter"].clone())).collect();
         let row = |id: &str, icon: &str, letter: &str| (serde_json::json!(id), serde_json::json!(icon), serde_json::json!(letter));
         assert_eq!(rows, [row("one", "letter", "A"), row("two", "look-up", "M")]);
+    }
+
+    #[test]
+    fn a_renamed_server_is_listed_by_its_new_name_and_by_its_user_once_blank() {
+        let dir = nori_testdir::TempDir::new("ios-rename");
+        keep(dir.path(), profile("one", "ada")).unwrap();
+        rename(dir.path(), "one", "  Kitchen ").unwrap();
+        assert_eq!(servers(dir.path()).unwrap()[0]["label"], "Kitchen");
+        rename(dir.path(), "one", " ").unwrap();
+        assert_eq!(servers(dir.path()).unwrap()[0]["label"], "ada");
     }
 
     #[test]

@@ -1032,9 +1032,74 @@ pub fn measured(m: Measured) -> String {
     }
 }
 
+/// What the account sheet calls those an account may act as, over their list.
+pub fn identities_title(kind: nori_core::providers::IdentityKind) -> &'static str {
+    match kind {
+        nori_core::providers::IdentityKind::Channel => "CHANNEL",
+    }
+}
+
+pub const IDENTITY_FAILED: &str = "Could not switch";
+
+/// The downloads' progress card in words: its title, the line under it, and how long and how fast.
+pub fn progress(p: &nori_core::transfers::Progress) -> [String; 3] {
+    use nori_core::transfers::{NoticeKind, Progress};
+    let join = |parts: &[String]| parts.iter().filter(|p| !p.is_empty()).cloned().collect::<Vec<_>>().join(" · ");
+    match p {
+        Progress::Fetching(n) => {
+            let of = format!("{} of {}", n.position, n.total);
+            let title = match n.kind {
+                NoticeKind::Waiting => "Waiting for a network".to_string(),
+                NoticeKind::OneNamed => format!("Downloading “{}”", n.current),
+                NoticeKind::One => "Downloading 1 song".into(),
+                NoticeKind::Many if !n.label.is_empty() => format!("Downloading “{}”", n.label),
+                NoticeKind::Many => format!("Downloading {of}"),
+            };
+            let counted = n.kind == NoticeKind::Waiting || (n.kind == NoticeKind::Many && !n.label.is_empty());
+            let current = if n.kind == NoticeKind::OneNamed { String::new() } else { n.current.clone() };
+            let speed = if n.kind == NoticeKind::Waiting { String::new() } else { numbers::speed(n.speed_bps, ".") };
+            [title, join(&[if counted { of } else { String::new() }, current, n.artist.clone()]), join(&[time_left(n.eta_s), speed])]
+        }
+        Progress::Processing { work: w, .. } => {
+            let title = if w.lyrics > 0 {
+                format!("Finding lyrics for {}…", songs(w.lyrics as usize))
+            } else if w.analysing > 0 {
+                format!("Analyzing {}…", songs(w.analysing as usize))
+            } else {
+                format!("Detecting beats for {}…", songs(w.beats as usize))
+            };
+            let analysing = if w.lyrics > 0 && w.analysing > 0 { format!("{} to analyze", w.analysing) } else { String::new() };
+            let beats = if (w.lyrics > 0 || w.analysing > 0) && w.beats > 0 { format!("{} for beat detection", w.beats) } else { String::new() };
+            [title, join(&[analysing, beats]), time_left(w.eta_s)]
+        }
+    }
+}
+
+/// "12 s left", "1:30 left"; empty when not known.
+fn time_left(seconds: i64) -> String {
+    match seconds {
+        ..0 => String::new(),
+        0..60 => format!("{seconds} s left"),
+        _ => format!("{} left", numbers::clock(seconds, false)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn progress_names_the_song_then_the_work_after_it() {
+        use nori_core::transfers::{Notice, NoticeKind, Processing, Progress};
+        let one = Notice { kind: NoticeKind::OneNamed, position: 1, total: 1, current: "Blue".into(), artist: "Ada".into(), eta_s: 90, speed_bps: 1_200_000, ..Default::default() };
+        assert_eq!(progress(&Progress::Fetching(one)), ["Downloading “Blue”", "Ada", "1:30 left · 1.2 MB/s"]);
+        let album = Notice { kind: NoticeKind::Many, position: 3, total: 12, current: "Blue".into(), label: "Kind".into(), eta_s: -1, ..Default::default() };
+        assert_eq!(progress(&Progress::Fetching(album)), ["Downloading “Kind”", "3 of 12 · Blue", ""]);
+        let waiting = Notice { kind: NoticeKind::Waiting, position: 0, total: 4, speed_bps: 500, eta_s: -1, ..Default::default() };
+        assert_eq!(progress(&Progress::Fetching(waiting)), ["Waiting for a network", "0 of 4", ""]);
+        let work = Processing { lyrics: 2, analysing: 3, beats: 0, eta_s: 12, permille: 400 };
+        assert_eq!(progress(&Progress::Processing { work, after_fetching: true }), ["Finding lyrics for 2 songs…", "3 to analyze", "12 s left"]);
+    }
 
     #[test]
     fn the_settings_menu_names_who_and_where() {

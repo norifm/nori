@@ -14,6 +14,15 @@ pub struct ProfileDownloads {
     pub ids: Vec<String>,
 }
 
+impl Core {
+    /// What the downloads are doing at the platform's `now` (`waiting` for a network), for a client that
+    /// draws its own progress; None once all is done.
+    pub fn download_progress(&self, waiting: bool, now: i64) -> Option<Progress> {
+        let listed = self.download_counts().pending as i32;
+        self.downloads.with(|t| t.progress(listed, waiting, now))
+    }
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
     /// Finished albums and unfiled songs, in newest-download order.

@@ -54,6 +54,10 @@ pub enum Said {
     /// A heart changed (pressed here, or by another device): hearts are read again ([`Handle::starred`]), or drawn from the core's marks
     /// carried here.
     Starred(nori_core::stars::StarMarks),
+    /// Downloads or the work on saved songs started: the client follows [`Handle::progress`] until it is None.
+    Working,
+    /// The profile in use keeps another picture of its account: its marks are drawn again.
+    Pictured,
 }
 
 /// Something done or failed, for the status line.
@@ -469,6 +473,7 @@ impl Session {
         #[cfg(feature = "desktop")]
         h.player_shown(true);
         h.follow_remote();
+        h.keep_picture();
         if !h.offline && h.rules().downloads && h.core.download_counts().pending > 0 {
             h.start_downloads();
         }
@@ -924,7 +929,14 @@ impl Handle {
     fn start_downloads(&self) {
         if let Some(d) = &self.downloader {
             d.start(nori_core::transfers::DOWNLOADS_AT_ONCE);
+            (self.out)(Said::Working);
         }
+    }
+
+    /// What the downloads are doing now, for the client's progress: a batch's bytes, then the work on the
+    /// saved songs; None once all is done.
+    pub fn progress(&self) -> Option<nori_core::transfers::Progress> {
+        self.core.download_progress(self.offline, nori_core::db::now_ms())
     }
 
     /// Queues `songs` for download (their covers fetched to disk too) and starts the downloader.
@@ -1162,6 +1174,7 @@ impl Handle {
     pub fn signed_in(&self, r: &nori_core::providers::SignInResult) {
         if let nori_core::providers::SignInResult::SignedIn { name } = r {
             self.keep_account(name);
+            self.keep_picture();
         }
     }
 
@@ -1178,24 +1191,63 @@ impl Handle {
         let mut shown = self.rules_shown.lock();
         (now != *shown).then(|| {
             *shown = now;
+            self.keep_picture();
             self.client.account()
         })
     }
 
-    /// Signs the profile's account out here; the profile forgets the account's name.
+    /// Signs the profile's account out here; the profile forgets the account's name and picture.
     pub fn sign_out(&self) {
         self.client.sign_out();
         self.keep_account("");
+        if self.profile_look(|s| s.picture.take().is_some()) {
+            (self.out)(Said::Pictured);
+        }
     }
 
     fn keep_account(&self, name: &str) {
-        let settings = &self.core.session.settings;
-        let Some(mut prefs) = settings.current() else { return };
-        let id = prefs.active_server_id.clone();
-        if let Some(s) = prefs.servers.iter_mut().find(|s| s.id == id) {
+        self.profile_look(|s| {
             s.user = name.to_string();
+            true
+        });
+    }
+
+    /// Changes this session's saved profile with `change`, kept when it says it changed something.
+    fn profile_look(&self, change: impl FnOnce(&mut SavedServer) -> bool) -> bool {
+        let settings = &self.core.session.settings;
+        let Some(mut prefs) = settings.current() else { return false };
+        let Some(s) = prefs.servers.iter_mut().find(|s| s.id == self.profile_id) else { return false };
+        let changed = change(s);
+        if changed {
             settings.put(prefs);
         }
+        changed
+    }
+
+    /// Keeps the picture of the account as it acts now on the profile, for its circle
+    /// (`Client::account_picture`); says [`Said::Pictured`] when it changed.
+    fn keep_picture(&self) {
+        let h = self.clone();
+        self.run(async move {
+            let picture = h.client.account_picture().await;
+            if h.profile_look(|s| std::mem::replace(&mut s.picture, picture.clone()) != picture) {
+                (h.out)(Said::Pictured);
+            }
+        });
+    }
+
+    /// Those the signed-in account may act as, its own first, the one it acts as chosen
+    /// (`Client::identities`); empty when it is only itself.
+    pub fn identities(&self) -> Result<Vec<nori_core::providers::Identity>, NetError> {
+        block_on(self.client.identities())
+    }
+
+    /// Acts as [`Handle::identities`]' entry `index` from now on: the library is the new one's, and the
+    /// profile keeps its picture.
+    pub fn choose_identity(&self, index: u32) -> Result<(), NetError> {
+        block_on(self.client.choose_identity(index))?;
+        self.keep_picture();
+        Ok(())
     }
 
     /// Stars or unstars on the server (queued when offline); says so when it fails.
@@ -1257,6 +1309,15 @@ impl Handle {
             Chore::MeasureAgain => {
                 let Ok(m) = self.core.measure_again() else { return };
                 self.applied(m.effect);
+                // The downloads are measured again now, the other songs as they next play.
+                if let Some(d) = self.downloader.clone() {
+                    let out = self.out.clone();
+                    self.run(async move {
+                        if d.measure_saved() > 0 {
+                            out(Said::Working);
+                        }
+                    });
+                }
                 return self.note(Note::Forgot(m.forgot));
             }
         }

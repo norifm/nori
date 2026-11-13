@@ -567,6 +567,14 @@ impl Downloader {
         }
     }
 
+    /// Reads back from disk the downloaded songs lacking a measurement (`Core::download_unanalysed`);
+    /// how many were queued.
+    pub fn measure_saved(&self) -> u32 {
+        let core = self.core();
+        let ids = core.download_unanalysed(core.download_beats()).unwrap_or_default();
+        self.analyses.analyse(ids)
+    }
+
     /// Blocks until nothing is left to fetch or read back.
     pub fn wait(&self) {
         loop {

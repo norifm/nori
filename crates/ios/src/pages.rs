@@ -522,6 +522,29 @@ fn with_progress(core: &nori_core::Core, rows: &mut Value) {
     });
 }
 
+/// What the downloads are doing, for the Downloads page's card: `stage` "download" with the batch's facts
+/// (`notice` 0 waiting for a network, 1 one song named, 2 one song, 3 several), or "work" with the saved
+/// songs still waiting for each step; `stages` and `at` lay out its bar (the bytes, then the work after).
+fn work_json(p: &nori_core::transfers::Progress) -> Value {
+    use nori_core::transfers::{NoticeKind, Progress};
+    match p {
+        Progress::Fetching(n) => {
+            let notice = match n.kind {
+                NoticeKind::Waiting => 0,
+                NoticeKind::OneNamed => 1,
+                NoticeKind::One => 2,
+                NoticeKind::Many => 3,
+            };
+            json!({ "stage": "download", "notice": notice, "position": n.position, "total": n.total, "song": n.current, "artist": n.artist, "album": n.label,
+                    "permille": n.permille, "eta": n.eta_s, "stages": 1, "at": 0 })
+        }
+        Progress::Processing { work: w, after_fetching } => {
+            let at = u8::from(*after_fetching);
+            json!({ "stage": "work", "lyrics": w.lyrics, "analysing": w.analysing, "beats": w.beats, "permille": w.permille, "eta": w.eta_s, "stages": 1 + at, "at": at })
+        }
+    }
+}
+
 fn list_prefs() -> HashMap<String, String> {
     with_session(|s| s.core.session.settings.prefs(|p| p.list_prefs.clone())).unwrap_or_default()
 }
@@ -783,7 +806,8 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                 all.extend(songs.iter().cloned());
             }
             keep_list(token, all, None);
-            send(token, &json!({ "running": !active.is_empty(), "sections": out }));
+            let work = with_session(|s| s.progress()).flatten();
+            send(token, &json!({ "running": !active.is_empty() || work.is_some(), "work": work.as_ref().map(work_json), "sections": out }));
         }
         PAGE_DOWNLOADED_ALBUM => match core.downloaded_album(arg.clone()) {
             Ok(Some(v)) => {
@@ -1931,6 +1955,16 @@ mod tests {
         assert_eq!(v["c"], "a");
         let bare = mix_json(&MixTile { covers: vec![], ..t });
         assert_eq!(bare["c"], "");
+    }
+
+    #[test]
+    fn the_work_card_says_the_bytes_then_the_work_after_them() {
+        use nori_core::transfers::{Notice, NoticeKind, Processing, Progress};
+        let n = Notice { kind: NoticeKind::OneNamed, position: 1, total: 1, current: "Blue".into(), permille: 420, eta_s: 30, ..Default::default() };
+        let v = work_json(&Progress::Fetching(n));
+        assert_eq!((v["stage"].as_str(), v["notice"].as_i64(), v["song"].as_str(), v["permille"].as_i64()), (Some("download"), Some(1), Some("Blue"), Some(420)));
+        let w = work_json(&Progress::Processing { work: Processing { lyrics: 2, analysing: 1, beats: 0, eta_s: 9, permille: 500 }, after_fetching: true });
+        assert_eq!((v["stages"].as_i64(), w["stages"].as_i64(), w["at"].as_i64(), w["lyrics"].as_i64()), (Some(1), Some(2), Some(1), Some(2)));
     }
 
     #[test]

@@ -521,6 +521,15 @@ pub struct Processing {
     pub permille: i32,
 }
 
+/// What the downloads are doing, for a client that draws its own progress ([`Tracker::progress`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Progress {
+    /// A batch's bytes arrive.
+    Fetching(Notice),
+    /// Saved songs are worked on; `after_fetching`: a batch downloaded first, its stage already done.
+    Processing { work: Processing, after_fetching: bool },
+}
+
 /// Which finished-batch notification title applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -602,6 +611,8 @@ pub struct Tracker {
     download_countdown: Countdown,
     /// Steps of work finished since the last time none was waiting: how far the processing notification's bar is.
     processed: i32,
+    /// [`Tracker::progress`] showed bytes arriving since the work was last all done.
+    fetched: bool,
     /// The platform's last `now` and when it was given, to extrapolate the platform clock.
     clock: Option<(i64, Instant)>,
     /// Actual vs estimated size of finished songs, to scale remaining estimates.
@@ -1186,6 +1197,21 @@ impl Tracker {
     /// The notification facts as [`Tracker::notice`] last computed them.
     pub fn notice_facts(&self) -> &Notice {
         &self.notice
+    }
+
+    /// What the downloads are doing at the platform's `now` (`listed` more queued, `waiting` for a network):
+    /// the batch's bytes while any song of it is open, then the work on the saved songs; None once all is done.
+    pub fn progress(&mut self, listed: i32, waiting: bool, now: i64) -> Option<Progress> {
+        if !self.batch.open.is_empty() {
+            self.notice(listed, waiting, now);
+            self.fetched = true;
+            return Some(Progress::Fetching(self.notice.clone()));
+        }
+        let Some(work) = self.processing_at(now) else {
+            self.fetched = false;
+            return None;
+        };
+        Some(Progress::Processing { work, after_fetching: self.fetched })
     }
 
     /// How the batch's downloads went; None when nothing finished.
@@ -1873,6 +1899,24 @@ mod tests {
         assert_eq!(t.notice(1, false, 0), NoticeChange::Changed);
         let n = t.notice_facts();
         assert_eq!((n.kind, n.current.as_str(), n.artist.as_str(), n.cover.as_str()), (NoticeKind::OneNamed, "Blue", "Ada", "al-7"));
+    }
+
+    #[test]
+    fn progress_is_the_bytes_then_the_work_after_them() {
+        let mut t = tracker(&["ext-p"], 1_000_000);
+        t.info.get_mut("ext-p").unwrap().title = "Blue".into();
+        assert_eq!(t.progress(0, false, 0), None);
+        t.followed("ext-p", QUEUED, 0);
+        t.open("ext-p", 0);
+        assert!(matches!(t.progress(0, false, 0), Some(Progress::Fetching(n)) if n.current == "Blue"));
+        t.followed("ext-p", COMPLETED, 1_000);
+        let Some(Progress::Processing { work, after_fetching: true }) = t.progress(0, false, 1_000) else { panic!("its lyrics follow the bytes") };
+        assert_eq!(work.lyrics, 1);
+        t.work_done("ext-p", Work::Lyrics);
+        assert_eq!(t.progress(0, false, 2_000), None);
+        // Measuring the downloads again, nothing downloads first.
+        t.plan("ext-p", Needs { analysis: true, beats: false }, None);
+        assert!(matches!(t.progress(0, false, 3_000), Some(Progress::Processing { after_fetching: false, .. })));
     }
 
     #[test]

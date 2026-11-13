@@ -591,7 +591,8 @@ A signed-in account that may act as others (a Google account's YouTube channels)
 its `info`'s `identities` (`channel`), lists them with `identities` (the account's own first, the one it
 acts as `chosen`) and acts as one from `choose-identity` on, keeping that per profile. Choosing drops the
 pages kept and the session's hearts, which were the other's, and asks the rules again
-(`Client::choose_identity`); Android's profile page lists them under the account. `account-picture` is
+(`Client::choose_identity`); Android's profile page, the desktop's sign-in sheet and the terminal's
+settings list them under the account. `account-picture` is
 the picture of the account as it acts now, an address with `{size}` or a fixed one: the profile keeps it
 (`SavedServer::picture`) and its letter's circle shows it (`covers::profile_picture`).
 

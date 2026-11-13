@@ -87,6 +87,15 @@ pub enum Msg {
     Volume(f32),
     /// A heart changed, here or on another device.
     Starred,
+    /// Downloads or the work on saved songs started: the progress card follows them.
+    Working,
+    /// The profile in use keeps another picture of its account.
+    Pictured,
+    /// Those the signed-in account may act as, its own first; empty when it is only itself or they could
+    /// not be read.
+    Identities(Vec<nori_core::providers::Identity>),
+    /// The account acts as another of them now, or why not.
+    IdentityChosen(Result<(), String>),
     /// A link to a song from the server, to copy; None when it made none.
     Shared(Option<String>),
     /// The playlists song `0` may go into, each with what it has of it; empty when they could not be read.
@@ -322,6 +331,8 @@ fn worded(s: Said) -> Msg {
         Said::JamEnded { host } => Msg::JamEnded(host),
         Said::Volume(v) => Msg::Volume(v),
         Said::Starred(_) => Msg::Starred,
+        Said::Working => Msg::Working,
+        Said::Pictured => Msg::Pictured,
         Said::Curve(n) => {
             let (text, action) = crate::words::curve_notice(&n);
             Msg::Ask { text, action: action.into() }
