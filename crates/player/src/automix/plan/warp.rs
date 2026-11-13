@@ -87,24 +87,7 @@ fn pair_up(p: &TransitionPlan, a: &[Beat], b: &[Beat], out_ms: f64, in_ms: f64) 
 /// Whether, under `p`'s tempos, every pair of beats on attacks sounds within the lock: a beat no attack was heard on
 /// (a quiet or beatless stretch) has nothing to clash.
 fn locked(p: &TransitionPlan, pairs: &[Pair]) -> bool {
-    pairs.iter().filter(|x| x.sure).all(|x| (p.wall_of_in_song(x.song) - wall_of_out_song(p, x.at)).abs() <= LOCK_SURE_MS)
-}
-
-/// The transition time at which the outgoing song's `song_ms` past `out_start_ms` is heard.
-fn wall_of_out_song(p: &TransitionPlan, song_ms: f64) -> f64 {
-    if p.out_rates.is_empty() {
-        return song_ms;
-    }
-    let (mut lo, mut hi) = (0.0, 2.0 * song_ms.max(0.0) + 1.0);
-    for _ in 0..48 {
-        let mid = (lo + hi) / 2.0;
-        if p.out_song_ms(mid) < song_ms {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    (lo + hi) / 2.0
+    pairs.iter().filter(|x| x.sure).all(|x| (p.wall_of_in_song(x.song) - p.wall_of_out_song(x.at)).abs() <= LOCK_SURE_MS)
 }
 
 /// The outgoing beats on attacks heard over `p`'s incoming loop, each against the nearest looped incoming beat on an

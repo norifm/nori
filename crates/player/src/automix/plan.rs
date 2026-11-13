@@ -2320,18 +2320,9 @@ mod tests {
         let b = TrackAnalysis { intro_beats: beats_at(100.0, 60_000.0, |_| 0.0), ..track(120.0) };
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
         assert!(p.reason.contains("both on one beat clock") && !p.out_rates.is_empty(), "{}", p.reason);
-        // Where an outgoing song time is heard: its rates' song time inverted.
-        let out_wall = |song: f64| {
-            let (mut lo, mut hi) = (0.0, 2.0 * song + 1.0);
-            for _ in 0..48 {
-                let mid = (lo + hi) / 2.0;
-                if p.out_song_ms(mid) < song { lo = mid } else { hi = mid }
-            }
-            (lo + hi) / 2.0
-        };
         let mut paired = 0;
         for x in &a.outro_beats {
-            let at = out_wall((x.at_ms - p.out_start_ms) as f64);
+            let at = p.wall_of_out_song((x.at_ms - p.out_start_ms) as f64);
             if !(0.0..=p.duration_ms as f64).contains(&at) {
                 continue;
             }

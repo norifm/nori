@@ -1613,7 +1613,108 @@ fn landmarks_are_found() {
     assert!(found >= 2, "the sung endings have their singing's end: {found}");
 }
 
+// ---- Accuracy -----------------------------------------------------------------------------------------------------
+//
+// The numbers docs/research/automix-novel.md (section 2) judges an end's beats and a mix by: the level, Lock@10 and
+// Lock@20, the downbeats, and where both songs' true beats land against each other in a mix.
 
+/// How one end's stored beats match the true ones over the stretch they cover.
+#[derive(Debug, Clone, Copy)]
+pub struct EndAccuracy {
+    /// Their tempo within 4 % of the true one, at the same level.
+    pub level_ok: bool,
+    /// The share of 16-beat runs whose every true beat has a stored one within 10 ms (20 ms), or 2.5 times the band's
+    /// looseness where its hits stray further from the true beat.
+    pub lock10: f64,
+    pub lock20: f64,
+    /// The share of true bar starts a stored downbeat marks, within a sixteenth.
+    pub downbeats: f64,
+}
 
+/// The median interval of `t`, seconds.
+fn median_ibi(t: &[f64]) -> f64 {
+    let mut d: Vec<f64> = t.windows(2).map(|w| w[1] - w[0]).collect();
+    d.sort_by(f64::total_cmp);
+    d.get(d.len() / 2).copied().unwrap_or(0.0)
+}
 
+pub fn end_accuracy(beats: &[crate::types::Beat], truth: &Truth, jitter_s: f64) -> Option<EndAccuracy> {
+    let est: Vec<f64> = beats.iter().map(|b| b.at_ms as f64 / 1000.0).collect();
+    let (from, to) = (*est.first()?, *est.last()?);
+    // Beats in a silence inside the music are no beats heard.
+    let audible = |t: &f64| truth.gaps.iter().all(|(g0, g1)| !(*g0..*g1).contains(t));
+    let rb: Vec<f64> = truth.beats_in(from - 0.01, to + 0.01).into_iter().filter(audible).collect();
+    if rb.len() < 16 {
+        return None;
+    }
+    let near = |t: f64, tol: f64| est.iter().any(|e| (e - t).abs() <= tol);
+    let lock = |tol: f64| {
+        let tol = tol.max(2.5 * jitter_s);
+        let runs: Vec<bool> = rb.windows(16).map(|w| w.iter().all(|&t| near(t, tol))).collect();
+        runs.iter().filter(|r| **r).count() as f64 / runs.len() as f64
+    };
+    let marked: Vec<f64> = beats.iter().filter(|b| b.downbeat).map(|b| b.at_ms as f64 / 1000.0).collect();
+    let rd: Vec<f64> = truth.downbeats_in(from - 0.01, to + 0.01).into_iter().filter(audible).collect();
+    let sixteenth = median_ibi(&rb) / 4.0;
+    let downbeats = rd.iter().filter(|&&d| marked.iter().any(|m| (m - d).abs() <= sixteenth)).count() as f64 / rd.len().max(1) as f64;
+    Some(EndAccuracy { level_ok: (median_ibi(&est) / median_ibi(&rb) - 1.0).abs() <= 0.04, lock10: lock(0.010), lock20: lock(0.020), downbeats })
+}
 
+/// Where the true beats of both songs land against each other in a beat-matched plan, as heard: for each outgoing true
+/// beat in the overlap while the incoming song's beats sound (after any incoming loop's repeats, which play it at one
+/// speed), how far the nearest incoming true beat is, ms: (the most, the RMS). None for a plan not beat-matched or over
+/// a looped ending.
+pub fn mix_error(p: &crate::types::TransitionPlan, ta: &Truth, tb: &Truth) -> Option<(f64, f64)> {
+    if p.kind != crate::types::TransitionKind::BeatMatched || p.out_loop_ms.is_some() {
+        return None;
+    }
+    let looped = p.in_loop.map_or(0.0, |l| (p.in_delay_ms + l.ms * (l.repeats as i64 + 1)) as f64);
+    let heard_in: Vec<f64> = tb.beats.iter().map(|u| u * 1000.0 - p.in_start_ms as f64).filter(|s| *s >= 0.0).map(|s| p.wall_of_in_song(s)).collect();
+    let half = 0.5 * median_ibi(&heard_in);
+    let sounding = heard_in.first()? - half..=heard_in.last()? + half;
+    let errors: Vec<f64> = ta
+        .beats
+        .iter()
+        .map(|t| p.wall_of_out_song(t * 1000.0 - p.out_start_ms as f64))
+        .filter(|at| (looped.max(p.in_delay_ms as f64)..=p.duration_ms as f64).contains(at) && sounding.contains(at))
+        .filter_map(|at| heard_in.iter().map(|w| (w - at).abs()).reduce(f64::min))
+        .collect();
+    if errors.is_empty() {
+        return None;
+    }
+    let rms = (errors.iter().map(|e| e * e).sum::<f64>() / errors.len() as f64).sqrt();
+    Some((errors.iter().copied().fold(0.0, f64::max), rms))
+}
+
+/// The research's numbers on every harness song and mix: the stored beats at the true level on all ends but the
+/// half-time and one-drop songs (counted at the other level); most 16-beat runs locked within 20 ms and many within
+/// 10 (loose bands' hits stray further); nearly every bar start marked; and both songs' true beats within 10 ms of each
+/// other through every beat-matched mix, in both styles.
+#[test]
+fn beats_and_mixes_are_accurate() {
+    let songs: Vec<Song> = mix_songs().into_iter().chain(corpus_all()).collect();
+    let ends: Vec<EndAccuracy> = songs
+        .iter()
+        .flat_map(|song| {
+            let (a, truth) = analysed(song.name);
+            [&a.track.intro_beats, &a.track.outro_beats].map(|beats| end_accuracy(beats, truth, song.jitter_ms / 1000.0).expect("an end's beats"))
+        })
+        .collect();
+    let n = ends.len() as f64;
+    let mean = |f: fn(&EndAccuracy) -> f64| ends.iter().map(f).sum::<f64>() / n;
+    let level = ends.iter().filter(|e| e.level_ok).count();
+    assert!(level + 4 >= ends.len(), "{level} of {} ends at the true level", ends.len());
+    assert!(mean(|e| e.lock20) >= 0.90 && mean(|e| e.lock10) >= 0.70, "Lock@20 {:.3}, Lock@10 {:.3}", mean(|e| e.lock20), mean(|e| e.lock10));
+    assert!(mean(|e| e.downbeats) >= 0.98, "bar starts {:.3}", mean(|e| e.downbeats));
+    for style in [crate::types::MixStyle::Smooth, crate::types::MixStyle::Dj] {
+        let settings = crate::types::AutoMixSettings { max_transition_s: style.longest_s() as f32, max_tempo_change_pct: style.tempo_pct(), style, ..Default::default() };
+        let errors: Vec<(f64, f64)> = par_map(&mix_pairs(), |(a, b)| {
+            let ((ta, wa), (tb, wb)) = (analysed(a), analysed(b));
+            mix_error(&plan::plan(Some(&ta.track), Some(&tb.track), ta.track.duration_ms, tb.track.duration_ms, &settings), wa, wb)
+        })
+        .into_iter()
+        .flatten()
+        .collect();
+        assert!(errors.len() >= 14 && errors.iter().all(|e| e.0 <= 10.0), "{style:?}: {errors:?}");
+    }
+}

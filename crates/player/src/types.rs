@@ -721,6 +721,25 @@ impl TransitionPlan {
         (lo + hi) / 2.0
     }
 
+    /// The transition time at which the outgoing song's `song_ms` past `out_start_ms` is heard
+    /// ([`TransitionPlan::out_song_ms`] inverted).
+    pub fn wall_of_out_song(&self, song_ms: f64) -> f64 {
+        // Before the transition it plays at its own speed.
+        if song_ms <= 0.0 {
+            return song_ms;
+        }
+        let (mut lo, mut hi) = (0.0, 2.0 * song_ms + 1.0);
+        for _ in 0..48 {
+            let mid = (lo + hi) / 2.0;
+            if self.out_song_ms(mid) < song_ms {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        (lo + hi) / 2.0
+    }
+
     /// Outgoing song time played in the first `t_ms` of the transition: its `out_rates` integrated; under a bend its
     /// speed is the incoming one over `tempo_ratio`.
     pub fn out_song_ms(&self, t_ms: f64) -> f64 {
