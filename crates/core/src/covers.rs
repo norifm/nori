@@ -67,6 +67,12 @@ pub(crate) fn own_address(cover: &str, size: u32) -> Option<String> {
     cover.contains(ADDRESS_MARK).then(|| cover.replace(SIZE_HOLE, &size.to_string()))
 }
 
+/// `profile`'s account picture at `size` px, for its circle; None without one.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn profile_picture(profile: crate::settings::SavedServer, size: u32) -> Option<String> {
+    profile.picture.as_deref().and_then(|p| own_address(p, size))
+}
+
 const ADDRESS_MARK: &str = "://";
 const SIZE_HOLE: &str = "{size}";
 

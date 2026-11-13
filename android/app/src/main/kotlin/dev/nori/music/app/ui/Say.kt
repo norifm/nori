@@ -111,6 +111,7 @@ class Say(private val r: Resources) {
     val create: String = r.getString(R.string.create)
     val delete: String = r.getString(R.string.delete)
     val edit: String = r.getString(R.string.edit)
+    val rename: String = r.getString(R.string.rename)
     val save: String = r.getString(R.string.save)
     fun serviceKey(service: String): String = r.getString(R.string.settings_service_key, service)
     val betterLyricsKeyAsk: String = r.getString(R.string.settings_betterlyrics_key_ask)
@@ -372,6 +373,11 @@ class Say(private val r: Resources) {
     val account: String get() = r.getString(R.string.account)
     fun signedInAs(name: String): String = r.getString(R.string.signed_in_as, name)
     val signOut: String get() = r.getString(R.string.sign_out)
+    val signedIn: String get() = r.getString(R.string.signed_in)
+    /** What a group of those an account may act as is called. */
+    fun identities(kind: dev.nori.music.ffi.IdentityKind): String = when (kind) {
+        dev.nori.music.ffi.IdentityKind.CHANNEL -> r.getString(R.string.identity_channel)
+    }
     val signInAction: String get() = r.getString(R.string.sign_in_action)
     val signingIn: String get() = r.getString(R.string.signing_in)
     val tryAgain: String get() = r.getString(R.string.try_again)

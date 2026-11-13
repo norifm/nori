@@ -38,7 +38,7 @@ val EqKind.slope: Boolean get() = EQ.bandKinds[ordinal].slope
 fun newServer(id: String) = SavedServer(
     id = id, kind = ServerKind.Subsonic, name = "", url = "", altUrl = "", user = "", password = "", apiKey = "", legacyAuth = false, headers = emptyMap(),
     allowSelfSigned = false, clientCert = "", clientCertPassword = "", wifiOnly = false, musicFolderIds = emptyList(), altMaxBitRate = 0,
-    icon = dev.nori.music.ffi.settings.ProfileIcon.LETTER,
+    icon = dev.nori.music.ffi.settings.ProfileIcon.LETTER, picture = null,
 )
 
 /** Its name, or else the host of its address (the core's `settings::label`). */

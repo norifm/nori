@@ -35,6 +35,7 @@
     <string name="create">Create</string>
     <string name="delete">Delete</string>
     <string name="edit">Edit</string>
+    <string name="rename">Rename</string>
     <string name="save">Save</string>
     <string name="add">Add</string>
     <string name="copy_it">Copy</string>
@@ -273,7 +274,9 @@
     <string name="provider_add">Add %1$s</string>
     <string name="account">Account</string>
     <string name="signed_in_as">Signed in as %1$s</string>
-    <string name="sign_out">Sign Out</string>
+    <string name="sign_out">Sign out</string>
+    <string name="signed_in">Signed in</string>
+    <string name="identity_channel">Channel</string>
     <string name="provider_signed_out_again">%1$s signed you out. Sign in again to see your library and likes.</string>
     <string name="provider_sign_in_hint">Sign in to see your own Home, your library and your likes.</string>
     <string name="provider_sign_in_page">Sign in to %1$s</string>

@@ -551,6 +551,9 @@ pub struct SavedServer {
     pub music_folder_ids: Vec<String>,
     pub alt_max_bit_rate: i32,
     pub icon: ProfileIcon,
+    /// The signed-in account's picture as its provider says (a channel's), a cover address with its
+    /// size to fill in; the letter's circle shows it.
+    pub picture: Option<String>,
 }
 
 /// One stream quality: `bit_rate` 0 and an empty `format` mean the original file.
@@ -1275,6 +1278,7 @@ fn server_from(v: &Value) -> Option<SavedServer> {
         music_folder_ids: folder_ids(o),
         alt_max_bit_rate: opt_i32(o, "altMaxBitRate"),
         icon: o.get("icon").and_then(Value::as_str).and_then(ProfileIcon::from_id).unwrap_or_default(),
+        picture: o.get("picture").and_then(Value::as_str).map(String::from),
     })
 }
 
@@ -1287,12 +1291,16 @@ fn folder_ids(o: &Map<String, Value>) -> Vec<String> {
 }
 
 fn server_json(s: &SavedServer) -> Value {
-    serde_json::json!({
+    let mut v = serde_json::json!({
         "id": s.id, "kind": s.kind.id(), "name": s.name, "url": s.url, "altUrl": s.alt_url, "user": s.user, "password": s.password,
         "apiKey": s.api_key, "legacyAuth": s.legacy_auth, "headers": s.headers, "allowSelfSigned": s.allow_self_signed,
         "clientCert": s.client_cert, "clientCertPassword": s.client_cert_password, "wifiOnly": s.wifi_only,
         "musicFolderIds": s.music_folder_ids, "altMaxBitRate": s.alt_max_bit_rate, "icon": s.icon.id(),
-    })
+    });
+    if let Some(p) = &s.picture {
+        v["picture"] = p.as_str().into();
+    }
+    v
 }
 
 /// The settings from what is stored: defaults for missing or mistyped values, ranges enforced.
@@ -2580,6 +2588,8 @@ mod tests {
         let icon = |json: Value| server_from(&json).unwrap().icon;
         assert_eq!(icon(serde_json::json!({"id": "a"})), ProfileIcon::Letter);
         assert_eq!(icon(serde_json::json!({"id": "a", "icon": "a-face-from-later"})), ProfileIcon::Letter);
+        let pictured = SavedServer { id: "a".into(), picture: Some("https://p.example/{size}.jpg".into()), ..SavedServer::default() };
+        assert_eq!(server_from(&server_json(&pictured)).unwrap().picture, pictured.picture, "the account's picture is kept");
         for kept in ProfileIcon::ALL {
             assert_eq!(server_from(&server_json(&SavedServer { id: "a".into(), icon: kept, ..SavedServer::default() })).unwrap().icon, kept);
         }

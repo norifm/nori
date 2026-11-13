@@ -42,7 +42,7 @@ impl Provider for Subsonic {
             field(WifiOnly, true),
             field(ClientCert, true),
         ];
-        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in: Vec::new() }
+        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in: Vec::new(), identities: None }
     }
 
     fn ready(&self, p: &SavedServer) -> bool {

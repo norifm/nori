@@ -19,7 +19,7 @@ use nori_plugin_sdk::sound_stage::{Format, Inputs};
 use nori_plugin_sdk::types::Value;
 use nori_plugin_sdk::slots::{InfoLine, Motion, Sleeve};
 use nori_plugin_sdk::provider;
-use nori_plugin_sdk::types::{Artist, Error, Explicit, Found, Item, Song};
+use nori_plugin_sdk::types::{Artist, Error, Explicit, Found, Item, Playlist, Song};
 use nori_plugin_sdk::{settings, state, store, Glyph, Hooks, ItemKind, Lifecycle, Manifest, MenuAction, Place, Provider, Row, Slot, Slots, SoundStage};
 
 #[derive(Default)]
@@ -38,7 +38,13 @@ struct Test {
     /// The open profile named "ended" starts with its session ended (true) and takes it up again at its
     /// first read (false); any other profile has no account.
     ended: Option<bool>,
+    /// Which of [`CHANNELS`] it acts as.
+    channel: usize,
 }
+
+/// Those its account may act as, the account's own first: name, handle.
+/// Name, handle and picture.
+const CHANNELS: [(&str, &str, &str); 2] = [("Ada", "@ada", "https://pictures.example/ada=s{size}"), ("Ada's covers", "@covers", "https://pictures.example/covers=s{size}")];
 
 fn fetch(url: &str) -> String {
     let r = nori_plugin_sdk::http::fetch(&Request { method: Method::Get, url: url.into(), headers: Vec::new(), body: None, timeout_ms: None });
@@ -178,8 +184,26 @@ fn song(title: String) -> Song {
 const LIBRARY: [&str; 3] = ["one", "two", "three"];
 
 /// A profile with no Subsonic server, whose search finds one song named after what was searched, whose
-/// library is two artists and three songs, and whose songs stream from allowed.example in parts.
+/// library is two artists and three songs, whose songs stream from allowed.example in parts, and whose
+/// account acts as one of two channels, each with a playlist and a picture of its own.
 impl Provider for Test {
+    fn info(&mut self) -> Option<provider::ProviderInfo> {
+        Some(provider::ProviderInfo { fields: Vec::new(), sign_in: Vec::new(), identities: Some(provider::IdentityKind::Channel) })
+    }
+
+    fn identities(&mut self) -> Result<Vec<provider::Identity>, Error> {
+        Ok(CHANNELS.iter().enumerate().map(|(i, (name, handle, picture))| provider::Identity { name: name.to_string(), detail: Some(handle.to_string()), picture: Some(picture.to_string()), chosen: i == self.channel }).collect())
+    }
+
+    fn account_picture(&mut self) -> Option<String> {
+        Some(CHANNELS[self.channel].2.to_string())
+    }
+
+    fn choose_identity(&mut self, index: u32) -> Result<(), Error> {
+        self.channel = (index as usize).min(CHANNELS.len() - 1);
+        Ok(())
+    }
+
     fn open(&mut self, profile: provider::Profile) {
         self.ended = (profile.name == "ended").then_some(true);
     }
@@ -207,6 +231,8 @@ impl Provider for Test {
         Ok(match request {
             provider::Request::Search((query, ..)) => provider::Page::Found(Found { songs: vec![song(query)], albums: Vec::new(), artists: Vec::new(), playlists: Vec::new() }),
             provider::Request::Artists => provider::Page::Artists(["Followed", "Subscribed"].map(|name| Artist { id: format!("test-{name}"), name: name.into(), cover: None, image_url: None, album_count: None, starred: true, external: false }).into()),
+            // One playlist, the channel's.
+            provider::Request::Playlists => provider::Page::Playlists(vec![Playlist { id: format!("test-list-{}", self.channel), name: CHANNELS[self.channel].0.into(), comment: None, owner: None, song_count: 1, duration: 0, cover: None }]),
             provider::Request::Songs((count, offset)) => provider::Page::Songs(LIBRARY.iter().skip(offset as usize).take(count as usize).map(|t| song(t.to_string())).collect()),
             _ => provider::Page::None,
         })

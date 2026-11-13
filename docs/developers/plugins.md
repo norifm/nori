@@ -504,7 +504,7 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
 ```json
 {"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "about": "…", "source": "https://github.com/…",
   "readme": "orbit/README.md", "icon": "orbit/icon.png", "points": ["sound-stage"],
-  "versions": [{"version": "1.2.0", "api": 4, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
+  "versions": [{"version": "1.2.0", "api": 5, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
     "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
 ```
 
@@ -579,6 +579,14 @@ on in any browser where they are signed in, the seconds between checks and, if i
 and its own `state` (a poll token). nori calls `check-code` with that record every `every` seconds (at
 least one) while the client shows the code, and stops when the user leaves it; `done` signs the account in
 as `sign-in` would. The web client and the iPod build no plugin provider, so they have no code step.
+
+A signed-in account that may act as others (a Google account's YouTube channels) says what they are in
+its `info`'s `identities` (`channel`), lists them with `identities` (the account's own first, the one it
+acts as `chosen`) and acts as one from `choose-identity` on, keeping that per profile. Choosing drops the
+pages kept and the session's hearts, which were the other's, and asks the rules again
+(`Client::choose_identity`); Android's profile page lists them under the account. `account-picture` is
+the picture of the account as it acts now, an address with `{size}` or a fixed one: the profile keeps it
+(`SavedServer::picture`) and its letter's circle shows it (`covers::profile_picture`).
 
 ## Lyrics
 

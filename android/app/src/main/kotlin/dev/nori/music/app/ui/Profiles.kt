@@ -42,6 +42,7 @@ import dev.nori.music.ffi.settings.ServerKind
 import dev.nori.music.ffi.settings.ProfileIcon
 import dev.nori.music.ffi.settings.profileIcons
 import dev.nori.music.ffi.settings.profileLetter
+import dev.nori.music.ffi.profilePicture
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.semantics.selected
@@ -54,10 +55,15 @@ fun profileLabel(vm: SettingsViewModel, profile: SavedServer): String {
     return profile.label.ifBlank { words.name }
 }
 
-/** A profile's mark on a circle, as its icon says: a letter, its provider's mark, or a face. */
+/** A profile's mark on a circle, as its icon says: a letter (the account's picture when it has one), its provider's mark, or a face. */
 @Composable
 fun ProfileMark(profile: SavedServer, label: String, side: Dp, modifier: Modifier = Modifier, icon: ProfileIcon = profile.icon) {
     val kind = profile.kind
+    if (icon == ProfileIcon.LETTER && profile.picture != null) {
+        val px = with(androidx.compose.ui.platform.LocalDensity.current) { side.roundToPx() }
+        Cover(remember(profile.picture, px) { profilePicture(profile, px.toUInt()) }, side, modifier, radius = side / 2)
+        return
+    }
     if (icon == ProfileIcon.PROVIDER && kind is ServerKind.Plugin) {
         val plugins: PluginsViewModel = viewModel()
         Box(modifier) { PluginTile(plugins, kind.id, null, label, side, CircleShape) }

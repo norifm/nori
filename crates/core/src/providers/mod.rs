@@ -133,6 +133,21 @@ pub trait Provider: Send + Sync {
 
     /// No reminder until the account is signed in, and its session ends, again.
     fn stop_reminding(&self, _client: &Client) {}
+
+    /// The signed-in account's picture as it acts now, a cover as the profile's covers are.
+    async fn account_picture(&self, _client: &Client) -> Option<String> {
+        None
+    }
+
+    /// Those the signed-in account may act as ([`ProviderInfo::identities`]), the account's own first.
+    async fn identities(&self, _client: &Client) -> NetResult<Vec<Identity>> {
+        Ok(Vec::new())
+    }
+
+    /// Acts as [`Provider::identities`]' entry `index` from now on.
+    async fn choose_identity(&self, _client: &Client, _index: u32) -> NetResult<()> {
+        Err(nowhere("identity"))
+    }
 }
 
 /// A source's answer to a read.
@@ -192,6 +207,30 @@ pub struct ProviderInfo {
     /// How the account signs in once the profile is added, the first offered right away; empty when
     /// the form is the sign-in.
     pub sign_in: Vec<SignIn>,
+    /// What the signed-in account may act as besides itself ([`Client::identities`]); None when it is
+    /// only itself.
+    pub identities: Option<IdentityKind>,
+}
+
+/// What a signed-in account may act as besides itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum IdentityKind {
+    /// A Google account's YouTube channels.
+    Channel,
+}
+
+/// One the account may act as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct Identity {
+    pub name: String,
+    /// What tells it apart from one of the same name ("@handle").
+    pub detail: Option<String>,
+    /// Its picture, a cover as the profile's covers are.
+    pub picture: Option<String>,
+    /// The one the account acts as now.
+    pub chosen: bool,
 }
 
 impl ProviderInfo {
@@ -745,6 +784,26 @@ impl Client {
     pub fn stop_reminding(&self) {
         self.core.provider().stop_reminding(self)
     }
+
+    /// The signed-in account's picture as it acts now (its chosen identity's), for the profile to keep
+    /// ([`crate::settings::SavedServer::picture`]); None while signed out or when it has none.
+    pub async fn account_picture(&self) -> Option<String> {
+        self.core.provider().account_picture(self).await
+    }
+
+    /// Those the signed-in account may act as, the account's own first, the one it acts as chosen.
+    pub async fn identities(&self) -> NetResult<Vec<Identity>> {
+        self.core.provider().identities(self).await
+    }
+
+    /// Acts as [`Client::identities`]' entry `index` from now on. What was kept of the library and the
+    /// session's hearts were another's, so they go; the rules are asked anew.
+    pub async fn choose_identity(&self, index: u32) -> NetResult<()> {
+        self.core.provider().choose_identity(self, index).await?;
+        self.core.cache_evict(String::new())?;
+        self.core.forget_marks();
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -752,7 +811,7 @@ mod tests {
     use super::*;
 
     fn info(fields: Vec<FieldSpec>, sign_in: Vec<SignIn>) -> ProviderInfo {
-        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in }
+        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in, identities: None }
     }
 
     fn web() -> SignIn {

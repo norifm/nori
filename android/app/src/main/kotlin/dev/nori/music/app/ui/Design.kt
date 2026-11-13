@@ -1043,6 +1043,7 @@ fun FormField(
     supportingText: @Composable (() -> Unit)? = null,
     singleLine: Boolean = false,
     minLines: Int = 1,
+    maxLines: Int = Int.MAX_VALUE,
     visualTransformation: androidx.compose.ui.text.input.VisualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
     keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default,
     /** Takes the focus, keyboard up, once it is placed: the one field a dialog asks for. */
@@ -1055,7 +1056,7 @@ fun FormField(
     androidx.compose.material3.OutlinedTextField(
         value, onValueChange, modifier.then(if (autofocus) Modifier.takesFocus() else Modifier),
         label = label, placeholder = placeholder, supportingText = supportingText,
-        singleLine = singleLine, minLines = minLines,
+        singleLine = singleLine, minLines = minLines, maxLines = maxLines,
         visualTransformation = visualTransformation,
         keyboardOptions = if (onDone != null) keyboardOptions.copy(imeAction = androidx.compose.ui.text.input.ImeAction.Done) else keyboardOptions,
         keyboardActions = if (onDone != null) androidx.compose.foundation.text.KeyboardActions(onDone = { onDone() }) else androidx.compose.foundation.text.KeyboardActions.Default,
