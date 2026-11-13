@@ -81,8 +81,8 @@ const KICK_PULSE: f32 = 0.5;
 const EFFECT_SOURCE_DB: f32 = -12.0;
 /// Loud enough at the exit for a brake, and a "bursting in" entry.
 const LOUD_DB: f32 = -6.0;
-/// An energy drop: the incoming opening this much under the outgoing exit.
-const DROP_DB: f32 = 6.0;
+/// An energy drop: the incoming opening's first four bars this much under the outgoing exit.
+const DROP_DB: f32 = 8.0;
 
 fn beatless(b: &BarProfile) -> bool {
     b.pulse <= BEATLESS_PULSE && b.level_db >= AUDIBLE_DB
@@ -162,11 +162,11 @@ fn entry(b: Option<&TrackAnalysis>, in_dur: i64) -> (f64, f64) {
     (music, first.unwrap_or(music))
 }
 
-/// The incoming song's level over its first two bars from `at`, against the outgoing song's at its exit `x`, dB.
+/// The incoming song's level over its first four bars from `at`, against the outgoing song's at its exit `x`, dB.
 fn entry_gap(a: &TrackAnalysis, b: Option<&TrackAnalysis>, x: f64, beat: f64, at: f64) -> Option<f32> {
     let b = b?;
     let out = bar_at(&a.outro_bars, x - beat)?.level_db;
-    let inc = mean_over(&b.intro_bars, at - 0.5 * bar_ms(b), at + 2.0 * bar_ms(b), |x| x.level_db)?;
+    let inc = mean_over(&b.intro_bars, at - 0.5 * bar_ms(b), at + 4.0 * bar_ms(b), |x| x.level_db)?;
     Some(inc - out)
 }
 
