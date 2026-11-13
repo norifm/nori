@@ -212,10 +212,12 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
     ]
 }
 
-/// A run's output and where its mix is heard, from the planner's log line: (start, length), frames.
+/// A run's output and where its mix is heard, from the planner's log line: (start, length), frames, and where in it
+/// the incoming song is first heard, frames.
 struct Run {
     out: Vec<i16>,
     mix: (usize, usize),
+    heard: usize,
     line: String,
 }
 
@@ -249,7 +251,8 @@ fn run_listed(kind: &Kind, a: nori_player::sim::Track, b: &[i16], gains: &[(&str
     let words: Vec<&str> = line.split_whitespace().collect();
     let len_ms: f64 = words[5].parse().unwrap();
     let start_ms: f64 = words[8].trim_end_matches(',').parse().unwrap();
-    Run { out: p.sink.heard_samples(), mix: (frames(start_ms / 1000.0), frames(len_ms / 1000.0)), line }
+    let heard_ms: f64 = words[13].parse().unwrap();
+    Run { out: p.sink.heard_samples(), mix: (frames(start_ms / 1000.0), frames(len_ms / 1000.0)), heard: frames(heard_ms / 1000.0), line }
 }
 
 /// The level of `x` (left channel, full scale 1) in dB over each 100 ms from frame `from` to `to`.
@@ -412,9 +415,10 @@ fn loudness_match_lets_go_gently(la: f32, lb: f32) {
             let last = known.last().map_or(0.0, |v| v.1);
             let step = known.windows(2).filter(|w| w[1].0 == w[0].0 + 1).map(|w| (w[1].1 - w[0].1).abs()).fold(0.0, f64::max);
             println!("{} ({la} -> {lb} LUFS): {last:+.2} dB after, largest 100 ms move {step:.2} dB; {}", kind.name, r.line);
-            // From the whole gap at the mix's start to none at its end, evenly.
-            let len = r.mix.1 as f64 / RATE as f64;
-            let off = known.iter().map(|&(k, v)| v - (la - lb) as f64 * (1.0 - (k as f64 + 0.5) * WIN_S / len).max(0.0)).fold(0.0, |m: f64, d| if d.abs() > m.abs() { d } else { m });
+            // From the whole gap where the incoming song is first heard to none at the mix's end, evenly.
+            let (len, heard) = (r.mix.1 as f64 / RATE as f64, r.heard as f64 / RATE as f64);
+            let glide = |t: f64| (1.0 - (t - heard) / (len - heard)).clamp(0.0, 1.0);
+            let off = known.iter().map(|&(k, v)| v - (la - lb) as f64 * glide((k as f64 + 0.5) * WIN_S)).fold(0.0, |m: f64, d| if d.abs() > m.abs() { d } else { m });
             assert!(off.abs() < 0.3, "{}: the match {off:+.2} dB off its glide", kind.name);
             assert!(last.abs() < 0.05, "{}: {last:.2} dB still turned after the mix", kind.name);
             if step > 1.0 {
@@ -477,7 +481,8 @@ fn level_holds_through_each_mix() {
 }
 
 /// Into a song 6 dB quieter, with the loudness match on: the two meet, the level gliding from one to the
-/// other across the mix, so half way it is half way, and none of the drop is left for the mix's end.
+/// other from where the incoming song is first heard, so half way along it is half way, and none of the drop is left
+/// for the mix's end.
 #[test]
 fn level_glides_across_a_loudness_gap() {
     let (a, b) = (steady(SONG_S, 31, 0.4), steady(SONG_S, 32, 0.2));
@@ -486,7 +491,8 @@ fn level_glides_across_a_loudness_gap() {
     for kind in kinds(-8.0, -14.0).into_iter().filter(|k| k.name != "equal-power crossfade") {
         let got = run(&kind, &a, &b, &[], false);
         let (s, n) = got.mix;
-        let mid = db(rms(&left(&got.out)[s + n / 2 - frames(0.5)..s + n / 2 + frames(0.5)]));
+        let half = s + got.heard + (n - got.heard) / 2;
+        let mid = db(rms(&left(&got.out)[half - frames(0.5)..half + frames(0.5)]));
         let want = (la + lb) / 2.0;
         println!("{}: {mid:.2} dB half way, between {la:.2} and {lb:.2} ({})", kind.name, got.line);
         assert!((mid - want).abs() < 1.5, "{}: {mid:.2} dB half way through, not near {want:.2} ({})", kind.name, got.line);

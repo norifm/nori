@@ -784,7 +784,7 @@ impl Host for App {
         let p = engine_plan(&t, &n.id);
         let line = match &p {
             None => format!("planFor: gapless ({})", t.reason),
-            Some(_) => format!("transition {} -> {}: {:?} {} ms at {}, tempo x{:.3} ({})", o.title, n.title, t.kind, t.duration_ms, t.out_start_ms, t.tempo_ratio, t.reason),
+            Some(_) => format!("transition {} -> {}: {:?} {} ms at {}, tempo x{:.3}, heard from {} ms ({})", o.title, n.title, t.kind, t.duration_ms, t.out_start_ms, t.tempo_ratio, t.in_heard_ms(), t.reason),
         };
         let repeated = p.is_none() && self.none.as_ref().is_some_and(|(id, s)| s.is_none() && id == outgoing_id);
         if !repeated {

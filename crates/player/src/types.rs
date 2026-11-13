@@ -537,6 +537,12 @@ pub struct TransitionPlan {
 }
 
 impl TransitionPlan {
+    /// Where the incoming track is first heard, ms into the transition: the loudness match glides from here.
+    pub fn in_heard_ms(&self) -> i64 {
+        let start = if self.in_fade_start_ms < 0 || self.in_fade_end_ms < self.in_fade_start_ms { 0 } else { self.in_fade_start_ms };
+        start.max(self.in_delay_ms).clamp(0, self.duration_ms.max(0))
+    }
+
     /// The same transition over `duration_ms`: every relative time scaled to it. An incoming loop is
     /// whole bars, so it is not kept, and a bend becomes a ramp after it.
     pub fn squeeze(&mut self, duration_ms: i64) {

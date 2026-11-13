@@ -38,11 +38,12 @@ pub(crate) fn crossover_ms(p: &TransitionPlan) -> i64 {
     let out_fade = span_ms(p.out_fade_start_ms, p.out_fade_end_ms, len);
     let in_fade = span_ms(p.in_fade_start_ms, p.in_fade_end_ms, len);
     let out_gain = db_to_gain((p.out_gain_db as f64).clamp(-24.0, 12.0));
-    let gap = trim(len, p.in_gain_db as f64);
+    let glide = trim_span(p);
+    let gap = trim(glide.1 - glide.0, p.in_gain_db as f64);
     let progress = |(start, end): (f64, f64), t: f64| if t <= start { 0.0 } else if t >= end { 1.0 } else { (t - start) / (end - start) };
     let mut t = 0.0;
     while t < len {
-        let (trim_out, trim_in) = trims(gap, progress((0.0, len), t));
+        let (trim_out, trim_in) = trims(gap, progress(glide, t));
         let g_out = fade(p.fade_curve, progress(out_fade, t), true) * out_gain * db_to_gain(trim_out);
         let g_in = fade(p.fade_curve, progress(in_fade, t), false) * db_to_gain(trim_in);
         if g_in >= g_out {
@@ -62,9 +63,15 @@ fn span_ms(a: i64, b: i64, len: f64) -> (f64, f64) {
     }
 }
 
-/// The loudness gap a transition of `len_ms` can carry, dB: the incoming song starts turned by it to the
-/// outgoing one's level, and the two meet as the level glides to the incoming song's own over the whole
-/// transition, no faster than [`TRIM_GLIDE_MS_PER_DB`]. At its end the incoming song is at its own level.
+/// Where the loudness match glides, ms: from where the incoming song is first heard to the transition's end. Before
+/// it the outgoing song plays alone, at its own level.
+fn trim_span(p: &TransitionPlan) -> (f64, f64) {
+    (p.in_heard_ms() as f64, p.duration_ms.max(0) as f64)
+}
+
+/// The loudness gap a glide of `len_ms` ([`trim_span`]) can carry, dB: the incoming song starts turned by it to the
+/// outgoing one's level, and the two meet as the level glides to the incoming song's own, no faster than
+/// [`TRIM_GLIDE_MS_PER_DB`]. At the transition's end the incoming song is at its own level.
 fn trim(len_ms: f64, db: f64) -> f64 {
     let most = len_ms.max(0.0) / TRIM_GLIDE_MS_PER_DB;
     db.clamp(-12.0, 12.0).clamp(-most, most)
@@ -530,8 +537,9 @@ pub struct Mixer {
     out_fade: Span,
     in_fade: Span,
     out_gain: f64,
-    /// The loudness gap the two songs meet across ([`trim`]).
+    /// The loudness gap the two songs meet across ([`trim`]), and where.
     gap_db: f64,
+    trim_span: Span,
     swap: Option<Span>,
     /// The kicks are beat-matched, so the lows of both decks land together and add up.
     matched: bool,
@@ -586,6 +594,7 @@ impl Mixer {
             in_fade: Span::default(),
             out_gain: 1.0,
             gap_db: 0.0,
+            trim_span: Span::default(),
             swap: None,
             matched: false,
             low_shelf: Shelf::default(),
@@ -670,7 +679,9 @@ impl Mixer {
         self.out_fade = span(p.out_fade_start_ms, p.out_fade_end_ms);
         self.in_fade = span(p.in_fade_start_ms, p.in_fade_end_ms);
         self.out_gain = db_to_gain((p.out_gain_db as f64).clamp(-24.0, 12.0));
-        self.gap_db = trim(p.duration_ms as f64, p.in_gain_db as f64);
+        let glide = trim_span(p);
+        self.gap_db = trim(glide.1 - glide.0, p.in_gain_db as f64);
+        self.trim_span = Span { start: frames(glide.0), end: frames(glide.1) };
         self.swap = p.bass_swap.map(|s| from(s.at_ms, s.len_ms));
         self.matched = p.kind == TransitionKind::BeatMatched;
         let cut = p.bass_swap.map_or(180.0, |s| s.cut_hz as f64);
@@ -812,7 +823,7 @@ impl Mixer {
         let (out, inc) = (fade(self.curve, self.out_fade.progress(p), true), fade(self.curve, self.in_fade.progress(p), false));
         let (heard_out, heard_in) = self.meter.as_ref().map_or((1.0, 1.0), Meter::shares);
         let held = 1.0 / (out * out * heard_out + inc * inc * heard_in).sqrt().max(1.0);
-        let (trim_out, trim_in) = trims(self.gap_db, p as f64 / self.len.max(1) as f64);
+        let (trim_out, trim_in) = trims(self.gap_db, self.trim_span.progress(p));
         // Beat-matched kicks land together and add up, so their lows change hands at equal gain. Other lows add in
         // power: they change hands at equal power, held to the power of one song under the fades.
         let swapped = self.swap.map_or(0.0, |s| raised_cos(s.progress(p)));
@@ -867,7 +878,7 @@ impl Mixer {
         let (rs, rt) = self.reverb.as_ref().map_or((None, none), |r| (Some(r.send), r.tail));
         let ramp = self.send_ramp;
         let ramps = |w: Option<Span>| w.map_or([0; 4], |w| [w.start, w.start + ramp, w.end.saturating_sub(ramp), w.end]);
-        let bends = [o.start, o.start + 1, o.end, i.start, i.start + 1, i.end, s.start, s.end, d.start, d.end, h.start, h.end, m.start, m.end, et.start, et.end, ed.start, ed.end, rt.start, rt.end];
+        let bends = [o.start, o.start + 1, o.end, i.start, i.start + 1, i.end, self.trim_span.start, s.start, s.end, d.start, d.end, h.start, h.end, m.start, m.end, et.start, et.end, ed.start, ed.end, rt.start, rt.end];
         let end = bends.into_iter().chain(ramps(es)).chain(ramps(rs)).filter(|&b| b > p).fold((p + FADE_RUN).min(self.len), u64::min);
         FadeRun { start: p, end, from: self.fades_at(p), to: self.fades_at(end) }
     }
@@ -1198,9 +1209,16 @@ mod tests {
             assert!(inc.last().unwrap().abs() < 1e-3, "{ms} ms, {db} dB: at its own level after: {inc:.2?}");
             let mid = inc.len() / 2;
             assert!((inc[mid] - gap * (1.0 - (mid as f64 * 100.0) / ms as f64)).abs() < 0.05, "{ms} ms, {db} dB: evenly: {inc:.2?}");
-            let out = trim_levels(ms, db, false);
+            // Alone, the outgoing song keeps its own level; once the incoming one is heard, it turns towards it.
+            let alone = trim_levels(ms, db, false);
+            assert!(alone.iter().all(|l| l.abs() < 0.01 || l.is_infinite()), "{ms} ms, {db} dB: the outgoing song alone turned: {alone:.2?}");
+            let p = TransitionPlan { duration_ms: ms, in_gain_db: db, out_fade_start_ms: ms, out_fade_end_ms: ms, in_fade_start_ms: ms / 2, in_fade_end_ms: ms / 2, ..plan() };
+            let n = (ms as f64 / 1000.0 * RATE) as usize;
+            let out: Vec<f64> = mix(&p, &vec![1f32; n], &vec![0f32; n]).iter().skip(1).step_by(4800).map(|v| 20.0 * (*v as f64).log10()).collect();
+            let half = gap.abs().min(ms as f64 / 2.0 / TRIM_GLIDE_MS_PER_DB).copysign(gap);
             let k = (ms / 100 - 1) as usize;
-            assert!(out[0].abs() < 0.01 && (out[k] + gap * k as f64 * 100.0 / ms as f64).abs() < 0.05, "{ms} ms, {db} dB: the outgoing song turned towards the incoming one: {out:.2?}");
+            let held = 20.0 * std::f64::consts::FRAC_1_SQRT_2.log10();
+            assert!(out[0].abs() < 0.01 && (out[k] - held + half * (k as f64 * 100.0 - ms as f64 / 2.0) / (ms as f64 / 2.0)).abs() < 0.05, "{ms} ms, {db} dB: the outgoing song turned towards the incoming one once it is heard: {out:.2?}");
         }
     }
 
