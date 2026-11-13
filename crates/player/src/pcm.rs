@@ -147,6 +147,11 @@ impl ByteStretcher {
         }
     }
 
+    /// [`Stretcher::along`].
+    pub fn along(&mut self, knots: &[(u64, f64)]) {
+        self.s.along(knots);
+    }
+
     /// [`Stretcher::entry_frames`].
     pub fn entry_frames(&self) -> usize {
         self.s.entry_frames()

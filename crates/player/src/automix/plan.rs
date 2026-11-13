@@ -88,6 +88,7 @@ fn blank(kind: TransitionKind, out_start: i64, in_start: i64, duration: i64, rea
         out_glide: None,
         brake: None,
         in_rates: Vec::new(),
+        out_rates: Vec::new(),
         reason,
     }
 }
@@ -1336,7 +1337,9 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     if let Some(b) = p.bend {
         bits.push(format!("tempo bending over the last {:.0} bars", k.profile_bars(b)));
     }
-    if warped {
+    if !p.out_rates.is_empty() {
+        bits.push("both on one beat clock".to_string());
+    } else if warped {
         bits.push("locked beat by beat".to_string());
     }
     if k.far {
@@ -2306,6 +2309,40 @@ mod tests {
         let beat = 500.0;
         let (k0, k1) = (((from - 120.0) / beat).ceil() as i64, ((to - 120.0) / beat).floor() as i64);
         (k0..=k1).map(|k| crate::types::Beat { at_ms: (120.0 + k as f64 * beat + drift(k)).round() as i64, downbeat: k % 4 == 0, sure: true }).collect()
+    }
+
+    /// A band pushing and pulling 35 ms around its tempo every six bars (its tempo swinging 1.8 % either way, faster than
+    /// one song may change speed to follow) into a steady song: both go onto one beat clock, each taking half the
+    /// swing, so every pair of beats meets within 20 ms and the incoming song swings well under the band's own swing.
+    #[test]
+    fn a_wobbling_band_and_the_next_song_share_one_clock() {
+        let a = TrackAnalysis { outro_beats: beats_at(178_000.0, 238_000.0, |k| 35.0 * (std::f64::consts::TAU * k as f64 / 24.0).sin()), ..track(120.0) };
+        let b = TrackAnalysis { intro_beats: beats_at(100.0, 60_000.0, |_| 0.0), ..track(120.0) };
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        assert!(p.reason.contains("both on one beat clock") && !p.out_rates.is_empty(), "{}", p.reason);
+        // Where an outgoing song time is heard: its rates' song time inverted.
+        let out_wall = |song: f64| {
+            let (mut lo, mut hi) = (0.0, 2.0 * song + 1.0);
+            for _ in 0..48 {
+                let mid = (lo + hi) / 2.0;
+                if p.out_song_ms(mid) < song { lo = mid } else { hi = mid }
+            }
+            (lo + hi) / 2.0
+        };
+        let mut paired = 0;
+        for x in &a.outro_beats {
+            let at = out_wall((x.at_ms - p.out_start_ms) as f64);
+            if !(0.0..=p.duration_ms as f64).contains(&at) {
+                continue;
+            }
+            let partner = b.intro_beats.iter().map(|y| (p.wall_of_in_song((y.at_ms - p.in_start_ms) as f64) - at).abs()).fold(f64::MAX, f64::min);
+            assert!(partner <= 20.0, "the beat at {} ms is {partner:.1} ms from its partner", x.at_ms);
+            paired += 1;
+        }
+        assert!(paired >= 16, "{paired} beats in the mix");
+        let swing = p.in_rates.iter().filter(|r| r.at_ms <= p.duration_ms as f64).map(|r| (r.speed / p.tempo_ratio - 1.0).abs()).fold(0.0, f64::max);
+        let band = 35.0 * std::f64::consts::TAU / 24.0 / 500.0;
+        assert!(swing <= 0.7 * band, "the incoming song swings {:.2} %, the band {:.2} %", swing * 100.0, band * 100.0);
     }
 
     /// An ending whose band drifts too far for one grid (its own refused) but slowly, beat to beat, is still mixed:

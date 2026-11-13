@@ -241,6 +241,16 @@ impl Stretcher {
         self.knots.extend(knots.iter().take(MAX_KNOTS).map(|&(at, r)| (at, bounded(r))));
     }
 
+    /// After a [`Stretcher::glide`]: follows `knots` (output frame, ratio; at most [`MAX_KNOTS`]) in place of its ramp,
+    /// the last one's ratio after. Allocates nothing.
+    pub fn along(&mut self, knots: &[(u64, f64)]) {
+        self.knots.clear();
+        self.knots.extend(knots.iter().take(MAX_KNOTS).map(|&(at, r)| (at, bounded(r))));
+        if let Some(&(_, r)) = self.knots.last() {
+            self.to = r;
+        }
+    }
+
     /// Feeds the input just before a [`Stretcher::glide`], oldest first, as its history; at least
     /// [`Stretcher::latency_frames`] of it warm the engine fully.
     pub fn warm(&mut self, input: &[f32]) {
