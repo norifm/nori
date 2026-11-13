@@ -344,13 +344,20 @@ fn tab_line(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     put(f, Paragraph::new(Line::from(spans)), Rect { x: area.x + area.width - w - 1, width: w, ..area });
 }
 
-/// The keys of what has them, or the last note while it shows. A click shows every key.
+/// The keys of what has them, or the last note while it shows, and at the end what the downloads are
+/// doing. A click shows every key.
 fn foot(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     if area.height == 0 {
         return;
     }
-    let r = Rect { x: area.x + 1, width: area.width.saturating_sub(2), ..area };
+    let mut r = Rect { x: area.x + 1, width: area.width.saturating_sub(2), ..area };
     app.hits.push((r, Hit::Button(Button::Help)));
+    if let Some(w) = &app.work {
+        let line = work_line(w, t);
+        let width = (line.width() as u16).min(r.width);
+        put(f, Paragraph::new(line), Rect { x: r.x + r.width - width, width, ..r });
+        r.width = r.width.saturating_sub(width + 2);
+    }
     if let Some((msg, error, _)) = &app.note {
         let style = if *error { Style::default().fg(Color::LightRed) } else { Style::default().fg(t.ink) };
         return text(f, r, msg, style);
@@ -366,6 +373,23 @@ fn foot(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let line = Line::from(spans);
     let line = if line.width() > r.width as usize { spread(line.spans, Span::raw(""), r.width as usize) } else { line };
     put(f, Paragraph::new(line), r);
+}
+
+/// What the downloads are doing, a bar of how far, and what is left: the bytes, then the work after them.
+fn work_line(w: &nori_core::transfers::Progress, t: &Theme) -> Line<'static> {
+    use nori_core::transfers::Progress;
+    const BAR: usize = 10;
+    let (what, left) = crate::text::progress(w);
+    let done = match w {
+        Progress::Fetching(n) => n.permille as f32 / 1000.0,
+        Progress::Processing { work, after_fetching } => (*after_fetching as u8 as f32 + work.permille as f32 / 1000.0) / (1.0 + *after_fetching as u8 as f32),
+    };
+    let filled = ((done.clamp(0.0, 1.0) * BAR as f32).round() as usize).min(BAR);
+    let mut spans = vec![Span::styled(format!("{what} "), Style::default().fg(t.ink)), Span::styled("━".repeat(filled), Style::default().fg(t.ink)), Span::styled("─".repeat(BAR - filled), t.dim())];
+    if !left.is_empty() {
+        spans.push(Span::styled(format!(" {left}"), t.dim()));
+    }
+    Line::from(spans)
 }
 
 /// The keys the line along the bottom shows for what has them.

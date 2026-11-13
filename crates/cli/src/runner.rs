@@ -617,6 +617,10 @@ impl Runner {
                 let _ = (plugin, url);
                 return;
             }
+            Msg::IdentityChosen(Ok(())) => {
+                app.handle(m);
+                return self.reopen(app);
+            }
             Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => {
                 #[cfg(feature = "sign-in-window")]
                 {
@@ -942,6 +946,18 @@ impl Runner {
                 settings.put(prefs);
                 return prefs_changed(app);
             }
+            Cmd::RenameProfile(id, name) => {
+                nori_host::profile_renamed(&self.root.app.settings, &id, &name);
+                return prefs_changed(app);
+            }
+            Cmd::ChooseIdentity(index) => {
+                let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
+                let h = (**s).clone();
+                nori_host::spawn("nori-identity", move || {
+                    let _ = tx.send(Msg::IdentityChosen(h.choose_identity(index).map_err(|e| crate::text::net_error(&e))));
+                });
+                return;
+            }
             Cmd::SwitchServer(id) => {
                 let settings = &self.root.app.settings;
                 let Some(p) = nori_host::profile_picked(settings, &id) else { return };
@@ -1134,7 +1150,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
         }
     }
 

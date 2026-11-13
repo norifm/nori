@@ -420,6 +420,59 @@ pub fn clock(ms: i64) -> String {
     numbers::clock(ms / 1000, false)
 }
 
+pub const RENAME_PROFILE: &str = "Rename profile";
+
+/// What the settings call those an account may act as.
+pub fn identities_title(kind: nori_core::providers::IdentityKind) -> &'static str {
+    match kind {
+        nori_core::providers::IdentityKind::Channel => "Channel",
+    }
+}
+
+/// One the account may act as: its name, and what tells it apart.
+pub fn identity_line(i: &nori_core::providers::Identity) -> String {
+    match &i.detail {
+        Some(d) if !d.is_empty() => format!("{} · {d}", i.name),
+        _ => i.name.clone(),
+    }
+}
+
+pub fn identity_failed(e: &str) -> String {
+    format!("Could not switch: {e}")
+}
+
+/// What the downloads are doing, for the line along the bottom: what works on what, and what is left.
+pub fn progress(p: &nori_core::transfers::Progress) -> (String, String) {
+    use nori_core::transfers::{NoticeKind, Progress};
+    let left = |s: i64| match s {
+        ..0 => String::new(),
+        0..60 => format!("{s} s left"),
+        _ => format!("{} left", numbers::clock(s, false)),
+    };
+    match p {
+        Progress::Fetching(n) => {
+            let what = match n.kind {
+                NoticeKind::Waiting => format!("Waiting for a network · {} of {}", n.position, n.total),
+                NoticeKind::OneNamed => format!("Downloading “{}”", n.current),
+                NoticeKind::One => "Downloading 1 song".into(),
+                NoticeKind::Many if !n.label.is_empty() => format!("Downloading “{}” · {} of {}", n.label, n.position, n.total),
+                NoticeKind::Many => format!("Downloading {} of {}", n.position, n.total),
+            };
+            (what, left(n.eta_s))
+        }
+        Progress::Processing { work: w, .. } => {
+            let what = if w.lyrics > 0 {
+                format!("Finding lyrics for {}", count(w.lyrics as u64, "song", "songs"))
+            } else if w.analysing > 0 {
+                format!("Analyzing {}", count(w.analysing as u64, "song", "songs"))
+            } else {
+                format!("Detecting beats for {}", count(w.beats as u64, "song", "songs"))
+            };
+            (what, left(w.eta_s))
+        }
+    }
+}
+
 /// "1 song", "12 songs".
 pub fn count(n: u64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
@@ -692,7 +745,7 @@ pub mod hints {
     pub const PLUGIN_BROWSER: Hints = &[("enter", "open"), ("/", "search"), ("← →", "repo"), ("esc", "back"), ("?", "keys")];
     pub const PLUGIN_REPOS: Hints = &[("enter", "add"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];
-    pub const PROFILE_ROW: Hints = &[("enter", "switch"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
+    pub const PROFILE_ROW: Hints = &[("enter", "switch"), ("e", "rename"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
     pub const EQUALIZER: Hints = &[("← →", "choose"), ("↑ ↓", "change"), ("enter", "switch"), ("d", "remove a band"), ("?", "keys")];
     pub const DOWNLOADS: Hints = &[("enter", "play"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const PLAYING: Hints = &[("space", "play"), ("n p", "next, previous"), ("m", "menu"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
@@ -1218,6 +1271,20 @@ pub fn pair_failed(e: nori_core::remote::PairError, name: Option<&str>) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn progress_names_the_song_then_the_work_after_it() {
+        use nori_core::transfers::{Notice, NoticeKind, Processing, Progress};
+        let fetching = |n: Notice| progress(&Progress::Fetching(n));
+        let one = Notice { kind: NoticeKind::OneNamed, position: 1, total: 1, current: "Blue".into(), eta_s: 90, ..Default::default() };
+        assert_eq!(fetching(one), ("Downloading “Blue”".into(), "1:30 left".into()));
+        let album = Notice { kind: NoticeKind::Many, position: 3, total: 12, label: "Kind".into(), eta_s: -1, ..Default::default() };
+        assert_eq!(fetching(album), ("Downloading “Kind” · 3 of 12".into(), String::new()));
+        let waiting = Notice { kind: NoticeKind::Waiting, position: 0, total: 4, eta_s: -1, ..Default::default() };
+        assert_eq!(fetching(waiting), ("Waiting for a network · 0 of 4".into(), String::new()));
+        let work = Processing { lyrics: 0, analysing: 1, beats: 2, eta_s: 12, permille: 400 };
+        assert_eq!(progress(&Progress::Processing { work, after_fetching: true }), ("Analyzing 1 song".into(), "12 s left".into()));
+    }
 
     #[test]
     fn words() {

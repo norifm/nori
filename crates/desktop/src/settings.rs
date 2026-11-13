@@ -163,6 +163,8 @@ pub enum Act {
     /// A server row's Edit: the account sheet of the profile in use where its provider has one to sign
     /// in to, else the profile in the sign-in form.
     Edit(String),
+    /// A server row's Rename: its name asked for.
+    Rename(String),
     /// Switch to the server with this id.
     Server(String),
     Chore(Chore),
@@ -180,6 +182,9 @@ impl Act {
         }
         if let Some(id) = name.strip_prefix("edit:") {
             return Some(Act::Edit(id.to_string()));
+        }
+        if let Some(id) = name.strip_prefix("rename:") {
+            return Some(Act::Rename(id.to_string()));
         }
         if let Some((what, path)) = name.split_once(':').filter(|(what, _)| matches!(*what, BACKUP_PASSWORD | RESTORE_PASSWORD)) {
             return Some(Act::BackupPassword { restore: what == RESTORE_PASSWORD, path: path.to_string() });
@@ -241,6 +246,8 @@ struct Row {
     letter: String,
     /// The glyph the tile holds instead: nori's own provider's server, or a profile's face.
     glyph: MarkGlyph,
+    /// A profile row's account picture.
+    picture: slint::Image,
 }
 
 /// The profile whose rows are kept under `profile` (`server_db`), as the server list names it.
@@ -548,9 +555,16 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             let mark = profile_mark(plugged, sv, &title);
             // A jam guest switches between the profiles; changing them is not its to do.
             let edits = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
+            let mut menu = Vec::new();
+            if edits {
+                menu.push(("Rename".to_string(), format!("rename:{}", sv.id)));
+                if editable(kinds, sv, active) {
+                    menu.push(("Edit".to_string(), format!("edit:{}", sv.id)));
+                }
+            }
             Row {
-                kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if edits { "Edit".into() } else { "".into() }, rank: index as i32,
-                icon: mark.icon, letter: mark.letter.into(), glyph: mark.glyph, ..Default::default()
+                kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, options: menu, rank: index as i32,
+                icon: mark.icon, letter: mark.letter.into(), glyph: mark.glyph, picture: mark.picture, ..Default::default()
             }
         }
         RowItem::MusicFolder { index, on, tapped } => {
@@ -568,6 +582,13 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: r.enabled, button: button.into(), rank: index as i32, keyed: src.asks_key_on_enable, ..Default::default() }
         }
     })
+}
+
+/// Whether profile `sv` has an Edit page: a field besides its name (renamed from its menu), or, in use, an
+/// account to sign in to.
+fn editable(kinds: &Kinds, sv: &SavedServer, active: bool) -> bool {
+    use nori_core::providers::FormField;
+    kinds.providers().into_iter().find(|i| i.kind == sv.kind).is_some_and(|i| i.fields.iter().any(|f| !f.advanced && f.what != FormField::Name) || (active && !i.sign_in.is_empty()))
 }
 
 /// Display name and description of a lyrics service by core id.
@@ -701,9 +722,11 @@ fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Tod
                 breakdown: ModelRc::new(VecModel::from(r.breakdown.into_iter().map(SharedString::from).collect::<Vec<_>>())),
                 line: r.line.into(),
                 control: r.control.into(),
+                values: ModelRc::new(VecModel::from(r.options.iter().map(|o| SharedString::from(o.1.as_str())).collect::<Vec<_>>())),
                 icon: r.icon,
                 glyph: r.glyph,
                 letter: r.letter.into(),
+                picture: r.picture,
                 first: i == 0 || !plated[i - 1],
                 last: i + 1 == n || !plated[i + 1],
             });
@@ -758,6 +781,8 @@ pub struct Plugged {
     pub choosing: bool,
     /// The switch over every plugin (the `pluginsOff` setting) is on.
     pub all_off: bool,
+    /// The account pictures decoded (the profiles', their channels'), by their address.
+    pub pictures: HashMap<String, slint::Image>,
 }
 
 impl Plugged {
@@ -1054,7 +1079,10 @@ fn plugin_line(p: &Plugged, id: &str, name: &str, about: Option<&str>, line: Str
 /// tile (the server glyph for nori's own provider), or a face.
 pub fn profile_mark(p: &Plugged, sv: &SavedServer, label: &str) -> Mark {
     let glyph = match sv.icon {
-        ProfileIcon::Letter => return Mark { letter: nori_core::settings::profile_letter(sv.clone(), label.into()).into(), ..Default::default() },
+        ProfileIcon::Letter => {
+            let picture = sv.picture.as_ref().and_then(|a| p.pictures.get(a)).cloned().unwrap_or_default();
+            return Mark { letter: nori_core::settings::profile_letter(sv.clone(), label.into()).into(), picture, ..Default::default() };
+        }
         ProfileIcon::Provider => match &sv.kind {
             ServerKind::Plugin { id } => {
                 let (icon, letter) = p.tile(id, label);

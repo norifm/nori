@@ -460,6 +460,81 @@ enum OutputLook {
     }
 }
 
+/// What the downloads are doing, as the Downloads page shows it under its title: the words, then a bar of
+/// the stages (the bytes, then the work on the saved songs), a 22 % ink track with an ink fill.
+final class WorkCard: UIView {
+    private let title = label(Fonts.font(15, .semibold, .body), Theme.label)
+    private let line = label(Fonts.font(13, .regular, .footnote), Theme.secondary)
+    private let bar = UIStackView()
+
+    init() {
+        super.init(frame: .zero)
+        bar.axis = .horizontal
+        bar.spacing = 3
+        bar.distribution = .fillEqually
+        let column = UIStackView(arrangedSubviews: [title, line, bar])
+        column.axis = .vertical
+        column.spacing = 4
+        column.setCustomSpacing(10, after: line)
+        let card = GroupCard([column])
+        card.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(card)
+        column.isLayoutMarginsRelativeArrangement = true
+        column.layoutMargins = UIEdgeInsets(top: 12, left: Space.groupInset, bottom: 14, right: Space.groupInset)
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: trailingAnchor),
+            card.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            bar.heightAnchor.constraint(equalToConstant: 3),
+        ])
+        isAccessibilityElement = true
+        accessibilityTraits = .updatesFrequently
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// How many lines of words it shows.
+    var lines: Int { line.isHidden ? 1 : 2 }
+
+    func show(_ w: [String: Any]) {
+        let words = Say.work(w)
+        title.text = words.title
+        line.text = words.line
+        line.isHidden = words.line.isEmpty
+        accessibilityLabel = [words.title, words.line].filter { !$0.isEmpty }.joined(separator: ", ")
+        let stages = max(1, w["stages"] as? Int ?? 1), at = w["at"] as? Int ?? 0
+        let done = CGFloat(min(max(w["permille"] as? Int ?? 0, 0), 1000)) / 1000
+        while bar.arrangedSubviews.count < stages { bar.addArrangedSubview(Stage()) }
+        while bar.arrangedSubviews.count > stages { bar.arrangedSubviews.last?.removeFromSuperview() }
+        for (i, v) in bar.arrangedSubviews.enumerated() {
+            (v as? Stage)?.share = i < at ? 1 : i == at ? done : 0
+        }
+    }
+
+    /// One stage of the bar: its track, and how much of it is done.
+    private final class Stage: UIView {
+        private let fill = UIView()
+        var share: CGFloat = 0 { didSet { setNeedsLayout() } }
+
+        init() {
+            super.init(frame: .zero)
+            backgroundColor = Theme.label.withAlphaComponent(0.22)
+            fill.backgroundColor = Theme.label
+            layer.cornerRadius = 1.5
+            clipsToBounds = true
+            addSubview(fill)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            fill.frame = CGRect(x: 0, y: 0, width: bounds.width * share, height: bounds.height)
+        }
+    }
+}
+
 /// Downloads, with the line saying they run only while the app is open or playing.
 final class DownloadsPage: PageController {
     init() { super.init(kind: NORI_PAGE_DOWNLOADS, title: Say.downloads) }
@@ -481,8 +556,19 @@ final class DownloadsPage: PageController {
     /// A row is swiped open: reading again would reload the table and close it, so it waits.
     private var swiped = false
 
+    /// What the downloads are doing, under the title while they do something.
+    private let card = WorkCard()
+
     override func took(_ a: PageAnswer, appending: Bool) {
         super.took(a, appending: appending)
+        if let w = a.raw["work"] as? [String: Any] {
+            let lines = card.lines
+            card.show(w)
+            // Laid out again as it comes, or grows or shrinks by a line.
+            if underName !== card || card.lines != lines { underName = card }
+        } else if underName != nil {
+            underName = nil
+        }
         stopAgain()
         guard a.raw["running"] as? Bool == true, view.window != nil,
               UIApplication.shared.applicationState == .active else { return }

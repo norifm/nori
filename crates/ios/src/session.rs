@@ -152,8 +152,9 @@ fn deliver_one(said: Said) {
             with_session(|s| crate::pages::warm_around(s, *index));
         }
         Said::JamEnded { host } => return crate::jam::left(Some(host.clone())),
-        // The state events say what these do to the music; the app draws nothing of them.
-        Said::Engine(Event::LongPause | Event::Focus(_)) => return,
+        // The state events say what these do to the music; the app draws nothing of them. The Downloads
+        // page follows the work while it shows, and the iPod draws no account pictures.
+        Said::Engine(Event::LongPause | Event::Focus(_)) | Said::Working | Said::Pictured => return,
         _ => {}
     }
     emit(&said);
@@ -257,6 +258,8 @@ fn pack(said: &Said) -> Packed {
             p.ms = (v * 1000.0).round() as i64;
         }
         Said::Starred(_) => p.kind = REPORT_STARRED,
+        // Dropped before (deliver_one).
+        Said::Working | Said::Pictured => {}
         Said::Curve(n) => {
             p.kind = REPORT_CURVE;
             let (output, curve, offer) = match n {

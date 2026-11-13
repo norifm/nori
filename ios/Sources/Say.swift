@@ -100,6 +100,30 @@ enum Say {
         return bits.joined(separator: " · ")
     }
 
+    /// The Downloads page's card (`work_json`): what works on what as its title, and the line under it.
+    static func work(_ w: [String: Any]) -> (title: String, line: String) {
+        let n = { (key: String) in w[key] as? Int ?? 0 }
+        let text = { (key: String) in w[key] as? String ?? "" }
+        let left = n("eta") < 0 ? "" : n("eta") < 60 ? "\(n("eta")) s left" : Fmt.clock(ms: n("eta") * 1000) + " left"
+        let join = { (bits: [String]) in bits.filter { !$0.isEmpty }.joined(separator: " · ") }
+        guard text("stage") == "download" else {
+            let title = n("lyrics") > 0 ? "Finding lyrics for \(songs(n("lyrics")))…"
+                : n("analysing") > 0 ? "Analyzing \(songs(n("analysing")))…" : "Detecting beats for \(songs(n("beats")))…"
+            let analysing = n("lyrics") > 0 && n("analysing") > 0 ? "\(n("analysing")) to analyze" : ""
+            let beats = (n("lyrics") > 0 || n("analysing") > 0) && n("beats") > 0 ? "\(n("beats")) for beat detection" : ""
+            return (title, join([analysing, beats, left]))
+        }
+        let of = "\(n("position")) of \(n("total"))"
+        switch n("notice") {
+        case 0: return ("Waiting for a network", of)
+        case 1: return ("Downloading “\(text("song"))”", join([text("artist"), left]))
+        case 2: return ("Downloading 1 song", join([text("song"), text("artist"), left]))
+        default:
+            guard !text("album").isEmpty else { return ("Downloading \(of)", join([text("song"), left])) }
+            return ("Downloading “\(text("album"))”", join([of, text("song"), left]))
+        }
+    }
+
     /// A built-in equalizer curve by its `PresetKind` code.
     static func preset(_ code: Int) -> String {
         ["Flat", "Bass boost", "Bass cut", "Treble boost", "Treble cut", "Vocal boost", "Loudness",
@@ -298,6 +322,9 @@ enum Say {
     static func forgetServer(_ name: String) -> String { "Forget \(name)?" }
     static let forgetServerNote = "Its downloads stay on this iPod until you add it again."
     static let forget = "Forget"
+    static let rename = "Rename"
+    static let renameServer = "Rename server"
+    static let save = "Save"
     static let user = "User"
     static let password = "Password"
     static let connect = "Connect"

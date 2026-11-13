@@ -177,6 +177,10 @@ pub enum Cmd {
     Cover(String),
     Login(Box<SavedServer>),
     SwitchServer(String),
+    /// Saved profile `0` renamed `1`; blank, it is called after its provider again.
+    RenameProfile(String, String),
+    /// The account acts as its identity at this place from now on.
+    ChooseIdentity(u32),
     /// Moves the music to this device, or here (None).
     Pick(Option<String>),
     /// The music goes to this speaker, through the device reaching it.
@@ -1088,6 +1092,10 @@ pub enum Target {
     BackupPassword { restore: bool, path: String },
     /// The sleep timer's choices, as offered.
     Sleep(Vec<nori_core::menus::SleepChoice>),
+    /// Saved profile `0`'s new name.
+    ProfileName(String),
+    /// Which of the account's identities it acts as, by its place among them.
+    Identity,
 }
 
 impl Target {
@@ -1102,6 +1110,8 @@ impl Target {
                 Some(Cmd::AddToPlaylist { id: c.playlist.id.clone(), songs: c.adds.clone() })
             }
             Target::Sleep(choices) => value.parse().ok().and_then(|i: usize| choices.get(i).copied()).map(Cmd::Sleep),
+            Target::ProfileName(id) => Some(Cmd::RenameProfile(id, value)),
+            Target::Identity => value.parse().ok().map(Cmd::ChooseIdentity),
             Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
             Target::Plugin { plugin, row, kind } => {
                 use nori_plugins::{RowKind, Value};
@@ -1266,6 +1276,9 @@ pub struct App {
     pub downloads: Load<Box<Downloads>>,
     pub downloads_sel: Sel,
     pub downloads_at: Option<Instant>,
+    /// What the downloads are doing, for the line along the bottom, and when to read it again.
+    pub work: Option<Box<nori_core::transfers::Progress>>,
+    pub work_at: Option<Instant>,
     pub settings: SettingsView,
     pub eq_sel: Sel,
     pub login: Login,
@@ -1743,6 +1756,7 @@ impl App {
             Msg::Note { text, error } => self.say(text, error),
             Msg::Cast(c) => self.devices.cast = c,
             // A page or list on screen, read again.
+            Msg::Reload(Req::Work) => self.cmds.push(Cmd::Load(Req::Work)),
             Msg::Reload(req) => {
                 let playlists = req == Req::Playlists;
                 if playlists && self.library.playlists.ready().is_some() {
@@ -1804,6 +1818,9 @@ impl App {
                 }
                 _ => self.dirty = false,
             },
+            // The runner opens the profile again as the identity chosen.
+            Msg::IdentityChosen(Ok(())) => {}
+            Msg::IdentityChosen(Err(e)) => self.say(crate::text::identity_failed(&e), true),
             // The runner opens these, and the profiles a jam is joined and left with.
             Msg::SignedIn(r) => match &mut self.overlay {
                 Some(Overlay::Account { flow, .. }) => {
@@ -2033,6 +2050,10 @@ impl App {
                 _ => self.cmds.push(Cmd::Load(Req::Downloads)),
             },
             (Req::Downloads | Req::DownloadProgress, Err(e)) => self.downloads = Load::Failed(e),
+            (Req::Work, Ok(Data::Work(w))) => {
+                self.work_at = w.is_some().then(|| Instant::now() + WORK_EVERY);
+                self.work = w;
+            }
             (Req::Facts, Ok(Data::Facts(f))) => self.settings.set_facts(*f),
             (Req::Facts, Err(_)) => {}
             (Req::Row { row, offset }, r) => {
@@ -2114,6 +2135,9 @@ impl App {
         if let Some(t) = self.downloads_at.filter(|_| self.in_sight) {
             sooner(t);
         }
+        if let Some(t) = self.work_at.filter(|_| self.in_sight) {
+            sooner(t);
+        }
         if let Some((_, since)) = self.flash {
             sooner(since + FLASH);
         }
@@ -2132,6 +2156,10 @@ impl App {
         }
         if self.flash.is_some_and(|(_, since)| since + FLASH <= now) {
             self.flash = None;
+        }
+        if self.work_at.is_some_and(|t| t <= now) {
+            self.work_at = None;
+            self.cmds.push(Cmd::Load(Req::Work));
         }
         if self.downloads_at.is_some_and(|t| t <= now) {
             self.downloads_at = None;
@@ -4196,6 +4224,8 @@ pub enum DownloadRow<'a> {
 
 /// How long a status note shows.
 pub const NOTE_FOR: Duration = Duration::from_secs(4);
+/// How often the line along the bottom reads what the downloads are doing, while they do something.
+const WORK_EVERY: Duration = Duration::from_secs(1);
 
 /// How long a pressed transport button or a stamped seal shows reversed.
 pub const FLASH: Duration = Duration::from_millis(230);

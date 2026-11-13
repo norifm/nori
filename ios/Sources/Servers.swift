@@ -2,11 +2,13 @@ import UIKit
 
 /// Settings → Servers: the saved ones in their order with their marks, the active one ticked where it
 /// stands. A tap switches to it at once; a tap on its mark chooses its icon; holding and dragging one moves
-/// it in the order (the core's `profilePlace`); a swipe forgets it; the last row adds one.
+/// it in the order (the core's `profilePlace`); a swipe renames or forgets it; the last row adds one.
 final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDelegate {
     fileprivate struct Saved {
         let id: String
         let label: String
+        /// The name it was given; empty, it is called after who signs in or its address.
+        let name: String
         let url: String
         let active: Bool
         /// A plugin's profile, which never opens here.
@@ -40,6 +42,7 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
             let saved = rows.map {
                 Saved(id: $0["id"] as? String ?? "",
                       label: ($0["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? Say.provider($0["kind"] as? String ?? "").name,
+                      name: $0["name"] as? String ?? "",
                       url: $0["url"] as? String ?? "", active: $0["active"] as? Bool ?? false,
                       waits: $0["waits"] as? Bool ?? false, kind: $0["kind"] as? String ?? "",
                       icon: ($0["icon"] as? String).flatMap(ProfileIcon.init(rawValue:)) ?? .letter,
@@ -76,7 +79,8 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
             mark.isUserInteractionEnabled = true
             mark.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tappedMark(_:))))
         }
-        cell.accessibilityCustomActions = [SpokenAction(Say.profileIcon) { [weak self] in self?.chooseIcon(s) }]
+        cell.accessibilityCustomActions = [SpokenAction(Say.profileIcon) { [weak self] in self?.chooseIcon(s) },
+                                           SpokenAction(Say.rename) { [weak self] in self?.rename(s) }]
         return cell
     }
 
@@ -104,9 +108,47 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
         indexPath.section == 0
     }
 
-    override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
-        guard editingStyle == .delete, !switching else { return }
+    override func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard indexPath.section == 0, !switching else { return nil }
         let s = servers[indexPath.row]
+        let forget = UIContextualAction(style: .destructive, title: Say.forget) { [weak self] _, _, done in
+            done(false)
+            self?.forget(s)
+        }
+        let rename = UIContextualAction(style: .normal, title: Say.rename) { [weak self] _, _, done in
+            done(true)
+            self?.rename(s)
+        }
+        rename.backgroundColor = Theme.secondary
+        let actions = UISwipeActionsConfiguration(actions: [forget, rename])
+        actions.performsFirstActionWithFullSwipe = false
+        return actions
+    }
+
+    /// Asks for `s`'s new name; left blank, it is called after who signs in or its address again.
+    private func rename(_ s: Saved) {
+        let ask = UIAlertController(title: Say.renameServer, message: nil, preferredStyle: .alert)
+        ask.view.tintColor = .black
+        ask.addTextField { field in
+            field.text = s.name
+            field.placeholder = s.label
+            field.autocapitalizationType = .words
+            field.clearButtonMode = .whileEditing
+            field.returnKeyType = .done
+        }
+        ask.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
+        ask.addAction(UIAlertAction(title: Say.save, style: .default) { [weak self] _ in
+            let name = ask.textFields?.first?.text ?? ""
+            DispatchQueue.global(qos: .userInitiated).async {
+                dataDirectory().path.withCString { d in s.id.withCString { i in name.withCString { nori_ios_rename_server(d, i, $0) } } }
+                DispatchQueue.main.async { self?.load() }
+            }
+        })
+        present(ask, animated: true)
+    }
+
+    private func forget(_ s: Saved) {
+        guard !switching else { return }
         let sheet = Sheet(Say.forgetServer(s.label), Say.forgetServerNote)
         sheet.add(Say.forget, destructive: true) { [weak self] in
             let forget = { dataDirectory().path.withCString { d in s.id.withCString { nori_ios_remove_server(d, $0) } } }

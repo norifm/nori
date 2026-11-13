@@ -34,7 +34,7 @@ use crate::words;
 use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
 use nori_core::providers::AfterAdding;
 
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, SongGo, SongPlace, SongRow, TopBar, View};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -549,6 +549,8 @@ pub struct App {
     taken: Option<Taken>,
     undo_timer: Timer,
     note: Timer,
+    /// Follows what the downloads are doing, each second while they do something.
+    work: Timer,
     search: Timer,
     /// The hosted jam's invite link its QR code was drawn for, and whether a jam is hosted.
     jam_link: String,
@@ -566,6 +568,8 @@ pub struct App {
     jam_controls: Option<nori_core::remote::JamControls>,
     /// The songs this guest asked for that wait for the host.
     asked: HashSet<String>,
+    /// Those the signed-in account may act as, as last read, for the account sheet.
+    identities: Vec<nori_core::providers::Identity>,
 }
 
 /// Wraps `f` to run on the main window while it is open.
@@ -804,6 +808,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             taken: None,
             undo_timer: Timer::default(),
             note: Timer::default(),
+            work: Timer::default(),
             search: Timer::default(),
             jam_link: String::new(),
             jam_hosting: false,
@@ -814,6 +819,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             playback: Playback::Here,
             jam_controls: None,
             asked: HashSet::new(),
+            identities: Vec::new(),
         })
     });
     let h = app.borrow().me.clone();
@@ -965,6 +971,17 @@ fn login_form(kinds: &nori_core::providers::Kinds, info: &nori_core::providers::
         asks_user: asks(FormField::User),
         asks_password: asks(FormField::Password),
     }
+}
+
+/// The progress card for `p`: its words, the song's cover, and its bar (the bytes, then the work after them).
+fn work_card(p: &nori_core::transfers::Progress) -> WorkCard {
+    use nori_core::transfers::Progress;
+    let [title, line, header] = words::progress(p);
+    let (cover, kind, stages, stage, permille) = match p {
+        Progress::Fetching(n) => (n.cover.clone(), 0, 1, 0, n.permille),
+        Progress::Processing { work, after_fetching } => (String::new(), if work.lyrics > 0 { 1 } else { 2 }, 1 + *after_fetching as i32, *after_fetching as i32, work.permille),
+    };
+    WorkCard { title: title.into(), line: line.into(), header: header.into(), cover: cover.into(), kind, stages, stage, permille }
 }
 
 fn wire(ui: &AppWindow, h: &AppHandle) {
@@ -1131,6 +1148,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_sign_in, h, |a, answer| a.sign_in(answer.to_string()));
     on!(ui.on_sign_in_window, h, |a| a.sign_in_window());
     on!(ui.on_sign_out, h, |a| a.sign_out());
+    on!(ui.on_choose_identity, h, |a, i| a.choose_identity(i));
+    on!(ui.on_rename_profile, h, |a, id, name| a.rename_profile(&id, &name));
     on!(ui.on_sign_in_quiet, h, |a| a.sign_in_quiet());
     on!(ui.on_signin_closed, h, |a| {
         a.sign_in_on(SignInEvent::Close);
@@ -2889,7 +2908,9 @@ impl App {
         }
         let ui = self.ui();
         if let Some(info) = providers.iter().find(|i| i.kind == profile.kind).or(providers.first()) {
-            ui.set_login_form(login_form(self.kinds(), info, self.plugged.about_of(&info.kind), nori_core::providers::FirstStep::Form));
+            // A saved profile is renamed from its menu.
+            let form = LoginKind { asks_name: false, ..login_form(self.kinds(), info, self.plugged.about_of(&info.kind), nori_core::providers::FirstStep::Form) };
+            ui.set_login_form(form);
             self.add_on(AddEvent::Edit { kind: info.kind.clone() });
         }
         ui.set_login_adding(false);
@@ -3443,6 +3464,101 @@ impl App {
         ui.set_signin_code_words(words::code_words(&service));
         ui.set_signin_service(service.into());
         ui.set_signin_pasting(false);
+        self.identities.clear();
+        self.identities_shown();
+        if !ended && !profile.user.is_empty() && info.is_some_and(|i| i.identities.is_some()) {
+            self.read_identities();
+        }
+    }
+
+    /// Asks who the signed-in account may act as: [`Msg::Identities`] answers.
+    fn read_identities(&self) {
+        let Some(s) = &self.session else { return };
+        let (h, tx) = ((***s).clone(), self.tx.clone());
+        nori_host::spawn("nori-identities", move || tx.send(Msg::Identities(h.identities().unwrap_or_default())));
+    }
+
+    /// The account sheet's channels, each with its picture once it came, the one the account acts as checked.
+    fn identities_shown(&mut self) {
+        self.want_pictures(self.identities.iter().filter_map(|i| i.picture.clone()).collect());
+        let lines: Vec<IdentityLine> = self
+            .identities
+            .iter()
+            .map(|i| IdentityLine {
+                name: i.name.as_str().into(),
+                detail: i.detail.clone().unwrap_or_default().into(),
+                picture: i.picture.as_ref().and_then(|p| self.plugged.pictures.get(p)).cloned().unwrap_or_default(),
+                letter: i.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default().into(),
+                chosen: i.chosen,
+            })
+            .collect();
+        let kind = self.root.app.settings.current().and_then(|p| p.active_server().map(|s| s.kind.clone()));
+        let kind = kind.and_then(|k| self.kinds().providers().into_iter().find(|i| i.kind == k)).and_then(|i| i.identities);
+        let ui = self.ui();
+        ui.set_signin_identities_title(kind.map_or("", words::identities_title).into());
+        ui.set_signin_identities(ModelRc::new(VecModel::from(lines)));
+    }
+
+    /// The account acts as its `index`th identity from now on, checked at once; the profile opens again as it.
+    fn choose_identity(&mut self, index: i32) {
+        let Some(s) = &self.session else { return };
+        let (h, tx) = ((***s).clone(), self.tx.clone());
+        for (i, id) in self.identities.iter_mut().enumerate() {
+            id.chosen = i as i32 == index;
+        }
+        self.identities_shown();
+        nori_host::spawn("nori-identity", move || tx.send(Msg::IdentityChosen(h.choose_identity(index.max(0) as u32).map_err(|e| words::net_error(&e)))));
+    }
+
+    /// Asks for the account pictures in `addresses` not yet decoded; each shows where it is drawn once it came.
+    fn want_pictures(&mut self, addresses: Vec<String>) {
+        for a in addresses {
+            if !self.plugged.pictures.contains_key(&a) {
+                let image = cover_image(&self.art, &self.me, a.as_str().into(), 0);
+                if image.size().width > 0 {
+                    self.plugged.pictures.insert(a, image);
+                }
+            }
+        }
+    }
+
+    /// Whether `id` is a saved profile's or an identity's picture.
+    fn is_picture(&self, id: &str) -> bool {
+        let saved = self.root.app.settings.current().is_some_and(|p| p.servers.iter().any(|s| s.picture.as_deref() == Some(id)));
+        saved || self.identities.iter().any(|i| i.picture.as_deref() == Some(id))
+    }
+
+    /// Follows what the downloads are doing: the card shows it now, then each second until they are done.
+    fn follow_work(&mut self) {
+        self.work_shown();
+        if self.ui().get_working() && !self.work.running() {
+            let me = self.me.clone();
+            self.work.start(TimerMode::Repeated, Duration::from_secs(1), move || me.with(App::work_shown));
+        }
+    }
+
+    /// The progress card as the downloads stand now; gone, and no longer followed, once they are done.
+    fn work_shown(&mut self) {
+        let progress = self.session.as_ref().and_then(|s| s.progress());
+        let ui = self.ui();
+        match progress {
+            Some(p) => {
+                ui.set_work(work_card(&p));
+                ui.set_working(true);
+            }
+            None => {
+                self.work.stop();
+                ui.set_working(false);
+            }
+        }
+    }
+
+    /// Saved profile `id` renamed; blank, it is called after its provider again.
+    fn rename_profile(&mut self, id: &str, name: &str) {
+        nori_host::profile_renamed(&self.root.app.settings, id, name);
+        self.ui().set_profile_renaming("".into());
+        self.profiles_shown();
+        self.settings_shown();
     }
 
     /// The provider's own sign-in page in a window of its own (this program again, `--sign-in`: the system's
@@ -3477,6 +3593,8 @@ impl App {
 
     fn sign_out(&mut self) {
         self.on_session(|s| s.sign_out());
+        self.identities.clear();
+        self.identities_shown();
         self.sign_in_on(SignInEvent::SignedOut);
         self.reopen();
     }
@@ -3656,6 +3774,23 @@ impl App {
                 self.jam_shown();
             }
             Msg::JamEnded(host) => self.left(&words::jam_ended(host.as_deref())),
+            Msg::Working => self.follow_work(),
+            Msg::Pictured => {
+                self.profiles_shown();
+                self.settings_shown();
+            }
+            Msg::Identities(v) => {
+                self.identities = v;
+                self.identities_shown();
+            }
+            Msg::IdentityChosen(Ok(())) => {
+                self.reopen();
+                self.read_identities();
+            }
+            Msg::IdentityChosen(Err(e)) => {
+                self.say(&format!("{} ({e})", words::IDENTITY_FAILED), true);
+                self.read_identities();
+            }
             Msg::Starred => {
                 self.on_session(|s| s.mpris_changed());
                 self.follow();
@@ -3871,7 +4006,14 @@ impl App {
         let id = key.id.clone();
         let large = key.size != CoverSize::Card;
         let picture = self.compositor.picture(&image.pixels, image.width, image.height);
-        self.art.borrow_mut().insert(key, picture, colours, Instant::now());
+        let small = key.size == CoverSize::Card;
+        self.art.borrow_mut().insert(key, picture.clone(), colours, Instant::now());
+        if small && self.is_picture(&id) {
+            self.plugged.pictures.insert(id.clone(), picture);
+            self.profiles_shown();
+            self.settings_shown();
+            self.identities_shown();
+        }
         let ui = self.ui();
         ui.set_covers_rev(ui.get_covers_rev().wrapping_add(1));
         if let Some(p) = &self.player {
@@ -4259,9 +4401,10 @@ impl App {
 
     /// The gear menu's profiles in their saved order, the one in use checked where it stands, and its mark
     /// on the top pill.
-    fn profiles_shown(&self) {
-        let ui = self.ui();
+    fn profiles_shown(&mut self) {
         let prefs = self.root.app.settings.current().unwrap_or_default();
+        self.want_pictures(prefs.servers.iter().filter_map(|s| s.picture.clone()).collect());
+        let ui = self.ui();
         let profiles = crate::settings::profile_items(&self.plugged, &prefs, self.kinds());
         if let (Some(t), Some(on)) = (&self.top, profiles.iter().find(|p| p.on)) {
             t.set_profile_mark(on.mark.clone());
@@ -4607,12 +4750,8 @@ impl App {
 
     /// Profile `id`'s circle shows the icon at `at` among those offered.
     fn profile_icon_picked(&mut self, id: &str, at: usize) {
-        let mut prefs = self.root.app.settings.current().unwrap_or_default();
-        let (Some(p), Some(&icon)) = (prefs.servers.iter().find(|s| s.id == id), nori_core::settings::ProfileIcon::ALL.get(at)) else { return };
-        let profile = nori_core::settings::SavedServer { icon, ..p.clone() };
-        let list = nori_core::settings::ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() };
-        prefs.servers = nori_core::settings::servers_updated(list, profile).servers;
-        self.root.app.settings.put(prefs);
+        let Some(&icon) = nori_core::settings::ProfileIcon::ALL.get(at) else { return };
+        nori_host::profile_look(&self.root.app.settings, id, |p| p.icon = icon);
         self.settings_shown();
     }
 
@@ -4633,6 +4772,14 @@ impl App {
                 self.open(p, None);
             }
             Some(Act::Edit(id)) => self.edit_profile(id),
+            Some(Act::Rename(id)) => {
+                let prefs = self.root.app.settings.current().unwrap_or_default();
+                let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };
+                let ui = self.ui();
+                ui.set_profile_rename_name(p.name.as_str().into());
+                ui.set_profile_rename_blank(words::profile_label(&SavedServer { name: String::new(), ..p.clone() }, self.kinds()).into());
+                ui.set_profile_renaming(id.as_str().into());
+            }
             Some(Act::Backup { restore }) => self.ask_field(words::backup_path(restore), name, false),
             Some(Act::BackupPassword { .. }) => {}
             Some(Act::Chore(c)) => {
@@ -5625,7 +5772,10 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_view(View::Settings);
-        let profile = |button: &str| crate::SettingRow { kind: 8, name: "a".into(), title: "Home".into(), button: button.into(), letter: "Z".into(), enabled: true, first: true, last: true, ..Default::default() };
+        let profile = |options: &[&str]| {
+            let options: Vec<slint::SharedString> = options.iter().map(|o| (*o).into()).collect();
+            crate::SettingRow { kind: 8, name: "a".into(), title: "Home".into(), options: ModelRc::new(VecModel::from(options)), letter: "Z".into(), enabled: true, first: true, last: true, ..Default::default() }
+        };
         let sv = nori_core::settings::SavedServer { user: "zoe".into(), ..Default::default() };
         let picker = crate::settings::icon_picker(&crate::settings::Plugged::default(), &sv, "Home", "OpenSubsonic");
         let did = Rc::new(RefCell::new(Vec::new()));
@@ -5654,9 +5804,9 @@ mod tests {
             slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0)
         };
         let circle = || i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "ProfileCircle").next().expect("the profile's circle");
-        for (button, want) in [("", Vec::<String>::new()), ("Edit", vec!["picker a".into(), "picked a 2".into()])] {
+        for (options, want) in [(&[][..], Vec::<String>::new()), (&["Rename"][..], vec!["picker a".into(), "picked a 2".into()])] {
             did.borrow_mut().clear();
-            ui.set_settings(ModelRc::new(VecModel::from(vec![profile(button)])));
+            ui.set_settings(ModelRc::new(VecModel::from(vec![profile(options)])));
             settle();
             click(middle(&circle()));
             // A popup's elements give where they are in it, not in the window: the choice is picked as a
@@ -5665,7 +5815,7 @@ mod tests {
                 singing.invoke_accessible_default_action();
                 settle();
             }
-            assert_eq!(*did.borrow(), want, "with {button:?}");
+            assert_eq!(*did.borrow(), want, "with {options:?}");
         }
     }
 

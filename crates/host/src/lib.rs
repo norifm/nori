@@ -123,6 +123,22 @@ pub fn profile_picked(settings: &Settings, id: &str) -> Option<SavedServer> {
     Some(profile)
 }
 
+/// Saved profile `id` changed by `look` (its name, its icon), nothing its connection reads, so nothing
+/// reconnects.
+pub fn profile_look(settings: &Settings, id: &str, look: impl FnOnce(&mut SavedServer)) {
+    let mut prefs = settings.current().unwrap_or_default();
+    let Some(mut profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
+    look(&mut profile);
+    let list = nori_core::settings::ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() };
+    prefs.servers = nori_core::settings::servers_updated(list, profile).servers;
+    settings.put(prefs);
+}
+
+/// Saved profile `id` renamed; blank, it is called after its provider again.
+pub fn profile_renamed(settings: &Settings, id: &str, name: &str) {
+    profile_look(settings, id, |p| p.name = name.trim().to_string());
+}
+
 /// Runs `f` on a named thread.
 pub fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
     let _ = std::thread::Builder::new().name(name.into()).spawn(f);

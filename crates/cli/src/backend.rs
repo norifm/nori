@@ -71,6 +71,8 @@ pub enum Msg {
     Left(String),
     /// How signing the account in went.
     SignedIn(nori_core::providers::SignInResult),
+    /// The account acts as another of its identities now, or why not.
+    IdentityChosen(Result<(), String>),
     /// The code to show came, or expired: the runner's `code`th code sign-in ([`nori_core::providers::code::CodeSignIn`]).
     CodeStep { code: u32, event: nori_core::providers::flow::SignInEvent },
     /// A plugin installed (its id), or why not.
@@ -126,6 +128,7 @@ impl Msg {
             Msg::Paired(r) => format!("paired: {}", r.is_ok()),
             Msg::Left(said) => format!("jam left: {said}"),
             Msg::SignedIn(r) => format!("signed in: {}", matches!(r, nori_core::providers::SignInResult::SignedIn { .. })),
+            Msg::IdentityChosen(r) => format!("identity chosen: {}", r.is_ok()),
             Msg::CodeStep { code, event } => format!("code sign-in {code}: {}", if matches!(event, nori_core::providers::flow::SignInEvent::CodeExpired) { "expired" } else { "shown" }),
             Msg::Installed(r) => format!("plugin installed: {r:?}"),
             Msg::Preview(r) => format!("plugin preview: {:?}", r.as_ref().map(|p| &p.card.id)),
@@ -167,6 +170,8 @@ pub enum Req {
     Downloads,
     /// The downloads screen's queue sections only, for the refresh while downloads run.
     DownloadProgress,
+    /// What the downloads are doing, for the line along the bottom.
+    Work,
     Facts,
     /// The playlists these songs may go into (the core's `playlist_choices`).
     PlaylistChoices(Vec<String>),
@@ -194,6 +199,8 @@ pub enum Data {
     Playlist(Box<PlaylistDetail>),
     Downloads(Box<Downloads>),
     DownloadProgress(Box<nori_core::transfers::DownloadSections>),
+    /// None once the downloads are done.
+    Work(Option<Box<nori_core::transfers::Progress>>),
     Facts(Box<Facts>),
     PlaylistChoices(Vec<nori_core::menus::PlaylistChoice>),
 }
@@ -263,7 +270,9 @@ impl Session {
         let id = IDS.fetch_add(1, Ordering::Relaxed);
         let tx = o.tx.clone();
         let out = Arc::new(move |s: Said| {
-            let _ = tx.send(Msg::From(id, Box::new(worded(s))));
+            if let Some(m) = worded(s) {
+                let _ = tx.send(Msg::From(id, Box::new(m)));
+            }
         });
         let host = nori_host::desktop::open(nori_host::desktop::DesktopOpen {
             root: o.root,
@@ -296,7 +305,7 @@ impl Session {
             Req::Playlist(id) => Some(PageAsk::Playlist(id)),
             Req::Mix(id) => Some(PageAsk::Mix(id)),
             Req::Favorites => Some(PageAsk::Favorites),
-            Req::Row { .. } | Req::Home | Req::Songs { .. } | Req::History(_) | Req::DownloadsSize | Req::Downloads | Req::DownloadProgress | Req::Facts | Req::PlaylistChoices(_) => None,
+            Req::Row { .. } | Req::Home | Req::Songs { .. } | Req::History(_) | Req::DownloadsSize | Req::Downloads | Req::DownloadProgress | Req::Work | Req::Facts | Req::PlaylistChoices(_) => None,
         };
         if let Some(ask) = ask {
             return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
@@ -371,6 +380,7 @@ impl Session {
                 let core = self.core.clone();
                 nori_host::spawn("nori-read", move || send(core.download_sections().map(|s| Data::DownloadProgress(Box::new(s))).map_err(|e| e.to_string())));
             }
+            Req::Work => send(Ok(Data::Work(self.host.progress().map(Box::new)))),
             Req::Facts => {
                 let (core, client, store, db, offline) = (self.core.clone(), self.client.clone(), self.store.clone(), self.db.clone(), self.offline);
                 let covers_bytes = self.covers.as_ref().and_then(|l| l.disk().map(|d| d.bytes())).unwrap_or(0);
@@ -425,12 +435,15 @@ impl Session {
 }
 
 /// A session's report as the event loop takes it.
-fn worded(s: Said) -> Msg {
+fn worded(s: Said) -> Option<Msg> {
     let note = |text: String, error: bool| Msg::Note { text, error };
-    match s {
+    Some(match s {
         Said::Remote => Msg::Remote,
         Said::JamEnded { host } => Msg::Left(crate::text::jam_ended(host.as_deref())),
         Said::Starred(marks) => Msg::Starred(marks),
+        Said::Working => Msg::Reload(Req::Work),
+        // The terminal draws no account pictures.
+        Said::Pictured => return None,
         Said::Volume(v) => Msg::Volume(v),
         Said::Curve(n) => note(crate::text::curve_notice(&n), false),
         Said::Engine(e) => Msg::Engine(e),
@@ -460,7 +473,7 @@ fn worded(s: Said) -> Msg {
                 false,
             ),
         },
-    }
+    })
 }
 
 /// A page read's answer as a screen's data.
@@ -528,5 +541,6 @@ fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Opti
         devices: CpalOutput::devices(),
         unsent: client.unsent().map_or((0, 0), |u| (u.waiting, u.dropped)),
         rules: core.rules(),
+        identities: if offline { Vec::new() } else { block_on(client.identities()).unwrap_or_default() },
     }
 }
