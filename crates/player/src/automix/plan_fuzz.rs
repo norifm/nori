@@ -87,6 +87,8 @@ fn row(r: &mut Rng, dur: i64, how: Rows) -> TrackAnalysis {
         outro_grid_to_ms: ms(r),
         intro_bars: Vec::new(),
         outro_bars: Vec::new(),
+        intro_beats: Vec::new(),
+        outro_beats: Vec::new(),
         analysed_ms: 0,
     }
 }

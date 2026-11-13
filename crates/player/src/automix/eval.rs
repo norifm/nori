@@ -1535,6 +1535,28 @@ fn end_bars_read_what_plays() {
     assert!(intro[14..30].iter().chain(&outro[24..29]).all(|b| b.change < 0.05), "steady sections change nothing");
 }
 
+/// Each end's beats sit on the music's own: nearly every sure beat within 10 ms of a true one (or 2.5 times the band's
+/// jitter, where its hits stray from the beat by that much), most of them sure, and a bar starting on the true
+/// downbeats; including a song whose band drifts and plays loose, and one whose breakdown is pads alone, whose
+/// swells peak after the beat.
+#[test]
+fn end_beats_sit_on_the_beat() {
+    for name in ["long-coda-124", "band-drift-118", "house-outro-124", "breakdown-124"] {
+        let (a, truth) = analysed(name);
+        let jitter = mix_songs().into_iter().chain(corpus_all()).find(|s| s.name == name).expect("a harness song").jitter_ms / 1000.0;
+        let tol = 0.010f64.max(2.5 * jitter);
+        for (end, beats) in [("intro", &a.track.intro_beats), ("outro", &a.track.outro_beats)] {
+            let near = |t: f64, of: &[f64]| of.iter().map(|x| (x - t).abs()).fold(f64::MAX, f64::min);
+            let sure: Vec<f64> = beats.iter().filter(|b| b.sure).map(|b| near(b.at_ms as f64 / 1000.0, &truth.beats)).collect();
+            assert!(sure.len() * 10 >= beats.len() * 7 && beats.len() >= 40, "{name} {end}: {} of {} sure", sure.len(), beats.len());
+            let off = sure.iter().filter(|d| **d > tol).count();
+            assert!(off * 20 <= sure.len(), "{name} {end}: {off} of {} sure beats over {:.0} ms from the beat", sure.len(), tol * 1000.0);
+            let downs: Vec<f64> = beats.iter().filter(|b| b.downbeat).map(|b| near(b.at_ms as f64 / 1000.0, &truth.downbeats)).collect();
+            assert!(downs.iter().filter(|d| **d <= 0.05).count() * 10 >= downs.len() * 9, "{name} {end}: downbeats {downs:?}");
+        }
+    }
+}
+
 /// Drops and exits within a beat are found; one where the song has none is a false alarm.
 #[test]
 fn landmarks_are_found() {

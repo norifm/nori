@@ -169,6 +169,9 @@ pub struct TrackAnalysis {
     /// on the end's grid, else in two-second blocks.
     pub intro_bars: Vec<BarProfile>,
     pub outro_bars: Vec<BarProfile>,
+    /// The beats of each end's first and last minute of music, as heard: a tempo that drifts is followed beat by beat.
+    pub intro_beats: Vec<Beat>,
+    pub outro_beats: Vec<Beat>,
     /// Analysis time, ms since the epoch.
     pub analysed_ms: i64,
 }

@@ -1461,6 +1461,8 @@ mod tests {
             outro_grid_to_ms: 0,
             intro_bars: Vec::new(),
             outro_bars: Vec::new(),
+            intro_beats: Vec::new(),
+            outro_beats: Vec::new(),
         }
     }
 
