@@ -18,6 +18,9 @@
 //! `DOUBLE_DROP_MAX_SKIP_MS` of the outgoing one. The outgoing song may be left early at a closing breakdown or
 //! before a hidden track (`Ending`) within that cap.
 
+mod moves;
+
+use moves::{Move, Pair};
 use super::structure::key_distance;
 use super::tempo::{fold, match_ratio};
 use crate::types::{AutoMixSettings, BassSwap, Bend, Echo, FadeCurve, HighsIn, InLoop, MixStyle, Sweep, TrackAnalysis, TransitionKind, TransitionPlan, VocalDuck};
@@ -37,10 +40,9 @@ const MIN_FADE_MS: i64 = 300;
 const MIN_MIXRAMP_MS: i64 = 5_000;
 const BASS_CUT_HZ: f32 = 180.0;
 const SWEEP_FROM_HZ: f32 = 18_000.0;
-/// Where the outgoing low-pass ends: beat-matched and plain fades.
+/// Where the outgoing low-pass of a beat-matched mix ends.
 const SWEEP_TO_HZ_MATCHED: f32 = 400.0;
-const SWEEP_TO_HZ_FADE: f32 = 500.0;
-/// Camelot neighbour or relative: gentle muffling.
+/// A fade's soft low-pass over clashing keys.
 const SWEEP_TO_HZ_SOFT: f32 = 2_500.0;
 
 fn low_pass(start_ms: i64, end_ms: i64, to_hz: f32) -> Sweep {
@@ -448,14 +450,21 @@ fn camelot_dist(a: &TrackAnalysis, b: &TrackAnalysis) -> Option<i32> {
     (a.key_confidence >= KEY_MIN_CONFIDENCE && b.key_confidence >= KEY_MIN_CONFIDENCE).then(|| key_distance(a.key, b.key)).flatten()
 }
 
-/// Low-pass for MixRamp and one-grid fades: soft when keys are neighbours, full otherwise.
+/// A fade's filters, the natural three-band blend: the mids dipped on both decks where the two bodies would crowd
+/// each other, and a soft low-pass on the outgoing song over the second half only where confident keys clash, so
+/// its chords give way. No sweep down to a muffle: that "underwater" fade is what Apple dropped in iOS 27.
 fn apply_fade_filter(p: &mut TransitionPlan, a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, s: &AutoMixSettings, dur: i64) {
     if !s.filter_effects || dur < 2000 {
         return;
     }
-    let soft = a.zip(b).is_some_and(|(a, b)| matches!(camelot_dist(a, b), Some(0 | 1)));
-    p.low_pass = Some(if soft { low_pass(dur / 2, dur, SWEEP_TO_HZ_SOFT) } else { low_pass(0, dur, SWEEP_TO_HZ_FADE) });
+    moves::dip_mids(p, s);
+    if a.zip(b).is_some_and(|(a, b)| camelot_dist(a, b).is_some_and(|d| d >= KEY_CLASH)) {
+        p.low_pass = Some(low_pass(dur / 2, dur, SWEEP_TO_HZ_SOFT));
+    }
 }
+
+/// Confident keys this far apart on the Camelot wheel clash under a fade.
+const KEY_CLASH: i32 = 3;
 
 pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_duration_ms: i64, in_duration_ms: i64, s: &AutoMixSettings) -> TransitionPlan {
     let out_dur = if out_duration_ms > 0 { out_duration_ms } else { out.map_or(0, |a| a.duration_ms) };
@@ -495,23 +504,29 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
             }
         }
     }
-    if let Some(p) = a.and_then(|a| on_its_stop(a, b, room, s, &why_not)) {
-        return p;
+    if a.is_none() && b.is_none() {
+        let dur = max_len.min(MAX_BLIND_FADE_MS);
+        return blank(TransitionKind::EqualPowerFade, out_dur - dur, 0, dur, "not analysed: equal-power fade".into());
     }
-    if let Some(p) = a.filter(|_| profile(s.style).echo_out).and_then(|a| echo_out(a, b, room, s, &why_not)) {
-        return p;
-    }
-    let sung_both = verdict.is_some_and(|v| v.cause == VOCALS_OVERLAP);
-    if s.beat_match && (a.is_some_and(grid_ok) || b.is_some_and(grid_ok)) {
-        if let Some(p) = one_grid(a, b, room, s, short, &why_not) {
-            return shape_fade(p, a, s, sung_both);
+    // Not locked: every move the pair allows, and a fade, the best kept; the same move as last time costs.
+    let mut candidates: Vec<Move> = Vec::new();
+    if let Some(a) = a {
+        let pair = Pair { a, b, room, s, why_not: &why_not };
+        candidates.extend(moves::stop(&pair));
+        candidates.extend(moves::beatless_blend(&pair));
+        if profile(s.style).handovers {
+            candidates.extend([moves::filter_ride(&pair), moves::echo_out(&pair), moves::filter_out(&pair), moves::brake(&pair), moves::reverb_wash(&pair)].into_iter().flatten());
         }
     }
-    if a.is_some() || b.is_some() {
-        return shape_fade(mixramp(a, b, room, s, &why_not), a, s, sung_both);
-    }
-    let dur = max_len.min(MAX_BLIND_FADE_MS);
-    blank(TransitionKind::EqualPowerFade, out_dur - dur, 0, dur, "not analysed: equal-power fade".into())
+    let sung_both = verdict.is_some_and(|v| v.cause == VOCALS_OVERLAP);
+    let gridded = s.beat_match && (a.is_some_and(grid_ok) || b.is_some_and(grid_ok));
+    let fade = gridded.then(|| one_grid(a, b, room, s, short, &why_not)).flatten().unwrap_or_else(|| mixramp(a, b, room, s, &why_not));
+    candidates.push(Move { plan: shape_fade(fade, a, s, sung_both), worth: moves::FADE_WORTH });
+    let net = |m: &Move| m.worth - if s.previous == Some(m.plan.kind) { moves::repeat_cost(m.plan.kind) } else { 0.0 };
+    candidates.into_iter().fold(None::<Move>, |best, m| match best {
+        Some(b) if net(&b) >= net(&m) => Some(b),
+        _ => Some(m),
+    }).expect("a fade is always a candidate").plan
 }
 
 /// What a transition must fit in, ms: both songs' lengths and the longest overlap.
@@ -572,8 +587,9 @@ struct Profile {
     riser: bool,
     /// The outgoing song fades over a bar at least after the swap, unless its music ends sooner.
     bar_tail: bool,
-    /// A pair that cannot be beat-matched echoes out ([`echo_out`]) rather than fading.
-    echo_out: bool,
+    /// A pair that cannot be beat-matched is handed over by a DJ's move (`moves`: filter ride, echo, brake...)
+    /// where one fits better than a fade.
+    handovers: bool,
     /// Per bar of looped outgoing slice heard again.
     loop_cost: f64,
     /// Per second of either song's singing under the run-up: a mix waits for the outgoing voice to end, or loops
@@ -592,10 +608,10 @@ const SMOOTH: Profile = Profile {
     swap_bars: 1.0,
     quick_drop_swap: false,
     highs_in: false,
-    fade_swap: false,
+    fade_swap: true,
     riser: false,
     bar_tail: false,
-    echo_out: false,
+    handovers: false,
     loop_cost: 0.1,
     sung_under_cost: 0.0,
 };
@@ -614,7 +630,7 @@ const DJ: Profile = Profile {
     fade_swap: true,
     riser: true,
     bar_tail: true,
-    echo_out: true,
+    handovers: true,
     loop_cost: 0.04,
     sung_under_cost: 0.1,
 };
@@ -1228,84 +1244,6 @@ fn bend(p: &mut TransitionPlan, k: &Lock, from: f64) {
     (p.tempo_ramp_beats, p.tempo_ramp_ms) = (0, 0);
 }
 
-/// Bars the outgoing echo rings on after the exit.
-const ECHO_TAIL_BARS: f64 = 2.0;
-/// Bars back from the end an echo-out may leave on.
-const ECHO_BARS_BACK: i64 = 8;
-const ECHO_FEEDBACK: f32 = 0.55;
-const ECHO_WET_DB: f32 = -4.0;
-/// The high-pass the echoes wash out through, Hz.
-const ECHO_HP_FROM_HZ: f32 = 60.0;
-const ECHO_HP_TO_HZ: f32 = 1_500.0;
-
-/// An echo-out, for a pair that cannot be beat-matched: on a downbeat after the outgoing song's last line, the
-/// song falls (over a beat on a trusted grid, a bar on its tempo alone) as its last beat rings on in repeats that
-/// a rising high-pass thins out, and the incoming music starts there, rising over a bar. Each song keeps its own
-/// tempo. Never over a sung beat, which would stutter.
-fn echo_out(a: &TrackAnalysis, b: Option<&TrackAnalysis>, room: Room, s: &AutoMixSettings, why_not: &str) -> Option<TransitionPlan> {
-    let Room { out_dur, in_dur, max_len } = room;
-    let beat = 60_000.0 / a.bpm;
-    if !(a.bpm > 0.0 && beat.is_finite()) {
-        return None;
-    }
-    let (bpb, on_grid) = (bar_beats(a), grid_ok(a));
-    let bar = bpb as f64 * beat;
-    let fall = if on_grid { beat } else { bar };
-    let dur = beat + ECHO_TAIL_BARS * bar;
-    if dur > max_len as f64 {
-        return None;
-    }
-    // The exit: the latest downbeat before the music ends (a closing breakdown is music to echo out of; a hidden
-    // track is not) or turns quiet, or a four-bar line of the outro within four bars of it, whose beat before is
-    // unsung.
-    let ending = Ending::of(a, out_dur);
-    let end = if ending.breakdown { ending.music_end } else { ending.leave(0.0) };
-    let quiet = (a.mixramp_end_ms > a.silence_start_ms).then(|| a.mixramp_end_ms as f64 + beat);
-    let limit = quiet.map_or(end, |q| q.min(end));
-    let last = a.beat_offset_ms + downbeat_before(limit, a.beat_offset_ms, beat, bpb, a.downbeat_phase as i64) as f64 * beat;
-    let fits = |x: f64| x - beat >= a.silence_start_ms as f64 && !sings_after(a, x - beat) && ending.skipped(x + fall) <= MAX_SKIP_MS as f64;
-    let on_line = |x: f64| a.outro_start_ms > 0 && {
-        let lines = (x - a.outro_start_ms as f64) / (4.0 * bar);
-        lines >= -0.01 && (lines - lines.round()).abs() < 0.01
-    };
-    let exits: Vec<f64> = (0..=ECHO_BARS_BACK).map(|n| last - n as f64 * bar).filter(|&x| fits(x)).collect();
-    let exit = exits.iter().take(4).copied().find(|&x| on_line(x)).or(exits.first().copied())?;
-    // The incoming music starts on the exit (its first downbeat, after a pickup of a beat at most), or as close
-    // before it as its own start allows: none of it is skipped.
-    let music = b.map_or(0, |b| b.silence_start_ms.clamp(0, in_dur / 3)) as f64;
-    let first = |b: &TrackAnalysis| {
-        let beat_b = 60_000.0 / b.bpm;
-        let d = b.beat_offset_ms + downbeat_from(music, b.beat_offset_ms, beat_b, bar_beats(b), b.downbeat_phase as i64) as f64 * beat_b;
-        (d - music <= beat_b).then_some(d)
-    };
-    let entry = b.filter(|b| grid_ok(b)).and_then(first).unwrap_or(music);
-    let in_start = (entry - beat).max(0.0).min(music).round();
-    if in_dur as f64 - in_start < 2.0 * dur {
-        return None;
-    }
-    let mut p = blank(TransitionKind::EchoOut, (exit - beat).round() as i64, in_start as i64, dur.round() as i64, String::new());
-    (p.out_fade_start_ms, p.out_fade_end_ms) = (beat.round() as i64, (beat + fall).round() as i64);
-    (p.in_fade_start_ms, p.in_fade_end_ms) = ((music - in_start).round() as i64, (beat + bar).round() as i64);
-    // A beat delay, doubled or halved into a quarter to a whole second.
-    let mut delay = beat;
-    while delay < 250.0 {
-        delay *= 2.0;
-    }
-    while delay > 1000.0 {
-        delay /= 2.0;
-    }
-    p.echo = Some(Echo { delay_ms: delay.round() as i64, feedback: ECHO_FEEDBACK, wet_db: ECHO_WET_DB, send: None, band: None, duck: None });
-    if s.filter_effects {
-        p.high_pass = Some(Sweep { start_ms: 0, end_ms: p.duration_ms, from_hz: ECHO_HP_FROM_HZ, to_hz: ECHO_HP_TO_HZ });
-    }
-    p.in_gain_db = loudness_trim(Some(a), b, s);
-    let tail = if why_not.is_empty() { String::new() } else { format!(" ({why_not})") };
-    let at = if on_line(exit) { "on the outro phrase" } else if a.vocal_end_ms > 0 { "after its last line" } else { "on its last bars" };
-    let by = if on_grid { "on its downbeat" } else { "by its tempo" };
-    p.reason = format!("echo-out {by}, {at}{tail}");
-    Some(p)
-}
-
 /// A fade aligned to the one usable grid when the two could not be locked: an exit on outgoing downbeats, or an
 /// entrance on an incoming downbeat. No tempo change.
 fn one_grid(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s: &AutoMixSettings, short: bool, why_not: &str) -> Option<TransitionPlan> {
@@ -1415,7 +1353,7 @@ fn mixramp(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s: 
 mod tests {
     use super::*;
     use crate::automix::structure::camelot;
-    use crate::types::MixStyle;
+    use crate::types::{BarProfile, MixStyle};
 
     /// A 4-minute track, 4/4, grid from 120 ms, an 8-bar intro, a 16-bar outro and silence at both ends.
     fn track(bpm: f64) -> TrackAnalysis {
@@ -1982,50 +1920,135 @@ mod tests {
         assert_eq!(p.in_start_ms, 120);
     }
 
-    /// A DJ pair that cannot beat-match echoes out: the outgoing song falls on a downbeat after its last line, its
-    /// last beat ringing on in repeats a rising high-pass thins, and the incoming music starts on that downbeat,
-    /// rising over a bar, nothing of it skipped. Smooth fades.
+    /// `n` bars of `bar` ms from `from`, each as `f` makes it from its index.
+    fn bars(from: f64, bar: f64, n: usize, f: impl Fn(usize) -> BarProfile) -> Vec<BarProfile> {
+        (0..n).map(|i| BarProfile { start_ms: (from + i as f64 * bar).round() as i64, ..f(i) }).collect()
+    }
+
+    /// A band bar: drums on every beat and the bass, unsung.
+    fn band(_: usize) -> BarProfile {
+        BarProfile { level_db: 0.0, low_db: 0.0, pulse: 1.0, voice: 0.0, ..Default::default() }
+    }
+
+    /// `t`'s last 32 bars and first 32 as `f` makes them.
+    fn profiled(t: TrackAnalysis, f: impl Fn(usize) -> BarProfile + Copy) -> TrackAnalysis {
+        let bar = 4.0 * 60_000.0 / t.bpm;
+        let last = t.beat_offset_ms + ((t.silence_end_ms as f64 - t.beat_offset_ms) / bar).floor() * bar - bar;
+        TrackAnalysis { outro_bars: bars(last - 31.0 * bar, bar, 32, f), intro_bars: bars(t.beat_offset_ms, bar, 32, f), ..t }
+    }
+
+    fn after(previous: TransitionKind) -> AutoMixSettings {
+        AutoMixSettings { previous: Some(previous), ..dj() }
+    }
+
+    /// Tempos too far apart to lock: a DJ rides the filters, the outgoing song darkening through a low-pass over its
+    /// last bars after its last line, the incoming one rising early through a high-pass that opens, the lows changing
+    /// hands once, on a beat. Smooth fades.
     #[test]
-    fn dj_echoes_out_where_it_cannot_beat_match() {
+    fn dj_rides_the_filters_across_a_tempo_gap() {
         let beat: f64 = 60_000.0 / 128.0;
         let a = TrackAnalysis { vocal_start_ms: 20_000, vocal_end_ms: 225_000, ..track(128.0) };
-        let lead = TrackAnalysis { silence_start_ms: 2_000, mixramp_start_ms: 2_300, intro_beat_offset_ms: 2_000.0, beat_offset_ms: 2_000.0, ..track(170.0) };
+        let p = plan(Some(&a), Some(&track(170.0)), 240_000, 240_000, &dj());
+        assert_eq!(p.kind, TransitionKind::FilterRide, "{}", p.reason);
+        check_skip(&p, &a, &track(170.0), 240_000);
+        assert!((p.duration_ms as f64 - 12.0 * beat).abs() <= 1.0 && p.in_delay_ms == 0, "{p:?}");
+        assert!(on_downbeat(&a, (p.out_start_ms + p.duration_ms) as f64) && !sings_after(&a, p.out_start_ms as f64 + 0.5 * p.duration_ms as f64), "{p:?}");
+        let (lp, hp, swap) = (p.low_pass.expect("A darkens"), p.in_high_pass.expect("B opens"), p.bass_swap.expect("one kick at a time"));
+        assert!(lp.from_hz > 5_000.0 && lp.to_hz <= 300.0 && hp.from_hz >= 1_000.0 && hp.to_hz <= 25.0, "{p:?}");
+        let at = swap.at_ms as f64 + 0.25 * beat;
+        assert!(((at / beat) - (at / beat).round()).abs() < 0.01 && swap.len_ms as f64 <= 0.5 * beat + 1.0, "on a beat, over half of one: {swap:?}");
+        assert!(p.in_fade_end_ms < p.duration_ms && p.out_fade_start_ms > 0, "B early, A held: {p:?}");
+        let smooth = plan(Some(&a), Some(&track(170.0)), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
+        assert_eq!(smooth.kind, TransitionKind::MixRampFade, "{}", smooth.reason);
+    }
+
+    /// Both songs carrying a kick at the join: the bass hand-off, a shorter ride whose outgoing song darkens only
+    /// after the lows have changed hands.
+    #[test]
+    fn two_kicks_hand_the_bass_off() {
+        let (a, b) = (profiled(track(128.0), band), profiled(track(170.0), band));
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        assert!(p.kind == TransitionKind::FilterRide && p.reason.contains("bass hand-off"), "{}", p.reason);
+        let (lp, swap) = (p.low_pass.expect(&p.reason), p.bass_swap.expect(&p.reason));
+        assert!(lp.start_ms >= swap.at_ms + swap.len_ms && p.duration_ms as f64 <= 8.0 * 60_000.0 / 128.0 + 1.0, "{p:?}");
+    }
+
+    /// After a ride, the next unmatched pair echoes out: on a downbeat after the last line the outgoing song's lows
+    /// go and its last beat rings on in band-limited repeats while it falls, and the incoming music starts on that
+    /// downbeat (its start delayed to it, nothing of it skipped), rising over a bar, the repeats held down under it.
+    #[test]
+    fn echo_out_for_variety() {
+        let beat: f64 = 60_000.0 / 128.0;
+        let a = TrackAnalysis { vocal_start_ms: 20_000, vocal_end_ms: 225_000, ..track(128.0) };
         let drifting = TrackAnalysis { stability: 0.3, outro_stability: 0.3, ..a.clone() };
-        for (a, b, grid) in [(a.clone(), track(170.0), true), (a.clone(), lead, true), (drifting, track(128.0), false)] {
-            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        for (a, b, grid) in [(a.clone(), track(170.0), true), (drifting, track(128.0), false)] {
+            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &after(TransitionKind::FilterRide));
             assert_eq!(p.kind, TransitionKind::EchoOut, "{}", p.reason);
             check_skip(&p, &a, &b, 240_000);
             let echo = p.echo.expect(&p.reason);
-            assert_eq!(echo.delay_ms, beat.round() as i64, "{echo:?}");
             let exit = p.out_start_ms as f64 + p.out_fade_start_ms as f64;
             assert!(on_downbeat(&a, exit) && exit - beat >= a.vocal_end_ms as f64, "{p:?}");
+            assert_eq!((echo.delay_ms, p.in_delay_ms), (beat.round() as i64, p.out_fade_start_ms), "{p:?}");
+            assert_eq!(p.in_start_ms, 120, "B from its first downbeat: {p:?}");
             let fall = (p.out_fade_end_ms - p.out_fade_start_ms) as f64;
             assert!(if grid { (fall - beat).abs() < 1.0 } else { (fall - 4.0 * beat).abs() < 1.0 }, "{p:?}");
-            assert!((p.in_fade_end_ms - p.in_fade_start_ms) as f64 >= 4.0 * beat - 1.0, "the next song rises over a bar: {p:?}");
-            assert!(p.in_start_ms <= b.silence_start_ms && p.in_start_ms as f64 + p.in_fade_start_ms as f64 >= b.silence_start_ms as f64, "{p:?}");
-            if b.silence_start_ms as f64 >= beat {
-                assert_eq!(p.in_start_ms as f64 + p.in_song_ms(p.out_fade_start_ms as f64), b.silence_start_ms as f64, "{p:?}");
-            }
-            let hp = p.high_pass.expect(&p.reason);
-            assert!(hp.to_hz > hp.from_hz && hp.end_ms == p.duration_ms, "{p:?}");
-            let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
-            assert!(smooth.kind != TransitionKind::EchoOut && smooth.echo.is_none(), "{}", smooth.reason);
+            assert!((p.in_fade_end_ms - p.in_fade_start_ms) as f64 >= 4.0 * beat - 1.0, "B rises over a bar: {p:?}");
+            let (send, band, duck) = (echo.send.expect("a send window"), echo.band.expect("band-limited"), echo.duck.expect("ducked"));
+            assert!(send.end_ms as f64 <= p.out_fade_end_ms as f64 + 1.0 && band.low_hz >= 150.0 && duck.at_ms >= p.in_delay_ms, "{echo:?}");
+            assert!(p.high_pass.is_some_and(|h| h.from_hz < 100.0 && h.to_hz > 1_000.0), "{p:?}");
         }
     }
 
-    /// A DJ fade between kicks that are not beat-matched (out of a song sung to its end, which cannot echo out)
-    /// hands the bass over once, where the fades cross; Smooth's fades keep both.
+    /// A loud outgoing song into an opening that hits brakes, after a ride; into a calmer one it washes out in a
+    /// reverb; a brake never twice in a row.
     #[test]
-    fn dj_fades_hand_the_bass_over_where_they_cross() {
+    fn marked_moves_where_they_fit() {
+        let beat: f64 = 60_000.0 / 128.0;
+        let (a, hit) = (profiled(track(128.0), band), profiled(track(170.0), band));
+        let p = plan(Some(&a), Some(&hit), 240_000, 240_000, &after(TransitionKind::FilterRide));
+        assert_eq!(p.kind, TransitionKind::Brake, "{}", p.reason);
+        let brake = p.brake.expect(&p.reason);
+        assert!(on_downbeat(&a, (p.out_start_ms + brake.start_ms) as f64) && brake.len_ms as f64 >= 4.0 * beat - 1.0, "{p:?}");
+        assert!(p.in_delay_ms > brake.start_ms && p.in_delay_ms < brake.start_ms + brake.len_ms && p.in_fade_end_ms > p.in_delay_ms, "B bursts in under its last beat, not at once: {p:?}");
+        assert_ne!(plan(Some(&a), Some(&hit), 240_000, 240_000, &after(TransitionKind::Brake)).kind, TransitionKind::Brake);
+
+        let calm = profiled(track(170.0), |_| BarProfile { level_db: -10.0, low_db: -20.0, pulse: 0.6, voice: 0.0, ..Default::default() });
+        let p = plan(Some(&a), Some(&calm), 240_000, 240_000, &after(TransitionKind::FilterRide));
+        assert_eq!(p.kind, TransitionKind::ReverbWash, "{}", p.reason);
+        let r = p.reverb.expect(&p.reason);
+        assert!(r.send.end_ms <= p.out_fade_end_ms && p.in_delay_ms >= p.out_fade_start_ms && r.low_cut_hz >= 150.0, "{p:?}");
+    }
+
+    /// Where one end has no beat a blend runs long at any tempo, the beatless side carrying it, in both styles.
+    #[test]
+    fn beatless_ends_blend_at_any_tempo() {
+        let pads = |i: usize| if i >= 24 { BarProfile { level_db: -8.0, low_db: -30.0, pulse: 0.1, voice: 0.0, ..Default::default() } } else { band(i) };
+        let a = profiled(track(128.0), pads);
+        let b = track(170.0);
+        for style in [MixStyle::Smooth, MixStyle::Dj] {
+            let s = AutoMixSettings { max_transition_s: style.longest_s() as f32, style, ..Default::default() };
+            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &s);
+            assert_eq!(p.kind, TransitionKind::BeatlessBlend, "{style:?}: {}", p.reason);
+            assert!(p.out_start_ms >= a.outro_bars[24].start_ms && p.duration_ms >= 6_000 && p.tempo_ratio == 1.0, "over the pads: {p:?}");
+            check_skip(&p, &a, &b, 240_000);
+        }
+    }
+
+    /// A fade between kicks that are not beat-matched (out of a song sung to its end, which no handover leaves) hands
+    /// the bass over once, where the fades cross, and dips both songs' mids, in both styles.
+    #[test]
+    fn fades_hand_the_bass_over_where_they_cross() {
         let a = TrackAnalysis { vocal_start_ms: 10_000, vocal_end_ms: 238_000, ..track(128.0) };
         let b = TrackAnalysis { bpm_confidence: 0.2, intro_bpm_confidence: 0.2, ..track(97.0) };
-        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
-        assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
-        let swap = p.bass_swap.expect(&p.reason);
-        let cross = (p.in_fade_start_ms.max(p.out_fade_start_ms) + p.in_fade_end_ms.min(p.out_fade_end_ms)) / 2;
-        assert!(swap.at_ms < cross && cross < swap.at_ms + swap.len_ms && swap.len_ms <= 1_000, "{p:?}");
-        let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings::default());
-        assert!(smooth.kind == TransitionKind::MixRampFade && smooth.bass_swap.is_none(), "{}", smooth.reason);
+        for s in [dj(), AutoMixSettings::default()] {
+            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &s);
+            assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
+            let swap = p.bass_swap.expect(&p.reason);
+            let cross = (p.in_fade_start_ms.max(p.out_fade_start_ms) + p.in_fade_end_ms.min(p.out_fade_end_ms)) / 2;
+            assert!(swap.at_ms < cross && cross < swap.at_ms + swap.len_ms && swap.len_ms <= 1_000, "{p:?}");
+            let dip = p.mid_dip.expect(&p.reason);
+            assert!(dip.outgoing && dip.incoming && dip.db < 0.0 && p.low_pass.is_none(), "{p:?}");
+        }
     }
 
     #[test]
@@ -2037,7 +2060,7 @@ mod tests {
         assert_eq!(p.kind, TransitionKind::MixRampFade);
         assert_eq!((p.out_start_ms, p.in_start_ms, p.duration_ms), (224_000, 1_000, 6_000));
         assert_eq!(p.in_fade_end_ms, 2_000, "the incoming fade follows its own ramp");
-        assert_eq!(p.low_pass.map(|f| (f.start_ms, f.to_hz)), Some((3_000, SWEEP_TO_HZ_SOFT)), "same key: soft low-pass in the second half");
+        assert!(p.low_pass.is_none() && p.mid_dip.is_some(), "same key: no low-pass, the mids dipped: {p:?}");
         assert_eq!(p.in_gain_db, 6.0, "incoming 6 dB quieter gets 6 dB");
         check_skip(&p, &a, &b, 240_000);
 
@@ -2137,9 +2160,9 @@ mod tests {
             assert!(p.duration_ms as f64 <= 5.25 * bar + 1.0 && p.reason.contains("keys far apart"), "{style:?}: {}", p.reason);
             check_skip(&p, &a, &b, 240_000);
         }
-        // No mix fits (tempos too far apart): a fade, or a DJ echo-out.
+        // No mix fits (tempos too far apart): a fade, or a DJ's filter ride.
         let b = TrackAnalysis { bpm: 150.0, intro_bpm: 150.0, ..b };
-        for (style, kind) in [(MixStyle::Smooth, TransitionKind::MixRampFade), (MixStyle::Dj, TransitionKind::EchoOut)] {
+        for (style, kind) in [(MixStyle::Smooth, TransitionKind::MixRampFade), (MixStyle::Dj, TransitionKind::FilterRide)] {
             let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(style));
             assert_eq!(p.kind, kind, "{style:?}: {}", p.reason);
         }
@@ -2215,19 +2238,24 @@ mod tests {
     }
 
     #[test]
-    fn dj_echoes_out_after_the_last_line() {
-        // A closing breakdown of seven bars, the voice running a bar into it; the next song without a grid, so an
-        // echo-out on the outgoing downbeats: in the breakdown after the line, not over the line.
+    fn dj_hands_over_after_the_last_line() {
+        // A closing breakdown of seven bars, the voice running a bar into it; the next song without a grid, so a
+        // handover on the outgoing downbeats: in the breakdown after the line, not over the line.
         let bar: f64 = 4.0 * 60_000.0 / 128.0;
         let end = 120.0 + bar * ((238_500.0 - 120.0) / bar).floor();
         let exit = (end - 7.0 * bar) as i64;
         let vocal_end = (end - 6.0 * bar) as i64;
         let a = TrackAnalysis { exit_ms: exit, vocal_start_ms: 10_000, vocal_end_ms: vocal_end, ..track(128.0) };
         let b = TrackAnalysis { bpm_confidence: 0.1, intro_bpm_confidence: 0.1, ..track(128.0) };
-        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
-        assert_eq!(p.kind, TransitionKind::EchoOut, "{}", p.reason);
-        assert!(p.out_start_ms >= vocal_end, "it echoes the singing: {}", p.reason);
-        check_skip(&p, &a, &b, 240_000);
+        for s in [dj(), after(TransitionKind::FilterRide)] {
+            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &s);
+            assert!(matches!(p.kind, TransitionKind::FilterRide | TransitionKind::EchoOut), "{}", p.reason);
+            // A ride's low-pass darkens the outgoing voice from a quarter of the way, an echo repeats from the beat
+            // before its exit.
+            let from = if p.kind == TransitionKind::FilterRide { p.out_start_ms + p.duration_ms / 4 } else { p.out_start_ms + p.out_fade_start_ms - p.in_delay_ms };
+            assert!(from >= vocal_end - 1, "{:?} over the singing: {}", p.kind, p.reason);
+            check_skip(&p, &a, &b, 240_000);
+        }
     }
 
     /// A fade out of a song singing near its end holds it whole until the line ends (or a bar before the fade does),

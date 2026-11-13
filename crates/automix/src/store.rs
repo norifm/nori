@@ -85,7 +85,7 @@ fn encode_bars(bars: &[BarProfile]) -> Vec<u8> {
 }
 
 fn decode_bars(b: &[u8]) -> Vec<BarProfile> {
-    b.chunks_exact(BAR_BYTES)
+    b.as_chunks::<BAR_BYTES>().0.iter()
         .map(|x| BarProfile {
             start_ms: i32::from_le_bytes([x[0], x[1], x[2], x[3]]) as i64,
             level_db: x[4] as i8 as f32 / 2.0,
