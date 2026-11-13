@@ -820,6 +820,7 @@ pub struct BarProfile {
     pub low_db: f32,
     pub pulse: f32,
     pub voice: f32,
+    pub change: f32,
 }
 
 #[cfg(feature = "ffi")]
