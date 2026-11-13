@@ -1324,7 +1324,8 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
         .count() as f64
         * 0.05;
     let sung_s = |from: f64, to: f64| (0..((to - from).max(0.0) / 0.05) as usize).filter(|k| a.sung_at(out_at(from + *k as f64 * 0.05 + 0.025))).count() as f64 * 0.05;
-    let sung_under_s = sung_s(0.0, run_up);
+    // From where the incoming song comes in: before it the outgoing one plays alone.
+    let sung_under_s = sung_s(ms(p.in_delay_ms).min(run_up), run_up);
     let end = a.exit.filter(|_| !a.gaps.is_empty()).unwrap_or(a.music.1);
     let sung_lost_s = sung_s(swap.map_or(0.0, |(s0, _)| s0), dur) + a.voice.iter().map(|(v0, v1)| (v1.min(end) - v0.max(heard_end)).max(0.0)).sum::<f64>();
     // Voices competing, with the plan as it is and with its separation taken out (the same window, gains and
@@ -1388,7 +1389,7 @@ pub struct MixTotals {
     pub bends: usize,
     pub beat_matched: usize,
     pub cuts: usize,
-    /// DJ moves for pairs that are not locked: rides, echoes, filters, brakes, washes.
+    /// DJ moves for pairs no stretch meets: loop ramps, rides, echoes, filters, brakes, washes.
     pub handovers: usize,
     pub drops: usize,
     pub drop_hit: usize,
@@ -1425,7 +1426,7 @@ pub fn mix_totals(scores: &[MixScore]) -> MixTotals {
         t.bends += s.bent as usize;
         t.beat_matched += (s.kind == K::BeatMatched) as usize;
         t.cuts += (s.kind == K::Cut) as usize;
-        t.handovers += matches!(s.kind, K::EchoOut | K::FilterRide | K::FilterOut | K::Brake | K::ReverbWash) as usize;
+        t.handovers += matches!(s.kind, K::LoopRamp | K::EchoOut | K::FilterRide | K::FilterOut | K::Brake | K::ReverbWash) as usize;
         if s.has_drop {
             t.drops += 1;
             t.drop_hit += s.drop_hit as usize;

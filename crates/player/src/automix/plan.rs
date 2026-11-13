@@ -23,7 +23,7 @@ mod moves;
 use moves::{Move, Pair};
 use super::structure::key_distance;
 use super::tempo::{fold, match_ratio};
-use crate::types::{AutoMixSettings, BassSwap, Bend, Echo, FadeCurve, HighsIn, InLoop, MixStyle, Sweep, TrackAnalysis, TransitionKind, TransitionPlan, VocalDuck};
+use crate::types::{AutoMixSettings, BassSwap, Bend, Echo, FadeCurve, Glide, HighsIn, InLoop, MixStyle, Sweep, TrackAnalysis, TransitionKind, TransitionPlan, VocalDuck};
 
 pub(crate) const MAX_SKIP_MS: i64 = 15_000;
 /// The outgoing music a double drop may leave unplayed: the outro after its last drop.
@@ -557,8 +557,8 @@ struct Lock {
     /// Keys at least [`KEY_FAR`] apart.
     far: bool,
     max_bars: i64,
-    /// A tempo gap past the limit: the fewest bars it glides over, across the whole mix; 0 for none.
-    glide_bars: f64,
+    /// A tempo gap past the limit, met halfway ([`meet_halfway`]).
+    split: bool,
     /// Filters are on, so two voices can be kept apart.
     separate: bool,
     profile: &'static Profile,
@@ -704,8 +704,6 @@ struct Window {
     /// The incoming song sings in the run-up, and before the mix ends.
     runup_sung: bool,
     after_sung: bool,
-    /// Both songs singing at once, ms.
-    both_sung: f64,
     score: f64,
 }
 
@@ -865,7 +863,8 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                     .find(|&from| at_end && from > plain && from >= a.silence_start_ms as f64 && from >= steady_from && unsung_from(from))
                     .map(|from| (from, at - from));
                 let over_singing = vocal_end.is_some_and(|v| plain < v) && prof.sung_under_cost > 0.0;
-                let outs = [fits.then_some((plain, 0.0)), looped.filter(|_| !fits || over_singing)];
+                // Met halfway, the outgoing song glides through the bars before the mix: not a loop of them.
+                let outs = [fits.then_some((plain, 0.0)), looped.filter(|_| (!fits || over_singing) && !k.split)];
                 for (start, out_loop) in outs.into_iter().flatten() {
                 // A run-up without chords cannot clash: the pair's length cap then applies only after the swap.
                 let neutral = landing == Landing::Drop && b.drop_runup_tonal_db <= -CHORDLESS_DB && !runup_sung;
@@ -879,10 +878,6 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                         let held = k.held_bars(dur);
                         let capped = if neutral { tail / bar } else { held };
                         if bars < 2.0 - 1e-6 || capped > k.max_bars as f64 + 0.3 || held > prof.most_bars[0] as f64 + 0.3 || dur > max_len as f64 {
-                            continue;
-                        }
-                        // A glide starts once the incoming loop has played.
-                        if bars - (in_loop.map_or(0, |(l, n)| l * (n + 1)) as f64) < k.glide_bars - 1e-6 {
                             continue;
                         }
                         let heard_end = if out_loop > 0.0 { at } else { at + tail };
@@ -968,7 +963,6 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                                 double,
                                 runup_sung,
                                 after_sung: vocal_start.is_some_and(|v| heard_at(v) < dur),
-                                both_sung,
                                 score,
                             });
                         }
@@ -991,10 +985,10 @@ fn beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSet
         max_pct = max_pct.min(VARISPEED_MAX_PCT);
     }
     let prof = profile(s.style);
-    // Past the limit, a DJ mix glides: one tempo for both decks, from the outgoing song's to the incoming one's
-    // across the whole mix, so each is about half the gap from its own as they cross.
-    let glide = pct > max_pct + 1e-9 && prof.bend && s.keep_pitch && pct <= (2.0 * max_pct).min(GLIDE_MAX_PCT) + 1e-9;
-    if pct > max_pct + 1e-9 && !glide {
+    // Past the limit, the two meet halfway: each song then moves at most half the gap, so twice the limit is met at
+    // the same strain on each.
+    let split = pct > max_pct + 1e-9 && s.keep_pitch && pct <= (2.0 * max_pct).min(SPLIT_MAX_PCT) + 1e-9;
+    if pct > max_pct + 1e-9 && !split {
         return Err(format!("tempo gap {pct:.1} % over the {max_pct:.1} % limit"));
     }
     if (ratio - 1.0).abs() < 0.0005 {
@@ -1021,13 +1015,8 @@ fn beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSet
     } else {
         prof.most_bars[0]
     };
-    let glide_bars = if glide { (pct / GLIDE_PCT_PER_BAR).ceil() } else { 0.0 };
-    let k = Lock { ratio, pct, bpm_a, b_bpm, bpb, beat: beat_a, bar, dist, mild_clash, far, max_bars, glide_bars, separate: s.filter_effects, profile: prof };
+    let k = Lock { ratio, pct, bpm_a, b_bpm, bpb, beat: beat_a, bar, dist, mild_clash, far, max_bars, split, separate: s.filter_effects, profile: prof };
     let w = drop_aligned(a, b, room, bpm_b, &k).ok_or("no bar-aligned window fits")?;
-    // A glide is long, so only a pair that blends glides: keys near, never two voices at once.
-    if glide && (mild_clash || w.both_sung > 0.0) {
-        return Err(format!("tempo gap {pct:.1} % over the {max_pct:.1} % limit, and no clean glide"));
-    }
     let ending = Ending::of(a, out_dur);
     let left = ending.exit < ending.music_end && (w.start + w.swap - ending.exit).abs() <= 0.5 * k.beat;
     let leaving = match (left, ending.breakdown) {
@@ -1044,7 +1033,66 @@ fn beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSet
         if w.out_loop > 0.0 { "intro/outro remix" } else { "" },
         if neutral { "run-up without chords" } else { "" },
     ];
-    Ok(finish_beat_matched(a, b, s, &k, &w, short_cause, &bits))
+    let mut p = finish_beat_matched(a, b, s, &k, &w, short_cause, &bits);
+    if split && !meet_halfway(&mut p, a, b, &k) {
+        return Err(format!("tempo gap {pct:.1} % over the {max_pct:.1} % limit, and no room to meet it halfway"));
+    }
+    Ok(p)
+}
+
+/// The most two tempos are moved together, percent: each by about half, which listeners take as comfortable up to
+/// about 10 % a song (Ishizaki et al. 2009).
+const SPLIT_MAX_PCT: f64 = 22.0;
+
+/// A tempo gap past the limit met halfway (Ishizaki et al. 2009): before the mix the outgoing song alone glides, no
+/// faster than [`moves::RAMP_PCT_PER_BAR`], to the tempo between the two, and the incoming one comes in there, so
+/// neither is more than half the gap from its own; after it the incoming one eases back. `p` was laid out with the
+/// outgoing song at its own tempo, the incoming one stretched to it; its times become those of the glide and the
+/// slower or faster bars after it. False when there is no room before the mix, or a loop would play through it.
+fn meet_halfway(p: &mut TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, k: &Lock) -> bool {
+    if p.out_loop_ms.is_some() {
+        return false;
+    }
+    let (to_a, to_b) = (1.0 / k.ratio.sqrt(), k.ratio.sqrt());
+    let bars = ((to_a - 1.0).abs() * 100.0 / moves::RAMP_PCT_PER_BAR).ceil().max(2.0);
+    let song = bars * k.bar;
+    let glide = song * 2.0 / (1.0 + to_a);
+    let start = p.out_start_ms as f64 - song;
+    if start < a.silence_start_ms as f64 {
+        return false;
+    }
+    let at = |ms: &mut i64| *ms = (glide + *ms as f64 / to_a).round() as i64;
+    let len = |ms: &mut i64| *ms = (*ms as f64 / to_a).round() as i64;
+    for ms in [&mut p.out_fade_start_ms, &mut p.out_fade_end_ms, &mut p.in_fade_start_ms, &mut p.in_fade_end_ms, &mut p.duration_ms] {
+        at(ms);
+    }
+    if let Some(sw) = p.bass_swap.as_mut() {
+        at(&mut sw.at_ms);
+        len(&mut sw.len_ms);
+    }
+    if let Some(h) = p.highs_in.as_mut() {
+        at(&mut h.at_ms);
+        len(&mut h.len_ms);
+    }
+    for sw in [p.low_pass.as_mut(), p.high_pass.as_mut()].into_iter().flatten() {
+        at(&mut sw.start_ms);
+        at(&mut sw.end_ms);
+    }
+    if let Some(d) = p.vocal_duck.as_mut() {
+        at(&mut d.until_ms);
+        len(&mut d.release_ms);
+    }
+    if let Some(l) = p.in_loop.as_mut() {
+        len(&mut l.ms);
+    }
+    p.out_start_ms = start.round() as i64;
+    p.in_delay_ms = glide.round() as i64;
+    p.out_glide = Some(Glide { window: crate::types::Window { start_ms: 0, end_ms: p.in_delay_ms }, to: to_a });
+    (p.tempo_ratio, p.bend) = (to_b, None);
+    let beats = ((to_b - 1.0).abs() * 100.0 / moves::EASE_PCT_PER_BEAT).ceil();
+    (p.tempo_ramp_beats, p.tempo_ramp_ms) = (beats as i32, (beats * 60_000.0 / b.bpm).round() as i64);
+    p.reason += &format!(", meeting halfway at {:.1} BPM", k.bpm_a * to_a);
+    true
 }
 
 /// How long the bass takes to change hands: a sixteenth as the drop hits, which brings its own; elsewhere eased
@@ -1118,7 +1166,7 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     p.in_loop = w.in_loop.map(|(l, n)| InLoop { ms: (l as f64 * k.bar).round() as i64, repeats: n as i32 });
     p.in_gain_db = loudness_trim(Some(a), Some(b), s);
     let loop_end = w.in_loop.map_or(0.0, |(l, n)| (l * (n + 1)) as f64 * k.bar);
-    if k.profile.bend {
+    if k.profile.bend && !k.split {
         bend(&mut p, k, loop_end);
     }
     let mut bits: Vec<String> = notes.iter().filter(|n| !n.is_empty()).map(|n| n.to_string()).collect();
@@ -1138,8 +1186,7 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
         bits.push(format!("its first {l} bars looped {n}x"));
     }
     if let Some(b) = p.bend {
-        let over = if k.glide_bars > 0.0 { "gliding across the gap" } else { "tempo bending" };
-        bits.push(format!("{over} over the last {:.0} bars", k.profile_bars(b)));
+        bits.push(format!("tempo bending over the last {:.0} bars", k.profile_bars(b)));
     }
     if k.far {
         bits.push(format!("{KEYS_FAR}: quick"));
@@ -1179,9 +1226,6 @@ const RISER_TO_HZ: f32 = 900.0;
 
 /// Bars of tempo glide at the end of a DJ mix, at most and at least.
 const BEND_BARS: f64 = 8.0;
-/// A tempo gap past the limit glides at most this much a bar, percent, and is never past this gap.
-const GLIDE_PCT_PER_BAR: f64 = 2.0;
-const GLIDE_MAX_PCT: f64 = 20.0;
 const BEND_MIN_BARS: f64 = 2.0;
 /// Tempo gaps under this are left to the ramp after the mix, percent.
 const BEND_MIN_PCT: f64 = 0.5;
@@ -1200,13 +1244,13 @@ impl Lock {
     }
 }
 
-/// Moves the tempo change into the mix: over its last bars, or all of them after the incoming loop (from `from` ms)
-/// for a glide, both decks glide to the incoming tempo, so the incoming song is at its own once the mix is over. The plan's times, laid out
+/// Moves the tempo change into the mix: over its last bars (after the incoming loop, from `from` ms) both decks
+/// glide to the incoming tempo, so the incoming song is at its own once the mix is over. The plan's times, laid out
 /// in the outgoing song's time, become wall-clock: from the bend's start the outgoing song plays at a changing
 /// speed, so each later time is where that song time is reached.
 fn bend(p: &mut TransitionPlan, k: &Lock, from: f64) {
     let dur = p.duration_ms as f64;
-    let span = if k.glide_bars > 0.0 { dur - from } else { (BEND_BARS * k.bar).min(dur - from) };
+    let span = (BEND_BARS * k.bar).min(dur - from);
     if k.ratio == 1.0 || k.pct < BEND_MIN_PCT || span < BEND_MIN_BARS * k.bar - 1.0 {
         return;
     }
@@ -1559,31 +1603,32 @@ mod tests {
         assert!(p.bend.is_none() && p.tempo_ramp_ms > 0, "{}", p.reason);
     }
 
-    /// A tempo gap past the limit glides in DJ mixes: one tempo for both decks across the whole mix, two percent a
-    /// bar at most, each song near its own while it is the louder; past twice the limit it does not mix.
+    /// A tempo gap past the style's limit is met halfway, in both styles: the outgoing song alone glides, two percent
+    /// a bar at most, to the tempo between the two; the incoming one comes in where the glide ends, both then at one
+    /// tempo, each within half the gap of its own, the swap on a downbeat; after it the incoming one eases back. Past
+    /// twice the limit no stretch meets it.
     #[test]
-    fn dj_glides_across_a_tempo_gap_past_the_limit() {
+    fn tempos_past_the_limit_meet_halfway() {
         let a = track(128.0);
-        for (bpm, glides) in [(110.0, true), (104.0, false)] {
+        for (s, bpm, met) in [(dj(), 110.0, true), (dj(), 104.0, false), (AutoMixSettings::default(), 118.0, true), (AutoMixSettings::default(), 110.0, false)] {
             let b = track(bpm);
             let pct = (128.0 / bpm - 1.0) * 100.0;
-            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
-            if !glides {
-                assert_ne!(p.kind, TransitionKind::BeatMatched, "{pct:.0} %: {}", p.reason);
+            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &s);
+            if !met {
+                assert_ne!(p.kind, TransitionKind::BeatMatched, "{:?} {pct:.0} %: {}", s.style, p.reason);
                 continue;
             }
-            assert_eq!(p.kind, TransitionKind::BeatMatched, "{pct:.0} %: {}", p.reason);
-            let bend = p.bend.expect(&p.reason);
-            let loop_end = p.in_loop.map_or(0, |l| l.ms * (l.repeats as i64 + 1));
-            assert_eq!((bend.start_ms, bend.end_ms), (loop_end, p.duration_ms), "across the whole mix: {p:?}");
-            let bars = p.out_song_ms(p.duration_ms as f64) / (4.0 * 60_000.0 / 128.0);
-            assert!(bars >= pct / 2.0 - 0.01, "{pct:.0} % over {bars} bars");
-            let swap = swap_at(&p) as f64;
-            let off = |r: f64| (r - 1.0).abs() * 100.0;
-            assert!(off(p.in_ratio_at(swap)) < pct && off(p.out_ratio_at(swap)) < pct, "both nearer their own at the swap: {p:?}");
-            lands_on_swap(&p, &a, p.in_start_ms + (p.in_song_ms(swap)).round() as i64);
+            assert_eq!(p.kind, TransitionKind::BeatMatched, "{:?} {pct:.0} %: {}", s.style, p.reason);
+            let g = p.out_glide.expect(&p.reason);
+            assert_eq!((g.window.start_ms, g.window.end_ms), (0, p.in_delay_ms), "the outgoing song glides alone until the incoming one comes in: {p:?}");
+            let bars = p.out_song_ms(p.in_delay_ms as f64) / (4.0 * 60_000.0 / 128.0);
+            assert!((g.to - 1.0).abs() * 100.0 <= 2.0 * bars + 0.01, "{bars} bars for {:.1} %", (g.to - 1.0) * 100.0);
+            assert!((128.0 * g.to - bpm * p.tempo_ratio).abs() < 0.05, "one tempo: {p:?}");
+            let half = ((128.0 / bpm).sqrt() - 1.0) * 100.0 + 0.1;
+            assert!((g.to - 1.0).abs() * 100.0 <= half && (p.tempo_ratio - 1.0).abs() * 100.0 <= half, "each within half the gap: {p:?}");
+            assert!(p.bend.is_none() && p.tempo_ramp_ms > 0, "eased back after: {p:?}");
+            lands_on_swap(&p, &a, p.in_start_ms + (p.in_song_ms(swap_at(&p) as f64)).round() as i64);
             check_skip(&p, &a, &b, 240_000);
-            assert_eq!(plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings::default()).kind, TransitionKind::MixRampFade, "Smooth never glides");
         }
     }
 
@@ -1871,7 +1916,7 @@ mod tests {
 
     #[test]
     fn tempo_limits_fall_back_to_mixramp() {
-        let (a, b) = (track(128.0), track(118.0)); // 8.5 %
+        let (a, b) = (track(128.0), track(104.0)); // 23 %: past twice Smooth's 6 %
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings::default());
         assert_eq!(p.kind, TransitionKind::MixRampFade);
         assert!(p.reason.contains("tempo gap"), "{}", p.reason);

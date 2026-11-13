@@ -152,7 +152,7 @@ fn end_bars(f: &Features, grid: &Grid, meter: i64, beat_s: f64, music: (f64, f64
     let song_low = (window_mean(&f.low_power, f.fps, f.t0, music.0, music.1) as f64).max(1e-12);
     let db = |v: f32, of: f64| (10.0 * ((v as f64).max(1e-12) / of).log10()) as f32;
     let frame = |t: f64| ((t - f.t0) * f.fps).round();
-    let mut bars: Vec<(BarProfile, [f32; 12])> = starts
+    let mut bars: Vec<ProfiledBar> = starts
         .take_while(|&s| s >= music.0 - 0.5 * bar_s && s + 0.5 * bar_s <= music.1)
         .map(|s| {
             let e = s + bar_s;
@@ -196,7 +196,7 @@ fn end_bars(f: &Features, grid: &Grid, meter: i64, beat_s: f64, music: (f64, f64
             if before.len() < 2 || after.len() < 2 {
                 return 0.0;
             }
-            let mean = |side: &[(BarProfile, [f32; 12])], f: &dyn Fn(&(BarProfile, [f32; 12])) -> f32| side.iter().map(f).sum::<f32>() / side.len() as f32;
+            let mean = |side: &[ProfiledBar], f: &dyn Fn(&ProfiledBar) -> f32| side.iter().map(f).sum::<f32>() / side.len() as f32;
             let chords: f32 = (0..12).map(|k| (mean(before, &|b| b.1[k]) - mean(after, &|b| b.1[k])).abs()).sum();
             let level = (mean(before, &|b| b.0.level_db) - mean(after, &|b| b.0.level_db)).abs() / CHANGE_DB;
             let lows = (mean(before, &|b| b.0.low_db.max(-CHANGE_LOWS_DB)) - mean(after, &|b| b.0.low_db.max(-CHANGE_LOWS_DB))).abs() / CHANGE_DB;
@@ -209,6 +209,9 @@ fn end_bars(f: &Features, grid: &Grid, meter: i64, beat_s: f64, music: (f64, f64
     let from = if intro { 0 } else { bars.len() - keep };
     bars[from..from + keep].iter().zip(&change[from..from + keep]).map(|((b, _), c)| BarProfile { change: *c, ..*b }).collect()
 }
+
+/// A bar and its pitch-class profile, while an end's changes are read.
+type ProfiledBar = (BarProfile, [f32; 12]);
 
 /// The mean pitch-class profile of `[from_s, to_s)`, its classes summing to 1.
 fn chroma_of(f: &Features, from_s: f64, to_s: f64) -> [f32; 12] {
