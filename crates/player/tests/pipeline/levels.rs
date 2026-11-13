@@ -140,17 +140,31 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
         },
         Kind {
             name: "MixRamp fade",
-            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            prefs: TransitionPrefs { beat_match: false, filter_effects: false, ..automix_prefs() },
             a: a.clone(),
             b: b.clone(),
             logged: &["MixRampFade", "mixramp fade"],
         },
         Kind {
             name: "downbeat-aligned fade",
-            prefs: automix_prefs(),
+            prefs: TransitionPrefs { filter_effects: false, ..automix_prefs() },
             a: a.clone(),
             b: TrackAnalysis { bpm_confidence: 0.1, intro_bpm_confidence: 0.1, ..b.clone() },
             logged: &["MixRampFade", "downbeat-aligned"],
+        },
+        Kind {
+            name: "melt",
+            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            a: a.clone(),
+            b: b.clone(),
+            logged: &["FilterRide", "melt"],
+        },
+        Kind {
+            name: "afterglow",
+            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            a: a.clone(),
+            b: TrackAnalysis { vocal_start_ms: 300, vocal_end_ms: 20_000, ..b.clone() },
+            logged: &["ReverbWash", "afterglow"],
         },
     ]
 }
