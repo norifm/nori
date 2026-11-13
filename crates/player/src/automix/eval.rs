@@ -10,6 +10,7 @@ use std::f64::consts::PI;
 
 use super::plan::{at_end, at_start, grid_ok};
 use super::structure::camelot;
+use crate::types::BarProfile;
 use super::*;
 
 /// Beat and downbeat tolerance, seconds (the standard ±70 ms).
@@ -1507,6 +1508,23 @@ fn end_grids_hold_before_a_coda() {
     let end = plan::at_end(&a.track);
     assert!(plan::grid_ok(&end), "{:.1} bpm conf {:.2} stab {:.2}", end.bpm, end.bpm_confidence, end.stability);
     assert!((end.bpm - truth.bpm).abs() < 0.5, "{} against {}", end.bpm, truth.bpm);
+}
+
+/// Each end's bars read what plays in them: a beat or none, singing or none, the bass or none.
+#[test]
+fn end_bars_read_what_plays() {
+    // Eight bars of drums, 32 of the band, 16 sung, 8 of the band, 12 of pads: the profiles' 32 bars at each end.
+    let (a, _) = analysed("long-coda-124");
+    let (intro, outro) = (&a.track.intro_bars, &a.track.outro_bars);
+    assert_eq!((intro.len(), outro.len()), (32, 32));
+    let mean = |bars: &[BarProfile], f: fn(&BarProfile) -> f32| bars.iter().map(f).sum::<f32>() / bars.len() as f32;
+    let all = |bars: &[BarProfile], ok: fn(&BarProfile) -> bool| bars.iter().all(ok);
+    assert!(all(&intro[..8], |b| b.pulse >= 0.75 && b.voice <= 0.05), "drums: {:?}", &intro[..8]);
+    assert!(all(&intro[8..], |b| b.pulse >= 0.75 && b.voice < 0.4), "the band: {:?}", &intro[8..]);
+    assert!(mean(&outro[..12], |b| b.voice) >= 0.6, "sung: {:?}", &outro[..12]);
+    assert!(all(&outro[12..20], |b| b.pulse >= 0.75 && b.voice < 0.4 && b.low_db > -6.0), "the band: {:?}", &outro[12..20]);
+    assert!(all(&outro[20..], |b| b.pulse <= 0.3 && b.low_db < -20.0 && b.level_db < -6.0), "pads: {:?}", &outro[20..]);
+    assert!(outro.windows(2).all(|w| w[1].start_ms > w[0].start_ms), "in time order");
 }
 
 /// Drops and exits within a beat are found; one where the song has none is a false alarm.

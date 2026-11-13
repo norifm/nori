@@ -1,6 +1,6 @@
 //! The `track_analysis` and `vocal_curve` tables, and the streaming analyser that feeds them.
 
-use nori_model::TrackAnalysis;
+use nori_model::{BarProfile, TrackAnalysis};
 use nori_player::automix::vocal::VocalCurve;
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -19,7 +19,7 @@ macro_rules! columns {
 
         fn row(r: &rusqlite::Row) -> rusqlite::Result<TrackAnalysis> {
             let mut at = 0..;
-            Ok(TrackAnalysis { $($field: column!(r, at.next().expect("unbounded") $(, $default)?)),* })
+            Ok(TrackAnalysis { $($field: column!(r, at.next().expect("unbounded") $(, $default)?),)* ..TrackAnalysis::default() })
         }
     };
 }
@@ -46,15 +46,54 @@ columns! {
     intro_grid_from_ms or 0, intro_grid_to_ms or 0, outro_grid_from_ms or 0, outro_grid_to_ms or 0,
 }
 
+/// The bar profile columns, after [`COLUMNS`].
+const BARS: [&str; 2] = ["intro_bars", "outro_bars"];
+
 pub fn put(c: &Connection, a: &TrackAnalysis) -> rusqlite::Result<()> {
-    let marks: Vec<String> = (1..=COLUMNS.len()).map(|i| format!("?{i}")).collect();
-    c.prepare_cached(&format!("INSERT OR REPLACE INTO track_analysis(server, {}) VALUES(sid(), {})", COLUMNS.join(", "), marks.join(",")))?
-        .execute(&values(a)[..])
+    let marks: Vec<String> = (1..=COLUMNS.len() + BARS.len()).map(|i| format!("?{i}")).collect();
+    let bars = [encode_bars(&a.intro_bars), encode_bars(&a.outro_bars)];
+    let mut all: Vec<&dyn rusqlite::ToSql> = values(a).to_vec();
+    all.extend(bars.iter().map(|b| b as &dyn rusqlite::ToSql));
+    c.prepare_cached(&format!("INSERT OR REPLACE INTO track_analysis(server, {}, {}) VALUES(sid(), {})", COLUMNS.join(", "), BARS.join(", "), marks.join(",")))?
+        .execute(&all[..])
         .map(|_| ())
 }
 
 pub fn get(c: &Connection, song_id: &str) -> rusqlite::Result<Option<TrackAnalysis>> {
-    c.prepare_cached(&format!("SELECT {} FROM track_analysis WHERE server=sid() AND song_id=?1", COLUMNS.join(", ")))?.query_row([song_id], row).optional()
+    c.prepare_cached(&format!("SELECT {}, {} FROM track_analysis WHERE server=sid() AND song_id=?1", COLUMNS.join(", "), BARS.join(", ")))?
+        .query_row([song_id], |r| {
+            let mut a = row(r)?;
+            let blob = |i: usize| r.get::<_, Vec<u8>>(COLUMNS.len() + i).map(|b| decode_bars(&b)).unwrap_or_default();
+            (a.intro_bars, a.outro_bars) = (blob(0), blob(1));
+            Ok(a)
+        })
+        .optional()
+}
+
+/// Bytes per stored bar: its start (ms, i32), level and lows (half dB, i8), pulse and voice (0..255).
+const BAR_BYTES: usize = 8;
+
+fn encode_bars(bars: &[BarProfile]) -> Vec<u8> {
+    let half_db = |db: f32| (db * 2.0).round().clamp(-128.0, 127.0) as i8 as u8;
+    let share = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+    bars.iter()
+        .flat_map(|b| {
+            let s = (b.start_ms.clamp(i32::MIN as i64, i32::MAX as i64) as i32).to_le_bytes();
+            [s[0], s[1], s[2], s[3], half_db(b.level_db), half_db(b.low_db), share(b.pulse), share(b.voice)]
+        })
+        .collect()
+}
+
+fn decode_bars(b: &[u8]) -> Vec<BarProfile> {
+    b.chunks_exact(BAR_BYTES)
+        .map(|x| BarProfile {
+            start_ms: i32::from_le_bytes([x[0], x[1], x[2], x[3]]) as i64,
+            level_db: x[4] as i8 as f32 / 2.0,
+            low_db: x[5] as i8 as f32 / 2.0,
+            pulse: x[6] as f32 / 255.0,
+            voice: x[7] as f32 / 255.0,
+        })
+        .collect()
 }
 
 /// Stores a fresh classical analysis, keeping the Beat This! grids and "model has looked" marks of the stored row
@@ -203,6 +242,21 @@ impl AnalysisStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bar_profiles_come_back() {
+        let c = nori_db::open("", "s").unwrap();
+        let bar = |i: i64| BarProfile { start_ms: 1_000 + 2_000 * i, level_db: -3.5 - i as f32, low_db: -40.0, pulse: 0.25 * i as f32, voice: 1.0 - 0.25 * i as f32 };
+        let a = TrackAnalysis { song_id: "a".into(), intro_bars: (0..4).map(bar).collect(), outro_bars: vec![bar(2)], ..TrackAnalysis::default() };
+        put(&c, &a).unwrap();
+        let got = get(&c, "a").unwrap().expect("the row");
+        assert_eq!((got.intro_bars.len(), got.outro_bars.len()), (4, 1));
+        for (g, w) in got.intro_bars.iter().chain(&got.outro_bars).zip(a.intro_bars.iter().chain(&a.outro_bars)) {
+            assert_eq!(g.start_ms, w.start_ms);
+            assert!((g.level_db - w.level_db).abs() <= 0.25 && (g.low_db - w.low_db).abs() <= 0.25, "{g:?} {w:?}");
+            assert!((g.pulse - w.pulse).abs() <= 1.0 / 255.0 && (g.voice - w.voice).abs() <= 1.0 / 255.0, "{g:?} {w:?}");
+        }
+    }
 
     #[test]
     fn rows_keep_the_stored_format() {
