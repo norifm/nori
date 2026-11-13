@@ -397,6 +397,24 @@ pub struct Glide {
     pub to: f64,
 }
 
+/// Relative. The incoming track's speed (its song time per wall time) at `at_ms`, linear between knots, the last one's
+/// after: a tempo that follows the outgoing song's beats one by one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Rate {
+    pub at_ms: f64,
+    pub speed: f64,
+}
+
+/// One beat at an end of a song, ms from the file's start: whether a bar starts on it, and whether it sits on an
+/// attack heard in the audio (else where a tracker put it).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Beat {
+    pub at_ms: i64,
+    pub downbeat: bool,
+    pub sure: bool,
+}
+
 /// Relative. A tape stop on the outgoing track: from `start_ms` its read speed falls as `(1 - t)^1.8` to nothing
 /// over `len_ms`, its pitch with it; after it the outgoing deck is silent.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -503,6 +521,10 @@ pub struct TransitionPlan {
     pub out_glide: Option<Glide>,
     #[cfg_attr(feature = "serde", serde(default))]
     pub brake: Option<Brake>,
+    /// When present, the incoming tempo over the transition and after it, the ease back to its own included (the
+    /// last knot at 1): `tempo_ratio` is its first speed, and the ramp after the overlap is not used.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub in_rates: Vec<Rate>,
     /// Why this plan, for logs.
     pub reason: String,
 }
@@ -553,6 +575,8 @@ impl TransitionPlan {
         }
         self.unbend();
         self.in_loop = None;
+        // Beat-locked rates hold only at the planned length.
+        self.in_rates.clear();
     }
 
     /// Whether both plans mix the same audio: equal but for `kind`, `reason` and `tempo_ramp_beats`
@@ -591,6 +615,7 @@ impl TransitionPlan {
             in_delay_ms,
             out_glide,
             brake,
+            in_rates,
         } = self;
         (*out_start_ms, *in_start_ms, *duration_ms, *tempo_ramp_ms, *out_fade_start_ms, *out_fade_end_ms, *in_fade_start_ms, *in_fade_end_ms, *out_loop_ms)
             == (o.out_start_ms, o.in_start_ms, o.duration_ms, o.tempo_ramp_ms, o.out_fade_start_ms, o.out_fade_end_ms, o.in_fade_start_ms, o.in_fade_end_ms, o.out_loop_ms)
@@ -599,6 +624,7 @@ impl TransitionPlan {
             && (*in_loop, *bend, *highs_in) == (o.in_loop, o.bend, o.highs_in)
             && (*in_low_pass, *in_high_pass, *mid_dip, *reverb) == (o.in_low_pass, o.in_high_pass, o.mid_dip, o.reverb)
             && (*in_delay_ms, *out_glide, *brake) == (o.in_delay_ms, o.out_glide, o.brake)
+            && *in_rates == o.in_rates
     }
 
     /// Where the tempo changes: from `tempo_ratio` to 1 over (start, length) ms of the transition, the bend or
@@ -613,6 +639,9 @@ impl TransitionPlan {
     /// The incoming track's speed `t_ms` into the transition (past its end too: the bend, or the ramp after
     /// the overlap).
     pub fn in_ratio_at(&self, t_ms: f64) -> f64 {
+        if let Some(r) = self.rate_at(t_ms) {
+            return r;
+        }
         let (r, (from, len)) = (self.tempo_ratio, self.glide());
         if t_ms <= from {
             r
@@ -628,6 +657,9 @@ impl TransitionPlan {
     pub fn in_played_ms(&self, t_ms: f64) -> f64 {
         let (r, (from, len)) = (self.tempo_ratio, self.glide());
         let played = |t: f64| {
+            if !self.in_rates.is_empty() {
+                return self.rates_played(t);
+            }
             if t <= from {
                 return t * r;
             }
@@ -636,6 +668,38 @@ impl TransitionPlan {
         };
         let delay = self.in_delay_ms.max(0) as f64;
         (played(t_ms.max(delay)) - played(delay)).max(0.0)
+    }
+
+    /// The speed `in_rates` give `t_ms` into the transition; None without them.
+    fn rate_at(&self, t_ms: f64) -> Option<f64> {
+        let (first, last) = (self.in_rates.first()?, self.in_rates.last()?);
+        if t_ms <= first.at_ms {
+            return Some(first.speed);
+        }
+        if t_ms >= last.at_ms {
+            return Some(last.speed);
+        }
+        let i = self.in_rates.partition_point(|k| k.at_ms <= t_ms);
+        let (a, b) = (self.in_rates[i - 1], self.in_rates[i]);
+        Some(a.speed + (b.speed - a.speed) * (t_ms - a.at_ms) / (b.at_ms - a.at_ms).max(1e-9))
+    }
+
+    /// Song time the `in_rates` play in the first `t_ms`: their speed integrated, piece by piece.
+    fn rates_played(&self, t_ms: f64) -> f64 {
+        let t = t_ms.max(0.0);
+        let first = self.in_rates[0];
+        let mut played = t.min(first.at_ms.max(0.0)) * first.speed;
+        for w in self.in_rates.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            if t <= a.at_ms {
+                break;
+            }
+            let end = t.min(b.at_ms);
+            let at_end = a.speed + (b.speed - a.speed) * (end - a.at_ms) / (b.at_ms - a.at_ms).max(1e-9);
+            played += (end - a.at_ms) * (a.speed + at_end) / 2.0;
+        }
+        let last = self.in_rates[self.in_rates.len() - 1];
+        played + (t - last.at_ms.max(0.0)).max(0.0) * last.speed
     }
 
     /// The loop's repeats, wall-clock ms.

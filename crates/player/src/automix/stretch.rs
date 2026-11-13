@@ -10,6 +10,8 @@
 pub const BLOCK: usize = 256;
 /// Ratio bounds; the minimum bounds the output of one block.
 const MIN_RATIO: f64 = 0.5;
+/// The most knots a schedule follows: a beat each over a long mix and the ease after it.
+pub const MAX_KNOTS: usize = 512;
 const MAX_RATIO: f64 = 2.0;
 const MAX_OUT: usize = (BLOCK as f64 / MIN_RATIO) as usize + 8;
 /// Crossfade from the stretched to the plain signal, frames.
@@ -49,6 +51,8 @@ enum Engine {
 pub struct Stretcher {
     ch: usize,
     engine: Engine,
+    /// A schedule of (output frame, ratio) knots, linear between them, that rules the ratio when not empty.
+    knots: Vec<(u64, f64)>,
     ratio0: f64,
     /// The ratio the schedule ends at; 1 hands over to the plain signal.
     to: f64,
@@ -158,6 +162,7 @@ impl Stretcher {
         Stretcher {
             ch,
             engine,
+            knots: Vec::with_capacity(MAX_KNOTS),
             ratio0: 1.0,
             to: 1.0,
             hold: 0,
@@ -188,6 +193,7 @@ impl Stretcher {
     pub fn configure(&mut self, ratio: f64, hold: u64, ramp: u64) {
         let ratio = bounded(ratio);
         (self.ratio0, self.to, self.hold, self.ramp, self.out_pos, self.frac) = (ratio, 1.0, hold, ramp, 0, 0.0);
+        self.knots.clear();
         (self.pend_read, self.pend_len, self.raw_pos) = (0, 0, 0);
         (self.given, self.content) = (0, 0.0);
         self.raw.fill(0.0);
@@ -222,6 +228,17 @@ impl Stretcher {
         if let Engine::Signalsmith(_) = self.engine {
             self.state = State::Entering(0);
         }
+    }
+
+    /// Starts following `knots` (output frame, ratio; at most [`MAX_KNOTS`], the rest dropped) from the next frame,
+    /// linear between them and the last one's ratio after; a last ratio of 1 hands over to the plain signal once
+    /// reached. Allocates nothing.
+    pub fn follow(&mut self, knots: &[(u64, f64)]) {
+        let (first, last) = (knots.first().map_or(1.0, |k| k.1), knots.last().map_or((0, 1.0), |k| *k));
+        // Never the direct path: the schedule is the stretcher's to keep.
+        self.configure(first, last.0, 1);
+        self.to = bounded(last.1);
+        self.knots.extend(knots.iter().take(MAX_KNOTS).map(|&(at, r)| (at, bounded(r))));
     }
 
     /// Feeds the input just before a [`Stretcher::glide`], oldest first, as its history; at least
@@ -277,6 +294,15 @@ impl Stretcher {
 
     /// The ratio the schedule gives output frame `at`.
     fn schedule(&self, at: u64) -> f64 {
+        if let (Some(&(f0, r0)), Some(&(_, rn))) = (self.knots.first(), self.knots.last()) {
+            if at <= f0 {
+                return r0;
+            }
+            let i = self.knots.partition_point(|k| k.0 <= at);
+            let Some(&(f1, r1)) = self.knots.get(i) else { return rn };
+            let (fa, ra) = self.knots[i - 1];
+            return ra + (r1 - ra) * (at - fa) as f64 / (f1 - fa).max(1) as f64;
+        }
         if at < self.hold {
             self.ratio0
         } else if at < self.hold + self.ramp {

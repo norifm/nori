@@ -82,6 +82,7 @@ fn blank(kind: TransitionKind, out_start: i64, in_start: i64, duration: i64, rea
         in_delay_ms: 0,
         out_glide: None,
         brake: None,
+        in_rates: Vec::new(),
         reason,
     }
 }

@@ -977,6 +977,7 @@ mod tests {
             in_delay_ms: 0,
             out_glide: None,
             brake: None,
+            in_rates: Vec::new(),
             reason: String::new(),
         }
     }
