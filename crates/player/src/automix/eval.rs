@@ -837,14 +837,22 @@ pub fn precision(reference: &[f64], estimate: &[f64]) -> f64 {
     estimate.iter().filter(|e| reference.iter().any(|r| (*e - r).abs() <= TOL)).count() as f64 / estimate.len() as f64
 }
 
-pub fn score_window(t: &TrackAnalysis, truth: &Truth, from: f64, to: f64) -> Option<WindowScore> {
+pub fn score_window(t: &TrackAnalysis, beats: Option<&[crate::types::Beat]>, truth: &Truth, from: f64, to: f64) -> Option<WindowScore> {
     let rb = truth.beats_in(from, to);
     if rb.len() < 8 {
         return None;
     }
     // Only where the song has beats: a grid carried on through a ringing last chord is not wrong.
     let half = 30.0 / median_bpm(&rb).max(1.0);
-    let (eb, ed) = grid(t, from.max(rb[0] - half), to.min(rb[rb.len() - 1] + half));
+    let (lo, hi) = (from.max(rb[0] - half), to.min(rb[rb.len() - 1] + half));
+    // An end gridded by its beats is mixed on them, as cleaned.
+    let (eb, ed) = match beats.and_then(crate::automix::curve::Curve::of) {
+        Some(c) => {
+            let on: Vec<_> = c.points.iter().filter(|p| (lo..=hi).contains(&(p.heard_ms / 1000.0))).collect();
+            (on.iter().map(|p| p.heard_ms / 1000.0).collect(), on.iter().filter(|p| p.downbeat).map(|p| p.heard_ms / 1000.0).collect())
+        }
+        None => grid(t, lo, hi),
+    };
     let rd = truth.downbeats_in(from, to);
     let beat_f = f_measure(&rb, &eb);
     let downbeat_f = f_measure(&rd, &ed);
@@ -891,15 +899,16 @@ pub fn score(a: &Analysis, truth: &Truth, with_key: bool) -> SongScore {
     let rb = truth.beats_in(from, f64::MAX);
     let tracked: Vec<f64> = a.tempo.beats.iter().copied().filter(|b| *b >= from).collect();
     let (gb, _) = grid(t, from, truth.music.1 + 1.0);
-    let intro_t = at_start(t);
-    let outro_t = at_end(t);
+    let (intro_t, intro_by) = at_start(t);
+    let (outro_t, outro_by) = at_end(t);
+    let by_beats = |g: plan::Gridded, beats| (g == plan::Gridded::Beats).then_some(beats);
     let first_beat = truth.beats.first().copied().unwrap_or(truth.music.0);
     // A grid that holds over a run of its end only is mixed inside the run, so it is scored there.
     let within = |(from, to): (f64, f64), (a, b): (i64, i64)| if b > 0 { (from.max(a as f64 / 1000.0), to.min(b as f64 / 1000.0)) } else { (from, to) };
     let (i0, i1) = within((first_beat.max(music.0), first_beat.max(music.0) + MIX_S), (intro_t.intro_grid_from_ms, intro_t.intro_grid_to_ms));
     let (o0, o1) = within((music.1 - MIX_S, music.1), (outro_t.outro_grid_from_ms, outro_t.outro_grid_to_ms));
-    let intro = score_window(&intro_t, truth, i0, i1);
-    let outro = score_window(&outro_t, truth, o0, o1);
+    let intro = score_window(&intro_t, by_beats(intro_by, &t.intro_beats[..]), truth, i0, i1);
+    let outro = score_window(&outro_t, by_beats(outro_by, &t.outro_beats[..]), truth, o0, o1);
     let beat = 60.0 / truth.bpm.max(1.0);
     let intro_cue_ok = Some((t.intro_end_ms as f64 / 1000.0 - truth.intro_end).abs() <= beat);
     let outro_cue = t.outro_start_ms as f64 / 1000.0;
@@ -1506,7 +1515,7 @@ fn transitions_hold_their_scores() {
 #[test]
 fn end_grids_hold_before_a_coda() {
     let (a, truth) = analysed("long-coda-124");
-    let end = plan::at_end(&a.track);
+    let end = plan::at_end(&a.track).0;
     assert!(plan::grid_ok(&end), "{:.1} bpm conf {:.2} stab {:.2}", end.bpm, end.bpm_confidence, end.stability);
     assert!((end.bpm - truth.bpm).abs() < 0.5, "{} against {}", end.bpm, truth.bpm);
 }
@@ -1603,6 +1612,7 @@ fn landmarks_are_found() {
     }
     assert!(found >= 2, "the sung endings have their singing's end: {found}");
 }
+
 
 
 

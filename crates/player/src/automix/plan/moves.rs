@@ -19,6 +19,8 @@ pub(super) struct Pair<'a> {
     pub room: Room,
     pub s: &'a AutoMixSettings,
     pub why_not: &'a str,
+    /// An end is gridded by its beats ([`super::Gridded::Beats`]): nothing that holds one tempo on both may lock to it.
+    pub by_beats: bool,
 }
 
 /// Worth of each move before what it costs, roughly how good it sounds when it fits: a blend over a beatless end
@@ -488,7 +490,7 @@ const MID_DIP_HZ: f32 = 1_000.0;
 /// rising high-pass; after it, the incoming song eases back to its own tempo at [`EASE_PCT_PER_BEAT`].
 pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     let (a, b, s) = (p.a, p.b?, p.s);
-    if !grid_ok(a) || !grid_ok(b) || !s.keep_pitch || !s.beat_match || bar_beats(a) != bar_beats(b) {
+    if p.by_beats || !grid_ok(a) || !grid_ok(b) || !s.keep_pitch || !s.beat_match || bar_beats(a) != bar_beats(b) {
         return None;
     }
     // Two tempos in one octave, far enough apart that a stretch cannot meet them and near enough to glide.
