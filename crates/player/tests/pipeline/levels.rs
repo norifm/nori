@@ -156,7 +156,7 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
             prefs: TransitionPrefs { style: MixStyle::Dj, auto_mix_max_s: 40, ..automix_prefs() },
             a: kicking(&a),
             b: kicking(&same_tempo),
-            logged: &["BeatMatched", "bass first"],
+            logged: &["LayeredMix", "bass first"],
             after: None,
         },
         Kind {
