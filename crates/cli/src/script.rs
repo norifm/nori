@@ -398,7 +398,7 @@ pub fn main(argv: Vec<String>) {
     let mpris = a.mpris.then(|| {
         let songs = cli.songs.clone();
         let controls = Arc::new(Keys { engine: cli.engine.clone(), songs });
-        let m = nori_mpris::Mpris::start("nori").map_err(|e| println!("no media controls: {e}")).ok()?;
+        let m = nori_mpris::Mpris::start("").map_err(|e| println!("no media controls: {e}")).ok()?;
         m.serve(Some(controls));
         Some(m)
     });

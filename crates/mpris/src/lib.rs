@@ -125,8 +125,15 @@ mod bus {
         url
     }
 
+    /// The bus name: one per process, `.instance<pid>` as the spec names a second instance, which is how
+    /// Plasma ties a player to its window.
+    fn bus_name() -> String {
+        format!("org.mpris.MediaPlayer2.nori.instance{}", std::process::id())
+    }
+
     struct Root {
-        identity: String,
+        /// The app's .desktop file, without `.desktop`: its name and icon in the desktop's controls.
+        desktop_entry: String,
     }
 
     #[interface(name = "org.mpris.MediaPlayer2")]
@@ -135,7 +142,11 @@ mod bus {
         fn quit(&self) {}
         #[zbus(property)]
         fn identity(&self) -> String {
-            self.identity.clone()
+            "nori".into()
+        }
+        #[zbus(property)]
+        fn desktop_entry(&self) -> String {
+            self.desktop_entry.clone()
         }
         #[zbus(property)]
         fn can_quit(&self) -> bool {
@@ -339,18 +350,16 @@ mod bus {
 
     impl Served {
         #[cfg(target_os = "linux")]
-        pub fn start(name: &str, controls: Arc<dyn Controls>) -> Result<Served, String> {
-            let served = Served::on(session().map_err(|e| e.to_string())?, name, controls)?;
-            // Without DoNotQueue: waits in line behind an owner that keeps the name.
-            let flags = zbus::fdo::RequestNameFlags::ReplaceExisting.into();
-            block_on(served.conn.request_name_with_flags(format!("org.mpris.MediaPlayer2.{name}"), flags)).map_err(|e| e.to_string())?;
+        pub fn start(desktop_entry: &str, controls: Arc<dyn Controls>) -> Result<Served, String> {
+            let served = Served::on(session().map_err(|e| e.to_string())?, desktop_entry, controls)?;
+            block_on(served.conn.request_name(bus_name())).map_err(|e| e.to_string())?;
             Ok(served)
         }
 
-        fn on(builder: Builder<'static>, identity: &str, controls: Arc<dyn Controls>) -> Result<Served, String> {
+        fn on(builder: Builder<'static>, desktop_entry: &str, controls: Arc<dyn Controls>) -> Result<Served, String> {
             let builder = builder
                 .internal_executor(false)
-                .serve_at(OBJECT, Root { identity: identity.to_string() })
+                .serve_at(OBJECT, Root { desktop_entry: desktop_entry.to_string() })
                 .and_then(|b| b.serve_at(OBJECT, Player(controls.clone())))
                 .map_err(|e| e.to_string())?;
             Ok(Served { conn: running(builder, "nori-mpris")?, controls })
@@ -425,7 +434,7 @@ mod bus {
         fn served(controls: Arc<Asked>) -> (Served, Connection) {
             let (server, client) = UnixStream::pair().unwrap();
             let guid = Guid::generate();
-            let served = std::thread::spawn(move || Served::on(Builder::async_io_unix_stream(server).server(guid).unwrap().p2p(), "nori", controls));
+            let served = std::thread::spawn(move || Served::on(Builder::async_io_unix_stream(server).server(guid).unwrap().p2p(), "dev.nori.test", controls));
             let client = block_on(Builder::async_io_unix_stream(client).p2p().build()).unwrap();
             (served.join().unwrap().unwrap(), client)
         }
@@ -482,6 +491,7 @@ mod bus {
             let asked = Arc::new(Asked { now: Mutex::new(song()), ..Asked::default() });
             let (_served, client) = served(asked.clone());
             assert_eq!(String::try_from(get(&client, "org.mpris.MediaPlayer2", "Identity")).unwrap(), "nori");
+            assert_eq!(String::try_from(get(&client, "org.mpris.MediaPlayer2", "DesktopEntry")).unwrap(), "dev.nori.test", "the desktop finds the app's name and icon by it");
             assert_eq!(i64::try_from(get(&client, PLAYER, "Position")).unwrap(), 30_000_000, "µs");
             let m = metadata_of(get(&client, PLAYER, "Metadata"));
             assert_eq!(ObjectPath::try_from(m["mpris:trackid"].clone()).unwrap().as_str(), "/org/nori/track/2");
@@ -745,30 +755,31 @@ pub struct Mpris {
 }
 
 impl Mpris {
+    /// `desktop_entry`: the app's .desktop file without `.desktop`, empty for one without (the terminal's).
     /// Errors without a session bus, or off Linux.
-    pub fn start(name: &str) -> Result<Mpris, String> {
+    pub fn start(desktop_entry: &str) -> Result<Mpris, String> {
         let current = Arc::new(Current::default());
         #[cfg(target_os = "linux")]
-        return Ok(Mpris { served: bus::Served::start(name, current.clone())?, current });
+        return Ok(Mpris { served: bus::Served::start(desktop_entry, current.clone())?, current });
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (name, current);
+            let _ = (desktop_entry, current);
             Err("MPRIS is Linux's".into())
         }
     }
 
     /// [`Mpris::start`] for a windowed app, whose main thread runs the system's event loop: on macOS, Now
     /// Playing and the media keys (their commands arrive on that loop). Called on the main thread.
-    pub fn for_app(name: &str) -> Result<Mpris, String> {
+    pub fn for_app(desktop_entry: &str) -> Result<Mpris, String> {
         #[cfg(target_os = "macos")]
         {
-            let _ = name;
+            let _ = desktop_entry;
             let current = Arc::new(Current::default());
             mac::listen(current.clone());
             Ok(Mpris { current })
         }
         #[cfg(not(target_os = "macos"))]
-        Mpris::start(name)
+        Mpris::start(desktop_entry)
     }
 
     /// Media keys drive `controls` from now on; None while no session is open.
@@ -869,11 +880,10 @@ mod tests {
     #[ignore = "needs a D-Bus session bus"]
     fn owns_its_name_on_the_session_bus() {
         let client = block_on(zbus::Connection::session()).unwrap();
-        let name = format!("nori_test_{}", std::process::id());
         let asked = Arc::new(Asked::default());
-        let m = Mpris::start(&name).unwrap();
+        let m = Mpris::start("").unwrap();
         m.serve(Some(asked.clone()));
-        let to = BusName::try_from(format!("org.mpris.MediaPlayer2.{name}")).unwrap();
+        let to = BusName::try_from(format!("org.mpris.MediaPlayer2.nori.instance{}", std::process::id())).unwrap();
         block_on(client.call_method(Some(to), "/org/mpris/MediaPlayer2", Some("org.mpris.MediaPlayer2.Player"), "PlayPause", &())).unwrap();
         assert_eq!(*asked.0.lock().unwrap(), ["toggle"]);
     }
