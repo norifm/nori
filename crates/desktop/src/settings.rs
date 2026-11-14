@@ -140,6 +140,7 @@ const EQUALIZER: &str = "equalizer";
 const ADD_SERVER: &str = "add-server";
 const BACKUP: &str = "backup";
 const RESTORE: &str = "restore";
+const CHECK_UPDATE: &str = "check-update";
 const BACKUP_PASSWORD: &str = "backup-password";
 const RESTORE_PASSWORD: &str = "restore-password";
 
@@ -172,6 +173,7 @@ pub enum Act {
     Backup { restore: bool },
     /// Asks for the password of the backup at `path`.
     BackupPassword { restore: bool, path: String },
+    CheckUpdate,
 }
 
 impl Act {
@@ -194,6 +196,7 @@ impl Act {
             ADD_SERVER => Some(Act::AddServer),
             BACKUP => Some(Act::Backup { restore: false }),
             RESTORE => Some(Act::Backup { restore: true }),
+            CHECK_UPDATE => Some(Act::CheckUpdate),
             _ => CHORES.into_iter().find(|c| chore_name(*c) == name).map(Act::Chore),
         }
     }
@@ -346,6 +349,8 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "autoFill" => ("When the queue ends", ""),
         "autoFillBasis" => ("Chosen by", ""),
         "autoFillRemote" => ("Include remote songs", ""),
+        "updateCheck" => ("Check automatically", "At most once a day, from GitHub"),
+        "updateBeta" => ("Beta updates", "Test versions of the next release. They may have bugs"),
         "bridgeOffline" => ("Play downloads when offline", ""),
         "autoEqAuto" => ("AutoEQ for headphones", ""),
         "autoEqDownload" => ("Keep the AutoEQ list", ""),
@@ -534,7 +539,8 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
                 SettingsAction::AddServer => Row { kind: BUTTON, name: ADD_SERVER.into(), title: "Add profile".into(), enabled: true, ..Default::default() },
                 SettingsAction::MakeBackup => Row { kind: ACTION, name: BACKUP.into(), title: words::BACK_UP.into(), detail: words::BACK_UP_DETAIL.into(), button: "Save".into(), enabled, ..Default::default() },
                 SettingsAction::RestoreBackup => Row { kind: ACTION, name: RESTORE.into(), title: words::RESTORE.into(), detail: words::RESTORE_DETAIL.into(), button: "Open".into(), enabled, ..Default::default() },
-                SettingsAction::AnalyseDownloads | SettingsAction::JoinJam | SettingsAction::CheckUpdate => return None,
+                SettingsAction::CheckUpdate => Row { kind: ACTION, name: CHECK_UPDATE.into(), title: "Check for updates".into(), detail: format!("Version {}", env!("CARGO_PKG_VERSION")), button: "Check".into(), enabled: true, ..Default::default() },
+                SettingsAction::AnalyseDownloads | SettingsAction::JoinJam => return None,
             }
         }
         RowItem::Note { note: n } => note(match n {

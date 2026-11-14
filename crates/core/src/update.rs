@@ -210,7 +210,8 @@ pub enum UpdateCheck {
     UpToDate { latest: String },
     /// A newer release with a matching APK; `skipped` when the user postponed this version.
     Available { update: AppUpdate, skipped: bool },
-    /// A newer release without an APK for this device.
+    /// A newer release without an APK for this device; every newer release for a desktop build, which
+    /// asks with no ABIs and is installed from the release's page.
     NoApk { version: String, page: String },
 }
 

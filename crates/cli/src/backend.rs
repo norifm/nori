@@ -16,7 +16,7 @@ pub use nori_host::desktop::Root;
 use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot, ShelfItems};
 pub use nori_host::pages::ALBUM_PAGE;
 pub use nori_host::session::{Audio, Chore};
-use nori_host::session::{Note, Said};
+use nori_host::session::{Note, Said, UpdateFound};
 pub use nori_host::{db_path, Fetch};
 use nori_http::Http;
 use nori_look::cover::CoverColours;
@@ -446,6 +446,11 @@ fn worded(s: Said) -> Option<Msg> {
         Said::Pictured => return None,
         Said::Volume(v) => Msg::Volume(v),
         Said::Curve(n) => note(crate::text::curve_notice(&n), false),
+        Said::Update(found) => match found {
+            UpdateFound::Newer { version, page } => note(format!("nori {version} is out: {page}"), false),
+            UpdateFound::Latest(latest) => note(format!("You have the latest version ({latest})"), false),
+            UpdateFound::Failed(e) => note(format!("Could not check: {}", net_error(&e)), true),
+        },
         Said::Engine(e) => Msg::Engine(e),
         Said::Lyrics(now) => Msg::Lyrics(now),
         Said::Search(v) => Msg::Search(v),

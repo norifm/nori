@@ -549,6 +549,8 @@ pub struct App {
     taken: Option<Taken>,
     undo_timer: Timer,
     note: Timer,
+    /// What the note's button answers, while it shows one.
+    note_asks: std::cell::Cell<Option<Asked>>,
     /// Follows what the downloads are doing, each second while they do something.
     work: Timer,
     search: Timer,
@@ -810,6 +812,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             taken: None,
             undo_timer: Timer::default(),
             note: Timer::default(),
+            note_asks: Default::default(),
             work: Timer::default(),
             search: Timer::default(),
             jam_link: String::new(),
@@ -948,6 +951,14 @@ fn stop(app: &RefCell<App>) {
         settings.keep_app_value(session::own::VOLUME, s.volume().to_string());
         s.close();
     }
+}
+
+/// What the note's button answers.
+enum Asked {
+    /// The session's last AutoEQ notice.
+    Curve,
+    /// Opens this page: a newer release's.
+    Page(String),
 }
 
 /// Opens `url` in the system's browser.
@@ -1331,11 +1342,13 @@ impl App {
     }
 
     fn say(&self, text: &str, error: bool) {
+        self.note_asks.take();
         self.note_for(text, error, "", Duration::from_millis(if error { 5000 } else { 2500 }));
     }
 
-    /// A note with a button, up long enough to be answered.
-    fn ask(&self, text: &str, action: &str) {
+    /// A note with a button answering `asked`, up long enough to be answered.
+    fn ask(&self, text: &str, action: &str, asked: Asked) {
+        self.note_asks.set(Some(asked));
         self.note_for(text, false, action, Duration::from_secs(8));
     }
 
@@ -1353,9 +1366,13 @@ impl App {
         });
     }
 
-    /// The note's button: the session's last AutoEQ notice answered.
+    /// The note's button: the session's last AutoEQ notice answered, or a release's page opened.
     fn note_act(&self) {
-        self.on_session(|s| s.curve_answer());
+        match self.note_asks.take() {
+            Some(Asked::Curve) => self.on_session(|s| s.curve_answer()),
+            Some(Asked::Page(url)) => open_in_browser(&url),
+            None => {}
+        }
         let ui = self.ui();
         ui.set_note("".into());
         ui.set_note_action("".into());
@@ -1378,6 +1395,7 @@ impl App {
         match Session::open(&self.root, self.http.clone(), profile, self.tx.clone(), self.mpris.clone()) {
             Ok(s) => {
                 s.check();
+                s.update_check(false);
                 if self.hidden {
                     s.in_sight(false);
                 }
@@ -3735,7 +3753,8 @@ impl App {
                 self.offer_shown();
             }
             Msg::Shared(None) => self.say(words::SHARE_FAILED, true),
-            Msg::Ask { text, action } => self.ask(&text, &action),
+            Msg::Ask { text, action } => self.ask(&text, &action, Asked::Curve),
+            Msg::Update { version, page } => self.ask(&format!("nori {version} is out"), "Get it", Asked::Page(page)),
             Msg::Reachable(Err(e)) => self.say(&e, true),
             Msg::Reachable(Ok(())) | Msg::From(..) => {}
             Msg::Cast => {
@@ -4784,6 +4803,10 @@ impl App {
             }
             Some(Act::Backup { restore }) => self.ask_field(words::backup_path(restore), name, false),
             Some(Act::BackupPassword { .. }) => {}
+            Some(Act::CheckUpdate) => {
+                self.on_session(|s| s.update_check(true));
+                self.say("Checking…", false);
+            }
             Some(Act::Chore(c)) => {
                 self.on_session(|s| s.action(c));
                 self.on_session(|s| s.facts());

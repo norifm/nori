@@ -14,7 +14,7 @@ use nori_covers::loader::Ticket;
 use nori_covers::memory::Image;
 use nori_engine::Event;
 use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot};
-use nori_host::session::{Chore, Note, Said};
+use nori_host::session::{Chore, Note, Said, UpdateFound};
 pub use nori_host::Fetch;
 use nori_http::Http;
 use nori_look::cover::CoverColours;
@@ -56,6 +56,8 @@ pub enum Msg {
     Playlist { text: String, change: PlaylistChange },
     /// A note with a button, answered with [`nori_host::session::Handle::curve_answer`].
     Ask { text: String, action: String },
+    /// A newer nori is out: a note whose button opens its release `page`.
+    Update { version: String, page: String },
     /// The profile the sign-in form made, and what follows its opening when it was added.
     LoggedIn(Result<SavedServer, String>),
     /// The account's sign-in answered.
@@ -333,6 +335,11 @@ fn worded(s: Said) -> Msg {
         Said::Starred(_) => Msg::Starred,
         Said::Working => Msg::Working,
         Said::Pictured => Msg::Pictured,
+        Said::Update(found) => match found {
+            UpdateFound::Newer { version, page } => Msg::Update { version, page },
+            UpdateFound::Latest(latest) => note(format!("You have the latest version ({latest})"), false),
+            UpdateFound::Failed(e) => note(format!("Could not check: {}", net_error(&e)), true),
+        },
         Said::Curve(n) => {
             let (text, action) = crate::words::curve_notice(&n);
             Msg::Ask { text, action: action.into() }
