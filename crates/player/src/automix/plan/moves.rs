@@ -762,8 +762,8 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     let (to_a, to_b) = (meet / a.bpm, meet / b.bpm);
     let (beat, bpb) = (60_000.0 / a.bpm, bar_beats(a));
     let bar = bpb as f64 * beat;
-    // The latest clean loop of 4 bars after the last line, before the song leaves or turns quiet; else of 2, else 1
-    // (a shorter loop repeats more).
+    // The latest clean loop of 8 bars after the last line, before the song leaves or turns quiet; else of 4, 2 or 1,
+    // as few as its plays allow (a shorter loop repeats more).
     let ending = Ending::of(a, p.room.out_dur);
     let quiet = (a.mixramp_end_ms > a.silence_start_ms).then_some(a.mixramp_end_ms as f64);
     let end = quiet.map_or(ending.leave(0.0), |q| q.min(ending.leave(0.0)));
@@ -773,17 +773,20 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
             bar_at(&a.outro_bars, from + (i as f64 + 0.5) * bar).is_some_and(|x| x.voice < LOOP_VOICE && x.pulse >= KICK_PULSE && x.level_db >= LOOP_LEVEL_DB)
         }) && !sings_after(a, from)
     };
-    let (start, looped) = [4usize, 2, 1]
+    // The glide, in whole bars at the outgoing tempo; then the first downbeat of the loop after it, and the blend: the
+    // loop plays through all of it, at most [`MAX_LOOP_PLAYS`] times.
+    let glide_bars = ((to_a - 1.0).abs() * 100.0 / RAMP_PCT_PER_BAR).ceil().max(2.0);
+    let glide_ms = glide_bars * bar;
+    let played = glide_bars + 1.0 + RAMP_BLEND_BARS;
+    let (start, looped) = [8usize, 4, 2, 1]
         .into_iter()
+        .filter(|&l| played / l as f64 <= MAX_LOOP_PLAYS)
         .flat_map(|l| (l..=EXIT_BARS_BACK as usize + l).map(move |back| (last - back as f64 * bar, l)))
         .find(|&(from, l)| from >= a.silence_start_ms as f64 && clean(from, l))?;
     let loop_ms = looped as f64 * bar;
     if ending.skipped(start + loop_ms) > MAX_SKIP_MS as f64 {
         return None;
     }
-    // The glide, in whole bars at the outgoing tempo; then the first downbeat of the loop after it.
-    let glide_bars = ((to_a - 1.0).abs() * 100.0 / RAMP_PCT_PER_BAR).ceil().max(2.0);
-    let glide_ms = glide_bars * bar;
     let (music, at) = entry(Some(b), p.room.in_dur);
     if at - music > MAX_SKIP_MS as f64 {
         return None;
@@ -836,6 +839,8 @@ const RAMP_MAX_GAP_PCT: f64 = 45.0;
 pub(super) const RAMP_PCT_PER_BAR: f64 = 2.0;
 pub(super) const EASE_PCT_PER_BEAT: f64 = 0.75;
 const RAMP_BLEND_BARS: f64 = 8.0;
+/// Most times a loop ramp's slice plays: a bar or two round more often turns into a broken record.
+pub(super) const MAX_LOOP_PLAYS: f64 = 5.0;
 const RAMP_DRAIN_BARS: f64 = 2.0;
 const RAMP_DRAIN_FROM_HZ: f32 = 30.0;
 const RAMP_DRAIN_TO_HZ: f32 = 1_500.0;

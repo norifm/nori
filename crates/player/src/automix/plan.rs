@@ -2511,7 +2511,7 @@ mod tests {
         check_skip(&p, &a, &b, 240_000);
         let (bar, g) = (4.0 * 60_000.0 / 128.0, p.out_glide.expect(&p.reason));
         let looped = p.out_loop_ms.expect(&p.reason) as f64 / bar;
-        assert!((looped - 4.0).abs() < 0.01, "four clean bars looped: {looped}");
+        assert!((looped - 8.0).abs() < 0.01, "eight clean bars looped, the longest, the fewest times round: {looped}");
         assert!((g.to - 1.0).abs() * 100.0 / ((g.window.end_ms - g.window.start_ms) as f64 / bar) <= 2.0 + 1e-6, "{g:?}");
         let at = p.out_song_ms(p.in_delay_ms as f64) / bar;
         assert!((at - at.round()).abs() < 0.01 && p.in_delay_ms >= g.window.end_ms, "in on a downbeat of the loop after the glide: {at}");
@@ -2521,6 +2521,13 @@ mod tests {
         assert!(p.tempo_ramp_ms as f64 >= (p.tempo_ratio - 1.0).abs() * 100.0 / 0.75 * 60_000.0 / 170.0 - 1.0, "eased back: {p:?}");
         let swap = p.bass_swap.expect(&p.reason);
         assert!(swap.at_ms > p.in_fade_start_ms && swap.at_ms < p.out_fade_start_ms + 1, "{p:?}");
+
+        assert!(p.out_song_ms(p.duration_ms as f64) / p.out_loop_ms.expect(&p.reason) as f64 <= moves::MAX_LOOP_PLAYS + 1e-6, "{p:?}");
+        // Only its last bar clean (sung before it): a bar looped through the whole glide and blend would be a broken
+        // record, so no loop ramp.
+        let one = profiled(track(128.0), |i| BarProfile { voice: if i < 31 { 1.0 } else { 0.0 }, ..band(i) });
+        let p = plan(Some(&TrackAnalysis { vocal_start_ms: 10_000, vocal_end_ms: one.outro_bars[31].start_ms, ..one }), Some(&b), 240_000, 240_000, &dj());
+        assert_ne!(p.kind, TransitionKind::LoopRamp, "{}", p.reason);
 
         let sung = profiled(track(128.0), |i| BarProfile { voice: if i >= 16 { 1.0 } else { 0.0 }, ..band(i) });
         let p = plan(Some(&TrackAnalysis { vocal_start_ms: 10_000, vocal_end_ms: 237_000, ..sung }), Some(&b), 240_000, 240_000, &dj());
