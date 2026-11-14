@@ -365,23 +365,9 @@ fn plan_from_real_analyses() {
 }
 
 
-/// A loud band keeps the voice curve up between lines, and the closing lines are sung quieter than the big chorus
-/// before them (as in "Itch"): the singing still ends with them, not with that chorus. It starts with the first
-/// verse, not with a shout in the intro.
-#[test]
-fn singing_spans_its_lines_over_a_loud_band() {
-    // Two-second bars at ten voice frames a second: an intro with one shout (12), verses (9.5), choruses (16),
-    // closing lines (10.5) and two bars of ringing guitar (1).
-    let mut bars = vec![1.5f32, 12.0, 1.5, 1.5];
-    for _ in 0..3 {
-        bars.extend([9.5; 8]);
-        bars.extend([16.0; 8]);
-    }
-    bars.extend([10.5; 10]);
-    bars.extend([1.0; 2]);
-    let voice: Vec<f32> = bars.iter().flat_map(|&b| [b; 20]).collect();
-    let secs = bars.len() as f64 * 2.0;
-    let f = analysis::Features {
+/// Features carrying only a voice curve, ten frames a second, for `secs`.
+fn voice_features(voice: Vec<f32>, secs: f64) -> analysis::Features {
+    analysis::Features {
         fps: 50.0,
         t0: -0.04,
         onset: Vec::new(),
@@ -400,7 +386,41 @@ fn singing_spans_its_lines_over_a_loud_band() {
         duration_s: secs,
         voice,
         voice_loudness: Vec::new(),
-    };
+    }
+}
+
+/// The singing ends with its last word and starts with its first, not on a bar line: a last word 1.3 s into a bar
+/// otherwise unsung is kept, and singing that stops 1.4 s into a bar sung enough to count ends there.
+#[test]
+fn singing_ends_on_its_last_word() {
+    let frames = |b: &[(f32, usize)]| -> Vec<f32> { b.iter().flat_map(|&(v, n)| std::iter::repeat_n(v, n)).collect() };
+    for (last, end) in [(frames(&[(10.0, 13), (1.0, 7)]), 1.3), (frames(&[(10.0, 14), (4.0, 6)]), 1.4)] {
+        let mut voice = frames(&[(1.5, 80), (10.0, 400)]);
+        voice.extend(last);
+        voice.extend(frames(&[(1.0, 40)]));
+        let secs = voice.len() as f64 / 10.0;
+        let (_, to) = vocal_span(&voice_features(voice, secs), 2.0, (0.0, secs)).expect("sung");
+        assert!((to - (48.0 + end)).abs() <= 0.15, "ends at {to:.2}, not {:.2}", 48.0 + end);
+    }
+}
+
+/// A loud band keeps the voice curve up between lines, and the closing lines are sung quieter than the big chorus
+/// before them (as in "Itch"): the singing still ends with them, not with that chorus. It starts with the first
+/// verse, not with a shout in the intro.
+#[test]
+fn singing_spans_its_lines_over_a_loud_band() {
+    // Two-second bars at ten voice frames a second: an intro with one shout (12), verses (9.5), choruses (16),
+    // closing lines (10.5) and two bars of ringing guitar (1).
+    let mut bars = vec![1.5f32, 12.0, 1.5, 1.5];
+    for _ in 0..3 {
+        bars.extend([9.5; 8]);
+        bars.extend([16.0; 8]);
+    }
+    bars.extend([10.5; 10]);
+    bars.extend([1.0; 2]);
+    let voice: Vec<f32> = bars.iter().flat_map(|&b| [b; 20]).collect();
+    let secs = bars.len() as f64 * 2.0;
+    let f = voice_features(voice, secs);
     let span = vocal_span(&f, 2.0, (0.0, secs));
     assert_eq!(span, Some((8.0, secs - 4.0)), "the first verse after four bars of intro, the closing lines two bars before the music ends");
 }
