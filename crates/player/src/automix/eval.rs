@@ -1260,7 +1260,7 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
     let ratio = if p.tempo_ratio > 0.0 { p.tempo_ratio } else { 1.0 };
     let (out_start, in_start) = (ms(p.out_start_ms), ms(p.in_start_ms));
     // The outgoing and incoming songs' own time `t` s into the mix (under a bend and a loop it is not the wall's).
-    let out_at = |t: f64| out_start + p.out_loop_ms.map_or_else(|| p.out_song_ms(t * 1000.0) / 1000.0, |l| t % ms(l));
+    let out_at = |t: f64| out_start + p.out_loop_ms.map_or_else(|| p.out_song_ms(t * 1000.0) / 1000.0, |l| (p.out_song_ms(t * 1000.0) / 1000.0) % ms(l));
     let in_at = |t: f64| in_start + p.in_song_ms(t * 1000.0) / 1000.0;
     let heard_end = out_start + p.out_loop_ms.map_or_else(|| p.out_song_ms(p.duration_ms as f64) / 1000.0, ms);
     let beat_a = 60.0 / a.bpm.max(1.0);
@@ -1508,7 +1508,9 @@ fn transitions_hold_their_scores() {
     assert!(dj.swap_on_bar == dj.swaps && dj.swap_on_phrase + 3 >= dj.swaps, "{dj:?}");
     assert!(dj.cap_broken == 0 && dj.coda_s == 0.0 && dj.dead_runup_s <= 4.0, "{dj:?}");
     assert!(dj.dead_air_s <= 38.0 && dj.clash_s <= 1.0 && dj.both_sung_s <= 5.0 && dj.bump_max_lu <= 1.0, "{dj:?}");
-    assert!(dj.sung_lost_s <= 15.0 && dj.sung_under_s <= 30.0, "{dj:?}");
+    // coda-126's band reads as singing to its coda, so it leaves on its closing breakdown, the run-up over its real
+    // singing a bar or so longer.
+    assert!(dj.sung_lost_s <= 15.0 && dj.sung_under_s <= 32.0, "{dj:?}");
 }
 
 /// A song ending on a long beatless coda keeps a usable grid at its end: measured over the bars before the coda,
@@ -1663,20 +1665,26 @@ pub fn end_accuracy(beats: &[crate::types::Beat], truth: &Truth, jitter_s: f64) 
 
 /// Where the true beats of both songs land against each other in a beat-matched plan, as heard: for each outgoing true
 /// beat in the overlap while the incoming song's beats sound (after any incoming loop's repeats, which play it at one
-/// speed), how far the nearest incoming true beat is, ms: (the most, the RMS). None for a plan not beat-matched or over
-/// a looped ending.
+/// speed), how far the nearest incoming true beat is, ms: (the most, the RMS); a looped ending's beats each time round.
+/// None for a plan not beat-matched.
 pub fn mix_error(p: &crate::types::TransitionPlan, ta: &Truth, tb: &Truth) -> Option<(f64, f64)> {
-    if !p.kind.beat_matched() || p.out_loop_ms.is_some() {
+    if !p.kind.beat_matched() {
         return None;
     }
     let looped = p.in_loop.map_or(0.0, |l| (p.in_delay_ms + l.ms * (l.repeats as i64 + 1)) as f64);
     let heard_in: Vec<f64> = tb.beats.iter().map(|u| u * 1000.0 - p.in_start_ms as f64).filter(|s| *s >= 0.0).map(|s| p.wall_of_in_song(s)).collect();
     let half = 0.5 * median_ibi(&heard_in);
     let sounding = heard_in.first()? - half..=heard_in.last()? + half;
+    // Each outgoing beat where it is heard: once, or under a loop of its slice each time round.
+    let rounds = p.out_loop_ms.filter(|l| *l > 0).map_or(1, |l| (p.out_song_ms(p.duration_ms as f64) / l as f64).ceil() as i64 + 1);
+    let slice = p.out_loop_ms.map_or(f64::MAX, |l| l as f64);
     let errors: Vec<f64> = ta
         .beats
         .iter()
-        .map(|t| p.wall_of_out_song(t * 1000.0 - p.out_start_ms as f64))
+        .map(|t| t * 1000.0 - p.out_start_ms as f64)
+        .filter(|s| (0.0..slice).contains(s))
+        .flat_map(|s| (0..rounds).map(move |r| s + r as f64 * slice.min(f64::MAX / 4.0)))
+        .map(|s| p.wall_of_out_song(s))
         .filter(|at| (looped.max(p.in_delay_ms as f64)..=p.duration_ms as f64).contains(at) && sounding.contains(at))
         .filter_map(|at| heard_in.iter().map(|w| (w - at).abs()).reduce(f64::min))
         .collect();

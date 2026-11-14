@@ -42,8 +42,8 @@ use crate::types::{BarProfile, Beat, TrackAnalysis};
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 23: the beat model reads a minute of each end.
-pub const ANALYSIS_VERSION: i32 = 23;
+/// Bump when stored rows should be measured again. 24: the singing starts and ends on its words, not bar lines.
+pub const ANALYSIS_VERSION: i32 = 24;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -77,9 +77,10 @@ const SUNG_SHARE: f32 = 0.7;
 /// synthetic songs), and every sung song of 89 real ones is over it (4.8 and up).
 const SUNG_FLOOR: f32 = 4.0;
 
-/// Where the singing of `music` starts and ends, on bars of `bar_s` counted from its start and back from its end:
-/// the first of two bars in a row, and the end of the last bar, whose level on the voice curve ([`vocal`]) is
-/// [`SUNG_SHARE`] of the song's median bar. None when no bar reaches [`SUNG_FLOOR`].
+/// Where the singing of `music` starts and ends: on bars of `bar_s` counted from its start and back from its end,
+/// the first of two bars in a row, and the last bar, whose level on the voice curve ([`vocal`]) is [`SUNG_SHARE`] of
+/// the song's median bar; then, within a bar either side, its first and last word at that level ([`WORD_S`]). None
+/// when no bar reaches [`SUNG_FLOOR`].
 fn vocal_span(f: &Features, bar_s: f64, music: (f64, f64)) -> Option<(f64, f64)> {
     let level = |from: f64| voice_level(f, from, from + bar_s);
     let n = ((music.1 - music.0) / bar_s).floor() as usize;
@@ -89,8 +90,36 @@ fn vocal_span(f: &Features, bar_s: f64, music: (f64, f64)) -> Option<(f64, f64)>
     let end = music.1 - last as f64 * bar_s;
     let sung_at = |i: usize| level(music.0 + i as f64 * bar_s) >= sung;
     let first = (0..n.saturating_sub(1)).find(|&i| sung_at(i) && sung_at(i + 1)).map_or(end - bar_s, |i| music.0 + i as f64 * bar_s);
-    Some((first.min(end - bar_s).max(music.0), end))
+    let first = first.min(end - bar_s).max(music.0);
+    // To the words: a stretch of a word at the sung level.
+    let e = vocal::CURVE_EVERY as f64;
+    let (fps, t0) = (f.fps / e, f.t0 + (e - 1.0) / 2.0 / f.fps);
+    let word = |t: f64| {
+        let (a, b) = (((t - t0) * fps).round().max(0.0) as usize, ((t + WORD_S - t0) * fps).round().max(0.0) as usize);
+        let v = f.voice.get(a.min(f.voice.len())..b.min(f.voice.len())).filter(|v| !v.is_empty());
+        v.is_some_and(|v| v.iter().sum::<f32>() / v.len() as f32 >= sung)
+    };
+    // Moved only across the frames joining the sung bars, at most a bar: on past a bar line while still sung, or back
+    // off unsung frames; never over a gap to a lone loud moment.
+    let steps = (bar_s * fps).round() as usize;
+    let step = |k: usize| k as f64 / fps;
+    let last_on = |from: f64| (0..=steps).map(|k| from + step(k)).take_while(|&t| word(t)).last();
+    // The singing ends after the last frame at the sung level in the last word.
+    let end_in = |t: f64| (0..=(WORD_S * fps).round() as usize).map(|k| t + step(k)).rfind(|&u| f.voice.get(((u - t0) * fps).round().max(0.0) as usize).is_some_and(|v| *v >= sung)).map_or(t + WORD_S, |u| u + step(1));
+    let last_word = match last_on(end - WORD_S) {
+        Some(t) => end_in(t),
+        None => (0..=steps).map(|k| end - WORD_S - step(k)).find(|&t| word(t)).map_or(end, end_in),
+    };
+    let first_word = match word(first) {
+        true => (0..=steps).map(|k| first - step(k)).take_while(|&t| word(t)).last().unwrap_or(first),
+        false => (0..=steps).map(|k| first + step(k)).find(|&t| word(t)).unwrap_or(first),
+    };
+    let end = last_word.min(music.1);
+    Some((first_word.max(music.0).min(end), end))
 }
+
+/// A word on the voice curve, s: the singing's first and last are found to this.
+const WORD_S: f64 = 0.3;
 
 /// The mean of the voice curve over `[from_s, to_s)`.
 fn voice_level(f: &Features, from_s: f64, to_s: f64) -> f32 {
