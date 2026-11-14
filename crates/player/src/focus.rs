@@ -118,10 +118,10 @@ impl FocusState {
         granted
     }
 
-    /// The listener paused or let the music go: no loss holds it any more, and the focus is given back
-    /// (`abandon`) when it was this player's.
+    /// The listener paused or let the music go, and the focus is given back (`abandon`) when it was this
+    /// player's. What a loss held is over for good: the loss's end plays nothing.
     pub fn paused(&mut self, abandon: impl FnOnce()) {
-        self.hold = Hold::Free;
+        self.hold = if self.hold == Hold::Held { Hold::Lost } else { Hold::Free };
         if core::mem::take(&mut self.owned) {
             abandon();
         }

@@ -1930,6 +1930,29 @@ fn the_audio_focus_holds_the_music_in_order() {
     assert_eq!(holds(&rig).last(), Some(&Hold::Lost));
 }
 
+/// A call outlasting the long pause: the client stops the music it let go, and the call's end must not
+/// read as the focus back to play on (Android's player went on wanting to play, stopped).
+#[test]
+fn music_let_go_during_a_call_stays_paused() {
+    use nori_player::focus::{Focus, Hold};
+    let a = music(60.0, 19);
+    let songs: [(&str, &[i16]); 1] = [("a", &a)];
+    let rig = Rig::build(files(&songs), sim::App::new(), Settings::default(), Extra { idle_release_ms: Some(300), ..Extra::default() });
+    let door = FocusDoor::default();
+    door.0.lock().0 = true;
+    rig.engine.ask_focus_of(Box::new(door.clone()));
+    rig.engine.go_to(0, 0);
+    rig.engine.play();
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2));
+    rig.engine.focus(Focus::LostTransient);
+    assert!(rig.wait_for(5, |r| r.events.lock().contains(&Event::LongPause)));
+    rig.engine.pause();
+    rig.run(500);
+    let holds: Vec<Hold> = rig.events.lock().iter().filter_map(|e| if let Event::Focus(h) = e { Some(*h) } else { None }).collect();
+    assert_eq!(holds, [Hold::Held, Hold::Lost], "held by the call, then over for good");
+    assert_eq!(door.0.lock().2, 1, "the focus given back");
+}
+
 #[test]
 fn released_at_once_when_the_music_moves_away() {
     let a = music(12.0, 19);
