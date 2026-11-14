@@ -340,6 +340,8 @@ pub struct Parts {
     pub guest: bool,
     /// The saved profile open.
     profile_id: String,
+    /// Its account: signing in and out, who it acts as.
+    account: crate::account::Account,
     /// The rules the client was last told of ([`Parts::account_changed`]).
     rules_shown: parking_lot::Mutex<ProfileRules>,
     discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
@@ -461,7 +463,10 @@ impl Session {
         let device = if guest { nori_core::remote::RemoteMe { kind: nori_remote::wire::DeviceKind::Guest, ..o.device } } else { o.device };
         #[cfg(feature = "desktop")]
         let media = o.mpris.map(|m| crate::remote::Media::new(m, covers.clone(), core.clone()));
+        let pictured = o.out.clone();
+        let account = crate::account::Account::new(client.clone(), core.session.settings.clone(), o.profile.id.clone(), Box::new(move || pictured(Said::Pictured)), None);
         let parts = Parts {
+            account,
             core,
             client,
             engine,
@@ -501,7 +506,7 @@ impl Session {
         #[cfg(feature = "desktop")]
         h.player_shown(true);
         h.follow_remote();
-        h.keep_picture();
+        h.account.keep_picture();
         if !h.offline && h.rules().downloads && h.core.download_counts().pending > 0 {
             h.start_downloads();
         }
@@ -1229,21 +1234,9 @@ impl Handle {
         block_on(self.search.answer(self.client.clone(), query, error))
     }
 
-    /// Signs the profile's account in with `answer` (cookies pasted from a browser); signed in, the
-    /// profile keeps the account's name, which a session opened on it again reads as signed in.
-    pub fn sign_in(&self, answer: String) -> nori_core::providers::SignInResult {
-        let r = block_on(self.client.sign_in(answer));
-        self.signed_in(&r);
-        r
-    }
-
-    /// How a sign-in went, whichever way it went (a page, pasting, a code): signed in, the profile keeps
-    /// the account's name.
-    pub fn signed_in(&self, r: &nori_core::providers::SignInResult) {
-        if let nori_core::providers::SignInResult::SignedIn { name } = r {
-            self.keep_account(name);
-            self.keep_picture();
-        }
+    /// The profile's account: signing it in and out, who it acts as.
+    pub fn account(&self) -> &crate::account::Account {
+        &self.account
     }
 
     /// What the app offers over the profile (a guest's: the host's library, read only), as the core
@@ -1259,63 +1252,9 @@ impl Handle {
         let mut shown = self.rules_shown.lock();
         (now != *shown).then(|| {
             *shown = now;
-            self.keep_picture();
+            self.account.keep_picture();
             self.client.account()
         })
-    }
-
-    /// Signs the profile's account out here; the profile forgets the account's name and picture.
-    pub fn sign_out(&self) {
-        self.client.sign_out();
-        self.keep_account("");
-        if self.profile_look(|s| s.picture.take().is_some()) {
-            (self.out)(Said::Pictured);
-        }
-    }
-
-    fn keep_account(&self, name: &str) {
-        self.profile_look(|s| {
-            s.user = name.to_string();
-            true
-        });
-    }
-
-    /// Changes this session's saved profile with `change`, kept when it says it changed something.
-    fn profile_look(&self, change: impl FnOnce(&mut SavedServer) -> bool) -> bool {
-        let settings = &self.core.session.settings;
-        let Some(mut prefs) = settings.current() else { return false };
-        let Some(s) = prefs.servers.iter_mut().find(|s| s.id == self.profile_id) else { return false };
-        let changed = change(s);
-        if changed {
-            settings.put(prefs);
-        }
-        changed
-    }
-
-    /// Keeps the picture of the account as it acts now on the profile, for its circle
-    /// (`Client::account_picture`); says [`Said::Pictured`] when it changed.
-    fn keep_picture(&self) {
-        let h = self.clone();
-        self.run(async move {
-            let picture = h.client.account_picture().await;
-            if h.profile_look(|s| std::mem::replace(&mut s.picture, picture.clone()) != picture) {
-                (h.out)(Said::Pictured);
-            }
-        });
-    }
-
-    /// Those the signed-in account may act as, its own first, the one it acts as chosen
-    /// (`Client::identities`); empty when it is only itself.
-    pub fn identities(&self) -> Result<Vec<nori_core::providers::Identity>, NetError> {
-        block_on(self.client.identities())
-    }
-
-    /// Acts as [`Handle::identities`]' entry `index` from now on: the library is the new one's, and the
-    /// profile keeps its picture.
-    pub fn choose_identity(&self, index: u32) -> Result<(), NetError> {
-        block_on(self.client.choose_identity(index))?;
-        self.keep_picture();
-        Ok(())
     }
 
     /// Stars or unstars on the server (queued when offline); says so when it fails.

@@ -613,7 +613,7 @@ impl Runner {
                     let (h, tx) = ((**s).clone(), self.tx.clone());
                     let title = format!("Sign in to {}", crate::text::provider_of(&app.settings.own.kinds, &kind).name);
                     self.sign_in_window = nori_sign_in_window::SignInWindow::open_at(app.settings.own.kinds.clone(), kind, title, url.clone(), move |_, cookies| {
-                        let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
+                        let _ = tx.send(Msg::SignedIn(h.account().sign_in(cookies)));
                     });
                 }
                 let _ = (plugin, url);
@@ -871,7 +871,7 @@ impl Runner {
                     let (h, tx) = ((**s).clone(), self.tx.clone());
                     let title = format!("Sign in to {}", crate::text::provider_of(&app.settings.own.kinds, kind).name);
                     self.sign_in_window = nori_sign_in_window::SignInWindow::open(app.settings.own.kinds.clone(), kind.clone(), title, move |_, cookies| {
-                        let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
+                        let _ = tx.send(Msg::SignedIn(h.account().sign_in(cookies)));
                     });
                     if self.sign_in_window.is_some() {
                         // Its cookies are the answer: one is on its way (already so when a key opened it).
@@ -896,13 +896,13 @@ impl Runner {
                 let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
                 let h = (**s).clone();
                 nori_host::spawn("nori-sign-in", move || {
-                    let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
+                    let _ = tx.send(Msg::SignedIn(h.account().sign_in(cookies)));
                 });
                 return;
             }
             Cmd::SignOut => {
                 if let Some(s) = &self.session {
-                    s.sign_out();
+                    s.account().sign_out();
                 }
                 return self.reopen(app);
             }
@@ -956,7 +956,7 @@ impl Runner {
                 let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
                 let h = (**s).clone();
                 nori_host::spawn("nori-identity", move || {
-                    let _ = tx.send(Msg::IdentityChosen(h.choose_identity(index).map_err(|e| crate::text::net_error(&e))));
+                    let _ = tx.send(Msg::IdentityChosen(h.account().choose_identity(index).map_err(|e| crate::text::net_error(&e))));
                 });
                 return;
             }
@@ -1220,7 +1220,7 @@ impl nori_core::providers::code::CodeHeard for Heard {
     fn heard(&self, event: SignInEvent) {
         let _ = self.tx.send(match event {
             SignInEvent::Answered { result } => {
-                self.session.signed_in(&result);
+                self.session.account().signed_in(&result);
                 Msg::SignedIn(result)
             }
             event => Msg::CodeStep { code: self.code, event },

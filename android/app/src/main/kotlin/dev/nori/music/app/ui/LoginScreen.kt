@@ -64,10 +64,15 @@ fun providerWords(vm: SettingsViewModel, kind: dev.nori.music.ffi.settings.Serve
  * account's name to the form being edited.
  */
 @Composable
-private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (String) -> Unit) {
+private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, profile: String, signed: (String) -> Unit) {
     val ui by vm.account.collectAsStateWithLifecycle()
-    val name = vm.prefs.collectAsStateWithLifecycle().value.server?.user.orEmpty()
-    LaunchedEffect(Unit) { vm.lookAtAccount() }
+    val prefs by vm.prefs.collectAsStateWithLifecycle()
+    val name = prefs.servers.firstOrNull { it.id == profile }?.user.orEmpty()
+    // Another profile's account through a client of its own while this shows; nothing else opens.
+    androidx.compose.runtime.DisposableEffect(profile) {
+        vm.accountOf(prefs.servers.firstOrNull { it.id == profile })
+        onDispose { vm.accountOf(null) }
+    }
     LaunchedEffect(name) { signed(name) }
     GroupLabel(say.account)
     if (ui.account == AccountState.SIGNED_IN) {
@@ -320,8 +325,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
                     enabled = !busy && ready,
                 )
             }
-            // Signing in is the profile in use's: its core asks the provider.
-            if (info != null && info.signIn.isNotEmpty() && !adding && p.id == vm.prefs.value.activeServerId) AccountPart(vm, info) { name -> p = p.copy(user = name) }
+            if (info != null && info.signIn.isNotEmpty() && !adding) AccountPart(vm, info, p.id) { name -> p = p.copy(user = name) }
             Spacer(Modifier.height(24.dp))
         }
     }

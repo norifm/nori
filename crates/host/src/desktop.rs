@@ -71,6 +71,18 @@ impl Root {
         &self.data
     }
 
+    /// `profile`'s account apart from the session open on `open` (its core and profile), with a core and
+    /// client of its own, so editing it opens nothing else; `pictured` hears its picture change.
+    pub fn account(&self, http: Arc<Http>, profile: &SavedServer, open: Option<(Arc<nori_core::Core>, SavedServer)>, pictured: Box<dyn Fn() + Send + Sync>) -> Result<crate::account::Account, String> {
+        let core = nori_core::Core::new(crate::db_path(&self.data), nori_core::settings::server_db_id(&profile.id), self.app.clone()).map_err(|e| format!("the database: {e}"))?;
+        core.use_kinds(self.plugins().kinds.clone());
+        core.configure_profile(profile.clone()).map_err(|e| format!("the server: {e}"))?;
+        let client = nori_core::client::Client::new(core, http.clone(), nori_core::covers::CoverNet::over(http));
+        client.set_profile(crate::net(profile));
+        let give_back = open.filter(|(_, p)| p.kind == profile.kind);
+        Ok(crate::account::Account::new(client, self.app.settings.clone(), profile.id.clone(), pictured, give_back))
+    }
+
     /// Removes saved profile `id` and, off this thread (a library is many rows), its rows in the database.
     /// Which profile takes over from the one in use is the core's (`settings::servers_removed`).
     pub fn remove_profile(&self, id: &str) -> ProfileRemoved {
