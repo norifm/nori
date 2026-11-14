@@ -7,6 +7,7 @@
 //! [`Mixer::prepare`]; mixing allocates nothing.
 
 use crate::pcm::Encoding;
+use crate::stage::ceiling;
 use crate::types::{FadeCurve, TransitionPlan};
 use std::f64::consts::PI;
 
@@ -448,11 +449,14 @@ fn window_gain(span: Span, ramp: u64, p: u64) -> f64 {
 
 /// A sample type the mixer reads and writes.
 pub trait Sample: Copy {
+    /// Full scale in [`Sample::to_f64`]'s units.
+    const FULL: f64;
     fn to_f64(self) -> f64;
     fn from_f64(v: f64) -> Self;
 }
 
 impl Sample for f32 {
+    const FULL: f64 = 1.0;
     #[inline]
     fn to_f64(self) -> f64 {
         self as f64
@@ -464,6 +468,7 @@ impl Sample for f32 {
 }
 
 impl Sample for i16 {
+    const FULL: f64 = 32768.0;
     #[inline]
     fn to_f64(self) -> f64 {
         self as f64
@@ -781,7 +786,7 @@ impl Mixer {
             for c in 0..ch {
                 (o[c], i[c]) = (fo[c].to_f64(), fi[c].to_f64());
             }
-            self.mix_frame(&mut o, &mut i);
+            self.mix_frame(&mut o, &mut i, T::FULL);
             for c in 0..ch {
                 fo[c] = T::from_f64(o[c]);
             }
@@ -791,12 +796,12 @@ impl Mixer {
     /// [`Mixer::process`] over little-endian PCM bytes.
     pub fn process_bytes(&mut self, out: &mut [u8], inc: &[u8], enc: Encoding) {
         match enc {
-            Encoding::Pcm16 => self.process_le::<2>(out, inc, |b| i16::from_le_bytes(b).to_f64(), |v| i16::from_f64(v).to_le_bytes()),
-            Encoding::Float => self.process_le::<4>(out, inc, |b| f32::from_le_bytes(b).to_f64(), |v| f32::from_f64(v).to_le_bytes()),
+            Encoding::Pcm16 => self.process_le::<2>(out, inc, i16::FULL, |b| i16::from_le_bytes(b).to_f64(), |v| i16::from_f64(v).to_le_bytes()),
+            Encoding::Float => self.process_le::<4>(out, inc, f32::FULL, |b| f32::from_le_bytes(b).to_f64(), |v| f32::from_f64(v).to_le_bytes()),
         }
     }
 
-    fn process_le<const W: usize>(&mut self, out: &mut [u8], inc: &[u8], load: impl Fn([u8; W]) -> f64, store: impl Fn(f64) -> [u8; W]) {
+    fn process_le<const W: usize>(&mut self, out: &mut [u8], inc: &[u8], full: f64, load: impl Fn([u8; W]) -> f64, store: impl Fn(f64) -> [u8; W]) {
         let (ch, fb) = (self.ch, self.ch * W);
         let (mut o, mut i) = ([0f64; MAX_CHANNELS], [0f64; MAX_CHANNELS]);
         let sample = |f: &[u8], c: usize| -> [u8; W] { f[c * W..c * W + W].try_into().unwrap() };
@@ -804,7 +809,7 @@ impl Mixer {
             for c in 0..ch {
                 (o[c], i[c]) = (load(sample(fo, c)), load(sample(fi, c)));
             }
-            self.mix_frame(&mut o, &mut i);
+            self.mix_frame(&mut o, &mut i, full);
             for c in 0..ch {
                 fo[c * W..c * W + W].copy_from_slice(&store(o[c]));
             }
@@ -904,7 +909,8 @@ impl Mixer {
 
     /// Mixes one frame: outgoing `o` and incoming `i` in, the mix out in `o`.
     #[inline]
-    fn mix_frame(&mut self, o: &mut [f64; MAX_CHANNELS], i: &mut [f64; MAX_CHANNELS]) {
+    /// One frame of the mix, rounded off under `full` scale ([`ceiling`]): two loud songs at once sum past it.
+    fn mix_frame(&mut self, o: &mut [f64; MAX_CHANNELS], i: &mut [f64; MAX_CHANNELS], full: f64) {
         let (ch, p) = (self.ch, self.pos);
         self.pos += 1;
         if p >= self.len {
@@ -1001,6 +1007,9 @@ impl Mixer {
                 *x += level * if c % 2 == 0 { l } else { rr };
             }
         }
+        for x in &mut o[..ch] {
+            *x = full * ceiling((*x / full) as f32) as f64;
+        }
     }
 }
 
@@ -1067,6 +1076,23 @@ mod tests {
         y
     }
 
+    /// Two loud songs in phase, both up at the middle of a fade: their sum is rounded off under full scale, in either
+    /// sample format, not past it (where a float output clips hard and 16-bit samples flatten).
+    #[test]
+    fn a_loud_mix_stays_under_full_scale() {
+        let tone = sine(220.0, 72000);
+        let top = tone.iter().fold(0f32, |m, x| m.max(x.abs()));
+        let loud: Vec<f32> = tone.iter().map(|v| v / top * 0.9).collect();
+        let y = mix(&plan(), &loud, &loud);
+        let peak = y.iter().fold(0f32, |m, v| m.max(v.abs()));
+        assert!(peak <= 1.0 && peak > 0.95, "peaks at {peak:.3}");
+        let mut m = Mixer::new(RATE as u32, 1);
+        m.configure(&plan());
+        let (mut out, inc): (Vec<i16>, Vec<i16>) = (loud.iter().map(|v| (v * 32767.0) as i16).collect(), loud.iter().map(|v| (v * 32767.0) as i16).collect());
+        m.process(&mut out, &inc);
+        assert!(!out.iter().any(|v| *v == i16::MAX || *v == i16::MIN), "16-bit samples flattened at full scale");
+    }
+
     #[test]
     fn fade_curves() {
         let (a, b) = (sine(440.0, 72000), sine(1234.5, 72000));
@@ -1110,12 +1136,13 @@ mod tests {
             let mut p = plan();
             p.duration_ms = 30;
             (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (start_ms, end_ms, start_ms, end_ms);
-            let (ones, zeros) = (vec![1f32; 1440], vec![0f32; 1440]);
-            let y = mix(&p, &ones, &zeros);
+            // Half scale, under the mix's ceiling.
+            let (halves, zeros) = (vec![0.5f32; 1440], vec![0f32; 1440]);
+            let y = mix(&p, &halves, &zeros);
             let span = Span { start: (start_ms * 48) as u64, end: (end_ms * 48) as u64 };
-            let worst = y.iter().enumerate().map(|(k, v)| (*v as f64 - fade(p.fade_curve, span.progress(k as u64), true)).abs()).fold(0.0, f64::max);
+            let worst = y.iter().enumerate().map(|(k, v)| (2.0 * *v as f64 - fade(p.fade_curve, span.progress(k as u64), true)).abs()).fold(0.0, f64::max);
             assert!(worst < 1.5e-3, "{start_ms}-{end_ms} ms: {worst} off the curve");
-            assert!(y[..=span.start as usize].iter().all(|v| *v == 1.0), "{start_ms}-{end_ms} ms: full until the fade starts");
+            assert!(y[..=span.start as usize].iter().all(|v| *v == 0.5), "{start_ms}-{end_ms} ms: full until the fade starts");
             assert!(y[span.end.max(span.start + 1) as usize..].iter().all(|v| *v == 0.0), "{start_ms}-{end_ms} ms: gone once it ends");
         }
     }
@@ -1158,11 +1185,11 @@ mod tests {
         p.duration_ms = 4000;
         p.fade_curve = FadeCurve::Linear;
         (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (2000, 4000, 2000, 4000);
-        let (ones, zeros) = (vec![1f32; 192000], vec![0f32; 192000]);
-        let y = mix(&p, &ones, &zeros);
-        assert!((y[48000] - 1.0).abs() < 1e-6 && (y[144000] - 0.5).abs() < 1e-3, "outgoing holds, then falls linearly");
-        let y = mix(&p, &zeros, &ones);
-        assert!(y[48000].abs() < 1e-6 && (y[144000] - 0.5).abs() < 1e-3, "incoming waits, then rises linearly");
+        let (halves, zeros) = (vec![0.5f32; 192000], vec![0f32; 192000]);
+        let y = mix(&p, &halves, &zeros);
+        assert!((y[48000] - 0.5).abs() < 1e-6 && (y[144000] - 0.25).abs() < 1e-3, "outgoing holds, then falls linearly");
+        let y = mix(&p, &zeros, &halves);
+        assert!(y[48000].abs() < 1e-6 && (y[144000] - 0.25).abs() < 1e-3, "incoming waits, then rises linearly");
     }
 
     /// Both decks up at once (the incoming one in before the outgoing one goes) hold one song's power, the
@@ -1190,9 +1217,10 @@ mod tests {
         (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = if incoming { (0, 0, 0, 0) } else { (ms, ms, ms, ms) };
         p.in_gain_db = db;
         let n = (ms as f64 / 1000.0 * RATE) as usize + 4800;
-        let (deck, quiet) = (vec![1f32; n], vec![0f32; n]);
+        // A tenth of full scale: turned up 9 dB it stays under the mix's ceiling.
+        let (deck, quiet) = (vec![0.1f32; n], vec![0f32; n]);
         let y = if incoming { mix(&p, &quiet, &deck) } else { mix(&p, &deck, &quiet) };
-        y.iter().skip(1).step_by(4800).map(|v| 20.0 * (*v as f64).log10()).collect()
+        y.iter().skip(1).step_by(4800).map(|v| 20.0 * (10.0 * *v as f64).log10()).collect()
     }
 
     /// The two songs meet across a loudness gap: the incoming one starts turned to the outgoing one's level,
@@ -1214,7 +1242,7 @@ mod tests {
             assert!(alone.iter().all(|l| l.abs() < 0.01 || l.is_infinite()), "{ms} ms, {db} dB: the outgoing song alone turned: {alone:.2?}");
             let p = TransitionPlan { duration_ms: ms, in_gain_db: db, out_fade_start_ms: ms, out_fade_end_ms: ms, in_fade_start_ms: ms / 2, in_fade_end_ms: ms / 2, ..plan() };
             let n = (ms as f64 / 1000.0 * RATE) as usize;
-            let out: Vec<f64> = mix(&p, &vec![1f32; n], &vec![0f32; n]).iter().skip(1).step_by(4800).map(|v| 20.0 * (*v as f64).log10()).collect();
+            let out: Vec<f64> = mix(&p, &vec![0.5f32; n], &vec![0f32; n]).iter().skip(1).step_by(4800).map(|v| 20.0 * (2.0 * *v as f64).log10()).collect();
             let half = gap.abs().min(ms as f64 / 2.0 / TRIM_GLIDE_MS_PER_DB).copysign(gap);
             let k = (ms / 100 - 1) as usize;
             let held = 20.0 * std::f64::consts::FRAC_1_SQRT_2.log10();
@@ -1500,11 +1528,11 @@ mod tests {
         p.echo = echo(Some(Window { start_ms: 0, end_ms: 300 }), None, None);
         let click = |ms: usize| {
             let mut x = vec![0f32; 96000];
-            x[ms * 48] = 1.0;
+            x[ms * 48] = 0.5;
             x
         };
         let y = mix(&p, &click(100), &vec![0f32; 96000]);
-        assert!((y[16800] - 1.0).abs() < 1e-6 && (y[28800] - 0.5).abs() < 1e-6, "sent inside: repeated at 350 and 600 ms");
+        assert!((y[16800] - 0.5).abs() < 1e-6 && (y[28800] - 0.25).abs() < 1e-6, "sent inside: repeated at 350 and 600 ms");
         let y = mix(&p, &click(500), &vec![0f32; 96000]);
         assert!(y[24001..].iter().all(|v| *v == 0.0), "sent outside: never repeated");
     }

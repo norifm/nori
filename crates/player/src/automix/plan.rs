@@ -263,23 +263,28 @@ pub(super) fn at_start(b: &TrackAnalysis) -> (TrackAnalysis, Gridded) {
     end_grid(b, false)
 }
 
-/// Whether song time `from` to `to` lies in the stretch `(start, end)` ms an end's grid holds over (both 0: all of
-/// it), give or take half a `beat`.
 /// Whether `[from, to)` ms of an end lies where its beats were measured and held up, `kept` of its `stored` ones (the
-/// steady run once cleaned), within `slack`, what is outside them beatless bars or `silent`; an end that stored no beats passes.
+/// steady run once cleaned), within `slack` (a bar: where the beats stop with the music, its last one comes up to a
+/// bar before its end) or a quarter of it where stored beats go on unsteady, what is outside them beatless bars or
+/// `silent`; an end that stored no beats passes.
 fn measured_or_beatless(bars: &[crate::types::BarProfile], stored: &[crate::types::Beat], kept: &[crate::types::Beat], from: f64, to: f64, slack: f64, silent: impl Fn(f64, f64) -> bool) -> bool {
-    if stored.is_empty() {
-        return true;
-    }
+    let (Some(s0), Some(s1)) = (stored.first(), stored.last()) else { return true };
     let (first, last) = kept.first().zip(kept.last()).map_or((f64::MAX, f64::MIN), |(f, l)| (f.at_ms as f64, l.at_ms as f64));
     let beatless = |g0: f64, g1: f64| {
         let inside: Vec<_> = bars.iter().filter(|b| (b.start_ms as f64) < g1 && b.start_ms as f64 + slack > g0).collect();
         silent(g0, g1) || (!inside.is_empty() && inside.iter().all(|b| moves::beatless(b) || b.level_db < moves::AUDIBLE_DB))
     };
-    let (before, after) = if first <= last { ((from, first - slack), (last + slack, to)) } else { ((from, to), (to, to)) };
+    let past = |unsteady: bool| if unsteady { 0.25 * slack } else { slack };
+    let (before, after) = if first <= last {
+        ((from, first - past((s0.at_ms as f64) < first)), (last + past((s1.at_ms as f64) > last), to))
+    } else {
+        ((from, to), (to, to))
+    };
     [before, after].into_iter().all(|(g0, g1)| g1 <= g0 || beatless(g0, g1))
 }
 
+/// Whether song time `from` to `to` lies in the stretch `(start, end)` ms an end's grid holds over (both 0: all of
+/// it), give or take half a `beat`.
 fn in_grid((start, end): (i64, i64), from: f64, to: f64, beat: f64) -> bool {
     end <= 0 || (from >= start as f64 - 0.5 * beat && to <= end as f64 + 0.5 * beat)
 }
@@ -2685,6 +2690,12 @@ mod tests {
         let p = plan(Some(&short), Some(&b), 240_000, 240_000, &dj());
         let heard_to = p.out_start_ms as f64 + p.out_song_ms(p.duration_ms as f64);
         assert!(!p.kind.beat_matched() || heard_to <= 200_000.0 + 250.0, "beat-matched to {heard_to:.0} past beats measured to 200000: {}", p.reason);
+        // Its tracker losing the beat in the last bar, beats coming early then anywhere: the mix stays within a beat of
+        // the last steady one, not the bar a song's last beat may fall short of its end by.
+        let lost = |k: i64| [0.0, -160.0, -290.0, 330.0, 670.0][(k - 472).clamp(0, 4) as usize];
+        let p = plan(Some(&TrackAnalysis { outro_beats: beats_at(178_000.0, 238_000.0, lost), ..track(120.0) }), Some(&b), 240_000, 240_000, &dj());
+        let heard_to = p.out_start_ms as f64 + p.out_song_ms(p.duration_ms as f64);
+        assert!(!p.kind.beat_matched() || heard_to <= 236_120.0 + 500.0, "beat-matched to {heard_to:.0} over beats lost from 236120: {}", p.reason);
     }
 
     /// The beat model counts an ending's beats three against two of the measured grid: its beats are mixed on, not the

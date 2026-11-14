@@ -162,8 +162,9 @@ pub(crate) fn cleaned(beats: &[Beat]) -> Vec<Beat> {
     clean(beats).iter().map(|p| Beat { at_ms: p.heard_ms.round() as i64, downbeat: p.downbeat, sure: p.sure && !p.filled }).collect()
 }
 
-/// The longest run of `beats` with no gap past [`RUN_GAP`] of their median gap: where they were measured beat by
-/// beat, not a stray beat a stretch of unbeaten music away from the rest.
+/// The longest run of `beats` with no gap past [`RUN_GAP`] of their median gap, nor under [`RUN_EARLY`] of it: where
+/// they were measured beat by beat, not a stray beat a stretch of unbeaten music away from the rest, nor a tracker
+/// losing the beat.
 pub(crate) fn steady_run(beats: &[Beat]) -> &[Beat] {
     if beats.len() < 2 {
         return beats;
@@ -173,7 +174,8 @@ pub(crate) fn steady_run(beats: &[Beat]) -> &[Beat] {
     let median = gaps[gaps.len() / 2] as f64;
     let (mut best, mut start) = ((0, 1), 0);
     for i in 1..beats.len() {
-        if (beats[i].at_ms - beats[i - 1].at_ms) as f64 > RUN_GAP * median {
+        let gap = (beats[i].at_ms - beats[i - 1].at_ms) as f64;
+        if gap > RUN_GAP * median || gap < RUN_EARLY * median {
             start = i;
         }
         if i + 1 - start > best.1 - best.0 {
@@ -185,6 +187,8 @@ pub(crate) fn steady_run(beats: &[Beat]) -> &[Beat] {
 
 /// A gap past this many of a run's usual beats breaks it.
 const RUN_GAP: f64 = 1.6;
+/// A beat this much of a usual one after the last breaks it: a quarter of a beat early or more.
+const RUN_EARLY: f64 = 0.75;
 
 /// The local period at each beat: the median gap within [`PERIOD_SPAN`] beats.
 fn periods(t: &[f64]) -> Vec<f64> {
@@ -383,6 +387,16 @@ mod tests {
     }
 
     /// The smoother solves its system: the fit against a dense solve, and the trace against the inverse's diagonal.
+    /// A tracker losing an ending puts beats a quarter or more early, then anywhere: the steady run stops at the first
+    /// of them, as at a hole.
+    #[test]
+    fn a_steady_run_stops_where_beats_come_early() {
+        let mut t: Vec<f64> = (0..40).map(|k| 1_000.0 + 410.0 * k as f64).collect();
+        t.extend([t[39] + 250.0, t[39] + 540.0, t[39] + 1_570.0]);
+        let b = beats(t.iter().copied());
+        assert_eq!(steady_run(&b).len(), 40);
+    }
+
     #[test]
     fn whittaker_solves_its_system() {
         let n = 12;
