@@ -10306,6 +10306,8 @@ export component TopBar inherits Window {
     callback search-step(int);
     callback search-accepted();
     callback search-escaped();
+    callback drag-window();
+    callback zoom-window();
     // The search field moved or changed its width (`search-end`, `search-width`): its preview follows it.
     callback search-placed();
     out property <length> search-end: content.field-end;
@@ -10323,6 +10325,12 @@ export component TopBar inherits Window {
         background: Theme.ground.with-alpha(Chrome.tint);
         border-width: 1px;
         border-color: Theme.outline;
+    }
+    // The pill's empty stretches move the window, as a toolbar's do; its tabs and fields keep their presses.
+    TitleStrip {
+        height: parent.height;
+        drag => { root.drag-window(); }
+        zoom => { root.zoom-window(); }
     }
     content := TopContent {
         width: parent.width;
