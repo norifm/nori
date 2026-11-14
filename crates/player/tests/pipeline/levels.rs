@@ -205,10 +205,50 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
         Kind {
             name: "rise",
             prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
-            a: sung,
+            a: sung.clone(),
             b: b.clone(),
             logged: &["FilterRide", "rise"],
             after: Some(TransitionKind::ReverbWash),
+        },
+        Kind {
+            name: "echo-out (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, beat_match: false, ..automix_prefs() },
+            a: a.clone(),
+            b: b.clone(),
+            logged: &["EchoOut"],
+            after: Some(TransitionKind::FilterRide),
+        },
+        Kind {
+            name: "filter ride (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, ..automix_prefs() },
+            a: a.clone(),
+            b: measured("b", 160.0, lufs_b),
+            logged: &["FilterRide", "filter ride"],
+            after: None,
+        },
+        Kind {
+            name: "bass hand-off (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, ..automix_prefs() },
+            a: kicking(&keyed(&a, 1)),
+            b: kicking(&keyed(&measured("b", 160.0, lufs_b), 7)),
+            logged: &["FilterRide", "hand-off"],
+            after: None,
+        },
+        Kind {
+            name: "filter-out off the last word (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, beat_match: false, ..automix_prefs() },
+            a: sung,
+            b: b.clone(),
+            logged: &["FilterOut"],
+            after: None,
+        },
+        Kind {
+            name: "brake (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, ..automix_prefs() },
+            a: kicking(&a),
+            b: kicking(&measured("b", 160.0, lufs_b)),
+            logged: &["Brake"],
+            after: Some(TransitionKind::FilterRide),
         },
         Kind {
             name: "glowing stop",
@@ -227,10 +267,14 @@ struct Run {
     mix: (usize, usize),
     heard: usize,
     line: String,
+    log: Vec<String>,
 }
 
+/// A run whose songs are as long as listed: its plan fits them, never squeezed by the engine.
 fn run(kind: &Kind, a: &[i16], b: &[i16], gains: &[(&str, f32)], replay_gain: bool) -> Run {
-    run_listed(kind, track("a", a), b, gains, replay_gain)
+    let r = run_listed(kind, track("a", a), b, gains, replay_gain);
+    assert!(!r.log.iter().any(|l| l.contains("made to fit")), "{}: squeezed: {:?}", kind.name, r.log);
+    r
 }
 
 fn run_listed(kind: &Kind, a: nori_player::sim::Track, b: &[i16], gains: &[(&str, f32)], replay_gain: bool) -> Run {
@@ -260,7 +304,7 @@ fn run_listed(kind: &Kind, a: nori_player::sim::Track, b: &[i16], gains: &[(&str
     let len_ms: f64 = words[5].parse().unwrap();
     let start_ms: f64 = words[8].trim_end_matches(',').parse().unwrap();
     let heard_ms: f64 = words[13].parse().unwrap();
-    Run { out: p.sink.heard_samples(), mix: (frames(start_ms / 1000.0), frames(len_ms / 1000.0)), heard: frames(heard_ms / 1000.0), line }
+    Run { out: p.sink.heard_samples(), mix: (frames(start_ms / 1000.0), frames(len_ms / 1000.0)), heard: frames(heard_ms / 1000.0), line, log }
 }
 
 /// The level of `x` (left channel, full scale 1) in dB over each 100 ms from frame `from` to `to`.
@@ -466,8 +510,10 @@ fn tiny_stretch_keeps_level() {
     assert!(step <= 1.0, "{}: {step:.2} dB in 100 ms, {:.1} s into the second half of the mix", kind.name, i as f64 * WIN_S);
 }
 
-/// Two different songs at one loudness: every kind of mix holds that level while both play, never louder or quieter
-/// than the songs themselves, as heard: over 400 ms, the window momentary loudness is measured over.
+/// Two different songs at one loudness: every kind of mix holds that level while both play (from where the incoming
+/// song is first heard, past the attack of one coming in on a beat: an effect on the outgoing one alone before it, a
+/// thinning or a brake, is that effect), never louder or quieter than the songs themselves, as heard: over 400 ms,
+/// the window momentary loudness is measured over.
 #[test]
 fn level_holds_through_each_mix() {
     let (a, b) = (steady(SONG_S, 31, 0.3), steady(SONG_S, 32, 0.3));
@@ -478,7 +524,9 @@ fn level_holds_through_each_mix() {
         let (s, n) = got.mix;
         let x = left(&got.out);
         let w = frames(0.4);
-        let l: Vec<f64> = (s..(s + n).saturating_sub(w)).step_by(frames(WIN_S)).map(|i| db(rms(&x[i..i + w]))).collect();
+        let from = s + if got.heard > 0 { got.heard + w / 2 } else { 0 };
+        let l: Vec<f64> = (from..s + n).step_by(frames(WIN_S)).map(|i| db(rms(&x[i..i + w]))).collect();
+        assert!(!l.is_empty(), "{}: nothing measured ({})", kind.name, got.line);
         let (lo, hi) = l.iter().fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v - own), hi.max(v - own)));
         println!("{}: {lo:+.2}..{hi:+.2} dB through the mix ({})", kind.name, got.line);
         if lo < -1.0 || hi > 1.0 {

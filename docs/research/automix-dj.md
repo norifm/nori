@@ -88,3 +88,11 @@ penalty from the previous transition's technique (passed in the settings).
   dead air, energy cliffs, unlocked beats overlapping.
 - The lab: analyses real songs (classical and Beat This!), plans every pair in both styles, tallies techniques and
   failure counts, and renders transitions through the simulated player for listening.
+- The lab's audit renders shuffled runs through the engine and checks the audio itself: holes, dropouts, bumps over
+  both songs, clicks, overs and the limiter's extra work, squeezed plans, plain fade-ins, and beats against final0.
+  It found, besides beat drift: rides over a dying fade-out (an effect needs its bars alive on average), handovers
+  onto a fading-in head (the head now starts under the outgoing song), a near-silent opening entered at its start
+  (opening bars under the audible level are skipped like silence), an echo-out whose next song rose over a bar after
+  a one-beat fall (it now rises as the outgoing falls), and brakes and reverb washes running past a song's end (the
+  engine squeezed them). Overs come only with volume leveling off: leveling turns loud masters down, and the
+  limiter runs whenever it may turn a song up.
