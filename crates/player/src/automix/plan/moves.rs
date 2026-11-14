@@ -54,7 +54,7 @@ pub(super) fn repeat_cost(kind: TransitionKind, style: MixStyle) -> f64 {
         TransitionKind::ReverbWash if style == MixStyle::Smooth => 0.4,
         TransitionKind::Brake | TransitionKind::ReverbWash => 2.0,
         TransitionKind::EchoOut | TransitionKind::FilterOut => 0.6,
-        TransitionKind::FilterRide => 1.0,
+        TransitionKind::FilterRide => 1.3,
         TransitionKind::LoopRamp => 0.8,
         TransitionKind::BeatlessBlend => 0.2,
         _ => 0.0,
@@ -355,10 +355,11 @@ const FILTER_OUT_TO_HZ: f32 = 1_200.0;
 /// The filter ride (B6), or the bass hand-off where both songs carry a kick at the join (B7): a DJ's long blend for
 /// two songs that cannot be locked. Over up to [`RIDE_BARS`] of the outgoing song's last music, under its last lines
 /// too, the incoming one comes up thin and low, its high-pass opening over the second half (its groove against the
-/// outgoing one only in the last bars, its kick only at the end, so one kick plays at a time), done as the outgoing song leaves after its last line or off its last word; the lows change hands over a
-/// bar there, the faders crossing from a bar before it so the two never sound louder than one, and the outgoing song
-/// plays out its outro, darkening through a low-pass. Two voices together for a bar at most; the longer the ride, the
-/// more it is worth.
+/// outgoing one only in the last bars, its kick only at the end, so one kick plays at a time), done as the outgoing
+/// song leaves after its last line or off its last word, the incoming drop or end of intro landing there where its
+/// opening allows. The lows change hands over a bar there, the faders crossing from a bar before it so the two never
+/// sound louder than one, and the outgoing song plays out its outro, darkening through a low-pass. Two voices
+/// together for a bar at most; the longer the ride, the more it is worth.
 pub(super) fn filter_ride(p: &Pair) -> Option<Move> {
     let (a, b, s) = (p.a, p.b?, p.s);
     if !s.filter_effects {
@@ -370,14 +371,26 @@ pub(super) fn filter_ride(p: &Pair) -> Option<Move> {
     let ending = Ending::of(a, p.room.out_dur);
     let x = leave(a, p.room.out_dur, beat, 0.0, 0.0, |x| x - RIDE_MIN_MS >= a.silence_start_ms as f64 && x + beat <= p.room.out_dur as f64 && alive(a, x - RIDE_MIN_MS, x))?;
     // The lead under the outgoing song, whole bars, within the room; two voices together for a bar at most: the
-    // incoming song may start singing under it once the outgoing one has sung its last line.
-    let voices = match (a.vocal_end_ms > 0, b.vocal_end_ms > 0) {
-        (true, true) => b.vocal_start_ms as f64 - music + bar + (x.at - a.vocal_end_ms as f64),
+    // incoming song, from `from`, may start singing under it once the outgoing one has sung its last line.
+    let room = (RIDE_BARS * bar).min(RIDE_MAX_MS).min(p.room.max_len as f64 - bar).min(x.at - a.silence_start_ms as f64);
+    let voices = |from: f64| match (a.vocal_end_ms > 0, b.vocal_end_ms > 0) {
+        (true, true) => b.vocal_start_ms as f64 - from + bar + (x.at - a.vocal_end_ms as f64),
         _ => f64::MAX,
     };
-    let most = (RIDE_BARS * bar).min(RIDE_MAX_MS).min(voices).min(p.room.max_len as f64 - bar).min(x.at - a.silence_start_ms as f64);
-    let lead = (most / bar).floor() * bar;
-    if lead < RIDE_MIN_MS || (p.room.in_dur as f64) - music < 2.0 * lead {
+    let whole = |ms: f64| (ms / bar).floor() * bar;
+    // Where the incoming song arrives (its drop, else the end of its intro) lands on the exit, the song started that
+    // far before it, when its opening holds the lead with no more than the skip cap of it left out.
+    let arrival = [(b.drop_ms, "its drop"), (b.intro_end_ms, "the end of its intro")].into_iter().find(|&(t, _)| t as f64 > music);
+    let landed = arrival.and_then(|(t, what)| {
+        let t = t as f64;
+        let lead = whole(room.min(t - music));
+        (lead >= RIDE_MIN_MS && t - lead - music <= MAX_SKIP_MS as f64 && voices(t - lead) >= lead).then_some((t - lead, lead, what))
+    });
+    let (from, lead, lands) = match landed {
+        Some((from, lead, what)) => (from, lead, Some(what)),
+        None => (music, whole(room.min(voices(music))), None),
+    };
+    if lead < RIDE_MIN_MS || (p.room.in_dur as f64) - from < 2.0 * lead {
         return None;
     }
     // The outro after the exit, played out: to the end of the music, a beat to two bars.
@@ -385,9 +398,9 @@ pub(super) fn filter_ride(p: &Pair) -> Option<Move> {
     let start = x.at - lead;
     // Both kicks where the bass changes hands: the incoming one's bars at the exit, the outgoing one's before it.
     let kicks = bar_at(&a.outro_bars, x.at - beat).is_some_and(kick)
-        && mean_over(&b.intro_bars, music + lead - bar, music + lead + bar, |x| if kick(x) { 1.0 } else { 0.0 }).is_some_and(|k| k >= 0.5);
+        && mean_over(&b.intro_bars, from + lead - bar, from + lead + bar, |x| if kick(x) { 1.0 } else { 0.0 }).is_some_and(|k| k >= 0.5);
     let dur = lead + outro;
-    let mut m = blank(TransitionKind::FilterRide, start.round() as i64, music.round() as i64, dur.round() as i64, String::new());
+    let mut m = blank(TransitionKind::FilterRide, start.round() as i64, from.round() as i64, dur.round() as i64, String::new());
     let ms = |t: f64| t.round() as i64;
     // Over the outgoing voice the incoming one stays thinner, longer.
     let over_voice = sings_after(a, start);
@@ -405,8 +418,9 @@ pub(super) fn filter_ride(p: &Pair) -> Option<Move> {
     m.in_gain_db = loudness_trim(Some(a), Some(b), s);
     let what = if kicks { "bass hand-off" } else { "filter ride" };
     let place = if x.word { ", off its last word" } else if x.on_line { ", on the outro phrase" } else { "" };
-    m.reason = format!("{what} over {:.0} bars{place}{}", lead / bar, tail(p.why_not));
-    let worth = if kicks { HANDOFF_WORTH } else { RIDE_WORTH } + RIDE_LENGTH_WORTH * lead / 1000.0;
+    let landing = lands.map_or(String::new(), |what| format!(", {what} on the exit"));
+    m.reason = format!("{what} over {:.0} bars{place}{landing}{}", lead / bar, tail(p.why_not));
+    let worth = if kicks { HANDOFF_WORTH } else { RIDE_WORTH } + RIDE_LENGTH_WORTH * lead / 1000.0 + if lands.is_some() { RIDE_LANDING_WORTH } else { 0.0 };
     Some(Move { plan: m, worth: worth - if on_grid { 0.0 } else { OFF_GRID_COST } })
 }
 
@@ -418,6 +432,8 @@ const RIDE_MIN_MS: f64 = 8_000.0;
 const RIDE_TAIL_BARS: f64 = 2.0;
 /// Per second of lead: the longer two songs ride together, the more it sounds like one set.
 const RIDE_LENGTH_WORTH: f64 = 0.05;
+/// The incoming song arriving (its drop, the end of its intro) as the outgoing one leaves.
+const RIDE_LANDING_WORTH: f64 = 0.3;
 /// Where the outgoing low-pass closes, two octaves over the swap's cut: lower, what is left between the two is a lone
 /// band, heard as a tone.
 const RIDE_OUT_TO_HZ: f32 = 800.0;
@@ -702,7 +718,8 @@ pub(super) fn beatless_blend(p: &Pair) -> Option<Move> {
         let leave = ending.leave(0.0);
         let dur = (beat_in - music).min(max);
         let start = leave - dur;
-        let clear = !sings_after(a, start + 0.5 * dur) || !sings_before(b, music + dur);
+        // A free-time opening under a voice sounds off its beat: the outgoing song done singing early in the blend.
+        let clear = !sings_after(a, start + BEATLESS_SUNG_SHARE * dur);
         if dur >= BEATLESS_MIN_MS && start >= a.silence_start_ms as f64 && clear && best.as_ref().is_none_or(|(_, d)| dur > *d) {
             let mut m = blank(TransitionKind::BeatlessBlend, start.round() as i64, music.round() as i64, dur.round() as i64, String::new());
             (m.out_fade_start_ms, m.out_fade_end_ms) = ((0.2 * dur).round() as i64, dur.round() as i64);
@@ -720,6 +737,9 @@ pub(super) fn beatless_blend(p: &Pair) -> Option<Move> {
     m.reason += &tail(p.why_not);
     Some(Move { worth: BEATLESS_WORTH + BEATLESS_LENGTH_WORTH * dur / 1000.0, plan: m })
 }
+
+/// The share of a blend over a beatless opening the outgoing song may still sing over, while the opening is faint.
+const BEATLESS_SUNG_SHARE: f64 = 0.25;
 
 /// The shortest beatless overlap worth it.
 const BEATLESS_MIN_MS: f64 = 6_000.0;

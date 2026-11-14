@@ -119,7 +119,12 @@ impl Curve {
             && (filled as f64) <= HOLD_MAX_FILLED * n as f64
             && (sure as f64) >= HOLD_MIN_SURE * (n - filled) as f64
             && self.scatter_ms() <= HOLD_SCATTER_MS
-            && self.tempo_change(4 * meter) <= HOLD_TEMPO_CHANGE
+            && self.steady(meter)
+    }
+
+    /// Whether the beats keep to one tempo, however loose: see [`HOLD_TEMPO_CHANGE`].
+    pub fn steady(&self, meter: usize) -> bool {
+        self.tempo_change(4 * meter) <= HOLD_TEMPO_CHANGE
     }
 
     /// Where an ending starts to slow (a ritardando), ms on the curve: its last bar [`SLOWS_BY`] slower than the bars
