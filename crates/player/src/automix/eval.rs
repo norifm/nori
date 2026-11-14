@@ -1738,7 +1738,7 @@ fn beats_and_mixes_are_accurate() {
         .into_iter()
         .flatten()
         .collect();
-        // One DJ pair would speed the next song's singing up 14 %: it is not beat-matched.
+        // One DJ pair would bend the outgoing song 14 % while it sings: it is not beat-matched.
         assert!(errors.len() >= 13 && errors.iter().all(|e| e.0 <= 10.0), "{style:?}: {errors:?}");
     }
 }
