@@ -1546,6 +1546,9 @@ fn one_grid(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s:
     let tail = if why_not.is_empty() { String::new() } else { format!(" ({why_not})") };
     let ending = a.map(|x| Ending::of(x, out_dur));
     let end_a = ending.map_or(out_dur, |e| e.leave(0.0).round() as i64);
+    // Gone by where the outgoing song turns quiet (its MixRamp end, `slack` after it), as an effect leaves: a fade
+    // over a dying tail brings the next song up from near silence.
+    let leave_by = |slack: f64| a.filter(|x| x.mixramp_end_ms > x.silence_start_ms).map_or(end_a, |x| ((x.mixramp_end_ms as f64 + slack).round() as i64).min(end_a));
     let skipped = |heard_end: i64| ending.map_or((out_dur - heard_end) as f64, |e| e.skipped(heard_end as f64));
     // The profile's fade lengths, the one fewer voices sing over the other in first.
     let out_bars = profile(s.style).fade_bars[short as usize];
@@ -1565,14 +1568,15 @@ fn one_grid(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s:
         // At the end, or on the bar the outgoing singing ends on, over the instrumental bars after it (a closing
         // breakdown's too).
         let after_line = (g.vocal_end_ms > 0).then(|| downbeat(g.vocal_end_ms as f64 + 0.5 * beat));
-        let through = ending.map_or(out_dur, |e| if e.breakdown { e.music_end } else { e.exit }.round() as i64);
+        let end = leave_by(beat);
+        let through = ending.map_or(out_dur, |e| if e.breakdown { e.music_end } else { e.exit }.round() as i64).min(end);
         let mut fades = Vec::new();
         for bars in out_bars {
             let dur = (*bars as f64 * bpb as f64 * beat).round() as i64;
             if dur > max_len || dur < MIN_FADE_MS {
                 continue;
             }
-            for (start, until, at) in [(downbeat(end_a as f64 - dur as f64), end_a, ""), (after_line.unwrap_or(-1), through, ", after its last line")] {
+            for (start, until, at) in [(downbeat(end as f64 - dur as f64), end, ""), (after_line.unwrap_or(-1), through, ", after its last line")] {
                 if start < g.silence_start_ms || start + dur > until || skipped(start + dur) > MAX_SKIP_MS as f64 {
                     continue;
                 }
@@ -1598,7 +1602,7 @@ fn one_grid(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s:
             if dur > max_len || dur < MIN_FADE_MS || dur > in_dur - in_start {
                 continue;
             }
-            let start = end_a - dur;
+            let start = leave_by(0.0) - dur;
             if start < 0 || skipped(start + dur) > MAX_SKIP_MS as f64 {
                 continue;
             }
@@ -1803,6 +1807,22 @@ mod tests {
         let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &off(MixStyle::Smooth));
         assert_eq!((dj.kind, smooth.kind), (TransitionKind::MixRampFade, TransitionKind::MixRampFade), "{} / {}", dj.reason, smooth.reason);
         assert!((dj.duration_ms as f64) <= 2.0 * bar + 1.0 && smooth.duration_ms > dj.duration_ms, "{dj:?} / {smooth:?}");
+    }
+
+    /// A song dying away over its last bars (turning quiet well before its music ends): a fallback fade on its grid
+    /// leaves before it turns quiet, as an effect does, not over the dying tail with the next song rising from near
+    /// silence.
+    #[test]
+    fn fades_leave_before_a_song_turns_quiet() {
+        let beat: f64 = 60_000.0 / 128.0;
+        let a = TrackAnalysis { mixramp_end_ms: 226_000, ..sung_until(0.0).0 };
+        let b = TrackAnalysis { vocal_start_ms: 200, vocal_end_ms: 200_000, ..track(181.0) };
+        for style in [MixStyle::Dj, MixStyle::Smooth] {
+            let s = AutoMixSettings { filter_effects: false, style, max_transition_s: style.longest_s() as f32, max_tempo_change_pct: style.tempo_pct(), ..Default::default() };
+            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &s);
+            assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
+            assert!((p.out_start_ms + p.duration_ms) as f64 <= 226_000.0 + beat + 1.0, "{p:?}");
+        }
     }
 
     #[test]
