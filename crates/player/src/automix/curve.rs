@@ -162,6 +162,30 @@ pub(crate) fn cleaned(beats: &[Beat]) -> Vec<Beat> {
     clean(beats).iter().map(|p| Beat { at_ms: p.heard_ms.round() as i64, downbeat: p.downbeat, sure: p.sure && !p.filled }).collect()
 }
 
+/// The longest run of `beats` with no gap past [`RUN_GAP`] of their median gap: where they were measured beat by
+/// beat, not a stray beat a stretch of unbeaten music away from the rest.
+pub(crate) fn steady_run(beats: &[Beat]) -> &[Beat] {
+    if beats.len() < 2 {
+        return beats;
+    }
+    let mut gaps: Vec<i64> = beats.windows(2).map(|w| w[1].at_ms - w[0].at_ms).collect();
+    gaps.sort_unstable();
+    let median = gaps[gaps.len() / 2] as f64;
+    let (mut best, mut start) = ((0, 1), 0);
+    for i in 1..beats.len() {
+        if (beats[i].at_ms - beats[i - 1].at_ms) as f64 > RUN_GAP * median {
+            start = i;
+        }
+        if i + 1 - start > best.1 - best.0 {
+            best = (start, i + 1);
+        }
+    }
+    &beats[best.0..best.1]
+}
+
+/// A gap past this many of a run's usual beats breaks it.
+const RUN_GAP: f64 = 1.6;
+
 /// The local period at each beat: the median gap within [`PERIOD_SPAN`] beats.
 fn periods(t: &[f64]) -> Vec<f64> {
     let gaps: Vec<f64> = t.windows(2).map(|w| w[1] - w[0]).collect();

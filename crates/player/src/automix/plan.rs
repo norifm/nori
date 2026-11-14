@@ -25,7 +25,7 @@ mod warp;
 
 use moves::{Move, Pair};
 use super::structure::key_distance;
-use super::curve::Curve;
+use super::curve::{cleaned, steady_run, Curve};
 use super::phrase;
 use super::tempo::{fold, match_ratio};
 use crate::types::{AutoMixSettings, BassSwap, Bend, Echo, FadeCurve, Glide, HighsIn, InLoop, MixStyle, Sweep, TrackAnalysis, TransitionKind, TransitionPlan, VocalDuck};
@@ -265,15 +265,18 @@ pub(super) fn at_start(b: &TrackAnalysis) -> (TrackAnalysis, Gridded) {
 
 /// Whether song time `from` to `to` lies in the stretch `(start, end)` ms an end's grid holds over (both 0: all of
 /// it), give or take half a `beat`.
-/// Whether `[from, to)` ms of an end lies where its `beats` were measured, within `slack`, what is outside them
-/// beatless bars or `silent`; an end measured by no beats passes.
-fn measured_or_beatless(bars: &[crate::types::BarProfile], beats: &[crate::types::Beat], from: f64, to: f64, slack: f64, silent: impl Fn(f64, f64) -> bool) -> bool {
-    let Some((first, last)) = beats.first().zip(beats.last()) else { return true };
+/// Whether `[from, to)` ms of an end lies where its beats were measured and held up, `kept` of its `stored` ones (the
+/// steady run once cleaned), within `slack`, what is outside them beatless bars or `silent`; an end that stored no beats passes.
+fn measured_or_beatless(bars: &[crate::types::BarProfile], stored: &[crate::types::Beat], kept: &[crate::types::Beat], from: f64, to: f64, slack: f64, silent: impl Fn(f64, f64) -> bool) -> bool {
+    if stored.is_empty() {
+        return true;
+    }
+    let (first, last) = kept.first().zip(kept.last()).map_or((f64::MAX, f64::MIN), |(f, l)| (f.at_ms as f64, l.at_ms as f64));
     let beatless = |g0: f64, g1: f64| {
         let inside: Vec<_> = bars.iter().filter(|b| (b.start_ms as f64) < g1 && b.start_ms as f64 + slack > g0).collect();
         silent(g0, g1) || (!inside.is_empty() && inside.iter().all(|b| moves::beatless(b) || b.level_db < moves::AUDIBLE_DB))
     };
-    let (before, after) = ((from, first.at_ms as f64 - slack), (last.at_ms as f64 + slack, to));
+    let (before, after) = if first <= last { ((from, first - slack), (last + slack, to)) } else { ((from, to), (to, to)) };
     [before, after].into_iter().all(|(g0, g1)| g1 <= g0 || beatless(g0, g1))
 }
 
@@ -934,6 +937,9 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
     let opening = vocal_start.is_some_and(|v| v > first + 0.5 * beat_n);
     let unsung_from = |t: f64| vocal_end.is_none_or(|v| t >= v - 0.5 * beat);
 
+    // The beats each end's lock checks by: cleaned, their steady run, as the lock pairs them.
+    let (out_clean, in_clean) = (cleaned(&a.outro_beats), cleaned(&b.intro_beats));
+    let (out_beats, in_beats) = (steady_run(&out_clean), steady_run(&in_clean));
     let mut windows: Vec<Window> = Vec::new();
     for &(d, landing) in &landings {
         let runup_sung = sings_before(b, d - 0.5 * beat_n);
@@ -1024,7 +1030,7 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                         // before its music ends), or over bars with no beat: a grid carried over beats not measured drifts.
                         let out_silent = |g0: f64, g1: f64| ending.silence(g0, g1) >= g1 - g0 - 1.0;
                         let in_silent = |_: f64, g1: f64| g1 <= b.silence_start_ms as f64;
-                        if !measured_or_beatless(&a.outro_bars, &a.outro_beats, start, heard_end, bar, out_silent) || !measured_or_beatless(&b.intro_bars, &b.intro_beats, in_start, in_end, bar_in, in_silent) {
+                        if !measured_or_beatless(&a.outro_bars, &a.outro_beats, out_beats, start, heard_end, bar, out_silent) || !measured_or_beatless(&b.intro_bars, &b.intro_beats, in_beats, in_start, in_end, bar_in, in_silent) {
                             continue;
                         }
                         let sung_skip_in = vocal_start.map_or(0.0, |v| (in_start - v.max(b.silence_start_ms as f64)).max(0.0));
@@ -2500,6 +2506,29 @@ mod tests {
         if p.kind.beat_matched() {
             let last = p.wall_of_out_song((a.outro_beats[a.outro_beats.len() - 1].at_ms - p.out_start_ms) as f64);
             let worst = b.intro_beats.iter().filter_map(|y| {
+                let at = p.wall_of_in_song((y.at_ms - p.in_start_ms) as f64);
+                (p.in_heard_ms() as f64..p.duration_ms.min(last as i64) as f64).contains(&at).then(|| a.outro_beats.iter().map(|x| (p.wall_of_out_song((x.at_ms - p.out_start_ms) as f64) - at).abs()).fold(f64::MAX, f64::min))
+            }).fold(0.0, f64::max);
+            assert!(worst <= 25.0, "beats {worst:.0} ms apart: {}", p.reason);
+        }
+    }
+
+    /// An opening with no beat for its first 22 s (one stray beat at its start), its beats after that half a beat off
+    /// its grid: a mix landing before them is held to them where the two songs' beats meet, not let through because
+    /// its landing had none to pair.
+    #[test]
+    fn a_late_beat_is_still_held() {
+        let a = TrackAnalysis { outro_beats: beats_at(178_000.0, 238_000.0, |_| 0.0), ..track(120.0) };
+        let mut late = beats_at(22_000.0, 60_000.0, |_| 250.0);
+        late.insert(0, crate::types::Beat { at_ms: 140, downbeat: true, sure: false });
+        let quiet = BarProfile { level_db: -20.0, low_db: -30.0, pulse: 0.1, voice: 0.0, ..Default::default() };
+        let bars = |i: usize| if i < 11 { quiet } else { band(i) };
+        let b = TrackAnalysis { intro_beats: late, ..profiled(track(120.0), bars) };
+        let a = TrackAnalysis { outro_bars: profiled(track(120.0), band).outro_bars, ..a };
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        if p.kind.beat_matched() {
+            let last = p.wall_of_out_song((a.outro_beats[a.outro_beats.len() - 1].at_ms - p.out_start_ms) as f64);
+            let worst = b.intro_beats.iter().skip(1).filter_map(|y| {
                 let at = p.wall_of_in_song((y.at_ms - p.in_start_ms) as f64);
                 (p.in_heard_ms() as f64..p.duration_ms.min(last as i64) as f64).contains(&at).then(|| a.outro_beats.iter().map(|x| (p.wall_of_out_song((x.at_ms - p.out_start_ms) as f64) - at).abs()).fold(f64::MAX, f64::min))
             }).fold(0.0, f64::max);
