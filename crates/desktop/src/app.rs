@@ -469,6 +469,9 @@ pub struct App {
     profiles: Vec<nori_core::SoundProfile>,
     /// The sign-in window's process while it is open (nori-sign-in).
     sign_in_window: Option<nori_sign_in_window::SignInWindow>,
+    /// The account sheet opened on a profile other than the one in use: its account and profile, until the
+    /// sheet closes.
+    apart: Option<(nori_host::account::Account, SavedServer)>,
     /// The code sign-in running while the account sheet shows its code, with its number; and how many
     /// have run.
     code: Option<(u32, Arc<nori_core::providers::code::CodeSignIn>)>,
@@ -766,6 +769,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             feed_songs: Vec::new(),
             profiles: Vec::new(),
             sign_in_window: None,
+            apart: None,
             code: None,
             codes: 0,
             want: Vec::new(),
@@ -1477,6 +1481,10 @@ impl App {
     /// Takes `event` on the account sheet and shows where that leaves it; false for an answer not to send.
     fn sign_in_on(&mut self, event: SignInEvent) -> bool {
         let send = self.sign_in.on(event);
+        if self.sign_in.shown == SignInShown::Closed {
+            // The plugin goes back to the profile in use.
+            self.apart = None;
+        }
         if !self.sign_in.checks_code() {
             self.code = None;
         }
@@ -1502,13 +1510,13 @@ impl App {
 
     /// The account sheet's code step: a new code asked for, shown and checked while the step shows.
     fn sign_in_code(&mut self) {
-        let Some(s) = &self.session else { return };
-        let (client, h) = (s.client.clone(), (***s).clone());
+        let Some(account) = self.sheet_account() else { return };
+        let client = account.client().clone();
         if !self.sign_in_on(SignInEvent::Code) {
             return;
         }
         self.codes += 1;
-        let heard = CodeHeard { session: h, tx: self.tx.clone(), code: self.codes };
+        let heard = CodeHeard { account, tx: self.tx.clone(), code: self.codes };
         self.code = Some((self.codes, client.sign_in_with_code(Arc::new(heard))));
     }
 
@@ -2910,24 +2918,22 @@ impl App {
     /// Joins the jam `link` invites to, as a guest profile of its own.
     /// Signs the account of the profile in use in with cookies pasted from a browser.
     fn sign_in(&mut self, answer: String) {
-        if self.session.is_none() || answer.trim().is_empty() || !self.sign_in_on(SignInEvent::Sent) {
+        let Some(account) = self.sheet_account() else { return };
+        if answer.trim().is_empty() || !self.sign_in_on(SignInEvent::Sent) {
             return;
         }
-        let Some(s) = &self.session else { return };
-        let (h, tx) = ((***s).clone(), self.tx.clone());
-        nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(h.sign_in(answer))));
+        let tx = self.tx.clone();
+        nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(account.sign_in(answer))));
     }
 
-    /// The account sheet of the profile in use, as its server's Edit and a seal tapped while signed out open
-    /// it: who is signed in, or Sign in (the provider's own page in a window) with pasting folded under it.
-    /// A server row's Edit: the profile in use's account sheet where its provider signs in to one, else
-    /// the profile in the sign-in form, saved over itself.
+    /// A server row's Edit: the profile's account sheet where its provider signs in to one, else the
+    /// profile in the sign-in form, saved over itself.
     fn edit_profile(&mut self, id: String) {
         let prefs = self.root.app.settings.current().unwrap_or_default();
         let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
         let providers = self.kinds().providers();
-        if id == prefs.active_server_id && providers.iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
-            return self.ask_sign_in();
+        if providers.iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
+            return if id == prefs.active_server_id { self.ask_sign_in() } else { self.account_apart(profile) };
         }
         let ui = self.ui();
         if let Some(info) = providers.iter().find(|i| i.kind == profile.kind).or(providers.first()) {
@@ -3485,14 +3491,44 @@ impl App {
 
     /// The account sheet, as asked for: the account's row, a seal tapped while signed out.
     fn ask_sign_in(&mut self) {
-        if let Some(offer) = self.session.as_ref().map(|s| s.client.sign_in_offer()) {
+        if let Some(offer) = self.sheet_account().map(|a| a.client().sign_in_offer()) {
             self.offer_sign_in(offer);
+        }
+    }
+
+    /// The account the sheet works on: the profile it was opened on apart from the one in use, else the
+    /// open session's.
+    fn sheet_account(&self) -> Option<nori_host::account::Account> {
+        self.apart.as_ref().map(|(a, _)| a.clone()).or_else(|| self.session.as_ref().map(|s| s.account().clone()))
+    }
+
+    /// The profile the account sheet is about, as the settings keep it now.
+    fn sheet_profile(&self) -> Option<SavedServer> {
+        let prefs = self.root.app.settings.current()?;
+        match &self.apart {
+            Some((_, p)) => prefs.servers.iter().find(|s| s.id == p.id).cloned(),
+            None => prefs.active_server().cloned(),
+        }
+    }
+
+    /// The account sheet of saved profile `profile`, not the one in use: a client of its own signs it in
+    /// and out, so nothing else opens.
+    fn account_apart(&mut self, profile: SavedServer) {
+        let open = self.session.as_ref().zip(self.root.app.settings.current().and_then(|p| p.active_server().cloned())).map(|(s, p)| (s.core.clone(), p));
+        let tx = self.tx.clone();
+        match self.root.account(self.http.clone(), &profile, open, Box::new(move || tx.send(Msg::Pictured))) {
+            Ok(account) => {
+                let offer = account.client().sign_in_offer();
+                self.apart = Some((account, profile));
+                self.offer_sign_in(offer);
+            }
+            Err(said) => self.say(&said, true),
         }
     }
 
     /// The account sheet, opened by `offer`.
     fn offer_sign_in(&mut self, offer: SignInEvent) {
-        let Some(profile) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) else { return };
+        let Some(profile) = self.sheet_profile() else { return };
         self.sign_in_on(offer);
         let ended = self.sign_in.shown == SignInShown::Offered { ended: true };
         let user = if ended { String::new() } else { profile.user.clone() };
@@ -3514,9 +3550,9 @@ impl App {
 
     /// Asks who the signed-in account may act as: [`Msg::Identities`] answers.
     fn read_identities(&self) {
-        let Some(s) = &self.session else { return };
-        let (h, tx) = ((***s).clone(), self.tx.clone());
-        nori_host::spawn("nori-identities", move || tx.send(Msg::Identities(h.identities().unwrap_or_default())));
+        let Some(account) = self.sheet_account() else { return };
+        let tx = self.tx.clone();
+        nori_host::spawn("nori-identities", move || tx.send(Msg::Identities(account.identities().unwrap_or_default())));
     }
 
     /// The account sheet's channels, each with its picture once it came, the one the account acts as checked.
@@ -3542,13 +3578,13 @@ impl App {
 
     /// The account acts as its `index`th identity from now on, checked at once; the profile opens again as it.
     fn choose_identity(&mut self, index: i32) {
-        let Some(s) = &self.session else { return };
-        let (h, tx) = ((***s).clone(), self.tx.clone());
+        let Some(account) = self.sheet_account() else { return };
+        let tx = self.tx.clone();
         for (i, id) in self.identities.iter_mut().enumerate() {
             id.chosen = i as i32 == index;
         }
         self.identities_shown();
-        nori_host::spawn("nori-identity", move || tx.send(Msg::IdentityChosen(h.choose_identity(index.max(0) as u32).map_err(|e| words::net_error(&e)))));
+        nori_host::spawn("nori-identity", move || tx.send(Msg::IdentityChosen(account.choose_identity(index.max(0) as u32).map_err(|e| words::net_error(&e)))));
     }
 
     /// Asks for the account pictures in `addresses` not yet decoded; each shows where it is drawn once it came.
@@ -3605,19 +3641,19 @@ impl App {
     /// The provider's own sign-in page in a window of its own (this program again, `--sign-in`: the system's
     /// web view); where that cannot start, the sheet unfolds pasting with why.
     fn sign_in_window(&mut self) {
-        let Some(kind) = self.root.app.settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
+        let Some(kind) = self.sheet_profile().map(|sv| sv.kind) else { return };
         self.sign_in_page(kind, None);
     }
 
     /// Opens `kind`'s sign-in window, at `start` where its plugin asked for that page.
     fn sign_in_page(&mut self, kind: nori_core::settings::ServerKind, start: Option<String>) {
-        let Some(s) = &self.session else { return };
+        let Some(account) = self.sheet_account() else { return };
         if self.sign_in_window.as_mut().is_some_and(|w| w.open_now()) {
             return;
         }
-        let (h, tx) = ((***s).clone(), self.tx.clone());
+        let tx = self.tx.clone();
         let title = format!("Sign in to {}", words::provider_of(self.kinds(), &kind).name);
-        let done = move |id, cookies| tx.send(Msg::SignInWindowDone(id, h.sign_in(cookies)));
+        let done = move |id, cookies| tx.send(Msg::SignInWindowDone(id, account.sign_in(cookies)));
         let window = match start {
             Some(start) => nori_sign_in_window::SignInWindow::open_at(self.kinds().clone(), kind, title, start, done),
             None => nori_sign_in_window::SignInWindow::open(self.kinds().clone(), kind, title, done),
@@ -3633,11 +3669,23 @@ impl App {
     }
 
     fn sign_out(&mut self) {
-        self.on_session(|s| s.sign_out());
+        let Some(account) = self.sheet_account() else { return };
+        account.sign_out();
         self.identities.clear();
         self.identities_shown();
         self.sign_in_on(SignInEvent::SignedOut);
-        self.reopen();
+        self.account_kept();
+    }
+
+    /// The sheet's account signed in or out: the profile in use opens again as it is now; another
+    /// profile's row shows who it is.
+    fn account_kept(&mut self) {
+        if self.apart.is_some() {
+            self.profiles_shown();
+            self.settings_shown();
+        } else {
+            self.reopen();
+        }
     }
 
     /// Opens the profile in use again, as the settings now keep it (its account signed in or out), on the
@@ -4014,7 +4062,7 @@ impl App {
                 let signed_in = matches!(r, nori_core::providers::SignInResult::SignedIn { .. });
                 self.sign_in_on(SignInEvent::Answered { result: r });
                 if signed_in {
-                    self.reopen();
+                    self.account_kept();
                 }
             }
             Msg::SignedIn(r) => {
@@ -4022,7 +4070,7 @@ impl App {
                 self.sign_in_on(SignInEvent::Answered { result: r });
                 if signed_in {
                     self.ui().set_signin_text("".into());
-                    self.reopen();
+                    self.account_kept();
                 }
             }
             Msg::LoggedIn(r) => match r {
@@ -5212,7 +5260,7 @@ fn show_in<T: Clone + PartialEq + 'static>(shown: ModelRc<T>, rows: Vec<T>, set:
 /// What the `code`th code sign-in says, as the app's messages; signed in, the session finishes it as any
 /// sign-in.
 struct CodeHeard {
-    session: nori_host::session::Handle,
+    account: nori_host::account::Account,
     tx: Tx,
     code: u32,
 }
@@ -5221,7 +5269,7 @@ impl nori_core::providers::code::CodeHeard for CodeHeard {
     fn heard(&self, event: SignInEvent) {
         self.tx.send(match event {
             SignInEvent::Answered { result } => {
-                self.session.signed_in(&result);
+                self.account.signed_in(&result);
                 Msg::SignedIn(result)
             }
             event => Msg::CodeStep { code: self.code, event },

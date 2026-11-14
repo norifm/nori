@@ -521,6 +521,15 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         viewModelScope.launch { nori.stopReminding() }
     }
 
+    /** One at a time, off the main thread: a client apart opens the database. */
+    private val accountLane = Dispatchers.IO.limitedParallelism(1)
+
+    /** The account part shows [profile]'s account (null: it left the screen); see `Nori.lookAtAccountOf`. */
+    fun accountOf(profile: SavedServer?) = viewModelScope.launch(accountLane) {
+        nori.lookAtAccountOf(profile)
+        if (profile != null) lookAtAccount()
+    }
+
     fun lookAtAccount() {
         viewModelScope.launch {
             val account = runCatching { nori.account() }.getOrNull()

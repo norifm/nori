@@ -300,19 +300,39 @@ class Nori private constructor(private val context: Context) {
 
     fun logout() = settings.value.server?.let { removeServer(it.id) }
 
+    /** The account looked at for a profile other than the one in use: its id and a client of its own. */
+    @Volatile private var apart: Pair<String, Client>? = null
+
     /**
-     * Signs the profile in use's account in with [answer] (the core's `Client::sign_in`, its provider's):
-     * signed in, the profile keeps the account's name, which brings its library and hearts.
+     * The account calls below act on [profile]'s account from now on, through a client of its own when it is
+     * not the profile in use, so editing it opens nothing else; null goes back to the one in use. A plugin
+     * serves one profile at a time: it is handed back to the profile in use when it is the same plugin's.
+     */
+    fun lookAtAccountOf(profile: SavedServer?) {
+        val active = settings.value.server
+        val was = apart
+        apart = if (profile == null || profile.id == active?.id) null else Client(open(dev.nori.music.ffi.settings.serverDb(profile.id), profile), transport, coverNet).also { it.setProfile(profile.net()) }.let { profile.id to it }
+        val gone = was?.let { (id, _) -> settings.value.servers.firstOrNull { it.id == id } }
+        if (gone != null && active != null && gone.kind == active.kind) runCatching { core.configureProfile(active) }
+    }
+
+    /** The client the account calls go through, and the profile whose account it is. */
+    private val accountClient: Client get() = apart?.second ?: client
+    private fun accountProfile(): SavedServer? = apart?.first?.let { id -> settings.value.servers.firstOrNull { it.id == id } } ?: settings.value.server
+
+    /**
+     * Signs the account looked at in with [answer] (the core's `Client::sign_in`, its provider's): signed
+     * in, the profile keeps the account's name, which brings its library and hearts.
      */
     suspend fun signIn(answer: String): dev.nori.music.ffi.SignInResult {
-        val r = withContext(Dispatchers.IO) { client.signIn(answer) }
+        val r = withContext(Dispatchers.IO) { accountClient.signIn(answer) }
         signedIn(r)
         return r
     }
 
     /** How a sign-in went, whichever way it went (a page, pasting, a code). Main thread. */
     fun signedIn(r: dev.nori.music.ffi.SignInResult) {
-        if (r is dev.nori.music.ffi.SignInResult.SignedIn) settings.value.server?.let {
+        if (r is dev.nori.music.ffi.SignInResult.SignedIn) accountProfile()?.let {
             updateServer(it.copy(user = r.name))
             pluginScope.launch { keepAccountPicture() }
         }
@@ -324,37 +344,37 @@ class Nori private constructor(private val context: Context) {
      * (finished with [signedIn]). It checks until it comes to something or is stopped.
      */
     fun signInWithCode(heard: (dev.nori.music.ffi.SignInEvent) -> Unit): dev.nori.music.ffi.CodeSignIn =
-        client.signInWithCode(object : dev.nori.music.ffi.CodeHeard {
+        accountClient.signInWithCode(object : dev.nori.music.ffi.CodeHeard {
             override fun heard(event: dev.nori.music.ffi.SignInEvent) = heard(event)
         })
 
     /** What the offer's sign-in opens: the provider's code or its page (the core's `sign_in_open`). */
-    suspend fun signInOpen(): dev.nori.music.ffi.SignInEvent? = withContext(Dispatchers.IO) { client.signInOpen() }
+    suspend fun signInOpen(): dev.nori.music.ffi.SignInEvent? = withContext(Dispatchers.IO) { accountClient.signInOpen() }
 
-    /** Signs the profile in use's account out here. Main thread. */
+    /** Signs the account looked at out here. Main thread. */
     fun signOut() {
-        client.signOut()
-        settings.value.server?.let { updateServer(it.copy(user = "", picture = null)) }
+        accountClient.signOut()
+        accountProfile()?.let { updateServer(it.copy(user = "", picture = null)) }
     }
 
-    /** Keeps the picture of the account as it acts now on the profile in use, for its circle (the core's `Client::account_picture`). */
+    /** Keeps the picture of the account looked at as it acts now on its profile, for its circle (the core's `Client::account_picture`). */
     suspend fun keepAccountPicture() {
-        val id = settings.value.activeServerId
-        val picture = withContext(Dispatchers.IO) { client.accountPicture() }
+        val id = accountProfile()?.id ?: return
+        val picture = withContext(Dispatchers.IO) { accountClient.accountPicture() }
         withContext(Dispatchers.Main) {
-            settings.value.server?.takeIf { it.id == id && it.picture != picture }?.let { setProfileLook(it.copy(picture = picture)) }
+            settings.value.servers.firstOrNull { it.id == id && it.picture != picture }?.let { setProfileLook(it.copy(picture = picture)) }
         }
     }
 
-    suspend fun account(): dev.nori.music.ffi.AccountState = withContext(Dispatchers.IO) { client.account() }
+    suspend fun account(): dev.nori.music.ffi.AccountState = withContext(Dispatchers.IO) { accountClient.account() }
 
     /** Those the signed-in account may act as, the account's own first (the core's `Client::identities`). */
-    suspend fun identities(): List<dev.nori.music.ffi.Identity> = withContext(Dispatchers.IO) { lifted { client.identities() } }
+    suspend fun identities(): List<dev.nori.music.ffi.Identity> = withContext(Dispatchers.IO) { lifted { accountClient.identities() } }
 
     /** Acts as [identities]' entry [index] from now on: the library's lists and hearts are read again as its. */
     suspend fun chooseIdentity(index: Int) {
-        withContext(Dispatchers.IO) { lifted { client.chooseIdentity(index.toUInt()) } }
-        library.onAccountChanged()
+        withContext(Dispatchers.IO) { lifted { accountClient.chooseIdentity(index.toUInt()) } }
+        if (apart == null) library.onAccountChanged()
         keepAccountPicture()
     }
 
@@ -365,7 +385,7 @@ class Nori private constructor(private val context: Context) {
     suspend fun signInDue(added: dev.nori.music.ffi.AfterAdding?): dev.nori.music.ffi.SignInEvent? = withContext(Dispatchers.IO) { client.signInDue(added) }
 
     /** Signing in offered when asked: the account's row, a seal tapped while signed out. */
-    suspend fun signInOffer(): dev.nori.music.ffi.SignInEvent = withContext(Dispatchers.IO) { client.signInOffer() }
+    suspend fun signInOffer(): dev.nori.music.ffi.SignInEvent = withContext(Dispatchers.IO) { accountClient.signInOffer() }
 
     suspend fun stopReminding() = withContext(Dispatchers.IO) { client.stopReminding() }
 
