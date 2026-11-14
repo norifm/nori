@@ -1197,8 +1197,11 @@ fn finish_window(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSe
         if neutral { "run-up without chords" } else { "" },
     ];
     let mut p = finish_beat_matched(a, b, s, k, w, short_cause, &bits)?;
-    if k.split && !meet_halfway(&mut p, a, b, k) {
-        return Err(format!("tempo gap {pct:.1} % over the {max_pct:.1} % limit, and no room to meet it halfway"));
+    if k.split {
+        if !meet_halfway(&mut p, a, b, k) {
+            return Err(format!("tempo gap {pct:.1} % over the {max_pct:.1} % limit, and no room to meet it halfway"));
+        }
+        warp::check(&p, a, b, p.out_fade_start_ms as f64)?;
     }
     Ok(p)
 }
@@ -1372,6 +1375,9 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     let warped = locked == warp::Locked::Warped;
     if k.profile.bend && !k.split && !warped {
         bend(&mut p, k, loop_end);
+        if p.bend.is_some() {
+            warp::check(&p, a, b, w.swap)?;
+        }
     }
     let mut bits: Vec<String> = notes.iter().filter(|n| !n.is_empty()).map(|n| n.to_string()).collect();
     if apart {
@@ -2440,6 +2446,45 @@ mod tests {
         let beat = 500.0;
         let (k0, k1) = (((from - 120.0) / beat).ceil() as i64, ((to - 120.0) / beat).floor() as i64);
         (k0..=k1).map(|k| crate::types::Beat { at_ms: (120.0 + k as f64 * beat + drift(k)).round() as i64, downbeat: k % 4 == 0, sure: true }).collect()
+    }
+
+    /// The incoming song's beats run 0.7 % slower than its grid and few of them fall on attacks: a mix on it is held to
+    /// all its beats, not let through unchecked, which drifted a real mix 100 ms apart.
+    #[test]
+    fn few_attacks_still_hold_the_lock() {
+        let a = TrackAnalysis { outro_beats: beats_at(178_000.0, 238_000.0, |_| 0.0), ..track(120.0) };
+        let slow: Vec<crate::types::Beat> = beats_at(100.0, 60_000.0, |k| 3.5 * k as f64).into_iter().enumerate().map(|(i, x)| crate::types::Beat { sure: i % 8 == 0, ..x }).collect();
+        let b = TrackAnalysis { intro_beats: slow, ..track(120.0) };
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        if p.kind.beat_matched() {
+            // Every incoming beat heard while the outgoing song's beats run.
+            let last = p.wall_of_out_song((a.outro_beats[a.outro_beats.len() - 1].at_ms - p.out_start_ms) as f64);
+            let worst = b.intro_beats.iter().filter_map(|y| {
+                let at = p.wall_of_in_song((y.at_ms - p.in_start_ms) as f64);
+                (p.in_heard_ms() as f64..p.duration_ms.min(last as i64) as f64).contains(&at).then(|| a.outro_beats.iter().map(|x| (p.wall_of_out_song((x.at_ms - p.out_start_ms) as f64) - at).abs()).fold(f64::MAX, f64::min))
+            }).fold(0.0, f64::max);
+            assert!(worst <= 25.0, "beats {worst:.0} ms apart: {}", p.reason);
+        }
+    }
+
+    /// Tempos too far apart to stretch one to the other are met halfway, the outgoing song gliding alone first: the mix
+    /// after the glide is held to the beats as well, not let through unchecked.
+    #[test]
+    fn a_glide_to_meet_is_held_to_the_beats() {
+        let at = |from: f64, to: f64, beat: f64, sure: usize| -> Vec<crate::types::Beat> {
+            (0..).map(|k| (k, from + k as f64 * beat)).take_while(|(_, t)| *t <= to).map(|(k, t)| crate::types::Beat { at_ms: t.round() as i64, downbeat: k % 4 == 0, sure: k % sure == 0 }).collect()
+        };
+        let a = TrackAnalysis { outro_beats: at(178_200.0, 238_000.0, 600.0, 1), ..track(100.0) };
+        let b = TrackAnalysis { intro_beats: at(120.0, 60_000.0, 500.0 * 1.007, 8), ..track(120.0) };
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        if p.kind.beat_matched() {
+            let last = p.wall_of_out_song((a.outro_beats[a.outro_beats.len() - 1].at_ms - p.out_start_ms) as f64);
+            let worst = b.intro_beats.iter().filter_map(|y| {
+                let at = p.wall_of_in_song((y.at_ms - p.in_start_ms) as f64);
+                (p.in_heard_ms() as f64..p.duration_ms.min(last as i64) as f64).contains(&at).then(|| a.outro_beats.iter().map(|x| (p.wall_of_out_song((x.at_ms - p.out_start_ms) as f64) - at).abs()).fold(f64::MAX, f64::min))
+            }).fold(0.0, f64::max);
+            assert!(worst <= 25.0, "beats {worst:.0} ms apart: {}", p.reason);
+        }
     }
 
     /// A band pushing and pulling 35 ms around its tempo every six bars (its tempo swinging 1.8 % either way, faster than
