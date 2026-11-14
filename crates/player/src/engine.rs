@@ -82,7 +82,7 @@ impl Plan {
     }
 
     fn stretching(&self) -> bool {
-        (self.tempo_ratio() - 1.0).abs() > 1e-4 || self.mixer.in_rates.iter().any(|k| (k.speed - 1.0).abs() > 1e-4)
+        (self.tempo_ratio() - 1.0).abs() > 1e-4 || self.mixer.in_rates.iter().any(|k| (k.speed - 1.0).abs() > 1e-4) || self.mixer.in_key.is_some()
     }
 }
 
@@ -1191,6 +1191,11 @@ impl TransitionEngine {
                 self.knots.push((0, m.in_ratio_at(from_ms)));
                 self.knots.extend(m.in_rates.iter().filter(|k| k.at_ms > from_ms).map(|k| (at(k.at_ms), k.speed)));
                 s.follow(&self.knots);
+            }
+            // In its shifted key through the rest of the overlap, from where it starts, then back to its own.
+            if let Some(k) = m.in_key {
+                let left_us = p.duration_us() - (m.in_delay_ms * 1000).max(late) - repeats_us;
+                s.transpose(k.semitones, frames(left_us), frames(k.ramp_ms * 1000));
             }
             self.flight.stretch = Some(Stretch { s, format: s_fmt });
             self.stretch_pace = p.tempo_ratio() as f64;

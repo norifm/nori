@@ -24,11 +24,11 @@ mod moves;
 mod warp;
 
 use moves::{Move, Pair};
-use super::structure::key_distance;
+use super::structure::{key_distance, transposed_key};
 use super::curve::{cleaned, steady_run, Curve};
 use super::phrase;
 use super::tempo::{fold, match_ratio};
-use crate::types::{AutoMixSettings, BassSwap, Bend, Echo, FadeCurve, Glide, HighsIn, InLoop, MixStyle, Sweep, TrackAnalysis, TransitionKind, TransitionPlan, VocalDuck};
+use crate::types::{AutoMixSettings, BassSwap, Bend, Echo, FadeCurve, Glide, HighsIn, InLoop, KeyShift, MixStyle, Sweep, TrackAnalysis, TransitionKind, TransitionPlan, VocalDuck};
 
 pub(crate) const MAX_SKIP_MS: i64 = 15_000;
 /// The outgoing music a double drop may leave unplayed: the outro after its last drop.
@@ -87,6 +87,7 @@ fn blank(kind: TransitionKind, out_start: i64, in_start: i64, duration: i64, rea
         in_delay_ms: 0,
         out_glide: None,
         brake: None,
+        in_key: None,
         in_rates: Vec::new(),
         out_rates: Vec::new(),
         reason,
@@ -550,6 +551,21 @@ fn pair_gate(a: &TrackAnalysis, b: &TrackAnalysis, out_dur: i64) -> Verdict {
     v
 }
 
+/// The fewest semitones that bring a clashing incoming key (trusted keys at least [`KEY_CLASH`] apart) next to the
+/// outgoing one on the Camelot wheel, the nearer result first; none for keys that blend. A semitone moves a key seven
+/// steps round the wheel, two semitones two, so at most two is ever needed.
+fn key_shift(a: &TrackAnalysis, b: &TrackAnalysis) -> Option<i32> {
+    camelot_dist(a, b).filter(|d| *d >= KEY_CLASH)?;
+    [1, -1, 2, -2]
+        .into_iter()
+        .filter_map(|s| key_distance(a.key, transposed_key(b.key, s)).filter(|d| *d <= 1).map(|d| (s, d)))
+        .min_by_key(|&(s, d)| (s.abs(), d))
+        .map(|(s, _)| s)
+}
+
+/// Beats of the incoming song a key shift takes to glide back per semitone: slowly enough not to sound like a sag.
+const KEY_RAMP_BEATS: f64 = 32.0;
+
 /// Camelot distance when both keys are trusted.
 fn camelot_dist(a: &TrackAnalysis, b: &TrackAnalysis) -> Option<i32> {
     (a.key_confidence >= KEY_MIN_CONFIDENCE && b.key_confidence >= KEY_MIN_CONFIDENCE).then(|| key_distance(a.key, b.key)).flatten()
@@ -603,8 +619,21 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
                 MIN_BPM_CONFIDENCE, MIN_STABILITY
             );
         } else {
-            match beat_matched(a, b, room, s, short_cause, by_beats) {
-                Ok(p) => return p,
+            // Clashing keys a pitch-keeping stretch can match: the mix is planned with the incoming song in its new key.
+            let shift = key_shift(a, b).filter(|_| s.keep_pitch);
+            let keyed = shift.map(|st| TrackAnalysis { key: transposed_key(b.key, st), ..b.clone() });
+            let cause = keyed.as_ref().map_or(short_cause, |k| {
+                let v = pair_gate(a, k, out_dur);
+                if v.clash { v.cause } else { v.short_cause }
+            });
+            match beat_matched(a, keyed.as_ref().unwrap_or(b), room, s, cause, by_beats) {
+                Ok(mut p) => {
+                    if let Some(st) = shift {
+                        p.in_key = Some(KeyShift { semitones: st as f32, ramp_ms: (KEY_RAMP_BEATS * st.abs() as f64 * 60_000.0 / b.bpm).round() as i64 });
+                        p.reason += &format!(", in key: {st:+} semitone{}", if st.abs() == 1 { "" } else { "s" });
+                    }
+                    return p;
+                }
                 Err(e) => why_not = e,
             }
         }
@@ -2449,6 +2478,25 @@ mod tests {
         assert_ne!(p.kind, TransitionKind::Brake, "{}", p.reason);
     }
 
+    /// Confident keys a tritone apart: a beat-matched mix moves the incoming song a semitone into a key next to the
+    /// outgoing one's, so it is not cut short as a clash, and glides it back after; not without a pitch-keeping stretch,
+    /// and not for keys that already blend.
+    #[test]
+    fn clashing_keys_are_matched_by_a_key_shift() {
+        let a = profiled(TrackAnalysis { key: camelot(0, false), key_confidence: 0.9, ..track(128.0) }, band);
+        let b = profiled(TrackAnalysis { key: camelot(6, false), key_confidence: 0.9, ..track(128.0) }, band);
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        assert!(p.kind.beat_matched(), "{}", p.reason);
+        let k = p.in_key.expect(&p.reason);
+        let to = crate::automix::structure::transposed_key(b.key, k.semitones as i32);
+        assert!(k.semitones.abs() == 1.0 && key_distance(a.key, to).is_some_and(|d| d <= 1), "{k:?}");
+        assert!(k.ramp_ms > 0 && !p.reason.contains("keys far apart"), "{p:?}");
+        let vari = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings { keep_pitch: false, ..dj() });
+        assert_eq!(vari.in_key, None, "{}", vari.reason);
+        let near = profiled(TrackAnalysis { key: camelot(7, false), key_confidence: 0.9, ..track(128.0) }, band);
+        assert_eq!(plan(Some(&a), Some(&near), 240_000, 240_000, &dj()).in_key, None);
+    }
+
     /// After a ride, the next unmatched pair echoes out: on a downbeat after the last line the outgoing song's lows
     /// go and its last beat rings on in band-limited repeats while it falls, and the incoming music starts on that
     /// downbeat (its start delayed to it, nothing of it skipped), rising as it falls, the repeats held down under it.
@@ -2886,8 +2934,9 @@ mod tests {
         let a = track(128.0);
         let b = TrackAnalysis { key: camelot(6, false), ..track(128.0) };
         let bar = 4.0 * 60_000.0 / 128.0;
-        let with = |style| AutoMixSettings { max_transition_s: 40.0, style, ..Default::default() };
-        // Both styles: a quick beat-matched mix, never a cut.
+        // Without a pitch-keeping stretch to match the keys (varispeed), both styles: a quick beat-matched mix, never a
+        // cut.
+        let with = |style| AutoMixSettings { max_transition_s: 40.0, style, keep_pitch: false, ..Default::default() };
         for style in [MixStyle::Smooth, MixStyle::Dj] {
             let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(style));
             assert_eq!(p.kind, TransitionKind::BeatMatched, "{style:?}: {}", p.reason);
@@ -2941,10 +2990,11 @@ mod tests {
     #[test]
     fn dj_mixes_far_keys_on_the_incoming_instruments() {
         let a = track(128.0);
-        // Keys far apart, the voice from the end of the intro: a quick mix, in before the voice.
+        // Keys far apart that varispeed cannot match, the voice from the end of the intro: a quick mix, in before the
+        // voice.
         let b = TrackAnalysis { key: camelot(6, false), ..track(128.0) };
         let sung = TrackAnalysis { vocal_start_ms: b.intro_end_ms, vocal_end_ms: 200_000, ..b };
-        let p = plan(Some(&a), Some(&sung), 240_000, 240_000, &dj());
+        let p = plan(Some(&a), Some(&sung), 240_000, 240_000, &AutoMixSettings { keep_pitch: false, ..dj() });
         assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
         assert!(p.in_start_ms < sung.vocal_start_ms, "it comes in singing: {}", p.reason);
         assert!(lands(&p, sung.vocal_start_ms) >= swap_at(&p) as f64 - 1.0, "its voice comes in under the run-up: {}", p.reason);

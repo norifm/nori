@@ -21,6 +21,8 @@ const SIGNALSMITH_HOP_S: f64 = 0.04;
 /// The smallest ratio offset Signalsmith Stretch follows cleanly, in frames per hop: closer to 1 it loses up to
 /// 2.6 dB. Such ratios are snapped to 1 or to this offset (0.07 % of tempo at 44.1 kHz).
 const SIGNALSMITH_CLEAR_FRAMES: f64 = 2.5;
+/// Transposed, frequencies above this move by a fixed amount rather than in proportion, which keeps the highs clean.
+const TONALITY_HZ: f32 = 8_000.0;
 pub(crate) const MAX_CHANNELS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -84,6 +86,34 @@ pub struct Stretcher {
     /// taken by [`Stretcher::take_content`].
     given: u64,
     content: f64,
+    /// The key schedule: semitones for `hold` output frames, then a linear glide to none over `ramp`.
+    key: KeySchedule,
+    /// The transposition the engine was last given, semitones, and its tonality limit (of the sample rate).
+    keyed: f32,
+    tonality: f32,
+}
+
+#[derive(Clone, Copy, Default)]
+struct KeySchedule {
+    semitones: f32,
+    hold: u64,
+    ramp: u64,
+}
+
+impl KeySchedule {
+    fn at(&self, frame: u64) -> f32 {
+        if frame < self.hold {
+            self.semitones
+        } else if frame < self.hold + self.ramp {
+            self.semitones * (1.0 - (frame - self.hold) as f32 / self.ramp as f32)
+        } else {
+            0.0
+        }
+    }
+
+    fn end(&self) -> u64 {
+        if self.semitones == 0.0 { 0 } else { self.hold + self.ramp }
+    }
 }
 
 #[inline]
@@ -185,6 +215,9 @@ impl Stretcher {
             hop,
             given: 0,
             content: 0.0,
+            key: KeySchedule::default(),
+            keyed: 0.0,
+            tonality: TONALITY_HZ / rate.max(8000) as f32,
         }
     }
 
@@ -196,6 +229,7 @@ impl Stretcher {
         self.knots.clear();
         (self.pend_read, self.pend_len, self.raw_pos) = (0, 0, 0);
         (self.given, self.content) = (0, 0.0);
+        self.key = KeySchedule::default();
         self.raw.fill(0.0);
         if (ratio - 1.0).abs() < 1e-6 && ramp == 0 {
             self.state = State::Direct;
@@ -206,6 +240,8 @@ impl Stretcher {
         match &mut self.engine {
             Engine::Signalsmith(s) => {
                 s.reset();
+                s.set_transpose_factor(1.0, None);
+                self.keyed = 0.0;
                 // Output frame j holds input (j - out_latency) * ratio - in_latency: drop the difference once.
                 self.drop = (s.input_latency() as f64 / ratio + s.output_latency() as f64).round() as usize;
                 self.lead = s.output_latency() as u64;
@@ -249,6 +285,18 @@ impl Stretcher {
         if let Some(&(_, r)) = self.knots.last() {
             self.to = r;
         }
+    }
+
+    /// After a schedule is set: transposes by `semitones` for `hold` output frames, then glides back to the song's own
+    /// key over `ramp`, the stretcher kept on until then. Varispeed cannot transpose: there it does nothing.
+    pub fn transpose(&mut self, semitones: f32, hold: u64, ramp: u64) {
+        if !matches!(self.engine, Engine::Signalsmith(_)) || semitones == 0.0 {
+            return;
+        }
+        if self.state == State::Direct {
+            self.configure(self.ratio0, self.hold, self.ramp.max(1));
+        }
+        self.key = KeySchedule { semitones, hold, ramp };
     }
 
     /// Feeds the input just before a [`Stretcher::glide`], oldest first, as its history; at least
@@ -347,7 +395,8 @@ impl Stretcher {
         let ch = self.ch;
         let n = input.len() / ch;
         let r = self.ratio_now();
-        if r == 1.0 && self.to == 1.0 && self.state == State::Active && self.out_pos >= self.hold + self.ramp + (self.latency + BLOCK) as u64 {
+        let settled = (self.hold + self.ramp).max(self.key.end());
+        if r == 1.0 && self.to == 1.0 && self.state == State::Active && self.out_pos >= settled + (self.latency + BLOCK) as u64 {
             self.state = State::Fading(0);
             if let Engine::Vari(v) = &mut self.engine {
                 v.phase = v.pos - v.pos.round();
@@ -369,6 +418,11 @@ impl Stretcher {
                 let fade = if let State::Fading(done) = self.state { Some((done, XFADE)) } else { None };
                 let made = match &mut self.engine {
                     Engine::Signalsmith(s) => {
+                        let key = self.key.at((self.synth + self.lead).saturating_sub(self.drop_total));
+                        if key != self.keyed {
+                            s.set_transpose_factor(2f32.powf(key / 12.0), Some(self.tonality));
+                            self.keyed = key;
+                        }
                         let want = n as f64 / r + self.frac;
                         let m = (want.floor() as usize).min(MAX_OUT);
                         self.frac = want - m as f64;
@@ -615,6 +669,11 @@ mod tests {
         let rate = 44100;
         let mut s = Stretcher::new(rate, 2, keep);
         s.configure(ratio, (hold * rate as f64) as u64, (ramp * rate as f64) as u64);
+        played(&mut s, x)
+    }
+
+    /// Stereo `x` through `s` as the engine plays it: the plain input once it is bypassed, what is left drained.
+    fn played(s: &mut Stretcher, x: &[f32]) -> Vec<f32> {
         let mut out = Vec::new();
         let mut buf = vec![0f32; 2048 * 2];
         let mut pos = 0;
@@ -639,6 +698,26 @@ mod tests {
             }
         }
         out
+    }
+
+    /// Transposed two semitones for two seconds, then back over two: a tone moves up and comes back to its own pitch,
+    /// the stretcher bypassed once it has.
+    #[test]
+    fn a_key_shift_moves_the_pitch_and_comes_back() {
+        let rate = 44100;
+        let x: Vec<f32> = (0..rate * 8).flat_map(|i| [0.3 * (std::f32::consts::TAU * 440.0 * i as f32 / rate as f32).sin(); 2]).collect();
+        let mut s = Stretcher::new(rate as u32, 2, true);
+        s.configure(1.0, 0, 0);
+        s.transpose(2.0, 2 * rate as u64, 2 * rate as u64);
+        let y = played(&mut s, &x);
+        let hz = |from: f64| {
+            let (a, b) = ((from * rate as f64) as usize, ((from + 0.5) * rate as f64) as usize);
+            y[a * 2..b * 2].chunks(2).collect::<Vec<_>>().windows(2).filter(|w| w[0][0] <= 0.0 && w[1][0] > 0.0).count() as f64 / 0.5
+        };
+        let up = 440.0 * 2f64.powf(2.0 / 12.0);
+        assert!((hz(1.0) - up).abs() < 4.0, "shifted: {:.1} Hz, not {up:.1}", hz(1.0));
+        assert!((hz(6.0) - 440.0).abs() < 4.0, "back: {:.1} Hz", hz(6.0));
+        assert!(s.bypassed() && y.len() == x.len(), "handed back to the plain song");
     }
 
     fn power(v: &[f32]) -> f64 {

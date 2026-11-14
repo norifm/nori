@@ -145,11 +145,11 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
             logged: &["BeatMatched", "remix"], after: None,
         },
         Kind {
-            name: "beat-matched, keys far apart (DJ)",
+            name: "beat-matched, stretched into a matched key (DJ)",
             prefs: TransitionPrefs { style: MixStyle::Dj, ..automix_prefs() },
             a: keyed(&a, 1),
             b: keyed(&same_tempo, 7),
-            logged: &["BeatMatched", "keys far apart"], after: None,
+            logged: &["BeatMatched", "in key"], after: None,
         },
         Kind {
             name: "beat-matched, EQ blend (DJ)",
@@ -344,10 +344,11 @@ fn each_mix_kind_uses_song_gains() {
         // level says it (below), not each sample.
         assert!(off <= 3 || kind.name.contains("stretched"), "{}: every sample as the gain-then-mix one (off by {off})", kind.name);
         assert!(worst < 0.01, "{}: {worst:.3} dB from the gain-then-mix level", kind.name);
-        // Either side of the mix, each song alone at its own level.
+        // Either side of the mix, each song alone at its own level: the incoming one once it has eased back to its own
+        // tempo and key (a song transposed plays a few tenths of a dB under its own, in Signalsmith's original too).
         let own = |s: &[i16], g: f32| db(rms(&left(&at(s, g))[frames(10.0)..frames(20.0)]));
         let before = db(rms(&x[s - frames(3.0)..s - frames(1.0)]));
-        let after = db(rms(&x[s + n + frames(8.0)..s + n + frames(10.0)]));
+        let after = db(rms(&x[s + n + frames(18.0)..s + n + frames(20.0)]));
         assert!((before - own(&a, ga)).abs() < 0.1, "{}: a at {before:.2} dB, its own {:.2}", kind.name, own(&a, ga));
         assert!((after - own(&b, gb)).abs() < 0.1, "{}: b at {after:.2} dB, its own {:.2}", kind.name, own(&b, gb));
     }

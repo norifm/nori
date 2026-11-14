@@ -437,6 +437,15 @@ pub struct Brake {
     pub len_ms: i64,
 }
 
+/// The incoming track transposed `semitones` into a key that blends with the outgoing one: so through the overlap,
+/// then gliding back to its own key over `ramp_ms` after it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct KeyShift {
+    pub semitones: f32,
+    pub ramp_ms: i64,
+}
+
 /// The incoming voice band (centred on `hz`) is held `db` down until `until_ms`, released over the
 /// `release_ms` before it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -534,6 +543,8 @@ pub struct TransitionPlan {
     pub out_glide: Option<Glide>,
     #[cfg_attr(feature = "serde", serde(default))]
     pub brake: Option<Brake>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub in_key: Option<KeyShift>,
     /// When present, the incoming tempo over the transition and after it, the ease back to its own included (the
     /// last knot at 1): `tempo_ratio` is its first speed, and the ramp after the overlap is not used.
     #[cfg_attr(feature = "serde", serde(default))]
@@ -639,6 +650,7 @@ impl TransitionPlan {
             in_delay_ms,
             out_glide,
             brake,
+            in_key,
             in_rates,
             out_rates,
         } = self;
@@ -648,7 +660,7 @@ impl TransitionPlan {
             && (*bass_swap, *low_pass, *high_pass, *echo, *vocal_duck) == (o.bass_swap, o.low_pass, o.high_pass, o.echo, o.vocal_duck)
             && (*in_loop, *bend, *highs_in) == (o.in_loop, o.bend, o.highs_in)
             && (*in_low_pass, *in_high_pass, *mid_dip, *reverb) == (o.in_low_pass, o.in_high_pass, o.mid_dip, o.reverb)
-            && (*in_delay_ms, *out_glide, *brake) == (o.in_delay_ms, o.out_glide, o.brake)
+            && (*in_delay_ms, *out_glide, *brake, *in_key) == (o.in_delay_ms, o.out_glide, o.brake, o.in_key)
             && (in_rates, out_rates) == (&o.in_rates, &o.out_rates)
     }
 

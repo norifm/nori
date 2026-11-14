@@ -603,6 +603,14 @@ pub(crate) fn key_distance(a: i32, b: i32) -> Option<i32> {
     Some(d.min(12 - d) + ((a > 12) != (b > 12)) as i32)
 }
 
+/// Camelot `code` transposed `semitones`: a semitone moves it seven steps round the wheel, the mode kept.
+pub(crate) fn transposed_key(code: i32, semitones: i32) -> i32 {
+    if !(1..=24).contains(&code) {
+        return code;
+    }
+    ((code - 1) % 12 + 7 * semitones).rem_euclid(12) + 1 + if code > 12 { 12 } else { 0 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,6 +628,8 @@ mod tests {
         assert_eq!(key_distance(camelot(0, false), camelot(7, false)), Some(1), "a fifth up");
         assert_eq!(key_distance(camelot(0, false), camelot(6, false)), Some(6), "tritone");
         assert_eq!(key_distance(camelot(0, false), camelot(0, false)), Some(0));
+        assert_eq!(transposed_key(camelot(0, false), 2), camelot(2, false), "C major up two is D major");
+        assert_eq!(transposed_key(camelot(9, true), -1), camelot(8, true), "A minor down one is G# minor");
         assert_eq!(key_distance(0, 5), None);
     }
 
