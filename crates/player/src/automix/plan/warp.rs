@@ -16,6 +16,10 @@ const SPEED_STEP: f64 = 0.004;
 const PAIR_SLACK: f64 = 0.15;
 /// The fewest paired beats worth following.
 const MIN_PAIRS: usize = 8;
+/// Pairs enough to check a mix by, though too few to follow.
+const MIN_CHECK_PAIRS: usize = 3;
+/// A soft beat (no attack heard, its place where the song's beat runs) is held this close, ms.
+const LOCK_SOFT_MS: f64 = 60.0;
 /// The outgoing tempo moving this much a bar inside the mix (its curve, a share) puts both songs on one beat clock:
 /// the incoming song following it alone would swing as far, and faster than [`SPEED_STEP`] lets it.
 const SHARED_CHANGE: f64 = 0.015;
@@ -69,13 +73,14 @@ fn pair_up(p: &TransitionPlan, a: &[Beat], b: &[Beat], out_ms: f64, in_ms: f64) 
         let (Some(x), Some(y)) = (usize::try_from(i).ok().and_then(|i| a.get(i)), usize::try_from(j).ok().and_then(|j| b.get(j))) else { continue };
         let at = x.at_ms as f64 - p.out_start_ms as f64;
         let song = y.at_ms as f64 - p.in_start_ms as f64;
-        if (0.0..=p.duration_ms as f64).contains(&at) && song >= 0.0 {
+        // Heard together: from where the incoming song is first heard.
+        if (p.in_heard_ms() as f64..=p.duration_ms as f64).contains(&p.wall_of_out_song(at)) && song >= 0.0 {
             out.push(Pair { at, song, sure: x.sure && y.sure });
         }
     }
     // One to one: each pair's two beat gaps in their usual ratio.
     let mut ratios: Vec<f64> = out.windows(2).map(|w| (w[1].song - w[0].song) / (w[1].at - w[0].at)).collect();
-    if out.len() < MIN_PAIRS || ratios.iter().any(|r| !r.is_finite() || *r <= 0.0) {
+    if out.len() < MIN_CHECK_PAIRS || ratios.iter().any(|r| !r.is_finite() || *r <= 0.0) {
         return None;
     }
     ratios.sort_by(f64::total_cmp);
@@ -84,10 +89,10 @@ fn pair_up(p: &TransitionPlan, a: &[Beat], b: &[Beat], out_ms: f64, in_ms: f64) 
     Some((out, held))
 }
 
-/// Whether, under `p`'s tempos, every pair of beats on attacks sounds within the lock: a beat no attack was heard on
-/// (a quiet or beatless stretch) has nothing to clash.
+/// Whether, under `p`'s tempos, every pair of beats sounds within the lock: [`LOCK_SURE_MS`] on attacks,
+/// [`LOCK_SOFT_MS`] where one of the two is soft.
 fn locked(p: &TransitionPlan, pairs: &[Pair]) -> bool {
-    pairs.iter().filter(|x| x.sure).all(|x| (p.wall_of_in_song(x.song) - p.wall_of_out_song(x.at)).abs() <= LOCK_SURE_MS)
+    pairs.iter().all(|x| (p.wall_of_in_song(x.song) - p.wall_of_out_song(x.at)).abs() <= if x.sure { LOCK_SURE_MS } else { LOCK_SOFT_MS })
 }
 
 /// The outgoing beats on attacks heard over `p`'s incoming loop, each against the nearest looped incoming beat on an
@@ -174,48 +179,75 @@ pub(super) enum Locked {
 /// Locks `p`'s incoming song to the outgoing one beat by beat where both ends have their beats: the rates that land
 /// each pair together, when they keep every pair within the lock. `swap` (transition ms) is where the window put the
 /// two songs' meeting downbeats. Err when the beats are known and drift apart even so: the window does not lock.
+/// The two songs' beats heard together in `p`, cleaned (so a beat missed does not break the pairing) and paired
+/// outward from the swap, `swap` ms into the transition, or from the outgoing song's last beat when the swap is past
+/// them; None where they cannot be paired. All of them are checked: left unchecked, a grid off by a percent drifted a
+/// mix 100 ms apart.
+fn paired(p: &TransitionPlan, a: &[Beat], b: &[Beat], swap: f64) -> Result<Option<Vec<Pair>>, String> {
+    let last = a[a.len() - 1].at_ms as f64 - p.out_start_ms as f64;
+    let anchor = p.out_song_ms(swap).min(last).max(0.0);
+    let out_ms = p.out_start_ms as f64 + anchor;
+    let in_ms = p.in_start_ms as f64 + p.in_song_ms(p.wall_of_out_song(anchor));
+    pairs(p, a, b, out_ms, in_ms)
+}
+
+/// The pairs that steer a warp: those on attacks (a soft beat's place is the curve's guess), or all of them where too
+/// few are.
+fn steering(all: &[Pair]) -> Vec<Pair> {
+    let sure: Vec<Pair> = all.iter().copied().filter(|x| x.sure).collect();
+    if sure.len() >= MIN_PAIRS { sure } else { all.to_vec() }
+}
+
+/// A plan laid out after its lock (the outgoing song gliding alone to meet the other, or a bend): its beats heard
+/// together still within the lock; Err where they drift apart.
+pub(super) fn check(p: &TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, swap: f64) -> Result<(), String> {
+    if a.outro_beats.is_empty() || b.intro_beats.is_empty() || p.out_loop_ms.is_some() {
+        return Ok(());
+    }
+    match paired(p, &cleaned(&a.outro_beats), &cleaned(&b.intro_beats), swap)? {
+        Some(all) if !locked(p, &all) => Err("the beats drift apart".into()),
+        _ => Ok(()),
+    }
+}
+
 pub(super) fn lock(p: &mut TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, swap: f64) -> Result<Locked, String> {
     // An outgoing loop repeats bars picked as steady; a bend or glide moves the outgoing beats themselves.
     if a.outro_beats.is_empty() || b.intro_beats.is_empty() || p.out_loop_ms.is_some() || p.bend.is_some() || p.out_glide.is_some() {
         return Ok(Locked::Unchecked);
     }
-    // Cleaned, so a beat missed does not break the pairing; paired outward from the swap, or from the outgoing song's
-    // last beat when the swap is past them.
     let (a_beats, b_beats) = (cleaned(&a.outro_beats), cleaned(&b.intro_beats));
-    let last = a_beats[a_beats.len() - 1].at_ms as f64 - p.out_start_ms as f64;
-    let anchor = swap.min(last).max(0.0);
-    let out_ms = p.out_start_ms as f64 + anchor;
-    let in_ms = p.in_start_ms as f64 + p.in_song_ms(anchor);
-    let Some(all) = pairs(p, &a_beats, &b_beats, out_ms, in_ms)? else { return Ok(Locked::Unchecked) };
-    // Only beats on attacks steer and are checked.
-    let mut pairs: Vec<Pair> = all.into_iter().filter(|x| x.sure).collect();
-    if pairs.len() < MIN_PAIRS {
-        return Ok(Locked::Unchecked);
-    }
+    let Some(mut all) = paired(p, &a_beats, &b_beats, swap)? else { return Ok(Locked::Unchecked) };
     // An incoming loop's repeats keep the speed they were played at: the outgoing beats over them, and the pairs
     // after them, must hold at one ratio.
     if let Some(l) = p.in_loop {
         let after = p.in_delay_ms as f64 + (l.ms * (l.repeats as i64 + 1)) as f64;
-        pairs.retain(|x| x.at >= after);
+        all.retain(|x| x.at >= after);
         let Some(under) = under_loop(p, &a_beats, &b_beats) else { return Err("the beats drift apart under the loop".into()) };
-        return if under + pairs.len() < MIN_PAIRS {
+        return if under + all.len() < MIN_CHECK_PAIRS {
             Ok(Locked::Unchecked)
-        } else if locked(p, &pairs) {
+        } else if locked(p, &all) {
             Ok(Locked::Held)
         } else {
             Err("the beats drift apart after the loop".into())
         };
     }
-    if locked(p, &pairs) {
+    if locked(p, &all) {
         return Ok(Locked::Held);
     }
+    if all.len() < MIN_PAIRS {
+        return Err("the beats drift apart".into());
+    }
     // An outgoing tempo moving within bars (its beats in the mix as a curve): both songs onto one clock, else the
-    // incoming song follows alone.
-    let at: Vec<f64> = pairs.iter().map(|x| x.at).collect();
+    // incoming song follows alone. Steered by the beats on attacks, all of them where those leave a soft one off.
     let (first, last) = (p.out_start_ms, p.out_start_ms + p.duration_ms);
     let heard: Vec<Beat> = a_beats.iter().copied().filter(|x| (first..=last).contains(&x.at_ms)).collect();
     let moving = Curve::of(&heard).is_some_and(|c| c.tempo_change(bar_beats(a) as usize) > SHARED_CHANGE);
-    let warped = if moving { follow(p, a, b, &pairs, &shared_clock(p, &pairs)).or_else(|| follow(p, a, b, &pairs, &at)) } else { follow(p, a, b, &pairs, &at) };
+    let attempt = |pairs: &[Pair]| {
+        let at: Vec<f64> = pairs.iter().map(|x| x.at).collect();
+        if moving { follow(p, a, b, pairs, &shared_clock(p, pairs), &all).or_else(|| follow(p, a, b, pairs, &at, &all)) } else { follow(p, a, b, pairs, &at, &all) }
+    };
+    let steer = steering(&all);
+    let warped = attempt(&steer).or_else(|| (steer.len() < all.len()).then(|| attempt(&all)).flatten());
     *p = warped.ok_or("the beats drift apart")?;
     Ok(Locked::Warped)
 }
@@ -235,9 +267,9 @@ fn shared_clock(p: &TransitionPlan, pairs: &[Pair]) -> Vec<f64> {
 }
 
 /// `p` with each pair's beats landing on `clock` (a time for each pair): the outgoing song warped onto it where it is
-/// not its own beats, the incoming one always; None when they miss the lock, a song strays past [`SHARED_STRAIN`] from
+/// not its own beats, the incoming one always; None when any of `all` (every pair heard together) misses the lock, a song strays past [`SHARED_STRAIN`] from
 /// its own speed, or more of a song is wanted than it has.
-fn follow(p: &TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, pairs: &[Pair], clock: &[f64]) -> Option<TransitionPlan> {
+fn follow(p: &TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, pairs: &[Pair], clock: &[f64], all: &[Pair]) -> Option<TransitionPlan> {
     let mut warped = p.clone();
     let own = pairs.iter().zip(clock).all(|(x, t)| (x.at - t).abs() < 1e-6);
     if !own {
@@ -265,7 +297,9 @@ fn follow(p: &TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, pairs: &[Pai
     warped.in_rates = rates(&on_clock, p.tempo_ratio, 60_000.0 / b.bpm.max(1.0));
     (warped.tempo_ramp_beats, warped.tempo_ramp_ms) = (0, 0);
     let strays = !own && warped.in_rates.iter().filter(|r| r.at_ms <= p.duration_ms as f64).any(|r| (r.speed / p.tempo_ratio - 1.0).abs() > SHARED_STRAIN);
-    (!strays && locked(&warped, &shifted)).then_some(warped)
+    // Every pair heard together held, not only those steered by.
+    let all: Vec<Pair> = all.iter().map(|x| Pair { song: x.song - shift, ..*x }).collect();
+    (!strays && locked(&warped, &all)).then_some(warped)
 }
 
 /// How far a warped plan's tempos stray from the speeds they start at, percent at most; 0 unwarped.
