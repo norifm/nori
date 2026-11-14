@@ -39,13 +39,14 @@ pub(crate) fn crossover_ms(p: &TransitionPlan) -> i64 {
     let out_fade = span_ms(p.out_fade_start_ms, p.out_fade_end_ms, len);
     let in_fade = span_ms(p.in_fade_start_ms, p.in_fade_end_ms, len);
     let out_gain = db_to_gain((p.out_gain_db as f64).clamp(-24.0, 12.0));
+    let tail = p.out_tail_db.filter(|_| out_fade.1 < len).map(|db| (db_to_gain(db as f64), (out_fade.1, len)));
     let glide = trim_span(p);
     let gap = trim(glide.1 - glide.0, p.in_gain_db as f64);
     let progress = |(start, end): (f64, f64), t: f64| if t <= start { 0.0 } else if t >= end { 1.0 } else { (t - start) / (end - start) };
     let mut t = 0.0;
     while t < len {
         let (trim_out, trim_in) = trims(gap, progress(glide, t));
-        let g_out = fade(p.fade_curve, progress(out_fade, t), true) * out_gain * db_to_gain(trim_out);
+        let g_out = out_level(p.fade_curve, progress(out_fade, t), tail.map(|(floor, s)| (floor, progress(s, t)))) * out_gain * db_to_gain(trim_out);
         let g_in = fade(p.fade_curve, progress(in_fade, t), false) * db_to_gain(trim_in);
         if g_in >= g_out {
             return t as i64;
@@ -94,6 +95,17 @@ fn fade(curve: FadeCurve, x: f64, down: bool) -> f64 {
         FadeCurve::EqualPower => (x * PI / 2.0).sin(),
         FadeCurve::Linear => x,
         FadeCurve::SineSquared => (x * PI / 2.0).sin().powi(2),
+    }
+}
+
+/// The outgoing gain `x` (0..1) through its fade, and with a tail, at `floor` and `y` through it: the fade then ends
+/// at the floor, and the tail falls from it as (1 - y)², a fader drawn down at an even pace.
+#[inline]
+fn out_level(curve: FadeCurve, x: f64, tail: Option<(f64, f64)>) -> f64 {
+    match tail {
+        Some((floor, y)) if y > 0.0 => floor * (1.0 - y).powi(2),
+        Some((floor, _)) => floor + (1.0 - floor) * fade(curve, x, true),
+        None => fade(curve, x, true),
     }
 }
 
@@ -541,6 +553,8 @@ pub struct Mixer {
     curve: FadeCurve,
     out_fade: Span,
     in_fade: Span,
+    /// The tail's floor, and where it falls from it ([`out_level`]).
+    out_tail: Option<(f64, Span)>,
     out_gain: f64,
     /// The loudness gap the two songs meet across ([`trim`]), and where.
     gap_db: f64,
@@ -597,6 +611,7 @@ impl Mixer {
             curve: FadeCurve::EqualPower,
             out_fade: Span::default(),
             in_fade: Span::default(),
+            out_tail: None,
             out_gain: 1.0,
             gap_db: 0.0,
             trim_span: Span::default(),
@@ -682,6 +697,7 @@ impl Mixer {
         self.brake = p.brake.filter(|b| b.len_ms > 0).map(|b| (frames(b.start_ms as f64), frames(b.len_ms as f64).max(1)));
         self.curve = p.fade_curve;
         self.out_fade = span(p.out_fade_start_ms, p.out_fade_end_ms);
+        self.out_tail = p.out_tail_db.filter(|_| self.out_fade.end < len).map(|db| (db_to_gain(db as f64), Span { start: self.out_fade.end, end: len }));
         self.in_fade = span(p.in_fade_start_ms, p.in_fade_end_ms);
         self.out_gain = db_to_gain((p.out_gain_db as f64).clamp(-24.0, 12.0));
         let glide = trim_span(p);
@@ -825,7 +841,8 @@ impl Mixer {
     /// power: where both are up at once, two songs would otherwise play louder than either, each as far as its own
     /// processing leaves it heard. Lows a bass swap gives to one deck at a time are not held down.
     fn fades_at(&self, p: u64) -> Fades {
-        let (out, inc) = (fade(self.curve, self.out_fade.progress(p), true), fade(self.curve, self.in_fade.progress(p), false));
+        let tail = self.out_tail.map(|(floor, s)| (floor, s.progress(p)));
+        let (out, inc) = (out_level(self.curve, self.out_fade.progress(p), tail), fade(self.curve, self.in_fade.progress(p), false));
         let (heard_out, heard_in) = self.meter.as_ref().map_or((1.0, 1.0), Meter::shares);
         let held = 1.0 / (out * out * heard_out + inc * inc * heard_in).sqrt().max(1.0);
         let (trim_out, trim_in) = trims(self.gap_db, self.trim_span.progress(p));
@@ -1035,6 +1052,7 @@ mod tests {
             out_fade_end_ms: 1000,
             in_fade_start_ms: 0,
             in_fade_end_ms: 1000,
+            out_tail_db: None,
             out_gain_db: 0.0,
             in_gain_db: 0.0,
             bass_swap: None,
@@ -1127,6 +1145,25 @@ mod tests {
         assert!(late > 600 && late < 1000, "{late}");
         p.duration_ms = 0;
         assert_eq!(crossover_ms(&p), 0);
+    }
+
+    /// A tail: the fade ends at its floor, the outgoing song held there and drawn down from it to nothing by the
+    /// transition's end; without room after the fade, the fade goes to nothing.
+    #[test]
+    fn an_outgoing_tail_falls_from_its_floor() {
+        let mut p = plan();
+        (p.duration_ms, p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (2000, 0, 500, 0, 500);
+        p.out_tail_db = Some(-12.0);
+        let (halves, zeros) = (vec![0.5f32; 96_000], vec![0f32; 96_000]);
+        let y = mix(&p, &halves, &zeros);
+        let gain_at = |ms: usize| rms(&y[ms * 48 - 240..ms * 48 + 240]) / 0.5;
+        let floor = 10f64.powf(-12.0 / 20.0);
+        for (ms, want) in [(500, floor), (1250, floor / 4.0), (1990, 0.0)] {
+            assert!((gain_at(ms) - want).abs() < 0.02, "{ms} ms: {:.3} against {want:.3}", gain_at(ms));
+        }
+        p.out_fade_end_ms = 2000;
+        let y = mix(&p, &halves, &zeros);
+        assert!(rms(&y[95_000..95_900]) < 0.01, "a fade to the end goes to nothing");
     }
 
     /// The outgoing gain heard through fades of 10 ms and of none, starting off the run grid: near the
