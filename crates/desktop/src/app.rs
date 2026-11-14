@@ -1211,6 +1211,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.go(View::Settings);
     });
     on!(ui.on_clear_queue, h, |a| a.clear_queue());
+    on!(ui.on_analyse_downloads, h, |a| a.on_session(|s| s.analyse_downloads()));
     on!(ui.on_remove_queued, h, |a, i| a.remove_queued(i.max(0) as usize));
     on!(ui.on_move_queued, h, |a, from, to| {
         a.on_session(|s| s.move_song(from.max(0) as usize, to.max(0) as usize));
@@ -1396,6 +1397,7 @@ impl App {
             Ok(s) => {
                 s.check();
                 s.update_check(false);
+                s.analysis_offer();
                 if self.hidden {
                     s.in_sight(false);
                 }
@@ -3755,6 +3757,14 @@ impl App {
             Msg::Shared(None) => self.say(words::SHARE_FAILED, true),
             Msg::Ask { text, action } => self.ask(&text, &action, Asked::Curve),
             Msg::Update { version, page } => self.ask(&format!("nori {version} is out"), "Get it", Asked::Page(page)),
+            Msg::AnalysisOffer(offer) => {
+                let (title, why, time) = words::analysis_offer(&offer);
+                let ui = self.ui();
+                ui.set_analysis_title(title.into());
+                ui.set_analysis_why(why.into());
+                ui.set_analysis_time(time.into());
+                ui.set_analysis_open(true);
+            }
             Msg::Reachable(Err(e)) => self.say(&e, true),
             Msg::Reachable(Ok(())) | Msg::From(..) => {}
             Msg::Cast => {

@@ -368,7 +368,6 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
     val facts by vm.settingsFacts.collectAsStateWithLifecycle()
     // The page's facts, fetched while it is open: the songs AutoMix measured, what is stored on the
     // phone, the server's music folders.
-    LaunchedEffect(id, p.autoMix) { if (id == "playing" && p.autoMix != dev.nori.music.ffi.settings.AutoMixMode.OFF) vm.refreshAnalysed() }
     LaunchedEffect(id) { if (id == "data") vm.refreshStorage() }
     if (id == "sound") LifecycleStartEffect(vm) { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.SOUND, true); onStopOrDispose { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.SOUND, false) } }
     LaunchedEffect(id, p.activeServerId) { if (id == "servers") vm.loadMusicFolders() }
@@ -472,7 +471,6 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                 )
             }
             "downloads" -> nav.downloads()
-            "analyse-downloads" -> actions?.analyseDownloads()
             "add-server" -> { vm.openLogin(null); editing = vm.newProfile() }
             "backup" -> saveBackup.launch(dev.nori.music.ffi.backup.backupFileName())
             "restore" -> openBackup.launch(arrayOf("*/*"))

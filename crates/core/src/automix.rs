@@ -2,8 +2,9 @@
 
 use nori_automix::beats::{EndGrid, MixEnd};
 use nori_automix::analysis::Analyzer;
-use nori_automix::store::{get, get_voice, measure, measured, missing, neural_missing, put, put_finished, AnalysisStream, Measured};
+use nori_automix::store::{get, get_voice, measure, missing, neural_missing, put, put_finished, AnalysisStream};
 
+use crate::settings::AutoMixMode;
 use crate::{Core, Result, TrackAnalysis};
 
 pub use nori_automix::*;
@@ -11,14 +12,35 @@ pub use nori_automix::*;
 #[cfg(test)]
 mod tests;
 
-/// What "Measure again" did: the songs forgotten, and what it asks of the player, as a settings change's
-/// effect bits (`settings_store::REPLAN`).
+/// Why downloaded songs are offered an analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum AnalysisReason {
+    /// AutoMix was turned on.
+    TurnedOn,
+    /// An update changed the analysis ([`ANALYSIS_VERSION`]).
+    Changed,
+}
+
+/// Downloaded songs to offer an analysis (the classical one and the beat model's), why, and about how many
+/// minutes it takes at this device's learned pace ([`felt_minutes`]). Answered yes, the client reads them
+/// back (`Core::download_unanalysed`); no, they are measured as they come up to play.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
-pub struct MeasuredAgain {
-    pub forgot: u32,
-    pub effect: u32,
+pub struct AnalysisOffer {
+    pub songs: u32,
+    pub reason: AnalysisReason,
+    pub minutes: u32,
 }
+
+/// A wait of `secs` in the minutes it is felt in: whole minutes, fives past an hour; 0 is under a minute.
+pub fn felt_minutes(secs: i64) -> u32 {
+    let min = (secs.max(0) + 30) / 60;
+    (if min >= 60 { (min + 2) / 5 * 5 } else { min }) as u32
+}
+
+/// The analysis version downloads were last offered for, so each version is offered once.
+const OFFERED_KEY: &str = "analysis_offered";
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
@@ -26,22 +48,39 @@ impl Core {
         Ok(get(&self.db.lock(), &song_id)?)
     }
 
-    /// "Measure again": deletes every analysis and vocal curve, so songs are measured anew, and has the
-    /// transition coming up planned again without them.
-    pub fn measure_again(&self) -> Result<MeasuredAgain> {
-        let forgot = {
-            let c = self.db.lock();
-            let n = c.execute("DELETE FROM track_analysis WHERE server=sid()", [])? as u32;
-            c.execute("DELETE FROM vocal_curve WHERE server=sid()", [])?;
-            c.execute("DELETE FROM kv WHERE server=sid() AND key LIKE 'sung|%'", [])?;
-            n
-        };
-        self.session.planner.analyses_changed();
-        Ok(MeasuredAgain { forgot, effect: crate::settings_store::REPLAN })
+    /// AutoMix went from `before` to `after`: the downloads to offer an analysis when it was turned on and
+    /// some lack it. Switching between its styles asks nothing: they share one analysis.
+    pub fn analysis_offer_on_switch(&self, before: AutoMixMode, after: AutoMixMode) -> Option<AnalysisOffer> {
+        if before.on() || !after.on() {
+            return None;
+        }
+        self.analysis_offer(AnalysisReason::TurnedOn)
     }
 
-    pub fn analysis_measured(&self) -> Result<Measured> {
-        Ok(measured(&self.db.lock())?)
+    /// At startup with AutoMix on, once per analysis version: the downloads to offer an analysis when an
+    /// update left some without the current one.
+    pub fn analysis_offer_at_start(&self) -> Option<AnalysisOffer> {
+        if !self.session.settings.prefs(|p| p.auto_mix.on()) {
+            return None;
+        }
+        {
+            let c = self.db.lock();
+            let offered = crate::db::kv_get(&c, OFFERED_KEY).ok().flatten().and_then(|v| v.parse::<i32>().ok());
+            if offered.is_some_and(|v| v >= ANALYSIS_VERSION) {
+                return None;
+            }
+            crate::db::kv_put(&c, OFFERED_KEY, &ANALYSIS_VERSION.to_string()).ok()?;
+        }
+        self.analysis_offer(AnalysisReason::Changed)
+    }
+}
+
+impl Core {
+    fn analysis_offer(&self, reason: AnalysisReason) -> Option<AnalysisOffer> {
+        let (_, analyses, beats) = self.download_lacking().ok()?;
+        let (analyses, beats_only) = (analyses.len() as u32, beats.len() as u32);
+        let secs = self.transfers().with(|t| t.read_back_s(analyses, beats_only, self.download_beats()));
+        (analyses + beats_only > 0).then_some(AnalysisOffer { songs: analyses + beats_only, reason, minutes: felt_minutes(secs) })
     }
 }
 

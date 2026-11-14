@@ -107,9 +107,11 @@ enum Say {
         let left = n("eta") < 0 ? "" : n("eta") < 60 ? "\(n("eta")) s left" : Fmt.clock(ms: n("eta") * 1000) + " left"
         let join = { (bits: [String]) in bits.filter { !$0.isEmpty }.joined(separator: " · ") }
         guard text("stage") == "download" else {
-            let title = n("lyrics") > 0 ? "Finding lyrics for \(songs(n("lyrics")))…" : "Analyzing \(songs(n("analysing")))…"
+            let title = n("lyrics") > 0 ? "Finding lyrics for \(songs(n("lyrics")))…"
+                : n("analysing") > 0 ? "Analyzing \(songs(n("analysing")))…" : "Detecting beats for \(songs(n("beats")))…"
             let analysing = n("lyrics") > 0 && n("analysing") > 0 ? "\(n("analysing")) to analyze" : ""
-            return (title, join([analysing, left]))
+            let beats = (n("lyrics") > 0 || n("analysing") > 0) && n("beats") > 0 ? "\(n("beats")) for beat detection" : ""
+            return (title, join([analysing, beats, left]))
         }
         let of = "\(n("position")) of \(n("total"))"
         switch n("notice") {
@@ -564,6 +566,15 @@ enum Say {
     static let curveNotNow = "Not Now"
     static let curveUndo = "Undo"
     static let curveKeep = "Keep"
+    static func analysisOfferTitle(_ n: Int) -> String { n == 1 ? "Analyze 1 downloaded song?" : "Analyze \(n) downloaded songs?" }
+    /// Why, then the time (the core rounds it) and the battery it takes.
+    static func analysisOfferText(minutes: Int, changed: Bool) -> String {
+        let why = changed ? "AutoMix's analysis changed in this update." : "AutoMix mixes songs best once they're analyzed."
+        let time = minutes == 0 ? "under a minute" : minutes < 60 ? "about \(minutes) min" : minutes % 60 == 0 ? "about \(minutes / 60) h" : "about \(minutes / 60) h \(minutes % 60) min"
+        return "\(why) It takes \(time) and uses a lot of battery, so it's best while charging. Otherwise each is analyzed when it plays."
+    }
+    static let analysisOfferYes = "Analyze"
+    static let analysisOfferNo = "Not Now"
     static func jamEnded(_ host: String) -> String { host.isEmpty ? "The jam ended" : "\(host) ended the jam" }
     static let listenHere = "Listen Here"
     static let playingHere = "Playing Here"

@@ -3,7 +3,6 @@
 //! draws them. Rows send back a setting name and value (`setting_set`) or a level edit (`edit_level`).
 
 use crate::text;
-use nori_core::automix::store::Measured;
 use nori_core::settings::{season_follow_value, EqLevel, EqMode, SoundBand, StoredPrefs, ThemeSeason, EQ_RANGES};
 use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, LyricsSource, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsPart};
@@ -182,16 +181,12 @@ pub struct Storage {
     pub all_download_songs: u32,
     /// Each profile with downloads (the id its rows are kept under) and what they hold.
     pub download_profiles: Vec<(String, i64)>,
-    /// This profile's finished downloads, which its actions work on.
-    pub download_songs: u32,
     pub database: i64,
 }
 
 /// Non-setting facts shown on the page, loaded when Settings opens.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Facts {
-    /// Songs AutoMix has measured.
-    pub analysed: Measured,
     /// Offline index counts: songs, albums, artists.
     pub indexed: (u32, u32, u32),
     pub storage: Storage,
@@ -588,12 +583,10 @@ fn page_facts(f: &Facts) -> PageFacts {
     PageFacts {
         parts: f.rules.settings.clone(),
         folders: f.folders.iter().map(|m| m.id.clone()).collect(),
-        analysed: f.analysed.songs,
         indexed_songs: f.indexed.0,
         stream_bytes: f.storage.stream,
         cover_bytes: f.storage.covers,
         lyrics_bytes: f.storage.lyrics,
-        download_songs: f.storage.download_songs,
         unsent_waiting: f.unsent.0,
         unsent_dropped: f.unsent.1,
         ..PageFacts::default()
@@ -1090,7 +1083,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
                 BeatModel::Unavailable | BeatModel::Unused => String::new(),
                 BeatModel::Failed { why } => format!("The beat model's download didn't work ({}). It tries again at the next song.", text::beat_failure(*why)),
                 BeatModel::Downloading => format!("Downloading the beat model (about {} MB)…", s.beat_model_mb),
-                BeatModel::Absent | BeatModel::Ready => "DJ uses more battery while songs are measured".into(),
+                BeatModel::Absent | BeatModel::Ready => "Uses more battery while songs are measured".into(),
             };
             return ("AutoMix".into(), state);
         }
@@ -1296,7 +1289,6 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             let (indexed_songs, albums, artists) = f.indexed;
             let chore = |title: &str, detail: String, button: &str, chore| Row::Action { title: format!("{indent}{title}"), detail, button: button.into(), enabled, action: Act::Chore(chore) };
             match action {
-                SettingsAction::MeasureAgain => chore("Measured songs", text::measured(f.analysed), "Measure again", Chore::MeasureAgain),
                 SettingsAction::SyncLibrary => {
                     let counts = format!("{} · {} · {} on this device", counted(indexed_songs, "song", "songs"), counted(albums, "album", "albums"), counted(artists, "artist", "artists"));
                     chore("Offline search", counts, "Update", Chore::SyncLibrary)
@@ -1310,7 +1302,6 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
                 SettingsAction::MakeBackup => Row::Action { title: text::BACK_UP.into(), detail: text::BACK_UP_DETAIL.into(), button: "Save".into(), enabled, action: Act::Backup { restore: false } },
                 SettingsAction::RestoreBackup => Row::Action { title: text::RESTORE.into(), detail: text::RESTORE_DETAIL.into(), button: "Open".into(), enabled, action: Act::Backup { restore: true } },
                 SettingsAction::CheckUpdate => Row::Action { title: "Check for updates".into(), detail: format!("Version {}", env!("CARGO_PKG_VERSION")), button: "Check".into(), enabled: true, action: Act::CheckUpdate },
-                SettingsAction::AnalyseDownloads => return None,
             }
         }
         RowItem::Note { note } => Row::Note {
@@ -1777,7 +1768,6 @@ mod tests {
             downloads: 3_000_000,
             all_download_songs: 5,
             download_profiles: vec![("a".into(), 2_000_000), ("b".into(), 1_000_000)],
-            download_songs: 3,
             ..Storage::default()
         };
         let stored = |storage: Storage| {

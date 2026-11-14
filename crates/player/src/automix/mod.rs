@@ -39,7 +39,7 @@ use crate::types::TrackAnalysis;
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 18: an end's grid over its steady run when one grid does not hold
+/// Bump when stored rows should be measured again, the beat model's ends too (a new model is a bump). 18: an end's grid over its steady run when one grid does not hold
 /// over all of it.
 pub const ANALYSIS_VERSION: i32 = 18;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that

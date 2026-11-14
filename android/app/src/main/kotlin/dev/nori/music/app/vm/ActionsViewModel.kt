@@ -53,6 +53,9 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     // A process started in the background could not restart the download service; with a screen up it can.
     init { nori.downloads.resume() }
 
+    // Asked once the app is on screen: an update that changed the analysis offers the downloads a new one.
+    init { nori.downloads.offerAtStart() }
+
     // What plugins show while they run, said as the app's own messages are.
     init { viewModelScope.launch { nori.plugins.notices.collect { _messages.trySend(it.line) } } }
 
@@ -237,11 +240,17 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         _messages.trySend(say.downloadingSongs(songs.size))
     }
 
-    /**
-     * Settings' "Analyse downloaded songs": the downloads with no current analysis are read back one at a time
-     * under the download service.
-     */
-    fun analyseDownloads() = nori.downloads.analyse { n -> _messages.trySend(if (n > 0) say.analysingDownloads(n) else say.nothingToAnalyse) }
+    /** The downloads lacking an analysis, read back one at a time under the download service. */
+    fun analyseDownloads() = nori.downloads.analyse(::analysing)
+
+    /** Downloaded songs offered an analysis, waiting for a yes or a not now. */
+    val analysisOffer: StateFlow<dev.nori.music.ffi.AnalysisOffer?> = nori.downloads.analysisOffer
+
+    fun answerAnalysis(yes: Boolean) = nori.downloads.answerOffer(yes, ::analysing)
+
+    private fun analysing(n: Int) {
+        _messages.trySend(if (n > 0) say.analysingDownloads(n) else say.nothingToAnalyse)
+    }
 
     /**
      * Fetches the artwork of songs being downloaded onto the disk; which covers, at which addresses, is

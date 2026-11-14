@@ -331,12 +331,6 @@ impl AutoMixMode {
         self != AutoMixMode::Off
     }
 
-    /// Whether the Beat This! model reads the upcoming songs' ends for their beat grids (a one-time
-    /// download, about 15 s of CPU a song): DJ mixes land on the beat, Smooth's short blends do without.
-    pub fn beat_model(self) -> bool {
-        self == AutoMixMode::Dj
-    }
-
     /// How it mixes; Smooth's limits while off, for a crossfade's beat matching.
     pub fn style(self) -> nori_player::types::MixStyle {
         match self {

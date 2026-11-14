@@ -110,7 +110,7 @@ fn lyrics_source(s: lyrics_sources::LyricsService, on: bool, p: &StoredPrefs) ->
 pub enum BeatModel {
     /// Not in this build.
     Unavailable,
-    /// AutoMix is off or Smooth: the model does not run ([`crate::settings::AutoMixMode::beat_model`]).
+    /// AutoMix is off: the model does not run.
     Unused,
     /// Not downloaded yet; fetched the next time AutoMix measures a song.
     Absent,
@@ -173,7 +173,7 @@ fn beat_model_now(p: &StoredPrefs, model: &beat_model::ModelFile) -> BeatModel {
     if !beats::AVAILABLE {
         return BeatModel::Unavailable;
     }
-    if !p.auto_mix.beat_model() {
+    if !p.auto_mix.on() {
         return BeatModel::Unused;
     }
     match model.state() {
@@ -389,9 +389,9 @@ mod tests {
     }
 
     #[test]
-    fn only_dj_runs_the_beat_model() {
+    fn automix_runs_the_beat_model() {
         use crate::settings::AutoMixMode::*;
-        for (auto_mix, want) in [(Off, BeatModel::Unused), (Smooth, BeatModel::Unused), (Dj, BeatModel::Absent)] {
+        for (auto_mix, want) in [(Off, BeatModel::Unused), (Smooth, BeatModel::Absent), (Dj, BeatModel::Absent)] {
             let p = StoredPrefs { auto_mix, ..StoredPrefs::default() };
             let want = if beats::AVAILABLE { want } else { BeatModel::Unavailable };
             assert_eq!(state(&p, Output::default(), &Default::default()).beat_model, want, "{auto_mix:?}");

@@ -248,6 +248,13 @@ pub extern "C" fn nori_ios_curve_answer() {
     with_session(|s| s.curve_answer());
 }
 
+/// The yes to the last [`crate::session::REPORT_ANALYSIS_OFFER`]: the downloads are read back, under the
+/// Downloads page's progress.
+#[no_mangle]
+pub extern "C" fn nori_ios_analyse_downloads() {
+    with_session(|s| s.analyse_downloads());
+}
+
 /// The AutoEQ list's hits for `query`, as JSON to free: `{short, count, hits}`.
 ///
 /// # Safety

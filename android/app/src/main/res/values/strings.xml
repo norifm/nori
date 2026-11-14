@@ -53,24 +53,13 @@
     <string name="settings_automix">AutoMix</string>
     <string name="settings_automix_smooth">Smooth</string>
     <string name="settings_automix_dj">DJ</string>
-    <!-- Under AutoMix in DJ mode: the beat model it downloads once and runs on the upcoming songs. -->
-    <string name="settings_beat_model_cost">DJ uses more battery while songs are measured</string>
+    <!-- Under AutoMix while on: the beat model it downloads once and runs on the upcoming songs. -->
+    <string name="settings_beat_model_cost">Uses more battery while songs are measured</string>
     <string name="settings_beat_model_downloading">Downloading the beat model (about %1$d MB)…</string>
     <string name="settings_beat_model_network">the network failed</string>
     <string name="settings_beat_model_wrong_file">the file that arrived was not the right one</string>
     <string name="settings_beat_model_storage">it could not be saved</string>
     <string name="settings_beat_model_failed">The beat model\'s download didn\'t work (%1$s). It tries again at the next song.</string>
-    <string name="settings_measured">Measured songs</string>
-    <plurals name="settings_measured_detail">
-        <item quantity="one">%1$d song measured for tempo and beats.</item>
-        <item quantity="other">%1$d songs measured for tempo and beats.</item>
-    </plurals>
-    <string name="settings_measured_all_outdated">All are measured again when they next play.</string>
-    <plurals name="settings_measured_outdated">
-        <item quantity="one">%1$d is measured again when it next plays.</item>
-        <item quantity="other">%1$d are measured again when they next play.</item>
-    </plurals>
-    <string name="settings_measure_again">Measure again</string>
     <string name="settings_keep_albums">Keep albums gapless</string>
     <string name="settings_skip_explicit">Skip explicit songs</string>
     <string name="settings_auto_fill">When the queue ends</string>
@@ -297,10 +286,6 @@
     <string name="settings_download_library">Download the whole library</string>
     <string name="settings_download_library_detail">Every song, at the download quality.</string>
     <string name="settings_download">Download</string>
-    <string name="settings_analyse_downloads">Analyze downloaded songs</string>
-    <string name="settings_analyse_downloads_detail">Downloads not analyzed yet, for AutoMix and lyrics sync. One song at a time.</string>
-    <string name="settings_hint_analyse_downloads">analysis automix measure beats lyrics sync downloads</string>
-    <string name="settings_analyse">Analyze</string>
     <string name="settings_cache_size">Space for streamed music</string>
     <string name="settings_stored">Stored on this device</string>
     <string name="settings_removed_profile">A removed profile</string>
@@ -385,7 +370,6 @@
     <string name="settings_hint_crossfade">One song fades into the next</string>
     <string name="settings_hint_keep_albums">No mixing between songs of the same album</string>
     <string name="settings_hint_automix">Blends songs matching the beat: smooth, or DJ mixes with loops, tempo bends, risers and double drops</string>
-    <string name="settings_hint_measured">Tempo and beats, measured on this device</string>
     <string name="settings_hint_skip_explicit">Songs your server marks explicit</string>
     <string name="settings_hint_auto_fill">Keep playing, autofill, songs, albums, more music</string>
     <string name="settings_hint_auto_fill_basis">Similar music, the same artist, genre or era</string>
@@ -498,4 +482,21 @@
     <string name="pair_failed_unreachable">Can’t reach %1$s. Is it on this network, with remote control on?</string>
     <string name="pair_failed_timed_out">%1$s didn’t answer in time.</string>
     <string name="pair_failed_refused">%1$s turned the code down. Scan the one it shows now.</string>
+    <!-- Downloaded songs offered an analysis, when AutoMix is turned on or an update changed it. -->
+    <plurals name="analysis_offer_title">
+        <item quantity="one">Analyze %d downloaded song?</item>
+        <item quantity="other">Analyze %d downloaded songs?</item>
+    </plurals>
+    <string name="analysis_offer_turned_on">AutoMix mixes songs best once they\'re analyzed. Otherwise each is analyzed when it plays.</string>
+    <string name="analysis_offer_changed">AutoMix\'s analysis changed in this update. Otherwise each is analyzed again when it plays.</string>
+    <string name="analysis_offer_time">Time</string>
+    <string name="analysis_offer_under_a_minute">Under a minute</string>
+    <string name="analysis_offer_minutes">About %1$d min</string>
+    <string name="analysis_offer_hours">About %1$d h</string>
+    <string name="analysis_offer_hours_minutes">About %1$d h %2$d min</string>
+    <string name="analysis_offer_battery">Battery</string>
+    <string name="analysis_offer_battery_cost">A lot</string>
+    <string name="analysis_offer_charging">Best while charging</string>
+    <string name="analysis_offer_yes">Analyze</string>
+    <string name="analysis_offer_no">Not now</string>
 </resources>

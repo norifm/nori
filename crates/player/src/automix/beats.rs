@@ -119,9 +119,9 @@ pub fn merge(row: &mut TrackAnalysis, end: MixEnd, grid: Option<EndGrid>) -> boo
 }
 
 /// Keeps the model's grids and marks from `old` in a fresh classical measurement of the same file (lengths within
-/// a second).
+/// a second) under the same analysis version. A newer version measures everything again, the model's ends too.
 pub fn carry(old: &TrackAnalysis, fresh: &mut TrackAnalysis) {
-    if (old.duration_ms - fresh.duration_ms).abs() > 1000 {
+    if (old.duration_ms - fresh.duration_ms).abs() > 1000 || old.analysis_version < super::ANALYSIS_VERSION {
         return;
     }
     if old.intro_grid_source == GRID_NEURAL {
@@ -136,10 +136,8 @@ pub fn carry(old: &TrackAnalysis, fresh: &mut TrackAnalysis) {
         fresh.outro_beats_per_bar = old.outro_beats_per_bar;
         (fresh.outro_grid_from_ms, fresh.outro_grid_to_ms) = (old.outro_grid_from_ms, old.outro_grid_to_ms);
     }
-    // An end the model could not grid under an older analysis is looked at again: the grid it is fitted to changed.
-    let kept = |source: i32| if source == GRID_NEURAL || old.analysis_version >= super::ANALYSIS_VERSION { source } else { 0 };
-    fresh.intro_grid_source = fresh.intro_grid_source.max(kept(old.intro_grid_source));
-    fresh.outro_grid_source = fresh.outro_grid_source.max(kept(old.outro_grid_source));
+    fresh.intro_grid_source = fresh.intro_grid_source.max(old.intro_grid_source);
+    fresh.outro_grid_source = fresh.outro_grid_source.max(old.outro_grid_source);
 }
 
 /// Whether the model has yet to look at `end` of `row`.
@@ -334,11 +332,12 @@ mod tests {
         carry(&old, &mut fresh);
         assert_eq!((fresh.intro_bpm, fresh.intro_beat_offset_ms, fresh.intro_grid_source), (128.0, 50.0, GRID_NEURAL));
         assert_eq!((fresh.outro_bpm, fresh.outro_grid_source), (101.0, GRID_CHECKED));
-        // An end the model could not grid under an older analysis is looked at again; its grid's span is carried.
+        // An older analysis version is measured again whole: the model reads both ends again.
         let older = TrackAnalysis { analysis_version: super::super::ANALYSIS_VERSION - 1, ..old.clone() };
         let mut fresh = row();
         carry(&older, &mut fresh);
-        assert_eq!((fresh.intro_grid_source, fresh.outro_grid_source), (GRID_NEURAL, GRID_CLASSICAL));
+        assert_eq!((fresh.intro_bpm, fresh.intro_grid_source, fresh.outro_grid_source), (100.0, GRID_CLASSICAL, GRID_CLASSICAL));
+        // Its grid's span is carried.
         let mut spanned = row();
         merge(&mut spanned, MixEnd::Outro, Some(EndGrid { bpm: 101.0, offset_ms: 0.0, confidence: 1.0, stability: 1.0, downbeat_phase: 0, beats_per_bar: 4, other_phase: None, anchor_ms: 0.0, span_ms: Some((170_000, 190_000)) }));
         let mut fresh = row();

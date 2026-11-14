@@ -114,10 +114,8 @@ pub enum SettingsLink {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SettingsAction {
-    MeasureAgain,
     SyncLibrary,
     DownloadLibrary,
-    AnalyseDownloads,
     ClearStream,
     ClearCovers,
     ClearLyrics,
@@ -193,15 +191,12 @@ pub struct PageFacts {
     pub car: bool,
     /// The active server's music folders, by id.
     pub folders: Vec<String>,
-    /// Songs AutoMix has measured.
-    pub analysed: u32,
     /// Songs in the offline index.
     pub indexed_songs: u32,
     pub syncing: bool,
     pub stream_bytes: i64,
     pub cover_bytes: i64,
     pub lyrics_bytes: i64,
-    pub download_songs: u32,
     /// A cache is being cleared.
     pub storage_busy: bool,
     /// Changes waiting for the server, and dropped unsent since the profile opened.
@@ -333,9 +328,6 @@ impl Page<'_> {
             row(RowItem::Note { note: SettingsNote::HeldByDac }).shown(s.untouched),
             self.chips("autoMix").enabled(live),
         ];
-        if !self.web() {
-            between.push(row(RowItem::Action { action: SettingsAction::MeasureAgain }).under().enabled(p.auto_mix.on() && self.f.analysed > 0));
-        }
         // AutoMix plans its own transitions, so the plain crossfade gives way to it.
         between.push(self.setting("crossfadeSec").enabled(live && !p.auto_mix.on()));
         between.push(self.setting("crossfadeKeepAlbums").enabled(live && (p.auto_mix.on() || p.crossfade_sec > 0)));
@@ -473,10 +465,8 @@ impl Page<'_> {
         }
         streaming.push(self.setting("cacheMb"));
         let mut downloads = vec![self.setting("download"), row(RowItem::Action { action: SettingsAction::DownloadLibrary }).enabled(f.indexed_songs > 0)];
-        match self.client {
-            SettingsClient::Phone => downloads.push(row(RowItem::Action { action: SettingsAction::AnalyseDownloads }).enabled(f.download_songs > 0)),
-            SettingsClient::Terminal => downloads.push(row(RowItem::Link { to: SettingsLink::Downloads })),
-            SettingsClient::Desktop | SettingsClient::Web => {}
+        if self.client == SettingsClient::Terminal {
+            downloads.push(row(RowItem::Link { to: SettingsLink::Downloads }));
         }
         let clear = |action, bytes: i64| row(RowItem::Action { action }).enabled(!f.storage_busy && bytes > 0);
         // What is kept and what clears it, no settings: the cache's size is streaming's.
@@ -733,7 +723,5 @@ mod tests {
             _ => None,
         }).collect();
         assert_eq!(folders, [(true, "2".to_string()), (true, "1".to_string())]);
-        let measure = rows.iter().find(|r| matches!(r.item, RowItem::Action { action: SettingsAction::MeasureAgain })).unwrap();
-        assert!(!measure.enabled && measure.depth == 1, "nothing measured yet");
     }
 }

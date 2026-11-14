@@ -77,11 +77,15 @@ impl Core {
         self.queue_downloads(rows)
     }
 
-    /// Downloaded songs lacking a current analysis, newest first.
+    /// Downloaded songs lacking a current analysis or, with AutoMix on, the beat model's read, newest first.
     pub fn download_unanalysed(&self) -> crate::Result<Vec<String>> {
-        let ids: Vec<String> = self.download_ids(true)?.into_iter().filter(|id| crate::queue::analysable(id)).collect();
-        let missing: HashSet<String> = self.analysis_missing(ids.clone())?.into_iter().collect();
-        Ok(ids.into_iter().filter(|id| missing.contains(id)).collect())
+        let (ids, analyses, beats) = self.download_lacking()?;
+        Ok(ids.into_iter().filter(|id| analyses.contains(id) || beats.contains(id)).collect())
+    }
+
+    /// Whether the beat model reads downloads once saved: with AutoMix on, in a build that has it.
+    pub fn download_beats(&self) -> bool {
+        nori_player::automix::beats::AVAILABLE && self.session.settings.prefs(|p| p.auto_mix.on())
     }
 
     /// Records settled downloads in order: finished, or removed (`finished` false). One transaction.
@@ -149,10 +153,22 @@ impl Core {
         self.session.settings.prefs(|p| p.download.bit_rate)
     }
 
+    /// The analysable downloads, newest first; those lacking a current analysis; and, with AutoMix on, those
+    /// with one that the beat model has not read.
+    pub(crate) fn download_lacking(&self) -> crate::Result<(Vec<String>, HashSet<String>, HashSet<String>)> {
+        let ids: Vec<String> = self.download_ids(true)?.into_iter().filter(|id| crate::queue::analysable(id)).collect();
+        let analyses = self.analysis_missing(ids.clone())?.into_iter().collect();
+        let beats = if self.download_beats() { self.analysis_neural_missing(ids.clone())?.into_iter().collect() } else { HashSet::new() };
+        Ok((ids, analyses, beats))
+    }
+
     fn queue_downloads(&self, rows: Vec<crate::Song>) -> crate::Result<DownloadQueued> {
         let q = queue_rows(&mut self.db.lock(), rows)?;
         let mut held = self.downloads.held();
         q.fresh.iter().for_each(|id| held.queued(id));
+        drop(held);
+        let beats = self.download_beats();
+        self.downloads.with(|t| t.set_beats_ahead(beats));
         Ok(q)
     }
 }

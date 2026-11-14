@@ -2,7 +2,6 @@
 //! setting name and the picked value.
 
 use std::collections::{HashMap, HashSet};
-use nori_core::automix::store::Measured;
 use nori_core::numbers::{self, POINT};
 use nori_core::settings::{season_follow_value, season_of, EqLevel, Level, StoredPrefs, ThemeSeason};
 use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, SettingKind, SettingsState};
@@ -98,7 +97,6 @@ fn appearance_pick(p: &StoredPrefs) -> i32 {
 /// Non-setting facts the pages show (sizes, counts, devices).
 #[derive(Default, Clone)]
 pub struct Facts {
-    pub analysed: Measured,
     pub indexed: (u32, u32, u32),
     pub stream_bytes: u64,
     pub cover_bytes: u64,
@@ -108,8 +106,6 @@ pub struct Facts {
     pub all_download_songs: u32,
     /// Each profile with downloads (the id its rows are kept under) and what they hold.
     pub download_profiles: Vec<(String, u64)>,
-    /// This profile's finished downloads, which its actions work on.
-    pub download_songs: u32,
     pub database_bytes: u64,
     pub folders: Vec<(String, String)>,
     pub devices: Vec<String>,
@@ -204,14 +200,13 @@ impl Act {
 
 pub use nori_host::session::Chore;
 
-const CHORES: [Chore; 6] = [Chore::SyncLibrary, Chore::DownloadLibrary, Chore::MeasureAgain, Chore::ClearStream, Chore::ClearCovers, Chore::ClearLyrics];
+const CHORES: [Chore; 5] = [Chore::SyncLibrary, Chore::DownloadLibrary, Chore::ClearStream, Chore::ClearCovers, Chore::ClearLyrics];
 
 /// A chore's row name in the UI.
 fn chore_name(c: Chore) -> &'static str {
     match c {
         Chore::SyncLibrary => "sync-library",
         Chore::DownloadLibrary => "download-library",
-        Chore::MeasureAgain => "measure-again",
         Chore::ClearStream => "clear-stream",
         Chore::ClearCovers => "clear-covers",
         Chore::ClearLyrics => "clear-lyrics",
@@ -340,7 +335,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
                 BeatModel::Unavailable | BeatModel::Unused => String::new(),
                 BeatModel::Downloading => format!("Downloading the beat model (about {} MB)…", s.beat_model_mb),
                 BeatModel::Failed { .. } => "The beat model's download didn't work. It tries again at the next song.".into(),
-                BeatModel::Absent | BeatModel::Ready => "DJ uses more battery while songs are measured".into(),
+                BeatModel::Absent | BeatModel::Ready => "Uses more battery while songs are measured".into(),
             };
             return ("AutoMix".into(), detail);
         }
@@ -527,7 +522,6 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             let (songs, albums, artists) = f.indexed;
             let bytes = |b: u64| numbers::bytes(b as i64, POINT);
             match a {
-                SettingsAction::MeasureAgain => action("Measured songs", words::measured(f.analysed), "Measure again", enabled, Chore::MeasureAgain),
                 SettingsAction::SyncLibrary => {
                     let counts = format!("{} · {} · {} on this Mac", words::count(songs, "song", "songs"), words::count(albums, "album", "albums"), words::count(artists, "artist", "artists"));
                     action("Offline search", counts, if f.syncing { "Updating…" } else { "Update" }, enabled, Chore::SyncLibrary)
@@ -540,7 +534,7 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
                 SettingsAction::MakeBackup => Row { kind: ACTION, name: BACKUP.into(), title: words::BACK_UP.into(), detail: words::BACK_UP_DETAIL.into(), button: "Save".into(), enabled, ..Default::default() },
                 SettingsAction::RestoreBackup => Row { kind: ACTION, name: RESTORE.into(), title: words::RESTORE.into(), detail: words::RESTORE_DETAIL.into(), button: "Open".into(), enabled, ..Default::default() },
                 SettingsAction::CheckUpdate => Row { kind: ACTION, name: CHECK_UPDATE.into(), title: "Check for updates".into(), detail: format!("Version {}", env!("CARGO_PKG_VERSION")), button: "Check".into(), enabled: true, ..Default::default() },
-                SettingsAction::AnalyseDownloads | SettingsAction::JoinJam => return None,
+                SettingsAction::JoinJam => return None,
             }
         }
         RowItem::Note { note: n } => note(match n {
@@ -621,13 +615,11 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
     let facts = PageFacts {
         parts: f.rules.settings.clone(),
         folders: f.folders.iter().map(|(_, id)| id.clone()).collect(),
-        analysed: f.analysed.songs,
         indexed_songs: f.indexed.0,
         syncing: f.syncing,
         stream_bytes: f.stream_bytes as i64,
         cover_bytes: f.cover_bytes as i64,
         lyrics_bytes: f.lyrics_bytes as i64,
-        download_songs: f.download_songs,
         unsent_waiting: f.unsent.0,
         unsent_dropped: f.unsent.1,
         ..PageFacts::default()
@@ -1543,7 +1535,6 @@ mod tests {
             download_bytes: 3 << 20,
             all_download_songs: 5,
             download_profiles: profiles,
-            download_songs: 3,
             ..Default::default()
         };
         let p = StoredPrefs { servers: vec![SavedServer { id: "a".into(), name: "Home".into(), ..Default::default() }], active_server_id: "a".into(), ..Default::default() };

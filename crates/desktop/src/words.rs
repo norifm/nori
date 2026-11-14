@@ -1,6 +1,5 @@
 //! User-facing wording for numbers and errors (mirrors the terminal's text.rs).
 
-use nori_core::automix::store::Measured;
 use nori_core::numbers;
 use nori_core::pages::{ReleaseGroup, ReleaseKind};
 use nori_core::profiles::CurveNotice;
@@ -1021,14 +1020,24 @@ pub fn profile_use(outputs: &[String]) -> String {
     if outputs.is_empty() { String::new() } else { format!("Used on {}", outputs.join(", ")) }
 }
 
-/// The "Measured songs" line: how many are measured, and how many wait to be measured again.
-pub fn measured(m: Measured) -> String {
-    let all = format!("{} measured for tempo and beats.", count(m.songs, "song", "songs"));
-    match m.outdated {
-        0 => all,
-        n if n == m.songs => format!("{all} All are measured again when they next play."),
-        1 => format!("{all} 1 is measured again when it next plays."),
-        n => format!("{all} {n} are measured again when they next play."),
+/// The dialog offering downloaded songs an analysis: its title, why, and how long it takes.
+pub fn analysis_offer(o: &nori_core::automix::AnalysisOffer) -> (String, &'static str, String) {
+    use nori_core::automix::AnalysisReason;
+    let title = format!("Analyze {} downloaded {}?", o.songs, if o.songs == 1 { "song" } else { "songs" });
+    let why = match o.reason {
+        AnalysisReason::TurnedOn => "AutoMix mixes songs best once they're analyzed. Otherwise each is analyzed when it plays.",
+        AnalysisReason::Changed => "AutoMix's analysis changed in this update. Otherwise each is analyzed again when it plays.",
+    };
+    (title, why, about(o.minutes))
+}
+
+/// "About 5 min", "About 1 h 20 min".
+fn about(minutes: u32) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, 0) => "Under a minute".into(),
+        (0, m) => format!("About {m} min"),
+        (h, 0) => format!("About {h} h"),
+        (h, m) => format!("About {h} h {m} min"),
     }
 }
 
@@ -1063,11 +1072,14 @@ pub fn progress(p: &nori_core::transfers::Progress) -> [String; 3] {
         Progress::Processing { work: w, .. } => {
             let title = if w.lyrics > 0 {
                 format!("Finding lyrics for {}…", songs(w.lyrics as usize))
-            } else {
+            } else if w.analysing > 0 {
                 format!("Analyzing {}…", songs(w.analysing as usize))
+            } else {
+                format!("Detecting beats for {}…", songs(w.beats as usize))
             };
             let analysing = if w.lyrics > 0 && w.analysing > 0 { format!("{} to analyze", w.analysing) } else { String::new() };
-            [title, analysing, time_left(w.eta_s)]
+            let beats = if (w.lyrics > 0 || w.analysing > 0) && w.beats > 0 { format!("{} for beat detection", w.beats) } else { String::new() };
+            [title, join(&[analysing, beats]), time_left(w.eta_s)]
         }
     }
 }
@@ -1094,7 +1106,7 @@ mod tests {
         assert_eq!(progress(&Progress::Fetching(album)), ["Downloading “Kind”", "3 of 12 · Blue", ""]);
         let waiting = Notice { kind: NoticeKind::Waiting, position: 0, total: 4, speed_bps: 500, eta_s: -1, ..Default::default() };
         assert_eq!(progress(&Progress::Fetching(waiting)), ["Waiting for a network", "0 of 4", ""]);
-        let work = Processing { lyrics: 2, analysing: 3, eta_s: 12, permille: 400 };
+        let work = Processing { lyrics: 2, analysing: 3, beats: 0, eta_s: 12, permille: 400 };
         assert_eq!(progress(&Progress::Processing { work, after_fetching: true }), ["Finding lyrics for 2 songs…", "3 to analyze", "12 s left"]);
     }
 
@@ -1106,6 +1118,15 @@ mod tests {
         assert_eq!(lines(p(ServerKind::Subsonic, "", "https://music.example.com/x", "ann")), ("ann".into(), "music.example.com".into()));
         assert_eq!(lines(p(ServerKind::Plugin { id: "dev.example.music".into() }, "", "", "")), ("dev.example.music".into(), "".into()), "a plugin's not here is named by its id");
         assert_eq!(lines(p(ServerKind::Subsonic, "Home", "http://h", "")), ("Home".into(), "".into()));
+    }
+
+    #[test]
+    fn an_analysis_offer_says_how_long_it_takes() {
+        use nori_core::automix::{AnalysisOffer, AnalysisReason};
+        let (title, why, time) = analysis_offer(&AnalysisOffer { songs: 1, reason: AnalysisReason::TurnedOn, minutes: 80 });
+        assert_eq!((title.as_str(), time.as_str()), ("Analyze 1 downloaded song?", "About 1 h 20 min"));
+        assert!(why.starts_with("AutoMix mixes"));
+        assert_eq!([about(0), about(5), about(60)], ["Under a minute", "About 5 min", "About 1 h"]);
     }
 
     #[test]

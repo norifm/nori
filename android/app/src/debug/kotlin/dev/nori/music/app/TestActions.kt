@@ -34,9 +34,6 @@ object TestActions {
      */
     fun setByName(context: Context, settings: SettingsViewModel, name: String, value: String): Boolean {
         if (device(context, settings, name, value)) return true
-        // Not a setting: the one button on that screen a check needs, so a run can start from a phone
-        // that has measured nothing and see the measuring happen.
-        if (name == "clearAnalyses") { settings.clearAnalyses(); return true }
         // The "Streamed music" button: a check that needs a song to be fetched cannot have it cached.
         if (name == "clearStreamCache") { settings.clearStreamCache(); return true }
         // The "Lyrics" button under Storage, without its question.
