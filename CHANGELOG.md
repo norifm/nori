@@ -6,6 +6,27 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-14
+
+### Added
+
+- Desktop, terminal and iPod get channels, renames and progress
+- Desktop and terminal say when a newer nori is out (refs #150)
+- Turning AutoMix on offers to analyze downloads, beats included
+- Desktop profiles drag by the row and remove from their … menu
+
+### Fixed
+
+- The web client builds again
+- The player's cover fades lower and shows a little under the title
+- Shuffle plays the playlist's songs before what autoplay added
+- The Mac window drags from the top bar's empty space (fixes #151)
+- Linux media controls name nori and show its icon, as KDE needs
+- A play press works after a call outlasts a long pause (fixes #149)
+- A search the server finds nothing for keeps the songs found here
+- The sign-in window shows its page on Linux, NVIDIA and AppImage too
+- Editing another profile's account no longer opens it or shows nothing
+
 ## [0.9.0] - 2026-11-13
 
 ### Added
