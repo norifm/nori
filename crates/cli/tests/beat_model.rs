@@ -1,4 +1,4 @@
-//! "Better beat detection" as the terminal client gets it: the same core path as every client, over nori-http. With
+//! The beat model as the terminal client gets it: the same core path as every client, over nori-http. With
 //! `--ignored` it fetches the authors' checkpoint from their server, checks it, converts it and keeps the
 //! weights, and prints what that cost; it needs the network, so it is not part of a plain `cargo test`.
 //! `cargo test --release -p nori-cli --features neural-beats --test beat_model -- --ignored --nocapture`
@@ -14,7 +14,7 @@ fn the_weights_come_from_the_authors() {
     let dir = nori_testdir::TempDir::new("beat-model");
     let settings = nori_core::settings_store::Settings::new();
     let mut prefs = settings.open(&dir.join("app.db").to_string_lossy()).unwrap();
-    (prefs.auto_mix, prefs.auto_mix_better_beats) = (true, true);
+    prefs.auto_mix = nori_core::settings::AutoMixMode::Dj;
     settings.put(prefs);
     let session = std::sync::Arc::new(nori_core::queue::Session::new(settings));
     let core = Core::new(dir.join("nori.db").to_string_lossy().into_owned(), "test".into(), session).unwrap();

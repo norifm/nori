@@ -30,7 +30,7 @@ rust-codecs = ["nori-player/rust-codecs", "symphonia/vorbis", "symphonia/alac"]
 # The core's queue, transition planner, settings and stream addresses, for a client that links the core.
 core = ["dep:nori-core"]
 # The optional neural beat tracker: the measurer runs Beat This! over the ends of the songs coming up when
-# "Better beat detection" is on. Without it nothing of tract is built or linked.
+# AutoMix is in DJ mode. Without it nothing of tract is built or linked.
 neural-beats = ["core", "nori-core/neural-beats"]
 # The virtual clock tests run the engine on (`testing`), for this crate's tests and its clients'.
 testing = []

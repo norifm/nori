@@ -110,6 +110,8 @@ fn lyrics_source(s: lyrics_sources::LyricsService, on: bool, p: &StoredPrefs) ->
 pub enum BeatModel {
     /// Not in this build.
     Unavailable,
+    /// AutoMix is off or Smooth: the model does not run ([`crate::settings::AutoMixMode::beat_model`]).
+    Unused,
     /// Not downloaded yet; fetched the next time AutoMix measures a song.
     Absent,
     Downloading,
@@ -167,9 +169,12 @@ pub struct Output {
     pub usb: bool,
 }
 
-fn beat_model_now(model: &beat_model::ModelFile) -> BeatModel {
+fn beat_model_now(p: &StoredPrefs, model: &beat_model::ModelFile) -> BeatModel {
     if !beats::AVAILABLE {
         return BeatModel::Unavailable;
+    }
+    if !p.auto_mix.beat_model() {
+        return BeatModel::Unused;
     }
     match model.state() {
         beat_model::State::Absent => BeatModel::Absent,
@@ -208,7 +213,7 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
         eq_status: eq_status(p, out.dac_bit_perfect),
         offload_paused: !out.usb && p.offload && !policy.offload,
         lyrics_sources,
-        beat_model: beat_model_now(model),
+        beat_model: beat_model_now(p, model),
         beat_model_mb: beat_model::SIZE_MB,
     }
 }
@@ -381,6 +386,16 @@ mod tests {
         let said = changed(&p);
         assert!(said.lines().any(|l| l == format!("{} = {other}", switch.name)), "{said}");
         assert!(!said.contains("secret-key"), "{said}");
+    }
+
+    #[test]
+    fn only_dj_runs_the_beat_model() {
+        use crate::settings::AutoMixMode::*;
+        for (auto_mix, want) in [(Off, BeatModel::Unused), (Smooth, BeatModel::Unused), (Dj, BeatModel::Absent)] {
+            let p = StoredPrefs { auto_mix, ..StoredPrefs::default() };
+            let want = if beats::AVAILABLE { want } else { BeatModel::Unavailable };
+            assert_eq!(state(&p, Output::default(), &Default::default()).beat_model, want, "{auto_mix:?}");
+        }
     }
 
     /// Every set of `all`.

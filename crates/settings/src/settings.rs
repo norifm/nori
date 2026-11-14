@@ -331,6 +331,12 @@ impl AutoMixMode {
         self != AutoMixMode::Off
     }
 
+    /// Whether the Beat This! model reads the upcoming songs' ends for their beat grids (a one-time
+    /// download, about 15 s of CPU a song): DJ mixes land on the beat, Smooth's short blends do without.
+    pub fn beat_model(self) -> bool {
+        self == AutoMixMode::Dj
+    }
+
     /// How it mixes; Smooth's limits while off, for a crossfade's beat matching.
     pub fn style(self) -> nori_player::types::MixStyle {
         match self {
@@ -585,11 +591,6 @@ pub struct StoredPrefs {
     /// Stored as a switch before the styles: on reads as Smooth ([`load`]).
     #[setting("autoMix", PICK, default = AutoMixMode::Off, show = K::Choice(AutoMixMode::NAMES), effect = APPLY_AUDIO | REPLAN)]
     pub auto_mix: AutoMixMode,
-    /// "Better beat detection": the Beat This! model on each upcoming song's ends, for AutoMix's beat
-    /// grids. Needs the `neural-beats` feature and a one-time model download; downloaded
-    /// songs are analyzed with it as they arrive.
-    #[setting("autoMixBetterBeats", FLAG, default = false, show = K::Switch)]
-    pub auto_mix_better_beats: bool,
     /// Songs of one album that follow each other in order play gapless, with AutoMix or a crossfade.
     #[setting("crossfadeKeepAlbums", FLAG, default = true, show = K::Switch, effect = REPLAN)]
     pub crossfade_keep_albums: bool,

@@ -225,7 +225,6 @@ private val SERVICE_HINTS: Map<String, Int> = mapOf(
 private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "crossfadeSec" to (R.string.settings_crossfade to R.string.settings_hint_crossfade),
     "autoMix" to (R.string.settings_automix to R.string.settings_hint_automix),
-    "autoMixBetterBeats" to (R.string.settings_better_beats to R.string.settings_hint_better_beats),
     "crossfadeKeepAlbums" to (R.string.settings_keep_albums to R.string.settings_hint_keep_albums),
     "skipExplicit" to (R.string.settings_skip_explicit to R.string.settings_hint_skip_explicit),
     "autoFill" to (R.string.settings_auto_fill to R.string.settings_hint_auto_fill),
@@ -541,17 +540,15 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
 
     /** The line under a setting: only where it says how things stand now, never what the setting does. */
     fun detail(name: String): String = when (name) {
-        "autoMixBetterBeats" -> {
-            val mb = s.beatModelMb.toInt()
-            if (!p.autoMixBetterBeats) str(R.string.settings_better_beats_cost) else when (val model = s.beatModel) {
-                is BeatModel.Failed -> str(R.string.settings_better_beats_failed, str(when (model.why) {
-                    dev.nori.music.ffi.automix.BeatFailure.NETWORK -> R.string.settings_better_beats_network
-                    dev.nori.music.ffi.automix.BeatFailure.WRONG_FILE -> R.string.settings_better_beats_wrong_file
-                    dev.nori.music.ffi.automix.BeatFailure.STORAGE -> R.string.settings_better_beats_storage
-                }))
-                BeatModel.Downloading -> str(R.string.settings_better_beats_downloading, mb)
-                else -> str(R.string.settings_better_beats_cost)
-            }
+        "autoMix" -> when (val model = s.beatModel) {
+            BeatModel.Unavailable, BeatModel.Unused -> ""
+            is BeatModel.Failed -> str(R.string.settings_beat_model_failed, str(when (model.why) {
+                dev.nori.music.ffi.automix.BeatFailure.NETWORK -> R.string.settings_beat_model_network
+                dev.nori.music.ffi.automix.BeatFailure.WRONG_FILE -> R.string.settings_beat_model_wrong_file
+                dev.nori.music.ffi.automix.BeatFailure.STORAGE -> R.string.settings_beat_model_storage
+            }))
+            BeatModel.Downloading -> str(R.string.settings_beat_model_downloading, s.beatModelMb.toInt())
+            else -> str(R.string.settings_beat_model_cost)
         }
         "bitPerfect" -> bitPerfectWords(f.dac)
         "offload" -> if (f.dac.device != null) str(R.string.settings_offload_usb) else if (s.offloadPaused) str(R.string.settings_offload_paused) else ""

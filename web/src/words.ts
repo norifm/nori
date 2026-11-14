@@ -294,7 +294,6 @@ export const W = {
   settingNames: {
     crossfadeSec: "Crossfade",
     autoMix: "AutoMix",
-    autoMixBetterBeats: "Better beat detection",
     crossfadeKeepAlbums: "Keep albums gapless",
     skipExplicit: "Skip explicit songs",
     autoFill: "When the queue ends",

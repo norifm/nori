@@ -77,41 +77,15 @@ impl Core {
         self.queue_downloads(rows)
     }
 
-    /// Marks `ids` for the beat model once downloaded; stored, so it survives a process restart.
-    pub fn download_want_beats(&self, ids: Vec<String>) -> crate::Result<()> {
-        {
-            let mut c = self.db.lock();
-            let tx = c.transaction()?;
-            {
-                let mut add = tx.prepare_cached("INSERT OR IGNORE INTO download_beats(server, id) VALUES(sid(), ?1)")?;
-                for id in &ids {
-                    add.execute([id])?;
-                }
-            }
-            tx.commit()?;
-        }
-        self.downloads.with(|t| t.want_beats(&ids, true));
-        Ok(())
-    }
-
-    /// Downloaded songs lacking a current analysis or (with `beats`) a beat model read, newest first; with
-    /// `beats` they are also marked via [`Core::download_want_beats`].
-    pub fn download_unanalysed(&self, beats: bool) -> crate::Result<Vec<String>> {
+    /// Downloaded songs lacking a current analysis, newest first.
+    pub fn download_unanalysed(&self) -> crate::Result<Vec<String>> {
         let ids: Vec<String> = self.download_ids(true)?.into_iter().filter(|id| crate::queue::analysable(id)).collect();
-        let mut missing: HashSet<String> = self.analysis_missing(ids.clone())?.into_iter().collect();
-        if beats {
-            missing.extend(self.analysis_neural_missing(ids.clone())?);
-        }
-        let ids: Vec<String> = ids.into_iter().filter(|id| missing.contains(id)).collect();
-        if beats {
-            self.download_want_beats(ids.clone())?;
-        }
-        Ok(ids)
+        let missing: HashSet<String> = self.analysis_missing(ids.clone())?.into_iter().collect();
+        Ok(ids.into_iter().filter(|id| missing.contains(id)).collect())
     }
 
     /// Records settled downloads in order: finished, or removed (`finished` false). One transaction.
     pub fn download_settle(&self, ids: Vec<String>, finished: Vec<bool>) -> crate::Result<()> {
-        let gone: Vec<String> = ids.iter().zip(&finished).filter(|(_, f)| !**f).map(|(id, _)| id.clone()).collect();
         // Read first: the in-memory table is asked per list row and must not wait for the statements.
         let mut state: HashMap<&str, HeldState> = {
             let held = self.downloads.held();
@@ -123,10 +97,6 @@ impl Core {
             {
                 let mut done = tx.prepare_cached("UPDATE downloads SET done=1 WHERE server=sid() AND id=?1")?;
                 let mut delete = tx.prepare_cached("DELETE FROM downloads WHERE server=sid() AND id=?1")?;
-                let mut unwanted = tx.prepare_cached("DELETE FROM download_beats WHERE server=sid() AND id=?1")?;
-                for id in &gone {
-                    unwanted.execute([id])?;
-                }
                 for (id, f) in ids.iter().zip(&finished) {
                     let now = state.get_mut(id.as_str()).expect("read above");
                     match (*now, *f) {
@@ -152,25 +122,11 @@ impl Core {
                 held.removed(id);
             }
         }
-        drop(held);
-        self.downloads.with(|t| t.want_beats(&gone, false));
         Ok(())
     }
 }
 
 impl Core {
-    /// Unmarks `ids` for the beat model (read, or no longer wanted).
-    pub fn download_beats_forget(&self, ids: &[String]) -> crate::Result<()> {
-        {
-            let c = self.db.lock();
-            let mut gone = c.prepare_cached("DELETE FROM download_beats WHERE server=sid() AND id=?1")?;
-            for id in ids {
-                gone.execute([id])?;
-            }
-        }
-        self.downloads.with(|t| t.want_beats(ids, false));
-        Ok(())
-    }
 
     /// The songs being or waiting to be downloaded (not failed), by id, without reading the songs.
     pub fn download_waiting(&self) -> crate::Result<std::collections::HashSet<String>> {
@@ -203,12 +159,6 @@ impl Core {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
-    /// Whether the beat model reads songs downloaded now: with better beat detection on, in a build
-    /// that has it.
-    pub fn download_beats(&self) -> bool {
-        nori_player::automix::beats::AVAILABLE && self.session.settings.prefs(|p| p.auto_mix.on() && p.auto_mix_better_beats)
-    }
-
     /// What downloaded songs still wait for, for the notification; `now` is the platform clock.
     pub fn download_processing(&self, now: i64) -> Option<Processing> {
         self.downloads.with(|t| t.processing_at(now))
@@ -246,17 +196,13 @@ impl Core {
                 let rows = st.query_map([], |r| r.get(0))?;
                 rows.filter_map(|r| r.ok()).collect()
             };
-            c.execute("DELETE FROM download_beats WHERE server=sid() AND id IN (SELECT id FROM downloads WHERE server=sid() AND done=0)", [])?;
             c.execute("DELETE FROM downloads WHERE server=sid() AND done=0", [])?;
             let mut held = self.downloads.held();
             ids.iter().for_each(|id| held.removed(id));
             ids
         };
         // After releasing the database: the tracker reads it under its own lock.
-        self.downloads.with(|t| {
-            ids.iter().for_each(|id| _ = t.forget(id));
-            t.want_beats(&ids, false);
-        });
+        self.downloads.with(|t| ids.iter().for_each(|id| _ = t.forget(id)));
         Ok(ids)
     }
 
@@ -392,34 +338,6 @@ mod tests {
             assert_eq!((q.fresh, q.again), (vec!["x".to_string(), "z".into()], vec!["y".to_string()]));
             assert_eq!(core.downloads(false).unwrap().len(), 3);
         }
-    }
-
-    #[test]
-    fn beat_marks_last_until_read() {
-        let core = core();
-        let wants = |id: &str| core.downloads.with(|t| t.wants_beats(id));
-        core.download_queue(vec![song("a"), song("b"), song("c")]).unwrap();
-        core.download_want_beats(vec!["a".into(), "b".into(), "c".into()]).unwrap();
-        assert!(wants("a") && wants("b"));
-        let rows = |core: &Core| {
-            let c = core.db.lock();
-            let mut st = c.prepare("SELECT id FROM download_beats ORDER BY id").unwrap();
-            st.query_map([], |r| r.get::<_, String>(0)).unwrap().map(Result::unwrap).collect::<Vec<_>>()
-        };
-        assert_eq!(rows(&core), ["a", "b", "c"]);
-        let reopened = Downloads::load(&core.db).unwrap();
-        assert!(reopened.with(|t| t.wants_beats("c")), "loaded with the table");
-        core.download_settle(vec!["b".into()], vec![false]).unwrap();
-        assert!(!wants("b"));
-        core.download_cancel_all().unwrap();
-        assert!(!wants("a") && !wants("c"));
-        assert!(rows(&core).is_empty());
-        core.download_queue(vec![song("d")]).unwrap();
-        core.download_want_beats(vec!["d".into()]).unwrap();
-        core.download_settle(vec!["d".into()], vec![true]).unwrap();
-        assert!(wants("d"), "downloaded, not read yet");
-        core.download_beats_forget(&["d".to_string()]).unwrap();
-        assert!(!wants("d") && rows(&core).is_empty(), "read");
     }
 
     #[test]

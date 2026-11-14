@@ -53,13 +53,13 @@
     <string name="settings_automix">AutoMix</string>
     <string name="settings_automix_smooth">Smooth</string>
     <string name="settings_automix_dj">DJ</string>
-    <string name="settings_better_beats">Better beat detection</string>
-    <string name="settings_better_beats_cost">Uses more battery while songs are measured</string>
-    <string name="settings_better_beats_downloading">Downloading (about %1$d MB)…</string>
-    <string name="settings_better_beats_network">the network failed</string>
-    <string name="settings_better_beats_wrong_file">the file that arrived was not the right one</string>
-    <string name="settings_better_beats_storage">it could not be saved</string>
-    <string name="settings_better_beats_failed">The download didn\'t work (%1$s). It tries again at the next song.</string>
+    <!-- Under AutoMix in DJ mode: the beat model it downloads once and runs on the upcoming songs. -->
+    <string name="settings_beat_model_cost">DJ uses more battery while songs are measured</string>
+    <string name="settings_beat_model_downloading">Downloading the beat model (about %1$d MB)…</string>
+    <string name="settings_beat_model_network">the network failed</string>
+    <string name="settings_beat_model_wrong_file">the file that arrived was not the right one</string>
+    <string name="settings_beat_model_storage">it could not be saved</string>
+    <string name="settings_beat_model_failed">The beat model\'s download didn\'t work (%1$s). It tries again at the next song.</string>
     <string name="settings_measured">Measured songs</string>
     <plurals name="settings_measured_detail">
         <item quantity="one">%1$d song measured for tempo and beats.</item>
@@ -297,7 +297,6 @@
     <string name="settings_download_library">Download the whole library</string>
     <string name="settings_download_library_detail">Every song, at the download quality.</string>
     <string name="settings_download">Download</string>
-    <!-- Better beat detection's model over downloaded songs, after their audio is saved. -->
     <string name="settings_analyse_downloads">Analyze downloaded songs</string>
     <string name="settings_analyse_downloads_detail">Downloads not analyzed yet, for AutoMix and lyrics sync. One song at a time.</string>
     <string name="settings_hint_analyse_downloads">analysis automix measure beats lyrics sync downloads</string>
@@ -386,7 +385,6 @@
     <string name="settings_hint_crossfade">One song fades into the next</string>
     <string name="settings_hint_keep_albums">No mixing between songs of the same album</string>
     <string name="settings_hint_automix">Blends songs matching the beat: smooth, or DJ mixes with loops, tempo bends, risers and double drops</string>
-    <string name="settings_hint_better_beats">A neural beat tracker for AutoMix, downloaded once (Beat This!)</string>
     <string name="settings_hint_measured">Tempo and beats, measured on this device</string>
     <string name="settings_hint_skip_explicit">Songs your server marks explicit</string>
     <string name="settings_hint_auto_fill">Keep playing, autofill, songs, albums, more music</string>

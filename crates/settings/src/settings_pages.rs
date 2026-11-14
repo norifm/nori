@@ -3,7 +3,7 @@
 //! settings a client offers and when a row applies are decided here once.
 
 use crate::settings::{GainMode, StoredPrefs};
-use crate::settings_model::{value_of, BeatModel, SettingSpec, SettingsState};
+use crate::settings_model::{value_of, SettingSpec, SettingsState};
 
 /// Which client the settings are drawn by: each offers what its platform has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -333,9 +333,6 @@ impl Page<'_> {
             row(RowItem::Note { note: SettingsNote::HeldByDac }).shown(s.untouched),
             self.chips("autoMix").enabled(live),
         ];
-        if s.beat_model != BeatModel::Unavailable {
-            between.push(self.setting("autoMixBetterBeats").under().enabled(live && p.auto_mix.on()));
-        }
         if !self.web() {
             between.push(row(RowItem::Action { action: SettingsAction::MeasureAgain }).under().enabled(p.auto_mix.on() && self.f.analysed > 0));
         }
@@ -596,7 +593,7 @@ mod tests {
         // The equalizer's own screen has these, and the Plugins page its switch.
         let elsewhere = ["eq", "eqMode", "eqPreampDb", "limiterThresholdDb", "mono", "limiter", "eqLayout", "pluginsOff"];
         for s in crate::settings_model::specs() {
-            if elsewhere.contains(&s.name.as_str()) || (s.name == "autoMixBetterBeats" && !nori_player::automix::beats::AVAILABLE) {
+            if elsewhere.contains(&s.name.as_str()) {
                 continue;
             }
             assert!(on_pages.contains(&s.name), "{} is on no page", s.name);

@@ -1063,14 +1063,11 @@ pub fn progress(p: &nori_core::transfers::Progress) -> [String; 3] {
         Progress::Processing { work: w, .. } => {
             let title = if w.lyrics > 0 {
                 format!("Finding lyrics for {}…", songs(w.lyrics as usize))
-            } else if w.analysing > 0 {
-                format!("Analyzing {}…", songs(w.analysing as usize))
             } else {
-                format!("Detecting beats for {}…", songs(w.beats as usize))
+                format!("Analyzing {}…", songs(w.analysing as usize))
             };
             let analysing = if w.lyrics > 0 && w.analysing > 0 { format!("{} to analyze", w.analysing) } else { String::new() };
-            let beats = if (w.lyrics > 0 || w.analysing > 0) && w.beats > 0 { format!("{} for beat detection", w.beats) } else { String::new() };
-            [title, join(&[analysing, beats]), time_left(w.eta_s)]
+            [title, analysing, time_left(w.eta_s)]
         }
     }
 }
@@ -1097,7 +1094,7 @@ mod tests {
         assert_eq!(progress(&Progress::Fetching(album)), ["Downloading “Kind”", "3 of 12 · Blue", ""]);
         let waiting = Notice { kind: NoticeKind::Waiting, position: 0, total: 4, speed_bps: 500, eta_s: -1, ..Default::default() };
         assert_eq!(progress(&Progress::Fetching(waiting)), ["Waiting for a network", "0 of 4", ""]);
-        let work = Processing { lyrics: 2, analysing: 3, beats: 0, eta_s: 12, permille: 400 };
+        let work = Processing { lyrics: 2, analysing: 3, eta_s: 12, permille: 400 };
         assert_eq!(progress(&Progress::Processing { work, after_fetching: true }), ["Finding lyrics for 2 songs…", "3 to analyze", "12 s left"]);
     }
 

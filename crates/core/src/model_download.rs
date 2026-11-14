@@ -16,7 +16,7 @@ const PIECE_TIMEOUT_MS: u32 = 90_000;
 pub fn ensure(client: &crate::client::Client) -> Option<PathBuf> {
     let settings = &client.session().settings;
     let model = &settings.model;
-    let wanted = || settings.prefs(|p| p.auto_mix.on() && p.auto_mix_better_beats);
+    let wanted = || settings.prefs(|p| p.auto_mix.beat_model());
     if !wanted() {
         return None;
     }
@@ -130,7 +130,7 @@ mod tests {
         let (c, fake) = crate::client::tests::client(Default::default());
         let settings = &c.session().settings;
         let mut p = settings.open(&dir.join("app.db").to_string_lossy()).unwrap();
-        (p.auto_mix, p.auto_mix_better_beats) = (true, true);
+        p.auto_mix = crate::settings::AutoMixMode::Dj;
         settings.put(p);
         settings.model.set_home(&dir.join("nori.db").to_string_lossy());
         *fake.metered.lock() = true;

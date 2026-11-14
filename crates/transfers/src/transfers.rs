@@ -55,17 +55,16 @@ pub const NEW_BATCH: i32 = 1;
 pub const DRAINED: i32 = 2;
 pub const MARKS: i32 = 4;
 
-/// Work after the bytes. Lyrics run in one lane, analysis and beats share another (one decode feeds
-/// both); each lane takes one song at a time, the two lanes in parallel.
+/// Work after the bytes, each in its own lane; a lane takes one song at a time, the two lanes in
+/// parallel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Work {
     Lyrics,
     Analysis,
-    Beats,
 }
 
 impl Work {
-    const ALL: [Work; 3] = [Work::Lyrics, Work::Analysis, Work::Beats];
+    const ALL: [Work; 2] = [Work::Lyrics, Work::Analysis];
 
     fn lane(self) -> usize {
         (self != Work::Lyrics) as usize
@@ -74,11 +73,11 @@ impl Work {
     /// How long one song's step may run before it is given up. Generous: steps run at the lowest
     /// priority, so this only catches a stuck step.
     fn limit_ms(self) -> i64 {
-        [30_000, 180_000, 600_000][self as usize]
+        [30_000, 180_000][self as usize]
     }
 
     fn guess_ms(self) -> f64 {
-        [3_000.0, 5_000.0, 40_000.0][self as usize]
+        [3_000.0, 5_000.0][self as usize]
     }
 }
 
@@ -88,28 +87,27 @@ pub enum Phase {
     Failed,
     Done,
     /// Saved, with work still pending, by [`Work`].
-    Processing([bool; 3]),
+    Processing([bool; 2]),
 }
 
 impl Phase {
-    /// The phase the screens show; processing shows lyrics, else analysis, else beats.
+    /// The phase the screens show; processing shows lyrics, else analysis.
     pub fn shown(self) -> DownloadPhase {
         match self {
             Phase::Downloading => DownloadPhase::Downloading,
             Phase::Failed => DownloadPhase::Failed,
             Phase::Done => DownloadPhase::Done,
-            Phase::Processing([true, ..]) => DownloadPhase::FindingLyrics,
-            Phase::Processing([_, true, _]) => DownloadPhase::Analysing,
-            Phase::Processing(_) => DownloadPhase::DetectingBeats,
+            Phase::Processing([true, _]) => DownloadPhase::FindingLyrics,
+            Phase::Processing(_) => DownloadPhase::Analysing,
         }
     }
 
-    fn processing(pending: [bool; 3]) -> Phase {
+    fn processing(pending: [bool; 2]) -> Phase {
         if pending.contains(&true) { Phase::Processing(pending) } else { Phase::Done }
     }
 
-    fn pending(self) -> [bool; 3] {
-        if let Phase::Processing(p) = self { p } else { [false; 3] }
+    fn pending(self) -> [bool; 2] {
+        if let Phase::Processing(p) = self { p } else { [false; 2] }
     }
 
     fn waits(self, work: Work) -> bool {
@@ -136,29 +134,11 @@ pub struct Saved {
     pub measuring: bool,
     /// Has an analysis of the current version.
     pub analysed: bool,
-    /// The beat model is available and enabled.
-    pub model_on: bool,
-    /// The beat model is wanted for this download (it was on when it was asked for).
-    pub beats_wanted: bool,
-    /// The model has read both ends of the current analysis.
-    pub beats_done: bool,
 }
 
-/// What a saved song still needs after its bytes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Needs {
-    pub analysis: bool,
-    pub beats: bool,
-}
-
-/// What `s` needs once saved. Always an analysis (also used for lyrics sync and untagged loudness); the
-/// beat model when on and wanted and not done for the current analysis.
-pub fn needs(s: Saved) -> Needs {
-    if !s.analysable {
-        return Needs::default();
-    }
-    let fresh = s.measuring || !s.analysed;
-    Needs { analysis: fresh, beats: s.model_on && s.beats_wanted && (fresh || !s.beats_done) }
+/// Whether `s` needs an analysis once saved (also used for lyrics sync and untagged loudness).
+pub fn needs_analysis(s: Saved) -> bool {
+    s.analysable && (s.measuring || !s.analysed)
 }
 
 /// Monotonic ms for timing steps.
@@ -170,7 +150,6 @@ fn mono_ms() -> i64 {
 struct ToCome {
     bytes: f64,
     lyrics: i32,
-    beats: i32,
     analysing: bool,
 }
 
@@ -441,9 +420,9 @@ impl Countdown {
 /// seconds per song. `tail`: an analysis measured while downloading may run past the last byte.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 struct After {
-    waiting: [f64; 3],
-    to_come: [f64; 3],
-    per: [f64; 3],
+    waiting: [f64; 2],
+    to_come: [f64; 2],
+    per: [f64; 2],
     tail: bool,
 }
 
@@ -515,7 +494,6 @@ pub struct RowFacts {
 pub struct Processing {
     pub lyrics: i32,
     pub analysing: i32,
-    pub beats: i32,
     pub eta_s: i64,
     /// The work finished of this run's work so far, 0..1000: the notification's bar.
     pub permille: i32,
@@ -587,8 +565,6 @@ pub struct Tracker {
     info: HashMap<String, Info>,
     /// Songs being analysed as their bytes arrive.
     analysing: HashSet<String>,
-    /// Downloads the beat model reads once saved (mirrors the download_beats table).
-    beats_wanted: HashSet<String>,
     /// Waiters on mark changes, woken after the lock is released when `wake` is set.
     wakers: Vec<Waker>,
     wake: bool,
@@ -601,7 +577,7 @@ pub struct Tracker {
     /// Bytes received in this process (a resumed download's earlier bytes excluded).
     received: i64,
     rate: Throughput,
-    paces: [Pace; 3],
+    paces: [Pace; 2],
     lanes: [Lane; 2],
     /// Songs saved in this process, and how many needed an analysis from disk.
     saved: i64,
@@ -717,8 +693,8 @@ impl Tracker {
     }
 
     /// Saved songs waiting for each [`Work`].
-    fn processing(&self) -> [i32; 3] {
-        let mut n = [0; 3];
+    fn processing(&self) -> [i32; 2] {
+        let mut n = [0; 2];
         for m in self.marks.values() {
             for w in Work::ALL {
                 n[w as usize] += m.0.waits(w) as i32;
@@ -728,16 +704,16 @@ impl Tracker {
     }
 
     /// The work left after the bytes: the saved songs', plus `to_come` songs needing lyrics (and an
-    /// analysis at the observed from-disk share) and `beats_to_come` needing the model. `tail`: a
-    /// downloading song is being analysed as it arrives.
-    fn after(&self, to_come: i32, beats_to_come: i32, tail: bool) -> After {
+    /// analysis at the observed from-disk share). `tail`: a downloading song is being analysed as it
+    /// arrives.
+    fn after(&self, to_come: i32, tail: bool) -> After {
         let n = self.processing();
         // Songs analysed while downloading only wait for a short tail, not a full analysis.
         let arriving = self.marks.iter().filter(|(id, m)| m.0.waits(Work::Analysis) && self.analysing.contains(*id)).count() as f64;
         let share = (self.from_disk as f64 + FROM_DISK_GUESS) / (self.saved as f64 + 1.0);
         After {
-            waiting: [n[0] as f64, (n[1] as f64 - arriving).max(0.0), n[2] as f64],
-            to_come: [to_come as f64, to_come as f64 * share, beats_to_come as f64],
+            waiting: [n[0] as f64, (n[1] as f64 - arriving).max(0.0)],
+            to_come: [to_come as f64, to_come as f64 * share],
             per: Work::ALL.map(|w| self.paces[w as usize].per_song_s(w)),
             tail: tail || arriving > 0.0,
         }
@@ -787,7 +763,7 @@ impl Tracker {
         let phase = match state {
             DOWNLOADING => Some(Phase::Downloading),
             // Its lyrics are looked up; other needs come later through `plan`.
-            COMPLETED => Some(Phase::processing([true, self.analysing.contains(id), false])),
+            COMPLETED => Some(Phase::processing([true, self.analysing.contains(id)])),
             FAILED => Some(Phase::Failed),
             _ => None,
         };
@@ -825,7 +801,7 @@ impl Tracker {
     }
 
     /// Work arrived; an idle lane starts its idle timer at `now` (monotonic).
-    fn entered(&mut self, pending: [bool; 3], now: i64) {
+    fn entered(&mut self, pending: [bool; 2], now: i64) {
         for (lane, came) in [(0, pending[0]), (1, pending[1])] {
             if came && self.lanes[lane].step.is_none() {
                 self.lanes[lane].since = now;
@@ -837,7 +813,7 @@ impl Tracker {
     /// counts down the remaining processing (speed 0, -1 when nothing is left).
     fn speed_eta_at(&mut self, now: i64) -> (i64, i64) {
         if self.batch.open.is_empty() {
-            let after = self.after(0, 0, false);
+            let after = self.after(0, false);
             let fresh = time_left(Some(0.0), &after);
             // The longest step running could be about to end: the count may go that far below the estimate.
             let running = self.lanes.iter().filter_map(|l| l.step.as_ref().map(|(_, w, _)| after.per[*w as usize])).fold(None, |m: Option<f64>, p| Some(m.map_or(p, |m| m.max(p))));
@@ -910,16 +886,16 @@ impl Tracker {
 
     /// Adds `needs` to saved song `id`'s processing. `saved`: Some(from_disk) for a fresh download (teaches
     /// the from-disk share), None for a song reprocessed later.
-    pub fn plan(&mut self, id: &str, needs: Needs, saved: Option<bool>) -> bool {
-        self.plan_at(id, needs, saved, mono_ms())
+    pub fn plan(&mut self, id: &str, analysis: bool, saved: Option<bool>) -> bool {
+        self.plan_at(id, analysis, saved, mono_ms())
     }
 
-    fn plan_at(&mut self, id: &str, needs: Needs, saved: Option<bool>, mono: i64) -> bool {
+    fn plan_at(&mut self, id: &str, analysis: bool, saved: Option<bool>, mono: i64) -> bool {
         if let Some(from_disk) = saved {
             self.saved += 1;
             self.from_disk += from_disk as i64;
         }
-        if !needs.analysis && !needs.beats {
+        if !analysis {
             return false;
         }
         let (phase, at) = match self.marks.get(id) {
@@ -928,9 +904,9 @@ impl Tracker {
             Some(_) => return false,
             None => (Phase::Done, self.platform_now().unwrap_or(0)),
         };
-        let [lyrics, analysing, beats] = phase.pending();
-        self.entered([false, true, false], mono);
-        self.mark(id, Phase::processing([lyrics, analysing || needs.analysis, beats || needs.beats]), at)
+        let [lyrics, _] = phase.pending();
+        self.entered([false, true], mono);
+        self.mark(id, Phase::processing([lyrics, true]), at)
     }
 
     /// Gives up steps past their [`Work::limit_ms`] and releases songs in a lane idle for
@@ -973,7 +949,7 @@ impl Tracker {
             };
             next = Some(next.map_or(wait, |n| n.min(wait)));
         }
-        if self.processing() == [0; 3] { -1 } else { next.unwrap_or(0) }
+        if self.processing() == [0; 2] { -1 } else { next.unwrap_or(0) }
     }
 
     /// [`Tracker::expire`] at the platform's `now`.
@@ -984,8 +960,8 @@ impl Tracker {
 
     /// The pending processing at the platform's `now`; None when there is none.
     pub fn processing_at(&mut self, now: i64) -> Option<Processing> {
-        let [lyrics, analysing, beats] = self.processing();
-        let waiting = lyrics + analysing + beats;
+        let [lyrics, analysing] = self.processing();
+        let waiting = lyrics + analysing;
         if waiting == 0 {
             self.processed = 0;
             return None;
@@ -993,7 +969,7 @@ impl Tracker {
         self.saw(now);
         let (_, eta_s) = self.speed_eta_at(now);
         let permille = (self.processed as i64 * 1000 / (self.processed + waiting) as i64) as i32;
-        Some(Processing { lyrics, analysing, beats, eta_s, permille })
+        Some(Processing { lyrics, analysing, eta_s, permille })
     }
 
     /// The marks changed since the last call, with their phase now.
@@ -1006,21 +982,6 @@ impl Tracker {
             m.at.push(at);
         }
         m
-    }
-
-    /// Replaces or changes the set of downloads the beat model reads once saved.
-    pub fn want_beats(&mut self, ids: &[String], on: bool) {
-        for id in ids {
-            if on {
-                self.beats_wanted.insert(id.clone());
-            } else {
-                self.beats_wanted.remove(id);
-            }
-        }
-    }
-
-    pub fn wants_beats(&self, id: &str) -> bool {
-        self.beats_wanted.contains(id)
     }
 
     /// An earlier process left `id` failed: marked so, unless this one already marked it. Returns its
@@ -1105,15 +1066,13 @@ impl Tracker {
 
     /// What the batch's `total` songs (`listed` of them known to the platform) still need: the bytes,
     /// each open song's length (else its scaled estimate) minus its bytes, and the average song size for
-    /// unsized and unreported songs; the lyrics lookups and beat model runs; whether one is analysed as
-    /// it arrives.
+    /// unsized and unreported songs; the lyrics lookups; whether one is analysed as it arrives.
     fn to_come(&self, total: i32, listed: i32) -> ToCome {
         let ratio = if self.sized_estimate > 0 { (self.sized_actual as f64 / self.sized_estimate as f64).clamp(0.5, 2.0) } else { 1.0 };
         let (mut remaining, mut known_sum, mut known_n, mut sizeless, mut unsized_had) = (0f64, self.batch.done_bytes as f64, self.batch.done_sized, 0i64, 0i64);
-        let (mut lyrics_to_come, mut beats_to_come, mut analysing) = (0, 0, false);
+        let (mut lyrics_to_come, mut analysing) = (0, false);
         for id in &self.batch.open {
             lyrics_to_come += 1;
-            beats_to_come += self.beats_wanted.contains(id) as i32;
             analysing |= self.analysing.contains(id);
             let (length, bytes) = self.open_slots().find(|s| s.id == *id).map_or((0, 0), |s| (s.length, s.bytes));
             let size = if length > 0 { length as f64 } else { self.info.get(id).map_or(0, |i| i.estimate) as f64 * ratio };
@@ -1129,7 +1088,7 @@ impl Tracker {
         let avg = if known_n == 0 { UNKNOWN_SONG_BYTES } else { known_sum / known_n as f64 };
         let unreported = (total - self.batch.finished() - listed).max(0);
         remaining += (sizeless as f64 * avg - unsized_had as f64).max(0.0) + unreported as f64 * avg;
-        ToCome { bytes: remaining, lyrics: lyrics_to_come + unreported, beats: beats_to_come, analysing }
+        ToCome { bytes: remaining, lyrics: lyrics_to_come + unreported, analysing }
     }
 
     /// Updates the notification facts for `listed` downloads the platform knows (`waiting`: no network).
@@ -1158,8 +1117,8 @@ impl Tracker {
         self.speed_bps = if idle { 0 } else { rate as i64 };
         let permille = (self.batch.fraction(in_flight) * 1000.0) as i32;
         let position = (self.batch.finished() + 1).min(total.max(1));
-        let ToCome { bytes: remaining, lyrics, beats, analysing } = self.to_come(total, listed);
-        let after = self.after(lyrics, beats, analysing);
+        let ToCome { bytes: remaining, lyrics, analysing } = self.to_come(total, listed);
+        let after = self.after(lyrics, analysing);
         self.saw(now);
         let download_s = if remaining < 1.0 {
             Some(0.0)
@@ -1363,9 +1322,7 @@ impl Downloads {
     pub fn load(db: &Arc<Mutex<Connection>>) -> nori_model::Result<Downloads> {
         let c = db.lock();
         let held = Held::load(&c)?;
-        let mut st = c.prepare("SELECT id FROM download_beats WHERE server=sid()")?;
-        let beats_wanted = st.query_map([], |r| r.get(0))?.filter_map(|r| r.ok()).collect();
-        let tracker = Tracker { db: Some(db.clone()), beats_wanted, ..Tracker::default() };
+        let tracker = Tracker { db: Some(db.clone()), ..Tracker::default() };
         Ok(Downloads { tracker: Mutex::new(tracker), held: Mutex::new(held) })
     }
 
@@ -1627,8 +1584,8 @@ mod tests {
         t.followed("a", DOWNLOADING, 0);
         assert_eq!(t.phase("a"), Some(DownloadPhase::Downloading));
         t.followed("a", COMPLETED, 1_000);
-        assert_eq!(t.marks["a"], (Phase::Processing([true, true, false]), 1_000));
-        assert!(t.plan("a", Needs { analysis: true, beats: true }, Some(false)));
+        assert_eq!(t.marks["a"], (Phase::Processing([true, true]), 1_000));
+        assert!(t.plan("a", true, Some(false)));
         assert_eq!(t.phase("a"), Some(DownloadPhase::FindingLyrics));
         assert!(t.work_done("a", Work::Lyrics));
         assert_eq!(t.phase("a"), Some(DownloadPhase::Analysing));
@@ -1636,8 +1593,6 @@ mod tests {
         t.analysing_ended("a", false);
         assert!(t.waits("a", Work::Analysis));
         assert!(t.work_done("a", Work::Analysis));
-        assert_eq!(t.phase("a"), Some(DownloadPhase::DetectingBeats));
-        assert!(t.work_done("a", Work::Beats));
         assert_eq!(t.marks["a"], (Phase::Done, 1_000), "done, at its saved time");
         assert!(!t.work_done("a", Work::Lyrics), "done stays done");
 
@@ -1653,9 +1608,9 @@ mod tests {
         assert_eq!(t.sections(&[], &["c".to_string()], |s: &String| s.as_str())[0], ["c"], "listed as active");
 
         // A downloaded song reprocessed later: no lyrics step.
-        assert!(t.plan("d", Needs { analysis: true, beats: false }, None));
+        assert!(t.plan("d", true, None));
         assert_eq!(t.phase("d"), Some(DownloadPhase::Analysing));
-        assert!(!t.plan("e", Needs::default(), None), "nothing to do: no mark");
+        assert!(!t.plan("e", false, None), "nothing to do: no mark");
         assert_eq!(t.phase("e"), None);
 
         // After the bytes, the time left follows each lane's work, and step times are learned (instant
@@ -1670,17 +1625,17 @@ mod tests {
         t.notice(2, false, 2_000);
         for id in ["ly-a", "ly-b"] {
             t.followed(id, COMPLETED, 2_000);
-            // Neither was measured as it came; both are wanted by the beat model.
-            t.plan_at(id, Needs { analysis: true, beats: true }, Some(true), 0);
+            // Neither was measured as it came.
+            t.plan_at(id, true, Some(true), 0);
         }
         assert_eq!((t.saved, t.from_disk), (2, 2));
         let s = t.summary().unwrap();
         assert_eq!((s.title, s.done), (SummaryTitle::Downloaded, 2));
-        assert_eq!(t.processing(), [2, 2, 2], "saved, not done");
-        // At the guesses: two lookups beside two analyses and two model runs.
+        assert_eq!(t.processing(), [2, 2], "saved, not done");
+        // At the guesses: two lookups beside two analyses.
         t.notice(0, false, 3_000);
-        assert_eq!(t.eta_s, (2.0 * 5.0 + 2.0f64 * 40.0) as i64);
-        // Song by song: each lookup takes 4 s, each analysis 2 s, each model run 20 s.
+        assert_eq!(t.eta_s, (2.0f64 * 5.0) as i64);
+        // Song by song: each lookup takes 4 s, each analysis 2 s.
         let mut clock = 0;
         let mut step = |t: &mut Tracker, id: &str, w: Work, ms: i64| {
             t.working_at(id, w, clock);
@@ -1689,89 +1644,79 @@ mod tests {
         };
         step(&mut t, "ly-a", Work::Lyrics, 4_000);
         step(&mut t, "ly-a", Work::Analysis, 2_000);
-        assert_eq!(t.processing(), [1, 1, 2], "the counts go down song by song");
-        step(&mut t, "ly-a", Work::Beats, 20_000);
+        assert_eq!(t.processing(), [1, 1], "the counts go down song by song");
         assert_eq!(t.marks["ly-a"].0, Phase::Done);
         step(&mut t, "ly-b", Work::Lyrics, 4_000);
         step(&mut t, "ly-b", Work::Analysis, 2_000);
-        assert_eq!(t.processing(), [0, 0, 1]);
-        assert_eq!(t.phase("ly-b"), Some(DownloadPhase::DetectingBeats), "detecting beats");
-        step(&mut t, "ly-b", Work::Beats, 20_000);
-        assert_eq!(t.processing(), [0, 0, 0]);
-        // Learned: 8 s over two lookups, 4 s over two analyses, 40 s over two model runs, each with its guess.
+        assert_eq!(t.processing(), [0, 0]);
+        // Learned: 8 s over two lookups, 4 s over two analyses, each with its guess.
         let per = |t: &Tracker, w: Work| t.paces[w as usize].per_song_s(w);
         assert!((per(&t, Work::Lyrics) - (8.0 + 2.0 * 3.0) / 4.0).abs() < 1e-9);
         assert!((per(&t, Work::Analysis) - (4.0 + 2.0 * 5.0) / 4.0).abs() < 1e-9);
-        assert!((per(&t, Work::Beats) - (40.0 + 2.0 * 40.0) / 4.0).abs() < 1e-9);
         // The next batch's allowance is the learned one.
         t.followed("ly-c", COMPLETED, 60_000);
-        t.plan("ly-c", Needs { analysis: true, beats: true }, Some(true));
-        let a = t.after(0, 0, false);
-        assert_eq!(a.waiting, [1.0, 1.0, 1.0]);
-        assert!((time_left(Some(0.0), &a) - (per(&t, Work::Analysis) + per(&t, Work::Beats))).abs() < 1e-9);
+        t.plan("ly-c", true, Some(true));
+        let a = t.after(0, false);
+        assert_eq!(a.waiting, [1.0, 1.0]);
+        assert!((time_left(Some(0.0), &a) - per(&t, Work::Analysis).max(per(&t, Work::Lyrics))).abs() < 1e-9);
         for w in Work::ALL {
             t.work_done("ly-c", w);
         }
         let before = per(&t, Work::Lyrics);
         for i in 0..20 {
             let id = format!("ly-d{i}");
-            t.marks.insert(id.clone(), (Phase::Processing([true, false, false]), 0));
+            t.marks.insert(id.clone(), (Phase::Processing([true, false]), 0));
             t.work_done(&id, Work::Lyrics);
         }
         assert!(per(&t, Work::Lyrics) < before / 4.0, "lookups ended at once weigh it down: {}", per(&t, Work::Lyrics));
         // An analysis found done without a step (measured as it came) says nothing of how long one takes.
         let analysis = per(&t, Work::Analysis);
-        t.marks.insert("ly-e".into(), (Phase::Processing([false, true, false]), 0));
+        t.marks.insert("ly-e".into(), (Phase::Processing([false, true]), 0));
         t.work_done("ly-e", Work::Analysis);
         assert_eq!(per(&t, Work::Analysis), analysis);
 
         // Processing facts follow the marks.
         let mut t = Tracker::default();
         assert!(t.processing_at(0).is_none());
-        t.plan("a", Needs { analysis: true, beats: true }, None);
-        t.plan("b", Needs { analysis: false, beats: true }, None);
+        t.plan("a", true, None);
+        t.plan("b", true, None);
         let p = t.processing_at(1_000).unwrap();
-        assert_eq!((p.lyrics, p.analysing, p.beats), (0, 1, 2));
+        assert_eq!((p.lyrics, p.analysing), (0, 2));
         assert!(p.eta_s > 0);
         assert_eq!(p.permille, 0, "nothing done yet");
         let moved = t.marks_changed();
         let b = moved.ids.iter().position(|i| i == "b").unwrap();
-        assert!(moved.ids.contains(&"a".to_string()) && moved.phases[b] == Some(DownloadPhase::DetectingBeats));
+        assert!(moved.ids.contains(&"a".to_string()) && moved.phases[b] == Some(DownloadPhase::Analysing));
         t.work_done("a", Work::Analysis);
-        assert_eq!(t.processing_at(1_500).unwrap().permille, 333, "one of three steps done");
-        t.work_done("a", Work::Beats);
+        assert_eq!(t.processing_at(1_500).unwrap().permille, 500, "one of two steps done");
         t.work_done("b", Work::Analysis);
-        t.work_done("b", Work::Beats);
         assert_eq!(t.marks["b"].0, Phase::Done);
         assert!(t.processing_at(2_000).is_none());
         // The next run's bar starts empty.
-        t.plan("c", Needs { analysis: true, beats: false }, None);
+        t.plan("c", true, None);
         assert_eq!(t.processing_at(3_000).unwrap().permille, 0);
     }
 
     #[test]
     fn steps() {
         let base = Saved { analysable: true, ..Saved::default() };
-        let needs_of = |s: Saved| (needs(s).analysis, needs(s).beats);
-        assert_eq!(needs_of(Saved { measuring: true, ..base }), (true, false), "streaming analysis in progress");
-        assert_eq!(needs_of(base), (true, false), "no current analysis");
-        assert_eq!(needs_of(Saved { analysed: true, ..base }), (false, false));
-        let ml = Saved { model_on: true, beats_wanted: true, ..base };
-        assert_eq!(needs_of(ml), (true, true));
-        assert_eq!(needs_of(Saved { analysed: true, ..ml }), (false, true));
-        assert_eq!(needs_of(Saved { analysed: true, beats_done: true, ..ml }), (false, false));
-        assert_eq!(needs_of(Saved { analysed: true, beats_done: true, measuring: true, ..ml }), (true, true), "measured again: its ends too");
-        assert_eq!(needs_of(Saved { beats_wanted: false, ..ml }), (true, false), "not wanted for this download");
-        assert_eq!(needs_of(Saved { model_on: false, ..ml }), (true, false), "the model is off");
-        assert_eq!(needs_of(Saved { analysable: false, ..ml }), (false, false), "a radio stream");
+        for (saved, want, why) in [
+            (Saved { measuring: true, ..base }, true, "streaming analysis in progress"),
+            (base, true, "no current analysis"),
+            (Saved { analysed: true, ..base }, false, "analysed"),
+            (Saved { analysed: true, measuring: true, ..base }, true, "measured again"),
+            (Saved { analysable: false, ..Saved::default() }, false, "a radio stream"),
+        ] {
+            assert_eq!(needs_analysis(saved), want, "{why}");
+        }
 
         // A timed-out step is given up; an idle lane is released; a slow live step finishes and is timed.
         let mut t = Tracker::default();
         for id in ["ex-a", "ex-b"] {
             t.followed(id, COMPLETED, 0);
-            t.plan_at(id, Needs { analysis: true, beats: id == "ex-a" }, Some(true), 0);
+            t.plan_at(id, true, Some(true), 0);
         }
-        assert_eq!(t.processing(), [2, 2, 1]);
+        assert_eq!(t.processing(), [2, 2]);
         // A lookup that never answers, and an analysis that runs.
         t.working_at("ex-a", Work::Lyrics, 0);
         t.working_at("ex-a", Work::Analysis, 0);
@@ -1783,17 +1728,14 @@ mod tests {
         assert!(t.waits("ex-b", Work::Lyrics), "the next lookup waits its turn");
         // The analysis is slow but alive: it ends well past the lookup's time, within its own.
         assert!(t.work_done_at("ex-a", Work::Analysis, 100_000));
-        t.working_at("ex-a", Work::Beats, 100_000);
         assert!((t.paces[Work::Analysis as usize].per_song_s(Work::Analysis) - (100.0 + 2.0 * 5.0) / 3.0).abs() < 1e-9, "learned from the step");
         // The lyrics lane moved on to nothing for its whole spell: what waits there is let go.
         t.expire(100_000);
         assert!(!t.waits("ex-b", Work::Lyrics));
-        assert!(t.waits("ex-b", Work::Analysis), "the measuring lane is busy with ex-a's beats, not stuck");
-        // The beat model's run ends; ex-b's analysis follows.
-        assert!(t.work_done_at("ex-a", Work::Beats, 160_000));
+        assert!(t.waits("ex-b", Work::Analysis), "the measuring lane just finished ex-a: ex-b waits its turn");
         assert_eq!(t.marks["ex-a"].0, Phase::Done);
-        t.working_at("ex-b", Work::Analysis, 160_000);
-        assert_eq!(t.expire(160_000 + Work::Analysis.limit_ms()), -1, "given up at its time: nothing is left processing");
+        t.working_at("ex-b", Work::Analysis, 100_000);
+        assert_eq!(t.expire(100_000 + Work::Analysis.limit_ms()), -1, "given up at its time: nothing is left processing");
         assert_eq!(t.marks["ex-b"].0, Phase::Done);
     }
 
@@ -1858,21 +1800,21 @@ mod tests {
         assert_eq!(row_facts(std::slice::from_ref(&slot), "other"), None);
 
         // Time left lanes.
-        let per = [3.0, 5.0, 40.0];
-        let after = |waiting: [f64; 3], to_come: [f64; 3], tail: bool| After { waiting, to_come, per, tail };
-        assert_eq!(time_left(None, &after([1.0; 3], [1.0; 3], true)), -1.0, "no speed yet");
-        assert_eq!(time_left(Some(10.0), &after([0.0; 3], [0.0; 3], false)), 10.0);
+        let per = [3.0, 5.0];
+        let after = |waiting: [f64; 2], to_come: [f64; 2], tail: bool| After { waiting, to_come, per, tail };
+        assert_eq!(time_left(None, &after([1.0; 2], [1.0; 2], true)), -1.0, "no speed yet");
+        assert_eq!(time_left(Some(10.0), &after([0.0; 2], [0.0; 2], false)), 10.0);
         // The last song's lookup comes after its last byte.
-        assert_eq!(time_left(Some(10.0), &after([0.0; 3], [2.0, 0.0, 0.0], false)), 13.0);
+        assert_eq!(time_left(Some(10.0), &after([0.0; 2], [2.0, 0.0], false)), 13.0);
         // Many lookups queued up take longer than the bytes.
-        assert_eq!(time_left(Some(10.0), &after([4.0, 0.0, 0.0], [2.0, 0.0, 0.0], false)), 18.0);
-        assert_eq!(time_left(Some(0.0), &after([3.0, 0.0, 0.0], [0.0; 3], false)), 9.0, "the bytes are in; the lookups are left");
-        assert_eq!(time_left(Some(5.0), &after([0.0; 3], [0.0; 3], true)), 5.0 + ANALYSIS_TAIL_S);
-        // The measuring lane runs beside the lookups: two analyses and three model runs, one song at a time.
-        assert_eq!(time_left(Some(0.0), &after([3.0, 2.0, 3.0], [0.0; 3], false)), 2.0 * 5.0 + 3.0 * 40.0, "the longer lane");
-        // Songs still to come: the last one's analysis and model run come after the last byte.
-        assert_eq!(time_left(Some(100.0), &after([0.0; 3], [0.0, 0.5, 1.0], false)), 100.0 + 0.5 * 5.0 + 40.0);
-        assert_eq!(time_left(Some(10.0), &after([0.0, 0.0, 4.0], [0.0, 0.0, 2.0], false)), 6.0 * 40.0, "the model's queue outlasts the bytes");
+        assert_eq!(time_left(Some(10.0), &after([4.0, 0.0], [2.0, 0.0], false)), 18.0);
+        assert_eq!(time_left(Some(0.0), &after([3.0, 0.0], [0.0; 2], false)), 9.0, "the bytes are in; the lookups are left");
+        assert_eq!(time_left(Some(5.0), &after([0.0; 2], [0.0; 2], true)), 5.0 + ANALYSIS_TAIL_S);
+        // The measuring lane runs beside the lookups, one song at a time.
+        assert_eq!(time_left(Some(0.0), &after([1.0, 3.0], [0.0; 2], false)), 3.0 * 5.0, "the longer lane");
+        // Songs still to come: the last one's analysis comes after the last byte.
+        assert_eq!(time_left(Some(100.0), &after([0.0; 2], [0.0, 0.5], false)), 100.0 + 0.5 * 5.0);
+        assert_eq!(time_left(Some(10.0), &after([0.0, 4.0], [0.0, 2.0], false)), 6.0 * 5.0, "the analyses' queue outlasts the bytes");
 
         // No slot notes nothing.
         let mut t = Tracker::default();
@@ -1915,7 +1857,7 @@ mod tests {
         t.work_done("ext-p", Work::Lyrics);
         assert_eq!(t.progress(0, false, 2_000), None);
         // Measuring the downloads again, nothing downloads first.
-        t.plan("ext-p", Needs { analysis: true, beats: false }, None);
+        t.plan("ext-p", true, None);
         assert!(matches!(t.progress(0, false, 3_000), Some(Progress::Processing { after_fetching: false, .. })));
     }
 

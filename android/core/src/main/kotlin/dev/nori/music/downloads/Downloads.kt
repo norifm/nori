@@ -186,7 +186,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     /** Publishes the table and reconciles it with media3 on the pool; called once, when [Nori] is built. */
     fun start() {
         io.execute {
-            // Saved songs are read back from the download cache (their analysis, the beat model), whether or not
+            // Saved songs are read back from the download cache (their analysis), whether or not
             // the playback service runs.
             val saved = dev.nori.music.playback.MeasureBridge({ id -> dev.nori.music.playback.AutoMixPrefetch.files(sources.downloadCache, sources.downloadKey(id)) })
             runCatching { dev.nori.music.playback.MeasureJni.processStart(saved, analyses()) }.onFailure { Log.w(TAG, "downloads will not be read back", it) }
@@ -235,21 +235,21 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         publish()
         val got = ids.filterIndexed { i, _ -> done[i] }
         if (got.isEmpty()) return
-        // What each needs - its lyrics, its analysis read back from the disk, the beat model - is the core's,
+        // What each needs - its lyrics, its analysis read back from the disk - is the core's,
         // decided and started here, one song at a time on threads of its own.
         runCatching { dev.nori.music.playback.MeasureJni.processSaved(analyses(), got.toTypedArray()) }.onFailure { Log.w(TAG, "could not read ${got.size} downloads back", it) }
         watchMarks()
-        // Each shows as processing until its lyrics, analysis and beats are over, or a step runs past its time.
+        // Each shows as processing until its lyrics and analysis are over, or a step runs past its time.
         main.post { main.removeCallbacks(expire); expire.run() }
     }
 
     /**
-     * "Analyse downloaded songs": the downloads with no analysis of the current version, and with [beats] those
-     * the beat model has not read, are read back as a download's are once saved, under the download service and
-     * its notification. [done] hears how many, on the main thread.
+     * "Analyse downloaded songs": the downloads with no analysis of the current version are read back as a
+     * download's are once saved, under the download service and its notification. [done] hears how many, on
+     * the main thread.
      */
     fun analyse(done: (Int) -> Unit) = io.execute {
-        val ids = runCatching { core.downloadUnanalysed(runCatching { core.downloadBeats() }.getOrDefault(false)) }.getOrElse { Log.w(TAG, "could not list the downloads to analyse", it); emptyList() }
+        val ids = runCatching { core.downloadUnanalysed() }.getOrElse { Log.w(TAG, "could not list the downloads to analyse", it); emptyList() }
         val n = if (ids.isEmpty()) 0 else runCatching { dev.nori.music.playback.MeasureJni.processAnalyse(analyses(), ids.toTypedArray()) }.getOrDefault(0)
         if (n > 0) {
             watchMarks()
@@ -411,10 +411,8 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         queued(runCatching { core.downloadQueueLibrary() })
     }
 
-    /** With better beat detection on, the beat model reads these songs once saved, written down before any can finish. */
     private fun queued(result: Result<DownloadQueued>) {
         val q = result.getOrElse { Log.w(TAG, "could not queue downloads", it); return }
-        if (runCatching { core.downloadBeats() }.getOrDefault(false)) runCatching { core.downloadWantBeats(q.fresh + q.again) }.onFailure { Log.w(TAG, "could not ask for the beat model", it) }
         if (q.fresh.isNotEmpty()) publish()
         val requests = q.fresh.map(::request)
         val retries = q.again.map(::request)
@@ -685,7 +683,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
 
     /**
      * The notification while saved songs are processing: what most of them wait for as the title ("Finding lyrics
-     * for 3 songs…", "Analysing 2 songs…", "Detecting beats for 5 songs…"), the rest and the time left below, and a
+     * for 3 songs…", "Analysing 2 songs…"), the rest and the time left below, and a
      * bar of the work done (the core's). The same one is handed back while its words and bar are; [working] from
      * now on, shown under [id] at [now].
      */
@@ -693,12 +691,10 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         val res = context.resources
         val title = when {
             p.lyrics > 0 -> res.getQuantityString(R.plurals.summary_finding_lyrics, p.lyrics, p.lyrics)
-            p.analysing > 0 -> res.getQuantityString(R.plurals.summary_analysing, p.analysing, p.analysing)
-            else -> res.getQuantityString(R.plurals.summary_detecting_beats, p.beats, p.beats)
+            else -> res.getQuantityString(R.plurals.summary_analysing, p.analysing, p.analysing)
         }
         val text = StringBuilder()
         if (p.lyrics > 0 && p.analysing > 0) text.part { it.append(res.getQuantityString(R.plurals.processing_analysing, p.analysing, p.analysing)) }
-        if ((p.lyrics > 0 || p.analysing > 0) && p.beats > 0) text.part { it.append(res.getQuantityString(R.plurals.processing_beats, p.beats, p.beats)) }
         val header = StringBuilder().also { h -> h.part { appendEta(res, it, p.etaS) } }
         val words = NoticeWords(title, text.toString(), header.toString())
         val key = "$words\n${p.permille}\n$downloadedThisBatch"

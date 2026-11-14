@@ -571,7 +571,7 @@ impl Downloader {
     /// how many were queued.
     pub fn measure_saved(&self) -> u32 {
         let core = self.core();
-        let ids = core.download_unanalysed(core.download_beats()).unwrap_or_default();
+        let ids = core.download_unanalysed().unwrap_or_default();
         self.analyses.analyse(ids)
     }
 
@@ -739,7 +739,7 @@ impl Shelf for StoreShelf {
 /// changes, never by polling; each is tried once per amount of bytes on disk. The thread lives only
 /// while there is news.
 ///
-/// With "Better beat detection" (the `neural-beats` feature), the same decode keeps the ends of the
+/// In DJ mode (with the `neural-beats` feature), the same decode keeps the ends of the
 /// current and next song for Beat This!'s intro and outro grids; the model loads when needed and is
 /// dropped with the thread.
 pub struct Measurer {
@@ -1270,7 +1270,7 @@ const LISTEN_AHEAD: usize = 2;
 
 /// The songs of `ids` for the beat model; none when it is off or not built.
 fn listen_to(core: &Core, ids: &[String], missing: &[String]) -> Vec<String> {
-    let wanted = beats::AVAILABLE && core.session.settings.with_prefs(|p| p.auto_mix.on() && p.auto_mix_better_beats).unwrap_or(false);
+    let wanted = beats::AVAILABLE && core.session.settings.with_prefs(|p| p.auto_mix.beat_model()).unwrap_or(false);
     if !wanted {
         return Vec::new();
     }

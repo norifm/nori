@@ -320,7 +320,7 @@ impl Settings {
 }
 
 impl Settings {
-    /// `f` over the open settings, the beat model's file following its switch under the same lock, so
+    /// `f` over the open settings, the beat model's file following DJ mode under the same lock, so
     /// concurrent edits reach it in the order they were kept.
     fn write<R>(&self, f: impl FnOnce(&mut Option<SettingsStore>) -> R) -> R {
         let watch = self.watch.read().clone();
@@ -328,7 +328,7 @@ impl Settings {
         let before = watch.as_ref().and_then(|_| Some(k.as_ref()?.prefs.clone()));
         let r = f(&mut k);
         if let Some(s) = k.as_ref() {
-            self.model.switched(s.prefs.auto_mix_better_beats, &self.writer);
+            self.model.switched(s.prefs.auto_mix.beat_model(), &self.writer);
         }
         let after = k.as_ref().map(|s| s.prefs.clone());
         drop(k);

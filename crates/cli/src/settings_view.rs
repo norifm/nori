@@ -621,7 +621,7 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
                         continue;
                     }
                     let identities = identity_row(&r, p, f, &own.kinds);
-                    rows.extend(flag_rows(&r, p, s).unwrap_or_else(|| row_of(r, p, s, f, &own.kinds).into_iter().collect()));
+                    rows.extend(flag_rows(&r, s).unwrap_or_else(|| row_of(r, p, s, f, &own.kinds).into_iter().collect()));
                     rows.extend(identities);
                 }
                 sections.push(section(section_title(sec.id), rows));
@@ -1080,17 +1080,17 @@ fn section_title(id: SectionId) -> &'static str {
 const SEASON: &str = "Season";
 
 /// A setting's title and the line under it, which says only how things stand now.
-fn setting_words(name: &str, p: &StoredPrefs, s: &SettingsState) -> (String, String) {
+fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let title = match name {
         "crossfadeSec" => "Crossfade",
-        "autoMix" => "AutoMix",
-        "autoMixBetterBeats" => {
+        "autoMix" => {
             let state = match &s.beat_model {
-                BeatModel::Failed { why } if p.auto_mix_better_beats => format!("The download didn't work ({}). It tries again at the next song.", text::beat_failure(*why)),
-                BeatModel::Downloading if p.auto_mix_better_beats => format!("Downloading (about {} MB)…", s.beat_model_mb),
-                _ => "Uses more battery while songs are measured".into(),
+                BeatModel::Unavailable | BeatModel::Unused => String::new(),
+                BeatModel::Failed { why } => format!("The beat model's download didn't work ({}). It tries again at the next song.", text::beat_failure(*why)),
+                BeatModel::Downloading => format!("Downloading the beat model (about {} MB)…", s.beat_model_mb),
+                BeatModel::Absent | BeatModel::Ready => "DJ uses more battery while songs are measured".into(),
             };
-            return ("Better beat detection".into(), state);
+            return ("AutoMix".into(), state);
         }
         "crossfadeKeepAlbums" => "Keep albums gapless",
         "skipExplicit" => "Skip explicit songs",
@@ -1215,12 +1215,12 @@ fn season_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, dark: bool, tod
 }
 
 /// A set of independent flags as its title, then a switch for each; None for any other row.
-fn flag_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState) -> Option<Vec<Row>> {
+fn flag_rows(r: &settings_pages::SettingsRow, s: &SettingsState) -> Option<Vec<Row>> {
     let RowItem::Setting { spec, value, .. } = &r.item else { return None };
     if spec.kind != SettingKind::Flags {
         return None;
     }
-    let (title, detail) = setting_words(&spec.name, p, s);
+    let (title, detail) = setting_words(&spec.name, s);
     let switches = spec.options.iter().map(|flag| Row::Toggle {
         switch: Switch::Stores(spec.name.clone(), settings_model::flag_toggled(value.clone(), flag.clone())),
         title: format!("  {}", option_words(&spec.name, flag)),
@@ -1256,7 +1256,7 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
     let enabled = r.enabled;
     Some(match r.item {
         RowItem::Setting { spec, value, chips } => {
-            let (title, detail) = setting_words(&spec.name, p, s);
+            let (title, detail) = setting_words(&spec.name, s);
             let title = format!("{indent}{title}");
             match spec.kind {
                 SettingKind::Switch => Row::Toggle { switch: Switch::Setting(spec.name), title, detail, on: value == "true", enabled },
