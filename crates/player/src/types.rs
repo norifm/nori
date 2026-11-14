@@ -502,6 +502,10 @@ pub struct TransitionPlan {
     /// Relative. The incoming gain goes 0 -> 1 between these.
     pub in_fade_start_ms: i64,
     pub in_fade_end_ms: i64,
+    /// When present, the outgoing fade goes from 1 to this level, dB, and from its end the outgoing song plays on
+    /// under the incoming one to the end of the transition, falling from it to silence: its ending heard faintly.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub out_tail_db: Option<f32>,
     /// Constant trim on the outgoing deck during the overlap.
     pub out_gain_db: f32,
     /// Trim on the incoming deck; the mixer glides it back to 0 dB by the end of the overlap.
@@ -614,6 +618,21 @@ impl TransitionPlan {
         self.out_rates.clear();
     }
 
+    /// The transition run on to `to_ms`, each deck at the speed it had at the old end through the added time: the
+    /// incoming song's ease back to its own tempo (the ramp after the overlap, or its rates' later knots) comes after.
+    pub fn lengthen(&mut self, to_ms: i64) {
+        let (end, by) = (self.duration_ms as f64, (to_ms - self.duration_ms) as f64);
+        if by <= 0.0 {
+            return;
+        }
+        if let Some(speed) = speed_at(&self.in_rates, end) {
+            let i = self.in_rates.partition_point(|k| k.at_ms < end);
+            self.in_rates.iter_mut().skip(i).for_each(|k| k.at_ms += by);
+            self.in_rates.insert(i, Rate { at_ms: end, speed });
+        }
+        self.duration_ms = to_ms;
+    }
+
     /// Whether both plans mix the same audio: equal but for `kind`, `reason` and `tempo_ramp_beats`
     /// (`tempo_ramp_ms` is what runs).
     pub fn sounds_same(&self, o: &TransitionPlan) -> bool {
@@ -632,6 +651,7 @@ impl TransitionPlan {
             out_fade_end_ms,
             in_fade_start_ms,
             in_fade_end_ms,
+            out_tail_db,
             out_gain_db,
             in_gain_db,
             bass_swap,
@@ -661,7 +681,7 @@ impl TransitionPlan {
             && (*in_loop, *bend, *highs_in) == (o.in_loop, o.bend, o.highs_in)
             && (*in_low_pass, *in_high_pass, *mid_dip, *reverb) == (o.in_low_pass, o.in_high_pass, o.mid_dip, o.reverb)
             && (*in_delay_ms, *out_glide, *brake, *in_key) == (o.in_delay_ms, o.out_glide, o.brake, o.in_key)
-            && (in_rates, out_rates) == (&o.in_rates, &o.out_rates)
+            && (in_rates, out_rates, out_tail_db) == (&o.in_rates, &o.out_rates, &o.out_tail_db)
     }
 
     /// Where the tempo changes: from `tempo_ratio` to 1 over (start, length) ms of the transition, the bend or
