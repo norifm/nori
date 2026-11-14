@@ -4,7 +4,7 @@
 //! are each end's as heard ([`TrackAnalysis::outro_beats`], [`TrackAnalysis::intro_beats`]).
 
 use super::*;
-use super::super::curve::{cleaned, Curve};
+use super::super::curve::{cleaned, steady_run, Curve};
 use crate::types::{Beat, Rate};
 
 /// How far a paired beat may sound from its partner, ms.
@@ -18,6 +18,8 @@ const PAIR_SLACK: f64 = 0.15;
 const MIN_PAIRS: usize = 8;
 /// Pairs enough to check a mix by, though too few to follow.
 const MIN_CHECK_PAIRS: usize = 3;
+/// A landing this near the first or last beat measured is among them, ms.
+const INSIDE_SLACK_MS: f64 = 50.0;
 /// A soft beat (no attack heard, its place where the song's beat runs) is held this close, ms.
 const LOCK_SOFT_MS: f64 = 60.0;
 /// The outgoing tempo moving this much a bar inside the mix (its curve, a share) puts both songs on one beat clock:
@@ -180,15 +182,27 @@ pub(super) enum Locked {
 /// each pair together, when they keep every pair within the lock. `swap` (transition ms) is where the window put the
 /// two songs' meeting downbeats. Err when the beats are known and drift apart even so: the window does not lock.
 /// The two songs' beats heard together in `p`, cleaned (so a beat missed does not break the pairing) and paired
-/// outward from the swap, `swap` ms into the transition, or from the outgoing song's last beat when the swap is past
-/// them; None where they cannot be paired. All of them are checked: left unchecked, a grid off by a percent drifted a
-/// mix 100 ms apart.
+/// outward from the swap, `swap` ms into the transition, or from where the two songs' beats meet when the swap is
+/// past either's; None where they cannot be paired, off where one song's beats were measured; Err where both were
+/// and they do not pair. All of them are checked: left unchecked, a grid off by a percent drifted a mix 100 ms apart.
 fn paired(p: &TransitionPlan, a: &[Beat], b: &[Beat], swap: f64) -> Result<Option<Vec<Pair>>, String> {
-    let last = a[a.len() - 1].at_ms as f64 - p.out_start_ms as f64;
-    let anchor = p.out_song_ms(swap).min(last).max(0.0);
-    let out_ms = p.out_start_ms as f64 + anchor;
-    let in_ms = p.in_start_ms as f64 + p.in_song_ms(p.wall_of_out_song(anchor));
-    pairs(p, a, b, out_ms, in_ms)
+    let at_out = |song: f64| p.in_start_ms as f64 + p.in_song_ms(p.wall_of_out_song(song));
+    let (a0, a1) = (a[0].at_ms as f64 - p.out_start_ms as f64, a[a.len() - 1].at_ms as f64 - p.out_start_ms as f64);
+    let mut anchor = p.out_song_ms(swap).clamp(a0.max(0.0), a1.max(0.0));
+    // A swap before the incoming beats start, or after they end: from where the two songs' beats meet.
+    let (b0, b1) = (b[0].at_ms as f64, b[b.len() - 1].at_ms as f64);
+    let in_at = at_out(anchor);
+    if in_at < b0 || in_at > b1 {
+        let edge = if in_at < b0 { b0 } else { b1 };
+        anchor = p.out_song_ms(p.wall_of_in_song(edge - p.in_start_ms as f64)).clamp(a0.max(0.0), a1.max(0.0));
+    }
+    let (out_ms, in_ms) = (p.out_start_ms as f64 + anchor, at_out(anchor));
+    // Landing where both songs' beats were measured, they pair, or the mix is off them.
+    let inside = |beats: &[Beat], t: f64| (beats[0].at_ms as f64 - INSIDE_SLACK_MS..=beats[beats.len() - 1].at_ms as f64 + INSIDE_SLACK_MS).contains(&t);
+    match pairs(p, a, b, out_ms, in_ms)? {
+        None if inside(a, out_ms) && inside(b, in_ms) => Err("the beats do not pair".into()),
+        found => Ok(found),
+    }
 }
 
 /// The pairs that steer a warp: those on attacks (a soft beat's place is the curve's guess), or all of them where too
@@ -204,7 +218,8 @@ pub(super) fn check(p: &TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, sw
     if a.outro_beats.is_empty() || b.intro_beats.is_empty() || p.out_loop_ms.is_some() {
         return Ok(());
     }
-    match paired(p, &cleaned(&a.outro_beats), &cleaned(&b.intro_beats), swap)? {
+    let (a_clean, b_clean) = (cleaned(&a.outro_beats), cleaned(&b.intro_beats));
+    match paired(p, steady_run(&a_clean), steady_run(&b_clean), swap)? {
         Some(all) if !locked(p, &all) => Err("the beats drift apart".into()),
         _ => Ok(()),
     }
@@ -215,14 +230,16 @@ pub(super) fn lock(p: &mut TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis,
     if a.outro_beats.is_empty() || b.intro_beats.is_empty() || p.out_loop_ms.is_some() || p.bend.is_some() || p.out_glide.is_some() {
         return Ok(Locked::Unchecked);
     }
-    let (a_beats, b_beats) = (cleaned(&a.outro_beats), cleaned(&b.intro_beats));
-    let Some(mut all) = paired(p, &a_beats, &b_beats, swap)? else { return Ok(Locked::Unchecked) };
+    // Cleaned, and only their steady run: a stray beat a stretch away from the rest pairs with nothing.
+    let (a_clean, b_clean) = (cleaned(&a.outro_beats), cleaned(&b.intro_beats));
+    let (a_beats, b_beats) = (steady_run(&a_clean), steady_run(&b_clean));
+    let Some(mut all) = paired(p, a_beats, b_beats, swap)? else { return Ok(Locked::Unchecked) };
     // An incoming loop's repeats keep the speed they were played at: the outgoing beats over them, and the pairs
     // after them, must hold at one ratio.
     if let Some(l) = p.in_loop {
         let after = p.in_delay_ms as f64 + (l.ms * (l.repeats as i64 + 1)) as f64;
         all.retain(|x| x.at >= after);
-        let Some(under) = under_loop(p, &a_beats, &b_beats) else { return Err("the beats drift apart under the loop".into()) };
+        let Some(under) = under_loop(p, a_beats, b_beats) else { return Err("the beats drift apart under the loop".into()) };
         return if under + all.len() < MIN_CHECK_PAIRS {
             Ok(Locked::Unchecked)
         } else if locked(p, &all) {
