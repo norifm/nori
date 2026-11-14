@@ -252,9 +252,9 @@ fn downloads_and_measuring_over_core() {
     measurer.ask(Vec::new());
     assert!(!measurer.busy(), "nothing asked: nothing to measure");
 
-    // "Better beat detection" without a model decodes nothing more and says why.
+    // DJ mode without a model decodes nothing more and says why.
     let mut prefs = settings.current().unwrap();
-    prefs.auto_mix_better_beats = true;
+    prefs.auto_mix = nori_core::settings::AutoMixMode::Dj;
     settings.put(prefs);
     measurer.ask(core.session.measure());
     settle(&measurer);
@@ -423,10 +423,10 @@ fn downloads_read_back(core: &Arc<Core>, net: &NoApi, store: &Arc<Store>, analys
         assert_eq!(download_phase(id.into()), Some(nori_core::DownloadPhase::Done), "done with it");
     }
     // Already analysed: nothing to read back.
-    assert!(!core.download_unanalysed(false).unwrap().iter().any(|id| ids.contains(&id.as_str())));
+    assert!(!core.download_unanalysed().unwrap().iter().any(|id| ids.contains(&id.as_str())));
     // Analysis gone: read back again.
     core.measure_again().unwrap();
-    let again: Vec<String> = core.download_unanalysed(false).unwrap().into_iter().filter(|id| ids.contains(&id.as_str())).collect();
+    let again: Vec<String> = core.download_unanalysed().unwrap().into_iter().filter(|id| ids.contains(&id.as_str())).collect();
     assert_eq!(again.len(), 2);
     assert_eq!(analyses.analyse(again), 2);
     analyses.wait();
@@ -434,7 +434,7 @@ fn downloads_read_back(core: &Arc<Core>, net: &NoApi, store: &Arc<Store>, analys
         assert!(core.analysis_get(id.into()).unwrap().is_some());
         assert_eq!(download_phase(id.into()), Some(nori_core::DownloadPhase::Done));
     }
-    assert!(core.transfers().with(|t| t.processing_at(0)).is_none_or(|p| p.analysing == 0 && p.beats == 0), "nothing left waiting");
+    assert!(core.transfers().with(|t| t.processing_at(0)).is_none_or(|p| p.analysing == 0), "nothing left waiting");
 }
 
 /// Whole songs, requests counted and signalled.

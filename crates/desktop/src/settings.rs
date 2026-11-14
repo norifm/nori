@@ -332,15 +332,14 @@ fn section_title(id: SectionId) -> &'static str {
 fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let (title, detail) = match name {
         "crossfadeSec" => ("Crossfade", ""),
-        "autoMix" => ("AutoMix", ""),
-        "autoMixBetterBeats" => {
-            let mb = s.beat_model_mb;
+        "autoMix" => {
             let detail = match &s.beat_model {
-                BeatModel::Downloading => format!("Downloading (about {mb} MB)…"),
-                BeatModel::Failed { .. } => "The download didn't work. It tries again at the next song.".into(),
-                _ => "Uses more battery while songs are measured".into(),
+                BeatModel::Unavailable | BeatModel::Unused => String::new(),
+                BeatModel::Downloading => format!("Downloading the beat model (about {} MB)…", s.beat_model_mb),
+                BeatModel::Failed { .. } => "The beat model's download didn't work. It tries again at the next song.".into(),
+                BeatModel::Absent | BeatModel::Ready => "DJ uses more battery while songs are measured".into(),
             };
-            return ("Better beat detection".into(), detail);
+            return ("AutoMix".into(), detail);
         }
         "crossfadeKeepAlbums" => ("Keep albums gapless", ""),
         "skipExplicit" => ("Skip explicit songs", ""),

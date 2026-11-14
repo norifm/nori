@@ -472,7 +472,6 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                 )
             }
             "downloads" -> nav.downloads()
-            // Asks first whether the beat model reads them too, as Download does.
             "analyse-downloads" -> actions?.analyseDownloads()
             "add-server" -> { vm.openLogin(null); editing = vm.newProfile() }
             "backup" -> saveBackup.launch(dev.nori.music.ffi.backup.backupFileName())

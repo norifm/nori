@@ -463,10 +463,8 @@ pub fn progress(p: &nori_core::transfers::Progress) -> (String, String) {
         Progress::Processing { work: w, .. } => {
             let what = if w.lyrics > 0 {
                 format!("Finding lyrics for {}", count(w.lyrics as u64, "song", "songs"))
-            } else if w.analysing > 0 {
-                format!("Analyzing {}", count(w.analysing as u64, "song", "songs"))
             } else {
-                format!("Detecting beats for {}", count(w.beats as u64, "song", "songs"))
+                format!("Analyzing {}", count(w.analysing as u64, "song", "songs"))
             };
             (what, left(w.eta_s))
         }
@@ -1282,7 +1280,7 @@ mod tests {
         assert_eq!(fetching(album), ("Downloading “Kind” · 3 of 12".into(), String::new()));
         let waiting = Notice { kind: NoticeKind::Waiting, position: 0, total: 4, eta_s: -1, ..Default::default() };
         assert_eq!(fetching(waiting), ("Waiting for a network · 0 of 4".into(), String::new()));
-        let work = Processing { lyrics: 0, analysing: 1, beats: 2, eta_s: 12, permille: 400 };
+        let work = Processing { lyrics: 0, analysing: 1, eta_s: 12, permille: 400 };
         assert_eq!(progress(&Progress::Processing { work, after_fetching: true }), ("Analyzing 1 song".into(), "12 s left".into()));
     }
 

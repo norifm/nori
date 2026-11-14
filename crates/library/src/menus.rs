@@ -279,7 +279,7 @@ pub enum DownloadGlyph {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn download_glyph(phase: Option<DownloadPhase>, downloaded: bool, pending: bool, page_whole: bool) -> DownloadGlyph {
     let glyph = match phase {
-        Some(DownloadPhase::Done | DownloadPhase::FindingLyrics | DownloadPhase::Analysing | DownloadPhase::DetectingBeats) => DownloadGlyph::Done,
+        Some(DownloadPhase::Done | DownloadPhase::FindingLyrics | DownloadPhase::Analysing) => DownloadGlyph::Done,
         Some(DownloadPhase::Failed) => DownloadGlyph::Failed,
         Some(DownloadPhase::Queued | DownloadPhase::Downloading) => DownloadGlyph::Ring,
         None if downloaded => DownloadGlyph::Done,
@@ -731,7 +731,7 @@ mod tests {
         assert_eq!(download_glyph(Some(P::Failed), true, false, false), DownloadGlyph::Failed, "this session's phase wins");
         assert_eq!((download_glyph(Some(P::Queued), false, false, false), download_glyph(Some(P::Downloading), false, false, false)), (DownloadGlyph::Ring, DownloadGlyph::Ring));
         // Saved and still processing, whichever step: downloaded already.
-        for p in [P::FindingLyrics, P::Analysing, P::DetectingBeats] {
+        for p in [P::FindingLyrics, P::Analysing] {
             assert_eq!(download_glyph(Some(p), false, false, false), DownloadGlyph::Done, "{p:?}");
         }
         assert_eq!(download_glyph(None, true, true, false), DownloadGlyph::Done);

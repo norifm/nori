@@ -391,7 +391,6 @@ private fun DownloadRow(
                             DownloadPhase.FAILED -> couldNot
                             DownloadPhase.FINDING_LYRICS -> say.findingLyrics
                             DownloadPhase.ANALYSING -> say.analysing
-                            DownloadPhase.DETECTING_BEATS -> say.detectingBeats
                             else -> sub ?: song.artist
                         },
                         maxLines = 1, overflow = TextOverflow.Ellipsis,

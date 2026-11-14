@@ -298,7 +298,6 @@ class Say(private val r: Resources) {
     val stopDownload: String = r.getString(R.string.stop_download)
     val findingLyrics: String = r.getString(R.string.finding_lyrics)
     val analysing: String = r.getString(R.string.analysing)
-    val detectingBeats: String = r.getString(R.string.detecting_beats)
     val nothingToAnalyse: String = r.getString(R.string.said_nothing_to_analyse)
     val equalizer: String = r.getString(R.string.equalizer)
     val addBand: String = r.getString(R.string.add_band)

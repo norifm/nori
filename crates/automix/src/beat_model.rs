@@ -1,6 +1,6 @@
-//! The Beat This! small0 weights behind "Better beat detection": where the file lives and how its download
+//! The Beat This! small0 weights behind AutoMix's DJ mode: where the file lives and how its download
 //! stands. The core fetches the authors' checkpoint, checks it, converts it to the weights file the graph
-//! (`nori_player::automix::weights::GRAPH`) reads, and deletes it when the switch goes off.
+//! (`nori_player::automix::weights::GRAPH`) reads, and deletes it when DJ mode is left.
 
 use std::path::{Path, PathBuf};
 

@@ -540,7 +540,7 @@ fn work_json(p: &nori_core::transfers::Progress) -> Value {
         }
         Progress::Processing { work: w, after_fetching } => {
             let at = u8::from(*after_fetching);
-            json!({ "stage": "work", "lyrics": w.lyrics, "analysing": w.analysing, "beats": w.beats, "permille": w.permille, "eta": w.eta_s, "stages": 1 + at, "at": at })
+            json!({ "stage": "work", "lyrics": w.lyrics, "analysing": w.analysing, "permille": w.permille, "eta": w.eta_s, "stages": 1 + at, "at": at })
         }
     }
 }
@@ -1963,7 +1963,7 @@ mod tests {
         let n = Notice { kind: NoticeKind::OneNamed, position: 1, total: 1, current: "Blue".into(), permille: 420, eta_s: 30, ..Default::default() };
         let v = work_json(&Progress::Fetching(n));
         assert_eq!((v["stage"].as_str(), v["notice"].as_i64(), v["song"].as_str(), v["permille"].as_i64()), (Some("download"), Some(1), Some("Blue"), Some(420)));
-        let w = work_json(&Progress::Processing { work: Processing { lyrics: 2, analysing: 1, beats: 0, eta_s: 9, permille: 500 }, after_fetching: true });
+        let w = work_json(&Progress::Processing { work: Processing { lyrics: 2, analysing: 1, eta_s: 9, permille: 500 }, after_fetching: true });
         assert_eq!((v["stages"].as_i64(), w["stages"].as_i64(), w["at"].as_i64(), w["lyrics"].as_i64()), (Some(1), Some(2), Some(1), Some(2)));
     }
 

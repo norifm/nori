@@ -498,7 +498,7 @@ pub struct PlayQueue {
     pub origin: Option<PageOrigin>,
 }
 
-/// A song's download state. `Queued` is shown for a waiting song with no stored mark; the last three are
+/// A song's download state. `Queued` is shown for a waiting song with no stored mark; the last two are
 /// post-download processing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -509,7 +509,6 @@ pub enum DownloadPhase {
     Done,
     FindingLyrics,
     Analysing,
-    DetectingBeats,
 }
 
 /// The kind of page a queue was started from. Saved by name: only add variants.

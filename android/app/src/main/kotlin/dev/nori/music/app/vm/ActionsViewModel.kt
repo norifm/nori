@@ -238,8 +238,8 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /**
-     * Settings' "Analyse downloaded songs": the downloads with no current analysis, and those the beat model has
-     * not read if it is on and wanted, are read back one at a time under the download service.
+     * Settings' "Analyse downloaded songs": the downloads with no current analysis are read back one at a time
+     * under the download service.
      */
     fun analyseDownloads() = nori.downloads.analyse { n -> _messages.trySend(if (n > 0) say.analysingDownloads(n) else say.nothingToAnalyse) }
 

@@ -1,8 +1,8 @@
-//! Post-download work, so playing a downloaded song does none: its lyrics looked up, its analysis read
-//! back from disk when it was not measured as it arrived (an MP4, a resumed download, an outdated
-//! analysis), and the beat model over its ends when wanted.
+//! Post-download work, so playing a downloaded song does none: its lyrics looked up, and its analysis
+//! read back from disk when it was not measured as it arrived (an MP4, a resumed download, an outdated
+//! analysis). The beat model reads only songs about to play (`core::listen_to`).
 //!
-//! What a song needs is the core's (`nori_core::transfers::needs`). Songs queue in one line worked by one
+//! What a song needs is the core's (`nori_core::transfers::needs_analysis`). Songs queue in one line worked by one
 //! lowest-priority thread, one decode per song, living only while a song is ready. A song still being
 //! measured as it arrives waits until that ends ([`Analyses::kick`]). Lyrics have a line and a thread of
 //! their own, one lookup at a time, as the core times them in a lane of their own. Progress phases are
@@ -11,11 +11,11 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock};
 
-use nori_core::transfers::{self, Needs, Saved, Work};
+use nori_core::transfers::{self, Saved, Work};
 use nori_core::Core;
 use parking_lot::{Condvar, Mutex};
 
-use crate::core::{decode, listen, Analyses, Decoded, Model, Shelf};
+use crate::core::{decode, Analyses, Decoded, Shelf};
 
 /// Saved songs waiting to be read back, and whether a thread works through them.
 #[derive(Debug, Default)]
@@ -73,24 +73,10 @@ pub(crate) struct ReadBack {
     lyrics_ended: Condvar,
 }
 
-/// The build has the beat model and AutoMix with "Better beat detection" is on.
-fn model_on(core: &Core) -> bool {
-    nori_player::automix::beats::AVAILABLE && core.session.settings.with_prefs(|p| p.auto_mix.on() && p.auto_mix_better_beats).unwrap_or(false)
-}
-
-/// What `id` needs once saved; `measuring`: it is being measured as it arrives.
-fn needs_of(core: &Core, id: &str, measuring: bool) -> (Needs, Saved) {
-    let one = vec![id.to_string()];
+/// `id`'s state once saved; `measuring`: it is being measured as it arrives.
+fn saved_of(core: &Core, id: &str, measuring: bool) -> Saved {
     let analysable = nori_core::queue::analysable(id);
-    let saved = Saved {
-        analysable,
-        measuring,
-        analysed: analysable && core.analysis_missing(one.clone()).is_ok_and(|m| m.is_empty()),
-        model_on: model_on(core),
-        beats_wanted: core.transfers().with(|t| t.wants_beats(id)),
-        beats_done: analysable && core.analysis_neural_missing(one).is_ok_and(|m| m.is_empty()),
-    };
-    (transfers::needs(saved), saved)
+    Saved { analysable, measuring, analysed: analysable && core.analysis_missing(vec![id.to_string()]).is_ok_and(|m| m.is_empty()) }
 }
 
 impl Analyses {
@@ -124,11 +110,9 @@ impl Analyses {
         let mut line = Vec::new();
         for id in ids {
             let measuring = self.arrivals.lock().has(&id);
-            let (needs, s) = needs_of(core, &id, measuring);
-            if core.transfers().with(|t| t.plan(&id, needs, download.then_some(needs.analysis && !s.measuring))) {
+            let analysis = transfers::needs_analysis(saved_of(core, &id, measuring));
+            if core.transfers().with(|t| t.plan(&id, analysis, download.then_some(analysis && !measuring))) {
                 line.push(id);
-            } else if !needs.beats && core.transfers().with(|t| t.wants_beats(&id)) && s.beats_done {
-                let _ = core.download_beats_forget(std::slice::from_ref(&id));
             }
         }
         let n = line.len() as u32;
@@ -190,12 +174,10 @@ impl Analyses {
 
     fn run(&self) {
         crate::arriving::lower_priority();
-        // Loaded by the first song that needs it, dropped with the thread.
-        let mut model = Model::new(&self.models);
         loop {
             let next = self.read_back.line.lock().next(|id| self.arrivals.lock().has(id));
             let Some(id) = next else { break };
-            let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.process(&mut model, &id)));
+            let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.process(&id)));
             if let Err(p) = done {
                 nori_core::alog::info(&format!("reading {id} back: {}", crate::panic_words(&*p)));
                 if let Some(c) = self.client() {
@@ -203,80 +185,44 @@ impl Analyses {
                 }
             }
         }
-        drop(model);
         self.read_back.ended.notify_all();
     }
 
-    /// Reads `id` back for its pending analysis and beat model run.
-    fn process(&self, model: &mut Model, id: &str) {
+    /// Reads `id` back for its pending analysis.
+    fn process(&self, id: &str) {
         let Some(client) = self.client() else { return };
         let core = client.core();
         let tracker = core.transfers();
-        let (analysis, beats) = tracker.with(|t| (t.waits(id, Work::Analysis), t.waits(id, Work::Beats)));
-        if !analysis && !beats {
+        if !tracker.with(|t| t.waits(id, Work::Analysis)) {
             return;
         }
-        let one = vec![id.to_string()];
         // It may have been measured elsewhere since it was saved.
-        let classical = analysis && !core.analysis_missing(one.clone()).unwrap_or_default().is_empty();
-        if analysis && !classical {
-            tracker.with(|t| t.work_done(id, Work::Analysis));
-        }
-        let read = beats && (classical || !core.analysis_neural_missing(one).unwrap_or_default().is_empty());
-        if beats && !read {
-            tracker.with(|t| t.work_done(id, Work::Beats));
-            let _ = core.download_beats_forget(&[id.to_string()]);
-        }
-        if !classical && !read {
-            return;
+        if core.analysis_missing(vec![id.to_string()]).unwrap_or_default().is_empty() {
+            return finish(core, id);
         }
         let shelf = self.read_back.shelf.get().expect("a song is lined up only once a shelf is installed");
         let Some((pieces, hint)) = shelf.whole(id).and_then(|w| Some((crate::pieces::Pieces::open(&w.files).ok()?, w.hint))) else {
             nori_core::alog::info(&format!("reading {id} back: not whole on the disk"));
             return finish(core, id);
         };
-        tracker.with(|t| t.working(id, if classical { Work::Analysis } else { Work::Beats }));
-        let listen_now = read && model.ready(&client);
-        if read && !listen_now {
-            nori_core::alog::info(&format!("reading {id} back: the beat model is not here"));
-            tracker.with(|t| t.work_done(id, Work::Beats));
-            if !classical {
-                return;
-            }
-        }
+        tracker.with(|t| t.working(id, Work::Analysis));
         let song = core.download_song(id);
         let expected_ms = song.as_ref().map_or(0, |s| s.duration as i64 * 1000);
         let hint = hint.or_else(|| song.map(|s| s.suffix).filter(|s| !s.is_empty()));
         let cpu = crate::arriving::thread_cpu_ms();
         // Abandoned once it no longer waits (cancelled or timed out).
-        let decoded = decode(id, "reading back", pieces, hint.as_deref(), expected_ms, classical, listen_now, || tracker.with(|t| t.waits(id, Work::Analysis) || t.waits(id, Work::Beats)));
-        let Some(Decoded { stream, ends }) = decoded else { return };
-        let mut stored = false;
-        if classical {
-            let a = stream.and_then(|s| core.analysis_finish_whole(id, s, expected_ms).ok().flatten());
-            nori_core::alog::info(&match &a {
-                Some(t) => format!("analysed {id} from the disk: {:.2} bpm (conf {:.2}, stab {:.2})", t.bpm, t.bpm_confidence, t.stability),
-                None => format!("analysed {id} from the disk: not stored"),
-            });
-            stored = a.is_some();
-            tracker.with(|t| t.work_done(id, Work::Analysis));
-        }
-        if listen_now {
-            if let (true, Some(mut ends)) = (model.loaded(), ends) {
-                if classical {
-                    tracker.with(|t| t.working(id, Work::Beats));
-                }
-                stored |= listen(core, id, &*model, &mut ends);
-                drop(ends);
-                crate::arriving::give_memory_back();
-            }
-            tracker.with(|t| t.work_done(id, Work::Beats));
-            let _ = core.download_beats_forget(&[id.to_string()]);
-        }
+        let decoded = decode(id, "reading back", pieces, hint.as_deref(), expected_ms, true, false, || tracker.with(|t| t.waits(id, Work::Analysis)));
+        let Some(Decoded { stream, .. }) = decoded else { return };
+        let a = stream.and_then(|s| core.analysis_finish_whole(id, s, expected_ms).ok().flatten());
+        nori_core::alog::info(&match &a {
+            Some(t) => format!("analysed {id} from the disk: {:.2} bpm (conf {:.2}, stab {:.2})", t.bpm, t.bpm_confidence, t.stability),
+            None => format!("analysed {id} from the disk: not stored"),
+        });
+        finish(core, id);
         if let (Some(a), Some(b)) = (cpu, crate::arriving::thread_cpu_ms()) {
             nori_core::alog::info(&format!("reading {id} back took {} ms of CPU", b.saturating_sub(a)));
         }
-        if stored {
+        if a.is_some() {
             // Replan what was planned without it.
             let measurers = self.arrivals.lock().measurers();
             for m in measurers {
@@ -286,12 +232,9 @@ impl Analyses {
     }
 }
 
-/// Marks `id`'s post-download work done.
+/// Marks `id`'s analysis after its download done.
 fn finish(core: &Core, id: &str) {
-    core.transfers().with(|t| {
-        t.work_done(id, Work::Analysis);
-        t.work_done(id, Work::Beats);
-    });
+    core.transfers().with(|t| t.work_done(id, Work::Analysis));
 }
 
 #[cfg(test)]

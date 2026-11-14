@@ -736,8 +736,6 @@ print('$a' if all(not x['id'].startswith('ext-') and x.get('suffix')!='Remote' f
 fi
 
 if want download-albums; then section "downloaded albums on the phone and through the car's media browser"
-  remember_settings autoMixBetterBeats
-  "$app" set autoMixBetterBeats false >/dev/null
   album_id=$(mix_album); first_id=$(song_id "Long Track 01"); third_id=$(song_id "Long Track 03")
   car_log=$(mktemp)
   "$app" do "undownload album:$album_id" >/dev/null

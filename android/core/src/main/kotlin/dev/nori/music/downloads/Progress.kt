@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
  */
 typealias DownloadPhase = dev.nori.music.ffi.model.DownloadPhase
 
-val DownloadPhase.processing get() = this == DownloadPhase.FINDING_LYRICS || this == DownloadPhase.ANALYSING || this == DownloadPhase.DETECTING_BEATS
+val DownloadPhase.processing get() = this == DownloadPhase.FINDING_LYRICS || this == DownloadPhase.ANALYSING
 
 /**
  * What a download this session has touched is doing. [progress] is 0..1, or negative while the size is

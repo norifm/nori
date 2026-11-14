@@ -91,7 +91,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 """"error":"${st.error.orEmpty()}","bridging":${st.bridging},"parkedId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().parked.orEmpty()}","songId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().current.orEmpty()}","eq":${p.eqEnabled},"limiter":${p.limiter},"hiRes":${p.hiRes},""" +
                 """"dspActive":${dev.nori.music.playback.Equalizer.inChain},"gainReductionDb":${dev.nori.music.playback.Equalizer.meterDb},"compressionDb":${dev.nori.music.playback.Equalizer.compressionDb},"soundBypass":${p.soundBypass},""" +
                 """"output":"${settings.currentOutput.value}","offload":${p.offload},"offloadWanted":${dev.nori.music.playback.PlaybackService.offloadWanted},"autoMix":"${p.autoMix}","theme":"${p.theme}",""" +
-                """"autoFill":"${p.autoFill?.name?.lowercase() ?: "off"}","autoMixBetterBeats":${p.autoMixBetterBeats},"scrobble":${p.scrobble},"lyricsOnline":${p.lyricsOnline},""" +
+                """"autoFill":"${p.autoFill?.name?.lowercase() ?: "off"}","scrobble":${p.scrobble},"lyricsOnline":${p.lyricsOnline},""" +
                 """"lyricsAnswerSong":"${TestActions.lastLyrics?.first.orEmpty()}","lyricsAnswerLines":${TestActions.lastLyrics?.second?.lyrics?.lines?.size ?: 0},""" +
                 """"lyricsAnswerTiming":"${TestActions.lastLyrics?.second?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +
                 // The timing of the words the player shows, whoever set it (`LyricsTiming`).

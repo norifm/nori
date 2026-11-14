@@ -1,4 +1,4 @@
-//! What "Better beat detection" holds on the heap while it measures a song, as nori-engine's measurer runs it: the
+//! What the beat model holds on the heap while it measures a song, as nori-engine's measurer runs it: the
 //! song decoded piece by piece into the classical analyser and the ends kept for the model, the model loaded, and
 //! its two windows run. Counted by a global allocator of this binary's own (the live bytes and their peak), so the
 //! figures are the Rust heap's exactly, not the process's RSS.

@@ -107,11 +107,9 @@ enum Say {
         let left = n("eta") < 0 ? "" : n("eta") < 60 ? "\(n("eta")) s left" : Fmt.clock(ms: n("eta") * 1000) + " left"
         let join = { (bits: [String]) in bits.filter { !$0.isEmpty }.joined(separator: " · ") }
         guard text("stage") == "download" else {
-            let title = n("lyrics") > 0 ? "Finding lyrics for \(songs(n("lyrics")))…"
-                : n("analysing") > 0 ? "Analyzing \(songs(n("analysing")))…" : "Detecting beats for \(songs(n("beats")))…"
+            let title = n("lyrics") > 0 ? "Finding lyrics for \(songs(n("lyrics")))…" : "Analyzing \(songs(n("analysing")))…"
             let analysing = n("lyrics") > 0 && n("analysing") > 0 ? "\(n("analysing")) to analyze" : ""
-            let beats = (n("lyrics") > 0 || n("analysing") > 0) && n("beats") > 0 ? "\(n("beats")) for beat detection" : ""
-            return (title, join([analysing, beats, left]))
+            return (title, join([analysing, left]))
         }
         let of = "\(n("position")) of \(n("total"))"
         switch n("notice") {
