@@ -6,8 +6,8 @@
 mod bluez;
 #[cfg(all(feature = "desktop", any(test, target_os = "macos")))]
 mod btids;
-#[cfg(feature = "desktop")]
 pub mod account;
+#[cfg(feature = "desktop")]
 pub mod desktop;
 mod lyrics;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
