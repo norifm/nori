@@ -157,11 +157,13 @@ pub fn toggled(name: &str, on: bool) -> (&str, String) {
 pub enum Act {
     Equalizer,
     AddServer,
-    /// A server row's Edit: the account sheet of the profile in use where its provider has one to sign
-    /// in to, else the profile in the sign-in form.
+    /// A server row's Edit: the profile's account sheet where its provider has one to sign in to, else
+    /// the profile in the sign-in form.
     Edit(String),
     /// A server row's Rename: its name asked for.
     Rename(String),
+    /// A server row's Remove: asked first ([`REMOVE_PROFILE`]).
+    Remove(String),
     /// Switch to the server with this id.
     Server(String),
     Chore(Chore),
@@ -183,6 +185,9 @@ impl Act {
         }
         if let Some(id) = name.strip_prefix("rename:") {
             return Some(Act::Rename(id.to_string()));
+        }
+        if let Some(id) = name.strip_prefix("remove:") {
+            return Some(Act::Remove(id.to_string()));
         }
         if let Some((what, path)) = name.split_once(':').filter(|(what, _)| matches!(*what, BACKUP_PASSWORD | RESTORE_PASSWORD)) {
             return Some(Act::BackupPassword { restore: what == RESTORE_PASSWORD, path: path.to_string() });
@@ -557,9 +562,10 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             let mut menu = Vec::new();
             if edits {
                 menu.push(("Rename".to_string(), format!("rename:{}", sv.id)));
-                if editable(kinds, sv, active) {
+                if editable(kinds, sv) {
                     menu.push(("Edit".to_string(), format!("edit:{}", sv.id)));
                 }
+                menu.push(("Remove".to_string(), format!("remove:{}", sv.id)));
             }
             Row {
                 kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, options: menu, rank: index as i32,
@@ -585,10 +591,13 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
 
 /// Whether profile `sv` has an Edit page: a field besides its name (renamed from its menu), or, in use, an
 /// account to sign in to.
-fn editable(kinds: &Kinds, sv: &SavedServer, active: bool) -> bool {
+fn editable(kinds: &Kinds, sv: &SavedServer) -> bool {
     use nori_core::providers::FormField;
-    kinds.providers().into_iter().find(|i| i.kind == sv.kind).is_some_and(|i| i.fields.iter().any(|f| !f.advanced && f.what != FormField::Name) || (active && !i.sign_in.is_empty()))
+    kinds.providers().into_iter().find(|i| i.kind == sv.kind).is_some_and(|i| i.fields.iter().any(|f| !f.advanced && f.what != FormField::Name) || !i.sign_in.is_empty())
 }
+
+/// The ask sheet's name for removing profile `id`, once confirmed.
+pub const REMOVE_PROFILE: &str = "remove-profile:";
 
 /// Display name and description of a lyrics service by core id.
 fn service(id: &str) -> Option<(&'static str, &'static str)> {

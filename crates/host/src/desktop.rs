@@ -43,6 +43,17 @@ fn zone(tz: Option<String>, link: Option<String>) -> Option<String> {
     link?.split_once("zoneinfo/").map(|(_, z)| z.to_string())
 }
 
+/// What removing a profile leaves open.
+#[derive(Debug, PartialEq)]
+pub enum ProfileRemoved {
+    /// It was not the one in use.
+    Elsewhere,
+    /// It was; this one takes over.
+    Opens(Box<SavedServer>),
+    /// It was the last.
+    Last,
+}
+
 /// A desktop client's object graph root (as Kotlin's `Nori`): the queue session over the settings, which
 /// every view reads, and the plugins installed under the data directory, opened at the first ask.
 pub struct Root {
@@ -58,6 +69,28 @@ impl Root {
 
     pub fn data(&self) -> &Path {
         &self.data
+    }
+
+    /// Removes saved profile `id` and, off this thread (a library is many rows), its rows in the database.
+    /// Which profile takes over from the one in use is the core's (`settings::servers_removed`).
+    pub fn remove_profile(&self, id: &str) -> ProfileRemoved {
+        let settings = &self.app.settings;
+        let mut prefs = settings.current().unwrap_or_default();
+        let was_active = prefs.active_server_id == id;
+        let list = nori_core::settings::ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: std::mem::take(&mut prefs.active_server_id) };
+        let left = nori_core::settings::servers_removed(list, id.to_string());
+        (prefs.servers, prefs.active_server_id) = (left.servers, left.active_server_id);
+        let next = prefs.active_server().cloned();
+        settings.put(prefs);
+        let (db, server) = (crate::db_path(&self.data), id.to_string());
+        crate::spawn("nori-forget", move || {
+            let _ = nori_core::db::db_forget_server(db, server);
+        });
+        match next {
+            _ if !was_active => ProfileRemoved::Elsewhere,
+            Some(p) => ProfileRemoved::Opens(Box::new(p)),
+            None => ProfileRemoved::Last,
+        }
     }
 
     /// The plugins, laid over the settings, and the kinds of profile they and nori open.

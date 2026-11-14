@@ -1377,12 +1377,14 @@ component ChoiceLine inherits Rectangle {
                 overflow: elide;
             }
         }
-        if root.full: Icon {
-            y: (parent.height - self.height) / 2;
-            glyph: Icons.check;
-            colour: Theme.text;
-            width: 18px;
-            height: 18px;
+        if root.full: VerticalLayout {
+            alignment: center;
+            Icon {
+                glyph: Icons.check;
+                colour: Theme.text;
+                width: 18px;
+                height: 18px;
+            }
         }
     }
     if root.divider: Rectangle {
@@ -1491,12 +1493,14 @@ component MenuLine inherits Rectangle {
             width: 18px;
             height: 18px;
         }
-        if root.chosen: Icon {
-            y: (parent.height - self.height) / 2;
-            glyph: Icons.check;
-            colour: Theme.dim;
-            width: 16px;
-            height: 16px;
+        if root.chosen: VerticalLayout {
+            alignment: center;
+            Icon {
+                glyph: Icons.check;
+                colour: Theme.dim;
+                width: 16px;
+                height: 16px;
+            }
         }
     }
     if root.divider: Rectangle {
@@ -3206,12 +3210,14 @@ component DevicesView inherits Rectangle {
                     line: d.line;
                     lit: d.active;
                     clicked => { root.pick(d.id); }
-                    if d.active: Icon {
-                        y: (parent.height - self.height) / 2;
-                        glyph: Icons.check;
-                        colour: Theme.accent;
-                        width: 16px;
-                        height: 16px;
+                    if d.active: VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            glyph: Icons.check;
+                            colour: Theme.accent;
+                            width: 16px;
+                            height: 16px;
+                        }
                     }
                 }
                 if d.note != "": HorizontalLayout {
@@ -4231,12 +4237,14 @@ component Chooser inherits Rectangle {
                             vertical-alignment: center;
                             overflow: elide;
                         }
-                        if i == root.chosen: Icon {
-                            y: (parent.height - self.height) / 2;
-                            glyph: Icons.check;
-                            colour: Theme.dim;
-                            width: 18px;
-                            height: 18px;
+                        if i == root.chosen: VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                glyph: Icons.check;
+                                colour: Theme.dim;
+                                width: 18px;
+                                height: 18px;
+                            }
                         }
                     }
                     oa := TouchArea {
@@ -4317,7 +4325,7 @@ global UsageColors {
     }
 }
 
-// The row of a hand-ranked list held by its handle and dragged to another place: its list (the rows' kind)
+// The row of a hand-ranked list held and dragged to another place: its list (the rows' kind)
 // and which (empty: none), where its middle stood and how tall it is, how far it has moved, and how many
 // places it has passed (down +).
 global RankDrag {
@@ -4332,8 +4340,8 @@ global RankDrag {
     in-out property <bool> landing;
 }
 
-// A row of a list ranked by hand (the lyrics services, the profiles): what it holds, then, where it is
-// `movable`, a handle that drags it to another place (its rank in `item.chosen`). The rows it passes step
+// A row of a list ranked by hand (the lyrics services, the profiles): what it holds; where it is `movable`,
+// the row itself is dragged to another place (its rank in `item.chosen`). The rows it passes step
 // out of its way, whatever their heights.
 component RankPlate inherits Rectangle {
     in property <SettingRow> item;
@@ -4361,58 +4369,61 @@ component RankPlate inherits Rectangle {
         border-top-right-radius: root.item.first || root.held ? 18px : 0;
         border-bottom-left-radius: root.item.last || root.held ? 18px : 0;
         border-bottom-right-radius: root.item.last || root.held ? 18px : 0;
-        if root.clickable: TouchArea {
-            clicked => { root.clicked(); }
+        // A press clicks; moved a few points (when it may move), the row is dragged to another place.
+        TouchArea {
+            enabled: root.clickable || root.movable;
+            mouse-cursor: root.held ? MouseCursor.grabbing : MouseCursor.default;
+            property <length> start;
+            property <bool> dragged;
+            pointer-event(e) => {
+                if e.button != PointerEventButton.left {
+                    return;
+                }
+                if e.kind == PointerEventKind.down {
+                    self.start = self.absolute-position.y + self.mouse-y;
+                    self.dragged = false;
+                }
+                if e.kind == PointerEventKind.up && root.held {
+                    RankDrag.landing = true;
+                    if RankDrag.by != 0 {
+                        root.placed(root.item.name, RankDrag.by);
+                    }
+                    RankDrag.held = "";
+                    RankDrag.dy = 0;
+                    RankDrag.by = 0;
+                }
+            }
+            moved => {
+                if !root.movable {
+                    return;
+                }
+                let dy = self.absolute-position.y + self.mouse-y - self.start;
+                if !root.held && (dy > 4px || dy < -4px) {
+                    self.dragged = true;
+                    RankDrag.by = 0;
+                    RankDrag.from = root.item.chosen;
+                    RankDrag.mid = root.mid;
+                    RankDrag.tall = root.height;
+                    RankDrag.kind = root.item.kind;
+                    RankDrag.held = root.item.name;
+                }
+                if root.held {
+                    RankDrag.dy = dy;
+                }
+            }
+            clicked => {
+                if root.clickable && !self.dragged {
+                    root.clicked();
+                }
+            }
         }
         line := HorizontalLayout {
             padding-left: 16px;
-            padding-right: root.movable ? 6px : 14px;
+            padding-right: 14px;
             padding-top: 12px;
             padding-bottom: 12px;
             spacing: 12px;
             @children
-            if root.movable: Rectangle {
-                width: 32px;
-                Icon {
-                    glyph: Icons.menu;
-                    colour: root.held ? Theme.text : Theme.dim;
-                    width: 18px;
-                    height: 18px;
-                }
-                handle := TouchArea {
-                    mouse-cursor: root.held ? MouseCursor.grabbing : MouseCursor.grab;
-                    property <length> start;
-                    pointer-event(e) => {
-                        if e.button != PointerEventButton.left {
-                            return;
-                        }
-                        if e.kind == PointerEventKind.down {
-                            self.start = self.absolute-position.y + self.mouse-y;
-                            RankDrag.by = 0;
-                            RankDrag.dy = 0;
-                            RankDrag.from = root.item.chosen;
-                            RankDrag.mid = root.mid;
-                            RankDrag.tall = root.height;
-                            RankDrag.kind = root.item.kind;
-                            RankDrag.held = root.item.name;
-                        }
-                        if e.kind == PointerEventKind.up && root.held {
-                            RankDrag.landing = true;
-                            if RankDrag.by != 0 {
-                                root.placed(root.item.name, RankDrag.by);
-                            }
-                            RankDrag.held = "";
-                            RankDrag.dy = 0;
-                            RankDrag.by = 0;
-                        }
-                    }
-                    moved => {
-                        if root.held {
-                            RankDrag.dy = self.absolute-position.y + self.mouse-y - self.start;
-                        }
-                    }
-                }
-            }
         }
         Rectangle {
             x: 14px;
@@ -4620,12 +4631,14 @@ component ProfileLine inherits Rectangle {
                 overflow: elide;
             }
         }
-        if root.on: Icon {
-            y: (parent.height - self.height) / 2;
-            glyph: Icons.check;
-            colour: Theme.accent;
-            width: 16px;
-            height: 16px;
+        if root.on: VerticalLayout {
+            alignment: center;
+            Icon {
+                glyph: Icons.check;
+                colour: Theme.accent;
+                width: 16px;
+                height: 16px;
+            }
         }
     }
     ta := TouchArea {
@@ -4719,12 +4732,14 @@ component SettingLine inherits VerticalLayout {
                 wrap: word-wrap;
             }
         }
-        if root.item.on: Icon {
-            y: (parent.height - self.height) / 2;
-            glyph: Icons.check;
-            colour: Theme.accent;
-            width: 18px;
-            height: 18px;
+        if root.item.on: VerticalLayout {
+            alignment: center;
+            Icon {
+                glyph: Icons.check;
+                colour: Theme.accent;
+                width: 18px;
+                height: 18px;
+            }
         }
         if root.item.options.length > 0: IconButton {
             y: (parent.height - self.height) / 2;
@@ -4739,7 +4754,7 @@ component SettingLine inherits VerticalLayout {
                     VerticalLayout {
                         padding: MenuShape.inset;
                         for o[i] in root.item.options: MenuRow {
-                            icon: i == 0 ? Icons.edit-pencil : Icons.settings;
+                            icon: o == "Remove" ? Icons.trash : o == "Edit" ? Icons.settings : Icons.edit-pencil;
                             text: o;
                             clicked => {
                                 profile-menu.close();
@@ -9789,12 +9804,14 @@ export component AppWindow inherits Window {
                                         overflow: elide;
                                     }
                                 }
-                                if id.chosen: Icon {
-                                    y: (parent.height - self.height) / 2;
-                                    glyph: Icons.check;
-                                    colour: Theme.accent;
-                                    width: 18px;
-                                    height: 18px;
+                                if id.chosen: VerticalLayout {
+                                    alignment: center;
+                                    Icon {
+                                        glyph: Icons.check;
+                                        colour: Theme.accent;
+                                        width: 18px;
+                                        height: 18px;
+                                    }
                                 }
                             }
                             if i < root.signin-identities.length - 1: Rectangle {
