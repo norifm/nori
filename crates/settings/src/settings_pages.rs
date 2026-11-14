@@ -494,8 +494,9 @@ impl Page<'_> {
         vec![(SectionId::Streaming, streaming), (SectionId::Downloads, downloads), (SectionId::Storage, storage), (SectionId::Backup, backup)]
     }
 
+    /// Updates: every client a release installs, the web's always the newest.
     fn about(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
-        if !self.phone() {
+        if self.web() {
             return Vec::new();
         }
         let mut updates = vec![row(RowItem::Action { action: SettingsAction::CheckUpdate }), self.setting("updateCheck")];

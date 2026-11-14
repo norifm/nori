@@ -17,6 +17,7 @@ use nori_core::playlist::{Hand, QueueEdit};
 use nori_core::lyrics_follow::LyricsNow;
 use nori_core::rules::{queue_keep, BridgeStep, QueueMoment};
 use nori_core::search::{SearchSession, SearchView};
+use nori_core::update::UpdateCheck;
 use nori_core::settings::{SavedServer, SettingChange, StoredPrefs};
 use nori_core::settings_store::{APPLY_AUDIO, APPLY_GAIN, CACHE_LIMIT, PLAYER, REPLAN, SOUND};
 use nori_core::transport::{block_on, Exchange, FailureKind, NetError, Transport, TransportError, TransportResponse};
@@ -58,6 +59,33 @@ pub enum Said {
     Working,
     /// The profile in use keeps another picture of its account: its marks are drawn again.
     Pictured,
+    /// What an update check found ([`Handle::update_check`]).
+    Update(UpdateFound),
+}
+
+/// What an update check found that is worth saying: a newer release always, the rest only when the
+/// check was asked for.
+#[derive(Debug, Clone)]
+pub enum UpdateFound {
+    /// A newer release, installed from its `page` (a desktop build does not update itself).
+    Newer { version: String, page: String },
+    /// This build is the newest, `latest`.
+    Latest(String),
+    Failed(NetError),
+}
+
+impl UpdateFound {
+    /// What to say of `check`'s outcome; None for nothing (not due, or nothing newer when not `asked`).
+    fn of(check: Result<UpdateCheck, NetError>, asked: bool) -> Option<UpdateFound> {
+        let found = match check {
+            Ok(UpdateCheck::NotDue) => return None,
+            Ok(UpdateCheck::NoApk { version, page }) => UpdateFound::Newer { version, page },
+            Ok(UpdateCheck::Available { update, .. }) => UpdateFound::Newer { version: update.version, page: update.page },
+            Ok(UpdateCheck::UpToDate { latest }) => UpdateFound::Latest(latest),
+            Err(e) => UpdateFound::Failed(e),
+        };
+        (asked || matches!(found, UpdateFound::Newer { .. })).then_some(found)
+    }
 }
 
 /// Something done or failed, for the status line.
@@ -572,6 +600,19 @@ impl Handle {
                 me.sync();
             }
             let _ = me.client.flush_pending().await;
+        });
+    }
+
+    /// Checks for a newer release of nori: `asked` from the settings, else once a day while the setting
+    /// is on (a client that shows updates asks as a session opens). [`UpdateFound::of`] says what is
+    /// said.
+    pub fn update_check(&self, asked: bool) {
+        let me = self.clone();
+        self.run(async move {
+            let check = me.client.update_check(asked, env!("CARGO_PKG_VERSION").into(), Vec::new()).await;
+            if let Some(found) = UpdateFound::of(check, asked) {
+                (me.out)(Said::Update(found));
+            }
         });
     }
 
@@ -1835,6 +1876,18 @@ mod tests {
     use nori_engine::Loader;
 
     use super::*;
+
+    #[test]
+    fn an_update_check_says_a_newer_release_and_the_rest_only_when_asked() {
+        let newer = || Ok(UpdateCheck::NoApk { version: "1.0.0".into(), page: "p".into() });
+        let latest = || Ok(UpdateCheck::UpToDate { latest: "0.9.0".into() });
+        let failed = || Err(NetError::Http { status: 500 });
+        let said = |check, asked| UpdateFound::of(check, asked);
+        assert!(matches!(said(newer(), false), Some(UpdateFound::Newer { version, page }) if version == "1.0.0" && page == "p"));
+        assert!([said(latest(), false), said(failed(), false), said(Ok(UpdateCheck::NotDue), false)].iter().all(Option::is_none), "a check of its own says nothing else");
+        assert!(matches!(said(latest(), true), Some(UpdateFound::Latest(v)) if v == "0.9.0"));
+        assert!(matches!(said(failed(), true), Some(UpdateFound::Failed(NetError::Http { status: 500 }))));
+    }
 
     #[cfg(feature = "desktop")]
     #[test]

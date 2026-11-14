@@ -295,6 +295,7 @@ impl Runner {
         match Session::open(o) {
             Ok(s) => {
                 s.check();
+                s.update_check(false);
                 if !app.in_sight {
                     s.in_sight(false);
                 }
@@ -1133,6 +1134,7 @@ impl Runner {
             }
             Cmd::Action(c) => s.action(c),
             Cmd::Curve => s.curve_answer(),
+            Cmd::CheckUpdate => s.update_check(true),
             Cmd::SoundPage(page, on) => s.sound_page(page, on),
             Cmd::SearchTyped(text) => {
                 let v = s.search_typed(&text);

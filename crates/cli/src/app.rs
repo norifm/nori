@@ -162,6 +162,8 @@ pub enum Cmd {
     Action(Chore),
     /// The answer to the last AutoEQ note (`Session::curve_answer`).
     Curve,
+    /// Checks for a newer nori now (`Session::update_check`).
+    CheckUpdate,
     Mouse(bool),
     Images(bool),
     Paint(bool),
@@ -284,6 +286,7 @@ impl Cmd {
             Cmd::Setting(k, v) => format!("setting {k}={v}"),
             Cmd::Action(a) => format!("action {a:?}"),
             Cmd::Curve => "curve".into(),
+            Cmd::CheckUpdate => "check update".into(),
             Cmd::SoundPage(page, on) => format!("sound page {page:?} {on}"),
             Cmd::Mouse(on) => format!("mouse {on}"),
             Cmd::Images(on) => format!("images {on}"),

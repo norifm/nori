@@ -108,6 +108,7 @@ pub enum Act {
     AllowMobileAssets(String),
     /// Asks where to save a backup, or which one to restore.
     Backup { restore: bool },
+    CheckUpdate,
 }
 
 pub use nori_host::session::Chore;
@@ -884,6 +885,7 @@ pub fn open_row(row: Row) -> Option<Opened> {
             Act::AddServer => Opened::Login,
             Act::JoinJam => Opened::Overlay(Overlay::Join { text: String::new(), error: None, busy: false }),
             Act::Chore(c) => Opened::Cmds(vec![Cmd::Action(c)]),
+            Act::CheckUpdate => Opened::Cmds(vec![Cmd::CheckUpdate]),
             Act::InstallPlugin => Opened::Overlay(Overlay::Input { title: text::PLUGIN_PATH.into(), text: String::new(), secret: false, target: Target::Install }),
             Act::PluginAction { plugin, row } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Act(plugin, row))]),
             Act::LookForPlugins => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Look)]),
@@ -1097,6 +1099,8 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "autoFill" => "When the queue ends",
         "autoFillBasis" => "Chosen by",
         "autoFillRemote" => "Include remote songs",
+        "updateCheck" => "Check for updates automatically",
+        "updateBeta" => "Beta updates",
         "bridgeOffline" => "Play downloads when offline",
         "headphoneSound" => "Headphone sound",
         "compressor" => "Compressor",
@@ -1305,7 +1309,8 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
                 SettingsAction::JoinJam => Row::Button { title: text::JAM_JOIN.into(), action: Act::JoinJam },
                 SettingsAction::MakeBackup => Row::Action { title: text::BACK_UP.into(), detail: text::BACK_UP_DETAIL.into(), button: "Save".into(), enabled, action: Act::Backup { restore: false } },
                 SettingsAction::RestoreBackup => Row::Action { title: text::RESTORE.into(), detail: text::RESTORE_DETAIL.into(), button: "Open".into(), enabled, action: Act::Backup { restore: true } },
-                SettingsAction::AnalyseDownloads | SettingsAction::CheckUpdate => return None,
+                SettingsAction::CheckUpdate => Row::Action { title: "Check for updates".into(), detail: format!("Version {}", env!("CARGO_PKG_VERSION")), button: "Check".into(), enabled: true, action: Act::CheckUpdate },
+                SettingsAction::AnalyseDownloads => return None,
             }
         }
         RowItem::Note { note } => Row::Note {
