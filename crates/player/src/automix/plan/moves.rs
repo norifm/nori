@@ -23,19 +23,20 @@ pub(super) struct Pair<'a> {
     pub by_beats: bool,
 }
 
-/// Worth of each move before what it costs, roughly how good it sounds when it fits: a blend over a beatless end
-/// above an effect handover, the marked effects (brake, reverb) below the plain ones so they come up only where they
-/// fit best or for variety.
+/// Worth of each move before what it costs, roughly how good it sounds when it fits: a song that stops cold ends on
+/// its stop; then the long blends (a loop ramp, a beatless blend, a ride, more the longer it runs); the marked
+/// effects (brake, reverb) for variety where they fit; the quick handovers (echo, filter-out) only where no blend
+/// does, as they are heard as cuts.
+const STOP_GLOW_WORTH: f64 = 2.8;
+const STOP_WORTH: f64 = 2.7;
 const LOOP_RAMP_WORTH: f64 = 2.4;
 const BEATLESS_WORTH: f64 = 2.0;
-const STOP_GLOW_WORTH: f64 = 1.7;
-const STOP_WORTH: f64 = 1.6;
 const HANDOFF_WORTH: f64 = 1.5;
 const RIDE_WORTH: f64 = 1.4;
 const BRAKE_WORTH: f64 = 1.3;
 const REVERB_WORTH: f64 = 1.3;
-const ECHO_WORTH: f64 = 1.2;
-const FILTER_OUT_WORTH: f64 = 1.0;
+const ECHO_WORTH: f64 = 0.9;
+const FILTER_OUT_WORTH: f64 = 0.8;
 const MELT_WORTH: f64 = 1.0;
 /// Each of Smooth's crossings (afterglow, rise), and more for the one that suits the pair ([`Suits`]).
 const CROSSING_WORTH: f64 = 0.85;
@@ -52,7 +53,8 @@ pub(super) fn repeat_cost(kind: TransitionKind, style: MixStyle) -> f64 {
     match kind {
         TransitionKind::ReverbWash if style == MixStyle::Smooth => 0.4,
         TransitionKind::Brake | TransitionKind::ReverbWash => 2.0,
-        TransitionKind::EchoOut | TransitionKind::FilterOut | TransitionKind::FilterRide => 0.6,
+        TransitionKind::EchoOut | TransitionKind::FilterOut => 0.6,
+        TransitionKind::FilterRide => 1.0,
         TransitionKind::LoopRamp => 0.8,
         TransitionKind::BeatlessBlend => 0.2,
         _ => 0.0,
@@ -98,6 +100,12 @@ fn alive(a: &TrackAnalysis, from: f64, to: f64) -> bool {
 const LOUD_DB: f32 = -6.0;
 /// An energy drop: the incoming opening's first four bars this much under the outgoing exit.
 const DROP_DB: f32 = 8.0;
+
+/// The incoming bar at `at` hits: loud, with its beat. A quick handover (an echo, a filter-out, a brake) works only
+/// onto one; onto anything softer it is heard as a cut.
+fn bursts_in(b: &TrackAnalysis, at: f64) -> bool {
+    bar_at(&b.intro_bars, at).is_some_and(|x| x.level_db >= LOUD_DB && x.pulse >= KICK_PULSE)
+}
 
 pub(super) fn beatless(b: &BarProfile) -> bool {
     b.pulse <= BEATLESS_PULSE && b.level_db >= AUDIBLE_DB
@@ -256,9 +264,10 @@ const QUIET_HEAD_MS: i64 = 1_000;
 /// Echo out (automix-software.md B10): on a downbeat after the last line, the outgoing song's lows go, its last beat
 /// rings on in band-limited repeats a rising high-pass thins, and it falls (over a beat on a trusted grid, a bar on
 /// its tempo alone); the incoming music starts on that downbeat, rising as it falls, the repeats ringing over its first
-/// bar and held down after it, and before its singing starts. Never over a sung beat, which would stutter.
+/// bar and held down after it, and before its singing starts. Never over a sung beat, which would stutter; only
+/// onto an opening that hits ([`bursts_in`]).
 pub(super) fn echo_out(p: &Pair) -> Option<Move> {
-    let (a, s) = (p.a, p.s);
+    let (a, b, s) = (p.a, p.b?, p.s);
     let (beat, on_grid) = beat_of(a)?;
     let bar = bar_beats(a) as f64 * beat;
     let fall = if on_grid { beat } else { bar };
@@ -268,8 +277,8 @@ pub(super) fn echo_out(p: &Pair) -> Option<Move> {
     }
     // Off a last word only with nothing sung after it: repeats under a voice still singing stutter.
     let x = leave(a, p.room.out_dur, beat, fall, beat, |x| !sings_after(a, x) && x - beat + dur <= p.room.out_dur as f64)?;
-    let (_, at) = entry(p.b, p.room.in_dur);
-    if (p.room.in_dur as f64) - at < 2.0 * dur {
+    let (_, at) = entry(Some(b), p.room.in_dur);
+    if !bursts_in(b, at) || (p.room.in_dur as f64) - at < 2.0 * dur {
         return None;
     }
     let mut m = handover(TransitionKind::EchoOut, x.at - beat, beat, at, dur);
@@ -277,7 +286,7 @@ pub(super) fn echo_out(p: &Pair) -> Option<Move> {
     (m.in_fade_start_ms, m.in_fade_end_ms) = (m.out_fade_start_ms, m.out_fade_end_ms);
     let delay = echo_delay(beat);
     // Held down once the incoming song is in, or as its singing starts if that is sooner.
-    let sung = p.b.filter(|b| b.vocal_end_ms > 0).map(|b| beat + b.vocal_start_ms as f64 - at);
+    let sung = (b.vocal_end_ms > 0).then_some(beat + b.vocal_start_ms as f64 - at);
     let duck_at = sung.map_or(beat + bar, |v| v.clamp(beat, beat + bar) - 0.5 * beat);
     m.echo = Some(Echo {
         delay_ms: delay.round() as i64,
@@ -291,7 +300,7 @@ pub(super) fn echo_out(p: &Pair) -> Option<Move> {
         // The lows going from half a beat before the exit, the repeats thinning after it.
         m.high_pass = Some(Sweep { start_ms: (0.5 * beat).round() as i64, end_ms: (beat + bar).round() as i64, from_hz: ECHO_HP_FROM_HZ, to_hz: ECHO_HP_TO_HZ });
     }
-    m.in_gain_db = loudness_trim(Some(a), p.b, s);
+    m.in_gain_db = loudness_trim(Some(a), Some(b), s);
     let line = if x.word { "off its last word" } else if x.on_line { "on the outro phrase" } else if a.vocal_end_ms > 0 { "after its last line" } else { "on its last bars" };
     let by = if on_grid { "on its downbeat" } else { "by its tempo" };
     m.reason = format!("echo-out {by}, {line}{}", tail(p.why_not));
@@ -310,9 +319,10 @@ const ECHO_HP_TO_HZ: f32 = 1_500.0;
 
 /// Filter out (B11): the outgoing song thins through a high-pass rising over two bars to a downbeat after its last
 /// line, or to its last word where it sings to its end, where it falls over a beat as the incoming music bursts in on
-/// it, clean. The dry move for an ending whose last beat is sung, where an echo would stutter the word.
+/// it, clean. The dry move for an ending whose last beat is sung, where an echo would stutter the word; only onto an
+/// opening that hits ([`bursts_in`]).
 pub(super) fn filter_out(p: &Pair) -> Option<Move> {
-    let (a, s) = (p.a, p.s);
+    let (a, b, s) = (p.a, p.b?, p.s);
     if !s.filter_effects {
         return None;
     }
@@ -322,8 +332,8 @@ pub(super) fn filter_out(p: &Pair) -> Option<Move> {
     let x = leave(a, p.room.out_dur, beat, beat, 0.0, |x| x - rise >= a.silence_start_ms as f64 && x + beat <= p.room.out_dur as f64 && alive(a, x - rise, x))?;
     // A tail within the song after the exit, for a loudness match to let go over.
     let dur = rise + (FILTER_OUT_TAIL_BARS * bar).min(p.room.out_dur as f64 - x.at).max(beat);
-    let (_, at) = entry(p.b, p.room.in_dur);
-    if dur > p.room.max_len as f64 || (p.room.in_dur as f64) - at < 2.0 * dur {
+    let (_, at) = entry(Some(b), p.room.in_dur);
+    if !bursts_in(b, at) || dur > p.room.max_len as f64 || (p.room.in_dur as f64) - at < 2.0 * dur {
         return None;
     }
     // The incoming song bursting in on its downbeat, the thinned outgoing one gone over the same beat.
@@ -331,7 +341,7 @@ pub(super) fn filter_out(p: &Pair) -> Option<Move> {
     (m.out_fade_start_ms, m.out_fade_end_ms) = (rise.round() as i64, (rise + beat).round() as i64);
     (m.in_fade_start_ms, m.in_fade_end_ms) = (rise.round() as i64, (rise + 0.5 * beat).round() as i64);
     m.high_pass = Some(Sweep { start_ms: 0, end_ms: (rise + beat).round() as i64, from_hz: FILTER_OUT_FROM_HZ, to_hz: FILTER_OUT_TO_HZ });
-    m.in_gain_db = loudness_trim(Some(a), p.b, s);
+    m.in_gain_db = loudness_trim(Some(a), Some(b), s);
     let place = if x.word { ", off its last word" } else if x.on_line { ", on the outro phrase" } else { "" };
     m.reason = format!("filter-out over {FILTER_OUT_BARS} bars{place}{}", tail(p.why_not));
     Some(Move { plan: m, worth: FILTER_OUT_WORTH - if on_grid || x.word { 0.0 } else { OFF_GRID_COST } })
@@ -342,75 +352,73 @@ const FILTER_OUT_TAIL_BARS: f64 = 2.0;
 const FILTER_OUT_FROM_HZ: f32 = 30.0;
 const FILTER_OUT_TO_HZ: f32 = 1_200.0;
 
-/// The filter ride (B6), or the bass hand-off where both songs carry a kick at the join (B7): over the outgoing
-/// song's last bars before it leaves, it darkens through a low-pass while the incoming one comes up through a
-/// high-pass that opens, the lows changing hands once, on a beat, so one kick plays at a time. Two grooves overlap,
-/// but in bands that do not crowd each other; short, so the tempos never drift far apart.
+/// The filter ride (B6), or the bass hand-off where both songs carry a kick at the join (B7): a DJ's long blend for
+/// two songs that cannot be locked. Over up to [`RIDE_BARS`] of the outgoing song's last music, under its last lines
+/// too, the incoming one comes up thin through a high-pass that opens (its kick only at the end, so one kick plays at
+/// a time), done as the outgoing song leaves after its last line or off its last word; the lows change hands over a
+/// bar there, the faders crossing from a bar before it so the two never sound louder than one, and the outgoing song
+/// plays out its outro, darkening through a low-pass. Two voices together for a bar at most; the longer the ride, the
+/// more it is worth.
 pub(super) fn filter_ride(p: &Pair) -> Option<Move> {
     let (a, b, s) = (p.a, p.b?, p.s);
     if !s.filter_effects {
         return None;
     }
     let (beat, on_grid) = beat_of(a)?;
+    let bar = bar_beats(a) as f64 * beat;
     let (music, _) = entry(Some(b), p.room.in_dur);
-    // The incoming kick where it is heard, in the bars under the hand-off, not bars further on.
-    let heard = music - bar_ms(b) + 1.0..music + (HANDOFF_BEATS * beat).min(HANDOFF_MAX_MS);
-    let in_kicks = mean_over(&b.intro_bars, heard.start, heard.end, |x| if kick(x) { 1.0 } else { 0.0 }).is_some_and(|k| k >= 0.5);
-    let (x, kicks, beats, len) = exits(a, p.room.out_dur, beat, 0.0, 0.0).into_iter().find_map(|x| {
-        let kicks = in_kicks && bar_at(&a.outro_bars, x.at - beat).is_some_and(kick);
-        let (beats, cap) = if kicks { (HANDOFF_BEATS, HANDOFF_MAX_MS) } else { (RIDE_BEATS, RIDE_MAX_MS) };
-        let len = (beats * beat).min(cap);
-        alive(a, x.at - len, x.at).then_some((x, kicks, beats, len))
-    })?;
-    if len > p.room.max_len as f64 || (p.room.in_dur as f64) - music < 2.0 * len {
+    let ending = Ending::of(a, p.room.out_dur);
+    let x = leave(a, p.room.out_dur, beat, 0.0, 0.0, |x| x - RIDE_MIN_MS >= a.silence_start_ms as f64 && x + beat <= p.room.out_dur as f64 && alive(a, x - RIDE_MIN_MS, x))?;
+    // The lead under the outgoing song, whole bars, within the room; two voices together for a bar at most: the
+    // incoming song may start singing under it once the outgoing one has sung its last line.
+    let voices = match (a.vocal_end_ms > 0, b.vocal_end_ms > 0) {
+        (true, true) => b.vocal_start_ms as f64 - music + bar + (x.at - a.vocal_end_ms as f64),
+        _ => f64::MAX,
+    };
+    let most = (RIDE_BARS * bar).min(RIDE_MAX_MS).min(voices).min(p.room.max_len as f64 - bar).min(x.at - a.silence_start_ms as f64);
+    let lead = (most / bar).floor() * bar;
+    if lead < RIDE_MIN_MS || (p.room.in_dur as f64) - music < 2.0 * lead {
         return None;
     }
-    // The outgoing singing done while the low-pass is still over 3 kHz, before its words would muffle under it.
-    let start = x.at - len;
-    if start < a.silence_start_ms as f64 || sings_after(a, start + RIDE_SUNG_SHARE * len) {
-        return None;
-    }
-    let both_sing = sings_before(b, music + len);
-    let mut m = blank(TransitionKind::FilterRide, start.round() as i64, music.round() as i64, len.round() as i64, String::new());
-    let ms = |f: f64| (f * len).round() as i64;
-    // The swap on the beat nearest its point, over half a beat.
-    let swap_beat = |f: f64| ((f * len / beat).round() * beat - 0.25 * beat).min(len - 0.5 * beat).max(0.0);
-    if kicks {
-        m.in_high_pass = Some(Sweep { start_ms: 0, end_ms: ms(0.38), from_hz: HANDOFF_IN_HZ, to_hz: OPEN_HP_HZ });
-        let swap = swap_beat(0.43);
-        m.bass_swap = Some(BassSwap { at_ms: swap.round() as i64, len_ms: (0.5 * beat).round() as i64, cut_hz: RIDE_SWAP_HZ });
-        m.low_pass = Some(Sweep { start_ms: (swap + 0.5 * beat).round() as i64, end_ms: ms(1.0), from_hz: SWEEP_FROM_HZ, to_hz: HANDOFF_OUT_HZ });
-        (m.out_fade_start_ms, m.out_fade_end_ms) = ((swap + 0.5 * beat).round() as i64, ms(1.0));
-        (m.in_fade_start_ms, m.in_fade_end_ms) = (0, ms(0.4));
-    } else {
-        let from = if both_sing { RIDE_IN_SUNG_HZ } else { RIDE_IN_HZ };
-        m.in_high_pass = Some(Sweep { start_ms: 0, end_ms: ms(0.7), from_hz: from, to_hz: OPEN_HP_HZ });
-        m.low_pass = Some(Sweep { start_ms: 0, end_ms: ms(1.0), from_hz: RIDE_OUT_FROM_HZ, to_hz: RIDE_OUT_TO_HZ });
-        let swap = swap_beat(0.5);
-        m.bass_swap = Some(BassSwap { at_ms: swap.round() as i64, len_ms: (0.5 * beat).round() as i64, cut_hz: RIDE_SWAP_HZ });
-        (m.out_fade_start_ms, m.out_fade_end_ms) = (ms(0.35), ms(1.0));
-        (m.in_fade_start_ms, m.in_fade_end_ms) = (0, ms(0.55));
-    }
+    // The outro after the exit, played out: to the end of the music, a beat to two bars.
+    let outro = (ending.music_end - x.at).clamp(beat, RIDE_TAIL_BARS * bar).min(p.room.out_dur as f64 - x.at);
+    let start = x.at - lead;
+    // Both kicks where the bass changes hands: the incoming one's bars at the exit, the outgoing one's before it.
+    let kicks = bar_at(&a.outro_bars, x.at - beat).is_some_and(kick)
+        && mean_over(&b.intro_bars, music + lead - bar, music + lead + bar, |x| if kick(x) { 1.0 } else { 0.0 }).is_some_and(|k| k >= 0.5);
+    let dur = lead + outro;
+    let mut m = blank(TransitionKind::FilterRide, start.round() as i64, music.round() as i64, dur.round() as i64, String::new());
+    let ms = |t: f64| t.round() as i64;
+    // Over the outgoing voice the incoming one stays thinner, longer.
+    let over_voice = sings_after(a, start);
+    let from = if kicks { HANDOFF_IN_HZ } else if over_voice { RIDE_IN_SUNG_HZ } else { RIDE_IN_HZ };
+    m.in_high_pass = Some(Sweep { start_ms: 0, end_ms: ms(lead), from_hz: from, to_hz: OPEN_HP_HZ });
+    (m.in_fade_start_ms, m.in_fade_end_ms) = (0, ms(lead));
+    let swap = (lead - 0.5 * bar).max(0.0);
+    m.bass_swap = Some(BassSwap { at_ms: ms(swap), len_ms: ms(bar.min(dur - swap)), cut_hz: RIDE_SWAP_HZ });
+    m.low_pass = Some(Sweep { start_ms: ms(lead), end_ms: ms(dur), from_hz: SWEEP_FROM_HZ, to_hz: RIDE_OUT_TO_HZ });
+    (m.out_fade_start_ms, m.out_fade_end_ms) = (ms(lead - bar), ms(dur));
     m.in_gain_db = loudness_trim(Some(a), Some(b), s);
     let what = if kicks { "bass hand-off" } else { "filter ride" };
-    m.reason = format!("{what} over {beats:.0} beats{}", tail(p.why_not));
-    let worth = if kicks { HANDOFF_WORTH } else { RIDE_WORTH };
+    let place = if x.word { ", off its last word" } else if x.on_line { ", on the outro phrase" } else { "" };
+    m.reason = format!("{what} over {:.0} bars{place}{}", lead / bar, tail(p.why_not));
+    let worth = if kicks { HANDOFF_WORTH } else { RIDE_WORTH } + RIDE_LENGTH_WORTH * lead / 1000.0;
     Some(Move { plan: m, worth: worth - if on_grid { 0.0 } else { OFF_GRID_COST } })
 }
 
-const RIDE_BEATS: f64 = 12.0;
-/// The share of a ride the outgoing song may still sing over.
-const RIDE_SUNG_SHARE: f64 = 0.25;
-const RIDE_MAX_MS: f64 = 8_000.0;
-const HANDOFF_BEATS: f64 = 8.0;
-const HANDOFF_MAX_MS: f64 = 7_000.0;
-const RIDE_OUT_FROM_HZ: f32 = 7_000.0;
+/// A ride's lead under the outgoing song: up to eight bars, within 8 to 20 s.
+const RIDE_BARS: f64 = 8.0;
+const RIDE_MAX_MS: f64 = 20_000.0;
+const RIDE_MIN_MS: f64 = 8_000.0;
+/// Bars of outro the outgoing song plays out after it leaves, at most.
+const RIDE_TAIL_BARS: f64 = 2.0;
+/// Per second of lead: the longer two songs ride together, the more it sounds like one set.
+const RIDE_LENGTH_WORTH: f64 = 0.05;
 const RIDE_OUT_TO_HZ: f32 = 300.0;
 const RIDE_IN_HZ: f32 = 1_200.0;
-/// The incoming high-pass when both songs sing: the incoming voice kept thin longer.
+/// The incoming high-pass under the outgoing voice: the incoming song kept thinner, longer.
 const RIDE_IN_SUNG_HZ: f32 = 2_400.0;
 const HANDOFF_IN_HZ: f32 = 900.0;
-const HANDOFF_OUT_HZ: f32 = 1_600.0;
 /// A high-pass this low has opened.
 const OPEN_HP_HZ: f32 = 20.0;
 const RIDE_SWAP_HZ: f32 = 200.0;
@@ -615,8 +623,7 @@ pub(super) fn brake(p: &Pair) -> Option<Move> {
     let x = exits(a, p.room.out_dur, beat, stop, beat).into_iter().find(fits)?;
     let (_, at) = entry(Some(b), p.room.in_dur);
     // The bar it bursts in on hits, not one after it.
-    let hits = bar_at(&b.intro_bars, at).is_some_and(|x| x.level_db >= LOUD_DB && x.pulse >= KICK_PULSE);
-    if !hits || (p.room.in_dur as f64) - at < 2.0 * dur {
+    if !bursts_in(b, at) || (p.room.in_dur as f64) - at < 2.0 * dur {
         return None;
     }
     let mut m = handover(TransitionKind::Brake, x.at - beat, land, at, dur);
@@ -748,8 +755,8 @@ const MID_DIP_HZ: f32 = 1_000.0;
 /// to stretch one to the other, the outgoing song loops its last clean bars (instrumental, steady, with drums) and,
 /// alone, glides at most [`RAMP_PCT_PER_BAR`] a bar to a tempo between the two, where neither is more than half the
 /// gap from its own; the incoming song comes in on a downbeat of the loop at that tempo, locked, over
-/// [`RAMP_BLEND_BARS`], the lows changing hands on a downbeat at the middle and the loop draining through a
-/// rising high-pass; after it, the incoming song eases back to its own tempo at [`EASE_PCT_PER_BEAT`].
+/// [`RAMP_BLEND_BARS`], the loop darkening as it comes (a low-pass rolling to [`RAMP_ROLL_HZ`], each play unlike the
+/// last), the lows changing hands on a downbeat at the middle and the loop draining through a rising high-pass; after it, the incoming song eases back to its own tempo at [`EASE_PCT_PER_BEAT`].
 pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     let (a, b, s) = (p.a, p.b?, p.s);
     if p.by_beats || !grid_ok(a) || !grid_ok(b) || !s.keep_pitch || !s.beat_match || bar_beats(a) != bar_beats(b) {
@@ -820,6 +827,7 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
         m.highs_in = Some(HighsIn { at_ms: m.in_delay_ms, len_ms: (half - bar_wall - delay).max(0.0).round() as i64, db: RAMP_HIGHS_DB, hz: RAMP_HIGHS_HZ });
     }
     if s.filter_effects {
+        m.low_pass = Some(Sweep { start_ms: m.in_delay_ms, end_ms: half.round() as i64, from_hz: SWEEP_FROM_HZ, to_hz: RAMP_ROLL_HZ });
         let drain = RAMP_DRAIN_BARS * bar_wall;
         m.high_pass = Some(Sweep { start_ms: (dur - drain).round() as i64, end_ms: m.duration_ms, from_hz: RAMP_DRAIN_FROM_HZ, to_hz: RAMP_DRAIN_TO_HZ });
     }
@@ -842,8 +850,11 @@ const RAMP_MAX_GAP_PCT: f64 = 45.0;
 pub(super) const RAMP_PCT_PER_BAR: f64 = 2.0;
 pub(super) const EASE_PCT_PER_BEAT: f64 = 0.75;
 const RAMP_BLEND_BARS: f64 = 8.0;
-/// Most times a loop ramp's slice plays: a bar or two round more often turns into a broken record.
-pub(super) const MAX_LOOP_PLAYS: f64 = 5.0;
+/// Most times a loop ramp's slice plays: more often, anything in it heard each time (a backing voice the voice
+/// measure misses) turns robotic.
+pub(super) const MAX_LOOP_PLAYS: f64 = 3.0;
+/// Where the loop's low-pass closes to by the swap: each play darker than the last, so no two sound the same.
+const RAMP_ROLL_HZ: f32 = 2_000.0;
 const RAMP_DRAIN_BARS: f64 = 2.0;
 const RAMP_DRAIN_FROM_HZ: f32 = 30.0;
 const RAMP_DRAIN_TO_HZ: f32 = 1_500.0;

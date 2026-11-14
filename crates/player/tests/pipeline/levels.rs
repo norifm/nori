@@ -119,6 +119,10 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
         let bars: Vec<BarProfile> = (0..30).map(|i| BarProfile { start_ms: 250 + i * bar, level_db: 0.0, low_db: 0.0, pulse: 1.0, voice: 0.0, change: 0.0 }).collect();
         TrackAnalysis { intro_bars: bars.clone(), outro_bars: bars, ..t.clone() }
     };
+    // Singing from its start, its first bar a hit, after a song sung to seven seconds before its end: no ride keeps
+    // the two voices apart, the place for a quick handover.
+    let sings_soon = kicking(&TrackAnalysis { vocal_start_ms: 300, vocal_end_ms: 20_000, ..b.clone() });
+    let lined = TrackAnalysis { vocal_start_ms: 300, vocal_end_ms: (SONG_S * 1000.0) as i64 - 7_000, ..a.clone() };
     // Stopping cold three seconds before its end.
     let stops = TrackAnalysis { exit_ms: (SONG_S * 1000.0) as i64 - 3_000, ..a.clone() };
     vec![
@@ -213,10 +217,10 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
         Kind {
             name: "echo-out (DJ)",
             prefs: TransitionPrefs { style: MixStyle::Dj, beat_match: false, ..automix_prefs() },
-            a: a.clone(),
-            b: b.clone(),
+            a: lined,
+            b: sings_soon.clone(),
             logged: &["EchoOut"],
-            after: Some(TransitionKind::FilterRide),
+            after: None,
         },
         Kind {
             name: "filter ride (DJ)",
@@ -238,7 +242,7 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
             name: "filter-out off the last word (DJ)",
             prefs: TransitionPrefs { style: MixStyle::Dj, beat_match: false, ..automix_prefs() },
             a: sung,
-            b: b.clone(),
+            b: sings_soon,
             logged: &["FilterOut"],
             after: None,
         },
