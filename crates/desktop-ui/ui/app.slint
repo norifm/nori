@@ -6573,6 +6573,13 @@ export component AppWindow inherits Window {
     in property <bool> ask-field;
     in property <bool> ask-secret;
     in-out property <string> ask-text;
+    // Downloaded songs offered an analysis: the question, why, and how long it takes; a yes is
+    // `analyse-downloads`.
+    in-out property <bool> analysis-open;
+    in property <string> analysis-title;
+    in property <string> analysis-why;
+    in property <string> analysis-time;
+    callback analyse-downloads();
     in-out property <string> key-service;
     in-out property <string> key-title;
     in-out property <string> key-text;
@@ -6662,7 +6669,7 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open;
+    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open;
     // What plugins say under the player's output, and a plugin's still drawn as Now Playing's cover.
     in property <[string]> plugin-status;
     in property <image> sleeve;
@@ -9298,6 +9305,45 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.ask-open = false;
                         root.setting-typed(root.ask-name, root.ask-text);
+                    }
+                }
+            }
+        }
+
+        if root.analysis-open: Dialog {
+            title: root.analysis-title;
+            sheet-width: 400px;
+            dismissed => { root.analysis-open = false; }
+            Text {
+                text: root.analysis-why;
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            DialogGroup {
+                InfoLine {
+                    label: "Time";
+                    value: root.analysis-time;
+                }
+                InfoLine {
+                    label: "Battery";
+                    value: "A lot. Best while charging";
+                    divider: false;
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Not now";
+                    clicked => { root.analysis-open = false; }
+                }
+                Capsule {
+                    text: "Analyze";
+                    clicked => {
+                        root.analysis-open = false;
+                        root.analyse-downloads();
                     }
                 }
             }

@@ -57,6 +57,8 @@ pub enum Msg {
     Reachable(Result<(), String>),
     /// Another device set the volume (0 to 1).
     Volume(f32),
+    /// Downloaded songs to offer an analysis (`Said::AnalysisOffer`).
+    AnalysisOffer(nori_core::automix::AnalysisOffer),
     /// The core's star marks moved (a heart pressed here or on another device).
     Starred(nori_core::stars::StarMarks),
     /// The other devices, the one playing or the jam changed: read them again.
@@ -121,6 +123,7 @@ impl Msg {
             Msg::LoggedIn(r) => format!("logged in: {}", r.is_ok()),
             Msg::Reachable(r) => format!("reachable: {}", r.is_ok()),
             Msg::Volume(v) => format!("volume {v}"),
+            Msg::AnalysisOffer(o) => format!("analysis offer {o:?}"),
             Msg::Starred(_) => "star marks".into(),
             Msg::Remote => "remote".into(),
             Msg::Jam(r) => format!("jam opened: {}", r.is_ok()),
@@ -446,6 +449,7 @@ fn worded(s: Said) -> Option<Msg> {
         Said::Pictured => return None,
         Said::Volume(v) => Msg::Volume(v),
         Said::Curve(n) => note(crate::text::curve_notice(&n), false),
+        Said::AnalysisOffer(o) => Msg::AnalysisOffer(o),
         Said::Update(found) => match found {
             UpdateFound::Newer { version, page } => note(format!("nori {version} is out: {page}"), false),
             UpdateFound::Latest(latest) => note(format!("You have the latest version ({latest})"), false),
@@ -466,7 +470,6 @@ fn worded(s: Said) -> Option<Msg> {
             Note::Indexing => note("Filling the offline index…".into(), false),
             Note::Indexed(t) => note(format!("Offline index: {} songs, {} albums, {} artists", t.songs, t.albums, t.artists), false),
             Note::IndexStopped(e) => note(format!("The offline index stopped: {}", net_error(&e)), true),
-            Note::Forgot(n) => note(format!("Forgot {n} measured songs"), false),
             Note::CurveFailed(e) => note(format!("Could not fetch the AutoEQ curve: {}", net_error(&e)), true),
             Note::Done(chore) => note(
                 match chore {
@@ -520,7 +523,6 @@ fn unreachable(e: &NetError) -> String {
 /// Library, storage and device facts for the settings page.
 fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Option<&nori_engine::Store>, db: &PathBuf, cover_bytes: u64, offline: bool) -> Facts {
     let index = core.index_size().unwrap_or_default();
-    let downloads = core.downloads(true).unwrap_or_default();
     // Every profile's: they share this computer's download folder.
     let listed = core.downloads_by_profile().unwrap_or_default();
     let all_download_songs = listed.iter().map(|p| p.ids.len() as u32).sum();
@@ -530,7 +532,6 @@ fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Opti
         _ => Vec::new(),
     };
     Facts {
-        analysed: core.analysis_measured().unwrap_or_default(),
         indexed: (index.songs, index.albums, index.artists),
         storage: Storage {
             stream: store.map_or(0, |s| s.cache_bytes()) as i64,
@@ -539,7 +540,6 @@ fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Opti
             downloads: download_profiles.iter().map(|p| p.1).sum(),
             all_download_songs,
             download_profiles,
-            download_songs: downloads.len() as u32,
             database: std::fs::metadata(db).map(|m| m.len() as i64).unwrap_or(0),
         },
         folders,

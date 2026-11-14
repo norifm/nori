@@ -126,8 +126,6 @@ data class StorageUi(
     val allDownloadSongs: Int = 0,
     /** Each profile with downloads (the id its rows are kept under) and what they hold. */
     val profileDownloads: List<Pair<String, Long>> = emptyList(),
-    /** This profile's finished downloads, which its actions work on. */
-    val downloadSongs: Int = 0,
     val indexBytes: Long = 0L,
     val busy: Boolean = false,
     /** Changes waiting for the server, and dropped unsent. */
@@ -195,16 +193,15 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** What a settings page depends on besides the settings, from this platform. */
     val settingsFacts: StateFlow<SettingsFacts> by lazy {
-        combine(combine(dac, _sync, _storage, _analysed, _folders, ::factsOf), update, nori.plugins.names, _backup) { f, u, names, b -> f.copy(update = u, installsUpdates = nori.updates.installs, pluginNames = names, backup = b) }
+        combine(combine(dac, _sync, _storage, _folders, ::factsOf), update, nori.plugins.names, _backup) { f, u, names, b -> f.copy(update = u, installsUpdates = nori.updates.installs, pluginNames = names, backup = b) }
             .stateIn(
                 viewModelScope, SharingStarted.WhileSubscribed(5_000),
-                factsOf(dac.value, _sync.value, _storage.value, _analysed.value, _folders.value).copy(update = update.value, installsUpdates = nori.updates.installs, pluginNames = nori.plugins.names.value, backup = _backup.value),
+                factsOf(dac.value, _sync.value, _storage.value, _folders.value).copy(update = update.value, installsUpdates = nori.updates.installs, pluginNames = nori.plugins.names.value, backup = _backup.value),
             )
     }
 
-    private fun factsOf(d: DacState, s: SyncUi, st: StorageUi, analysed: dev.nori.music.ffi.automix.Measured, folders: List<MusicFolder>) = SettingsFacts(
+    private fun factsOf(d: DacState, s: SyncUi, st: StorageUi, folders: List<MusicFolder>) = SettingsFacts(
         dac = d,
-        analysed = analysed,
         sync = s,
         storage = st,
         folders = folders,
@@ -212,7 +209,10 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** A row's setting changed: its name and the value picked, which the core reads and applies; false for a name or value it does not take. */
     fun set(name: String, value: String): Boolean {
-        apply(nori.settings.core.settingSet(name, value) ?: return false)
+        val before = nori.settings.value.autoMix
+        val change = nori.settings.core.settingSet(name, value) ?: return false
+        apply(change)
+        nori.downloads.offerOnSwitch(before, change.prefs.autoMix)
         return true
     }
 
@@ -273,7 +273,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** A button on a settings row. */
     fun act(action: String) {
         when (action) {
-            "measure-again" -> clearAnalyses()
             "sync-library" -> syncLibrary()
             "download-library" -> downloadLibrary()
             "clear-stream" -> clearStreamCache()
@@ -347,7 +346,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             downloadBytes = nori.sources.downloadBytes(),
             allDownloadSongs = profiles.sumOf { it.ids.size },
             profileDownloads = profiles.map { it.profile to nori.sources.downloadBytes(it.ids) },
-            downloadSongs = nori.downloads.state.value.done.size,
             indexBytes = index.sumOf { dirBytes(files[it.toInt()]) },
             unsentWaiting = unsent?.waiting?.toInt() ?: 0,
             unsentDropped = unsent?.dropped?.toInt() ?: 0,
@@ -893,20 +891,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         } catch (e: Exception) {
             _autoEq.update { it.copy(task = AutoEqTask.Failed(describeConnectionError(e))) }
         }
-    }
-
-    private val _analysed = MutableStateFlow(dev.nori.music.ffi.automix.Measured(0u, 0u))
-
-    fun refreshAnalysed() = viewModelScope.launch {
-        _analysed.value = withContext(Dispatchers.IO) { runCatching { nori.core.analysisMeasured() }.getOrDefault(dev.nori.music.ffi.automix.Measured(0u, 0u)) }
-    }
-
-    /** Forgets every measurement; the downloaded songs are measured again now, under the download service and its
-     *  notification, the others when they next play. */
-    fun clearAnalyses() = viewModelScope.launch {
-        withContext(Dispatchers.IO) { runCatching { nori.core.measureAgain() } }.getOrNull()?.let { nori.settings.asked(it.effect) }
-        refreshAnalysed()
-        nori.downloads.analyse { refreshAnalysed() }
     }
 
     // ---- downloads ----

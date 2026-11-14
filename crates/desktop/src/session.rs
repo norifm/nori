@@ -58,6 +58,9 @@ pub enum Msg {
     Ask { text: String, action: String },
     /// A newer nori is out: a note whose button opens its release `page`.
     Update { version: String, page: String },
+    /// Downloaded songs to offer an analysis: asked in a dialog, answered with
+    /// [`nori_host::session::Handle::analyse_downloads`].
+    AnalysisOffer(nori_core::automix::AnalysisOffer),
     /// The profile the sign-in form made, and what follows its opening when it was added.
     LoggedIn(Result<SavedServer, String>),
     /// The account's sign-in answered.
@@ -278,7 +281,6 @@ impl Session {
         let cover_bytes = self.covers.as_ref().and_then(|l| l.disk()).map_or(0, |d| d.bytes());
         nori_host::spawn("nori-facts", move || {
             let index = core.index_size().unwrap_or_default();
-            let downloads = core.downloads(true).unwrap_or_default();
             // Every profile's: they share this computer's download folder.
             let listed = core.downloads_by_profile().unwrap_or_default();
             let all_download_songs = listed.iter().map(|p| p.ids.len() as u32).sum();
@@ -289,7 +291,6 @@ impl Session {
                 _ => Vec::new(),
             };
             send(Msg::Facts(Box::new(crate::settings::Facts {
-                analysed: core.analysis_measured().unwrap_or_default(),
                 indexed: (index.songs, index.albums, index.artists),
                 stream_bytes: store.as_ref().map_or(0, |s| s.cache_bytes()),
                 cover_bytes,
@@ -297,7 +298,6 @@ impl Session {
                 download_bytes: profiles.iter().map(|p| p.1).sum(),
                 all_download_songs,
                 download_profiles: profiles,
-                download_songs: downloads.len() as u32,
                 database_bytes: std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0),
                 folders,
                 devices: CpalOutput::devices(),
@@ -340,6 +340,7 @@ fn worded(s: Said) -> Msg {
             UpdateFound::Latest(latest) => note(format!("You have the latest version ({latest})"), false),
             UpdateFound::Failed(e) => note(format!("Could not check: {}", net_error(&e)), true),
         },
+        Said::AnalysisOffer(o) => Msg::AnalysisOffer(o),
         Said::Curve(n) => {
             let (text, action) = crate::words::curve_notice(&n);
             Msg::Ask { text, action: action.into() }
@@ -355,7 +356,6 @@ fn worded(s: Said) -> Msg {
             Note::Indexing => note("Filling the offline index…".into(), false),
             Note::Indexed(t) => note(format!("Offline index: {} songs", t.songs), false),
             Note::IndexStopped(e) => note(format!("The offline index stopped: {}", net_error(&e)), true),
-            Note::Forgot(n) => note(format!("Forgot {n} measured songs"), false),
             Note::CurveFailed(e) => note(format!("Could not fetch the AutoEQ curve: {}", net_error(&e)), true),
             Note::Done(chore) => note(
                 match chore {

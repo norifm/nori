@@ -1,6 +1,5 @@
 //! The terminal client's English: formatted times, sizes, decibels, counts, captions and messages.
 
-use nori_core::automix::store::Measured;
 use nori_core::beat_model::BeatFailure;
 use nori_core::lyrics_sources::LyricsOrigin;
 use nori_core::numbers::{self, POINT};
@@ -463,8 +462,10 @@ pub fn progress(p: &nori_core::transfers::Progress) -> (String, String) {
         Progress::Processing { work: w, .. } => {
             let what = if w.lyrics > 0 {
                 format!("Finding lyrics for {}", count(w.lyrics as u64, "song", "songs"))
-            } else {
+            } else if w.analysing > 0 {
                 format!("Analyzing {}", count(w.analysing as u64, "song", "songs"))
+            } else {
+                format!("Detecting beats for {}", count(w.beats as u64, "song", "songs"))
             };
             (what, left(w.eta_s))
         }
@@ -668,14 +669,27 @@ pub fn eq_bypass(why: EqBypass) -> &'static str {
     }
 }
 
-/// The "Measured songs" line: how many are measured, and how many wait to be measured again.
-pub fn measured(m: Measured) -> String {
-    let all = format!("{} measured for tempo and beats.", count(m.songs.into(), "song", "songs"));
-    match m.outdated {
-        0 => all,
-        n if n == m.songs => format!("{all} All are measured again when they next play."),
-        1 => format!("{all} 1 is measured again when it next plays."),
-        n => format!("{all} {n} are measured again when they next play."),
+pub const ANALYZE: &str = "Analyze";
+
+/// The question when downloaded songs are offered an analysis: its title, and its lines.
+pub fn analysis_offer(o: &nori_core::automix::AnalysisOffer) -> (String, Vec<String>) {
+    use nori_core::automix::AnalysisReason;
+    let title = format!("Analyze {} downloaded {}?", o.songs, if o.songs == 1 { "song" } else { "songs" });
+    let why = match o.reason {
+        AnalysisReason::TurnedOn => "AutoMix mixes songs best once they are analyzed.",
+        AnalysisReason::Changed => "AutoMix's analysis changed in this update.",
+    };
+    let cost = format!("It takes {} and uses a lot of battery, so it is best while charging.", about(o.minutes));
+    (title, vec![why.into(), cost, "Otherwise each is analyzed when it plays.".into()])
+}
+
+/// "about 5 min", "about 1 h 20 min".
+fn about(minutes: u32) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, 0) => "under a minute".into(),
+        (0, m) => format!("about {m} min"),
+        (h, 0) => format!("about {h} h"),
+        (h, m) => format!("about {h} h {m} min"),
     }
 }
 
@@ -1280,8 +1294,17 @@ mod tests {
         assert_eq!(fetching(album), ("Downloading “Kind” · 3 of 12".into(), String::new()));
         let waiting = Notice { kind: NoticeKind::Waiting, position: 0, total: 4, eta_s: -1, ..Default::default() };
         assert_eq!(fetching(waiting), ("Waiting for a network · 0 of 4".into(), String::new()));
-        let work = Processing { lyrics: 0, analysing: 1, eta_s: 12, permille: 400 };
+        let work = Processing { lyrics: 0, analysing: 1, beats: 2, eta_s: 12, permille: 400 };
         assert_eq!(progress(&Progress::Processing { work, after_fetching: true }), ("Analyzing 1 song".into(), "12 s left".into()));
+    }
+
+    #[test]
+    fn an_analysis_offer_says_how_long_it_takes() {
+        use nori_core::automix::{AnalysisOffer, AnalysisReason};
+        let (title, lines) = analysis_offer(&AnalysisOffer { songs: 240, reason: AnalysisReason::Changed, minutes: 80 });
+        assert_eq!(title, "Analyze 240 downloaded songs?");
+        assert_eq!(lines[..2], ["AutoMix's analysis changed in this update.", "It takes about 1 h 20 min and uses a lot of battery, so it is best while charging."]);
+        assert_eq!([about(0), about(5), about(60)], ["under a minute", "about 5 min", "about 1 h"]);
     }
 
     #[test]

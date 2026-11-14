@@ -296,6 +296,7 @@ impl Runner {
             Ok(s) => {
                 s.check();
                 s.update_check(false);
+                s.analysis_offer();
                 if !app.in_sight {
                     s.in_sight(false);
                 }
@@ -1135,6 +1136,7 @@ impl Runner {
             Cmd::Action(c) => s.action(c),
             Cmd::Curve => s.curve_answer(),
             Cmd::CheckUpdate => s.update_check(true),
+            Cmd::AnalyseDownloads => s.analyse_downloads(),
             Cmd::SoundPage(page, on) => s.sound_page(page, on),
             Cmd::SearchTyped(text) => {
                 let v = s.search_typed(&text);

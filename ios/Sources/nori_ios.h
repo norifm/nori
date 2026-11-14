@@ -64,6 +64,9 @@ typedef struct NoriReport {
 /// A device paired (flag 1, text its name) or not (flag 0: count is why, a NORI_PAIR_FAILED_* code, text the
 /// device's name when its code says it).
 #define NORI_REPORT_PAIRED 25
+/// Downloaded songs offered an analysis: count of them, about ms minutes; flag 1 when an update changed the
+/// analysis, 0 when AutoMix was turned on. nori_ios_analyse_downloads is the yes.
+#define NORI_REPORT_ANALYSIS_OFFER 26
 
 typedef void (*NoriReportFn)(const NoriReport *report);
 
@@ -196,7 +199,6 @@ void nori_ios_forget(const char *id);
 #define NORI_NOTE_INDEXED 12
 #define NORI_NOTE_INDEX_STOPPED 13
 #define NORI_NOTE_DONE 14
-#define NORI_NOTE_FORGOT 15
 #define NORI_NOTE_CURVE_FAILED 16
 
 /// Pages for `nori_ios_read`. `arg`: the id for album/artist/playlist/mix, the name for a genre, the
@@ -383,6 +385,8 @@ int32_t nori_ios_device_adopt(const char *output, const char *name, const char *
 void nori_ios_device_forget(const char *output);
 /// The answer to the last AutoEQ report (NORI_REPORT_CURVE): the curve offered applied, or the one applied undone.
 void nori_ios_curve_answer(void);
+/// The yes to the last NORI_REPORT_ANALYSIS_OFFER: the downloads are read back.
+void nori_ios_analyse_downloads(void);
 
 /// The AutoEQ list's hits, JSON to free: {short, count, hits: [{name, source, form, target, path}]}.
 char *nori_ios_autoeq_browse(const char *query);

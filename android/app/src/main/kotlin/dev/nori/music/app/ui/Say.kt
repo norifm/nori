@@ -298,6 +298,7 @@ class Say(private val r: Resources) {
     val stopDownload: String = r.getString(R.string.stop_download)
     val findingLyrics: String = r.getString(R.string.finding_lyrics)
     val analysing: String = r.getString(R.string.analysing)
+    val detectingBeats: String = r.getString(R.string.detecting_beats)
     val nothingToAnalyse: String = r.getString(R.string.said_nothing_to_analyse)
     val equalizer: String = r.getString(R.string.equalizer)
     val addBand: String = r.getString(R.string.add_band)
@@ -1048,6 +1049,24 @@ class Say(private val r: Resources) {
     fun downloadingSongs(n: Int): String = r.getQuantityString(R.plurals.said_downloading, n, n)
     fun downloadsRemoved(n: Int): String = r.getQuantityString(R.plurals.said_downloads_removed, n, n)
     fun analysingDownloads(n: Int): String = r.getQuantityString(R.plurals.said_analysing_downloads, n, n)
+    fun analysisOfferTitle(n: Int): String = r.getQuantityString(R.plurals.analysis_offer_title, n, n)
+    fun analysisOfferWhy(reason: dev.nori.music.ffi.AnalysisReason): String = r.getString(when (reason) {
+        dev.nori.music.ffi.AnalysisReason.TURNED_ON -> R.string.analysis_offer_turned_on
+        dev.nori.music.ffi.AnalysisReason.CHANGED -> R.string.analysis_offer_changed
+    })
+    /** "About 5 min", "About 1 h 20 min": the core rounds the wait (`AnalysisOffer.minutes`). */
+    fun analysisOfferMinutes(minutes: Int): String = when {
+        minutes == 0 -> r.getString(R.string.analysis_offer_under_a_minute)
+        minutes < 60 -> r.getString(R.string.analysis_offer_minutes, minutes)
+        minutes % 60 == 0 -> r.getString(R.string.analysis_offer_hours, minutes / 60)
+        else -> r.getString(R.string.analysis_offer_hours_minutes, minutes / 60, minutes % 60)
+    }
+    val analysisOfferTime: String = r.getString(R.string.analysis_offer_time)
+    val analysisOfferBattery: String = r.getString(R.string.analysis_offer_battery)
+    val analysisOfferBatteryCost: String = r.getString(R.string.analysis_offer_battery_cost)
+    val analysisOfferCharging: String = r.getString(R.string.analysis_offer_charging)
+    val analysisOfferYes: String = r.getString(R.string.analysis_offer_yes)
+    val analysisOfferNo: String = r.getString(R.string.analysis_offer_no)
     /** After an M3U import: how many of its entries were found and went into [playlist]. */
     fun m3uImported(found: Int, entries: Int, playlist: String): String =
         if (found == 0) r.getString(R.string.m3u_none_found, entries) else r.getString(R.string.m3u_imported, found, entries, playlist)

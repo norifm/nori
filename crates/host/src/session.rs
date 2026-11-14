@@ -61,6 +61,9 @@ pub enum Said {
     Pictured,
     /// What an update check found ([`Handle::update_check`]).
     Update(UpdateFound),
+    /// Downloaded songs to offer an analysis: AutoMix was turned on, or an update changed the analysis
+    /// ([`Handle::analysis_offer`]). The client asks, and answers yes through [`Handle::analyse_downloads`].
+    AnalysisOffer(nori_core::automix::AnalysisOffer),
 }
 
 /// What an update check found that is worth saying: a newer release always, the rest only when the
@@ -101,8 +104,6 @@ pub enum Note {
     Indexed(IngestStats),
     IndexStopped(NetError),
     Done(Chore),
-    /// Forgot this many songs' measurements.
-    Forgot(u32),
     /// An AutoEQ curve could not be fetched.
     CurveFailed(NetError),
 }
@@ -112,7 +113,6 @@ pub enum Note {
 pub enum Chore {
     SyncLibrary,
     DownloadLibrary,
-    MeasureAgain,
     ClearStream,
     ClearCovers,
     ClearLyrics,
@@ -616,6 +616,29 @@ impl Handle {
         });
     }
 
+    /// Offers the downloads an analysis when an update changed it, once per change, with AutoMix on (a
+    /// client asks as a session opens).
+    pub fn analysis_offer(&self) {
+        let me = self.clone();
+        self.run(async move {
+            if let Some(offer) = me.core.analysis_offer_at_start() {
+                (me.out)(Said::AnalysisOffer(offer));
+            }
+        });
+    }
+
+    /// Reads back the downloads lacking an analysis or the beat model's read (`Core::download_unanalysed`),
+    /// under the downloads' progress.
+    pub fn analyse_downloads(&self) {
+        let Some(d) = self.downloader.clone() else { return };
+        let out = self.out.clone();
+        self.run(async move {
+            if d.measure_saved() > 0 {
+                out(Said::Working);
+            }
+        });
+    }
+
     /// Fills the offline index from the server, on a thread of its own: its pages are written between
     /// requests, which would hold up the session's other tasks.
     pub fn sync(&self) {
@@ -1024,10 +1047,14 @@ impl Handle {
 
     /// Sets a setting by name and applies its effects, as Android's player does. None if no such setting.
     pub fn setting(&self, name: &str, value: &str) -> Option<SettingChange> {
+        let before = self.core.session.settings.prefs(|p| p.auto_mix);
         let change = self.core.session.settings.edit_by_name(name, value)?;
         self.took(&change);
         if matches!(name, "remoteControl" | "jam") {
             self.follow_remote();
+        }
+        if let Some(offer) = self.core.analysis_offer_on_switch(before, change.prefs.auto_mix) {
+            (self.out)(Said::AnalysisOffer(offer));
         }
         Some(change)
     }
@@ -1346,20 +1373,6 @@ impl Handle {
                 if let Some(d) = self.covers.as_ref().and_then(|l| l.disk()) {
                     d.clear();
                 }
-            }
-            Chore::MeasureAgain => {
-                let Ok(m) = self.core.measure_again() else { return };
-                self.applied(m.effect);
-                // The downloads are measured again now, the other songs as they next play.
-                if let Some(d) = self.downloader.clone() {
-                    let out = self.out.clone();
-                    self.run(async move {
-                        if d.measure_saved() > 0 {
-                            out(Said::Working);
-                        }
-                    });
-                }
-                return self.note(Note::Forgot(m.forgot));
             }
         }
         self.note(Note::Done(chore));

@@ -424,6 +424,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             PairingRequest()
             MobileDownloadQuestion(actions)
             RemoveDownloadsQuestion(actions)
+            AnalysisOfferQuestion(actions)
             val route = controller.currentBackStackEntryAsState().value?.destination?.route
             // The tab the page on screen belongs to, which is the one that stays lit, as Apple's does: a
             // settings group, or an album opened from Home, is still inside that tab. Lit only on the tab
@@ -848,6 +849,38 @@ private fun RemoveDownloadsQuestion(actions: ActionsViewModel) {
             text = { androidx.compose.material3.Text(say.removeDownloadsText(asked.size)) },
             confirmButton = { TextAction(say.remove, { actions.removeAsked(true) }, destructive = true) },
             dismissButton = { TextAction(say.cancel, { actions.removeAsked(false) }) },
+        )
+    }
+}
+
+/**
+ * Downloaded songs offered an analysis: why, then how long it takes and what it costs as two facts on a
+ * plate a step up from the card, its corners concentric with the card's.
+ */
+@Composable
+private fun AnalysisOfferQuestion(actions: ActionsViewModel) {
+    val offer by actions.analysisOffer.collectAsStateWithLifecycle()
+    NoriDialog(offer, { actions.answerAnalysis(false) }) { o ->
+        val scheme = androidx.compose.material3.MaterialTheme.colorScheme
+        AlertCard(
+            title = { androidx.compose.material3.Text(say.analysisOfferTitle(o.songs.toInt())) },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    androidx.compose.material3.Text(say.analysisOfferWhy(o.reason))
+                    androidx.compose.material3.Surface(
+                        Modifier.padding(top = 16.dp).fillMaxWidth(),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(Radius.sheet - 20.dp),
+                        color = scheme.surfaceContainerHigh, contentColor = scheme.onSurface, border = hairlineBorder(),
+                    ) {
+                        androidx.compose.foundation.layout.Column {
+                            GroupRow(say.analysisOfferTime, value = say.analysisOfferMinutes(o.minutes.toInt()), minHeight = 44.dp)
+                            GroupRow(say.analysisOfferBattery, subtitle = say.analysisOfferCharging, value = say.analysisOfferBatteryCost, minHeight = 44.dp, divider = false)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextAction(say.analysisOfferYes, { actions.answerAnalysis(true) }) },
+            dismissButton = { TextAction(say.analysisOfferNo, { actions.answerAnalysis(false) }) },
         )
     }
 }

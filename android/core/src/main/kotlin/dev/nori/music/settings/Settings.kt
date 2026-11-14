@@ -166,7 +166,7 @@ class Settings(private val context: Context) {
         if (change.effect != 0u) _effects.tryEmit(change.effect.toInt())
     }
 
-    /** What a core call asks of the player besides a settings change (`MeasuredAgain`), told as a change's effect is. */
+    /** What a core call asks of the player besides a settings change (a plugin's layer), told as a change's effect is. */
     fun asked(effect: UInt) {
         if (effect != 0u) _effects.tryEmit(effect.toInt())
     }

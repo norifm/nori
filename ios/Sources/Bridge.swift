@@ -469,6 +469,8 @@ final class Core {
             NotificationCenter.default.post(name: .noriFavorites, object: nil)
         case NORI_REPORT_CURVE:
             askCurve(text, offered: flag != 0)
+        case NORI_REPORT_ANALYSIS_OFFER:
+            askAnalysis(songs: Int(count), minutes: Int(ms), changed: flag != 0)
         default:
             break
         }
@@ -483,6 +485,17 @@ final class Core {
         let ask = UIAlertController(title: offered ? Say.curveOffered : Say.curveApplied, message: curve, preferredStyle: .alert)
         ask.addAction(UIAlertAction(title: offered ? Say.curveApply : Say.curveUndo, style: .default) { _ in nori_ios_curve_answer() })
         ask.addAction(UIAlertAction(title: offered ? Say.curveNotNow : Say.curveKeep, style: .cancel))
+        shown.present(ask, animated: true)
+    }
+
+    /// Downloaded songs offered an analysis: why, how long and what it costs; Analyze reads them back.
+    private func askAnalysis(songs: Int, minutes: Int, changed: Bool) {
+        var top = UIApplication.shared.keyWindow?.rootViewController
+        while let next = top?.presentedViewController { top = next }
+        guard let shown = top else { return }
+        let ask = UIAlertController(title: Say.analysisOfferTitle(songs), message: Say.analysisOfferText(minutes: minutes, changed: changed), preferredStyle: .alert)
+        ask.addAction(UIAlertAction(title: Say.analysisOfferNo, style: .cancel))
+        ask.addAction(UIAlertAction(title: Say.analysisOfferYes, style: .default) { _ in nori_ios_analyse_downloads() })
         shown.present(ask, animated: true)
     }
 

@@ -164,6 +164,8 @@ pub enum Cmd {
     Curve,
     /// Checks for a newer nori now (`Session::update_check`).
     CheckUpdate,
+    /// Reads back the downloads an analysis was offered for (`Session::analyse_downloads`).
+    AnalyseDownloads,
     Mouse(bool),
     Images(bool),
     Paint(bool),
@@ -287,6 +289,7 @@ impl Cmd {
             Cmd::Action(a) => format!("action {a:?}"),
             Cmd::Curve => "curve".into(),
             Cmd::CheckUpdate => "check update".into(),
+            Cmd::AnalyseDownloads => "analyse downloads".into(),
             Cmd::SoundPage(page, on) => format!("sound page {page:?} {on}"),
             Cmd::Mouse(on) => format!("mouse {on}"),
             Cmd::Images(on) => format!("images {on}"),
@@ -1788,6 +1791,10 @@ impl App {
             Msg::Volume(v) if self.devices.active.is_none() => self.volume = v,
             Msg::Volume(_) => self.dirty = false,
             Msg::Starred(marks) => self.marks = marks,
+            Msg::AnalysisOffer(offer) => {
+                let (title, lines) = crate::text::analysis_offer(&offer);
+                self.overlay = Some(Overlay::Confirm { title, lines, yes: crate::text::ANALYZE.into(), cmd: Box::new(Cmd::AnalyseDownloads) });
+            }
             // The runner read the devices into `devices`.
             Msg::Remote => {}
             Msg::Jam(Ok(())) => {

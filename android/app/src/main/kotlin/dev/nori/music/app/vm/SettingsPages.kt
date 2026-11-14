@@ -112,8 +112,6 @@ data class ActionAsk(val title: String, val text: String, val confirm: String)
 /** What a page depends on besides the settings, from this phone. */
 data class SettingsFacts(
     val dac: DacState = DacState(),
-    /** Songs AutoMix has measured. */
-    val analysed: dev.nori.music.ffi.automix.Measured = dev.nori.music.ffi.automix.Measured(0u, 0u),
     val sync: SyncUi = SyncUi(),
     val storage: StorageUi = StorageUi(),
     /** The active server's music folders. */
@@ -316,10 +314,8 @@ private fun itemWords(item: RowItem): Pair<Int, Int>? = when (item) {
         SettingsLink.DOWNLOADS -> R.string.settings_downloads to 0
     }
     is RowItem.Action -> when (item.action) {
-        SettingsAction.MEASURE_AGAIN -> R.string.settings_measured to R.string.settings_hint_measured
         SettingsAction.SYNC_LIBRARY -> R.string.settings_offline_search to R.string.settings_hint_offline_search
         SettingsAction.DOWNLOAD_LIBRARY -> R.string.settings_download_library to 0
-        SettingsAction.ANALYSE_DOWNLOADS -> R.string.settings_analyse_downloads to R.string.settings_hint_analyse_downloads
         SettingsAction.CLEAR_STREAM -> R.string.settings_streamed to R.string.settings_hint_streamed
         SettingsAction.CLEAR_COVERS -> R.string.settings_covers to R.string.settings_hint_covers
         SettingsAction.CLEAR_LYRICS -> R.string.settings_lyrics_cache to R.string.settings_hint_lyrics_cache
@@ -337,13 +333,11 @@ private fun pageFacts(res: Resources, f: SettingsFacts, parts: List<SettingsPart
     parts = parts,
     car = res.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK == android.content.res.Configuration.UI_MODE_TYPE_CAR,
     folders = f.folders.map { it.id },
-    analysed = f.analysed.songs,
     indexedSongs = f.sync.indexed.songs,
     syncing = f.sync.running,
     streamBytes = f.storage.streamBytes,
     coverBytes = f.storage.coverBytes,
     lyricsBytes = f.storage.lyricsBytes,
-    downloadSongs = f.storage.downloadSongs.toUInt(),
     storageBusy = f.storage.busy,
     unsentWaiting = f.storage.unsentWaiting.toUInt(),
     unsentDropped = f.storage.unsentDropped.toUInt(),
@@ -678,7 +672,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
     fun action(a: SettingsAction, enabled: Boolean): SettingRow? {
         val clearing = str(if (f.storage.busy) R.string.settings_clearing else R.string.settings_clear)
         return when (a) {
-            SettingsAction.MEASURE_AGAIN -> actionRow(R.string.settings_measured, measuredWords(res, f.analysed), str(R.string.settings_measure_again), enabled, "measure-again")
             SettingsAction.SYNC_LIBRARY -> {
                 val sync = f.sync
                 val indexed = sync.indexed
@@ -692,7 +685,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                 SettingRow.Action(settingKey(t), t, sync.error ?: counts, str(if (sync.running) R.string.settings_updating else R.string.settings_update), enabled, sync.error != null, "sync-library")
             }
             SettingsAction.DOWNLOAD_LIBRARY -> actionRow(R.string.settings_download_library, str(R.string.settings_download_library_detail), str(R.string.settings_download), enabled, "download-library")
-            SettingsAction.ANALYSE_DOWNLOADS -> actionRow(R.string.settings_analyse_downloads, str(R.string.settings_analyse_downloads_detail), str(R.string.settings_analyse), enabled, "analyse-downloads")
             SettingsAction.CLEAR_STREAM -> actionRow(R.string.settings_streamed, str(R.string.settings_streamed_detail), clearing, enabled, "clear-stream")
             SettingsAction.CLEAR_COVERS -> actionRow(R.string.settings_covers, str(R.string.settings_covers_detail), clearing, enabled, "clear-covers")
             SettingsAction.CLEAR_LYRICS -> actionRow(R.string.settings_lyrics_cache, str(R.string.settings_lyrics_cache_detail, Fmt.bytes(f.storage.lyricsBytes)), clearing, enabled, "clear-lyrics")
@@ -773,14 +765,3 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
     }
 }
 
-/** The "Measured songs" line: how many are measured, and how many wait to be measured again. */
-private fun measuredWords(res: Resources, m: dev.nori.music.ffi.automix.Measured): String {
-    val songs = m.songs.toInt()
-    val outdated = m.outdated.toInt()
-    val all = res.getQuantityString(R.plurals.settings_measured_detail, songs, songs)
-    return when (outdated) {
-        0 -> all
-        songs -> all + " " + res.getString(R.string.settings_measured_all_outdated)
-        else -> all + " " + res.getQuantityString(R.plurals.settings_measured_outdated, outdated, outdated)
-    }
-}
