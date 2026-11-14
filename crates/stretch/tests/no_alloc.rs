@@ -51,7 +51,9 @@ fn processing_never_allocates() {
     let mut out = vec![0f32; 2048 * ch];
     let mut flushed = vec![0f32; s.output_latency() * ch];
     let before = ALLOCS.with(Cell::get);
-    for _ in 0..2 {
+    // Untransposed, then a key change up and down.
+    for transpose in [1.0, 2f32.powf(2.0 / 12.0), 2f32.powf(-1.0 / 12.0)] {
+        s.set_transpose_factor(transpose, None);
         for (i, block) in x.chunks(256 * ch).enumerate() {
             // AutoMix's range of ratios, 0.5 to 2.
             let ratio = 0.5 + 1.5 * (i % 64) as f64 / 63.0;
