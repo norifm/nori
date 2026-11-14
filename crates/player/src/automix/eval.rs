@@ -1738,8 +1738,29 @@ fn beats_and_mixes_are_accurate() {
         .into_iter()
         .flatten()
         .collect();
-        assert!(errors.len() >= 14 && errors.iter().all(|e| e.0 <= 10.0), "{style:?}: {errors:?}");
+        // One DJ pair would speed the next song's singing up 14 %: it is not beat-matched.
+        assert!(errors.len() >= 13 && errors.iter().all(|e| e.0 <= 10.0), "{style:?}: {errors:?}");
     }
 }
 
 
+
+/// Wherever an outgoing song's lows are handed over and it then closes through a low-pass, the low-pass stops two
+/// octaves over the cut: closer, the band left between the two is heard as a tone.
+#[test]
+fn no_lone_band_after_the_bass_goes() {
+    for style in [crate::types::MixStyle::Smooth, crate::types::MixStyle::Dj] {
+        for previous in [None, Some(crate::types::TransitionKind::FilterRide), Some(crate::types::TransitionKind::BeatMatched)] {
+            let settings = crate::types::AutoMixSettings { max_transition_s: style.longest_s() as f32, max_tempo_change_pct: style.tempo_pct(), style, previous, ..Default::default() };
+            for (a, b) in mix_pairs() {
+                let ((ta, _), (tb, _)) = (analysed(a), analysed(b));
+                let p = plan::plan(Some(&ta.track), Some(&tb.track), ta.track.duration_ms, tb.track.duration_ms, &settings);
+                if let (Some(lp), Some(sw)) = (p.low_pass, p.bass_swap) {
+                    if lp.end_ms > sw.at_ms + sw.len_ms {
+                        assert!(lp.to_hz >= 4.0 * sw.cut_hz - 1.0, "{a} -> {b}: low-pass to {} Hz over a cut at {} Hz: {}", lp.to_hz, sw.cut_hz, p.reason);
+                    }
+                }
+            }
+        }
+    }
+}
