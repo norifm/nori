@@ -274,7 +274,7 @@ impl Playlist {
             }
             (_, None) => Some(0),
         };
-        self.order = self.cur.filter(|_| shuffling).map(|c| shuffle_around(n, c, |_| false, seed));
+        self.order = self.cur.filter(|_| shuffling).map(|c| shuffle_around(n, c, |_| Hand::No, seed));
         self.rev += 1;
         self.cur
     }
@@ -486,7 +486,7 @@ impl Playlist {
             return;
         }
         self.order = match (on && !self.ids.is_empty(), self.cur) {
-            (true, Some(c)) => Some(shuffle_around(self.ids.len(), c, |i| self.hand[i].by_user(), seed)),
+            (true, Some(c)) => Some(shuffle_around(self.ids.len(), c, |i| self.hand[i], seed)),
             (true, None) => {
                 let mut all: Vec<usize> = (0..self.ids.len()).collect();
                 shuffle(&mut all, seed);
@@ -909,6 +909,20 @@ mod tests {
         assert_eq!(p.add(ids(&["more"]), Hand::Last), 12, "and after what was added before it");
         assert_eq!(list(&p)[10..], ["t11", "mine", "more", "f1", "f2"]);
         assert_eq!(p.hand(13), Hand::Auto);
+    }
+
+    #[test]
+    fn shuffle_keeps_autofill_after_the_list() {
+        let list_songs: Vec<String> = (0..10).map(|n| format!("t{n}")).collect();
+        for seed in 1..50 {
+            let mut p = Playlist::default();
+            p.set(list_songs.clone(), Some(8), false, 0);
+            p.take(10, ids(&["f1", "f2", "f3"]), &[Hand::Auto; 3]);
+            p.set_shuffle(true, seed);
+            let order = played(&p);
+            assert_eq!(order[0], "t8");
+            assert!(order[..10].iter().all(|id| id.starts_with('t')), "seed {seed}: {order:?}");
+        }
     }
 
     #[test]
