@@ -657,6 +657,8 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
     bar.on_search_step(to_main_with(ui, |m, by| m.invoke_search_step(by)));
     bar.on_search_accepted(to_main(ui, |m| m.invoke_search_accepted()));
     bar.on_search_escaped(to_main(ui, |m| m.set_search_preview_open(false)));
+    bar.on_drag_window(to_main(ui, |m| m.invoke_drag_window()));
+    bar.on_zoom_window(to_main(ui, |m| m.invoke_zoom_window()));
     let (pill, main) = (bar.as_weak(), ui.as_weak());
     bar.on_search_placed(move || {
         let (Some(bar), Some(ui)) = (pill.upgrade(), main.upgrade()) else { return };
