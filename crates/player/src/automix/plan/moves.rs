@@ -82,7 +82,7 @@ pub(super) fn mean_over(bars: &[BarProfile], from: f64, to: f64, f: fn(&BarProfi
 
 /// A bar with no beat in it, audible.
 const BEATLESS_PULSE: f32 = 0.3;
-const AUDIBLE_DB: f32 = -30.0;
+pub(super) const AUDIBLE_DB: f32 = -30.0;
 /// A bar with a kick in it: its lows and its beat.
 const KICK_LOW_DB: f32 = -6.0;
 const KICK_PULSE: f32 = 0.5;
@@ -93,7 +93,7 @@ const LOUD_DB: f32 = -6.0;
 /// An energy drop: the incoming opening's first four bars this much under the outgoing exit.
 const DROP_DB: f32 = 8.0;
 
-fn beatless(b: &BarProfile) -> bool {
+pub(super) fn beatless(b: &BarProfile) -> bool {
     b.pulse <= BEATLESS_PULSE && b.level_db >= AUDIBLE_DB
 }
 

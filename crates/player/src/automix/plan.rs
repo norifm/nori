@@ -265,6 +265,18 @@ pub(super) fn at_start(b: &TrackAnalysis) -> (TrackAnalysis, Gridded) {
 
 /// Whether song time `from` to `to` lies in the stretch `(start, end)` ms an end's grid holds over (both 0: all of
 /// it), give or take half a `beat`.
+/// Whether `[from, to)` ms of an end lies where its `beats` were measured, within `slack`, what is outside them
+/// beatless bars or `silent`; an end measured by no beats passes.
+fn measured_or_beatless(bars: &[crate::types::BarProfile], beats: &[crate::types::Beat], from: f64, to: f64, slack: f64, silent: impl Fn(f64, f64) -> bool) -> bool {
+    let Some((first, last)) = beats.first().zip(beats.last()) else { return true };
+    let beatless = |g0: f64, g1: f64| {
+        let inside: Vec<_> = bars.iter().filter(|b| (b.start_ms as f64) < g1 && b.start_ms as f64 + slack > g0).collect();
+        silent(g0, g1) || (!inside.is_empty() && inside.iter().all(|b| moves::beatless(b) || b.level_db < moves::AUDIBLE_DB))
+    };
+    let (before, after) = ((from, first.at_ms as f64 - slack), (last.at_ms as f64 + slack, to));
+    [before, after].into_iter().all(|(g0, g1)| g1 <= g0 || beatless(g0, g1))
+}
+
 fn in_grid((start, end): (i64, i64), from: f64, to: f64, beat: f64) -> bool {
     end <= 0 || (from >= start as f64 - 0.5 * beat && to <= end as f64 + 0.5 * beat)
 }
@@ -1000,6 +1012,13 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                         // Where an end's grid holds over a run of it only, the mix plays inside the run.
                         let in_end = in_start + (dur - loop_wall) * ratio;
                         if !in_grid((a.outro_grid_from_ms, a.outro_grid_to_ms), start, heard_end, beat) || !in_grid((b.intro_grid_from_ms, b.intro_grid_to_ms), in_start, in_end, beat_n) {
+                            continue;
+                        }
+                        // And where both ends' beats were measured, within a bar (an ending's last beat comes up to a bar
+                        // before its music ends), or over bars with no beat: a grid carried over beats not measured drifts.
+                        let out_silent = |g0: f64, g1: f64| ending.silence(g0, g1) >= g1 - g0 - 1.0;
+                        let in_silent = |_: f64, g1: f64| g1 <= b.silence_start_ms as f64;
+                        if !measured_or_beatless(&a.outro_bars, &a.outro_beats, start, heard_end, bar, out_silent) || !measured_or_beatless(&b.intro_bars, &b.intro_beats, in_start, in_end, bar_in, in_silent) {
                             continue;
                         }
                         let sung_skip_in = vocal_start.map_or(0.0, |v| (in_start - v.max(b.silence_start_ms as f64)).max(0.0));
@@ -2464,6 +2483,21 @@ mod tests {
         assert!(p.reason.contains("locked beat by beat"), "{}", p.reason);
         let p = plan(Some(&drifting(120.0, 12.0)), Some(&b), 240_000, 240_000, &dj());
         assert_ne!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
+    }
+
+    /// A beat-matched mix plays where both ends' beats were measured: an ending whose beats stop well before the song
+    /// does (as the model's window stops at a closing breakdown) is not beat-matched past them on a grid carried on
+    /// beyond them, which drifted 70 to 140 ms off on real songs; measured to its end, it is.
+    #[test]
+    fn beat_matched_mixes_stay_inside_the_measured_beats() {
+        let b = TrackAnalysis { intro_beats: beats_at(100.0, 60_000.0, |_| 0.0), ..track(120.0) };
+        let measured = |to: f64| TrackAnalysis { outro_beats: beats_at(to - 60_000.0, to, |_| 0.0), ..track(120.0) };
+        let p = plan(Some(&measured(238_000.0)), Some(&b), 240_000, 240_000, &dj());
+        assert!(p.kind.beat_matched(), "{}", p.reason);
+        let short = measured(200_000.0);
+        let p = plan(Some(&short), Some(&b), 240_000, 240_000, &dj());
+        let heard_to = p.out_start_ms as f64 + p.out_song_ms(p.duration_ms as f64);
+        assert!(!p.kind.beat_matched() || heard_to <= 200_000.0 + 250.0, "beat-matched to {heard_to:.0} past beats measured to 200000: {}", p.reason);
     }
 
     /// The beat model counts an ending's beats three against two of the measured grid: its beats are mixed on, not the
