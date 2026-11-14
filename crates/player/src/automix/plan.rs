@@ -696,6 +696,10 @@ struct Profile {
     /// A DJ's blend: the incoming fader up within a bar and its layers brought in one at a time by the EQ, now and
     /// then its bass first ([`TransitionKind::LayeredMix`]).
     layers: bool,
+    /// A plain fade's lengths when two songs cannot be locked, bars, tried in turn; the second when the pair gates
+    /// shorten it. A DJ keeps two grooves at different tempos together briefly: a long fallback sounds like any
+    /// crossfade.
+    fade_bars: [&'static [i64]; 2],
     /// Per bar of looped outgoing slice heard again.
     loop_cost: f64,
     /// Per second of either song's singing under the run-up: a mix waits for the outgoing voice to end, or loops
@@ -718,6 +722,7 @@ const SMOOTH: Profile = Profile {
     riser: false,
     bar_tail: false,
     layers: false,
+    fade_bars: [&[8, 4], &[4]],
     loop_cost: 0.1,
     sung_under_cost: 0.0,
 };
@@ -737,6 +742,7 @@ const DJ: Profile = Profile {
     riser: true,
     bar_tail: true,
     layers: true,
+    fade_bars: [&[2], &[2]],
     loop_cost: 0.04,
     sung_under_cost: 0.1,
 };
@@ -1532,8 +1538,8 @@ fn one_grid(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s:
     let ending = a.map(|x| Ending::of(x, out_dur));
     let end_a = ending.map_or(out_dur, |e| e.leave(0.0).round() as i64);
     let skipped = |heard_end: i64| ending.map_or((out_dur - heard_end) as f64, |e| e.skipped(heard_end as f64));
-    // 8 bars, else 4 (only 4 when the pair gates shorten it): the one fewer voices sing over the other in first.
-    let out_bars: &[i64] = if short { &[4] } else { &[8, 4] };
+    // The profile's fade lengths, the one fewer voices sing over the other in first.
+    let out_bars = profile(s.style).fade_bars[short as usize];
     let fade = |start: i64, in_start: i64, dur: i64, reason: String| {
         let mut p = blank(TransitionKind::MixRampFade, start, in_start, dur, String::new());
         apply_fade_filter(&mut p, a, b, s, dur);
@@ -1774,6 +1780,20 @@ mod tests {
         let end = 120.0 + bar * ((238_500.0 - 120.0) / bar).floor();
         let vocal_end = (end - bars_left * bar) as i64;
         (TrackAnalysis { vocal_start_ms: 10_000, vocal_end_ms: vocal_end, ..track(128.0) }, vocal_end)
+    }
+
+    /// Two songs that cannot be locked and allow no move fade: briefly in DJ, two bars, as a long overlap of two
+    /// grooves at different tempos sounds like any crossfade; longer in Smooth.
+    #[test]
+    fn dj_fallback_fades_are_brief() {
+        let bar: f64 = 4.0 * 60_000.0 / 128.0;
+        let (a, _) = sung_until(0.0);
+        let b = TrackAnalysis { vocal_start_ms: 200, vocal_end_ms: 200_000, ..track(181.0) };
+        let off = |style| AutoMixSettings { filter_effects: false, ..AutoMixSettings { style, max_transition_s: style.longest_s() as f32, max_tempo_change_pct: style.tempo_pct(), ..Default::default() } };
+        let dj = plan(Some(&a), Some(&b), 240_000, 240_000, &off(MixStyle::Dj));
+        let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &off(MixStyle::Smooth));
+        assert_eq!((dj.kind, smooth.kind), (TransitionKind::MixRampFade, TransitionKind::MixRampFade), "{} / {}", dj.reason, smooth.reason);
+        assert!((dj.duration_ms as f64) <= 2.0 * bar + 1.0 && smooth.duration_ms > dj.duration_ms, "{dj:?} / {smooth:?}");
     }
 
     #[test]
