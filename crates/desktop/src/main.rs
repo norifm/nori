@@ -23,6 +23,10 @@ use nori_core::settings::SavedServer;
 
 use nori_desktop_ui::*;
 
+/// The app's id on Linux: its .desktop file's name (tools/host-release/linux.py), its window's class
+/// and Wayland app id, and its media controls' `DesktopEntry`, by which the desktop finds its name and icon.
+const APP_ID: &str = "dev.nori.desktop";
+
 /// $XDG_DATA_HOME/nori, else ~/.local/share/nori (same as the terminal client).
 fn data_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {

@@ -738,7 +738,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             compositor,
             tx,
             inbox,
-            mpris: nori_mpris::Mpris::for_app(&format!("nori.desktop{}", std::process::id())).ok().map(Arc::new),
+            mpris: nori_mpris::Mpris::for_app(crate::APP_ID).ok().map(Arc::new),
             root,
             http: Http::new(),
             session: None,

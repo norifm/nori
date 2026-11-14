@@ -221,7 +221,7 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     app.settings.own.kinds = root.plugins().kinds.clone();
     app.settings.own.device = own::text(&root.app.settings, own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
-    let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
+    let mpris = o.mpris.then(|| nori_mpris::Mpris::start("").ok().map(Arc::new)).flatten();
     app.shared = root.app.clone();
     app.settings.own.shared = root.app.clone();
     let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, code: None, codes: 0, o };
