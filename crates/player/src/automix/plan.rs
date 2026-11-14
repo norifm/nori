@@ -2434,6 +2434,21 @@ mod tests {
         }
     }
 
+    /// An opening whose kick comes in only after a soft first bar, at a slow tempo where two of its bars outlast the
+    /// hand-off: the bass is not handed over to music that has none yet, the outgoing song rides out instead, and no
+    /// brake bursts into it.
+    #[test]
+    fn the_bass_goes_only_to_a_song_that_has_it() {
+        let slow_start = |i: usize| if i == 0 { BarProfile { level_db: -11.0, low_db: -14.0, pulse: 0.2, ..band(i) } } else { band(i) };
+        let a = profiled(track(164.0), band);
+        let b = profiled(TrackAnalysis { key: camelot(6, false), ..track(66.0) }, slow_start);
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        assert!(p.kind == TransitionKind::FilterRide && !p.reason.contains("hand-off"), "{}", p.reason);
+        // Nor does a brake burst into it: its hit is a bar late.
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &after(TransitionKind::FilterRide));
+        assert_ne!(p.kind, TransitionKind::Brake, "{}", p.reason);
+    }
+
     /// After a ride, the next unmatched pair echoes out: on a downbeat after the last line the outgoing song's lows
     /// go and its last beat rings on in band-limited repeats while it falls, and the incoming music starts on that
     /// downbeat (its start delayed to it, nothing of it skipped), rising as it falls, the repeats held down under it.

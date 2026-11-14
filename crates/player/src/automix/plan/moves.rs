@@ -353,7 +353,9 @@ pub(super) fn filter_ride(p: &Pair) -> Option<Move> {
     }
     let (beat, on_grid) = beat_of(a)?;
     let (music, _) = entry(Some(b), p.room.in_dur);
-    let in_kicks = mean_over(&b.intro_bars, music, music + 2.0 * bar_ms(b), |x| if kick(x) { 1.0 } else { 0.0 }).is_some_and(|k| k >= 0.5);
+    // The incoming kick where it is heard, in the bars under the hand-off, not bars further on.
+    let heard = music - bar_ms(b) + 1.0..music + (HANDOFF_BEATS * beat).min(HANDOFF_MAX_MS);
+    let in_kicks = mean_over(&b.intro_bars, heard.start, heard.end, |x| if kick(x) { 1.0 } else { 0.0 }).is_some_and(|k| k >= 0.5);
     let (x, kicks, beats, len) = exits(a, p.room.out_dur, beat, 0.0, 0.0).into_iter().find_map(|x| {
         let kicks = in_kicks && bar_at(&a.outro_bars, x.at - beat).is_some_and(kick);
         let (beats, cap) = if kicks { (HANDOFF_BEATS, HANDOFF_MAX_MS) } else { (RIDE_BEATS, RIDE_MAX_MS) };
@@ -612,7 +614,8 @@ pub(super) fn brake(p: &Pair) -> Option<Move> {
     let fits = |x: &Exit| x.at - beat + dur <= p.room.out_dur as f64 && bar_at(&a.outro_bars, x.at - beat).is_some_and(|b| b.level_db >= LOUD_DB);
     let x = exits(a, p.room.out_dur, beat, stop, beat).into_iter().find(fits)?;
     let (_, at) = entry(Some(b), p.room.in_dur);
-    let hits = mean_over(&b.intro_bars, at - 0.5 * bar_ms(b), at + 2.0 * bar_ms(b), |x| if x.level_db >= LOUD_DB && x.pulse >= KICK_PULSE { 1.0 } else { 0.0 }).is_some_and(|h| h >= 0.5);
+    // The bar it bursts in on hits, not one after it.
+    let hits = bar_at(&b.intro_bars, at).is_some_and(|x| x.level_db >= LOUD_DB && x.pulse >= KICK_PULSE);
     if !hits || (p.room.in_dur as f64) - at < 2.0 * dur {
         return None;
     }
