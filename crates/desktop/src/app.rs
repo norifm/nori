@@ -1260,6 +1260,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_setting_typed, h, |a, name, text| match (crate::settings::PluginAct::of(&name), crate::settings::Act::of(&name)) {
         _ if name == words::REMOVE_DOWNLOADS => a.remove_asked(),
+        _ if name.starts_with(crate::settings::REMOVE_PROFILE) => a.remove_profile(&name[crate::settings::REMOVE_PROFILE.len()..]),
         (Some(act), _) => a.plugin_typed(act, text.to_string()),
         (None, Some(act)) => a.backup_typed(act, text.to_string()),
         (None, None) => a.setting(&name, &text),
@@ -2942,6 +2943,24 @@ impl App {
         ui.set_login_password("".into());
         self.editing = Some(profile);
         self.go(View::Login);
+    }
+
+    /// Removes profile `id`, as its ask sheet confirmed; the one in use gives way to the next, or the first
+    /// screen when it was the last.
+    fn remove_profile(&mut self, id: &str) {
+        let active = self.root.app.settings.current().is_some_and(|p| p.active_server_id == id);
+        if active {
+            if let Some(s) = self.session.take() {
+                s.close_for(None);
+            }
+        }
+        match self.root.remove_profile(id) {
+            nori_host::desktop::ProfileRemoved::Elsewhere => {}
+            nori_host::desktop::ProfileRemoved::Opens(next) => self.open(*next, None),
+            nori_host::desktop::ProfileRemoved::Last => self.choose_provider(),
+        }
+        self.profiles_shown();
+        self.settings_shown();
     }
 
     /// The account changed under the open profile: its seals and downloads follow, and a session the
@@ -4803,6 +4822,19 @@ impl App {
                 self.open(p, None);
             }
             Some(Act::Edit(id)) => self.edit_profile(id),
+            Some(Act::Remove(id)) => {
+                let prefs = self.root.app.settings.current().unwrap_or_default();
+                let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };
+                let (title, note) = words::remove_profile(&words::profile_label(p, self.kinds()));
+                let ui = self.ui();
+                ui.set_ask_title(title.into());
+                ui.set_ask_note(note.into());
+                ui.set_ask_name(format!("{}{id}", crate::settings::REMOVE_PROFILE).into());
+                ui.set_ask_button(words::REMOVE.into());
+                ui.set_ask_field(false);
+                ui.set_ask_text("".into());
+                ui.set_ask_open(true);
+            }
             Some(Act::Rename(id)) => {
                 let prefs = self.root.app.settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };
@@ -6133,7 +6165,7 @@ mod tests {
         assert!(landed.as_slice() == settled.as_slice(), "the rows land in place, without sliding back first");
     }
 
-    /// A lyrics service dragged by its handle past two others moves two places down, once let go.
+    /// A lyrics service dragged past two others moves two places down, once let go.
     #[test]
     fn a_lyrics_service_is_dragged_to_its_rank() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -6158,8 +6190,8 @@ mod tests {
         };
         pass(1000);
         use slint::platform::{PointerEventButton::Left, WindowEvent::*};
-        // The first service's handle; the rows below it stand 56 px apart.
-        let at = |y: f32| slint::LogicalPosition::new(978.0, y);
+        // The first service's name; the rows below it stand 56 px apart.
+        let at = |y: f32| slint::LogicalPosition::new(500.0, y);
         ui.window().dispatch_event(PointerMoved { position: at(532.0) });
         ui.window().dispatch_event(PointerPressed { position: at(532.0), button: Left });
         for y in (532..=662).step_by(10) {
@@ -6171,8 +6203,8 @@ mod tests {
         assert_eq!(*moved.borrow(), [(6, "LYRICS_PLUS".to_string(), 2)]);
     }
 
-    /// A profile dragged by its handle above the one before it moves one place up, once let go; a jam
-    /// guest's profiles have no handle.
+    /// A profile dragged above the one before it moves one place up, once let go; a jam guest's profiles
+    /// stay in place.
     #[test]
     fn a_profile_is_dragged_to_its_place() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -6200,9 +6232,9 @@ mod tests {
             ui.window().take_snapshot().unwrap();
         };
         use slint::platform::{PointerEventButton::Left, WindowEvent::*};
-        // Up the handles' column from the foot of the page: each press dragged 70 px up, until one moves a row.
+        // Up the names' column from the foot of the page: each press dragged 70 px up, until one moves a row.
         let drag = || {
-            let at = |y: f32| slint::LogicalPosition::new(978.0, y);
+            let at = |y: f32| slint::LogicalPosition::new(500.0, y);
             for y in (100..=780).rev().step_by(6) {
                 let y = y as f32;
                 ui.window().dispatch_event(PointerMoved { position: at(y) });

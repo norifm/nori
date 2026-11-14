@@ -143,6 +143,11 @@ pub fn remove_downloads(n: usize) -> (String, &'static str) {
     if n == 1 { ("Remove the download?".into(), "It no longer plays offline.") } else { (format!("Remove {n} downloads?"), "They no longer play offline.") }
 }
 
+/// Asks before profile `name` is removed: the question, and what goes with it.
+pub fn remove_profile(name: &str) -> (String, &'static str) {
+    (format!("Remove {name}?"), "What nori keeps for it on this computer goes with it.")
+}
+
 /// Asks before removing `name`.
 pub fn remove_plugin(name: &str) -> String {
     format!("Remove {name}?")
@@ -1111,6 +1116,15 @@ mod tests {
     }
 
     #[test]
+    fn an_analysis_offer_says_how_long_it_takes() {
+        use nori_core::automix::{AnalysisOffer, AnalysisReason};
+        let (title, why, time) = analysis_offer(&AnalysisOffer { songs: 1, reason: AnalysisReason::TurnedOn, minutes: 80 });
+        assert_eq!((title.as_str(), time.as_str()), ("Analyze 1 downloaded song?", "About 1 h 20 min"));
+        assert!(why.starts_with("AutoMix mixes"));
+        assert_eq!([about(0), about(5), about(60)], ["Under a minute", "About 5 min", "About 1 h"]);
+    }
+
+    #[test]
     fn the_settings_menu_names_who_and_where() {
         use nori_core::settings::SavedServer;
         let p = |kind, name: &str, url: &str, user: &str| SavedServer { kind, name: name.into(), url: url.into(), user: user.into(), ..Default::default() };
@@ -1118,15 +1132,6 @@ mod tests {
         assert_eq!(lines(p(ServerKind::Subsonic, "", "https://music.example.com/x", "ann")), ("ann".into(), "music.example.com".into()));
         assert_eq!(lines(p(ServerKind::Plugin { id: "dev.example.music".into() }, "", "", "")), ("dev.example.music".into(), "".into()), "a plugin's not here is named by its id");
         assert_eq!(lines(p(ServerKind::Subsonic, "Home", "http://h", "")), ("Home".into(), "".into()));
-    }
-
-    #[test]
-    fn an_analysis_offer_says_how_long_it_takes() {
-        use nori_core::automix::{AnalysisOffer, AnalysisReason};
-        let (title, why, time) = analysis_offer(&AnalysisOffer { songs: 1, reason: AnalysisReason::TurnedOn, minutes: 80 });
-        assert_eq!((title.as_str(), time.as_str()), ("Analyze 1 downloaded song?", "About 1 h 20 min"));
-        assert!(why.starts_with("AutoMix mixes"));
-        assert_eq!([about(0), about(5), about(60)], ["Under a minute", "About 5 min", "About 1 h"]);
     }
 
     #[test]
