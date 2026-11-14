@@ -396,8 +396,8 @@ fn joins_whole() {
     rig.heard_as(&order, from, 0, &[true, true], 0);
 
     // Keep albums switched on joins whole.
-    // Before a1's mix is made (30 s) up to just before it is heard.
-    for at_ms in [22_000, 28_000, 29_500] {
+    // Well before a1's mix up to just before it is heard (at 28 s).
+    for at_ms in [22_000, 26_000, 27_500] {
         keep_albums_switched_on_at(at_ms);
     }
 }

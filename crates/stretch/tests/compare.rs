@@ -225,6 +225,48 @@ fn long_runs_stay_within_the_originals_own_rounding_spread() {
     eprintln!("spectra at most {worst_dist:.3} dB apart on average, levels {worst_level:.4} dB");
 }
 
+/// Transposed a semitone or two either way (a key change) at ratios near 1: the same pitch and level as the original,
+/// and spectra within a fifth of a dB on average. Not sample for sample as untransposed: the outputs stay about 1e-3
+/// of the signal apart (a steady phase offset on a sine, -67 dB), though each is ten times steadier under a one-ulp
+/// nudge; its cause was not found.
+#[test]
+fn transposed_runs_match_the_original() {
+    let mut worst = (0f64, 0f64);
+    for ch in [1, 2] {
+        for (name, input) in INPUTS {
+            let x = input(ch);
+            for semitones in [1.0f32, -1.0, 2.0, -2.0] {
+                for (limit, ratio) in [(None, 1.0), (Some(8000.0 / RATE as f32), 1.03), (None, 0.9)] {
+                    let (mut rust, mut cpp) = engines(ch, RATE);
+                    let factor = 2f32.powf(semitones / 12.0);
+                    rust.set_transpose_factor(factor, limit);
+                    cpp.set_transpose_factor(factor, limit);
+                    let (a, b) = (run(&mut rust, &x, ch, ratio), run(&mut cpp, &x, ch, ratio));
+                    let (dist, level) = (spectral_distance(&a, &b, ch), level_db(&a, &b));
+                    let case = format!("{ch} ch {name}, {semitones} semitones {limit:?}, at {ratio}");
+                    assert!(dist < 0.2 && level.abs() < 0.01, "{case}: {dist:.3} dB apart, {level:.4} dB louder");
+                    worst = (worst.0.max(dist), worst.1.max(level.abs()));
+                }
+            }
+        }
+    }
+    eprintln!("transposed: spectra at most {:.3} dB apart on average, levels {:.4} dB", worst.0, worst.1);
+}
+
+/// A transposed sine comes out at the transposed pitch.
+#[test]
+fn transposition_moves_the_pitch() {
+    let x = signal(2.0, 1, |t, _| 0.3 * (TAU * 440.0 * t).sin());
+    for semitones in [2.0f32, -1.0] {
+        let (mut rust, _) = engines(1, RATE);
+        rust.set_transpose_factor(2f32.powf(semitones / 12.0), None);
+        let y = run(&mut rust, &x, 1, 1.0);
+        let crossings = y[30_000..74_100].windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count() as f64 / (44_100.0 / RATE as f64);
+        let want = 440.0 * 2f64.powf(semitones as f64 / 12.0);
+        assert!((crossings - want).abs() < 1.5, "{semitones} semitones: {crossings:.1} Hz, not {want:.1}");
+    }
+}
+
 #[test]
 fn half_speed_matches_the_original_statistically() {
     // AutoMix's slowest ratio: some blocks stretch past 2x, where both randomize phases (the original unseeded).

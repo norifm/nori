@@ -3,8 +3,8 @@
 //!
 //! Ported from Signalsmith Stretch, Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd., and Signalsmith
 //! Linear, Copyright (c) 2025 Signalsmith Audio, both MIT (see LICENSE in this crate). Only what nori uses is here:
-//! the cheaper preset with its split computation, `process`, `flush` and `reset`; no
-//! transposition, seeking, formants or custom frequency maps.
+//! the cheaper preset with its split computation, `process`, `flush`, `reset` and transposition; no seeking, formants
+//! or custom frequency maps.
 //!
 //! The original spreads each block's work over the interval that reads its output, a step per output sample, so a
 //! small audio callback costs about the same each time. nori fills seconds of output at once, so a block's work
@@ -140,6 +140,16 @@ pub struct Stretch {
     silence_first: bool,
     prev_input_offset: i32,
     random: MinStd,
+    /// Transposition: the frequency multiplier, and the frequency (of the sample rate) above which frequencies move by
+    /// a fixed amount rather than in proportion.
+    freq_multiplier: f32,
+    tonality_limit: f32,
+    /// Transposing: the bands' energy over all channels and smoothed, its peaks (input band, output band), and per
+    /// output band the input band it reads and the local frequency stretch.
+    energy: Vec<f32>,
+    smoothed_energy: Vec<f32>,
+    peaks: Vec<(f32, f32)>,
+    output_map: Vec<(f32, f32)>,
 }
 
 impl Stretch {
@@ -185,7 +195,20 @@ impl Stretch {
             silence_first: true,
             prev_input_offset: -1,
             random: MinStd(1),
+            freq_multiplier: 1.0,
+            tonality_limit: 0.5,
+            energy: vec![0.0; bands],
+            smoothed_energy: vec![0.0; bands],
+            peaks: Vec::with_capacity(bands),
+            output_map: vec![(0.0, 1.0); bands],
         }
+    }
+
+    /// Transposes by `multiplier` (2 an octave up); above `tonality_limit` (of the sample rate) frequencies move by a
+    /// fixed amount instead, which keeps the highs clean. Signalsmith's `setTransposeFactor`.
+    pub fn set_transpose_factor(&mut self, multiplier: f32, tonality_limit: Option<f32>) {
+        self.freq_multiplier = multiplier;
+        self.tonality_limit = tonality_limit.filter(|l| *l > 0.0).map_or(1.0, |l| l / multiplier.sqrt());
     }
 
     /// Frames between the input passed to `process` and the center of the effect.
@@ -321,6 +344,10 @@ impl Stretch {
             // The analysis, then the rotation and the previous input kept.
             steps += 2 * (ch + 1);
         }
+        // Transposing, the energy smoothed over three steps and its peaks found.
+        if self.freq_multiplier != 1.0 {
+            steps += 3 + 1;
+        }
         steps += 1 + ch + SPLIT_MAIN_PREDICTION + 1 + ch;
         self.block = Block { read: 0, steps, synthesized: 0 };
 
@@ -372,14 +399,24 @@ impl Stretch {
         for (energy, input) in self.input_energy.iter_mut().zip(&self.input) {
             *energy = input.norm_sqr();
         }
-        self.predict_from_previous();
-        if time_factor > MAX_CLEAN_STRETCH {
-            let random_low = MAX_CLEAN_STRETCH * 2.0 - time_factor;
+        let random_low = (time_factor > MAX_CLEAN_STRETCH).then_some(MAX_CLEAN_STRETCH * 2.0 - time_factor);
+        if self.freq_multiplier != 1.0 {
+            self.smooth_energy(smoothing_bins);
+            self.find_peaks();
+            self.update_output_map();
+            self.predict_from_previous_mapped();
             for b in 0..bands {
-                self.predict_bin_random(b, random_low, time_factor, long_step);
+                self.predict_bin(b, random_low, time_factor, long_step);
             }
         } else {
-            self.predict_bins(time_factor, long_step);
+            for b in 0..bands {
+                self.output_map[b] = (b as f32, 1.0);
+            }
+            self.predict_from_previous();
+            match random_low {
+                Some(_) => (0..bands).for_each(|b| self.predict_bin(b, random_low, time_factor, long_step)),
+                None => self.predict_bins(time_factor, long_step),
+            }
         }
         if new_spectrum {
             self.prev_input.copy_from_slice(&self.input);
@@ -397,6 +434,118 @@ impl Stretch {
             *prediction_input = *input;
             let phase = *output * mul_conj(*input, *prev_input);
             *output = phase / (prev_energy.max(*prediction_energy) + NOISE_FLOOR);
+        }
+    }
+
+    /// The bands' energy over all channels, and smoothed down and up across them twice.
+    fn smooth_energy(&mut self, smoothing_bins: f32) {
+        let bands = self.bands;
+        self.energy.fill(0.0);
+        for c in 0..self.channels {
+            for (e, x) in self.energy.iter_mut().zip(&self.input_energy[c * bands..(c + 1) * bands]) {
+                *e += *x;
+            }
+        }
+        self.smoothed_energy.copy_from_slice(&self.energy);
+        let slew = 1.0 / (1.0 + smoothing_bins * 0.5);
+        let mut e = 0.0;
+        for _ in 0..2 {
+            for s in self.smoothed_energy.iter_mut().rev() {
+                e += (*s - e) * slew;
+                *s = e;
+            }
+            for s in self.smoothed_energy.iter_mut() {
+                e += (*s - e) * slew;
+                *s = e;
+            }
+        }
+    }
+
+    fn map_freq(&self, freq: f32) -> f32 {
+        if freq > self.tonality_limit {
+            freq + (self.freq_multiplier - 1.0) * self.tonality_limit
+        } else {
+            freq * self.freq_multiplier
+        }
+    }
+
+    /// Runs of bands louder than their smoothed energy: each run's energy-weighted centre, and the band its frequency
+    /// moves to.
+    fn find_peaks(&mut self) {
+        self.peaks.clear();
+        let mut start = 0;
+        while start < self.bands {
+            if self.energy[start] > self.smoothed_energy[start] {
+                let mut end = start;
+                let (mut band_sum, mut energy_sum) = (0f32, 0f32);
+                while end < self.bands && self.energy[end] > self.smoothed_energy[end] {
+                    band_sum += end as f32 * self.energy[end];
+                    energy_sum += self.energy[end];
+                    end += 1;
+                }
+                let avg = band_sum / energy_sum;
+                let to = self.stft.freq_to_bin(self.map_freq(self.stft.bin_to_freq(avg)));
+                self.peaks.push((avg, to));
+                start = end;
+            }
+            start += 1;
+        }
+    }
+
+    /// The input band each output band reads: the peaks moved to their bands, smoothly in between, by the edge peaks'
+    /// offsets outside them.
+    fn update_output_map(&mut self) {
+        let bands = self.bands as i32;
+        let (Some(&first), Some(&last)) = (self.peaks.first(), self.peaks.last()) else {
+            for (b, m) in self.output_map.iter_mut().enumerate() {
+                *m = (b as f32, 1.0);
+            }
+            return;
+        };
+        let bottom = first.0 - first.1;
+        for b in 0..bands.min(first.1.ceil() as i32) {
+            self.output_map[b as usize] = (b as f32 + bottom, 1.0);
+        }
+        for w in self.peaks.windows(2) {
+            let (prev, next) = (w[0], w[1]);
+            let range_scale = 1.0 / (next.1 - prev.1);
+            let out_offset = prev.0 - prev.1;
+            let out_scale = next.0 - next.1 - prev.0 + prev.1;
+            let grad_scale = out_scale * range_scale;
+            for b in 0.max(prev.1.ceil() as i32)..bands.min(next.1.ceil() as i32) {
+                let r = (b as f32 - prev.1) * range_scale;
+                let h = r * r * (3.0 - 2.0 * r);
+                let grad_h = 6.0 * r * (1.0 - r);
+                self.output_map[b as usize] = (b as f32 + out_offset + h * out_scale, 1.0 + grad_h * grad_scale);
+            }
+        }
+        let top = last.0 - last.1;
+        for b in 0.max(last.1 as i32)..bands {
+            self.output_map[b as usize] = (b as f32 + top, 1.0);
+        }
+    }
+
+    /// [`predict_from_previous`](Self::predict_from_previous) with each output bin reading its mapped input band,
+    /// between bins, its energy scaled by the local stretch.
+    fn predict_from_previous_mapped(&mut self) {
+        let bands = self.bands;
+        for c in 0..self.channels {
+            let run = c * bands..(c + 1) * bands;
+            let (input, prev_input, input_energy) = (&self.input[run.clone()], &self.prev_input[run.clone()], &self.input_energy[run.clone()]);
+            let energy_at = |i: f32| {
+                let low = i.floor() as i32;
+                let at = |k: i32| if k < 0 || k as usize >= bands { 0.0 } else { input_energy[k as usize] };
+                at(low) + (at(low + 1) - at(low)) * (i - low as f32)
+            };
+            for b in 0..bands {
+                let (from, grad) = self.output_map[b];
+                let i = c * bands + b;
+                let prev_energy = self.prediction_energy[i];
+                self.prediction_energy[i] = energy_at(from) * grad.max(0.0);
+                self.prediction_input[i] = fractional_at(input, from);
+                let phase = self.output[i] * mul_conj(self.prediction_input[i], fractional_at(prev_input, from));
+                self.output[i] = phase / (prev_energy.max(self.prediction_energy[i]) + NOISE_FLOOR);
+            }
         }
     }
 
@@ -489,9 +638,10 @@ impl Stretch {
         }
     }
 
-    /// [`predict_bins`](Self::predict_bins) for one bin when the stretch is too large for clean phases: each vertical
-    /// step reads its input at a time factor drawn from `random_low..time_factor`.
-    fn predict_bin_random(&mut self, b: usize, random_low: f32, time_factor: f32, long_step: usize) {
+    /// [`predict_bins`](Self::predict_bins) for one bin, each vertical step reading the input at the bin's mapped band
+    /// less the time factor; when the stretch is too large for clean phases, a time factor drawn from
+    /// `random_low..time_factor` for each.
+    fn predict_bin(&mut self, b: usize, random_low: Option<f32>, time_factor: f32, long_step: usize) {
         let (ch, bands) = (self.channels, self.bands);
         let mut loudest = 0;
         let mut max_energy = self.prediction_energy[b];
@@ -508,19 +658,22 @@ impl Stretch {
         let output = &self.output[offset..offset + bands];
         let prediction = predictions[b];
         let mut phase = Complex32::default();
+        let map = &self.output_map;
+        let random = &mut self.random;
+        let mut factor = || random_low.map_or(time_factor, |low| random.uniform(low, time_factor));
         if b > 0 {
-            let tf = self.random.uniform(random_low, time_factor);
-            phase += output[b - 1] * mul_conj(prediction, fractional_at(input, b as f32 - tf));
+            let tf = factor();
+            phase += output[b - 1] * mul_conj(prediction, fractional_at(input, map[b].0 - tf));
             if b >= long_step {
-                phase += output[b - long_step] * mul_conj(prediction, fractional_at(input, b as f32 - long_step as f32 * tf));
+                phase += output[b - long_step] * mul_conj(prediction, fractional_at(input, map[b].0 - long_step as f32 * tf));
             }
         }
         if b < bands - 1 {
-            let tf = self.random.uniform(random_low, time_factor);
-            phase += mul_conj(output[b + 1], mul_conj(predictions[b + 1], fractional_at(input, (b + 1) as f32 - tf)));
+            let tf = factor();
+            phase += mul_conj(output[b + 1], mul_conj(predictions[b + 1], fractional_at(input, map[b + 1].0 - tf)));
             if b + long_step < bands {
                 let up = b + long_step;
-                phase += mul_conj(output[up], mul_conj(predictions[up], fractional_at(input, up as f32 - long_step as f32 * tf)));
+                phase += mul_conj(output[up], mul_conj(predictions[up], fractional_at(input, map[up].0 - long_step as f32 * tf)));
             }
         }
         let out = make_output(max_energy, prediction, phase);

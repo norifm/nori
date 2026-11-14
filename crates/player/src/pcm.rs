@@ -129,6 +129,16 @@ impl ByteStretcher {
 
     /// From the plain signal, 1 for `hold_frames`, then glided to `to` over `ramp_frames`, never handed over
     /// ([`Stretcher::glide`]). `lead_in` is the input just before, in order, warming it.
+    /// [`Stretcher::follow`].
+    pub fn follow(&mut self, knots: &[(u64, f64)]) {
+        self.s.follow(knots);
+    }
+
+    /// [`Stretcher::transpose`].
+    pub fn transpose(&mut self, semitones: f32, hold_frames: u64, ramp_frames: u64) {
+        self.s.transpose(semitones, hold_frames, ramp_frames);
+    }
+
     pub fn glide(&mut self, to: f64, hold_frames: u64, ramp_frames: u64, lead_in: &[&[u8]], enc: Encoding) {
         self.s.glide(to, hold_frames, ramp_frames);
         let (w, ch, chunk) = (enc.width(), self.ch, self.fin.len() * enc.width());
@@ -140,6 +150,11 @@ impl ByteStretcher {
             }
             self.s.warm(&self.fin[..n]);
         }
+    }
+
+    /// [`Stretcher::along`].
+    pub fn along(&mut self, knots: &[(u64, f64)]) {
+        self.s.along(knots);
     }
 
     /// [`Stretcher::entry_frames`].

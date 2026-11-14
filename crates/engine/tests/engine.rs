@@ -3637,10 +3637,10 @@ fn shuffle_near_mix_keeps_audio() {
 
 // ---- a MixRamp fade out of a song with no beat grid, left before its end ----
 
-/// An analysis with no usable beat grid (as the phone's Go Slowly and Black Star): leaving at `exit_ms`
-/// (0: at the end), a quiet head of `head_ms`.
+/// An analysis with no beat at all, so nothing but a MixRamp fade fits (no move can be timed on it): leaving at
+/// `exit_ms` (0: at the end), a quiet head of `head_ms`.
 fn gridless(id: &str, ms: i64, exit_ms: i64, head_ms: i64) -> TrackAnalysis {
-    TrackAnalysis { bpm_confidence: 0.3, stability: 0.2, outro_bpm_confidence: 0.3, outro_stability: 0.2, intro_bpm_confidence: 0.3, intro_stability: 0.2, exit_ms, mixramp_start_ms: head_ms, mixramp_end_ms: ms - 1_000, ..measured(id, 108.0, ms) }
+    TrackAnalysis { bpm: 0.0, outro_bpm: 0.0, intro_bpm: 0.0, bpm_confidence: 0.0, stability: 0.0, exit_ms, mixramp_start_ms: head_ms, mixramp_end_ms: ms - 1_000, ..measured(id, 108.0, ms) }
 }
 
 /// The level of `hz` in each 20 ms of the left channel of `heard`.

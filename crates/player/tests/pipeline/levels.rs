@@ -3,7 +3,7 @@
 use nori_player::automix::ANALYSIS_VERSION;
 use nori_player::sim::{prefs_off, Player};
 use nori_player::transitions::TransitionPrefs;
-use nori_player::types::{MixStyle, TrackAnalysis};
+use nori_player::types::{BarProfile, MixStyle, TrackAnalysis, TransitionKind};
 
 use crate::common::*;
 
@@ -84,6 +84,8 @@ struct Kind {
     a: TrackAnalysis,
     b: TrackAnalysis,
     logged: &'static [&'static str],
+    /// The kind of the transition into the outgoing song.
+    after: Option<TransitionKind>,
 }
 
 fn automix_prefs() -> TransitionPrefs {
@@ -108,68 +110,178 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
         ..a.clone()
     };
     let long_intro = TrackAnalysis { intro_end_ms: 250 + 12 * bar, silence_start_ms: 100, ..same_tempo.clone() };
+    // Sung to two seconds before its end, every bar loud.
+    let sung_to = (SONG_S * 1000.0) as i64 - 2_000;
+    let outro_bars = (10..30).map(|i| BarProfile { start_ms: 250 + i * bar, level_db: 0.0, low_db: 0.0, pulse: 1.0, voice: if 250 + i * bar < sung_to { 1.0 } else { 0.0 }, change: 0.0 }).collect();
+    let sung = TrackAnalysis { vocal_start_ms: 300, vocal_end_ms: sung_to, outro_bars, ..a.clone() };
+    // A kick in every bar of both ends: a DJ mix hands the bass over first.
+    let kicking = |t: &TrackAnalysis| {
+        let bars: Vec<BarProfile> = (0..30).map(|i| BarProfile { start_ms: 250 + i * bar, level_db: 0.0, low_db: 0.0, pulse: 1.0, voice: 0.0, change: 0.0 }).collect();
+        TrackAnalysis { intro_bars: bars.clone(), outro_bars: bars, ..t.clone() }
+    };
+    // Stopping cold three seconds before its end.
+    let stops = TrackAnalysis { exit_ms: (SONG_S * 1000.0) as i64 - 3_000, ..a.clone() };
     vec![
-        Kind { name: "equal-power crossfade", prefs: crossfade(6), a: a.clone(), b: b.clone(), logged: &["EqualPowerFade"] },
+        Kind { name: "equal-power crossfade", prefs: crossfade(6), a: a.clone(), b: b.clone(), logged: &["EqualPowerFade"], after: None },
         Kind {
             name: "beat-matched, stretched, bass swap",
             prefs: automix_prefs(),
             a: a.clone(),
             b: b.clone(),
-            logged: &["BeatMatched", "tempo x0.976"],
+            logged: &["BeatMatched", "tempo x0.976"], after: None,
         },
         Kind {
             name: "beat-matched, no bass swap, no filters",
             prefs: TransitionPrefs { bass_swap: false, filter_effects: false, ..automix_prefs() },
             a: a.clone(),
             b: same_tempo.clone(),
-            logged: &["BeatMatched", "tempo x1.000"],
+            logged: &["BeatMatched", "tempo x1.000"], after: None,
         },
         Kind {
             name: "beat-matched, the outro looped",
             prefs: automix_prefs(),
             a: short_outro,
             b: long_intro,
-            logged: &["BeatMatched", "remix"],
+            logged: &["BeatMatched", "remix"], after: None,
         },
         Kind {
-            name: "beat-matched, keys far apart (DJ)",
+            name: "beat-matched, stretched into a matched key (DJ)",
             prefs: TransitionPrefs { style: MixStyle::Dj, ..automix_prefs() },
             a: keyed(&a, 1),
             b: keyed(&same_tempo, 7),
-            logged: &["BeatMatched", "keys far apart"],
+            logged: &["BeatMatched", "in key"], after: None,
+        },
+        Kind {
+            name: "beat-matched, EQ blend (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, auto_mix_max_s: 40, ..automix_prefs() },
+            a: a.clone(),
+            b: same_tempo.clone(),
+            logged: &["BeatMatched", "run-up"],
+            after: None,
+        },
+        Kind {
+            name: "beat-matched, bass first (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, auto_mix_max_s: 40, ..automix_prefs() },
+            a: kicking(&a),
+            b: kicking(&same_tempo),
+            logged: &["LayeredMix", "bass first"],
+            after: None,
         },
         Kind {
             name: "MixRamp fade",
-            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            prefs: TransitionPrefs { beat_match: false, filter_effects: false, ..automix_prefs() },
             a: a.clone(),
             b: b.clone(),
-            logged: &["MixRampFade", "mixramp fade"],
+            logged: &["MixRampFade", "mixramp fade"], after: None,
         },
         Kind {
             name: "downbeat-aligned fade",
-            prefs: automix_prefs(),
+            prefs: TransitionPrefs { filter_effects: false, ..automix_prefs() },
             a: a.clone(),
             b: TrackAnalysis { bpm_confidence: 0.1, intro_bpm_confidence: 0.1, ..b.clone() },
-            logged: &["MixRampFade", "downbeat-aligned"],
+            logged: &["MixRampFade", "downbeat-aligned"], after: None,
+        },
+        Kind {
+            name: "melt",
+            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            a: a.clone(),
+            b: b.clone(),
+            logged: &["FilterRide", "melt"], after: None,
+        },
+        Kind {
+            name: "afterglow",
+            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            a: a.clone(),
+            b: TrackAnalysis { vocal_start_ms: 300, vocal_end_ms: 20_000, ..b.clone() },
+            logged: &["ReverbWash", "afterglow"], after: None,
+        },
+        Kind {
+            name: "afterglow off the last word",
+            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            a: sung.clone(),
+            b: b.clone(),
+            logged: &["ReverbWash", "last word"], after: None,
+        },
+        Kind {
+            name: "rise",
+            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            a: sung.clone(),
+            b: b.clone(),
+            logged: &["FilterRide", "rise"],
+            after: Some(TransitionKind::ReverbWash),
+        },
+        Kind {
+            name: "echo-out (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, beat_match: false, ..automix_prefs() },
+            a: a.clone(),
+            b: b.clone(),
+            logged: &["EchoOut"],
+            after: Some(TransitionKind::FilterRide),
+        },
+        Kind {
+            name: "filter ride (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, ..automix_prefs() },
+            a: a.clone(),
+            b: measured("b", 160.0, lufs_b),
+            logged: &["FilterRide", "filter ride"],
+            after: None,
+        },
+        Kind {
+            name: "bass hand-off (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, ..automix_prefs() },
+            a: kicking(&keyed(&a, 1)),
+            b: kicking(&keyed(&measured("b", 160.0, lufs_b), 7)),
+            logged: &["FilterRide", "hand-off"],
+            after: None,
+        },
+        Kind {
+            name: "filter-out off the last word (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, beat_match: false, ..automix_prefs() },
+            a: sung,
+            b: b.clone(),
+            logged: &["FilterOut"],
+            after: None,
+        },
+        Kind {
+            name: "brake (DJ)",
+            prefs: TransitionPrefs { style: MixStyle::Dj, ..automix_prefs() },
+            a: kicking(&a),
+            b: kicking(&measured("b", 160.0, lufs_b)),
+            logged: &["Brake"],
+            after: Some(TransitionKind::FilterRide),
+        },
+        Kind {
+            name: "glowing stop",
+            prefs: TransitionPrefs { beat_match: false, ..automix_prefs() },
+            a: stops,
+            b: b.clone(),
+            logged: &["ReverbWash", "glowing"], after: None,
         },
     ]
 }
 
-/// A run's output and where its mix is heard, from the planner's log line: (start, length), frames.
+/// A run's output and where its mix is heard, from the planner's log line: (start, length), frames, and where in it
+/// the incoming song is first heard, frames.
 struct Run {
     out: Vec<i16>,
     mix: (usize, usize),
+    heard: usize,
     line: String,
+    log: Vec<String>,
 }
 
+/// A run whose songs are as long as listed: its plan fits them, never squeezed by the engine.
 fn run(kind: &Kind, a: &[i16], b: &[i16], gains: &[(&str, f32)], replay_gain: bool) -> Run {
-    run_listed(kind, track("a", a), b, gains, replay_gain)
+    let r = run_listed(kind, track("a", a), b, gains, replay_gain);
+    assert!(!r.log.iter().any(|l| l.contains("made to fit")), "{}: squeezed: {:?}", kind.name, r.log);
+    r
 }
 
 fn run_listed(kind: &Kind, a: nori_player::sim::Track, b: &[i16], gains: &[(&str, f32)], replay_gain: bool) -> Run {
     let prefs = TransitionPrefs { replay_gain, ..kind.prefs };
     let mut p = Player::with_prefs(vec![a, track("b", b)], prefs);
     p.measure_on_move = false;
+    p.app.kinds_into.extend(kind.after.map(|k| ("a".to_string(), k)));
     for t in [&kind.a, &kind.b] {
         if !t.song_id.is_empty() {
             p.app.analyses.insert(t.song_id.clone(), t.clone());
@@ -191,7 +303,8 @@ fn run_listed(kind: &Kind, a: nori_player::sim::Track, b: &[i16], gains: &[(&str
     let words: Vec<&str> = line.split_whitespace().collect();
     let len_ms: f64 = words[5].parse().unwrap();
     let start_ms: f64 = words[8].trim_end_matches(',').parse().unwrap();
-    Run { out: p.sink.heard_samples(), mix: (frames(start_ms / 1000.0), frames(len_ms / 1000.0)), line }
+    let heard_ms: f64 = words[13].parse().unwrap();
+    Run { out: p.sink.heard_samples(), mix: (frames(start_ms / 1000.0), frames(len_ms / 1000.0)), heard: frames(heard_ms / 1000.0), line, log }
 }
 
 /// The level of `x` (left channel, full scale 1) in dB over each 100 ms from frame `from` to `to`.
@@ -231,10 +344,11 @@ fn each_mix_kind_uses_song_gains() {
         // level says it (below), not each sample.
         assert!(off <= 3 || kind.name.contains("stretched"), "{}: every sample as the gain-then-mix one (off by {off})", kind.name);
         assert!(worst < 0.01, "{}: {worst:.3} dB from the gain-then-mix level", kind.name);
-        // Either side of the mix, each song alone at its own level.
+        // Either side of the mix, each song alone at its own level: the incoming one once it has eased back to its own
+        // tempo and key (a song transposed plays a few tenths of a dB under its own, in Signalsmith's original too).
         let own = |s: &[i16], g: f32| db(rms(&left(&at(s, g))[frames(10.0)..frames(20.0)]));
         let before = db(rms(&x[s - frames(3.0)..s - frames(1.0)]));
-        let after = db(rms(&x[s + n + frames(8.0)..s + n + frames(10.0)]));
+        let after = db(rms(&x[s + n + frames(18.0)..s + n + frames(20.0)]));
         assert!((before - own(&a, ga)).abs() < 0.1, "{}: a at {before:.2} dB, its own {:.2}", kind.name, own(&a, ga));
         assert!((after - own(&b, gb)).abs() < 0.1, "{}: b at {after:.2} dB, its own {:.2}", kind.name, own(&b, gb));
     }
@@ -294,7 +408,7 @@ fn no_level_step() {
         prefs: TransitionPrefs { auto_mix_max_s: 12, ..automix_prefs() },
         a: TrackAnalysis::default(),
         b: TrackAnalysis::default(),
-        logged: &["EqualPowerFade", "not analysed"],
+        logged: &["EqualPowerFade", "not analysed"], after: None,
     });
     let mut bad = Vec::new();
     let mut cut = 0;
@@ -354,9 +468,10 @@ fn loudness_match_lets_go_gently(la: f32, lb: f32) {
             let last = known.last().map_or(0.0, |v| v.1);
             let step = known.windows(2).filter(|w| w[1].0 == w[0].0 + 1).map(|w| (w[1].1 - w[0].1).abs()).fold(0.0, f64::max);
             println!("{} ({la} -> {lb} LUFS): {last:+.2} dB after, largest 100 ms move {step:.2} dB; {}", kind.name, r.line);
-            // From the whole gap at the mix's start to none at its end, evenly.
-            let len = r.mix.1 as f64 / RATE as f64;
-            let off = known.iter().map(|&(k, v)| v - (la - lb) as f64 * (1.0 - (k as f64 + 0.5) * WIN_S / len).max(0.0)).fold(0.0, |m: f64, d| if d.abs() > m.abs() { d } else { m });
+            // From the whole gap where the incoming song is first heard to none at the mix's end, evenly.
+            let (len, heard) = (r.mix.1 as f64 / RATE as f64, r.heard as f64 / RATE as f64);
+            let glide = |t: f64| (1.0 - (t - heard) / (len - heard)).clamp(0.0, 1.0);
+            let off = known.iter().map(|&(k, v)| v - (la - lb) as f64 * glide((k as f64 + 0.5) * WIN_S)).fold(0.0, |m: f64, d| if d.abs() > m.abs() { d } else { m });
             assert!(off.abs() < 0.3, "{}: the match {off:+.2} dB off its glide", kind.name);
             assert!(last.abs() < 0.05, "{}: {last:.2} dB still turned after the mix", kind.name);
             if step > 1.0 {
@@ -380,10 +495,10 @@ fn tiny_stretch_keeps_level() {
         prefs: TransitionPrefs { bass_swap: false, filter_effects: false, ..automix_prefs() },
         a: measured("a", 120.0, -14.0),
         b: measured("b", 120.09, -14.0),
-        logged: &["BeatMatched", "tempo x0.999"],
+        logged: &["BeatMatched", "tempo x0.999"], after: None,
     };
     let got = run(&kind, &quiet, &b, &[], true);
-    let plain = run(&Kind { b: measured("b", 120.0, -14.0), logged: &["BeatMatched", "tempo x1.000"], ..kind.clone() }, &quiet, &b, &[], true);
+    let plain = run(&Kind { b: measured("b", 120.0, -14.0), logged: &["BeatMatched", "tempo x1.000"], after: None, ..kind.clone() }, &quiet, &b, &[], true);
     assert_eq!(got.mix, plain.mix, "{} against {}", got.line, plain.line);
     let (s, n) = got.mix;
     // From where the incoming song is fully in (the second half of the mix) to twenty seconds past it.
@@ -396,8 +511,10 @@ fn tiny_stretch_keeps_level() {
     assert!(step <= 1.0, "{}: {step:.2} dB in 100 ms, {:.1} s into the second half of the mix", kind.name, i as f64 * WIN_S);
 }
 
-/// Two different songs at one loudness: every kind of mix holds that level while both play, never louder or quieter
-/// than the songs themselves, as heard: over 400 ms, the window momentary loudness is measured over.
+/// Two different songs at one loudness: every kind of mix holds that level while both play (from where the incoming
+/// song is first heard, past the attack of one coming in on a beat: an effect on the outgoing one alone before it, a
+/// thinning or a brake, is that effect), never louder or quieter than the songs themselves, as heard: over 400 ms,
+/// the window momentary loudness is measured over.
 #[test]
 fn level_holds_through_each_mix() {
     let (a, b) = (steady(SONG_S, 31, 0.3), steady(SONG_S, 32, 0.3));
@@ -408,7 +525,9 @@ fn level_holds_through_each_mix() {
         let (s, n) = got.mix;
         let x = left(&got.out);
         let w = frames(0.4);
-        let l: Vec<f64> = (s..(s + n).saturating_sub(w)).step_by(frames(WIN_S)).map(|i| db(rms(&x[i..i + w]))).collect();
+        let from = s + if got.heard > 0 { got.heard + w / 2 } else { 0 };
+        let l: Vec<f64> = (from..s + n).step_by(frames(WIN_S)).map(|i| db(rms(&x[i..i + w]))).collect();
+        assert!(!l.is_empty(), "{}: nothing measured ({})", kind.name, got.line);
         let (lo, hi) = l.iter().fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v - own), hi.max(v - own)));
         println!("{}: {lo:+.2}..{hi:+.2} dB through the mix ({})", kind.name, got.line);
         if lo < -1.0 || hi > 1.0 {
@@ -419,7 +538,8 @@ fn level_holds_through_each_mix() {
 }
 
 /// Into a song 6 dB quieter, with the loudness match on: the two meet, the level gliding from one to the
-/// other across the mix, so half way it is half way, and none of the drop is left for the mix's end.
+/// other from where the incoming song is first heard, so half way along it is half way, and none of the drop is left
+/// for the mix's end.
 #[test]
 fn level_glides_across_a_loudness_gap() {
     let (a, b) = (steady(SONG_S, 31, 0.4), steady(SONG_S, 32, 0.2));
@@ -428,7 +548,8 @@ fn level_glides_across_a_loudness_gap() {
     for kind in kinds(-8.0, -14.0).into_iter().filter(|k| k.name != "equal-power crossfade") {
         let got = run(&kind, &a, &b, &[], false);
         let (s, n) = got.mix;
-        let mid = db(rms(&left(&got.out)[s + n / 2 - frames(0.5)..s + n / 2 + frames(0.5)]));
+        let half = s + got.heard + (n - got.heard) / 2;
+        let mid = db(rms(&left(&got.out)[half - frames(0.5)..half + frames(0.5)]));
         let want = (la + lb) / 2.0;
         println!("{}: {mid:.2} dB half way, between {la:.2} and {lb:.2} ({})", kind.name, got.line);
         assert!((mid - want).abs() < 1.5, "{}: {mid:.2} dB half way through, not near {want:.2} ({})", kind.name, got.line);

@@ -1324,9 +1324,16 @@ fn words_kind(kind: nori_core::automix::planner::TransitionKind) -> &'static str
     use nori_core::automix::planner::TransitionKind as K;
     match kind {
         K::BeatMatched => "AutoMix: beat-matched mix",
+        K::LayeredMix => "AutoMix: layered mix",
         K::EchoOut => "AutoMix: echo out",
         K::Cut => "AutoMix: cut",
         K::MixRampFade => "AutoMix: fade",
+        K::FilterRide => "AutoMix: filter ride",
+        K::FilterOut => "AutoMix: filter out",
+        K::Brake => "AutoMix: brake",
+        K::ReverbWash => "AutoMix: reverb wash",
+        K::BeatlessBlend => "AutoMix: blend",
+        K::LoopRamp => "AutoMix: loop ramp",
         K::EqualPowerFade => "Crossfade",
         K::Gapless => "Gapless",
     }

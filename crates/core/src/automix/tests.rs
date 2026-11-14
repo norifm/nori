@@ -58,7 +58,7 @@ impl Core {
 
 #[test]
 fn beat_model_grid_survives_reanalysis() {
-    use nori_player::automix::beats::{EndGrid, MixEnd, GRID_CHECKED, GRID_NEURAL};
+    use nori_player::automix::beats::{EndGrid, EndRead, MixEnd, GRID_CHECKED, GRID_NEURAL};
     let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
     let row = TrackAnalysis {
         song_id: "s".into(),
@@ -75,9 +75,10 @@ fn beat_model_grid_survives_reanalysis() {
     core.analysis_store(TrackAnalysis { song_id: "old".into(), analysis_version: 1, ..row.clone() }).unwrap();
     assert_eq!(core.analysis_neural_missing(vec!["s".into(), "old".into(), "none".into()]).unwrap(), vec!["s".to_string()]);
     let sure = EndGrid { bpm: 90.0, offset_ms: 10.0, confidence: 1.0, stability: 1.0, downbeat_phase: 0, beats_per_bar: 3, other_phase: None, anchor_ms: 0.0, span_ms: None };
-    assert!(core.analysis_neural_store("s", MixEnd::Intro, Some(sure)).unwrap());
-    assert!(!core.analysis_neural_store("s", MixEnd::Outro, None).unwrap());
-    assert!(!core.analysis_neural_store("none", MixEnd::Outro, None).unwrap());
+    let read = |grid| EndRead { grid, beats: Vec::new() };
+    assert!(core.analysis_neural_store("s", MixEnd::Intro, &read(Some(sure))).unwrap());
+    assert!(!core.analysis_neural_store("s", MixEnd::Outro, &read(None)).unwrap());
+    assert!(!core.analysis_neural_store("none", MixEnd::Outro, &read(None)).unwrap());
     let stored = core.analysis_get("s".into()).unwrap().unwrap();
     assert_eq!((stored.intro_bpm, stored.intro_beats_per_bar, stored.intro_grid_source, stored.outro_grid_source), (90.0, 3, GRID_NEURAL, GRID_CHECKED));
     assert!(core.analysis_neural_missing(vec!["s".into()]).unwrap().is_empty());
