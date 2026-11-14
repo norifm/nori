@@ -46,7 +46,7 @@ const MIN_MIXRAMP_MS: i64 = 5_000;
 const BASS_CUT_HZ: f32 = 180.0;
 const SWEEP_FROM_HZ: f32 = 18_000.0;
 /// Where the outgoing low-pass of a beat-matched mix ends.
-const SWEEP_TO_HZ_MATCHED: f32 = 400.0;
+const SWEEP_TO_HZ_MATCHED: f32 = 800.0;
 /// A fade's soft low-pass over clashing keys.
 const SWEEP_TO_HZ_SOFT: f32 = 2_500.0;
 
@@ -345,7 +345,10 @@ impl Ending {
         let gap = (a.gap_ms > a.silence_start_ms && a.gap_end_ms > a.gap_ms && a.gap_end_ms as f64 <= music_end)
             .then_some((a.gap_ms as f64, a.gap_end_ms as f64));
         let mut e = Ending { music_end, gap, exit: music_end, breakdown: false, slows: None };
-        let x = a.exit_ms as f64;
+        // A closing breakdown the song sings a last line into (up to two bars) is left after its last word, not over
+        // it; singing found all through it is the breakdown itself.
+        let sung_into = a.vocal_end_ms as f64 - a.exit_ms as f64;
+        let x = if a.vocal_end_ms > 0 && sung_into > 0.0 && sung_into <= SUNG_INTO_EXIT_BARS * bar_ms(a) { a.vocal_end_ms as f64 } else { a.exit_ms as f64 };
         if a.exit_ms > a.silence_start_ms && x < music_end {
             e.exit = x;
             e.breakdown = gap.is_none_or(|(g0, _)| (g0 - x).abs() > 1.0);
@@ -392,6 +395,9 @@ impl Ending {
         (t1.min(end) - t0.max(self.exit)).max(0.0)
     }
 }
+
+/// Bars of a closing breakdown a last line may run into.
+const SUNG_INTO_EXIT_BARS: f64 = 2.0;
 
 /// The longest closing breakdown that is a song's stop ringing out rather than a coda, ms.
 const RING_OUT_MS: f64 = 6_000.0;
@@ -464,13 +470,16 @@ fn separate_in_fade(p: &mut TransitionPlan, s: &AutoMixSettings, sung_both: bool
 }
 
 /// A plain fade out of a song still singing once it would fall: the song holds until its last line ends, then falls
-/// over what is left, a bar at least, as the incoming song, risen under it, takes over; that one's voice band is cut
+/// over what is left, a bar at least (where the fade runs to the song's own end, only what the song has left after
+/// its last word: the song ends itself), as the incoming song, risen under it, takes over; that one's voice band is cut
 /// until then so the line stays clear, and the outgoing song is darkened only once it has sung.
 fn hold_through_line(p: &mut TransitionPlan, a: Option<&TrackAnalysis>, s: &AutoMixSettings) {
     let Some(a) = a.filter(|a| a.vocal_end_ms > 0) else {
         return;
     };
-    let hold = (a.vocal_end_ms - p.out_start_ms).min(p.duration_ms - bar_ms(a).round() as i64);
+    let to_its_end = p.out_start_ms + p.duration_ms >= a.silence_end_ms - MIN_FADE_MS;
+    let fall = if to_its_end { MIN_FADE_MS } else { bar_ms(a).round() as i64 };
+    let hold = (a.vocal_end_ms - p.out_start_ms).min(p.duration_ms - fall);
     if hold <= p.out_fade_start_ms {
         return;
     }
@@ -1319,6 +1328,24 @@ fn swap_len(k: &Lock, landing: Landing) -> f64 {
     }
 }
 
+/// The most a song is sped up or slowed down while it sings, percent: more is heard as the voice itself changing.
+const SUNG_STRETCH_PCT: f64 = 6.0;
+
+/// How far `p` moves a song off its own tempo while it sings, percent, when that is over [`SUNG_STRETCH_PCT`]: the
+/// incoming song through the mix and its ease back, the outgoing one through its glide to the meeting tempo or its
+/// bend to the incoming one.
+fn stretched_singing(p: &TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis) -> Option<f64> {
+    let pct = |speed: f64| (speed - 1.0).abs() * 100.0;
+    let out_from = |wall: i64| p.out_start_ms as f64 + p.out_song_ms(wall as f64);
+    let in_to = p.in_start_ms as f64 + p.in_song_ms(p.duration_ms as f64) + p.tempo_ramp_ms as f64;
+    let stretched = [
+        sings_before(b, in_to).then(|| pct(p.tempo_ratio)),
+        p.out_glide.filter(|g| sings_after(a, out_from(g.window.start_ms))).map(|g| pct(g.to)),
+        p.bend.filter(|bd| sings_after(a, out_from(bd.start_ms))).map(|_| pct(1.0 / p.tempo_ratio)),
+    ];
+    stretched.into_iter().flatten().filter(|x| *x > SUNG_STRETCH_PCT).reduce(f64::max)
+}
+
 fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings, k: &Lock, w: &Window, short_cause: &str, notes: &[&str]) -> Result<TransitionPlan, String> {
     let dur_ms = w.dur.round() as i64;
     let swap = (w.swap.round() as i64).clamp(0, dur_ms);
@@ -1426,6 +1453,9 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
         if p.bend.is_some() {
             warp::check(&p, a, b, w.swap)?;
         }
+    }
+    if let Some(pct) = stretched_singing(&p, a, b) {
+        return Err(format!("its singing would be stretched {pct:.1} %"));
     }
     let mut bits: Vec<String> = notes.iter().filter(|n| !n.is_empty()).map(|n| n.to_string()).collect();
     if apart {
@@ -2378,6 +2408,43 @@ mod tests {
         assert_ne!(p.kind, TransitionKind::FilterRide, "{}", p.reason);
     }
 
+    /// A song is not sped up or slowed down more than six percent while it sings: tempos 9 % apart beat-match into an
+    /// instrumental opening, not into one that sings at once.
+    #[test]
+    fn singing_is_not_stretched_far() {
+        let a = track(128.0);
+        let fast = |t: TrackAnalysis| TrackAnalysis { bpm: 140.0, intro_bpm: 140.0, ..t };
+        let plain = fast(track(140.0));
+        let sung = fast(TrackAnalysis { vocal_start_ms: 500, vocal_end_ms: 200_000, ..track(140.0) });
+        let p = plan(Some(&a), Some(&plain), 240_000, 240_000, &dj());
+        assert!(p.kind.beat_matched() && (p.tempo_ratio - 1.0).abs() > 0.06, "{}", p.reason);
+        let p = plan(Some(&a), Some(&sung), 240_000, 240_000, &dj());
+        assert!(!p.kind.beat_matched() && p.reason.contains("singing would be stretched"), "{}", p.reason);
+    }
+
+    /// A last line sung a bar or two into the closing breakdown is heard whole: the mix leaves after it, not at the
+    /// breakdown's start. A fade that runs to the song's own end holds the voice to its last word.
+    #[test]
+    fn the_last_line_is_heard() {
+        let bar: f64 = 4.0 * 60_000.0 / 128.0;
+        let end = 120.0 + bar * ((238_500.0 - 120.0) / bar).floor();
+        let exit = (end - 6.0 * bar) as i64;
+        let vocal_end = exit + (1.5 * bar) as i64;
+        let a = TrackAnalysis { exit_ms: exit, vocal_start_ms: 10_000, vocal_end_ms: vocal_end, ..track(128.0) };
+        let far = TrackAnalysis { bpm_confidence: 0.1, intro_bpm_confidence: 0.1, ..track(150.0) };
+        for s in [dj(), AutoMixSettings { max_transition_s: 40.0, ..Default::default() }] {
+            let p = plan(Some(&a), Some(&far), 240_000, 240_000, &s);
+            assert!(p.out_start_ms + p.duration_ms >= vocal_end, "{:?} ends before the last word: {}", s.style, p.reason);
+        }
+        // Sung to half a second before its end: a fade to its end falls only after the last word.
+        let to_end = TrackAnalysis { vocal_start_ms: 10_000, vocal_end_ms: 238_000, silence_end_ms: 238_500, mixramp_end_ms: 238_400, ..track(128.0) };
+        let off = AutoMixSettings { filter_effects: false, ..dj() };
+        let p = plan(Some(&to_end), Some(&far), 240_000, 240_000, &off);
+        assert_eq!(p.kind, TransitionKind::MixRampFade, "{}", p.reason);
+        // At most the shortest fall over its end, not a bar of it.
+        assert!(p.out_start_ms + p.out_fade_start_ms >= to_end.vocal_end_ms - MIN_FADE_MS, "falls over the last word: {p:?}");
+    }
+
     /// A low-pass closing no lower than this leaves the outgoing song's body in.
     const RIDE_GENTLE_HZ: f32 = 400.0;
 
@@ -2399,7 +2466,9 @@ mod tests {
         assert!(on_downbeat(&a, exit) && exit >= a.vocal_end_ms as f64 && p.in_delay_ms == 0, "{p:?}");
         let (lp, hp, swap) = (p.low_pass.expect("A darkens"), p.in_high_pass.expect("B opens"), p.bass_swap.expect("one kick at a time"));
         assert!(hp.from_hz >= 1_000.0 && hp.to_hz <= 25.0 && hp.end_ms as f64 == lead, "B open as A leaves: {p:?}");
-        assert!(lp.start_ms as f64 == lead && lp.to_hz <= 300.0 && (lead - p.out_fade_start_ms as f64 - bar).abs() <= 1.0, "A open until it leaves, falling from a bar before: {p:?}");
+        assert!(lp.start_ms as f64 == lead && lp.to_hz <= 1_000.0 && (lead - p.out_fade_start_ms as f64 - bar).abs() <= 1.0, "A open until it leaves, falling from a bar before: {p:?}");
+        // Thin and low through the first half: the high-pass opens over the second, the fader on a sine-squared curve.
+        assert!(p.fade_curve == FadeCurve::SineSquared && (hp.start_ms as f64 - 0.5 * lead).abs() <= bar && hp.start_ms as f64 >= 0.4 * lead, "{p:?}");
         assert!((swap.len_ms as f64 - bar).abs() <= 1.0 && ((swap.at_ms + swap.len_ms / 2) as f64 - lead).abs() <= 1.0, "over a bar, on the exit: {swap:?}");
         let smooth = plan(Some(&a), Some(&track(170.0)), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
         assert!(smooth.kind == TransitionKind::FilterRide && smooth.reason.contains("melt"), "{}", smooth.reason);

@@ -354,8 +354,8 @@ const FILTER_OUT_TO_HZ: f32 = 1_200.0;
 
 /// The filter ride (B6), or the bass hand-off where both songs carry a kick at the join (B7): a DJ's long blend for
 /// two songs that cannot be locked. Over up to [`RIDE_BARS`] of the outgoing song's last music, under its last lines
-/// too, the incoming one comes up thin through a high-pass that opens (its kick only at the end, so one kick plays at
-/// a time), done as the outgoing song leaves after its last line or off its last word; the lows change hands over a
+/// too, the incoming one comes up thin and low, its high-pass opening over the second half (its groove against the
+/// outgoing one only in the last bars, its kick only at the end, so one kick plays at a time), done as the outgoing song leaves after its last line or off its last word; the lows change hands over a
 /// bar there, the faders crossing from a bar before it so the two never sound louder than one, and the outgoing song
 /// plays out its outro, darkening through a low-pass. Two voices together for a bar at most; the longer the ride, the
 /// more it is worth.
@@ -392,8 +392,12 @@ pub(super) fn filter_ride(p: &Pair) -> Option<Move> {
     // Over the outgoing voice the incoming one stays thinner, longer.
     let over_voice = sings_after(a, start);
     let from = if kicks { HANDOFF_IN_HZ } else if over_voice { RIDE_IN_SUNG_HZ } else { RIDE_IN_HZ };
-    m.in_high_pass = Some(Sweep { start_ms: 0, end_ms: ms(lead), from_hz: from, to_hz: OPEN_HP_HZ });
+    // Thin and low through the first half, so its groove is heard against the outgoing one only in the last bars:
+    // the fader on a sine-squared curve, the high-pass opening over the second half.
+    let opens = (0.5 * lead / bar).floor() * bar;
+    m.in_high_pass = Some(Sweep { start_ms: ms(opens), end_ms: ms(lead), from_hz: from, to_hz: OPEN_HP_HZ });
     (m.in_fade_start_ms, m.in_fade_end_ms) = (0, ms(lead));
+    m.fade_curve = FadeCurve::SineSquared;
     let swap = (lead - 0.5 * bar).max(0.0);
     m.bass_swap = Some(BassSwap { at_ms: ms(swap), len_ms: ms(bar.min(dur - swap)), cut_hz: RIDE_SWAP_HZ });
     m.low_pass = Some(Sweep { start_ms: ms(lead), end_ms: ms(dur), from_hz: SWEEP_FROM_HZ, to_hz: RIDE_OUT_TO_HZ });
@@ -414,7 +418,9 @@ const RIDE_MIN_MS: f64 = 8_000.0;
 const RIDE_TAIL_BARS: f64 = 2.0;
 /// Per second of lead: the longer two songs ride together, the more it sounds like one set.
 const RIDE_LENGTH_WORTH: f64 = 0.05;
-const RIDE_OUT_TO_HZ: f32 = 300.0;
+/// Where the outgoing low-pass closes, two octaves over the swap's cut: lower, what is left between the two is a lone
+/// band, heard as a tone.
+const RIDE_OUT_TO_HZ: f32 = 800.0;
 const RIDE_IN_HZ: f32 = 1_200.0;
 /// The incoming high-pass under the outgoing voice: the incoming song kept thinner, longer.
 const RIDE_IN_SUNG_HZ: f32 = 2_400.0;
@@ -464,7 +470,7 @@ const MELT_MIN_MS: f64 = 5_000.0;
 /// The share of a melt the outgoing song may still sing over.
 const MELT_SUNG_SHARE: f64 = 0.3;
 const MELT_IN_HZ: f32 = 600.0;
-const MELT_OUT_HZ: f32 = 500.0;
+const MELT_OUT_HZ: f32 = 800.0;
 
 /// Where a Smooth handover's two-beat crossing starts: around a downbeat after the last line, or, where the singing
 /// runs to the song's stop or end, at its last word.
