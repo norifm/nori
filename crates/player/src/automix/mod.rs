@@ -42,8 +42,8 @@ use crate::types::{BarProfile, Beat, TrackAnalysis};
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 24: the singing starts and ends on its words, not bar lines.
-pub const ANALYSIS_VERSION: i32 = 24;
+/// Bump when stored rows should be measured again. 25: where the music stops cold.
+pub const ANALYSIS_VERSION: i32 = 25;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -437,6 +437,7 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
 
     // Where to leave: a closing breakdown, or the gap before a hidden track.
     let exit = if silent { None } else { structure::breakdown(&t, &db, f, music, song.1, grid_ok) }.or(leave.map(|(g0, _)| g0 as f64 / 1000.0));
+    let stop = if silent { None } else { loudness::cold_stop(&f.blocks_raw, (song.1 * 1000.0).round() as i64) };
     let vocal = if silent { None } else { vocal_span(f, if bar_s >= 1.0 { bar_s } else { 2.0 }, (music.0, song.1)) };
 
     // How far each end holds its level, in bars from the first bar line (two-second blocks without a grid).
@@ -532,6 +533,7 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         exit_ms: exit.map_or(0, |e| (e * 1000.0).round() as i64),
         gap_ms: gap.map_or(0, |g| g.0),
         gap_end_ms: gap.map_or(0, |g| g.1),
+        stop_ms: stop.unwrap_or(0),
         intro_beats_per_bar: 0,
         outro_beats_per_bar: 0,
         intro_grid_source: beats::GRID_CLASSICAL,
