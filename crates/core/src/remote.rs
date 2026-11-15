@@ -74,6 +74,12 @@ const RETRY_MAX_MS: u64 = 300_000;
 #[cfg(not(target_arch = "wasm32"))]
 const SENT_WAIT_MS: u64 = 3_000;
 
+/// How long a send waits for its answer.
+const SEND_TIMEOUT_MS: u32 = 15_000;
+/// How long a send to a nearby device's door waits: one on this network answers at once, and what it
+/// does not take goes through the relay next.
+const DOOR_TIMEOUT_MS: u32 = 3_000;
+
 /// A held poll's own timeout: the hold plus the way there and back.
 const POLL_TIMEOUT_MS: u32 = HOLD_MS + 15_000;
 
@@ -2718,24 +2724,38 @@ fn remote_url(client: &Client, endpoint: &str, params: &[(String, String)], meth
 
 /// Sends `o`; `who` is this device's [`Remote::who`].
 async fn deliver(client: &Client, who: &[(String, String)], o: Out) {
-    let (url, json) = match o {
-        Out::Get(url) => (url, None),
+    let relay = |json: &str| remote_url(client, "noriRemote.send", who, "POST", json.as_bytes());
+    let (url, json, timeout_ms, relayed) = match o {
+        Out::Get(url) => (url, None, SEND_TIMEOUT_MS, None),
         Out::Send(link, outgoing) => {
             let json = serde_json::to_string(&outgoing).unwrap_or_default();
-            let url = match link {
-                Link::Relay => remote_url(client, "noriRemote.send", who, "POST", json.as_bytes()),
+            match link {
+                Link::Relay => (relay(&json), Some(json), SEND_TIMEOUT_MS, None),
                 Link::Lan(base) => {
                     let Some(secret) = outgoing.to.as_deref().and_then(|to| pairing::lan_key(client, to)) else { return };
                     let dev = &who[0].1;
-                    format!("{base}{}", lan::signed(&secret, "POST", &format!("/rest/noriRemote.send?dev={dev}"), json.as_bytes(), db::now_ms()))
+                    let url = format!("{base}{}", lan::signed(&secret, "POST", &format!("/rest/noriRemote.send?dev={dev}"), json.as_bytes(), db::now_ms()));
+                    // A time exchange measures the door itself; anything else may go by the relay.
+                    let timing = matches!(&outgoing.body, Some(Body::Command { op, .. }) if matches!(**op, Op::Clock { .. })) || matches!(outgoing.body, Some(Body::Clock { .. }));
+                    let relayed = (!timing && !client.core.serverless()).then(|| relay(&json));
+                    (url, Some(json), DOOR_TIMEOUT_MS, relayed)
                 }
-            };
-            (url, Some(json))
+            }
         }
     };
-    let sent = client.transport.send(Exchange { url, json, timeout_ms: 15_000, ..Default::default() }).await;
-    if let Err(e) = sent {
-        crate::alog::info(&format!("remote: not sent: {e}"));
+    let sent = client.transport.send(Exchange { url, json: json.clone(), timeout_ms, ..Default::default() }).await;
+    let failed = match sent {
+        Ok(answer) if (200..300).contains(&answer.status) => return,
+        Ok(answer) => format!("HTTP {}", answer.status),
+        Err(e) => e.to_string(),
+    };
+    crate::alog::info(&format!("remote: not sent: {failed}"));
+    // A door seen on this network that does not take it (the device asleep, its address stale): the
+    // relay reaches the device where it polls there.
+    if let Some(url) = relayed {
+        if let Err(e) = client.transport.send(Exchange { url, json, timeout_ms: SEND_TIMEOUT_MS, ..Default::default() }).await {
+            crate::alog::info(&format!("remote: not sent through the relay either: {e}"));
+        }
     }
 }
 
@@ -4597,6 +4617,30 @@ mod tests {
         }
         remote.pull("youtube".into());
         assert_eq!(remote.inner.lock().refused.get("youtube").copied(), Some(Refusal::OtherSource), "nor are its songs taken here");
+    }
+
+    /// A command a nearby device's door does not take goes through the relay instead of being lost;
+    /// one the door takes goes once; a time exchange, which only measures the door, is not sent on.
+    #[test]
+    fn a_command_the_door_does_not_take_goes_through_the_relay() {
+        use crate::transport::FailureKind;
+        let (client, net) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        let who = vec![("dev".to_string(), "me".to_string())];
+        let command = |op: Op| Out::send(Link::Lan("http://phone.test".into()), Outgoing { to: Some("phone".into()), body: Some(Body::Command { id: 1, op: Box::new(op) }), ..Default::default() });
+        let transfer = || command(Op::Transfer { to: "me".into(), listen_handoff: true });
+        let sent = |net: &crate::client::tests::Fake| -> Vec<String> { net.sent.lock().drain(..).map(|e| e.url.split('?').next().unwrap_or_default().to_string()).collect() };
+
+        net.answers.lock().extend([Err(FailureKind::Connect), Ok((200, crate::client::tests::OK.as_bytes().to_vec()))]);
+        crate::transport::block_on(deliver(&client, &who, transfer()));
+        assert_eq!(sent(&net), ["http://phone.test/rest/noriRemote.send", "http://test/rest/noriRemote.send"]);
+
+        net.answers.lock().push_back(Ok((200, b"{}".to_vec())));
+        crate::transport::block_on(deliver(&client, &who, transfer()));
+        assert_eq!(sent(&net), ["http://phone.test/rest/noriRemote.send"]);
+
+        net.answers.lock().push_back(Err(FailureKind::Connect));
+        crate::transport::block_on(deliver(&client, &who, command(Op::Clock { t1: 1 })));
+        assert_eq!(sent(&net), ["http://phone.test/rest/noriRemote.send"]);
     }
 
     /// This device picked again while the queue it asked for is on its way keeps waiting for that
