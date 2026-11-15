@@ -217,11 +217,8 @@ val LocalPlayerMenu = staticCompositionLocalOf<(Song) -> Unit> { {} }
 /** Opens the devices sheet (RemoteScreens.DevicesHost): where the music plays. */
 val LocalDevices = staticCompositionLocalOf<() -> Unit> { {} }
 
-/** A song's seal tapped: the like flipped, or, signed out where an account would keep it, the sign-in offer. */
+/** A song's seal tapped: the favorite flipped, on the account or, where it can't keep one, on this phone. */
 val LocalSealTap = staticCompositionLocalOf<(dev.nori.music.ffi.model.Song, Boolean) -> Unit> { { _, _ -> } }
-
-/** Whether songs show a seal: a like, or one that asks to sign in (`ProfileRules`). */
-val dev.nori.music.ffi.library.ProfileRules.seals: Boolean get() = stars || starsAfterSignIn
 
 /** Says one line in the app's message pill at the top ([ActionsViewModel.tell]). */
 val LocalMessages = staticCompositionLocalOf<(String) -> Unit> { {} }
@@ -414,7 +411,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             LocalCardMenu provides { menuCard = it },
             LocalPlayerMenu provides { menuSong = it; menuFromPlayer = true },
             LocalDevices provides { devicesOpen = true },
-            LocalSealTap provides { s, on -> if (rules.stars) actions.star(s, on) else settings.offerSignIn() },
+            LocalSealTap provides { s, on -> actions.star(s, on) },
             LocalMessages provides actions::tell,
             LocalRules provides rules,
             LocalAsked provides asked,

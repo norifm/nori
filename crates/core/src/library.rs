@@ -17,12 +17,24 @@ impl Client {
         self.read_each(read, |p| shown.show(p)).await
     }
 
-    /// Stars or unstars: the mark is shown at once via `marked`, then the write is sent (queued offline).
-    /// A server refusal restores the previous mark and returns the error.
+    /// Stars or unstars: the mark is shown at once via `marked`, then the write is sent (queued offline),
+    /// or, where the account can't keep favorites, the item is kept on this device (favorites.rs). An
+    /// item kept here from before is unstarred here, and on the account only when it lists it. A refusal
+    /// restores the previous mark and returns the error.
     pub async fn star(&self, kind: Starrable, id: String, on: bool, marked: Arc<dyn StarsShown>) -> NetResult<()> {
         let m = self.core.stars.lock().mark(kind, id.clone(), on);
         marked.marks(m.marks);
-        let sent = self.write(Write::Star { kind, id: id.clone(), on }).await;
+        let sent = if self.core.rules().stars_here {
+            self.star_here(kind, &id, on).await
+        } else if !on && self.core.here.lock().has(kind, &id) {
+            let listed = self.core.listed.lock().has(kind, &id);
+            match self.star_here(kind, &id, false).await {
+                Ok(()) if listed => self.write(Write::Star { kind, id: id.clone(), on }).await,
+                done => done,
+            }
+        } else {
+            self.write(Write::Star { kind, id: id.clone(), on }).await
+        };
         if sent.is_err() {
             let restored = self.core.stars.lock().restore(kind, id.clone(), on, m.previous);
             marked.marks(restored);

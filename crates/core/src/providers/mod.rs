@@ -53,6 +53,11 @@ pub trait Provider: Send + Sync {
         false
     }
 
+    /// Whether favorites its account can't keep are kept on this device (`ProfileRules::stars_here`).
+    fn favorites_here(&self) -> bool {
+        false
+    }
+
     /// `read` asked of the source now; None when it has nothing for such a read (the empty page). How
     /// its answer is kept, how long it is fresh and what the session lays over it are the core's
     /// (cache_policy.rs).
@@ -712,7 +717,8 @@ impl Core {
                 provider
             }
         };
-        provider.configure(self, &profile)
+        provider.configure(self, &profile)?;
+        self.load_favorites_here()
     }
 
     /// What the profile plays from.

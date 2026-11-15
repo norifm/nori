@@ -384,9 +384,6 @@ class Nori private constructor(private val context: Context) {
      */
     suspend fun signInDue(added: dev.nori.music.ffi.AfterAdding?): dev.nori.music.ffi.SignInEvent? = withContext(Dispatchers.IO) { client.signInDue(added) }
 
-    /** Signing in offered when asked: the account's row, a seal tapped while signed out. */
-    suspend fun signInOffer(): dev.nori.music.ffi.SignInEvent = withContext(Dispatchers.IO) { accountClient.signInOffer() }
-
     suspend fun stopReminding() = withContext(Dispatchers.IO) { client.stopReminding() }
 
     // Last: the downloads thread opens the core, whose plugins may call back into any field above.

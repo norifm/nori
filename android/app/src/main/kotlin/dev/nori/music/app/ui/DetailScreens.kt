@@ -252,7 +252,7 @@ fun AlbumScreen(id: String, actions: ActionsViewModel, vm: AlbumViewModel = view
 /** An album's page: [detail] null while the songs are on the wire, [failed] when they did not come. */
 @Composable
 private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actions: ActionsViewModel, vm: AlbumViewModel) {
-    val account = LocalRules.current.account
+    val stars = LocalRules.current.stars
     val list = rememberSongListState(actions)
     val nav = LocalNav.current
     val arrival = rememberArrival(detail != null)
@@ -277,7 +277,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
         onShuffle = detail?.let { d -> { actions.shuffle(d.songs, from) } },
         queue = queue,
         actions = {
-            if (account) {
+            if (stars) {
                 val albumStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ALBUM, album.id, album.starred)
                 FavoriteButton(albumStarred) { actions.starAlbum(album.id, !albumStarred) }
             }
@@ -348,7 +348,7 @@ fun ArtistReleasesScreen(id: String, group: Int, vm: ArtistViewModel = viewModel
 /** An artist's page: [ui] null while the detail is on the wire, [failed] when it did not come. */
 @Composable
 private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: ActionsViewModel, vm: ArtistViewModel, leave: (String) -> Unit) {
-    val account = LocalRules.current.account
+    val stars = LocalRules.current.stars
     val list = rememberSongListState(actions)
     val nav = LocalNav.current
     val arrival = rememberArrival(ui != null)
@@ -376,7 +376,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
         // Only a queue this page's Play or Shuffle started (all the artist's songs), not any song by them.
         queue = rememberPageQueue(rememberOrigin(OriginKind.ARTIST, artist.id), ui?.detail?.queue),
         actions = {
-            if (account) {
+            if (stars) {
                 val artistStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ARTIST, artist.id, artist.starred)
                 FavoriteButton(artistStarred) { actions.starArtist(artist.id, !artistStarred) }
             }

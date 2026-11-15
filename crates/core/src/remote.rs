@@ -4141,10 +4141,10 @@ impl Remote {
             });
             (entries, current.map(|c| c as u32), p.rev(), p.len() as u32, p.lit(), p.repeat())
         });
-        // Hearts as this device shows them: pressed here or by another device since the song was read.
-        let stars = self.client.core.stars.lock();
+        // Hearts as this device shows them: pressed here or by another device since the song was read,
+        // listed by the source or kept here.
         for e in &mut entries {
-            e.starred = stars.starred(crate::client::Starrable::Song, &e.id, e.starred);
+            e.starred = self.client.core.starred(crate::client::Starrable::Song, &e.id, e.starred);
         }
         QueueRead { entries, index, rev, len, shuffle, repeat }
     }

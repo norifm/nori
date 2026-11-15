@@ -283,12 +283,14 @@ class PageController: TablePage {
         }
     }
 
-    /// After Play: the record's seal, or a mix's Save as playlist (the account's).
+    /// After Play: the record's seal where seals are kept, or a playlist's pin and a mix's Save as
+    /// playlist (the account's).
     private func ownGlyphs(_ head: [String: Any]) -> [UIView] {
         let kind = head["k"] as? String ?? ""
         let item = Item(head)
-        guard Core.shared.rules.account, !item.external else { return [] }
+        guard !item.external else { return [] }
         if kind == "album" || kind == "artist" {
+            guard Core.shared.rules.stars else { return [] }
             let on = Core.shared.isFavorite(item)
             let seal = GlyphButton(on ? Glyph.sealedPage : Glyph.sealPage, Say.favorite)
             seal.look = look
@@ -299,6 +301,7 @@ class PageController: TablePage {
             }
             return [seal]
         }
+        guard Core.shared.rules.account else { return [] }
         if kind == "playlist" {
             // Pinned on this iPod: the server cannot star a playlist.
             let id = item.id
@@ -683,7 +686,7 @@ class PageController: TablePage {
                 PageController.add(entries, to: sheet, from: self) { act in
                     item.id.withCString { nori_ios_collection_download_act(kind, $0, act) }
                 }
-                if kind != NORI_PAGE_PLAYLIST && !item.external && Core.shared.rules.account {
+                if kind != NORI_PAGE_PLAYLIST && !item.external && Core.shared.rules.stars {
                     let on = Core.shared.isFavorite(item)
                     sheet.add(on ? Say.removeFromFavorites : Say.addToFavorites, glyph: Glyph.draw(on ? Iconoir.seal : Iconoir.sealOutline, 20)) {
                         Core.shared.favorite(item, !on)

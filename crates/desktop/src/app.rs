@@ -1408,8 +1408,8 @@ impl App {
                 }
                 ui.set_volume(s.volume());
                 ui.set_downloads(s.rules().downloads);
-                // Albums and artists carry the account's seals, as on Android.
-                ui.set_page_can_star(s.rules().account && s.rules().stars);
+                // Albums and artists carry seals where songs do, as on Android.
+                ui.set_page_can_star(s.rules().stars);
                 ui.set_favorites_offered(s.rules().stars);
                 ui.set_library_tabs(library_tabs(&s.rules()));
                 self.session = Some(s);
@@ -1671,7 +1671,8 @@ impl App {
             _ => PageLayout::List,
         });
         ui.set_page_mix(matches!(ask, PageAsk::Mix(_)));
-        ui.set_page_pinnable(matches!(ask, PageAsk::Playlist(_)));
+        // A pin is kept here beside the account's playlists, as on Android.
+        ui.set_page_pinnable(matches!(ask, PageAsk::Playlist(_)) && self.account());
         ui.set_page_title("".into());
         ui.set_page_sub("".into());
         ui.set_page_sub_artist("".into());
@@ -2858,9 +2859,6 @@ impl App {
 
     /// Flips `s`'s heart, once: through the device playing while it has the song, else here.
     fn star(&mut self, s: &Song) {
-        if self.session.as_ref().is_some_and(|x| !x.rules().stars && x.rules().stars_after_sign_in) {
-            return self.ask_sign_in();
-        }
         let on = !self.starred(s);
         self.on_session(|x| x.star_song(s.id.clone(), on, self.there()));
         self.mark_playing();
@@ -2909,10 +2907,9 @@ impl App {
         self.session.as_ref().is_some_and(|s| s.rules().account)
     }
 
-    /// `s`'s heart as the lists show it; none where songs carry no hearts (`ProfileRules::stars`), or one
-    /// that asks to sign in.
+    /// `s`'s seal as the lists show it; none where songs carry no seals (`ProfileRules::stars`).
     fn heart(&self, s: &Song) -> Option<bool> {
-        self.session.as_ref().is_some_and(|x| x.rules().stars || x.rules().stars_after_sign_in).then(|| self.starred(s))
+        self.session.as_ref().is_some_and(|x| x.rules().stars).then(|| self.starred(s))
     }
 
     /// Joins the jam `link` invites to, as a guest profile of its own.
@@ -2978,7 +2975,7 @@ impl App {
         let offer = s.client.sign_in_due(None);
         let ui = self.ui();
         ui.set_downloads(rules.downloads);
-        ui.set_page_can_star(rules.account && rules.stars);
+        ui.set_page_can_star(rules.stars);
         ui.set_favorites_offered(rules.stars);
         ui.set_library_tabs(library_tabs(&rules));
         self.mirror();

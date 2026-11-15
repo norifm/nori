@@ -93,7 +93,7 @@ re-exports every domain crate by module name (`nori_core::playlist` is `nori_que
 | The one app database and its background writer | `nori-db` |
 | Records, `CoreError`, the log, numbers for display | `nori-model`: `model`, `alog`, `numbers`, `lines` |
 | Settings: one `StoredPrefs` field per setting, the model, the pages per client | `nori-settings`: `settings`, `settings_store`, `settings_model`, `settings_pages`, `credits` |
-| A backup of the settings, sound profiles and plugins, sealed with a password | `nori-backup` (`nori-core::backup`) |
+| A backup of the settings, sound profiles, favorites kept on this device and plugins, sealed with a password | `nori-backup` (`nori-core::backup`) |
 | Plugins: what repos offer, search, updates waiting, providers to offer on the first screen, a plugin's README and icon ([Plugins](plugins.md)) | `nori-plugins`: `offers_found`, `updates_waiting`, `provider_offers`, `offer_of`, `Plugins::offers_stand`, `Plugins::readme`, `Plugins::icon` |
 | Library, search, browse, mixes, smart playlists, history, favorites, M3U | `nori-library`: `library`, `search`, `browse`, `mixes`, `smart`, `history`, `stars`, `m3u` |
 | What each page shows, as data: discs, releases by kind, big buttons, row swipes, song menus, the car tree | `nori-library`: `pages`, `rows`, `menus`, `car` |
@@ -309,6 +309,8 @@ of this; Android's `PlaybackService` calls the same functions.
 - **A profile's mark**: `SavedServer::icon` (`settings::ProfileIcon`, the picker's order `profile_icons`): its
   letter (`profile_letter`, the default), its provider's mark, or one of Iconoir's faces.
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.
+  Seals show on songs, albums and artists wherever `ProfileRules::stars` says; where the account can't
+  keep them (`stars_here`) the core keeps them on this device, and the client draws and calls the same.
 - **Fetching ahead**: the engine fetches the next song as soon as it is next, a provider's too: it plays
   anyway, and the server takes a while to fetch one from its provider, too long for a mix into it.
   `Client::precache_targets` names the songs after it (the `songs_ahead_wifi` and `songs_ahead_mobile`

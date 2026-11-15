@@ -806,11 +806,12 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let seals = &*marks;
     let marks = Marks::of(marks, rules, devices);
     let Some(p) = pages.last_mut() else { return };
-    // star: None when the page cannot be starred.
+    // star: None when the page has no seal (an album's or artist's where seals are kept, a playlist's
+    // pin where the account's are).
     let (title, by, caption, star): (String, String, String, Option<bool>) = match p {
-        Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. } => (d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), Some(marks.stars.starred(Starrable::Album, &d.album.id, d.album.starred))),
-        Page::Artist { detail: Load::Ready(d), .. } => (d.artist.name.clone(), String::new(), crate::text::artist_caption(d), Some(marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
-        Page::Playlist { detail: Load::Ready(d), .. } => (d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), Some(prefs.pinned_playlists.contains(&d.playlist.id))),
+        Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. } => (d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), stars.then(|| marks.stars.starred(Starrable::Album, &d.album.id, d.album.starred))),
+        Page::Artist { detail: Load::Ready(d), .. } => (d.artist.name.clone(), String::new(), crate::text::artist_caption(d), stars.then(|| marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
+        Page::Playlist { detail: Load::Ready(d), .. } => (d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), account.then(|| prefs.pinned_playlists.contains(&d.playlist.id))),
         Page::Row { title, items, .. } => (title.clone(), String::new(), crate::text::count(items.len() as u64, "entry", "entries"), None),
         Page::Mix { detail: Load::Ready(m), .. } => (crate::text::mix_name(m.name).to_string(), String::new(), crate::text::songs_caption(m.songs.len() as u32, m.seconds), None),
         Page::Mix { detail: Load::Failed(e), .. } => return failed(f, area, t, e),
@@ -822,8 +823,8 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     if area.height < 5 {
         return;
     }
-    // The title, and the seal at its end where the account can star the page's.
-    let sealed = star.filter(|_| account && stars);
+    // The title, and the seal at its end.
+    let sealed = star;
     let seal_w = if sealed.is_some() { 3 } else { 0 };
     text(f, Rect { width: area.width.saturating_sub(seal_w), ..row_of(area, 0) }, &title, bold().fg(t.ink));
     if let Some(on) = sealed {

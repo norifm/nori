@@ -579,7 +579,9 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
 Its `rules` name the Library sections it fills, and each is a `read`: Albums `albums` (sort, count,
 offset), Artists `artists` (whole), Songs `songs` (count, offset, in its own order; fewer than asked ends
 the list), Playlists `playlists`, Favorites `starred` (its `found`'s songs, albums and artists). A read
-it has nothing for answers `none`, the empty page.
+it has nothing for answers `none`, the empty page. Where its rules say `stars` false (signed out, or no
+account), nori keeps the seals on this device, adds Favorites itself and never asks `starred`
+([Providers](providers.md)).
 
 An artist's page shelves its albums by `kind` (none: with the albums) and orders each shelf newest first
 by `released`, else by `year`, releases of the same day in the plugin's order (`release_groups`). A
@@ -637,7 +639,9 @@ platform grants (Android's Bluetooth permission) is asked again when a plugin ne
 
 The rest of a backup: every stored setting as the settings table keeps it (read back through `load`,
 so an older backup moves on as an older database does), the server profiles with their passwords among
-them, and the saved sound profiles. A restore keeps the profiles here beside the backup's (one with the
+them, the saved sound profiles, and every profile's favorites kept on this device (a provider's account
+couldn't keep them), restored beside those here under the profile each lands as (`same_profile`); a
+backup from before them restores without. A restore keeps the profiles here beside the backup's (one with the
 same id, or the same address and user, stays as it is here) and the profile in use stays in use. Not
 in a backup: each profile's library index, history, downloads and caches (the server has them, or
 they are fetched again), its smart playlists (a profile's library data, not settings), and `app_kv`

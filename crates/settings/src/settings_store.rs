@@ -426,8 +426,7 @@ impl Settings {
     /// it lacks, older forms moved on), the profiles here kept beside the backup's
     /// (`settings::servers_restored`). `server`: the profile in use changed.
     pub fn restore(&self, backed: &serde_json::Map<String, Value>) -> SettingChange {
-        let raw: HashMap<String, PrefValue> = backed.iter().filter_map(|(k, v)| Some((k.clone(), value_from(v.clone())?))).collect();
-        let restored = load(&raw);
+        let restored = backed_prefs(backed);
         let here = self.prefs(StoredPrefs::clone);
         let list = crate::settings::servers_restored(ServerList { servers: here.servers, active_server_id: here.active_server_id.clone() }, ServerList { servers: restored.servers.clone(), active_server_id: restored.active_server_id.clone() });
         let prefs = StoredPrefs { servers: list.servers, active_server_id: list.active_server_id, ..restored };
@@ -474,6 +473,12 @@ impl Settings {
             None => f(&StoredPrefs::default()),
         }
     }
+}
+
+/// The settings a backup keeps ([`Settings::backed_up`]), read as stored ones are.
+pub fn backed_prefs(backed: &serde_json::Map<String, Value>) -> StoredPrefs {
+    let raw: HashMap<String, PrefValue> = backed.iter().filter_map(|(k, v)| Some((k.clone(), value_from(v.clone())?))).collect();
+    load(&raw)
 }
 
 /// An equalizer screen tool (sliders are [`Settings::edit_band`] and [`Settings::edit_level`]).

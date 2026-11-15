@@ -54,6 +54,15 @@ A provider only fetches and sends. Everything else is the core's page store
   and is asked anew when stale. A page asked anew that has not changed is not shown again.
 - The session's favorites are laid over every page as it is read: items unmarked this session leave the
   favorites, items marked join them before the source lists them.
+- Favorites the account can't keep (a plugin's provider signed out, or one without an account) are kept
+  on this device (`ProfileRules::stars_here`, `Provider::favorites_here`; `crates/core/src/favorites.rs`):
+  `Client::star` keeps the item's record (title, artist, album, cover; enough to draw its row and open
+  it) in the profile's `favorites_here` table, never sending, queueing or streaming anything. The record is
+  the one this session showed (the queue, a download, a kept page), else the source's page of the item.
+  Seals then show on songs, albums and artists as an account's would, and the favorites list the
+  source's with those kept here after them, each item once. Signed in, seals go to the account; one kept
+  here from before is unsealed here, and on the account too when it lists it. They are not indexed or
+  synced, go with the profile when it is removed, and are in a backup.
 - A write makes the pages of its kind stale (`cache_policy::stale`). They still show, offline too, until
   the source answers anew.
 - Home stays as first shown for the whole session. A refresh merges the new feed into it, so nothing

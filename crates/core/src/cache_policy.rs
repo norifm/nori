@@ -279,7 +279,7 @@ pub(crate) struct Kept {
 }
 
 /// The songs, albums and artists `page` shows.
-fn records(page: &mut Page) -> (Vec<&mut Song>, Vec<&mut Album>, Vec<&mut Artist>) {
+pub(crate) fn records(page: &mut Page) -> (Vec<&mut Song>, Vec<&mut Album>, Vec<&mut Artist>) {
     let (mut songs, mut albums, mut artists): (Vec<&mut Song>, Vec<&mut Album>, Vec<&mut Artist>) = Default::default();
     match page {
         Page::Albums { v } => albums.extend(v),
@@ -363,8 +363,8 @@ impl Client {
     fn overlaid(&self, read: &Read, page: Page) -> Page {
         let mut page = match (read, page) {
             (_, Page::StarredPage { v }) => {
-                self.core.listed.lock().keep(&v);
-                Page::StarredPage { v: self.marked_favourites(v) }
+                *self.core.listed.lock() = crate::stars::Ids::of(&v);
+                Page::StarredPage { v: self.marked_favourites(self.core.with_favorites_here(v)) }
             }
             (Read::FavouriteAlbums { .. }, Page::Albums { v }) => Page::Albums { v: self.core.stars.lock().overlay_albums(v) },
             (_, page) => page,
@@ -400,6 +400,11 @@ impl Client {
         }
         songs.extend(starred.songs);
         Starred::new(starred.artists, starred.albums, songs)
+    }
+
+    /// The record of item `id` of `kind` that a page kept this session shows.
+    pub(crate) fn kept_record(&self, kind: Starrable, id: &str) -> Option<crate::favorites::Record> {
+        self.core.kept.lock().values_mut().find_map(|k| crate::favorites::Record::in_page(&mut k.page, kind, id))
     }
 
     /// `read`'s turn to ask the source, once no other read of its page is asking; None for a read never kept.

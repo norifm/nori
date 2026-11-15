@@ -2022,12 +2022,16 @@ pub fn servers_removed(list: ServerList, id: String) -> ServerList {
 /// are when the backup has one with the same id, or the same address and user. The profile in use
 /// stays in use; with none, the backup's is.
 pub fn servers_restored(here: ServerList, backed: ServerList) -> ServerList {
-    let same = |a: &SavedServer, b: &SavedServer| a.id == b.id || (a.kind == b.kind && a.url == b.url && a.user == b.user);
-    let in_use = backed.servers.iter().find(|s| s.id == backed.active_server_id).map(|b| here.servers.iter().find(|h| same(h, b)).unwrap_or(b).id.clone());
+    let in_use = backed.servers.iter().find(|s| s.id == backed.active_server_id).map(|b| here.servers.iter().find(|h| same_profile(h, b)).unwrap_or(b).id.clone());
     let active_server_id = if here.active_server_id.is_empty() { in_use.unwrap_or_default() } else { here.active_server_id };
-    let mut servers: Vec<SavedServer> = backed.servers.into_iter().filter(|b| !here.servers.iter().any(|h| same(h, b))).collect();
+    let mut servers: Vec<SavedServer> = backed.servers.into_iter().filter(|b| !here.servers.iter().any(|h| same_profile(h, b))).collect();
     servers.extend(here.servers);
     ServerList { servers, active_server_id }
+}
+
+/// Whether profiles `a` and `b` are one: the same id, or the same kind, address and user.
+pub fn same_profile(a: &SavedServer, b: &SavedServer) -> bool {
+    a.id == b.id || (a.kind == b.kind && a.url == b.url && a.user == b.user)
 }
 
 /// The server id rows in the app database are kept under: the active profile's, or "default".
