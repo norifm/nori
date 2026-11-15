@@ -28,10 +28,10 @@ fn a_session_the_plugin_takes_up_again_is_signed_in_here() {
     let client = Client::new(core, nori_http::Http::new(), Default::default());
     assert_eq!(client.account(), AccountState::Ended);
     assert_eq!(client.sign_in_due(None), Some(SignInEvent::Offer { ended: true }), "offered again at start");
-    assert!(!client.core().rules().stars);
+    assert!(client.core().rules().stars_here, "while it ended, seals are kept on this device");
 
     block_on(client.read_now(Read::ArtistIndex)).unwrap();
     assert_eq!(client.account(), AccountState::SignedIn, "asked anew once a read went through");
-    assert!(client.core().rules().stars, "its likes are offered again");
+    assert!(!client.core().rules().stars_here, "seals go to its likes again");
     assert_eq!(client.sign_in_due(None), Some(SignInEvent::Close), "the offer closes");
 }

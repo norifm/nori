@@ -945,16 +945,23 @@ fn seeking() {
     assert!(matches!(a.cmds.last(), Some(Cmd::Seek(_))), ". seeks over the cards too");
 }
 
-/// Signed out of a provider whose account would carry likes, the seal says where to sign in.
+/// Signed out of a provider, whose seals are kept on this device, an album page and its songs carry
+/// the seal, and pressing it seals the item.
 #[test]
-fn a_signed_out_like_says_where_to_sign_in() {
+fn a_signed_out_provider_seals_on_this_device() {
     let mut a = app();
-    a.rules = nori_core::browse::ProfileRules { account: false, stars: false, stars_after_sign_in: true, ..Default::default() };
-    a.go(View::Songs);
-    a.handle(Msg::Data(songs_req(), Ok(Data::Songs(vec![song("yt-1", "One", 200)], false))));
-    key(&mut a, KeyCode::Char('f'));
-    assert!(matches!(a.cmds.last(), Some(Cmd::OfferSignIn)));
-    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Star(..))));
+    a.rules = nori_core::browse::ProfileRules { account: false, stars: true, stars_here: true, ..Default::default() };
+    a.go(View::Albums);
+    a.open_album("yt-al".into());
+    let songs = vec![song("yt-1", "One", 200), Song { starred: true, ..song("yt-2", "Two", 200) }];
+    a.handle(Msg::Data(Req::Album("yt-al".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("yt-al", "Three"), songs, vec![]))))));
+    let s = draw(&mut a, 170, 40);
+    let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
+    assert!(s.contains("Three 好") && line("Two").contains('好') && !line("One").contains('好'), "{s}");
+    let star = hit_rect(&a, Hit::Button(crate::app::Button::Star));
+    click(&mut a, star.x + 1, star.y);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Album, "yt-al".into(), true)));
+    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::OfferSignIn)));
 }
 
 fn account(user: &str, ended: bool) -> Overlay {

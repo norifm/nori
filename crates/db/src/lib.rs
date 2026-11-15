@@ -4,6 +4,7 @@
 pub mod background;
 mod upgrade;
 pub mod items;
+pub mod favorites;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Weak};
@@ -65,9 +66,9 @@ CREATE TABLE IF NOT EXISTS profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, o
 ";
 
 /// Per-server tables, cleared when a profile is removed.
-const SERVER_TABLES: [&str; 14] = [
+const SERVER_TABLES: [&str; 15] = [
     "items", "cache", "kv", "pending", "downloads", "searches", "plays", "song_stats", "server_plays", "mix_excluded", "autofill_picks", "smart_playlists", "track_analysis",
-    "vocal_curve",
+    "vocal_curve", "favorites_here",
 ];
 
 /// Opens the database for `server`'s rows (in memory for an empty `path`).
@@ -91,6 +92,7 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
 
     c.execute_batch(items::DOWNLOADS)?;
     c.execute_batch(SCHEMA)?;
+    c.execute_batch(favorites::TABLE)?;
     add_pending_tries(&c)?;
     update_analysis_columns(&c)?;
     drop_old_lyrics(&c)?;
@@ -234,6 +236,8 @@ fn update_analysis_columns(c: &Connection) -> rusqlite::Result<()> {
 pub fn open_app(path: &str) -> rusqlite::Result<Connection> {
     let c = connect(path)?;
     c.execute_batch(APP_SCHEMA)?;
+    // A backup and a removed profile's rows reach it here.
+    c.execute_batch(favorites::TABLE)?;
     Ok(c)
 }
 
