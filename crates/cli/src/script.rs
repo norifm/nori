@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! nori-cli --script --url http://localhost:4533 --user admin --password admin --play "noise" --crossfade 6
-//! nori-cli --script ... --search "noise" --songs 2 --start 570 --crossfade 6 --mix-albums --wav out.wav
+//! nori-cli --script ... --search "noise" --songs 2 --start 570 --crossfade 6 --wav out.wav
 //! nori-cli --script --provider dev.example.music --play "daft punk" --songs 1 --wav out.wav
 //! nori-cli --script --provider dev.example.music --sign-in cookies.txt --home
 //! ```
@@ -51,8 +51,6 @@ struct Args {
     start_s: f64,
     crossfade: Option<i32>,
     automix: AutoMixMode,
-    /// Crossfade within an album played in order too (by default albums stay gapless).
-    mix_albums: bool,
     replay_gain: Option<GainMode>,
     /// Float output to the device or file.
     hi_res: bool,
@@ -69,7 +67,7 @@ struct Args {
 fn usage() -> ! {
     eprintln!(
         "usage: nori-cli --script --url URL --user USER --password PASSWORD [--search|--play QUERY] [--songs N] [--start SECONDS]\n\
-         \x20               [--crossfade SECONDS] [--automix smooth|dj] [--mix-albums] [--replay-gain off|track|album|auto] [--hi-res]\n\
+         \x20               [--crossfade SECONDS] [--automix smooth|dj] [--replay-gain off|track|album|auto] [--hi-res]\n\
          \x20               [--download] [--offline] [--mpris]\n\
          \x20               [--wav OUT.wav [--pace X]] [--device NAME] [--devices]\n\
          \x20      nori-cli --script --provider KIND [the same, without the server] [--sign-in FILE] [--home]\n\
@@ -104,7 +102,6 @@ fn args(argv: Vec<String>) -> (Args, Root) {
         start_s: 0.0,
         crossfade: None,
         automix: AutoMixMode::Off,
-        mix_albums: false,
         replay_gain: None,
         hi_res: false,
         download: false,
@@ -132,7 +129,6 @@ fn args(argv: Vec<String>) -> (Args, Root) {
             "--start" => a.start_s = v().parse().unwrap_or_else(|_| usage()),
             "--crossfade" => a.crossfade = Some(v().parse().unwrap_or_else(|_| usage())),
             "--automix" => a.automix = auto_mix_mode(&v()).unwrap_or_else(|| usage()),
-            "--mix-albums" => a.mix_albums = true,
             "--replay-gain" => a.replay_gain = Some(gain_mode(&v()).unwrap_or_else(|| usage())),
             "--hi-res" => a.hi_res = true,
             "--download" => a.download = true,
@@ -321,7 +317,6 @@ pub fn main(argv: Vec<String>) {
     let mut prefs = root.app.settings.open(&db).unwrap_or_else(|e| panic!("the settings: {e}"));
     prefs.crossfade_sec = a.crossfade.unwrap_or(prefs.crossfade_sec);
     prefs.auto_mix = a.automix;
-    prefs.crossfade_keep_albums = !a.mix_albums;
     prefs.replay_gain = a.replay_gain.unwrap_or(prefs.replay_gain);
     prefs.hi_res = a.hi_res;
     root.app.settings.put(prefs.clone());

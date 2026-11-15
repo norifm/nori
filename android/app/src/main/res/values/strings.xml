@@ -71,7 +71,6 @@
         <item quantity="other">%1$d are measured again when they next play.</item>
     </plurals>
     <string name="settings_measure_again">Measure again</string>
-    <string name="settings_keep_albums">Keep albums gapless</string>
     <string name="settings_skip_explicit">Skip explicit songs</string>
     <string name="settings_auto_fill">When the queue ends</string>
     <string name="settings_auto_fill_stop">Stop</string>
@@ -384,7 +383,6 @@
 
     <!-- What the search also finds a row by: the jargon someone might type, and the rows' own words. -->
     <string name="settings_hint_crossfade">One song fades into the next</string>
-    <string name="settings_hint_keep_albums">No mixing between songs of the same album</string>
     <string name="settings_hint_automix">Blends songs matching the beat: smooth, or DJ mixes with loops, tempo bends, risers and double drops</string>
     <string name="settings_hint_better_beats">A neural beat tracker for AutoMix, downloaded once (Beat This!)</string>
     <string name="settings_hint_measured">Tempo and beats, measured on this device</string>

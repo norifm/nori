@@ -867,7 +867,7 @@ mod tests {
         let (prefs, _) = open_old("old-changed", &stored_062(true));
         let kinds: Vec<_> = prefs.servers.iter().map(|s| (s.id.as_str(), s.kind.id())).collect();
         assert_eq!(kinds, vec![("a1", "fm.nori.youtube-music")], "its built-in YouTube Music profile the plugin's");
-        assert_eq!((prefs.active_server_id.as_str(), prefs.theme, prefs.cache_mb, prefs.crossfade_keep_albums), ("a1", ThemeMode::Midnight, 4096, false), "the rest as it was, pure black with dark becoming Midnight");
+        assert_eq!((prefs.active_server_id.as_str(), prefs.theme, prefs.cache_mb, prefs.auto_mix_better_beats), ("a1", ThemeMode::Midnight, 4096, true), "the rest as it was, pure black with dark becoming Midnight");
     }
 
     #[test]

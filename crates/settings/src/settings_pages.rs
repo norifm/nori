@@ -341,7 +341,6 @@ impl Page<'_> {
         }
         // AutoMix plans its own transitions, so the plain crossfade gives way to it.
         between.push(self.setting("crossfadeSec").enabled(live && !p.auto_mix.on()));
-        between.push(self.setting("crossfadeKeepAlbums").enabled(live && (p.auto_mix.on() || p.crossfade_sec > 0)));
         let mut queue = vec![
             self.setting("skipExplicit"),
             self.chips("autoFill"),
@@ -613,8 +612,6 @@ mod tests {
         let live = |p: &StoredPrefs, name: &str| live(SettingsClient::Phone, p, name);
         let d = StoredPrefs::default();
         assert!(live(&d, "crossfadeSec") && !live(&StoredPrefs { auto_mix: crate::settings::AutoMixMode::Smooth, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
-        let mixing = [StoredPrefs { auto_mix: crate::settings::AutoMixMode::Smooth, ..d.clone() }, StoredPrefs { crossfade_sec: 4, ..d.clone() }];
-        assert!(!live(&d, "crossfadeKeepAlbums") && mixing.iter().all(|p| live(p, "crossfadeKeepAlbums")), "only while songs mix");
         assert!(!live(&StoredPrefs { auto_fill: None, ..d.clone() }, "autoFillBasis") && live(&d, "autoFillBasis"));
         assert!(live(&d, "loudnessLevel") && !live(&StoredPrefs { replay_gain: GainMode::Off, ..d.clone() }, "loudnessLevel"));
         assert!(!live(&d, "dimLevel") && live(&StoredPrefs { burn_in_protection: true, dim_when_idle: crate::settings::DimIdle::Minute, ..d.clone() }, "dimLevel"));

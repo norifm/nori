@@ -72,7 +72,6 @@ fn sample() -> StoredPrefs {
         crossfade_sec: 6,
         auto_mix: AutoMixMode::Dj,
         auto_mix_better_beats: true,
-        crossfade_keep_albums: false,
         taste_model: false,
         third_party_lookups: false,
         update_check: false,

@@ -342,7 +342,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
             };
             return ("Better beat detection".into(), detail);
         }
-        "crossfadeKeepAlbums" => ("Keep albums gapless", ""),
         "skipExplicit" => ("Skip explicit songs", ""),
         "autoFill" => ("When the queue ends", ""),
         "autoFillBasis" => ("Chosen by", ""),

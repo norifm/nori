@@ -386,6 +386,8 @@ fn voice_features(voice: Vec<f32>, secs: f64) -> analysis::Features {
         duration_s: secs,
         voice,
         voice_loudness: Vec::new(),
+        head: None,
+        tail: None,
     }
 }
 
@@ -423,4 +425,27 @@ fn singing_spans_its_lines_over_a_loud_band() {
     let f = voice_features(voice, secs);
     let span = vocal_span(&f, 2.0, (0.0, secs));
     assert_eq!(span, Some((8.0, secs - 4.0)), "the first verse after four bars of intro, the closing lines two bars before the music ends");
+}
+
+/// A file's edges are its first and last 200 ms: a pad cut in two runs on across the cut, a drum hit on it
+/// included; followed by silence, or faded out, it does not.
+#[test]
+fn edges_say_where_files_run_on() {
+    let rate = 44_100usize;
+    let tau = std::f32::consts::TAU;
+    let pad = |i: usize| (i as f32 * 440.0 * tau / rate as f32).sin() * 0.1 + (i as f32 * 110.0 * tau / rate as f32).sin() * 0.05;
+    let n = rate * 12;
+    let first: Vec<f32> = (0..n).map(pad).collect();
+    let hit = |k: usize| if k < 2_000 { (1.0 - k as f32 / 2_000.0) * 0.6 * ((k * 7_919 % 97) as f32 / 97.0 - 0.5) } else { 0.0 };
+    let second: Vec<f32> = (n..2 * n).map(|i| pad(i) + hit(i - n)).collect();
+    let next = analyse("b", &second, rate as u32).track;
+    let runs_on = |x: &[f32]| {
+        let a = analyse("a", x, rate as u32).track;
+        plan::runs_on(Some(&a), Some(&next), a.duration_ms, next.duration_ms)
+    };
+    assert!(runs_on(&first), "cut in two, it runs on");
+    let silent: Vec<f32> = first.iter().copied().chain(std::iter::repeat_n(0.0, rate)).collect();
+    let fade = 4 * rate;
+    let faded: Vec<f32> = first.iter().enumerate().map(|(i, v)| v * ((n - i) as f32 / fade as f32).min(1.0)).collect();
+    assert!(!runs_on(&silent) && !runs_on(&faded), "a silent ending or a fade does not run on");
 }

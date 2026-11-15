@@ -69,7 +69,7 @@ fn albums_stay_gapless() {
     let b = track("b", &whole[cut..]).on_album("x", 2);
     let mut p = Player::with_prefs(vec![a, b], crossfade(6));
     play_all(&mut p, 90_000);
-    assert!(p.app.logged("planFor: gapless (same album in order"), "{:?}", p.app.log);
+    assert!(p.app.logged("planFor: gapless (one album running on"), "{:?}", p.app.log);
     assert!(p.sink.heard_samples() == whole, "the album plays straight on, sample for sample");
 
     // An album between songs of other albums: gapless inside, mixed at its ends.
@@ -107,7 +107,7 @@ fn shuffled_album_mixes() {
     p.play_from(first);
     assert!(p.run_to_end(90_000));
     assert_eq!(mixed(&p).len(), 1, "{:?}", p.app.log);
-    assert!(!p.app.logged("same album in order"), "{:?}", p.app.log);
+    assert!(!p.app.logged("one album running on"), "{:?}", p.app.log);
 }
 
 #[test]

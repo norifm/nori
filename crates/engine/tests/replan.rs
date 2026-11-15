@@ -117,32 +117,6 @@ impl Rig {
 }
 
 #[test]
-fn keep_albums_off() {
-    let rig = Rig::new("replan-keep", &["a1", "a2", "a3"], true);
-    rig.engine.play_at(0, 0);
-    assert!(!rig.mixes_into(1), "kept gapless while the setting says so");
-    // Early in the second song, before its ending is made.
-    rig.set("crossfadeKeepAlbums", "false");
-    assert!(rig.mixes_into(2), "mixed into the third song once the album is no longer kept gapless");
-    let note = rig.core.session.planner.transition_note("a2").expect("a2's ending was planned");
-    assert_ne!(note.kind, nori_player::types::TransitionKind::Gapless, "{note:?}");
-
-    // Keep albums off remakes gapless ending.
-    let rig = Rig::new("replan-late", &["d1", "d2"], true);
-    rig.engine.play_at(0, 0);
-    assert!(rig.until(20, |r| r.engine.status().index == Some(0) && r.engine.status().position_ms > 1_000));
-    rig.engine.seek(SECS as i64 * 1000 - 15_000);
-    // The ending is already made gapless.
-    // Looked at: the status is otherwise as old as the last burst.
-    assert!(rig.until(20, |r| {
-        r.engine.look();
-        r.engine.status().position_ms > SECS as i64 * 1000 - 13_000
-    }), "{:?}", rig.engine.status());
-    rig.set("crossfadeKeepAlbums", "false");
-    assert!(rig.mixes_into(1), "the ending is made again as a mix");
-}
-
-#[test]
 fn each_setting_change_is_planned_with() {
     let rig = Rig::new("replan-each", &["b1", "b2", "b3", "b4", "b5"], false);
     rig.set("autoMix", "OFF");

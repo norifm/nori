@@ -15,7 +15,7 @@ use crate::pcm::{Encoding, Format};
 use crate::pipeline::{self, Reading as _, Remake, Sink, Songs};
 use crate::playlist::Playlist;
 use crate::transitions::{engine_plan, pick, whole_song, Skip, TransitionPrefs, WindowSong};
-use crate::types::{TrackAnalysis, TransitionKind};
+use crate::types::{AutoMixSettings, TrackAnalysis, TransitionKind};
 
 pub use crate::pipeline::Sound;
 
@@ -711,7 +711,6 @@ pub fn prefs_off() -> TransitionPrefs {
         bass_swap: true,
         filter_effects: true,
         keep_pitch: true,
-        keep_albums: true,
         replay_gain: false,
         style: crate::types::MixStyle::Smooth,
     }
@@ -778,8 +777,11 @@ impl Host for App {
             Ok(p) => p,
         };
         let (o, n) = (&self.window[chosen.out], &self.window[chosen.next]);
-        let (a, b) = if self.prefs.auto_mix { (self.analyses.get(&o.id), self.analyses.get(&n.id)) } else { (None, None) };
-        let t = plan::plan(a, b, o.duration_ms, n.duration_ms, &chosen.settings);
+        let (a, b) = (self.analyses.get(&o.id), self.analyses.get(&n.id));
+        let gapless = chosen.gapless(a, b, o.duration_ms, n.duration_ms);
+        let settings = AutoMixSettings { gapless, ..chosen.settings };
+        let (a, b) = if self.prefs.auto_mix { (a, b) } else { (None, None) };
+        let t = plan::plan(a, b, o.duration_ms, n.duration_ms, &settings);
         self.kinds_into.insert(n.id.clone(), t.kind);
         let p = engine_plan(&t, &n.id);
         let line = match &p {

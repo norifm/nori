@@ -42,8 +42,8 @@ use crate::types::{BarProfile, Beat, TrackAnalysis};
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 25: where the music stops cold.
-pub const ANALYSIS_VERSION: i32 = 25;
+/// Bump when stored rows should be measured again. 26: the file's first and last 200 ms, for album seams.
+pub const ANALYSIS_VERSION: i32 = 26;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -542,6 +542,8 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         vocal_start_ms: vocal.map_or(0, |v| (v.0 * 1000.0).round() as i64),
         vocal_end_ms: vocal.map_or(0, |v| (v.1 * 1000.0).round() as i64),
         steady_intro_ms: steady_intro,
+        head: f.head.clone(),
+        tail: f.tail.clone(),
         intro_grid_from_ms: intro_grid.span_ms.map_or(0, |s| s.0),
         intro_grid_to_ms: intro_grid.span_ms.map_or(0, |s| s.1),
         outro_grid_from_ms: outro_grid.span_ms.map_or(0, |s| s.0),

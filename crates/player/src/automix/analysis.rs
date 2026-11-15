@@ -12,6 +12,7 @@ use rustfft::{Fft, FftPlanner};
 
 use super::loudness::Meter;
 use super::vocal;
+use crate::types::Edge;
 
 pub(crate) const TARGET_RATE: f64 = 22050.0;
 /// What an analysis of a song of unknown length is sized for.
@@ -75,6 +76,29 @@ pub struct Features {
     pub voice: Vec<f32>,
     /// The voice band's loudness, dBFS, at the same frames.
     pub voice_loudness: Vec<f32>,
+    /// The file's first and last [`EDGE_FRAMES`] whole frames (about 200 ms); None for a shorter file.
+    pub head: Option<Edge>,
+    pub tail: Option<Edge>,
+}
+
+/// Frames a file's edge is measured over: 200 ms of hops.
+pub(crate) const EDGE_FRAMES: usize = 17;
+/// The edge's bands, Hz: from 30 to each of these.
+const EDGE_HZ: [f64; EDGE_BANDS + 1] = [30.0, 60.0, 150.0, 300.0, 600.0, 1_200.0, 2_400.0, 4_800.0, 9_600.0];
+const EDGE_BANDS: usize = 8;
+
+/// A frame's power and its power in each of [`EDGE_HZ`]'s bands.
+type EdgeFrame = (f32, [f32; EDGE_BANDS]);
+
+/// A file's edge from its frames: the median of each power, so a single hit at the seam (a drum on its first beat)
+/// does not stand for it.
+fn edge_of(frames: &[EdgeFrame]) -> Edge {
+    let median = |f: &dyn Fn(&EdgeFrame) -> f32| {
+        let mut v: Vec<f32> = frames.iter().map(f).collect();
+        v.sort_by(f32::total_cmp);
+        10.0 * (v[v.len() / 2] + 1e-12).log10()
+    };
+    Edge { db: median(&|x| x.0), bands: (0..EDGE_BANDS).map(|i| median(&|x| x.1[i])).collect() }
 }
 
 impl Features {
@@ -135,6 +159,13 @@ pub struct Analyzer {
     meter: Meter,
     samples: u64,
     voice: vocal::Tracker,
+    /// Bin range per edge band.
+    edge_bins: [(usize, usize); EDGE_BANDS],
+    /// The first [`EDGE_FRAMES`] whole frames, and the last (`tail_at` the next written), of `whole_frames`.
+    head: [EdgeFrame; EDGE_FRAMES],
+    tail: [EdgeFrame; EDGE_FRAMES],
+    tail_at: usize,
+    whole_frames: usize,
     f: Features,
 }
 
@@ -176,6 +207,8 @@ impl Analyzer {
             bands[b].1 = i + 1;
         }
         let low_bins = ((LOW_HZ / bin_hz) as usize + 1).min(8);
+        let bin_of = |hz: f64| ((hz / bin_hz).round() as usize).clamp(1, n / 2);
+        let edge_bins = core::array::from_fn(|i| (bin_of(EDGE_HZ[i]), bin_of(EDGE_HZ[i + 1]).max(bin_of(EDGE_HZ[i]) + 1)));
         let in_voice = |i: &usize| (VOCAL_LO_HZ..=VOCAL_HI_HZ).contains(&(*i as f64 * bin_hz));
         let vocal_bins = (1..n / 2).find(in_voice).map_or(0..0, |lo| lo..(lo..n / 2).take_while(in_voice).last().map_or(lo, |hi| hi + 1));
 
@@ -242,6 +275,11 @@ impl Analyzer {
             meter: Meter::new(rate, blocks),
             samples: 0,
             voice: vocal::Tracker::new(n, hop, sr, 2.0 / wsum, frames),
+            edge_bins,
+            head: [(0.0, [0.0; EDGE_BANDS]); EDGE_FRAMES],
+            tail: [(0.0, [0.0; EDGE_BANDS]); EDGE_FRAMES],
+            tail_at: 0,
+            whole_frames: 0,
             f: Features {
                 fps: sr / hop as f64,
                 // Frame k is computed once (k + 1) hops have arrived.
@@ -262,6 +300,8 @@ impl Analyzer {
                 duration_s: 0.0,
                 voice: Vec::new(),
                 voice_loudness: Vec::new(),
+                head: None,
+                tail: None,
             },
         }
     }
@@ -424,6 +464,19 @@ impl Analyzer {
             self.level[b] = l;
         }
         self.prev = self.level;
+        // A whole frame (its window all inside the file) counts towards its edges.
+        if self.written >= self.n {
+            let edge: [f32; EDGE_BANDS] = core::array::from_fn(|i| {
+                let (lo, hi) = self.edge_bins[i];
+                self.buf[lo..hi].iter().map(|c| c.norm_sqr()).sum::<f32>() / (hi - lo) as f32 * self.pow_norm
+            });
+            if self.whole_frames < EDGE_FRAMES {
+                self.head[self.whole_frames] = (total * self.pow_norm, edge);
+            }
+            self.tail[self.tail_at] = (total * self.pow_norm, edge);
+            self.tail_at = (self.tail_at + 1) % EDGE_FRAMES;
+            self.whole_frames += 1;
+        }
         self.f.onset.push(flux);
         self.f.low_onset.push(flux_low);
         self.f.power.push(total * self.pow_norm);
@@ -505,9 +558,14 @@ impl Analyzer {
                 duration_s: 0.0,
                 voice: Vec::new(),
                 voice_loudness: Vec::new(),
+                head: None,
+                tail: None,
             },
         );
         (f.voice, f.voice_loudness) = self.voice.take();
+        if self.whole_frames >= EDGE_FRAMES {
+            (f.head, f.tail) = (Some(edge_of(&self.head)), Some(edge_of(&self.tail)));
+        }
         f.blocks_k = std::mem::take(&mut self.meter.blocks_k);
         f.blocks_raw = std::mem::take(&mut self.meter.blocks_raw);
         f.duration_s = self.samples as f64 / self.rate;
@@ -521,6 +579,7 @@ impl Analyzer {
         (self.side_acc, self.side_until) = (0.0, 0);
         (self.written, self.since_hop, self.hops, self.samples, self.acc, self.acc_n) = (0, 0, 0, 0, 0.0, 0);
         (self.prev, self.prev_low) = ([0.0; BANDS], [0.0; 8]);
+        (self.tail_at, self.whole_frames) = (0, 0);
         self.meter.reset();
         self.voice.reset();
         for v in [&mut self.f.onset, &mut self.f.low_onset, &mut self.f.power, &mut self.f.low_power, &mut self.f.vocal, &mut self.f.centroid] {
