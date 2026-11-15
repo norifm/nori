@@ -265,6 +265,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(album.coverArt, CoverSize.CARD), vm.cover(album.coverArt, CoverSize.ROW)),
+        item = album.id,
         title = album.name,
         subtitle = album.artist,
         onSubtitle = album.artistId?.let { a ->
@@ -368,6 +369,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
     HeroPage(
         coverUrl = vm.cover(artist.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(artist.coverArt, CoverSize.CARD), vm.cover(artist.coverArt, CoverSize.ROW)),
+        item = artist.id,
         title = artist.name,
         titleSize = 32.sp,
         onPlay = ui?.let { ready -> { actions.playArtist(ready.detail.artist.id) } },
@@ -484,6 +486,7 @@ private fun PlaylistPage(
     HeroPage(
         coverUrl = vm.cover(playlist.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(playlist.coverArt, CoverSize.CARD), vm.cover(playlist.coverArt, CoverSize.ROW)),
+        item = playlist.id,
         title = playlist.name,
         subtitle = remember(playlist.comment, prefs.playlistNotes) { dev.nori.music.ffi.library.playlistDescription(playlist.comment, prefs.playlistNotes) },
         onPlay = detail?.let { d -> { actions.play(d.songs, from = from) } },

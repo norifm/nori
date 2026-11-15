@@ -73,6 +73,12 @@ fun HeroPage(
     title: String,
     /** The same cover at the sizes lists ask for: drawn at once while [coverUrl] loads. */
     coverStandIns: List<String?> = emptyList(),
+    /**
+     * The record the page is of (its id), for a page that opens on what a row knew and is then answered:
+     * its colors are measured once from the first cover it has. The answer may name that cover by
+     * another address (a larger rendition), and measured again the page would change color while read.
+     */
+    item: String? = null,
     /** The artist line under the title, in ink; tapping it opens [onSubtitle]. */
     subtitle: String? = null,
     /** The title's size: Literata 27 for a record, larger for an artist. */
@@ -127,9 +133,8 @@ fun HeroPage(
     // provider's too, whose file the core keeps in memory): the full one is a download away, and the
     // page wore the theme's colours until it came.
     val context = androidx.compose.ui.platform.LocalContext.current
-    val measured = remember(lead, coverStandIns) {
-        coverStandIns.firstOrNull { it != null && dev.nori.music.data.CoverLoader.get(context).kept(it) != null } ?: lead
-    }
+    val pick = { coverStandIns.firstOrNull { it != null && dev.nori.music.data.CoverLoader.get(context).kept(it) != null } ?: lead }
+    val measured = if (item != null) remember(item, lead != null, pick) else remember(lead, coverStandIns, pick)
     val palette = if (tinted) rememberCoverPalette(measured) else null
     // Shuffle stays labelled Shuffle (never Pause); it lights while this page's queue is shuffling.
     val player: PlayerViewModel = viewModel()
