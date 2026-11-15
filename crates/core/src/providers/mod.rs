@@ -595,15 +595,16 @@ impl Kinds {
 /// The profile a login saves. A new profile for one already saved takes over that profile's id (and its
 /// library and downloads), music folder, bitrate cap, icon and, if the form's is empty, name; what the form
 /// does not ask (a signed-in account's name) stays the saved one's. A profile is the saved one of its
-/// kind with the same address and user; without an address in the form, the kind's saved one. A
-/// profile already saved is returned as it is.
+/// kind with the same address and user; a kind whose form asks no address has nothing to tell its
+/// profiles apart by, so each login adds one (an account each). A profile already saved is returned as
+/// it is.
 fn server_for_login(info: &ProviderInfo, list: ServerList, profile: SavedServer) -> SavedServer {
     if list.servers.iter().any(|s| s.id == profile.id) {
         return profile;
     }
     let address = |url: &str| url.trim().trim_end_matches('/').to_ascii_lowercase();
     let same = |s: &&SavedServer| {
-        s.kind == profile.kind && (!info.asks(FormField::Address) || (address(&s.url) == address(&profile.url) && s.user.trim().eq_ignore_ascii_case(profile.user.trim())))
+        s.kind == profile.kind && info.asks(FormField::Address) && address(&s.url) == address(&profile.url) && s.user.trim().eq_ignore_ascii_case(profile.user.trim())
     };
     match list.servers.iter().find(same) {
         Some(saved) => SavedServer {
@@ -904,6 +905,17 @@ mod tests {
         assert_eq!(k.login_profile(list.clone(), elsewhere.clone()), elsewhere);
         let edited = SavedServer { url: "https://moved.example.com".into(), ..kept };
         assert_eq!(k.login_profile(list, edited.clone()), edited);
+    }
+
+    /// A kind that asks no address (a service's account) takes a profile per login.
+    #[test]
+    fn a_login_without_an_address_adds_a_profile() {
+        let info = ProviderInfo { kind: ServerKind::Plugin { id: "x".into() }, fields: vec![FieldSpec { what: FormField::Name, advanced: false }], sign_in: Vec::new(), identities: None };
+        let first = saved("a1", info.kind.clone(), "", "");
+        let list = ServerList { servers: vec![first.clone()], active_server_id: "a1".into() };
+        let second = saved("a2", info.kind.clone(), "", "");
+        assert_eq!(server_for_login(&info, list.clone(), second.clone()), second);
+        assert_eq!(server_for_login(&info, list, first.clone()), first);
     }
 
     /// A login to a saved server keeps that profile's library, music folder, bitrate cap and place in the
