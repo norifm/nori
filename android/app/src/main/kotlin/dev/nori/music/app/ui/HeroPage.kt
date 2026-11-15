@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
@@ -256,7 +257,8 @@ fun HeroPage(
                     { press(buttons.playPress, onPlay) }, Modifier.weight(1f),
                     prominent = true, enabled = buttons.playEnabled,
                 )
-                actions()
+                // The seal's place is kept on a page without one, so the pill stays in the middle.
+                Row(Modifier.widthIn(min = GLYPH_TARGET), Arrangement.spacedBy(4.dp), Alignment.CenterVertically) { actions() }
             } else Row(
                 Modifier.fillMaxWidth().padding(start = Space.tight, end = Space.tight, top = 2.dp),
                 Arrangement.Center, Alignment.CenterVertically,
