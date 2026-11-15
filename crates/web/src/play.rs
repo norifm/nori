@@ -886,8 +886,8 @@ fn told(s: &Said) -> Option<Value> {
         Said::Volume(v) => json!({ "kind": "volume", "volume": v }),
         Said::Curve(_) => return None,
         Said::Starred(_) => json!({ "kind": "starred" }),
-        // The page keeps no downloads and no account pictures.
-        Said::Working | Said::Pictured => return None,
+        // The page keeps no downloads and no account pictures, and the server it comes from updates it.
+        Said::Working | Said::Pictured | Said::Update(_) | Said::AnalysisOffer(_) => return None,
     })
 }
 
