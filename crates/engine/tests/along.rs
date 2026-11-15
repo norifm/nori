@@ -18,6 +18,7 @@ use common::{Stepper, Virtual};
 use nori_engine::{AudioOutput, Body, ByteSource, Config, Engine, Event, Feed, Followed, Lead, Library, Located, OpenError, OutputFormat, Settings, SharedQueue, Source};
 use nori_player::automix::analysis::Analyzer;
 use nori_player::automix::plan;
+use nori_player::types::OutLoop;
 use nori_player::automix::eval::Rng;
 use nori_player::engine::{Host, Plan};
 use nori_player::pipeline::App;
@@ -986,37 +987,24 @@ fn a_guest_joins_mid_mix() {
 
 }
 
+/// A guest joins a looped mix (the loop from its start, or after a second of the song's own time): it renders the
+/// same audio as the host.
 #[test]
 fn a_guest_rejoins_an_outro_loop() {
-    let (a, b) = (song(6.0, 1, None), song(30.0, 2, None));
-    let mut plan = mix(4_000, 4.0, 1.0, 0.0);
-    plan.mixer.out_loop_ms = Some(2_000);
-    let mut jam = Jam::new(
-        &[("a", &a), ("b", &b)],
-        Some(plan),
-        Settings::default(),
-        &two_ways()[..1],
-    );
-    jam.host.engine.play_at(0, 4_000);
-    jam.run(2_500);
-    assert!(
-        jam.host.engine.status().mixing,
-        "{:?}",
-        jam.host.logs.lock()
-    );
-    jam.join(0);
-    jam.run(800);
-    assert!(
-        jam.guests[0].rig.engine.status().mixing,
-        "joining the loop keeps both songs audible"
-    );
-    let (_, error) = matching_audio(&jam.host.card, &jam.guests[0].rig.card, jam.now_ns())
-        .expect("the guest renders the same loop");
-    assert!(
-        error < 0.02,
-        "the loop differs: {error}; {:?}",
-        jam.guests[0].rig.logs.lock()
-    );
+    for at_ms in [0, 1_000] {
+        let (a, b) = (song(6.0, 1, None), song(30.0, 2, None));
+        let mut plan = mix(4_000, 4.0, 1.0, 0.0);
+        plan.mixer.out_loop = Some(OutLoop { at_ms, ms: 2_000 - at_ms, rounds: None });
+        let mut jam = Jam::new(&[("a", &a), ("b", &b)], Some(plan), Settings::default(), &two_ways()[..1]);
+        jam.host.engine.play_at(0, 4_000);
+        jam.run(2_500);
+        assert!(jam.host.engine.status().mixing, "{:?}", jam.host.logs.lock());
+        jam.join(0);
+        jam.run(800);
+        assert!(jam.guests[0].rig.engine.status().mixing, "loop at {at_ms}: joining the loop keeps both songs audible: {:?}", jam.guests[0].rig.logs.lock());
+        let (_, error) = matching_audio(&jam.host.card, &jam.guests[0].rig.card, jam.now_ns()).expect("the guest renders the same loop");
+        assert!(error < 0.02, "loop at {at_ms}: the loop differs: {error}; {:?}", jam.guests[0].rig.logs.lock());
+    }
 }
 
 #[test]

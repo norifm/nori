@@ -474,6 +474,49 @@ pub struct InLoop {
     pub repeats: i32,
 }
 
+/// The outgoing song's loop, in its own song time past the transition's start: it plays on to `at_ms`, then the `ms`
+/// from there round, `rounds` more times before it goes on from the slice's end (None: round until the mix ends).
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct OutLoop {
+    pub at_ms: i64,
+    pub ms: i64,
+    pub rounds: Option<i32>,
+}
+
+impl OutLoop {
+    /// The song time heard once `read` ms of it have been read through the loop.
+    pub fn heard(&self, read: f64) -> f64 {
+        let (at, ms) = (self.at_ms as f64, self.ms.max(1) as f64);
+        let looped = self.rounds.map_or(f64::INFINITY, |n| (n.max(0) as f64 + 1.0) * ms);
+        if read < at {
+            read
+        } else if read - at < looped {
+            at + (read - at) % ms
+        } else {
+            read - looped + ms
+        }
+    }
+
+    /// Where song time `heard` is read: before the slice and in it, the first time; after it, once the rounds are
+    /// read (never without an end to them).
+    pub fn read_of(&self, heard: f64) -> f64 {
+        let end = (self.at_ms + self.ms) as f64;
+        match self.rounds {
+            _ if heard < end => heard,
+            Some(n) => heard + n.max(0) as f64 * self.ms as f64,
+            None => f64::INFINITY,
+        }
+    }
+
+    /// The song time the engine holds for `read` ms read through it: up to the slice's end, and past it what plays
+    /// after the rounds.
+    pub fn held(&self, read: f64) -> f64 {
+        let end = (self.at_ms + self.ms) as f64;
+        self.rounds.map_or(end, |_| self.heard(read).max(end))
+    }
+}
+
 /// Relative. The tempo both decks play at glides from the outgoing song's to the incoming one's between
 /// `start_ms` and `end_ms`, linearly in time: the incoming track's speed from `tempo_ratio` to 1, the
 /// outgoing one's from 1 to `1 / tempo_ratio`, so their beats stay together.
@@ -527,8 +570,9 @@ pub struct TransitionPlan {
     /// Relative. High-pass sweep on the outgoing track (DJ "filter open").
     pub high_pass: Option<Sweep>,
     pub echo: Option<Echo>,
-    /// Outro loop: the engine holds this many ms of the outgoing track and reads it round for `duration_ms`.
-    pub out_loop_ms: Option<i64>,
+    /// Outro loop: the engine holds the outgoing track to the end of its slice and reads the slice round.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub out_loop: Option<OutLoop>,
     /// Relative.
     pub vocal_duck: Option<VocalDuck>,
     #[cfg_attr(feature = "serde", serde(default))]
@@ -561,7 +605,7 @@ pub struct TransitionPlan {
     #[cfg_attr(feature = "serde", serde(default))]
     pub in_rates: Vec<Rate>,
     /// When present, the outgoing tempo over the transition, from 1: both songs then follow one beat clock. Never with
-    /// a `bend`, `out_glide` or `out_loop_ms`.
+    /// a `bend`, `out_glide` or `out_loop`.
     #[cfg_attr(feature = "serde", serde(default))]
     pub out_rates: Vec<Rate>,
     /// Why this plan, for logs.
@@ -666,7 +710,7 @@ impl TransitionPlan {
             low_pass,
             high_pass,
             echo,
-            out_loop_ms,
+            out_loop,
             vocal_duck,
             in_loop,
             bend,
@@ -681,8 +725,8 @@ impl TransitionPlan {
             in_rates,
             out_rates,
         } = self;
-        (*out_start_ms, *in_start_ms, *duration_ms, *tempo_ramp_ms, *out_fade_start_ms, *out_fade_end_ms, *in_fade_start_ms, *in_fade_end_ms, *out_loop_ms)
-            == (o.out_start_ms, o.in_start_ms, o.duration_ms, o.tempo_ramp_ms, o.out_fade_start_ms, o.out_fade_end_ms, o.in_fade_start_ms, o.in_fade_end_ms, o.out_loop_ms)
+        (*out_start_ms, *in_start_ms, *duration_ms, *tempo_ramp_ms, *out_fade_start_ms, *out_fade_end_ms, *in_fade_start_ms, *in_fade_end_ms, *out_loop)
+            == (o.out_start_ms, o.in_start_ms, o.duration_ms, o.tempo_ramp_ms, o.out_fade_start_ms, o.out_fade_end_ms, o.in_fade_start_ms, o.in_fade_end_ms, o.out_loop)
             && (*tempo_ratio, *keep_pitch, *fade_curve, *out_gain_db, *in_gain_db) == (o.tempo_ratio, o.keep_pitch, o.fade_curve, o.out_gain_db, o.in_gain_db)
             && (*bass_swap, *low_pass, *high_pass, *echo, *vocal_duck) == (o.bass_swap, o.low_pass, o.high_pass, o.echo, o.vocal_duck)
             && (*in_loop, *bend, *highs_in) == (o.in_loop, o.bend, o.highs_in)
@@ -795,8 +839,27 @@ impl TransitionPlan {
         (lo + hi) / 2.0
     }
 
-    /// Outgoing song time played in the first `t_ms` of the transition: its `out_rates` integrated; under a bend its
-    /// speed is the incoming one over `tempo_ratio`.
+    /// Outgoing song time heard `t_ms` into the transition, past its start: what [`Self::out_song_ms`] reads, through
+    /// the loop.
+    pub fn out_heard_ms(&self, t_ms: f64) -> f64 {
+        let read = self.out_song_ms(t_ms);
+        self.out_loop.map_or(read, |l| l.heard(read))
+    }
+
+    /// Where outgoing song time `song_ms` past the transition's start is heard, ms into it: through the loop, the first
+    /// time it is.
+    pub fn wall_of_out_heard(&self, song_ms: f64) -> f64 {
+        self.wall_of_out_song(self.out_loop.map_or(song_ms, |l| l.read_of(song_ms)))
+    }
+
+    /// Outgoing song time the engine holds for the transition, past its start.
+    pub fn out_held_ms(&self) -> f64 {
+        let read = self.out_song_ms(self.duration_ms as f64);
+        self.out_loop.map_or(read, |l| l.held(read))
+    }
+
+    /// Outgoing song time read in the first `t_ms` of the transition (a loop's rounds counted as read on): its
+    /// `out_rates` integrated; under a bend its speed is the incoming one over `tempo_ratio`.
     pub fn out_song_ms(&self, t_ms: f64) -> f64 {
         let t = t_ms.max(0.0);
         if !self.out_rates.is_empty() {

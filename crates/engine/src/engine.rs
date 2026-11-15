@@ -2147,7 +2147,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
         match (self.following.as_ref().and_then(|f| f.mix_place.as_ref()), &self.p.engine.plans) {
             (Some(place), Plans::Led(Some((_, plan))))
-                if place.index == index && plan.out_loop_us() > 0 =>
+                if place.index == index && plan.mixer.out_loop.is_some() =>
             {
                 let from_ms = plan.out_start_us() / 1000;
                 let phase_us = (ms * 1000.0).round() as i64 - plan.out_start_us();

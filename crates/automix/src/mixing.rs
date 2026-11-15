@@ -85,7 +85,7 @@ pub fn adopt(nori: &TransitionPlan, p: Proposal, out_ms: i64, in_ms: i64, max_te
     // A loop, a bend, a duck or beat-by-beat rates nori placed for its own plan don't fit another: the bend's tempo
     // change goes after it.
     t.unbend();
-    (t.out_loop_ms, t.in_loop, t.vocal_duck, t.highs_in) = (None, None, None, None);
+    (t.out_loop, t.in_loop, t.vocal_duck, t.highs_in) = (None, None, None, None);
     t.in_rates.clear();
     t.out_rates.clear();
     if p.kind == Proposed::Gapless {

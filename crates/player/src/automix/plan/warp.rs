@@ -215,7 +215,7 @@ fn steering(all: &[Pair]) -> Vec<Pair> {
 /// A plan laid out after its lock (the outgoing song gliding alone to meet the other, or a bend): its beats heard
 /// together still within the lock; Err where they drift apart.
 pub(super) fn check(p: &TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, swap: f64) -> Result<(), String> {
-    if a.outro_beats.is_empty() || b.intro_beats.is_empty() || p.out_loop_ms.is_some() {
+    if a.outro_beats.is_empty() || b.intro_beats.is_empty() || p.out_loop.is_some() {
         return Ok(());
     }
     let (a_clean, b_clean) = (cleaned(&a.outro_beats), cleaned(&b.intro_beats));
@@ -227,7 +227,7 @@ pub(super) fn check(p: &TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, sw
 
 pub(super) fn lock(p: &mut TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, swap: f64) -> Result<Locked, String> {
     // An outgoing loop repeats bars picked as steady; a bend or glide moves the outgoing beats themselves.
-    if a.outro_beats.is_empty() || b.intro_beats.is_empty() || p.out_loop_ms.is_some() || p.bend.is_some() || p.out_glide.is_some() {
+    if a.outro_beats.is_empty() || b.intro_beats.is_empty() || p.out_loop.is_some() || p.bend.is_some() || p.out_glide.is_some() {
         return Ok(Locked::Unchecked);
     }
     // Cleaned, and only their steady run: a stray beat a stretch away from the rest pairs with nothing.
