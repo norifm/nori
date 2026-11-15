@@ -1253,7 +1253,7 @@ fun MoreButton(items: List<Pair<String, () -> Unit>>, modifier: Modifier = Modif
 val LocalEinkScreen = androidx.compose.runtime.compositionLocalOf { false }
 
 /** How much room a [GlyphButton] takes for a finger. */
-private val GLYPH_TARGET = 48.dp
+internal val GLYPH_TARGET = 48.dp
 
 
 
