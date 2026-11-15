@@ -56,6 +56,7 @@ Heavy work goes through one machine-wide queue, so worktrees and agents take tur
 | --- | --- |
 | `tools/check.sh rust --workspace` | `cargo nextest run` with four build jobs and four test threads; `-p <crate>` for one crate |
 | `tools/check.sh rust-doc --workspace` | the doctests, which nextest skips |
+| `tools/check.sh web` | CI's wasm clippy of both web modules, with the NDK's clang for the C parts; nori-web is empty natively, so nothing else checks it |
 | `tools/check.sh android [GRADLE OPTIONS]` | `./gradlew :app:assembleDebug` |
 | `tools/check.sh bazel <command> [...]` | a Bazel command |
 | `python3 tools/with-resource.py build <command>` | any other command, in the same queue |
