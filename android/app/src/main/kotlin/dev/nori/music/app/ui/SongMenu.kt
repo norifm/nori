@@ -107,7 +107,7 @@ fun SongMenu(
             val lyrics = player?.let { p -> val l by p.lyrics.collectAsState(); hasWords(l, song.id) } == true
             var excluded by remember(song.id) { mutableStateOf(false) }
             LaunchedEffect(song.id) { excluded = actions.excludedFromMixes(song) }
-            val items = remember(song, starred, excluded, download, player != null, lyrics, rules, page) { dev.nori.music.ffi.library.songMenu(song, starred, excluded, download, player != null, lyrics, rules.stars, rules.account, rules.downloads, rules.radio, rules.asks, page) }
+            val items = remember(song, starred, excluded, download, player != null, lyrics, rules, page) { dev.nori.music.ffi.library.songMenu(song, starred, excluded, download, player != null, lyrics, rules.stars, rules.account, rules.playlists, rules.downloads, rules.radio, rules.asks, page) }
             val labels = remember(items) { items.map { say.songAction(it.action) } }
             val at = { place: dev.nori.music.ffi.library.SongMenuPlace -> items.indices.filter { items[it].place == place } }
             @Composable fun titleGlyph(n: Int) = when (val a = items[n].action) {
@@ -469,7 +469,7 @@ fun SelectionBar(actions: ActionsViewModel) {
                 BarAction(say.play) { actions.play(songs); actions.clearSelection() }
                 BarAction(say.next) { actions.playNext(songs); actions.clearSelection() }
                 BarAction(say.queue) { actions.enqueue(songs); actions.clearSelection() }
-                if (LocalRules.current.account) BarAction(say.playlist) { picking = true }
+                if (LocalRules.current.playlists) BarAction(say.playlist) { picking = true }
                 if (LocalRules.current.downloads) BarAction(say.get) { actions.download(songs); actions.clearSelection() }
                 IconButton(actions::clearSelection) { Icon(Iconoir.Xmark, say.clearSelection, Modifier.size(20.dp)) }
             }

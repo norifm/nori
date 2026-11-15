@@ -626,7 +626,7 @@ impl Nori {
             "artist" => Some(PageOrigin::new(OriginKind::Artist, id)),
             _ => None,
         };
-        let items: Vec<Value> = song_menu(song.clone(), song.starred, false, SongDownload::None, player, lyrics, rules.stars, rules.account, false, rules.radio, self.guest(), on)
+        let items: Vec<Value> = song_menu(song.clone(), song.starred, false, SongDownload::None, player, lyrics, rules.stars, rules.account, rules.playlists, false, rules.radio, self.guest(), on)
             .into_iter()
             .map(|m| {
                 let place = format!("{:?}", m.place);

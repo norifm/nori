@@ -1950,7 +1950,7 @@ impl App {
                 ui.set_page_title(words::mix_name(m.name).into());
                 ui.set_page_caption(if m.songs.is_empty() { String::new() } else { words::songs_caption(m.songs.len(), m.seconds) }.into());
                 ui.set_page_covers(ModelRc::new(VecModel::from(m.covers.iter().map(SharedString::from).collect::<Vec<_>>())));
-                ui.set_page_can_save(self.session.as_ref().is_some_and(|s| s.rules().account) && !m.songs.is_empty());
+                ui.set_page_can_save(self.session.as_ref().is_some_and(|s| s.rules().playlists) && !m.songs.is_empty());
                 self.set_page_art(m.covers.first().cloned());
                 self.page_songs = m.songs;
                 self.page = Some(PageShown::Mix(Some((m.id.clone(), words::mix_name(m.name).to_string()))));
@@ -2483,7 +2483,7 @@ impl App {
         let lyrics = player && self.lyrics.as_ref().is_some_and(|l| !l.is_empty());
         let excluded = s.core.mix_excluded_songs().is_ok_and(|ids| ids.contains(&one.id));
         let quality = words::quality(&one);
-        let items = song_menu(one, starred.unwrap_or_default(), excluded, download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, s.rules().asks, page);
+        let items = song_menu(one, starred.unwrap_or_default(), excluded, download, player, lyrics, starred.is_some(), s.rules().account, s.rules().playlists, s.rules().downloads, s.rules().radio, s.rules().asks, page);
         let lines = items.into_iter().map(|m| {
             let (kind, id) = match &m.action {
                 A::Favourite { .. } => (0, String::new()),
@@ -2708,7 +2708,7 @@ impl App {
     /// Whether the profile may change `p` (the core's `playlist_editable`), signed in as its user.
     fn editable(&self, p: &nori_core::Playlist) -> bool {
         let user = self.root.app.settings.current().and_then(|prefs| prefs.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
-        nori_core::menus::playlist_editable(p, &user, self.account())
+        nori_core::menus::playlist_editable(p, &user, self.session.as_ref().is_some_and(|s| s.rules().playlists))
     }
 
     /// Adds the song whose menu asked to the picker's playlist `i`, or to a new one named `name`.

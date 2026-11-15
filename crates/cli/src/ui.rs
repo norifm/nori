@@ -843,7 +843,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         plays.push((Span::styled(crate::text::PLAY, bold().fg(t.ink)), Button::PlayAll));
         plays.push((Span::styled(crate::text::SHUFFLE, Style::default().fg(t.ink)), Button::ShuffleAll));
     }
-    if matches!(p, Page::Mix { detail: Load::Ready(m), .. } if account && !m.songs.is_empty()) {
+    if matches!(p, Page::Mix { detail: Load::Ready(m), .. } if rules.playlists && !m.songs.is_empty()) {
         plays.push((Span::styled(crate::text::SAVE_AS_PLAYLIST, Style::default().fg(t.ink)), Button::SaveMix));
     }
     line(row_of(area, 1), &by, plays);

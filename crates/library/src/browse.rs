@@ -392,9 +392,11 @@ pub struct ProfileRules {
     /// Playing or queueing songs asks the jam's host for them: a tap or Play asks for the song that
     /// would start, Play next and Add to queue for each song.
     pub asks: bool,
-    /// Subsonic account work: ratings, playlist edits, sharing, library mixes and their settings,
-    /// scrobbles, now playing and queue pushes. Local history does not require an account.
+    /// Subsonic account work: ratings, sharing, library mixes and their settings, scrobbles, now
+    /// playing and queue pushes. Local history does not require an account.
     pub account: bool,
+    /// The account's own playlists can be made and changed: songs added and removed, renamed, deleted.
+    pub playlists: bool,
     /// Songs, albums and playlists can be kept for offline playback on this device.
     pub downloads: bool,
     /// A song can start a radio queue from the provider's related tracks.
@@ -443,7 +445,7 @@ pub fn profile_rules(guest: bool) -> ProfileRules {
     let sections = if guest { vec![Albums, Artists, Songs, Genres] } else { vec![Albums, Favourites, Artists, Songs, Playlists, Smart, History, Genres, Decades, Folders, Radio, Downloads] };
     let account_only = [SettingsPart::ServerOptions, SettingsPart::Library, SettingsPart::Downloads];
     let settings = SETTINGS_PARTS.into_iter().filter(|p| !guest || !account_only.contains(p)).collect();
-    ProfileRules { asks: guest, account: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, stars_here: false, scrobbles: !guest, feed: false, mixes: !guest }
+    ProfileRules { asks: guest, account: !guest, playlists: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, stars_here: false, scrobbles: !guest, feed: false, mixes: !guest }
 }
 
 /// A decade's years, first and last, from its first year.

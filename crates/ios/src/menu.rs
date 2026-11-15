@@ -76,7 +76,7 @@ fn details_json(s: &Song) -> Value {
 /// `rules`: whether the profile has the account's things, and whether its menu asks a jam's host
 /// as its guest. `page`: the page it is opened on, whose own album or artist it leaves out.
 fn menu_json(song: &Song, starred: bool, excluded: bool, download: SongDownload, player: bool, rules: &ProfileRules, page: Option<PageOrigin>) -> Value {
-    let items: Vec<Value> = song_menu(song.clone(), starred, excluded, download, player, false, rules.stars, rules.account, rules.downloads, rules.radio, rules.asks, page)
+    let items: Vec<Value> = song_menu(song.clone(), starred, excluded, download, player, false, rules.stars, rules.account, rules.playlists, rules.downloads, rules.radio, rules.asks, page)
         .iter()
         // The iPod has no sheet for the lyrics' source and timing.
         .filter(|i| i.action != SongAction::Lyrics)

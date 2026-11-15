@@ -584,6 +584,12 @@ it has nothing for answers `none`, the empty page. Where its rules say `stars` f
 account), nori keeps the seals on this device, adds Favorites itself and never asks `starred`
 ([Providers](providers.md)).
 
+Where its rules say `account` and list Playlists, nori offers playlist changes
+(`ProfileRules::playlists`) and sends them to `write`: `create-playlist`, `add-to-playlist`,
+`remove-from-playlist` (the index into the songs its `playlist` page lists), `rename-playlist`,
+`delete-playlist`. Only a playlist naming no `owner` is offered them: the account's own. One the
+account follows, or the service makes, names who made it.
+
 An artist's page shelves its albums by `kind` (none: with the albums) and orders each shelf newest first
 by `released`, else by `year`, releases of the same day in the plugin's order (`release_groups`). A
 source that gives only years keeps its own order within a year.

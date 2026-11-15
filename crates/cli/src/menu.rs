@@ -90,7 +90,7 @@ impl App {
         let download = self.downloaded.get(&song.id).copied().unwrap_or(SongDownload::None);
         let lyrics = self.lyrics.found().is_some_and(|l| !l.pick.lyrics.lines.is_empty()) && self.song.as_ref().is_some_and(|s| s.id == song.id);
         let r = &self.rules;
-        let items = nori_core::menus::song_menu(song.clone(), starred, self.excluded.contains(&song.id), download, player, lyrics, r.stars, r.account, r.downloads, r.radio, self.guest(), page);
+        let items = nori_core::menus::song_menu(song.clone(), starred, self.excluded.contains(&song.id), download, player, lyrics, r.stars, r.account, r.playlists, r.downloads, r.radio, self.guest(), page);
         let mut lines = Vec::with_capacity(items.len() + 1);
         let mut more = false;
         for i in items.into_iter().filter(|i| offered(&i.action) && i.enabled) {
@@ -119,7 +119,7 @@ impl App {
             _ => return Vec::new(),
         };
         let mut lines = vec![MenuLine::Heading(title), MenuLine::Act(MenuAct::PlayPage), MenuLine::Act(MenuAct::ShufflePage)];
-        if matches!(page, Page::Mix { .. }) && self.rules.account {
+        if matches!(page, Page::Mix { .. }) && self.rules.playlists {
             lines.push(MenuLine::Act(MenuAct::SaveMix));
         }
         lines.extend(self.page_actions().into_iter().filter(|a| *a != PageAction::Edit).map(|a| MenuLine::Act(MenuAct::Page(a))));

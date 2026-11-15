@@ -323,7 +323,7 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     fun addToPlaylist(c: PlaylistChoice) = attempt(say.addedToPlaylist(c.playlist.name)) { nori.library.addToPlaylist(c.playlist.id, c.adds) }
     /** Keeps a mix as a playlist on the account, named by the core (`saved_mix_name`) so a second save does not repeat a name. */
     /** Whether [p] is the account's own, to change or delete (the core's `playlist_editable`). */
-    fun editable(p: Playlist): Boolean = dev.nori.music.ffi.library.playlistEditable(p, nori.settings.value.server?.user.orEmpty(), nori.rules.account)
+    fun editable(p: Playlist): Boolean = dev.nori.music.ffi.library.playlistEditable(p, nori.settings.value.server?.user.orEmpty(), nori.rules.playlists)
 
     fun deletePlaylist(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) } }
 
