@@ -35,7 +35,7 @@ so it can hold that profile's state (a session, resolved streams).
 | `info` | the add form's fields (`FieldSpec`: a `FormField` such as name, address, user; plain or advanced) and how the account signs in, the first way offered first (`SignIn::WebPage { start_url }`, `SignIn::Code`, `SignIn::Paste`) |
 | `ready`, `check` | whether the form can be sent; checking a profile before it is kept (a server is pinged) |
 | `rules` | the profile's `ProfileRules`: library sections, favorites, downloads, radio, remote control and jams, scrobbles, its own Home feed, and the same for a jam guest |
-| `configure` | points the `Core` at the profile |
+| `configure` | points the `Core` at the profile. A plugin is told the profile open (`open`), and told again when its instance starts anew after a failed call (`Worker::opens`) |
 | `read`, `parse`, `scope`, `gone` | the core's `Read`s (search, album, artist, playlist, Home feed, library sections) as a `Page` (`Answer::Page`), or as the raw answer the core keeps on disk and has `parse` read again (`Answer::Raw`, a Subsonic server's); what else an answer depends on (a server's music folders); which error means the item is gone |
 | `write` | favorites, playlists and the rest of `Write`, where it has somewhere to send them |
 | `stream`, `ahead`, `resolver` | where a song streams from and its cache key; how far ahead songs may be fetched; a `ResolveStream` that turns stream addresses into the URLs they open at, called by the engine's byte source (`nori_engine::core::resolving`), which reads a URL served as an HLS playlist as its segments (`crates/engine/src/hls.rs`) |
