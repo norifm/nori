@@ -6,6 +6,21 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-15
+
+Plugins move to plugin API 6: nori fetches their new versions (YouTube Music 0.7.0, SoundCloud 0.6.0
+and the rest) the first time it opens, and a plugin's profile waits for its update.
+
+### Added
+
+- YouTube Music and SoundCloud songs, albums and artists take a favorite kept on this device while
+  signed out (#156)
+
+### Fixed
+
+- An artist's releases go newest first by their release date, and YouTube Music and SoundCloud
+  singles and EPs sit on their own shelves (#153)
+
 ## [0.9.1] - 2026-11-14
 
 ### Added
