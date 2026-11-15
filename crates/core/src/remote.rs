@@ -2,8 +2,8 @@
 //! remote control or jams are switched on, or the profile is a jam guest's; it polls the relay only
 //! while it serves (this device is controllable), watches (a device picker or jam screen is open),
 //! mirrors the account's active device or hosts a jam, and holds each poll up to [`HOLD_MS`], so a quiet
-//! device wakes about once a minute; one that only serves, with nothing on its screen, on a metered network
-//! waits [`REST_MS`] between polls. Nearby devices are reached through their LAN door instead of the relay.
+//! device wakes about once a minute; a paused one that only serves, with nothing on its screen, on a metered
+//! network waits [`REST_MS`] between polls. Nearby devices are reached through their LAN door instead of the relay.
 //!
 //! One device of the account plays at a time: the active one. This one is it until a transfer moves the
 //! playback elsewhere ([`Remote::pick`], or another device's transfer); it then mirrors that device
@@ -83,8 +83,9 @@ const DOOR_TIMEOUT_MS: u32 = 3_000;
 /// A held poll's own timeout: the hold plus the way there and back.
 const POLL_TIMEOUT_MS: u32 = HOLD_MS + 15_000;
 
-/// Between two relay polls of a device that only serves, with nothing on its screen, on a metered network
-/// ([`Remote::rest`]): a poll asked again as each hold ends would wake its radio every minute. A relay lists a
+/// Between two relay polls of a paused device that only serves, with nothing on its screen, on a metered
+/// network ([`Remote::rest`]): a poll asked again as each hold ends would wake its radio every minute. A
+/// playing device streams anyway, and is the one another device takes the queue from. A relay lists a
 /// device only while its poll is held and a little after (octo-fiesta: 20 s), so it is not listed meanwhile.
 const REST_MS: u64 = 300_000;
 
@@ -1335,10 +1336,11 @@ impl Inner {
         self.probes_asked != self.probes_answered
     }
 
-    /// The relay is wanted only so this device can be controlled, and nothing here shows anything.
+    /// The relay is wanted only so this device can be controlled, and nothing here plays or shows anything.
     fn rests(&self) -> bool {
         self.serving
             && self.sight == Sight::Nothing
+            && !self.playing.playing
             && !(self.probing() || self.watching || self.active.discovering() || self.active.taking().is_some() || self.follows_mirror() || self.jams() || self.guest.listen().is_some())
     }
 
@@ -1741,7 +1743,7 @@ impl Remote {
     pub fn played_read(self: Arc<Self>, read: impl FnOnce() -> Playing) {
         // The report belongs to call entry, before waiting for the session lock.
         let now = self.now();
-        let (publish, started, shown, cancelled, playing, stopped) = {
+        let (publish, started, returned, shown, cancelled, playing, stopped) = {
             let mut i = self.inner.lock();
             let playing = read();
             let started = playing.playing && !i.playing.playing;
@@ -1759,15 +1761,18 @@ impl Remote {
             let cancelled = moved_here && i.active.cancel_taking();
             i.playing = playing;
             i.playing_at = Some(now);
-            (i.serving || i.hosted().is_some(), started && i.active.mirror().is_some(), shown, cancelled, playing.playing, stopped)
+            (i.serving || i.hosted().is_some(), started, started && i.active.mirror().is_some(), shown, cancelled, playing.playing, stopped)
         };
         if playing {
             self.clone().set_discovering(false);
         } else if stopped {
             self.discover_again();
         }
-        if started {
+        if returned {
             self.set_active(None, Becomes::Followed);
+        }
+        if started {
+            self.rested.notify();
         }
         if publish {
             self.publish();
@@ -3279,7 +3284,7 @@ impl Remote {
     }
 
     /// Before the next relay poll: waits [`REST_MS`] while this device only serves ([`Inner::rests`]) on a
-    /// metered network, until anything that changes that ([`Remote::keep_polling`]) or a stop.
+    /// metered network, until anything that changes that ([`Remote::keep_polling`], playing) or a stop.
     async fn rest(&self, poller: u64) {
         let resting = |i: &Inner| !i.stopped && i.relay_poller == Some(poller) && i.rests();
         if !self.client.metered() || !resting(&self.inner.lock()) {
