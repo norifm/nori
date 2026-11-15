@@ -127,6 +127,7 @@ mod bus {
 
     /// The bus name: one per process, `.instance<pid>` as the spec names a second instance, which is how
     /// Plasma ties a player to its window.
+    #[cfg(target_os = "linux")]
     fn bus_name() -> String {
         format!("org.mpris.MediaPlayer2.nori.instance{}", std::process::id())
     }
