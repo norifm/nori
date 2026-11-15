@@ -10,6 +10,7 @@ cargo test -j4 --workspace                          # all Rust tests; never -j a
 cargo test -j4 -p <crate>                           # one crate while iterating
 tools/check.sh rust --workspace                     # nextest, queued across worktrees; doctests separately
 tools/check.sh web                                  # CI's wasm clippy of both web modules
+tools/check.sh ipod                                 # the iPod crate alone: its host without the desktop parts
 tools/check.sh android                              # queued debug APK with incremental optimized Rust
 tools/device-check.sh smoke                         # lease one device from NORI_E2E_DEVICES
 python3 tools/rust.py test --workspace               # optional Bazel native tests; shared worktree cache
@@ -32,8 +33,9 @@ tools/ipod.sh [build install run]                   # the iPod app's .ipa, built
 tools/ipod-bench.sh nori|music                      # iPod battery/CPU for 30 min, unplugged, SSH over Wi-Fi (NORI_IPOD_HOST)
 ```
 
-Before committing: `cargo test -j4 --workspace` and a build; `tools/check.sh web` when it touches a
-crate the web client uses (core, host, engine, remote: natively nori-web is empty). If the change reaches Android, also
+Before committing: `cargo test -j4 --workspace` and a build; `tools/check.sh web` and `tools/check.sh ipod`
+when it touches a crate those clients use (core, host, engine, remote): natively nori-web is empty, and
+a workspace build gives the host the desktop parts the iPod leaves out. If the change reaches Android, also
 `tools/smoke.sh` plus the `--only` sections it touches. The full e2e suites run once per batch.
 Use `tools/check.sh` or `tools/with-resource.py build <command>` for heavy commands across agents.
 Device scripts lease their emulator; `tools/device-check.sh` allocates from `NORI_E2E_DEVICES`.

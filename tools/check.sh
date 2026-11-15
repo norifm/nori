@@ -13,7 +13,9 @@ case "${1:-}" in
     for f in "" --no-default-features; do
       python3 "$here/with-resource.py" build cargo clippy -j4 --target wasm32-unknown-unknown -p nori-web --all-targets $f -- -D warnings
     done ;;
+  # The iPod's host, without the desktop parts a workspace build turns on.
+  ipod) exec python3 "$here/with-resource.py" build cargo clippy -j4 -p nori-ios --all-targets -- -D warnings ;;
   android) shift; exec python3 "$here/with-resource.py" build ./gradlew :app:assembleDebug "$@" ;;
   bazel) shift; exec python3 "$here/with-resource.py" build bazel "$@" ;;
-  *) echo "usage: check.sh rust [--workspace|-p CRATE ...]|rust-doc [...]|web|android [GRADLE OPTIONS]|bazel COMMAND [...]" >&2; exit 2 ;;
+  *) echo "usage: check.sh rust [--workspace|-p CRATE ...]|rust-doc [...]|web|ipod|android [GRADLE OPTIONS]|bazel COMMAND [...]" >&2; exit 2 ;;
 esac
