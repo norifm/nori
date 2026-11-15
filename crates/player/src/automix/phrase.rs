@@ -127,7 +127,7 @@ mod tests {
         (0..n)
             .map(|i| {
                 let (level_db, voice, change) = f(i);
-                BarProfile { start_ms: 2_000 * i as i64, level_db, low_db: level_db, pulse: 1.0, voice, change }
+                BarProfile { start_ms: 2_000 * i as i64, level_db, low_db: level_db, pulse: 1.0, voice, change, ..BarProfile::default() }
             })
             .collect()
     }

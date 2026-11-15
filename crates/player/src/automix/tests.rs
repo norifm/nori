@@ -376,6 +376,7 @@ fn voice_features(voice: Vec<f32>, secs: f64) -> analysis::Features {
         low_power: Vec::new(),
         vocal: Vec::new(),
         centroid: Vec::new(),
+        timbre: Vec::new(),
         chroma: Vec::new(),
         chroma_t0: 0.0,
         chroma_step: 0.0,
@@ -448,4 +449,19 @@ fn edges_say_where_files_run_on() {
     let fade = 4 * rate;
     let faded: Vec<f32> = first.iter().enumerate().map(|(i, v)| v * ((n - i) as f32 / fade as f32).min(1.0)).collect();
     assert!(!runs_on(&silent) && !runs_on(&faded), "a silent ending or a fade does not run on");
+}
+
+/// Bars that come round in fours repeat four bars on, as their next four do; chords cycling in fives do not, their
+/// harmony moved on at every bar four later.
+#[test]
+fn bars_repeat_as_their_music_comes_round() {
+    let chords = |n: usize| [(0, false), (5, false), (7, false), (9, true), (2, true)][..n].to_vec();
+    let mean = |n: usize| {
+        let a = analyse("r", &Synth { chords: chords(n), secs: 90.0, ..Synth::new(120.0) }.render(), 44100).track;
+        let r: Vec<f32> = a.outro_bars.iter().chain(&a.intro_bars).filter_map(|b| b.repeat4).collect();
+        assert!(r.len() >= 32, "{n} chords: repeats measured: {}", r.len());
+        r.iter().sum::<f32>() / r.len() as f32
+    };
+    let (fours, fives) = (mean(4), mean(5));
+    assert!(fours > 0.95 && fives < 0.7, "four chords come round {fours:.2}, five do not {fives:.2}");
 }

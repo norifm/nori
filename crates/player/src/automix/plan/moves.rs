@@ -833,8 +833,8 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     let (to_a, to_b) = (meet / a.bpm, meet / b_bpm);
     let (beat, bpb) = (60_000.0 / a.bpm, bar_beats(a));
     let bar = bpb as f64 * beat;
-    // The latest clean loop of 8 bars after the last line, before the song leaves or turns quiet; else of 4, where its
-    // plays allow (a shorter loop repeats more).
+    // A clean loop of 8 bars after the last line, before the song leaves or turns quiet, or of 4, where its plays allow
+    // (a shorter loop repeats more).
     let ending = Ending::of(a, p.room.out_dur);
     let quiet = (a.mixramp_end_ms > a.silence_start_ms).then_some(a.mixramp_end_ms as f64);
     let end = quiet.map_or(ending.leave(0.0), |q| q.min(ending.leave(0.0)));
@@ -846,7 +846,10 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
         in_grid((a.outro_grid_from_ms, a.outro_grid_to_ms), from, to, beat) && measured_or_beatless(&a.outro_bars, &a.outro_beats, &out_kept, from, to, bar, |_, _| false)
     };
     let clean = |from: f64, bars: usize| {
-        !sings_after(a, from) && loopable(a, from, bars, bar, |x| x.pulse >= KICK_PULSE && x.level_db >= LOOP_LEVEL_DB) && gridded(from, from + bars as f64 * bar)
+        !sings_after(a, from)
+            && loopable(a, from, bars, bar, |x| x.pulse >= KICK_PULSE && x.level_db >= LOOP_LEVEL_DB)
+            && seamless(&a.outro_bars, from, bars, bar)
+            && gridded(from, from + bars as f64 * bar)
     };
     // The glide, in whole bars at the outgoing tempo; then the first downbeat of the loop after it, and the blend. The
     // song glides over as many of its own bars before the loop as the glide reads (in its grid, and unsung unless the
@@ -863,17 +866,22 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
             start >= a.silence_start_ms as f64 && gridded(start, from) && (sung_ok || !sings_after(a, start))
         })
     };
+    // Of the clean slices that skip no more than allowed, the one that goes round most seamlessly; an eight-bar one
+    // (heard fewer times) first, as before where seams are not measured, and one nearer the end (less of the song
+    // skipped) breaking near ties.
+    let rank = |from: f64, l: usize| {
+        let back = (last - from) / bar - l as f64;
+        seam(&a.outro_bars, from, l, bar).unwrap_or(SEAM_TYPICAL) as f64 + if l == 8 { RAMP_LONG_WORTH } else { 0.0 } - RAMP_BACK_COST * back
+    };
     let (from, looped, own) = [8usize, 4]
         .into_iter()
         .flat_map(|l| (l..=EXIT_BARS_BACK as usize + l).map(move |back| (last - back as f64 * bar, l)))
-        .filter(|&(from, l)| from >= a.silence_start_ms as f64 && clean(from, l))
+        .filter(|&(from, l)| from >= a.silence_start_ms as f64 && clean(from, l) && ending.skipped(from + l as f64 * bar) <= MAX_SKIP_MS as f64)
         .filter_map(|(from, l)| Some((from, l, own(from)?)))
-        .find(|&(_, l, k)| (played - k as f64) / l as f64 <= MAX_LOOP_PLAYS)?;
+        .filter(|&(_, l, k)| (played - k as f64) / l as f64 <= MAX_LOOP_PLAYS)
+        .max_by(|x, y| rank(x.0, x.1).total_cmp(&rank(y.0, y.1)))?;
     let (loop_ms, own_ms) = (looped as f64 * bar, own as f64 * bar);
     let start = from - own_ms;
-    if ending.skipped(from + loop_ms) > MAX_SKIP_MS as f64 {
-        return None;
-    }
     // The incoming song locks on its first downbeat, its pickup (up to a bar) played before it.
     let music = music_start(Some(b), p.room.in_dur) as f64;
     let (beat_b, bar_b) = (60_000.0 / b.bpm, bar_ms(b));
@@ -922,8 +930,9 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     }
     m.in_gain_db = loudness_trim(Some(a), Some(b), s);
     m.reason = format!(
-        "loop ramp: {looped}-bar loop{} gliding {:.1} -> {:.1} BPM over {glide_bars:.0} bars, in locked for {RAMP_BLEND_BARS:.0}, back to {:.1} over {beats_back:.0} beats{}",
+        "loop ramp: {looped}-bar loop{}{} gliding {:.1} -> {:.1} BPM over {glide_bars:.0} bars, in locked for {RAMP_BLEND_BARS:.0}, back to {:.1} over {beats_back:.0} beats{}",
         if own > 0 { format!(" after {own} bars of its own") } else { String::new() },
+        seam(&a.outro_bars, from, looped, bar).map_or(String::new(), |s| format!(", seam {s:.2}")),
         a.bpm,
         meet,
         b.bpm,
@@ -934,6 +943,10 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     }
     Some(Move { plan: m, worth: LOOP_RAMP_WORTH })
 }
+
+/// A loop ramp's slice ranks by its seam, this much more for eight bars, this much less a bar further from the end.
+const RAMP_LONG_WORTH: f64 = 0.1;
+const RAMP_BACK_COST: f64 = 0.01;
 
 /// Tempo gaps a loop ramp crosses, percent; under the lower a stretch meets them.
 const RAMP_MIN_GAP_PCT: f64 = 8.0;
@@ -962,6 +975,49 @@ const LOOP_LEVEL_DB: f32 = -8.0;
 pub(super) fn loopable(a: &TrackAnalysis, from: f64, bars: usize, bar: f64, fits: impl Fn(&BarProfile) -> bool) -> bool {
     (0..bars).all(|i| bar_at(&a.outro_bars, from + (i as f64 + 0.5) * bar).is_some_and(|x| x.voice < LOOP_VOICE && fits(x)))
 }
+
+/// How seamlessly `n` bars of `bars` from `from` go round, 0..1, the best of three measured ways: the bar the song
+/// plays after them against their first (LoopMaker's criterion), the bar before them against their last
+/// (PyMusicLooper's other way round), and, for a texture that does not change from bar to bar (a drum intro before
+/// its drop), how alike each of them is to the next. None when none is measured (an end analysed before bars kept
+/// their repeats).
+pub(super) fn seam(bars: &[BarProfile], from: f64, n: usize, bar: f64) -> Option<f32> {
+    // Repeats count the stored bars: read at another tempo octave they would be the wrong ones.
+    let spacing = bars.windows(2).find(|w| w[1].start_ms as f64 > from).map(|w| (w[1].start_ms - w[0].start_ms) as f64);
+    if spacing.is_none_or(|s| (s / bar - 1.0).abs() > SEAM_BAR_SLACK) {
+        return None;
+    }
+    let at = |k: f64| bar_at(bars, from + (k + 0.5) * bar);
+    let repeat = |x: &BarProfile| if n >= 8 { x.repeat8 } else { x.repeat4 };
+    let after = at(0.0).and_then(repeat);
+    let before = at(-1.0).and_then(repeat);
+    // One texture: each bar like the next, and in eight bars the first four like the four after them, so a slow build
+    // (a riser, a filter opening) that drifts a little each bar is not taken for one.
+    let alike = |k: usize, r: &dyn Fn(&BarProfile) -> Option<f32>| at(k as f64).and_then(r);
+    let mut pairs = (0..n.saturating_sub(1)).map(|k| alike(k, &|x| x.repeat1)).collect::<Vec<_>>();
+    if n >= 8 {
+        pairs.extend((0..4).map(|k| alike(k, &|x| x.repeat4)));
+    }
+    let steady = pairs.into_iter().collect::<Option<Vec<f32>>>().and_then(|r| r.into_iter().reduce(f32::min));
+    [after, before, steady].into_iter().flatten().reduce(f32::max)
+}
+
+/// The stored bars may differ from the planner's by this share before their repeats are not read.
+const SEAM_BAR_SLACK: f64 = 0.1;
+
+/// Whether `n` bars from `from` go round seamlessly enough to loop ([`seam`] at [`SEAM_MIN`]); unmeasured, as before
+/// bars were measured for it, they are taken to.
+pub(super) fn seamless(bars: &[BarProfile], from: f64, n: usize, bar: f64) -> bool {
+    seam(bars, from, n, bar).is_none_or(|s| s >= SEAM_MIN)
+}
+
+/// A loop's seam at least this alike ([`seam`]); a typical one (with no seam measured, taken to be it); and what each
+/// point of it off the typical is worth to a window, so a more seamless loop gains on the alternatives and a less
+/// seamless one loses. Set on the lab's songs: their loopable slices' seams have a median of 0.81 and a quartile of
+/// 0.75; under it are slices whose music moves on at the join (0.2, 0.6 to 0.67).
+pub(super) const SEAM_MIN: f32 = 0.75;
+pub(super) const SEAM_TYPICAL: f32 = 0.81;
+pub(super) const SEAM_WORTH: f64 = 2.0;
 
 /// Whether `n` bars from `from` keep within [`loudness::STEADY_DB`] of one another: a loop of them jumps by no more
 /// each time round.
