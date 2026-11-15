@@ -1187,7 +1187,7 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                     }
                     let lead = ((d - first) / bar_in).round() as i64;
                     let steady = |l: i64| b.steady_intro_ms == 0 || first + l as f64 * bar_in <= b.steady_intro_ms as f64 + 0.5 * beat_n;
-                    let fits = |l: i64| l <= lead && runup > lead && (runup - lead) % l == 0 && runup - lead <= MAX_IN_LOOPED_BARS && steady(l);
+                    let fits = |l: i64| l <= lead && runup > lead && (runup - lead) % l == 0 && runup - lead <= MAX_IN_LOOPED_BARS && steady(l) && moves::seamless(&b.intro_bars, first, l as usize, bar_in);
                     match [8i64, 4].into_iter().find(|&l| fits(l)) {
                         Some(l) => (in_start, in_loop) = (first, Some((l, (runup - lead) / l))),
                         None => continue,
@@ -1219,7 +1219,10 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                     .flat_map(|(lb, own)| {
                         let from = at - lb as f64 * bar;
                         let start = from - own as f64 * bar;
-                        let clean = start >= a.silence_start_ms as f64 && moves::loopable(a, from, lb as usize, bar, |_| true) && moves::steady(&a.outro_bars, from, lb as usize, bar);
+                        let clean = start >= a.silence_start_ms as f64
+                            && moves::loopable(a, from, lb as usize, bar, |_| true)
+                            && moves::steady(&a.outro_bars, from, lb as usize, bar)
+                            && moves::seamless(&a.outro_bars, from, lb as usize, bar);
                         let to_end = clean && !sings_after(a, from);
                         let lands = (runup - own) % lb == 0;
                         let released = (clean && lands).then(|| Some((runup - own) / lb - 1));
@@ -1284,6 +1287,7 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                         }
                         if let Some((l, n)) = in_loop {
                             score -= IN_LOOP_COST * (l * n) as f64;
+                            score += moves::SEAM_WORTH * moves::seam(&b.intro_bars, first, l as usize, bar_in).map_or(0.0, |s| (s - moves::SEAM_TYPICAL) as f64);
                         }
                         if double {
                             score += DOUBLE_DROP_WORTH;
@@ -1315,6 +1319,8 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                         if out_loop > 0.0 {
                             let again = out_loop_rounds.map_or(dur - out_loop_at - out_loop, |n| n as f64 * out_loop);
                             score -= prof.loop_cost * again / bar;
+                            let from = start + out_loop_at;
+                            score += moves::SEAM_WORTH * moves::seam(&a.outro_bars, from, (out_loop / bar).round() as usize, bar).map_or(0.0, |s| (s - moves::SEAM_TYPICAL) as f64);
                         }
                         // The outgoing singing: under the run-up, faded after the swap, and skipped (over the plain rate).
                         // Under a loop, its own bars before the slice under the run-up; released, what follows it faded
@@ -1453,16 +1459,17 @@ fn finish_window(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSe
         _ => "",
     };
     let neutral = k.held_bars(w.dur) > k.max_bars as f64 + 0.3;
+    let seam = w.out_loop().and_then(|l| moves::seam(&a.outro_bars, w.start + l.at_ms as f64, (l.ms as f64 / k.bar).round() as usize, k.bar));
+    let looped = match (w.out_loop > 0.0, w.out_loop_rounds) {
+        (false, _) => String::new(),
+        (true, rounds) => format!("intro/outro remix{}{}", if rounds.is_some() { ", released" } else { "" }, seam.map_or(String::new(), |s| format!(", seam {s:.2}"))),
+    };
     let bits = [
         w.landing.words(),
         if w.double { "a double drop" } else { "" },
         if w.on_phrase { "on the outro phrase" } else if w.after_line { "after its last line" } else { "" },
         leaving,
-        match (w.out_loop > 0.0, w.out_loop_rounds) {
-            (false, _) => "",
-            (true, None) => "intro/outro remix",
-            (true, Some(_)) => "intro/outro remix, released",
-        },
+        &looped,
         if neutral { "run-up without chords" } else { "" },
     ];
     let mut p = finish_beat_matched(a, b, s, k, w, short_cause, &bits)?;
@@ -1698,7 +1705,8 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
         bits.push(format!("{}-bar run-up", w.runup_bars));
     }
     if let Some((l, n)) = w.in_loop {
-        bits.push(format!("its first {l} bars looped {n}x"));
+        let seam = moves::seam(&b.intro_bars, w.in_start, l as usize, k.bar * k.ratio).map_or(String::new(), |s| format!(", seam {s:.2}"));
+        bits.push(format!("its first {l} bars looped {n}x{seam}"));
     }
     if let Some(b) = p.bend {
         bits.push(format!("tempo bending over the last {:.0} bars", k.profile_bars(b)));
@@ -2058,8 +2066,14 @@ mod tests {
         // Smooth never loops it.
         assert_eq!(smooth.in_loop, None, "{}", smooth.reason);
         // An opening that builds after two bars would drop back each time round: not looped.
-        let building = TrackAnalysis { steady_intro_ms: (120.0 + 8.0 * beat) as i64, ..b };
+        let building = TrackAnalysis { steady_intro_ms: (120.0 + 8.0 * beat) as i64, ..b.clone() };
         let p = plan(Some(&a), Some(&building), 240_000, 240_000, &dj());
+        assert_eq!(p.in_loop, None, "{}", p.reason);
+        // Nor one whose bars do not come round, the seam heard each time; bars that do still loop.
+        let repeating = |r: f32| profiled(b.clone(), move |i| BarProfile { repeat1: Some(r), repeat4: Some(r), repeat8: Some(r), ..band(i) });
+        let p = plan(Some(&a), Some(&repeating(0.95)), 240_000, 240_000, &dj());
+        assert!(p.in_loop.is_some(), "{}", p.reason);
+        let p = plan(Some(&a), Some(&repeating(0.7)), 240_000, 240_000, &dj());
         assert_eq!(p.in_loop, None, "{}", p.reason);
     }
 
@@ -2159,6 +2173,10 @@ mod tests {
         assert!(p.duration_ms > l.ms && plays_to_swap(&p) <= moves::MAX_LOOP_PLAYS + 1e-6, "{}", p.reason);
         let smooth = plan(Some(&steady), Some(&b), 238_500, 240_000, &AutoMixSettings::default());
         assert_eq!(smooth.out_loop, None, "{}", smooth.reason);
+        // Bars that do not come round eight bars on would be heard to jump at the seam: not looped.
+        let moving = TrackAnalysis { outro_bars: steady.outro_bars.iter().map(|x| BarProfile { repeat4: Some(0.5), repeat8: Some(0.5), ..*x }).collect(), ..steady.clone() };
+        let p = plan(Some(&moving), Some(&b), 238_500, 240_000, &dj());
+        assert_eq!(p.out_loop, None, "{}", p.reason);
         // Sung until five bars from its end under the same 16-bar run-up: it plays its own bars, then its last four
         // unsung ones round, landing on the swap at their end.
         let (sung, vocal_end) = sung_until(5.0);
@@ -2194,6 +2212,33 @@ mod tests {
         assert!(plays_to_swap(&p) <= moves::MAX_LOOP_PLAYS + 1e-6 && (p.out_heard_ms(swap_at(&p) as f64 - 1.0) - (l.at_ms + l.ms) as f64).abs() < 2.0, "{p:?}");
         assert!(p.out_start_ms as f64 + p.out_heard_ms(p.duration_ms as f64) > slice_end + 0.5 * bar, "the song goes on past the slice: {p:?}");
         check_skip(&p, &a, &b, 238_500);
+    }
+
+    /// A loop's seam is the best of three: the bar after the slice like its first, the bar before it like its last, or
+    /// the slice one texture from bar to bar; unmeasured, it is not known.
+    #[test]
+    fn a_loop_seam_is_how_the_slice_goes_round() {
+        let bar = 2_000.0;
+        let bars = |f: &dyn Fn(usize) -> BarProfile| (0..16).map(|i| BarProfile { start_ms: i as i64 * 2_000, ..f(i) }).collect::<Vec<_>>();
+        let at = |r1: Option<f32>, r4: Option<f32>| BarProfile { repeat1: r1, repeat4: r4, ..Default::default() };
+        let cases: [(Vec<BarProfile>, Option<f32>); 5] = [
+            (bars(&|i| at(Some(0.3), Some(if i == 4 { 0.9 } else { 0.4 }))), Some(0.9)),
+            (bars(&|i| at(Some(0.3), Some(if i == 3 { 0.85 } else { 0.4 }))), Some(0.85)),
+            (bars(&|i| at(Some(if (4..7).contains(&i) { 0.95 } else { 0.2 }), Some(0.4))), Some(0.95)),
+            (bars(&|i| at(Some(if (4..6).contains(&i) { 0.95 } else { 0.2 }), Some(0.4))), Some(0.4)),
+            (bars(&|_| at(None, None)), None),
+        ];
+        for (i, (b, want)) in cases.into_iter().enumerate() {
+            assert_eq!(moves::seam(&b, 4.0 * bar, 4, bar), want, "case {i}");
+        }
+        // Eight bars each like the next but drifting (a riser): the first four are not like the four after them.
+        let drifting = bars(&|i| BarProfile { repeat8: Some(0.4), ..at(Some(0.95), Some(if i < 4 { 0.5 } else { 0.95 })) });
+        assert_eq!(moves::seam(&drifting, 0.0, 8, bar), Some(0.5), "a build is not one texture");
+        let level = bars(&|_| BarProfile { repeat8: Some(0.4), ..at(Some(0.95), Some(0.95)) });
+        assert_eq!(moves::seam(&level, 0.0, 8, bar), Some(0.95), "a held texture is");
+        // Read at another tempo octave, the stored bars' repeats are not the planner's.
+        let b = bars(&|_| at(Some(0.95), Some(0.95)));
+        assert_eq!(moves::seam(&b, 4.0 * bar, 4, bar / 2.0), None);
     }
 
     /// Album songs whose files meet: one level and spectrum across the seam runs on; a faded or silent end, a level
@@ -2543,6 +2588,10 @@ mod tests {
             let slice_end = (p.out_start_ms + l.at_ms + l.ms) as f64;
             assert_eq!(a.outro_bars.iter().any(|x| last(x) && (x.start_ms as f64) < slice_end), ends_on_last, "{p:?}");
         }
+        // Bars that do not come round are not looped even where nothing else fits.
+        let moving = TrackAnalysis { outro_bars: a.outro_bars.iter().map(|x| BarProfile { repeat1: Some(0.5), repeat4: Some(0.5), repeat8: Some(0.5), ..*x }).collect(), ..a.clone() };
+        let p = plan(Some(&moving), Some(&b), 240_000, 240_000, &dj());
+        assert_eq!(p.out_loop, None, "{}", p.reason);
         let a = sung_bars(TrackAnalysis { vocal_start_ms: 10_000, vocal_end_ms: 238_000, ..a });
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings { max_transition_s: 40.0, ..Default::default() });
         assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
@@ -3097,6 +3146,14 @@ mod tests {
         let l = p.out_loop.expect(&p.reason);
         let looped = l.ms as f64 / bar;
         assert!(l.at_ms as f64 >= bar - 1.0, "it glides over its own bars before the loop: {p:?}");
+        // Of the clean slices, the one that goes round most seamlessly; none where nothing does.
+        let seamless_at = |k: usize| profiled(track(128.0), move |i| BarProfile { repeat8: Some(if i == k { 0.99 } else { 0.85 }), repeat4: Some(0.5), ..band(i) });
+        let one = seamless_at(18);
+        let r = plan(Some(&one), Some(&b), 240_000, 240_000, &dj());
+        let slice = r.out_start_ms + r.out_loop.expect(&r.reason).at_ms;
+        assert!([18, 19].iter().any(|&k| (slice - one.outro_bars[k].start_ms).abs() <= 1), "the slice at bar 18, or just after it: {r:?}");
+        let none = profiled(track(128.0), |i| BarProfile { repeat8: Some(0.5), repeat4: Some(0.5), ..band(i) });
+        assert_ne!(plan(Some(&none), Some(&b), 240_000, 240_000, &dj()).kind, TransitionKind::LoopRamp);
         assert!((looped - 8.0).abs() < 0.01, "eight clean bars looped, the longest, the fewest times round: {looped}");
         assert!((g.to - 1.0).abs() * 100.0 / ((g.window.end_ms - g.window.start_ms) as f64 / bar) <= 2.0 + 1e-6, "{g:?}");
         let downbeat_heard = |p: &TransitionPlan, b: &TrackAnalysis| p.in_delay_ms as f64 + (b.beat_offset_ms - p.in_start_ms as f64) / p.tempo_ratio;
@@ -3795,7 +3852,7 @@ mod tests {
         let ring_out = |at: f64| -> Vec<BarProfile> {
             (0..64).map(|i| {
                 let start = at - 48.0 * 4.0 * beat + i as f64 * 4.0 * beat;
-                BarProfile { start_ms: start as i64, level_db: if start < at { 0.0 } else { -24.0 }, low_db: 0.0, pulse: 1.0, voice: if start < at { 1.0 } else { 0.0 }, change: 0.0 }
+                BarProfile { start_ms: start as i64, level_db: if start < at { 0.0 } else { -24.0 }, low_db: 0.0, pulse: 1.0, voice: if start < at { 1.0 } else { 0.0 }, change: 0.0, ..BarProfile::default() }
             }).collect()
         };
         let to_stop = TrackAnalysis { vocal_start_ms: 20_000, vocal_end_ms: stop as i64, outro_bars: ring_out(stop), ..track(128.0) };

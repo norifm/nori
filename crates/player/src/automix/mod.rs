@@ -42,8 +42,8 @@ use crate::types::{BarProfile, Beat, TrackAnalysis};
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 26: the file's first and last 200 ms, for album seams.
-pub const ANALYSIS_VERSION: i32 = 26;
+/// Bump when stored rows should be measured again. 27: how each end bar repeats 4 and 8 bars on, for loop seams.
+pub const ANALYSIS_VERSION: i32 = 27;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -178,8 +178,8 @@ fn end_bars(f: &Features, grid: &Grid, meter: i64, beat_s: f64, music: (f64, f64
     } else {
         music.1 - BLOCK_S
     };
-    // A few bars further in than kept, for the change at the innermost ones.
-    let starts = (0..END_BARS + CHANGE_SPAN).map(|i| if intro { first + i as f64 * bar_s } else { first - i as f64 * bar_s });
+    // A few bars further in than kept, for the change at the innermost ones and an opening's repeats.
+    let starts = (0..END_BARS + CHANGE_SPAN.max(REPEAT_FAR)).map(|i| if intro { first + i as f64 * bar_s } else { first - i as f64 * bar_s });
     let song = (window_mean(&f.power, f.fps, f.t0, music.0, music.1) as f64).max(1e-12);
     let song_low = (window_mean(&f.low_power, f.fps, f.t0, music.0, music.1) as f64).max(1e-12);
     let db = |v: f32, of: f64| (10.0 * ((v as f64).max(1e-12) / of).log10()) as f32;
@@ -214,8 +214,11 @@ fn end_bars(f: &Features, grid: &Grid, meter: i64, beat_s: f64, music: (f64, f64
                 pulse,
                 voice: voice_frames,
                 change: 0.0,
+                ..BarProfile::default()
             };
-            (bar, chroma_of(f, s, e))
+            let beat = bar_s / meter.max(1) as f64;
+            let sounds = (0..meter.max(1)).map(|k| beat_sound(f, s + k as f64 * beat, s + (k + 1) as f64 * beat)).collect();
+            (bar, chroma_of(f, s, e), sounds)
         })
         .collect();
     if !intro {
@@ -237,10 +240,56 @@ fn end_bars(f: &Features, grid: &Grid, meter: i64, beat_s: f64, music: (f64, f64
             ((chords + level + lows + beat + voice) / CHANGE_FULL).min(1.0)
         })
         .collect();
+    let repeat = |i: usize, n: usize| bars.get(i + n).map(|later| alike(&bars[i].2, &later.2));
     let keep = bars.len().min(END_BARS);
     let from = if intro { 0 } else { bars.len() - keep };
-    bars[from..from + keep].iter().zip(&change[from..from + keep]).map(|((b, _), c)| BarProfile { change: *c, ..*b }).collect()
+    (from..from + keep).map(|i| BarProfile { change: change[i], repeat1: repeat(i, 1), repeat4: repeat(i, 4), repeat8: repeat(i, REPEAT_FAR), ..bars[i].0 }).collect()
 }
+
+/// A beat's sound: its pitch classes, its timbre (band levels, dB) and its level (dB).
+struct BeatSound {
+    chroma: [f32; 12],
+    timbre: [f32; analysis::EDGE_BANDS],
+    level_db: f32,
+}
+
+/// `[from_s, to_s)` of `f` as one beat's sound.
+fn beat_sound(f: &Features, from_s: f64, to_s: f64) -> BeatSound {
+    let at = |t: f64| (((t - f.t0) * f.fps).round().max(0.0) as usize).min(f.power.len());
+    let (a, b) = (at(from_s), at(to_s).max(at(from_s) + 1).min(f.power.len()));
+    let frames = b.saturating_sub(a).max(1) as f32;
+    let timbre = core::array::from_fn(|k| f.timbre.get(a..b.min(f.timbre.len())).map_or(0.0, |t| t.iter().map(|x| analysis::Features::band_db(x[k])).sum::<f32>()) / frames);
+    let power = f.power.get(a..b).map_or(0.0, |p| p.iter().sum::<f32>()) / frames;
+    BeatSound { chroma: chroma_of(f, from_s, to_s), timbre, level_db: 10.0 * (power + 1e-12).log10() }
+}
+
+/// How alike two bars sound, beat by beat, 0..1: LoopMaker's chunk match (Shi and Mysore, CHI 2018), its harmony
+/// (chroma cosine), timbre (the bands' shape, their overall level aside) and level weighed 1 : 0.6 : 0.2.
+fn alike(x: &[BeatSound], y: &[BeatSound]) -> f32 {
+    let beat = |p: &BeatSound, q: &BeatSound| {
+        let norm = |c: &[f32; 12]| c.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let (np, nq) = (norm(&p.chroma), norm(&q.chroma));
+        let harmony = if np > 0.0 && nq > 0.0 { p.chroma.iter().zip(&q.chroma).map(|(a, b)| a * b).sum::<f32>() / (np * nq) } else { (np == nq) as u8 as f32 };
+        let d: Vec<f32> = p.timbre.iter().zip(&q.timbre).map(|(a, b)| a - b).collect();
+        let mean = d.iter().sum::<f32>() / d.len() as f32;
+        let shape = (d.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / d.len() as f32).sqrt();
+        let timbre = (-shape / REPEAT_TIMBRE_DB).exp();
+        let level = (-(p.level_db - q.level_db).abs() / REPEAT_LEVEL_DB).exp();
+        (REPEAT_HARMONY * harmony + REPEAT_TIMBRE * timbre + REPEAT_LEVEL * level) / (REPEAT_HARMONY + REPEAT_TIMBRE + REPEAT_LEVEL)
+    };
+    let n = x.len().min(y.len()).max(1);
+    x.iter().zip(y).map(|(p, q)| beat(p, q)).sum::<f32>() / n as f32
+}
+
+/// The farther repeat each end bar is measured for, bars (the nearer is 4): the loops the planner makes.
+const REPEAT_FAR: usize = 8;
+/// LoopMaker's weights of harmony, timbre and level.
+const REPEAT_HARMONY: f32 = 1.0;
+const REPEAT_TIMBRE: f32 = 0.6;
+const REPEAT_LEVEL: f32 = 0.2;
+/// A beat's timbre this far from another's, dB of band shape, or its level this far, is alike by 1/e.
+const REPEAT_TIMBRE_DB: f32 = 6.0;
+const REPEAT_LEVEL_DB: f32 = 3.0;
 
 /// The music at each end whose beats are kept, seconds.
 const END_BEATS_S: f64 = 60.0;
@@ -320,7 +369,7 @@ fn end_beats(refined: &[(f64, bool)], f: &Features, meter: i64) -> Vec<Beat> {
 }
 
 /// A bar and its pitch-class profile, while an end's changes are read.
-type ProfiledBar = (BarProfile, [f32; 12]);
+type ProfiledBar = (BarProfile, [f32; 12], Vec<BeatSound>);
 
 /// The mean pitch-class profile of `[from_s, to_s)`, its classes summing to 1.
 fn chroma_of(f: &Features, from_s: f64, to_s: f64) -> [f32; 12] {

@@ -839,6 +839,9 @@ pub struct BarProfile {
     pub pulse: f32,
     pub voice: f32,
     pub change: f32,
+    pub repeat1: Option<f32>,
+    pub repeat4: Option<f32>,
+    pub repeat8: Option<f32>,
 }
 
 #[cfg(feature = "ffi")]

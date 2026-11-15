@@ -71,6 +71,12 @@ pub struct BarProfile {
     /// How much the music changes as the bar starts, 0..1: the four bars after it against the four before, in chords,
     /// level, lows, beat and singing. A section starts where it peaks.
     pub change: f32,
+    /// How closely the next bar, and the bars 4 and 8 on, sound like this one, beat by beat, 0..1 (LoopMaker's chunk
+    /// match: harmony, timbre and level): a loop of 4 or 8 bars from here goes round as the song would go on, and bars
+    /// alike from one to the next go round whatever their length. None where there is no such bar at this end.
+    pub repeat1: Option<f32>,
+    pub repeat4: Option<f32>,
+    pub repeat8: Option<f32>,
 }
 
 /// A file's first or last 200 ms: its level, dBFS, and its spectrum in eight bands from 30 Hz to 9.6 kHz, dB.

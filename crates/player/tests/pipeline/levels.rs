@@ -104,7 +104,7 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
     let music_from = (SONG_S * 1000.0) as i64 - 5 * bar;
     // A kick in every bar of both ends: a DJ mix hands the bass over first.
     let kicking = |t: &TrackAnalysis| {
-        let bars: Vec<BarProfile> = (0..30).map(|i| BarProfile { start_ms: 250 + i * bar, level_db: 0.0, low_db: 0.0, pulse: 1.0, voice: 0.0, change: 0.0 }).collect();
+        let bars: Vec<BarProfile> = (0..30).map(|i| BarProfile { start_ms: 250 + i * bar, level_db: 0.0, low_db: 0.0, pulse: 1.0, voice: 0.0, change: 0.0, ..BarProfile::default() }).collect();
         TrackAnalysis { intro_bars: bars.clone(), outro_bars: bars, ..t.clone() }
     };
     let short_outro = kicking(&TrackAnalysis {
@@ -117,7 +117,7 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
     let long_intro = TrackAnalysis { intro_end_ms: 250 + 12 * bar, silence_start_ms: 100, ..same_tempo.clone() };
     // Sung to two seconds before its end, every bar loud.
     let sung_to = (SONG_S * 1000.0) as i64 - 2_000;
-    let outro_bars = (10..30).map(|i| BarProfile { start_ms: 250 + i * bar, level_db: 0.0, low_db: 0.0, pulse: 1.0, voice: if 250 + i * bar < sung_to { 1.0 } else { 0.0 }, change: 0.0 }).collect();
+    let outro_bars = (10..30).map(|i| BarProfile { start_ms: 250 + i * bar, level_db: 0.0, low_db: 0.0, pulse: 1.0, voice: if 250 + i * bar < sung_to { 1.0 } else { 0.0 }, change: 0.0, ..BarProfile::default() }).collect();
     let sung = TrackAnalysis { vocal_start_ms: 300, vocal_end_ms: sung_to, outro_bars, ..a.clone() };
     // Singing from its start, its first bar a hit, after a song sung to seven seconds before its end: no ride keeps
     // the two voices apart, the place for a quick handover.

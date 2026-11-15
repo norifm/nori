@@ -76,16 +76,22 @@ pub struct Features {
     pub voice: Vec<f32>,
     /// The voice band's loudness, dBFS, at the same frames.
     pub voice_loudness: Vec<f32>,
+    /// The frame's spectrum in [`EDGE_HZ`]'s eight bands, in [`Features::band_db`] steps: its timbre.
+    pub timbre: Vec<[u8; EDGE_BANDS]>,
     /// The file's first and last [`EDGE_FRAMES`] whole frames (about 200 ms); None for a shorter file.
     pub head: Option<Edge>,
     pub tail: Option<Edge>,
 }
 
+/// A frame's band levels kept in half-dB steps from this floor, dB.
+const TIMBRE_FLOOR_DB: f32 = -100.0;
+const TIMBRE_STEPS_PER_DB: f32 = 2.0;
+
 /// Frames a file's edge is measured over: 200 ms of hops.
 pub(crate) const EDGE_FRAMES: usize = 17;
 /// The edge's bands, Hz: from 30 to each of these.
 const EDGE_HZ: [f64; EDGE_BANDS + 1] = [30.0, 60.0, 150.0, 300.0, 600.0, 1_200.0, 2_400.0, 4_800.0, 9_600.0];
-const EDGE_BANDS: usize = 8;
+pub(crate) const EDGE_BANDS: usize = 8;
 
 /// A frame's power and its power in each of [`EDGE_HZ`]'s bands.
 type EdgeFrame = (f32, [f32; EDGE_BANDS]);
@@ -102,6 +108,11 @@ fn edge_of(frames: &[EdgeFrame]) -> Edge {
 }
 
 impl Features {
+    /// A [`Features::timbre`] step in dB, from silence at [`TIMBRE_FLOOR_DB`].
+    pub fn band_db(step: u8) -> f32 {
+        TIMBRE_FLOOR_DB + step as f32 / TIMBRE_STEPS_PER_DB
+    }
+
     /// The song's vocal activity curve, as stored.
     pub fn voice_curve(&self) -> vocal::VocalCurve {
         vocal::VocalCurve::from_raw(&self.voice, &self.voice_loudness, self.fps, self.t0)
@@ -290,6 +301,7 @@ impl Analyzer {
                 low_power: Vec::with_capacity(frames),
                 vocal: Vec::with_capacity(frames),
                 centroid: Vec::with_capacity(frames),
+                timbre: Vec::with_capacity(frames),
                 chroma: Vec::with_capacity(frames / CHROMA_EVERY + 2),
                 chroma_t0: 0.0,
                 chroma_step: (hop * CHROMA_EVERY) as f64 / sr,
@@ -465,11 +477,13 @@ impl Analyzer {
         }
         self.prev = self.level;
         // A whole frame (its window all inside the file) counts towards its edges.
+        let edge: [f32; EDGE_BANDS] = core::array::from_fn(|i| {
+            let (lo, hi) = self.edge_bins[i];
+            self.buf[lo..hi].iter().map(|c| c.norm_sqr()).sum::<f32>() / (hi - lo) as f32 * self.pow_norm
+        });
+        let step = |p: f32| ((10.0 * (p + 1e-12).log10() - TIMBRE_FLOOR_DB) * TIMBRE_STEPS_PER_DB).round().clamp(0.0, 255.0) as u8;
+        self.f.timbre.push(edge.map(step));
         if self.written >= self.n {
-            let edge: [f32; EDGE_BANDS] = core::array::from_fn(|i| {
-                let (lo, hi) = self.edge_bins[i];
-                self.buf[lo..hi].iter().map(|c| c.norm_sqr()).sum::<f32>() / (hi - lo) as f32 * self.pow_norm
-            });
             if self.whole_frames < EDGE_FRAMES {
                 self.head[self.whole_frames] = (total * self.pow_norm, edge);
             }
@@ -548,6 +562,7 @@ impl Analyzer {
                 low_power: Vec::new(),
                 vocal: Vec::new(),
                 centroid: Vec::new(),
+                timbre: Vec::new(),
                 chroma: Vec::new(),
                 chroma_t0: 0.0,
                 chroma_step,
@@ -585,6 +600,7 @@ impl Analyzer {
         for v in [&mut self.f.onset, &mut self.f.low_onset, &mut self.f.power, &mut self.f.low_power, &mut self.f.vocal, &mut self.f.centroid] {
             v.clear();
         }
+        self.f.timbre.clear();
         self.f.chroma.clear();
         self.f.pitch.iter_mut().for_each(|v| *v = 0.0);
         self.f.tuning_cs = (0.0, 0.0);

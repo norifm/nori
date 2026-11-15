@@ -51,7 +51,7 @@ const BARS: [&str; 5] = ["intro_bars", "outro_bars", "intro_beats", "outro_beats
 
 pub fn put(c: &Connection, a: &TrackAnalysis) -> rusqlite::Result<()> {
     let marks: Vec<String> = (1..=COLUMNS.len() + BARS.len()).map(|i| format!("?{i}")).collect();
-    let bars = [encode_bars(&a.intro_bars), encode_bars(&a.outro_bars), encode_beats(&a.intro_beats), encode_beats(&a.outro_beats), encode_edges(a)];
+    let bars = [encode_bars(&a.intro_bars, a.analysis_version), encode_bars(&a.outro_bars, a.analysis_version), encode_beats(&a.intro_beats), encode_beats(&a.outro_beats), encode_edges(a)];
     let mut all: Vec<&dyn rusqlite::ToSql> = values(a).to_vec();
     all.extend(bars.iter().map(|b| b as &dyn rusqlite::ToSql));
     c.prepare_cached(&format!("INSERT OR REPLACE INTO track_analysis(server, {}, {}) VALUES(sid(), {})", COLUMNS.join(", "), BARS.join(", "), marks.join(",")))?
@@ -63,7 +63,7 @@ pub fn get(c: &Connection, song_id: &str) -> rusqlite::Result<Option<TrackAnalys
     c.prepare_cached(&format!("SELECT {}, {} FROM track_analysis WHERE server=sid() AND song_id=?1", COLUMNS.join(", "), BARS.join(", ")))?
         .query_row([song_id], |r| {
             let mut a = row(r)?;
-            let blob = |i: usize| r.get::<_, Vec<u8>>(COLUMNS.len() + i).map(|b| decode_bars(&b)).unwrap_or_default();
+            let blob = |i: usize| r.get::<_, Vec<u8>>(COLUMNS.len() + i).map(|b| decode_bars(&b, a.analysis_version)).unwrap_or_default();
             (a.intro_bars, a.outro_bars) = (blob(0), blob(1));
             let beats = |i: usize| r.get::<_, Vec<u8>>(COLUMNS.len() + i).map(|b| decode_beats(&b)).unwrap_or_default();
             (a.intro_beats, a.outro_beats) = (beats(2), beats(3));
@@ -73,29 +73,37 @@ pub fn get(c: &Connection, song_id: &str) -> rusqlite::Result<Option<TrackAnalys
         .optional()
 }
 
-/// Bytes per stored bar: its start (ms, i32) and its level, lows, pulse, voice and change (f32 each), as measured.
-const BAR_BYTES: usize = 24;
+/// Bytes per stored bar: its start (ms, i32) and its level, lows, pulse, voice, change and repeats 1, 4 and 8 bars on
+/// (f32 each, NaN for none), as measured; before analysis version 27, without the repeats.
+const BAR_BYTES: usize = 36;
+const BAR_BYTES_26: usize = 24;
+const REPEATS_FROM_VERSION: i32 = 27;
 
-fn encode_bars(bars: &[BarProfile]) -> Vec<u8> {
+/// `bars` as analysis `version` stores them.
+fn encode_bars(bars: &[BarProfile], version: i32) -> Vec<u8> {
+    let size = if version < REPEATS_FROM_VERSION { BAR_BYTES_26 } else { BAR_BYTES };
     bars.iter()
         .flat_map(|b| {
             let mut x = [0u8; BAR_BYTES];
             x[..4].copy_from_slice(&(b.start_ms.clamp(i32::MIN as i64, i32::MAX as i64) as i32).to_le_bytes());
-            for (i, v) in [b.level_db, b.low_db, b.pulse, b.voice, b.change].into_iter().enumerate() {
+            let repeat = |r: Option<f32>| r.unwrap_or(f32::NAN);
+            for (i, v) in [b.level_db, b.low_db, b.pulse, b.voice, b.change, repeat(b.repeat1), repeat(b.repeat4), repeat(b.repeat8)].into_iter().enumerate() {
                 x[4 + 4 * i..8 + 4 * i].copy_from_slice(&v.to_le_bytes());
             }
-            x
+            x.into_iter().take(size)
         })
         .collect()
 }
 
-fn decode_bars(b: &[u8]) -> Vec<BarProfile> {
+/// The bars stored in `b` by analysis `version`.
+fn decode_bars(b: &[u8], version: i32) -> Vec<BarProfile> {
     let f = |x: &[u8], i: usize| f32::from_le_bytes([x[4 + 4 * i], x[5 + 4 * i], x[6 + 4 * i], x[7 + 4 * i]]);
-    b.as_chunks::<BAR_BYTES>()
-        .0
-        .iter()
-        .map(|x| BarProfile { start_ms: i32::from_le_bytes([x[0], x[1], x[2], x[3]]) as i64, level_db: f(x, 0), low_db: f(x, 1), pulse: f(x, 2), voice: f(x, 3), change: f(x, 4) })
-        .collect()
+    let bar = |x: &[u8]| BarProfile { start_ms: i32::from_le_bytes([x[0], x[1], x[2], x[3]]) as i64, level_db: f(x, 0), low_db: f(x, 1), pulse: f(x, 2), voice: f(x, 3), change: f(x, 4), ..BarProfile::default() };
+    let repeat = |v: f32| (!v.is_nan()).then_some(v);
+    if version < REPEATS_FROM_VERSION {
+        return b.as_chunks::<BAR_BYTES_26>().0.iter().map(|x| bar(x)).collect();
+    }
+    b.as_chunks::<BAR_BYTES>().0.iter().map(|x| BarProfile { repeat1: repeat(f(x, 5)), repeat4: repeat(f(x, 6)), repeat8: repeat(f(x, 7)), ..bar(x) }).collect()
 }
 
 /// Bytes per stored beat: its time (ms, i32) and flags (bit 0 downbeat, bit 1 sure).
@@ -284,11 +292,22 @@ mod tests {
     #[test]
     fn bar_profiles_come_back() {
         let c = nori_db::open("", "s").unwrap();
-        let bar = |i: i64| BarProfile { start_ms: 1_000 + 2_000 * i, level_db: -3.5 - i as f32, low_db: -40.0, pulse: 0.25 * i as f32, voice: 1.0 - 0.25 * i as f32, change: 0.1 * i as f32 };
+        let bar = |i: i64| BarProfile {
+            start_ms: 1_000 + 2_000 * i,
+            level_db: -3.5 - i as f32,
+            low_db: -40.0,
+            pulse: 0.25 * i as f32,
+            voice: 1.0 - 0.25 * i as f32,
+            change: 0.1 * i as f32,
+            repeat1: (i > 0).then_some(0.3),
+            repeat4: (i % 2 == 0).then_some(0.9 - 0.1 * i as f32),
+            repeat8: (i == 1).then_some(0.5),
+        };
         let beat = |i: i64| Beat { at_ms: 500 * i - 250, downbeat: i % 4 == 0, sure: i % 3 != 0 };
         let edge = |db: f32| Edge { db, bands: (0..8).map(|i| db - i as f32).collect() };
         let a = TrackAnalysis {
             song_id: "a".into(),
+            analysis_version: crate::ANALYSIS_VERSION,
             intro_bars: (0..4).map(bar).collect(),
             outro_bars: vec![bar(2)],
             intro_beats: (0..9).map(beat).collect(),
@@ -303,8 +322,15 @@ mod tests {
         assert_eq!((&got.intro_beats, &got.outro_beats), (&a.intro_beats, &a.outro_beats), "beats come back as they went in");
         assert_eq!((&got.intro_bars, &got.outro_bars), (&a.intro_bars, &a.outro_bars), "bars come back as measured");
         assert_eq!((&got.head, &got.tail), (&a.head, &a.tail), "edges come back as measured");
-        put(&c, &TrackAnalysis { song_id: "b".into(), head: None, ..a }).unwrap();
+        put(&c, &TrackAnalysis { song_id: "b".into(), head: None, ..a.clone() }).unwrap();
         assert_eq!(get(&c, "b").unwrap().map(|b| (b.head, b.tail)), Some((None, None)), "half measured is not measured");
+        // A row measured before bars kept their repeats: 24 bytes a bar, read as such.
+        put(&c, &TrackAnalysis { analysis_version: REPEATS_FROM_VERSION - 1, ..a.clone() }).unwrap();
+        let stored: Vec<u8> = c.query_row("SELECT intro_bars FROM track_analysis WHERE song_id = 'a'", [], |r| r.get(0)).unwrap();
+        assert_eq!(stored.len(), 4 * BAR_BYTES_26);
+        let got = get(&c, "a").unwrap().expect("the row");
+        let unrepeated: Vec<BarProfile> = a.intro_bars.iter().map(|b| BarProfile { repeat1: None, repeat4: None, repeat8: None, ..*b }).collect();
+        assert_eq!(got.intro_bars, unrepeated, "old bars come back as they were measured");
     }
 
     #[test]
