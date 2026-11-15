@@ -18,13 +18,15 @@ impl Client {
     }
 
     /// Stars or unstars: the mark is shown at once via `marked`, then the write is sent (queued offline),
-    /// or, where the account can't keep favorites, the item is kept on this device (favorites.rs). An
-    /// item kept here from before is unstarred here, and on the account only when it lists it. A refusal
-    /// restores the previous mark and returns the error.
+    /// or, where the account can't keep favorites or has nowhere for one of this kind, the item is kept
+    /// on this device (favorites.rs). An item kept here from before is unstarred here, and on the account
+    /// only when it lists it. A refusal restores the previous mark and returns the error.
     pub async fn star(&self, kind: Starrable, id: String, on: bool, marked: Arc<dyn StarsShown>) -> NetResult<()> {
         let m = self.core.stars.lock().mark(kind, id.clone(), on);
         marked.marks(m.marks);
-        let sent = if self.core.rules().stars_here {
+        let provider = self.core.provider();
+        let nowhere = || provider.favorites_here() && !provider.keeps_favorites(kind);
+        let sent = if self.core.rules().stars_here || nowhere() {
             self.star_here(kind, &id, on).await
         } else if !on && self.core.here.lock().has(kind, &id) {
             let listed = self.core.listed.lock().has(kind, &id);
@@ -33,7 +35,11 @@ impl Client {
                 done => done,
             }
         } else {
-            self.write(Write::Star { kind, id: id.clone(), on }).await
+            match self.write(Write::Star { kind, id: id.clone(), on }).await {
+                // The account said only now that it has nowhere for one of this kind.
+                Err(_) if nowhere() => self.star_here(kind, &id, on).await,
+                sent => sent,
+            }
         };
         if sent.is_err() {
             let restored = self.core.stars.lock().restore(kind, id.clone(), on, m.previous);

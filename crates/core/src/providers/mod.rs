@@ -58,6 +58,12 @@ pub trait Provider: Send + Sync {
         false
     }
 
+    /// Whether the account open keeps favorites of `kind`. One it has nowhere for is kept on this
+    /// device, where the provider keeps any ([`Provider::favorites_here`]).
+    fn keeps_favorites(&self, _kind: crate::client::Starrable) -> bool {
+        true
+    }
+
     /// `read` asked of the source now; None when it has nothing for such a read (the empty page). How
     /// its answer is kept, how long it is fresh and what the session lays over it are the core's
     /// (cache_policy.rs).
