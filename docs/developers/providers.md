@@ -61,7 +61,9 @@ A provider only fetches and sends. Everything else is the core's page store
   the one this session showed (the queue, a download, a kept page), else the source's page of the item.
   Seals then show on songs, albums and artists as an account's would, and the favorites list the
   source's with those kept here after them, each item once. Signed in, seals go to the account; one kept
-  here from before is unsealed here, and on the account too when it lists it. They are not indexed or
+  here from before is unsealed here, and on the account too when it lists it. A kind of item the
+  account has nowhere for (`Provider::keeps_favorites`; a plugin's `write` answering `unsupported`: an
+  album or an artist on YouTube Music) is kept here while signed in too. They are not indexed or
   synced, go with the profile when it is removed, and are in a backup.
 - A write makes the pages of its kind stale (`cache_policy::stale`). They still show, offline too, until
   the source answers anew.

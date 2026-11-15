@@ -63,6 +63,11 @@ impl Provider for Fake {
         true
     }
 
+    /// Its account has hearts for songs alone.
+    fn keeps_favorites(&self, kind: Starrable) -> bool {
+        kind == Starrable::Song
+    }
+
     async fn read(&self, _: &Client, read: Read) -> NetResult<Option<Answer>> {
         Ok(match read {
             Read::StarredItems => {
@@ -368,5 +373,20 @@ mod tests {
         star(&c, Starrable::Song, "f-2", false).unwrap();
         assert!(fake.hearts.lock().is_empty(), "the account listed it");
         assert!(favorites(&c).is_empty());
+    }
+
+    /// Signed in, a seal the account has nowhere for (an album's) is kept on this device, and goes
+    /// from here; nothing of it is sent.
+    #[test]
+    fn signed_in_a_seal_the_account_cant_keep_is_kept_here() {
+        let (c, fake) = fake();
+        block(c.sign_in("let me in".into()));
+        star(&c, Starrable::Song, "f-2", true).unwrap();
+        star(&c, Starrable::Album, "f-al", true).unwrap();
+        assert_eq!(*fake.hearts.lock(), ["f-2"], "the album went nowhere");
+        assert!(c.core.starred(Starrable::Album, "f-al", false));
+        assert_eq!(favorites(&c), ["album f-al", "f-2 Two"]);
+        star(&c, Starrable::Album, "f-al", false).unwrap();
+        assert_eq!(favorites(&c), ["f-2 Two"]);
     }
 }

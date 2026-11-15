@@ -39,12 +39,14 @@ pub(crate) struct PluginProvider {
     open: RwLock<SavedServer>,
     /// Where its account stands, as it last said (asked with its rules).
     account: RwLock<AccountState>,
+    /// The kinds of favorite the account said it has nowhere for, since its rules were last asked.
+    unkept: RwLock<Vec<Starrable>>,
 }
 
 impl PluginProvider {
     pub(crate) fn new(id: &str, plugins: Arc<Plugins>) -> Option<PluginProvider> {
         let worker = plugins.worker(id)?;
-        Some(PluginProvider { id: id.to_string(), plugins, worker, info: std::sync::OnceLock::new(), rules: RwLock::new(None), open: RwLock::default(), account: RwLock::new(AccountState::SignedOut) })
+        Some(PluginProvider { id: id.to_string(), plugins, worker, info: std::sync::OnceLock::new(), rules: RwLock::new(None), open: RwLock::default(), account: RwLock::new(AccountState::SignedOut), unkept: RwLock::default() })
     }
 
     fn kind(&self) -> ServerKind {
@@ -70,6 +72,7 @@ impl PluginProvider {
             Some(w::AccountState::Ended) => AccountState::Ended,
             Some(w::AccountState::SignedOut) | None => AccountState::SignedOut,
         };
+        self.unkept.write().clear();
         let ahead = said.as_ref().and_then(|r| r.ahead).map(|a| a as usize);
         let rules = rules(said, guest);
         *self.rules.write() = Some((rules.clone(), ahead));
@@ -294,6 +297,10 @@ impl Provider for PluginProvider {
         true
     }
 
+    fn keeps_favorites(&self, kind: Starrable) -> bool {
+        !self.unkept.read().contains(&kind)
+    }
+
     async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>> {
         if matches!(read, Read::StarredItems) && self.rules.read().as_ref().is_some_and(|(r, _)| r.stars_here) {
             return Ok(None);
@@ -305,8 +312,18 @@ impl Provider for PluginProvider {
     }
 
     async fn write(&self, client: &Client, c: Write) -> NetResult<()> {
+        let star = match &c {
+            Write::Star { kind, .. } => Some(*kind),
+            _ => None,
+        };
         let Some(c) = change(c) else { return Err(super::nowhere("place for this change")) };
         let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_write(s, &c)).await.ok_or_else(stopped)?;
+        if let (Some(kind), Err(t::Error { kind: t::ErrorKind::Unsupported, .. })) = (star, &said) {
+            let mut unkept = self.unkept.write();
+            if !unkept.contains(&kind) {
+                unkept.push(kind);
+            }
+        }
         self.heard(client, said)
     }
 
