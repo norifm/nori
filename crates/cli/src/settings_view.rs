@@ -1092,7 +1092,6 @@ fn setting_words(name: &str, p: &StoredPrefs, s: &SettingsState) -> (String, Str
             };
             return ("Better beat detection".into(), state);
         }
-        "crossfadeKeepAlbums" => "Keep albums gapless",
         "skipExplicit" => "Skip explicit songs",
         "autoFill" => "When the queue ends",
         "autoFillBasis" => "Chosen by",

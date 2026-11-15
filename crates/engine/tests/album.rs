@@ -1,5 +1,5 @@
-//! With AutoMix (or a crossfade) and "keep albums gapless" on, an album in order plays sample-exact
-//! gapless however its plans came about; other joins (another album, shuffle) still mix. Runs over the
+//! With AutoMix (or a crossfade), an album in order whose songs run on into each other plays sample-exact
+//! gapless however its plans came about; other joins (another album, shuffle, songs that fade out) still mix. Runs over the
 //! test's own core.
 
 use std::collections::HashMap;
@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use common::card::{Card, Pull};
 use common::{Stepper, Virtual};
-use nori_core::settings_store::{APPLY_AUDIO, REPLAN};
 use nori_core::{Core, Song};
 use nori_engine::core::{settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Measurer};
 use nori_engine::{Body, ByteSource, Config, Engine, State, Store};
@@ -151,16 +150,6 @@ impl Rig {
         Rig { engine, time: Stepper::new(clock, card.pull.clone()), card, core, store, analyses, measurer, songs: made, _dir: dir }
     }
 
-    /// Sets a setting by name and relays its effects.
-    fn set(&self, name: &str, value: &str) {
-        let effect = self.core.session.settings.edit_by_name(name, value).unwrap_or_else(|| panic!("{name} is a setting")).effect;
-        if effect & APPLY_AUDIO != 0 {
-            self.engine.set_settings(settings(&self.core.session.settings.current().unwrap(), Default::default()));
-        }
-        if effect & REPLAN != 0 {
-            self.engine.replan();
-        }
-    }
 
     fn until(&self, secs: u64, mut done: impl FnMut(&Rig) -> bool) -> bool {
         self.time.until(Duration::from_secs(secs), || {
@@ -394,28 +383,18 @@ fn joins_whole() {
     let (_, order) = rig.to_the_end();
     // a1's last seconds, then a2 and a3 whole.
     rig.heard_as(&order, from, 0, &[true, true], 0);
-
-    // Keep albums switched on joins whole.
-    // Well before a1's mix up to just before it is heard (at 28 s).
-    for at_ms in [22_000, 26_000, 27_500] {
-        keep_albums_switched_on_at(at_ms);
-    }
 }
 
-fn keep_albums_switched_on_at(at_ms: i64) {
-    let rig = Rig::new(&format!("album-switched-{at_ms}"), &ALBUM, true, 0, Measured::Before, false);
-    rig.set("crossfadeKeepAlbums", "false");
-    // The place read as a screen reads it, so the switch lands where asked.
-    rig.engine.position_updates(Some(std::time::Duration::from_millis(100)));
-    rig.engine.play_at(0, 0);
-    // a1 is planned as a mix, then albums are kept gapless.
-    assert!(rig.until(40, |r| r.engine.status().position_ms >= at_ms), "{:?}", rig.engine.status());
-    assert!(!rig.engine.status().mixing, "switched at {} ms, before the mix is heard", rig.engine.status().position_ms);
-    assert!(rig.core.session.planner.transition_note("a1").is_some_and(|n| n.kind != nori_player::types::TransitionKind::Gapless), "a1 is planned as a mix first: {:?}", rig.core.session.planner.transition_note("a1"));
-    rig.set("crossfadeKeepAlbums", "true");
-    let (mixed, order) = rig.to_the_end();
-    rig.heard_as(&order, 0, 0, &[true, true], 1);
-    assert!(!mixed, "nothing mixed");
+/// An album whose songs fade out does not run on into its next song: they mix like any pair, measured before it
+/// plays or while it does.
+#[test]
+fn an_album_that_does_not_run_on_mixes() {
+    for (name, measured) in [("before", Measured::Before), ("playing", Measured::WhilePlaying)] {
+        let rig = Rig::tagged(&format!("album-faded-{name}"), &ALBUM, true, 0, measured, false, &Tags { quiet_ends: true, ..Tags::default() });
+        rig.engine.play_at(0, 0);
+        let (mixed, _) = rig.to_the_end();
+        assert!(mixed, "{name}: the faded album's songs are mixed");
+    }
 }
 
 /// Gapless across the discs of a double album.
@@ -484,7 +463,7 @@ fn odd_tags_play_gapless() {
     fn listed_first(v: &mut [Song]) {
         (v[0].track, v[0].disc_number, v[1].track, v[2].track) = (2, 0, 1, 3);
     }
-    let stories: [(&str, Tags); 7] = [
+    let stories: [(&str, Tags); 6] = [
         ("listed-first", Tags { tag: listed_first, ..Tags::default() }),
         // 1, 2, 4: a missing track.
         ("gap", Tags { tag: gap, ..Tags::default() }),
@@ -492,8 +471,6 @@ fn odd_tags_play_gapless() {
         ("one-track", Tags { tag: one_track_missing, ..Tags::default() }),
         ("one-disc", Tags { tag: one_disc_missing, ..Tags::default() }),
         ("numbered-on", Tags { tag: numbered_on, ..Tags::default() }),
-        // Near-silent endings make a wrong mix sound like a late start, as reported.
-        ("quiet-ends", Tags { tag: no_tracks, quiet_ends: true, ..Tags::default() }),
     ];
     for (name, tags) in stories {
         let rig = Rig::tagged(&format!("album-tags-{name}"), &ALBUM, true, 0, Measured::Before, false, &tags);

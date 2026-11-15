@@ -1,6 +1,6 @@
 //! The `track_analysis` and `vocal_curve` tables, and the streaming analyser that feeds them.
 
-use nori_model::{BarProfile, Beat, TrackAnalysis};
+use nori_model::{BarProfile, Beat, Edge, TrackAnalysis};
 use nori_player::automix::vocal::VocalCurve;
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -46,12 +46,12 @@ columns! {
     intro_grid_from_ms or 0, intro_grid_to_ms or 0, outro_grid_from_ms or 0, outro_grid_to_ms or 0, stop_ms or 0,
 }
 
-/// The bar profile and beat columns, after [`COLUMNS`].
-const BARS: [&str; 4] = ["intro_bars", "outro_bars", "intro_beats", "outro_beats"];
+/// The bar profile, beat and edge columns, after [`COLUMNS`].
+const BARS: [&str; 5] = ["intro_bars", "outro_bars", "intro_beats", "outro_beats", "edges"];
 
 pub fn put(c: &Connection, a: &TrackAnalysis) -> rusqlite::Result<()> {
     let marks: Vec<String> = (1..=COLUMNS.len() + BARS.len()).map(|i| format!("?{i}")).collect();
-    let bars = [encode_bars(&a.intro_bars), encode_bars(&a.outro_bars), encode_beats(&a.intro_beats), encode_beats(&a.outro_beats)];
+    let bars = [encode_bars(&a.intro_bars), encode_bars(&a.outro_bars), encode_beats(&a.intro_beats), encode_beats(&a.outro_beats), encode_edges(a)];
     let mut all: Vec<&dyn rusqlite::ToSql> = values(a).to_vec();
     all.extend(bars.iter().map(|b| b as &dyn rusqlite::ToSql));
     c.prepare_cached(&format!("INSERT OR REPLACE INTO track_analysis(server, {}, {}) VALUES(sid(), {})", COLUMNS.join(", "), BARS.join(", "), marks.join(",")))?
@@ -67,6 +67,7 @@ pub fn get(c: &Connection, song_id: &str) -> rusqlite::Result<Option<TrackAnalys
             (a.intro_bars, a.outro_bars) = (blob(0), blob(1));
             let beats = |i: usize| r.get::<_, Vec<u8>>(COLUMNS.len() + i).map(|b| decode_beats(&b)).unwrap_or_default();
             (a.intro_beats, a.outro_beats) = (beats(2), beats(3));
+            (a.head, a.tail) = r.get::<_, Vec<u8>>(COLUMNS.len() + 4).map(|b| decode_edges(&b)).unwrap_or_default();
             Ok(a)
         })
         .optional()
@@ -114,6 +115,24 @@ fn decode_beats(b: &[u8]) -> Vec<Beat> {
     b.as_chunks::<BEAT_BYTES>().0.iter().map(|x| Beat { at_ms: i32::from_le_bytes([x[0], x[1], x[2], x[3]]) as i64, downbeat: x[4] & 1 != 0, sure: x[4] & 2 != 0 }).collect()
 }
 
+
+/// Floats per stored edge: its level and its bands.
+const EDGE_FLOATS: usize = 9;
+
+/// Both edges as little-endian f32s, head then tail; empty when either was not measured.
+fn encode_edges(a: &TrackAnalysis) -> Vec<u8> {
+    let (Some(h), Some(t)) = (&a.head, &a.tail) else { return Vec::new() };
+    [h, t].iter().flat_map(|e| core::iter::once(e.db).chain(e.bands.iter().copied()).take(EDGE_FLOATS)).flat_map(f32::to_le_bytes).collect()
+}
+
+fn decode_edges(b: &[u8]) -> (Option<Edge>, Option<Edge>) {
+    let v: Vec<f32> = b.as_chunks::<4>().0.iter().map(|x| f32::from_le_bytes(*x)).collect();
+    if v.len() != 2 * EDGE_FLOATS {
+        return (None, None);
+    }
+    let edge = |e: &[f32]| Some(Edge { db: e[0], bands: e[1..].to_vec() });
+    (edge(&v[..EDGE_FLOATS]), edge(&v[EDGE_FLOATS..]))
+}
 
 /// Stores a fresh classical analysis, keeping the Beat This! grids and "model has looked" marks of the stored row
 /// (`beats::carry`). Returns the row as stored.
@@ -267,12 +286,25 @@ mod tests {
         let c = nori_db::open("", "s").unwrap();
         let bar = |i: i64| BarProfile { start_ms: 1_000 + 2_000 * i, level_db: -3.5 - i as f32, low_db: -40.0, pulse: 0.25 * i as f32, voice: 1.0 - 0.25 * i as f32, change: 0.1 * i as f32 };
         let beat = |i: i64| Beat { at_ms: 500 * i - 250, downbeat: i % 4 == 0, sure: i % 3 != 0 };
-        let a = TrackAnalysis { song_id: "a".into(), intro_bars: (0..4).map(bar).collect(), outro_bars: vec![bar(2)], intro_beats: (0..9).map(beat).collect(), outro_beats: vec![beat(7)], ..TrackAnalysis::default() };
+        let edge = |db: f32| Edge { db, bands: (0..8).map(|i| db - i as f32).collect() };
+        let a = TrackAnalysis {
+            song_id: "a".into(),
+            intro_bars: (0..4).map(bar).collect(),
+            outro_bars: vec![bar(2)],
+            intro_beats: (0..9).map(beat).collect(),
+            outro_beats: vec![beat(7)],
+            head: Some(edge(-20.0)),
+            tail: Some(edge(-33.5)),
+            ..TrackAnalysis::default()
+        };
         put(&c, &a).unwrap();
         let got = get(&c, "a").unwrap().expect("the row");
         assert_eq!((got.intro_bars.len(), got.outro_bars.len()), (4, 1));
         assert_eq!((&got.intro_beats, &got.outro_beats), (&a.intro_beats, &a.outro_beats), "beats come back as they went in");
         assert_eq!((&got.intro_bars, &got.outro_bars), (&a.intro_bars, &a.outro_bars), "bars come back as measured");
+        assert_eq!((&got.head, &got.tail), (&a.head, &a.tail), "edges come back as measured");
+        put(&c, &TrackAnalysis { song_id: "b".into(), head: None, ..a }).unwrap();
+        assert_eq!(get(&c, "b").unwrap().map(|b| (b.head, b.tail)), Some((None, None)), "half measured is not measured");
     }
 
     #[test]

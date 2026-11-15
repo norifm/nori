@@ -631,7 +631,7 @@ fn simulated(songs: &[(&str, &[i16])], prefs: TransitionPrefs) -> Vec<i16> {
 }
 
 fn crossfade(secs: i32) -> TransitionPrefs {
-    TransitionPrefs { crossfade_s: secs, keep_albums: true, ..prefs_off() }
+    TransitionPrefs { crossfade_s: secs, ..prefs_off() }
 }
 
 #[test]
@@ -3083,7 +3083,7 @@ fn next_spam_keeps_playing() {
             }
         }
         let mut app = sim::App::new();
-        app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() };
+        app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() };
         for (id, _) in &songs {
             app.analyses.insert(id.clone(), measured(id, 120.0, ms));
         }
@@ -3131,7 +3131,7 @@ fn seek_near_the_end_through_the_fade() {
     let songs: Vec<Vec<i16>> = (0..3).map(|k| music(40.0, 90 + k)).collect();
     let files: Vec<(String, Vec<u8>, i64)> = ["a", "b", "c"].iter().zip(&songs).map(|(id, s)| (id.to_string(), wav(s), 40_000)).collect();
     let mut app = sim::App::new();
-    app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() };
+    app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() };
     let extra = Extra::default();
     for id in ["a", "b", "c"] {
         extra.server.slow.lock().push((id.into(), Duration::from_millis(300)));
@@ -3587,7 +3587,7 @@ fn shuffle_near_mix_keeps_audio() {
         })
     }) {
         let what = format!("shuffle {when_ms} ms from the mix, holding {hold_ms} ms, seed {seed}, notification delayed {delay_ms} ms");
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
         for (id, _) in songs {
             live.0.lock().analyses.insert(id.into(), gridless(id, 40_000, if id == "a" { 30_000 } else { 0 }, 0));
         }
@@ -3676,7 +3676,7 @@ enum Meddle {
 #[test]
 fn mixes_keep_their_length() {
     let (a, b) = (common::sine(RATE, 200.0, 40.0, 6_000.0), common::sine(RATE, 900.0, 40.0, 6_000.0));
-    let automix = |on: bool| TransitionPrefs { auto_mix: on, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() };
+    let automix = |on: bool| TransitionPrefs { auto_mix: on, auto_mix_max_s: 12, ..prefs_off() };
     use Meddle::*;
     // (ms heard from the mix's start when it comes (before it: negative), what comes, what the device holds)
     let cases = [
@@ -3796,7 +3796,7 @@ fn mixramp_fades_out_after_seek() {
     for (head_ms, before_ms, hold_ms, end_ms, meanwhile) in cases {
         let what = format!("head {head_ms} ms, seek {before_ms} ms before the mix, the device holding {hold_ms} ms, the music to {end_ms} ms, {meanwhile:?}");
         let a = &a[..end_ms as usize * 48 * 2];
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
         {
             let mut app = live.0.lock();
             app.analyses.insert("a".into(), gridless("a", 40_000, 30_000, 0));
@@ -3848,7 +3848,7 @@ fn seek_into_ending_lands() {
     let (a, b) = (music(40.0, 80), music(40.0, 81));
     for (to_ms, fade_ms) in [(4_100, 0), (4_100, 150), (12_000, 150), (24_000, 0), (24_000, 150), (31_000, 150)] {
         let what = format!("to {to_ms} ms, a {fade_ms} ms dip");
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
         {
             let mut app = live.0.lock();
             app.analyses.insert("a".into(), gridless("a", 40_000, 30_000, 0));

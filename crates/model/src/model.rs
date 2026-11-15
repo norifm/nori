@@ -14,7 +14,7 @@ pub struct Listen {
 }
 
 // Player types, redeclared below for uniffi.
-pub use nori_player::types::{AutoMixSettings, BarProfile, Beat, EqBand, EqKind, FadeCurve, MixStyle, NamedPreset, PresetKind, TrackAnalysis, TransitionKind};
+pub use nori_player::types::{AutoMixSettings, BarProfile, Beat, Edge, EqBand, EqKind, FadeCurve, MixStyle, NamedPreset, PresetKind, TrackAnalysis, TransitionKind};
 
 /// `starred` is a timestamp on the wire and a bool once stored.
 fn flag<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
@@ -810,6 +810,8 @@ pub struct TrackAnalysis {
     pub outro_bars: Vec<BarProfile>,
     pub intro_beats: Vec<Beat>,
     pub outro_beats: Vec<Beat>,
+    pub head: Option<Edge>,
+    pub tail: Option<Edge>,
     pub analysed_ms: i64,
 }
 
@@ -819,6 +821,13 @@ pub struct Beat {
     pub at_ms: i64,
     pub downbeat: bool,
     pub sure: bool,
+}
+
+#[cfg(feature = "ffi")]
+#[uniffi::remote(Record)]
+pub struct Edge {
+    pub db: f32,
+    pub bands: Vec<f32>,
 }
 
 #[cfg(feature = "ffi")]
@@ -841,7 +850,7 @@ pub struct AutoMixSettings {
     pub bass_swap: bool,
     pub filter_effects: bool,
     pub keep_pitch: bool,
-    pub same_album_in_order: bool,
+    pub gapless: bool,
     pub match_loudness: bool,
     pub out_tag_bpm: f32,
     pub in_tag_bpm: f32,
@@ -958,7 +967,6 @@ pub struct TransitionPrefs {
     pub bass_swap: bool,
     pub filter_effects: bool,
     pub keep_pitch: bool,
-    pub keep_albums: bool,
     pub replay_gain: bool,
     pub style: MixStyle,
 }

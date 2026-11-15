@@ -73,6 +73,13 @@ pub struct BarProfile {
     pub change: f32,
 }
 
+/// A file's first or last 200 ms: its level, dBFS, and its spectrum in eight bands from 30 Hz to 9.6 kHz, dB.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Edge {
+    pub db: f32,
+    pub bands: Vec<f32>,
+}
+
 /// AutoMix analysis of one track (a `track_analysis` row). Times are ms from the file's start. Beat `n`
 /// is at `beat_offset_ms + n * 60000 / bpm`; beats with `n % beats_per_bar == downbeat_phase` start a bar.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -171,6 +178,9 @@ pub struct TrackAnalysis {
     /// The beats of each end's first and last minute of music, as heard: a tempo that drifts is followed beat by beat.
     pub intro_beats: Vec<Beat>,
     pub outro_beats: Vec<Beat>,
+    /// The file's first and last 200 ms, where it meets the songs before and after it on an album; None unmeasured.
+    pub head: Option<Edge>,
+    pub tail: Option<Edge>,
     /// Analysis time, ms since the epoch.
     pub analysed_ms: i64,
 }
@@ -218,8 +228,9 @@ pub struct AutoMixSettings {
     pub filter_effects: bool,
     /// Time-stretch (true) or varispeed (moves pitch, so held to 2 %).
     pub keep_pitch: bool,
-    /// The tracks are consecutive on one album played in order: no transition.
-    pub same_album_in_order: bool,
+    /// The pair plays gapless, no transition: songs of one album running on into each other
+    /// ([`crate::transitions::Pick::gapless`]), or as a plugin says.
+    pub gapless: bool,
     /// Trim the incoming track to the outgoing one's loudness (off when ReplayGain levels them).
     pub match_loudness: bool,
     /// Tag BPM of the outgoing track (0 unknown), to settle half/double tempo errors.
@@ -240,7 +251,7 @@ impl Default for AutoMixSettings {
             bass_swap: true,
             filter_effects: true,
             keep_pitch: true,
-            same_album_in_order: false,
+            gapless: false,
             match_loudness: false,
             out_tag_bpm: 0.0,
             in_tag_bpm: 0.0,

@@ -194,12 +194,9 @@ impl Planner {
         drop(p);
         let mixing = self.mixing.lock().clone();
         let mut chosen = chosen;
-        // nori mixes a pair unless they follow on an album in order.
-        if let Some(mixes) = mixing.as_ref().and_then(|m| m.mixes(&o.id, &n.id, !chosen.settings.same_album_in_order)) {
-            chosen.settings.same_album_in_order = !mixes;
-        }
-        // Database reads happen without the planner locked.
-        let (a, b) = if prefs.auto_mix {
+        // Database reads happen without the planner locked: the analyses to plan with, and for an album's songs where
+        // their files meet, even without AutoMix.
+        let (a, b) = if prefs.auto_mix || chosen.on_album {
             self.db.get().map_or((None, None), |db| {
                 let c = db.lock();
                 (get_with_lyrics(&c, &o.id).ok().flatten(), get_with_lyrics(&c, &n.id).ok().flatten())
@@ -207,6 +204,10 @@ impl Planner {
         } else {
             (None, None)
         };
+        // nori mixes a pair unless they run on into each other on an album; a plugin may say otherwise.
+        let gapless = chosen.gapless(a.as_ref(), b.as_ref(), o.duration_ms, n.duration_ms);
+        chosen.settings.gapless = mixing.as_ref().and_then(|m| m.mixes(&o.id, &n.id, !gapless)).map_or(gapless, |mixes| !mixes);
+        let (a, b) = if prefs.auto_mix { (a, b) } else { (None, None) };
         let mut t = nori_player::automix::plan::plan(a.as_ref(), b.as_ref(), o.duration_ms, n.duration_ms, &chosen.settings);
         let theirs = mixing.as_ref().and_then(|m| m.plan(&o.id, &n.id, a.as_ref(), b.as_ref(), &t));
         if let Some(p) = theirs {
@@ -503,7 +504,7 @@ mod tests {
         let track = |id: &str, track| WindowSong { album_id: Some("x".into()), track, ..song(id, 200_000) };
         let window = || vec![track("a", 1), track("b", 2)];
         planner.transition_window(window(), false);
-        assert!(planner.plan_for("a").is_none(), "same album in order: gapless");
+        assert!(planner.plan_for("a").is_none(), "one album running on: gapless");
         planner.transition_window(window(), false);
         assert!(planner.plan_for("a").is_none());
         assert_eq!(*made.lock(), 1, "planned once");
