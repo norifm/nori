@@ -125,6 +125,8 @@ fn rules(said: Option<w::ProfileRules>, guest: bool) -> ProfileRules {
     let mut shown = ProfileRules {
         asks: guest,
         account: false,
+        // Signed in, with its playlists in Library: their changes go to its `write`.
+        playlists: r.account && r.sections.contains(&w::LibrarySection::Playlists) && !guest,
         downloads: r.downloads && !guest,
         radio: r.radio && !guest,
         indexed: false,
@@ -542,5 +544,17 @@ mod tests {
         assert_eq!((signed_in.stars, signed_in.stars_here, signed_in.sections), (true, false, vec![LibrarySection::History]));
         let guest = rules(said(false), true);
         assert_eq!((guest.stars, guest.stars_here, guest.sections.len()), (false, false, 0));
+    }
+
+    /// Signed in with its playlists in Library, they can be made and changed; not signed out, without
+    /// them, or as a guest.
+    #[test]
+    fn an_accounts_playlists_can_be_changed() {
+        let said = |account: bool, sections: Vec<w::LibrarySection>| Some(w::ProfileRules { account, downloads: true, radio: true, feed: true, stars: account, scrobbles: false, sections, measures: true, ahead: None });
+        let lists = || vec![w::LibrarySection::Playlists];
+        assert!(rules(said(true, lists()), false).playlists);
+        assert!(!rules(said(false, lists()), false).playlists);
+        assert!(!rules(said(true, Vec::new()), false).playlists);
+        assert!(!rules(said(true, lists()), true).playlists);
     }
 }

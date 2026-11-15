@@ -28,7 +28,7 @@ struct Fake {
 
 /// Signed out, its favorites are kept on this device.
 fn rules(signed_in: bool) -> ProfileRules {
-    ProfileRules { account: false, indexed: false, remote: false, stars: true, stars_here: !signed_in, scrobbles: signed_in, feed: true, mixes: signed_in, ..profile_rules(false) }
+    ProfileRules { account: false, playlists: signed_in, indexed: false, remote: false, stars: true, stars_here: !signed_in, scrobbles: signed_in, feed: true, mixes: signed_in, ..profile_rules(false) }
 }
 
 fn album() -> AlbumDetail {
@@ -79,6 +79,12 @@ impl Provider for Fake {
                 *self.albums_read.lock() += 1;
                 Some(Page::AlbumPage { v: album() })
             }
+            // Its own playlist names no owner; one it follows names who made it.
+            Read::PlaylistList => {
+                let list = |id: &str, owner: Option<&str>| crate::Playlist { id: id.into(), name: id.into(), owner: owner.map(str::to_string), ..Default::default() };
+                Some(Page::Playlists { v: vec![list("f-own", None), list("f-followed", Some("someone"))] })
+            }
+            Read::PlaylistById { id } if id == "f-own" => Some(Page::PlaylistPage { v: crate::PlaylistDetail::new(crate::Playlist { id, ..Default::default() }, vec![album().songs.remove(0)]) }),
             Read::HomeFeed => {
                 Moment::default().await;
                 let mut n = self.feeds.lock();
@@ -373,6 +379,17 @@ mod tests {
         star(&c, Starrable::Song, "f-2", false).unwrap();
         assert!(fake.hearts.lock().is_empty(), "the account listed it");
         assert!(favorites(&c).is_empty());
+    }
+
+    /// Signed in, songs can be added to the account's own playlists, each knowing which it holds; the
+    /// ones it follows, and signed out, none.
+    #[test]
+    fn songs_go_to_the_accounts_own_playlists() {
+        let (c, _) = fake();
+        let choices = |c: &Client| -> Vec<(String, Vec<String>, u32)> { block(c.playlist_choices(vec!["f-1".into(), "f-2".into()])).unwrap().into_iter().map(|p| (p.playlist.id, p.adds, p.holds)).collect() };
+        assert!(choices(&c).is_empty(), "signed out");
+        block(c.sign_in("let me in".into()));
+        assert_eq!(choices(&c), [("f-own".to_string(), vec!["f-2".to_string()], 1)]);
     }
 
     /// Signed in, a seal the account has nowhere for (an album's) is kept on this device, and goes

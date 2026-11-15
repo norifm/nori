@@ -99,10 +99,14 @@ impl Client {
     /// ([`crate::menus::playlist_choices`]). Each page is the stored one while fresh, else asked, the
     /// playlists' together.
     pub async fn playlist_choices(&self, song_ids: Vec<String>) -> NetResult<Vec<crate::menus::PlaylistChoice>> {
-        let Some(user) = self.core.account.read().as_ref().map(|a| a.user.clone()) else { return Ok(Vec::new()) };
-        let account = self.core.rules().account;
+        let playlists = self.core.rules().playlists;
+        if !playlists {
+            return Ok(Vec::new());
+        }
+        // A provider without a Subsonic account names no user: its own playlists name no owner.
+        let user = self.core.account.read().as_ref().map(|a| a.user.clone()).unwrap_or_default();
         let Some(Page::Playlists { v }) = self.cached_or_fetched(Read::PlaylistList).await? else { return Ok(Vec::new()) };
-        let mine: Vec<_> = v.into_iter().filter(|p| crate::menus::playlist_editable(p, &user, account)).collect();
+        let mine: Vec<_> = v.into_iter().filter(|p| crate::menus::playlist_editable(p, &user, playlists)).collect();
         let pages = futures_util::future::join_all(mine.iter().map(|p| self.cached_or_fetched(Read::PlaylistById { id: p.id.clone() }))).await;
         let held = pages.into_iter().map(|page| match page {
             Ok(Some(Page::PlaylistPage { v })) => Some(v.songs.into_iter().map(|s| s.id).collect()),
