@@ -505,6 +505,17 @@ class Say(private val r: Resources) {
         name,
     )
     /** The button that opens it; none where nothing here can. */
+    /** A waiting profile's line in a list: that it can't be used, and why in a few words. */
+    fun profileUnavailable(wait: dev.nori.music.ffi.ProfileWait): String = r.getString(
+        when (wait) {
+            dev.nori.music.ffi.ProfileWait.INSTALL -> R.string.profile_unavailable_install
+            dev.nori.music.ffi.ProfileWait.UPDATE -> R.string.profile_unavailable_update
+            dev.nori.music.ffi.ProfileWait.TURN_ON -> R.string.profile_unavailable_turn_on
+            dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> R.string.profile_unavailable_plugins_on
+            dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> R.string.profile_unavailable_no_plugins
+        },
+    )
+
     fun profileWaitAction(name: String, wait: dev.nori.music.ffi.ProfileWait): String? = when (wait) {
         dev.nori.music.ffi.ProfileWait.INSTALL -> r.getString(R.string.profile_wait_install, name)
         dev.nori.music.ffi.ProfileWait.TURN_ON -> r.getString(R.string.profile_wait_turn_on, name)
