@@ -2,7 +2,8 @@
 //! remote control or jams are switched on, or the profile is a jam guest's; it polls the relay only
 //! while it serves (this device is controllable), watches (a device picker or jam screen is open),
 //! mirrors the account's active device or hosts a jam, and holds each poll up to [`HOLD_MS`], so a quiet
-//! device wakes about once a minute. Nearby devices are reached through their LAN door instead of the relay.
+//! device wakes about once a minute; paused with nothing on its screen on a metered network, it is not
+//! listed there at all. Nearby devices are reached through their LAN door instead of the relay.
 //!
 //! One device of the account plays at a time: the active one. This one is it until a transfer moves the
 //! playback elsewhere ([`Remote::pick`], or another device's transfer); it then mirrors that device
@@ -1235,6 +1236,8 @@ struct Inner {
     door: Option<Door>,
     /// What shows the mirrored device here ([`Remote::sight`]).
     sight: Sight,
+    /// Whether the network was metered when the pollers were last looked at ([`Remote::keep_polling`]).
+    metered: bool,
     /// [`Remote::stop`] ran: nothing starts again.
     stopped: bool,
     /// The relay lets jam guests stream the host's queue ([`Answer::along`]).
@@ -1329,8 +1332,14 @@ impl Inner {
         self.probes_asked != self.probes_answered
     }
 
+    /// Whether this device is listed at the relay as one to control. Not while it is paused with nothing
+    /// on its screen on a metered network: hearing the relay there wakes the radio every minute.
+    fn offered(&self) -> bool {
+        self.serving && !(self.metered && self.sight == Sight::Nothing && !self.playing.playing)
+    }
+
     fn wants_relay(&self) -> bool {
-        self.probing() || self.relay != RelaySupport::Unsupported && !matches!(self.guest, GuestJam::Over) && (self.serving || self.watching || self.active.discovering() || self.active.taking().is_some() || self.follows_mirror() || self.hosted().is_some() || self.guest.listen().is_some())
+        self.probing() || self.relay != RelaySupport::Unsupported && !matches!(self.guest, GuestJam::Over) && (self.offered() || self.watching || self.active.discovering() || self.active.taking().is_some() || self.follows_mirror() || self.hosted().is_some() || self.guest.listen().is_some())
     }
 
     /// Whether the mirrored device is followed: while something here shows it, or it plays.
@@ -1726,7 +1735,7 @@ impl Remote {
     pub fn played_read(self: Arc<Self>, read: impl FnOnce() -> Playing) {
         // The report belongs to call entry, before waiting for the session lock.
         let now = self.now();
-        let (publish, started, shown, cancelled, playing, stopped) = {
+        let (publish, started, returned, shown, cancelled, playing, stopped) = {
             let mut i = self.inner.lock();
             let playing = read();
             let started = playing.playing && !i.playing.playing;
@@ -1744,20 +1753,20 @@ impl Remote {
             let cancelled = moved_here && i.active.cancel_taking();
             i.playing = playing;
             i.playing_at = Some(now);
-            (i.serving || i.hosted().is_some(), started && i.active.mirror().is_some(), shown, cancelled, playing.playing, stopped)
+            (i.serving || i.hosted().is_some(), started, started && i.active.mirror().is_some(), shown, cancelled, playing.playing, stopped)
         };
         if playing {
             self.clone().set_discovering(false);
         } else if stopped {
             self.discover_again();
         }
-        if started {
+        if returned {
             self.set_active(None, Becomes::Followed);
         }
         if publish {
             self.publish();
         }
-        if cancelled {
+        if cancelled || started || stopped {
             self.keep_polling();
         }
         if shown {
@@ -1886,9 +1895,11 @@ impl Remote {
         self.played_read(|| playing);
     }
 
-    /// The device is on a network again: a poll that failed is asked again now, not after its wait.
-    pub fn network_back(&self) {
+    /// The device is on a network again, maybe another kind: a poll that failed is asked again now, not
+    /// after its wait.
+    pub fn network_back(self: Arc<Self>) {
         self.retry.notify();
+        self.keep_polling();
     }
 
     /// The device's volume moved by itself (its own keys), 0 to 100; None when it cannot be set.
@@ -3229,8 +3240,11 @@ impl Remote {
     fn keep_polling(self: &Arc<Self>) {
         let mut start_relay = None;
         let mut start_peers = Vec::new();
+        let mut left = false;
+        let metered = self.client.metered();
         {
             let mut i = self.inner.lock();
+            i.metered = metered;
             if i.wants_relay() {
                 if i.relay_poller.is_none() {
                     let poller = i.next_id();
@@ -3240,6 +3254,9 @@ impl Remote {
             } else if i.relay_poller.is_some() {
                 i.end_relay_poll();
                 self.cancel.notify();
+                // No longer offered ([`Inner::offered`]): it leaves, and says its state anew when it is back.
+                left = i.serving;
+                i.unsaid |= i.serving;
             }
             i.forget_lost();
             for k in 0..i.peers.len() {
@@ -3258,13 +3275,16 @@ impl Remote {
         for (service, poller) in start_peers {
             self.spawn(self.clone().poll_peer(service, poller));
         }
+        if left {
+            self.leave();
+        }
         self.shown.changed();
     }
 
     async fn poll_relay(self: Arc<Self>, poller: u64) {
         let said_serving = self.clone().relay_polls(poller).await;
         // Its last poll, saying this device serves, may reach the relay after the leave: it goes again.
-        if said_serving && !self.inner.lock().serving {
+        if said_serving && !self.inner.lock().offered() {
             self.leave();
         }
     }
@@ -3280,14 +3300,14 @@ impl Remote {
                 if i.relay_poller != Some(poller) {
                     return said_serving;
                 }
-                // A mirrored device paused out of sight: nothing else wants the relay.
+                // This device or the one it mirrors paused out of sight: nothing else wants the relay.
                 if !i.wants_relay() {
                     i.relay_poller = None;
                     return said_serving;
                 }
-                let url = self.poll_url(i.since, !first_poll && !i.relay_down, i.serving);
+                let url = self.poll_url(i.since, !first_poll && !i.relay_down, i.offered());
                 first_poll = false;
-                said_serving = i.serving;
+                said_serving = i.offered();
                 (url, i.probes_asked)
             };
             let poll = std::pin::pin!(transport::get(&*self.client.transport, url, POLL_TIMEOUT_MS));
@@ -3295,7 +3315,7 @@ impl Remote {
                 Either::Left(((), poll)) => {
                     // A poll saying this device serves may reach the relay after its leave: the leave goes
                     // again once the relay answered it (or the remote stopped).
-                    if said_serving && !self.inner.lock().serving {
+                    if said_serving && !self.inner.lock().offered() {
                         select(std::pin::pin!(self.given_up(|_| true)), poll).await;
                     }
                     return said_serving;
@@ -3498,7 +3518,7 @@ impl Remote {
             }
             // Commands are heard from the first answer on: only then is this device's state said to the
             // relay, so no controller or guest sends it one before it can hear it.
-            if i.since.is_none() && (i.serving || i.hosted().is_some()) || i.serving && unlisted {
+            if i.since.is_none() && (i.offered() || i.hosted().is_some()) || i.offered() && unlisted {
                 i.unsaid = true;
                 republish = true;
             }
@@ -4215,7 +4235,7 @@ impl Remote {
                 d.publish(state.clone());
             }
             let heard = i.since.is_some();
-            (state, i.serving && heard, i.jam_room().filter(|_| heard).map(str::to_string), i.relay != RelaySupport::Unsupported)
+            (state, i.offered() && heard, i.jam_room().filter(|_| heard).map(str::to_string), i.relay != RelaySupport::Unsupported)
         };
         if serving && relay {
             self.out(Out::send(Link::Relay, Outgoing { state: Some(state.clone()), ..Default::default() }));
