@@ -283,7 +283,7 @@ impl Provider for PluginProvider {
         *core.server.write() = crate::api::Server::default();
         *self.open.write() = profile.clone();
         let p = profile_of(profile);
-        self.now(move |s, x| x.nori_plugin_provider().call_open(s, &p));
+        self.worker.opens(move |s, x| x.nori_plugin_provider().call_open(s, &p));
         let guest = nori_remote::is_guest_key(&profile.api_key);
         core.set_rules(self.ask_rules(profile, guest));
         *core.account.write() = None;

@@ -229,6 +229,7 @@ impl Provider for Test {
             self.ended = Some(false);
         }
         Ok(match request {
+            provider::Request::Song(id) if id == "trap" => panic!("told to"),
             provider::Request::Search((query, ..)) => provider::Page::Found(Found { songs: vec![song(query)], albums: Vec::new(), artists: Vec::new(), playlists: Vec::new() }),
             provider::Request::Artists => provider::Page::Artists(["Followed", "Subscribed"].map(|name| Artist { id: format!("test-{name}"), name: name.into(), cover: None, image_url: None, album_count: None, starred: true, external: false }).into()),
             // One playlist, the channel's.
