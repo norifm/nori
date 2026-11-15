@@ -1060,7 +1060,7 @@ mod tests {
             low_pass: None,
             high_pass: None,
             echo: None,
-            out_loop_ms: None,
+            out_loop: None,
             vocal_duck: None,
             in_loop: None,
             bend: None,

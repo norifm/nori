@@ -3,7 +3,7 @@
 //! docs/research/automix-dj.md and automix-software.md (B6 to B14).
 
 use super::*;
-use crate::types::{Band, BarProfile, Brake, Duck, Glide, HighsIn, MidDip, Reverb, Window};
+use crate::types::{Band, BarProfile, Brake, Duck, Glide, HighsIn, MidDip, OutLoop, Reverb, Window};
 
 /// A plan and its worth; the higher wins.
 pub(super) struct Move {
@@ -846,21 +846,32 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
         in_grid((a.outro_grid_from_ms, a.outro_grid_to_ms), from, to, beat) && measured_or_beatless(&a.outro_bars, &a.outro_beats, &out_kept, from, to, bar, |_, _| false)
     };
     let clean = |from: f64, bars: usize| {
-        loopable(a, from, bars, bar, |x| x.pulse >= KICK_PULSE && x.level_db >= LOOP_LEVEL_DB) && gridded(from, from + bars as f64 * bar)
+        !sings_after(a, from) && loopable(a, from, bars, bar, |x| x.pulse >= KICK_PULSE && x.level_db >= LOOP_LEVEL_DB) && gridded(from, from + bars as f64 * bar)
     };
     // The glide, in whole bars at the outgoing tempo; then the first downbeat of the loop after it, and the blend. The
-    // loop is heard at most [`MAX_LOOP_PLAYS`] times up to the bass swap, halfway through the blend, the song bars
-    // the glide takes counted as it speeds up or slows down; after the swap it darkens, drains and fades.
+    // song glides over as many of its own bars before the loop as the glide reads (in its grid, and unsung unless the
+    // glide stretches a voice no more than [`SUNG_STRETCH_PCT`]); then the loop is heard at most [`MAX_LOOP_PLAYS`]
+    // times up to the bass swap, halfway through the blend; after the swap it darkens, drains and fades.
     let glide_bars = ((to_a - 1.0).abs() * 100.0 / RAMP_PCT_PER_BAR).ceil().max(2.0);
     let glide_ms = glide_bars * bar;
-    let played = glide_bars * (1.0 + to_a) / 2.0 + 1.0 + 0.5 * RAMP_BLEND_BARS;
-    let (start, looped) = [8usize, 4]
+    let glided = glide_bars * (1.0 + to_a) / 2.0;
+    let played = glided + 1.0 + 0.5 * RAMP_BLEND_BARS;
+    let sung_ok = (to_a - 1.0).abs() * 100.0 <= SUNG_STRETCH_PCT;
+    let own = |from: f64| {
+        (0..=glided.floor() as usize).rev().find(|&k| {
+            let start = from - k as f64 * bar;
+            start >= a.silence_start_ms as f64 && gridded(start, from) && (sung_ok || !sings_after(a, start))
+        })
+    };
+    let (from, looped, own) = [8usize, 4]
         .into_iter()
-        .filter(|&l| played / l as f64 <= MAX_LOOP_PLAYS)
         .flat_map(|l| (l..=EXIT_BARS_BACK as usize + l).map(move |back| (last - back as f64 * bar, l)))
-        .find(|&(from, l)| from >= a.silence_start_ms as f64 && clean(from, l))?;
-    let loop_ms = looped as f64 * bar;
-    if ending.skipped(start + loop_ms) > MAX_SKIP_MS as f64 {
+        .filter(|&(from, l)| from >= a.silence_start_ms as f64 && clean(from, l))
+        .filter_map(|(from, l)| Some((from, l, own(from)?)))
+        .find(|&(_, l, k)| (played - k as f64) / l as f64 <= MAX_LOOP_PLAYS)?;
+    let (loop_ms, own_ms) = (looped as f64 * bar, own as f64 * bar);
+    let start = from - own_ms;
+    if ending.skipped(from + loop_ms) > MAX_SKIP_MS as f64 {
         return None;
     }
     // The incoming song locks on its first downbeat, its pickup (up to a bar) played before it.
@@ -872,7 +883,7 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
         return None;
     }
     let mut m = blank(TransitionKind::LoopRamp, start.round() as i64, (at - pickup).round() as i64, 0, String::new());
-    m.out_loop_ms = Some(loop_ms.round() as i64);
+    m.out_loop = Some(OutLoop { at_ms: own_ms.round() as i64, ms: loop_ms.round() as i64, rounds: None });
     m.out_glide = Some(Glide { window: Window { start_ms: 0, end_ms: glide_ms.round() as i64 }, to: to_a });
     let downbeat = (m.out_song_ms(glide_ms) / bar).ceil() * bar;
     let delay = glide_ms + (downbeat - m.out_song_ms(glide_ms)) / to_a;
@@ -911,7 +922,8 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     }
     m.in_gain_db = loudness_trim(Some(a), Some(b), s);
     m.reason = format!(
-        "loop ramp: {looped}-bar loop gliding {:.1} -> {:.1} BPM over {glide_bars:.0} bars, in locked for {RAMP_BLEND_BARS:.0}, back to {:.1} over {beats_back:.0} beats{}",
+        "loop ramp: {looped}-bar loop{} gliding {:.1} -> {:.1} BPM over {glide_bars:.0} bars, in locked for {RAMP_BLEND_BARS:.0}, back to {:.1} over {beats_back:.0} beats{}",
+        if own > 0 { format!(" after {own} bars of its own") } else { String::new() },
         a.bpm,
         meet,
         b.bpm,
@@ -946,10 +958,9 @@ const RAMP_HIGHS_HZ: f32 = 3_000.0;
 const LOOP_VOICE: f32 = 0.4;
 const LOOP_LEVEL_DB: f32 = -8.0;
 
-/// Whether `bars` of the outgoing song from `from` loop without a voice: none of them sung, nothing sung after them,
-/// and each one `fits`.
+/// Whether `bars` of the outgoing song from `from` loop without a voice: none of them sung, and each one `fits`.
 pub(super) fn loopable(a: &TrackAnalysis, from: f64, bars: usize, bar: f64, fits: impl Fn(&BarProfile) -> bool) -> bool {
-    !sings_after(a, from) && (0..bars).all(|i| bar_at(&a.outro_bars, from + (i as f64 + 0.5) * bar).is_some_and(|x| x.voice < LOOP_VOICE && fits(x)))
+    (0..bars).all(|i| bar_at(&a.outro_bars, from + (i as f64 + 0.5) * bar).is_some_and(|x| x.voice < LOOP_VOICE && fits(x)))
 }
 
 /// Whether `n` bars from `from` keep within [`loudness::STEADY_DB`] of one another: a loop of them jumps by no more

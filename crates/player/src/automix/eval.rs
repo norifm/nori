@@ -1169,7 +1169,6 @@ fn short_term(x: &[f32], rate: f64) -> Vec<f64> {
 fn loudness_bump(p: &crate::types::TransitionPlan, xa: &[f32], xb: &[f32], rate: f64) -> f64 {
     let at = |ms: i64| (ms.max(0) as f64 * rate / 1000.0) as usize;
     let (o0, i0, n) = (at(p.out_start_ms), at(p.in_start_ms), at(p.duration_ms));
-    let loop_n = p.out_loop_ms.map(|l| at(l).max(1));
     let sample = |x: &[f32], t: f64| {
         let j = t.floor() as usize;
         let f = (t - j as f64) as f32;
@@ -1178,12 +1177,7 @@ fn loudness_bump(p: &crate::types::TransitionPlan, xa: &[f32], xb: &[f32], rate:
     };
     // Each deck at its own song time (a bend moves both, a loop holds the incoming one back).
     let wall_ms = |k: usize| k as f64 * 1000.0 / rate;
-    let seg_a: Vec<f32> = (0..n)
-        .map(|k| match loop_n {
-            Some(l) => xa.get(o0 + k % l).copied().unwrap_or(0.0),
-            None => sample(xa, o0 as f64 + p.out_song_ms(wall_ms(k)) * rate / 1000.0),
-        })
-        .collect();
+    let seg_a: Vec<f32> = (0..n).map(|k| sample(xa, o0 as f64 + p.out_heard_ms(wall_ms(k)) * rate / 1000.0)).collect();
     // Nothing of the incoming song before its delay.
     let seg_b: Vec<f32> = (0..n).map(|k| if wall_ms(k) < p.in_delay_ms as f64 { 0.0 } else { sample(xb, i0 as f64 + p.in_song_ms(wall_ms(k)) * rate / 1000.0) }).collect();
     let mut m = mixer::Mixer::new(rate as u32, 1);
@@ -1260,9 +1254,9 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
     let ratio = if p.tempo_ratio > 0.0 { p.tempo_ratio } else { 1.0 };
     let (out_start, in_start) = (ms(p.out_start_ms), ms(p.in_start_ms));
     // The outgoing and incoming songs' own time `t` s into the mix (under a bend and a loop it is not the wall's).
-    let out_at = |t: f64| out_start + p.out_loop_ms.map_or_else(|| p.out_song_ms(t * 1000.0) / 1000.0, |l| (p.out_song_ms(t * 1000.0) / 1000.0) % ms(l));
+    let out_at = |t: f64| out_start + p.out_heard_ms(t * 1000.0) / 1000.0;
     let in_at = |t: f64| in_start + p.in_song_ms(t * 1000.0) / 1000.0;
-    let heard_end = out_start + p.out_loop_ms.map_or_else(|| p.out_song_ms(p.duration_ms as f64) / 1000.0, ms);
+    let heard_end = out_start + p.out_held_ms() / 1000.0;
     let beat_a = 60.0 / a.bpm.max(1.0);
     // The bass swap, from where the incoming lows start to come in to where they are all in: a swap that starts on
     // a line and one that finishes on it are both on it.
@@ -1384,7 +1378,7 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
         both_sung_s,
         sung_under_s,
         sung_lost_s,
-        out_looped: p.out_loop_ms.is_some(),
+        out_looped: p.out_loop.is_some(),
         bump_lu: loudness_bump(p, audio.0, audio.1, audio.2),
     }
 }
@@ -1689,15 +1683,26 @@ pub fn mix_error(p: &crate::types::TransitionPlan, ta: &Truth, tb: &Truth) -> Op
         .collect();
     let half = 0.5 * median_ibi(&heard_in);
     let sounding = heard_in.first()? - half..=heard_in.last()? + half;
-    // Each outgoing beat where it is heard: once, or under a loop of its slice each time round.
-    let rounds = p.out_loop_ms.filter(|l| *l > 0).map_or(1, |l| (p.out_song_ms(p.duration_ms as f64) / l as f64).ceil() as i64 + 1);
-    let slice = p.out_loop_ms.map_or(f64::MAX, |l| l as f64);
+    // Each outgoing beat where it is heard: once, or in a loop's slice each time round (after the rounds, past the
+    // slice, once more, later by them).
+    let read = p.out_song_ms(p.duration_ms as f64);
+    let reads = |s: f64| -> Vec<f64> {
+        let Some(l) = p.out_loop else { return vec![s] };
+        let (at, ms) = (l.at_ms as f64, l.ms.max(1) as f64);
+        let rounds = l.rounds.map_or(((read - at) / ms).ceil().max(0.0) as i64, |n| n.max(0) as i64);
+        match l.rounds {
+            _ if s < at => vec![s],
+            _ if s < at + ms => (0..=rounds).map(|r| s + r as f64 * ms).collect(),
+            Some(_) => vec![s + rounds as f64 * ms],
+            None => vec![],
+        }
+    };
     let errors: Vec<f64> = ta
         .beats
         .iter()
         .map(|t| t * 1000.0 - p.out_start_ms as f64)
-        .filter(|s| (0.0..slice).contains(s))
-        .flat_map(|s| (0..rounds).map(move |r| s + r as f64 * slice.min(f64::MAX / 4.0)))
+        .filter(|s| *s >= 0.0)
+        .flat_map(reads)
         .map(|s| p.wall_of_out_song(s))
         .filter(|at| (looped.max(p.in_delay_ms as f64)..=p.duration_ms as f64).contains(at) && sounding.contains(at))
         .filter_map(|at| heard_in.iter().map(|w| (w - at).abs()).reduce(f64::min))
