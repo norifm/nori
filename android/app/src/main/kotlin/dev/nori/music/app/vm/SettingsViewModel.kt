@@ -426,6 +426,12 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             .map { server -> server?.let { withContext(Dispatchers.IO) { nori.plugins.kinds.waits(it) } } }
             .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    /** What each saved profile that doesn't open here waits for, by its id: a list shows those unavailable. */
+    val profileWaits: StateFlow<Map<String, dev.nori.music.ffi.ProfileWait>> =
+        combine(prefs.map { it.servers to it.pluginsOff }.distinctUntilChanged(), nori.plugins.cards, nori.plugins.providers) { (servers, _), _, _ -> servers }
+            .map { servers -> withContext(Dispatchers.IO) { servers.mapNotNull { s -> nori.plugins.kinds.waits(s)?.let { s.id to it } }.toMap() } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
     init {
         // Its plugin running now, the profile opens again, with it.
         viewModelScope.launch {

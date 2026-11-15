@@ -437,10 +437,13 @@ fun WaitingProfile(vm: SettingsViewModel, wait: dev.nori.music.ffi.ProfileWait) 
                     }, Modifier.fillMaxWidth().padding(top = 4.dp).testTag("profile-wait"), prominent = true)
                 }
             }
-            val others = prefs.servers.filter { it.id != profile.id }
-            if (others.isNotEmpty()) GroupLabel(say.profiles)
+            // This profile too, unavailable, so the list is the one the user knows.
+            GroupLabel(say.profiles)
             GroupCard {
-                others.forEach { other -> ProfileLine(vm, other, active = false, divider = true) { vm.switchServer(other) } }
+                prefs.servers.forEach { saved ->
+                    val active = saved.id == profile.id
+                    ProfileLine(vm, saved, active, divider = true, onClick = if (active) null else ({ vm.switchServer(saved) }))
+                }
                 GroupRow(say.addProfile, { adding = true }, icon = Iconoir.Plus, divider = false)
             }
         }
