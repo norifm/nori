@@ -1689,6 +1689,11 @@ impl Remote {
     /// [`Self::pick`]; `cast`: to carry a cast through it.
     fn pick_for(self: Arc<Self>, device: Option<String>, cast: bool) {
         self.clone().set_discovering(false);
+        // Picked here again while the queue asked for is on its way: asked anew, the device would hand
+        // it over twice and its first answer be refused; cancelled, the queue left here would play.
+        if device.is_none() && self.inner.lock().active.taking().is_some() {
+            return;
+        }
         let cancelled = self.inner.lock().active.cancel_taking();
         let (active, idle, plays, leads) = {
             let i = self.inner.lock();
@@ -4592,6 +4597,34 @@ mod tests {
         }
         remote.pull("youtube".into());
         assert_eq!(remote.inner.lock().refused.get("youtube").copied(), Some(Refusal::OtherSource), "nor are its songs taken here");
+    }
+
+    /// This device picked again while the queue it asked for is on its way keeps waiting for that
+    /// queue: asked once, it is still taken when it comes, also after the controls came back here.
+    #[test]
+    fn picking_here_again_keeps_the_queue_asked_for() {
+        let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let playing = DeviceState { index: Some(0), playing: true, ..Default::default() };
+        {
+            let mut i = remote.inner.lock();
+            let member = Member { id: "phone".into(), name: "phone".into(), kind: DeviceKind::Phone, state: Some(playing.clone()) };
+            i.peers.push(Peer { library_marks: false, service: "phone".into(), bases: vec!["http://phone.test".into()], failed: 0, member, received: 0, since: None, poller: None, lost: false });
+            let mut phone = Mirrored::new("phone".into(), 0);
+            phone.shown = Some(playing);
+            i.active.set_mirror(Some(phone));
+        }
+        let asked = || remote.inner.lock().active.taking().map(|t| (t.from.clone(), t.id));
+        remote.clone().pick(None);
+        let first = asked().expect("the phone's queue is asked for");
+        remote.clone().pick(None);
+        assert_eq!(asked(), Some(first.clone()), "picked again while it is awaited");
+        remote.taken_late(first.1);
+        assert!(remote.inner.lock().active.mirror().is_none(), "late: the controls are here");
+        remote.clone().pick(None);
+        assert_eq!(asked(), Some(first), "still awaited once the controls are here");
+        remote.clone().pick(Some("phone".into()));
+        assert_eq!(asked(), None, "another device picked: no longer asked for");
     }
 
     #[test]
