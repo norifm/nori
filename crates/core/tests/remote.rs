@@ -1392,61 +1392,28 @@ fn a_jam_opened_while_a_poll_is_held_hears_its_first_request() {
     relay.close();
 }
 
-/// A paused device that only serves, with nothing on its screen, polls the relay every few minutes on a
-/// metered network rather than after every answer, and at once again when something shows or it plays;
-/// playing, or unmetered, it polls after each. The account's other device changes once a minute, answering
-/// the polls held.
+/// A device listed at the relay hears it: paused, with nothing on its screen, on a metered network, it
+/// still asks again as each poll is answered, so what another device asks of it arrives at once.
 #[test]
-fn out_of_sight_on_mobile_data_a_paused_device_polls_the_relay_less() {
-    for (metered, plays) in [(false, false), (true, false), (true, true)] {
-        let relay = Relay::new();
-        relay.metered.store(metered, Ordering::Relaxed);
-        let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-        let paused = Playing { playing: false, position_ms: 5_000, volume: Some(40), ..Default::default() };
-        phone.playing(&["s1", "s2"], 0);
-        if !plays {
-            phone.remote.clone().played(paused);
-        }
-        desk.playing(&["s3"], 0);
-        phone.remote.clone().serve(true);
-        desk.remote.clone().serve(true);
-        phone.remote.clone().sight(Sight::Nothing);
-        relay.sim.pass(Duration::from_secs(60));
-        let id = phone.remote.id();
-        let polls = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.poll") && a.ends_with(id.as_str())).count();
-        let before = polls();
-        for minute in 0..10 {
-            desk.remote.clone().played(Playing { playing: minute % 2 == 1, ..paused });
-            relay.sim.pass(Duration::from_secs(60));
-        }
-        let ten_minutes = polls() - before;
-        if metered && !plays {
-            assert!((1..=3).contains(&ten_minutes), "{ten_minutes} polls in ten minutes on mobile data, paused out of sight");
-            // Its next poll is answered by the other device changing; the rest after it is the one cut short.
-            let rest = |desk_plays: bool| {
-                let asked = polls();
-                relay.sim.until("the next poll", || (polls() > asked).then_some(()));
-                desk.remote.clone().played(Playing { playing: desk_plays, ..paused });
-                relay.sim.pass(Duration::from_secs(30));
-                polls()
-            };
-            let resting = rest(false);
-            phone.remote.clone().played(Playing { playing: true, ..paused });
-            relay.sim.pass(Duration::from_secs(1));
-            assert!(polls() > resting, "playing, it polls again at once");
-            phone.remote.clone().played(paused);
-            let resting = rest(true);
-            phone.remote.clone().sight(Sight::Screen);
-            relay.sim.pass(Duration::from_secs(1));
-            assert!(polls() > resting, "in sight, it polls again at once");
-        } else {
-            assert!(ten_minutes >= 9, "{ten_minutes} polls in ten minutes, metered {metered}, playing {plays}");
-        }
-        phone.remote.stop();
-        desk.remote.stop();
-        relay.close();
-    }
+fn out_of_sight_on_mobile_data_a_paused_device_hears_the_relay() {
+    let relay = Relay::new();
+    relay.metered.store(true, Ordering::Relaxed);
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().played(Playing { playing: false, position_ms: 5_000, volume: Some(40), ..Default::default() });
+    phone.remote.clone().serve(true);
+    desk.remote.clone().serve(true);
+    phone.remote.clone().sight(Sight::Nothing);
+    relay.sim.pass(Duration::from_secs(400));
+    let id = phone.remote.id();
+    assert!(relay.parked(&id), "its poll is held");
+    desk.remote.clone().send(id, Op::Play);
+    relay.sim.pass(Duration::from_secs(1));
+    assert_eq!(phone.ops.try_recv().ok(), Some(Op::Play), "asked to play, it hears within a second");
+    phone.remote.stop();
+    desk.remote.stop();
+    relay.close();
 }
 
 #[test]
