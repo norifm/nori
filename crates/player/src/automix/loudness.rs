@@ -216,12 +216,6 @@ pub(crate) fn last_gap(blocks_raw: &[f32], min_ms: i64) -> Option<(i64, i64)> {
     None
 }
 
-/// The most bars a steady run is counted over: more than any loop.
-const STEADY_BARS: i64 = 16;
-
-/// Where the music is steady enough to loop, ms, in bars of `bar` from the bar line `first`: the end of the run of
-/// opening bars, and the starts of the runs before the last bar line of the music and of `exit`, every bar of a run
-/// within `STEADY_DB` of the others (a loop of them jumps by no more each time round).
 /// Where the music stops cold, ms, before `end_ms`: the end of the last block in its last [`STOP_REACH_MS`] that, and
 /// the second up to it, is within [`STOP_LOUD_DB`] of the song's level, after which, past a [`STOP_RING_MS`] ring, the
 /// level stays [`STOP_FALL_DB`] under that second for [`STOP_HOLD_MS`] or to the end of the file. None for a song that
@@ -253,28 +247,26 @@ const STOP_RING_MS: i64 = 200;
 /// staying down this long, ms.
 const STOP_HOLD_MS: i64 = 1_000;
 
-pub(crate) fn steady_ends(blocks_raw: &[f32], music: (i64, i64), first: i64, bar: i64, exit: Option<i64>) -> (i64, i64, i64) {
+/// The most bars a steady run is counted over: more than any loop.
+const STEADY_BARS: i64 = 16;
+
+/// Where the opening is steady enough to loop up to, ms, in bars of `bar` from the bar line `first`: the end of the run
+/// of opening bars each within `STEADY_DB` of the others (a loop of them jumps by no more each time round).
+pub(crate) fn steady_intro(blocks_raw: &[f32], music: (i64, i64), first: i64, bar: i64) -> i64 {
     let level = |from: i64| {
         let (a, b) = ((from / BLOCK_MS).max(0) as usize, (((from + bar) / BLOCK_MS) as usize).min(blocks_raw.len()));
         db(blocks_raw[a..b.max(a)].iter().map(|v| *v as f64).sum::<f64>() / (b - a).max(1) as f64)
     };
-    // How many of the bars starting at `starts` keep together.
-    let run = |starts: &mut dyn Iterator<Item = i64>| {
-        let (mut lo, mut hi, mut n) = (f64::MAX, f64::MIN, 0);
-        for t in starts.take(STEADY_BARS as usize).filter(|&t| t >= music.0 && t + bar <= music.1) {
-            let l = level(t);
-            (lo, hi) = (lo.min(l), hi.max(l));
-            if hi - lo > STEADY_DB {
-                break;
-            }
-            n += 1;
+    let (mut lo, mut hi, mut n) = (f64::MAX, f64::MIN, 0);
+    for t in (0..).map(|m| first + m * bar).take(STEADY_BARS as usize).filter(|&t| t >= music.0 && t + bar <= music.1) {
+        let l = level(t);
+        (lo, hi) = (lo.min(l), hi.max(l));
+        if hi - lo > STEADY_DB {
+            break;
         }
-        n
-    };
-    let line_before = |t: i64| first + (t - first).div_euclid(bar) * bar;
-    let back_from = |end: i64| end - run(&mut (1..).map(|m| end - m * bar)) * bar;
-    let intro = first + run(&mut (0..).map(|m| first + m * bar)) * bar;
-    (intro, back_from(line_before(music.1)), exit.map_or(0, |e| back_from(line_before(e))))
+        n += 1;
+    }
+    first + n * bar
 }
 
 /// MixRamp points, ms: centres of the first and last 400 ms windows at or above `lufs + MIXRAMP_DB`.
@@ -385,22 +377,15 @@ mod tests {
     }
 
     #[test]
-    fn steady_ends_stop_where_the_level_moves() {
-        // Silence, 8 s of intro, a jump of 8 dB, the body, a 12 s fade to silence (40 dB, a step a second); 2 s bars
-        // from 1 s.
-        let fade: Vec<(f64, f64)> = (0..12).map(|i| (1.0, -20.0 - 40.0 * (i as f64 + 0.5) / 12.0)).collect();
-        let song = [vec![(1.0, -90.0), (8.0, -28.0), (100.0, -20.0)], fade, vec![(2.0, -90.0)]].concat();
-        let b = blocks(&song);
-        let music = silence_trim(&b);
-        let (intro, end, exit) = steady_ends(&b, music, 1_000, 2_000, Some(109_000));
-        assert_eq!(intro, 9_000, "the opening's bars keep together until the jump at 9 s");
-        assert_eq!(end, 117_000, "only the last bar of a fade: {music:?}");
-        assert_eq!(exit, 109_000 - STEADY_BARS * 2_000, "the body before the fade, as many bars as are counted");
+    fn a_steady_opening_ends_where_the_level_moves() {
+        // Silence, 8 s of intro, a jump of 8 dB, the body; 2 s bars from 1 s.
+        let b = blocks(&[(1.0, -90.0), (8.0, -28.0), (100.0, -20.0), (2.0, -90.0)]);
+        assert_eq!(steady_intro(&b, silence_trim(&b), 1_000, 2_000), 9_000, "the opening's bars keep together until the jump at 9 s");
         // A bar that swings within itself, the same each time, is steady.
         let swing: Vec<(f64, f64)> = (0..30).flat_map(|_| [(1.2, -12.0), (0.8, -20.0)]).collect();
         let b = blocks(&[vec![(1.0, -90.0)], swing, vec![(2.0, -90.0)]].concat());
         let (s0, s1) = silence_trim(&b);
-        assert_eq!(steady_ends(&b, (s0, s1), s0, 2_000, None), (s0 + STEADY_BARS * 2_000, s1 - STEADY_BARS * 2_000, 0));
+        assert_eq!(steady_intro(&b, (s0, s1), s0, 2_000), s0 + STEADY_BARS * 2_000);
     }
 
     #[test]

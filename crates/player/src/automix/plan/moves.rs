@@ -23,16 +23,17 @@ pub(super) struct Pair<'a> {
     pub by_beats: bool,
 }
 
-/// Worth of each move before what it costs, roughly how good it sounds when it fits: a song that stops on a last hit
-/// ringing out a bar or more ends on its stop, the next song coming in under the ring; then the long blends (a loop
-/// ramp, a beatless blend, a ride, more the longer it runs); the marked effects (brake, reverb) for variety where they
-/// fit; a stop with no ring to start under where none of those does, before the quick handovers (echo, filter-out),
-/// heard as cuts.
+/// Worth of each move before what it costs, roughly how good it sounds when it fits: a loop ramp, the one long locked
+/// blend across a tempo gap (its repeat cost puts it under a stop the next time); a song that stops on a last hit
+/// ringing out a bar or more ends on its stop, the next song coming in under the ring; then the other long blends (a
+/// beatless blend, a ride, more the longer it runs); the marked effects (brake, reverb) for variety where they fit; a
+/// stop with no ring to start under where none of those does, before the quick handovers (echo, filter-out), heard as
+/// cuts.
+const LOOP_RAMP_WORTH: f64 = 2.9;
 const STOP_GLOW_WORTH: f64 = 2.8;
 const STOP_WORTH: f64 = 2.7;
 const CUT_STOP_GLOW_WORTH: f64 = 0.87;
 const CUT_STOP_WORTH: f64 = 0.85;
-const LOOP_RAMP_WORTH: f64 = 2.4;
 const BEATLESS_WORTH: f64 = 2.0;
 const HANDOFF_WORTH: f64 = 1.5;
 const RIDE_WORTH: f64 = 1.4;
@@ -253,6 +254,10 @@ fn handover(kind: TransitionKind, start: f64, delay: f64, in_start: f64, dur: f6
 /// the outgoing song, as far ahead as the plan brings it in, its fade moved with it: a handover onto it would
 /// otherwise leave a near-silence after the exit.
 pub(super) fn pre_roll(m: &mut TransitionPlan, b: &TrackAnalysis) {
+    // A loop ramp's entry is locked to the loop's downbeat, and the loop plays on under a quiet head.
+    if m.kind == TransitionKind::LoopRamp {
+        return;
+    }
     let head = b.mixramp_start_ms - m.in_start_ms;
     let pre = head.min(m.in_delay_ms);
     if head > QUIET_HEAD_MS && pre > 0 {
@@ -816,33 +821,40 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     if p.by_beats || !grid_ok(a) || !grid_ok(b) || !s.keep_pitch || !s.beat_match || bar_beats(a) != bar_beats(b) {
         return None;
     }
-    // Two tempos in one octave, far enough apart that a stretch cannot meet them and near enough to glide.
-    let ratio = b.bpm / a.bpm;
-    let gap = (ratio - 1.0).abs() * 100.0;
-    if !(RAMP_MIN_GAP_PCT..=RAMP_MAX_GAP_PCT).contains(&gap) || camelot_dist(a, b).is_some_and(|d| d > 2) {
+    // Two tempos, the incoming one folded to the outgoing one's octave, far enough apart that a stretch cannot meet
+    // them and near enough to glide; clashing keys only where a key shift brings them together.
+    let b_bpm = fold(a.bpm, b.bpm);
+    let gap = (b_bpm / a.bpm - 1.0).abs() * 100.0;
+    let shift = key_shift(a, b);
+    if !(RAMP_MIN_GAP_PCT..=RAMP_MAX_GAP_PCT).contains(&gap) || camelot_dist(a, b).is_some_and(|d| d >= KEY_CLASH) && shift.is_none() {
         return None;
     }
-    let meet = (a.bpm * b.bpm).sqrt();
-    let (to_a, to_b) = (meet / a.bpm, meet / b.bpm);
+    let meet = (a.bpm * b_bpm).sqrt();
+    let (to_a, to_b) = (meet / a.bpm, meet / b_bpm);
     let (beat, bpb) = (60_000.0 / a.bpm, bar_beats(a));
     let bar = bpb as f64 * beat;
-    // The latest clean loop of 8 bars after the last line, before the song leaves or turns quiet; else of 4, 2 or 1,
-    // as few as its plays allow (a shorter loop repeats more).
+    // The latest clean loop of 8 bars after the last line, before the song leaves or turns quiet; else of 4, where its
+    // plays allow (a shorter loop repeats more).
     let ending = Ending::of(a, p.room.out_dur);
     let quiet = (a.mixramp_end_ms > a.silence_start_ms).then_some(a.mixramp_end_ms as f64);
     let end = quiet.map_or(ending.leave(0.0), |q| q.min(ending.leave(0.0)));
     let last = a.beat_offset_ms + downbeat_before(end, a.beat_offset_ms, beat, bpb, a.downbeat_phase as i64) as f64 * beat;
-    let clean = |from: f64, bars: usize| {
-        (0..bars).all(|i| {
-            bar_at(&a.outro_bars, from + (i as f64 + 0.5) * bar).is_some_and(|x| x.voice < LOOP_VOICE && x.pulse >= KICK_PULSE && x.level_db >= LOOP_LEVEL_DB)
-        }) && !sings_after(a, from)
+    // Where the outgoing grid holds and its beats were measured: a constant grid laid over bars it does not hold for
+    // drifts off them.
+    let out_kept = steady_run(&cleaned(&a.outro_beats)).to_vec();
+    let gridded = |from: f64, to: f64| {
+        in_grid((a.outro_grid_from_ms, a.outro_grid_to_ms), from, to, beat) && measured_or_beatless(&a.outro_bars, &a.outro_beats, &out_kept, from, to, bar, |_, _| false)
     };
-    // The glide, in whole bars at the outgoing tempo; then the first downbeat of the loop after it, and the blend: the
-    // loop plays through all of it, at most [`MAX_LOOP_PLAYS`] times.
+    let clean = |from: f64, bars: usize| {
+        loopable(a, from, bars, bar, |x| x.pulse >= KICK_PULSE && x.level_db >= LOOP_LEVEL_DB) && gridded(from, from + bars as f64 * bar)
+    };
+    // The glide, in whole bars at the outgoing tempo; then the first downbeat of the loop after it, and the blend. The
+    // loop is heard at most [`MAX_LOOP_PLAYS`] times up to the bass swap, halfway through the blend, the song bars
+    // the glide takes counted as it speeds up or slows down; after the swap it darkens, drains and fades.
     let glide_bars = ((to_a - 1.0).abs() * 100.0 / RAMP_PCT_PER_BAR).ceil().max(2.0);
     let glide_ms = glide_bars * bar;
-    let played = glide_bars + 1.0 + RAMP_BLEND_BARS;
-    let (start, looped) = [8usize, 4, 2, 1]
+    let played = glide_bars * (1.0 + to_a) / 2.0 + 1.0 + 0.5 * RAMP_BLEND_BARS;
+    let (start, looped) = [8usize, 4]
         .into_iter()
         .filter(|&l| played / l as f64 <= MAX_LOOP_PLAYS)
         .flat_map(|l| (l..=EXIT_BARS_BACK as usize + l).map(move |back| (last - back as f64 * bar, l)))
@@ -851,11 +863,15 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     if ending.skipped(start + loop_ms) > MAX_SKIP_MS as f64 {
         return None;
     }
-    let (music, at) = entry(Some(b), p.room.in_dur);
+    // The incoming song locks on its first downbeat, its pickup (up to a bar) played before it.
+    let music = music_start(Some(b), p.room.in_dur) as f64;
+    let (beat_b, bar_b) = (60_000.0 / b.bpm, bar_ms(b));
+    let at = b.beat_offset_ms + downbeat_from(music, b.beat_offset_ms, beat_b, bar_beats(b), b.downbeat_phase as i64) as f64 * beat_b;
+    let pickup = (at - music).min(bar_b);
     if at - music > MAX_SKIP_MS as f64 {
         return None;
     }
-    let mut m = blank(TransitionKind::LoopRamp, start.round() as i64, at.round() as i64, 0, String::new());
+    let mut m = blank(TransitionKind::LoopRamp, start.round() as i64, (at - pickup).round() as i64, 0, String::new());
     m.out_loop_ms = Some(loop_ms.round() as i64);
     m.out_glide = Some(Glide { window: Window { start_ms: 0, end_ms: glide_ms.round() as i64 }, to: to_a });
     let downbeat = (m.out_song_ms(glide_ms) / bar).ceil() * bar;
@@ -866,8 +882,16 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     if dur > p.room.max_len as f64 || (p.room.in_dur as f64) - at < 2.0 * dur {
         return None;
     }
+    // The incoming blend inside its grid, as the outgoing loop is.
+    let in_kept = steady_run(&cleaned(&b.intro_beats)).to_vec();
+    let in_end = at + blend * to_b;
+    if !in_grid((b.intro_grid_from_ms, b.intro_grid_to_ms), at, in_end, beat_b)
+        || !measured_or_beatless(&b.intro_bars, &b.intro_beats, &in_kept, at, in_end, bar_b, |_, g1| g1 <= b.silence_start_ms as f64)
+    {
+        return None;
+    }
     m.duration_ms = dur.round() as i64;
-    m.in_delay_ms = delay.round() as i64;
+    m.in_delay_ms = (delay - pickup / to_b).round() as i64;
     (m.tempo_ratio, m.keep_pitch) = (to_b, true);
     // Back to its own tempo after the mix, no faster than the ease.
     let beats_back = ((to_b - 1.0).abs() * 100.0 / EASE_PCT_PER_BEAT).ceil();
@@ -893,6 +917,9 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
         b.bpm,
         tail(p.why_not)
     );
+    if let Some(st) = shift {
+        in_key(&mut m, st, b.bpm);
+    }
     Some(Move { plan: m, worth: LOOP_RAMP_WORTH })
 }
 
@@ -914,6 +941,21 @@ const RAMP_DRAIN_FROM_HZ: f32 = 30.0;
 const RAMP_DRAIN_TO_HZ: f32 = 1_500.0;
 const RAMP_HIGHS_DB: f32 = -15.0;
 const RAMP_HIGHS_HZ: f32 = 3_000.0;
-/// A loopable bar: unsung, with its beat, and no quieter than this against the song.
+/// A loopable bar is sung less than this share; a loop ramp's also has its beat and is no quieter than this against
+/// the song.
 const LOOP_VOICE: f32 = 0.4;
 const LOOP_LEVEL_DB: f32 = -8.0;
+
+/// Whether `bars` of the outgoing song from `from` loop without a voice: none of them sung, nothing sung after them,
+/// and each one `fits`.
+pub(super) fn loopable(a: &TrackAnalysis, from: f64, bars: usize, bar: f64, fits: impl Fn(&BarProfile) -> bool) -> bool {
+    !sings_after(a, from) && (0..bars).all(|i| bar_at(&a.outro_bars, from + (i as f64 + 0.5) * bar).is_some_and(|x| x.voice < LOOP_VOICE && fits(x)))
+}
+
+/// Whether `n` bars from `from` keep within [`loudness::STEADY_DB`] of one another: a loop of them jumps by no more
+/// each time round.
+pub(super) fn steady(bars: &[BarProfile], from: f64, n: usize, bar: f64) -> bool {
+    let levels: Vec<f32> = (0..n).filter_map(|i| bar_at(bars, from + (i as f64 + 0.5) * bar).map(|x| x.level_db)).collect();
+    let (lo, hi) = levels.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &l| (lo.min(l), hi.max(l)));
+    levels.len() == n && f64::from(hi - lo) <= crate::automix::loudness::STEADY_DB
+}

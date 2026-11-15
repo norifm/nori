@@ -441,12 +441,12 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
     let vocal = if silent { None } else { vocal_span(f, if bar_s >= 1.0 { bar_s } else { 2.0 }, (music.0, song.1)) };
 
     // How far each end holds its level, in bars from the first bar line (two-second blocks without a grid).
-    let (steady_intro, steady_end, steady_exit) = if silent {
-        (0, 0, 0)
+    let steady_intro = if silent {
+        0
     } else {
         let ms = |t: f64| (t * 1000.0).round() as i64;
         let (first, bar) = structure::bar_grid(&t, &db, music).unwrap_or((music.0, 2.0));
-        loudness::steady_ends(&f.blocks_raw, (s0, s1), ms(first), ms(bar), exit.map(ms))
+        loudness::steady_intro(&f.blocks_raw, (s0, s1), ms(first), ms(bar))
     };
 
     // The end's grid is measured where a mix leaves: before a closing breakdown, whose beat has dropped away.
@@ -542,8 +542,6 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         vocal_start_ms: vocal.map_or(0, |v| (v.0 * 1000.0).round() as i64),
         vocal_end_ms: vocal.map_or(0, |v| (v.1 * 1000.0).round() as i64),
         steady_intro_ms: steady_intro,
-        steady_end_ms: steady_end,
-        steady_exit_ms: steady_exit,
         intro_grid_from_ms: intro_grid.span_ms.map_or(0, |s| s.0),
         intro_grid_to_ms: intro_grid.span_ms.map_or(0, |s| s.1),
         outro_grid_from_ms: outro_grid.span_ms.map_or(0, |s| s.0),

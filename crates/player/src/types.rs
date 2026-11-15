@@ -158,10 +158,6 @@ pub struct TrackAnalysis {
     /// How far the opening's bars keep within 3 dB of each other, from the first bar line: a loop of the opening
     /// ends by it. 0 unknown.
     pub steady_intro_ms: i64,
-    /// Where the bars that keep together before the last bar line of the music start, and those before the exit's
-    /// (0 without an exit): a loop of the ending starts at or after it. 0 unknown.
-    pub steady_end_ms: i64,
-    pub steady_exit_ms: i64,
     /// Where each end's grid holds, ms, when it holds over only part of the end (a live band's run of steady bars
     /// between loose ones): a beat-matched mix plays inside it. Both 0: the whole end.
     pub intro_grid_from_ms: i64,
