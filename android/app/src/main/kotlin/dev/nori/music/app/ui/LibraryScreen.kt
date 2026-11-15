@@ -437,8 +437,10 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
             item {
                 GroupCard(Modifier.padding(bottom = LIST_GAP)) {
                     if (smart) GroupRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, icon = Iconoir.MagicWand, chevron = true)
-                    GroupRow(say.newPlaylist, { name = ""; creating = true }, icon = Iconoir.Plus)
-                    GroupRow(say.importPlaylistFile, { pickM3u.launch(arrayOf("*/*")) }, icon = Iconoir.Download, divider = false)
+                    // A playlist file's songs are looked up in the index, which only a server's library has.
+                    val imports = LocalRules.current.indexed
+                    GroupRow(say.newPlaylist, { name = ""; creating = true }, icon = Iconoir.Plus, divider = imports)
+                    if (imports) GroupRow(say.importPlaylistFile, { pickM3u.launch(arrayOf("*/*")) }, icon = Iconoir.Download, divider = false)
                 }
             }
             if (playlists.isEmpty()) item { EmptyNote(Note.NO_PLAYLISTS) }

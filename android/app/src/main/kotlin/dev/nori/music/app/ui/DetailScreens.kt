@@ -532,7 +532,7 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
             name, page.songs, list.downloaded, from, actions,
             coverUrl = vm.cover(page.coverArt, CoverSize.FULL), coverStandIns = listOf(vm.cover(page.coverArt, CoverSize.ROW)),
             // As a mix's page has it: keep the genre's songs on the account as a playlist.
-            afterPlay = { if (LocalRules.current.account && page.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(name, page.songs) } },
+            afterPlay = { if (LocalRules.current.playlists && page.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(name, page.songs) } },
         ) {
             songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from, pageWhole = whole)
         }
