@@ -802,8 +802,6 @@ pub struct TrackAnalysis {
     pub vocal_start_ms: i64,
     pub vocal_end_ms: i64,
     pub steady_intro_ms: i64,
-    pub steady_end_ms: i64,
-    pub steady_exit_ms: i64,
     pub intro_grid_from_ms: i64,
     pub intro_grid_to_ms: i64,
     pub outro_grid_from_ms: i64,
