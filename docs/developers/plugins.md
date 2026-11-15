@@ -511,7 +511,7 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
 ```json
 {"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "about": "…", "source": "https://github.com/…",
   "readme": "orbit/README.md", "icon": "orbit/icon.png", "points": ["sound-stage"],
-  "versions": [{"version": "1.2.0", "api": 5, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
+  "versions": [{"version": "1.2.0", "api": 6, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
     "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
 ```
 
@@ -580,6 +580,10 @@ Its `rules` name the Library sections it fills, and each is a `read`: Albums `al
 offset), Artists `artists` (whole), Songs `songs` (count, offset, in its own order; fewer than asked ends
 the list), Playlists `playlists`, Favorites `starred` (its `found`'s songs, albums and artists). A read
 it has nothing for answers `none`, the empty page.
+
+An artist's page shelves its albums by `kind` (none: with the albums) and orders each shelf newest first
+by `released`, else by `year`, releases of the same day in the plugin's order (`release_groups`). A
+source that gives only years keeps its own order within a year.
 
 A provider whose sign-in ways include `code` answers `start-code` with a code, the page the user allows it
 on in any browser where they are signed in, the seconds between checks and, if it knows, how long it lasts,
