@@ -39,7 +39,7 @@ pub(crate) fn crossover_ms(p: &TransitionPlan) -> i64 {
     let out_fade = span_ms(p.out_fade_start_ms, p.out_fade_end_ms, len);
     let in_fade = span_ms(p.in_fade_start_ms, p.in_fade_end_ms, len);
     let out_gain = db_to_gain((p.out_gain_db as f64).clamp(-24.0, 12.0));
-    let tail = p.out_tail_db.filter(|_| out_fade.1 < len).map(|db| (db_to_gain(db as f64), (out_fade.1, len)));
+    let tail = p.out_tail.map(|t| (db_to_gain(t.db as f64), (out_fade.1, (t.end_ms as f64).min(len)))).filter(|(_, s)| s.0 < s.1);
     let glide = trim_span(p);
     let gap = trim(glide.1 - glide.0, p.in_gain_db as f64);
     let progress = |(start, end): (f64, f64), t: f64| if t <= start { 0.0 } else if t >= end { 1.0 } else { (t - start) / (end - start) };
@@ -697,7 +697,7 @@ impl Mixer {
         self.brake = p.brake.filter(|b| b.len_ms > 0).map(|b| (frames(b.start_ms as f64), frames(b.len_ms as f64).max(1)));
         self.curve = p.fade_curve;
         self.out_fade = span(p.out_fade_start_ms, p.out_fade_end_ms);
-        self.out_tail = p.out_tail_db.filter(|_| self.out_fade.end < len).map(|db| (db_to_gain(db as f64), Span { start: self.out_fade.end, end: len }));
+        self.out_tail = p.out_tail.map(|t| (db_to_gain(t.db as f64), Span { start: self.out_fade.end, end: frames(t.end_ms as f64).min(len) })).filter(|(_, s)| s.start < s.end);
         self.in_fade = span(p.in_fade_start_ms, p.in_fade_end_ms);
         self.out_gain = db_to_gain((p.out_gain_db as f64).clamp(-24.0, 12.0));
         let glide = trim_span(p);
@@ -1033,7 +1033,7 @@ impl Mixer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Band, BassSwap, Duck, Echo, MidDip, Reverb, Sweep, TransitionKind, VocalDuck, Window};
+    use crate::types::{Band, BassSwap, Duck, Echo, MidDip, Reverb, Sweep, Tail, TransitionKind, VocalDuck, Window};
 
     const RATE: f64 = 48000.0;
 
@@ -1052,7 +1052,7 @@ mod tests {
             out_fade_end_ms: 1000,
             in_fade_start_ms: 0,
             in_fade_end_ms: 1000,
-            out_tail_db: None,
+            out_tail: None,
             out_gain_db: 0.0,
             in_gain_db: 0.0,
             bass_swap: None,
@@ -1148,17 +1148,17 @@ mod tests {
     }
 
     /// A tail: the fade ends at its floor, the outgoing song held there and drawn down from it to nothing by the
-    /// transition's end; without room after the fade, the fade goes to nothing.
+    /// tail's end, silent after it; without room after the fade, the fade goes to nothing.
     #[test]
     fn an_outgoing_tail_falls_from_its_floor() {
         let mut p = plan();
         (p.duration_ms, p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (2000, 0, 500, 0, 500);
-        p.out_tail_db = Some(-12.0);
+        p.out_tail = Some(Tail { db: -12.0, end_ms: 1_500 });
         let (halves, zeros) = (vec![0.5f32; 96_000], vec![0f32; 96_000]);
         let y = mix(&p, &halves, &zeros);
         let gain_at = |ms: usize| rms(&y[ms * 48 - 240..ms * 48 + 240]) / 0.5;
         let floor = 10f64.powf(-12.0 / 20.0);
-        for (ms, want) in [(500, floor), (1250, floor / 4.0), (1990, 0.0)] {
+        for (ms, want) in [(500, floor), (1000, floor / 4.0), (1490, 0.0), (1750, 0.0)] {
             assert!((gain_at(ms) - want).abs() < 0.02, "{ms} ms: {:.3} against {want:.3}", gain_at(ms));
         }
         p.out_fade_end_ms = 2000;

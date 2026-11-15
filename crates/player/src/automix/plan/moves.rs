@@ -23,12 +23,15 @@ pub(super) struct Pair<'a> {
     pub by_beats: bool,
 }
 
-/// Worth of each move before what it costs, roughly how good it sounds when it fits: a song that stops cold ends on
-/// its stop; then the long blends (a loop ramp, a beatless blend, a ride, more the longer it runs); the marked
-/// effects (brake, reverb) for variety where they fit; the quick handovers (echo, filter-out) only where no blend
-/// does, as they are heard as cuts.
+/// Worth of each move before what it costs, roughly how good it sounds when it fits: a song that stops on a last hit
+/// ringing out a bar or more ends on its stop, the next song coming in under the ring; then the long blends (a loop
+/// ramp, a beatless blend, a ride, more the longer it runs); the marked effects (brake, reverb) for variety where they
+/// fit; a stop with no ring to start under where none of those does, before the quick handovers (echo, filter-out),
+/// heard as cuts.
 const STOP_GLOW_WORTH: f64 = 2.8;
 const STOP_WORTH: f64 = 2.7;
+const CUT_STOP_GLOW_WORTH: f64 = 0.87;
+const CUT_STOP_WORTH: f64 = 0.85;
 const LOOP_RAMP_WORTH: f64 = 2.4;
 const BEATLESS_WORTH: f64 = 2.0;
 const HANDOFF_WORTH: f64 = 1.5;
@@ -772,6 +775,7 @@ const BEATLESS_MIN_MS: f64 = 6_000.0;
 pub(super) fn stop(p: &Pair) -> Vec<Move> {
     let Some(dry) = on_its_stop(p.a, p.b, p.room, p.s, p.why_not) else { return Vec::new() };
     let lead = beat_of(p.a).map_or(STOP_LEAD_MS, |(beat, _)| beat);
+    let rings = dry.duration_ms as f64 >= super::bar_ms(p.a);
     let glows = p.s.filter_effects && dry.out_start_ms as f64 - lead >= p.a.silence_start_ms as f64;
     let glow = glows.then(|| {
         let ms = |t: f64| t.round() as i64;
@@ -782,9 +786,10 @@ pub(super) fn stop(p: &Pair) -> Vec<Move> {
         (m.in_fade_start_ms, m.in_fade_end_ms) = (ms(lead), ms(lead) + dry.in_fade_end_ms);
         m.reverb = Some(Reverb { send: Window { start_ms: 0, end_ms: ms(2.0 * lead) }, decay_s: AFTERGLOW_DECAY_S, wet_db: AFTERGLOW_WET_DB, low_cut_hz: REVERB_LOW_CUT_HZ });
         m.reason = format!("on its stop, its last hit glowing under the next song{}", tail(p.why_not));
-        Move { plan: m, worth: STOP_GLOW_WORTH }
+        Move { plan: m, worth: if rings { STOP_GLOW_WORTH } else { CUT_STOP_GLOW_WORTH } }
     });
-    glow.into_iter().chain([Move { plan: dry, worth: STOP_WORTH }]).collect()
+    let worth = if rings { STOP_WORTH } else { CUT_STOP_WORTH };
+    glow.into_iter().chain([Move { plan: dry, worth }]).collect()
 }
 
 /// How far before a stop off any musical tempo its glow starts, ms.

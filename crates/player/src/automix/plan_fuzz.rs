@@ -70,6 +70,7 @@ fn row(r: &mut Rng, dur: i64, how: Rows) -> TrackAnalysis {
         exit_ms: ms(r),
         gap_ms: ms(r),
         gap_end_ms: ms(r),
+        stop_ms: ms(r),
         drop_runup_tonal_db: c(r) * -20.0,
         intro_beats_per_bar: i(r),
         outro_beats_per_bar: i(r),

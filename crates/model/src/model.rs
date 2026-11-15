@@ -792,6 +792,7 @@ pub struct TrackAnalysis {
     pub exit_ms: i64,
     pub gap_ms: i64,
     pub gap_end_ms: i64,
+    pub stop_ms: i64,
     pub drop_runup_tonal_db: f32,
     pub intro_beats_per_bar: i32,
     pub outro_beats_per_bar: i32,

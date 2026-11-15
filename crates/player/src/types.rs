@@ -135,6 +135,9 @@ pub struct TrackAnalysis {
     /// The last silence of 6 s or more inside the music; 0 when none.
     pub gap_ms: i64,
     pub gap_end_ms: i64,
+    /// Where the music stops cold, in its last half minute: its last loud moment before it falls silent at once, a
+    /// short ring aside. 0 when it fades out.
+    pub stop_ms: i64,
     /// Tonal energy of the drop's run-up (most chordal four bars) relative to the body, dB; a drum
     /// intro reads far below 0.
     pub drop_runup_tonal_db: f32,
@@ -410,6 +413,15 @@ pub struct Glide {
     pub to: f64,
 }
 
+/// Relative. The outgoing fade goes from 1 to `db`, and from its end the outgoing song plays on under the incoming
+/// one, falling from that level to silence at `end_ms`: its ending heard faintly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Tail {
+    pub db: f32,
+    pub end_ms: i64,
+}
+
 /// Relative. A track's speed (its song time per wall time) at `at_ms`, linear between knots, the first one's before and
 /// the last one's after: a tempo that follows beats one by one.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -502,10 +514,9 @@ pub struct TransitionPlan {
     /// Relative. The incoming gain goes 0 -> 1 between these.
     pub in_fade_start_ms: i64,
     pub in_fade_end_ms: i64,
-    /// When present, the outgoing fade goes from 1 to this level, dB, and from its end the outgoing song plays on
-    /// under the incoming one to the end of the transition, falling from it to silence: its ending heard faintly.
+    /// The outgoing song's ending played on under the incoming one after its fade.
     #[cfg_attr(feature = "serde", serde(default))]
-    pub out_tail_db: Option<f32>,
+    pub out_tail: Option<Tail>,
     /// Constant trim on the outgoing deck during the overlap.
     pub out_gain_db: f32,
     /// Trim on the incoming deck; the mixer glides it back to 0 dB by the end of the overlap.
@@ -651,7 +662,7 @@ impl TransitionPlan {
             out_fade_end_ms,
             in_fade_start_ms,
             in_fade_end_ms,
-            out_tail_db,
+            out_tail,
             out_gain_db,
             in_gain_db,
             bass_swap,
@@ -681,7 +692,7 @@ impl TransitionPlan {
             && (*in_loop, *bend, *highs_in) == (o.in_loop, o.bend, o.highs_in)
             && (*in_low_pass, *in_high_pass, *mid_dip, *reverb) == (o.in_low_pass, o.in_high_pass, o.mid_dip, o.reverb)
             && (*in_delay_ms, *out_glide, *brake, *in_key) == (o.in_delay_ms, o.out_glide, o.brake, o.in_key)
-            && (in_rates, out_rates, out_tail_db) == (&o.in_rates, &o.out_rates, &o.out_tail_db)
+            && (in_rates, out_rates, out_tail) == (&o.in_rates, &o.out_rates, &o.out_tail)
     }
 
     /// Where the tempo changes: from `tempo_ratio` to 1 over (start, length) ms of the transition, the bend or
