@@ -2029,9 +2029,10 @@ pub fn servers_restored(here: ServerList, backed: ServerList) -> ServerList {
     ServerList { servers, active_server_id }
 }
 
-/// Whether profiles `a` and `b` are one: the same id, or the same kind, address and user.
+/// Whether profiles `a` and `b` are one: the same id, or the same kind, address and user. Profiles
+/// without an address (a service's accounts) are told apart by their id alone.
 pub fn same_profile(a: &SavedServer, b: &SavedServer) -> bool {
-    a.id == b.id || (a.kind == b.kind && a.url == b.url && a.user == b.user)
+    a.id == b.id || (a.kind == b.kind && !a.url.is_empty() && a.url == b.url && a.user == b.user)
 }
 
 /// The server id rows in the app database are kept under: the active profile's, or "default".
@@ -2545,6 +2546,9 @@ mod tests {
         assert_eq!((none_here.servers.len(), none_here.active_server_id.as_str()), (2, "b1"), "with none in use, the backup's is");
         let logged_out = servers_restored(ServerList { active_server_id: String::new(), ..here }, backed);
         assert_eq!(logged_out.active_server_id, "h1", "the backup's one in use, as it is here");
+        let account = |id: &str| SavedServer { id: id.into(), kind: ServerKind::Plugin { id: "x".into() }, ..SavedServer::default() };
+        let accounts = servers_restored(ServerList { servers: vec![account("a1")], active_server_id: "a1".into() }, ServerList { servers: vec![account("a1"), account("a2")], active_server_id: "a2".into() });
+        assert_eq!(accounts.servers.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["a2", "a1"], "a service's second account is a profile of its own");
     }
 
     #[test]

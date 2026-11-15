@@ -184,10 +184,11 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     if let Some(file) = &o.install_plugin {
         root.install_plugin(file)?;
     }
+    // A provider given on the command line: its saved profile, or a new one, made active.
     if let Some(kind) = o.provider.clone() {
-        let list = nori_core::settings::ServerList { servers: prefs.servers.clone(), active_server_id: prefs.active_server_id.clone() };
-        let form = SavedServer { id: nori_core::settings::new_server_id(), kind, ..Default::default() };
-        prefs = nori_core::providers::profile_activated(prefs, root.plugins().kinds.login_profile(list, form));
+        let saved = prefs.servers.iter().find(|s| s.kind == kind).cloned();
+        let profile = saved.unwrap_or_else(|| SavedServer { id: nori_core::settings::new_server_id(), kind, ..Default::default() });
+        prefs = nori_core::providers::profile_activated(prefs, profile);
         root.app.settings.put(prefs.clone());
     }
     let mouse = o.mouse.unwrap_or_else(|| own::flag(&root.app.settings, own::MOUSE, true));
