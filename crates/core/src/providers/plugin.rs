@@ -71,7 +71,7 @@ impl PluginProvider {
             Some(w::AccountState::SignedOut) | None => AccountState::SignedOut,
         };
         let ahead = said.as_ref().and_then(|r| r.ahead).map(|a| a as usize);
-        let rules = rules(said, !self.info().sign_in.is_empty(), guest);
+        let rules = rules(said, guest);
         *self.rules.write() = Some((rules.clone(), ahead));
         rules
     }
@@ -97,8 +97,9 @@ fn profile_of(p: &SavedServer) -> w::Profile {
     w::Profile { id: p.id.clone(), name: p.name.clone(), address: p.url.clone(), user: p.user.clone(), password: p.password.clone(), api_key: p.api_key.clone() }
 }
 
-/// nori's rules from what the plugin said; `signs_in` when its account signs in at all.
-fn rules(said: Option<w::ProfileRules>, signs_in: bool, guest: bool) -> ProfileRules {
+/// nori's rules from what the plugin said. Where its account can't keep favorites, they are kept on
+/// this device, and Library has them.
+fn rules(said: Option<w::ProfileRules>, guest: bool) -> ProfileRules {
     use SettingsPart::*;
     let r = said.unwrap_or(w::ProfileRules { account: false, downloads: false, radio: false, feed: false, stars: false, scrobbles: false, sections: Vec::new(), measures: true, ahead: None });
     let sections = r.sections.iter().map(|s| match s {
@@ -113,18 +114,23 @@ fn rules(said: Option<w::ProfileRules>, signs_in: bool, guest: bool) -> ProfileR
         w::LibrarySection::Radio => LibrarySection::Radio,
         w::LibrarySection::Downloads => LibrarySection::Downloads,
     });
+    let stars_here = !r.stars && !guest;
+    let mut sections: Vec<LibrarySection> = if guest { Vec::new() } else { sections.collect() };
+    if stars_here && !sections.contains(&LibrarySection::Favourites) {
+        sections.push(LibrarySection::Favourites);
+    }
     let mut shown = ProfileRules {
         asks: guest,
         account: false,
         downloads: r.downloads && !guest,
         radio: r.radio && !guest,
         indexed: false,
-        sections: if guest { Vec::new() } else { sections.collect() },
+        sections,
         settings: vec![Profiles, ServerOptions, Look, Playback, Sound, Lyrics, Downloads, Storage, About],
         remote: true,
         measures: r.measures && !guest,
-        stars: r.stars && !guest,
-        stars_after_sign_in: signs_in && !r.account && !guest,
+        stars: !guest,
+        stars_here,
         scrobbles: r.scrobbles && !guest,
         feed: r.feed,
         mixes: r.account && !guest,
@@ -284,7 +290,14 @@ impl Provider for PluginProvider {
         Ok(())
     }
 
+    fn favorites_here(&self) -> bool {
+        true
+    }
+
     async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>> {
+        if matches!(read, Read::StarredItems) && self.rules.read().as_ref().is_some_and(|(r, _)| r.stars_here) {
+            return Ok(None);
+        }
         let Some(asked) = request(&read) else { return Ok(None) };
         let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_read(s, &asked)).await.ok_or_else(stopped)?;
         let said = self.heard(client, said)?;
@@ -493,5 +506,24 @@ impl nori_plugins::Media for Client {
     fn cover_url(&self, id: &str, size: u32) -> Option<String> {
         let url = self.core.cover_address(id.to_string(), size);
         url.starts_with("http").then_some(url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where the account can't keep favorites (signed out, or none at all), seals are kept here and
+    /// Library has them; signed in, they are the account's; a guest has none.
+    #[test]
+    fn favorites_the_account_cant_keep_are_kept_here() {
+        let said = |stars: bool| Some(w::ProfileRules { account: stars, downloads: true, radio: true, feed: true, stars, scrobbles: false, sections: vec![w::LibrarySection::History], measures: true, ahead: None });
+        let out = rules(said(false), false);
+        assert_eq!((out.stars, out.stars_here), (true, true));
+        assert_eq!(out.sections, [LibrarySection::History, LibrarySection::Favourites]);
+        let signed_in = rules(said(true), false);
+        assert_eq!((signed_in.stars, signed_in.stars_here, signed_in.sections), (true, false, vec![LibrarySection::History]));
+        let guest = rules(said(false), true);
+        assert_eq!((guest.stars, guest.stars_here, guest.sections.len()), (false, false, 0));
     }
 }

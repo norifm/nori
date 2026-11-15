@@ -685,7 +685,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             // A jam guest's seals would be the host's; a provider may have them signed in.
                             val tap = LocalSealTap.current
                             NoiseTitleButton(vm)
-                            if (LocalRules.current.seals) TitleButton(
+                            if (LocalRules.current.stars) TitleButton(
                                 if (starred) Kanji.Sealed else Kanji.Seal,
                                 say.favourite, starred, rememberStamp(),
                             ) { tap(s, !starred) }

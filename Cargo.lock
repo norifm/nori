@@ -4880,6 +4880,7 @@ dependencies = [
  "async-trait",
  "chacha20poly1305",
  "getrandom 0.4.3",
+ "nori-db",
  "nori-model",
  "nori-net",
  "nori-plugins",

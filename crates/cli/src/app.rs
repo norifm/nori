@@ -3258,8 +3258,7 @@ impl App {
                     Item::Mix(m) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Mix(m.id), next)),
                 }
             }
-            // Hearts are where songs carry them, downloads the account's.
-            (Action::Star, _) if !self.rules.stars && self.rules.stars_after_sign_in => self.cmds.push(Cmd::OfferSignIn),
+            // Seals are where songs carry them, downloads the account's.
             (Action::Star, _) if !self.rules.stars => self.dirty = false,
             (Action::Download, _) if !self.rules.downloads => self.dirty = false,
             (Action::Download, item) => match item {

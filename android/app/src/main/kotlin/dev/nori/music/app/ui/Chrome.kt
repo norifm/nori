@@ -469,7 +469,7 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
                 }
                 // Seals where songs carry favorites (a provider's only signed in): the bar's one color, the accent.
                 val tap = LocalSealTap.current
-                if (LocalRules.current.seals) song?.let { s ->
+                if (LocalRules.current.stars) song?.let { s ->
                     val starred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
                     Box(standing) { FavoriteSeal(starred, tint = look.color(CoverLook.ACCENT), muted = look.color(CoverLook.CHROME_CONTENT_65)) { tap(s, !starred) } }
                 }

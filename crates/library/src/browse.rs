@@ -411,10 +411,11 @@ pub struct ProfileRules {
     pub remote: bool,
     /// AutoMix measures the songs ahead here (a guest plays its host's transitions).
     pub measures: bool,
-    /// Songs carry hearts, and a heart is sent (an account's, or a provider account's likes).
+    /// Songs, albums and artists carry seals: the account's favorites, or those kept on this device.
     pub stars: bool,
-    /// Songs show a seal that asks to sign in: a provider's account, signed out, would carry them.
-    pub stars_after_sign_in: bool,
+    /// A seal is kept on this device, not sent: the provider's account can't keep favorites (signed
+    /// out, or it has none).
+    pub stars_here: bool,
     /// Songs heard are scrobbled: the account keeps plays (a server's, a provider's history).
     pub scrobbles: bool,
     /// Home is the service's own feed (`Read::HomeFeed`), not the library's shelves.
@@ -442,7 +443,7 @@ pub fn profile_rules(guest: bool) -> ProfileRules {
     let sections = if guest { vec![Albums, Artists, Songs, Genres] } else { vec![Albums, Favourites, Artists, Songs, Playlists, Smart, History, Genres, Decades, Folders, Radio, Downloads] };
     let account_only = [SettingsPart::ServerOptions, SettingsPart::Library, SettingsPart::Downloads];
     let settings = SETTINGS_PARTS.into_iter().filter(|p| !guest || !account_only.contains(p)).collect();
-    ProfileRules { asks: guest, account: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, stars_after_sign_in: false, scrobbles: !guest, feed: false, mixes: !guest }
+    ProfileRules { asks: guest, account: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, stars_here: false, scrobbles: !guest, feed: false, mixes: !guest }
 }
 
 /// A decade's years, first and last, from its first year.

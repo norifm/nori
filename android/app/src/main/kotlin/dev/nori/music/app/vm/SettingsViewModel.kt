@@ -585,9 +585,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     fun skipSignIn() { signInOn(dev.nori.music.ffi.SignInEvent.Close) }
 
-    /** Offers signing in, as a seal tapped while signed out does. */
-    fun offerSignIn() = viewModelScope.launch { signInOn(nori.signInOffer()) }
-
     /** Takes [event] on the pages of adding a profile; says what to do next. */
     fun addOn(event: dev.nori.music.ffi.AddEvent): dev.nori.music.ffi.AddDo {
         val step = dev.nori.music.ffi.addFlowOn(_add.value, event)

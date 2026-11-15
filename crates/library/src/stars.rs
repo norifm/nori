@@ -89,51 +89,94 @@ impl StarMarks {
     }
 }
 
-/// The favourites the source listed last: an item among them shows starred where its own record does
-/// not say so (a YouTube Music song played from an album, a search or a radio).
+/// Items by kind, each set of ids apart: the favourites a source listed last (an item among them shows
+/// starred where its own record does not say so: a YouTube Music song played from an album, a search or
+/// a radio), or those kept on this device.
 #[derive(Debug, Default)]
-pub struct Listed {
+pub struct Ids {
     songs: HashSet<String>,
     albums: HashSet<String>,
     artists: HashSet<String>,
 }
 
-impl Listed {
-    /// The source's favourites as it listed them now.
-    pub fn keep(&mut self, starred: &Starred) {
-        self.songs = starred.songs.iter().map(|s| s.id.clone()).collect();
-        self.albums = starred.albums.iter().map(|a| a.id.clone()).collect();
-        self.artists = starred.artists.iter().map(|a| a.id.clone()).collect();
+impl Ids {
+    /// The items of `starred`.
+    pub fn of(starred: &Starred) -> Ids {
+        Ids {
+            songs: starred.songs.iter().map(|s| s.id.clone()).collect(),
+            albums: starred.albums.iter().map(|a| a.id.clone()).collect(),
+            artists: starred.artists.iter().map(|a| a.id.clone()).collect(),
+        }
     }
 
-    /// Whether the item shows starred by its record (`listed`) or the favourites.
-    pub fn starred(&self, kind: Starrable, id: &str, listed: bool) -> bool {
-        listed
-            || match kind {
-                Starrable::Song => self.songs.contains(id),
-                Starrable::Album => self.albums.contains(id),
-                Starrable::Artist => self.artists.contains(id),
-            }
+    fn of_kind(&mut self, kind: Starrable) -> &mut HashSet<String> {
+        match kind {
+            Starrable::Song => &mut self.songs,
+            Starrable::Album => &mut self.albums,
+            Starrable::Artist => &mut self.artists,
+        }
     }
+
+    /// Whether item `id` of `kind` is among them.
+    pub fn has(&self, kind: Starrable, id: &str) -> bool {
+        match kind {
+            Starrable::Song => self.songs.contains(id),
+            Starrable::Album => self.albums.contains(id),
+            Starrable::Artist => self.artists.contains(id),
+        }
+    }
+
+    /// Adds item `id` of `kind` (`on`) or takes it out.
+    pub fn set(&mut self, kind: Starrable, id: &str, on: bool) {
+        let ids = self.of_kind(kind);
+        if on {
+            ids.insert(id.to_string());
+        } else {
+            ids.remove(id);
+        }
+    }
+}
+
+/// The source's favourites with those kept on this device after them, each item once.
+pub fn with_here(source: Starred, here: Starred) -> Starred {
+    fn join<T>(mut first: Vec<T>, then: Vec<T>, id: impl Fn(&T) -> &str) -> Vec<T> {
+        let seen: HashSet<String> = first.iter().map(|x| id(x).to_string()).collect();
+        first.extend(then.into_iter().filter(|x| !seen.contains(id(x))));
+        first
+    }
+    Starred::new(join(source.artists, here.artists, |a| &a.id), join(source.albums, here.albums, |a| &a.id), join(source.songs, here.songs, |s| &s.id))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A song among the favourites listed shows starred though its own record does not say so; the
-    /// list kept is the last one, and kinds stay apart.
+    /// Ids are kept by kind: a song among them is not the album of its id; the set from a listing is
+    /// that listing's alone.
     #[test]
-    fn listed_favourites_show_starred() {
+    fn ids_by_kind() {
         let s = |id: &str| Song { id: id.into(), ..Default::default() };
-        let mut listed = Listed::default();
-        listed.keep(&Starred::new(vec![], vec![], vec![s("rap-god")]));
-        assert!(listed.starred(Starrable::Song, "rap-god", false));
-        assert!(!listed.starred(Starrable::Album, "rap-god", false));
-        assert!(!listed.starred(Starrable::Song, "other", false));
-        assert!(listed.starred(Starrable::Song, "other", true), "its record still counts");
-        listed.keep(&Starred::new(vec![], vec![], vec![]));
-        assert!(!listed.starred(Starrable::Song, "rap-god", false), "taken off the list");
+        let mut ids = Ids::of(&Starred::new(vec![], vec![], vec![s("rap-god")]));
+        assert!(ids.has(Starrable::Song, "rap-god"));
+        assert!(!ids.has(Starrable::Album, "rap-god"));
+        ids.set(Starrable::Album, "rap-god", true);
+        ids.set(Starrable::Song, "rap-god", false);
+        assert_eq!((ids.has(Starrable::Song, "rap-god"), ids.has(Starrable::Album, "rap-god")), (false, true));
+        assert!(!Ids::of(&Starred::new(vec![], vec![], vec![])).has(Starrable::Album, "rap-god"), "a new listing");
+    }
+
+    /// Those kept here follow the source's, and an item the source lists too is shown once, as the
+    /// source has it.
+    #[test]
+    fn kept_here_follow_the_source() {
+        let s = |id: &str, title: &str| Song { id: id.into(), title: title.into(), ..Default::default() };
+        let a = |id: &str| Album { id: id.into(), ..Default::default() };
+        let source = Starred::new(vec![], vec![a("l1")], vec![s("1", "account"), s("2", "account")]);
+        let here = Starred::new(vec![Artist { id: "r1".into(), ..Default::default() }], vec![a("l2"), a("l1")], vec![s("3", "here"), s("2", "here")]);
+        let got = with_here(source, here);
+        assert_eq!(got.songs.iter().map(|s| (s.id.as_str(), s.title.as_str())).collect::<Vec<_>>(), [("1", "account"), ("2", "account"), ("3", "here")]);
+        assert_eq!(got.albums.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["l1", "l2"]);
+        assert_eq!((got.artists.len(), got.library_songs), (1, 3));
     }
 
     #[test]
