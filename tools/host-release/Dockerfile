@@ -1,5 +1,7 @@
 FROM ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
+# A mirror's brief outage is retried, as in .github/actions/apt.
+RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential curl ca-certificates python3 git pkg-config clang file squashfs-tools zstd \
     libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev \
