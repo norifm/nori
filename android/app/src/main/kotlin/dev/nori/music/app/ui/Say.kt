@@ -524,9 +524,9 @@ class Say(private val r: Resources) {
     }
     val addProfile: String get() = r.getString(R.string.settings_add_server)
     val profileIcon: String get() = r.getString(R.string.profile_icon)
-    /** What [icon] is called on the picker: the letter, the provider's ([provider]), or the face. */
-    fun profileIconName(icon: dev.nori.music.ffi.settings.ProfileIcon, provider: String): String = when (icon) {
-        dev.nori.music.ffi.settings.ProfileIcon.LETTER -> r.getString(R.string.profile_icon_letter)
+    /** What [icon] is called on the picker: the letter (the [picture] in its place), the provider's ([provider]), or the face. */
+    fun profileIconName(icon: dev.nori.music.ffi.settings.ProfileIcon, provider: String, picture: Boolean): String = when (icon) {
+        dev.nori.music.ffi.settings.ProfileIcon.LETTER -> r.getString(if (picture) R.string.profile_icon_picture else R.string.profile_icon_letter)
         dev.nori.music.ffi.settings.ProfileIcon.PROVIDER -> provider
         dev.nori.music.ffi.settings.ProfileIcon.SING -> r.getString(R.string.profile_icon_sing)
         dev.nori.music.ffi.settings.ProfileIcon.SURPRISE -> r.getString(R.string.profile_icon_surprise)

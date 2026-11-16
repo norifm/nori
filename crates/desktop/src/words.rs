@@ -969,10 +969,12 @@ pub fn profile_label(p: &nori_core::settings::SavedServer, kinds: &nori_core::pr
     Some(nori_core::settings::label(&p.name, &p.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| provider_of(kinds, &p.kind).name)
 }
 
-/// What a profile's icon is called on its picker: its provider's mark by the provider's name (`provider`).
-pub fn profile_icon_name(icon: nori_core::settings::ProfileIcon, provider: &str) -> String {
+/// What a profile's icon is called on its picker: its provider's mark by the provider's name (`provider`), the
+/// letter by the picture that stands in its place when the profile has one.
+pub fn profile_icon_name(icon: nori_core::settings::ProfileIcon, provider: &str, picture: bool) -> String {
     use nori_core::settings::ProfileIcon;
     match icon {
+        ProfileIcon::Letter if picture => "Picture",
         ProfileIcon::Letter => "Letter",
         ProfileIcon::Provider => provider,
         ProfileIcon::Sing => "Singing",

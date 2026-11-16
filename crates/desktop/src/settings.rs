@@ -1123,7 +1123,7 @@ pub fn profile_items(p: &Plugged, prefs: &StoredPrefs, kinds: &Kinds) -> Vec<cra
 
 /// The icons `sv`'s circle can show, each as it would show it, named (`provider` names its provider's mark).
 pub fn icon_picker(p: &Plugged, sv: &SavedServer, label: &str, provider: &str) -> IconPicker {
-    let choices: Vec<IconChoice> = ProfileIcon::ALL.iter().map(|&icon| IconChoice { name: words::profile_icon_name(icon, provider).into(), mark: profile_mark(p, &SavedServer { icon, ..sv.clone() }, label) }).collect();
+    let choices: Vec<IconChoice> = ProfileIcon::ALL.iter().map(|&icon| IconChoice { name: words::profile_icon_name(icon, provider, sv.picture.is_some()).into(), mark: profile_mark(p, &SavedServer { icon, ..sv.clone() }, label) }).collect();
     let chosen = ProfileIcon::ALL.iter().position(|&i| i == sv.icon).expect("ALL holds every icon");
     IconPicker { choices: ModelRc::new(VecModel::from(choices)), chosen: chosen as i32 }
 }
@@ -1933,6 +1933,14 @@ mod tests {
         let faces = [MarkGlyph::Sing, MarkGlyph::Surprise, MarkGlyph::Talking, MarkGlyph::LookUp, MarkGlyph::Satisfied, MarkGlyph::Think];
         assert_eq!(glyphs, [[MarkGlyph::None, MarkGlyph::Server].as_slice(), &faces].concat());
         assert_eq!((choices[0].mark.letter.as_str(), picker.chosen), ("Z", 6));
+    }
+
+    /// A profile with a picture shows it where its letter would be, so that choice is named for the picture.
+    #[test]
+    fn the_icon_picker_names_a_picture_for_what_it_is() {
+        let sv = SavedServer { user: "zoe".into(), picture: Some("https://example.com/zoe.jpg".into()), ..Default::default() };
+        let picker = icon_picker(&Plugged::default(), &sv, "home", "YouTube Music");
+        assert_eq!(slint::Model::row_data(&picker.choices, 0).map(|c| c.name.to_string()).as_deref(), Some("Picture"));
     }
 
     /// A tile is empty until the icon is heard of, then the icon, or the letter for a plugin with none;
