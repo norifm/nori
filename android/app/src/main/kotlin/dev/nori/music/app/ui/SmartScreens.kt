@@ -332,7 +332,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
         GroupLabel(say.order)
         GroupCard {
             GroupRow(say.sortBy) { Pick(draft.sortField, schema.sorts, label = say::smartField) { draft = draft.copy(sortField = it) } }
-            GroupRow(say.descending, { draft = draft.copy(descending = !draft.descending) }) { NoriSwitch(draft.descending, { draft = draft.copy(descending = it) }) }
+            GroupRow(say.descending, { draft = draft.copy(descending = !draft.descending) }) { NoriSwitch(draft.descending, null) }
             GroupField(
                 remember(draft.limit) { dev.nori.music.ffi.library.smartLimitText(draft.limit) }, { draft = draft.copy(limit = dev.nori.music.ffi.library.smartLimitTyped(it)) },
                 label = say.limit, placeholder = say.noLimit, keyboardOptions = numbers, divider = false,

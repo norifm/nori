@@ -31,6 +31,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.ColorProducer
 import androidx.compose.foundation.layout.padding
@@ -901,11 +902,13 @@ fun SearchField(
 ) {
     val scheme = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
-    // The keyboard put away (Back) ends the typing, so the accent edge goes with it.
+    // The keyboard put away (Back) ends the typing, so the accent edge goes with it. A remote's focus stays: let
+    // go, it would land back on the field, and the keyboard with it.
     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
     val typing = androidx.compose.foundation.layout.WindowInsets.isImeVisible
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
-    LaunchedEffect(typing) { if (!typing && focused) focusManager.clearFocus() }
+    val input = androidx.compose.ui.platform.LocalInputModeManager.current
+    LaunchedEffect(typing) { if (!typing && focused && input.inputMode == androidx.compose.ui.input.InputMode.Touch) focusManager.clearFocus() }
     Surface(
         shape = PillShape, color = scheme.surfaceContainer, contentColor = scheme.onSurface, modifier = modifier.fillMaxWidth(),
         border = if (focused) androidx.compose.foundation.BorderStroke(HAIRLINE * 2, scheme.primary) else hairlineBorder(),
@@ -1264,6 +1267,8 @@ internal val GLYPH_TARGET = 48.dp
  *
  * The thumb slides when it is tapped, which is the one kind of motion this app allows: something the
  * user touched, answering. Nothing moves otherwise.
+ *
+ * With no [onCheckedChange] it only shows the state: the row it sits in takes the tap, and a remote's focus.
  */
 @Composable
 fun NoriSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
@@ -1281,12 +1286,13 @@ fun NoriSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier
         on.luminance() > 0.8f -> androidx.compose.ui.graphics.lerp(Color.White, scheme.onSecondary, t)
         else -> Color.White
     }
+    val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Box(
         modifier.size(width = 51.dp, height = 31.dp)
             .then(
                 if (onCheckedChange != null) Modifier.clickable(
                     enabled = enabled,
-                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    interactionSource = press,
                     indication = null,
                 ) { onCheckedChange(!checked) } else Modifier,
             )
@@ -1299,7 +1305,8 @@ fun NoriSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier
                 val cx = pad + r + (size.width - 2 * (pad + r)) * t
                 drawCircle(Color.Black.copy(alpha = 0.16f), r + 0.5f.dp.toPx(), androidx.compose.ui.geometry.Offset(cx, h / 2f + 1.dp.toPx()))
                 drawCircle(thumb, r, androidx.compose.ui.geometry.Offset(cx, h / 2f))
-            },
+            }
+            .clip(PillShape).focusShown(press, scheme.onSurface),
     )
 }
 
