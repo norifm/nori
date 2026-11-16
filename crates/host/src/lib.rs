@@ -61,6 +61,18 @@ pub fn keep_log(data: &std::path::Path) {
     }));
 }
 
+/// Where the desktop and terminal clients keep their data, the same folder for both: $XDG_DATA_HOME/nori,
+/// else ~/.local/share/nori; on Windows %LOCALAPPDATA%\nori.
+pub fn data_dir() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    let set = |name| std::env::var_os(name).filter(|d| !d.is_empty()).map(PathBuf::from);
+    if let Some(d) = set("XDG_DATA_HOME") {
+        return d.join("nori");
+    }
+    let home = if cfg!(windows) { set("LOCALAPPDATA") } else { set("HOME").map(|h| h.join(".local/share")) };
+    home.unwrap_or_else(std::env::temp_dir).join("nori")
+}
+
 /// This computer's name, as the account's other devices list it (remote control). A browser has none.
 #[cfg(any(unix, windows))]
 pub fn device_name() -> String {
