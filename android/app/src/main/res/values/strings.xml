@@ -354,6 +354,7 @@
     <string name="manage_profiles">Manage profiles</string>
     <string name="profile_icon">Icon</string>
     <string name="profile_icon_letter">Letter</string>
+    <string name="profile_icon_picture">Picture</string>
     <string name="profile_icon_sing">Singing</string>
     <string name="profile_icon_surprise">Surprised</string>
     <string name="profile_icon_talking">Talking</string>

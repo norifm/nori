@@ -111,7 +111,7 @@ fun ProfileIconPicker(vm: SettingsViewModel, profile: SavedServer?, onDismiss: (
                     Box(
                         Modifier.size(PICKED).clip(CircleShape).border(ring, CircleShape)
                             .clickable { vm.setProfileIcon(shown, icon); onDismiss() }.testTag("profile-icon-${icon.name.lowercase()}")
-                            .clearAndSetSemantics { contentDescription = say.profileIconName(icon, provider); selected = chosen; role = androidx.compose.ui.semantics.Role.RadioButton },
+                            .clearAndSetSemantics { contentDescription = say.profileIconName(icon, provider, shown.picture != null); selected = chosen; role = androidx.compose.ui.semantics.Role.RadioButton },
                         Alignment.Center,
                     ) { ProfileMark(shown, label, PICKED - 10.dp, icon = icon) }
                 }
