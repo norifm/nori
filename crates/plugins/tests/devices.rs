@@ -298,6 +298,25 @@ fn an_audio_device_connecting_is_an_output_where_bluetooth_tells_of_them() {
 }
 
 #[test]
+fn the_client_hears_audio_devices_connect_only_while_it_listens() {
+    const A2DP: &str = "0000110b-0000-1000-8000-00805f9b34fb";
+    let speaker = |id: &str, name: &str| BtDevice { id: id.into(), name: name.into(), services: vec![A2DP.into()], vendor: None, product: None };
+    let (_dir, _session, fake, plugins) = open_hearing("plugins-devices-heard", vec![speaker("OLD", "Kitchen")], true);
+    assert!(fake.watching.lock().unwrap().is_empty(), "nothing listens, so nothing is watched");
+    let heard = Arc::new(Mutex::new(0));
+    let count = heard.clone();
+    plugins.hear_outputs_connect(Some(Arc::new(move || *count.lock().unwrap() += 1)));
+    assert_eq!(*fake.watching.lock().unwrap(), vec![true]);
+    plugins.bluetooth_connected(BtDevice { services: vec![SPP.into()], ..device("BUDS", "Not audio") });
+    plugins.bluetooth_connected(speaker("CAR", "Car"));
+    assert_eq!(*heard.lock().unwrap(), 1, "only an audio device that came, not one already there");
+    plugins.hear_outputs_connect(None);
+    assert_eq!(*fake.watching.lock().unwrap(), vec![true, false]);
+    plugins.bluetooth_connected(speaker("TV", "TV"));
+    assert_eq!(*heard.lock().unwrap(), 1);
+}
+
+#[test]
 fn a_device_told_of_as_watching_starts_is_heard_once() {
     let dir = nori_testdir::TempDir::new("plugins-devices-at-once");
     let session = Arc::new(Session::default());

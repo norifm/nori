@@ -337,10 +337,9 @@ impl Page<'_> {
             self.setting("autoFillBasis").under().enabled(p.auto_fill.is_some()),
             self.setting("autoFillRemote").under().enabled(p.auto_fill.is_some()),
         ];
+        // A browser has no downloads, and hears no Bluetooth devices connect.
         if !self.web() {
             queue.push(self.setting("bridgeOffline"));
-        }
-        if self.phone() {
             queue.push(self.setting("playOnBluetooth"));
         }
         vec![(SectionId::Between, between), (SectionId::Queue, queue)]
@@ -632,9 +631,10 @@ mod tests {
         for client in [SettingsClient::Desktop, SettingsClient::Terminal] {
             let rows = every_row(client, &d, &facts());
             let has = names(&rows, false);
-            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate", "playOnBluetooth"] {
+            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
                 assert!(phone.iter().any(|n| n == phone_only) && !has.iter().any(|n| n == phone_only), "{phone_only} offered by {client:?}");
             }
+            assert!(has.iter().any(|n| n == "playOnBluetooth"), "{client:?} plays when Bluetooth connects");
             assert!(rows.iter().any(|r| matches!(r.item, RowItem::LyricsSource { .. })), "the services are on the lyrics page");
             assert!(!pages(client, &ALL_PARTS).contains(&SettingsPage::LyricsSources));
         }
@@ -660,7 +660,7 @@ mod tests {
         for kept in ["autoMix", "crossfadeSec", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season"] {
             assert!(has.iter().any(|n| n == kept), "{kept} is on the web's pages");
         }
-        for left in ["theme", "bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
+        for left in ["theme", "bridgeOffline", "playOnBluetooth", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
             assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
         }
         let links: Vec<_> = rows.iter().filter_map(|r| match r.item {

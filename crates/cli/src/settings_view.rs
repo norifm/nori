@@ -1095,6 +1095,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "updateCheck" => "Check for updates automatically",
         "updateBeta" => "Beta updates",
         "bridgeOffline" => "Play downloads when offline",
+        "playOnBluetooth" => "Play when Bluetooth connects",
         "headphoneSound" => "Headphone sound",
         "compressor" => "Compressor",
         "replayGain" => "Volume leveling",

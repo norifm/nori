@@ -601,7 +601,8 @@ pub struct StoredPrefs {
     pub auto_fill_remote: bool,
     #[setting("bridgeOffline", FLAG, default = false, show = K::Switch)]
     pub bridge_offline: bool,
-    /// A Bluetooth audio device connecting plays the queue left here (Android's receiver, off with this).
+    /// A Bluetooth audio device connecting plays the queue left here (Android's receiver, the desktop's
+    /// Bluetooth watch; off, neither listens).
     #[setting("playOnBluetooth", FLAG, default = false, show = K::Switch)]
     pub play_on_bluetooth: bool,
     // Sound.
