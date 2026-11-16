@@ -41,6 +41,7 @@ pub struct Now {
 }
 
 /// What the system's controls show.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Status {
     Playing,
@@ -48,6 +49,7 @@ enum Status {
     Stopped,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 impl Now {
     /// By the state alone: a song whose details are still on their way (another device's queue) plays.
     fn status(&self) -> Status {

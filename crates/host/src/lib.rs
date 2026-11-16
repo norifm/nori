@@ -62,14 +62,25 @@ pub fn keep_log(data: &std::path::Path) {
 }
 
 /// This computer's name, as the account's other devices list it (remote control). A browser has none.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub fn device_name() -> String {
+    let name = host_name();
+    let name = name.trim_end_matches(".local");
+    if name.is_empty() { "nori".into() } else { name.into() }
+}
+
+#[cfg(unix)]
+fn host_name() -> String {
     let mut buf = [0u8; 256];
     // SAFETY: the buffer is writable for its whole length; gethostname writes a NUL-terminated name into it.
     let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
-    let name = if ok { String::from_utf8_lossy(buf.split(|b| *b == 0).next().unwrap_or_default()).into_owned() } else { String::new() };
-    let name = name.trim_end_matches(".local").to_string();
-    if name.is_empty() { "nori".into() } else { name }
+    if ok { String::from_utf8_lossy(buf.split(|b| *b == 0).next().unwrap_or_default()).into_owned() } else { String::new() }
+}
+
+/// Windows sets it for every process.
+#[cfg(windows)]
+fn host_name() -> String {
+    std::env::var("COMPUTERNAME").unwrap_or_default()
 }
 
 /// Why a jam was not joined.
