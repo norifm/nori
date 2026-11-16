@@ -352,6 +352,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "updateCheck" => ("Check automatically", "At most once a day, from GitHub"),
         "updateBeta" => ("Beta updates", "Test versions of the next release. They may have bugs"),
         "bridgeOffline" => ("Play downloads when offline", ""),
+        "playOnBluetooth" => ("Play when Bluetooth connects", "Headphones, a speaker or a car: the queue goes on where it stopped"),
         "autoEqAuto" => ("AutoEQ for headphones", ""),
         "autoEqDownload" => ("Keep the AutoEQ list", ""),
         "profilePerOutput" => ("Remember sound per device", ""),

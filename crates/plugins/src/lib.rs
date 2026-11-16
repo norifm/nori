@@ -169,6 +169,9 @@ pub struct Plugins {
     /// Whether the platform's Bluetooth is how this client hears output devices connect (the desktop's
     /// BlueZ; Android has its audio device callback).
     pub(crate) bluetooth_outputs: std::sync::atomic::AtomicBool,
+    /// Told when an audio device connects, where the platform's Bluetooth tells of them
+    /// ([`Plugins::hear_outputs_connect`]).
+    pub(crate) output_connected: std::sync::RwLock<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// The app is away from the screen (Android's own report; every other client stays false).
     pub(crate) away: std::sync::atomic::AtomicBool,
     me: std::sync::Weak<Plugins>,
@@ -260,6 +263,7 @@ impl Plugins {
             controls: Arc::default(),
             watching: Mutex::new(false),
             bluetooth_outputs: Default::default(),
+            output_connected: Default::default(),
             away: Default::default(),
             me: me.clone(),
             library: Default::default(),

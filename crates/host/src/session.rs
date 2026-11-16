@@ -509,6 +509,8 @@ impl Session {
         #[cfg(feature = "desktop")]
         h.player_shown(true);
         h.follow_remote();
+        #[cfg(feature = "desktop")]
+        h.follow_bluetooth();
         h.account.keep_picture();
         if !h.offline && h.rules().downloads && h.core.download_counts().pending > 0 {
             h.start_downloads();
@@ -866,6 +868,22 @@ impl Handle {
     }
 
     /// Makes or drops the remote as the settings say, and serves while remote control is on.
+    /// With `playOnBluetooth` on, a Bluetooth audio device connecting plays, as a play press does; the
+    /// plugin host is how the desktop hears them, and watches Bluetooth only while this is on.
+    #[cfg(feature = "desktop")]
+    fn follow_bluetooth(&self) {
+        let Some(plugins) = &self.plugins else { return };
+        let on = self.core.session.settings.effective().is_some_and(|p| p.play_on_bluetooth);
+        let me = self.weak();
+        plugins.hear_outputs_connect(on.then(|| {
+            Arc::new(move || {
+                if let Some(parts) = me.upgrade() {
+                    Handle::of(parts).resume();
+                }
+            }) as Arc<dyn Fn() + Send + Sync>
+        }));
+    }
+
     fn follow_remote(&self) {
         let prefs = self.core.session.settings.effective().unwrap_or_default();
         if self.offline || !self.rules().remote || !(prefs.remote_control || self.guest) {
@@ -1096,6 +1114,8 @@ impl Handle {
             self.apply(effect, &prefs);
         }
         self.follow_remote();
+        #[cfg(feature = "desktop")]
+        self.follow_bluetooth();
         (self.out)(Said::Overridden);
     }
 
@@ -1108,6 +1128,8 @@ impl Handle {
 
     fn took(&self, change: &SettingChange) {
         self.apply(change.effect, &change.prefs);
+        #[cfg(feature = "desktop")]
+        self.follow_bluetooth();
         if let Some(store) = self.store.as_ref().filter(|_| change.effect & CACHE_LIMIT != 0) {
             store.set_limit(change.prefs.cache_mb.max(0) as u64 * 1024 * 1024);
         }

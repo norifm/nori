@@ -120,6 +120,11 @@ fn late_autofill_respects_playback_and_new_queues() {
 
 /// A session of the server at `url` over four one-second songs, kept as downloads under `dir`.
 fn session_of_songs(dir: &nori_testdir::TempDir, url: &str, card: &Card, clock: Virtual) -> (Session, Vec<Song>) {
+    session_opening(dir, url, card, clock, nori_core::providers::Kinds::builtin())
+}
+
+/// [`session_of_songs`], opening `kinds`.
+fn session_opening(dir: &nori_testdir::TempDir, url: &str, card: &Card, clock: Virtual, kinds: Arc<nori_core::providers::Kinds>) -> (Session, Vec<Song>) {
     let prefs = nori_core::settings_store::Settings::new();
     let mut p = prefs.open(&db_path(dir.path())).unwrap();
     p.remote_control = false;
@@ -128,7 +133,7 @@ fn session_of_songs(dir: &nori_testdir::TempDir, url: &str, card: &Card, clock: 
     prefs.put(p);
     let queue = Arc::new(nori_core::queue::Session::new(prefs));
     let profile = SavedServer { id: "test".into(), url: url.into(), user: "ann".into(), password: "pw".into(), ..Default::default() };
-    let s = Session::open_on(test_open(queue, dir.path(), profile, Box::new(card.clone())), clock).unwrap();
+    let s = Session::open_on(Open { kinds, ..test_open(queue, dir.path(), profile, Box::new(card.clone())) }, clock).unwrap();
     let songs: Vec<Song> = ["a", "b", "c", "d"].into_iter().map(|id| Song { id: id.into(), title: id.into(), duration: 1, suffix: "wav".into(), album_id: Some("album".into()), ..Default::default() }).collect();
     s.core.download_queue(songs.clone()).unwrap();
     s.core.download_settle(songs.iter().map(|s| s.id.clone()).collect(), vec![true; songs.len()]).unwrap();
@@ -170,6 +175,72 @@ fn media_keys_start_a_restored_queue_and_fill_at_its_end() {
     s.close();
 }
 
+/// The platform's Bluetooth with nothing connected: each watch asked of it.
+#[cfg(feature = "desktop")]
+#[derive(Default)]
+struct Radio(std::sync::Mutex<Vec<bool>>);
+
+#[cfg(feature = "desktop")]
+impl nori_plugins::Bluetooth for Radio {
+    fn watch(&self, on: bool) {
+        self.0.lock().unwrap().push(on);
+    }
+    fn connected(&self) -> Vec<nori_plugins::BtDevice> {
+        Vec::new()
+    }
+    fn rfcomm(&self, _: u64, _: String, _: String) -> Result<(), nori_plugins::BtFailure> {
+        Err(nori_plugins::BtFailure::Unsupported)
+    }
+    fn rfcomm_write(&self, _: u64, _: Vec<u8>) -> Result<(), nori_plugins::BtFailure> {
+        Err(nori_plugins::BtFailure::Unsupported)
+    }
+    fn gatt(&self, _: u64, _: String) -> Result<(), nori_plugins::BtFailure> {
+        Err(nori_plugins::BtFailure::Unsupported)
+    }
+    fn gatt_mtu(&self, _: u64) -> u16 {
+        0
+    }
+    fn gatt_services(&self, _: u64) -> Vec<String> {
+        Vec::new()
+    }
+    fn gatt_read(&self, _: u64, _: String, _: String) -> Result<Vec<u8>, nori_plugins::BtFailure> {
+        Err(nori_plugins::BtFailure::Unsupported)
+    }
+    fn gatt_write(&self, _: u64, _: String, _: String, _: Vec<u8>, _: bool) -> Result<(), nori_plugins::BtFailure> {
+        Err(nori_plugins::BtFailure::Unsupported)
+    }
+    fn gatt_notify(&self, _: u64, _: String, _: String, _: bool) -> Result<(), nori_plugins::BtFailure> {
+        Err(nori_plugins::BtFailure::Unsupported)
+    }
+    fn close(&self, _: u64) {}
+}
+
+/// With `playOnBluetooth` on, an audio device connecting plays the queue as a play press does; only
+/// then is Bluetooth watched for it.
+#[cfg(feature = "desktop")]
+#[test]
+fn an_audio_device_connecting_plays_while_the_switch_is_on() {
+    let dir = nori_testdir::TempDir::new("host-play-on-bluetooth");
+    let (url, _asked) = holding_server();
+    let (card, clock) = (Card::new(), Virtual::default());
+    let time = Stepper::new(clock.clone(), card.pull.clone());
+    let plugins = nori_plugins::open(dir.join("plugins"), nori_core::settings_store::Settings::new(), Arc::new(nori_plugins::testing::Quiet));
+    let radio = Arc::new(Radio::default());
+    plugins.use_bluetooth(radio.clone(), true);
+    let (s, songs) = session_opening(&dir, &url, &card, clock, nori_core::providers::Kinds::with_plugins(plugins.clone()));
+    s.play(songs[..2].to_vec(), 0, false, None);
+    s.engine.pause();
+    assert!(time.until(Duration::from_secs(2), || s.engine.status().state == State::Paused));
+    assert!(radio.0.lock().unwrap().is_empty(), "off, Bluetooth is not watched");
+    s.setting("playOnBluetooth", "true").expect("a setting");
+    assert_eq!(*radio.0.lock().unwrap(), [true]);
+    let speaker = nori_plugins::BtDevice { id: "CAR".into(), name: "Car".into(), services: vec!["0000110b-0000-1000-8000-00805f9b34fb".into()], vendor: None, product: None };
+    plugins.bluetooth_connected(speaker);
+    assert!(time.until(Duration::from_secs(2), || s.engine.status().state == State::Playing), "the queue plays");
+    s.setting("playOnBluetooth", "false").expect("a setting");
+    assert_eq!(*radio.0.lock().unwrap(), [true, false]);
+    s.close();
+}
 
 /// A server that answers every request with `body`.
 fn answering_server(body: &'static str) -> String {
