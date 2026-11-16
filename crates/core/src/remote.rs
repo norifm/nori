@@ -70,7 +70,7 @@ const PREVIOUS_RESTARTS_MS: i64 = 3_000;
 const RETRY_MS: u64 = 30_000;
 const RETRY_MAX_MS: u64 = 300_000;
 
-/// The longest [`Remote::stop`] waits for the sends queued before it (leaving the relay among them).
+/// The longest [`Remote::sent`] waits for the sends queued before stopping (leaving the relay among them).
 #[cfg(not(target_arch = "wasm32"))]
 const SENT_WAIT_MS: u64 = 3_000;
 
@@ -1597,7 +1597,10 @@ pub struct Remote {
     cancel: Notify,
     /// None once stopped: the sender ends with what was queued.
     out: Mutex<Option<Outbox>>,
-    /// The tasks [`Remote::stop`] waits for.
+    /// What `out` queues, kept to wait for the sender to end ([`Remote::sent`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    sends: Arc<Sends>,
+    /// The tasks [`Remote::stop`] ends; `out` closes once they have.
     running: Arc<Running>,
     /// What plays along with a jam's host here.
     follower: Mutex<Option<Arc<dyn Follower>>>,
@@ -2331,9 +2334,8 @@ impl Remote {
     }
 
     /// Ends remote control here for good: leaves the relay, withdraws the door, ends a hosted jam, stops
-    /// mirroring, and ends every task this remote started, a held poll at once. Queued sends still go.
-    /// Natively it waits for those tasks and sends, up to [`SENT_WAIT_MS`]: a client quitting next
-    /// leaves the device lists at once.
+    /// mirroring, and ends every task this remote started, a held poll at once. It returns at once, its
+    /// device id free for the next remote; what was queued still goes ([`Remote::sent`] waits for it).
     pub fn stop(self: Arc<Self>) {
         self.clone().serve(false);
         self.clone().discover_active(false);
@@ -2352,24 +2354,29 @@ impl Remote {
         self.retry.notify();
         self.timing.notify();
         self.cancel.notify();
-        // After the tasks: a poller ending may send the leave again.
-        let sent = async {
-            self.running.ended().await;
-            let sends = self.out.lock().take().map(|o| o.0.clone());
-            if let Some(s) = sends {
-                s.ended().await;
-            }
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        self.tasks.block_on(std::pin::pin!(async {
-            select(std::pin::pin!(sent), self.tasks.sleep(Duration::from_millis(SENT_WAIT_MS))).await;
+        // The outbox closes after the tasks: a poller ending may send the leave again.
+        let closing = self.clone();
+        self.tasks.spawn(Box::pin(async move {
+            closing.running.ended().await;
+            closing.out.lock().take();
         }));
-        // A browser cannot wait: its tasks end and its sends go on their own.
-        #[cfg(target_arch = "wasm32")]
-        drop(sent);
-        self.out.lock().take();
         self.id_lock.lock().take();
         self.shown.changed();
+    }
+
+    /// Waits, up to [`SENT_WAIT_MS`], for what a stopped remote still had to send: a client quitting
+    /// next leaves the device lists at once. A browser cannot wait; its sends go on their own.
+    pub fn sent(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let sent = async {
+                self.running.ended().await;
+                self.sends.ended().await;
+            };
+            self.tasks.block_on(std::pin::pin!(async {
+                select(std::pin::pin!(sent), self.tasks.sleep(Duration::from_millis(SENT_WAIT_MS))).await;
+            }));
+        }
     }
 
     /// Who asked for each song that came in through the jam, by song id, for "added by" on the queue: the
@@ -2619,6 +2626,7 @@ enum Sending {
 
 impl Sends {
     /// Until the sender ended.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn ended(&self) {
         self.changed.until(|| self.queue.lock().sender == Sending::Ended).await;
     }
@@ -2782,7 +2790,7 @@ impl Remote {
             ).map_err(|e| crate::alog::info(&format!("remote: could not keep instance: {e}"))).ok()?.parse().ok()
         });
         let sends = Arc::new(Sends::default());
-        let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), running: Arc::default(), follower: Mutex::default() });
+        let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), #[cfg(not(target_arch = "wasm32"))] sends: sends.clone(), running: Arc::default(), follower: Mutex::default() });
         remote.tasks.spawn(Box::pin(send_all(sends, remote.client.clone(), remote.who())));
         *remote.client.core.remote.lock() = Arc::downgrade(&remote);
         if remote.client.core.serverless() && remote.client.core.lan_jam.read().is_none() {
@@ -4662,6 +4670,29 @@ mod tests {
         assert_eq!(asked(), None, "another device picked: no longer asked for");
     }
 
+    /// Stopping ends remote control at once, as a client switching profiles has it; what was queued
+    /// still goes, and [`Remote::sent`] waits for it, as a client quitting has it.
+    #[test]
+    fn stop_returns_at_once_and_its_last_sends_go_after() {
+        let (client, fake) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        *fake.held.lock() = true;
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        remote.out(Out::send(Link::Relay, Outgoing { room: Some("room".into()), to: None, body: None, state: None }));
+        let (stopped, returned) = std::sync::mpsc::channel();
+        let stopping = remote.clone();
+        std::thread::spawn(move || {
+            stopping.stop();
+            let _ = stopped.send(());
+        });
+        assert_eq!(returned.recv_timeout(Duration::from_secs(1)), Ok(()), "stop waited for a send to a slow server");
+        let ended = || remote.sends.queue.lock().sender == Sending::Ended;
+        assert!(!ended(), "the send is still under way");
+        fake.release();
+        remote.sent();
+        assert!(ended(), "sent returned before the sender ended");
+        assert_eq!(fake.sent.lock().len(), 1, "the send queued before stop went");
+    }
+
     #[test]
     fn stop_returns_while_a_task_starts_another() {
         let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
@@ -4684,6 +4715,7 @@ mod tests {
         let (sent, stopped) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             remote.clone().stop();
+            remote.sent();
             let _ = sent.send(*remote.running.count.lock());
         });
         assert_eq!(stopped.recv_timeout(Duration::from_secs(10)), Ok(0), "stop waited for a task waiting on it, or a task started after it");

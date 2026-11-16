@@ -172,6 +172,9 @@ pub(crate) mod tests {
         /// Each request pends once before answering, as a real one would.
         pub pends: Mutex<bool>,
         pub metered: Mutex<bool>,
+        /// While true, every request waits, as one to a slow server would; set false through [`Fake::release`].
+        pub held: Mutex<bool>,
+        released: nori_tasks::Notify,
     }
 
     impl Fake {
@@ -184,12 +187,17 @@ pub(crate) mod tests {
         pub fn asked(&self) -> Vec<String> {
             self.asked.lock().iter().map(|(u, _)| u.clone()).collect()
         }
+        pub fn release(&self) {
+            *self.held.lock() = false;
+            self.released.notify();
+        }
     }
 
     #[async_trait::async_trait]
     impl Transport for Fake {
         async fn get(&self, url: String, timeout_ms: u32) -> Result<TransportResponse, TransportError> {
             self.asked.lock().push((url, timeout_ms));
+            self.released.until(|| !*self.held.lock()).await;
             if *self.pends.lock() {
                 let mut pended = false;
                 std::future::poll_fn(|cx| {

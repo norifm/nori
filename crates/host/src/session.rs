@@ -513,8 +513,18 @@ impl Session {
         Ok(Session { h })
     }
 
-    /// Saves the queue and stops the engine.
+    /// Saves the queue and stops the engine, as the client quits: the remote's last sends go first, so
+    /// the device leaves the others' lists at once.
     pub fn close(&self) {
+        let remote = self.remote();
+        self.end();
+        if let Some(r) = remote {
+            r.sent();
+        }
+    }
+
+    /// Saves the queue and stops the engine and the remote, which sends what it still has meanwhile.
+    fn end(&self) {
         #[cfg(feature = "desktop")]
         if let Some(m) = &self.media {
             m.mpris.serve(None);
@@ -525,14 +535,14 @@ impl Session {
         self.engine.stop();
     }
 
-    /// Closes the session as `next` takes over (None: the sign-in). A jam guest's profile is left for
-    /// good then: the jam is told, and its rows are forgotten.
+    /// Closes the session as `next` takes over (None: the sign-in), without waiting on the network. A
+    /// jam guest's profile is left for good then: the jam is told, and its rows are forgotten.
     pub fn close_for(&self, next: Option<&SavedServer>) {
         let left = self.guest && next.is_none_or(|p| p.id != self.profile_id);
         if let Some(r) = self.remote().filter(|_| left) {
             r.jam_leave();
         }
-        self.close();
+        self.end();
         if left {
             forget_guest_rows(self.db.to_string_lossy().into_owned(), &self.profile_id);
         }
