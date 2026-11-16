@@ -31,6 +31,8 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
     private var kept: Set<Int> = []
     /// Another device's queue, mirrored: a tap plays there, nothing is edited from here.
     private var mirrored = false
+    /// What the head offers for the whole queue, by name (the core's `queue_actions`).
+    private var offers: [String] = []
     /// The jam this iPod is a guest in, over its host's queue.
     private var jam: Jam?
     private var opened = false
@@ -194,6 +196,7 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
         reorderable = a.head["reorderable"] as? Bool ?? false
         kept = Set(a.head["kept"] as? [Int] ?? [])
         mirrored = a.head["remote"] as? Bool ?? false
+        offers = a.head["offers"] as? [String] ?? []
         jam = a.head["jam"] as? Bool == true ? Core.shared.jam : nil
         table.reloadData()
         // Opens on the song playing, what has played above it out of sight.
@@ -267,7 +270,7 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
             label.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: Space.gutter),
             label.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -6),
         ])
-        if part == .next && !mirrored {
+        if part == .next && !mirrored && offers.contains("Clear") {
             let clear = UIButton(type: .system)
             clear.setTitle(Say.clear, for: .normal)
             clear.tintColor = Theme.Card.secondary
@@ -275,9 +278,24 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
             clear.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
             clear.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(clear)
+            let keeps = offers.contains("AddToPlaylist")
             NSLayoutConstraint.activate([
-                clear.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -Space.gutter),
+                clear.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: keeps ? -Space.gutter - 36 : -Space.gutter),
                 clear.centerYAnchor.constraint(equalTo: label.centerYAnchor),
+            ])
+        }
+        if part == .next && offers.contains("AddToPlaylist") {
+            // The whole queue into a playlist, as a mix's page keeps itself.
+            let keep = GlyphButton(Glyph.draw(Iconoir.plusCircle, 20), Say.addToPlaylist, quiet: true, side: 32)
+            keep.tapped = { [weak self] in
+                guard let self else { return }
+                SongMenu.pickPlaylistForQueue(from: self)
+            }
+            keep.tintColor = Theme.Card.secondary
+            header.addSubview(keep)
+            NSLayoutConstraint.activate([
+                keep.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -Space.gutter + 6),
+                keep.centerYAnchor.constraint(equalTo: label.centerYAnchor),
             ])
         }
         return header

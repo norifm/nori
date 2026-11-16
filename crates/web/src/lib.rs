@@ -484,6 +484,12 @@ impl Nori {
         Value::from(drawn).to_string()
     }
 
+    /// What the queue's head offers, in order (`menus::queue_actions`), by name, for a queue of `songs` songs
+    /// of which `upcoming` follow the one playing; `guest`: a jam guest's.
+    pub fn queue_actions(&self, songs: u32, upcoming: u32, guest: bool) -> String {
+        Value::from(nori_core::menus::queue_actions(songs, upcoming, self.rules().playlists, guest).iter().map(|a| format!("{a:?}")).collect::<Vec<_>>()).to_string()
+    }
+
     /// What the head of a page's song list offers, in order (`menus::page_actions`), by name, for `kind`
     /// (`Album`, `Artist`, `Playlist`) with `songs` songs. A browser keeps no downloads.
     pub fn page_actions(&self, kind: String, songs: u32) -> Result<String, JsValue> {

@@ -7,7 +7,6 @@ the owner asks for it, and delete its line once it ships.
 
 **Queue**
 - Clear the upcoming songs (Android).
-- Save the queue as a playlist.
 - Total and remaining time in the queue header.
 
 **Playlists**

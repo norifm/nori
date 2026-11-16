@@ -181,7 +181,7 @@ impl App {
     }
 
     /// The account's playlists to add `songs` to, a new one first.
-    fn pick_playlist(&mut self, songs: Vec<String>) {
+    pub(crate) fn pick_playlist(&mut self, songs: Vec<String>) {
         // The playlists come from the core (`Data::PlaylistChoices`), after New playlist.
         let options = vec![(crate::text::NEW_PLAYLIST.to_string(), String::new())];
         self.cmds.push(Cmd::Load(crate::backend::Req::PlaylistChoices(songs.clone())));
