@@ -280,6 +280,9 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         return out
     }
 
+    /** The place shown still moves: this phone's while playing and heard or while a pause's fade is heard, another device's while it plays. */
+    val placeRuns: Boolean get() = engine()?.takeIf { mirror == null }?.placeRuns ?: _state.value.playing
+
     /** The service's engine, on the main thread only (where it lives): null with no service. */
     private fun engine(): EnginePlayer? =
         PlaybackService.rustPlayer?.takeIf { android.os.Looper.myLooper() == android.os.Looper.getMainLooper() }

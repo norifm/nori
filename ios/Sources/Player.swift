@@ -897,8 +897,8 @@ final class LyricsCard: UITableViewController {
         var step = NoriLyricStep()
         nori_ios_lyric_advance(clock, Int64(now.position), 1, force ? 1 : 0, &step)
         if step.redraw != 0 { show(step) }
-        // While bytes are on their way, or paused, the place stands still: nothing runs.
-        guard now.playing, !now.buffering, step.wait > 0 else { return stop() }
+        // While bytes are on their way, or paused once the fade is over, the place stands still: nothing runs.
+        guard now.moving, step.wait > 0 else { return stop() }
         if sweeps && step.still == 0 {
             let l: CADisplayLink
             if case .link(let running) = pacer {

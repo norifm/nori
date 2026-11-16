@@ -315,7 +315,7 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
         lastMs[0] = shownMs
         if (hasBacking) backingSung = clock.atBackingSung
         var drawnAt = 0L
-        while (playing && live && isActive) {
+        while ((playing || vm.placeRuns) && live && isActive) {
             val wait = LyricsClock.wait(step)
             if (wait == 0) break
             // Display frames while the fill moves; asleep between words and after a line is sung, when

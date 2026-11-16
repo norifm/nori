@@ -49,6 +49,8 @@ export type Now = {
   index: number | null;
   id: string | null;
   positionMs: number;
+  /** Paused while the fade is still heard: how much longer the place runs on, ms. */
+  fadingMs: number;
   pace: number;
   mixing: boolean;
   buffering: boolean;

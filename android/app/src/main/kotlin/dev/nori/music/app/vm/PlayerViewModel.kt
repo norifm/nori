@@ -259,6 +259,9 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     /** The player's own place, unshaped: for the test bridge's traces. */
     val playerPositionMs: Long get() = player.playerPositionMs
 
+    /** The place still moves: the lyrics go on being drawn through a pause's fade. */
+    val placeRuns: Boolean get() = player.placeRuns
+
     /** [positionMs] while the song playing is still [songId]; null once the player has left it. */
     fun positionIn(songId: String?): Long? = dev.nori.music.data.playheadFor(songId, state.value.current?.id) { player.positionMs }
 

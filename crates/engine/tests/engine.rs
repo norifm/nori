@@ -311,6 +311,8 @@ struct Card {
     /// last paused.
     loud_until_us: u64,
     paused_us: u64,
+    /// With [`Extra::periods`]: each pull's frames and when it is heard, µs.
+    pulls: Vec<(u64, usize)>,
 }
 
 /// Frames the card pulls at a time.
@@ -333,6 +335,7 @@ impl common::Device for Card {
             self.block.resize(frames * feed.format().channels, 0);
             let got = feed.pull_i16(&mut self.block);
             self.said.pulled(self.now_us + delay_us, got, rate);
+            self.pulls.push((self.now_us + delay_us, got));
             let ch = feed.format().channels;
             if let Some(last) = self.block[..got * ch].iter().rposition(|v| v.abs() >= 100) {
                 self.loud_until_us = self.now_us + delay_us + (last / ch) as u64 * 1_000_000 / rate as u64;
@@ -571,6 +574,7 @@ impl Rig {
             now_us: 0,
             loud_until_us: 0,
             paused_us: 0,
+            pulls: Vec::new(),
         }));
         let out = Recorder { card: card.clone(), opened: Arc::default(), shut: Arc::default(), watch: Arc::default(), flushes: Arc::default(), shallow: Arc::default() };
         let (opened, shut, watch, flushes, shallow) = (out.opened.clone(), out.shut.clone(), out.watch.clone(), out.flushes.clone(), out.shallow.clone());
@@ -1217,6 +1221,51 @@ fn pause_fades_to_silence_heard() {
     let c = rig.card.lock();
     assert!(c.paused_us + 10_000 >= c.loud_until_us, "paused at {} µs, music heard until {} µs", c.paused_us, c.loud_until_us);
     assert!(rig.heard.lock().iter().any(|&v| v > 2000 && v < 6000), "a ramp down, not a cut");
+}
+
+/// Behind a device that plays each pull later (a cpal stream over Bluetooth), the place said follows the
+/// ear through a pause and play: it runs on through the fade still heard, stops where the music stops,
+/// and moves again only once the music is heard again.
+#[test]
+fn the_place_said_follows_the_ear_through_a_pause() {
+    let a = vec![8000i16; RATE as usize * 2 * 30];
+    let extra = Extra { periods: Some((RATE as usize / 100, 250_000)), ..Extra::default() };
+    let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings { fade_ms: 150, ..Settings::default() }, extra);
+    // What the ear has heard by now, ms.
+    let ear = |r: &Rig| {
+        let c = r.card.lock();
+        c.pulls.iter().filter(|p| p.0 <= c.now_us).map(|p| p.1).sum::<usize>() as i64 * 1000 / RATE as i64
+    };
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 3));
+    rig.engine.pause();
+    rig.run(20);
+    let s = rig.engine.status();
+    let runs_to = s.positions_at(s.at + Duration::from_secs(10), s.buffering).0;
+    rig.run(1_000);
+    let (stopped, heard) = (rig.engine.status().position_ms, ear(&rig));
+    assert!((runs_to - heard).abs() < 30, "said during the fade to run on to {runs_to} ms, the music stopped at {heard} ms");
+    assert!((stopped - heard).abs() < 30, "stopped at {stopped} ms, the music at {heard} ms");
+    rig.engine.play();
+    let mut early = Vec::new();
+    for _ in 0..100 {
+        rig.run(5);
+        let s = rig.engine.status();
+        let moving = s.state == State::Playing && !s.buffering;
+        if s.position_ms < stopped - 30 || (moving && (ear(&rig) <= heard || s.position_ms > ear(&rig) + 30)) {
+            early.push((s.position_ms, s.buffering, ear(&rig)));
+        }
+    }
+    assert!(early.is_empty(), "said moving before the music is heard again, or back before the pause (place, held, ear): {early:?}");
+    let s = rig.engine.status();
+    assert!(s.state == State::Playing && !s.buffering && ear(&rig) > stopped + 200, "and plays on: {s:?}, the ear at {} ms", ear(&rig));
+
+    // Sent back before the music is heard again: the place from the seek on is heard.
+    rig.engine.pause();
+    rig.run(1_000);
+    rig.engine.play();
+    rig.engine.seek(1_000);
+    assert!(rig.wait_for(2, |r| !r.engine.status().buffering && r.engine.status().position_ms < 2_000), "plays from 1 s: {:?}", rig.engine.status());
 }
 
 /// A pause says where the music stopped: the place a client reads as it hears of the pause is the one

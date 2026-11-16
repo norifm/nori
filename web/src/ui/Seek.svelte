@@ -38,7 +38,8 @@
     }
     const ms = player.position();
     run.style.transform = shift(ms);
-    if (a.pace > 0 && a.length > ms) run.animate([{ transform: shift(ms) }, { transform: shift(a.length) }], { duration: (a.length - ms) / a.pace, easing: "linear", fill: "forwards" });
+    const end = Math.min(a.length, ms + Math.max(0, a.until - performance.now()) * a.pace);
+    if (a.pace > 0 && end > ms) run.animate([{ transform: shift(ms) }, { transform: shift(end) }], { duration: (end - ms) / a.pace, easing: "linear", fill: "forwards" });
   });
 
   $effect(() => {
@@ -58,7 +59,7 @@
       }
       const ms = player.position();
       at = ms;
-      if (a.pace > 0 && !document.hidden && ms < a.length) {
+      if (a.pace > 0 && !document.hidden && ms < a.length && performance.now() < a.until) {
         timer = setTimeout(tick, (1000 - (ms % 1000)) / a.pace + 5);
         count(1);
       }
