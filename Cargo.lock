@@ -5298,6 +5298,7 @@ dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
  "futures-channel",
+ "if-addrs",
  "libc",
  "memmap2",
  "nori-automix",

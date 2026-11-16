@@ -22,7 +22,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-${{ matrix.package }}
-      - run: cargo build --release -p ${{ matrix.package }}
+      - run: cargo build --release --keep-going -p ${{ matrix.package }}
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.package }}-windows-x86_64
