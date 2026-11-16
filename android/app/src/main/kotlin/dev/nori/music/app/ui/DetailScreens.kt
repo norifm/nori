@@ -511,7 +511,7 @@ private fun PlaylistPage(
                 songRows(
                     detail.songs, actions, list,
                     cover = { vm.cover(it.coverArt, CoverSize.ROW) }, rows = shown, arrival = arrival, from = from,
-                    pageWhole = whole,
+                    pageWhole = whole, edits = { at -> actions.rowEdits(playlist, detail.songs, at) },
                 )
             }
             failed != null -> item(key = "fail") { LoadFailed(failed) }

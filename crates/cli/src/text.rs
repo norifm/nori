@@ -856,8 +856,25 @@ pub fn menu_act(a: &crate::menu::MenuAct, missing: usize) -> String {
         MenuAct::ShufflePage => SHUFFLE.into(),
         MenuAct::SaveMix => SAVE_AS_PLAYLIST.into(),
         MenuAct::Page(p) => page_action(*p, missing),
+        MenuAct::Edit(nori_core::menus::PlaylistEdit::MoveUp) => "Move up".into(),
+        MenuAct::Edit(nori_core::menus::PlaylistEdit::MoveDown) => "Move down".into(),
+        MenuAct::Edit(nori_core::menus::PlaylistEdit::Remove) => "Remove from playlist".into(),
+        MenuAct::RenamePlaylist => "Rename".into(),
         MenuAct::Plugin(e) => e.label.clone(),
     }
+}
+
+pub const RENAME_PLAYLIST: &str = "Rename playlist";
+pub const MOVED: &str = "Moved";
+
+/// A song taken out of a playlist: "Removed from Road trip".
+pub fn removed_from(name: &str) -> String {
+    format!("Removed from {name}")
+}
+
+/// A playlist named anew: "Renamed to Road trip".
+pub fn playlist_renamed(name: &str) -> String {
+    format!("Renamed to {name}")
 }
 
 /// A playlist made: "Created nori discover".

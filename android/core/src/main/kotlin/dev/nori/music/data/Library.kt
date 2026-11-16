@@ -325,6 +325,11 @@ class Library(
 
     suspend fun deletePlaylist(id: String) = writePlaylist(Write.DeletePlaylist(id))
 
+    suspend fun renamePlaylist(id: String, name: String) = writePlaylist(Write.RenamePlaylist(id, name))
+
+    /** A row's move or removal, as the core words it (`playlist_edit_write`). */
+    suspend fun editPlaylist(w: Write) = writePlaylist(w)
+
     /** Not worth queueing: by the time it could be replayed it is no longer true. */
     suspend fun nowPlaying(id: String) { call(Read.NowPlaying(id)) { it } }
 

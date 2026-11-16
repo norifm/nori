@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use nori_core::browse::AlbumSort;
 use nori_core::lyrics_follow::LyricsNow;
-use nori_core::menus::PageKind;
+use nori_core::menus::{PageKind, PlaylistEdit};
 use nori_core::offer::Offered;
 use nori_core::paged::Paged;
 use nori_core::search::{SearchShown, SearchView};
@@ -2462,9 +2462,17 @@ impl App {
             PageLayout::List => None,
         });
         let mut lines = self.menu_lines(one, false, page);
-        if list == 0 && self.page_playlist().is_some() {
+        if list == 0 {
+            let edits = nori_core::menus::playlist_edits(i as u32, self.page_songs.len() as u32, self.page_playlist().is_some());
             let at = lines.iter().position(|l| l.kind == 7).map_or(lines.len(), |p| p + 1);
-            lines.insert(at, SongGo { title: words::REMOVE_FROM_PLAYLIST.into(), kind: 18, id: SharedString::default(), place: SongPlace::Main, enabled: true, filled: false });
+            lines.splice(at..at, edits.into_iter().map(|e| {
+                let (title, kind) = match e {
+                    PlaylistEdit::MoveUp => (words::MOVE_UP, 20),
+                    PlaylistEdit::MoveDown => (words::MOVE_DOWN, 21),
+                    PlaylistEdit::Remove => (words::REMOVE_FROM_PLAYLIST, 18),
+                };
+                SongGo { title: title.into(), kind, id: SharedString::default(), place: SongPlace::Main, enabled: true, filled: false }
+            }));
         }
         ModelRc::new(VecModel::from(lines))
     }
@@ -2540,7 +2548,9 @@ impl App {
         match how {
             -1 if list == 3 => self.on_session(|s| s.jump(i)),
             -1 => self.on_session(|s| s.play(songs, i, false, origin)),
-            18 => self.remove_from_playlist(i),
+            18 => self.edit_playlist(i, PlaylistEdit::Remove),
+            20 => self.edit_playlist(i, PlaylistEdit::MoveUp),
+            21 => self.edit_playlist(i, PlaylistEdit::MoveDown),
             _ => self.song_act(one, how),
         }
     }
@@ -2751,11 +2761,13 @@ impl App {
         }
     }
 
-    /// Takes entry `index` out of the playlist shown.
-    fn remove_from_playlist(&self, index: usize) {
+    /// Moves entry `index` of the playlist shown, or takes it out.
+    fn edit_playlist(&self, index: usize, edit: PlaylistEdit) {
         let Some(p) = self.page_playlist() else { return };
-        let write = nori_core::client::Write::RemoveFromPlaylist { id: p.id.clone(), index: index as i32 };
-        self.playlist_write(write, words::removed_from_playlist(&p.name), PlaylistChange::Changed(p.id.clone()));
+        let ids = self.page_songs.iter().map(|s| s.id.clone()).collect();
+        let Some(write) = nori_core::menus::playlist_edit_write(p.id.clone(), ids, index as u32, edit) else { return };
+        let done = if edit == PlaylistEdit::Remove { words::removed_from_playlist(&p.name) } else { words::MOVED.into() };
+        self.playlist_write(write, done, PlaylistChange::Changed(p.id.clone()));
     }
 
     /// Names the playlist shown `name`.

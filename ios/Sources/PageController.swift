@@ -129,7 +129,7 @@ class PageController: TablePage {
               rows[path.section].layout == .list else { return }
         let item = rows[path.section].section.items[path.row]
         guard item.kind == "song" else { return menu(for: item) }
-        SongMenu.show(item, token: token, index: item.index, from: self) { [weak self] page in
+        SongMenu.show(item, token: token, index: item.index, from: self, edited: { [weak self] in self?.reload() }) { [weak self] page in
             self?.navigationController?.pushViewController(page, animated: true)
         }
     }
@@ -619,11 +619,11 @@ class PageController: TablePage {
         guard item.kind == "song" else { return none }
         let index = Int32(item.index)
         let action: UIContextualAction
-        if left && kind == NORI_PAGE_PLAYLIST {
-            let playlist = arg
-            action = UIContextualAction(style: .destructive, title: Say.removeFromPlaylist) { [weak self] _, _, done in
+        if left && nori_ios_playlist_edits(token, index) & NORI_EDIT_REMOVE != 0 {
+            let token = self.token
+            action = UIContextualAction(style: .destructive, title: Say.remove) { [weak self] _, _, done in
                 DispatchQueue.global(qos: .userInitiated).async {
-                    let ok = playlist.withCString { nori_ios_playlist_remove($0, index) } == 1
+                    let ok = nori_ios_playlist_edit(token, index, NORI_EDIT_REMOVE) == 1
                     DispatchQueue.main.async {
                         done(ok)
                         if ok { self?.reload() } else { Toast.show(Say.failed) }

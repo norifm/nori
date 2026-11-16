@@ -201,6 +201,9 @@ internal fun searchFocusKey(): Int = searchTaps.intValue
 val LocalNav = staticCompositionLocalOf<Nav> { error("no nav") }
 val LocalSongMenu = staticCompositionLocalOf<(Song) -> Unit> { {} }
 
+/** A playlist row's song menu, with the changes the row offers ([dev.nori.music.app.vm.RowEdits]). */
+val LocalSongRowMenu = staticCompositionLocalOf<(Song, dev.nori.music.app.vm.RowEdits) -> Unit> { { _, _ -> } }
+
 /** The album or artist page [entry] shows, as the song menu is told it. */
 private fun pageOf(entry: androidx.navigation.NavBackStackEntry?): dev.nori.music.ffi.model.PageOrigin? {
     val id = entry?.arguments?.getString("id") ?: return null
@@ -338,6 +341,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
         var menuCard by remember { mutableStateOf<dev.nori.music.app.vm.CardItem?>(null) }
         var menuFromPlayer by remember { mutableStateOf(false) }
         var menuPage by remember { mutableStateOf<dev.nori.music.ffi.model.PageOrigin?>(null) }
+        var menuEdits by remember { mutableStateOf<dev.nori.music.app.vm.RowEdits?>(null) }
         var devicesOpen by remember { mutableStateOf(false) }
         // Said on the profile the phone went back to: the guest's page is fading out by then.
         if (!guest) LaunchedEffect(Unit) { remote.ended.collect { snackbar.showSnackbar(say.jamEnded(it), withDismissAction = true) } }
@@ -419,9 +423,10 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             LocalPages provides pages,
             LocalPlayerSheet provides sheet,
             LocalDownloadMarks provides rememberDownloadMarks(actions),
-            LocalSongMenu provides { menuSong = it; menuFromPlayer = false; menuPage = pageOf(controller.currentBackStackEntry) },
+            LocalSongMenu provides { menuSong = it; menuFromPlayer = false; menuPage = pageOf(controller.currentBackStackEntry); menuEdits = null },
+            LocalSongRowMenu provides { s, edits -> menuSong = s; menuFromPlayer = false; menuPage = pageOf(controller.currentBackStackEntry); menuEdits = edits },
             LocalCardMenu provides { menuCard = it },
-            LocalPlayerMenu provides { menuSong = it; menuFromPlayer = true },
+            LocalPlayerMenu provides { menuSong = it; menuFromPlayer = true; menuEdits = null },
             LocalDevices provides { devicesOpen = true },
             LocalSealTap provides { s, on -> actions.star(s, on) },
             LocalMessages provides actions::tell,
@@ -673,7 +678,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             SheetBack(sheet)
             SelectionBack(actions, sheet, controller)
             }
-            SongMenu(menuSong, actions, onDismiss = { menuSong = null }, player = player.takeIf { menuFromPlayer }, page = menuPage.takeUnless { menuFromPlayer })
+            SongMenu(menuSong, actions, onDismiss = { menuSong = null }, player = player.takeIf { menuFromPlayer }, page = menuPage.takeUnless { menuFromPlayer }, edits = menuEdits.takeUnless { menuFromPlayer })
             CardMenu(menuCard, actions, onDismiss = { menuCard = null })
             DevicesHost(devicesOpen) { devicesOpen = false }
             // A jam that would not start says so, whichever menu started it.

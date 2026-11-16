@@ -41,6 +41,9 @@ import dev.nori.music.app.ui.say
 import dev.nori.music.settings.server
 
 /** Everything that can be done to a song, album or playlist from any screen. One instance per activity. */
+/** The changes a playlist's row offers, and what does one. */
+class RowEdits(val edits: List<dev.nori.music.ffi.library.PlaylistEdit>, val apply: (dev.nori.music.ffi.library.PlaylistEdit) -> Unit)
+
 class ActionsViewModel(app: Application) : NoriViewModel(app) {
     private val _messages = Channel<String>(Channel.CONFLATED)
     /** One-line confirmations and failures, for a snackbar or whatever the UI uses. */
@@ -326,6 +329,21 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     fun editable(p: Playlist): Boolean = dev.nori.music.ffi.library.playlistEditable(p, nori.settings.value.server?.user.orEmpty(), nori.rules.playlists)
 
     fun deletePlaylist(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) } }
+
+    fun renamePlaylist(id: String, name: String) {
+        val named = name.trim()
+        if (named.isNotEmpty()) viewModelScope.launch { runCatching { nori.library.renamePlaylist(id, named) } }
+    }
+
+    /** What row [at] of [playlist], which holds [songs], offers to change (the core's `playlist_edits`); null for nothing. */
+    fun rowEdits(playlist: Playlist, songs: List<Song>, at: Int): RowEdits? {
+        val edits = dev.nori.music.ffi.library.playlistEdits(at.toUInt(), songs.size.toUInt(), editable(playlist))
+        if (edits.isEmpty()) return null
+        return RowEdits(edits) { edit ->
+            val w = dev.nori.music.ffi.library.playlistEditWrite(playlist.id, songs.map { it.id }, at.toUInt(), edit)
+            if (w != null) viewModelScope.launch { runCatching { nori.library.editPlaylist(w) } }
+        }
+    }
 
     fun saveAsPlaylist(title: String, songs: List<Song>) = viewModelScope.launch {
         try {

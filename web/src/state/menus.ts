@@ -105,7 +105,7 @@ function item(a: MenuAction, s: Song): Item | null {
  * under it, then the lines most reached for, the album and artist, and the rest. Opened on a row it starts
  * with Play (`play`, what clicking the row does); `extra` the page's own entries; `inPlayer` when opened
  * from the player. */
-export async function songMenu(s: Song, at: Anchor, { play, extra = [], inPlayer = false }: { play?: () => unknown; extra?: Item[]; inPlayer?: boolean } = {}) {
+export async function songMenu(s: Song, at: Anchor, { play, extra = [], inPlayer = false }: { play?: () => unknown; extra?: Item[] | Promise<Item[]>; inPlayer?: boolean } = {}) {
   const lyrics = inPlayer && !!player.shown && player.shown.song === s.id;
   const page = inPlayer ? "" : route.top;
   const { items: actions, quality } = JSON.parse(await ask<string>("menu", JSON.stringify(s), inPlayer, lyrics, page, route.arg)) as { items: MenuAction[]; quality: string | null };
@@ -115,9 +115,10 @@ export async function songMenu(s: Song, at: Anchor, { play, extra = [], inPlayer
       return i ? [{ ...i, disabled: !a.enabled }] : [];
     });
   const first: Item[] = play ? [{ label: W.play, icon: "play", run: play }] : [];
+  const own = await extra;
   ui.menu(
     { title: s.title, line: s.line || s.artist, cover: s.cover ?? "", glyphs: of("Title"), quality: quality ?? undefined },
-    [[...first, ...of("Line", false), ...extra], of("Names"), of("Line", true)],
+    [[...first, ...of("Line", false), ...own], of("Names"), of("Line", true)],
     at,
     of("Glyphs"),
   );

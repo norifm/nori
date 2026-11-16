@@ -133,6 +133,8 @@ pub enum Cmd {
     /// Adds songs to the playlist `id`, or makes one called `name` of them.
     AddToPlaylist { id: String, songs: Vec<String> },
     NewPlaylist { name: String, songs: Vec<String> },
+    /// A change of playlist `id` (renamed, a song moved or taken out), and what is said once it is made.
+    EditPlaylist { id: String, write: nori_core::client::Write, said: String },
     /// Reads which of these songs are downloaded.
     ReadDownloads(Vec<String>),
     /// Draws the mix again.
@@ -1100,6 +1102,8 @@ pub enum Target {
     Sleep(Vec<nori_core::menus::SleepChoice>),
     /// Saved profile `0`'s new name.
     ProfileName(String),
+    /// Playlist `0`'s new name.
+    PlaylistName(String),
     /// Which of the account's identities it acts as, by its place among them.
     Identity,
 }
@@ -1117,6 +1121,11 @@ impl Target {
             }
             Target::Sleep(choices) => value.parse().ok().and_then(|i: usize| choices.get(i).copied()).map(Cmd::Sleep),
             Target::ProfileName(id) => Some(Cmd::RenameProfile(id, value)),
+            Target::PlaylistName(id) => {
+                let name = value.trim().to_string();
+                let said = crate::text::playlist_renamed(&name);
+                (!name.is_empty()).then(|| Cmd::EditPlaylist { id: id.clone(), write: nori_core::client::Write::RenamePlaylist { id, name }, said })
+            }
             Target::Identity => value.parse().ok().map(Cmd::ChooseIdentity),
             Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
             Target::Plugin { plugin, row, kind } => {

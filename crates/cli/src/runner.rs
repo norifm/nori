@@ -1017,12 +1017,13 @@ impl Runner {
             },
             Cmd::AddToPlaylist { id, songs } => {
                 let name = app.library.playlists.ready().and_then(|v| v.iter().find(|p| p.id == id)).map(|p| p.name.clone()).unwrap_or_default();
-                self.playlist_write(s, nori_core::client::Write::AddToPlaylist { id, song_ids: songs }, crate::text::added_to(&name));
+                self.playlist_write(s, nori_core::client::Write::AddToPlaylist { id, song_ids: songs }, crate::text::added_to(&name), None);
             }
             Cmd::NewPlaylist { name, songs } => {
                 let said = crate::text::created(&name);
-                self.playlist_write(s, nori_core::client::Write::CreatePlaylist { name, song_ids: songs }, said);
+                self.playlist_write(s, nori_core::client::Write::CreatePlaylist { name, song_ids: songs }, said, None);
             }
+            Cmd::EditPlaylist { id, write, said } => self.playlist_write(s, write, said, Some(id)),
             Cmd::RedrawMix(mix) => {
                 let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
                 nori_host::spawn("nori-mix", move || {
@@ -1164,7 +1165,8 @@ impl Runner {
 
 impl Runner {
     /// Changes a playlist on the server, then says `said` and has the playlists read again.
-    fn playlist_write(&self, s: &Session, w: nori_core::client::Write, said: String) {
+    /// Asks for `w`, then says `said` and reads the playlists again, and playlist `page` when its page changed.
+    fn playlist_write(&self, s: &Session, w: nori_core::client::Write, said: String, page: Option<String>) {
         let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
         nori_host::spawn("nori-playlist", move || {
             let send = |m: Msg| {
@@ -1174,6 +1176,9 @@ impl Runner {
                 Ok(()) => {
                     send(Msg::Note { text: said, error: false });
                     send(Msg::Reload(crate::backend::Req::Playlists));
+                    if let Some(id) = page {
+                        send(Msg::Reload(crate::backend::Req::Playlist(id)));
+                    }
                 }
                 Err(e) => send(Msg::Note { text: crate::text::net_error(&e), error: true }),
             }

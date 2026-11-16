@@ -6,12 +6,12 @@ use std::ffi::{c_char, CString};
 
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::{Starrable, Write};
-use nori_core::menus::{row_swipe, saved_mix_name, sleep_choices, song_menu, RowSwipeAct, SongAction, SongDownload, SongMenuItem};
+use nori_core::menus::{row_swipe, saved_mix_name, sleep_choices, song_menu, PlaylistEdit, RowSwipeAct, SongAction, SongDownload, SongMenuItem};
 use nori_core::browse::ProfileRules;
 use nori_core::{PageOrigin, Song};
 use serde_json::{json, Value};
 
-use crate::pages::{keep_list, list_origin, list_song, owned};
+use crate::pages::{keep_list, list_edit_write, list_edits, list_origin, list_song, owned};
 use crate::session::{c_text, server, with_session};
 
 fn action_code(a: &SongAction) -> i32 {
@@ -288,17 +288,28 @@ pub extern "C" fn nori_ios_row_swipe(left: i32, starred: i32) -> i32 {
     }
 }
 
-/// Takes entry `index` out of playlist `playlist`. Blocks; 1 when done.
-///
-/// # Safety
-/// `playlist` is NUL-terminated UTF-8.
+/// What song `index` of list `token` offers to change in its playlist, as `NORI_EDIT_*` bits: none unless
+/// the list is a playlist the account may change.
 #[no_mangle]
-pub unsafe extern "C" fn nori_ios_playlist_remove(playlist: *const c_char, index: i32) -> i32 {
-    if index < 0 {
-        return 0;
+pub extern "C" fn nori_ios_playlist_edits(token: u64, index: i32) -> i32 {
+    let Ok(index) = u32::try_from(index) else { return 0 };
+    list_edits(token, index).iter().map(|e| edit_bit(*e)).fold(0, |all, b| all | b)
+}
+
+/// Does edit `edit` (one `NORI_EDIT_*` bit) of song `index` of list `token` in its playlist. Blocks; 1 when done.
+#[no_mangle]
+pub extern "C" fn nori_ios_playlist_edit(token: u64, index: i32, edit: i32) -> i32 {
+    let Ok(index) = u32::try_from(index) else { return 0 };
+    let Some(edit) = [PlaylistEdit::MoveUp, PlaylistEdit::MoveDown, PlaylistEdit::Remove].into_iter().find(|e| edit_bit(*e) == edit) else { return 0 };
+    list_edit_write(token, index, edit).map_or(0, wrote)
+}
+
+fn edit_bit(edit: PlaylistEdit) -> i32 {
+    match edit {
+        PlaylistEdit::MoveUp => 1,
+        PlaylistEdit::MoveDown => 2,
+        PlaylistEdit::Remove => 4,
     }
-    let id = c_text(playlist);
-    wrote(Write::RemoveFromPlaylist { id, index })
 }
 
 /// Deletes playlist `playlist`. Blocks; 1 when done.

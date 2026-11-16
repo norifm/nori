@@ -467,7 +467,9 @@ enum Say {
     static let excludedFromMixes = "Excluded from mixes"
     static let backInMixes = "Back in mixes"
     static let serverDownloading = "The server is downloading it into your library"
-    static let removeFromPlaylist = "Remove"
+    static let removeFromPlaylist = "Remove from playlist"
+    static let moveUp = "Move up"
+    static let moveDown = "Move down"
     static func addedToPlaylist(_ name: String) -> String { "Added to \(name)" }
     static func playlistCreated(_ name: String) -> String { "Created \(name)" }
     static func deleteNamed(_ name: String) -> String { "Delete \(name)" }
