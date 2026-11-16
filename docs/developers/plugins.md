@@ -15,7 +15,7 @@ built yet, is `docs/research/plugins.md`.
 | plugins' sound stages in the chain | `crates/player/src/stage.rs` |
 | overrides laid over the settings | `crates/settings/src/overrides.rs` |
 | plugins' providers | `crates/core/src/providers/plugin.rs`, through `Kinds` |
-| nori's own plugins | [nori-plugins](https://github.com/norifm/nori-plugins): orbit (a sound stage), playback (speed and pitch as overrides), youtube-music (a provider) |
+| nori's own plugins | [nori-plugins](https://github.com/norifm/nori-plugins): orbit (a sound stage), playback (speed and pitch as overrides), mix-tuning (AutoMix's limits), remote-switch (a row on the devices sheet overriding a setting), youtube-music (a provider) |
 
 ## Writing one
 
@@ -306,7 +306,11 @@ A plugin changes nori's values by key, never by writing the settings: the user's
 are, and turning the plugin off brings nori's own values back.
 
 - A key is a setting's name (`crossfadeSec`), or a tunable's: a value with no setting
-  (`playback.speed`, `playback.pitch`, `silence.skip`, `queue.previousAlwaysSkips`; `Tunables`).
+  (`playback.speed`, `playback.pitch`, `silence.skip`, `queue.previousAlwaysSkips`; `Tunables`), and
+  AutoMix's limits in place of its style's (`autoMix.longestSec` up to 40, `autoMix.tempoPct` up to 12,
+  `autoMix.beatMatch`, `autoMix.bassSwap`, `autoMix.filters`, `autoMix.keepPitch`; `MixTunables`), which
+  the planner reads through `Settings::transition_prefs` and which replan when they change. This is where
+  the knobs a few people want go, instead of the settings.
 - The host keeps a plugin's overrides in its store and lays the enabled plugins' over the settings in
   their order (`Layer`, held by the app's `Settings`); a later plugin's value of a key wins. A setting's
   override goes through that setting's own codec and range.

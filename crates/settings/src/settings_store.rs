@@ -284,10 +284,13 @@ impl Settings {
         if *held == layer {
             return 0;
         }
-        let audio = if held.stages != layer.stages || held.preparing != layer.preparing || Tunables::with(&held.overrides) != Tunables::with(&layer.overrides) { APPLY_AUDIO } else { 0 };
+        let (was, now) = (Tunables::with(&held.overrides), Tunables::with(&layer.overrides));
+        let sound = |t: Tunables| Tunables { mix: Default::default(), ..t };
+        let audio = if held.stages != layer.stages || held.preparing != layer.preparing || sound(was) != sound(now) { APPLY_AUDIO } else { 0 };
+        let mix = if was.mix != now.mix { REPLAN } else { 0 };
         let settings = self.with_prefs(|p| effects(&effective(p, &held.overrides), &effective(p, &layer.overrides))).unwrap_or(0);
         *held = layer;
-        audio | settings
+        audio | mix | settings
     }
 }
 
@@ -305,6 +308,13 @@ impl Settings {
         let prefs = store.prefs.clone();
         self.write(|k| *k = Some(store));
         Ok(prefs)
+    }
+
+    /// The transitions as the planner plans them: the settings in effect, with AutoMix's limits
+    /// plugins set; None before they are open.
+    pub fn transition_prefs(&self) -> Option<nori_model::TransitionPrefs> {
+        let mix = crate::overrides::Tunables::with(&self.layer().overrides).mix;
+        self.with_effective(|p| mix.over(p.transition_prefs()))
     }
 
     /// A copy of the settings in effect: the user's with what the enabled plugins override laid over
@@ -781,6 +791,8 @@ mod tests {
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), APPLY_AUDIO, "a tunable");
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), 0, "the same layer");
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25"), ("crossfadeSec", "6")])), APPLY_AUDIO | REPLAN, "a setting's own effect");
+        assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25"), ("crossfadeSec", "6"), ("autoMix.longestSec", "20")])), REPLAN, "AutoMix's limits replan");
+        assert_eq!(s.transition_prefs().map(|p| p.auto_mix_max_s), Some(20));
         assert_eq!(s.set_layer(Layer::default()), APPLY_AUDIO | REPLAN, "turned off, both go back");
     }
 
