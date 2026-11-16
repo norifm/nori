@@ -10,7 +10,7 @@ details behind them.
 | --- | --- |
 | Every build | Rust stable through rustup; sccache (`cargo install --locked sccache`), since `.cargo/config.toml` sends every compile through it |
 | Rust tests | FFmpeg 8 or newer on the `PATH`: the engine tests encode their fixtures with it |
-| Android | Android SDK and NDK (`ANDROID_NDK_HOME`, or the newest under `$ANDROID_HOME/ndk`), a JDK 17 or newer, `rustup target add aarch64-linux-android x86_64-linux-android`, `cargo install cargo-ndk` |
+| Android | Android SDK and NDK (`ANDROID_NDK_HOME`, or the newest under `$ANDROID_HOME/ndk`), a JDK 17 or newer, `rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android`, `cargo install cargo-ndk` |
 | Desktop and terminal on macOS | Xcode's command line tools |
 | Desktop and terminal on Linux | `build-essential pkg-config clang libasound2-dev libfontconfig1-dev libfreetype6-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev` (Ubuntu names, as `tools/host-release/Dockerfile` installs them; WebKitGTK is for the sign-in window) |
 | The iPod app, Linux release packages | Docker |

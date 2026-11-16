@@ -18,5 +18,5 @@ runs:
         echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
         rustup update stable --no-self-update
         rustup default stable
-        rustup target add aarch64-linux-android x86_64-linux-android
+        rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
         cargo install --locked cargo-ndk --version 4.1.2
