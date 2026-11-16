@@ -3137,8 +3137,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             }
             s.position_ms = ms;
             s.at = at;
+            // A fade over music not heard yet is not heard either: the place stays.
             s.fading_until = match self.playback {
-                Playback::Pausing { until } => Some(Instant::now() + Duration::from_millis((until - self.now()).max(0) as u64)),
+                Playback::Pausing { until } if !self.p.unheard() => Some(Instant::now() + Duration::from_millis((until - self.now()).max(0) as u64)),
                 _ => None,
             };
         }
