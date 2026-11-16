@@ -479,7 +479,7 @@ if [ -n "$branch" ]; then git push origin "$branch"; fi
 git push origin "v$version"
 
 host_assets=()
-while IFS= read -r asset; do host_assets+=("$asset"); done < <(find "$out" -type f \( -name 'nori-desktop-*' -o -name 'nori-desktop_*' -o -name 'nori-cli-*' -o -name 'nori-cli_*' -o -name 'SHA256SUMS-macos-*' -o -name 'SHA256SUMS-linux-*' \))
+while IFS= read -r asset; do host_assets+=("$asset"); done < <(find "$out" -type f \( -name 'nori-desktop-*' -o -name 'nori-desktop_*' -o -name 'nori-cli-*' -o -name 'nori-cli_*' -o -name 'SHA256SUMS-macos-*' -o -name 'SHA256SUMS-linux-*' -o -name 'SHA256SUMS-windows-*' \))
 if [ "$existing" = 1 ]; then
   echo "==> adding the files to the release"
   gh release upload "v$version" "${apks[@]/#/$out/}" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} --clobber
