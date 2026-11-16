@@ -1236,7 +1236,13 @@ fn the_place_said_follows_the_ear_through_a_pause() {
         let c = r.card.lock();
         c.pulls.iter().filter(|p| p.0 <= c.now_us).map(|p| p.1).sum::<usize>() as i64 * 1000 / RATE as i64
     };
+    // Paused before a sample is heard: no fade is heard, so the place does not run on.
     rig.engine.play_at(0, 0);
+    rig.engine.pause();
+    rig.run(20);
+    let s = rig.engine.status();
+    assert_eq!(s.positions_at(s.at + Duration::from_secs(10), s.buffering).0, s.position_ms, "paused unheard: {s:?}");
+    rig.engine.play();
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 3));
     rig.engine.pause();
     rig.run(20);
