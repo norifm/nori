@@ -2080,6 +2080,26 @@ fn device_gets_own_sound() {
     assert_eq!(off, None, "the headphones' sound from then on");
 }
 
+/// A song started part way leaves its cover tag unread: it is seeked over, not fetched first.
+#[test]
+fn a_song_started_part_way_skips_its_tag() {
+    let a: Vec<i16> = music(30.0 * 8_000.0 / RATE as f64, 83);
+    let syncsafe = |n: usize| [(n >> 21) as u8 & 0x7f, (n >> 14) as u8 & 0x7f, (n >> 7) as u8 & 0x7f, n as u8 & 0x7f];
+    // A 500 KB cover: five seconds on this link.
+    let tag = 500_000;
+    let mut file = [b"ID3".as_slice(), &[3, 0, 0], &syncsafe(tag)].concat();
+    file.resize(10 + tag, 0);
+    file.extend_from_slice(&common::wav(8_000, &a));
+    let extra = Extra::default();
+    extra.server.slow.lock().push(("a".into(), Duration::from_millis(150)));
+    extra.server.paced.lock().push(("a".into(), vec![(0, 100_000)]));
+    let rig = Rig::build(vec![("a".into(), file, 30_000)], sim::App::new(), Settings::default(), extra);
+    rig.engine.play_at(0, 20_000);
+    let from = 20 * 8_000 * 2;
+    assert!(rig.wait_for(10, |r| r.heard.lock().windows(256).any(|w| w == &a[from..from + 256])), "heard from 20 s");
+    assert!(rig.now_ms() < 2_000, "heard from 20 s after {} ms", rig.now_ms());
+}
+
 #[test]
 fn id3_tag_is_skipped() {
     // A cover-sized tag full of valid-looking MPEG layer I frames.
