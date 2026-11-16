@@ -2921,6 +2921,15 @@ impl App {
         self.session.as_ref().is_some_and(|s| s.guest)
     }
 
+    /// The place shown still moves: here while playing and heard or while a pause's fade is heard,
+    /// elsewhere while the music plays.
+    fn place_runs(&self) -> bool {
+        match (&self.playback, &self.session) {
+            (Playback::Here, Some(s)) => s.engine.status_with(|st| st.runs_now()),
+            _ => self.ui().get_playing(),
+        }
+    }
+
     /// Whether the player offers `control`: a jam guest's by its role (the core's jam controls), this
     /// computer's own player all of them.
     fn offers(&self, control: fn(&nori_core::remote::Controls) -> nori_core::remote::Reach) -> bool {
@@ -4220,7 +4229,7 @@ impl App {
     fn lyrics_step(&mut self, force: bool) {
         let ui = self.ui();
         let at = self.position_now();
-        let playing = ui.get_playing();
+        let runs = self.place_runs();
         let Some(l) = &mut self.lyrics else { return };
         let full = ui.get_full_player() && ui.get_full_panel() == Panel::Lyrics;
         let side = ui.get_inspector() == Panel::Lyrics;
@@ -4248,7 +4257,7 @@ impl App {
         ui.set_lyric_now(now.now.into());
         ui.set_lyric_mix(now.mix);
         ui.set_lyric_rest(now.rest.into());
-        match now.wait.filter(|_| playing && !self.hidden) {
+        match now.wait.filter(|_| runs && !self.hidden) {
             Some(ms) => {
                 let me = self.me.clone();
                 self.lyrics_timer.start(TimerMode::SingleShot, Duration::from_millis(ms), move || me.with(|a| a.lyrics_step(false)));

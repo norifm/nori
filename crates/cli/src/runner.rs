@@ -742,7 +742,7 @@ impl Runner {
             r.watch(devices_open);
         }
         let now = s.now();
-        app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, speed: now.pace, mixing: now.mixing, buffering: now.buffering });
+        app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, fading_until: now.fading_until, speed: now.pace, mixing: now.mixing, buffering: now.buffering });
         let id = now.song.as_ref().map(|s| s.id.clone());
         if id != self.heard {
             self.heard = id.clone();

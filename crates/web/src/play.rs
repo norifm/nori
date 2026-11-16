@@ -589,6 +589,7 @@ impl Nori {
                 "index": n.index,
                 "id": n.song.as_ref().map(|s| s.id.clone()),
                 "positionMs": n.position_now(),
+                "fadingMs": n.fading_ms(),
                 "pace": n.pace,
                 "mixing": n.mixing,
                 "buffering": n.buffering,

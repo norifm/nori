@@ -223,6 +223,8 @@ pub struct Status {
     pub id: Option<String>,
     pub position_ms: i64,
     pub at: Instant,
+    /// Paused while the music heard fades out: the place runs on until then ([`run_ms`]).
+    pub fading_until: Option<Instant>,
     pub speed: f32,
     /// How fast the position moves: speed times the tempo a mix plays the song at.
     pub pace: f32,
@@ -260,6 +262,7 @@ impl Default for Status {
             id: None,
             position_ms: 0,
             at: Instant::now(),
+            fading_until: None,
             speed: 1.0,
             pace: 1.0,
             mixing: false,
@@ -325,18 +328,14 @@ impl Status {
 
     /// The displayed and outgoing transition positions at one moment, held while waiting for audio.
     pub fn positions_at(&self, now: Instant, buffering: bool) -> (i64, i64) {
-        let elapsed = if self.state == State::Playing && !buffering {
-            now.saturating_duration_since(self.at).as_secs_f64() * 1000.0
-        } else {
-            0.0
-        };
+        let elapsed = run_ms(self.state, buffering, self.at, self.fading_until, now);
         (
             self.position_ms + (elapsed * self.pace as f64) as i64,
             self.mix_position_ms + (elapsed * self.speed as f64) as i64,
         )
     }
 
-    /// Paused where it is now.
+    /// Paused where it is now, until the engine says where the music it fades out stops.
     fn paused(&mut self) {
         if self.state == State::Playing {
             let now = Instant::now();
@@ -348,8 +347,44 @@ impl Status {
 
     /// The position for a seek bar, and whether the reading is old enough to [`Engine::look`] again.
     pub fn screen_now(&self) -> (i64, bool) {
-        nori_player::heard::screen_place(self.position_ms, self.at.elapsed().as_millis() as i64, self.pace, self.state == State::Playing)
+        let fading = self.state == State::Paused && self.fading_until.is_some();
+        let age = if fading { run_ms(self.state, false, self.at, self.fading_until, Instant::now()) } else { self.at.elapsed().as_secs_f64() * 1000.0 };
+        nori_player::heard::screen_place(self.position_ms, age as i64, self.pace, self.state == State::Playing || fading)
     }
+
+    /// The place runs on now ([`runs`]): a screen drawing it keeps drawing.
+    pub fn runs_now(&self) -> bool {
+        runs(self.state, self.buffering, self.fading_until, Instant::now())
+    }
+
+    /// Playing again from where the place has run on to by now.
+    fn played(&mut self) {
+        let now = Instant::now();
+        self.position_ms = self.positions_at(now, self.buffering).0;
+        self.at = now;
+        self.fading_until = None;
+        self.state = State::Playing;
+    }
+}
+
+/// Whether the place runs on at `now`: playing and heard, or paused while the fade is still heard.
+pub fn runs(state: State, buffering: bool, fading_until: Option<Instant>, now: Instant) -> bool {
+    match state {
+        State::Playing => !buffering,
+        State::Paused => fading_until.is_some_and(|u| now < u),
+        _ => false,
+    }
+}
+
+/// How long a place read at `at` has run on by `now`, ms (times its pace): while playing and heard, and
+/// while paused until the fade still heard ends (`fading_until`).
+pub fn run_ms(state: State, buffering: bool, at: Instant, fading_until: Option<Instant>, now: Instant) -> f64 {
+    let to = match (state, fading_until) {
+        (State::Playing, _) if !buffering => now,
+        (State::Paused, Some(until)) => until.min(now),
+        _ => return 0.0,
+    };
+    to.saturating_duration_since(at).as_secs_f64() * 1000.0
 }
 
 #[derive(Debug, Clone)]
@@ -593,8 +628,7 @@ impl Engine {
         let n = self.plays.fetch_add(1, Ordering::AcqRel) + 1;
         self.press(Command::Play, |s| {
             if s.index.is_some() && s.state != State::Playing {
-                s.state = State::Playing;
-                s.at = Instant::now();
+                s.played();
             }
         });
         n
@@ -1495,7 +1529,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             let mut st = self.status.lock();
             if s == State::Playing {
                 // The place held while stopped runs on from now, not from when it stopped.
-                st.at = Instant::now();
+                st.played();
             }
             // Loading until this turn's report says it is heard.
             st.buffering = s == State::Playing && !self.told.audible;
@@ -3103,6 +3137,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             }
             s.position_ms = ms;
             s.at = at;
+            s.fading_until = match self.playback {
+                Playback::Pausing { until } => Some(Instant::now() + Duration::from_millis((until - self.now()).max(0) as u64)),
+                _ => None,
+            };
         }
         s.releases = self.releases;
         more(&mut s);

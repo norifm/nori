@@ -72,6 +72,7 @@ internal object RustPlayerJni {
     /** The engine reads its output once, now. */
     @JvmStatic @CriticalNative external fun look(h: Long)
     @JvmStatic @CriticalNative external fun mixing(h: Long): Boolean
+    @JvmStatic @CriticalNative external fun placeRuns(h: Long): Boolean
     @JvmStatic @CriticalNative external fun waiting(h: Long): Boolean
     @JvmStatic @CriticalNative external fun networkBack(h: Long)
     /**
@@ -420,6 +421,9 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      * its output again whenever that reading is a second old (nori_player::heard::screen_place).
      */
     fun shownMs(index: Int): Long = RustPlayerJni.shownMs(h, index)
+
+    /** The place still moves: playing and heard, or paused while the fade is still heard. */
+    val placeRuns: Boolean get() = RustPlayerJni.placeRuns(h)
 
     /** Jumps sent to the engine so far: a seek asked after this reading is sent as a later one. */
     val jumpsSent: Long get() = sent

@@ -752,6 +752,8 @@ pub struct Now {
     pub state: State,
     pub position_ms: i64,
     pub at: Instant,
+    /// Paused while the music heard fades out: the place runs on until then.
+    pub fading_until: Option<Instant>,
     pub speed: f32,
     pub mixing: bool,
     pub buffering: bool,
@@ -759,16 +761,17 @@ pub struct Now {
 
 impl Default for Now {
     fn default() -> Self {
-        Now { state: State::Idle, position_ms: 0, at: Instant::now(), speed: 1.0, mixing: false, buffering: false }
+        Now { state: State::Idle, position_ms: 0, at: Instant::now(), fading_until: None, speed: 1.0, mixing: false, buffering: false }
     }
 }
 
 impl Now {
     pub fn position(&self, now: Instant) -> i64 {
-        match self.state {
-            State::Playing if !self.buffering => self.position_ms + (now.saturating_duration_since(self.at).as_secs_f64() * 1000.0 * self.speed as f64) as i64,
-            _ => self.position_ms,
-        }
+        self.position_ms + (nori_engine::run_ms(self.state, self.buffering, self.at, self.fading_until, now) * self.speed as f64) as i64
+    }
+
+    pub fn runs(&self, now: Instant) -> bool {
+        nori_engine::runs(self.state, self.buffering, self.fading_until, now)
     }
 }
 
@@ -2138,7 +2141,7 @@ impl App {
     pub fn next_wake(&self, now: Instant) -> Option<Instant> {
         let mut at: Option<Instant> = None;
         let mut sooner = |t: Instant| at = Some(at.map_or(t, |a| a.min(t)));
-        if self.in_sight && self.now.state == State::Playing && !self.now.buffering {
+        if self.in_sight && self.now.runs(now) {
             if self.shown.clock {
                 let pos = self.now.position(now).max(0);
                 let left = 1000 - pos % 1000;

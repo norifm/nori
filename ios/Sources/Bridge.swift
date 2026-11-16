@@ -134,12 +134,18 @@ struct Now {
     /// The lock screen shows it: not while another device plays (`Playback::shown_to_system`).
     var system = false
 
+    /// Paused while the fade is still heard: the place runs on this long after `stamp`.
+    var fadingMs = 0
+
     var playing: Bool { state == .playing }
 
-    /// The position extrapolated from the last read while playing and not buffering.
+    /// The place runs on: playing and not buffering, or paused while the fade is still heard.
+    var moving: Bool { (playing && !buffering) || Date().timeIntervalSince(stamp) * 1000 < Double(fadingMs) }
+
+    /// The position extrapolated from the last read while it runs on.
     var position: Int {
-        guard playing, !buffering else { return ms }
-        return ms + Int(Date().timeIntervalSince(stamp) * 1000 * pace)
+        let since = Date().timeIntervalSince(stamp) * 1000
+        return ms + Int((playing && !buffering ? since : min(since, Double(fadingMs))) * pace)
     }
 }
 
@@ -380,6 +386,7 @@ final class Core {
         n.state = PlayState(rawValue: d["state"] as? Int ?? 0) ?? .idle
         n.index = d["index"] as? Int ?? -1
         n.ms = d["ms"] as? Int ?? 0
+        n.fadingMs = d["fadingMs"] as? Int ?? 0
         n.pace = d["pace"] as? Double ?? 1
         n.mixing = d["mixing"] as? Bool ?? false
         n.repeatMode = d["repeat"] as? Int ?? 0

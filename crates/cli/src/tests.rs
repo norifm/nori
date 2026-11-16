@@ -1298,7 +1298,7 @@ fn idle() {
     assert_eq!(a.next_wake(now), None, "idle: no timer at all");
     a.now.state = State::Paused;
     assert_eq!(a.next_wake(now), None, "paused: no timer at all");
-    a.now = crate::app::Now { state: State::Playing, position_ms: 12_300, at: now, speed: 1.0, mixing: false, buffering: false };
+    a.now = crate::app::Now { state: State::Playing, position_ms: 12_300, at: now, fading_until: None, speed: 1.0, mixing: false, buffering: false };
     let wake = a.next_wake(now).unwrap();
     let ms = wake.duration_since(now).as_millis();
     assert!((690..=710).contains(&ms), "the next whole second of the song: {ms}");
@@ -1330,7 +1330,7 @@ fn idle() {
 fn clock_wakes_only_where_drawn() {
     let mut a = app();
     let now = Instant::now();
-    a.now = crate::app::Now { state: State::Playing, position_ms: 12_300, at: now, speed: 1.0, mixing: false, buffering: false };
+    a.now = crate::app::Now { state: State::Playing, position_ms: 12_300, at: now, fading_until: None, speed: 1.0, mixing: false, buffering: false };
     a.song = Some(Song { id: "s".into(), title: "Song".into(), duration: 200, ..Default::default() });
     draw(&mut a, 60, 10);
     assert_eq!(a.next_wake(now), None, "a bar without a clock needs no tick");
@@ -1913,7 +1913,7 @@ fn the_main_screens() {
         a.server = "music.example".into();
         a.heard(Some(tracks[1].clone()));
         a.queue = Some(nori_core::playlist::PlaylistView { songs: tracks.clone(), len: 5, list_rev: 1, order: (0..5).collect(), queued: vec![], index: 1, shuffle: false, repeat: 0, bridging: false, rev: 1 });
-        a.now = crate::app::Now { state: State::Playing, position_ms: 95_000, at: Instant::now(), speed: 1.0, mixing: false, buffering: false };
+        a.now = crate::app::Now { state: State::Playing, position_ms: 95_000, at: Instant::now(), fading_until: None, speed: 1.0, mixing: false, buffering: false };
         for (name, s) in screens(&mut a, w, h, mode) {
             let want = match name {
                 "home" => "Kind of Blue",
