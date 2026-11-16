@@ -220,7 +220,7 @@ impl Session {
     /// Whether arriving on `index` of `list`, the queue as the player knows it, would skip it ("skip
     /// explicit songs"); asked before the song is read.
     pub fn skips(&self, list: &Playlist, index: usize) -> bool {
-        let skip_explicit = self.settings.prefs(|p| p.skip_explicit);
+        let skip_explicit = self.settings.in_effect(|p| p.skip_explicit);
         if !skip_explicit {
             return false;
         }
@@ -265,7 +265,7 @@ impl Session {
     }
 
     fn gain_around(&self, around: Option<Around>, bit_perfect: bool) -> f32 {
-        let (Some(prefs), Some(a)) = (self.settings.with_prefs(|p| p.gain_prefs()), around) else { return 1.0 };
+        let (Some(prefs), Some(a)) = (self.settings.with_effective(|p| p.gain_prefs()), around) else { return 1.0 };
         self.queue_gain(a.before, Some(a.song), a.after, &prefs, bit_perfect, a.shuffling)
     }
 
@@ -300,7 +300,7 @@ impl Session {
 
     /// The ids to save as the server's play queue: radio streams left out, empty unless scrobbling is on.
     pub fn to_push(&self) -> Vec<String> {
-        if !self.settings.prefs(|p| p.scrobble) {
+        if !self.settings.in_effect(|p| p.scrobble) {
             return Vec::new();
         }
         self.playlist(|p| p.ids().iter().filter(|id| !queue::is_radio(id)).cloned().collect())

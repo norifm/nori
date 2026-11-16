@@ -393,7 +393,7 @@ private fun PastePage(vm: RemoteViewModel, way: Pasting, onPaired: (dev.nori.mus
 @Composable
 fun DevicesHost(open: Boolean, onDismiss: () -> Unit) {
     val settings: dev.nori.music.app.vm.SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     val output by settings.currentOutput.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val tell = LocalMessages.current

@@ -64,6 +64,9 @@ pub enum Said {
     /// Downloaded songs to offer an analysis: AutoMix was turned on, or an update changed the analysis
     /// ([`Handle::analysis_offer`]). The client asks, and answers yes through [`Handle::analyse_downloads`].
     AnalysisOffer(nori_core::automix::AnalysisOffer),
+    /// What plugins override of the settings changed: the client draws again what it reads of the
+    /// settings in effect.
+    Overridden,
 }
 
 /// What an update check found that is worth saying: a newer release always, the rest only when the
@@ -864,7 +867,7 @@ impl Handle {
 
     /// Makes or drops the remote as the settings say, and serves while remote control is on.
     fn follow_remote(&self) {
-        let prefs = self.core.session.settings.current().unwrap_or_default();
+        let prefs = self.core.session.settings.effective().unwrap_or_default();
         if self.offline || !self.rules().remote || !(prefs.remote_control || self.guest) {
             return self.remotes.set(None);
         }
@@ -1062,10 +1065,11 @@ impl Handle {
 
     /// Sets a setting by name and applies its effects, as Android's player does. None if no such setting.
     pub fn setting(&self, name: &str, value: &str) -> Option<SettingChange> {
-        let before = self.core.session.settings.prefs(|p| p.auto_mix);
+        let remote = |p: &StoredPrefs| p.remote_control;
+        let (before, remote_before) = (self.core.session.settings.prefs(|p| p.auto_mix), self.core.session.settings.in_effect(remote));
         let change = self.core.session.settings.edit_by_name(name, value)?;
         self.took(&change);
-        if matches!(name, "remoteControl" | "jam") {
+        if self.core.session.settings.in_effect(remote) != remote_before {
             self.follow_remote();
         }
         if let Some(offer) = self.core.analysis_offer_on_switch(before, change.prefs.auto_mix) {
@@ -1078,10 +1082,21 @@ impl Handle {
     /// nori's plugin host, and applies them.
     pub fn lay_overrides(&self, overrides: Vec<(String, String)>) {
         let settings = &self.core.session.settings;
+        let before = settings.effective();
         let effect = settings.set_layer(nori_core::overrides::Layer { overrides, ..settings.layer() });
-        if let Some(prefs) = settings.current() {
+        if effect != 0 || settings.effective() != before {
+            self.overrides_changed(effect);
+        }
+    }
+
+    /// The settings in effect changed with what plugins override: applies `effect` and follows remote
+    /// control.
+    pub fn overrides_changed(&self, effect: u32) {
+        if let Some(prefs) = self.core.session.settings.current() {
             self.apply(effect, &prefs);
         }
+        self.follow_remote();
+        (self.out)(Said::Overridden);
     }
 
     /// Applies the settings a backup restored (`nori_backup::restore`), as [`Session::setting`] does a
@@ -2016,6 +2031,29 @@ mod tests {
                 s.close();
             }
         }
+    }
+
+    /// A plugin turning remote control off drops the remote while the switch stays on; every plugin off
+    /// or the override gone, it is made again.
+    #[test]
+    fn a_plugins_override_of_remote_control_is_followed() {
+        let dir = nori_testdir::TempDir::new("host-remote-override");
+        let settings = nori_core::settings_store::Settings::new();
+        settings.open(&db_path(dir.path())).unwrap();
+        let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
+        let profile = SavedServer { id: "own".into(), url: "http://127.0.0.1:9".into(), user: "ann".into(), ..Default::default() };
+        let s = Session::open(test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)))).unwrap();
+        assert!(s.remote().is_some());
+        s.lay_overrides(vec![("remoteControl".into(), "false".into())]);
+        assert!(s.remote().is_none());
+        assert_eq!(settings.with_prefs(|p| p.remote_control), Some(true), "the switch stays as set");
+        s.setting("pluginsOff", "true");
+        assert!(s.remote().is_some(), "every plugin off");
+        s.setting("pluginsOff", "false");
+        assert!(s.remote().is_none());
+        s.lay_overrides(Vec::new());
+        assert!(s.remote().is_some());
+        s.close();
     }
 
     /// A song's request the server never answers is dropped with its song: the connection closes.

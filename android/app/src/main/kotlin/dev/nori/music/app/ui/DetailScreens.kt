@@ -473,7 +473,7 @@ private fun PlaylistPage(
     onFilter: (String) -> Unit,
 ) {
     val settings: SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     val list = rememberSongListState(actions)
     val arrival = rememberArrival(detail != null)
     val head = remember(detail, playlist) {

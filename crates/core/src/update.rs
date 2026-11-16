@@ -378,14 +378,14 @@ impl Client {
     pub async fn update_check(&self, asked: bool, version: String, abis: Vec<String>) -> NetResult<UpdateCheck> {
         let now = crate::db::now_ms();
         if !asked {
-            let on = self.settings().prefs(|p| p.update_check);
+            let on = self.settings().in_effect(|p| p.update_check);
             let checked = self.settings().app_value(CHECKED_KEY).and_then(|v| v.parse::<i64>().ok());
             if !due(on, checked, now) {
                 return Ok(UpdateCheck::NotDue);
             }
         }
         self.settings().keep_app_value(CHECKED_KEY, now.to_string());
-        let channel = Channel::of(&version, self.settings().prefs(|p| p.update_beta));
+        let channel = Channel::of(&version, self.settings().in_effect(|p| p.update_beta));
         let request = Exchange {
             url: if channel == Channel::Stable { LATEST_URL } else { RECENT_URL }.to_string(),
             headers: [("Accept".to_string(), "application/vnd.github+json".to_string()), ("X-GitHub-Api-Version".to_string(), "2022-11-28".to_string())].into(),

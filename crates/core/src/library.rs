@@ -152,7 +152,7 @@ impl Client {
     /// not taken that up yet. Never asked with the offer switched off, nor for a profile without an
     /// account's things (a jam guest's, whose Home is the host's).
     pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> NetResult<Option<QueueOffer>> {
-        if playing || !self.settings().prefs(|p| p.queue_offer) || !self.core.rules().account {
+        if playing || !self.settings().in_effect(|p| p.queue_offer) || !self.core.rules().account {
             return Ok(None);
         }
         let here = shown.or_else(|| self.core.session.snapshot().0).or_else(|| {

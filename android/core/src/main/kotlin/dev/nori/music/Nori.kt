@@ -120,7 +120,7 @@ class Nori private constructor(private val context: Context) {
      * Off the main thread: shrinking the cache touches the disk. Never builds the graph itself.
      */
     fun applyCacheLimit() {
-        if (lazySources.isInitialized()) sources.setStreamLimitMb(settings.value.cacheMb)
+        if (lazySources.isInitialized()) sources.setStreamLimitMb(settings.effective.value.cacheMb)
     }
 
     val library = Library(::core, ::client)

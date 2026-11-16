@@ -19,7 +19,7 @@ impl Client {
     /// The user's (wifi, mobile, download) qualities.
     fn saved_qualities(&self) -> (StreamQuality, StreamQuality, StreamQuality) {
         let q = |s: &crate::settings::SavedQuality| StreamQuality { bit_rate: s.bit_rate.max(0) as u32, format: s.format.clone() };
-        self.settings().prefs(|p| (q(&p.wifi), q(&p.mobile), q(&p.download)))
+        self.settings().in_effect(|p| (q(&p.wifi), q(&p.mobile), q(&p.download)))
     }
 }
 

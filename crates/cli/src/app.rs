@@ -1328,7 +1328,10 @@ pub struct App {
     pub reduced_motion: bool,
     /// The transport button or the seal just pressed, until its flash ends.
     pub flash: Option<(Button, Instant)>,
+    /// The settings as the user set them, which the settings and equalizer screens show.
     pub prefs: StoredPrefs,
+    /// The settings in effect, with what enabled plugins override: what the other screens wear and do.
+    pub effective: StoredPrefs,
     pub volume: f32,
     pub mouse: bool,
     pub images: bool,
@@ -1363,6 +1366,7 @@ impl App {
     pub fn new(prefs: StoredPrefs) -> App {
         App {
             paint: true,
+            effective: prefs.clone(),
             prefs,
             volume: 1.0,
             mouse: true,
@@ -1392,9 +1396,9 @@ impl App {
         self.dirty = true;
     }
 
-    /// Takes the stored settings and updates what depends on them.
-    pub fn prefs_changed(&mut self, prefs: StoredPrefs) {
-        self.prefs = prefs;
+    /// Takes the stored settings and those in effect, and updates what depends on them.
+    pub fn prefs_changed(&mut self, prefs: StoredPrefs, effective: StoredPrefs) {
+        (self.prefs, self.effective) = (prefs, effective);
         self.retheme();
         self.settings.invalidate();
         self.dirty = true;
@@ -1403,10 +1407,10 @@ impl App {
     pub fn retheme(&mut self) {
         let day = crate::art::Day::now();
         let dark = crate::art::terminal_dark(std::env::var("COLORFGBG").ok().as_deref());
-        self.dark = self.prefs.theme.is_dark(dark);
-        self.look = Theme::season(&self.shared, &self.prefs, day, dark, self.paint, self.colors);
+        self.dark = self.effective.theme.is_dark(dark);
+        self.look = Theme::season(&self.shared, &self.effective, day, dark, self.paint, self.colors);
         self.theme = match &self.colours {
-            Some(c) if self.prefs.theme.covers_tint_pages() && self.images => Theme::dyed(c.edge, &self.prefs, day, self.dark, self.paint, self.colors),
+            Some(c) if self.effective.theme.covers_tint_pages() && self.images => Theme::dyed(c.edge, &self.effective, day, self.dark, self.paint, self.colors),
             _ => self.look,
         };
     }
@@ -1796,8 +1800,8 @@ impl App {
                 let (title, lines) = crate::text::analysis_offer(&offer);
                 self.overlay = Some(Overlay::Confirm { title, lines, yes: crate::text::ANALYZE.into(), cmd: Box::new(Cmd::AnalyseDownloads) });
             }
-            // The runner read the devices into `devices`.
-            Msg::Remote => {}
+            // The runner read the devices into `devices`, and the settings in effect.
+            Msg::Remote | Msg::Overridden => {}
             Msg::Jam(Ok(())) => {
                 self.panel = Panel::Queue;
                 self.invite();
@@ -3376,7 +3380,7 @@ impl App {
 
     /// A song picked from a list, per the `tap_action` setting (not offered here; default PlayList).
     fn tap(&mut self, songs: Vec<Song>, i: usize) {
-        match self.prefs.tap_action {
+        match self.effective.tap_action {
             TapAction::PlayOne => self.cmds.push(Cmd::Play { songs: vec![songs[i].clone()], start: 0, shuffle: false, from: None }),
             TapAction::Queue => self.cmds.push(Cmd::Enqueue(vec![songs[i].clone()], false)),
             TapAction::PlayNext => self.cmds.push(Cmd::Enqueue(vec![songs[i].clone()], true)),

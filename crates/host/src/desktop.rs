@@ -109,7 +109,6 @@ impl Root {
     pub fn plugins(&self) -> &Plugged {
         self.plugins.get_or_init(|| {
             let watched = Arc::new(Watched::default());
-            let _ = watched.settings.set(Arc::downgrade(&self.app.settings));
             let host = nori_plugins::open(self.data.join("plugins"), self.app.settings.clone(), watched.clone());
             let _ = watched.plugins.set(Arc::downgrade(&host));
             // Watched only while an enabled plugin reaches devices or hears outputs connect (BlueZ and
@@ -237,11 +236,8 @@ type SignsIn = Box<dyn Fn(String, String) + Send + Sync>;
 /// pages ([`Watched::as_said`]), and commands go to D-Bus on Linux. The desktop has no wake: nothing starts it while it is closed.
 #[derive(Default)]
 pub struct Watched {
-    engine: std::sync::Mutex<Option<std::sync::Weak<nori_engine::Engine>>>,
     session: std::sync::Mutex<Option<std::sync::Weak<crate::session::Parts>>>,
     plugins: std::sync::OnceLock<std::sync::Weak<nori_plugins::Plugins>>,
-    /// The settings the plugins are laid over.
-    settings: OnceLock<std::sync::Weak<Settings>>,
     heard: std::sync::Mutex<Option<Hears>>,
     /// Told when a plugin's page or the devices plugins control changed ([`Watched::on_changed`]).
     changed: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
@@ -333,14 +329,9 @@ impl Watched {
 }
 
 impl nori_plugins::Client for Watched {
-    /// The engine takes all of its settings again, whatever `effect` says.
-    fn layer_changed(&self, _effect: u32) {
-        let engine = self.engine.lock().expect("not poisoned").as_ref().and_then(std::sync::Weak::upgrade);
-        let settings = self.settings.get().and_then(std::sync::Weak::upgrade);
-        if let (Some(engine), Some(settings)) = (engine, settings) {
-            if let Some(prefs) = settings.current() {
-                engine.set_settings(nori_engine::core::settings(&prefs, settings.layer()));
-            }
+    fn layer_changed(&self, effect: u32) {
+        if let Some(session) = self.session() {
+            session.overrides_changed(effect);
         }
     }
     fn status(&self, id: String, row: String, words: String, args: Vec<String>) {
@@ -516,7 +507,7 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
         out: o.out,
         kinds: plugged.kinds.clone(),
     })?;
-    *plugged.watched.engine.lock().expect("not poisoned") = Some(Arc::downgrade(&session.engine));
+    *plugged.watched.session.lock().expect("not poisoned") = Some(session.weak());
     // A plugin's cast takes the music, and the sound card gets it back, at its volume, when it ends.
     let engine = Arc::downgrade(&session.engine);
     let (core, covers) = (session.core.clone(), session.covers.clone());
@@ -540,7 +531,6 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
             nori_plugins::Card::Back => engine.come_back(),
         }
     }));
-    *plugged.watched.session.lock().expect("not poisoned") = Some(session.weak());
     Ok(session)
 }
 

@@ -311,7 +311,7 @@ impl Runner {
                 let keep = (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server.clone(), app.settings.own.clone(), app.colors, app.paint, app.reduced_motion);
                 *app = App::new(prefs);
                 (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server, app.settings.own, app.colors, app.paint, app.reduced_motion) = keep;
-                app.retheme();
+                prefs_changed(app);
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
                 app.output = self.o.device.clone().or_else(|| own::text(&self.root.app.settings, own::DEVICE)).unwrap_or_default();
                 match self.session.as_ref().and_then(|s| s.client.sign_in_due(added)) {
@@ -586,6 +586,7 @@ impl Runner {
                 }
             }
             Msg::Remote | Msg::Jam(_) => self.remote_read(app),
+            Msg::Overridden => prefs_changed(app),
             // The plugin installed is shown, and asked to be turned on, from its card.
             Msg::Installed(_) => self.plugin(app, crate::app::PluginCmd::Read),
             Msg::BackedUp(r) => return app.say(r.as_ref().map_or_else(crate::text::backup_failed, |_| crate::text::BACKUP_SAVED.into()), r.is_err()),
@@ -679,7 +680,7 @@ impl Runner {
         let Some(s) = &self.session else { return };
         let remote = s.remote();
         let guest = s.guest;
-        let jams = guest || self.root.app.settings.prefs(|p| p.remote_control);
+        let jams = guest || self.root.app.settings.in_effect(|p| p.remote_control);
         let d = &mut app.devices;
         // A guest's music is the jam's: it moves to no other device.
         d.on = remote.is_some() && !guest;
@@ -781,7 +782,7 @@ impl Runner {
         };
         let now = Instant::now();
         let force = app.lyrics_wake.is_some_and(|t| t <= now);
-        let (_, wait) = l.advance(app.now.position(now), app.prefs.lyrics_sweep, force);
+        let (_, wait) = l.advance(app.now.position(now), app.effective.lyrics_sweep, force);
         app.lyrics_wake = wait.map(|ms| now + std::time::Duration::from_millis(ms));
     }
 
@@ -964,7 +965,7 @@ impl Runner {
             Cmd::SwitchServer(id) => {
                 let settings = &self.root.app.settings;
                 let Some(p) = nori_host::profile_picked(settings, &id) else { return };
-                app.prefs_changed(settings.current().unwrap_or_default());
+                prefs_changed(app);
                 self.open(app, p, None);
                 app.go(View::Home);
                 return;
@@ -1195,8 +1196,9 @@ fn narrowed(app: &mut App) {
 }
 
 fn prefs_changed(app: &mut App) {
-    if let Some(p) = app.shared.settings.current() {
-        app.prefs_changed(p);
+    let settings = &app.shared.settings;
+    if let (Some(p), Some(e)) = (settings.current(), settings.effective()) {
+        app.prefs_changed(p, e);
     }
 }
 

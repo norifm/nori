@@ -136,6 +136,9 @@ data class StorageUi(
 class SettingsViewModel(app: Application) : NoriViewModel(app) {
     val prefs: StateFlow<StoredPrefs> = nori.settings.prefs
 
+    /** The settings in effect, with what enabled plugins override: what screens other than the settings wear and do. */
+    val effective: StateFlow<StoredPrefs> = nori.settings.effective
+
     /** The palette worn where the season's is [palette] (at night when [dark]): a plugin's season of its own, or null for the season's. */
     suspend fun look(palette: dev.nori.music.ffi.look.Palette, dark: Boolean): dev.nori.music.ffi.look.Palette? =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { nori.session.look(palette, null, dark) }.takeIf { it != palette }

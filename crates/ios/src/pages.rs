@@ -934,7 +934,7 @@ fn now_json(s: &nori_host::session::Session) -> Value {
     let mut v = json!({
         "state": state, "index": n.index.map_or(-1, |i| i as i64), "ms": n.position_now().max(0),
         "pace": n.pace, "repeat": n.repeat, "shuffle": n.shuffle, "len": n.len, "mixing": n.mixing,
-        "eq": here && s.core.session.settings.prefs(|p| p.eq_enabled), "remote": !n.jam && (!here || s.remote().is_some()),
+        "eq": here && s.core.session.settings.in_effect(|p| p.eq_enabled), "remote": !n.jam && (!here || s.remote().is_some()),
         "buffering": n.buffering, "volume": n.volume.map(|v| (v * 100.0).round() as i64), "jam": n.jam,
         "system": s.playback().shown_to_system(),
     });

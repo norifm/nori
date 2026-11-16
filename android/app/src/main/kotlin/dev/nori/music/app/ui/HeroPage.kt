@@ -120,7 +120,7 @@ fun HeroPage(
     content: LazyListScope.() -> Unit,
 ) {
     val settings: SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     // Pages wear their cover's colours except in Midnight (the core's rule).
     val tinted = LocalPapers.current.coversTint
     // The picture that stands at the top of the page: the cover, or the mosaic of a page of several records.

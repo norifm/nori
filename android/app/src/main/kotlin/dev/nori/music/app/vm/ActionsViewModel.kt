@@ -131,7 +131,7 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /** What swiping a song row right and left does, as set in Settings. */
-    val swipes: Pair<SwipeAction, SwipeAction> get() = nori.settings.value.let { it.swipeRight to it.swipeLeft }
+    val swipes: Pair<SwipeAction, SwipeAction> get() = nori.settings.effective.value.let { it.swipeRight to it.swipeLeft }
 
     // By id: the core has the artist's albums from reading the page, so they need not be handed back.
     fun playArtist(artistId: String, shuffle: Boolean = false) = attempt(null) {

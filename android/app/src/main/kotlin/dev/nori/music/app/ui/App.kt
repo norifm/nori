@@ -259,7 +259,7 @@ private data class Session(val loggedIn: Boolean, val profile: String?, val gues
 @Composable
 fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.LaunchRoute?>? = null) {
     val settings: SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     androidx.compose.runtime.SideEffect {
         AppMotion.reduce = prefs.motion != dev.nori.music.ffi.settings.Motion.FULL
         AppMotion.still = prefs.motion == dev.nori.music.ffi.settings.Motion.EINK

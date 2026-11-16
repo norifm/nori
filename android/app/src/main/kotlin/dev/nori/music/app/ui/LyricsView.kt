@@ -110,7 +110,7 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean,
     val current = playerState.current?.id
     val looking = loaded.songId != current || loaded is dev.nori.music.ffi.lyrics.LyricsNow.Looking
     val settings: SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     val shown = LocalPlayerShown.current
     // When the screen stays on is the core's (`lyrics_keep_screen_on`).
     if (prefs.lyricsKeepScreenOn && shown) {
@@ -255,7 +255,7 @@ private val HEADER_FADE = FadeTimes(inMs = 220f, outMs = 160f)
 private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyrics, song: String?, playing: Boolean, following: Boolean, anchor: LyricsAnchor) {
     val lyrics = found.lyrics
     val settings: SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     val shown = LocalPlayerShown.current
     // Which line is lit, how long its change takes, how far the singing is and when to look again are all
     // the core's (crates/look/src/lyrics.rs); this only asks with the playhead and draws the answer.

@@ -16,7 +16,7 @@ const PIECE_TIMEOUT_MS: u32 = 90_000;
 pub fn ensure(client: &crate::client::Client) -> Option<PathBuf> {
     let settings = &client.session().settings;
     let model = &settings.model;
-    let wanted = || settings.prefs(|p| p.auto_mix.on());
+    let wanted = || settings.in_effect(|p| p.auto_mix.on());
     if !wanted() {
         return None;
     }

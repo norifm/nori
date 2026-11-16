@@ -132,7 +132,7 @@ impl Session {
     /// The player's song changed to `id`. Records the song left in the history when the taste model is
     /// on, and returns what to scrobble when scrobbling is on.
     pub fn scrobble_track(&self, id: Option<String>, why: TrackChange, playing: bool, now_ms: i64, wall_ms: i64, tz_offset_ms: i32) -> ScrobbleSend {
-        let (taste_model, scrobble) = self.settings.prefs(|p| (p.taste_model, p.scrobble));
+        let (taste_model, scrobble) = self.settings.in_effect(|p| (p.taste_model, p.scrobble));
         let next = followed(id, why);
         let song = next.as_deref().and_then(|id| self.song(id));
         let open = self.db.weak();

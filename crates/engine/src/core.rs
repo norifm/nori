@@ -635,7 +635,7 @@ impl Downloader {
             t.followed(id, transfers::DOWNLOADING, now);
             t.open(id, now)
         });
-        let quality = core.session.settings.prefs(|p| nori_core::stream::StreamQuality { bit_rate: p.download.bit_rate.max(0) as u32, format: p.download.format.clone() });
+        let quality = core.session.settings.in_effect(|p| nori_core::stream::StreamQuality { bit_rate: p.download.bit_rate.max(0) as u32, format: p.download.format.clone() });
         let part = self.store.download_part(id, &format!("{}{}", quality.bit_rate, quality.format));
         let url = self.client.download_target(id.to_string(), quality).url;
         let mut chunk = vec![0u8; DOWNLOAD_CHUNK];
@@ -1270,7 +1270,7 @@ const LISTEN_AHEAD: usize = 2;
 
 /// The songs of `ids` for the beat model; none when it is off or not built.
 fn listen_to(core: &Core, ids: &[String], missing: &[String]) -> Vec<String> {
-    let wanted = beats::AVAILABLE && core.session.settings.with_prefs(|p| p.auto_mix.on()).unwrap_or(false);
+    let wanted = beats::AVAILABLE && core.session.settings.with_effective(|p| p.auto_mix.on()).unwrap_or(false);
     if !wanted {
         return Vec::new();
     }

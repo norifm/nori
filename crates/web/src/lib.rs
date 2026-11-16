@@ -328,7 +328,7 @@ impl Nori {
     /// `system_dark`: the browser's color scheme, followed while the appearance is System.
     pub fn theme(&self, month: u32, day: u32, zone: String, system_dark: bool) -> String {
         use nori_look::theme::{roles, season_now, southern, SEASONS};
-        let prefs = self.app.settings.current().unwrap_or_default();
+        let prefs = self.app.settings.effective().unwrap_or_default();
         let (palette, dark) = nori_core::settings::theme_palette(&prefs, system_dark, month, day, southern(&zone));
         let r = roles(palette);
         let now = season_now(month, day, southern(&zone));

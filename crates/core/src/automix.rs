@@ -60,7 +60,7 @@ impl Core {
     /// At startup with AutoMix on, once per analysis version: the downloads to offer an analysis when an
     /// update left some without the current one.
     pub fn analysis_offer_at_start(&self) -> Option<AnalysisOffer> {
-        if !self.session.settings.prefs(|p| p.auto_mix.on()) {
+        if !self.session.settings.in_effect(|p| p.auto_mix.on()) {
             return None;
         }
         {

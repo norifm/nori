@@ -95,7 +95,7 @@ class MixesWidget : NoriWidget() {
                         ShelfTile(PageOrigin(OriginKind.PLAYLIST, p.id), p.name, listOfNotNull(p.coverArt), false)
                     }
                 } else withContext(Dispatchers.IO) {
-                    val taste = nori.settings.value.tasteModel
+                    val taste = nori.settings.effective.value.tasteModel
                     // As the Home row has them: the mixes drawn for today, the starred songs handed over first.
                     if (taste) runCatching { MixStore.warm(nori) }
                     // As MixesViewModel: a failed hand-over leaves the favourites empty rather than unknown.

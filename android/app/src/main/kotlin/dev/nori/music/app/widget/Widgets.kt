@@ -119,7 +119,7 @@ object Widgets {
     class Theme(val coversTint: Boolean, val look: IntArray, val accents: dev.nori.music.app.ui.Accents)
 
     fun theme(context: Context): Theme {
-        val prefs = Nori.get(context).settings.value
+        val prefs = Nori.get(context).settings.effective.value
         val system = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         val dark = dev.nori.music.ffi.settings.themeIsDark(prefs.theme, system)
         return Theme(dev.nori.music.ffi.settings.coversTintPages(prefs.theme), dev.nori.music.app.ui.plainLook(dev.nori.music.app.ui.schemeOf(prefs, dark)), dev.nori.music.app.ui.accentsOf(prefs))
