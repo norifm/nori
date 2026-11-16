@@ -6,6 +6,25 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-11-16
+
+### Added
+
+- Plugins' overrides reach everything nori does, remote control too
+- Plugins can tune AutoMix's longest transition, tempo and mix parts
+- Your playlists can be renamed and their songs moved or removed everywhere
+- The desktop and terminal can play when Bluetooth connects
+- A downloaded playlist stays downloaded as it changes
+
+### Fixed
+
+- A paused phone on mobile data stays listed and answers at once
+- Lyrics follow the music through a pause instead of jumping back
+
+### Performance
+
+- A song started part way no longer reads its cover first
+
 ## [0.9.3] - 2026-11-16
 
 ### Added
