@@ -6,7 +6,6 @@ the owner asks for it, and delete its line once it ships.
 ## First
 
 **Queue**
-- Clear the upcoming songs (Android).
 - Total and remaining time in the queue header.
 
 **Playlists**
@@ -47,10 +46,10 @@ the owner asks for it, and delete its line once it ships.
 
 Plan: `docs/research/plugins.md`. These go there instead of becoming settings:
 - casting: Snapcast, UPnP/DLNA, Chromecast;
-- headphone control (ANC, battery) over Bluetooth;
 - the removed sound knobs (crossfade curves, crossfeed levels, compressor, expander, loudness
-  compensation) and the hardcoded values, as overrides and sound-stage plugins;
-- autoplay when headphones connect, headset click mapping, audio focus behavior;
+  compensation) and the other hardcoded values, as overrides and sound-stage plugins (AutoMix's limits
+  are tunables now: mix-tuning);
+- headset click mapping, audio focus behavior;
 - lyrics over Bluetooth (the line in the title field);
 - automation intents for Tasker-style apps.
 
