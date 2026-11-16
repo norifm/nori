@@ -835,6 +835,7 @@ fn returning_here_does_not_wait_for_a_dead_device() {
         phone.remote.clone().serve(true);
         let ghost = phone.until("the phone published", |_| relay.hub.lock().rooms.values().flat_map(|r| &r.members).find(|m| m.id == phone.remote.id() && m.state.as_ref().is_some_and(|s| s.playing)).cloned());
         phone.remote.clone().stop();
+        phone.remote.sent();
         relay.hub.lock().rooms.entry("u:ann".into()).or_default().members.push(ghost);
         let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
         desk.queued(&["local"]);
@@ -2198,8 +2199,10 @@ fn hand_offs_in_a_circle_are_followed_once() {
     let (phone_id, laptop_id) = (phone.remote.id(), laptop.remote.id());
     let published = |id: &str| relay.hub.lock().rooms.values().flat_map(|r| &r.members).find(|m| m.id == id && m.state.is_some()).cloned();
     let mut members = phone.until("both published", |_| Some([published(&phone_id)?, published(&laptop_id)?]));
-    phone.remote.clone().stop();
-    laptop.remote.clone().stop();
+    for d in [&phone, &laptop] {
+        d.remote.clone().stop();
+        d.remote.sent();
+    }
     for (m, to) in members.iter_mut().zip([&laptop_id, &phone_id]) {
         let state = m.state.as_mut().unwrap();
         state.playing = false;
@@ -2360,12 +2363,41 @@ fn a_stopped_device_leaves_the_lists_at_once() {
     desk.remote.clone().watch(true);
     desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
 
-    // Its leaving reaches the relay late: stopping waits for it, as a client quits right after.
+    // Its leaving reaches the relay late: a client quitting right after waits for it.
     relay.leave_late.store(true, Ordering::Relaxed);
     phone.remote.clone().stop();
+    phone.remote.sent();
     let listed = relay.hub.lock().rooms["u:ann"].members.iter().any(|m| m.id == phone_id);
     assert!(!listed, "the relay was told before the stop returned");
     desk.until("the phone gone", |r| r.devices().is_empty().then_some(()));
+    relay.close();
+}
+
+/// A device's remote made again at once, as switching to another profile of the same account does,
+/// stays listed though the one before still had its leaving to send.
+#[test]
+fn a_device_made_again_at_once_stays_listed() {
+    let relay = Relay::new();
+    let dir = nori_testdir::TempDir::new("remote-made-again");
+    let phone = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
+    phone.playing(&["s1"], 0);
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.remote.clone().watch(true);
+    let listed = |r: &Remote| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state);
+    desk.until("the phone", listed);
+
+    relay.leave_late.store(true, Ordering::Relaxed);
+    phone.remote.clone().stop();
+    let again = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
+    assert_eq!(again.remote.id(), phone_id, "the same device");
+    again.playing(&["s1"], 0);
+    again.remote.clone().serve(true);
+    desk.sim.pass(Duration::from_secs(5));
+    let in_room = relay.hub.lock().rooms["u:ann"].members.iter().any(|m| m.id == phone_id);
+    assert!(in_room, "the leave of the remote before took the device off the relay");
+    assert!(listed(&desk.remote).is_some(), "the desk lost the phone");
     relay.close();
 }
 
@@ -3269,6 +3301,7 @@ fn waiting(sim: &Native, what: &str, left: Duration) {
 fn stop(d: &Device) {
     let at = d.sim.now_us();
     d.remote.clone().stop();
+    d.remote.sent();
     assert_eq!(d.sim.now_us(), at, "stopping waited, timers {:?}", d.sim.waits());
 }
 
@@ -3358,6 +3391,7 @@ fn leaving_gives_up_the_held_poll_and_leaves_nothing_waiting() {
     assert!(sim.waits().is_empty(), "no timer waits: {:?}", sim.waits());
     assert_eq!(Arc::strong_count(&guest.remote), 1, "no task of the remote runs");
     phone.remote.clone().stop();
+    phone.remote.sent();
     assert_eq!(Arc::strong_count(&phone.remote), 1, "no task of the remote runs");
     relay.close();
 }
