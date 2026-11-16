@@ -1,5 +1,7 @@
 //! nori's Slint desktop client over the core and nori-engine. Shares its data directory with the
 //! terminal client; this crate only draws and forwards input.
+// A window of its own on Windows, with no console behind it.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
 mod compositor;

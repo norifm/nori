@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import zipfile
 from pathlib import Path
 
 import dmg
@@ -27,18 +28,25 @@ def package(binaries, output, version, system, arch):
             name = f"nori-{client}-{version}-{system}-{arch}"
             stage = work / name
             stage.mkdir()
-            binary = binaries / f"nori-{client}"
+            binary = binaries / f"nori-{client}{'.exe' if system == 'windows' else ''}"
             shutil.copy2(binary, stage / binary.name)
             if system == "macos":
                 sign(stage / binary.name)
             shutil.copy2(ROOT / "LICENSE", stage / "LICENSE")
             (stage / "README.txt").write_text(
                 "nori music\nhttps://github.com/norifm/nori\n\n"
-                + f"Run ./{binary.name} or install it on your PATH.\n"
-                + "Desktop and terminal share ~/.local/share/nori (or $XDG_DATA_HOME/nori).\n")
-            archive = output / f"{name}.tar.gz"
-            with tarfile.open(archive, "w:gz") as tar:
-                tar.add(stage, arcname=name)
+                + (f"Run {binary.name}.\nDesktop and terminal share %LOCALAPPDATA%\\nori.\n" if system == "windows" else
+                   f"Run ./{binary.name} or install it on your PATH.\n"
+                   + "Desktop and terminal share ~/.local/share/nori (or $XDG_DATA_HOME/nori).\n"))
+            if system == "windows":
+                archive = output / f"{name}.zip"
+                with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip:
+                    for file in stage.iterdir():
+                        zip.write(file, f"{name}/{file.name}")
+            else:
+                archive = output / f"{name}.tar.gz"
+                with tarfile.open(archive, "w:gz") as tar:
+                    tar.add(stage, arcname=name)
             artifacts.append(archive)
             if system == "linux" and (Path("/etc/debian_version").exists()):
                 deb_arch = {"x86_64": "amd64", "aarch64": "arm64"}[arch]
@@ -81,8 +89,8 @@ if __name__ == "__main__":
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--arch", choices=("aarch64", "x86_64"))
-    p.add_argument("--system", choices=("macos", "linux"))
+    p.add_argument("--system", choices=("macos", "linux", "windows"))
     a = p.parse_args()
-    system = a.system or {"Linux": "linux", "Darwin": "macos"}[platform.system()]
-    arch = a.arch or {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64"}[platform.machine()]
+    system = a.system or {"Linux": "linux", "Darwin": "macos", "Windows": "windows"}[platform.system()]
+    arch = a.arch or {"arm64": "aarch64", "aarch64": "aarch64", "ARM64": "aarch64", "x86_64": "x86_64", "AMD64": "x86_64"}[platform.machine()]
     package(a.binaries, a.output, a.version, system, arch)
