@@ -1393,50 +1393,25 @@ fn a_jam_opened_while_a_poll_is_held_hears_its_first_request() {
     relay.close();
 }
 
-/// Paused with nothing on its screen on a metered network, a device leaves the relay: it is not listed
-/// and asks nothing. Playing, in sight or on an unmetered network it is listed and hears at once.
+/// A device listed at the relay hears it: paused, with nothing on its screen, on a metered network, it
+/// still asks again as each poll is answered, so what another device asks of it arrives at once.
 #[test]
-fn paused_out_of_sight_on_mobile_data_a_device_leaves_the_relay() {
+fn out_of_sight_on_mobile_data_a_paused_device_hears_the_relay() {
     let relay = Relay::new();
     relay.metered.store(true, Ordering::Relaxed);
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-    let paused = Playing { playing: false, position_ms: 5_000, volume: Some(40), ..Default::default() };
     phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().played(Playing { playing: false, position_ms: 5_000, volume: Some(40), ..Default::default() });
     phone.remote.clone().serve(true);
-    desk.remote.clone().watch(true);
+    desk.remote.clone().serve(true);
     phone.remote.clone().sight(Sight::Nothing);
+    relay.sim.pass(Duration::from_secs(400));
     let id = phone.remote.id();
-    let polls = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.poll") && a.ends_with(id.as_str())).count();
-    let listed = |desk: &Remote| desk.devices().iter().any(|d| d.name == "Phone");
-    let hears = |what: &str| {
-        relay.sim.pass(Duration::from_secs(400));
-        assert!(listed(&desk.remote), "{what}, it is listed");
-        desk.remote.clone().send(id.clone(), Op::Next);
-        relay.sim.pass(Duration::from_secs(1));
-        assert_eq!(phone.ops.try_recv().ok(), Some(Op::Next), "{what}, it hears within a second");
-    };
-    let gone = |what: &str| {
-        relay.sim.pass(Duration::from_secs(5));
-        assert!(!listed(&desk.remote), "{what}, it is not listed");
-        let before = polls();
-        relay.sim.pass(Duration::from_secs(600));
-        assert_eq!(polls(), before, "{what}, it asks nothing");
-    };
-    hears("playing");
-    phone.remote.clone().played(paused);
-    gone("paused");
-    phone.remote.clone().played(Playing { playing: true, ..paused });
-    hears("playing again");
-    phone.remote.clone().played(paused);
-    gone("paused again");
-    phone.remote.clone().sight(Sight::Notification);
-    hears("in sight");
-    phone.remote.clone().sight(Sight::Nothing);
-    gone("out of sight");
-    relay.metered.store(false, Ordering::Relaxed);
-    phone.remote.clone().network_back();
-    hears("unmetered");
+    assert!(relay.parked(&id), "its poll is held");
+    desk.remote.clone().send(id, Op::Play);
+    relay.sim.pass(Duration::from_secs(1));
+    assert_eq!(phone.ops.try_recv().ok(), Some(Op::Play), "asked to play, it hears within a second");
     phone.remote.stop();
     desk.remote.stop();
     relay.close();
@@ -3350,10 +3325,10 @@ fn a_failed_poll_waits_longer_each_time_until_the_network_is_back() {
         waiting(sim, "the same retry after a change", Duration::from_secs(secs));
         sim.pass(Duration::from_secs(secs));
     }
-    phone.remote.clone().network_back();
+    phone.remote.network_back();
     waiting(sim, "the first wait again once the network is back", Duration::from_secs(30));
     relay.go_down(false);
-    phone.remote.clone().network_back();
+    phone.remote.network_back();
     eventually(&relay, "listed again", || relay.lists(&id));
 
     // Down again after an answer: the wait starts over, and the network coming back asks at once.
@@ -3361,7 +3336,7 @@ fn a_failed_poll_waits_longer_each_time_until_the_network_is_back() {
     waiting(sim, "the retry after that", Duration::from_secs(30));
     relay.go_down(false);
     let polls = relay.asked_for("noriRemote.poll");
-    phone.remote.clone().network_back();
+    phone.remote.network_back();
     eventually(&relay, "asked again once the network is back", || relay.asked_for("noriRemote.poll") > polls);
     relay.close();
 }
