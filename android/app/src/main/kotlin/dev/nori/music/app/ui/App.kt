@@ -1,5 +1,8 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusGroup
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -307,16 +310,20 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
         LaunchedEffect(sheet) {
             androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect { playerWasOpen = it }
         }
+        val pages = rememberPages(controller, pageNavigator)
         // The player covers the page, so a field on it (search) lets go of its focus: held under the player,
         // the keyboard came back over it whenever the window got its focus back (from the background, a menu).
+        // A remote's or a keyboard's focus moves on to what is shown, the player or the page.
         val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
         val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        val input = androidx.compose.ui.platform.LocalInputModeManager.current
         LaunchedEffect(sheet) {
             androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect { open ->
-                if (open) { focusManager.clearFocus(force = true); keyboard?.hide() }
+                if (input.inputMode == androidx.compose.ui.input.InputMode.Keyboard) (if (open) sheet.focus else pages.focus).requestFocus()
+                else if (open) focusManager.clearFocus(force = true)
+                if (open) keyboard?.hide()
             }
         }
-        val pages = rememberPages(controller, pageNavigator)
         val nav = remember(controller) { Nav(controller, sheet, pages) }
         // A jam just joined opens on it: the player, turned to the queue with the jam over it.
         if (guest) {
@@ -530,7 +537,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
               val covered by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value >= 1f } }
               CompositionLocalProvider(LocalWide provides wide, LocalCoverAtEnd provides coverAtEnd, LocalPageStart provides pageStart, LocalPageEnd provides pageEnd) {
               CompositionLocalProvider(LocalPageCovered provides covered) {
-              Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (covered) 0f else 1f }) {
+              Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (covered) 0f else 1f }.fenced { !sheet.isOpen }) {
               // The strips the camera and the chrome stand in are the app's own page; a tinted page paints them over
               // itself (HeroPage), so its colour comes and goes with the page. Painted here in the chrome's
               // colour, which follows a page on a slower fade of its own, they held the album's colour at the
@@ -614,6 +621,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
                   SideChrome(
                       player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook, chromeLeft,
                       Modifier.align(if (chromeLeft) Alignment.CenterStart else Alignment.CenterEnd).coversPage()
+                          // A page's rows run on under the chrome, so none lies wholly beside it for a remote to find.
+                          .focusProperties { if (chromeLeft) right = pages.focus else left = pages.focus }
                           .onGloballyPositioned { sideRoom = with(density) { it.size.width.toDp() } }.keepsTouches(),
                   )
               }
@@ -706,6 +715,13 @@ private fun androidx.navigation.NavGraphBuilder.page(
 ) = addPage(route) { entry -> if (inset) Inset { content(entry) } else content(entry) }
 
 /**
+ * A remote's D-pad or a keyboard moves into this part of the screen only while [open]: the player put away
+ * is still composed below the window, and the page under an open player is still there.
+ */
+private fun Modifier.fenced(open: () -> Boolean): Modifier =
+    focusProperties { onEnter = { if (!open()) cancelFocusChange() } }.focusGroup()
+
+/**
  * The player sheet over everything else, present only while it is open or moving. The page behind
  * darkens as it comes in; the sheet's leading corners round off while it is in flight and square up once it
  * fills the screen. All of it is read in the draw phase, so a drag redraws two layers and recomposes
@@ -752,7 +768,8 @@ private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
             // is underneath: the list the player was opened from, playing a song nobody could see.
             // Being hit at all is enough to keep a touch here; nothing is consumed, so every control
             // inside works as before.
-            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } },
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
+            .focusRequester(sheet.focus).fenced { sheet.isOpen },
     ) {
         CompositionLocalProvider(LocalChromeInset provides 0.dp, LocalPlayerShown provides shown) { content() }
     }

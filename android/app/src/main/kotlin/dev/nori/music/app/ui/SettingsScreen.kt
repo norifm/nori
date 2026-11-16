@@ -101,7 +101,7 @@ fun Toggle(title: String, detail: String, value: Boolean, enabled: Boolean = tru
     GroupRow(
         title, if (enabled) ({ onChange(!value) }) else null, Modifier.spotlight(key).alpha(if (enabled) 1f else DIMMED),
         subtitle = detail, divider = divider,
-        trailing = { NoriSwitch(value, if (enabled) onChange else null) },
+        trailing = { NoriSwitch(value, null) },
     )
 }
 
@@ -343,18 +343,17 @@ fun SettingsScreen(vm: SettingsViewModel) {
             }
             return@Column
         }
-        val scroll = rememberLazyListState()
-        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(top = 8.dp, bottom = LocalChromeInset.current)) {
-            item(key = "groups") {
-                GroupCard {
-                    groups.forEachIndexed { i, g ->
-                        GroupRow(g.title, { nav.settingsGroup(g.id) }, subtitle = g.summary, icon = groupIcon(g.id), chevron = true, divider = i < groups.lastIndex || perf)
-                        // Plugins go before About, the last group.
-                        if (i == groups.lastIndex - 1) GroupRow(say.plugins, nav::plugins, subtitle = say.pluginsSummary, icon = Iconoir.Sparks, chevron = true)
-                    }
-                    // Only the perf build has a recorder, and with it the last row (docs/developers/building.md).
-                    if (perf) GroupRow(say.performance, { nav.go("perf") }, subtitle = say.performanceDetail, icon = Iconoir.DashboardSpeed, chevron = true, divider = false)
+        // One card, in a plain column: a remote reaches its rows below the screen, which a lazy list's one item hid.
+        val scroll = rememberScrollState()
+        Column(Modifier.fadesUnderTitle(scroll).verticalScroll(scroll).padding(top = 8.dp, bottom = LocalChromeInset.current)) {
+            GroupCard {
+                groups.forEachIndexed { i, g ->
+                    GroupRow(g.title, { nav.settingsGroup(g.id) }, subtitle = g.summary, icon = groupIcon(g.id), chevron = true, divider = i < groups.lastIndex || perf)
+                    // Plugins go before About, the last group.
+                    if (i == groups.lastIndex - 1) GroupRow(say.plugins, nav::plugins, subtitle = say.pluginsSummary, icon = Iconoir.Sparks, chevron = true)
                 }
+                // Only the perf build has a recorder, and with it the last row (docs/developers/building.md).
+                if (perf) GroupRow(say.performance, { nav.go("perf") }, subtitle = say.performanceDetail, icon = Iconoir.DashboardSpeed, chevron = true, divider = false)
             }
         }
     }

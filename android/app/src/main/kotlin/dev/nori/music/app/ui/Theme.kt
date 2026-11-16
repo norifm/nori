@@ -1,5 +1,7 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -55,11 +57,31 @@ fun NoriTheme(prefs: StoredPrefs, look: suspend (Palette, Boolean) -> Palette? =
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.ui.platform.LocalDensity provides density, LocalLook provides dressed, LocalPapers provides papers,
         LocalStatusBarLooks provides statusBar,
+        androidx.compose.material3.LocalRippleConfiguration provides FocusShown,
     ) {
         // The status bar's icons follow the theme, not the system's dark mode the window was started in.
         StatusBarIconsFollow(statusBar)
         MaterialTheme(colorScheme = scheme, typography = NoriTypography, content = content)
     }
+}
+
+/**
+ * What a remote's D-pad or a keyboard has focused is washed in ink strongly enough to find from a sofa;
+ * Material's own wash is a tenth. A touch focuses nothing, so a phone draws as before: the other strengths
+ * are Material's.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+private val FocusShown = androidx.compose.material3.RippleConfiguration(
+    rippleAlpha = androidx.compose.material.ripple.RippleAlpha(draggedAlpha = 0.16f, focusedAlpha = FOCUS_WASH, hoveredAlpha = 0.08f, pressedAlpha = 0.10f),
+)
+
+private const val FOCUS_WASH = 0.26f
+
+/** The same wash for a control that draws its own press and so takes no ripple (a tab): under its content, inside its clip. */
+@Composable
+fun androidx.compose.ui.Modifier.focusShown(source: androidx.compose.foundation.interaction.InteractionSource, ink: androidx.compose.ui.graphics.Color): androidx.compose.ui.Modifier {
+    val focused by source.collectIsFocusedAsState()
+    return if (focused) drawBehind { drawRect(ink, alpha = FOCUS_WASH) } else this
 }
 
 /** The day the theme is worn on, and which half of the world it is in (the seasons are the other way round in the south). */

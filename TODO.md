@@ -80,5 +80,5 @@ When everything above is done; each behind a switch:
 
 ## Not planned
 
-Other server types, local files, Wear OS, Android TV, audiobook mode, star ratings, Genius, a grid/list
+Other server types, local files, Wear OS, audiobook mode, star ratings, Genius, a grid/list
 toggle, the A-Z rail.

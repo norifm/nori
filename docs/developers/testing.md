@@ -249,6 +249,11 @@ app's listener, then restores adb's previous state.
   `"car play <id>"` and `"car voice <words>[|artist|album|playlist|genre|song]"`, logging each row under
   the tag `noricar`. `adb shell content read --uri content://dev.nori.music.carart/c/<cover id>` reads a
   picture. Android Auto itself is checked on a phone with the Desktop Head Unit.
+- **A TV**: an Android TV emulator (a `tv` system image, 1080p) and `adb shell input keyevent 19`-`23`
+  (up, down, left, right, center) walk the remote's focus: the side chrome, into the page beside it,
+  into the player and back. `uiautomator dump` marks the focused node. adb's keys come from a virtual
+  device, which a text field ignores for moving focus, so leaving a field with the D-pad needs a real
+  remote.
 
 ## Desktop
 

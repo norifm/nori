@@ -348,6 +348,7 @@ private fun TabButton(tab: Tab, selected: Boolean, chrome: ChromeColours, modifi
     val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Box(
         modifier.clip(PillShape)
+            .focusShown(press, chrome.quiet)
             .clickable(interactionSource = press, indication = null, onClick = onClick)
             .semantics { contentDescription = tab.label },
         Alignment.Center,
