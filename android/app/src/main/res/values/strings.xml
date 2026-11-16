@@ -73,6 +73,7 @@
     <string name="settings_auto_fill_basis_era">The same era</string>
     <string name="settings_auto_fill_remote">Include remote songs</string>
     <string name="settings_bridge_offline">Play downloads when offline</string>
+    <string name="settings_play_on_bluetooth">Play when Bluetooth connects</string>
 
     <!-- Sound. -->
     <string name="settings_section_equalizer">Equalizer</string>
@@ -375,6 +376,7 @@
     <string name="settings_hint_auto_fill_basis">Similar music, the same artist, genre or era</string>
     <string name="settings_hint_auto_fill_remote">Let autoplay pick songs not in your library yet</string>
     <string name="settings_hint_bridge_offline">If the server drops, keep playing from downloads</string>
+    <string name="settings_hint_play_on_bluetooth">Headphones, a speaker or a car: the queue goes on where it stopped</string>
     <string name="settings_hint_autoeq_auto">Applies a known correction curve when headphones connect</string>
     <string name="settings_hint_autoeq_list">The headphone list, downloaded on Wi-Fi and refreshed monthly</string>
     <string name="settings_hint_per_device">Each device keeps its own equalizer settings</string>

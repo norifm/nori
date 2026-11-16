@@ -54,6 +54,7 @@ fn sample() -> StoredPrefs {
         queue_offer: false,
         auto_fill: Some(AutoFillKind::Albums),
         bridge_offline: true,
+        play_on_bluetooth: true,
         auto_fill_basis: AutoFillBasis::Genre,
         auto_fill_remote: true,
         eq_enabled: true,

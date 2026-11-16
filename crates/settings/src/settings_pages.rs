@@ -340,6 +340,9 @@ impl Page<'_> {
         if !self.web() {
             queue.push(self.setting("bridgeOffline"));
         }
+        if self.phone() {
+            queue.push(self.setting("playOnBluetooth"));
+        }
         vec![(SectionId::Between, between), (SectionId::Queue, queue)]
     }
 
@@ -629,7 +632,7 @@ mod tests {
         for client in [SettingsClient::Desktop, SettingsClient::Terminal] {
             let rows = every_row(client, &d, &facts());
             let has = names(&rows, false);
-            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
+            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate", "playOnBluetooth"] {
                 assert!(phone.iter().any(|n| n == phone_only) && !has.iter().any(|n| n == phone_only), "{phone_only} offered by {client:?}");
             }
             assert!(rows.iter().any(|r| matches!(r.item, RowItem::LyricsSource { .. })), "the services are on the lyrics page");

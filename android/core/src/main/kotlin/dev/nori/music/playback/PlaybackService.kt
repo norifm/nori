@@ -1266,6 +1266,28 @@ class MediaButtons : androidx.media3.session.MediaButtonReceiver() {
         runCatching { Nori.get(context).core.queueSaved() }.getOrDefault(false)
 }
 
+/**
+ * A Bluetooth audio device connected while `playOnBluetooth` is on: a play press, so the saved queue goes
+ * on as it does from a headset's button. Declared disabled in the manifest; the setting enables it
+ * ([enable]), so with it off Android never starts nori for a connection.
+ */
+@UnstableApi
+class PlayOnBluetooth : android.content.BroadcastReceiver() {
+    override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+        if (intent.getIntExtra(android.bluetooth.BluetoothProfile.EXTRA_STATE, -1) != android.bluetooth.BluetoothProfile.STATE_CONNECTED) return
+        val press = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PLAY)
+        MediaButtons().onReceive(context, android.content.Intent(android.content.Intent.ACTION_MEDIA_BUTTON).setComponent(android.content.ComponentName(context, MediaButtons::class.java)).putExtra(android.content.Intent.EXTRA_KEY_EVENT, press))
+    }
+
+    companion object {
+        fun enable(context: android.content.Context, on: Boolean) = context.packageManager.setComponentEnabledSetting(
+            android.content.ComponentName(context, PlayOnBluetooth::class.java),
+            if (on) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
+            android.content.pm.PackageManager.DONT_KILL_APP,
+        )
+    }
+}
+
 /** media3's notification, a jam's song saying whose jam it is beside the app's name ([inJam]). */
 @UnstableApi
 private class JamNotification(context: android.content.Context) : androidx.media3.session.DefaultMediaNotificationProvider(
