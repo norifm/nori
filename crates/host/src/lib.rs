@@ -61,15 +61,38 @@ pub fn keep_log(data: &std::path::Path) {
     }));
 }
 
+/// Where the desktop and terminal clients keep their data, the same folder for both: $XDG_DATA_HOME/nori,
+/// else ~/.local/share/nori; on Windows %LOCALAPPDATA%\nori.
+pub fn data_dir() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    let set = |name| std::env::var_os(name).filter(|d| !d.is_empty()).map(PathBuf::from);
+    if let Some(d) = set("XDG_DATA_HOME") {
+        return d.join("nori");
+    }
+    let home = if cfg!(windows) { set("LOCALAPPDATA") } else { set("HOME").map(|h| h.join(".local/share")) };
+    home.unwrap_or_else(std::env::temp_dir).join("nori")
+}
+
 /// This computer's name, as the account's other devices list it (remote control). A browser has none.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub fn device_name() -> String {
+    let name = host_name();
+    let name = name.trim_end_matches(".local");
+    if name.is_empty() { "nori".into() } else { name.into() }
+}
+
+#[cfg(unix)]
+fn host_name() -> String {
     let mut buf = [0u8; 256];
     // SAFETY: the buffer is writable for its whole length; gethostname writes a NUL-terminated name into it.
     let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
-    let name = if ok { String::from_utf8_lossy(buf.split(|b| *b == 0).next().unwrap_or_default()).into_owned() } else { String::new() };
-    let name = name.trim_end_matches(".local").to_string();
-    if name.is_empty() { "nori".into() } else { name }
+    if ok { String::from_utf8_lossy(buf.split(|b| *b == 0).next().unwrap_or_default()).into_owned() } else { String::new() }
+}
+
+/// Windows sets it for every process.
+#[cfg(windows)]
+fn host_name() -> String {
+    std::env::var("COMPUTERNAME").unwrap_or_default()
 }
 
 /// Why a jam was not joined.

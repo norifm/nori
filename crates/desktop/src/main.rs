@@ -1,5 +1,7 @@
 //! nori's Slint desktop client over the core and nori-engine. Shares its data directory with the
 //! terminal client; this crate only draws and forwards input.
+// A window of its own on Windows, with no console behind it.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
 mod compositor;
@@ -17,8 +19,6 @@ mod settings;
 mod sung;
 mod words;
 
-use std::path::PathBuf;
-
 use nori_core::settings::SavedServer;
 
 use nori_desktop_ui::*;
@@ -26,17 +26,6 @@ use nori_desktop_ui::*;
 /// The app's id on Linux: its .desktop file's name (tools/host-release/linux.py), its window's class
 /// and Wayland app id, and its media controls' `DesktopEntry`, by which the desktop finds its name and icon.
 const APP_ID: &str = "dev.nori.desktop";
-
-/// $XDG_DATA_HOME/nori, else ~/.local/share/nori (same as the terminal client).
-fn data_dir() -> PathBuf {
-    if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
-        return PathBuf::from(d).join("nori");
-    }
-    match std::env::var_os("HOME") {
-        Some(h) => PathBuf::from(h).join(".local/share/nori"),
-        None => std::env::temp_dir().join("nori"),
-    }
-}
 
 fn main() -> Result<(), String> {
     // The sign-in window, started by the app as a process of its own (app.rs `sign_in_window`).
@@ -51,7 +40,7 @@ fn main() -> Result<(), String> {
         let control = if cfg!(all(feature = "test-control", unix)) { " [--control-socket PATH]" } else { "" };
         format!("usage: nori-desktop [--data DIR] [--url URL --user USER --password PASSWORD]{control}")
     };
-    let mut data = data_dir();
+    let mut data = nori_host::data_dir();
     #[cfg(all(feature = "test-control", unix))]
     let mut control_socket = None;
     let (mut url, mut user, mut password) = (None, None, String::new());
@@ -60,7 +49,7 @@ fn main() -> Result<(), String> {
         let mut v = || args.next().ok_or_else(usage);
         match a.as_str() {
             #[cfg(all(feature = "test-control", unix))]
-            "--control-socket" => control_socket = Some(PathBuf::from(v()?)),
+            "--control-socket" => control_socket = Some(std::path::PathBuf::from(v()?)),
             "--data" => data = v()?.into(),
             "--url" => url = Some(v()?),
             "--user" => user = Some(v()?),
