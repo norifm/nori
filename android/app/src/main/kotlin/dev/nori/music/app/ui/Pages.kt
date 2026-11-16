@@ -130,6 +130,10 @@ class Pages(private val controller: NavHostController, val navigator: PageNaviga
     /** Takes a remote's or a keyboard's focus into the page in front. */
     val focus = androidx.compose.ui.focus.FocusRequester()
 
+    /** Whether a remote's or a keyboard's focus is on a page (not the chrome or the player). */
+    var focused by mutableStateOf(false)
+        internal set
+
     // What is shown changes in composition, as the stack does (changeTo), and from the motion's own coroutines;
     // only the latter are told to the composition, by [shownVersion]: it already knows of its own changes.
     private var shownVersion by androidx.compose.runtime.mutableIntStateOf(0)
@@ -315,8 +319,8 @@ fun PageStack(controller: NavHostController, pages: Pages, start: String, modifi
     // it stays.
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
     val input = androidx.compose.ui.platform.LocalInputModeManager.current
-    var held by remember { mutableStateOf(false) }
     LaunchedEffect(top, started) {
+        val held = pages.focused
         val keys = held && input.inputMode == androidx.compose.ui.input.InputMode.Keyboard
         if (held && !keys) focus.clearFocus()
         if (started != null) pages.run(started) else pages.navigator.settle()
@@ -331,7 +335,7 @@ fun PageStack(controller: NavHostController, pages: Pages, start: String, modifi
         change != null -> listOf(change.under to Role.UNDER, change.over to Role.OVER)
         else -> listOfNotNull(stack.getOrNull(stack.size - 2)?.takeIf { idle }?.let { it to Role.HIDDEN }, top to Role.TOP)
     }
-    Box(modifier.fillMaxSize().onSizeChanged { pages.width = it.width.toFloat() }.onFocusChanged { held = it.hasFocus }) {
+    Box(modifier.fillMaxSize().onSizeChanged { pages.width = it.width.toFloat() }.onFocusChanged { pages.focused = it.hasFocus }) {
         for ((entry, role) in shown) key(entry.id) {
             ShownPage(pages, entry, role, change) {
                 entry.LocalOwnersProvider(holder) { (entry.destination as PageNavigator.Destination).content(entry) }

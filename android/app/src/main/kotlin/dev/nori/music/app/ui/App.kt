@@ -311,6 +311,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect { playerWasOpen = it }
         }
         val pages = rememberPages(controller, pageNavigator)
+        val chromeFocus = remember { androidx.compose.ui.focus.FocusRequester() }
         // The player covers the page, so a field on it (search) lets go of its focus: held under the player,
         // the keyboard came back over it whenever the window got its focus back (from the background, a menu).
         // A remote's or a keyboard's focus moves on to what is shown, the player or the page.
@@ -405,6 +406,10 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
         val lyricsKeepOn = remember { mutableStateOf(false) }
         val config = androidx.compose.ui.platform.LocalConfiguration.current
         val wide = isWide(config.screenWidthDp, config.screenHeightDp)
+        // A phone on its side puts the chrome beside the page; a TV keeps it below, docked (ChromeDock), where a
+        // remote finds it and its words read across.
+        val tv = (config.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+        val side = wide && !tv
         // The bars the app has put away, set below where they are decided, read by its dialogs' windows.
         val hiddenBars = remember { mutableStateOf(HiddenBars(status = false)) }
         CompositionLocalProvider(
@@ -503,14 +508,14 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             // On its side the chrome stands on the edge the phone's bottom turned to (SideChrome): the right one
             // way round, the left the other, or beside a car's driver. The camera is on the opposite side.
             val rotation = remember(config) { barsView.display?.rotation ?: android.view.Surface.ROTATION_0 }
-            val chromeLeft = wide && (rotation == android.view.Surface.ROTATION_270 || coverAtEnd)
+            val chromeLeft = side && (rotation == android.view.Surface.ROTATION_270 || coverAtEnd)
             androidx.compose.runtime.SideEffect {
-                sheet.edge = if (!wide) SheetEdge.BOTTOM else if (chromeLeft) SheetEdge.LEFT else SheetEdge.RIGHT
+                sheet.edge = if (!side) SheetEdge.BOTTOM else if (chromeLeft) SheetEdge.LEFT else SheetEdge.RIGHT
             }
             var sideRoom by remember { mutableStateOf(0.dp) }
             val cutout = androidx.compose.foundation.layout.WindowInsets.displayCutout.asPaddingValues()
-            val pageStart = if (!wide) 0.dp else if (chromeLeft) sideRoom else cutout.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
-            val pageEnd = if (!wide) 0.dp else if (chromeLeft) cutout.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) else sideRoom
+            val pageStart = if (!side) 0.dp else if (chromeLeft) sideRoom else cutout.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
+            val pageEnd = if (!side) 0.dp else if (chromeLeft) cutout.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) else sideRoom
             // A turn of the phone: the system dissolves the old layout into the new (MainActivity), the chrome is
             // laid out again where it already lay, and its glyphs turn upright from where they were.
             val turn = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -542,7 +547,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
               // itself (HeroPage), so its colour comes and goes with the page. Painted here in the chrome's
               // colour, which follows a page on a slower fade of its own, they held the album's colour at the
               // screen's edges while the page slid away.
-              if (wide) {
+              if (side) {
                   val bg = MaterialTheme.colorScheme.background
                   val strip = Modifier.fillMaxHeight().drawBehind { drawRect(bg) }
                   Box(strip.width(pageStart).align(Alignment.CenterStart))
@@ -598,7 +603,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
               }
               // Upright, what runs on under the bar fades into the page's colour across the bar's room, as a row on its
               // side does under the strip the chrome stands in (bleedsToEdges); the page's colour is the chrome's look's.
-              if (!wide) Box(
+              if (!side) Box(
                   Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(chromeHeight + EDGE_REACH).coversPage().drawBehind {
                       val reach = EDGE_REACH.toPx()
                       val fade = edgeFade(chromeLook.color(CoverLook.CHROME_PAGE), size.height - reach, reach)
@@ -608,16 +613,19 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
               Box(
                   Modifier.align(Alignment.BottomCenter).padding(start = pageStart, end = pageEnd).coversPage()
                       .onGloballyPositioned { chromeHeight = with(density) { it.size.height.toDp() } }
-                      .then(if (wide) Modifier else Modifier.keepsTouches()),
+                      .then(if (side) Modifier else Modifier.keepsTouches())
+                      // Up from it goes into the page, whose rows run on under it; Back on a tab's own page
+                      // comes down to it (ChromeBack).
+                      .focusProperties { up = pages.focus }.focusRequester(chromeFocus),
               ) {
                   // The now playing bar has a heart now, and it reads the stars the user has just
                   // changed from here like every other one. Outside this, it saw only the server's
                   // answer, so a tap on it changed nothing until the song came round again.
                   CompositionLocalProvider(LocalStarMarks provides marks, LocalBackdrop provides backdrop, LocalGlyphTurn provides { turn.value }) {
-                      BottomChrome(player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook)
+                      BottomChrome(player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook, below = !side)
                   }
               }
-              if (wide) CompositionLocalProvider(LocalStarMarks provides marks, LocalGlyphTurn provides { turn.value }) {
+              if (side) CompositionLocalProvider(LocalStarMarks provides marks, LocalGlyphTurn provides { turn.value }) {
                   SideChrome(
                       player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook, chromeLeft,
                       Modifier.align(if (chromeLeft) Alignment.CenterStart else Alignment.CenterEnd).coversPage()
@@ -661,6 +669,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
               }
             }
             EdgeBack(pages, sheet)
+            if (tv) ChromeBack(pages, sheet, chromeFocus)
             SheetBack(sheet)
             SelectionBack(actions, sheet, controller)
             }
@@ -691,6 +700,17 @@ private fun SheetBack(sheet: PlayerSheet) {
             throw e
         }
     }
+}
+
+/**
+ * On a TV, Back on a tab's own page takes the remote down to the chrome first, a page's length below; Back
+ * from there goes on as it would. Registered after the pages' own (EdgeBack), so it goes first.
+ */
+@Composable
+private fun ChromeBack(pages: Pages, sheet: PlayerSheet, chrome: androidx.compose.ui.focus.FocusRequester) {
+    val stack by pages.navigator.backStack.collectAsState()
+    val root = stack.lastOrNull()?.destination?.route in Pages.ROOTS
+    androidx.activity.compose.BackHandler(root && pages.focused && !sheet.isOpen) { chrome.requestFocus() }
 }
 
 /**

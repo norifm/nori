@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
 import androidx.compose.foundation.layout.statusBars
@@ -92,16 +93,19 @@ import dev.nori.music.app.vm.PlayerViewModel
 @Composable
 fun BottomChrome(
     player: PlayerViewModel, actions: ActionsViewModel, onOpenPlayer: () -> Unit,
-    route: String?, tabs: List<Tab>, onTab: (String) -> Unit, look: Look,
+    route: String?, tabs: List<Tab>, onTab: (String) -> Unit, look: Look, below: Boolean,
 ) {
     Column {
         SelectionBar(actions)
-        if (!LocalWide.current) Box(Modifier.fillMaxWidth().padding(horizontal = BAR_END)) {
-            ChromePill(player, actions, onOpenPlayer, route, tabs, onTab, look)
+        val dock = below && LocalWide.current
+        if (below) Box(Modifier.fillMaxWidth().padding(horizontal = BAR_END), Alignment.Center) {
+            if (dock) ChromeDock(player, actions, onOpenPlayer, route, tabs, onTab, look)
+            else ChromePill(player, actions, onOpenPlayer, route, tabs, onTab, look)
         }
-        // The gesture bar's room is gap enough above its handle; without one the pill keeps off the edge.
+        // The gesture bar's room is gap enough above its handle; without one the pill keeps off the edge, the
+        // dock further, clear of what a TV's frame may hide.
         val room = with(androidx.compose.ui.platform.LocalDensity.current) { gestureBarRoom.getBottom(this).toDp() }
-        Spacer(Modifier.height(room.coerceAtLeast(BAR_OFF)))
+        Spacer(Modifier.height(room.coerceAtLeast(if (dock) DOCK_OFF else BAR_OFF)))
     }
 }
 
@@ -171,6 +175,32 @@ private fun ChromePill(
             MiniPlayer(player, actions, onOpenPlayer, look)
             Box(Modifier.fillMaxWidth().height(hairline).background(chrome.divider))
             TabRow(route, tabs, onTab, chrome, Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/**
+ * Across a TV's width the pill lies along the bottom in one row, the mini player and then the tabs, as wide
+ * as the words need rather than the screen; the tabs alone while nothing plays.
+ */
+@Composable
+private fun ChromeDock(
+    player: PlayerViewModel, actions: ActionsViewModel, onOpenPlayer: () -> Unit,
+    route: String?, tabs: List<Tab>, onTab: (String) -> Unit, look: Look,
+) {
+    val chrome = ChromeColours(look)
+    val state by player.state.collectAsStateWithLifecycle()
+    val tabsWidth = DOCK_TAB * tabs.size
+    if ((state.current?.title ?: state.radio) == null) {
+        Pill(PillShape, chrome, Modifier.width(tabsWidth)) { TabRow(route, tabs, onTab, chrome, Modifier.fillMaxWidth()) }
+        return
+    }
+    val hairline = with(androidx.compose.ui.platform.LocalDensity.current) { 1f.toDp() }
+    Pill(RoundedCornerShape(CHROME_CORNER), chrome, Modifier.widthIn(max = DOCK_WIDTH).fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { MiniPlayer(player, actions, onOpenPlayer, look) }
+            Box(Modifier.width(hairline).height(MINI_COVER).background(chrome.divider))
+            TabRow(route, tabs, onTab, chrome, Modifier.width(tabsWidth))
         }
     }
 }
@@ -269,6 +299,10 @@ private val MINI_PAD = 8.dp
 private val MINI_COVER_CORNER = 10.dp
 private val MINI_ROW = MINI_COVER + MINI_PAD * 2
 private val CHROME_CORNER = MINI_COVER_CORNER + MINI_PAD
+/** A tab's share of the dock, and the most the dock spreads to across a TV. */
+private val DOCK_TAB = 76.dp
+private val DOCK_WIDTH = 760.dp
+private val DOCK_OFF = 24.dp
 /** How much the page behind the chrome is blurred, and how much of the page's own color is laid over that. */
 private val BACKDROP_BLUR = 24.dp
 private const val BLURRED_TINT = 0.55f
