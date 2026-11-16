@@ -328,6 +328,12 @@ of this; Android's `PlaybackService` calls the same functions.
   the last leaves. On the host the client says only `Session::sound_page(page, shown)`; the session's
   `apply` counts the changes.
 - **A download's covers**: `Core::download_cover_urls`, for the cover loader to `warm`.
+- **A playlist kept downloaded**: a playlist's page downloads it whole with `Core::download_playlist`
+  (all its songs, even for "the other 3"), which keeps it so; `Client::kept_playlists_sync` at launch
+  brings the kept ones up to date. Both answer a `KeptChange`: the downloads queued, and the songs to
+  delete (only those keeping brought, which no kept playlist holds). Removing all of a playlist's
+  downloads stops keeping it. On the host, `Handle::download_later(Fetch::Playlist)` or
+  `download_playlist`; the session syncs as it opens.
 
 ## The clients today
 

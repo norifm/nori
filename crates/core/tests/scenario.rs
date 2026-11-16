@@ -35,6 +35,8 @@ struct Server {
     starred: Mutex<BTreeSet<String>>,
     /// Changes the server took, as "endpoint id".
     took: Mutex<Vec<String>>,
+    /// The account's playlists: id and song ids.
+    playlists: Mutex<Vec<(&'static str, Vec<&'static str>)>>,
 }
 
 fn song_json(t: &Track, starred: bool) -> String {
@@ -70,7 +72,7 @@ fn decode(v: &str) -> String {
 
 impl Server {
     fn new() -> Arc<Server> {
-        Arc::new(Server { reachable: AtomicBool::new(true), starred: Mutex::new(BTreeSet::new()), took: Mutex::new(Vec::new()) })
+        Arc::new(Server { reachable: AtomicBool::new(true), starred: Mutex::new(BTreeSet::new()), took: Mutex::new(Vec::new()), playlists: Mutex::new(Vec::new()) })
     }
 
     fn reachable(&self, on: bool) {
@@ -110,6 +112,15 @@ impl Server {
                     _ => true,
                 };
                 ok("")
+            }
+            "getPlaylists" => {
+                let listed: Vec<String> = self.playlists.lock().iter().map(|(id, songs)| format!(r#"{{"id":"{id}","name":"{id}","songCount":{}}}"#, songs.len())).collect();
+                ok(&format!(r#""playlists":{{"playlist":[{}]}}"#, listed.join(",")))
+            }
+            "getPlaylist" => {
+                let held = self.playlists.lock().iter().find(|p| p.0 == id).map(|p| p.1.clone()).unwrap_or_default();
+                let entries: Vec<String> = held.iter().map(|s| self.songs(|t| t.0 == *s)).collect();
+                ok(&format!(r#""playlist":{{"id":"{id}","name":"{id}","entry":[{}]}}"#, entries.join(",")))
             }
             "getStarred2" => {
                 let starred = self.starred.lock().clone();
@@ -189,6 +200,34 @@ fn offline_changes_reach_server() {
     block(client.flush_pending()).unwrap();
     assert_eq!(server.took(), ["star s1", "scrobble s2", "unstar s1", "star s3"], "in order, each once");
     assert_eq!(server.starred.lock().iter().collect::<Vec<_>>(), ["s3"]);
+}
+
+/// A playlist downloaded is kept as the server changes it: songs added are queued, and a song leaving
+/// goes only when keeping it brought it; a playlist deleted lets its songs go.
+#[test]
+fn a_kept_playlist_follows_the_server() {
+    let server = Server::new();
+    server.playlists.lock().push(("p", vec!["s1", "s2", "ext-deezer-song-9"]));
+    let (core, client) = logged_in(&server);
+    let change = |c: nori_core::transfers::KeptChange| (c.queued.fresh, c.gone);
+    let settle = |ids: &[&str]| core.download_settle(ids.iter().map(|s| s.to_string()).collect(), vec![true; ids.len()]).unwrap();
+    assert_eq!(block(client.kept_playlists_sync()).unwrap(), Default::default(), "nothing kept");
+
+    let songs = block(client.playlist_songs_of("p".into())).unwrap();
+    assert_eq!(change(core.download_playlist("p".into(), songs).unwrap()), (vec!["s1".into(), "s2".into()], vec![]), "not the provider's");
+    settle(&["s1", "s2"]);
+    let own = block(client.playlist_songs_of("p".into())).unwrap().into_iter().find(|s| s.id == "s1").map(|s| nori_core::Song { id: "s3".into(), ..s }).unwrap();
+    core.download_queue(vec![own]).unwrap();
+    settle(&["s3"]);
+
+    server.playlists.lock()[0].1 = vec!["s2", "s3", "s5"];
+    assert_eq!(change(block(client.kept_playlists_sync()).unwrap()), (vec!["s5".into()], vec!["s1".into()]));
+    settle(&["s5"]);
+    server.playlists.lock()[0].1 = vec!["s5"];
+    assert_eq!(change(block(client.kept_playlists_sync()).unwrap()), (vec![], vec!["s2".into()]), "s3 was downloaded by itself");
+    server.playlists.lock().clear();
+    assert_eq!(change(block(client.kept_playlists_sync()).unwrap()), (vec![], vec!["s5".into()]));
+    assert_eq!(block(client.kept_playlists_sync()).unwrap(), Default::default(), "let go");
 }
 
 #[test]

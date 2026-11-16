@@ -3529,6 +3529,8 @@ impl App {
             PageAction::Download { act: DownloadAct::Remove } => {
                 self.ask_remove(songs.iter().map(|s| s.id.clone()).collect());
             }
+            // A playlist is downloaded whole, so it is kept downloaded as it changes.
+            PageAction::Download { act: DownloadAct::Missing } if matches!(fetch, Some(Fetch::Playlist(_))) => self.cmds.extend(fetch.map(Cmd::DownloadFetch)),
             PageAction::Download { act: DownloadAct::Missing } => {
                 let missing: Vec<Song> = songs.into_iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).collect();
                 self.cmds.push(Cmd::Download(missing));

@@ -365,6 +365,9 @@ class Library(
 
     suspend fun sync(): IngestStats = withContext(Dispatchers.IO) { lifted { client.syncLibrary() } }
 
+    /** Brings the playlists kept downloaded up to date with the server (the core's `kept_playlists_sync`). */
+    suspend fun syncKept(): dev.nori.music.ffi.transfers.KeptChange = withContext(Dispatchers.IO) { lifted { client.keptPlaylistsSync() } }
+
     suspend fun indexSize(): IngestStats = withContext(Dispatchers.IO) { core.indexSize() }
 
     /** The signed prefix the profile's cover addresses start with; null where the core makes each one. */

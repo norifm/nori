@@ -97,13 +97,14 @@ internal fun SongListPage(
 
 /**
  * The glyphs of a page's list head: what the core's `page_actions` offers [kind], in its order. Download and
- * Add to queue are done here ([artistId]: the artist's own songs); [own] answers the ones only
- * the page can do (Refresh, Edit) and a page without an answer shows no glyph for them.
+ * Add to queue are done here ([artistId]: the artist's own songs; [playlistId]: the playlist, downloaded whole
+ * and kept so); [own] answers the ones only the page can do (Refresh, Edit) and a page without an answer
+ * shows no glyph for them.
  */
 @Composable
 internal fun PageActionGlyphs(
     kind: PageKind, songs: List<Song>, done: Set<String>, actions: ActionsViewModel, artistId: String? = null,
-    own: (PageAction) -> (() -> Unit)? = { null },
+    playlistId: String? = null, own: (PageAction) -> (() -> Unit)? = { null },
 ) {
     val downloads = LocalRules.current.downloads
     val missing = remember(songs, done) { songs.filterNot { it.id in done } }
@@ -113,7 +114,7 @@ internal fun PageActionGlyphs(
     for (a in offered) when (a) {
         is PageAction.Download -> GlyphButton(
             if (a.act == DownloadAct.REMOVE) Iconoir.CheckCircle else Iconoir.Download,
-            say.downloadEntry(a.act, missing.size), quiet = true, onClick = downloadAction(a.act, songs, missing, actions),
+            say.downloadEntry(a.act, missing.size), quiet = true, onClick = downloadAction(a.act, songs, missing, actions, playlistId),
         )
         PageAction.DownloadEverything -> GlyphButton(Iconoir.Download, say.downloadEverything, quiet = true) { artistId?.let { actions.downloadArtist(it) } }
         PageAction.AddToQueue -> GlyphButton(Iconoir.Playlist, say.addToQueue, quiet = true) {
@@ -124,10 +125,10 @@ internal fun PageActionGlyphs(
     }
 }
 
-/** What a download [act] on [songs] does, [missing] being those not yet here. */
-private fun downloadAction(act: DownloadAct, songs: List<Song>, missing: List<Song>, actions: ActionsViewModel): () -> Unit = when (act) {
-    DownloadAct.ALL -> { { actions.download(songs) } }
-    DownloadAct.MISSING -> { { actions.download(missing) } }
+/** What a download [act] on [songs] does, [missing] being those not yet here; those of [playlist] are downloaded whole. */
+private fun downloadAction(act: DownloadAct, songs: List<Song>, missing: List<Song>, actions: ActionsViewModel, playlist: String?): () -> Unit = when (act) {
+    DownloadAct.ALL -> { { actions.download(songs, playlist) } }
+    DownloadAct.MISSING -> if (playlist != null) { { actions.download(songs, playlist) } } else { { actions.download(missing) } }
     DownloadAct.REMOVE -> { { actions.undownload(songs) } }
 }
 
@@ -501,7 +502,7 @@ private fun PlaylistPage(
         },
         headLabel = head,
         headActions = {
-            PageActionGlyphs(PageKind.Playlist, detail?.songs.orEmpty(), list.downloaded, actions)
+            PageActionGlyphs(PageKind.Playlist, detail?.songs.orEmpty(), list.downloaded, actions, playlistId = id)
         },
     ) {
         when {

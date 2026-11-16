@@ -515,6 +515,9 @@ impl Session {
         if !h.offline && h.rules().downloads && h.core.download_counts().pending > 0 {
             h.start_downloads();
         }
+        if !h.offline && h.rules().downloads {
+            h.sync_kept();
+        }
         Ok(Session { h })
     }
 
@@ -1045,9 +1048,50 @@ impl Handle {
         self.start_downloads();
     }
 
-    /// [`Handle::download`] of what `what` names, once fetched.
+    /// [`Handle::download`] of what `what` names, once fetched; a playlist is kept downloaded as it
+    /// changes (`Core::download_playlist`).
     pub fn download_later(&self, what: Fetch) {
-        self.fetched(what, |me, songs| me.download(songs));
+        match what {
+            Fetch::Playlist(id) => self.fetched(Fetch::Playlist(id.clone()), move |me, songs| me.download_playlist(id, songs)),
+            what => self.fetched(what, |me, songs| me.download(songs)),
+        }
+    }
+
+    /// Downloads playlist `id`, all of whose `songs` are given, and keeps it downloaded as it changes
+    /// (`Core::download_playlist`).
+    pub fn download_playlist(&self, id: String, songs: Vec<Song>) {
+        match self.core.download_playlist(id, songs) {
+            Ok(change) => {
+                self.note(Note::Downloading(change.queued.fresh.len() + change.queued.again.len()));
+                self.kept_changed(change);
+            }
+            Err(e) => self.note(Note::DownloadFailed(e)),
+        }
+    }
+
+    /// Brings the playlists kept downloaded up to date with the server (`Client::kept_playlists_sync`).
+    fn sync_kept(&self) {
+        let me = self.clone();
+        self.run(async move {
+            if let Ok(change) = me.client.kept_playlists_sync().await {
+                me.kept_changed(change);
+            }
+        });
+    }
+
+    /// Does what keeping playlists downloaded changed: the songs queued download, covers too, and those
+    /// gone are deleted.
+    fn kept_changed(&self, change: nori_core::transfers::KeptChange) {
+        for id in &change.gone {
+            self.download_remove(id);
+        }
+        let queued: std::collections::HashSet<&String> = change.queued.fresh.iter().chain(&change.queued.again).collect();
+        if queued.is_empty() {
+            return;
+        }
+        let songs: Vec<Song> = self.core.downloads(false).unwrap_or_default().into_iter().filter(|s| queued.contains(&s.id)).collect();
+        warm_covers(&self.core, self.covers.as_ref(), &songs);
+        self.start_downloads();
     }
 
     /// Where song `id`'s download stands.

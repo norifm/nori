@@ -427,6 +427,17 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
      */
     fun download(songs: List<Song>) = io.execute { queued(runCatching { core.downloadQueue(songs) }) }
 
+    /** Downloads playlist [id], all of whose [songs] are given, and keeps it downloaded as it changes (the core's `download_playlist`). */
+    fun downloadPlaylist(id: String, songs: List<Song>) = io.execute {
+        runCatching { core.downloadPlaylist(id, songs) }.onSuccess(::kept).onFailure { Log.w(TAG, "could not download playlist $id", it) }
+    }
+
+    /** Does what keeping playlists downloaded changed: the songs queued download, those that left go. */
+    fun kept(change: dev.nori.music.ffi.transfers.KeptChange) {
+        queued(Result.success(change.queued))
+        if (change.gone.isNotEmpty()) main.post { remove(change.gone) }
+    }
+
     /** Every song of the offline index, in one call to the core; sync the library first so the index is complete. */
     fun downloadLibrary() = io.execute {
         queued(runCatching { core.downloadQueueLibrary() })

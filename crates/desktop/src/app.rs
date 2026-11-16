@@ -2000,6 +2000,7 @@ impl App {
         let Some(fetch) = self.page_fetch.clone() else { return };
         match act {
             0 | 3 => self.on_session(|s| s.download_later(fetch)),
+            1 if matches!(fetch, Fetch::Playlist(_)) => self.on_session(|s| s.download_later(fetch)),
             1 => {
                 let Some(s) = &self.session else { return };
                 let ids: Vec<&str> = self.page_songs.iter().map(|s| s.id.as_str()).collect();

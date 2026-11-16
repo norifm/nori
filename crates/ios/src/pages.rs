@@ -1082,9 +1082,10 @@ fn entries_of(s: &nori_host::session::Session, songs: &[Song]) -> Value {
     Value::from(entries)
 }
 
-/// Runs download entry `act` (as [`entries_of`] codes it) on `songs`: the songs downloaded, or removed
-/// for 2.
-fn act_on(s: &nori_host::session::Session, songs: Vec<Song>, act: i32) -> i32 {
+/// Runs download entry `act` (as [`entries_of`] codes it) on `songs`, those of `playlist` when they are
+/// one's: the songs downloaded, or removed for 2. A playlist is downloaded whole, so it is kept
+/// downloaded as it changes.
+fn act_on(s: &nori_host::session::Session, songs: Vec<Song>, act: i32, playlist: Option<String>) -> i32 {
     let states = download_states(s, &songs);
     let picked = |want: fn(&(bool, bool)) -> bool| -> Vec<Song> {
         songs.iter().zip(&states).filter(|(_, st)| want(st)).map(|(song, _)| song.clone()).collect()
@@ -1100,7 +1101,10 @@ fn act_on(s: &nori_host::session::Session, songs: Vec<Song>, act: i32) -> i32 {
         _ => return 0,
     };
     let n = to_get.len() as i32;
-    s.download(to_get);
+    match playlist {
+        Some(id) => s.download_playlist(id, songs),
+        None => s.download(to_get),
+    }
     n
 }
 
@@ -1212,8 +1216,9 @@ pub extern "C" fn nori_ios_shuffle_library(albums: i32) -> i32 {
 /// Runs download entry `act` on list `token` ([`act_on`]).
 #[no_mangle]
 pub extern "C" fn nori_ios_download_act(token: u64, act: i32) -> i32 {
-    let Some((songs, _)) = list(token) else { return 0 };
-    with_session(|s| act_on(s, songs, act)).unwrap_or(0)
+    let Some((songs, origin)) = list(token) else { return 0 };
+    let playlist = origin.filter(|o| o.kind == OriginKind::Playlist).map(|o| o.id);
+    with_session(|s| act_on(s, songs, act, playlist)).unwrap_or(0)
 }
 
 /// [`nori_ios_download_entries`] for an album, playlist or artist by id, as a card's menu has it. Blocks.
@@ -1236,8 +1241,8 @@ pub unsafe extern "C" fn nori_ios_collection_download_entries(kind: i32, id: *co
 pub unsafe extern "C" fn nori_ios_collection_download_act(kind: i32, id: *const c_char, act: i32) -> i32 {
     let id = c_text(id);
     let Some((client, core)) = server() else { return 0 };
-    let songs = collection_songs(&core, &client, kind, id);
-    with_session(|s| act_on(s, songs, act)).unwrap_or(0)
+    let songs = collection_songs(&core, &client, kind, id.clone());
+    with_session(|s| act_on(s, songs, act, (kind == PAGE_PLAYLIST).then_some(id))).unwrap_or(0)
 }
 
 fn fetch(kind: i32, id: String) -> Option<Fetch> {
