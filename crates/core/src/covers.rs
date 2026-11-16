@@ -161,7 +161,7 @@ pub(crate) fn cover_neighbours(index: i32, previous: i32, next: i32, ahead: i32,
 impl Client {
     /// Upcoming songs' covers a phone fetches ahead: as many as songs are prepared ahead on this network.
     pub fn covers_ahead(&self) -> i32 {
-        self.settings().prefs(|p| nori_player::queue::precache_count(self.metered(), p.songs_ahead_wifi, p.songs_ahead_mobile)) as i32
+        self.settings().in_effect(|p| nori_player::queue::precache_count(self.metered(), p.songs_ahead_wifi, p.songs_ahead_mobile)) as i32
     }
 }
 

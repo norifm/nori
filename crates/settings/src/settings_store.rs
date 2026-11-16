@@ -307,6 +307,18 @@ impl Settings {
         Ok(prefs)
     }
 
+    /// A copy of the settings in effect: the user's with what the enabled plugins override laid over
+    /// them; None before they are open.
+    pub fn effective(&self) -> Option<StoredPrefs> {
+        self.with_effective(StoredPrefs::clone)
+    }
+
+    /// Whether enabled plugins override some settings, also while every plugin is off; while none do,
+    /// the settings in effect are the stored ones.
+    pub fn overridden(&self) -> bool {
+        !self.layer.lock().overrides.is_empty()
+    }
+
     /// Replaces the settings. Returns the effect bits; 0 when nothing changed or the settings are not open.
     pub fn put(&self, prefs: StoredPrefs) -> u32 {
         self.with_store(|s| s.edit(|_| prefs)).unwrap_or(0)
@@ -456,23 +468,48 @@ impl Settings {
         Ok(())
     }
 
-    /// A copy of the live settings; None before they are open.
+    /// A copy of the settings as the user set them, which the settings screens show and edits start
+    /// from; None before they are open. What nori does reads [`Settings::effective`].
     pub fn current(&self) -> Option<StoredPrefs> {
         self.with_prefs(StoredPrefs::clone)
     }
 
-    /// `f` applied to the live settings without copying them; None before they are open.
+    /// `f` applied to the settings as the user set them, without copying them; None before they are open.
     pub fn with_prefs<R>(&self, f: impl FnOnce(&StoredPrefs) -> R) -> Option<R> {
         self.kept.read().as_ref().map(|k| f(&k.prefs))
     }
 
-    /// `f` applied to the live settings, or to the defaults before they are open.
+    /// `f` applied to the settings as the user set them, or to the defaults before they are open.
     pub fn prefs<R>(&self, f: impl FnOnce(&StoredPrefs) -> R) -> R {
         match self.kept.read().as_ref() {
             Some(k) => f(&k.prefs),
             None => f(&StoredPrefs::default()),
         }
     }
+
+    /// `f` applied to the settings in effect: the user's with what the enabled plugins override laid
+    /// over them; None before they are open.
+    pub fn with_effective<R>(&self, f: impl FnOnce(&StoredPrefs) -> R) -> Option<R> {
+        let overrides = self.layer.lock().overrides.clone();
+        self.kept.read().as_ref().map(|k| laid_over(&k.prefs, &overrides, f))
+    }
+
+    /// `f` applied to the settings in effect, or to the defaults before they are open.
+    pub fn in_effect<R>(&self, f: impl FnOnce(&StoredPrefs) -> R) -> R {
+        let overrides = self.layer.lock().overrides.clone();
+        match self.kept.read().as_ref() {
+            Some(k) => laid_over(&k.prefs, &overrides, f),
+            None => laid_over(&StoredPrefs::default(), &overrides, f),
+        }
+    }
+}
+
+/// `f` applied to `stored` with `overrides` laid over it, copied only when there are some.
+fn laid_over<R>(stored: &StoredPrefs, overrides: &[(String, String)], f: impl FnOnce(&StoredPrefs) -> R) -> R {
+    if stored.plugins_off || overrides.is_empty() {
+        return f(stored);
+    }
+    f(&crate::overrides::effective(stored, overrides))
 }
 
 /// The settings a backup keeps ([`Settings::backed_up`]), read as stored ones are.
@@ -745,6 +782,19 @@ mod tests {
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), 0, "the same layer");
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25"), ("crossfadeSec", "6")])), APPLY_AUDIO | REPLAN, "a setting's own effect");
         assert_eq!(s.set_layer(Layer::default()), APPLY_AUDIO | REPLAN, "turned off, both go back");
+    }
+
+    #[test]
+    fn what_plugins_override_is_in_effect_while_the_stored_settings_stay() {
+        use crate::overrides::Layer;
+        let dir = nori_testdir::TempDir::new("settings-in-effect");
+        let s = Settings::new();
+        s.open(dir.path().join("app.db").to_str().unwrap()).unwrap();
+        s.set_layer(Layer { overrides: vec![("remoteControl".into(), "false".into())], ..Layer::default() });
+        assert_eq!((s.with_prefs(|p| p.remote_control), s.with_effective(|p| p.remote_control)), (Some(true), Some(false)));
+        assert!(!s.in_effect(|p| p.remote_control) && s.overridden());
+        s.edit_by_name("pluginsOff", "true").unwrap();
+        assert_eq!(s.effective().map(|p| p.remote_control), Some(true), "every plugin off");
     }
 
     #[test]

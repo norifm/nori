@@ -310,9 +310,14 @@ are, and turning the plugin off brings nori's own values back.
 - The host keeps a plugin's overrides in its store and lays the enabled plugins' over the settings in
   their order (`Layer`, held by the app's `Settings`); a later plugin's value of a key wins. A setting's
   override goes through that setting's own codec and range.
+- Everything nori does reads the settings in effect (`Settings::effective`, `with_effective`,
+  `in_effect`; Android's `Settings.effective`); only the settings screens, and edits that write the
+  settings back, read the stored ones (`current`, `with_prefs`, `prefs`; Android's `prefs`).
 - The layer changes when a plugin overrides or clears a key, a row changes, or a plugin is turned on or
-  off, moved or removed; the client then derives the engine's settings again
-  (`nori_engine::core::settings(stored, layer)`), as for a settings change. Nothing is read per buffer.
+  off, moved or removed; when that changes the settings in effect the client hears `layer_changed`,
+  derives the engine's settings again (`nori_engine::core::settings(stored, layer)`) as for a settings
+  change, and follows the rest: remote control is made or dropped (`Handle::overrides_changed`), and
+  the desktop dresses its windows again (`Said::Overridden`). Nothing is read per buffer.
 
 ## Sound stages
 

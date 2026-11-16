@@ -30,7 +30,7 @@ impl Client {
     pub async fn autoeq_update(&self, asked: bool, metered: bool) -> NetResult<Option<u32>> {
         let now = crate::db::now_ms();
         if !asked {
-            let auto = self.settings().prefs(|p| p.auto_eq_download && p.third_party_lookups);
+            let auto = self.settings().in_effect(|p| p.auto_eq_download && p.third_party_lookups);
             let (stored, fetched) = {
                 let c = self.core.db.lock();
                 (autoeq::count(&c)?, autoeq::fetched_ms(&c)?)

@@ -85,7 +85,7 @@ impl Core {
 
     /// Whether the beat model reads downloads once saved: with AutoMix on, in a build that has it.
     pub fn download_beats(&self) -> bool {
-        nori_player::automix::beats::AVAILABLE && self.session.settings.prefs(|p| p.auto_mix.on())
+        nori_player::automix::beats::AVAILABLE && self.session.settings.in_effect(|p| p.auto_mix.on())
     }
 
     /// Records settled downloads in order: finished, or removed (`finished` false). One transaction.
@@ -150,7 +150,7 @@ impl Core {
     }
 
     fn download_kbps(&self) -> i32 {
-        self.session.settings.prefs(|p| p.download.bit_rate)
+        self.session.settings.in_effect(|p| p.download.bit_rate)
     }
 
     /// The analysable downloads, newest first; those lacking a current analysis; and, with AutoMix on, those

@@ -96,6 +96,8 @@ pub enum Msg {
     Working,
     /// The profile in use keeps another picture of its account.
     Pictured,
+    /// What plugins override of the settings changed.
+    Overridden,
     /// Those the signed-in account may act as, its own first; empty when it is only itself or they could
     /// not be read.
     Identities(Vec<nori_core::providers::Identity>),
@@ -335,6 +337,7 @@ fn worded(s: Said) -> Msg {
         Said::Starred(_) => Msg::Starred,
         Said::Working => Msg::Working,
         Said::Pictured => Msg::Pictured,
+        Said::Overridden => Msg::Overridden,
         Said::Update(found) => match found {
             UpdateFound::Newer { version, page } => Msg::Update { version, page },
             UpdateFound::Latest(latest) => note(format!("You have the latest version ({latest})"), false),

@@ -105,13 +105,13 @@ class MixesViewModel(app: Application) : NoriViewModel(app) {
             .catch { withContext(Dispatchers.IO) { nori.core.mixFavourites(emptyList()) }; emit(Unit) }
             .onStart { emit(Unit) },
         // The mixes are the taste model's: switched off, it draws nothing and offers only favourites.
-        nori.settings.prefs.map { it.tasteModel }.distinctUntilChanged().onEach { if (it) warm() },
+        nori.settings.effective.map { it.tasteModel }.distinctUntilChanged().onEach { if (it) warm() },
         MixStore.version,
     ) { _, taste, _ ->
         val server = nori.settings.value.activeServerId
         withContext(Dispatchers.IO) { nori.core.mixCards(taste) }.map { card(it) }
             .also { MixStore.lastCards = Triple(server, taste, it) }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial(nori.settings.value.tasteModel))
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial(nori.settings.effective.value.tasteModel))
 }
 
 /** One mix page. Its list does not change while it is open unless asked to (favourites follow the hearts). */

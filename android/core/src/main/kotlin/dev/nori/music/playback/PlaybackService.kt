@@ -218,25 +218,25 @@ class PlaybackService : MediaLibraryService() {
 
         // Fired from the audio device callback (main) and from the player's track opening (its own thread);
         // the player may only be touched on the main looper.
-        nori.dac.onChanged = { main.post { applyAudio(nori.settings.value); player.gainChanged() } }
+        nori.dac.onChanged = { main.post { applyAudio(nori.settings.effective.value); player.gainChanged() } }
         nori.dac.start()
         nori.outputs.start()
         // Plugging in headphones or a DAC swaps the whole sound chain, if a profile is bound to it.
         scope.launch {
             // A device arriving or leaving changes what the audio chain may do (see applyAudio), whether or
             // not the user binds sound profiles to outputs.
-            nori.outputs.usb.collect { applyAudio(nori.settings.value) }
+            nori.outputs.usb.collect { applyAudio(nori.settings.effective.value) }
         }
         scope.launch {
             // The device's own sound (a bound profile or AutoEQ curve), or the sound from before it came back.
             nori.outputs.current.collect { output -> nori.deviceSound.onOutput(output); pluginMoment() }
         }
-        applyAudio(nori.settings.value)
+        applyAudio(nori.settings.effective.value)
         scope.launch {
             // What a change asks of the player is the core's call (settings_store.rs); the sound chain and
             // the planner's settings follow there by themselves, so a screen's setting costs nothing here.
             nori.settings.effects.collect { e ->
-                if (e and 1 != 0) applyAudio(nori.settings.value)
+                if (e and 1 != 0) applyAudio(nori.settings.effective.value)
                 // The sound chain's values alone (8), or the fades and high quality output (16): the player
                 // keeps its own and is handed them.
                 else if (e and (8 or 16) != 0) player.applySettings()
@@ -272,7 +272,7 @@ class PlaybackService : MediaLibraryService() {
         nori.remotes.onGuestQueue = ::guestQueue
         // A jam guest's controls by its role: what the session, the notification and a car offer.
         scope.launch { nori.remotes.jamControls.collect { player.offer(it) } }
-        scope.launch { nori.settings.prefs.map { it.remoteControl }.distinctUntilChanged().collect { nori.remotes.serve(true) } }
+        scope.launch { nori.settings.effective.map { it.remoteControl }.distinctUntilChanged().collect { nori.remotes.serve(true) } }
         elsewhere = dev.nori.music.remote.RemoteDevicePlayer(this, nori)
         scope.launch { nori.remotes.mirror.collect(::mirrored) }
         scope.launch { nori.plugins.cast.collect(::casted) }
@@ -1138,7 +1138,7 @@ class PlaybackService : MediaLibraryService() {
             val q = withContext(Dispatchers.IO) { runCatching { nori.core.loadQueue() }.getOrNull() }
             if (q != null && q.songs.isNotEmpty()) return MediaSession.MediaItemsWithStartPosition(startedFrom(held(q.songs), q.origin), q.index.toInt(), q.positionMs.toLong())
         }
-        val tiles = withContext(Dispatchers.IO) { runCatching { nori.core.mixCards(nori.settings.value.tasteModel) }.getOrDefault(emptyList()) }
+        val tiles = withContext(Dispatchers.IO) { runCatching { nori.core.mixCards(nori.settings.effective.value.tasteModel) }.getOrDefault(emptyList()) }
         val mix = if (query.isBlank()) tiles.firstOrNull { it.name == dev.nori.music.ffi.library.MixName.QUICK_PICKS } ?: tiles.firstOrNull()
         else tiles.firstOrNull { CarWords.mix(it.name).equals(query.trim(), ignoreCase = true) }
         if (mix != null) return queued(withContext(Dispatchers.IO) { runCatching { nori.client.carQueue(dev.nori.music.ffi.library.carActionRow("mix:${mix.id}", dev.nori.music.ffi.library.CarAction.PLAY)) }.getOrNull() })

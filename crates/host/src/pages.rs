@@ -194,7 +194,7 @@ impl Handle {
         let client = &self.client;
         // The mixes and the favourites are the profile's where it has them (`ProfileRules::mixes`).
         let mixes = mixes.then_some(self.rules().mixes);
-        let taste = self.core.session.settings.prefs(|p| p.taste_model);
+        let taste = self.core.session.settings.in_effect(|p| p.taste_model);
         // The favourites' tile follows the starred songs: stored at once, the server's after.
         let stored = mixes.filter(|&account| account).map(|_| client.mix_favourites_stored());
         let tiles = |account: bool| if account { self.core.mix_cards(taste) } else { Vec::new() };

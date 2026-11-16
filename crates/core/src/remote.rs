@@ -2274,7 +2274,7 @@ impl Remote {
     /// Where starting a jam here stands, as every screen that offers it shows it.
     pub fn jam_start(&self) -> JamStart {
         let i = self.inner.lock();
-        let on = self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false);
+        let on = self.client.core.session.settings.with_effective(|p| p.remote_control).unwrap_or(false);
         match i.host {
             HostJam::Hosting(_) => return JamStart::Hosting,
             HostJam::Opening(_) => return JamStart::Starting,
@@ -3068,7 +3068,7 @@ impl Remote {
     pub(crate) fn sync_mark(self: &Arc<Self>, kind: crate::client::Starrable, id: String) {
         // Its queue's hearts are in its state.
         self.publish();
-        if !self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false) {
+        if !self.client.core.session.settings.with_effective(|p| p.remote_control).unwrap_or(false) {
             return;
         }
         let on = {
@@ -3826,7 +3826,7 @@ impl Remote {
         let body = match op {
             Op::LibraryMarks { marks } => {
                 let allowed = matches!(via, Via::Door) && !self.inner.lock().stopped
-                    && self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false);
+                    && self.client.core.session.settings.with_effective(|p| p.remote_control).unwrap_or(false);
                 let refusal = if allowed {
                     self.marked(marks);
                     self.publish();

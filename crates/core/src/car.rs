@@ -282,7 +282,7 @@ impl Client {
             page.songs_group = Some(CarGroup::Songs);
             return page;
         }
-        let taste = self.settings().prefs(|p| p.taste_model);
+        let taste = self.settings().in_effect(|p| p.taste_model);
         // The starred songs handed to the mixes, as the Home row hands them before it is drawn.
         if let Ok(h) = self.mix_favourites_stored() {
             if !h.fresh {

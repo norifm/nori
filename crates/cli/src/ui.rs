@@ -1304,8 +1304,8 @@ fn mix_lines(app: &App, w: usize, t: &Theme) -> Vec<Line<'static>> {
         if !n.reason.is_empty() {
             lines.push(Line::from(Span::styled(fit(&format!("  {}", n.reason), w).into_owned(), t.dim())));
         }
-    } else if app.prefs.auto_mix.on() || app.prefs.crossfade_sec > 0 {
-        let what = if app.prefs.auto_mix.on() { "AutoMix" } else { "Crossfade" };
+    } else if app.effective.auto_mix.on() || app.effective.crossfade_sec > 0 {
+        let what = if app.effective.auto_mix.on() { "AutoMix" } else { "Crossfade" };
         lines.push(Line::from(Span::styled(fit(&format!("{what} on · planned as this plays"), w).into_owned(), t.dim())));
     }
     lines
@@ -1453,8 +1453,8 @@ fn lyrics(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     }
     let frame = l.clock.shown();
     let synced = l.pick.lyrics.synced;
-    let sweep = app.prefs.lyrics_sweep && l.clock.timing().sweeps();
-    let translate = app.prefs.lyrics_translation;
+    let sweep = app.effective.lyrics_sweep && l.clock.timing().sweeps();
+    let translate = app.effective.lyrics_translation;
     let active = frame.active;
     // After the last line `active` is past the end; stay on the last line.
     let focus = app.lyrics_sel.unwrap_or((active.max(0) as usize).min(l.pick.lyrics.lines.len().saturating_sub(1)));

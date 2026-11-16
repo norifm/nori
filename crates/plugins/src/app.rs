@@ -15,8 +15,8 @@ use crate::{AssetState, Command, Control, Hook, Plugins, WakeEvent};
 /// What a client does with what plugins say.
 #[cfg_attr(feature = "ffi", uniffi::export(with_foreign))]
 pub trait Client: Send + Sync {
-    /// The settings' layer changed: the client applies `effect` again (the settings' effect bits) and
-    /// derives the engine's settings with it.
+    /// The settings in effect changed with the layer: the client applies `effect` again (the settings'
+    /// effect bits), derives the engine's settings with it and follows what else it reads of them.
     fn layer_changed(&self, effect: u32);
     /// A status row's line, from plugin `id`'s strings.
     fn status(&self, id: String, row: String, words: String, args: Vec<String>);
@@ -82,19 +82,18 @@ impl Side for App {
     }
 
     fn effective(&self, key: &str) -> Option<Value> {
-        let p = self.settings.current()?;
-        value_of(&nori_settings::overrides::effective(&p, &self.settings.layer().overrides), key).map(value)
+        self.settings.with_effective(|p| value_of(p, key)).flatten().map(value)
     }
 
     fn laid(&self, _id: &str) {
         let Some(plugins) = self.plugins.get().and_then(Weak::upgrade) else { return };
-        let effective = |s: &Settings| s.current().map(|p| nori_settings::overrides::effective(&p, &s.layer().overrides));
-        let before = plugins.hears(Hook::SettingChanged).then(|| effective(&self.settings)).flatten();
+        let before = self.settings.effective();
         let effect = self.settings.set_layer(plugins.layer());
-        if effect != 0 {
+        let after = self.settings.effective();
+        if effect != 0 || before != after {
             self.client.layer_changed(effect);
         }
-        if let (Some(before), Some(after)) = (before, effective(&self.settings)) {
+        if let (true, Some(before), Some(after)) = (plugins.hears(Hook::SettingChanged), before, after) {
             for (key, value) in changes(&before, &after) {
                 plugins.setting_changed(&key, value);
             }

@@ -844,7 +844,7 @@ internal fun OutputButton(
     val here = outputHeadphones()
     // With remote control or jams on, or a plugin's rows to show, the button opens nori's own devices
     // first (RemoteScreens); this phone's outputs are one row of it.
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     val pluginDevices by settings.pluginDevices.collectAsStateWithLifecycle()
     val finds by settings.pluginsFindOutputs.collectAsStateWithLifecycle()
     val devices = prefs.remoteControl && LocalRules.current.remote || pluginDevices.isNotEmpty() || here != null || finds

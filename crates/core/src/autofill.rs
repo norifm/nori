@@ -204,7 +204,7 @@ impl Client {
         let Some(d) = self.core.session.deciders() else { return Refill::default() };
         let last = self.core.session.autofill_seed().and_then(|id| self.core.session.song(&id));
         let Some(named) = d.queue_ended(last.as_ref()).await else { return Refill::default() };
-        let songs = self.resolved(named, &[], &HashSet::new(), self.settings().prefs(|p| p.auto_fill_remote)).await;
+        let songs = self.resolved(named, &[], &HashSet::new(), self.settings().in_effect(|p| p.auto_fill_remote)).await;
         self.core.session.register(songs.clone());
         Refill { songs, after: self.core.session.end_entry(), ..Refill::default() }
     }
@@ -212,7 +212,7 @@ impl Client {
     /// What to append after the queue's end, per the autofill settings. Empty on failure or an unknown seed.
     pub async fn autofill(&self) -> Refill {
         let (kind, basis, remote) =
-            self.settings().prefs(|p| (p.auto_fill, p.auto_fill_basis, p.auto_fill_remote));
+            self.settings().in_effect(|p| (p.auto_fill, p.auto_fill_basis, p.auto_fill_remote));
         self.autofill_as(kind, basis, remote).await
     }
 

@@ -123,7 +123,7 @@ class ResizableEvictor(
 class MediaSources(context: Context, private val clientOf: () -> Client, private val http: Http, private val settings: Settings) {
     private val client get() = clientOf()
     val database = StandaloneDatabaseProvider(context)
-    val streamEvictor = ResizableEvictor(settings.value.cacheMb * 1024L * 1024L, ::added)
+    val streamEvictor = ResizableEvictor(settings.effective.value.cacheMb * 1024L * 1024L, ::added)
     val streamCache = SimpleCache(File(context.cacheDir, "stream"), streamEvictor, database)
     val downloadCache = SimpleCache(File(context.getExternalFilesDir(null) ?: context.filesDir, "downloads"), Arrivals(::added), database)
 
@@ -327,13 +327,13 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
     }
 
     /** The key [resolve] would give a song that is not downloaded, without building its URL. */
-    fun streamKey(id: String): String = settings.value.let { client.streamKey(id, http.metered, it.wifi.ffi(), it.mobile.ffi()) }
+    fun streamKey(id: String): String = settings.effective.value.let { client.streamKey(id, http.metered, it.wifi.ffi(), it.mobile.ffi()) }
 
     private fun SavedQuality.ffi() = StreamQuality(bitRate.coerceAtLeast(0).toUInt(), format)
 
     fun downloadKey(id: String) = dev.nori.music.ffi.net.downloadKey(id)
 
-    fun downloadUrl(id: String): String = client.downloadTarget(id, settings.value.download.ffi()).url
+    fun downloadUrl(id: String): String = client.downloadTarget(id, settings.effective.value.download.ffi()).url
 
     /**
      * The limit follows the setting without a restart; checked whenever a track is opened, so the
@@ -341,8 +341,8 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
      * through [setStreamLimitMb].
      */
     private fun applyStreamLimit() {
-        val want = settings.value.cacheMb * 1024L * 1024L
-        if (streamEvictor.maxBytes != want) setStreamLimitMb(settings.value.cacheMb)
+        val want = settings.effective.value.cacheMb * 1024L * 1024L
+        if (streamEvictor.maxBytes != want) setStreamLimitMb(settings.effective.value.cacheMb)
     }
 
     /** Sets the streamed-music limit now; call off the main thread, it touches the disk. */

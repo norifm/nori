@@ -52,7 +52,7 @@ impl Session {
     pub fn new(settings: Arc<Settings>) -> Session {
         let db = Arc::new(nori_db::Profile::default());
         let read = settings.clone();
-        let planner = Planner::new(db.clone(), Box::new(move || read.with_prefs(nori_settings::settings::StoredPrefs::transition_prefs)));
+        let planner = Planner::new(db.clone(), Box::new(move || read.with_effective(nori_settings::settings::StoredPrefs::transition_prefs)));
         Session { settings, db, planner, queue: Default::default(), store: Default::default(), controls: Default::default(), refill: Default::default(), scrobbler: Default::default(), deciders: Default::default(), decided: Default::default(), scrobbles: Default::default(), along: AtomicBool::new(false) }
     }
 }

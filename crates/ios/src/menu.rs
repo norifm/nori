@@ -277,7 +277,7 @@ pub unsafe extern "C" fn nori_ios_save_list(token: u64, title: *const c_char) ->
 /// `starred`: -1 nothing, else a `NORI_SWIPE_*` code.
 #[no_mangle]
 pub extern "C" fn nori_ios_row_swipe(left: i32, starred: i32) -> i32 {
-    let setting = with_session(|s| (s.core.session.settings.prefs(|p| if left != 0 { p.swipe_left } else { p.swipe_right }), (s.rules().stars, s.rules().downloads)));
+    let setting = with_session(|s| (s.core.session.settings.in_effect(|p| if left != 0 { p.swipe_left } else { p.swipe_right }), (s.rules().stars, s.rules().downloads)));
     match setting.and_then(|(s, (stars, account))| row_swipe(s, starred != 0, stars, account)) {
         None => -1,
         Some(RowSwipeAct::Queue) => 0,

@@ -41,7 +41,7 @@ fn tap(selecting: bool, tap_action: TapAction) -> TapPlan {
 impl Session {
     /// The tap action per settings; selecting while a selection is active.
     pub fn tap_plan(&self, selecting: bool) -> TapPlan {
-        tap(selecting, self.settings.prefs(|p| p.tap_action))
+        tap(selecting, self.settings.in_effect(|p| p.tap_action))
     }
 }
 

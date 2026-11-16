@@ -63,6 +63,8 @@ pub enum Msg {
     Starred(nori_core::stars::StarMarks),
     /// The other devices, the one playing or the jam changed: read them again.
     Remote,
+    /// What plugins override of the settings changed: the settings are read again.
+    Overridden,
     /// Whether the jam asked for opened, or why not.
     Jam(Result<(), String>),
     /// A device paired (its name), or what to say of why not.
@@ -126,6 +128,7 @@ impl Msg {
             Msg::AnalysisOffer(o) => format!("analysis offer {o:?}"),
             Msg::Starred(_) => "star marks".into(),
             Msg::Remote => "remote".into(),
+            Msg::Overridden => "overrides".into(),
             Msg::Jam(r) => format!("jam opened: {}", r.is_ok()),
             Msg::Joined(r) => format!("jam joined: {}", r.is_ok()),
             Msg::Paired(r) => format!("paired: {}", r.is_ok()),
@@ -445,6 +448,7 @@ fn worded(s: Said) -> Option<Msg> {
         Said::JamEnded { host } => Msg::Left(crate::text::jam_ended(host.as_deref())),
         Said::Starred(marks) => Msg::Starred(marks),
         Said::Working => Msg::Reload(Req::Work),
+        Said::Overridden => Msg::Overridden,
         // The terminal draws no account pictures.
         Said::Pictured => return None,
         Said::Volume(v) => Msg::Volume(v),

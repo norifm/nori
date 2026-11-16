@@ -1703,7 +1703,7 @@ impl App {
     /// The page's cover, whose colors the page wears, or none. Its header is the cover's own wash, undyed, as
     /// Android's page shows the cover itself and lets it melt into the dyed page; none where pages wear no cover.
     fn page_colours(&mut self, c: Option<&CoverColours>) {
-        let tinted = self.root.app.settings.prefs(|p| p.theme.covers_tint_pages());
+        let tinted = self.root.app.settings.in_effect(|p| p.theme.covers_tint_pages());
         self.ui().set_page_wash(c.filter(|_| tinted).map(|c| wash(c, None)).unwrap_or_default());
         self.page_cover = c.cloned();
         self.repaint();
@@ -1737,14 +1737,14 @@ impl App {
 
     /// A cover's wash on the season's paper, as its page is dyed; none where pages wear no cover.
     fn dyed_wash(&self, c: &CoverColours) -> Option<Image> {
-        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.effective().unwrap_or_default();
         crate::look::dye(&prefs, self.compositor.system_dark(), crate::look::Today::now(), c).map(|d| wash(c, Some(&d)))
     }
 
     /// The look of the page the app is on: the season's, or a cover's.
     fn page_look(&self) -> crate::look::Look {
         let ui = self.ui();
-        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.effective().unwrap_or_default();
         let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
         let cover = if ui.get_full_player() {
             self.now_cover.as_ref()
@@ -1762,7 +1762,7 @@ impl App {
     /// Dresses every window in the page's look, cross-fading from the one worn unless motion is reduced.
     fn repaint(&mut self) {
         let want = self.page_look();
-        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.effective().unwrap_or_default();
         self.ui().set_covers_tint(prefs.theme.covers_tint_pages());
         // nori's Motion setting, as on Android: animations run unless it asks for less.
         let motion = prefs.motion;
@@ -1937,7 +1937,7 @@ impl App {
             Data::Page(PageGot::Playlist(d)) if shown => {
                 ui.set_page_starred(nori_core::browse::playlist_pinned(&self.root.app.settings, &d.playlist.id));
                 ui.set_page_title(d.playlist.name.as_str().into());
-                let notes = self.root.app.settings.prefs(|p| p.playlist_notes);
+                let notes = self.root.app.settings.in_effect(|p| p.playlist_notes);
                 ui.set_page_sub(nori_core::pages::playlist_description(d.playlist.comment.clone(), notes).unwrap_or_default().into());
                 ui.set_page_caption(if d.songs.is_empty() { String::new() } else { words::songs_caption(d.songs.len(), d.seconds) }.into());
                 self.set_page_art(d.playlist.cover_art.clone());
@@ -3883,6 +3883,7 @@ impl App {
             }
             Msg::JamEnded(host) => self.left(&words::jam_ended(host.as_deref())),
             Msg::Working => self.follow_work(),
+            Msg::Overridden => self.repaint(),
             Msg::Pictured => {
                 self.profiles_shown();
                 self.settings_shown();
@@ -3911,7 +3912,7 @@ impl App {
                 }
                 if let Some(s) = &self.session {
                     let core = s.core.clone();
-                    let taste = self.root.app.settings.prefs(|p| p.taste_model);
+                    let taste = self.root.app.settings.in_effect(|p| p.taste_model);
                     let id = nori_core::mixes::board::FAVOURITES_MIX;
                     if let nori_core::mixes::board::MixLookup::Ready { sheet } = core.mix_page(id.into()) {
                         self.data(Req::Page(PageAsk::Mix(id.into())), Ok(Data::Page(PageGot::Mix(Box::new(sheet)))));
@@ -4569,7 +4570,7 @@ impl App {
         let ui = self.ui();
         let g = ui.global::<crate::Jam>();
         let guest = self.guest();
-        let jams = guest || self.root.app.settings.prefs(|p| p.remote_control);
+        let jams = guest || self.root.app.settings.in_effect(|p| p.remote_control);
         let remote = self.session.as_ref().and_then(|s| s.remote()).filter(|_| jams);
         let unsupported = remote.as_ref().is_some_and(|r| r.jam_start() == nori_core::remote::JamStart::Unsupported);
         let view = remote.as_ref().and_then(|r| r.jam_view());

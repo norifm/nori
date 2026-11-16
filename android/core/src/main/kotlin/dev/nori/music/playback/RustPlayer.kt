@@ -1139,7 +1139,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     // Last, once everything above exists: from here on the engine's threads may call in.
     init {
         h = RustPlayerJni.create(
-            RustBridge(this), nori.currentClient.uniffiCloneHandle(), nori.analyses, Build.VERSION.SDK_INT, nori.settings.value.hiRes,
+            RustBridge(this), nori.currentClient.uniffiCloneHandle(), nori.analyses, Build.VERSION.SDK_INT, nori.settings.effective.value.hiRes,
             context.getSystemService(android.app.ActivityManager::class.java).memoryClass,
         )
         if (h == 0L) error = PlaybackException("the Rust player would not start", null, PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK)
