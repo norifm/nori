@@ -578,7 +578,7 @@ impl Stream {
         let gapless = if sized { crate::mp4::gapless(&mut source).ok().flatten() } else { None };
         let padded = if whole && gapless.is_none() { crate::webm::discards(&mut source).ok().flatten() } else { None };
         source.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-        let source = past_id3(source).map_err(|e| e.to_string())?;
+        let source = past_id3(source, sized && from_ms > 0).map_err(|e| e.to_string())?;
         // Asked once the first bytes are read: a song still arriving learns its length with them.
         let byte_len = source.byte_len();
         let mut source: Box<dyn MediaSource> = if sized { source } else { Box::new(Unsized(source)) };
@@ -1101,9 +1101,10 @@ impl Decoding {
 }
 
 /// The source from after its ID3v2 tags. symphonia's ID3 reader is left out (it keeps the cover in
-/// memory), and its probe would find false MPEG headers inside a large cover. Read through rather than
-/// seeked over, so a song still arriving is fetched in one piece.
-fn past_id3(mut source: Box<dyn MediaSource>) -> io::Result<Box<dyn MediaSource>> {
+/// memory), and its probe would find false MPEG headers inside a large cover. Read through, so a song
+/// still arriving is fetched in one piece, unless it starts part way (`seek_over`): it is fetched from
+/// there anyway, and a cover read first holds up the start.
+fn past_id3(mut source: Box<dyn MediaSource>, seek_over: bool) -> io::Result<Box<dyn MediaSource>> {
     let mut start = 0u64;
     loop {
         let mut header = [0u8; 10];
@@ -1113,7 +1114,9 @@ fn past_id3(mut source: Box<dyn MediaSource>) -> io::Result<Box<dyn MediaSource>
             Some(size) if whole && header.starts_with(b"ID3") && header[3] < 0xff && header[4] < 0xff => {
                 // Plus a 10-byte footer if flagged.
                 let length = size + if header[5] & 0x10 != 0 { 10 } else { 0 };
-                if io::copy(&mut (&mut source).take(length), &mut io::sink())? < length {
+                if seek_over {
+                    source.seek(SeekFrom::Start(start + 10 + length))?;
+                } else if io::copy(&mut (&mut source).take(length), &mut io::sink())? < length {
                     return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the song ends inside its tag"));
                 }
                 start += 10 + length;
