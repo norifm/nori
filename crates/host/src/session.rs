@@ -870,7 +870,6 @@ impl Handle {
         }
     }
 
-    /// Makes or drops the remote as the settings say, and serves while remote control is on.
     /// With `playOnBluetooth` on, a Bluetooth audio device connecting plays, as a play press does; the
     /// plugin host is how the desktop hears them, and watches Bluetooth only while this is on.
     #[cfg(feature = "desktop")]
@@ -887,6 +886,7 @@ impl Handle {
         }));
     }
 
+    /// Makes or drops the remote as the settings say, and serves while remote control is on.
     fn follow_remote(&self) {
         let prefs = self.core.session.settings.effective().unwrap_or_default();
         if self.offline || !self.rules().remote || !(prefs.remote_control || self.guest) {
