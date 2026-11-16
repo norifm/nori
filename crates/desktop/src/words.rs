@@ -618,6 +618,7 @@ pub fn playlist_deleted(name: &str) -> String {
 }
 
 pub const REMOVE_FROM_PLAYLIST: &str = "Remove from playlist";
+pub const MOVED: &str = "Moved";
 
 pub fn playlist_failed(e: &str) -> String {
     format!("The playlist could not be changed: {e}")

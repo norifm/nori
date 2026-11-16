@@ -9,7 +9,6 @@ the owner asks for it, and delete its line once it ships.
 - Total and remaining time in the queue header.
 
 **Playlists**
-- Rename, reorder, remove songs.
 - Add to several playlists at once, with an "already in this playlist" hint.
 
 **Library and search**

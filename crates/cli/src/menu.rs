@@ -2,7 +2,7 @@
 //! under More), an album's, a playlist's or an artist's, and on a page the page's own actions after the song's.
 
 use nori_core::client::Starrable;
-use nori_core::menus::{PageAction, SongAction, SongDownload};
+use nori_core::menus::{PageAction, PlaylistEdit, SongAction, SongDownload};
 use nori_core::{OriginKind, PageOrigin, Song};
 
 use nori_plugins::{ItemKind, Items};
@@ -33,6 +33,9 @@ pub enum MenuAct {
     ShufflePage,
     SaveMix,
     Page(PageAction),
+    /// The account's own playlist shown: a change of the song's row, or its name.
+    Edit(PlaylistEdit),
+    RenamePlaylist,
     /// A plugin's, on the item.
     Plugin(nori_plugins::MenuEntry),
 }
@@ -52,11 +55,14 @@ impl App {
                 let song = songs[at].clone();
                 let mut lines = self.song_lines(&song, from_player);
                 let folded = split_more(&mut lines);
+                if !from_player {
+                    lines.extend(self.row_edits(&song, at).into_iter().map(|e| MenuLine::Act(MenuAct::Edit(e))));
+                }
                 lines.extend(self.plugin_lines(ItemKind::Song));
                 if !from_player {
                     lines.extend(self.page_lines());
                 }
-                Some(Overlay::Menu { title: song.title.clone(), item: Box::new(Item::Song(vec![song], 0)), lines, folded, sel: Sel::default() })
+                Some(Overlay::Menu { title: song.title.clone(), item: Box::new(Item::Song(songs, at)), lines, folded, sel: Sel::default() })
             }
             Some(item @ (Item::Album(_) | Item::Playlist(_) | Item::Artist(_))) => {
                 let (title, kind) = match &item {
@@ -122,6 +128,9 @@ impl App {
         if matches!(page, Page::Mix { .. }) && self.rules.playlists {
             lines.push(MenuLine::Act(MenuAct::SaveMix));
         }
+        if self.own_playlist().is_some() {
+            lines.push(MenuLine::Act(MenuAct::RenamePlaylist));
+        }
         lines.extend(self.page_actions().into_iter().filter(|a| *a != PageAction::Edit).map(|a| MenuLine::Act(MenuAct::Page(a))));
         lines
     }
@@ -129,9 +138,9 @@ impl App {
     /// Does what the menu's line does on `item`, and closes the menu.
     pub fn menu_act(&mut self, act: MenuAct, item: Item) {
         self.overlay = None;
-        let song = match &item {
-            Item::Song(songs, at) => songs.get(*at).cloned(),
-            _ => None,
+        let (song, at) = match &item {
+            Item::Song(songs, at) => (songs.get(*at).cloned(), *at),
+            _ => (None, 0),
         };
         let fetch = match &item {
             Item::Album(a) => Some(Fetch::Album(a.id.clone())),
@@ -147,6 +156,14 @@ impl App {
             (MenuAct::ShufflePage, _) => self.play_page(true),
             (MenuAct::SaveMix, _) => self.save_mix(),
             (MenuAct::Page(a), _) => self.page_act(a),
+            (MenuAct::Edit(e), Some(s)) => self.edit_row(e, &s, at),
+            (MenuAct::Edit(_), None) => {}
+            (MenuAct::RenamePlaylist, _) => {
+                if let Some(d) = self.own_playlist() {
+                    let target = Target::PlaylistName(d.playlist.id.clone());
+                    self.overlay = Some(Overlay::Input { title: crate::text::RENAME_PLAYLIST.into(), text: d.playlist.name.clone(), secret: false, target });
+                }
+            }
             (MenuAct::Plugin(e), _) => {
                 let items = match item {
                     Item::Song(mut songs, at) if at < songs.len() => Some(Items::Songs(vec![songs.swap_remove(at)])),
@@ -159,6 +176,31 @@ impl App {
             }
             (MenuAct::Song(_), None) => {}
             (MenuAct::Song(a), Some(s)) => self.song_act(a, s),
+        }
+    }
+
+    /// The playlist page shown, when it is the account's own to change ([`nori_core::menus::playlist_editable`]).
+    fn own_playlist(&self) -> Option<&nori_core::PlaylistDetail> {
+        let Some(Page::Playlist { detail: Load::Ready(d), .. }) = self.page() else { return None };
+        let user = self.prefs.active_server().map_or("", |s| s.user.as_str());
+        nori_core::menus::playlist_editable(&d.playlist, user, self.rules.playlists).then_some(d)
+    }
+
+    /// What `song`'s row `at` of the account's own playlist shown offers to change.
+    fn row_edits(&self, song: &Song, at: usize) -> Vec<PlaylistEdit> {
+        let Some(d) = self.own_playlist().filter(|d| d.songs.get(at).is_some_and(|s| s.id == song.id)) else { return Vec::new() };
+        nori_core::menus::playlist_edits(at as u32, d.songs.len() as u32, true)
+    }
+
+    fn edit_row(&mut self, e: PlaylistEdit, song: &Song, at: usize) {
+        let Some(d) = self.own_playlist().filter(|d| d.songs.get(at).is_some_and(|s| s.id == song.id)) else { return };
+        let (id, ids) = (d.playlist.id.clone(), d.songs.iter().map(|s| s.id.clone()).collect());
+        let said = match e {
+            PlaylistEdit::Remove => crate::text::removed_from(&d.playlist.name),
+            PlaylistEdit::MoveUp | PlaylistEdit::MoveDown => crate::text::MOVED.into(),
+        };
+        if let Some(write) = nori_core::menus::playlist_edit_write(id.clone(), ids, at as u32, e) {
+            self.cmds.push(Cmd::EditPlaylist { id, write, said });
         }
     }
 

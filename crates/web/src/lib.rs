@@ -503,6 +503,12 @@ impl Nori {
         Ok(Value::from(page_actions(kind, songs, 0, false).iter().map(|a| format!("{a:?}")).collect::<Vec<_>>()).to_string())
     }
 
+    /// What row `index` of a playlist of `songs` songs offers to change, in order (`menus::playlist_edits`),
+    /// by name; nothing unless the account may change it.
+    pub fn playlist_edits(&self, index: u32, songs: u32, editable: bool) -> String {
+        Value::from(nori_core::menus::playlist_edits(index, songs, editable).iter().map(|e| format!("{e:?}")).collect::<Vec<_>>()).to_string()
+    }
+
     /// The settings `names` (comma separated) as `{ name: value }`.
     pub fn settings(&self, names: String) -> String {
         let prefs = self.app.settings.current().unwrap_or_default();

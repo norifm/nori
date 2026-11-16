@@ -413,7 +413,12 @@ int32_t nori_ios_playlist_add(uint64_t token, int32_t index, const char *playlis
 int32_t nori_ios_playlist_create(uint64_t token, int32_t index, const char *name);
 int32_t nori_ios_queue_playlist_add(const char *playlist);
 int32_t nori_ios_queue_playlist_create(const char *name);
-int32_t nori_ios_playlist_remove(const char *playlist, int32_t index);
+/// What a song of a playlist list offers to change, as bits (0 unless the account may change it), and one done.
+#define NORI_EDIT_MOVE_UP 1
+#define NORI_EDIT_MOVE_DOWN 2
+#define NORI_EDIT_REMOVE 4
+int32_t nori_ios_playlist_edits(uint64_t token, int32_t index);
+int32_t nori_ios_playlist_edit(uint64_t token, int32_t index, int32_t edit);
 /// A tap on a song row: plays the list from it, or keeps the playing song going (1: open the player).
 int32_t nori_ios_tap_song(uint64_t token, int32_t index);
 /// A song row's swipe to the left (left 1) or right, by the swipeLeft/swipeRight settings: -1 nothing.

@@ -1073,6 +1073,44 @@ fn a_playlists_seal_pins_it() {
     assert!(seal_filled(&a, crate::app::Button::Star), "shown at once");
 }
 
+/// The account's own playlist: a row's menu moves it or takes it out, the page's renames it; another
+/// user's offers neither.
+#[test]
+fn an_own_playlists_rows_move_and_go() {
+    use crate::menu::{MenuAct, MenuLine};
+    use nori_core::client::Write;
+    use nori_core::menus::PlaylistEdit;
+    let page = |owner: Option<&str>| {
+        let mut a = app();
+        a.rules = nori_core::browse::ProfileRules { playlists: true, ..Default::default() };
+        a.open_playlist("own-1".into());
+        let pl = nori_core::Playlist { id: "own-1".into(), name: "Rain".into(), owner: owner.map(Into::into), ..Default::default() };
+        let detail = nori_core::PlaylistDetail::new(pl, vec![song("1", "One", 200), song("2", "Two", 200), song("3", "Three", 200)]);
+        a.handle(Msg::Data(Req::Playlist("own-1".into()), Ok(Data::Playlist(Box::new(detail)))));
+        draw(&mut a, 170, 40);
+        key(&mut a, KeyCode::Down);
+        key(&mut a, KeyCode::Char('m'));
+        a
+    };
+    let lines = |a: &App| match &a.overlay {
+        Some(Overlay::Menu { lines, .. }) => lines.clone(),
+        _ => panic!("no menu"),
+    };
+    let mut a = page(None);
+    let edits: Vec<MenuLine> = [PlaylistEdit::MoveUp, PlaylistEdit::MoveDown, PlaylistEdit::Remove].map(|e| MenuLine::Act(MenuAct::Edit(e))).into();
+    assert!(lines(&a).windows(3).any(|w| w == edits.as_slice()), "{:?}", lines(&a));
+    assert!(lines(&a).contains(&MenuLine::Act(MenuAct::RenamePlaylist)));
+    let up = lines(&a).iter().position(|l| *l == edits[0]).unwrap();
+    if let Some(Overlay::Menu { sel, .. }) = &mut a.overlay {
+        sel.at = up;
+    }
+    key(&mut a, KeyCode::Enter);
+    let order = vec!["2".to_string(), "1".into(), "3".into()];
+    assert!(a.cmds.contains(&Cmd::EditPlaylist { id: "own-1".into(), write: Write::ReplacePlaylist { id: "own-1".into(), song_ids: order }, said: "Moved".into() }), "{:?}", a.cmds);
+    let a = page(Some("someone-else"));
+    assert!(!lines(&a).iter().any(|l| matches!(l, MenuLine::Act(MenuAct::Edit(_) | MenuAct::RenamePlaylist))), "{:?}", lines(&a));
+}
+
 #[test]
 fn buttons() {
     let mut a = app();

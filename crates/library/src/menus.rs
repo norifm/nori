@@ -399,6 +399,51 @@ pub fn playlist_editable(playlist: &Playlist, user: &str, playlists: bool) -> bo
     playlists && !is_provider_id(&playlist.id) && playlist.owner.as_deref().is_none_or(|o| o.eq_ignore_ascii_case(user))
 }
 
+/// A change a song row of the account's own playlist offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum PlaylistEdit {
+    MoveUp,
+    MoveDown,
+    Remove,
+}
+
+/// What row `index` of a playlist of `songs` songs offers to change, in order; nothing unless the
+/// playlist is `editable` ([`playlist_editable`]).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn playlist_edits(index: u32, songs: u32, editable: bool) -> Vec<PlaylistEdit> {
+    if !editable || index >= songs {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(3);
+    if index > 0 {
+        out.push(PlaylistEdit::MoveUp);
+    }
+    if index + 1 < songs {
+        out.push(PlaylistEdit::MoveDown);
+    }
+    out.push(PlaylistEdit::Remove);
+    out
+}
+
+/// What the server is asked for `edit` of row `index` of playlist `id`, which holds `song_ids`: a move
+/// sends every song in the new order, a removal the row. None for a row the edit can't reach.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn playlist_edit_write(id: String, mut song_ids: Vec<String>, index: u32, edit: PlaylistEdit) -> Option<nori_net::requests::Write> {
+    use nori_net::requests::Write;
+    let at = index as usize;
+    let to = match edit {
+        PlaylistEdit::Remove => return (at < song_ids.len()).then_some(Write::RemoveFromPlaylist { id, index: index as i32 }),
+        PlaylistEdit::MoveUp => at.checked_sub(1)?,
+        PlaylistEdit::MoveDown => at + 1,
+    };
+    if to >= song_ids.len() {
+        return None;
+    }
+    song_ids.swap(at, to);
+    Some(Write::ReplacePlaylist { id, song_ids })
+}
+
 /// Something the queue's head offers for the whole queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -799,4 +844,29 @@ mod tests {
         assert_eq!(download_glyphs(&[D::Done, D::Pending, D::None], true), [DownloadGlyph::Done, DownloadGlyph::Ring, DownloadGlyph::None]);
     }
 
+    #[test]
+    fn a_playlist_row_offers_its_moves_and_removal() {
+        use PlaylistEdit::*;
+        assert_eq!(playlist_edits(0, 3, true), [MoveDown, Remove]);
+        assert_eq!(playlist_edits(1, 3, true), [MoveUp, MoveDown, Remove]);
+        assert_eq!(playlist_edits(2, 3, true), [MoveUp, Remove]);
+        assert_eq!(playlist_edits(0, 1, true), [Remove]);
+        assert!(playlist_edits(1, 3, false).is_empty() && playlist_edits(3, 3, true).is_empty());
+    }
+
+    #[test]
+    fn a_playlist_edit_asks_for_its_write() {
+        use nori_net::requests::Write;
+        let ids = || vec!["a".to_string(), "b".into(), "a".into()];
+        let order = |w: Option<Write>| match w {
+            Some(Write::ReplacePlaylist { song_ids, .. }) => song_ids,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(order(playlist_edit_write("p".into(), ids(), 2, PlaylistEdit::MoveUp)), ["a", "a", "b"]);
+        assert_eq!(order(playlist_edit_write("p".into(), ids(), 0, PlaylistEdit::MoveDown)), ["b", "a", "a"]);
+        assert!(matches!(playlist_edit_write("p".into(), ids(), 2, PlaylistEdit::Remove), Some(Write::RemoveFromPlaylist { index: 2, .. })), "the row, not the first of its song");
+        assert!(playlist_edit_write("p".into(), ids(), 0, PlaylistEdit::MoveUp).is_none());
+        assert!(playlist_edit_write("p".into(), ids(), 2, PlaylistEdit::MoveDown).is_none());
+        assert!(playlist_edit_write("p".into(), ids(), 3, PlaylistEdit::Remove).is_none());
+    }
 }

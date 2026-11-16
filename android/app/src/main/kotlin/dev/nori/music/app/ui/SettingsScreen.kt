@@ -410,9 +410,9 @@ private fun BackupPasswordDialog(restore: Boolean, onDismiss: () -> Unit, onDone
     )
 }
 
-/** A profile's new [name]; left blank, it goes back to [shown], its provider's. */
+/** A new name for what is called [name]; [shown] stands in the field while it is blank. */
 @Composable
-private fun RenameDialog(name: String, shown: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+internal fun RenameDialog(name: String, shown: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var text by remember { mutableStateOf(name) }
     AlertCard(
         title = { Text(say.rename) },

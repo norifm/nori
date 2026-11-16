@@ -5,12 +5,14 @@ import UIKit
 enum SongMenu {
     /// Shows song `index` of list `token`'s menu over `host`, laid out as Android's: the song with its seal
     /// and details, its names opening their pages, its format with the bare glyphs, then the lines in two
-    /// groups. `player`: opened from the player card; `go` opens a page (album, artist).
+    /// groups. `player`: opened from the player card; `go` opens a page (album, artist); `edited`: the song
+    /// moved in or left its playlist.
     static func show(_ song: Item, token: UInt64, index: Int, from host: UIViewController, player: Bool = false,
-                     go: @escaping (UIViewController) -> Void) {
+                     edited: (() -> Void)? = nil, go: @escaping (UIViewController) -> Void) {
         let starred: Int32 = Core.shared.isFavorite(song) ? 1 : 0
         DispatchQueue.global(qos: .userInitiated).async {
             let d = takenJSON(nori_ios_song_menu(token, Int32(index), starred, player ? 1 : 0)) as? [String: Any]
+            let edits = nori_ios_playlist_edits(token, Int32(index))
             DispatchQueue.main.async {
                 guard let d else { return }
                 let items = d["items"] as? [[String: Any]] ?? []
@@ -30,6 +32,16 @@ enum SongMenu {
                     sheet.add(Say.songAction(a, item), glyph: glyph(a, item), enabled: item["enabled"] as? Bool ?? true,
                               more: item["more"] as? Bool ?? false) {
                         act(a, item, song: song, token: token, index: index, details: details, host: host, go: go)
+                    }
+                }
+                let lines: [(Int32, String, [GlyphPart])] = [(NORI_EDIT_MOVE_UP, Say.moveUp, Iconoir.navArrowUp),
+                                                             (NORI_EDIT_MOVE_DOWN, Say.moveDown, Iconoir.navArrowDown),
+                                                             (NORI_EDIT_REMOVE, Say.removeFromPlaylist, Iconoir.xmark)]
+                for (edit, words, glyph) in lines where edits & edit != 0 {
+                    sheet.add(words, glyph: Glyph.draw(glyph, 20), destructive: edit == NORI_EDIT_REMOVE) {
+                        off({ nori_ios_playlist_edit(token, Int32(index), edit) }) { ok in
+                            if ok == 1 { edited?() } else { Toast.show(Say.failed) }
+                        }
                     }
                 }
                 sheet.show(from: host)
