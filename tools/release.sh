@@ -33,8 +33,9 @@
 # release. A release already on GitHub without the iPod app is offered it first,
 # when only build, docs, test or chore commits came since.
 #
-# By default there is one APK per 64-bit ABI, each carrying only its own Rust core (half the size of
-# one carrying both): arm64-v8a is every phone of the last decade, x86_64 is emulators and Chromebooks.
+# By default there is one APK per ABI, each carrying only its own Rust core (a fraction of the size of
+# one carrying them all): arm64-v8a is every phone of the last decade, armeabi-v7a is the 32-bit ones
+# (older phones, Android TV boxes and sticks), x86_64 is emulators and Chromebooks.
 #
 # Leaves one directory holding everything a release page needs:
 #
@@ -58,7 +59,7 @@ set -euo pipefail
 tooling="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${NORI_RELEASE_WORKSPACE:-$tooling}"
 
-ABI=arm64-v8a,x86_64
+ABI=arm64-v8a,armeabi-v7a,x86_64
 RUN_TESTS=1
 IPOD=1
 HOSTS=1

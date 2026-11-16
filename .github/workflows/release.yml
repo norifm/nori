@@ -57,7 +57,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        abi: [arm64-v8a, x86_64]
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
     env:
       RUSTC_WRAPPER: ''
       CARGO_BUILD_JOBS: '2'
