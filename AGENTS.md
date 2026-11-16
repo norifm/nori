@@ -127,10 +127,10 @@ asks; `docs/research/plugins.md` is the plugin plan.
   client would need it too, it belongs in Rust. A rule written in two languages is a bug. A feature
   only one platform can have (Android Auto, widgets, launcher shortcuts, the iPod's lock screen) may
   live wholly in that client; what it shows still comes from the core where the core already has it.
-- Clients keep parity: a screen, control or fix asked for on one client (Android, the desktop, the web,
-  the terminal, the iPod) is meant for every client that has that screen, even when the request names
-  only one. When the request does not say, ask after building it whether the other clients get it too,
-  and list the ones still missing it.
+- Clients keep parity: every change and fix (a screen, a control, a behavior) is made in every client
+  (Android, the desktop, the web, the terminal, the iPod) that has that screen or feature, in the same
+  change, even when the request names only one, unless the request says otherwise. A client left out
+  is named in the report with why (it has no such screen, no plugins).
 - The core returns data and enums, never user-facing text. Words live in each client: Android string
   resources (`strings.xml`, `strings_ui.xml`, read via `ui/Say.kt`), `crates/cli/src/text.rs`,
   the desktop's `words.rs`. Logs, perf report and self test are English.
