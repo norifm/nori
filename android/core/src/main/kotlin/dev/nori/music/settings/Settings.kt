@@ -162,6 +162,7 @@ class Settings(private val context: Context) {
      * A change by name the core has already kept (`setting_set`): taken in here, and nothing sent back.
      */
     fun took(change: SettingChange) {
+        receivers(state.value, change.prefs)
         state.value = change.prefs
         if (change.effect != 0u) _effects.tryEmit(change.effect.toInt())
     }
@@ -187,8 +188,15 @@ class Settings(private val context: Context) {
         if (next == state.value) return
         // The core first: whatever reacts to the new value (on any thread) reads it from there.
         val effect = core.put(next)
+        receivers(state.value, next)
         state.value = next
         if (effect != 0u) _effects.tryEmit(effect.toInt())
+    }
+
+    /** The manifest receivers a setting turns on, changed only when it does. */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun receivers(before: StoredPrefs, after: StoredPrefs) {
+        if (before.playOnBluetooth != after.playOnBluetooth) dev.nori.music.playback.PlayOnBluetooth.enable(context, after.playOnBluetooth)
     }
 
     private fun load(): StoredPrefs = core.open(java.io.File(context.filesDir, dbFileName()).path)

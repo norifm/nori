@@ -229,6 +229,7 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "autoFillBasis" to (R.string.settings_auto_fill_basis to R.string.settings_hint_auto_fill_basis),
     "autoFillRemote" to (R.string.settings_auto_fill_remote to R.string.settings_hint_auto_fill_remote),
     "bridgeOffline" to (R.string.settings_bridge_offline to R.string.settings_hint_bridge_offline),
+    "playOnBluetooth" to (R.string.settings_play_on_bluetooth to R.string.settings_hint_play_on_bluetooth),
     "autoEqAuto" to (R.string.settings_autoeq_auto to R.string.settings_hint_autoeq_auto),
     "autoEqDownload" to (R.string.settings_autoeq_list to R.string.settings_hint_autoeq_list),
     "profilePerOutput" to (R.string.settings_per_device to R.string.settings_hint_per_device),

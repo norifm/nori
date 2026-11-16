@@ -71,6 +71,11 @@
                 <action android:name="android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
+        <receiver android:name="dev.nori.music.playback.PlayOnBluetooth" android:enabled="false" android:exported="false">
+            <intent-filter>
+                <action android:name="android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
         <receiver
             android:name="dev.nori.music.plugins.PluginCommandReceiver"
             android:enabled="false"

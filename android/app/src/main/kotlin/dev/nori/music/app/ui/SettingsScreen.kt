@@ -449,6 +449,9 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     val p by vm.prefs.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<SavedServer?>(null) }
     var asking by remember { mutableStateOf<Pair<String, dev.nori.music.app.vm.ActionAsk>?>(null) }
+    // Android tells an app of a Bluetooth device connecting only with this permission: asked as the switch turns on.
+    val askBluetooth = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) vm.set("playOnBluetooth", "true") }
+    val bluetoothAllowed = { android.os.Build.VERSION.SDK_INT < 31 || androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED }
     NoriDialog(editing, { editing = null }, DialogStyle.Page) { e -> LoginScreen(vm, e) { editing = null } }
     // A backup's file, picked first; its password is asked next (`restore`: a backup to open).
     var backupFile by remember { mutableStateOf<Pair<android.net.Uri, Boolean>?>(null) }
@@ -600,7 +603,9 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     @Composable
     fun RowOf(at: Int, row: SettingRow, divider: Boolean) = androidx.compose.runtime.key((row as? SettingRow.Placed)?.id ?: "#$at") {
             when (row) {
-                is SettingRow.Toggle -> Toggle(row.title, row.detail, row.on, enabled = row.enabled, key = row.key) { on -> vm.set(row.name, on.toString()) }
+                is SettingRow.Toggle -> Toggle(row.title, row.detail, row.on, enabled = row.enabled, key = row.key) { on ->
+                    if (on && row.name == "playOnBluetooth" && !bluetoothAllowed()) askBluetooth.launch(android.Manifest.permission.BLUETOOTH_CONNECT) else vm.set(row.name, on.toString())
+                }
                 is SettingRow.Choice -> Choice(row, divider) { v -> vm.set(row.name, v) }
                 is SettingRow.ChipChoice -> ChipChoice(row, divider) { v -> vm.set(row.name, v) }
                 is SettingRow.Flags -> Flags(row, divider) { v -> vm.set(row.name, v) }
