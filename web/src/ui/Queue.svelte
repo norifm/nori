@@ -5,7 +5,8 @@
   // the next song puts them, and come and go folding.
   import { player } from "../state/player.svelte";
   import { remote } from "../state/remote.svelte";
-  import { songMenu } from "../state/menus";
+  import { ask } from "../rpc";
+  import { addToPlaylist, songMenu } from "../state/menus";
   import { beside, pointer, ui } from "../state/ui.svelte";
   import { W } from "../words";
   import type { QueueSong, Song } from "../state/types";
@@ -20,8 +21,13 @@
   const n = $derived(player.now);
   const rows = $derived(n?.queue ?? []);
   const current = $derived(n?.current ?? -1);
-  /** Songs follow the one heard, and this is no jam guest, whose queue is the host's to change. */
-  const after = $derived(current >= 0 && !remote.jam?.guest ? rows.length - current - 1 : 0);
+  /** How many songs follow the one heard. */
+  const after = $derived(current >= 0 ? rows.length - current - 1 : 0);
+  /** What the whole queue takes (the core's `queue_actions`). */
+  let offers = $state<string[]>([]);
+  $effect(() => {
+    void ask<string>("queue_actions", rows.length, after, !!remote.jam?.guest).then((j) => (offers = JSON.parse(j) as string[]));
+  });
   let list = $state<HTMLOListElement>();
   /** A row's glide, ms, on one curve for both ways rows move at once ([cubicOut] in CSS), so they keep step. */
   const GLIDE_MS = 240;
@@ -92,8 +98,11 @@
 
 <JamQueue />
 <div class="box">
-{#if after > 0}
-  <div class="top"><button class="clear" onclick={() => void player.clear(after)}>{W.clear}</button></div>
+{#if offers.length > 0}
+  <div class="top">
+    {#if offers.includes("Clear")}<button class="clear" onclick={() => void player.clear(after)}>{W.clear}</button>{/if}
+    {#if offers.includes("AddToPlaylist")}<button class="keep" aria-label={W.addToPlaylist} title={W.addToPlaylist} onclick={() => void addToPlaylist(rows as Song[])}><Icon name="plus-circle" /></button>{/if}
+  </div>
 {/if}
 <ol class="queue" id="queue" style:--fade-top="{FADE_TOP}px" bind:this={list} onscrollend={rested} use:sortable={{ moved: (from, to) => move(rows[from].index, rows[to].index), whole: true }}>
   {#each items as item (item.key)}
@@ -148,7 +157,7 @@
     flex: 1;
     min-height: 0;
   }
-  /* The queue's head: Clear in the quiet ink, as the desktop's. */
+  /* The queue's head: Clear and the glyph that keeps it as a playlist, in the quiet ink, as the desktop's. */
   .top {
     display: flex;
     justify-content: flex-end;
@@ -161,7 +170,20 @@
     font-size: 13px;
     font-weight: 600;
   }
-  .clear:hover {
+  .keep {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    color: var(--ink2);
+  }
+  .keep :global(.icon) {
+    width: 20px;
+    height: 20px;
+  }
+  .clear:hover,
+  .keep:hover {
     background: var(--hover);
   }
   .undo {

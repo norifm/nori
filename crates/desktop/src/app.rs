@@ -560,8 +560,9 @@ pub struct App {
     /// The hosted jam's invite link its QR code was drawn for, and whether a jam is hosted.
     jam_link: String,
     jam_hosting: bool,
-    /// The song whose menu opened the playlist picker, and the playlists offered for it.
-    menu_song: Option<Song>,
+    /// The songs the playlist picker is open for (one whose menu asked, or the queue's), and the playlists
+    /// offered for them.
+    picking: Vec<String>,
     /// The downloads asked to be removed, waiting for the ask sheet's yes.
     removing: Vec<String>,
     picker: Vec<nori_core::menus::PlaylistChoice>,
@@ -821,7 +822,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             search: Timer::default(),
             jam_link: String::new(),
             jam_hosting: false,
-            menu_song: None,
+            picking: Vec::new(),
             removing: Vec::new(),
             picker: Vec::new(),
             sleep_choices: Vec::new(),
@@ -1215,6 +1216,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.go(View::Settings);
     });
     on!(ui.on_clear_queue, h, |a| a.clear_queue());
+    on!(ui.on_keep_queue, h, |a| a.keep_queue());
     on!(ui.on_analyse_downloads, h, |a| a.on_session(|s| s.analyse_downloads()));
     on!(ui.on_remove_queued, h, |a, i| a.remove_queued(i.max(0) as usize));
     on!(ui.on_move_queued, h, |a, from, to| {
@@ -2569,15 +2571,7 @@ impl App {
             3 => self.on_session(|s| s.download(vec![one])),
             4 => self.on_session(|s| s.play_later(Fetch::Radio(one.id), false)),
             5 | 6 => self.on_session(|s| s.enqueue(vec![one], how == 5)),
-            7 => {
-                let ui = self.ui();
-                ui.set_picker_name("".into());
-                ui.set_picker_naming(false);
-                ui.set_picker_open(true);
-                self.picker_shown(Vec::new());
-                self.ask_choices(one.id.clone());
-                self.menu_song = Some(one);
-            }
+            7 => self.pick_playlist(vec![one.id]),
             8 => self.ask_remove(vec![one.id]),
             9 => self.on_session(|s| s.download_remove(&one.id)),
             10 => self.on_session(|s| s.star(nori_core::client::Starrable::Song, one.id, true)),
@@ -2683,21 +2677,37 @@ impl App {
         });
     }
 
-    /// Asks the core which playlists song `id` may go into and what each has of it, shown when they come.
-    fn ask_choices(&self, id: String) {
+    /// Opens the playlist picker for `songs`: the core is asked which playlists they may go into and what
+    /// each has of them, shown when they come.
+    fn pick_playlist(&mut self, songs: Vec<String>) {
+        let ui = self.ui();
+        ui.set_picker_name("".into());
+        ui.set_picker_naming(false);
+        ui.set_picker_open(true);
+        self.picker_shown(Vec::new());
+        self.picking = songs.clone();
         let Some(client) = self.session.as_ref().map(|s| s.client.clone()) else { return };
         let tx = self.tx.clone();
         nori_host::spawn("nori-choices", move || {
-            let choices = nori_core::transport::block_on(client.playlist_choices(vec![id.clone()])).unwrap_or_default();
-            tx.send(Msg::Choices(id, choices));
+            let choices = nori_core::transport::block_on(client.playlist_choices(songs.clone())).unwrap_or_default();
+            tx.send(Msg::Choices(songs, choices));
         });
     }
 
-    /// The picker's playlists, each saying what it has of the song.
+    /// The queue's songs in play order go into a playlist picked next.
+    fn keep_queue(&mut self) {
+        let songs: Vec<String> = self.queue.as_ref().map(|q| q.rows.order.iter().filter_map(|&i| Some(q.songs.get(i as usize)?.id.clone())).collect()).unwrap_or_default();
+        if !songs.is_empty() {
+            self.pick_playlist(songs);
+        }
+    }
+
+    /// The picker's playlists, each saying what it has of the songs.
     fn picker_shown(&mut self, choices: Vec<nori_core::menus::PlaylistChoice>) {
+        let asked = self.picking.len() as u32;
         let shown = choices.iter().map(|c| PlaylistChoice {
             title: c.playlist.name.as_str().into(),
-            sub: words::playlist_holds(c.holds, 1, c.playlist.song_count).into(),
+            sub: words::playlist_holds(c.holds, asked, c.playlist.song_count).into(),
             art: c.playlist.cover_art.clone().unwrap_or_default().into(),
             full: c.adds.is_empty(),
         });
@@ -2711,10 +2721,13 @@ impl App {
         nori_core::menus::playlist_editable(p, &user, self.session.as_ref().is_some_and(|s| s.rules().playlists))
     }
 
-    /// Adds the song whose menu asked to the picker's playlist `i`, or to a new one named `name`.
+    /// Adds the songs the picker is open for to its playlist `i`, or to a new one named `name`.
     fn add_to_playlist(&mut self, to: Result<usize, String>) {
         self.ui().set_picker_open(false);
-        let Some(song) = self.menu_song.take() else { return };
+        let songs = std::mem::take(&mut self.picking);
+        if songs.is_empty() {
+            return;
+        }
         match to {
             Ok(i) => {
                 let Some(c) = self.picker.get(i) else { return };
@@ -2724,7 +2737,7 @@ impl App {
             Err(name) => {
                 let name = name.trim().to_string();
                 if !name.is_empty() {
-                    self.playlist_write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: vec![song.id] }, words::playlist_created(&name), PlaylistChange::Made);
+                    self.playlist_write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: songs }, words::playlist_created(&name), PlaylistChange::Made);
                 }
             }
         }
@@ -3808,8 +3821,8 @@ impl App {
             Msg::Note { text, error } => self.say(&text, error),
             Msg::Playlist { text, change } => self.playlist_changed(&text, change),
             Msg::Shared(Some(link)) => self.copy(link, words::LINK_COPIED),
-            Msg::Choices(id, choices) => {
-                if self.ui().get_picker_open() && self.menu_song.as_ref().is_some_and(|s| s.id == id) {
+            Msg::Choices(songs, choices) => {
+                if self.ui().get_picker_open() && self.picking == songs {
                     self.picker_shown(choices);
                 }
             }
@@ -5030,6 +5043,9 @@ impl App {
                 Some(SongRow { by: q.by.get(&s.id).cloned().unwrap_or_default().into(), played: at < now, ..row(s, i as usize, at == now) })
             }).collect();
             self.queue_shown(rows);
+            let offers = nori_core::menus::queue_actions(q.rows.order.len() as u32, q.upcoming().count() as u32, self.session.as_ref().is_some_and(|s| s.rules().playlists), ui.global::<crate::Jam>().get_guest());
+            ui.set_queue_clearable(offers.contains(&nori_core::menus::QueueAction::Clear));
+            ui.set_queue_keepable(offers.contains(&nori_core::menus::QueueAction::AddToPlaylist));
             ui.set_queue_from(queue_from(q.upcoming().map(|(_, s)| s)).into());
             self.queue = Some(q);
         }
@@ -6172,6 +6188,7 @@ mod tests {
         let row = |i: i32, n: i32| SongRow { title: format!("Song {n}").into(), index: i, playing: i == 0, ..Default::default() };
         let queue = Rc::new(VecModel::from((0..6).map(|i| row(i, i)).collect::<Vec<_>>()));
         ui.set_queue(ModelRc::from(queue.clone()));
+        ui.set_queue_clearable(true);
         let moves = Rc::new(RefCell::new(Vec::new()));
         let (seen, model) = (moves.clone(), queue.clone());
         // As the app does: the session moves the song and the rows are read again, in their new order.
@@ -6435,7 +6452,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_shows_only_with_songs_after_the_one_playing() {
+    fn the_queue_head_shows_what_the_queue_offers() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
@@ -6443,17 +6460,20 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.show().unwrap();
         ui.set_inspector(Panel::Queue);
-        let row = |index: i32, played: bool, playing: bool| SongRow { index, title: format!("Song {index}").into(), played, playing, ..Default::default() };
-        let clear = |rows: Vec<SongRow>| {
-            ui.set_queue(ModelRc::new(VecModel::from(rows)));
+        ui.set_queue(ModelRc::new(VecModel::from(vec![SongRow { title: "Song".into(), playing: true, ..Default::default() }])));
+        for (clearable, keepable) in [(false, false), (true, false), (false, true), (true, true)] {
+            ui.set_queue_clearable(clearable);
+            ui.set_queue_keepable(keepable);
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
-            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "QueueView")
-                .flat_map(|q| q.query_descendants().match_predicate(|e| e.accessible_label().is_some_and(|l| l == "Clear")).find_all())
-                .count()
-        };
-        assert_eq!(clear(vec![row(0, true, false), row(1, false, true)]), 0, "nothing after the song playing");
-        assert_eq!(clear(vec![row(0, true, false), row(1, false, true), row(2, false, false)]), 1);
+            let shown = |label: &'static str| {
+                i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "QueueView")
+                    .flat_map(|q| q.query_descendants().match_predicate(move |e| e.accessible_label().is_some_and(|l| l == label)).find_all())
+                    .count()
+                    == 1
+            };
+            assert_eq!((shown("Clear"), shown("Add to playlist")), (clearable, keepable));
+        }
     }
 
     #[test]

@@ -1346,13 +1346,15 @@ fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
         let head = row_of(area, 0);
         let left = vec![Span::styled(crate::text::UP_NEXT, bold().fg(t.ink)), Span::styled(format!("  {}", crate::text::songs_caption(q.len, secs)), t.dim())];
         put(f, Paragraph::new(Line::from(left)), head);
-        // Clear, shuffle and repeat are the queue's, the host's in a jam; Clear while songs follow the one playing.
+        // Shuffle and repeat are the queue's, the host's in a jam; before them, what the whole queue offers.
         if !app.guest() {
             let (shuffle, repeat) = (q.shuffle, q.repeat);
             let lit = |on: bool| if on { t.current() } else { t.dim() };
-            let clear = (app.upcoming() > 0).then(|| (Span::styled(crate::text::CLEAR, t.dim()), Button::Clear));
-            let words: Vec<_> = clear
-                .into_iter()
+            let offers = app.queue_offers().into_iter().map(|a| match a {
+                nori_core::menus::QueueAction::Clear => (Span::styled(crate::text::CLEAR, t.dim()), Button::Clear),
+                nori_core::menus::QueueAction::AddToPlaylist => (Span::styled(crate::text::SAVE, t.dim()), Button::Keep),
+            });
+            let words: Vec<_> = offers
                 .chain([
                     (Span::styled(crate::text::SHUFFLE, lit(shuffle)), Button::Shuffle),
                     (Span::styled(crate::text::repeat_word(repeat), lit(repeat != nori_core::rules::REPEAT_OFF)), Button::Repeat),

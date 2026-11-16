@@ -603,7 +603,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             )
                             .then(if (page == Panel.QUEUE) Modifier.padding(horizontal = 26.dp) else Modifier),
                     ) {
-                        if (page == Panel.QUEUE) Queue(vm) { choose(Panel.ART) } else LyricsView(vm, actions, state.advancing) { choose(Panel.ART) }
+                        if (page == Panel.QUEUE) Queue(vm, actions) { choose(Panel.ART) } else LyricsView(vm, actions, state.advancing) { choose(Panel.ART) }
                     }
                 }
 
@@ -2801,7 +2801,7 @@ private const val MIXING_FADE_MS = 360f
 
 /** [showPlayer]: the song playing was tapped, which goes back to the player rather than starting it again. */
 @Composable
-private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
+private fun Queue(vm: PlayerViewModel, actions: ActionsViewModel, showPlayer: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     // The player's answers to the moves and removals made here, read with [state].
     val answered by vm.answered.collectAsStateWithLifecycle()
@@ -2863,16 +2863,25 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
         )
         // A jam guest's queue is the host's to change: it only shows it.
         val edits = !state.jamGuest
+        // The queue's songs in play order, while a playlist is picked for them.
+        var keeping by remember { mutableStateOf<List<Song>?>(null) }
+        NoriSheet(keeping, { keeping = null }) { songs -> PlaylistPicker(songs, actions) { keeping = null } }
         Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
             LookText(
                 remember { say.queue }, ink, Modifier.padding(top = 4.dp, bottom = 8.dp),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
             )
             Row(Modifier, Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
-                // Clear, as Apple Music's and Spotify's queues have it: what plays after the song playing
-                // goes at once, and the undo below puts it back.
+                // What the whole queue takes (the core's `queue_actions`). Clear, as Apple Music's and
+                // Spotify's queues have it: what plays after the song playing goes at once, and the undo
+                // below puts it back. Into a playlist, as a mix's page keeps itself.
                 val after = if (now >= 0) order.size - now - 1 else 0
-                if (edits && after > 0) LookTextAction(say.clear, quiet, { undo.took(Removal.Cleared(after), -1, null, 0f); vm.clearUpcoming() })
+                val playlists = LocalRules.current.playlists
+                val offers = remember(order.size, after, playlists, edits) { dev.nori.music.ffi.library.queueActions(order.size.toUInt(), after.toUInt(), playlists, !edits) }
+                if (dev.nori.music.ffi.library.QueueAction.CLEAR in offers) LookTextAction(say.clear, quiet, { undo.took(Removal.Cleared(after), -1, null, 0f); vm.clearUpcoming() })
+                if (dev.nori.music.ffi.library.QueueAction.ADD_TO_PLAYLIST in offers) IconButton({ keeping = order.map { state.queue[it] } }, Modifier.size(44.dp)) {
+                    LookIcon(Iconoir.PlusCircle, say.addToPlaylist, Modifier.size(22.dp)) { look.color(CoverLook.ON_VARIANT) }
+                }
                 if (state.offersReorder) {
                     val shuffleOn = state.shuffle
                     val repeatOn = state.repeat != Repeat.OFF

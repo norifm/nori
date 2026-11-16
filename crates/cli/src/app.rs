@@ -1210,6 +1210,7 @@ pub enum Button {
     Shuffle,
     Repeat,
     Clear,
+    Keep,
     Panel(Panel),
     Full,
     PlayAll,
@@ -2697,7 +2698,7 @@ impl App {
             Action::SeekBack | Action::SeekForward | Action::SeekBackLong | Action::SeekForwardLong if !self.offers(|c| c.seek) => self.dirty = false,
             Action::Shuffle | Action::Repeat if self.guest() => self.dirty = false,
             Action::MoveUp | Action::MoveDown if self.queue_in_focus() && !self.offers(|c| c.reorder) => self.dirty = false,
-            Action::Remove | Action::Undo | Action::Clear if self.guest() && self.queue_in_focus() => self.dirty = false,
+            Action::Remove | Action::Undo if self.guest() && self.queue_in_focus() => self.dirty = false,
             Action::TogglePlay => {
                 self.pressed(Button::Toggle);
                 self.cmds.push(Cmd::Toggle);
@@ -2862,7 +2863,8 @@ impl App {
             Action::Undo if self.queue_in_focus() => self.cmds.push(Cmd::Undo),
             Action::Undo => self.dirty = false,
             Action::Clear if self.queue_in_focus() => self.clear_queue(),
-            Action::Clear => self.dirty = false,
+            Action::Keep if self.queue_in_focus() => self.keep_queue(),
+            Action::Clear | Action::Keep => self.dirty = false,
             Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.move_here(a == Action::MoveUp) {
                 Some(c) => self.cmds.push(c),
                 None => self.dirty = false,
@@ -3572,12 +3574,27 @@ impl App {
         self.queue.as_ref().and_then(|q| Some(q.order.len() - 1 - q.order.iter().position(|&i| i as i32 == q.index)?)).unwrap_or(0)
     }
 
-    /// Clears the queue, its undo on u; nothing for a jam guest, whose queue is the host's.
+    /// What the queue's head offers for the whole queue (the core's `queue_actions`).
+    pub fn queue_offers(&self) -> Vec<nori_core::menus::QueueAction> {
+        nori_core::menus::queue_actions(self.queue.as_ref().map_or(0, |q| q.order.len() as u32), self.upcoming() as u32, self.rules.playlists, self.guest())
+    }
+
+    /// Clears the queue, its undo on u, where the queue offers it.
     fn clear_queue(&mut self) {
-        if self.guest() || self.upcoming() == 0 {
-            self.dirty = false;
-        } else {
+        if self.queue_offers().contains(&nori_core::menus::QueueAction::Clear) {
             self.cmds.push(Cmd::Clear);
+        } else {
+            self.dirty = false;
+        }
+    }
+
+    /// The queue's songs in play order go into a playlist picked next, where the queue offers it.
+    fn keep_queue(&mut self) {
+        let songs: Vec<String> = self.queue.as_ref().map(|q| q.order.iter().filter_map(|&i| Some(q.songs.get(i as usize)?.id.clone())).collect()).unwrap_or_default();
+        if self.queue_offers().contains(&nori_core::menus::QueueAction::AddToPlaylist) {
+            self.pick_playlist(songs);
+        } else {
+            self.dirty = false;
         }
     }
 
@@ -4112,6 +4129,7 @@ impl App {
             Button::Shuffle => self.do_action(Action::Shuffle),
             Button::Repeat => self.do_action(Action::Repeat),
             Button::Clear => self.clear_queue(),
+            Button::Keep => self.keep_queue(),
             Button::Panel(p) => self.set_panel(p),
             Button::Full => self.toggle_full(),
             Button::PlayAll => self.play_all(false),

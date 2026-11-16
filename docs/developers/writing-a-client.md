@@ -285,7 +285,11 @@ of this; Android's `PlaybackService` calls the same functions.
 - **Clearing the queue**: `Session::clear_upcoming` (`playlist_clear_upcoming`, `Op::Clear` on the device
   playing) takes the songs after the one playing in play order; for the same `UNDO_MS`,
   `Session::put_back_cleared` (`playlist_restore_all`, `Op::RestoreCleared`) puts them back where they
-  were. Clear shows only while songs follow the one playing, and not to a jam guest.
+  were.
+- **The queue's head**: `menus::queue_actions` says what it offers for the whole queue, in order: Clear
+  while songs follow the one playing, and Add to playlist (the queue in play order, into the client's
+  playlist picker) where the account's playlists take songs; nothing to a jam guest. Clear is a word,
+  Add to playlist the plus-circle glyph a mix's page keeps itself with.
 - **Search**: `SearchSession` answers each keystroke from the offline index and the server once typing
   pauses (`typed_with_index`, `answer`); its `SearchView` says where the answer stands as one
   `SearchShown` (blank, asking, failed, found, nothing found). An ask typed over ends at once with

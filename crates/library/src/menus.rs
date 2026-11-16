@@ -399,6 +399,34 @@ pub fn playlist_editable(playlist: &Playlist, user: &str, playlists: bool) -> bo
     playlists && !is_provider_id(&playlist.id) && playlist.owner.as_deref().is_none_or(|o| o.eq_ignore_ascii_case(user))
 }
 
+/// Something the queue's head offers for the whole queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum QueueAction {
+    /// Takes out the songs after the one playing.
+    Clear,
+    /// The whole queue, in play order, into a playlist of the account: a new one or one it has.
+    AddToPlaylist,
+}
+
+/// What the queue's head offers, in order, for a queue of `songs` songs of which `upcoming` follow the one
+/// playing. `playlists`: the account's playlists take songs ([`crate::browse::ProfileRules::playlists`]).
+/// A jam `guest` sees the host's queue, which is not its to keep or change: nothing.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn queue_actions(songs: u32, upcoming: u32, playlists: bool, guest: bool) -> Vec<QueueAction> {
+    let mut out = Vec::with_capacity(2);
+    if guest {
+        return out;
+    }
+    if upcoming > 0 {
+        out.push(QueueAction::Clear);
+    }
+    if playlists && songs > 0 {
+        out.push(QueueAction::AddToPlaylist);
+    }
+    out
+}
+
 /// A playlist offered to take some songs, with which of them it has already.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -454,6 +482,21 @@ mod tests {
 
     /// Adding to a playlist follows the profile's playlists, not its Subsonic account: a provider's
     /// account has them without one.
+    #[test]
+    fn the_queue_offers_what_it_can_take() {
+        use QueueAction::*;
+        // songs, upcoming, playlists, guest
+        for (songs, upcoming, playlists, guest, want) in [
+            (5, 3, true, false, vec![Clear, AddToPlaylist]),
+            (5, 0, true, false, vec![AddToPlaylist]),
+            (5, 3, false, false, vec![Clear]),
+            (0, 0, true, false, vec![]),
+            (5, 3, true, true, vec![]),
+        ] {
+            assert_eq!(queue_actions(songs, upcoming, playlists, guest), want, "{songs} songs, {upcoming} upcoming, playlists {playlists}, guest {guest}");
+        }
+    }
+
     #[test]
     fn adding_to_a_playlist_follows_the_profiles_playlists() {
         let has = |account: bool, playlists: bool| song_menu(Song::default(), false, false, SongDownload::None, false, false, true, account, playlists, false, false, false, None).iter().any(|i| i.action == SongAction::AddToPlaylist);

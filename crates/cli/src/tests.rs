@@ -701,7 +701,7 @@ fn queue_panel_editing() {
     key(&mut a, KeyCode::Char('Q'));
     assert_eq!((a.full, a.panel, a.focus), (true, Panel::Queue, Focus::Panel));
     let s = draw(&mut a, 160, 30);
-    assert!(s.contains("▶ Song 1") && s.contains("Playing next  5 songs") && s.contains("Clear   Shuffle   Repeat") && s.contains("c clear"), "{s}");
+    assert!(s.contains("▶ Song 1") && s.contains("Playing next  5 songs") && s.contains("Clear   Save   Shuffle   Repeat") && s.contains("c clear") && s.contains("w save"), "{s}");
     dump("queue", &s);
     assert_eq!(a.queue_sel.at, 1, "the queue opens on the song playing");
     let sent = a.cmds.len();
@@ -714,6 +714,10 @@ fn queue_panel_editing() {
     assert_eq!(a.cmds.last(), Some(&Cmd::Undo), "u puts it back");
     key(&mut a, KeyCode::Char('c'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Clear), "c clears what plays after");
+    key(&mut a, KeyCode::Char('w'));
+    let ids: Vec<String> = (0..5).map(|i| format!("s{i}")).collect();
+    assert!(matches!(&a.overlay, Some(Overlay::Picker { target: Target::Playlist { songs, .. }, .. }) if *songs == ids), "w offers the whole queue to a playlist");
+    key(&mut a, KeyCode::Esc);
     key(&mut a, KeyCode::Char('K'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Move(2, 1)));
     key(&mut a, KeyCode::Enter);

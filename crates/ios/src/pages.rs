@@ -869,11 +869,14 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
 
 /// The queue the player shows (`Handle::queue_shown`): this iPod's, the device's it mirrors (`remote`:
 /// read only but for a tap, which plays that song there), or a jam guest's host's (`jam`), each song
-/// with who asked for it in the jam (`by`) where someone did.
+/// with who asked for it in the jam (`by`) where someone did. `offers`: what its head offers for the whole
+/// queue, by name (`menus::queue_actions`).
 fn queue_json(s: &nori_host::session::Session) -> Value {
     let q = s.queue_shown(None);
     let shown = q.heard().map_or(-1, |i| i as i32);
     let mut v = queue_sections(&q.songs, &q.rows, q.view.repeat, q.view.shuffle, shown);
+    let offers = nori_core::menus::queue_actions(q.rows.order.len() as u32, q.upcoming().count() as u32, s.rules().playlists, s.guest);
+    v["head"]["offers"] = offers.iter().map(|a| format!("{a:?}")).collect();
     if q.mirrored {
         v["head"]["remote"] = json!(true);
     }

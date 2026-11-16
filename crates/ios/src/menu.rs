@@ -213,6 +213,41 @@ pub unsafe extern "C" fn nori_ios_playlist_create(token: u64, index: i32, name: 
     wrote(Write::CreatePlaylist { name: name.trim().to_string(), song_ids: vec![song.id] })
 }
 
+/// The queue shown, in play order, as song ids.
+fn queue_ids() -> Vec<String> {
+    with_session(|s| {
+        let q = s.queue_shown(None);
+        q.rows.order.iter().filter_map(|&i| Some(q.songs.get(i as usize)?.id.clone())).collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Adds the whole queue to playlist `playlist`. Blocks; 1 when the server took it.
+///
+/// # Safety
+/// `playlist` is NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_queue_playlist_add(playlist: *const c_char) -> i32 {
+    let (id, song_ids) = (c_text(playlist), queue_ids());
+    if song_ids.is_empty() {
+        return 0;
+    }
+    wrote(Write::AddToPlaylist { id, song_ids })
+}
+
+/// Makes playlist `name` holding the whole queue. Blocks; 1 when done.
+///
+/// # Safety
+/// `name` is NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_queue_playlist_create(name: *const c_char) -> i32 {
+    let (name, song_ids) = (c_text(name), queue_ids());
+    if name.trim().is_empty() || song_ids.is_empty() {
+        return 0;
+    }
+    wrote(Write::CreatePlaylist { name: name.trim().to_string(), song_ids })
+}
+
 /// Saves list `token` (a mix's songs) as a new playlist named after `title`, the mix's name as the app
 /// words it (`menus::saved_mix_name` against the account's playlists). Blocks; the name it took, to free,
 /// or null when it was not saved.
