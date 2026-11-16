@@ -6,6 +6,9 @@ FROM swift:${SWIFT}-noble
 ARG SWIFT
 ENV SWIFT_VERSION=${SWIFT}
 
+# A mirror's brief outage is retried, as in .github/actions/apt.
+RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-retries
+
 RUN apt-get update \
  && apt-get install -y --no-install-recommends lld build-essential curl ca-certificates python3 zip rsync \
       xz-utils libarchive-tools \
