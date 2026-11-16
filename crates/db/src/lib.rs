@@ -56,6 +56,10 @@ CREATE TABLE IF NOT EXISTS autofill_picks(server TEXT NOT NULL, kind INTEGER NOT
 CREATE TABLE IF NOT EXISTS smart_playlists(server TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, json TEXT NOT NULL, updated_ms INTEGER NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS track_analysis(server TEXT NOT NULL, song_id TEXT NOT NULL, analysis_version INTEGER NOT NULL, duration_ms INTEGER NOT NULL, bpm REAL NOT NULL, bpm_confidence REAL NOT NULL, beat_offset_ms REAL NOT NULL, stability REAL NOT NULL, downbeat_phase INTEGER NOT NULL, downbeat_confidence REAL NOT NULL, lufs REAL NOT NULL, key INTEGER NOT NULL, key_confidence REAL NOT NULL, silence_start_ms INTEGER NOT NULL, silence_end_ms INTEGER NOT NULL, mixramp_start_ms INTEGER NOT NULL, mixramp_end_ms INTEGER NOT NULL, intro_end_ms INTEGER NOT NULL, outro_start_ms INTEGER NOT NULL, outro_centroid REAL NOT NULL, intro_centroid REAL NOT NULL, outro_bpm REAL NOT NULL, outro_bpm_confidence REAL NOT NULL, outro_beat_offset_ms REAL NOT NULL, outro_stability REAL NOT NULL, outro_downbeat_phase INTEGER NOT NULL, intro_bpm REAL NOT NULL, intro_bpm_confidence REAL NOT NULL, intro_beat_offset_ms REAL NOT NULL, intro_stability REAL NOT NULL, intro_downbeat_phase INTEGER NOT NULL, beats_per_bar INTEGER NOT NULL DEFAULT 0, drop_ms INTEGER NOT NULL DEFAULT 0, exit_ms INTEGER NOT NULL DEFAULT 0, gap_ms INTEGER NOT NULL DEFAULT 0, gap_end_ms INTEGER NOT NULL DEFAULT 0, drop_runup_tonal_db REAL NOT NULL DEFAULT 0, intro_beats_per_bar INTEGER NOT NULL DEFAULT 0, outro_beats_per_bar INTEGER NOT NULL DEFAULT 0, intro_grid_source INTEGER NOT NULL DEFAULT 0, outro_grid_source INTEGER NOT NULL DEFAULT 0, last_drop_ms INTEGER NOT NULL DEFAULT 0, vocal_start_ms INTEGER NOT NULL DEFAULT 0, vocal_end_ms INTEGER NOT NULL DEFAULT 0, steady_intro_ms INTEGER NOT NULL DEFAULT 0, steady_end_ms INTEGER NOT NULL DEFAULT 0, steady_exit_ms INTEGER NOT NULL DEFAULT 0, intro_grid_from_ms INTEGER NOT NULL DEFAULT 0, intro_grid_to_ms INTEGER NOT NULL DEFAULT 0, outro_grid_from_ms INTEGER NOT NULL DEFAULT 0, outro_grid_to_ms INTEGER NOT NULL DEFAULT 0, analysed_ms INTEGER NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS vocal_curve(server TEXT NOT NULL, song_id TEXT NOT NULL, curve BLOB NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS kept_playlists(server TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS kept_songs(server TEXT NOT NULL, playlist TEXT NOT NULL, song TEXT NOT NULL, PRIMARY KEY(server, playlist, song)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS kept_songs_song ON kept_songs(server, song);
+CREATE TABLE IF NOT EXISTS kept_brought(server TEXT NOT NULL, song TEXT NOT NULL, PRIMARY KEY(server, song)) WITHOUT ROWID;
 ";
 
 /// The app-wide tables.
@@ -66,9 +70,9 @@ CREATE TABLE IF NOT EXISTS profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, o
 ";
 
 /// Per-server tables, cleared when a profile is removed.
-const SERVER_TABLES: [&str; 15] = [
+const SERVER_TABLES: [&str; 18] = [
     "items", "cache", "kv", "pending", "downloads", "searches", "plays", "song_stats", "server_plays", "mix_excluded", "autofill_picks", "smart_playlists", "track_analysis",
-    "vocal_curve", "favorites_here",
+    "vocal_curve", "favorites_here", "kept_playlists", "kept_songs", "kept_brought",
 ];
 
 /// Opens the database for `server`'s rows (in memory for an empty `path`).

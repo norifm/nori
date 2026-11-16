@@ -59,6 +59,16 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     // Asked once the app is on screen: an update that changed the analysis offers the downloads a new one.
     init { nori.downloads.offerAtStart() }
 
+    // Playlists kept downloaded follow the server's changes; with none kept nothing is asked.
+    init {
+        viewModelScope.launch {
+            val change = runCatching { nori.library.syncKept() }.getOrNull() ?: return@launch
+            nori.downloads.kept(change)
+            val queued = (change.queued.fresh + change.queued.again).toSet()
+            if (queued.isNotEmpty()) warmCovers(withContext(Dispatchers.IO) { nori.core.downloads(false) }.filter { it.id in queued })
+        }
+    }
+
     // What plugins show while they run, said as the app's own messages are.
     init { viewModelScope.launch { nori.plugins.notices.collect { _messages.trySend(it.line) } } }
 
@@ -223,10 +233,16 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     private val _mobileDownload = MutableStateFlow<List<Song>?>(null)
     /** Songs asked for on mobile data, waiting for a yes before they download. */
     val mobileDownload: StateFlow<List<Song>?> = _mobileDownload.asStateFlow()
+    /** The playlist [mobileDownload] is, when it is one. */
+    private var mobilePlaylist: String? = null
 
-    fun download(songs: List<Song>) {
+    /** Downloads [songs]; all of [playlist]'s, when given, which is then kept downloaded as it changes. */
+    fun download(songs: List<Song>, playlist: String? = null) {
         viewModelScope.launch {
-            if (withContext(Dispatchers.IO) { nori.http.metered }) _mobileDownload.value = songs else downloadNow(songs)
+            if (withContext(Dispatchers.IO) { nori.http.metered }) {
+                mobilePlaylist = playlist
+                _mobileDownload.value = songs
+            } else downloadNow(songs, playlist)
         }
     }
 
@@ -234,11 +250,11 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     fun downloadOnMobileData(yes: Boolean) {
         val songs = _mobileDownload.value ?: return
         _mobileDownload.value = null
-        if (yes) downloadNow(songs)
+        if (yes) downloadNow(songs, mobilePlaylist)
     }
 
-    private fun downloadNow(songs: List<Song>) {
-        nori.downloads.download(songs)
+    private fun downloadNow(songs: List<Song>, playlist: String?) {
+        if (playlist != null) nori.downloads.downloadPlaylist(playlist, songs) else nori.downloads.download(songs)
         warmCovers(songs)
         _messages.trySend(say.downloadingSongs(songs.size))
     }

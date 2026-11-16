@@ -29,7 +29,7 @@ the owner asks for it, and delete its line once it ships.
 - Pause and resume.
 - Stop when storage runs low.
 - Store covers with the download, so the image cache can't evict them.
-- Auto-download rules: keep a playlist or the favorites downloaded.
+- Auto-download rules: keep the favorites downloaded.
 - Keep a song that is already in the stream cache as a download, without fetching it again.
 
 **AutoMix**

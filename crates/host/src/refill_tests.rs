@@ -257,6 +257,50 @@ fn answering_server(body: &'static str) -> String {
     url
 }
 
+/// A server listing one playlist, `p`, of the songs `entries`.
+fn playlist_server(entries: &'static [&'static str]) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for mut c in listener.incoming().flatten() {
+            use std::io::Write as _;
+            let mut buf = [0u8; 4096];
+            let n = c.read(&mut buf).unwrap_or(0);
+            let asked = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or_default().to_string();
+            let songs: Vec<String> = entries.iter().map(|id| format!(r#"{{"id":"{id}","title":"{id}","duration":1,"suffix":"wav"}}"#)).collect();
+            let page = if asked.contains("/getPlaylists") {
+                r#""playlists":{"playlist":[{"id":"p","name":"P"}]}"#.to_string()
+            } else {
+                format!(r#""playlist":{{"id":"p","name":"P","entry":[{}]}}"#, songs.join(","))
+            };
+            let body = format!(r#"{{"subsonic-response":{{"status":"ok","version":"1.16.1",{page}}}}}"#);
+            let _ = write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        }
+    });
+    url
+}
+
+/// A song that left a kept playlist is deleted when keeping brought it; one downloaded by itself stays.
+#[test]
+fn a_kept_playlist_deletes_what_left_it() {
+    let dir = nori_testdir::TempDir::new("host-kept");
+    let url = playlist_server(&["b", "c"]);
+    let (card, clock) = (Card::new(), Virtual::default());
+    let (s, songs) = session_of_songs(&dir, &url, &card, clock);
+    s.download_remove("a");
+    let change = s.core.download_playlist("p".into(), songs[..2].to_vec()).unwrap();
+    assert_eq!(change.queued.fresh, ["a"], "keeping brings a; b was downloaded by itself");
+    let a = s.store.as_ref().expect("a store").download_path("a");
+    std::fs::write(&a, wav(44_100, &sine(44_100, 220.0, 1.0, 16_000.0))).unwrap();
+    s.core.download_settle(vec!["a".into()], vec![true]).unwrap();
+
+    s.kept_changed(block_on(s.client.kept_playlists_sync()).unwrap());
+    assert!(!a.exists(), "a left the playlist");
+    let state = |id| s.download_state(id);
+    assert_eq!([state("a"), state("b"), state("c")], { use nori_core::menus::SongDownload::*; [None, Done, Done] });
+    s.close();
+}
+
 /// A radio from the song playing goes on with it where it is; only the songs after it change.
 #[test]
 fn a_radio_from_the_song_playing_keeps_it_playing() {

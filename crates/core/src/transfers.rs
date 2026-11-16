@@ -2,8 +2,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::cache_policy::{Page, Read};
+use crate::client::{Client, NetResult};
 use crate::Core;
 
+pub use nori_transfers::kept::KeptChange;
 pub use nori_transfers::transfers::*;
 
 /// One profile's finished downloads: the id its rows are kept under (`server_db`) and its songs, newest first.
@@ -63,6 +66,17 @@ impl Core {
             t.know(&songs);
         });
         self.queue_downloads(songs)
+    }
+
+    /// Downloads playlist `id`'s `songs` (not providers') and keeps it downloaded: songs added to it later
+    /// are downloaded as [`Client::kept_playlists_sync`] finds them, and those leaving it go when keeping
+    /// it brought them. Removing all its downloads stops keeping it.
+    pub fn download_playlist(&self, id: String, songs: Vec<crate::Song>) -> crate::Result<KeptChange> {
+        let songs: Vec<crate::Song> = songs.into_iter().filter(|s| !s.is_provider()).collect();
+        let held: Vec<String> = songs.iter().map(|s| s.id.clone()).collect();
+        let queued = self.download_queue(songs)?;
+        let gone = nori_transfers::kept::keep(&mut self.db.lock(), &id, &held, &queued.fresh)?;
+        Ok(KeptChange { queued, gone })
     }
 
     /// Queues every indexed song, in index order ([`Core::download_queue`]).
@@ -260,6 +274,31 @@ impl Core {
     pub fn download_queue_counts(&self) -> crate::Result<DownloadQueueCounts> {
         let [active, queued, failed, _] = self.download_id_sections()?;
         Ok(DownloadQueueCounts { waiting: (active.len() + queued.len()) as u32, failed: failed.len() as u32 })
+    }
+}
+
+#[cfg_attr(feature = "ffi", uniffi::export)]
+impl Client {
+    /// Brings the playlists kept downloaded up to date with the source: songs added are queued, the songs
+    /// that left them go when keeping brought them, and a playlist no longer listed, or whose downloads
+    /// were all removed, is let go. Asks nothing while no playlist is kept.
+    pub async fn kept_playlists_sync(&self) -> NetResult<KeptChange> {
+        let kept = nori_transfers::kept::kept(&mut self.core.db.lock())?;
+        let mut change = KeptChange::default();
+        if kept.is_empty() {
+            return Ok(change);
+        }
+        let Page::Playlists { v: listed } = self.read_now(Read::PlaylistList).await? else { return Ok(change) };
+        for id in kept {
+            if listed.iter().any(|p| p.id == id) {
+                // One that fails to come is looked at again next time; what the others changed stands.
+                let Ok(songs) = self.playlist_songs_of(id.clone()).await else { continue };
+                change.add(self.core.download_playlist(id, songs)?);
+            } else {
+                change.gone.extend(nori_transfers::kept::vanished(&mut self.core.db.lock(), &id)?);
+            }
+        }
+        Ok(change)
     }
 }
 
