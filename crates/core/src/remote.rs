@@ -4623,10 +4623,12 @@ mod tests {
     }
 
     /// This device picked again while the queue it asked for is on its way keeps waiting for that
-    /// queue: asked once, it is still taken when it comes, also after the controls came back here.
+    /// queue: asked once, it is still taken when it comes, also after the controls came back here. The
+    /// request is held in flight: one that failed would end the wait.
     #[test]
     fn picking_here_again_keeps_the_queue_asked_for() {
-        let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        let (client, net) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        *net.held.lock() = true;
         let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
         let playing = DeviceState { index: Some(0), playing: true, ..Default::default() };
         {
@@ -4648,6 +4650,7 @@ mod tests {
         assert_eq!(asked(), Some(first), "still awaited once the controls are here");
         remote.clone().pick(Some("phone".into()));
         assert_eq!(asked(), None, "another device picked: no longer asked for");
+        net.release();
     }
 
     /// Stopping ends remote control at once, as a client switching profiles has it; what was queued
