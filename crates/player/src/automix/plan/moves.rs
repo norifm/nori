@@ -824,9 +824,9 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
     // Two tempos, the incoming one folded to the outgoing one's octave, far enough apart that a stretch cannot meet
     // them and near enough to glide; clashing keys only where a key shift brings them together.
     let b_bpm = fold(a.bpm, b.bpm);
-    let gap = (b_bpm / a.bpm - 1.0).abs() * 100.0;
+    let gap = (b_bpm.max(a.bpm) / b_bpm.min(a.bpm) - 1.0) * 100.0;
     let shift = key_shift(a, b);
-    if !(RAMP_MIN_GAP_PCT..=RAMP_MAX_GAP_PCT).contains(&gap) || camelot_dist(a, b).is_some_and(|d| d >= KEY_CLASH) && shift.is_none() {
+    if !(RAMP_MIN_GAP_PCT..=super::SPLIT_MAX_PCT).contains(&gap) || camelot_dist(a, b).is_some_and(|d| d >= KEY_CLASH) && shift.is_none() {
         return None;
     }
     let meet = (a.bpm * b_bpm).sqrt();
@@ -948,9 +948,9 @@ pub(super) fn loop_ramp(p: &Pair) -> Option<Move> {
 const RAMP_LONG_WORTH: f64 = 0.1;
 const RAMP_BACK_COST: f64 = 0.01;
 
-/// Tempo gaps a loop ramp crosses, percent; under the lower a stretch meets them.
+/// The least tempo gap a loop ramp crosses, percent; under it a stretch meets them. The most is the most two tempos are
+/// moved together ([`super::SPLIT_MAX_PCT`]): further, the outgoing song races or drags.
 const RAMP_MIN_GAP_PCT: f64 = 8.0;
-const RAMP_MAX_GAP_PCT: f64 = 45.0;
 /// The outgoing glide's rate (DJs ride 2 to 3 % a bar; BitChord 2.5 BPM a bar), and the incoming ease back after
 /// (BitChord: below about 1 % a beat it reads as the groove, not the song changing speed).
 pub(super) const RAMP_PCT_PER_BAR: f64 = 2.0;
@@ -966,14 +966,23 @@ const RAMP_DRAIN_FROM_HZ: f32 = 30.0;
 const RAMP_DRAIN_TO_HZ: f32 = 1_500.0;
 const RAMP_HIGHS_DB: f32 = -15.0;
 const RAMP_HIGHS_HZ: f32 = 3_000.0;
-/// A loopable bar is sung less than this share; a loop ramp's also has its beat and is no quieter than this against
-/// the song.
-const LOOP_VOICE: f32 = 0.4;
+/// A loopable bar is sung less than this share, next to none: any voice in a loop is heard again each time round. A
+/// loop ramp's bar also has its beat and is no quieter than this against the song.
+const LOOP_VOICE: f32 = 0.1;
 const LOOP_LEVEL_DB: f32 = -8.0;
+/// Bars before a loop unsung too: a line's held last note or a backing "ooh" trails it by up to a phrase, and the
+/// voice curve, which follows a voice moving, misses a held note.
+const LOOP_TAIL_BARS: usize = 4;
 
-/// Whether `bars` of the outgoing song from `from` loop without a voice: none of them sung, and each one `fits`.
+/// Whether `n` bars of `bars` from `from` loop without a voice: none of them sung, nor the [`LOOP_TAIL_BARS`] before
+/// them, where they are profiled.
+pub(super) fn unsung(bars: &[BarProfile], from: f64, n: usize, bar: f64) -> bool {
+    (-(LOOP_TAIL_BARS as i64)..n as i64).all(|k| bar_at(bars, from + (k as f64 + 0.5) * bar).is_none_or(|x| x.voice < LOOP_VOICE))
+}
+
+/// Whether `bars` of the outgoing song from `from` loop without a voice ([`unsung`]), each one profiled and `fits`.
 pub(super) fn loopable(a: &TrackAnalysis, from: f64, bars: usize, bar: f64, fits: impl Fn(&BarProfile) -> bool) -> bool {
-    (0..bars).all(|i| bar_at(&a.outro_bars, from + (i as f64 + 0.5) * bar).is_some_and(|x| x.voice < LOOP_VOICE && fits(x)))
+    unsung(&a.outro_bars, from, bars, bar) && (0..bars).all(|i| bar_at(&a.outro_bars, from + (i as f64 + 0.5) * bar).is_some_and(&fits))
 }
 
 /// How seamlessly `n` bars of `bars` from `from` go round, 0..1, the best of three measured ways: the bar the song
@@ -1005,24 +1014,28 @@ pub(super) fn seam(bars: &[BarProfile], from: f64, n: usize, bar: f64) -> Option
 /// The stored bars may differ from the planner's by this share before their repeats are not read.
 const SEAM_BAR_SLACK: f64 = 0.1;
 
-/// Whether `n` bars from `from` go round seamlessly enough to loop ([`seam`] at [`SEAM_MIN`]); unmeasured, as before
-/// bars were measured for it, they are taken to.
+/// Whether `n` bars from `from` go round seamlessly enough to loop: [`seam`] at [`SEAM_MIN`] (unmeasured, as before
+/// bars were measured for it, taken to), at a [`steady`] level.
 pub(super) fn seamless(bars: &[BarProfile], from: f64, n: usize, bar: f64) -> bool {
-    seam(bars, from, n, bar).is_none_or(|s| s >= SEAM_MIN)
+    seam(bars, from, n, bar).is_none_or(|s| s >= SEAM_MIN) && steady(bars, from, n, bar)
 }
 
 /// A loop's seam at least this alike ([`seam`]); a typical one (with no seam measured, taken to be it); and what each
 /// point of it off the typical is worth to a window, so a more seamless loop gains on the alternatives and a less
-/// seamless one loses. Set on the lab's songs: their loopable slices' seams have a median of 0.81 and a quartile of
-/// 0.75; under it are slices whose music moves on at the join (0.2, 0.6 to 0.67).
-pub(super) const SEAM_MIN: f32 = 0.75;
+/// seamless one loses. Set on the lab's songs and listening: their loopable slices' seams have a median of 0.81;
+/// under 0.8 a loop is heard to jump at the join (0.76), and lower the music moves on there (0.2, 0.6 to 0.67).
+pub(super) const SEAM_MIN: f32 = 0.8;
 pub(super) const SEAM_TYPICAL: f32 = 0.81;
 pub(super) const SEAM_WORTH: f64 = 2.0;
 
-/// Whether `n` bars from `from` keep within [`loudness::STEADY_DB`] of one another: a loop of them jumps by no more
-/// each time round.
-pub(super) fn steady(bars: &[BarProfile], from: f64, n: usize, bar: f64) -> bool {
-    let levels: Vec<f32> = (0..n).filter_map(|i| bar_at(bars, from + (i as f64 + 0.5) * bar).map(|x| x.level_db)).collect();
+/// Whether `n` bars from `from` keep within [`loudness::STEADY_DB`] of one another, and the last within
+/// [`LOOP_WRAP_DB`] of the first: a slice of a fade-out or a build jumps back each time round. Taken to where they
+/// are not all profiled.
+fn steady(bars: &[BarProfile], from: f64, n: usize, bar: f64) -> bool {
+    let Some(levels) = (0..n).map(|i| bar_at(bars, from + (i as f64 + 0.5) * bar).map(|x| x.level_db)).collect::<Option<Vec<f32>>>() else { return true };
     let (lo, hi) = levels.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &l| (lo.min(l), hi.max(l)));
-    levels.len() == n && f64::from(hi - lo) <= crate::automix::loudness::STEADY_DB
+    f64::from(hi - lo) <= crate::automix::loudness::STEADY_DB && levels.last().zip(levels.first()).is_none_or(|(l, f)| (l - f).abs() <= LOOP_WRAP_DB)
 }
+
+/// The most a loop's last bar may differ in level from its first, dB.
+const LOOP_WRAP_DB: f32 = 1.5;
