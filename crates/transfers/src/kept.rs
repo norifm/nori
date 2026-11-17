@@ -26,6 +26,24 @@ impl KeptChange {
     }
 }
 
+/// Why the kept playlists are looked at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum KeptCheck {
+    /// A session opened: looked at.
+    Opened,
+    /// The app came back in sight: looked at unless that was done in the last [`RECHECK_MS`].
+    Shown,
+}
+
+/// How long after a look at the kept playlists coming back in sight looks again.
+pub const RECHECK_MS: i64 = 30 * 60 * 1000;
+
+/// Whether `check` looks at the kept playlists, last looked at `last_ms` (None: not yet), at `now_ms`.
+pub fn check_due(check: KeptCheck, last_ms: Option<i64>, now_ms: i64) -> bool {
+    check == KeptCheck::Opened || last_ms.is_none_or(|t| now_ms < t || now_ms - t >= RECHECK_MS)
+}
+
 /// Keeps playlist `id` downloaded, holding `songs`, of which keeping brought `brought` into the
 /// downloads. The songs it held before and holds no more that are to go are returned.
 pub fn keep(c: &mut Connection, id: &str, songs: &[String], brought: &[String]) -> rusqlite::Result<Vec<String>> {
@@ -127,6 +145,20 @@ mod tests {
         assert_eq!(keep(&mut c, "q", &[], &[]).unwrap(), ["shared"], "brought by p, held by neither now");
         assert_eq!(vanished(&mut c, "p").unwrap(), ["b", "c"]);
         assert_eq!(kept(&mut c).unwrap(), ["q"], "empty, q stays kept");
+    }
+
+    #[test]
+    fn coming_back_looks_again_at_most_every_half_hour() {
+        let now = 10 * RECHECK_MS;
+        for (check, last, due) in [
+            (KeptCheck::Shown, None, true),
+            (KeptCheck::Shown, Some(now - RECHECK_MS + 1), false),
+            (KeptCheck::Shown, Some(now - RECHECK_MS), true),
+            (KeptCheck::Shown, Some(now + 1), true),
+            (KeptCheck::Opened, Some(now), true),
+        ] {
+            assert_eq!(check_due(check, last, now), due, "{check:?} last {last:?}");
+        }
     }
 
     #[test]

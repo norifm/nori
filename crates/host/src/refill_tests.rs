@@ -280,7 +280,8 @@ fn playlist_server(entries: &'static [&'static str]) -> String {
     url
 }
 
-/// A song that left a kept playlist is deleted when keeping brought it; one downloaded by itself stays.
+/// A song that left a kept playlist, taken out here, is deleted at once when keeping brought it; one
+/// downloaded by itself stays.
 #[test]
 fn a_kept_playlist_deletes_what_left_it() {
     let dir = nori_testdir::TempDir::new("host-kept");
@@ -294,7 +295,7 @@ fn a_kept_playlist_deletes_what_left_it() {
     std::fs::write(&a, wav(44_100, &sine(44_100, 220.0, 1.0, 16_000.0))).unwrap();
     s.core.download_settle(vec!["a".into()], vec![true]).unwrap();
 
-    s.kept_changed(block_on(s.client.kept_playlists_sync()).unwrap());
+    s.write_playlist(nori_core::client::Write::RemoveFromPlaylist { id: "p".into(), index: 0 }).unwrap();
     assert!(!a.exists(), "a left the playlist");
     let state = |id| s.download_state(id);
     assert_eq!([state("a"), state("b"), state("c")], { use nori_core::menus::SongDownload::*; [None, Done, Done] });

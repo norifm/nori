@@ -3,10 +3,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::cache_policy::{Page, Read};
-use crate::client::{Client, NetResult};
+use crate::client::{Client, NetResult, Write};
 use crate::Core;
 
-pub use nori_transfers::kept::KeptChange;
+pub use nori_transfers::kept::{KeptChange, KeptCheck};
 pub use nori_transfers::transfers::*;
 
 /// One profile's finished downloads: the id its rows are kept under (`server_db`) and its songs, newest first.
@@ -68,11 +68,10 @@ impl Core {
         self.queue_downloads(songs)
     }
 
-    /// Downloads playlist `id`'s `songs` (not providers') and keeps it downloaded: songs added to it later
-    /// are downloaded as [`Client::kept_playlists_sync`] finds them, and those leaving it go when keeping
-    /// it brought them. Removing all its downloads stops keeping it.
+    /// Downloads playlist `id`'s `songs` and keeps it downloaded: songs added to it later are downloaded
+    /// as [`Client::kept_playlists_sync`] finds them, and those leaving it go when keeping it brought them.
+    /// Removing all its downloads stops keeping it.
     pub fn download_playlist(&self, id: String, songs: Vec<crate::Song>) -> crate::Result<KeptChange> {
-        let songs: Vec<crate::Song> = songs.into_iter().filter(|s| !s.is_provider()).collect();
         let held: Vec<String> = songs.iter().map(|s| s.id.clone()).collect();
         let queued = self.download_queue(songs)?;
         let gone = nori_transfers::kept::keep(&mut self.db.lock(), &id, &held, &queued.fresh)?;
@@ -279,16 +278,33 @@ impl Core {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
-    /// Brings the playlists kept downloaded up to date with the source: songs added are queued, the songs
-    /// that left them go when keeping brought them, and a playlist no longer listed, or whose downloads
-    /// were all removed, is let go. Asks nothing while no playlist is kept.
-    pub async fn kept_playlists_sync(&self) -> NetResult<KeptChange> {
-        let kept = nori_transfers::kept::kept(&mut self.core.db.lock())?;
+    /// Brings the playlists kept downloaded up to date with the source, when `check` is due
+    /// ([`nori_transfers::kept::check_due`]): songs added are queued, the songs that left them go when
+    /// keeping brought them, and a playlist no longer listed, or whose downloads were all removed, is let
+    /// go. Asks nothing while no playlist is kept.
+    pub async fn kept_playlists_sync(&self, check: KeptCheck) -> NetResult<KeptChange> {
         let mut change = KeptChange::default();
+        let now = crate::db::now_ms();
+        let last = {
+            let mut last = self.kept_checked_ms.lock();
+            if !nori_transfers::kept::check_due(check, *last, now) {
+                return Ok(change);
+            }
+            last.replace(now)
+        };
+        let kept = nori_transfers::kept::kept(&mut self.core.db.lock())?;
         if kept.is_empty() {
             return Ok(change);
         }
-        let Page::Playlists { v: listed } = self.read_now(Read::PlaylistList).await? else { return Ok(change) };
+        let listed = match self.read_now(Read::PlaylistList).await {
+            Ok(Page::Playlists { v }) => v,
+            Ok(_) => return Ok(change),
+            // Not looked at: coming back in sight tries again.
+            Err(e) => {
+                *self.kept_checked_ms.lock() = last;
+                return Err(e);
+            }
+        };
         for id in kept {
             if listed.iter().any(|p| p.id == id) {
                 // One that fails to come is looked at again next time; what the others changed stands.
@@ -299,6 +315,22 @@ impl Client {
             }
         }
         Ok(change)
+    }
+
+    /// After this device's write `w` was taken: a kept playlist it changed (songs added, moved or removed,
+    /// or the playlist deleted) is brought up to date now, not at the next look.
+    pub async fn kept_playlist_written(&self, w: Write) -> NetResult<KeptChange> {
+        let (Write::AddToPlaylist { id, .. } | Write::RemoveFromPlaylist { id, .. } | Write::ReplacePlaylist { id, .. } | Write::DeletePlaylist { id }) = &w else {
+            return Ok(KeptChange::default());
+        };
+        if !nori_transfers::kept::kept(&mut self.core.db.lock())?.contains(id) {
+            return Ok(KeptChange::default());
+        }
+        if matches!(w, Write::DeletePlaylist { .. }) {
+            return Ok(KeptChange { gone: nori_transfers::kept::vanished(&mut self.core.db.lock(), id)?, ..Default::default() });
+        }
+        let songs = self.playlist_songs_of(id.clone()).await?;
+        Ok(self.core.download_playlist(id.clone(), songs)?)
     }
 }
 

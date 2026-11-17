@@ -2791,10 +2791,10 @@ impl App {
 
     /// Sends `write` to the server; `done` is said once it took it.
     fn playlist_write(&self, write: nori_core::client::Write, done: String, change: PlaylistChange) {
-        let Some(client) = self.session.as_ref().map(|s| s.client.clone()) else { return };
+        let Some(handle) = self.session.as_ref().map(|s| nori_host::session::Handle::clone(s)) else { return };
         let tx = self.tx.clone();
         nori_host::spawn("nori-playlist-write", move || {
-            let note = match nori_core::transport::block_on(client.write(write)) {
+            let note = match handle.write_playlist(write) {
                 Ok(()) => Msg::Playlist { text: done, change },
                 Err(e) => Msg::Note { text: words::playlist_failed(&words::net_error(&e)), error: true },
             };

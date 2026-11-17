@@ -9,6 +9,7 @@ import dev.nori.music.downloads.DownloadMark
 import dev.nori.music.ffi.model.Artist
 import dev.nori.music.ffi.transfers.DownloadQueueCounts
 import dev.nori.music.ffi.transfers.DownloadSections
+import dev.nori.music.ffi.transfers.KeptCheck
 import dev.nori.music.net.said
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -59,14 +60,12 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     // Asked once the app is on screen: an update that changed the analysis offers the downloads a new one.
     init { nori.downloads.offerAtStart() }
 
-    // Playlists kept downloaded follow the server's changes; with none kept nothing is asked.
-    init {
-        viewModelScope.launch {
-            val change = runCatching { nori.library.syncKept() }.getOrNull() ?: return@launch
-            nori.downloads.kept(change)
-            val queued = (change.queued.fresh + change.queued.again).toSet()
-            if (queued.isNotEmpty()) warmCovers(withContext(Dispatchers.IO) { nori.core.downloads(false) }.filter { it.id in queued })
-        }
+    /**
+     * The app came on screen: playlists kept downloaded follow the server's changes, looked at again at most
+     * every half hour (the core's `kept_playlists_sync`); with none kept nothing is asked.
+     */
+    fun shown() {
+        viewModelScope.launch { runCatching { nori.library.syncKept(KeptCheck.SHOWN) }.onSuccess(nori.downloads::kept) }
     }
 
     // What plugins show while they run, said as the app's own messages are.

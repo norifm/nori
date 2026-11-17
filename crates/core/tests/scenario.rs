@@ -122,6 +122,18 @@ impl Server {
                 let entries: Vec<String> = held.iter().map(|s| self.songs(|t| t.0 == *s)).collect();
                 ok(&format!(r#""playlist":{{"id":"{id}","name":"{id}","entry":[{}]}}"#, entries.join(",")))
             }
+            "updatePlaylist" => {
+                let id = p.get("playlistId").cloned().unwrap_or_default();
+                let added = p.get("songIdToAdd").cloned().unwrap_or_default();
+                if let Some(pl) = self.playlists.lock().iter_mut().find(|pl| pl.0 == id) {
+                    pl.1.extend(LIBRARY.iter().map(|t| t.0).find(|s| *s == added));
+                }
+                ok("")
+            }
+            "deletePlaylist" => {
+                self.playlists.lock().retain(|pl| pl.0 != id);
+                ok("")
+            }
             "getStarred2" => {
                 let starred = self.starred.lock().clone();
                 ok(&format!(r#""starred2":{{"song":[{}]}}"#, self.songs(|t| starred.contains(t.0))))
@@ -211,23 +223,51 @@ fn a_kept_playlist_follows_the_server() {
     let (core, client) = logged_in(&server);
     let change = |c: nori_core::transfers::KeptChange| (c.queued.fresh, c.gone);
     let settle = |ids: &[&str]| core.download_settle(ids.iter().map(|s| s.to_string()).collect(), vec![true; ids.len()]).unwrap();
-    assert_eq!(block(client.kept_playlists_sync()).unwrap(), Default::default(), "nothing kept");
+    assert_eq!(block(client.kept_playlists_sync(nori_core::transfers::KeptCheck::Opened)).unwrap(), Default::default(), "nothing kept");
 
     let songs = block(client.playlist_songs_of("p".into())).unwrap();
-    assert_eq!(change(core.download_playlist("p".into(), songs).unwrap()), (vec!["s1".into(), "s2".into()], vec![]), "not the provider's");
-    settle(&["s1", "s2"]);
+    assert_eq!(change(core.download_playlist("p".into(), songs).unwrap()), (vec!["s1".into(), "s2".into(), "ext-deezer-song-9".into()], vec![]), "the provider's too");
+    settle(&["s1", "s2", "ext-deezer-song-9"]);
     let own = block(client.playlist_songs_of("p".into())).unwrap().into_iter().find(|s| s.id == "s1").map(|s| nori_core::Song { id: "s3".into(), ..s }).unwrap();
     core.download_queue(vec![own]).unwrap();
     settle(&["s3"]);
 
     server.playlists.lock()[0].1 = vec!["s2", "s3", "s5"];
-    assert_eq!(change(block(client.kept_playlists_sync()).unwrap()), (vec!["s5".into()], vec!["s1".into()]));
+    assert_eq!(change(block(client.kept_playlists_sync(nori_core::transfers::KeptCheck::Opened)).unwrap()), (vec!["s5".into()], vec!["ext-deezer-song-9".into(), "s1".into()]));
     settle(&["s5"]);
     server.playlists.lock()[0].1 = vec!["s5"];
-    assert_eq!(change(block(client.kept_playlists_sync()).unwrap()), (vec![], vec!["s2".into()]), "s3 was downloaded by itself");
+    assert_eq!(change(block(client.kept_playlists_sync(nori_core::transfers::KeptCheck::Opened)).unwrap()), (vec![], vec!["s2".into()]), "s3 was downloaded by itself");
     server.playlists.lock().clear();
-    assert_eq!(change(block(client.kept_playlists_sync()).unwrap()), (vec![], vec!["s5".into()]));
-    assert_eq!(block(client.kept_playlists_sync()).unwrap(), Default::default(), "let go");
+    assert_eq!(change(block(client.kept_playlists_sync(nori_core::transfers::KeptCheck::Opened)).unwrap()), (vec![], vec!["s5".into()]));
+    assert_eq!(block(client.kept_playlists_sync(nori_core::transfers::KeptCheck::Opened)).unwrap(), Default::default(), "let go");
+}
+
+/// A kept playlist this device edits follows at once; coming back in sight looks at the server again
+/// only after half an hour.
+#[test]
+fn a_kept_playlist_edited_here_follows_at_once() {
+    use nori_core::transfers::KeptCheck;
+    let server = Server::new();
+    server.playlists.lock().push(("p", vec!["s1"]));
+    let (core, client) = logged_in(&server);
+    let change = |c: nori_core::transfers::KeptChange| (c.queued.fresh, c.gone);
+    let settle = |ids: &[&str]| core.download_settle(ids.iter().map(|s| s.to_string()).collect(), vec![true; ids.len()]).unwrap();
+    core.download_playlist("p".into(), block(client.playlist_songs_of("p".into())).unwrap()).unwrap();
+    settle(&["s1"]);
+    assert_eq!(block(client.kept_playlists_sync(KeptCheck::Opened)).unwrap(), Default::default());
+
+    server.playlists.lock()[0].1.push("s2");
+    assert_eq!(block(client.kept_playlists_sync(KeptCheck::Shown)).unwrap(), Default::default(), "looked at a moment ago");
+    let add = Write::AddToPlaylist { id: "p".into(), song_ids: vec!["s3".into()] };
+    block(client.write(add.clone())).unwrap();
+    assert_eq!(change(block(client.kept_playlist_written(add)).unwrap()), (vec!["s2".into(), "s3".into()], vec![]));
+    settle(&["s2", "s3"]);
+    let rename = Write::RenamePlaylist { id: "p".into(), name: "q".into() };
+    assert_eq!(block(client.kept_playlist_written(rename)).unwrap(), Default::default(), "the songs stay");
+
+    let delete = Write::DeletePlaylist { id: "p".into() };
+    block(client.write(delete.clone())).unwrap();
+    assert_eq!(change(block(client.kept_playlist_written(delete)).unwrap()), (vec![], vec!["s1".into(), "s2".into(), "s3".into()]));
 }
 
 #[test]
