@@ -496,49 +496,37 @@ class PlaybackService : MediaLibraryService() {
     private var buttonsShown: dev.nori.music.ffi.SessionButtons? = null
     private var repeatShown = -1
 
-    private var carShown = false
-
-    /** The system session's extra buttons, kept for a notification controller that connects later. */
-    private var notificationButtons: List<CommandButton> = emptyList()
-
     /** As the app's heart has it: this session's mark, else the song as the queue playing it holds it - another device's while it plays. */
     private fun currentStarred(item: MediaItem): Boolean =
         nori.library.isStarred(StarKind.SONG, item.mediaId, if (shown === elsewhere) elsewhere.currentStarred else nori.session.queueStarred(item.mediaId))
 
     /**
      * Heart and shuffle beside previous / play / next, in the secondary slots the way other players put
-     * them, for a controller that shows them; the notification and lock screen get the heart alone. A car
-     * reads the same system session, so it stays full while Android Auto is connected. Called when the
-     * track, the shuffle flag, a star or the car changes - never on a timer. Whether the heart shows and
-     * what each does are the core's (shown.rs session_buttons_now); what they say, ours.
+     * them. Called when the track, the shuffle flag or a star changes - never on a timer. Whether the
+     * heart shows and what each does are the core's (shown.rs session_buttons_now); what they say, ours.
      */
     private fun refreshButtons() {
         if (!::session.isInitialized) return
         val item = shown.currentMediaItem
         val b = nori.core.sessionButtonsNow(item != null && currentStarred(item), shown.shuffleModeEnabled)
-        val car = session.connectedControllers.any { session.isAutoCompanionController(it) }
-        if (b == buttonsShown && shown.repeatMode == repeatShown && car == carShown) return
-        carShown = car
+        if (b == buttonsShown && shown.repeatMode == repeatShown) return
         buttonsShown = b
         repeatShown = shown.repeatMode
         val buttons = ArrayList<CommandButton>(4)
-        val seal = if (b.heart) {
+        if (b.heart) {
             // Nori's seal, not the system's heart: no icon a controller would draw its own glyph for.
-            listOf(CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+            buttons += CommandButton.Builder(CommandButton.ICON_UNDEFINED)
                 .setCustomIconResId(if (b.starred) R.drawable.seal else R.drawable.seal_outline)
                 .setDisplayName(getString(if (b.starred) R.string.session_remove_favourite else R.string.session_add_favourite))
                 .setSessionCommand(SessionCommand(if (b.starred) CMD_UNFAVOURITE else CMD_FAVOURITE, Bundle.EMPTY))
-                .setSlots(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW).build())
-        } else {
-            emptyList()
+                .setSlots(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW).build()
         }
-        buttons += seal
         buttons += CommandButton.Builder(if (b.shuffling) CommandButton.ICON_SHUFFLE_ON else CommandButton.ICON_SHUFFLE_OFF)
             .setDisplayName(getString(if (b.shuffling) R.string.session_shuffle_off else R.string.session_shuffle_on))
             .setSessionCommand(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
             .setSlots(CommandButton.SLOT_FORWARD_SECONDARY, CommandButton.SLOT_OVERFLOW).build()
         // Then repeat and a radio from a song of the library, in the overflow: a car's now playing lists them
-        // after the heart and shuffle.
+        // after the heart and shuffle; the phone's media controls, which show two, keep those.
         val (icon, said) = when (shown.repeatMode) {
             Player.REPEAT_MODE_ALL -> CommandButton.ICON_REPEAT_ALL to R.string.car_repeat_all
             Player.REPEAT_MODE_ONE -> CommandButton.ICON_REPEAT_ONE to R.string.car_repeat_one
@@ -548,9 +536,7 @@ class PlaybackService : MediaLibraryService() {
             .setSlots(CommandButton.SLOT_OVERFLOW).build()
         if (b.heart) buttons += CommandButton.Builder(CommandButton.ICON_RADIO).setDisplayName(getString(R.string.car_start_radio))
             .setSessionCommand(SessionCommand(CMD_RADIO, Bundle.EMPTY)).setSlots(CommandButton.SLOT_OVERFLOW).build()
-        notificationButtons = if (car) buttons else seal
         session.setMediaButtonPreferences(buttons)
-        session.mediaNotificationControllerInfo?.let { session.setMediaButtonPreferences(it, notificationButtons) }
     }
 
     /** Tells the remote control (if it is on) the player changed; a null check otherwise. */
@@ -983,9 +969,7 @@ class PlaybackService : MediaLibraryService() {
                 .add(SessionCommand(CMD_CLEAR, Bundle.EMPTY)).add(SessionCommand(CMD_PUT_BACK_CLEARED, Bundle.EMPTY))
                 .add(SessionCommand(CarTree.CMD_ITEM_NEXT, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_QUEUE, Bundle.EMPTY))
                 .add(SessionCommand(CarTree.CMD_ITEM_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_DOWNLOAD, Bundle.EMPTY)).build()
-            val result = MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(commands)
-            if (session.isMediaNotificationController(controller)) result.setMediaButtonPreferences(notificationButtons)
-            return result.build()
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(commands).build()
         }
 
         override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
@@ -1030,11 +1014,6 @@ class PlaybackService : MediaLibraryService() {
         // Tuning goes with its controller: the app stopped (it lets go of the service) or its process died.
         override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
             tuning(controller, false)
-            if (session.isAutoCompanionController(controller)) refreshButtons()
-        }
-
-        override fun onPostConnect(session: MediaSession, controller: MediaSession.ControllerInfo) {
-            if (session.isAutoCompanionController(controller)) refreshButtons()
         }
 
         override fun onAddMediaItems(session: MediaSession, controller: MediaSession.ControllerInfo, items: MutableList<MediaItem>): ListenableFuture<MutableList<MediaItem>> {
