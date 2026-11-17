@@ -26,7 +26,6 @@ pub struct Stage {
     pub soft_to: f32,
     pub status_shade: f32,
     pub status_shade_to: f32,
-    pub hero_stops: Vec<f32>,
     pub floor_stops: Vec<f32>,
     pub lyrics_mask: Vec<sleeve::Stop>,
 
@@ -90,7 +89,6 @@ pub fn stage() -> Stage {
         soft_to: sleeve::SOFT_TO,
         status_shade: sleeve::STATUS_SHADE,
         status_shade_to: sleeve::STATUS_SHADE_TO,
-        hero_stops: sleeve::HERO_STOPS.to_vec(),
         floor_stops: sleeve::FLOOR_STOPS.to_vec(),
         lyrics_mask: sleeve::LYRICS_MASK.to_vec(),
         spinner_after_ms: 300,
