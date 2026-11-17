@@ -62,10 +62,10 @@ import androidx.compose.foundation.layout.windowInsetsPadding
  * edge under the status bar and dissolves into the page, the page wears the colour the artwork ends
  * on, and the title, the artist and the two big buttons sit centred underneath it.
  *
- * The dissolve is the point. The wash starts from the average colour of the cover's own bottom rows,
- * so there is no line where the picture stops - it simply runs out of picture. Everything is static:
- * one gradient, no blur, no animation, so an open page costs nothing between frames. Scrolling moves
- * the artwork in the draw phase only, so it never recomposes.
+ * The dissolve is the point. The artwork fades into the page as the player's sleeve does
+ * ([SoftSleeve]): its last stretch blurs and eases out, so there is no line where the picture stops - it
+ * simply runs out of picture. Nothing animates, so an open page costs nothing between frames. Scrolling
+ * moves the artwork in the draw phase only, so it never recomposes.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -180,30 +180,16 @@ fun HeroPage(
                         alpha = 1f - (scrolled / size.height).coerceIn(0f, 1f) * 0.5f
                     },
             ) {
-                picture(Modifier.fillMaxSize())
-                val look = LocalLook.current
+                // The cover fades into the page as the player's sleeve does: its last stretch blurs and eases
+                // out with no slope at either end, so there is no row where the picture is seen to stop, and
+                // the title stands where that fade is nearly over. It ends on the page inside the artwork, so
+                // the parallax never slides a seam into view.
+                SoftSleeve(Modifier.fillMaxSize()) { picture(Modifier.fillMaxSize()) }
+                // Just enough shade under the status bar for white icons on a pale cover.
                 Box(
                     Modifier.fillMaxSize().drawWithCache {
-                        // The whole dissolve happens inside the artwork, and finishes on the
-                        // page colour rather than on the cover's edge colour: a second gradient
-                        // below would be squeezed into a few dozen pixels as the parallax slides
-                        // the picture down over it, and a colour ramp that steep across the full
-                        // width is a line. The stops are the look's (nori_look::dress), made
-                        // into brushes once per size.
-                        val at = stage.heroStops
-                        val dissolve = Brush.verticalGradient(
-                            at[0] to Color.Transparent,
-                            at[1] to look.color(CoverLook.HERO_EDGE),
-                            at[2] to look.color(CoverLook.HERO_MID),
-                            at[3] to look.color(CoverLook.BACKGROUND),
-                        )
-                        // Just enough shade under the status bar for white icons on a pale cover.
                         val shade = Brush.verticalGradient(0f to Color.Black.copy(alpha = stage.statusShade), stage.statusShadeTo to Color.Transparent)
-                        onDrawWithContent {
-                            drawContent()
-                            drawRect(dissolve)
-                            drawRect(shade)
-                        }
+                        onDrawBehind { drawRect(shade) }
                     },
                 )
             } else if (art != null) Box(

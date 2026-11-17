@@ -56,7 +56,8 @@ pub const SOFT_TO: f32 = 1.0 - SAMPLE_SHARE * 0.55;
 pub const STATUS_SHADE: f32 = 0.50;
 pub const STATUS_SHADE_TO: f32 = 0.20;
 
-/// Album artwork dissolve: clear until `[0]`, then `HERO_EDGE`, `HERO_MID` and the page colour. Ends
+/// The iPod's artwork dissolve, on its album pages and its player alike (Android's album pages fade as
+/// its player's sleeve does): clear until `[0]`, then `HERO_EDGE`, `HERO_MID` and the page colour. Ends
 /// on the page colour inside the artwork so parallax never exposes a seam.
 pub const HERO_STOPS: [f32; 4] = [0.60, 0.76, 0.88, 1.0];
 /// Opacity of the dissolve at each of [`HERO_STOPS`].
