@@ -2233,6 +2233,24 @@ fn playing(songs: &[(&str, &[i16])], app: impl App + Send + 'static, settings: S
     rig
 }
 
+/// A start an output plays seconds late (a Bluetooth headset taken by another device) is logged with what
+/// the engine holds, and once heard, after how long.
+#[test]
+fn a_start_heard_late_is_logged() {
+    let a = vec![8000i16; RATE as usize * 2 * 30];
+    let live = Live::new(prefs_off());
+    let extra = Extra { periods: Some((RATE as usize / 100, 5_000_000)), ..Extra::default() };
+    let rig = Rig::build(files(&[("a", &a)]), live.clone(), Settings::default(), extra);
+    let said = |what: &str| live.0.lock().log.iter().any(|l| l.contains(what));
+    rig.engine.play_at(0, 0);
+    rig.run(2_500);
+    assert!(!said("no music heard"), "not yet: {:?}", live.0.lock().log);
+    rig.run(1_000);
+    assert!(said("playing, and no music heard for 3") && said("ring "), "{:?}", live.0.lock().log);
+    assert!(rig.wait_for(10, |r| !r.engine.status().buffering), "heard in the end");
+    assert!(said("music heard after "), "{:?}", live.0.lock().log);
+}
+
 #[test]
 fn bit_perfect_drops_replay_gain() {
     let (a, b) = (music(20.0, 32), music(10.0, 33));

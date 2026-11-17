@@ -1011,18 +1011,19 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     fn fail(&mut self, i: usize, kind: PlaybackError, why: String) {
         let id = self.id_at(i);
         let next = self.next_of(i);
-        self.failures.push((id.clone(), why));
+        let said = format!("{id} will not play ({why})");
+        self.failures.push((id, why));
         let decided = match self.app.on_error(kind, next.is_some()) {
             Some(d) => d,
             None => self.errors.failed(kind, false, false, next.is_some()),
         };
         match (decided, next) {
             (OnError::Skip, Some(n)) => {
-                self.app.log(&format!("{id} will not play: skipped"));
+                self.app.log(&format!("{said}: skipped"));
                 self.jump(n, 0);
             }
             _ => {
-                self.app.log(&format!("{id} will not play: stopped"));
+                self.app.log(&format!("{said}: stopped"));
                 let halt = match decided {
                     OnError::Bridge => Halt::Bridge,
                     OnError::Wait => Halt::Wait,
