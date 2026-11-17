@@ -1167,12 +1167,12 @@ impl Runner {
     /// Changes a playlist on the server, then says `said` and has the playlists read again.
     /// Asks for `w`, then says `said` and reads the playlists again, and playlist `page` when its page changed.
     fn playlist_write(&self, s: &Session, w: nori_core::client::Write, said: String, page: Option<String>) {
-        let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+        let (handle, tx, id) = (nori_host::session::Handle::clone(s), self.tx.clone(), s.id);
         nori_host::spawn("nori-playlist", move || {
             let send = |m: Msg| {
                 let _ = tx.send(Msg::From(id, Box::new(m)));
             };
-            match block_on(client.write(w)) {
+            match handle.write_playlist(w) {
                 Ok(()) => {
                     send(Msg::Note { text: said, error: false });
                     send(Msg::Reload(crate::backend::Req::Playlists));

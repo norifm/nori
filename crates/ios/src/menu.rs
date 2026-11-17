@@ -103,7 +103,7 @@ fn play_radio(song: Song) -> i32 {
 }
 
 fn wrote(w: Write) -> i32 {
-    server().map_or(0, |(client, _)| i32::from(nori_core::transport::block_on(client.write(w)).is_ok()))
+    with_session(|s| nori_host::session::Handle::clone(s)).map_or(0, |h| i32::from(h.write_playlist(w).is_ok()))
 }
 
 /// Keeps the playing song (here, or on the device this one mirrors) as a one-song list under `token`, for

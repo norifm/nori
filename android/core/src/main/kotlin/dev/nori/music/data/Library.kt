@@ -76,6 +76,8 @@ object Covers {
 class Library(
     private val coreOf: () -> Core,
     private val clientOf: () -> Client,
+    /** What a playlist write changed in the playlists kept downloaded, for the downloads to do. */
+    private val keptChanged: (dev.nori.music.ffi.transfers.KeptChange) -> Unit,
 ) {
     // Resolved on every use, which is always on an IO thread: the core belongs to the active server profile
     // and building it costs ~100 ms the UI thread should not pay.
@@ -313,7 +315,12 @@ class Library(
     private val _playlistsVersion = MutableStateFlow(0)
     val playlistsVersion: StateFlow<Int> = _playlistsVersion.asStateFlow()
 
-    private suspend fun writePlaylist(w: Write) { write(w); _playlistsVersion.update { it + 1 } }
+    /** A playlist write; a kept playlist it changed follows at once (the core's `kept_playlist_written`). */
+    private suspend fun writePlaylist(w: Write) {
+        write(w)
+        _playlistsVersion.update { it + 1 }
+        runCatching { withContext(Dispatchers.IO) { lifted { client.keptPlaylistWritten(w) } } }.onSuccess(keptChanged)
+    }
 
     suspend fun createPlaylist(name: String, songIds: List<String>) = writePlaylist(Write.CreatePlaylist(name, songIds))
 
@@ -365,8 +372,9 @@ class Library(
 
     suspend fun sync(): IngestStats = withContext(Dispatchers.IO) { lifted { client.syncLibrary() } }
 
-    /** Brings the playlists kept downloaded up to date with the server (the core's `kept_playlists_sync`). */
-    suspend fun syncKept(): dev.nori.music.ffi.transfers.KeptChange = withContext(Dispatchers.IO) { lifted { client.keptPlaylistsSync() } }
+    /** Brings the playlists kept downloaded up to date with the server when [check] is due (the core's `kept_playlists_sync`). */
+    suspend fun syncKept(check: dev.nori.music.ffi.transfers.KeptCheck): dev.nori.music.ffi.transfers.KeptChange =
+        withContext(Dispatchers.IO) { lifted { client.keptPlaylistsSync(check) } }
 
     suspend fun indexSize(): IngestStats = withContext(Dispatchers.IO) { core.indexSize() }
 

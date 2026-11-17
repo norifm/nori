@@ -515,9 +515,7 @@ impl Session {
         if !h.offline && h.rules().downloads && h.core.download_counts().pending > 0 {
             h.start_downloads();
         }
-        if !h.offline && h.rules().downloads {
-            h.sync_kept();
-        }
+        h.sync_kept(nori_core::transfers::KeptCheck::Opened);
         Ok(Session { h })
     }
 
@@ -863,6 +861,9 @@ impl Handle {
         // The player shows on every page of a desktop client while it is seen.
         #[cfg(feature = "desktop")]
         self.player_shown(seen);
+        if seen {
+            self.sync_kept(nori_core::transfers::KeptCheck::Shown);
+        }
         let Some(remote) = self.remote() else { return };
         remote.clone().sight(if seen { nori_core::remote::Sight::Screen } else { nori_core::remote::Sight::Nothing });
         if seen {
@@ -1069,14 +1070,30 @@ impl Handle {
         }
     }
 
-    /// Brings the playlists kept downloaded up to date with the server (`Client::kept_playlists_sync`).
-    fn sync_kept(&self) {
+    /// Brings the playlists kept downloaded up to date with the server when `check` is due
+    /// (`Client::kept_playlists_sync`).
+    fn sync_kept(&self, check: nori_core::transfers::KeptCheck) {
+        if self.offline || !self.rules().downloads {
+            return;
+        }
         let me = self.clone();
         self.run(async move {
-            if let Ok(change) = me.client.kept_playlists_sync().await {
+            if let Ok(change) = me.client.kept_playlists_sync(check).await {
                 me.kept_changed(change);
             }
         });
+    }
+
+    /// Sends `w`, a change to a playlist, and waits for the server to take it; a kept playlist it changed
+    /// then follows before this returns (`Client::kept_playlist_written`). Not on a UI thread.
+    pub fn write_playlist(&self, w: nori_core::client::Write) -> Result<(), NetError> {
+        block_on(self.client.write(w.clone()))?;
+        if !self.offline && self.rules().downloads {
+            if let Ok(change) = block_on(self.client.kept_playlist_written(w)) {
+                self.kept_changed(change);
+            }
+        }
+        Ok(())
     }
 
     /// Does what keeping playlists downloaded changed: the songs queued download, covers too, and those
@@ -1834,9 +1851,8 @@ fn queueable(songs: Vec<Song>) -> Vec<Song> {
     if songs.len() == 1 { songs } else { songs.into_iter().filter(|s| !s.is_provider()).collect() }
 }
 
-/// Queues `songs` but providers' for download, their covers fetched to disk too; what to say of it.
+/// Queues `songs` for download, their covers fetched to disk too; what to say of it.
 fn queue_downloads(core: &Core, covers: Option<&Arc<Loader>>, songs: Vec<Song>) -> Note {
-    let songs: Vec<Song> = songs.into_iter().filter(|s| !s.is_provider()).collect();
     warm_covers(core, covers, &songs);
     match core.download_queue(songs) {
         Ok(q) => Note::Downloading(q.fresh.len() + q.again.len()),
@@ -1949,7 +1965,7 @@ mod tests {
         core.download_queue(vec![song("done")]).unwrap();
         core.download_settle(vec!["done".into()], vec![true]).unwrap();
         let said = queue_downloads(&core, None, vec![song("done"), song("new"), song("ext-1")]);
-        assert!(matches!(said, Note::Downloading(1)), "the finished and the provider's song are not downloaded");
+        assert!(matches!(said, Note::Downloading(2)), "the finished song is not downloaded again; a provider's is");
     }
 
     #[test]

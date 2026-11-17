@@ -123,7 +123,7 @@ class Nori private constructor(private val context: Context) {
         if (lazySources.isInitialized()) sources.setStreamLimitMb(settings.effective.value.cacheMb)
     }
 
-    val library = Library(::core, ::client)
+    val library = Library(::core, ::client) { downloads.kept(it) }
     val downloads = Downloads(context, ::core, ::client, { analyses }, lazySources, settings)
     val dac = BitPerfect(context)
     private val pluginScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)

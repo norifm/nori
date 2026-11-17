@@ -432,10 +432,16 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         runCatching { core.downloadPlaylist(id, songs) }.onSuccess(::kept).onFailure { Log.w(TAG, "could not download playlist $id", it) }
     }
 
-    /** Does what keeping playlists downloaded changed: the songs queued download, those that left go. */
+    /** Does what keeping playlists downloaded changed: the songs queued download, covers too, and those that left go. */
     fun kept(change: dev.nori.music.ffi.transfers.KeptChange) {
         queued(Result.success(change.queued))
         if (change.gone.isNotEmpty()) main.post { remove(change.gone) }
+        val ids = (change.queued.fresh + change.queued.again).toSet()
+        if (ids.isNotEmpty()) io.execute {
+            val covers = core.downloads(false).filter { it.id in ids }.mapNotNull { it.coverArt }
+            val loader = dev.nori.music.data.CoverLoader.get(context)
+            for (url in core.downloadCoverUrls(covers)) loader.warm(url)
+        }
     }
 
     /** Every song of the offline index, in one call to the core; sync the library first so the index is complete. */
