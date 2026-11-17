@@ -157,7 +157,7 @@ fn failing_songs() {
     p.play_from(0);
     p.run_for(15_000);
     let skipped: Vec<&str> = p.app.log.iter().filter(|l| l.contains("will not play")).map(String::as_str).collect();
-    assert_eq!(skipped, ["s1 will not play: skipped", "s2 will not play: skipped", "s3 will not play: skipped", "s4 will not play: stopped"]);
+    assert_eq!(skipped, ["s1 will not play (s1 is broken): skipped", "s2 will not play (s2 is broken): skipped", "s3 will not play (s3 is broken): skipped", "s4 will not play (s4 is broken): stopped"]);
     assert!(!p.playing(), "stopped after three in a row");
     assert_eq!(p.sink.heard_frames as usize, frames(4.0), "only the first song was heard; s5 never played");
 
@@ -167,7 +167,7 @@ fn failing_songs() {
     p.tracks.broken = ["s1", "s3", "s4", "s5"].map(String::from).to_vec();
     p.play_from(0);
     p.run_for(20_000);
-    let skipped = p.app.log.iter().filter(|l| l.ends_with("will not play: skipped")).count();
+    let skipped = p.app.log.iter().filter(|l| l.ends_with("is broken): skipped")).count();
     assert_eq!(skipped, 4, "{:?}", p.app.log);
     assert!(p.changes.iter().any(|c| c.1 == 6), "the last song played: {:?}", p.changes);
     assert_eq!(p.sink.heard_frames as usize, frames(9.0), "s0, s2 and s6");

@@ -921,6 +921,8 @@ struct Told {
     heard: Option<(usize, String)>,
     loops: u32,
     stalled: bool,
+    /// Since when (engine ms) a stall has gone on, and whether it was logged ([`Worker::say_waits`]).
+    waited: Option<(i64, bool)>,
     /// Music was heard playing at the last report, through any jump since.
     audible: bool,
     placed: bool,
@@ -960,6 +962,10 @@ const PANICS_KEPT_ON: usize = 3;
 /// Playing with the position still this long and no bytes on their way, the song is opened again from
 /// scratch: an output that stopped taking music without saying so.
 const STALL_RESTART_MS: i64 = 10_000;
+/// A turn this long is logged ([`Worker::step`]).
+const SLOW_TURN_MS: i64 = 1_000;
+/// Playing with no music heard this long is logged, with what the engine holds, and again once it comes.
+const SLOW_MUSIC_MS: i64 = 3_000;
 /// A standing position is looked at once more at this point, so a watching client sees it.
 const STALL_SAY_MS: i64 = 5_000;
 const STANDING_MS: i64 = 250;
@@ -1176,12 +1182,19 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
     }
 
-    /// One turn, a panicking one recovered: ms until the next (`None`: until woken), or `None` to stop.
+    /// One turn, a panicking one recovered: ms until the next (`None`: until woken), or `None` to stop. A
+    /// turn held up (a device slow to start, a callback waiting) is logged: nothing else runs meanwhile.
     fn step(&mut self) -> Option<Option<i64>> {
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.turn())) {
+        let started = self.now();
+        let wake = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.turn())) {
             Ok(w) => w,
             Err(p) => Some(self.panicked(panic_words(&*p))),
+        };
+        let took = self.now() - started;
+        if took >= SLOW_TURN_MS {
+            self.p.app.log(&format!("one turn of the engine took {took} ms"));
         }
+        wake
     }
 
     /// After a panicking turn: recovers (itself guarded), or waits for a command.
@@ -2789,6 +2802,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             return self.check_offload();
         }
         if let Some(message) = self.p.sink.track.take_failure() {
+            self.p.app.log(&format!("the output failed: {message}"));
             (self.events)(Event::Error { id: String::new(), message });
             self.p.pause();
             self.set_state(State::Idle);
@@ -2954,6 +2968,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// Ends a [`Event::Buffering`]: the CPU path no longer waits for bytes.
     fn unstall(&mut self) {
+        self.told.waited = None;
         self.status.lock().buffering = false;
         if std::mem::take(&mut self.told.stalled) {
             (self.events)(Event::Buffering(false));
@@ -3075,7 +3090,28 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         if stall_changed {
             (self.events)(Event::Buffering(stalled));
         }
+        self.say_waits(now, stalled);
         self.say_changes(now, i, ms, other, looped, mixing_was, mixing);
+    }
+
+    /// Logs playing with no music heard for [`SLOW_MUSIC_MS`], with what the engine holds, and how long
+    /// it took once music comes: a wait the user sees as loading.
+    fn say_waits(&mut self, now: i64, stalled: bool) {
+        match (stalled, self.told.waited) {
+            (true, None) => self.told.waited = Some((now, false)),
+            (true, Some((since, false))) if now - since >= SLOW_MUSIC_MS => {
+                self.told.waited = Some((since, true));
+                let words = self.words((self.p.sink.track.filled_us() + self.p.sink.track.latency_us()) / 1000);
+                self.p.app.log(&format!("playing, and no music heard for {} ms: {words}", now - since));
+            }
+            (false, Some((since, said))) => {
+                if said {
+                    self.p.app.log(&format!("music heard after {} ms of waiting", now - since));
+                }
+                self.told.waited = None;
+            }
+            _ => {}
+        }
     }
 
     /// [`Worker::report`] while the songs go to the output's decoder: the queue follows the song heard,
@@ -3296,6 +3332,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         // A start is said once its first sample is heard, the output's latency after it was written.
         if self.p.unheard() && !self.told.audible {
             at((track.latency_us() / 1000).max(START_HEARD_MS));
+        }
+        if let Some((since, false)) = self.told.waited {
+            at((since + SLOW_MUSIC_MS - now).max(1));
         }
         // With no screen watching, only a change of song needs saying on time (the notification, a car).
         for u in [self.p.until_next_song_us().map(|u| (u, 5)), self.p.until_heard_changes_us(!positions).map(|u| (u, 1))].into_iter().flatten() {
