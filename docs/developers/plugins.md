@@ -392,7 +392,8 @@ nori decides and with a 100 ms budget per call; past it, or with none enabled, n
 ## Slots
 
 Places in nori's screens a plugin fills, each named in its manifest (`places`, `menu`) and drawn by the
-client from what the plugin answers (`crates/plugins/src/slots.rs`); one not named is never asked.
+client from what the plugin answers (`crates/plugins/src/slots.rs`); one not named is never asked. Each
+that calls the plugin needs it to export `slots`; devices calls nothing, so a plugin of rows alone fills it.
 
 | place | the plugin answers | the client |
 |---|---|---|

@@ -149,9 +149,10 @@ impl Plugins {
         out
     }
 
-    /// The plugins whose rows show on the devices sheet ("Playing on") too, in `lang`.
+    /// The plugins whose rows show on the devices sheet ("Playing on") too, in `lang`. Nothing is called
+    /// there, so it takes no slots.
     pub fn device_cards(&self, lang: String) -> Vec<PluginCard> {
-        let shown = self.filling(Place::Devices);
+        let shown: Vec<String> = self.running().into_iter().filter(|i| i.manifest.places.contains(&Place::Devices)).map(|i| i.manifest.id.clone()).collect();
         self.cards(lang).into_iter().filter(|c| shown.contains(&c.id)).collect()
     }
 }

@@ -546,6 +546,16 @@ fn slots_ask_the_plugins_that_fill_them() {
     assert_eq!(plugins.device_cards("en".into()).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec![ID]);
 }
 
+#[test]
+fn a_plugin_of_rows_alone_shows_them_on_the_devices_sheet() {
+    let dir = nori_testdir::TempDir::new("plugins-devices-rows");
+    let plugins = Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
+    plugins.install(&fixture("rows-only")).unwrap();
+    plugins.turn(ID.into(), true);
+    assert_eq!(plugins.device_cards("en".into()).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec![ID]);
+    assert_eq!(nori_tasks::block_on(plugins.player_status()), Vec::<String>::new(), "a place it is called for needs slots");
+}
+
 /// `pkg`'s sha256 (hex), the key made from `seed` (hex), and that key's signature over the sha256 (hex).
 fn signed(pkg: &[u8], seed: u8) -> (String, String, String) {
     use ed25519_dalek::Signer;
