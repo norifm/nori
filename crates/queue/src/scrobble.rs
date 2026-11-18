@@ -1,6 +1,6 @@
 //! Play counting. Listening time is summed from play/pause edges and judged when the song is left (no
 //! timer). The song left is recorded in the local history in the background; the platform is told what
-//! to send the server.
+//! to send (nori-core's `Client::scrobble`).
 
 use std::sync::{Arc, Weak};
 
@@ -65,15 +65,16 @@ pub trait Scrobbles: Send + Sync {
     fn scrobble(&self, song: &Song, at_ms: i64);
 }
 
-/// What to tell the server when a song is left.
+/// What to tell the server and the scrobbling accounts when a song is left.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct ScrobbleSend {
-    /// The song left, if heard long enough to count, and when it started.
-    pub submit_id: Option<String>,
-    pub submit_at: i64,
-    /// For the server's "now playing".
-    pub now_playing_id: Option<String>,
+    /// The song left, if heard long enough to count.
+    pub counted: Option<Song>,
+    /// When it started, wall clock ms.
+    pub counted_at: i64,
+    /// The song now playing.
+    pub playing: Option<Song>,
 }
 
 /// Listening needed for a play to count, Last.fm's rule: half of `duration_s` or 4 minutes, whichever
@@ -130,9 +131,9 @@ impl Session {
     }
 
     /// The player's song changed to `id`. Records the song left in the history when the taste model is
-    /// on, and returns what to scrobble when scrobbling is on.
+    /// on, and returns what to scrobble.
     pub fn scrobble_track(&self, id: Option<String>, why: TrackChange, playing: bool, now_ms: i64, wall_ms: i64, tz_offset_ms: i32) -> ScrobbleSend {
-        let (taste_model, scrobble) = self.settings.in_effect(|p| (p.taste_model, p.scrobble));
+        let taste_model = self.settings.in_effect(|p| p.taste_model);
         let next = followed(id, why);
         let song = next.as_deref().and_then(|id| self.song(id));
         let open = self.db.weak();
@@ -147,19 +148,17 @@ impl Session {
             }
         }
         let counted = done.filter(|c| Weak::ptr_eq(&c.profile, &open) && c.heard_ms >= needed_ms(c.song.duration as i64));
+        let playing = next.as_deref().and_then(|id| self.song(id));
         if let Some(to) = self.scrobbles.lock().clone() {
             if let Some(c) = &counted {
                 to.scrobble(&c.song, c.started_at);
             }
-            if let Some(s) = next.as_deref().and_then(|id| self.song(id)) {
-                to.now_playing(&s);
+            if let Some(s) = &playing {
+                to.now_playing(s);
             }
         }
-        if !scrobble {
-            return ScrobbleSend { submit_id: None, submit_at: 0, now_playing_id: None };
-        }
-        let submit_at = counted.as_ref().map_or(0, |c| c.started_at);
-        ScrobbleSend { submit_id: counted.map(|c| c.song.id), submit_at, now_playing_id: next }
+        let counted_at = counted.as_ref().map_or(0, |c| c.started_at);
+        ScrobbleSend { counted: counted.map(|c| c.song), counted_at, playing }
     }
 }
 
@@ -206,8 +205,8 @@ mod tests {
     }
 
     #[test]
-    fn plays_go_to_a_sink_by_the_same_rule_whatever_the_server_switch() {
-        let (_dir, session) = crate::playlist::tests::opened(|p| p.scrobble = false);
+    fn plays_go_to_a_sink_by_the_same_rule() {
+        let (_dir, session) = crate::playlist::tests::opened(|_| {});
         let song = |id: &str| Song { id: id.into(), duration: 100, ..Default::default() };
         session.register(vec![song("a"), song("b"), song("c")]);
         let told = Arc::new(Told::default());
@@ -217,7 +216,7 @@ mod tests {
         session.scrobble_track(Some("b".into()), TrackChange::Moved, true, 20_000, 21_000, 0);
         // Heard 60 s: counts, with its start.
         let sent = session.scrobble_track(Some("c".into()), TrackChange::Moved, true, 80_000, 81_000, 0);
-        assert_eq!(sent.submit_id, None, "the server's switch is off");
+        assert_eq!((sent.counted.map(|s| s.id), sent.counted_at, sent.playing.map(|s| s.id)), (Some("b".into()), 21_000, Some("c".into())));
         assert_eq!(*told.0.lock(), ["now a", "now b", "play b 21000", "now c"]);
         session.scrobble_to(None);
         session.scrobble_track(None, TrackChange::Ended, false, 200_000, 201_000, 0);

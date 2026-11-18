@@ -132,6 +132,30 @@ char *nori_ios_profile_icons(void);
 void nori_ios_set_server_icon(const char *data_dir, const char *id, const char *icon);
 /// Renames saved server `id`; blank, it is called after its provider again.
 void nori_ios_rename_server(const char *data_dir, const char *id, const char *name);
+/// Server `id`'s scrobbling accounts as JSON to free: [{id, kind, user, host, on}], `kind` "listenbrainz",
+/// "librefm" or "lastfm", `host` empty for the kind's own service.
+char *nori_ios_scrobblers(const char *data_dir, const char *id);
+/// Whether server `id` is told what plays itself, first in its scrobbling list: 1 on, 0 off, -1 where
+/// its rules have it take none.
+int32_t nori_ios_scrobble_itself(const char *data_dir, const char *id);
+/// Server `id` told what plays itself (non-zero), or not.
+void nori_ios_switch_scrobble_itself(const char *data_dir, const char *id, int32_t on);
+/// Server `id`'s scrobbling account `account` on (non-zero) or off.
+void nori_ios_switch_scrobbler(const char *data_dir, const char *id, const char *account, int32_t on);
+/// Server `id` without its scrobbling account `account`.
+void nori_ios_remove_scrobbler(const char *data_dir, const char *id, const char *account);
+/// The kinds of scrobbling account a profile can add, in order, as JSON to free:
+/// [{kind, signIn: "form"|"browser", help, fields: [{id, required, advanced}]}].
+char *nori_ios_scrobbler_kinds(void);
+/// A token to allow on the service's page for the account `form` describes (as nori_ios_add_scrobbler
+/// takes it), as JSON to free: {token, page}. Blocks on the network. NULL when there is none, a
+/// NORI_LOGIN_ code in `code` and `detail` as nori_ios_login's.
+char *nori_ios_scrobbler_approval(const char *form, int32_t *code, char **detail);
+/// Signs in to the scrobbling account `form` describes, JSON {kind, fields: {id: typed}, approved} by
+/// the ids nori_ios_scrobbler_kinds gives, `approved` the token allowed on the service's page where it
+/// signs in there, and keeps it in server `id`. Blocks on the network. A NORI_LOGIN_ code; `detail` as
+/// nori_ios_login's.
+int32_t nori_ios_add_scrobbler(const char *data_dir, const char *id, const char *form, char **detail);
 /// Makes server `id` the active one: 1, or 0 for an unknown id. Takes effect at nori_ios_reopen.
 int32_t nori_ios_pick_server(const char *data_dir, const char *id);
 void nori_ios_remove_server(const char *data_dir, const char *id);

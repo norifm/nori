@@ -282,6 +282,13 @@ class Nori private constructor(private val context: Context) {
     /** A profile renamed; blank, it is called after its provider again. */
     fun renameProfile(profile: SavedServer, name: String) = setProfileLook(profile.copy(name = name.trim()))
 
+    /** [profile] saved with its scrobbling accounts changed. */
+    fun setScrobblers(profile: SavedServer) = setProfileLook(profile)
+
+    /** Signs in to the scrobbling account [form] describes (the core's `Client::sign_in_scrobbler`). */
+    suspend fun signInScrobbler(form: dev.nori.music.ffi.ScrobblerForm): dev.nori.music.ffi.settings.SavedScrobbler = client.signInScrobbler(form)
+    suspend fun scrobblerApproval(form: dev.nori.music.ffi.ScrobblerForm): dev.nori.music.ffi.ScrobblerApproval = client.scrobblerApproval(form)
+
     /** [profile] saved with nothing its connection reads changed, so nothing reconnects. */
     private fun setProfileLook(profile: SavedServer) {
         settings.update { p -> p.withServers(dev.nori.music.ffi.settings.serversUpdated(p.serverList(), profile)) }

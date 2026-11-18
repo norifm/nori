@@ -185,6 +185,8 @@ pub enum Cmd {
     SwitchServer(String),
     /// Saved profile `0` renamed `1`; blank, it is called after its provider again.
     RenameProfile(String, String),
+    /// Saved profile `profile`'s scrobbling accounts changed, or one signed in to and added.
+    Scrobbler { profile: String, change: ScrobblerChange },
     /// The account acts as its identity at this place from now on.
     ChooseIdentity(u32),
     /// Moves the music to this device, or here (None).
@@ -1074,6 +1076,19 @@ pub enum Overlay {
     Account { kind: nori_core::settings::ServerKind, ways: Vec<nori_core::providers::SignIn>, user: String, pasting: bool, text: String, flow: SignInFlow, window_failed: bool },
 }
 
+/// A change to a profile's scrobbling accounts.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScrobblerChange {
+    /// The profile's server told what plays, or not.
+    Itself(bool),
+    Switch { id: String, on: bool },
+    Remove(String),
+    /// Sign in to the account the form describes and keep it.
+    SignIn(Box<nori_core::scrobblers::ScrobblerForm>),
+    /// Ask for a token to allow on the service's page for the account the form describes.
+    Approve(Box<nori_core::scrobblers::ScrobblerForm>),
+}
+
 /// What a picker sets.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
@@ -1105,6 +1120,13 @@ pub enum Target {
     Sleep(Vec<nori_core::menus::SleepChoice>),
     /// Saved profile `0`'s new name.
     ProfileName(String),
+    /// A line of saved profile `0`'s scrobbling accounts ([`crate::settings_view::SettingsView::scrobbling_menu`]).
+    Scrobbling(String),
+    /// The kind of scrobbling account to add to saved profile `0`.
+    ScrobblerKind(String),
+    /// The next field of a scrobbling account being added to `profile`: `step` of
+    /// [`nori_core::scrobblers::scrobbler_fields`].
+    ScrobblerField { profile: String, form: Box<nori_core::scrobblers::ScrobblerForm>, step: usize },
     /// Playlist `0`'s new name.
     PlaylistName(String),
     /// Which of the account's identities it acts as, by its place among them.
@@ -1124,6 +1146,27 @@ impl Target {
             }
             Target::Sleep(choices) => value.parse().ok().and_then(|i: usize| choices.get(i).copied()).map(Cmd::Sleep),
             Target::ProfileName(id) => Some(Cmd::RenameProfile(id, value)),
+            Target::Scrobbling(profile) => {
+                let (what, id) = value.split_once(':')?;
+                let change = match what {
+                    "on" | "off" if id.is_empty() => ScrobblerChange::Itself(what == "on"),
+                    "on" | "off" => ScrobblerChange::Switch { id: id.to_string(), on: what == "on" },
+                    "remove" => ScrobblerChange::Remove(id.to_string()),
+                    _ => return None,
+                };
+                Some(Cmd::Scrobbler { profile, change })
+            }
+            Target::ScrobblerField { profile, form, step } => {
+                use nori_core::scrobblers::{scrobbler_fields, scrobbler_form_with, scrobbler_sign_in, ScrobblerSignIn};
+                let field = scrobbler_fields(form.kind)[step].field;
+                let form = Box::new(scrobbler_form_with(*form, field, value));
+                let change = match scrobbler_sign_in(form.kind) {
+                    ScrobblerSignIn::Form => ScrobblerChange::SignIn(form),
+                    ScrobblerSignIn::Browser => ScrobblerChange::Approve(form),
+                };
+                Some(Cmd::Scrobbler { profile, change })
+            }
+            Target::ScrobblerKind(_) => None,
             Target::PlaylistName(id) => {
                 let name = value.trim().to_string();
                 let said = crate::text::playlist_renamed(&name);
@@ -1845,8 +1888,18 @@ impl App {
                 }
                 _ => self.dirty = false,
             },
-            // The runner opens the profile again as the identity chosen.
-            Msg::IdentityChosen(Ok(())) => {}
+            // The runner opens the profile again as the identity chosen, and keeps a scrobbling account.
+            Msg::IdentityChosen(Ok(())) | Msg::ScrobblerSignedIn { .. } => {}
+            // Signing in waits for the page allowing nori, then Done.
+            Msg::ScrobblerApproval { profile, form, approval } => match approval {
+                Ok(a) => {
+                    let kind = form.kind;
+                    let form = Box::new(nori_core::scrobblers::ScrobblerForm { approved: a.token, ..*form });
+                    let cmd = Box::new(Cmd::Scrobbler { profile, change: ScrobblerChange::SignIn(form) });
+                    self.overlay = Some(crate::text::scrobbler_allow(kind, &a.page, cmd));
+                }
+                Err(e) => self.say(crate::text::scrobbler_refused(&e), true),
+            },
             Msg::IdentityChosen(Err(e)) => self.say(crate::text::identity_failed(&e), true),
             // The runner opens these, and the profiles a jam is joined and left with.
             Msg::SignedIn(r) => match &mut self.overlay {
@@ -2510,6 +2563,11 @@ impl App {
                                 self.cmds.extend(cmd);
                                 sheet
                             }
+                            Target::Scrobbling(profile) if value == "add" => Some(crate::text::scrobbler_kinds(profile)),
+                            Target::ScrobblerKind(profile) => {
+                                let kind = nori_core::settings::ScrobblerKind::from_id(&value);
+                                kind.map(|kind| crate::text::scrobbler_field(profile, Box::new(nori_core::scrobblers::ScrobblerForm { kind, ..Default::default() }), 0))
+                            }
                             target => {
                                 self.cmds.extend(target.cmd(value));
                                 None
@@ -2680,6 +2738,12 @@ impl App {
                         // A repo that isn't nori's is added only once the user says they trust it.
                         Target::AddRepo if !typed.trim().is_empty() => self.overlay = Some(crate::settings_view::trust_repo(typed.trim())),
                         Target::AddRepo => {}
+                        // Each field of an account being added asks the next, the last signs in.
+                        Target::ScrobblerField { profile, form, step } if step + 1 < nori_core::scrobblers::scrobbler_fields(form.kind).len() => {
+                            let field = nori_core::scrobblers::scrobbler_fields(form.kind)[step].field;
+                            let form = nori_core::scrobblers::scrobbler_form_with(*form, field, typed);
+                            self.overlay = Some(crate::text::scrobbler_field(profile, Box::new(form), step + 1));
+                        }
                         Target::BackupFile { restore } if !typed.trim().is_empty() => {
                             let target = Target::BackupPassword { restore, path: typed.trim().to_string() };
                             self.overlay = Some(Overlay::Input { title: crate::text::BACKUP_PASSWORD.into(), text: String::new(), secret: true, target });
@@ -2871,7 +2935,7 @@ impl App {
                 let item = if self.focus == Focus::Main { self.selected() } else { None };
                 self.jam_with(item);
             }
-            Action::Menu if self.on_settings() => match self.settings.plugin_menu() {
+            Action::Menu if self.on_settings() => match self.settings.plugin_menu().or_else(|| self.settings.scrobbling_menu()) {
                 Some(o) => self.overlay = Some(o),
                 None => self.dirty = false,
             },

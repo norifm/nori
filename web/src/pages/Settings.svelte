@@ -10,8 +10,9 @@
   import { route, href } from "../state/route.svelte";
   import { refreshTheme } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
-  import type { Profile, ProfileIcon, SettingRow, SettingsSection } from "../state/types";
+  import type { Profile, ProfileIcon, Scrobbler, ScrobblerKindForm, SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
+  import AddScrobbler from "../ui/AddScrobbler.svelte";
   import Icon from "../ui/Icon.svelte";
   import Look from "../ui/Look.svelte";
   import Page from "../ui/Page.svelte";
@@ -27,7 +28,10 @@
     const name = route.arg;
     const sections = names.includes(name) ? (JSON.parse(await ask<string>("settings_page", name)) as SettingsSection[]) : [];
     const profile = JSON.parse(await ask<string>("profile")) as Profile | null;
-    return { names, sections, profile };
+    const scrobblers = JSON.parse(await ask<string>("scrobblers")) as Scrobbler[];
+    const itself = JSON.parse(await ask<string>("scrobble_itself")) as { on: boolean } | null;
+    const scrobblerKinds = JSON.parse(await ask<string>("scrobbler_kinds")) as ScrobblerKindForm[];
+    return { names, sections, profile, scrobblers, scrobblerKinds, itself };
   });
   /** The page open: on a wide screen the first while none is asked for. */
   const name = $derived(route.arg || (ui.wide ? "Servers" : ""));
@@ -46,6 +50,17 @@
   let picking = $state(false);
   async function pickIcon(icon: ProfileIcon) {
     await ask("profile_icon", icon);
+    rev++;
+  }
+
+  /** A scrobbling account being added. */
+  let adding = $state(false);
+  async function scrobblerSwitch(id: string, on: boolean) {
+    await ask("scrobbler_switch", id, on);
+    rev++;
+  }
+  async function scrobblerRemove(id: string) {
+    await ask("scrobbler_remove", id);
     rev++;
   }
 
@@ -99,6 +114,27 @@
     </div>
     <button class="group-row" onclick={() => void signOut()}><Icon name="log-out" /><span class="words">{W.signOut}</span></button>
   </div>
+  <div class="group-label">{W.scrobbling}</div>
+  <div class="group" id="scrobblers">
+    {#if page.data?.itself}
+      <label class="group-row" id="scrobble-itself">
+        <span class="words"><span>{W.scrobblerServer}</span><span class="sub">{W.scrobblerBuiltIn}</span></span>
+        <input type="checkbox" class="switch" aria-label={W.scrobblerServer} checked={page.data.itself.on} onchange={(e) => void ask("scrobble_itself_switch", e.currentTarget.checked)} />
+        <!-- In line with the accounts' switches, which have their menu after them. -->
+        <span class="glyph" aria-hidden="true"></span>
+      </label>
+    {/if}
+    {#each page.data?.scrobblers ?? [] as a (a.id)}
+      <label class="group-row" data-scrobbler={a.id}>
+        <span class="words"><span>{W.scrobbler(a.kind)}</span><span class="sub">{[a.user, a.host].filter(Boolean).join(" · ")}</span></span>
+        <input type="checkbox" class="switch" aria-label={W.scrobbler(a.kind)} checked={a.on} onchange={(e) => void scrobblerSwitch(a.id, e.currentTarget.checked)} />
+        <button class="glyph" aria-label={W.more} title={W.more} onclick={(e) => ui.drop(e, [{ label: W.scrobblerRemove, run: () => scrobblerRemove(a.id) }])}><Icon name="more-horiz" /></button>
+      </label>
+    {/each}
+    <button class="group-row" id="add-scrobbler-row" onclick={() => (adding = true)}><Icon name="plus" /><span class="words">{W.addScrobblerAccount}</span></button>
+  </div>
+  <p class="note">{W.scrobblingNote}</p>
+  {#if adding}<AddScrobbler kinds={page.data?.scrobblerKinds ?? []} close={() => (adding = false)} added={() => ((adding = false), rev++)} />{/if}
   {#if picking && profile}<ProfileIconPicker {profile} pick={(icon) => void pickIcon(icon)} close={() => (picking = false)} />{/if}
 {/snippet}
 

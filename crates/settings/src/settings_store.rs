@@ -151,7 +151,7 @@ impl SettingsStore {
             prefs.eq_mode = crate::settings::EqMode::Parametric;
         }
         let legacy = crate::settings::legacy(&raw);
-        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || crate::settings::pure_black(&raw) || crate::settings::old_screen_defaults(&raw) || crate::settings::switched(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") {
+        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || crate::settings::pure_black(&raw) || crate::settings::old_screen_defaults(&raw) || crate::settings::switched(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") || raw.contains_key(crate::settings::SCROBBLE_KEY) {
             write(&mut c, &prefs)?;
         }
         if legacy {
@@ -714,6 +714,28 @@ mod tests {
         b.writer.flush();
         let kept = open(&dir).prefs;
         assert_eq!((kept.crossfade_sec, kept.theme, kept.cache_mb), (4, ThemeMode::Light, 4096));
+    }
+
+    /// The one scrobbling switch, off, turns every saved profile's off, once: a profile turned on again
+    /// stays on.
+    #[test]
+    fn the_old_scrobbling_switch_moves_into_each_profile_once() {
+        let dir = nori_testdir::TempDir::new("scrobble-migration");
+        let path = dir.join("nori.db").display().to_string();
+        let servers = ["a", "b"].map(|id| crate::settings::SavedServer { id: id.into(), ..Default::default() }).to_vec();
+        for (old, off) in [(true, false), (false, true)] {
+            {
+                let mut c = db::open_app(&path).unwrap();
+                write(&mut c, &StoredPrefs { servers: servers.clone(), ..Default::default() }).unwrap();
+                c.execute("INSERT INTO settings VALUES ('scrobble', ?1)", [to_json(&PrefValue::Flag { v: old })]).unwrap();
+            }
+            let mut migrated = SettingsStore::open(&path, Writer::default()).unwrap();
+            assert!(migrated.prefs.servers.iter().all(|s| s.scrobble_off == off), "old switch {old}");
+            assert!(!read(&migrated.db.lock()).unwrap().contains_key("scrobble"));
+            migrated.prefs.servers[0].scrobble_off = false;
+            write(&mut migrated.db.lock(), &migrated.prefs).unwrap();
+            assert!(!SettingsStore::open(&path, Writer::default()).unwrap().prefs.servers[0].scrobble_off);
+        }
     }
 
     #[test]

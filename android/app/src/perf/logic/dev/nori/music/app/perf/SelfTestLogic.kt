@@ -378,13 +378,15 @@ data class Knobs(
     val eq: Boolean, val headphone: dev.nori.music.ffi.settings.HeadphoneSound, val balance: Float, val mono: Boolean, val limiter: Boolean,
     val offload: Boolean, val crossfadeSec: Int, val autoMix: dev.nori.music.ffi.settings.AutoMixMode,
     val replayGain: GainMode, val scrobble: Boolean, val autoFill: dev.nori.music.ffi.settings.AutoFillKind?, val skipExplicit: Boolean,
+    /** The profile's scrobbling accounts being on, in its order. */
+    val scrobblers: List<Boolean> = emptyList(),
 )
 
 /** What the test starts from: the plain CPU path, nothing mixing, nothing reported, nothing added. */
 fun testKnobs(user: Knobs): Knobs = user.copy(
     eq = false, headphone = dev.nori.music.ffi.settings.HeadphoneSound.OFF, balance = 0f, mono = false, limiter = false,
     offload = false, crossfadeSec = 0, autoMix = dev.nori.music.ffi.settings.AutoMixMode.OFF, scrobble = false, autoFill = null,
-    skipExplicit = false,
+    skipExplicit = false, scrobblers = user.scrobblers.map { false },
 )
 
 /** Names of the settings that differ between [a] and [b]: what putting [a] back changes. */
@@ -396,6 +398,7 @@ fun knobsDiffer(a: Knobs, b: Knobs): List<String> {
     d("offload", a.offload, b.offload)
     d("crossfadeSec", a.crossfadeSec, b.crossfadeSec); d("autoMix", a.autoMix, b.autoMix); d("replayGain", a.replayGain, b.replayGain)
     d("scrobble", a.scrobble, b.scrobble); d("autoFill", a.autoFill, b.autoFill); d("skipExplicit", a.skipExplicit, b.skipExplicit)
+    d("scrobblers", a.scrobblers, b.scrobblers)
     return out
 }
 

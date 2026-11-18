@@ -36,6 +36,54 @@ pub fn provider_of(kinds: &nori_core::providers::Kinds, kind: &ServerKind) -> Pr
     provider(kind, kinds.plugin_name(kind.clone(), "en".into()))
 }
 
+/// A scrobbling account's service.
+pub fn scrobbler(kind: nori_core::settings::ScrobblerKind) -> &'static str {
+    match kind {
+        nori_core::settings::ScrobblerKind::ListenBrainz => "ListenBrainz",
+        nori_core::settings::ScrobblerKind::LibreFm => "Libre.fm",
+        nori_core::settings::ScrobblerKind::LastFm => "Last.fm",
+    }
+}
+
+/// What a `kind` account costs, where it does.
+pub fn scrobbler_cost(kind: nori_core::settings::ScrobblerKind) -> &'static str {
+    match kind {
+        nori_core::settings::ScrobblerKind::LastFm => "Needs Last.fm Pro",
+        nori_core::settings::ScrobblerKind::ListenBrainz | nori_core::settings::ScrobblerKind::LibreFm => "",
+    }
+}
+
+/// The link to where a `kind` account's form finds what it asks (`scrobbler_help_page`).
+pub fn scrobbler_help(kind: nori_core::settings::ScrobblerKind) -> &'static str {
+    match nori_core::scrobblers::scrobbler_help_page(kind).map(|_| kind) {
+        Some(nori_core::settings::ScrobblerKind::LastFm) => "Get an API key",
+        Some(_) => "Get your token",
+        None => "",
+    }
+}
+
+/// What a `kind` account's address is for.
+pub fn scrobbler_address_hint(kind: nori_core::settings::ScrobblerKind) -> &'static str {
+    match kind {
+        nori_core::settings::ScrobblerKind::ListenBrainz => "Empty for ListenBrainz. Maloja, Koito: their ListenBrainz API address.",
+        nori_core::settings::ScrobblerKind::LibreFm => "Empty for Libre.fm. Another GNU FM server: its API address.",
+        nori_core::settings::ScrobblerKind::LastFm => "",
+    }
+}
+
+/// Who a scrobbling account is, and where, when not its kind's own service.
+pub fn scrobbler_detail(a: &nori_core::settings::SavedScrobbler) -> String {
+    [a.user.clone(), nori_core::settings::label("", &a.url)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
+}
+
+/// Why a scrobbling account didn't sign in.
+pub fn scrobbler_failure(e: &nori_core::transport::NetError) -> String {
+    match e {
+        nori_core::transport::NetError::Transport { .. } => "Couldn’t reach it.".into(),
+        e => format!("Refused: {e}"),
+    }
+}
+
 pub const SHOW_ALL: &str = "Show all";
 
 pub const PLUGINS: &str = "Plugins";

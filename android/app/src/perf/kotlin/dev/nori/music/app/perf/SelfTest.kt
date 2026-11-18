@@ -298,15 +298,22 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
 
         // ---- settings ----
 
+        private fun StoredPrefs.profile() = servers.firstOrNull { it.id == activeServerId }
+
         private fun StoredPrefs.knobs() = Knobs(
             eqEnabled, headphone, balance, mono, limiter, offload, crossfadeSec, autoMix,
-            replayGain, scrobble, autoFill, skipExplicit,
+            replayGain, profile()?.scrobbleOff == false, autoFill, skipExplicit, profile()?.scrobblers.orEmpty().map { it.on },
         )
 
+        /** With [k]: the scrobbling switches are the active profile's. */
         private fun StoredPrefs.with(k: Knobs) = copy(
             eqEnabled = k.eq, headphone = k.headphone, balance = k.balance, mono = k.mono, limiter = k.limiter,
             offload = k.offload, crossfadeSec = k.crossfadeSec, autoMix = k.autoMix,
-            replayGain = k.replayGain, scrobble = k.scrobble, autoFill = k.autoFill, skipExplicit = k.skipExplicit,
+            replayGain = k.replayGain, autoFill = k.autoFill, skipExplicit = k.skipExplicit,
+            servers = servers.map { s ->
+                if (s.id != activeServerId) s
+                else s.copy(scrobbleOff = !k.scrobble, scrobblers = s.scrobblers.mapIndexed { i, a -> a.copy(on = k.scrobblers.getOrElse(i) { a.on }) })
+            },
         )
 
         private fun set(change: (Knobs) -> Knobs) {

@@ -3115,6 +3115,78 @@ fn a_profile_moves_with_k_and_j() {
     assert!(!draw(&mut a, 140, 40).contains("K J move"));
 }
 
+/// A profile's m lists its server, then its scrobbling accounts: picking one switches it, another line
+/// removes an account, and adding picks a kind, asks each field it asks in turn, then signs in, Last.fm
+/// after its page allowed nori.
+#[test]
+fn a_profiles_scrobbling_accounts_are_switched_removed_and_added() {
+    use crate::app::ScrobblerChange;
+    use nori_core::settings::{SavedScrobbler, ScrobblerKind};
+    let lb = SavedScrobbler { id: "x".into(), kind: ScrobblerKind::ListenBrainz, on: true, user: "lee".into(), ..Default::default() };
+    let sv = nori_core::settings::SavedServer { id: "a".into(), url: "http://a".into(), scrobblers: vec![lb], ..Default::default() };
+    let mut a = App::new(StoredPrefs { servers: vec![sv], active_server_id: "a".into(), ..StoredPrefs::default() });
+    a.go(View::Settings);
+    a.settings.set_facts(crate::settings_view::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() });
+    select_row(&mut a, |r| matches!(r, Row::Server { id, .. } if id == "a"));
+    a.cmds.clear();
+    let change = |a: &mut App| match a.cmds.pop() {
+        Some(Cmd::Scrobbler { profile, change }) if profile == "a" => change,
+        other => panic!("{other:?}"),
+    };
+    key(&mut a, KeyCode::Char('m'));
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("OpenSubsonic · built in · on") && s.contains("ListenBrainz · lee · on") && s.contains("Remove ListenBrainz · lee") && s.contains("Add scrobbler"), "{s}");
+    // m, then picks the line `n` down.
+    let pick = |a: &mut App, n: usize| {
+        key(a, KeyCode::Char('m'));
+        for _ in 0..n {
+            key(a, KeyCode::Down);
+        }
+        key(a, KeyCode::Enter);
+    };
+    key(&mut a, KeyCode::Esc);
+    pick(&mut a, 0);
+    assert_eq!(change(&mut a), ScrobblerChange::Itself(false));
+    pick(&mut a, 1);
+    assert_eq!(change(&mut a), ScrobblerChange::Switch { id: "x".into(), on: false });
+    pick(&mut a, 2);
+    assert_eq!(change(&mut a), ScrobblerChange::Remove("x".into()));
+
+    // Add scrobbler, then a kind: n lines down the kinds.
+    let add = |a: &mut App, n: usize| {
+        pick(a, 3);
+        for _ in 0..n {
+            key(a, KeyCode::Down);
+        }
+        key(a, KeyCode::Enter);
+    };
+    add(&mut a, 1);
+    for typed in ["ann", "pw", ""] {
+        assert!(a.cmds.is_empty(), "{:?}", a.cmds);
+        chars(&mut a, typed);
+        key(&mut a, KeyCode::Enter);
+    }
+    let form = nori_core::scrobblers::ScrobblerForm { kind: ScrobblerKind::LibreFm, user: "ann".into(), password: "pw".into(), ..Default::default() };
+    assert_eq!(change(&mut a), ScrobblerChange::SignIn(Box::new(form)));
+    assert!(a.overlay.is_none());
+
+    // Last.fm asks its key and secret, then for the page allowing nori, and signs in with its token on Done.
+    add(&mut a, 2);
+    for typed in ["key", "secret"] {
+        chars(&mut a, typed);
+        key(&mut a, KeyCode::Enter);
+    }
+    let form = nori_core::scrobblers::ScrobblerForm { kind: ScrobblerKind::LastFm, key: "key".into(), secret: "secret".into(), ..Default::default() };
+    assert_eq!(change(&mut a), ScrobblerChange::Approve(Box::new(form.clone())));
+    let page = "https://www.last.fm/api/auth/?api_key=key&token=tk";
+    let approval = Ok(nori_core::scrobblers::ScrobblerApproval { token: "tk".into(), page: page.into() });
+    a.handle(Msg::ScrobblerApproval { profile: "a".into(), form: Box::new(form.clone()), approval });
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains(page), "{s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(change(&mut a), ScrobblerChange::SignIn(Box::new(nori_core::scrobblers::ScrobblerForm { approved: "tk".into(), ..form })));
+}
+
 #[test]
 fn paired_devices_are_listed_picked_forgotten_and_paired_with_a_reason_when_not() {
     use nori_core::remote::{wire::DeviceKind, PairError, PairedDevice, PairedReach};

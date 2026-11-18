@@ -263,7 +263,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "swipeLeft" to (R.string.settings_swipe_left to 0),
     "playlistNotes" to (R.string.settings_playlist_notes to R.string.settings_hint_playlist_notes),
     "tasteModel" to (R.string.settings_taste_model to R.string.settings_hint_taste_model),
-    "scrobble" to (R.string.settings_scrobble to R.string.settings_hint_scrobble),
     "queueOffer" to (R.string.settings_queue_offer to 0),
     "thirdPartyLookups" to (R.string.settings_lookups to R.string.settings_hint_lookups),
     "remoteControl" to (R.string.settings_remote_control to R.string.settings_hint_remote_control),

@@ -625,6 +625,14 @@ impl Runner {
                 app.handle(m);
                 return self.reopen(app);
             }
+            Msg::ScrobblerSignedIn { profile, account } => {
+                app.say(crate::text::scrobbler_added(account), account.is_err());
+                if let Ok(account) = account {
+                    nori_host::scrobbler_kept(&self.root.app.settings, profile, account.clone());
+                    prefs_changed(app);
+                }
+                return;
+            }
             Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => {
                 #[cfg(feature = "sign-in-window")]
                 {
@@ -954,6 +962,33 @@ impl Runner {
                 nori_host::profile_renamed(&self.root.app.settings, &id, &name);
                 return prefs_changed(app);
             }
+            Cmd::Scrobbler { profile, change } => {
+                let settings = &self.root.app.settings;
+                match change {
+                    crate::app::ScrobblerChange::Itself(on) => nori_host::server_scrobble_switched(settings, &profile, on),
+                    crate::app::ScrobblerChange::Switch { id, on } => nori_host::scrobbler_switched(settings, &profile, &id, on),
+                    crate::app::ScrobblerChange::Remove(id) => nori_host::scrobbler_removed(settings, &profile, &id),
+                    crate::app::ScrobblerChange::SignIn(form) => {
+                        let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
+                        let client = s.client.clone();
+                        nori_host::spawn("nori-scrobbler", move || {
+                            let account = nori_core::transport::block_on(client.sign_in_scrobbler(*form));
+                            let _ = tx.send(Msg::ScrobblerSignedIn { profile, account });
+                        });
+                        return;
+                    }
+                    crate::app::ScrobblerChange::Approve(form) => {
+                        let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
+                        let client = s.client.clone();
+                        nori_host::spawn("nori-scrobbler", move || {
+                            let approval = nori_core::transport::block_on(client.scrobbler_approval((*form).clone()));
+                            let _ = tx.send(Msg::ScrobblerApproval { profile, form, approval });
+                        });
+                        return;
+                    }
+                }
+                return prefs_changed(app);
+            }
             Cmd::ChooseIdentity(index) => {
                 let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
                 let h = (**s).clone();
@@ -1157,7 +1192,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::Scrobbler { .. } | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
         }
     }
 

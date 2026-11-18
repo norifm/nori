@@ -65,6 +65,10 @@ pub enum Msg {
     LoggedIn(Result<SavedServer, String>),
     /// The account's sign-in answered.
     SignedIn(nori_core::providers::SignInResult),
+    /// A scrobbling account for profile `profile` signed in, or why not.
+    ScrobblerSignedIn { profile: String, account: Result<nori_core::settings::SavedScrobbler, String> },
+    /// The token to allow on a scrobbling service's page, and that page, or why there is none.
+    ScrobblerApproval(Result<nori_core::scrobblers::ScrobblerApproval, String>),
     /// The sign-in window (its process id) came back on a signed-in page, and the core's answer.
     SignInWindowDone(u32, nori_core::providers::SignInResult),
     /// The `code`th code sign-in's code came, or expired.

@@ -337,18 +337,11 @@ class Library(
     /** A row's move or removal, as the core words it (`playlist_edit_write`). */
     suspend fun editPlaylist(w: Write) = writePlaylist(w)
 
-    /** Not worth queueing: by the time it could be replayed it is no longer true. */
-    suspend fun nowPlaying(id: String) { call(Read.NowPlaying(id)) { it } }
-
     suspend fun createRadio(name: String, streamUrl: String) = write(Write.CreateRadio(name, streamUrl))
     suspend fun deleteRadio(id: String) = write(Write.DeleteRadio(id))
 
     /** A public link to a song or album; the server must have sharing enabled. */
     suspend fun share(id: String): String = call(Read.ShareLink(id)) { (it as Page.ShareUrl).v }
-
-
-    /** [submission] false marks "now playing"; true counts the play. */
-    suspend fun scrobble(id: String, submission: Boolean, timeMs: Long? = null) = write(Write.Scrobble(id, submission, timeMs))
 
     // ---- queue hand-off between devices ----
 
