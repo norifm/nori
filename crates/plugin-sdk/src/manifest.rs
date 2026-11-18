@@ -3,6 +3,9 @@
 //! What it calls (HTTP, settings) nori reads from the wasm's imports; this says only what code can't:
 //! which hosts, which keys, which rows, which places in nori's screens it fills.
 
+/// A glyph of nori's own set, as the WIT has it.
+pub use crate::types::Glyph;
+
 /// Where a sound stage sits in nori's chain.
 #[derive(Clone, Copy)]
 pub enum Slot {
@@ -139,33 +142,6 @@ pub enum ItemKind {
     Album,
     Artist,
     Playlist,
-}
-
-/// A glyph from nori's own set, drawn in each client's style.
-#[derive(Clone, Copy)]
-pub enum Glyph {
-    Sparkle,
-    Info,
-    Share,
-    Link,
-    Search,
-    Heart,
-    Download,
-    Add,
-    Play,
-    Tune,
-    Headphones,
-    Speaker,
-    Battery,
-    Touch,
-    Timer,
-    Gauge,
-    Wave,
-    Bluetooth,
-    Gear,
-    Globe,
-    Key,
-    Person,
 }
 
 /// An action in nori's menus of `kinds`; `id` is its label's key in the plugin's strings.
@@ -307,7 +283,7 @@ pub struct Asset {
 }
 
 /// The plugin API this SDK speaks.
-pub const API: u32 = 6;
+pub const API: u32 = 7;
 /// The section's own format.
 const FORMAT: u8 = 2;
 

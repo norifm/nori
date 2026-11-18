@@ -1,5 +1,7 @@
 //! Display facts derived from settings and the queue; clients word them.
 
+use nori_model::deciders::{NoriButton, SessionButtons};
+
 use crate::Core;
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -11,19 +13,11 @@ impl Core {
     }
 }
 
-/// The media session's extra buttons: a heart and a shuffle toggle.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
-pub struct SessionButtons {
-    /// A library song is playing (not nothing or radio).
-    pub heart: bool,
-    /// The heart is filled.
-    pub starred: bool,
-    pub shuffling: bool,
-}
-
+/// The media session's own buttons: the seal and a radio from the song for a library song, shuffle and
+/// repeat always; the seal and shuffle first, in the places other players put them.
 pub fn session_buttons(song: bool, starred: bool, shuffle: bool) -> SessionButtons {
-    SessionButtons { heart: song, starred: song && starred, shuffling: shuffle }
+    let buttons = if song { vec![NoriButton::Favorite, NoriButton::Shuffle, NoriButton::Repeat, NoriButton::Radio] } else { vec![NoriButton::Shuffle, NoriButton::Repeat] };
+    SessionButtons { buttons, starred: song && starred, shuffling: shuffle }
 }
 
 /// A radio stream's title: the announced ICY title, else the station name.
@@ -39,7 +33,8 @@ mod tests {
     #[test]
     fn shown() {
         let b = session_buttons(false, true, false);
-        assert_eq!((b.heart, b.starred), (false, false));
+        assert_eq!((b.buttons, b.starred), (vec![NoriButton::Shuffle, NoriButton::Repeat], false), "no seal or radio without a library song");
+        assert_eq!(session_buttons(true, true, false).buttons, [NoriButton::Favorite, NoriButton::Shuffle, NoriButton::Repeat, NoriButton::Radio]);
 
         // Radio title prefers announcement.
         let s = |v: &str| Some(v.to_string());

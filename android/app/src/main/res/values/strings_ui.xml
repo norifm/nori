@@ -818,6 +818,7 @@
     <string name="plugins_kind_slots">Adds to screens</string>
     <string name="plugins_kind_deciders">Chooses what plays</string>
     <string name="plugins_kind_preparation">Prepares songs</string>
+    <string name="plugins_kind_notification">Notification buttons</string>
     <string name="plugins_kind_overrides">Changes playback values</string>
     <string name="plugins_get">Get plugins</string>
     <string name="plugins_asking">Asking the repos…</string>

@@ -452,6 +452,8 @@ impl nori_plugins::Client for Watched {
     fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {
         self.tell_changed();
     }
+    /// No notification here: MPRIS has no buttons of a player's own.
+    fn buttons_changed(&self) {}
 }
 
 /// The cpal device named `device` (else the system's default) at `volume` (0 to 1).

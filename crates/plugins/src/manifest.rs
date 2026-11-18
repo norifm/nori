@@ -172,6 +172,12 @@ pub enum Glyph {
     Person,
 }
 
+/// The glyphs in the order of the SDK's (the WIT's `glyph`), as the manifest numbers them.
+pub(crate) const GLYPHS: [Glyph; 22] = [
+    Glyph::Sparkle, Glyph::Info, Glyph::Share, Glyph::Link, Glyph::Search, Glyph::Heart, Glyph::Download, Glyph::Add, Glyph::Play, Glyph::Tune, Glyph::Headphones, Glyph::Speaker,
+    Glyph::Battery, Glyph::Touch, Glyph::Timer, Glyph::Gauge, Glyph::Wave, Glyph::Bluetooth, Glyph::Gear, Glyph::Globe, Glyph::Key, Glyph::Person,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum ItemKind {
@@ -345,10 +351,6 @@ impl Manifest {
             2 => Some(Slot::Master),
             _ => None,
         };
-        const GLYPHS: [Glyph; 22] = [
-            Glyph::Sparkle, Glyph::Info, Glyph::Share, Glyph::Link, Glyph::Search, Glyph::Heart, Glyph::Download, Glyph::Add, Glyph::Play, Glyph::Tune, Glyph::Headphones, Glyph::Speaker,
-            Glyph::Battery, Glyph::Touch, Glyph::Timer, Glyph::Gauge, Glyph::Wave, Glyph::Bluetooth, Glyph::Gear, Glyph::Globe, Glyph::Key, Glyph::Person,
-        ];
         let rows = w
             .rows
             .iter()
@@ -517,6 +519,16 @@ mod tests {
             })
             .collect();
         assert_eq!(names, POINTS.to_vec());
+    }
+
+    #[test]
+    fn the_glyphs_are_wits_in_its_order() {
+        let mut resolve = wit_parser::Resolve::default();
+        let (pkg, _) = resolve.push_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wit")).unwrap();
+        let glyph = resolve.types.iter().find(|(_, t)| t.name.as_deref() == Some("glyph") && t.owner == wit_parser::TypeOwner::Interface(resolve.packages[pkg].interfaces["types"])).unwrap().1;
+        let wit_parser::TypeDefKind::Enum(e) = &glyph.kind else { panic!("an enum") };
+        let names: Vec<String> = e.cases.iter().map(|c| c.name.clone()).collect();
+        assert_eq!(names, GLYPHS.map(|g| format!("{g:?}").to_lowercase()));
     }
 
     #[test]

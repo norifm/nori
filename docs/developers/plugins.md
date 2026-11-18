@@ -426,6 +426,27 @@ no enabled plugin exports the point (`Deciders::deciding`), no input is built an
 `mixes` is AutoMix's (AutoMix seams). On Android double and triple presses stay media3's own (it counts
 them); a long press reaches the decider.
 
+## Notification buttons
+
+A plugin exporting `notification` may decide the buttons beside previous, play and next on Android's
+media notification, lock screen and car (`crates/plugins/src/notification.rs`). nori's own are the core's
+(`Core::session_buttons_now`: the seal and a radio for a library song, shuffle and repeat); the plugin
+gets them in order with what plays (the song, the seal's state, shuffle, repeat) and answers its own
+list, or none for nori's. It may keep, reorder or leave out nori's, give one a glyph of nori's set
+(`types.glyph`, the SDK's `Glyph`) and a label from its strings, and add its own, each with a glyph and a
+label; a press of its own runs its lifecycle `action(id)` (`Plugins::notification_press`).
+
+| point | runs | budget | nori checks |
+|---|---|---|---|
+| notification | the song, the seal, shuffle or repeat changed, or the plugin called `session.buttons-changed`; on Android, off the main thread (`Plugins::notification_buttons`) | fuel only | each of nori's buttons at most once and only those it shows now; a plugin's own has a glyph and a label. Else nori's |
+
+The first enabled plugin exporting it whose answer holds decides; nori's stand otherwise. What was asked
+and answered is kept, so the same song and state ask nothing. While no enabled plugin exports it
+(`Plugins::decides_buttons`, which Android keeps as a flow read when plugins change), the playback
+service draws nori's buttons with no call into the plugin host. Android maps the glyphs to drawables
+of the app's Iconoir set (`glyph_*.xml`, tools/glyphs.py). Only Android has such a notification: MPRIS,
+the iPod's lock screen and a browser's media session have no buttons of a player's own.
+
 ## Device control
 
 A plugin names the Bluetooth devices it reaches in its manifest (`devices`: a name pattern with `*`, a
@@ -523,7 +544,7 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
 ```json
 {"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "about": "…", "source": "https://github.com/…",
   "readme": "orbit/README.md", "icon": "orbit/icon.png", "points": ["sound-stage"],
-  "versions": [{"version": "1.2.0", "api": 6, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
+  "versions": [{"version": "1.2.0", "api": 7, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
     "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
 ```
 
@@ -686,6 +707,8 @@ they are fetched again), its smart playlists (a profile's library data, not sett
   the tap feeds them, refinements and plans.
   `tests/lyrics.rs` and `tests/scrobbler.rs`: its lyrics service in nori's race and its scrobbles.
 - `cargo test -p nori-plugins --test deciders`: each decider over the test plugin, nori's checks, the budget.
+- `cargo test -p nori-plugins --test notification`: the fixture's notification buttons in place of nori's,
+  those nori refuses, asked again only on a change or the plugin's word, and its own button's press.
   Their seams with a fake: `cargo test -p nori-queue deciders`, `-p nori-core autofill profiles`.
 - `cargo test -p nori-engine --test engine another_card`: a card swapped mid-song plays on from there.
 - `cargo test -p nori-player --test pipeline stage`: stages in the chain on the virtual clock: kept

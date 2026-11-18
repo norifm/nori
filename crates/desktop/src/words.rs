@@ -222,6 +222,7 @@ pub fn plugin_is(points: &[String], overrides: bool) -> String {
             "lyrics" => "a lyrics source",
             "scrobbler" => "a scrobbler",
             "device-control" => "a device control",
+            "notification" => "a notification control",
             "hooks" | "deciders" | "slots" | "preparation" => "a playback helper",
             _ => continue,
         };

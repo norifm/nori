@@ -3,10 +3,10 @@
 
 /// The plugin API major version this host speaks. A component's types must match exactly, so a plugin
 /// built for another can't run: any change to a type in `wit/` raises it.
-pub const API: u32 = 6;
+pub const API: u32 = 7;
 
 /// The extension points in the order of `wit/`'s `plugin` world exports: a section's bits, in turn.
-pub const POINTS: [&str; 11] = ["lifecycle", "hooks", "provider", "sound-stage", "preparation", "automix", "deciders", "slots", "device-control", "lyrics", "scrobbler"];
+pub const POINTS: [&str; 12] = ["lifecycle", "hooks", "provider", "sound-stage", "preparation", "automix", "deciders", "slots", "device-control", "lyrics", "scrobbler", "notification"];
 
 /// A row's kinds, in the order the SDK writes them.
 pub const ROW_KINDS: [&str; 14] = ["Switch", "Choice", "Level", "Secret", "Text", "Action", "Status", "Section", "Note", "Link", "Flags", "Page", "Segments", "Meter"];

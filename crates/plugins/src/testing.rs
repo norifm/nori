@@ -35,6 +35,7 @@ impl crate::Client for Quiet {
     fn commands(&self, _: Vec<crate::Command>) {}
     fn watch_screen(&self, _: bool) {}
     fn asset(&self, _: String, _: String, _: crate::AssetState) {}
+    fn buttons_changed(&self) {}
 }
 
 /// Marks `plugins` as calling plugin `id` from now on, as when nori stops in one of its calls.
