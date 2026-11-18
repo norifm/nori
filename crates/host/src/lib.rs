@@ -12,6 +12,8 @@ pub mod desktop;
 mod lyrics;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
 mod macbt;
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+pub use macbt::beside_main_run_loop;
 pub mod pages;
 pub mod player;
 #[cfg(feature = "desktop")]

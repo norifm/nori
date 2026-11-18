@@ -438,8 +438,10 @@ lists them, and a channel opens to no other. The install sheet says it reaches B
   through a client `Profile1`), and on macOS IOBluetooth for classic devices and RFCOMM and CoreBluetooth
   for GATT (`crates/host/src/macbt/`). There a device is its classic address (a device only on LE, its
   CoreBluetooth identifier, listed when connected to the system with a common service), and GATT to a
-  classic device goes to the LE peripheral of its name. IOBluetooth runs on a thread of its own whose run
-  loop sleeps between events; CoreBluetooth's delegate on a dispatch queue. Both are made at the first
+  classic device goes to the LE peripheral of its name. IOBluetooth is called on a thread of its own and
+  tells of channels, their data and devices on the main thread's run loop, which the client runs (the
+  terminal client runs itself on another thread for it, `beside_main_run_loop`); CoreBluetooth's delegate
+  runs on a dispatch queue. Both are made at the first
   need and let go once nothing is watched or open. The app's `Info.plist` gives
   `NSBluetoothAlwaysUsageDescription` (`tools/host-release/app.py`).
 - **Watched only while needed.** The platform is told to watch devices connecting only while an enabled

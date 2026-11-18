@@ -1,7 +1,8 @@
-//! Classic Bluetooth through IOBluetooth, on a thread of its own ("nori-iobluetooth") whose run loop
-//! IOBluetooth delivers to: made at the first need, ended once nothing is watched or open. Calls reach it
-//! through a run loop source; what waits on the device (an SDP query, a channel opening) is waited for on
-//! the caller's thread, so the run loop sleeps between events.
+//! Classic Bluetooth through IOBluetooth, called on a thread of its own ("nori-iobluetooth"): made at the
+//! first need, ended once nothing is watched or open. Calls reach it through a run loop source; what waits
+//! on the device (an SDP query, a channel opening) is waited for on the caller's thread. IOBluetooth tells
+//! of what it does (a channel opening, its data, a device connecting) on the main thread's run loop
+//! whichever thread asked, so the client runs that run loop.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -213,7 +214,7 @@ impl OnThread {
     /// Whether `d` is connected: IOBluetooth tells of a device before `isConnected` says so, just
     /// after it is first asked.
     fn is_connected(&self, d: &IOBluetoothDevice) -> bool {
-        let told = self.watcher.as_ref().zip(address_of(d)).is_some_and(|((w, _), a)| w.ivars().gone.borrow().contains_key(&a));
+        let told = self.watcher.as_ref().zip(address_of(d)).is_some_and(|((w, _), a)| w.ivars().gone.lock().expect("not poisoned").contains_key(&a));
         // SAFETY: a property read.
         told || unsafe { d.isConnected() }
     }
@@ -227,7 +228,7 @@ impl OnThread {
             if let Some((watcher, note)) = self.watcher.take() {
                 // SAFETY: notifications IOBluetooth gave, ended once.
                 unsafe { note.unregister() };
-                for (_, n) in watcher.ivars().gone.borrow_mut().drain() {
+                for (_, n) in watcher.ivars().gone.lock().expect("not poisoned").drain() {
                     // SAFETY: as above.
                     unsafe { n.unregister() };
                 }
@@ -310,8 +311,9 @@ impl OnThread {
 
 struct WatcherIvars {
     plugins: Weak<Plugins>,
-    /// Each connected device's disconnect notification, by address.
-    gone: RefCell<HashMap<String, Retained<IOBluetoothUserNotification>>>,
+    /// Each connected device's disconnect notification, by address: followed on the thread and on the
+    /// main thread, where the watcher hears devices connect and go.
+    gone: Mutex<HashMap<String, Retained<IOBluetoothUserNotification>>>,
 }
 
 define_class!(
@@ -337,7 +339,7 @@ define_class!(
         #[unsafe(method(disconnected:device:))]
         fn disconnected(&self, _note: Option<&IOBluetoothUserNotification>, d: Option<&IOBluetoothDevice>) {
             let Some(address) = d.and_then(address_of) else { return };
-            if let Some(n) = self.ivars().gone.borrow_mut().remove(&address) {
+            if let Some(n) = self.ivars().gone.lock().expect("not poisoned").remove(&address) {
                 // SAFETY: the notification this device was followed with, ended once.
                 unsafe { n.unregister() };
             }
@@ -352,7 +354,7 @@ define_class!(
 
 impl Watcher {
     fn new(plugins: Weak<Plugins>) -> Retained<Watcher> {
-        let this = Self::alloc().set_ivars(WatcherIvars { plugins, gone: RefCell::default() });
+        let this = Self::alloc().set_ivars(WatcherIvars { plugins, gone: Mutex::default() });
         // SAFETY: NSObject's `init`.
         unsafe { msg_send![super(this), init] }
     }
@@ -360,7 +362,7 @@ impl Watcher {
     /// Hears `d` disconnect, once.
     fn follow(&self, d: &IOBluetoothDevice) {
         let Some(address) = address_of(d) else { return };
-        let mut gone = self.ivars().gone.borrow_mut();
+        let mut gone = self.ivars().gone.lock().expect("not poisoned");
         if gone.contains_key(&address) {
             return;
         }
