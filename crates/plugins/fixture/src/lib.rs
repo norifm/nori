@@ -1,7 +1,8 @@
 //! Each extension point nori's tests check, in its plainest form (nori_plugins::testing).
 
-// The headphones are a plugin of their own: the test plugin's points go unused.
-#![cfg_attr(feature = "headphones", allow(dead_code))]
+// The headphones are a plugin of their own, and rows-only exports its lifecycle alone: the test
+// plugin's other points go unused.
+#![cfg_attr(any(feature = "headphones", feature = "rows-only"), allow(dead_code))]
 
 #[cfg(feature = "headphones")]
 mod headphones;
@@ -312,5 +313,7 @@ const MANIFEST: Manifest = Manifest {
     ..Manifest::new(if cfg!(feature = "second") { "fm.nori.test.second" } else { "fm.nori.test" })
 };
 
-#[cfg(not(feature = "headphones"))]
+#[cfg(feature = "rows-only")]
+nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle);
+#[cfg(not(any(feature = "headphones", feature = "rows-only")))]
 nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots, preparation, automix, deciders, lyrics, scrobbler, notification);
