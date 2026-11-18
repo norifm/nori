@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS kept_playlists(server TEXT NOT NULL, id TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS kept_songs(server TEXT NOT NULL, playlist TEXT NOT NULL, song TEXT NOT NULL, PRIMARY KEY(server, playlist, song)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS kept_songs_song ON kept_songs(server, song);
 CREATE TABLE IF NOT EXISTS kept_brought(server TEXT NOT NULL, song TEXT NOT NULL, PRIMARY KEY(server, song)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS scrobbles_waiting(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, account TEXT NOT NULL, artist TEXT NOT NULL, title TEXT NOT NULL, album TEXT NOT NULL, duration INTEGER NOT NULL, track INTEGER NOT NULL, at_ms INTEGER NOT NULL);
 ";
 
 /// The app-wide tables.
@@ -70,9 +71,9 @@ CREATE TABLE IF NOT EXISTS profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, o
 ";
 
 /// Per-server tables, cleared when a profile is removed.
-const SERVER_TABLES: [&str; 18] = [
+const SERVER_TABLES: [&str; 19] = [
     "items", "cache", "kv", "pending", "downloads", "searches", "plays", "song_stats", "server_plays", "mix_excluded", "autofill_picks", "smart_playlists", "track_analysis",
-    "vocal_curve", "favorites_here", "kept_playlists", "kept_songs", "kept_brought",
+    "vocal_curve", "favorites_here", "kept_playlists", "kept_songs", "kept_brought", "scrobbles_waiting",
 ];
 
 /// Opens the database for `server`'s rows (in memory for an empty `path`).

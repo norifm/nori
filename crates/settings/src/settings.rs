@@ -554,6 +554,60 @@ pub struct SavedServer {
     /// The signed-in account's picture as its provider says (a channel's), a cover address with its
     /// size to fill in; the letter's circle shows it.
     pub picture: Option<String>,
+    /// The server or provider isn't told what plays: no scrobbles, now playing or saved queue.
+    pub scrobble_off: bool,
+    /// Where its plays go besides its server or provider.
+    pub scrobblers: Vec<SavedScrobbler>,
+}
+
+/// A scrobbling account a profile's plays go to, whatever the profile plays from.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SavedScrobbler {
+    /// What its plays waiting to be sent are kept under.
+    pub id: String,
+    pub kind: ScrobblerKind,
+    pub on: bool,
+    /// The service's API address; empty for the kind's own service.
+    pub url: String,
+    /// Last.fm's or Libre.fm's API key, or ListenBrainz's user token.
+    pub key: String,
+    /// Last.fm's shared secret; empty for the others.
+    pub secret: String,
+    /// Last.fm's or Libre.fm's session key, from signing in; empty for ListenBrainz.
+    pub session: String,
+    /// The account's name, as the service gave it when it was added.
+    pub user: String,
+}
+
+/// The service a scrobbling account is on; another speaking the same API is reached at its address
+/// (Maloja and Koito ListenBrainz's, another GNU FM server Libre.fm's).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum ScrobblerKind {
+    ListenBrainz,
+    /// Last.fm's API without its keys.
+    LibreFm,
+    #[default]
+    LastFm,
+}
+
+impl ScrobblerKind {
+    /// Every kind, in the order a profile offers to add them: Last.fm last, as its API keys need Last.fm Pro.
+    pub const ALL: [ScrobblerKind; 3] = [Self::ListenBrainz, Self::LibreFm, Self::LastFm];
+
+    /// How the settings store it.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::ListenBrainz => "listenbrainz",
+            Self::LibreFm => "librefm",
+            Self::LastFm => "lastfm",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<ScrobblerKind> {
+        Self::ALL.into_iter().find(|k| k.id() == id)
+    }
 }
 
 /// One stream quality: `bit_rate` 0 and an empty `format` mean the original file.
@@ -723,8 +777,6 @@ pub struct StoredPrefs {
     pub playlist_notes: bool,
     #[setting("tasteModel", FLAG, default = true, show = K::Switch)]
     pub taste_model: bool,
-    #[setting("scrobble", FLAG, default = true, show = K::Switch)]
-    pub scrobble: bool,
     /// Offers the queue another device or app left on the server when nothing plays here.
     #[setting("queueOffer", FLAG, default = true, show = K::Switch)]
     pub queue_offer: bool,
@@ -1278,7 +1330,28 @@ fn server_from(v: &Value) -> Option<SavedServer> {
         alt_max_bit_rate: opt_i32(o, "altMaxBitRate"),
         icon: o.get("icon").and_then(Value::as_str).and_then(ProfileIcon::from_id).unwrap_or_default(),
         picture: o.get("picture").and_then(Value::as_str).map(String::from),
+        scrobble_off: opt_bool(o, "scrobbleOff"),
+        scrobblers: o.get("scrobblers").and_then(Value::as_array).map_or_else(Vec::new, |a| a.iter().filter_map(scrobbler_from).collect()),
     })
+}
+
+/// An account of a kind nori no longer has is left out.
+fn scrobbler_from(v: &Value) -> Option<SavedScrobbler> {
+    let o = v.as_object()?;
+    Some(SavedScrobbler {
+        id: text(o.get("id")?),
+        kind: ScrobblerKind::from_id(o.get("kind")?.as_str()?)?,
+        on: opt_bool(o, "on"),
+        url: opt_string(o, "url"),
+        key: opt_string(o, "key"),
+        secret: opt_string(o, "secret"),
+        session: opt_string(o, "session"),
+        user: opt_string(o, "user"),
+    })
+}
+
+fn scrobbler_json(s: &SavedScrobbler) -> Value {
+    serde_json::json!({ "id": s.id, "kind": s.kind.id(), "on": s.on, "url": s.url, "key": s.key, "secret": s.secret, "session": s.session, "user": s.user })
 }
 
 /// `musicFolderIds`, or the one `musicFolderId` stored before a server could show several.
@@ -1298,6 +1371,12 @@ fn server_json(s: &SavedServer) -> Value {
     });
     if let Some(p) = &s.picture {
         v["picture"] = p.as_str().into();
+    }
+    if s.scrobble_off {
+        v["scrobbleOff"] = true.into();
+    }
+    if !s.scrobblers.is_empty() {
+        v["scrobblers"] = s.scrobblers.iter().map(scrobbler_json).collect();
     }
     v
 }
@@ -1331,6 +1410,10 @@ pub fn load(raw: &HashMap<String, PrefValue>) -> StoredPrefs {
     }
     migrate_picks(raw, &mut p);
     migrate_pure_black(raw, &mut p);
+    // Before each profile had its own: one switch telling every profile's server.
+    if let Some(PrefValue::Flag { v: false }) = raw.get(SCROBBLE_KEY) {
+        p.servers.iter_mut().for_each(|s| s.scrobble_off = true);
+    }
     // Settings stored before Home's rows were: the rows as that install has always shown them.
     if !raw.is_empty() && !raw.contains_key("homeRows") {
         p.home_rows = HomeRow::every().to_vec();
@@ -1415,6 +1498,10 @@ fn migrate_pure_black(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
 
 /// The equalizer mode's key; absent in settings stored before the graphic equalizer existed.
 pub(crate) const EQ_MODE_KEY: &str = "eqMode";
+
+/// The one switch telling every profile's server what plays, before each profile had its own
+/// ([`SavedServer::scrobble_off`]): read once, then stored without it.
+pub(crate) const SCROBBLE_KEY: &str = "scrobble";
 
 /// Whether settings stored before the graphic equalizer have the parametric one set up (on, a pre-amp,
 /// or bands other than the flat defaults); such installs keep it.
@@ -2093,6 +2180,30 @@ pub fn server_from_form(profile: SavedServer, headers: String) -> SavedServer {
     SavedServer { url: profile.url.trim().to_string(), alt_url: profile.alt_url.trim().to_string(), headers: parse_headers(&headers), ..profile }
 }
 
+/// `profile` with `account` in place of its namesake by id, or after the others.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn profile_scrobbler_put(mut profile: SavedServer, account: SavedScrobbler) -> SavedServer {
+    match profile.scrobblers.iter_mut().find(|a| a.id == account.id) {
+        Some(kept) => *kept = account,
+        None => profile.scrobblers.push(account),
+    }
+    profile
+}
+
+/// `profile` with its server or provider told what plays, or not.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn profile_scrobble_switched(mut profile: SavedServer, on: bool) -> SavedServer {
+    profile.scrobble_off = !on;
+    profile
+}
+
+/// `profile` without its scrobbling account `id`.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn profile_scrobbler_removed(mut profile: SavedServer, id: String) -> SavedServer {
+    profile.scrobblers.retain(|a| a.id != id);
+    profile
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn server_label(name: String, url: String) -> String {
     label(&name, &url)
@@ -2642,6 +2753,23 @@ mod tests {
             assert_eq!(server_from(&server_json(&p)), Some(p));
         }
         assert_eq!(server_from(&serde_json::json!({"id": "a", "url": "https://x"})).unwrap().kind, ServerKind::Subsonic, "saved before kinds");
+    }
+
+    /// A profile's scrobbling accounts are kept; one of a kind nori doesn't have is left out.
+    #[test]
+    fn scrobbling_accounts_are_kept() {
+        let lb = SavedScrobbler { id: "c".into(), kind: ScrobblerKind::ListenBrainz, on: true, key: "t".into(), user: "me".into(), ..Default::default() };
+        let fm = SavedScrobbler { id: "d".into(), key: "k".into(), secret: "s".into(), session: "sk".into(), ..Default::default() };
+        let p = SavedServer { id: "p".into(), scrobblers: vec![lb.clone(), fm.clone()], ..SavedServer::default() };
+        assert_eq!(server_from(&server_json(&p)), Some(p.clone()));
+        let stored = serde_json::json!({"id": "p", "scrobblers": [{"id": "x", "kind": "a-service-from-later"}, scrobbler_json(&lb)]});
+        assert_eq!(server_from(&stored).unwrap().scrobblers, std::slice::from_ref(&lb));
+
+        let off = SavedScrobbler { on: false, ..lb.clone() };
+        let e = SavedScrobbler { id: "e".into(), ..fm.clone() };
+        let edited = profile_scrobbler_put(profile_scrobbler_put(p, off.clone()), e.clone());
+        assert_eq!(edited.scrobblers, [off.clone(), fm.clone(), e.clone()], "in place, then after");
+        assert_eq!(profile_scrobbler_removed(edited, "d".into()).scrobblers, [off, e]);
     }
 
     /// A profile of the built-in YouTube Music is the plugin's, keeping its id and name; its account

@@ -97,8 +97,7 @@ remember_settings offload autoMix eq remoteControl
 id=$(long_song)
 
 if want scrobble; then section scrobble
-  remember_settings scrobble
-  "$app" set scrobble true >/dev/null
+  # The fixture profile tells its server what plays (SavedServer::scrobble_off left off).
   "$app" set autoMix off >/dev/null
   scrobble_first=$(song_id 'Long Track 01'); scrobble_second=$(song_id 'Long Track 02'); scrobble_third=$(song_id 'Long Track 03')
   count() { api getSong "&id=$1" | python3 -c 'import json,sys;print(json.load(sys.stdin)["subsonic-response"]["song"].get("playCount",0))'; }

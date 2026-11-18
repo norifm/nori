@@ -142,7 +142,8 @@ pub enum Row {
     Repo { url: String, title: String, detail: String, removable: bool },
     /// A saved profile: enter switches to it; K J move it to place `up` or `down` where it can go, and e
     /// renames it from `name` where it may be (a jam guest's profiles stay as they are).
-    Server { id: String, label: String, detail: String, active: bool, up: Option<u32>, down: Option<u32>, name: Option<String> },
+    /// `name` and `scrobbling` are set when the profile may be changed here.
+    Server { id: String, label: String, detail: String, active: bool, up: Option<u32>, down: Option<u32>, name: Option<String>, scrobbling: Option<Scrobbling> },
     Button { title: String, action: Act },
     /// A lyrics service in the ranked list: enter switches it, ← → move it, `key` adds or changes its key.
     /// `asks_key`: switching it on asks for its key.
@@ -241,6 +242,14 @@ impl Alone {
             Alone::No | Alone::Plugins => None,
         }
     }
+}
+
+/// A profile's scrobbling list: its server first where it takes plays (its name, and being told them),
+/// then its accounts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scrobbling {
+    pub itself: Option<(String, bool)>,
+    pub accounts: Vec<nori_core::settings::SavedScrobbler>,
 }
 
 /// What the page shows beyond the settings: the terminal's own state, the kinds of profile and the
@@ -530,6 +539,18 @@ impl SettingsView {
     }
 
     /// m on a plugin: moving and removing it.
+    /// The selected profile's scrobbling list: its server first, where it takes plays, then its accounts;
+    /// picking one switches it, then each account removes one, then adding one.
+    pub fn scrobbling_menu(&self) -> Option<Overlay> {
+        let Some(Row::Server { id, label, scrobbling: Some(Scrobbling { itself, accounts }), .. }) = self.selected() else { return None };
+        let switch = |on: bool| if on { "off" } else { "on" };
+        let mut options: Vec<(String, String)> = itself.iter().map(|(name, on)| (text::scrobbler_itself_line(name, *on), format!("{}:", switch(*on)))).collect();
+        options.extend(accounts.iter().map(|a| (text::scrobbler_line(a), format!("{}:{}", switch(a.on), a.id))));
+        options.extend(accounts.iter().map(|a| (format!("Remove {}", text::scrobbler_name(a)), format!("remove:{}", a.id))));
+        options.push(("Add scrobbler".to_string(), "add".to_string()));
+        Some(Overlay::Picker { title: format!("Scrobbling for {label}"), options, sel: Sel::default(), target: Target::Scrobbling(id.clone()) })
+    }
+
     pub fn plugin_menu(&self) -> Option<Overlay> {
         let c = self.plugin_here()?;
         let can = |up| self.plugin_move(up).is_some();
@@ -1111,7 +1132,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "lyricsPreferWords" => "Prefer word-by-word lyrics",
         "playlistNotes" => "Playlist notes",
         "tasteModel" => "Keep listening history",
-        "scrobble" => "Tell the server what you play",
         "queueOffer" => "Continue from other devices",
         "thirdPartyLookups" => "Look things up online",
         "remoteControl" => "Remote control and jams",
@@ -1348,11 +1368,16 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             if !sv.alt_url.trim().is_empty() {
                 parts.push("second address");
             }
-            let label = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or(words.name);
+            let label = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.clone());
             let movable = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
             let up = index.checked_sub(1).filter(|_| movable);
             let down = Some(index + 1).filter(|to| movable && (*to as usize) < p.servers.len());
-            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active, up, down, name: movable.then(|| sv.name.clone()) }
+            // The open profile's rules as its session has them; another's as the core reads the saved profile.
+            let scrobbling = movable.then(|| {
+                let takes = if active { f.rules.scrobbles } else { kinds.rules_of(sv.clone(), false).scrobbles };
+                Scrobbling { itself: takes.then(|| (words.name.clone(), !sv.scrobble_off)), accounts: sv.scrobblers.clone() }
+            });
+            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active, up, down, name: movable.then(|| sv.name.clone()), scrobbling }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             Row::Toggle { switch: Switch::Stores("musicFolders".into(), tapped), title: f.folders.get(index as usize)?.name.clone(), detail: String::new(), on, enabled }
@@ -1798,7 +1823,6 @@ mod tests {
             auto_fill: Some(nori_core::settings::AutoFillKind::Songs),
             compressor: Some(nori_core::settings::CompressorPreset::Light),
             replay_gain: nori_core::settings::GainMode::Track,
-            scrobble: true,
             lyrics_online: true,
             third_party_lookups: true,
             servers: vec![server],

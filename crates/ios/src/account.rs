@@ -383,6 +383,143 @@ pub unsafe extern "C" fn nori_ios_remove_server(data_dir: *const c_char, id: *co
     let _ = remove(Path::new(&text(data_dir)), &text(id));
 }
 
+/// Saved server `id`'s scrobbling accounts as JSON to free: `[{id, kind, user, host, on}]`, `kind` as the
+/// settings store it, `host` the address's, empty for the kind's own service. NULL for an unreadable path.
+///
+/// # Safety
+/// Both are NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_scrobblers(data_dir: *const c_char, id: *const c_char) -> *mut c_char {
+    let Ok(settings) = live_settings(Path::new(&text(data_dir))) else { return std::ptr::null_mut() };
+    let id = text(id);
+    let accounts = settings.prefs(|p| p.servers.iter().find(|s| s.id == id).map(|s| s.scrobblers.clone()).unwrap_or_default());
+    let rows: Vec<serde_json::Value> = accounts
+        .iter()
+        .map(|a| serde_json::json!({ "id": a.id, "kind": a.kind.id(), "user": a.user, "host": nori_core::settings::label("", &a.url), "on": a.on }))
+        .collect();
+    owned(&serde_json::Value::from(rows).to_string()).into_raw()
+}
+
+/// Whether saved server `id` is told what plays itself, first in its scrobbling list: 1 on, 0 off, -1
+/// where its rules have it take none (the open profile's as its session has them).
+///
+/// # Safety
+/// Both are NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_scrobble_itself(data_dir: *const c_char, id: *const c_char) -> i32 {
+    let Ok(settings) = live_settings(Path::new(&text(data_dir))) else { return -1 };
+    let (prefs, id) = (settings.current().unwrap_or_default(), text(id));
+    let Some(profile) = prefs.servers.iter().find(|s| s.id == id) else { return -1 };
+    let open = (prefs.active_server_id == id).then(|| crate::session::with_session(|s| s.rules().scrobbles)).flatten();
+    match open.unwrap_or_else(|| Kinds::builtin().rules_of(profile.clone(), false).scrobbles) {
+        true => i32::from(!profile.scrobble_off),
+        false => -1,
+    }
+}
+
+/// Saved server `id` told what plays itself (non-zero), or not.
+///
+/// # Safety
+/// Both are NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_switch_scrobble_itself(data_dir: *const c_char, id: *const c_char, on: i32) {
+    if let Ok(settings) = live_settings(Path::new(&text(data_dir))) {
+        nori_host::server_scrobble_switched(&settings, &text(id), on != 0);
+        settings.writer.flush();
+    }
+}
+
+/// Saved server `id`'s scrobbling account `account` turned on (non-zero) or off.
+///
+/// # Safety
+/// The strings are NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_switch_scrobbler(data_dir: *const c_char, id: *const c_char, account: *const c_char, on: i32) {
+    if let Ok(settings) = live_settings(Path::new(&text(data_dir))) {
+        nori_host::scrobbler_switched(&settings, &text(id), &text(account), on != 0);
+        settings.writer.flush();
+    }
+}
+
+/// Saved server `id` without its scrobbling account `account`.
+///
+/// # Safety
+/// The strings are NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_remove_scrobbler(data_dir: *const c_char, id: *const c_char, account: *const c_char) {
+    if let Ok(settings) = live_settings(Path::new(&text(data_dir))) {
+        nori_host::scrobbler_removed(&settings, &text(id), &text(account));
+        settings.writer.flush();
+    }
+}
+
+/// The kinds of scrobbling account a profile can add, with the fields each asks, as JSON to free
+/// (`nori_core::scrobblers::scrobbler_kinds_json`).
+#[no_mangle]
+pub extern "C" fn nori_ios_scrobbler_kinds() -> *mut c_char {
+    owned(&nori_core::scrobblers::scrobbler_kinds_json()).into_raw()
+}
+
+/// A token to allow on the scrobbling service's page for the account `form` describes (JSON as
+/// [`nori_ios_add_scrobbler`] takes it), as JSON to free: `{token, page}`. Blocks on the network. NULL
+/// when there is none, with a [`LOGIN_OK`] code's failure in `code` and `detail` as [`nori_ios_login`]'s.
+///
+/// # Safety
+/// `form` is NUL-terminated UTF-8, or NULL. `code` and `detail` are NULL or pointers this function writes.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_scrobbler_approval(form: *const c_char, code: *mut i32, detail: *mut *mut c_char) -> *mut c_char {
+    if !detail.is_null() {
+        unsafe { *detail = std::ptr::null_mut() };
+    }
+    let v: serde_json::Value = serde_json::from_str(&text(form)).unwrap_or_default();
+    let found = nori_core::scrobblers::ScrobblerForm::from_json(v["kind"].as_str().unwrap_or_default(), &v["fields"], "")
+        .ok_or((LOGIN_INCOMPLETE, None))
+        .and_then(|form| crate::session::server().map(|(client, _)| (client, form)).ok_or((LOGIN_DATABASE, None)))
+        .and_then(|(client, form)| block_on(client.scrobbler_approval(form)).map_err(fail));
+    let (failed, extra) = match found {
+        Ok(a) => return owned(&serde_json::json!({ "token": a.token, "page": a.page }).to_string()).into_raw(),
+        Err(f) => f,
+    };
+    if !code.is_null() {
+        unsafe { *code = failed };
+    }
+    if let (false, Some(extra)) = (detail.is_null(), extra.filter(|s| !s.is_empty())) {
+        unsafe { *detail = owned(&extra).into_raw() };
+    }
+    std::ptr::null_mut()
+}
+
+/// Signs in to the scrobbling account `form` describes, JSON `{kind, fields: {id: typed}, approved}` by the ids
+/// [`nori_ios_scrobbler_kinds`] gives, `approved` the token allowed on the service's page where it signs
+/// in there ([`nori_ios_scrobbler_approval`]), and keeps it in saved server `id`. Blocks on the network. Returns a
+/// [`LOGIN_OK`] code, `detail` as [`nori_ios_login`]'s; [`LOGIN_DATABASE`] while no profile is open.
+///
+/// # Safety
+/// The strings are NUL-terminated UTF-8, or NULL. `detail` is NULL or a pointer this function writes.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_add_scrobbler(data_dir: *const c_char, id: *const c_char, form: *const c_char, detail: *mut *mut c_char) -> i32 {
+    if !detail.is_null() {
+        unsafe { *detail = std::ptr::null_mut() };
+    }
+    let v: serde_json::Value = serde_json::from_str(&text(form)).unwrap_or_default();
+    let Some(form) = nori_core::scrobblers::ScrobblerForm::from_json(v["kind"].as_str().unwrap_or_default(), &v["fields"], v["approved"].as_str().unwrap_or_default()) else {
+        return LOGIN_INCOMPLETE;
+    };
+    let (Ok(settings), Some(client)) = (live_settings(Path::new(&text(data_dir))), crate::session::server().map(|(client, _)| client)) else { return LOGIN_DATABASE };
+    let (code, extra) = match block_on(client.sign_in_scrobbler(form)) {
+        Ok(account) => {
+            nori_host::scrobbler_kept(&settings, &text(id), account);
+            settings.writer.flush();
+            (LOGIN_OK, None)
+        }
+        Err(e) => fail(e),
+    };
+    if let (false, Some(extra)) = (detail.is_null(), extra.filter(|s| !s.is_empty())) {
+        unsafe { *detail = owned(&extra).into_raw() };
+    }
+    code
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

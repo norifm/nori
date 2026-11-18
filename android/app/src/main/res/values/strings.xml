@@ -263,7 +263,6 @@
     <string name="settings_update_beta_detail">Test versions of the next release. They may have bugs</string>
     <string name="settings_updating">Updating…</string>
     <string name="settings_taste_model">Keep listening history</string>
-    <string name="settings_scrobble">Tell the server what you play</string>
     <string name="settings_queue_offer">Continue from other devices</string>
     <string name="settings_lookups">Look things up online</string>
 
@@ -409,7 +408,6 @@
     <string name="settings_hint_tap_action">What opening a song in a list does</string>
     <string name="settings_hint_offline_search">Song names kept on this device so search works without a connection</string>
     <string name="settings_hint_taste_model">Stored on this device. Powers mixes and stats</string>
-    <string name="settings_hint_scrobble">Scrobbling. Sends your plays to your server</string>
     <string name="settings_hint_lookups">Missing lyrics and the AutoEQ headphone list. Third-party lookups</string>
     <string name="settings_hint_ahead">Preload, prefetch, buffer and cache upcoming songs and lyrics</string>
     <string name="settings_hint_cache_size">How much streamed music to keep on this device</string>

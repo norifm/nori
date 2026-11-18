@@ -29,6 +29,7 @@ pub mod remote;
 pub mod jam_pick;
 pub mod destination;
 pub mod providers;
+pub mod scrobblers;
 mod favorites;
 #[cfg(feature = "neural-beats")]
 pub mod model_download;

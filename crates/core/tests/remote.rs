@@ -1153,9 +1153,9 @@ fn a_handoff_counts_one_listen() {
         desk.core.session.scrobble_track(Some("long".into()), TrackChange::Moved, true, now, nori_core::db::now_ms(), 0);
         let donor = phone.core.session.scrobble_track(None, TrackChange::Ended, false, now, nori_core::db::now_ms(), 0);
         let receiver = desk.core.session.scrobble_track(None, TrackChange::Ended, false, now + heard, nori_core::db::now_ms() + heard, 0);
-        assert_eq!(donor.submit_id, None, "the old device no longer owns the listen");
-        assert_eq!(receiver.submit_id.as_deref(), Some("long"), "time heard on both devices qualifies");
-        assert_eq!(receiver.submit_at, started, "the original start belongs to the same listen");
+        assert_eq!(donor.counted, None, "the old device no longer owns the listen");
+        assert_eq!(receiver.counted.map(|s| s.id).as_deref(), Some("long"), "time heard on both devices qualifies");
+        assert_eq!(receiver.counted_at, started, "the original start belongs to the same listen");
         desk.core.session.settings.writer.flush();
         assert!(phone.core.history_recent(10, None, true).unwrap().0.is_empty(), "the donor does not record the listen again");
         let history = desk.core.history_recent(10, None, true).unwrap().0;

@@ -80,13 +80,18 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
             mark.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tappedMark(_:))))
         }
         cell.accessibilityCustomActions = [SpokenAction(Say.profileIcon) { [weak self] in self?.chooseIcon(s) },
-                                           SpokenAction(Say.rename) { [weak self] in self?.rename(s) }]
+                                           SpokenAction(Say.rename) { [weak self] in self?.rename(s) },
+                                           SpokenAction(Say.scrobbling) { [weak self] in self?.scrobbling(s) }]
         return cell
     }
 
     @objc private func tappedMark(_ tap: UITapGestureRecognizer) {
         guard let path = tableView.indexPathForRow(at: tap.location(in: tableView)), path.section == 0 else { return }
         chooseIcon(servers[path.row])
+    }
+
+    private func scrobbling(_ s: Saved) {
+        navigationController?.pushViewController(ScrobblingPage(id: s.id), animated: true)
     }
 
     private func chooseIcon(_ s: Saved) {
@@ -120,7 +125,12 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
             self?.rename(s)
         }
         rename.backgroundColor = Theme.secondary
-        let actions = UISwipeActionsConfiguration(actions: [forget, rename])
+        let scrobbling = UIContextualAction(style: .normal, title: Say.scrobbling) { [weak self] _, _, done in
+            done(true)
+            self?.scrobbling(s)
+        }
+        scrobbling.backgroundColor = Theme.secondary
+        let actions = UISwipeActionsConfiguration(actions: [forget, rename, scrobbling])
         actions.performsFirstActionWithFullSwipe = false
         return actions
     }
@@ -303,6 +313,238 @@ final class ProfileIconPage: TablePage {
             dataDirectory().path.withCString { d in id.withCString { i in icon.withCString { nori_ios_set_server_icon(d, i, $0) } } }
             DispatchQueue.main.async { self.navigationController?.popViewController(animated: true) }
         }
+    }
+}
+
+/// A profile's scrobbling accounts, whatever it plays from: each with its switch, a swipe removes it; the
+/// last rows add one, signed in by the core (`Client::sign_in_scrobbler`), Last.fm after its page allowed
+/// nori in Safari (`Client::scrobbler_approval`).
+final class ScrobblingPage: TablePage {
+    private struct Account {
+        let id: String
+        let kind: String
+        let detail: String
+        let on: Bool
+    }
+
+    /// A kind of account to add: the fields it asks, by id; whether it signs in on its page; where its
+    /// fields come from, if anywhere.
+    private struct Kind {
+        let id: String
+        let fields: [String]
+        let browser: Bool
+        let help: URL?
+    }
+
+    private let profile: String
+    /// The server itself, first: 1 told what plays, 0 not, -1 where it takes none.
+    private var itself: Int32 = -1
+    private var accounts: [Account] = []
+    private let kinds: [Kind] = (takenJSON(nori_ios_scrobbler_kinds()) as? [[String: Any]] ?? []).map {
+        Kind(id: $0["kind"] as? String ?? "", fields: ($0["fields"] as? [[String: Any]] ?? []).map { $0["id"] as? String ?? "" },
+             browser: $0["signIn"] as? String == "browser", help: ($0["help"] as? String).flatMap(URL.init(string:)))
+    }
+
+    init(id: String) {
+        profile = id
+        super.init(style: .grouped)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = Say.scrobbling
+        dress(tableView)
+        load()
+    }
+
+    private func load() {
+        let id = profile
+        DispatchQueue.global(qos: .userInitiated).async {
+            let rows = dataDirectory().path.withCString { d in id.withCString { takenJSON(nori_ios_scrobblers(d, $0)) } } as? [[String: Any]] ?? []
+            let itself = dataDirectory().path.withCString { d in id.withCString { nori_ios_scrobble_itself(d, $0) } }
+            let accounts = rows.map {
+                Account(id: $0["id"] as? String ?? "", kind: $0["kind"] as? String ?? "",
+                        detail: [$0["user"] as? String ?? "", $0["host"] as? String ?? ""].filter { !$0.isEmpty }.joined(separator: " · "),
+                        on: $0["on"] as? Bool ?? false)
+            }
+            DispatchQueue.main.async {
+                self.itself = itself
+                self.accounts = accounts
+                self.tableView.reloadData()
+            }
+        }
+    }
+
+    override func numberOfSections(in tableView: UITableView) -> Int { 2 }
+
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        section == 0 ? first + accounts.count : kinds.count
+    }
+
+    /// Rows before the accounts: the server itself, where it takes plays.
+    private var first: Int { itself >= 0 ? 1 : 0 }
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        section == 1 ? Say.addScrobblerTitle : nil
+    }
+
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        section == 1 ? Say.scrobblingNote : nil
+    }
+
+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if indexPath.section == 1 {
+            let cell = row(tableView, id: "add", style: .subtitle)
+            let kind = kinds[indexPath.row].id
+            cell.textLabel?.text = Say.scrobbler(kind)
+            cell.detailTextLabel?.text = Say.scrobblerCost(kind)
+            cell.accessoryType = .disclosureIndicator
+            return cell
+        }
+        if indexPath.row < first {
+            let cell = row(tableView, id: "itself", style: .subtitle)
+            cell.textLabel?.text = Say.scrobblerServer
+            cell.detailTextLabel?.text = Say.scrobblerBuiltIn
+            let toggle = UISwitch()
+            toggle.isOn = itself == 1
+            toggle.onTintColor = Theme.switchOn
+            let id = profile
+            toggle.addAction { [weak self] in
+                let on: Int32 = toggle.isOn ? 1 : 0
+                DispatchQueue.global(qos: .userInitiated).async {
+                    dataDirectory().path.withCString { d in id.withCString { nori_ios_switch_scrobble_itself(d, $0, on) } }
+                    DispatchQueue.main.async { self?.load() }
+                }
+            }
+            cell.accessoryView = toggle
+            cell.selectionStyle = .none
+            return cell
+        }
+        let cell = row(tableView, id: "account", style: .subtitle)
+        let a = accounts[indexPath.row - first]
+        cell.textLabel?.text = Say.scrobbler(a.kind)
+        cell.detailTextLabel?.text = a.detail
+        let toggle = UISwitch()
+        toggle.isOn = a.on
+        toggle.onTintColor = Theme.switchOn
+        let (id, account) = (profile, a.id)
+        toggle.addAction { [weak self] in
+            let on: Int32 = toggle.isOn ? 1 : 0
+            DispatchQueue.global(qos: .userInitiated).async {
+                dataDirectory().path.withCString { d in id.withCString { i in account.withCString { nori_ios_switch_scrobbler(d, i, $0, on) } } }
+                DispatchQueue.main.async { self?.load() }
+            }
+        }
+        cell.accessoryView = toggle
+        cell.selectionStyle = .none
+        return cell
+    }
+
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        if indexPath.section == 1 { add(kinds[indexPath.row]) }
+    }
+
+    override func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard indexPath.section == 0, indexPath.row >= first else { return nil }
+        let (id, account) = (profile, accounts[indexPath.row - first].id)
+        let remove = UIContextualAction(style: .destructive, title: Say.remove) { [weak self] _, _, done in
+            done(true)
+            DispatchQueue.global(qos: .userInitiated).async {
+                dataDirectory().path.withCString { d in id.withCString { i in account.withCString { nori_ios_remove_scrobbler(d, i, $0) } } }
+                DispatchQueue.main.async { self?.load() }
+            }
+        }
+        return UISwipeActionsConfiguration(actions: [remove])
+    }
+
+    /// Asks for the fields a `kind` account signs in with, then signs in, or for one signing in on its
+    /// page opens it first; a failure says why and asks again.
+    private func add(_ kind: Kind, failed: String? = nil) {
+        let ask = UIAlertController(title: Say.addScrobbler(kind.id), message: failed ?? Say.scrobblerHint(kind.id), preferredStyle: .alert)
+        ask.view.tintColor = .black
+        for id in kind.fields {
+            ask.addTextField { field in
+                field.placeholder = Say.scrobblerField(id)
+                field.isSecureTextEntry = ["token", "secret", "password"].contains(id)
+                field.autocapitalizationType = .none
+                field.autocorrectionType = .no
+            }
+        }
+        if let help = kind.help {
+            ask.addAction(UIAlertAction(title: Say.scrobblerHelp(kind.id), style: .default) { [weak self] _ in
+                UIApplication.shared.openURL(help)
+                self?.add(kind)
+            })
+        }
+        ask.addAction(UIAlertAction(title: kind.browser ? Say.scrobblerContinue(kind.id) : Say.add, style: .default) { [weak self] _ in
+            let typed = ask.textFields?.map { $0.text ?? "" } ?? []
+            let form: [String: Any] = ["kind": kind.id, "fields": Dictionary(uniqueKeysWithValues: zip(kind.fields, typed))]
+            kind.browser ? self?.approve(kind, form) : self?.signIn(kind, form)
+        })
+        ask.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
+        present(ask, animated: true)
+    }
+
+    private func json(_ form: [String: Any]) -> String {
+        (try? JSONSerialization.data(withJSONObject: form)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
+    /// Asks for the token to allow on the service's page, opens the page in Safari, and waits for Done.
+    private func approve(_ kind: Kind, _ form: [String: Any]) {
+        let text = json(form)
+        busy(true)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var code: Int32 = NORI_LOGIN_OK
+            var detail: UnsafeMutablePointer<CChar>?
+            let got = text.withCString { f in withUnsafeMutablePointer(to: &detail) { nori_ios_scrobbler_approval(f, &code, $0) } }
+            let extra = taken(detail)
+            let approval = takenJSON(got) as? [String: String]
+            DispatchQueue.main.async {
+                self.busy(false)
+                guard let token = approval?["token"], let page = approval?["page"].flatMap(URL.init(string:)) else {
+                    return self.add(kind, failed: Say.failure(code, extra))
+                }
+                UIApplication.shared.openURL(page)
+                var approved = form
+                approved["approved"] = token
+                let done = UIAlertController(title: Say.addScrobbler(kind.id), message: Say.scrobblerAllow(kind.id), preferredStyle: .alert)
+                done.view.tintColor = .black
+                done.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
+                done.addAction(UIAlertAction(title: Say.done, style: .default) { [weak self] _ in self?.signIn(kind, approved) })
+                self.present(done, animated: true)
+            }
+        }
+    }
+
+    private func signIn(_ kind: Kind, _ form: [String: Any]) {
+        let (id, text) = (profile, json(form))
+        busy(true)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var detail: UnsafeMutablePointer<CChar>?
+            let code = dataDirectory().path.withCString { d in
+                id.withCString { i in text.withCString { f in withUnsafeMutablePointer(to: &detail) { nori_ios_add_scrobbler(d, i, f, $0) } } }
+            }
+            let extra = taken(detail)
+            DispatchQueue.main.async {
+                self.busy(false)
+                if code == NORI_LOGIN_OK {
+                    self.load()
+                } else {
+                    self.add(kind, failed: Say.failure(code, extra))
+                }
+            }
+        }
+    }
+
+    /// A spinner at the title's end while the network is asked.
+    private func busy(_ on: Bool) {
+        guard on else { return nameEnd = [] }
+        let spinner = UIActivityIndicatorView(style: Theme.dark ? .white : .gray)
+        spinner.startAnimating()
+        nameEnd = [spinner]
     }
 }
 

@@ -576,6 +576,53 @@ class Say(private val r: Resources) {
     val clientCertPassword: String = r.getString(R.string.client_cert_password)
     val importClientCert: String = r.getString(R.string.import_client_cert)
     val replaceClientCert: String = r.getString(R.string.replace_client_cert)
+    val scrobbling: String = r.getString(R.string.scrobbling)
+    val scrobblingHint: String = r.getString(R.string.scrobbling_hint)
+    fun scrobbler(k: dev.nori.music.ffi.settings.ScrobblerKind): String = r.getString(
+        when (k) {
+            dev.nori.music.ffi.settings.ScrobblerKind.LISTEN_BRAINZ -> R.string.listenbrainz
+            dev.nori.music.ffi.settings.ScrobblerKind.LIBRE_FM -> R.string.librefm
+            dev.nori.music.ffi.settings.ScrobblerKind.LAST_FM -> R.string.lastfm
+        },
+    )
+    fun addScrobbler(k: dev.nori.music.ffi.settings.ScrobblerKind): String = r.getString(
+        when (k) {
+            dev.nori.music.ffi.settings.ScrobblerKind.LISTEN_BRAINZ -> R.string.add_listenbrainz
+            dev.nori.music.ffi.settings.ScrobblerKind.LIBRE_FM -> R.string.add_librefm
+            dev.nori.music.ffi.settings.ScrobblerKind.LAST_FM -> R.string.add_lastfm
+        },
+    )
+    fun scrobblerField(f: dev.nori.music.ffi.ScrobblerField): String = r.getString(
+        when (f) {
+            dev.nori.music.ffi.ScrobblerField.TOKEN -> R.string.listenbrainz_token
+            dev.nori.music.ffi.ScrobblerField.API_KEY -> R.string.lastfm_api_key
+            dev.nori.music.ffi.ScrobblerField.SECRET -> R.string.lastfm_secret
+            dev.nori.music.ffi.ScrobblerField.USER -> R.string.user
+            dev.nori.music.ffi.ScrobblerField.PASSWORD -> R.string.password
+            dev.nori.music.ffi.ScrobblerField.ADDRESS -> R.string.scrobbler_address
+        },
+    )
+    val addScrobblerAccount: String = r.getString(R.string.add_scrobbler_account)
+    val scrobblerBuiltIn: String = r.getString(R.string.scrobbler_built_in)
+    val addScrobblerTitle: String = r.getString(R.string.add_scrobbler_title)
+    /** What a [k] account costs, where it does. */
+    fun scrobblerCost(k: dev.nori.music.ffi.settings.ScrobblerKind): String? =
+        if (k == dev.nori.music.ffi.settings.ScrobblerKind.LAST_FM) r.getString(R.string.lastfm_cost) else null
+    /** The link to where a [k] account's form finds what it asks. */
+    fun scrobblerHelp(k: dev.nori.music.ffi.settings.ScrobblerKind): String =
+        r.getString(if (k == dev.nori.music.ffi.settings.ScrobblerKind.LAST_FM) R.string.lastfm_help else R.string.listenbrainz_help)
+    fun scrobblerContinue(k: dev.nori.music.ffi.settings.ScrobblerKind): String = r.getString(R.string.scrobbler_continue, scrobbler(k))
+    fun scrobblerAllow(k: dev.nori.music.ffi.settings.ScrobblerKind): String = r.getString(R.string.scrobbler_allow, scrobbler(k))
+    /** What a field of a [k] account says under it, if anything. */
+    fun scrobblerFieldHint(k: dev.nori.music.ffi.settings.ScrobblerKind, f: dev.nori.music.ffi.ScrobblerField): String? = when (f) {
+        dev.nori.music.ffi.ScrobblerField.PASSWORD -> R.string.scrobbler_password_hint
+        dev.nori.music.ffi.ScrobblerField.ADDRESS -> when (k) {
+            dev.nori.music.ffi.settings.ScrobblerKind.LISTEN_BRAINZ -> R.string.listenbrainz_address_hint
+            dev.nori.music.ffi.settings.ScrobblerKind.LIBRE_FM -> R.string.librefm_address_hint
+            dev.nori.music.ffi.settings.ScrobblerKind.LAST_FM -> null
+        }
+        else -> null
+    }?.let(r::getString)
     val underTheHood: String = r.getString(R.string.under_the_hood)
     val playback: String = r.getString(R.string.playback)
     val libraryAndSearch: String = r.getString(R.string.library_and_search)

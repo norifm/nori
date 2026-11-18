@@ -232,7 +232,6 @@ enum Say {
             ("remoteControl", "Remote control and jams"),
         ]),
         ("Server", [
-            ("scrobble", "Scrobble plays"),
             ("thirdPartyLookups", "Look up artist info and lyrics online"),
         ]),
     ]
@@ -324,6 +323,34 @@ enum Say {
     static let forget = "Forget"
     static let rename = "Rename"
     static let renameServer = "Rename server"
+    static let scrobbling = "Scrobbling"
+    static let scrobblingNote = "Plays go to each one that’s on, whatever this profile plays from."
+    static func scrobbler(_ kind: String) -> String {
+        ["listenbrainz": "ListenBrainz", "librefm": "Libre.fm", "lastfm": "Last.fm"][kind] ?? kind
+    }
+    static func addScrobbler(_ kind: String) -> String { "Add \(scrobbler(kind))" }
+    static func scrobblerHint(_ kind: String) -> String {
+        [
+            "listenbrainz": "Address: empty for ListenBrainz; Maloja, Koito: their ListenBrainz API address.",
+            "librefm": "The password signs in once; only the session is kept. Address: empty for Libre.fm; another GNU FM server: its API address.",
+            "lastfm": "The key and secret are from last.fm/api/account/create. Then you allow nori on Last.fm.",
+        ][kind] ?? ""
+    }
+    static let addScrobblerTitle = "Add a scrobbler"
+    /// The profile's own server, first among where its plays go.
+    static let scrobblerServer = "OpenSubsonic"
+    static let scrobblerBuiltIn = "Built in"
+    /// What an account costs, where it does.
+    static func scrobblerCost(_ kind: String) -> String? { kind == "lastfm" ? "Needs Last.fm Pro" : nil }
+    static func scrobblerHelp(_ kind: String) -> String { kind == "lastfm" ? "Get an API key" : "Get your token" }
+    static func scrobblerContinue(_ kind: String) -> String { "Continue on \(scrobbler(kind))" }
+    static func scrobblerAllow(_ kind: String) -> String { "Allow nori on \(scrobbler(kind)) in Safari, then come back and tap Done." }
+    /// What a field adding a scrobbling account asks.
+    static func scrobblerField(_ id: String) -> String {
+        ["token": "User token", "apiKey": "API key", "secret": "Shared secret", "user": user, "password": password, "address": "Address (optional)"][id] ?? id
+    }
+    static let add = "Add"
+    static let done = "Done"
     static let save = "Save"
     static let user = "User"
     static let password = "Password"
