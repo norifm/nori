@@ -13,6 +13,34 @@ use nori_plugins::{Bluetooth, BtDevice, BtFailure, Plugins};
 
 use crate::btids;
 
+/// Runs `app` on a thread of its own while the main thread, which calls this, runs its run loop: IOBluetooth
+/// tells of devices and channels only there. For a client whose main thread runs nothing else; returns
+/// what `app` returns.
+pub fn beside_main_run_loop<R: Send + 'static>(app: impl FnOnce() -> R + Send + 'static) -> R {
+    /// Stops the main run loop once the app ends, returned or panicked.
+    struct Ended;
+    impl Drop for Ended {
+        fn drop(&mut self) {
+            dispatch2::DispatchQueue::main().exec_async(|| {
+                if let Some(main) = objc2_core_foundation::CFRunLoop::current() {
+                    main.stop();
+                }
+            });
+        }
+    }
+    let app = std::thread::Builder::new()
+        .name("nori-app".into())
+        // As much as the main thread has.
+        .stack_size(8 << 20)
+        .spawn(move || {
+            let _ended = Ended;
+            app()
+        })
+        .expect("a thread for the app");
+    objc2_core_foundation::CFRunLoop::run();
+    app.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
 /// The longest a channel, a connection, a device's services or a scan for it take to come.
 const SLOWEST: Duration = Duration::from_secs(10);
 
