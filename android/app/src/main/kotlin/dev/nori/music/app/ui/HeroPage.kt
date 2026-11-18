@@ -44,6 +44,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,7 +66,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
  * The dissolve is the point. The artwork fades into the page as the player's sleeve does
  * ([SoftSleeve]): its last stretch blurs and eases out, so there is no line where the picture stops - it
  * simply runs out of picture. Nothing animates, so an open page costs nothing between frames. Scrolling
- * moves the artwork in the draw phase only, so it never recomposes.
+ * moves the picture in the draw phase only, so it never recomposes, and the fade scrolls with the title.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -173,21 +174,21 @@ fun HeroPage(
                     val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(side, side + HERO_DEEPER.roundToPx()))
                     layout(placeable.width, placeable.height) { placeable.place(0, 0) }
                 }
-                    // Parallax and fade, read in the draw phase: scrolling never recomposes the hero.
-                    .graphicsLayer {
-                        val scrolled = heroScroll(size.height)
-                        translationY = scrolled * 0.4f
-                        alpha = 1f - (scrolled / size.height).coerceIn(0f, 1f) * 0.5f
-                    },
+                    // Fade, read in the draw phase: scrolling never recomposes the hero.
+                    .graphicsLayer { alpha = 1f - (heroScroll(size.height) / size.height).coerceIn(0f, 1f) * 0.5f },
             ) {
+                // The parallax, also in the draw phase: the picture lags the page, clipped to its box.
+                val lag = Modifier.fillMaxSize().clipToBounds().graphicsLayer { translationY = heroScroll(size.height) * 0.4f }
                 // The cover fades into the page as the player's sleeve does: its last stretch blurs and eases
                 // out with no slope at either end, so there is no row where the picture is seen to stop, and
-                // the title stands where that fade is nearly over. It ends on the page inside the artwork, so
-                // the parallax never slides a seam into view.
-                SoftSleeve(Modifier.fillMaxSize()) { picture(Modifier.fillMaxSize()) }
+                // the title stands where that fade is nearly over. The blur and the fade are the page's, not
+                // the picture's: they scroll with the title, as the player's go with it when it shrinks, and
+                // only the picture behind them lags. The fade ends on the page inside the box, so the lag
+                // never slides a seam into view.
+                SoftSleeve(Modifier.fillMaxSize()) { picture(lag) }
                 // Just enough shade under the status bar for white icons on a pale cover.
                 Box(
-                    Modifier.fillMaxSize().drawWithCache {
+                    lag.drawWithCache {
                         val shade = Brush.verticalGradient(0f to Color.Black.copy(alpha = stage.statusShade), stage.statusShadeTo to Color.Transparent)
                         onDrawBehind { drawRect(shade) }
                     },
