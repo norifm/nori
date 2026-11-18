@@ -1,4 +1,4 @@
-package nori:plugin@6.0.0;
+package nori:plugin@7.0.0;
 
 /// The plugin's line in nori's log. Secrets never go here.
 interface log {
@@ -179,6 +179,10 @@ interface session {
     // `library.write`
     star: func(kind: item-kind, id: string, on: bool) -> result<_, error>;
     add-to-playlist: func(playlist: string, ids: list<string>) -> result<_, error>;
+
+    // any plugin
+    /// Its `notification.buttons` would answer otherwise now: nori asks again.
+    buttons-changed: func();
 }
 
 /// The open profile's Subsonic API through the core, signed by it (`account.subsonic`). The plugin

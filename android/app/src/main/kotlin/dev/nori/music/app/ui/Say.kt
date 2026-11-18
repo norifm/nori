@@ -421,6 +421,7 @@ class Say(private val r: Resources) {
             "slots" -> R.string.plugins_kind_slots
             "deciders" -> R.string.plugins_kind_deciders
             "preparation" -> R.string.plugins_kind_preparation
+            "notification" -> R.string.plugins_kind_notification
             else -> null
         }
     } + listOfNotNull(R.string.plugins_kind_overrides.takeIf { overrides })).joinToString(" · ") { r.getString(it) }

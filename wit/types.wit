@@ -1,4 +1,4 @@
-package nori:plugin@6.0.0;
+package nori:plugin@7.0.0;
 
 /// What plugins and nori say to each other about music: records of nori's own, never its internals.
 interface types {
@@ -193,6 +193,32 @@ interface types {
         hdmi,
         cast,
         other,
+    }
+
+    /// A glyph from nori's own set, drawn in each client's style.
+    enum glyph {
+        sparkle,
+        info,
+        share,
+        link,
+        search,
+        heart,
+        download,
+        add,
+        play,
+        tune,
+        headphones,
+        speaker,
+        battery,
+        touch,
+        timer,
+        gauge,
+        wave,
+        bluetooth,
+        gear,
+        globe,
+        key,
+        person,
     }
 
     /// A service found on the LAN by mDNS.

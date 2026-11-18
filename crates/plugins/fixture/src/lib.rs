@@ -11,6 +11,7 @@ mod automix;
 mod deciders;
 mod lan;
 mod lyrics;
+mod notification;
 mod preparation;
 mod scrobbler;
 
@@ -89,6 +90,7 @@ mod unlinked;
 impl Lifecycle for Test {
     fn action(&mut self, id: String) {
         deciders::acted(&id);
+        notification::acted(&id);
         if hooked::action(&id) {
             return;
         }
@@ -311,4 +313,4 @@ const MANIFEST: Manifest = Manifest {
 };
 
 #[cfg(not(feature = "headphones"))]
-nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots, preparation, automix, deciders, lyrics, scrobbler);
+nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots, preparation, automix, deciders, lyrics, scrobbler, notification);

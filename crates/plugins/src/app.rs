@@ -48,6 +48,9 @@ pub trait Client: Send + Sync {
     fn watch_screen(&self, on: bool);
     /// Plugin `id`'s asset `name` is now at `state`: its line on the plugin's page.
     fn asset(&self, id: String, name: String, state: AssetState);
+    /// A plugin's notification buttons would answer otherwise now: the client asks for them again
+    /// ([`Plugins::notification_buttons`]); nothing where it has no notification.
+    fn buttons_changed(&self);
 }
 
 struct App {
@@ -158,6 +161,10 @@ impl Side for App {
 
     fn asset(&self, id: &str, name: &str, state: AssetState) {
         self.client.asset(id.into(), name.into(), state);
+    }
+
+    fn buttons_changed(&self) {
+        self.client.buttons_changed();
     }
 
     /// The stored settings' changes; those of what is in effect come with the layer ([`Side::laid`]).

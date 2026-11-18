@@ -234,6 +234,7 @@ export const W = {
       slots: "Adds to screens",
       deciders: "Chooses what plays",
       preparation: "Prepares songs",
+      notification: "Notification buttons",
     };
     return [...points.flatMap((p) => kinds[p] ?? []), ...(overrides ? ["Changes playback values"] : [])].join(" · ");
   },

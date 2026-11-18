@@ -1,4 +1,4 @@
-package nori:plugin@6.0.0;
+package nori:plugin@7.0.0;
 
 /// The plugin's page. Its rows are declared in its manifest, so nori draws them while it is not
 /// running; values are kept by nori in the plugin's store.
@@ -603,6 +603,45 @@ interface scrobbler {
     scrobble: func(song: song, at-ms: s64);
 }
 
+/// The buttons beside previous, play and next on Android's media notification, lock screen and car.
+interface notification {
+    use types.{song, glyph};
+    use session.{repeat};
+
+    /// One of nori's own buttons.
+    enum nori-button {
+        favorite,
+        shuffle,
+        repeat,
+        radio,
+    }
+
+    variant press {
+        nori(nori-button),
+        /// The plugin's own: a press runs its lifecycle `action` with this id.
+        action(string),
+    }
+
+    record button {
+        press: press,
+        /// One of nori's glyphs in place of its own; a plugin's own button needs one.
+        glyph: option<glyph>,
+        /// A key of the plugin's `strings/` in place of nori's words; a plugin's own button needs one.
+        label: option<string>,
+    }
+
+    record playing {
+        song: option<song>,
+        favorite: bool,
+        shuffle: bool,
+        repeat: repeat,
+    }
+
+    /// The buttons in order, given what plays and nori's; none keeps nori's. Asked again only when
+    /// `now` or nori's buttons change, or the plugin calls `session.buttons-changed`.
+    buttons: func(now: playing, nori: list<button>) -> option<list<button>>;
+}
+
 /// What every plugin is: every host interface it may import and every extension point it may
 /// export. The SDK answers each export it doesn't implement with nori's own answer.
 world plugin {
@@ -638,4 +677,5 @@ world plugin {
     export device-control;
     export lyrics;
     export scrobbler;
+    export notification;
 }

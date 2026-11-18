@@ -23,6 +23,7 @@ mod kept;
 mod lan;
 mod lyrics;
 mod manifest;
+mod notification;
 mod package;
 mod prepare;
 mod readme;
@@ -62,6 +63,7 @@ pub use host::{Side, Value};
 pub use kept::{KeptPlugin, KeptPlugins, PluginRestored, PluginReturn};
 pub use lan::{Cast, CastButton, CastKind, CastLook, CastTarget};
 pub use sink::{Encoding, Sink};
+pub use notification::{ButtonPress, NotificationButton};
 pub use manifest::{AssetSpec, DeviceFilter, Glyph, Hook, ItemKind, Manifest, MenuSpec, Permission, Place, Refusal, RowKind, RowSpec, Slot, WakeEvent, API, POINTS};
 pub use session::{Control, Found, Library, Moment, Profile, Repeat, Route};
 pub use wake::Command;
@@ -195,6 +197,8 @@ pub struct Plugins {
     marks: Arc<safe::Marks>,
     /// How this start runs the plugins.
     start: Mutex<Start>,
+    /// The notification's buttons last decided.
+    buttons: notification::Decided,
 }
 
 /// How a start runs the plugins.
@@ -278,6 +282,7 @@ impl Plugins {
             songs: Arc::default(),
             marks,
             start: Mutex::new(start),
+            buttons: Default::default(),
         });
         plugins.lan.set_plugins(Arc::downgrade(&plugins));
         if crashed {

@@ -33,7 +33,11 @@ import com.google.common.util.concurrent.ListenableFuture
 import dev.nori.music.Nori
 import dev.nori.music.settings.loggedIn
 import dev.nori.music.data.StarKind
+import dev.nori.music.ffi.model.NoriButton
 import dev.nori.music.ffi.model.Song
+import dev.nori.music.ffi.plugins.ButtonPress
+import dev.nori.music.ffi.plugins.Glyph
+import dev.nori.music.ffi.plugins.NotificationButton
 import dev.nori.music.ffi.settings.StoredPrefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +78,10 @@ class PlaybackService : MediaLibraryService() {
         /** The car's own now-playing buttons: repeat, turned on round (off, all, one), and a radio from the song playing. */
         const val CMD_REPEAT = "nori.repeat"
         const val CMD_RADIO = "nori.radio"
+        /** A plugin's own notification button: its lifecycle action [ARG_ACTION] of plugin [ARG_PLUGIN] runs. */
+        const val CMD_PLUGIN_BUTTON = "nori.pluginButton"
+        const val ARG_PLUGIN = "plugin"
+        const val ARG_ACTION = "action"
         /** The queue's Clear, and its undo: the songs after the one playing go, or come back where they were. */
         const val CMD_CLEAR = "nori.clear"
         const val CMD_PUT_BACK_CLEARED = "nori.putBackCleared"
@@ -266,6 +274,8 @@ class PlaybackService : MediaLibraryService() {
         // A heart changed anywhere in the app (or by the notification itself) redraws the notification's heart.
         // A StateFlow: it emits only on a change, so this is idle while music plays untouched.
         scope.launch { nori.library.starMarks.collect { refreshButtons() } }
+        // A plugin started or stopped deciding the buttons, or says its answer changed: they are asked again.
+        scope.launch { kotlinx.coroutines.flow.merge(nori.plugins.decidesButtons, nori.plugins.buttonsChanged).collect { refreshButtons() } }
         // Controllable from the account's other devices while this runs and remote control is on (Remotes).
         nori.remotes.service = remotePlayer
         nori.remotes.engine = player
@@ -492,51 +502,112 @@ class PlaybackService : MediaLibraryService() {
         player.play()
     }
 
-    /** What the heart, shuffle and repeat buttons last showed, so an unrelated change does not rebuild the notification. */
-    private var buttonsShown: dev.nori.music.ffi.SessionButtons? = null
+    /** nori's own buttons and the repeat mode last drawn, and the buttons drawn, so an unrelated change does not rebuild the notification. */
+    private var ownShown: dev.nori.music.ffi.model.SessionButtons? = null
     private var repeatShown = -1
+    private var buttonsShown: List<NotificationButton>? = null
+    /** A plugin's buttons being asked for; a newer change replaces it. */
+    private var buttonsAsked: kotlinx.coroutines.Job? = null
 
     /** As the app's heart has it: this session's mark, else the song as the queue playing it holds it - another device's while it plays. */
     private fun currentStarred(item: MediaItem): Boolean =
         nori.library.isStarred(StarKind.SONG, item.mediaId, if (shown === elsewhere) elsewhere.currentStarred else nori.session.queueStarred(item.mediaId))
 
     /**
-     * Heart and shuffle beside previous / play / next, in the secondary slots the way other players put
-     * them. Called when the track, the shuffle flag or a star changes - never on a timer. Whether the
-     * heart shows and what each does are the core's (shown.rs session_buttons_now); what they say, ours.
+     * The buttons beside previous / play / next. Called when the track, the shuffle flag, repeat, a star or
+     * the plugins deciding them change - never on a timer. Which of nori's show is the core's (shown.rs
+     * session_buttons_now); while a plugin decides them (the `notification` point) they are its answer,
+     * asked off the main thread; what nori's say, ours.
      */
     private fun refreshButtons() {
         if (!::session.isInitialized) return
         val item = shown.currentMediaItem
-        val b = nori.core.sessionButtonsNow(item != null && currentStarred(item), shown.shuffleModeEnabled)
-        if (b == buttonsShown && shown.repeatMode == repeatShown) return
-        buttonsShown = b
-        repeatShown = shown.repeatMode
-        val buttons = ArrayList<CommandButton>(4)
-        if (b.heart) {
-            // Nori's seal, not the system's heart: no icon a controller would draw its own glyph for.
-            buttons += CommandButton.Builder(CommandButton.ICON_UNDEFINED)
-                .setCustomIconResId(if (b.starred) R.drawable.seal else R.drawable.seal_outline)
-                .setDisplayName(getString(if (b.starred) R.string.session_remove_favourite else R.string.session_add_favourite))
-                .setSessionCommand(SessionCommand(if (b.starred) CMD_UNFAVOURITE else CMD_FAVOURITE, Bundle.EMPTY))
-                .setSlots(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW).build()
+        val own = nori.core.sessionButtonsNow(item != null && currentStarred(item), shown.shuffleModeEnabled)
+        val repeat = shown.repeatMode
+        buttonsAsked?.cancel()
+        if (!nori.plugins.decidesButtons.value) {
+            showButtons(own.buttons.map { NotificationButton(ButtonPress.Nori(it), null, null) }, own, repeat)
+            return
         }
-        buttons += CommandButton.Builder(if (b.shuffling) CommandButton.ICON_SHUFFLE_ON else CommandButton.ICON_SHUFFLE_OFF)
-            .setDisplayName(getString(if (b.shuffling) R.string.session_shuffle_off else R.string.session_shuffle_on))
-            .setSessionCommand(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
-            .setSlots(CommandButton.SLOT_FORWARD_SECONDARY, CommandButton.SLOT_OVERFLOW).build()
-        // Then repeat and a radio from a song of the library, in the overflow: a car's now playing lists them
-        // after the heart and shuffle; the phone's media controls, which show two, keep those.
-        val (icon, said) = when (shown.repeatMode) {
-            Player.REPEAT_MODE_ALL -> CommandButton.ICON_REPEAT_ALL to R.string.car_repeat_all
-            Player.REPEAT_MODE_ONE -> CommandButton.ICON_REPEAT_ONE to R.string.car_repeat_one
-            else -> CommandButton.ICON_REPEAT_OFF to R.string.car_repeat_off
+        val mode = when (repeat) {
+            Player.REPEAT_MODE_ALL -> dev.nori.music.ffi.plugins.Repeat.ALL
+            Player.REPEAT_MODE_ONE -> dev.nori.music.ffi.plugins.Repeat.ONE
+            else -> dev.nori.music.ffi.plugins.Repeat.OFF
         }
-        buttons += CommandButton.Builder(icon).setDisplayName(getString(said)).setSessionCommand(SessionCommand(CMD_REPEAT, Bundle.EMPTY))
-            .setSlots(CommandButton.SLOT_OVERFLOW).build()
-        if (b.heart) buttons += CommandButton.Builder(CommandButton.ICON_RADIO).setDisplayName(getString(R.string.car_start_radio))
-            .setSessionCommand(SessionCommand(CMD_RADIO, Bundle.EMPTY)).setSlots(CommandButton.SLOT_OVERFLOW).build()
-        session.setMediaButtonPreferences(buttons)
+        buttonsAsked = scope.launch { showButtons(nori.plugins.notificationButtons(item?.mediaId, own, mode), own, repeat) }
+    }
+
+    private fun showButtons(buttons: List<NotificationButton>, own: dev.nori.music.ffi.model.SessionButtons, repeat: Int) {
+        if (buttons == buttonsShown && own == ownShown && repeat == repeatShown) return
+        buttonsShown = buttons
+        ownShown = own
+        repeatShown = repeat
+        session.setMediaButtonPreferences(buttons.map { commandButton(it, own, repeat) })
+    }
+
+    /**
+     * One button as media3 is given it. nori's seal and shuffle sit in the secondary slots the way other
+     * players put them, the rest in the overflow, which a car's now playing lists after them; a plugin's
+     * glyph and label stand in for nori's own.
+     */
+    private fun commandButton(b: NotificationButton, own: dev.nori.music.ffi.model.SessionButtons, repeat: Int): CommandButton {
+        val press = b.press
+        // Nori's seal, not the system's heart: no icon a controller would draw its own glyph for.
+        val (icon, drawn, said, command) = when (press) {
+            is ButtonPress.Plugin -> ButtonLook(CommandButton.ICON_UNDEFINED, null, null,
+                SessionCommand(CMD_PLUGIN_BUTTON, Bundle().apply { putString(ARG_PLUGIN, press.plugin); putString(ARG_ACTION, press.action) }))
+            is ButtonPress.Nori -> when (press.button) {
+                NoriButton.FAVORITE -> ButtonLook(CommandButton.ICON_UNDEFINED, if (own.starred) R.drawable.seal else R.drawable.seal_outline,
+                    if (own.starred) R.string.session_remove_favourite else R.string.session_add_favourite, SessionCommand(if (own.starred) CMD_UNFAVOURITE else CMD_FAVOURITE, Bundle.EMPTY))
+                NoriButton.SHUFFLE -> ButtonLook(if (own.shuffling) CommandButton.ICON_SHUFFLE_ON else CommandButton.ICON_SHUFFLE_OFF, null,
+                    if (own.shuffling) R.string.session_shuffle_off else R.string.session_shuffle_on, SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
+                NoriButton.REPEAT -> when (repeat) {
+                    Player.REPEAT_MODE_ALL -> ButtonLook(CommandButton.ICON_REPEAT_ALL, null, R.string.car_repeat_all, SessionCommand(CMD_REPEAT, Bundle.EMPTY))
+                    Player.REPEAT_MODE_ONE -> ButtonLook(CommandButton.ICON_REPEAT_ONE, null, R.string.car_repeat_one, SessionCommand(CMD_REPEAT, Bundle.EMPTY))
+                    else -> ButtonLook(CommandButton.ICON_REPEAT_OFF, null, R.string.car_repeat_off, SessionCommand(CMD_REPEAT, Bundle.EMPTY))
+                }
+                NoriButton.RADIO -> ButtonLook(CommandButton.ICON_RADIO, null, R.string.car_start_radio, SessionCommand(CMD_RADIO, Bundle.EMPTY))
+            }
+        }
+        val slots = when ((press as? ButtonPress.Nori)?.button) {
+            NoriButton.FAVORITE -> intArrayOf(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW)
+            NoriButton.SHUFFLE -> intArrayOf(CommandButton.SLOT_FORWARD_SECONDARY, CommandButton.SLOT_OVERFLOW)
+            else -> intArrayOf(CommandButton.SLOT_OVERFLOW)
+        }
+        val glyph = b.glyph?.let(::glyphIcon)
+        return CommandButton.Builder(if (glyph != null) CommandButton.ICON_UNDEFINED else icon)
+            .apply { (glyph ?: drawn)?.let(::setCustomIconResId) }
+            .setDisplayName(b.label ?: said?.let(::getString).orEmpty())
+            .setSessionCommand(command).setSlots(*slots).build()
+    }
+
+    /** nori's icon for a button (a media3 constant, else a drawable), its words and its command. */
+    private data class ButtonLook(val icon: Int, val drawn: Int?, val said: Int?, val command: SessionCommand)
+
+    /** A plugin's glyph as the notification draws it: the app's Iconoir glyphs, the seal for a heart. */
+    private fun glyphIcon(g: Glyph): Int = when (g) {
+        Glyph.SPARKLE -> R.drawable.car_new
+        Glyph.INFO -> R.drawable.glyph_info
+        Glyph.SHARE -> R.drawable.glyph_share
+        Glyph.LINK -> R.drawable.glyph_link
+        Glyph.SEARCH -> R.drawable.glyph_search
+        Glyph.HEART -> R.drawable.seal_outline
+        Glyph.DOWNLOAD -> R.drawable.car_download
+        Glyph.ADD -> R.drawable.car_add_to_queue
+        Glyph.PLAY -> R.drawable.glyph_play
+        Glyph.TUNE -> R.drawable.glyph_tune
+        Glyph.HEADPHONES -> R.drawable.glyph_headphones
+        Glyph.SPEAKER -> R.drawable.glyph_speaker
+        Glyph.BATTERY -> R.drawable.glyph_battery
+        Glyph.TOUCH -> R.drawable.glyph_touch
+        Glyph.TIMER -> R.drawable.glyph_timer
+        Glyph.GAUGE -> R.drawable.glyph_gauge
+        Glyph.WAVE -> R.drawable.glyph_wave
+        Glyph.BLUETOOTH -> R.drawable.glyph_bluetooth
+        Glyph.GEAR -> R.drawable.glyph_gear
+        Glyph.GLOBE -> R.drawable.glyph_globe
+        Glyph.KEY -> R.drawable.glyph_key
+        Glyph.PERSON -> R.drawable.car_artists
     }
 
     /** Tells the remote control (if it is on) the player changed; a null check otherwise. */
@@ -967,7 +1038,7 @@ class PlaybackService : MediaLibraryService() {
                 .add(SessionCommand(CMD_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_UNFAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
                 .add(SessionCommand(CMD_FILL_NEXT, Bundle.EMPTY)).add(SessionCommand(CMD_REPEAT, Bundle.EMPTY)).add(SessionCommand(CMD_RADIO, Bundle.EMPTY))
                 .add(SessionCommand(CMD_CLEAR, Bundle.EMPTY)).add(SessionCommand(CMD_PUT_BACK_CLEARED, Bundle.EMPTY))
-                .add(SessionCommand(CarTree.CMD_ITEM_NEXT, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_QUEUE, Bundle.EMPTY))
+                .add(SessionCommand(CMD_PLUGIN_BUTTON, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_NEXT, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_QUEUE, Bundle.EMPTY))
                 .add(SessionCommand(CarTree.CMD_ITEM_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_DOWNLOAD, Bundle.EMPTY)).build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(commands).build()
         }
@@ -984,7 +1055,7 @@ class PlaybackService : MediaLibraryService() {
             }
             if (command.customAction == CMD_FAVOURITE || command.customAction == CMD_UNFAVOURITE) {
                 // Only while the heart shows (a song of the library is playing; the core's call).
-                val item = shown.currentMediaItem?.takeIf { buttonsShown?.heart == true }
+                val item = shown.currentMediaItem?.takeIf { ownShown?.buttons?.contains(NoriButton.FAVORITE) == true }
                 if (item != null) {
                     val on = command.customAction == CMD_FAVOURITE
                     // The same path as the app's heart: the mark goes up at once (and redraws both hearts),
@@ -1006,7 +1077,14 @@ class PlaybackService : MediaLibraryService() {
                 else -> Player.REPEAT_MODE_OFF
             }
             // Likewise only beside the heart: a station's id has no similar songs.
-            if (command.customAction == CMD_RADIO && buttonsShown?.heart == true) shown.currentMediaItem?.mediaId?.let(::radioFrom)
+            if (command.customAction == CMD_RADIO && ownShown?.buttons?.contains(NoriButton.RADIO) == true) shown.currentMediaItem?.mediaId?.let(::radioFrom)
+            // The notification's own extras come with the command; the system's media controls hand them as its args.
+            if (command.customAction == CMD_PLUGIN_BUTTON) {
+                val extras = command.customExtras.takeIf { it.containsKey(ARG_PLUGIN) } ?: args
+                val plugin = extras.getString(ARG_PLUGIN)
+                val action = extras.getString(ARG_ACTION)
+                if (plugin != null && action != null) scope.launch { nori.plugins.notificationPress(plugin, action) }
+            }
             args.getString(androidx.media3.session.MediaConstants.EXTRA_KEY_MEDIA_ID)?.let { id -> carItemCommand(command.customAction, id) }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
