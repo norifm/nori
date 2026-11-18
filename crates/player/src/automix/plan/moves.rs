@@ -777,7 +777,9 @@ const BEATLESS_SUNG_SHARE: f64 = 0.25;
 const BEATLESS_MIN_MS: f64 = 6_000.0;
 
 /// A song that stops cold ([`on_its_stop`]) as a move: the radio's and the rock DJ's answer, end to end. It may also
-/// glow: from a beat before it, its last hit rings into the afterglow's reverb under the next song.
+/// glow: from a beat before it, its last hit rings into the afterglow's reverb under the next song, and the song itself
+/// falls over the stop's first bar, the reverb carrying it on: a ring held longer breaks off later, a cut under the
+/// next song.
 pub(super) fn stop(p: &Pair) -> Vec<Move> {
     let Some(dry) = on_its_stop(p.a, p.b, p.room, p.s, p.why_not) else { return Vec::new() };
     let lead = beat_of(p.a).map_or(STOP_LEAD_MS, |(beat, _)| beat);
@@ -788,7 +790,7 @@ pub(super) fn stop(p: &Pair) -> Vec<Move> {
         let mut m = dry.clone();
         m.kind = TransitionKind::ReverbWash;
         (m.out_start_ms, m.duration_ms, m.in_delay_ms) = (dry.out_start_ms - ms(lead), dry.duration_ms + ms(lead), ms(lead));
-        (m.out_fade_start_ms, m.out_fade_end_ms) = (ms(lead), m.duration_ms);
+        (m.out_fade_start_ms, m.out_fade_end_ms) = (ms(lead), ms(lead + super::bar_ms(p.a)).min(m.duration_ms));
         (m.in_fade_start_ms, m.in_fade_end_ms) = (ms(lead), ms(lead) + dry.in_fade_end_ms);
         m.reverb = Some(Reverb { send: Window { start_ms: 0, end_ms: ms(2.0 * lead) }, decay_s: AFTERGLOW_DECAY_S, wet_db: AFTERGLOW_WET_DB, low_cut_hz: REVERB_LOW_CUT_HZ });
         m.reason = format!("on its stop, its last hit glowing under the next song{}", tail(p.why_not));
