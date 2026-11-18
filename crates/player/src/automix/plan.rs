@@ -819,8 +819,8 @@ fn faded_out(p: &TransitionPlan) -> (i64, f64) {
 /// as a DJ leaves it on low: where a mix lets it go before its music ends, its fade ends at [`TAIL_DB`] and it plays
 /// on, drawn down to nothing, to the end of its music (of the music before a hidden track, where it turns quiet or
 /// stops, and for two locked grooves no further than where it slows), [`TAIL_MAX_MS`] at most and within the longest
-/// mix. Not where it stops before then anyway: after a brake, under a loop of its bars, or where an echo rings on
-/// for it.
+/// mix. Not where it stops before then anyway: after a brake, under a loop of its bars, or where an echo or a reverb
+/// rings on for it.
 fn play_out(p: &mut TransitionPlan, a: &TrackAnalysis, room: Room, s: &AutoMixSettings) {
     // A loop round to the mix's end leaves nothing of the song to play out; one released goes on to it.
     if p.brake.is_some() || p.out_loop.is_some_and(|l| l.rounds.is_none()) || p.duration_ms <= 0 {
@@ -831,7 +831,7 @@ fn play_out(p: &mut TransitionPlan, a: &TrackAnalysis, room: Room, s: &AutoMixSe
     if let Some(at) = stop.filter(|&at| (0..at).contains(&p.out_fade_start_ms) && at < p.out_fade_end_ms) {
         p.out_fade_end_ms = at;
     }
-    if !profile(s.style).play_out || p.echo.is_some() {
+    if !profile(s.style).play_out || p.echo.is_some() || p.reverb.is_some() {
         return;
     }
     let (fade_end, gone) = faded_out(p);
@@ -3803,7 +3803,7 @@ mod tests {
 
     /// A song that stops cold, its last hit ringing out, ends on its stop: a mix that cannot blend starts the next
     /// song there under the ring-out instead of fading the bars before it. The last hit glows into a reverb from a beat
-    /// before the stop, dry again right after a glow.
+    /// before the stop, the song itself gone a bar after it, dry again right after a glow.
     #[test]
     fn a_song_that_stops_ends_on_its_stop() {
         let beat: f64 = 60_000.0 / 128.0;
@@ -3825,6 +3825,9 @@ mod tests {
                 assert!(p.in_fade_end_ms - p.in_fade_start_ms <= MIN_FADE_MS && p.low_pass.is_none(), "the next song comes in at once: {p:?}");
                 assert_eq!(p.out_fade_start_ms, lead, "the hit is heard whole: {p:?}");
                 assert_eq!(p.reverb.map(|r| r.send.end_ms), (lead > 0).then_some(2 * lead), "{p:?}");
+                let falls = if lead > 0 { lead + (4.0 * beat).round() as i64 } else { p.duration_ms };
+                assert_eq!(p.out_fade_end_ms, falls, "{p:?}");
+                assert!(p.out_tail.is_none(), "the glow carries it on, the song not played out under it: {p:?}");
                 check_skip(&p, a, b, 240_000);
             }
         }
