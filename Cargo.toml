@@ -92,6 +92,9 @@ opt-level = 3
 
 [profile.dist.package.nori-android]
 opt-level = 3
+# The library links here: with an override of its own Cargo leaves out the profile's `strip`, and the APK
+# carried 11 MB of symbol table.
+strip = true
 
 [profile.dist.package.nori-stretch]
 opt-level = 3
