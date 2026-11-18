@@ -110,7 +110,7 @@ extension UIImage {
 }
 
 /// The path data tools/glyphs.py writes: absolute M, L, C and Z, numbers apart by spaces.
-private enum GlyphPath {
+enum GlyphPath {
     static func parse(_ d: String) -> UIBezierPath {
         let p = UIBezierPath()
         var command: Character = "M"

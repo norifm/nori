@@ -439,6 +439,16 @@ impl Settings {
         })
     }
 
+    /// The settings changed by `make` and kept, as a change by name is: None when nothing changed or the
+    /// settings are not open.
+    pub fn change(&self, make: impl FnOnce(&StoredPrefs) -> StoredPrefs) -> Option<SettingChange> {
+        self.write(|k| {
+            let s = k.as_mut()?;
+            let effect = s.edit(make)?;
+            Some(SettingChange { prefs: s.prefs.clone(), server: false, effect })
+        })
+    }
+
     /// The settings as a backup keeps them: each stored value as the settings table holds it.
     pub fn backed_up(&self) -> serde_json::Map<String, Value> {
         self.prefs(save).iter().map(|(k, v)| (k.clone(), json_of(v))).collect()

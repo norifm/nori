@@ -114,7 +114,8 @@ abstract class UniffiBindgenTask @Inject constructor(private val exec: ExecOpera
 
 val rustToolchain = providers.exec { commandLine("rustc", "-vV") }.standardOutput.asText
 val cargoNdkVersion = providers.exec { commandLine("cargo", "ndk", "--version") }.standardOutput.asText
-val rustEnvironment = listOf("RUSTFLAGS", "RUSTUP_TOOLCHAIN", "CC", "CXX", "CFLAGS", "CXXFLAGS", "CXXSTDLIB")
+// NORI_SUPPORT_URL and NORI_STRIPE_KEY are read by the core at compile time (its Support page).
+val rustEnvironment = listOf("RUSTFLAGS", "RUSTUP_TOOLCHAIN", "CC", "CXX", "CFLAGS", "CXXFLAGS", "CXXSTDLIB", "NORI_SUPPORT_URL", "NORI_STRIPE_KEY")
     .map { name -> providers.environmentVariable(name).orElse("").map { "$name=$it" } }
     .reduce { a, b -> a.zip(b) { x, y -> "$x\n$y" } }
     .zip(providers.environmentVariablesPrefixedBy("CARGO_")) { flags, cargo ->

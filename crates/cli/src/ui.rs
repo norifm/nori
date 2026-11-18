@@ -414,6 +414,7 @@ fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
         View::Home => h::HOME,
         View::Settings => app.settings.hints(),
         View::Equalizer => h::EQUALIZER,
+        View::Support => h::SUPPORT,
         View::Downloads => h::DOWNLOADS,
         View::Search => h::RESULTS,
         View::Albums | View::Songs => h::SORTED,
@@ -450,6 +451,7 @@ fn page_view(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         View::Downloads => downloads(f, inner, app, t, focused),
         View::Equalizer => equalizer(f, inner, app, t, focused),
         View::Settings => settings(f, inner, app, t, focused),
+        View::Support => support(f, inner, app, t, focused),
         View::Login => {}
     }
 }
@@ -945,6 +947,89 @@ fn equalizer(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
     let mid = Rect { y: area.y + top_h + 1, height: under_area.y.saturating_sub(area.y + top_h + 2), ..area };
     let on_ = p.eq_enabled && bypass.is_none();
     curve(f, mid, &rows, &bands, &p, chosen, on_, app, t);
+}
+
+/// The Support page: the stamp book, a seal per payment in the accent of its season, then what to give,
+/// always on view at the foot; the book shows its newest seals when they don't all fit. While a payment
+/// waits on its checkout page, the page's link and QR code are under Give.
+fn support(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
+    use crate::support::Line as L;
+    let area = heading(f, area, crate::text::SUPPORT_TITLE, crate::text::SUPPORT_LINE, t);
+    if area.height < 8 || area.width < 24 {
+        return;
+    }
+    let monthly = app.prefs.support.monthly;
+    let p = &app.support;
+    let c = &p.choice;
+    let chosen = |l: L| focused && p.line(monthly) == Some(l);
+    let label = |l: L, words: &str| Span::styled(format!(" {} ", pad(words, 14)), if chosen(l) { t.select(focused) } else { Style::default().fg(t.ink) });
+    let mut foot: Vec<Line> = Vec::new();
+    let mut amounts = vec![label(L::Amount, crate::text::SUPPORT_AMOUNT)];
+    let at = match c.pick {
+        nori_core::support::SupportPick::Offered { index } => Some(index as usize),
+        nori_core::support::SupportPick::Other => None,
+    };
+    for (i, a) in c.offered.iter().enumerate() {
+        let lit = at == Some(i);
+        amounts.push(Span::styled(format!(" {} ", nori_host::support::number(*a, &c.currency)), if lit { bold().fg(t.ink).add_modifier(Modifier::UNDERLINED) } else { t.dim() }));
+    }
+    amounts.push(Span::styled(format!(" {} ", crate::text::SUPPORT_OTHER), if at.is_none() { bold().fg(t.ink).add_modifier(Modifier::UNDERLINED) } else { t.dim() }));
+    foot.push(Line::from(amounts));
+    if at.is_none() {
+        let typed = if c.other.is_empty() { Span::styled("0", t.dim()) } else { Span::styled(c.other.clone(), bold().fg(t.ink)) };
+        let mut l = vec![Span::raw(format!(" {} ", pad("", 14))), typed];
+        if let Some(limit) = crate::text::support_limit(c) {
+            l.push(Span::styled(format!("   {limit}"), t.dim()));
+        }
+        foot.push(Line::from(l));
+    }
+    let on = c.cadence == nori_core::support::Cadence::Monthly;
+    foot.push(Line::from(vec![label(L::EveryMonth, crate::text::SUPPORT_EVERY_MONTH), Span::styled(format!(" {}", crate::text::on_off(on)), if on { t.current() } else { t.dim() })]));
+    foot.push(Line::from(vec![label(L::Currency, crate::text::SUPPORT_CURRENCY), Span::styled(format!(" ‹ {} ›", nori_host::support::currency_name(&c.currency.code)), t.dim())]));
+    foot.push(Line::default());
+    let give = Span::styled(format!(" [ {} ] ", crate::text::support_give(c)), if chosen(L::Give) { t.select(focused) } else if c.amount.is_some() { bold().fg(t.ink) } else { t.dim() });
+    foot.push(Line::from(give));
+    if monthly {
+        foot.push(Line::from(Span::styled(format!(" [ {} ] ", crate::text::SUPPORT_MANAGE), if chosen(L::Manage) { t.select(focused) } else { t.dim() })));
+    }
+    if let Some(g) = &p.given {
+        foot.push(Line::default());
+        foot.push(Line::from(Span::styled(format!(" {}", crate::text::SUPPORT_IN_BROWSER), t.dim())));
+        foot.push(Line::from(Span::styled(format!(" {}", g.url), Style::default().fg(t.ink))));
+        // The code only where it fits whole under the rest, with room for the book.
+        if let Some(code) = nori_core::remote::qr_code(g.url.clone()) {
+            let qr = qr_lines(&code);
+            if (foot.len() + qr.len() + 4) as u16 <= area.height && qr.first().is_some_and(|l| (l.width() as u16) < area.width) {
+                foot.push(Line::default());
+                foot.extend(qr.into_iter().map(|l| Line::from([vec![Span::raw(" ")], l.spans].concat())));
+            }
+        }
+    }
+    let foot_h = (foot.len() as u16).min(area.height);
+    let foot_area = Rect { y: area.y + area.height - foot_h, height: foot_h, ..area };
+    put(f, Paragraph::new(foot), foot_area);
+    // The book: each seal its season's kanji in its paid season's accent, the next one's place quiet.
+    let book = Rect { height: area.height.saturating_sub(foot_h + 1), ..area };
+    let day = crate::art::Day::now();
+    let stamps = nori_core::support::support_stamps(app.prefs.support.paid.clone(), day.southern);
+    let next = nori_look::theme::season_now(day.month, day.day, day.southern).season;
+    let kanji = |s: nori_look::theme::Season| ["春", "夏", "秋", "冬"][s as usize];
+    let mut cells: Vec<Span> = stamps
+        .iter()
+        .map(|s| {
+            let accent = nori_look::theme::palette(Some(s.season), 1, 1, false, app.dark, false).accent;
+            Span::styled(format!(" {} ", kanji(s.season)), Style::default().bg(crate::art::argb(accent)).fg(t.page).add_modifier(Modifier::BOLD))
+        })
+        .collect();
+    cells.push(Span::styled(format!("[{}]", kanji(next)), t.dim()));
+    let per_row = ((book.width as usize + 1) / 5).max(1);
+    let mut rows: Vec<Line> = cells.chunks(per_row).map(|r| Line::from(r.iter().flat_map(|c| [c.clone(), Span::raw(" ")]).collect::<Vec<_>>())).collect();
+    let fits = book.height as usize / 2;
+    if rows.len() > fits {
+        rows.drain(..rows.len() - fits);
+    }
+    let spaced: Vec<Line> = rows.into_iter().flat_map(|r| [r, Line::default()]).collect();
+    put(f, Paragraph::new(spaced), book);
 }
 
 /// Whether a switch is on.

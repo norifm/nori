@@ -739,6 +739,8 @@ fun Caption(text: String, modifier: Modifier = Modifier, align: TextAlign = Text
 
 /** How tall a page's [PillButton] stands. */
 private val ACTION_SIDE = 46.dp
+/** How much of a [PillButton] shows while it is not offered. */
+private const val DISABLED_PILL = 0.38f
 
 /**
  * The button the page is built around: a full pill, tinted with the page's accent. [prominent] is the
@@ -756,9 +758,11 @@ fun PillButton(
     val look = LocalLook.current
     val container = look.color(if (prominent) CoverLook.PILL else CoverLook.PILL_PLATE)
     val content = look.color(if (prominent) CoverLook.PILL_INK else CoverLook.TINT_INK)
+    // Not offered now (nothing to give, busy): the plate fades back, as the tap that changed it asked.
+    val shown by androidx.compose.animation.core.animateFloatAsState(if (enabled) 1f else DISABLED_PILL, AppMotion.settle(), label = "pill")
     Surface(
         onClick = onClick, enabled = enabled, shape = PillShape, color = container, contentColor = content,
-        modifier = modifier.heightIn(min = ACTION_SIDE),
+        modifier = modifier.heightIn(min = ACTION_SIDE).graphicsLayer { alpha = shown },
     ) {
         Row(Modifier.padding(horizontal = 16.dp), Arrangement.Center, Alignment.CenterVertically) {
             if (icon != null) Icon(icon, null, Modifier.size(18.dp))

@@ -31,7 +31,9 @@
     const scrobblers = JSON.parse(await ask<string>("scrobblers")) as Scrobbler[];
     const itself = JSON.parse(await ask<string>("scrobble_itself")) as { on: boolean } | null;
     const scrobblerKinds = JSON.parse(await ask<string>("scrobbler_kinds")) as ScrobblerKindForm[];
-    return { names, sections, profile, scrobblers, scrobblerKinds, itself };
+    // A build with a support service offers its page last.
+    const supported = await ask<boolean>("support_offered");
+    return { names, sections, profile, scrobblers, scrobblerKinds, itself, supported };
   });
   /** The page open: on a wide screen the first while none is asked for. */
   const name = $derived(route.arg || (ui.wide ? "Servers" : ""));
@@ -93,6 +95,7 @@
         <a class="group-row" href={href("settings", n)} data-page={n}><Icon name={glyphs[n] ?? "settings"} /><span class="words"><span>{W.settingsPages[n]?.[0] ?? n}</span><span class="sub">{W.settingsPages[n]?.[1] ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
       {/each}
       <a class="group-row" href={href("settings", "Plugins")}><Icon name="view-grid" /><span class="words">{W.plugins}</span><Icon name="nav-arrow-right" /></a>
+      {#if page.data?.supported}<a class="group-row" href={href("support")}><Icon name="seal" /><span class="words">{W.supportTitle}</span><Icon name="nav-arrow-right" /></a>{/if}
     </div>
   </Page>
 {:else if name === "Servers"}

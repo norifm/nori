@@ -25,6 +25,7 @@ pub mod playlist;
 pub mod library;
 pub mod stage;
 pub mod update;
+pub mod support;
 pub mod remote;
 pub mod jam_pick;
 pub mod destination;

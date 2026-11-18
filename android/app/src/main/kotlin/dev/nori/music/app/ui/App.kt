@@ -155,6 +155,7 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
     fun player(panel: Panel? = null) { sheet.panelAsked = panel; sheet.open() }
     fun equalizer() = go("equalizer")
     fun plugins() = go("plugins")
+    fun support() = go("support")
     fun plugin(id: String) = go("plugins/${Uri.encode(id)}")
     fun pluginBrowser() = go("plugin-browser")
     fun pluginRepos() = go("plugin-repos")
@@ -596,6 +597,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
                     page("smart/{id}", inset = false) { SmartScreen(it.arguments!!.getString("id")!!, actions) }
                     page("smartEdit/{id}") { SmartEditScreen(it.arguments!!.getString("id")!!.let { i -> if (i == "new") "" else i }) }
                     page("stats") { StatsScreen() }
+                    page("support") { SupportScreen(viewModel()) }
                     page("perf") { dev.nori.music.app.PerfHooks.recorder?.Page() }
                     page("downloads") { DownloadsScreen(actions) }
                     page("decade/{year}") { SongsScreen(actions, it.arguments!!.getString("year")!!.toInt()) }

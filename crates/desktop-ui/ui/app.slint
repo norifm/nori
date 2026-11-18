@@ -11,7 +11,7 @@ import "../../../android/app/src/main/res/font/inter.ttf";
 import "../../../android/app/src/main/res/font/literata.ttf";
 
 // The main window's views. `shelf` is one of Home's shelves shown whole, `for-you` Home's picks.
-export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites }
+export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites, support }
 // A panel beside the player: the inspector on the right, or Now Playing's beside the artwork.
 export enum Panel { none, queue, lyrics, devices }
 // How the page view lays out what it shows: an album's, an artist's, or a list's (a playlist or a mix).
@@ -6035,6 +6035,277 @@ component EqualizerPage inherits Flickable {
 }
 
 // "Show all" beside a section's title: quiet, as a shelf's.
+// A payment's seal in the stamp book: its season (0 spring to 3 winter) and how far a hand turned it.
+export struct SupportSeal {
+    season: int,
+    tilt: float,
+}
+
+// The seal's shape as the stamp book prints it (Android's SupportScreen.kt): the chop and its thin inner
+// border, and the empty place's frame.
+global SealShape {
+    out property <string> body: "M5.5,2H18.5A3.5,3.5 0 0 1 22,5.5V18.5A3.5,3.5 0 0 1 18.5,22H5.5A3.5,3.5 0 0 1 2,18.5V5.5A3.5,3.5 0 0 1 5.5,2ZM5.85,3.75H18.15A2.1,2.1 0 0 1 20.25,5.85V18.15A2.1,2.1 0 0 1 18.15,20.25H5.85A2.1,2.1 0 0 1 3.75,18.15V5.85A2.1,2.1 0 0 1 5.85,3.75ZM5.95,4.35H18.05A1.6,1.6 0 0 1 19.65,5.95V18.05A1.6,1.6 0 0 1 18.05,19.65H5.95A1.6,1.6 0 0 1 4.35,18.05V5.95A1.6,1.6 0 0 1 5.95,4.35Z";
+    out property <string> frame: "M6.5,3H17.5A3.5,3.5 0 0 1 21,6.5V17.5A3.5,3.5 0 0 1 17.5,21H6.5A3.5,3.5 0 0 1 3,17.5V6.5A3.5,3.5 0 0 1 6.5,3Z";
+}
+
+// A paid seal: the chop in its season's accent with the season's kanji cut out of it (the page shows
+// through), turned by `tilt` degrees. `fresh` is the one just paid for: it is stamped, landing from larger.
+component PaidSeal inherits Rectangle {
+    in property <int> season;
+    in property <float> tilt;
+    in property <bool> fresh;
+    property <float> scale: root.fresh && !Motion.reduced ? 1.5 : 1;
+    Rectangle {
+        transform-rotation: root.tilt * 1deg;
+        transform-scale: root.scale;
+        animate transform-scale { duration: 380ms; easing: cubic-bezier(0.3, 1.9, 0.5, 1); }
+        Path {
+            width: 100%;
+            height: 100%;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            commands: SealShape.body;
+            fill-rule: evenodd;
+            fill: Theme.season-accents[root.season];
+        }
+        Icon {
+            x: parent.width * 0.19;
+            y: parent.height * 0.19;
+            width: parent.width * 0.62;
+            height: parent.height * 0.62;
+            glyph: Icons.seasons[root.season];
+            colour: Theme.ground;
+        }
+    }
+    init => {
+        if root.fresh {
+            root.scale = 1;
+        }
+    }
+}
+
+// The place the next seal goes: the frame and its season's kanji, uncolored, as a song not a favorite yet.
+component NextSeal inherits Rectangle {
+    in property <int> season;
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: SealShape.frame;
+        stroke: Theme.dim;
+        stroke-width: 1.5 * root.width / 24;
+    }
+    Icon {
+        x: parent.width * 0.22;
+        y: parent.height * 0.22;
+        width: parent.width * 0.56;
+        height: parent.height * 0.56;
+        glyph: Icons.seasons[root.season];
+        colour: Theme.dim;
+        opacity: 0.85;
+    }
+}
+
+// Supporting nori, as Android's page: the stamp book, a seal per payment in the accent of the season it was
+// paid in, five to a row filling the column, scrolling with faded edges above what to give, which always
+// stands whole at the foot: the amount (the offered ones as chips, then Other, typed), every month, the
+// currency, and Give, which opens Stripe's checkout page in the browser. While that page is open a quiet
+// line says so, and opens it again.
+component SupportPage inherits Rectangle {
+    in property <[SupportSeal]> seals;
+    in property <int> next;
+    in property <int> fresh: -1;
+    in property <[string]> amounts;
+    // The offered amount chosen; -1 is Other.
+    in property <int> pick;
+    in property <string> other;
+    in property <string> limit;
+    in property <bool> monthly;
+    in property <[string]> currencies;
+    in property <int> currency;
+    in property <string> give-words;
+    in property <bool> can-give;
+    // A monthly payment runs: Manage changes or stops it.
+    in property <bool> running;
+    // A checkout page is open in the browser.
+    in property <bool> waiting;
+    callback picked(int);
+    callback typed(string);
+    callback monthly-set(bool);
+    callback currency-picked(int);
+    callback give();
+    callback manage();
+    callback open-again();
+    property <length> column: min(root.width - 64px, 520px);
+    property <length> gap: 14px;
+    property <length> side: (root.column - 4 * root.gap) / 5;
+    property <int> rows: floor((root.seals.length + 1 + 4) / 5);
+    VerticalLayout {
+        Heading {
+            title: "Support nori";
+            caption: "nori is and always will be free.";
+        }
+        book := Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+            flick := Flickable {
+                content-height: root.rows * (root.side + root.gap) + 24px;
+                for s[i] in root.seals: PaidSeal {
+                    x: 32px + mod(i, 5) * (root.side + root.gap);
+                    y: 8px + floor(i / 5) * (root.side + root.gap);
+                    width: root.side;
+                    height: root.side;
+                    season: s.season;
+                    tilt: s.tilt;
+                    fresh: i == root.fresh;
+                }
+                NextSeal {
+                    x: 32px + mod(root.seals.length, 5) * (root.side + root.gap);
+                    y: 8px + floor(root.seals.length / 5) * (root.side + root.gap);
+                    width: root.side;
+                    height: root.side;
+                    season: root.next;
+                }
+            }
+            // What scrolls past either edge fades into the page, while there is more that way.
+            Rectangle {
+                y: 0;
+                height: 28px;
+                opacity: clamp(-flick.content-y / 28px, 0, 1);
+                background: @linear-gradient(180deg, Theme.ground 0%, Theme.ground.transparentize(1) 100%);
+            }
+            Rectangle {
+                y: parent.height - self.height;
+                height: 28px;
+                opacity: clamp((flick.content-height + flick.content-y - flick.height) / 28px, 0, 1);
+                background: @linear-gradient(0deg, Theme.ground 0%, Theme.ground.transparentize(1) 100%);
+            }
+        }
+        foot := VerticalLayout {
+            vertical-stretch: 0;
+            padding-left: 32px;
+            padding-right: root.width - 32px - root.column;
+            padding-top: 16px;
+            padding-bottom: 24px;
+            spacing: 12px;
+            Rectangle {
+                border-radius: 18px;
+                background: Theme.panel;
+                border-width: 1px;
+                border-color: Theme.hairline;
+                VerticalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    VerticalLayout {
+                        padding-top: 12px;
+                        padding-bottom: 12px;
+                        spacing: 10px;
+                        Text {
+                            text: "Amount";
+                            color: Theme.text;
+                            font-size: 15px;
+                        }
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 6px;
+                            for a[i] in root.amounts: Chip {
+                                text: a;
+                                lit: root.pick == i;
+                                clicked => { root.picked(i); }
+                            }
+                            Chip {
+                                text: "Other";
+                                lit: root.pick == -1;
+                                clicked => { root.picked(-1); }
+                            }
+                        }
+                    }
+                    // Other chosen: what is typed, with the limit beside it once it is past one.
+                    if root.pick == -1: HorizontalLayout {
+                        padding-bottom: 12px;
+                        spacing: 12px;
+                        Field {
+                            placeholder: "0";
+                            text: root.other;
+                            edited(t) => { root.typed(t); }
+                            init => { self.take-focus(); }
+                        }
+                        Text {
+                            text: root.limit;
+                            color: Theme.dim;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Rectangle { height: 1px; background: Theme.hairline; }
+                    HorizontalLayout {
+                        height: 48px;
+                        alignment: space-between;
+                        Text {
+                            text: "Every month";
+                            color: Theme.text;
+                            font-size: 15px;
+                            vertical-alignment: center;
+                        }
+                        Toggle {
+                            y: (parent.height - self.height) / 2;
+                            on: root.monthly;
+                            toggled(on) => { root.monthly-set(on); }
+                        }
+                    }
+                    Rectangle { height: 1px; background: Theme.hairline; }
+                    HorizontalLayout {
+                        height: 48px;
+                        alignment: space-between;
+                        Text {
+                            text: "Currency";
+                            color: Theme.text;
+                            font-size: 15px;
+                            vertical-alignment: center;
+                        }
+                        Chooser {
+                            y: (parent.height - self.height) / 2;
+                            options: root.currencies;
+                            chosen: root.currency;
+                            picked(i) => { root.currency-picked(i); }
+                        }
+                    }
+                }
+            }
+            Capsule {
+                width: root.column;
+                size: 44px;
+                text: root.give-words;
+                opacity: root.can-give ? 1 : 0.38;
+                animate opacity { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+                clicked => {
+                    if root.can-give {
+                        root.give();
+                    }
+                }
+            }
+            if root.running: TextButton {
+                text: "Manage monthly support";
+                clicked => { root.manage(); }
+            }
+            if root.waiting: HorizontalLayout {
+                spacing: 10px;
+                Text {
+                    text: "Finish in your browser";
+                    color: Theme.dim;
+                    font-size: 13.5px;
+                    vertical-alignment: center;
+                }
+                TextButton {
+                    text: "Open again";
+                    clicked => { root.open-again(); }
+                }
+            }
+        }
+    }
+}
+
 component ShowAllLink inherits Text {
     callback clicked;
     color: Theme.dim;
@@ -6324,7 +6595,7 @@ component TopContent inherits Rectangle {
         IconButton {
             y: (parent.height - self.height) / 2;
             glyph: Icons.settings;
-            lit: root.view == View.settings || root.view == View.equalizer;
+            lit: root.view == View.settings || root.view == View.equalizer || root.view == View.support;
             quiet: true;
             size: 36px;
             clicked => { root.go(View.settings); }
@@ -6618,6 +6889,28 @@ export component AppWindow inherits Window {
     in property <string> artist-chosen;
     callback choose-artist(string);
     // The equalizer page (view 9), from the settings.
+    // The Support page (view support, from About): see SupportPage.
+    in property <[SupportSeal]> support-seals;
+    in property <int> support-next;
+    in property <int> support-fresh: -1;
+    in property <[string]> support-amounts;
+    in property <int> support-pick;
+    in property <string> support-other;
+    in property <string> support-limit;
+    in property <bool> support-monthly;
+    in property <[string]> support-currencies;
+    in property <int> support-currency;
+    in property <string> support-give-words;
+    in property <bool> support-can-give;
+    in property <bool> support-running;
+    in property <bool> support-waiting;
+    callback support-picked(int);
+    callback support-typed(string);
+    callback support-monthly-set(bool);
+    callback support-currency-picked(int);
+    callback support-give();
+    callback support-manage();
+    callback support-open-again();
     in property <bool> eq-on;
     in property <bool> eq-graphic;
     in property <int> eq-count;
@@ -8196,6 +8489,32 @@ export component AppWindow inherits Window {
 
                 // The equalizer, as the Android app's: the switch, graphic or parametric, the bands, the presets,
                 // the pre-amp, then the output.
+                if root.view == View.support: Fade {
+                    SupportPage {
+                        seals: root.support-seals;
+                        next: root.support-next;
+                        fresh: root.support-fresh;
+                        amounts: root.support-amounts;
+                        pick: root.support-pick;
+                        other: root.support-other;
+                        limit: root.support-limit;
+                        monthly: root.support-monthly;
+                        currencies: root.support-currencies;
+                        currency: root.support-currency;
+                        give-words: root.support-give-words;
+                        can-give: root.support-can-give;
+                        running: root.support-running;
+                        waiting: root.support-waiting;
+                        picked(i) => { root.support-picked(i); }
+                        typed(t) => { root.support-typed(t); }
+                        monthly-set(on) => { root.support-monthly-set(on); }
+                        currency-picked(i) => { root.support-currency-picked(i); }
+                        give => { root.support-give(); }
+                        manage => { root.support-manage(); }
+                        open-again => { root.support-open-again(); }
+                    }
+                }
+
                 if root.view == View.equalizer: Fade {
                     EqualizerPage {
                         on: root.eq-on;

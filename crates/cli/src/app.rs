@@ -51,6 +51,8 @@ pub enum View {
     History,
     Equalizer,
     Settings,
+    /// Supporting nori, from About.
+    Support,
     /// Full-window login form.
     Login,
 }
@@ -72,6 +74,7 @@ impl View {
             View::Downloads => "Downloads",
             View::Equalizer => "Equalizer",
             View::Settings => "Settings",
+            View::Support => crate::text::SUPPORT_TITLE,
         }
     }
 }
@@ -166,6 +169,12 @@ pub enum Cmd {
     Curve,
     /// Checks for a newer nori now (`Session::update_check`).
     CheckUpdate,
+    /// Starts paying what is chosen on Stripe's checkout page, in the browser.
+    SupportGive(Box<nori_core::support::SupportChoice>),
+    /// Asks the support service what this app has paid.
+    SupportRefresh,
+    /// Opens Stripe's page where the monthly payment is changed or stopped.
+    SupportManage,
     /// Reads back the downloads an analysis was offered for (`Session::analyse_downloads`).
     AnalyseDownloads,
     Mouse(bool),
@@ -293,6 +302,9 @@ impl Cmd {
             Cmd::Action(a) => format!("action {a:?}"),
             Cmd::Curve => "curve".into(),
             Cmd::CheckUpdate => "check update".into(),
+            Cmd::SupportGive(c) => format!("support give {:?} {}", c.amount, c.currency.code),
+            Cmd::SupportRefresh => "support refresh".into(),
+            Cmd::SupportManage => "support manage".into(),
             Cmd::AnalyseDownloads => "analyse downloads".into(),
             Cmd::SoundPage(page, on) => format!("sound page {page:?} {on}"),
             Cmd::Mouse(on) => format!("mouse {on}"),
@@ -1131,6 +1143,10 @@ pub enum Target {
     PlaylistName(String),
     /// Which of the account's identities it acts as, by its place among them.
     Identity,
+    /// The amount typed for Other on the Support page.
+    SupportOther,
+    /// The Support page's currency.
+    SupportCurrency,
 }
 
 impl Target {
@@ -1173,6 +1189,8 @@ impl Target {
                 (!name.is_empty()).then(|| Cmd::EditPlaylist { id: id.clone(), write: nori_core::client::Write::RenamePlaylist { id, name }, said })
             }
             Target::Identity => value.parse().ok().map(Cmd::ChooseIdentity),
+            // The Support page keeps these itself.
+            Target::SupportOther | Target::SupportCurrency => None,
             Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
             Target::Plugin { plugin, row, kind } => {
                 use nori_plugins::{RowKind, Value};
@@ -1343,6 +1361,7 @@ pub struct App {
     pub work_at: Option<Instant>,
     pub settings: SettingsView,
     pub eq_sel: Sel,
+    pub support: crate::support::Support,
     pub login: Login,
     pub lyrics: Words,
     pub lyrics_sel: Option<usize>,
@@ -1580,7 +1599,7 @@ impl App {
             View::Downloads => self.rules.sections.contains(&LibrarySection::Downloads),
             View::History => self.rules.sections.contains(&LibrarySection::History),
             View::Favorites => self.rules.stars,
-            View::Home | View::Search | View::Equalizer | View::Settings | View::Login => true,
+            View::Home | View::Search | View::Equalizer | View::Settings | View::Support | View::Login => true,
             v => self.sections().contains(&v),
         }
     }
@@ -1670,6 +1689,8 @@ impl App {
                 }
             }
             View::Search if self.search.view.is_none() => self.search.editing = true,
+            // Each time it opens, what was paid elsewhere (a monthly payment, another device).
+            View::Support => self.cmds.push(Cmd::SupportRefresh),
             _ => {}
         }
     }
@@ -1804,6 +1825,18 @@ impl App {
             }
             Msg::Engine(e) => self.engine(e),
             Msg::Data(req, r) => self.data(req, r),
+            Msg::SupportGiven(Ok(Some(url))) => {
+                let seals = self.prefs.support.paid.len();
+                self.support.gave(url, seals);
+                self.dirty = true;
+            }
+            Msg::SupportGiven(Ok(None)) | Msg::SupportManaged(Ok(_)) => {}
+            Msg::SupportGiven(Err(e)) | Msg::SupportManaged(Err(e)) => self.say(e, true),
+            // The runner has read the settings again.
+            Msg::SupportRefreshed => {
+                self.support.seals(self.prefs.support.paid.len());
+                self.dirty = true;
+            }
             Msg::Cover { art, colours, .. } => {
                 if let Some(c) = colours {
                     if self.cover_art.as_deref() == Some(&art) {
@@ -2271,7 +2304,7 @@ impl App {
             Focus::Main => match self.view {
                 View::Downloads | View::Home => &[Scope::Edit, Scope::List, Scope::Global],
                 View::Equalizer => &[Scope::Eq, Scope::List, Scope::Global],
-                View::Settings => &[Scope::Values, Scope::List, Scope::Global],
+                View::Settings | View::Support => &[Scope::Values, Scope::List, Scope::Global],
                 _ => &[Scope::List, Scope::Global],
             },
         }
@@ -2563,6 +2596,10 @@ impl App {
                                 self.cmds.extend(cmd);
                                 sheet
                             }
+                            Target::SupportCurrency => {
+                                self.support.currency(value);
+                                None
+                            }
                             Target::Scrobbling(profile) if value == "add" => Some(crate::text::scrobbler_kinds(profile)),
                             Target::ScrobblerKind(profile) => {
                                 let kind = nori_core::settings::ScrobblerKind::from_id(&value);
@@ -2744,6 +2781,7 @@ impl App {
                             let form = nori_core::scrobblers::scrobbler_form_with(*form, field, typed);
                             self.overlay = Some(crate::text::scrobbler_field(profile, Box::new(form), step + 1));
                         }
+                        Target::SupportOther => self.support.typed(typed),
                         Target::BackupFile { restore } if !typed.trim().is_empty() => {
                             let target = Target::BackupPassword { restore, path: typed.trim().to_string() };
                             self.overlay = Some(Overlay::Input { title: crate::text::BACKUP_PASSWORD.into(), text: String::new(), secret: true, target });
@@ -2879,6 +2917,7 @@ impl App {
                 }
                 match self.view {
                     View::Equalizer => self.eq_step(up),
+                    View::Support => self.support.step(self.prefs.support.monthly, up),
                     View::Settings => {
                         let cmds = self.settings.step(up);
                         self.cmds.extend(cmds);
@@ -3020,6 +3059,9 @@ impl App {
         if self.view == View::Settings && self.settings.alone != Alone::No {
             return self.plugins_left();
         }
+        if self.view == View::Support && self.pages.is_empty() {
+            return self.go(View::Settings);
+        }
         if self.pages.pop().is_none() {
             self.dirty = false;
         }
@@ -3035,6 +3077,9 @@ impl App {
     fn refresh(&mut self) {
         if self.lyrics_focused() {
             return self.cmds.push(Cmd::LyricsRefresh);
+        }
+        if self.view == View::Support && self.pages.is_empty() {
+            return self.cmds.push(Cmd::SupportRefresh);
         }
         if let Some(p) = self.pages.last_mut() {
             if let Page::Row { pages, row: Some(_), .. } = p {
@@ -3100,6 +3145,7 @@ impl App {
                 (&mut self.downloads_sel, len)
             }
             View::Equalizer => (&mut self.eq_sel, crate::settings_view::eq_rows(&self.prefs).len()),
+            View::Support => (&mut self.support.sel, crate::support::Support::lines(self.prefs.support.monthly).len()),
             View::Settings => {
                 self.settings.pages(&self.prefs);
                 return Some(self.settings.list());
@@ -3300,6 +3346,16 @@ impl App {
             Focus::Main if self.page().is_none() && self.view == View::Equalizer => {
                 if a == Action::Open {
                     self.eq_open();
+                }
+                return;
+            }
+            Focus::Main if self.page().is_none() && self.view == View::Support => {
+                if a == Action::Open {
+                    match self.support.open(self.prefs.support.monthly) {
+                        Some(crate::settings_view::Opened::Cmds(c)) => self.cmds.extend(c),
+                        Some(crate::settings_view::Opened::Overlay(o)) => self.overlay = Some(o),
+                        _ => {}
+                    }
                 }
                 return;
             }

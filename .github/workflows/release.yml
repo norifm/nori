@@ -20,6 +20,10 @@ on:
         default: false
 permissions:
   contents: read
+env:
+  # The Support page's service, compiled into every client (docs/developers/support.md).
+  NORI_SUPPORT_URL: ${{ vars.NORI_SUPPORT_URL }}
+  NORI_STRIPE_KEY: ${{ vars.NORI_STRIPE_KEY }}
 jobs:
   # The source as one commit, so every job builds, and the tag lands on, the same one while a branch moves.
   resolve:
@@ -28,6 +32,10 @@ jobs:
     outputs:
       sha: ${{ steps.sha.outputs.sha }}
     steps:
+      - name: The Support page's service is set
+        run: |
+          test -n "$NORI_SUPPORT_URL" && test -n "$NORI_STRIPE_KEY" ||
+            { echo "::error::Set the repository variables NORI_SUPPORT_URL and NORI_STRIPE_KEY: without them the apps have no Support page"; exit 1; }
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source }}

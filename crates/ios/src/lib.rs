@@ -21,6 +21,7 @@ mod paging;
 mod remote;
 mod session;
 mod sound;
+mod support;
 mod theme;
 
 pub use output::{

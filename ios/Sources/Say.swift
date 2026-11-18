@@ -477,6 +477,20 @@ enum Say {
 
     // About, from Android's strings.xml.
     static let licences = "Licenses"
+    static let supportTitle = "Support nori"
+    static let supportLine = "nori is and always will be free."
+    static let supportAmount = "Amount"
+    static let supportOther = "Other"
+    static let supportEveryMonth = "Every month"
+    static let supportCurrency = "Currency"
+    static let supportChoose = "Choose an amount"
+    static func supportGive(_ amount: String, monthly: Bool) -> String { monthly ? "Give \(amount) a month" : "Give \(amount)" }
+    static func supportLeast(_ amount: String) -> String { "At least \(amount)" }
+    static func supportMost(_ amount: String) -> String { "At most \(amount)" }
+    static let supportManage = "Manage monthly support"
+    static let supportInSafari = "Finish in Safari, or scan to pay on your phone"
+    static let supportOtherCurrency = "Your monthly support is in another currency"
+    static let supportFailed = "The support service didn't answer"
     static let freeSoftware = "nori is free software"
     static let rustCore = "Rust core"
     static let fontsAndData = "Fonts and data"

@@ -100,6 +100,7 @@ The other languages:
 - Web, Svelte: `web/src/` (`pages/` screens, `ui/` parts, `state/`, `words.ts`, `rpc.ts` to the worker in
   crates/web); browser checks in `web/check/`.
 - Tooling: `tools/` (device scripts, release, perf, Bazel).
+- Support service, TypeScript: `support/worker` (the Cloudflare Worker over Stripe the Support page pays through); docs/developers/support.md.
 
 ## Docs
 
