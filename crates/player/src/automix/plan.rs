@@ -719,6 +719,7 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
     let verdict = a.zip(b).map(|(a, b)| pair_gate(a, b, out_dur));
     let short_cause = verdict.map(|v| if v.clash { v.cause } else { v.short_cause }).unwrap_or("");
     let short = !short_cause.is_empty();
+    let mut locked = None;
     if let (Some(a), Some(b)) = (a, b) {
         if !s.beat_match {
             why_not = "beat matching off".into();
@@ -741,8 +742,13 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
                     if let Some(st) = shift {
                         in_key(&mut p, st, b.bpm);
                     }
-                    play_out(&mut p, a, room, s);
-                    return p;
+                    let cut = sung_cut_s(&p, a);
+                    if cut <= 0.0 {
+                        play_out(&mut p, a, room, s);
+                        return p;
+                    }
+                    why_not = format!("beat-matched, {cut:.0} s of its singing would go under the next song");
+                    locked = Some(p);
                 }
                 Err(e) => why_not = e,
             }
@@ -775,7 +781,10 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
     if let Some(b) = b {
         candidates.iter_mut().for_each(|m| moves::pre_roll(&mut m.plan, b));
     }
-    let net = |m: &Move| m.worth - if s.previous == Some(m.plan.kind) { moves::repeat_cost(m.plan.kind, s.style) } else { 0.0 };
+    candidates.extend(locked.map(|plan| Move { plan, worth: LOCKED_WORTH }));
+    // Each pays for the outgoing singing it lets go before it ends.
+    let cut_cost = |m: &Move| a.map_or(0.0, |a| SUNG_CUT_COST * sung_cut_s(&m.plan, a));
+    let net = |m: &Move| m.worth - cut_cost(m) - if s.previous == Some(m.plan.kind) { moves::repeat_cost(m.plan.kind, s.style) } else { 0.0 };
     let mut p = candidates.into_iter().fold(None::<Move>, |best, m| match best {
         Some(b) if net(&b) >= net(&m) => Some(b),
         _ => Some(m),
@@ -784,6 +793,25 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
         play_out(&mut p, a, room, s);
     }
     p
+}
+
+/// A beat-matched mix's worth against the moves: over all of them, unless it lets more of the outgoing song's singing
+/// go than they do.
+const LOCKED_WORTH: f64 = 3.2;
+/// Per second of the outgoing song's singing a mix lets go before it ends ([`sung_cut_s`]): the rate a beat-matched
+/// window pays for singing faded under the next song.
+const SUNG_CUT_COST: f64 = SUNG_FADE_COST;
+
+/// Seconds of `a`'s singing after `p` has faded it out: heard only under the next song, or not at all.
+fn sung_cut_s(p: &TransitionPlan, a: &TrackAnalysis) -> f64 {
+    if a.vocal_end_ms > 0 { (a.vocal_end_ms as f64 - faded_out(p).1).max(0.0) / 1000.0 } else { 0.0 }
+}
+
+/// Where `p`'s fade of the outgoing song ends: in the mix, and in the song, ms.
+fn faded_out(p: &TransitionPlan) -> (i64, f64) {
+    let dur = p.duration_ms;
+    let end = if p.out_fade_start_ms < 0 || p.out_fade_end_ms < p.out_fade_start_ms { dur } else { p.out_fade_end_ms.min(dur) };
+    (end, p.out_start_ms as f64 + p.out_heard_ms(end as f64))
 }
 
 /// How the outgoing song lets go of its ending. A fade it stops cold under ends on the stop: a stop heard under the
@@ -806,9 +834,7 @@ fn play_out(p: &mut TransitionPlan, a: &TrackAnalysis, room: Room, s: &AutoMixSe
     if !profile(s.style).play_out || p.echo.is_some() {
         return;
     }
-    let dur = p.duration_ms;
-    let fade_end = if p.out_fade_start_ms < 0 || p.out_fade_end_ms < p.out_fade_start_ms { dur } else { p.out_fade_end_ms.min(dur) };
-    let gone = p.out_start_ms as f64 + p.out_heard_ms(fade_end as f64);
+    let (fade_end, gone) = faded_out(p);
     if ending.stop.is_some_and(|t| t <= gone + 1.0) {
         return;
     }
@@ -3801,6 +3827,29 @@ mod tests {
                 assert_eq!(p.reverb.map(|r| r.send.end_ms), (lead > 0).then_some(2 * lead), "{p:?}");
                 check_skip(&p, a, b, 240_000);
             }
+        }
+    }
+
+    /// Sung up to its stop, its beats held only well before it: a beat-matched mix there lets the singing go under the
+    /// next song, so the song ends on its stop instead; its beats held to the end, or to a bar before it (a word or two
+    /// let go), the mix is beat-matched.
+    #[test]
+    fn singing_cut_short_gives_way_to_the_stop() {
+        let beat: f64 = 60_000.0 / 128.0;
+        let bar = 4.0 * beat;
+        let stop = (120.0 + 500.0 * beat) as i64;
+        let held = TrackAnalysis { stop_ms: stop, vocal_start_ms: 20_000, vocal_end_ms: stop + 100, ..track(128.0) };
+        let held_to = |bars: f64| TrackAnalysis { outro_grid_from_ms: stop - (40.0 * bar) as i64, outro_grid_to_ms: stop - (bars * bar) as i64, ..held.clone() };
+        let (close, early) = (held_to(1.0), held_to(4.0));
+        let b = track(128.0);
+        for style in [MixStyle::Dj, MixStyle::Smooth] {
+            let s = AutoMixSettings { style, max_transition_s: 40.0, max_tempo_change_pct: style.tempo_pct(), ..dj() };
+            for a in [&held, &close] {
+                let p = plan(Some(a), Some(&b), 240_000, 240_000, &s);
+                assert!(p.kind.beat_matched(), "{style:?}: {}", p.reason);
+            }
+            let p = plan(Some(&early), Some(&b), 240_000, 240_000, &s);
+            assert_eq!((p.kind, p.out_start_ms + beat.round() as i64), (TransitionKind::ReverbWash, stop), "{style:?}: {}", p.reason);
         }
     }
 

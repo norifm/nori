@@ -1,5 +1,6 @@
-//! Moves for a pair that is not beat-matched, and blends that need no lock: each a plan and what it is worth, or
-//! none where the pair does not allow it; [`super::plan`] keeps the best. Recipes and their sources:
+//! Moves for a pair that is not beat-matched, or whose beat-matched mix lets the outgoing singing go, and blends that
+//! need no lock: each a plan and what it is worth, or none where the pair does not allow it; [`super::plan`] keeps the
+//! best. Recipes and their sources:
 //! docs/research/automix-dj.md and automix-software.md (B6 to B14).
 
 use super::*;
