@@ -1442,17 +1442,9 @@ impl Handle {
             }
             _ => None,
         };
-        if let Some(send) = send.filter(|s| self.rules().scrobbles && (s.submit_id.is_some() || s.now_playing_id.is_some())) {
+        if let Some(send) = send.filter(|s| s.counted.is_some() || s.playing.is_some()) {
             let client = self.client.clone();
-            self.run(async move {
-                // Offline, writes wait in the pending queue with their original time.
-                if let Some(id) = send.submit_id {
-                    let _ = client.write(nori_core::client::Write::Scrobble { id, submission: true, time_ms: Some(send.submit_at) }).await;
-                }
-                if let Some(id) = send.now_playing_id {
-                    let _ = client.write(nori_core::client::Write::Scrobble { id, submission: false, time_ms: None }).await;
-                }
-            });
+            self.run(async move { client.scrobble(send).await });
         }
         match e {
             Event::Song { .. } => self.arrived(),

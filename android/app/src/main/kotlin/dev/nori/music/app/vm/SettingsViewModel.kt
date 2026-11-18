@@ -641,6 +641,60 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun switchServer(profile: SavedServer) = nori.activate(profile)
     fun updateServer(profile: SavedServer) = nori.updateServer(profile)
     fun setProfileIcon(profile: SavedServer, icon: dev.nori.music.ffi.settings.ProfileIcon) = nori.setProfileIcon(profile, icon)
+
+    /**
+     * Adding a scrobbling account: signing in, why the last try failed, and the token to allow on the
+     * service's page, once asked for.
+     */
+    data class ScrobblerAdd(val busy: Boolean = false, val failed: String? = null, val approval: dev.nori.music.ffi.ScrobblerApproval? = null)
+
+    private val _scrobblerAdd = MutableStateFlow(ScrobblerAdd())
+    val scrobblerAdd: StateFlow<ScrobblerAdd> = _scrobblerAdd
+
+    /**
+     * Signs in to the account [form] describes, with the token allowed on the service's page if one was
+     * asked for, and keeps it in [profile]; [added] is given the profile saved.
+     */
+    fun addScrobbler(profile: SavedServer, form: dev.nori.music.ffi.ScrobblerForm, added: (SavedServer) -> Unit) {
+        val approval = _scrobblerAdd.value.approval
+        _scrobblerAdd.value = ScrobblerAdd(busy = true, approval = approval)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { nori.signInScrobbler(form.copy(approved = approval?.token.orEmpty())) } }
+                .onSuccess { a -> _scrobblerAdd.value = ScrobblerAdd(); added(putScrobbler(profile, a)) }
+                .onFailure { e -> _scrobblerAdd.value = ScrobblerAdd(failed = dev.nori.music.net.Failures.describe(e), approval = approval) }
+        }
+    }
+
+    /** Asks for a token to allow nori with on the service's page, which the sheet then opens. */
+    fun askScrobblerApproval(form: dev.nori.music.ffi.ScrobblerForm) {
+        _scrobblerAdd.value = ScrobblerAdd(busy = true)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { nori.scrobblerApproval(form) } }
+                .onSuccess { _scrobblerAdd.value = ScrobblerAdd(approval = it) }
+                .onFailure { e -> _scrobblerAdd.value = ScrobblerAdd(failed = dev.nori.music.net.Failures.describe(e)) }
+        }
+    }
+
+    fun scrobblerAddReset() { _scrobblerAdd.value = ScrobblerAdd() }
+
+    /** [profile] with [account] in place of its namesake, or added; saved and returned. */
+    fun putScrobbler(profile: SavedServer, account: dev.nori.music.ffi.settings.SavedScrobbler): SavedServer =
+        dev.nori.music.ffi.settings.profileScrobblerPut(profile, account).also(nori::setScrobblers)
+
+    /**
+     * Whether [profile] is told what plays itself, so its scrobbling list starts with it: the open
+     * profile's rules as its core reports them, another's as the core reads them from the saved profile.
+     */
+    fun scrobblesItself(profile: SavedServer): Boolean =
+        if (profile.id == nori.settings.value.activeServerId) nori.rules.scrobbles else nori.plugins.kinds.rulesOf(profile, false).scrobbles
+
+    /** [profile] with its server told what plays, or not; saved and returned. */
+    fun switchServerScrobble(profile: SavedServer, on: Boolean): SavedServer =
+        dev.nori.music.ffi.settings.profileScrobbleSwitched(profile, on).also(nori::setScrobblers)
+
+    /** [profile] without account [id]; saved and returned. */
+    fun removeScrobbler(profile: SavedServer, id: String): SavedServer =
+        dev.nori.music.ffi.settings.profileScrobblerRemoved(profile, id).also(nori::setScrobblers)
     fun renameProfile(profile: SavedServer, name: String) = nori.renameProfile(profile, name)
     fun removeServer(id: String) = nori.removeServer(id)
 

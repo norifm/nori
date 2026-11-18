@@ -443,7 +443,7 @@ impl Page<'_> {
         if !self.web() {
             out.push((SectionId::Search, vec![row(RowItem::Action { action: SettingsAction::SyncLibrary }).enabled(!self.f.syncing)]));
         }
-        out.push((SectionId::History, vec![self.setting("tasteModel"), self.setting("scrobble")]));
+        out.push((SectionId::History, vec![self.setting("tasteModel")]));
         out.push((SectionId::Online, vec![self.setting("thirdPartyLookups")]));
         let mut devices = vec![self.setting("remoteControl")];
         match self.client {

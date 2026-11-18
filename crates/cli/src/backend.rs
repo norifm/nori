@@ -77,6 +77,14 @@ pub enum Msg {
     SignedIn(nori_core::providers::SignInResult),
     /// The account acts as another of its identities now, or why not.
     IdentityChosen(Result<(), String>),
+    /// A scrobbling account for saved profile `profile` signed in to, or why not.
+    ScrobblerSignedIn { profile: String, account: Result<nori_core::settings::SavedScrobbler, nori_core::transport::NetError> },
+    /// The token to allow on a scrobbling service's page for the account `form` describes, or why not.
+    ScrobblerApproval {
+        profile: String,
+        form: Box<nori_core::scrobblers::ScrobblerForm>,
+        approval: Result<nori_core::scrobblers::ScrobblerApproval, nori_core::transport::NetError>,
+    },
     /// The code to show came, or expired: the runner's `code`th code sign-in ([`nori_core::providers::code::CodeSignIn`]).
     CodeStep { code: u32, event: nori_core::providers::flow::SignInEvent },
     /// A plugin installed (its id), or why not.
@@ -135,6 +143,8 @@ impl Msg {
             Msg::Left(said) => format!("jam left: {said}"),
             Msg::SignedIn(r) => format!("signed in: {}", matches!(r, nori_core::providers::SignInResult::SignedIn { .. })),
             Msg::IdentityChosen(r) => format!("identity chosen: {}", r.is_ok()),
+            Msg::ScrobblerSignedIn { account, .. } => format!("scrobbler signed in: {}", account.is_ok()),
+            Msg::ScrobblerApproval { approval, .. } => format!("scrobbler approval: {}", approval.is_ok()),
             Msg::CodeStep { code, event } => format!("code sign-in {code}: {}", if matches!(event, nori_core::providers::flow::SignInEvent::CodeExpired) { "expired" } else { "shown" }),
             Msg::Installed(r) => format!("plugin installed: {r:?}"),
             Msg::Preview(r) => format!("plugin preview: {:?}", r.as_ref().map(|p| &p.card.id)),

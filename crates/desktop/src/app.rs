@@ -34,7 +34,7 @@ use crate::words;
 use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
 use nori_core::providers::AfterAdding;
 
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, ScrobblerLine, Shelf, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -464,6 +464,8 @@ pub struct App {
     autoeq_hits: Vec<nori_core::AutoEqEntry>,
     /// The output playing now, as the engine names it.
     output: String,
+    /// The token allowed on a scrobbling service's page for the account being added, once asked for.
+    scrobbler_approved: Option<String>,
     /// Home's feed shelves' songs, by shelf (a source's own Home).
     feed_songs: Vec<Vec<Song>>,
     profiles: Vec<nori_core::SoundProfile>,
@@ -767,6 +769,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             autoeq_query: String::new(),
             autoeq_hits: Vec::new(),
             output: String::new(),
+            scrobbler_approved: None,
             feed_songs: Vec::new(),
             profiles: Vec::new(),
             sign_in_window: None,
@@ -1168,6 +1171,29 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_sign_out, h, |a| a.sign_out());
     on!(ui.on_choose_identity, h, |a, i| a.choose_identity(i));
     on!(ui.on_rename_profile, h, |a, id, name| a.rename_profile(&id, &name));
+    on!(ui.on_scrobbler_toggled, h, |a, id, on| {
+        let profile = a.ui().get_scrobbling_profile().to_string();
+        nori_host::scrobbler_switched(&a.root.app.settings, &profile, &id, on);
+        a.scrobblers_shown();
+    });
+    on!(ui.on_scrobbler_server_toggled, h, |a, on| {
+        let profile = a.ui().get_scrobbling_profile().to_string();
+        nori_host::server_scrobble_switched(&a.root.app.settings, &profile, on);
+        a.scrobblers_shown();
+    });
+    on!(ui.on_scrobbler_removed, h, |a, id| {
+        let profile = a.ui().get_scrobbling_profile().to_string();
+        nori_host::scrobbler_removed(&a.root.app.settings, &profile, &id);
+        a.scrobblers_shown();
+    });
+    on!(ui.on_scrobbler_add, h, |a, i| a.scrobbler_add(i as usize));
+    on!(ui.on_scrobbler_help_opened, h, |a| {
+        let kind = nori_core::scrobblers::scrobbler_kinds().get(a.ui().get_scrobbler_adding() as usize).copied();
+        if let Some(page) = kind.and_then(nori_core::scrobblers::scrobbler_help_page) {
+            open_in_browser(&page);
+        }
+    });
+    on!(ui.on_scrobbler_sign_in, h, |a| a.scrobbler_sign_in());
     on!(ui.on_sign_in_quiet, h, |a| a.sign_in_quiet());
     on!(ui.on_signin_closed, h, |a| {
         a.sign_in_on(SignInEvent::Close);
@@ -3663,6 +3689,99 @@ impl App {
     }
 
     /// Saved profile `id` renamed; blank, it is called after its provider again.
+    /// The scrobbling dialog's accounts, as the settings keep them now, and its form emptied.
+    fn scrobblers_shown(&mut self) {
+        let ui = self.ui();
+        let id = ui.get_scrobbling_profile().to_string();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let Some(profile) = prefs.servers.iter().find(|s| s.id == id) else { return };
+        // The open profile's rules as its session has them; another's as the core reads the saved profile.
+        let itself = match &self.session {
+            Some(s) if prefs.active_server_id == id => s.rules().scrobbles,
+            _ => self.kinds().rules_of(profile.clone(), false).scrobbles,
+        };
+        ui.set_scrobbler_server(if itself { words::provider_of(self.kinds(), &profile.kind).name.into() } else { "".into() });
+        ui.set_scrobbler_server_on(!profile.scrobble_off);
+        let lines: Vec<ScrobblerLine> = profile
+            .scrobblers
+            .iter()
+            .map(|a| ScrobblerLine { id: a.id.as_str().into(), title: words::scrobbler(a.kind).into(), detail: words::scrobbler_detail(a).into(), on: a.on })
+            .collect();
+        ui.set_scrobblers(std::rc::Rc::new(slint::VecModel::from(lines)).into());
+        for set in [AppWindow::set_scrobbler_key, AppWindow::set_scrobbler_secret, AppWindow::set_scrobbler_user, AppWindow::set_scrobbler_password, AppWindow::set_scrobbler_url, AppWindow::set_scrobbler_failed] {
+            set(&ui, "".into());
+        }
+        ui.set_scrobbler_busy(false);
+    }
+
+    /// The scrobbling dialog's form for adding kind `i` of [`nori_core::scrobblers::scrobbler_kinds`],
+    /// with the fields that kind asks, empty.
+    fn scrobbler_add(&mut self, i: usize) {
+        use nori_core::scrobblers::{ScrobblerField, ScrobblerSignIn};
+        let Some(&kind) = nori_core::scrobblers::scrobbler_kinds().get(i) else { return };
+        let fields: Vec<ScrobblerField> = nori_core::scrobblers::scrobbler_fields(kind).into_iter().map(|a| a.field).collect();
+        let ui = self.ui();
+        let key = if fields.contains(&ScrobblerField::Token) { "User token" } else if fields.contains(&ScrobblerField::ApiKey) { "API key" } else { "" };
+        ui.set_scrobbler_key_label(key.into());
+        ui.set_scrobbler_key_hidden(fields.contains(&ScrobblerField::Token));
+        ui.set_scrobbler_asks_secret(fields.contains(&ScrobblerField::Secret));
+        ui.set_scrobbler_asks_user(fields.contains(&ScrobblerField::User));
+        ui.set_scrobbler_asks_address(fields.contains(&ScrobblerField::Address));
+        ui.set_scrobbler_address_hint(words::scrobbler_address_hint(kind).into());
+        ui.set_scrobbler_help(words::scrobbler_help(kind).into());
+        ui.set_scrobbler_browser(nori_core::scrobblers::scrobbler_sign_in(kind) == ScrobblerSignIn::Browser);
+        ui.set_scrobbler_advanced(false);
+        for set in [AppWindow::set_scrobbler_key, AppWindow::set_scrobbler_secret, AppWindow::set_scrobbler_user, AppWindow::set_scrobbler_password, AppWindow::set_scrobbler_url, AppWindow::set_scrobbler_failed] {
+            set(&ui, "".into());
+        }
+        self.scrobbler_approved = None;
+        ui.set_scrobbler_page_opened(false);
+        ui.set_scrobbler_adding(i as i32);
+        ui.set_scrobbler_step(2);
+    }
+
+    /// The form's kind, and what is typed into it.
+    fn scrobbler_form(&self) -> Option<nori_core::scrobblers::ScrobblerForm> {
+        let ui = self.ui();
+        let kind = *nori_core::scrobblers::scrobbler_kinds().get(ui.get_scrobbler_adding() as usize)?;
+        Some(nori_core::scrobblers::ScrobblerForm {
+            kind,
+            url: ui.get_scrobbler_url().into(),
+            key: ui.get_scrobbler_key().into(),
+            secret: ui.get_scrobbler_secret().into(),
+            user: ui.get_scrobbler_user().into(),
+            password: ui.get_scrobbler_password().into(),
+            approved: self.scrobbler_approved.clone().unwrap_or_default(),
+        })
+    }
+
+    /// The scrobbling dialog's form sent, on a thread of its own: a kind signing in on its page asks for
+    /// the token to allow there first, which opens the page; then, or for the others, the account signs in.
+    fn scrobbler_sign_in(&mut self) {
+        use nori_core::scrobblers::ScrobblerSignIn;
+        let ui = self.ui();
+        let Some(form) = self.scrobbler_form() else { return };
+        if ui.get_scrobbler_busy() || !nori_core::scrobblers::scrobbler_form_ready(&form) {
+            return;
+        }
+        let Some(client) = self.session.as_ref().map(|s| s.client.clone()) else { return };
+        ui.set_scrobbler_busy(true);
+        ui.set_scrobbler_failed("".into());
+        let tx = self.tx.clone();
+        if nori_core::scrobblers::scrobbler_sign_in(form.kind) == ScrobblerSignIn::Browser && self.scrobbler_approved.is_none() {
+            nori_host::spawn("nori-scrobbler", move || {
+                let approval = nori_core::transport::block_on(client.scrobbler_approval(form)).map_err(|e| words::scrobbler_failure(&e));
+                tx.send(Msg::ScrobblerApproval(approval));
+            });
+            return;
+        }
+        let profile = ui.get_scrobbling_profile().to_string();
+        nori_host::spawn("nori-scrobbler", move || {
+            let account = nori_core::transport::block_on(client.sign_in_scrobbler(form)).map_err(|e| words::scrobbler_failure(&e));
+            tx.send(Msg::ScrobblerSignedIn { profile, account });
+        });
+    }
+
     fn rename_profile(&mut self, id: &str, name: &str) {
         nori_host::profile_renamed(&self.root.app.settings, id, name);
         self.ui().set_profile_renaming("".into());
@@ -4104,6 +4223,32 @@ impl App {
                 if signed_in {
                     self.ui().set_signin_text("".into());
                     self.account_kept();
+                }
+            }
+            Msg::ScrobblerSignedIn { profile, account } => {
+                let ui = self.ui();
+                ui.set_scrobbler_busy(false);
+                match account {
+                    Ok(account) => {
+                        nori_host::scrobbler_kept(&self.root.app.settings, &profile, account);
+                        if ui.get_scrobbling_profile().as_str() == profile {
+                            ui.set_scrobbler_step(0);
+                            self.scrobblers_shown();
+                        }
+                    }
+                    Err(why) => ui.set_scrobbler_failed(why.into()),
+                }
+            }
+            Msg::ScrobblerApproval(approval) => {
+                let ui = self.ui();
+                ui.set_scrobbler_busy(false);
+                match approval {
+                    Ok(a) => {
+                        open_in_browser(&a.page);
+                        self.scrobbler_approved = Some(a.token);
+                        ui.set_scrobbler_page_opened(true);
+                    }
+                    Err(why) => ui.set_scrobbler_failed(why.into()),
                 }
             }
             Msg::LoggedIn(r) => match r {
@@ -4903,6 +5048,17 @@ impl App {
                 self.open(p, None);
             }
             Some(Act::Edit(id)) => self.edit_profile(id),
+            Some(Act::Scrobbling(id)) => {
+                let ui = self.ui();
+                ui.set_scrobbling_profile(id.as_str().into());
+                let kinds: Vec<crate::ScrobblerKindLine> = nori_core::scrobblers::scrobbler_kinds()
+                    .into_iter()
+                    .map(|k| crate::ScrobblerKindLine { name: words::scrobbler(k).into(), cost: words::scrobbler_cost(k).into() })
+                    .collect();
+                ui.set_scrobbler_kinds(std::rc::Rc::new(slint::VecModel::from(kinds)).into());
+                ui.set_scrobbler_step(0);
+                self.scrobblers_shown();
+            }
             Some(Act::Remove(id)) => {
                 let prefs = self.root.app.settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };

@@ -298,9 +298,9 @@ impl Session {
         self.playlist(|p| p.rev())
     }
 
-    /// The ids to save as the server's play queue: radio streams left out, empty unless scrobbling is on.
+    /// The ids to save as the server's play queue: radio streams left out, empty while the profile doesn't tell its server what plays.
     pub fn to_push(&self) -> Vec<String> {
-        if !self.settings.in_effect(|p| p.scrobble) {
+        if self.settings.in_effect(|p| p.active_server().is_some_and(|s| s.scrobble_off)) {
             return Vec::new();
         }
         self.playlist(|p| p.ids().iter().filter(|id| !queue::is_radio(id)).cloned().collect())
@@ -743,6 +743,19 @@ pub(crate) mod tests {
         s.show_shuffle(false);
         s.shuffle(false);
         assert!(!s.shuffle_shown());
+    }
+
+    /// A profile that doesn't tell its server what plays doesn't save its queue there either.
+    #[test]
+    fn a_profile_not_telling_its_server_saves_no_queue() {
+        for off in [false, true] {
+            let (_dir, s) = opened(|p| {
+                p.servers = vec![nori_settings::settings::SavedServer { id: "p".into(), scrobble_off: off, ..Default::default() }];
+                p.active_server_id = "p".into();
+            });
+            s.set(ids(&["t1"]), Some(0), false, None);
+            assert_eq!(s.push_write(Some("t1".into()), 0).is_some(), !off, "scrobble_off {off}");
+        }
     }
 
     #[test]

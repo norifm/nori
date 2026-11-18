@@ -165,6 +165,26 @@ pub fn profile_renamed(settings: &Settings, id: &str, name: &str) {
     profile_look(settings, id, |p| p.name = name.trim().to_string());
 }
 
+/// Saved profile `id` with `account` in place of its namesake among its scrobbling accounts, or added.
+pub fn scrobbler_kept(settings: &Settings, id: &str, account: nori_core::settings::SavedScrobbler) {
+    profile_look(settings, id, |p| *p = nori_core::settings::profile_scrobbler_put(std::mem::take(p), account));
+}
+
+/// Saved profile `id`'s scrobbling account `account` turned on or off.
+pub fn scrobbler_switched(settings: &Settings, id: &str, account: &str, on: bool) {
+    profile_look(settings, id, |p| p.scrobblers.iter_mut().filter(|a| a.id == account).for_each(|a| a.on = on));
+}
+
+/// Saved profile `id`'s server or provider told what plays, or not.
+pub fn server_scrobble_switched(settings: &Settings, id: &str, on: bool) {
+    profile_look(settings, id, |p| *p = nori_core::settings::profile_scrobble_switched(std::mem::take(p), on));
+}
+
+/// Saved profile `id` without its scrobbling account `account`.
+pub fn scrobbler_removed(settings: &Settings, id: &str, account: &str) {
+    profile_look(settings, id, |p| *p = nori_core::settings::profile_scrobbler_removed(std::mem::take(p), account.to_string()));
+}
+
 /// Runs `f` on a named thread.
 pub fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
     let _ = std::thread::Builder::new().name(name.into()).spawn(f);
@@ -375,6 +395,25 @@ impl PlaceSeen {
 
 #[cfg(test)]
 mod tests {
+    use nori_core::settings::{SavedScrobbler, SavedServer, StoredPrefs};
+
+    /// A profile's scrobbling account is added, switched and removed in place; another profile's isn't.
+    #[test]
+    fn scrobbling_accounts_change_in_their_profile() {
+        let settings = nori_core::settings_store::Settings::default();
+        settings.open("").unwrap();
+        let profile = |id: &str| SavedServer { id: id.into(), ..Default::default() };
+        settings.put(StoredPrefs { servers: vec![profile("a"), profile("b")], ..Default::default() });
+        let account = |id: &str| SavedScrobbler { id: id.into(), on: true, ..Default::default() };
+        super::scrobbler_kept(&settings, "a", account("x"));
+        super::scrobbler_kept(&settings, "a", account("y"));
+        super::scrobbler_switched(&settings, "a", "x", false);
+        super::scrobbler_removed(&settings, "a", "y");
+        let servers = settings.current().unwrap().servers;
+        assert_eq!(servers[0].scrobblers, [SavedScrobbler { on: false, ..account("x") }]);
+        assert!(servers[1].scrobblers.is_empty());
+    }
+
     /// In a process of its own: the hook is the whole process's.
     #[test]
     fn a_panic_is_kept_in_the_log() {

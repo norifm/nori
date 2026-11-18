@@ -38,6 +38,8 @@ pub struct Client {
     pub(crate) autoeq_failed_ms: parking_lot::Mutex<Option<i64>>,
     /// When the playlists kept downloaded were last looked at (transfers.rs).
     pub(crate) kept_checked_ms: parking_lot::Mutex<Option<i64>>,
+    /// Plays are going to the scrobbling accounts (scrobblers.rs).
+    pub(crate) scrobbling: AtomicBool,
     /// Told the profile's second address, so covers are keyed alike through both.
     covers: Arc<crate::covers::CoverNet>,
 }
@@ -108,7 +110,7 @@ impl Client {
 impl Client {
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(core: Arc<Core>, transport: Arc<dyn Transport>, covers: Arc<crate::covers::CoverNet>) -> Arc<Self> {
-        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), replaying: Default::default(), dropped: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), autoeq_failed_ms: Default::default(), kept_checked_ms: Default::default() })
+        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), replaying: Default::default(), dropped: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), autoeq_failed_ms: Default::default(), kept_checked_ms: Default::default(), scrobbling: AtomicBool::new(false) })
     }
 
     /// Sets the profile's addresses, folder and bitrate cap.

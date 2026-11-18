@@ -162,6 +162,8 @@ pub enum Act {
     Edit(String),
     /// A server row's Rename: its name asked for.
     Rename(String),
+    /// A server row's Scrobbling: its scrobbling accounts' dialog.
+    Scrobbling(String),
     /// A server row's Remove: asked first ([`REMOVE_PROFILE`]).
     Remove(String),
     /// Switch to the server with this id.
@@ -185,6 +187,9 @@ impl Act {
         }
         if let Some(id) = name.strip_prefix("rename:") {
             return Some(Act::Rename(id.to_string()));
+        }
+        if let Some(id) = name.strip_prefix("scrobbling:") {
+            return Some(Act::Scrobbling(id.to_string()));
         }
         if let Some(id) = name.strip_prefix("remove:") {
             return Some(Act::Remove(id.to_string()));
@@ -370,7 +375,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "lyricsOnline" => ("Find missing lyrics online", ""),
         "lyricsPreferWords" => ("Prefer word-by-word lyrics", ""),
         "tasteModel" => ("Keep listening history", ""),
-        "scrobble" => ("Tell the server what you play", ""),
         "thirdPartyLookups" => ("Look things up online", ""),
         "remoteControl" => ("Remote control and jams", ""),
         "wifi" => ("Streaming quality", ""),
@@ -566,6 +570,7 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
                 if editable(kinds, sv) {
                     menu.push(("Edit".to_string(), format!("edit:{}", sv.id)));
                 }
+                menu.push(("Scrobbling".to_string(), format!("scrobbling:{}", sv.id)));
                 menu.push(("Remove".to_string(), format!("remove:{}", sv.id)));
             }
             Row {
@@ -1602,7 +1607,7 @@ mod tests {
 
     #[test]
     fn row_names_resolve() {
-        let p = StoredPrefs { auto_mix: nori_core::settings::AutoMixMode::Dj, auto_fill: Some(nori_core::settings::AutoFillKind::Songs), compressor: Some(nori_core::settings::CompressorPreset::Light), scrobble: true, ..StoredPrefs::default() };
+        let p = StoredPrefs { auto_mix: nori_core::settings::AutoMixMode::Dj, auto_fill: Some(nori_core::settings::AutoFillKind::Songs), compressor: Some(nori_core::settings::CompressorPreset::Light), ..StoredPrefs::default() };
         let f = Facts::default();
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {
@@ -1624,6 +1629,7 @@ mod tests {
         assert_eq!(Act::of(ADD_SERVER), Some(Act::AddServer));
         assert_eq!(Act::of("server:7"), Some(Act::Server("7".into())));
         assert_eq!(Act::of("edit:7"), Some(Act::Edit("7".into())));
+        assert_eq!(Act::of("scrobbling:7"), Some(Act::Scrobbling("7".into())));
         assert_eq!(Act::of(&backup_password(true, "C:/b:k.noribackup")), Some(Act::BackupPassword { restore: true, path: "C:/b:k.noribackup".into() }), "a path with colons");
         assert_eq!(Act::of(&backup_password(false, "/a")), Some(Act::BackupPassword { restore: false, path: "/a".into() }));
     }

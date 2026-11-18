@@ -177,6 +177,29 @@ export const W = {
   time: clock,
   servers: "Servers",
   accounts: "Accounts",
+  scrobbling: "Scrobbling",
+  scrobblingNote: "Plays go to each one that's on, whatever this profile plays from.",
+  scrobbler: (kind: string) => ({ listenbrainz: "ListenBrainz", librefm: "Libre.fm", lastfm: "Last.fm" })[kind] ?? kind,
+  addScrobbler: (kind: string) => `Add ${W.scrobbler(kind)}`,
+  addScrobblerAccount: "Add scrobbler",
+  /** The profile's own server, first among where its plays go. */
+  scrobblerServer: "OpenSubsonic",
+  scrobblerBuiltIn: "Built in",
+  advanced: "Advanced",
+  addScrobblerTitle: "Add a scrobbler",
+  /** What an account costs, where it does. */
+  scrobblerCost: (kind: string) => (kind === "lastfm" ? "Needs Last.fm Pro" : ""),
+  scrobblerHelp: (kind: string) => (kind === "lastfm" ? "Get an API key" : "Get your token"),
+  scrobblerContinue: (kind: string) => `Continue on ${W.scrobbler(kind)}`,
+  scrobblerAllow: (kind: string) => `Allow nori on ${W.scrobbler(kind)}, then come back and press Done.`,
+  scrobblerPasswordNote: "The password signs in once; only the session is kept.",
+  scrobblerAddressNote: (kind: string) =>
+    kind === "librefm" ? "Empty for Libre.fm. Another GNU FM server: its API address." : "Empty for ListenBrainz. Maloja, Koito: their ListenBrainz API address.",
+  /** What a field adding a scrobbling account asks. */
+  scrobblerField: { token: "User token", apiKey: "API key", secret: "Shared secret", user: "User", password: "Password", address: "Address" },
+  scrobblerAdd: "Add",
+  scrobblerAdding: "Connecting…",
+  scrobblerRemove: "Remove",
   profileIcon: "Icon",
   /** What an icon is called on the picker; a server's own mark is named after its kind of server. */
   profileIcons: { Letter: "Letter", Provider: "OpenSubsonic", Sing: "Singing", Surprise: "Surprised", Talking: "Talking", LookUp: "Looking up", Satisfied: "Smiling", Think: "Thinking" } as Record<string, string>,
@@ -310,7 +333,6 @@ export const W = {
     lyricsOnline: "Find missing lyrics online",
     lyricsPreferWords: "Prefer word-by-word lyrics",
     tasteModel: "Keep listening history",
-    scrobble: "Tell the server what you play",
     thirdPartyLookups: "Look things up online",
     remoteControl: "Remote control and jams",
     theme: "Appearance",
