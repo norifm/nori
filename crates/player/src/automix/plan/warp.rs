@@ -212,27 +212,37 @@ fn steering(all: &[Pair]) -> Vec<Pair> {
     if sure.len() >= MIN_PAIRS { sure } else { all.to_vec() }
 }
 
+/// Each end's beats a lock goes by: cleaned, and only their steady run (a stray beat a stretch away from the rest
+/// pairs with nothing).
+pub(super) struct Kept {
+    pub out: Vec<Beat>,
+    pub inc: Vec<Beat>,
+}
+
+impl Kept {
+    pub fn of(a: &TrackAnalysis, b: &TrackAnalysis) -> Kept {
+        Kept { out: steady_run(&cleaned(&a.outro_beats)).to_vec(), inc: steady_run(&cleaned(&b.intro_beats)).to_vec() }
+    }
+}
+
 /// A plan laid out after its lock (the outgoing song gliding alone to meet the other, or a bend): its beats heard
 /// together still within the lock; Err where they drift apart.
-pub(super) fn check(p: &TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, swap: f64) -> Result<(), String> {
-    if a.outro_beats.is_empty() || b.intro_beats.is_empty() || p.out_loop.is_some() {
+pub(super) fn check(p: &TransitionPlan, beats: &Kept, swap: f64) -> Result<(), String> {
+    if beats.out.is_empty() || beats.inc.is_empty() || p.out_loop.is_some() {
         return Ok(());
     }
-    let (a_clean, b_clean) = (cleaned(&a.outro_beats), cleaned(&b.intro_beats));
-    match paired(p, steady_run(&a_clean), steady_run(&b_clean), swap)? {
+    match paired(p, &beats.out, &beats.inc, swap)? {
         Some(all) if !locked(p, &all) => Err("the beats drift apart".into()),
         _ => Ok(()),
     }
 }
 
-pub(super) fn lock(p: &mut TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, swap: f64) -> Result<Locked, String> {
+pub(super) fn lock(p: &mut TransitionPlan, a: &TrackAnalysis, b: &TrackAnalysis, beats: &Kept, swap: f64) -> Result<Locked, String> {
+    let (a_beats, b_beats) = (&beats.out[..], &beats.inc[..]);
     // An outgoing loop repeats bars picked as steady; a bend or glide moves the outgoing beats themselves.
-    if a.outro_beats.is_empty() || b.intro_beats.is_empty() || p.out_loop.is_some() || p.bend.is_some() || p.out_glide.is_some() {
+    if a_beats.is_empty() || b_beats.is_empty() || p.out_loop.is_some() || p.bend.is_some() || p.out_glide.is_some() {
         return Ok(Locked::Unchecked);
     }
-    // Cleaned, and only their steady run: a stray beat a stretch away from the rest pairs with nothing.
-    let (a_clean, b_clean) = (cleaned(&a.outro_beats), cleaned(&b.intro_beats));
-    let (a_beats, b_beats) = (steady_run(&a_clean), steady_run(&b_clean));
     let Some(mut all) = paired(p, a_beats, b_beats, swap)? else { return Ok(Locked::Unchecked) };
     // An incoming loop's repeats keep the speed they were played at: the outgoing beats over them, and the pairs
     // after them, must hold at one ratio.

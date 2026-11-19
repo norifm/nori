@@ -900,7 +900,7 @@ pub fn score(a: &Analysis, truth: &Truth, with_key: bool) -> SongScore {
     let tracked: Vec<f64> = a.tempo.beats.iter().copied().filter(|b| *b >= from).collect();
     let (gb, _) = grid(t, from, truth.music.1 + 1.0);
     let (intro_t, intro_by) = at_start(t);
-    let (outro_t, outro_by) = at_end(t);
+    let (outro_t, outro_by, _) = at_end(t);
     let by_beats = |g: plan::Gridded, beats| (g == plan::Gridded::Beats).then_some(beats);
     let first_beat = truth.beats.first().copied().unwrap_or(truth.music.0);
     // A grid that holds over a run of its end only is mixed inside the run, so it is scored there.
