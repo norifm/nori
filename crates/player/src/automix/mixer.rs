@@ -16,7 +16,8 @@ const MAX_CHANNELS: usize = 8;
 pub(crate) const TRIM_GLIDE_MS_PER_DB: f64 = 150.0;
 /// Frames between sweep coefficient updates.
 const SWEEP_STEP: u64 = 16;
-/// A sweep's filter is faded in over this long so switching it on does not click, and out as long once it ends open.
+/// A sweep's filter is faded in over this long so switching it on over a playing deck does not click, and out as long once
+/// it ends open or its incoming deck's mix ends.
 const SWEEP_ENTRY_MS: f64 = 50.0;
 /// A sweep ending at or past these is open: its filter is switched off after it.
 const OPEN_LOW_PASS_HZ: f64 = 18_000.0;
@@ -299,12 +300,17 @@ struct SweepFilter {
     on_from: u64,
     /// Where the filter's fade-in is measured from: where it comes on, or a seek that landed past that.
     entry_from: u64,
-    /// A sweep that ends open fades its filter out from its end, and is off after that.
+    /// Its deck is silent until the filter comes on (the incoming deck), so it is whole from there, with nothing to fade
+    /// in over.
+    whole_on: bool,
+    /// Where the filter fades out from, and is off after: the end of a sweep that ends open, or on the incoming deck
+    /// no later than the mix's last frame takes, so the song plays on untouched past the mix.
     open_from: Option<u64>,
 }
 
 impl SweepFilter {
-    fn new(rate: f64, span: Span, on_from: u64, from: f64, to: f64, low: bool) -> Self {
+    /// A sweep on the outgoing deck, playing before the filter comes on at the sweep's start.
+    fn new(rate: f64, span: Span, from: f64, to: f64, low: bool) -> Self {
         let opens = if low { to >= OPEN_LOW_PASS_HZ } else { to <= OPEN_HIGH_PASS_HZ };
         let (from, to) = (from.min(rate * 0.45), to.min(rate * 0.45));
         SweepFilter {
@@ -314,10 +320,19 @@ impl SweepFilter {
             low,
             coef: Coef::pass(rate, from, low),
             state: [[[0.0; 2]; MAX_CHANNELS]; 2],
-            on_from,
-            entry_from: on_from,
+            on_from: span.start,
+            entry_from: span.start,
+            whole_on: false,
             open_from: opens.then_some(span.end),
         }
+    }
+
+    /// The sweep on the incoming deck instead, which comes in at `comes_in`: on from there if not before, and faded out
+    /// over `entry` frames by the last of the mix's `len`.
+    fn incoming(self, comes_in: u64, len: u64, entry: u64) -> Self {
+        let on_from = self.span.start.min(comes_in);
+        let out_by = len.saturating_sub(1 + entry);
+        SweepFilter { on_from, entry_from: on_from, whole_on: true, open_from: Some(self.open_from.map_or(out_by, |o| o.min(out_by))), ..self }
     }
 
     fn retune(&mut self, rate: f64, p: u64) {
@@ -334,7 +349,7 @@ impl SweepFilter {
         if p >= self.span.start && (p - self.span.start).is_multiple_of(SWEEP_STEP) && p < self.span.end + SWEEP_STEP {
             self.retune(rate, p);
         }
-        let fade_in = (p - self.entry_from.min(p)) as f64 / entry as f64;
+        let fade_in = if self.whole_on && self.entry_from == self.on_from { 1.0 } else { (p - self.entry_from.min(p)) as f64 / entry as f64 };
         let fade_out = self.open_from.map_or(1.0, |o| 1.0 - p.saturating_sub(o) as f64 / entry as f64);
         fade_in.min(fade_out).min(1.0)
     }
@@ -828,16 +843,13 @@ impl Mixer {
             (from(h.at_ms, h.len_ms), db_to_gain((h.db as f64).clamp(-30.0, 0.0)))
         });
         // An incoming deck is filtered from where it comes in: heard whole before its sweep, it would thin as that starts.
-        let comes_in = self.in_fade.start;
-        let sweep = |s: crate::types::Sweep, low, incoming: bool| {
-            let span = span(s.start_ms, s.end_ms);
-            SweepFilter::new(rate, span, if incoming { span.start.min(comes_in) } else { span.start }, s.from_hz as f64, s.to_hz as f64, low)
-        };
-        self.high_pass = p.high_pass.map(|s| sweep(s, false, false));
-        self.low_pass = p.low_pass.map(|s| sweep(s, true, false));
-        self.in_high_pass = p.in_high_pass.map(|s| sweep(s, false, true));
-        self.in_low_pass = p.in_low_pass.map(|s| sweep(s, true, true));
-        self.sweep_entry = frames(SWEEP_ENTRY_MS).max(1);
+        let (comes_in, entry) = (self.in_fade.start, frames(SWEEP_ENTRY_MS).max(1));
+        let sweep = |s: crate::types::Sweep, low| SweepFilter::new(rate, span(s.start_ms, s.end_ms), s.from_hz as f64, s.to_hz as f64, low);
+        self.high_pass = p.high_pass.map(|s| sweep(s, false));
+        self.low_pass = p.low_pass.map(|s| sweep(s, true));
+        self.in_high_pass = p.in_high_pass.map(|s| sweep(s, false).incoming(comes_in, len, entry));
+        self.in_low_pass = p.in_low_pass.map(|s| sweep(s, true).incoming(comes_in, len, entry));
+        self.sweep_entry = entry;
         self.duck = p.vocal_duck.filter(|d| d.db < 0.0).map(|d| {
             let end = frames(d.until_ms as f64).min(len);
             let start = end.saturating_sub(frames(d.release_ms as f64));
@@ -1768,6 +1780,34 @@ mod tests {
         assert!(held < 0.01, "300 Hz held out before the sweep: {held}");
         let jump = thin.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0f32, f32::max);
         assert!(jump < 0.5 * 2.0 * std::f32::consts::PI * 300.0 / 48000.0 * 1.2, "no clicks: {jump}");
+    }
+
+    /// A brake's incoming low-pass, on from where its deck comes in: the deck was silent before, so none of its highs
+    /// leak through while the filter would fade in.
+    #[test]
+    fn an_incoming_filter_is_whole_from_where_its_deck_comes_in() {
+        let mut p = plan();
+        p.duration_ms = 2500;
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (0, 1767, 1767, 1988);
+        p.in_low_pass = Some(Sweep { start_ms: 1767, end_ms: 2400, from_hz: 800.0, to_hz: 18_000.0 });
+        let (zeros, hats) = (vec![0f32; 120_000], sine(10_000.0, 120_000));
+        let y = mix(&p, &zeros, &hats);
+        let leak = 20.0 * (tone_level(&y[84_816..87_216], 10_000.0) / 0.5).log10();
+        assert!(leak < -60.0, "10 kHz in the deck's first 50 ms: {leak:.1} dB");
+    }
+
+    /// An incoming deck's filter is out on the mix's last frame, whatever its sweep: past the mix the incoming song
+    /// plays untouched, and nothing changes there.
+    #[test]
+    fn an_incoming_filter_is_out_by_the_mixs_end() {
+        let low = Sweep { start_ms: 0, end_ms: 1000, from_hz: 250.0, to_hz: 18_000.0 };
+        let high = Sweep { start_ms: 0, end_ms: 1000, from_hz: 1_200.0, to_hz: 300.0 };
+        let (zeros, x) = (vec![0f32; 48000], noise(48000));
+        let plain = mix(&plan(), &zeros, &x);
+        for (in_low_pass, in_high_pass) in [(Some(low), None), (None, Some(high))] {
+            let y = mix(&TransitionPlan { in_low_pass, in_high_pass, ..plan() }, &zeros, &x);
+            assert_eq!(y[47999], plain[47999], "{in_low_pass:?} {in_high_pass:?}");
+        }
     }
 
     #[test]
