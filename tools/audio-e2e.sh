@@ -171,21 +171,32 @@ fi
 
 if want restart; then section "seek after a restart"
   # Pause, kill, reopen, seek while paused, play: the seek has to win over the restored position. The
-  # queue is restored from the core's saved copy by a new service; the seek logic itself is
-  # controls.rs a_seek_while_paused_sticks_and_play_resumes_from_it.
-  "$app" play "$song" >/dev/null; sounds 20
+  # queue is restored from the core's saved copy by a new service, shuffled, repeating and marked as it was
+  # (what is saved is the core's, playlist.rs shuffle_repeat_and_marks_are_saved_with_the_queue); the seek
+  # logic itself is controls.rs a_seek_while_paused_sticks_and_play_resumes_from_it.
+  "$app" play "album:$(mix_album)" >/dev/null; sounds 20
+  "$app" do shuffle >/dev/null; wait_for shuffle True 10 >/dev/null
+  "$app" do repeat >/dev/null; wait_for repeat ALL 10 >/dev/null
+  "$app" do "playnext $song" >/dev/null; wait_until 10 bash -c "'$app' state | grep -q '\"upNextQueued\":\"1'"
+  next=$(field upNext); queued=$(field upNextQueued)
   "$app" do "seek 10000" >/dev/null; wait_for positionMs ">9000" 10 >/dev/null
   "$app" do pause >/dev/null; wait_for playing False 10 >/dev/null
   adb shell am force-stop "$pkg" >/dev/null 2>&1
   app_up >/dev/null
   # Cold boot: wait for the queue to be back before touching it.
   wait_for title "!" 60 >/dev/null
+  check "shuffle is still on after a restart" wait_for shuffle True 10
+  check "in the same order" test "$(field upNext)" = "$next"
+  check "the song added by hand still marked" test "$(field upNextQueued)" = "$queued"
+  check "and repeat too" wait_for repeat ALL 10
   "$app" do "seek 30000" >/dev/null
   wait_for positionMs ">27000" 10 >/dev/null; b=$WAITED
   check "a seek while paused after a restart sticks ($b)" test "${b:-0}" -ge 27000 -a "${b:-0}" -le 33000
   "$app" do resume >/dev/null
   check "play resumes from the seek" wait_for positionMs ">30500" 10
   check "and sounds" sounds 10
+  "$app" do shuffle >/dev/null; wait_for shuffle False 10 >/dev/null
+  "$app" do repeat >/dev/null; "$app" do repeat >/dev/null; wait_for repeat OFF 10 >/dev/null
 fi
 
 if want transcode; then section "a transcode stated longer than it is"

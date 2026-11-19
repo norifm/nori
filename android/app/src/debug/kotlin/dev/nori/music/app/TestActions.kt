@@ -223,6 +223,7 @@ object TestActions {
             "enqueue" -> actions.enqueue(songs)
             "playnext" -> actions.playNext(songs)
             "shuffle" -> player.toggleShuffle()
+            "repeat" -> player.cycleRepeat()
             "clearqueue" -> nori.player.clear()
             // "newplaylist <name>|<ref>": the checks create one, look for it on the server, then delete it.
             "newplaylist" -> {

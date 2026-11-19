@@ -7,10 +7,14 @@ pub use nori_queue::playlist::*;
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
-    /// Saves the queue and its origin page for the next start.
+    /// Saves the queue, its shuffle order, repeat mode, the songs' marks and origin page for the next start.
     pub fn playlist_save(&self, position_ms: u64) -> crate::Result<()> {
-        let (ids, index) = self.session.playlist(|p| (p.ids().to_vec(), p.current().unwrap_or(0) as u32));
-        self.queue_save(ids, index, position_ms, self.session.origin())
+        let (ids, index, order, repeat, hands) = self.session.playlist(|p| {
+            let order = p.shuffle_order().map(|o| o.iter().map(|&i| i as u32).collect());
+            (p.ids().to_vec(), p.current().unwrap_or(0) as u32, order, p.repeat(), (0..p.len()).map(|i| p.hand(i)).collect())
+        });
+        let now = crate::queue::Kept { ids, order, repeat, hands, origin: self.session.origin() };
+        self.queue_save(now, index, position_ms)
     }
 }
 
@@ -85,6 +89,33 @@ pub(crate) mod tests {
             let q = core.load_queue().unwrap();
             assert_eq!((q.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), q.index), (vec!["rk1", "rk2"], 0), "rk1 stays current");
         }
+    }
+
+    #[test]
+    fn shuffle_repeat_and_marks_are_saved_with_the_queue() {
+        let core = core(&["radio:1", "o1", "o2", "o3", "o4"], 2);
+        core.session.register(["o1", "o2", "o3", "o4"].map(|id| crate::Song { id: id.into(), ..Default::default() }).to_vec());
+        core.session.shuffle(true);
+        core.session.repeat(nori_player::playlist::REPEAT_ALL);
+        core.playlist_save(0).unwrap();
+        // The radio stream (list index 0) is not saved: the order skips it and counts from the songs kept.
+        let kept: Vec<u32> = core.session.shuffle_order(|o| o.unwrap().iter().filter(|&&i| i != 0).map(|&i| i as u32 - 1).collect());
+        let q = core.load_queue().unwrap();
+        assert_eq!((q.order, q.repeat, q.index), (Some(kept), nori_player::playlist::REPEAT_ALL, 1));
+
+        // The songs added by hand or by autofill keep their marks, counted among the songs kept.
+        core.session.take(5, vec!["o1".into()], vec![Hand::Last]);
+        core.session.take(6, vec!["o2".into()], vec![Hand::Auto]);
+        core.playlist_save(0).unwrap();
+        let q = core.load_queue().unwrap();
+        assert_eq!((q.queued, q.auto), (vec![4], vec![5]));
+
+        // Shuffle or repeat changed alone, the songs the same: saved too.
+        core.session.shuffle(false);
+        core.session.repeat(nori_player::playlist::REPEAT_OFF);
+        core.playlist_save(0).unwrap();
+        let q = core.load_queue().unwrap();
+        assert_eq!((q.order, q.repeat), (None, nori_player::playlist::REPEAT_OFF));
     }
 
     #[test]

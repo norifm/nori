@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn a_queue_left_elsewhere_is_offered_once() {
         let songs: Vec<Song> = ["a", "b"].iter().map(|id| Song { id: id.to_string(), ..Default::default() }).collect();
-        let saved = PlayQueue { songs: songs.clone(), index: 1, position_ms: 1200, origin: None };
+        let saved = PlayQueue { songs: songs.clone(), index: 1, position_ms: 1200, ..Default::default() };
         let at = QueuePlace { song: "b".into(), position_ms: 1200 };
         let elsewhere = QueuePlace { song: "b".into(), position_ms: 900 };
         let offer = |by: &str, here, playing, ours, seen| queue_offer(saved.clone(), by, here, playing, ours, seen);
@@ -206,7 +206,7 @@ mod tests {
         ] {
             assert_eq!(offer("nori", here, playing, ours, seen), None, "{why}");
         }
-        assert_eq!(queue_offer(PlayQueue { songs: vec![], index: 0, position_ms: 0, origin: None }, "x", None, false, None, None), None, "nothing saved");
+        assert_eq!(queue_offer(PlayQueue::default(), "x", None, false, None, None), None, "nothing saved");
     }
 
     #[test]

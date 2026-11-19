@@ -175,6 +175,10 @@ struct StoredQueue {
     position: u64,
     /// Parsed separately so an unknown origin kind loses only the origin.
     origin: serde_json::Value,
+    order: Option<Vec<u32>>,
+    repeat: u8,
+    queued: Vec<u32>,
+    auto: Vec<u32>,
     /// Made with each write of the songs; the place belongs to them only with the same stamp, so two
     /// apps over one database never pair one's place with the other's songs.
     stamp: Option<String>,
@@ -208,7 +212,7 @@ impl Core {
     /// The queue's songs, origin and place, in one transaction; returns their new stamp.
     fn write_queue(&self, queue: PlayQueue) -> Result<String> {
         let stamp = nori_remote::new_id();
-        let json = serde_json::json!({ "songs": queue.songs, "index": queue.index, "position": queue.position_ms, "origin": queue.origin, "stamp": stamp });
+        let json = serde_json::json!({ "songs": queue.songs, "index": queue.index, "position": queue.position_ms, "origin": queue.origin, "order": queue.order, "repeat": queue.repeat, "queued": queue.queued, "auto": queue.auto, "stamp": stamp });
         let c = self.db.lock();
         let tx = c.unchecked_transaction()?;
         db::kv_put(&tx, "queue", &json.to_string())?;
@@ -325,7 +329,7 @@ impl Core {
         let index = q.index.min(q.songs.len().saturating_sub(1) as u32);
         self.session.register(q.songs.clone());
         let origin = serde_json::from_value::<Option<crate::PageOrigin>>(q.origin).ok().flatten();
-        Ok(PlayQueue { songs: q.songs, index, position_ms: q.position, origin })
+        Ok(PlayQueue { songs: q.songs, index, position_ms: q.position, origin, order: q.order, repeat: q.repeat, queued: q.queued, auto: q.auto })
     }
 
     /// A sorted, filtered page of indexed songs. `sort`: title, artist, album, year, duration, created,

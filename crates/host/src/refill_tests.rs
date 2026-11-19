@@ -175,6 +175,28 @@ fn media_keys_start_a_restored_queue_and_fill_at_its_end() {
     s.close();
 }
 
+/// A queue left shuffled and repeating comes back so after a restart: same play order, same song, repeat
+/// on, the song added by hand still marked so.
+#[test]
+fn a_restart_keeps_shuffle_repeat_and_marks() {
+    let dir = nori_testdir::TempDir::new("host-shuffle-kept");
+    let (url, _asked) = holding_server();
+    let (s, songs) = session_of_songs(&dir, &url, &Card::new(), Virtual::default());
+    s.play(songs[..3].to_vec(), 2, true, None);
+    s.core.session.take(3, vec![songs[3].id.clone()], vec![nori_core::playlist::Hand::Next]);
+    s.repeat(nori_core::rules::REPEAT_ALL);
+    let state = |s: &Session| s.core.session.playlist(|p| (p.shuffle_order().map(<[usize]>::to_vec), p.current(), p.repeat(), (0..p.len()).map(|i| p.hand(i).by_user()).collect::<Vec<_>>()));
+    let left = state(&s);
+    s.close();
+
+    let (s, _) = session_of_songs(&dir, &url, &Card::new(), Virtual::default());
+    let back = state(&s);
+    assert!(left.0.is_some() && left.3.contains(&true), "shuffled, one song added by hand, before the restart");
+    assert_eq!(back, left);
+    assert!(s.core.session.shuffle_shown());
+    s.close();
+}
+
 /// The platform's Bluetooth with nothing connected: each watch asked of it.
 #[cfg(feature = "desktop")]
 #[derive(Default)]

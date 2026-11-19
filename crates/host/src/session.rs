@@ -673,17 +673,26 @@ impl Handle {
         });
     }
 
-    /// Restores the saved queue, paused at its position; with none saved the queue is empty (the one
-    /// left by the profile open before, a jam's host's songs, is no queue of this one's).
+    /// Restores the saved queue, paused at its position, shuffled, repeating and with the songs added by
+    /// hand or by autofill marked as it was; with none saved
+    /// the queue is empty (the one left by the profile open before, a jam's host's songs, is no queue of
+    /// this one's).
     fn restore(&self) {
+        let session = &self.core.session;
         let Some(q) = self.core.load_queue().ok().filter(|q| !q.songs.is_empty()) else {
-            self.core.session.set(Vec::new(), None, false, None);
+            session.set(Vec::new(), None, false, None);
             return self.engine.queue_changed();
         };
-        let index = q.index as usize;
-        self.core.session.set(q.songs.iter().map(|s| s.id.clone()).collect(), Some(index as u32), false, q.origin);
+        let ids = q.songs.iter().map(|s| s.id.clone()).collect();
+        let at = match q.order {
+            Some(order) => session.set_shuffled(ids, order, Some(q.index), q.origin),
+            None => session.set(ids, Some(q.index), false, q.origin),
+        };
+        session.mark(nori_core::playlist::queue_saved_hands(q.songs.len() as u32, q.queued, q.auto));
+        session.repeat(q.repeat);
+        self.engine.set_repeat(q.repeat);
         self.engine.queue_changed();
-        self.engine.go_to(index, q.position_ms as i64);
+        self.engine.go_to(at.at.unwrap_or(q.index) as usize, q.position_ms as i64);
     }
 
     /// Saves the queue and pushes it to the server as `rules::queue_keep` says for `moment`.
@@ -1743,6 +1752,7 @@ impl Handle {
         // Set on the queue first so the screen shows it at once.
         self.core.session.repeat(mode);
         self.engine.set_repeat(mode);
+        self.keeper.later(queue_keep(QueueMoment::Edited).save_after_ms);
     }
 
     /// A queue handed over from another device: `songs` from `index` at `position_ms`, playing or not,

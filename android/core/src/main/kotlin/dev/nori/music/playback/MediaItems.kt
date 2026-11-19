@@ -101,8 +101,9 @@ fun MediaItem.inJam(jam: String?): MediaItem =
     if (jam == null) this else buildUpon().setMediaMetadata(mediaMetadata.buildUpon().setSubtitle(jam).build()).build()
 
 /**
- * The order a list plays in (positions in it, a weighted shuffle, which the player's own shuffle would
- * undo), marked on its first item so the core shuffles the list into it (nori-queue `playlist_set_shuffled`).
+ * The order a list plays in (positions in it: a weighted shuffle, which the player's own shuffle would
+ * undo, or a saved queue's), marked on its first item so the core shuffles the list into it (nori-queue
+ * `playlist_set_shuffled`).
  */
 private const val SHUFFLED = "shuffled"
 fun MediaItem.shuffledAs(): IntArray? = mediaMetadata.extras?.getIntArray(SHUFFLED)

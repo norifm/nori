@@ -358,7 +358,7 @@ impl From<QueueWire> for PlayQueue {
     fn from(q: QueueWire) -> Self {
         let current = q.current.map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string()));
         let index = current.and_then(|c| q.entry.iter().position(|s| s.id == c)).unwrap_or(0) as u32;
-        PlayQueue { songs: q.entry, index, position_ms: q.position, origin: None }
+        PlayQueue { songs: q.entry, index, position_ms: q.position, ..Default::default() }
     }
 }
 

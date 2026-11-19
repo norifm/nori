@@ -202,7 +202,7 @@ A new device check needs a line here saying why Rust cannot test it.
 | `eq` | the equalizer leaves without stopping the track | the real track |
 | `tuning` | the buffer is shallow only while a sound page is in sight and tuned, resized in place, never reopened | `AudioTrack.setBufferSizeInFrames` and the app's lifecycle |
 | `automix` | measuring starts when AutoMix is switched on, and the coming songs are measured out of the media3 cache | media3's cache read through JNI |
-| `restart` | a seek while paused after a force stop sticks, and play resumes from it | a new service restoring the saved queue |
+| `restart` | after a force stop the queue comes back shuffled in the same order, repeating and with its Play next song marked, a seek while paused sticks, and play resumes from it | a new service restoring the saved queue through media3 |
 | `container-seek` | an M4A seek while paused resumes (local server) | Android's source and output after Rust's container seek |
 | `transcode` | a transcode stated longer than it is plays past its real end (local server) | media3 and OkHttp on a real HTTP stack |
 | `errors` | no playback errors over the run | the run's whole log |
