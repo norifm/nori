@@ -245,6 +245,16 @@ struct Hold {
     at_ms: i64,
     /// How far into the transition the hold began, transition time (non-zero after a seek into it).
     late_us: i64,
+    before: Before,
+}
+
+/// What was heard before a hold began.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Before {
+    /// Nothing: a seek or a remake started there.
+    Nothing,
+    /// The held song itself, up to the hold.
+    Song,
 }
 
 /// How a mix reads the held ending.
@@ -1007,7 +1017,7 @@ impl TransitionEngine {
         }
         let p = self.plan().cloned().expect("a plan exists past this point");
         let late_us = mix_phase.unwrap_or_else(|| (p.mixer.wall_of_out_heard(late_song_us as f64 / 1000.0) * 1000.0).round() as i64);
-        self.begin_hold(&p, out, late_us, host.now_ms());
+        self.begin_hold(&p, out, late_us, if landed { Before::Nothing } else { Before::Song }, host.now_ms());
         if late {
             host.log(&format!("transition: late hold, {} ms in", late_us / 1000));
         }
@@ -1134,7 +1144,7 @@ impl TransitionEngine {
     }
 
     /// Holds the ending from now (`at_ms`), `late_us` into the transition.
-    fn begin_hold(&mut self, p: &Plan, out: Format, late_us: i64, at_ms: i64) {
+    fn begin_hold(&mut self, p: &Plan, out: Format, late_us: i64, before: Before, at_ms: i64) {
         self.flight.held_id = self.playing_id.clone().or_else(|| self.current_id.clone());
         self.held_offset_us = self.offset_us;
         self.held_song = self.song.clone();
@@ -1152,7 +1162,7 @@ impl TransitionEngine {
         // A late hold only holds what is left of the overlap; a loop's is held from the transition's start.
         let late_hold = if p.mixer.out_loop.is_some() { 0 } else { (p.mixer.out_song_ms(late as f64 / 1000.0) * 1000.0).round() as i64 };
         let limit = out.bytes((hold_us - late_hold).max(0));
-        self.flight.phase = Phase::Hold(Hold { len: 0, limit, held_us: 0, at_ms, late_us });
+        self.flight.phase = Phase::Hold(Hold { len: 0, limit, held_us: 0, at_ms, late_us, before });
     }
 
     /// Where `p`, held `late_us` into it, hands over: the next song takes over where it becomes the
@@ -1275,9 +1285,12 @@ impl TransitionEngine {
                 }
                 let m = self.ensure_mixer(out);
                 m.configure(&p.mixer);
-                // A late hold starts the mix curves that far in.
+                // A late hold starts the mix curves that far in, coming in from the song if it was heard up to there.
                 if late > 0 {
-                    m.seek(frame_of_us(late) as u64);
+                    match h.before {
+                        Before::Nothing => m.seek(frame_of_us(late) as u64),
+                        Before::Song => m.enter(frame_of_us(late) as u64),
+                    }
                 }
                 self.flight.skip_left = 0;
                 self.enter_incoming(&p, late);
@@ -3019,6 +3032,33 @@ mod tests {
         assert!(h.log.iter().any(|l| l.contains("holding the ending")), "{:?}", h.log);
         assert!(!h.log.iter().any(|l| l.contains("no runway")), "{:?}", h.log);
         assert!(d.samples().is_empty(), "the ending waits for the next song");
+    }
+
+    /// A plan that comes half a second after its start while the song plays (a queue edit, an analysis landing): the
+    /// mix comes in from the song as it played, with no step larger than the two tones' own, keeping pitch or not.
+    #[test]
+    fn a_plan_come_late_mixes_in_without_a_step() {
+        for keep_pitch in [false, true] {
+            let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+            e.configure(&mut d, &mut h, stream("a", FMT));
+            feed(&mut e, &mut d, &mut h, &sine(440.0, RATE, 1.5, 0), 0);
+            let mut p = fade("b", 1_000_000);
+            p.mixer.keep_pitch = keep_pitch;
+            p.mixer.out_rates = [(0.0, 1.0), (2000.0, 0.9)].map(|(at_ms, speed)| crate::types::Rate { at_ms, speed }).to_vec();
+            p.mixer.in_rates = [(0.0, 1.0), (2000.0, 1.0)].map(|(at_ms, speed)| crate::types::Rate { at_ms, speed }).to_vec();
+            h.plans.insert("a".into(), p);
+            e.replan();
+            feed(&mut e, &mut d, &mut h, &sine(440.0, RATE, 1.5, RATE as usize * 3 / 2), 1_500_000);
+            assert!(h.log.iter().any(|l| l.contains("late hold, 506 ms in")), "half a second of the song, 506 ms of the mix: {:?}", h.log);
+            let passed = d.samples().len() / 2;
+            e.configure(&mut d, &mut h, stream("b", FMT));
+            e.handle_discontinuity(&mut d, &mut h);
+            feed(&mut e, &mut d, &mut h, &sine(660.0, RATE, 3.0, 0), 3_000_000);
+            let s: Vec<f64> = d.samples().iter().step_by(2).map(|&v| v as f64).collect();
+            let own = 8000.0 * std::f64::consts::TAU * (440.0 + 660.0) / RATE as f64;
+            let step = s[passed - 100..passed + RATE as usize / 2].windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max);
+            assert!(step < own, "pitch {keep_pitch}: a step of {step:.0} as the mix comes in, the tones' own at most {own:.0}");
+        }
     }
 
     #[test]
