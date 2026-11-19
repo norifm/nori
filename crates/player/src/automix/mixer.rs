@@ -66,11 +66,12 @@ pub(crate) fn crossover_ms(p: &TransitionPlan) -> i64 {
 
 /// A fade window in ms clipped to `len`; the whole transition when it is not a window.
 fn span_ms(a: i64, b: i64, len: f64) -> (f64, f64) {
-    if a < 0 || b < a {
-        (0.0, len)
-    } else {
-        ((a as f64).min(len), (b as f64).min(len))
-    }
+    if a < 0 || b < a { (0.0, len) } else { window_ms(a, b, len) }
+}
+
+/// A window in ms clipped to the transition's `len`: one that starts before it starts at its first frame.
+fn window_ms(a: i64, b: i64, len: f64) -> (f64, f64) {
+    ((a.max(0) as f64).min(len), (b.max(0) as f64).min(len))
 }
 
 /// Where the loudness match glides, ms: from where the incoming song is first heard to the transition's end. Before
@@ -813,10 +814,9 @@ impl Mixer {
         let rate = self.rate;
         let frames = |ms: f64| (ms.max(0.0) * rate / 1000.0).round() as u64;
         let len = frames(p.duration_ms as f64);
-        let span = |a: i64, b: i64| {
-            let (a, b) = span_ms(a, b, p.duration_ms.max(0) as f64);
-            Span { start: frames(a), end: frames(b) }
-        };
+        let ms_to_span = |(a, b): (f64, f64)| Span { start: frames(a), end: frames(b) };
+        let fade = |a: i64, b: i64| ms_to_span(span_ms(a, b, p.duration_ms.max(0) as f64));
+        let window = |a: i64, b: i64| ms_to_span(window_ms(a, b, p.duration_ms.max(0) as f64));
         // A change that starts at `at_ms` and takes `len_ms`, inside the transition.
         let from = |at_ms: i64, len_ms: i64| {
             let start = frames(at_ms as f64).min(len);
@@ -827,9 +827,9 @@ impl Mixer {
         self.len = len;
         self.brake = p.brake.filter(|b| b.len_ms > 0).map(|b| (frames(b.start_ms as f64), frames(b.len_ms as f64).max(1)));
         self.curve = p.fade_curve;
-        self.out_fade = span(p.out_fade_start_ms, p.out_fade_end_ms);
+        self.out_fade = fade(p.out_fade_start_ms, p.out_fade_end_ms);
         self.out_tail = p.out_tail.map(|t| (db_to_gain(t.db as f64), Span { start: self.out_fade.end, end: frames(t.end_ms as f64).min(len) })).filter(|(_, s)| s.start < s.end);
-        self.in_fade = span(p.in_fade_start_ms, p.in_fade_end_ms);
+        self.in_fade = fade(p.in_fade_start_ms, p.in_fade_end_ms);
         self.out_gain = db_to_gain((p.out_gain_db as f64).clamp(-24.0, 12.0));
         let glide = trim_span(p);
         self.gap_db = trim(glide.1 - glide.0, p.in_gain_db as f64);
@@ -844,7 +844,7 @@ impl Mixer {
         });
         // An incoming deck is filtered from where it comes in: heard whole before its sweep, it would thin as that starts.
         let (comes_in, entry) = (self.in_fade.start, frames(SWEEP_ENTRY_MS).max(1));
-        let sweep = |s: crate::types::Sweep, low| SweepFilter::new(rate, span(s.start_ms, s.end_ms), s.from_hz as f64, s.to_hz as f64, low);
+        let sweep = |s: crate::types::Sweep, low| SweepFilter::new(rate, window(s.start_ms, s.end_ms), s.from_hz as f64, s.to_hz as f64, low);
         self.high_pass = p.high_pass.map(|s| sweep(s, false));
         self.low_pass = p.low_pass.map(|s| sweep(s, true));
         self.in_high_pass = p.in_high_pass.map(|s| sweep(s, false).incoming(comes_in, len, entry));
@@ -857,7 +857,7 @@ impl Mixer {
             (Span { start, end }, 1.0 - db_to_gain((d.db as f64).clamp(-30.0, 0.0)))
         });
         self.mid_dip = p.mid_dip.filter(|d| d.db < 0.0 && (d.outgoing || d.incoming)).map(|d| MidDip {
-            span: span(d.window.start_ms, d.window.end_ms),
+            span: window(d.window.start_ms, d.window.end_ms),
             depth: 1.0 - db_to_gain((d.db as f64).clamp(-30.0, 0.0)),
             coef: Coef::band_pass(rate, d.hz as f64, VOX_Q),
             decks: [d.outgoing, d.incoming],
@@ -871,7 +871,7 @@ impl Mixer {
                 delay,
                 feedback: (e.feedback as f64).clamp(0.0, 0.9),
                 wet: db_to_gain((e.wet_db as f64).clamp(-24.0, 0.0)),
-                send: e.send.map(|w| span(w.start_ms, w.end_ms)),
+                send: e.send.map(|w| window(w.start_ms, w.end_ms)),
                 duck: e.duck.filter(|d| d.db < 0.0).map(|d| (from(d.at_ms, d.len_ms), db_to_gain((d.db as f64).clamp(-48.0, 0.0)))),
                 band: e.band.map(|b| (Coef::pass(rate, b.low_hz as f64, false), Coef::pass(rate, b.high_hz as f64, true))),
                 tail: Span { start: len.saturating_sub(delay as u64), end: len },
@@ -895,7 +895,7 @@ impl Mixer {
             });
             let turn = COMB_SWING_HZ.map(|hz| (2.0 * PI * hz * COMB_SWING_STEP as f64 / rate).sin_cos());
             ReverbFx {
-                send: span(r.send.start_ms, r.send.end_ms),
+                send: window(r.send.start_ms, r.send.end_ms),
                 tail: Span { start: len.saturating_sub(frames(decay * 250.0)), end: len },
                 wet: db_to_gain((r.wet_db as f64).clamp(-30.0, 0.0)),
                 input: feedback.map(|g| ((1.0 - g * g) / 8.0).sqrt()),
@@ -1825,6 +1825,27 @@ mod tests {
             let dipped = if (on_outgoing && outgoing) || (!on_outgoing && incoming) { -6.0 } else { 0.0 };
             assert!((db(22800, 25200) - dipped).abs() < 0.3, "{outgoing} {incoming}: {:.2} dB in the middle", db(22800, 25200));
             assert!(db(0, 240).abs() < 0.2 && db(47760, 48000).abs() < 0.2, "{outgoing} {incoming}: none at the ends");
+        }
+    }
+
+    /// A sweep's, the mid dip's or a send's window that starts before the mix starts at its first frame and keeps its
+    /// own end.
+    #[test]
+    fn a_window_from_before_the_mix_keeps_its_end() {
+        let with = |start_ms: i64| {
+            let w = Window { start_ms, end_ms: 827 };
+            [
+                ("sweep", TransitionPlan { low_pass: Some(Sweep { start_ms, end_ms: 827, from_hz: 18_000.0, to_hz: 300.0 }), ..outgoing_only(1103) }),
+                ("mid dip", TransitionPlan { mid_dip: Some(MidDip { window: w, db: -6.0, hz: 1_000.0, outgoing: true, incoming: false }), ..outgoing_only(1103) }),
+                ("echo", TransitionPlan { echo: echo(Some(w), None, None), ..outgoing_only(1103) }),
+                ("reverb", TransitionPlan { reverb: reverb(w, 2.0), ..outgoing_only(1103) }),
+            ]
+        };
+        let (x, zeros) = (noise(52944), vec![0f32; 52944]);
+        for ((name, early), (_, from_start)) in with(-276).iter().zip(with(0)) {
+            let (a, b) = (mix(early, &x, &zeros), mix(&from_start, &x, &zeros));
+            let off = a.iter().zip(&b).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max);
+            assert!(off == 0.0, "the {name} from before the mix is {off} off the one from its start");
         }
     }
 
