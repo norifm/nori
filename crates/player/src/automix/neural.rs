@@ -23,6 +23,9 @@ pub const WINDOW: usize = 1500;
 pub(crate) const BORDER: usize = 6;
 /// Frames per model run: a window plus a border of silence either side.
 pub const CHUNK: usize = WINDOW + 2 * BORDER;
+/// The most frames read of one end: two runs of the model. A minute's last frame, centred on its cut edge, would be a
+/// third run for that frame alone.
+const READ_FRAMES: usize = 2 * WINDOW;
 const MODEL_RATE: f64 = 22050.0;
 const F_MIN: f64 = 30.0;
 const F_MAX: f64 = 11000.0;
@@ -257,12 +260,13 @@ impl BeatThis {
         Ok(Tracked { beats, downbeats })
     }
 
-    /// Beats and downbeats of one end of a song (`x` mono at `rate`, any length: read in overlapping chunks), seconds
-    /// from its first sample; the song's own edge is the start of an intro, the cut edge of an outro counts as one.
+    /// Beats and downbeats of one end of a song (`x` mono at `rate`, read in overlapping chunks, [`READ_FRAMES`] at
+    /// most), seconds from its first sample; the song's own edge is the start of an intro, the cut edge of an outro
+    /// counts as one.
     pub fn track_end(&self, x: &[f32], rate: u32, intro: bool) -> TractResult<Tracked> {
         let (y, sr) = decimate(x, rate);
         let mel = LogMel::new(sr).frames(&y);
-        self.track(&mel, intro, !intro)
+        self.track(&mel[..mel.len().min(READ_FRAMES)], intro, !intro)
     }
 }
 
@@ -373,6 +377,8 @@ mod tests {
         assert_eq!(chunk_starts(WINDOW, CHUNK), vec![-6]);
         assert_eq!(chunk_starts(1500, 512), vec![-6, 494, 994]);
         assert_eq!(chunk_starts(1500, 1500), vec![-6, 6]);
+        let read = ((crate::automix::beats::READ_MS as f64 / 1000.0 * FPS) as usize + 1).min(READ_FRAMES);
+        assert_eq!(chunk_starts(read, CHUNK).len(), 2, "a whole read is two runs of the model");
         for c in [512, CHUNK] {
             for n in [1, 40, 499, 500, 501, 1234, 1500] {
                 let starts = chunk_starts(n, c);

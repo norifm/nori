@@ -727,7 +727,7 @@ const REVERB_IN_BARS: f64 = 2.0;
 /// bars, the beatful side gone before the other's beat starts. Long, and never two voices at once.
 pub(super) fn beatless_blend(p: &Pair) -> Option<Move> {
     let (a, b, s) = (p.a, p.b?, p.s);
-    let Room { out_dur, in_dur, max_len } = p.room;
+    let Room { out_dur, in_dur, max_len, .. } = p.room;
     let ending = Ending::of(a, out_dur);
     let (music, _) = entry(Some(b), in_dur);
     let max = (max_len as f64).min(BEATLESS_MAX_MS);

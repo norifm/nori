@@ -449,6 +449,11 @@ impl Room {
     }
 }
 
+/// The frames a brake of `len` reads: its slowing read ends `len / 2.8` in.
+fn brake_kept(len: u64) -> usize {
+    (len as f64 / 2.8) as usize + 2
+}
+
 /// 0 outside `span`, 1 inside, ramped over `ramp` frames at both ends.
 #[inline]
 fn window_gain(span: Span, ramp: u64, p: u64) -> f64 {
@@ -669,7 +674,7 @@ impl Mixer {
             self.room.size(self.rate);
         }
         if let Some(b) = p.brake {
-            let need = (self.frames(b.len_ms as f64) as usize + 1) * self.ch;
+            let need = brake_kept(self.frames(b.len_ms as f64).max(1)) * self.ch;
             if self.brake_buf.len() < need {
                 self.brake_buf.resize(need, 0.0);
             }
@@ -802,7 +807,7 @@ impl Mixer {
             for c in 0..ch {
                 (o[c], i[c]) = (fo[c].to_f64(), fi[c].to_f64());
             }
-            self.mix_frame(&mut o, &mut i, T::FULL);
+            self.mix_frame(&mut o, &mut i, T::FULL, 1.0 / T::FULL);
             for c in 0..ch {
                 fo[c] = T::from_f64(o[c]);
             }
@@ -820,12 +825,13 @@ impl Mixer {
     fn process_le<const W: usize>(&mut self, out: &mut [u8], inc: &[u8], full: f64, load: impl Fn([u8; W]) -> f64, store: impl Fn(f64) -> [u8; W]) {
         let (ch, fb) = (self.ch, self.ch * W);
         let (mut o, mut i) = ([0f64; MAX_CHANNELS], [0f64; MAX_CHANNELS]);
+        let per_full = 1.0 / full;
         let sample = |f: &[u8], c: usize| -> [u8; W] { f[c * W..c * W + W].try_into().unwrap() };
         for (fo, fi) in out.chunks_exact_mut(fb).zip(inc.chunks_exact(fb)) {
             for c in 0..ch {
                 (o[c], i[c]) = (load(sample(fo, c)), load(sample(fi, c)));
             }
-            self.mix_frame(&mut o, &mut i, full);
+            self.mix_frame(&mut o, &mut i, full, per_full);
             for c in 0..ch {
                 fo[c * W..c * W + W].copy_from_slice(&store(o[c]));
             }
@@ -848,14 +854,18 @@ impl Mixer {
         let (trim_out, trim_in) = trims(self.gap_db, self.trim_span.progress(p));
         // Beat-matched kicks land together and add up, so their lows change hands at equal gain. Other lows add in
         // power: they change hands at equal power, held to the power of one song under the fades.
-        let swapped = self.swap.map_or(0.0, |s| raised_cos(s.progress(p)));
-        let (lows_out, lows_in) = if self.matched {
-            (1.0 - swapped, swapped)
-        } else {
-            let (o, i) = ((1.0 - swapped).sqrt(), swapped.sqrt());
-            let k = ((out * out + inc * inc).min(1.0) / (out * out * o * o + inc * inc * i * i).max(f64::MIN_POSITIVE)).sqrt();
-            (k * o, k * i)
-        };
+        let swap = self.swap.map(|s| {
+            let swapped = raised_cos(s.progress(p));
+            let (lows_out, lows_in) = if self.matched {
+                (1.0 - swapped, swapped)
+            } else {
+                let (o, i) = ((1.0 - swapped).sqrt(), swapped.sqrt());
+                let k = ((out * out + inc * inc).min(1.0) / (out * out * o * o + inc * inc * i * i).max(f64::MIN_POSITIVE)).sqrt();
+                (k * o, k * i)
+            };
+            (self.swap_section(lows_out), self.swap_section(lows_in), self.hold_shelf.high(held))
+        });
+        let (low_out, low_in, shelf) = swap.unwrap_or_default();
         // All of the incoming voice band is held down until the release, none after.
         let duck = match self.duck {
             Some((span, depth)) if p < span.end => depth * (1.0 - raised_cos(span.progress(p))),
@@ -875,9 +885,9 @@ impl Mixer {
             out: out * self.out_gain * db_to_gain(trim_out),
             inc: inc * db_to_gain(trim_in),
             held,
-            low_out: self.swap_section(lows_out),
-            low_in: self.swap_section(lows_in),
-            shelf: self.hold_shelf.high(held),
+            low_out,
+            low_in,
+            shelf,
             highs_in: self.highs_in.map_or_else(Coef::default, |(span, floor)| self.highs_shelf.high(floor + (1.0 - floor) * raised_cos(span.progress(p)))),
             duck,
             dip,
@@ -902,11 +912,15 @@ impl Mixer {
         let ramps = |w: Option<Span>| w.map_or([0; 4], |w| [w.start, w.start + ramp, w.end.saturating_sub(ramp), w.end]);
         let bends = [o.start, o.start + 1, o.end, i.start, i.start + 1, i.end, self.trim_span.start, s.start, s.end, d.start, d.end, h.start, h.end, m.start, m.end, et.start, et.end, ed.start, ed.end, rt.start, rt.end];
         let end = bends.into_iter().chain(ramps(es)).chain(ramps(rs)).filter(|&b| b > p).fold((p + FADE_RUN).min(self.len), u64::min);
-        FadeRun { start: p, end, from: self.fades_at(p), to: self.fades_at(end) }
+        // The run before it ended here on the same gains, unless a meter has heard more since.
+        let last = self.fades;
+        let from = if self.meter.is_none() && last.end == p && last.start < p { last.to } else { self.fades_at(p) };
+        FadeRun { start: p, end, from, to: self.fades_at(end) }
     }
 
-    /// Frame `k` of a `len`-frame brake on the outgoing deck: the frame is kept, and what plays is the outgoing audio
-    /// where a read slowing as `(1 - t)^1.8` has reached (its integral), between frames; nothing after it.
+    /// Frame `k` of a `len`-frame brake on the outgoing deck: the frame is kept while the read can reach it, and what
+    /// plays is the outgoing audio where a read slowing as `(1 - t)^1.8` has reached (its integral), between frames;
+    /// nothing after it.
     #[inline]
     fn brake_frame(&mut self, k: u64, len: u64, o: &mut [f64; MAX_CHANNELS]) {
         let ch = self.ch;
@@ -914,8 +928,10 @@ impl Mixer {
             o[..ch].fill(0.0);
             return;
         }
-        let kept = k as usize * ch;
-        self.brake_buf[kept..kept + ch].copy_from_slice(&o[..ch]);
+        if (k as usize) < brake_kept(len) {
+            let kept = k as usize * ch;
+            self.brake_buf[kept..kept + ch].copy_from_slice(&o[..ch]);
+        }
         let x = len as f64 / 2.8 * (1.0 - (1.0 - k as f64 / len as f64).powf(2.8));
         let (j, f) = (x.floor() as usize, x - x.floor());
         let next = (j + 1).min(k as usize);
@@ -924,10 +940,10 @@ impl Mixer {
         }
     }
 
-    /// Mixes one frame: outgoing `o` and incoming `i` in, the mix out in `o`.
+    /// Mixes one frame: outgoing `o` and incoming `i` in, the mix out in `o`, rounded off under `full` scale
+    /// ([`ceiling`]; `per_full` is one over it): two loud songs at once sum past it.
     #[inline]
-    /// One frame of the mix, rounded off under `full` scale ([`ceiling`]): two loud songs at once sum past it.
-    fn mix_frame(&mut self, o: &mut [f64; MAX_CHANNELS], i: &mut [f64; MAX_CHANNELS], full: f64) {
+    fn mix_frame(&mut self, o: &mut [f64; MAX_CHANNELS], i: &mut [f64; MAX_CHANNELS], full: f64, per_full: f64) {
         let (ch, p) = (self.ch, self.pos);
         self.pos += 1;
         if p >= self.len {
@@ -1025,7 +1041,7 @@ impl Mixer {
             }
         }
         for x in &mut o[..ch] {
-            *x = full * ceiling((*x / full) as f32) as f64;
+            *x = full * ceiling((*x * per_full) as f32) as f64;
         }
     }
 }
