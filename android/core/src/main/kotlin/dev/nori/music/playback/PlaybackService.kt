@@ -1344,6 +1344,15 @@ class MediaButtons : androidx.media3.session.MediaButtonReceiver() {
 }
 
 /**
+ * Whether [intent] is the Bluetooth stack's word of an audio device (A2DP) connecting. The action is the
+ * system's alone to send; the receivers hearing it are exported (the stack sends it as its own uid), so
+ * an app's explicit intent with another action reaches them and is turned away here.
+ */
+fun audioDeviceConnected(intent: android.content.Intent): Boolean =
+    intent.action == android.bluetooth.BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED &&
+        intent.getIntExtra(android.bluetooth.BluetoothProfile.EXTRA_STATE, -1) == android.bluetooth.BluetoothProfile.STATE_CONNECTED
+
+/**
  * A Bluetooth audio device connected while `playOnBluetooth` is on: a play press, so the saved queue goes
  * on as it does from a headset's button. Declared disabled in the manifest; the setting enables it
  * ([enable]), so with it off Android never starts nori for a connection.
@@ -1351,17 +1360,19 @@ class MediaButtons : androidx.media3.session.MediaButtonReceiver() {
 @UnstableApi
 class PlayOnBluetooth : android.content.BroadcastReceiver() {
     override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
-        if (intent.getIntExtra(android.bluetooth.BluetoothProfile.EXTRA_STATE, -1) != android.bluetooth.BluetoothProfile.STATE_CONNECTED) return
+        if (!audioDeviceConnected(intent)) return
         val press = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PLAY)
         MediaButtons().onReceive(context, android.content.Intent(android.content.Intent.ACTION_MEDIA_BUTTON).setComponent(android.content.ComponentName(context, MediaButtons::class.java)).putExtra(android.content.Intent.EXTRA_KEY_EVENT, press))
     }
 
     companion object {
-        fun enable(context: android.content.Context, on: Boolean) = context.packageManager.setComponentEnabledSetting(
-            android.content.ComponentName(context, PlayOnBluetooth::class.java),
-            if (on) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
-            android.content.pm.PackageManager.DONT_KILL_APP,
-        )
+        /** Turns the receiver on or off; nothing is written when it already is. */
+        fun enable(context: android.content.Context, on: Boolean) {
+            val pm = context.packageManager
+            val me = android.content.ComponentName(context, PlayOnBluetooth::class.java)
+            val want = if (on) android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED else android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+            if (pm.getComponentEnabledSetting(me) != want) pm.setComponentEnabledSetting(me, want, android.content.pm.PackageManager.DONT_KILL_APP)
+        }
     }
 }
 
