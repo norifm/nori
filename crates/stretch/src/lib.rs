@@ -409,8 +409,8 @@ impl Stretch {
                 self.predict_bin(b, random_low, time_factor, long_step);
             }
         } else {
-            for b in 0..bands {
-                self.output_map[b] = (b as f32, 1.0);
+            for (b, m) in self.output_map.iter_mut().enumerate() {
+                *m = (b as f32, 1.0);
             }
             self.predict_from_previous();
             match random_low {
