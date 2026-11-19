@@ -72,11 +72,18 @@ fn enabling_measures_and_matches() {
     // The clock runs in b's own time: slowed to a's tempo through the mix and eased back to its own
     // after (a 2.4 % change eases back over 32 beats, most of what is left of b), so five seconds heard
     // are between 4.88 and 5 of b's - never five seconds of the output's own, which fell behind the music
-    // and leapt where b's timestamps came back. It runs on into the next mix, out of b into c.
+    // and leapt where b's timestamps came back. Read where it is heard: b's ending is held from its plan's start, before
+    // its ease back ends, and a held ending counts as played.
     p.run_for(9_000);
-    let a = p.position_ms();
+    let shown = |p: &mut Player| {
+        let seen = p.bar();
+        (seen.index.or(p.current()), seen.ms)
+    };
+    let (from, a) = shown(&mut p);
     p.run_for(5_000);
-    let moved = p.position_ms() - a;
+    let (to, b) = shown(&mut p);
+    let moved = b - a;
+    assert_eq!((from, to), (Some(1), Some(1)), "b heard throughout");
     assert!((4_878 - 20..=5_020).contains(&moved) && moved < 4_990, "{moved} ms of b in 5 s");
     assert!(p.run_to_end(120_000), "the queue plays to its end");
     assert_eq!(p.app.log.iter().filter(|l| l.contains("mixing: the next track arrived")).count(), 2, "{:?}", p.app.log);

@@ -408,10 +408,13 @@ struct Converter {
     id: Option<StreamId>,
 }
 
-/// The incoming song's stretcher in its own format (the incoming one while converting).
+/// The incoming song's stretcher in its own format (the incoming one while converting), and the song frames given it
+/// and handed out of it.
 struct Stretch {
     s: ByteStretcher,
     format: Format,
+    fed: f64,
+    handed: f64,
 }
 
 /// The engine's own clock for stretched or looped audio, in the incoming song's time.
@@ -916,9 +919,13 @@ impl TransitionEngine {
         match self.flight.phase {
             Phase::Pass => {
                 if self.flight.stretch.is_some() {
-                    self.stretch_out(host, buffer, pts_us);
-                    self.drain(down);
-                    return (true, buffer.len());
+                    if !self.reaches_ending(host, pts_us, native.us(buffer.len())) {
+                        self.stretch_out(host, buffer, pts_us);
+                        self.drain(down);
+                        return (true, buffer.len());
+                    }
+                    // Its ending is held at its own speed.
+                    self.end_stretch(host);
                 }
                 let converted = if self.converting() {
                     match self.converted(host, buffer) {
@@ -1190,6 +1197,7 @@ impl TransitionEngine {
 
     /// The next track begins (or a seek landed): start mixing into the hold, or let the hold go unmixed.
     pub fn handle_discontinuity<D: Downstream, H: Host>(&mut self, down: &mut D, host: &mut H) {
+        self.end_stretch(host);
         let p = self.plan().cloned();
         let ending = self.flight.plan_for.clone().or_else(|| self.playing_id.clone());
         if p.is_some() && self.out.is_some() && matches!(self.flight.phase, Phase::Hold(h) if h.len > 0) {
@@ -1380,7 +1388,7 @@ impl TransitionEngine {
                 let left_us = p.duration_us() - from_us - repeats_us;
                 s.transpose(k.semitones, frames(left_us), frames(k.ramp_ms * 1000));
             }
-            self.flight.stretch = Some(Stretch { s, format: s_fmt });
+            self.flight.stretch = Some(Stretch { s, format: s_fmt, fed: 0.0, handed: 0.0 });
             self.stretch_pace = p.tempo_ratio() as f64;
         }
         self.flight.clock = None;
@@ -1725,20 +1733,27 @@ impl TransitionEngine {
         let need = input.len() * 3 + st.s.latency_frames() * fmt.frame_bytes() + 8192;
         let mut buf = self.take_pooled(need);
         buf.resize(need, 0);
-        let s = &mut self.flight.stretch.as_mut().expect("checked").s;
+        let st = self.flight.stretch.as_mut().expect("checked");
         let mut produced = 0;
         let mut at = 0;
         let fb = fmt.frame_bytes();
         while at < input.len() {
-            let (used, made) = s.process(&input[at..], &mut buf[produced..], fmt.encoding);
+            let (used, made) = st.s.process(&input[at..], &mut buf[produced..], fmt.encoding);
             at += used;
             produced += made;
             if used == 0 && made == 0 {
                 break;
             }
         }
+        st.fed += (at / fb) as f64;
         // Song time per output frame, including a finished stretcher's last frames.
-        let (produced, content) = if s.bypassed() { self.finish_stretch(&mut buf, produced, fmt) } else { (produced, s.take_content()) };
+        let (produced, content) = if st.s.bypassed() {
+            self.finish_stretch(&mut buf, produced, fmt)
+        } else {
+            let content = st.s.take_content();
+            st.handed += content;
+            (produced, content)
+        };
         if produced >= fb {
             self.stretch_pace = content / (produced / fb) as f64;
         }
@@ -1794,6 +1809,58 @@ impl TransitionEngine {
         // Back on the track's own timestamps: the output takes the next one as a new reference.
         self.flight.resync_next = true;
         (produced + more, s.take_content())
+    }
+
+    /// The stretcher lets go of the song before its ramp ends (the song ended, or its ending is held): what it still
+    /// holds of the song goes out, pushed by silence and cut where the song ends, and the song plays on at its own speed
+    /// on its own timestamps.
+    fn end_stretch<H: Host>(&mut self, host: &mut H) {
+        let (Some(out), Some(st)) = (self.out, self.flight.stretch.as_ref()) else { return };
+        let (enc, fb) = (st.format.encoding, st.format.frame_bytes());
+        let mut left = st.fed - st.handed;
+        // At the slowest ratio a song frame is two out, and a few blocks are still on their way.
+        let room = ((left.max(0.0) * 2.0) as usize + 4 * crate::automix::stretch::BLOCK) * fb;
+        let mut buf = self.take_pooled(room);
+        buf.resize(room, 0);
+        let Some(Stretch { mut s, .. }) = self.flight.stretch.take() else { return };
+        let (mut made, mut content) = (0, 0.0);
+        while left > 0.5 && made + fb <= room {
+            let (used, m) = s.process(&SILENCE, &mut buf[made..], enc);
+            let c = s.take_content();
+            let frames = m / fb;
+            let keep = if c > left { (left / c * frames as f64).round() as usize } else { frames };
+            (made, content, left) = (made + keep * fb, content + c.min(left), left - c);
+            if used == 0 && m == 0 {
+                break;
+            }
+        }
+        buf.truncate(made);
+        let pace = if made >= fb { content / (made / fb) as f64 } else { 1.0 };
+        let o = if self.converting() {
+            let c = self.converted(host, &buf);
+            self.recycle(buf);
+            c
+        } else {
+            Some(buf)
+        };
+        if let Some(o) = o {
+            if matches!(self.flight.phase, Phase::Mix { .. }) {
+                self.mix_src(host, &o, 0, pace, out);
+                self.recycle(o);
+            } else {
+                let at = self.stamp(0, o.len() / out.frame_bytes(), pace, out);
+                self.enqueue(o, at, Some(self.offset_us), pace, 1.0);
+            }
+        }
+        if self.flight.repeat.is_none() {
+            self.flight.clock = None;
+        }
+        self.flight.resync_next = true;
+    }
+
+    /// Whether the song flowing reaches its plan's start within `us` of `pts_us`.
+    fn reaches_ending<H: Host>(&mut self, host: &mut H, pts_us: i64, us: i64) -> bool {
+        self.refresh_plan(host).is_some_and(|(start_us, _)| pts_us - self.offset_us + us > start_us)
     }
 
     /// Lets the held audio go unmixed (the next track never came, or the mix was cut short). A cut
@@ -2057,6 +2124,7 @@ impl TransitionEngine {
     /// The source ended: flush the hold and finish the last analysis. Returns whether everything
     /// queued went to the output.
     pub fn play_to_end_of_stream<D: Downstream, H: Host>(&mut self, down: &mut D, host: &mut H) -> bool {
+        self.end_stretch(host);
         self.abandon_transition(host);
         self.finish_analysis(host);
         self.drain(down)
@@ -3109,6 +3177,58 @@ mod tests {
         // hold was never released. Timestamps must only move forward from the mix on.
         let from_mix: Vec<i64> = d.taken.iter().map(|(_, p)| *p).skip_while(|&p| p < 1_000_000).collect();
         assert!(from_mix.windows(2).all(|w| w[1] >= w[0]), "{from_mix:?}");
+    }
+
+    /// `a` mixes into `b` 3 % fast, its tempo ramping back over 10 s after the mix, longer than `b` (`b_secs` of
+    /// `b_value`, from 3 s): `b` ends while it is still stretched.
+    fn into_a_short_stretched_song(e: &mut TransitionEngine, d: &mut Down, h: &mut Host_, keep_pitch: bool, b_secs: f64, b_value: i16) {
+        let mut p = fade("b", 1_000_000);
+        (p.mixer.tempo_ratio, p.mixer.keep_pitch, p.mixer.tempo_ramp_ms) = (1.03, keep_pitch, 10_000);
+        h.plans.insert("a".into(), p);
+        e.configure(d, h, stream("a", FMT));
+        feed(e, d, h, &tone(0, 3.0), 0);
+        e.configure(d, h, stream("b", FMT));
+        e.handle_discontinuity(d, h);
+        e.set_output_stream_offset_us(3_000_000);
+        feed(e, d, h, &tone(b_value, b_secs), 3_000_000);
+    }
+
+    /// The song after a short one that ended still stretched plays as it is, sample for sample.
+    #[test]
+    fn a_song_after_a_stretched_one_plays_as_it_is() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        into_a_short_stretched_song(&mut e, &mut d, &mut h, false, 3.0, 4000);
+        e.configure(&mut d, &mut h, stream("c", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+        e.set_output_stream_offset_us(6_000_000);
+        let c = ramp(2 * RATE as usize);
+        feed(&mut e, &mut d, &mut h, &c, 6_000_000);
+        let s = d.samples();
+        let last: Vec<u8> = s[s.len() - 2 * RATE as usize..].iter().flat_map(|v| v.to_le_bytes()).collect();
+        assert!(last == c[c.len() - last.len()..], "c's last second is c's own");
+    }
+
+    /// A short song still stretched at its end plays all of it: what the stretcher holds goes out.
+    #[test]
+    fn a_song_ending_stretched_plays_to_its_end() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        let mut m = fade("b", 1_000_000).mixer;
+        (m.tempo_ratio, m.tempo_ramp_ms) = (1.03, 10_000);
+        into_a_short_stretched_song(&mut e, &mut d, &mut h, true, 3.0, -4000);
+        assert!(e.play_to_end_of_stream(&mut d, &mut h));
+        let b = (d.samples().len() / 2 - RATE as usize) as f64 / RATE as f64;
+        let want = m.wall_of_in_song(3000.0) / 1000.0;
+        assert!((b - want).abs() < 0.01, "b plays {b:.3} s, all of it {want:.3} s");
+    }
+
+    /// A song's ending held while it is still stretched from the mix into it: held where its plan starts, not late.
+    #[test]
+    fn a_stretched_song_holds_its_ending_on_time() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        h.plans.insert("b".into(), fade("c", 2_500_000));
+        into_a_short_stretched_song(&mut e, &mut d, &mut h, false, 5.0, 4000);
+        assert!(e.holding(), "{}", e.words());
+        assert!(!h.log.iter().any(|l| l.contains("late hold")), "{:?}", h.log);
     }
 
     /// Seconds of output at `f` taken after the first `from` bytes.
