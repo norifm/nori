@@ -59,36 +59,6 @@
 </dialog>
 
 <style>
-  .sheet {
-    margin: auto auto 0;
-    width: 100%;
-    max-width: 560px;
-    max-height: 86vh;
-    padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
-    border: 0;
-    border-top: var(--hairline) solid var(--hair);
-    border-radius: var(--r-sheet) var(--r-sheet) 0 0;
-    background: var(--surface);
-    color: var(--ink);
-    animation: rise 240ms cubic-bezier(0.05, 0.7, 0.1, 1);
-  }
-  .sheet::backdrop {
-    background: var(--scrim);
-  }
-  @keyframes rise {
-    from {
-      transform: translateY(40px);
-      opacity: 0;
-    }
-  }
-  .handle {
-    display: block;
-    width: 36px;
-    height: 4px;
-    border-radius: 2px;
-    margin: 0 auto 12px;
-    background: color-mix(in srgb, var(--ink) 20%, transparent);
-  }
   .head {
     display: flex;
     align-items: center;

@@ -11,6 +11,7 @@ mod menu;
 mod runner;
 mod script;
 mod settings_view;
+mod support;
 mod term;
 mod text;
 mod ui;

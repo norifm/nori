@@ -31,7 +31,7 @@ internal fun InfoRow(title: String, detail: String, end: String? = null, divider
 @Composable
 internal fun AboutContent(
     section: @Composable (String, @Composable ColumnScope.() -> Unit) -> Unit, openLicences: () -> Unit,
-    report: (header: String, share: (android.net.Uri?) -> Unit) -> Unit, updates: @Composable () -> Unit = {},
+    report: (header: String, share: (android.net.Uri?) -> Unit) -> Unit, support: (() -> Unit)? = null, updates: @Composable () -> Unit = {},
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -44,7 +44,7 @@ internal fun AboutContent(
     }
     section("nori") {
         InfoRow(facts.title, facts.build, end = say.copyIt) { clipboard.setText(AnnotatedString(facts.report)) }
-        InfoRow(say.reportProblem, say.reportProblemDetail, divider = false) {
+        InfoRow(say.reportProblem, say.reportProblemDetail, divider = support != null) {
             report(facts.report) { uri ->
                 if (uri == null) tell(say.reportFailed)
                 else context.startActivity(
@@ -56,6 +56,7 @@ internal fun AboutContent(
                 )
             }
         }
+        if (support != null) GroupRow(say.supportTitle, support, chevron = true, divider = false)
     }
     updates()
     section(say.underTheHood) {

@@ -108,6 +108,13 @@ pub enum Msg {
     BackedUp(Result<(), nori_host::desktop::BackupFailure>),
     /// What a backup restored, or why it couldn't.
     Restored(Result<Box<nori_core::backup::Restored>, nori_host::desktop::BackupFailure>),
+    /// A payment started on Stripe's checkout page (its address, opened in the browser; None when nothing
+    /// payable was chosen), or what to say of why not.
+    SupportGiven(Result<Option<String>, String>),
+    /// Stripe's page for the monthly payment (opened in the browser), or what to say of why not.
+    SupportManaged(Result<String, String>),
+    /// The support service told what this app has paid, which the settings keep.
+    SupportRefreshed,
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -136,6 +143,9 @@ impl Msg {
             Msg::AnalysisOffer(o) => format!("analysis offer {o:?}"),
             Msg::Starred(_) => "star marks".into(),
             Msg::Remote => "remote".into(),
+            Msg::SupportGiven(r) => format!("support given: {}", r.is_ok()),
+            Msg::SupportManaged(r) => format!("support manage page: {}", r.is_ok()),
+            Msg::SupportRefreshed => "support refreshed".into(),
             Msg::Overridden => "overrides".into(),
             Msg::Jam(r) => format!("jam opened: {}", r.is_ok()),
             Msg::Joined(r) => format!("jam joined: {}", r.is_ok()),

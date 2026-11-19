@@ -360,6 +360,22 @@ export const W = {
   } as Record<string, string>,
   // The equalizer.
   equalizer: "Equalizer",
+  supportTitle: "Support nori",
+  supportLine: "nori is and always will be free.",
+  supportAmount: "Amount",
+  supportOther: "Other",
+  supportEveryMonth: "Every month",
+  supportCurrency: "Currency",
+  supportChoose: "Choose an amount",
+  /** The Give button: "Give €10", "Give 40 zł a month". */
+  supportGive: (amount: string, monthly: boolean) => (monthly ? `Give ${amount} a month` : `Give ${amount}`),
+  supportLeast: (amount: string) => `At least ${amount}`,
+  supportMost: (amount: string) => `At most ${amount}`,
+  supportPay: (amount: string) => `Pay ${amount}`,
+  supportManage: "Manage monthly support",
+  supportOtherCurrency: "Your monthly support is in another currency",
+  supportFailed: "The payment didn't go through",
+  currencyNames: { EUR: "Euro", USD: "US Dollar", GBP: "British Pound", PLN: "Polish Zloty", CHF: "Swiss Franc", CZK: "Czech Koruna", SEK: "Swedish Krona", NOK: "Norwegian Krone", DKK: "Danish Krone", CAD: "Canadian Dollar", AUD: "Australian Dollar", JPY: "Japanese Yen" } as Record<string, string>,
   eq: {
     graphic: "Graphic",
     parametric: "Parametric",

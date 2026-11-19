@@ -529,6 +529,16 @@ pub fn profile_letter(profile: SavedServer, label: String) -> String {
     from.trim().chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default()
 }
 
+/// The app as a supporter of nori: the login the support service knows it by (empty before the first
+/// payment), when each payment was made (Unix seconds, oldest first) and whether a monthly one runs.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct Supporter {
+    pub login: String,
+    pub paid: Vec<i64>,
+    pub monthly: bool,
+}
+
 /// One saved server profile. Each has its own rows in the index database.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -803,6 +813,9 @@ pub struct StoredPrefs {
     pub pinned_playlists: Vec<String>,
     #[setting("listPrefs", LIST_PREFS, default = HashMap::new(), hidden)]
     pub list_prefs: HashMap<String, String>,
+    /// What the support service knows this app as, and what it was paid (`nori_core::support`).
+    #[setting("support", SUPPORT, default = Supporter::default())]
+    pub support: Supporter,
     // Downloads and storage.
     #[setting("wifi", Quality, default = SavedQuality::default(), show = K::Choice(QUALITIES))]
     pub wifi: SavedQuality,
@@ -839,6 +852,23 @@ const SERVERS: Custom<Vec<SavedServer>> = Custom {
     set: None,
     show: None,
 };
+
+/// `{"login":…,"paid":[…],"monthly":…}`; the default when unreadable.
+const SUPPORT: Custom<Supporter> = Custom {
+    load: |t, d| t.and_then(|j| serde_json::from_str::<Value>(j).ok()).and_then(|v| supporter_from(&v)).unwrap_or(d),
+    save: |s| serde_json::json!({ "login": s.login, "paid": s.paid, "monthly": s.monthly }).to_string(),
+    // Set by name only by the test bridge, in the stored form.
+    set: Some(|t| serde_json::from_str::<Value>(t).ok().and_then(|v| supporter_from(&v))),
+    show: None,
+};
+
+fn supporter_from(v: &Value) -> Option<Supporter> {
+    Some(Supporter {
+        login: v.get("login")?.as_str()?.to_string(),
+        paid: v.get("paid")?.as_array()?.iter().map(Value::as_i64).collect::<Option<_>>()?,
+        monthly: v.get("monthly")?.as_bool()?,
+    })
+}
 
 /// "kind:freq:gain:q:channel" per band, bands joined by ';'.
 const BANDS: Custom<Vec<SoundBand>> = Custom { load: |t, d| t.and_then(decode_bands).unwrap_or(d), save: |b| encode_bands(b), set: None, show: None };

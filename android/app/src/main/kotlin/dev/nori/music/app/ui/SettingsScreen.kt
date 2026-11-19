@@ -319,6 +319,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
     val hits = remember(query, config) { if (query.isBlank()) emptyList() else vm.searchSettings(query, res) }
     val groups = remember(config) { vm.settingsGroups(res) }
     val perf = dev.nori.music.app.PerfHooks.recorder != null
+    val supported = remember { dev.nori.music.ffi.supportService() != null }
     Column {
         LargeTitle(say.settings)
         SearchField(query, { query = it }, stringResource(R.string.settings_search), Modifier.padding(horizontal = Space.gutter, vertical = 6.dp))
@@ -348,10 +349,12 @@ fun SettingsScreen(vm: SettingsViewModel) {
         Column(Modifier.fadesUnderTitle(scroll).verticalScroll(scroll).padding(top = 8.dp, bottom = LocalChromeInset.current)) {
             GroupCard {
                 groups.forEachIndexed { i, g ->
-                    GroupRow(g.title, { nav.settingsGroup(g.id) }, subtitle = g.summary, icon = groupIcon(g.id), chevron = true, divider = i < groups.lastIndex || perf)
+                    GroupRow(g.title, { nav.settingsGroup(g.id) }, subtitle = g.summary, icon = groupIcon(g.id), chevron = true, divider = i < groups.lastIndex || perf || supported)
                     // Plugins go before About, the last group.
                     if (i == groups.lastIndex - 1) GroupRow(say.plugins, nav::plugins, subtitle = say.pluginsSummary, icon = Iconoir.Sparks, chevron = true)
                 }
+                // A build with a support service offers the Support page last.
+                if (supported) GroupRow(say.supportTitle, nav::support, icon = Kanji.Seal, chevron = true, divider = perf)
                 // Only the perf build has a recorder, and with it the last row (docs/developers/building.md).
                 if (perf) GroupRow(say.performance, { nav.go("perf") }, subtitle = say.performanceDetail, icon = Iconoir.DashboardSpeed, chevron = true, divider = false)
             }
@@ -382,7 +385,7 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
             LargeTitle(page.title)
             when (id) {
                 // The build's facts, then the rows the page builder made for About (the update check).
-                "about" -> AboutContent({ title, content -> Section(title, content) }, { nav.settingsGroup("licences") }, vm::reportProblem) {
+                "about" -> AboutContent({ title, content -> Section(title, content) }, { nav.settingsGroup("licences") }, vm::reportProblem, nav::support.takeIf { dev.nori.music.ffi.supportService() != null }) {
                     page.sections.forEach { s -> SettingsSectionRows(vm, s, actions) }
                 }
                 "licences" -> LicencesContent { title, content -> Section(title, content) }

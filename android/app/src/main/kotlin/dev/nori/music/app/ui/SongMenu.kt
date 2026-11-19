@@ -263,7 +263,7 @@ private fun PluginItems(actions: ActionsViewModel, kind: dev.nori.music.ffi.plug
  * Upward drags and flings the sheet's lines had no use for, kept from the sheet: an open sheet otherwise
  * lifts under them and springs back. Downward ones still reach it, so a swipe down closes it.
  */
-private val KeepUpwardDrags = object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+internal val KeepUpwardDrags = object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
     override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource) =
         androidx.compose.ui.geometry.Offset(0f, available.y.coerceAtMost(0f))
     override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity) =
@@ -526,7 +526,7 @@ private fun SelectedCount(n: Int, modifier: Modifier) {
 /** Where a group's icons and words start: the head's cover and the format line start there too. */
 private val SHEET_INSET = Space.gutter
 /** A menu sheet's line: Android's 48 dp touch target, so a long menu fits the screen. */
-private val SHEET_ROW = 48.dp
+internal val SHEET_ROW = 48.dp
 /** Narrower than a page's glyphs, so six leave the line under the head room for the format. */
 private val SHEET_GLYPH = 40.dp
 private val SHEET_GLYPH_ICON = 20.dp

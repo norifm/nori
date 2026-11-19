@@ -1150,6 +1150,33 @@ fn time_left(seconds: i64) -> String {
     }
 }
 
+/// The Support page's Give button: what is chosen comes to `amount`, every month or once; nothing payable, none.
+pub fn support_give(amount: Option<&str>, monthly: bool) -> String {
+    match amount {
+        None => "Choose an amount".into(),
+        Some(a) if monthly => format!("Give {a} a month"),
+        Some(a) => format!("Give {a}"),
+    }
+}
+
+/// What is typed for Other says once it is past a limit; empty while it is not.
+pub fn support_limit(c: &nori_core::support::SupportChoice) -> String {
+    use nori_core::support::TypedAmount;
+    match c.typed {
+        Some(TypedAmount::TooLittle { least }) => format!("At least {}", nori_host::support::money(least, &c.currency)),
+        Some(TypedAmount::TooMuch { most }) => format!("At most {}", nori_host::support::money(most, &c.currency)),
+        _ => String::new(),
+    }
+}
+
+/// Why the support service could not start a payment or open the monthly one's page.
+pub fn support_failed(e: &NetError) -> String {
+    match e {
+        NetError::Http { status: 409 } => "Your monthly support is in another currency".into(),
+        e => format!("The support service didn't answer. {}", net_error(e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

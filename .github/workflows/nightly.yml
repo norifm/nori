@@ -14,6 +14,9 @@ permissions:
   contents: read
 env:
   RUSTC_WRAPPER: ''
+  # The Support page's service, compiled into every client (docs/developers/support.md).
+  NORI_SUPPORT_URL: ${{ vars.NORI_SUPPORT_URL }}
+  NORI_STRIPE_KEY: ${{ vars.NORI_STRIPE_KEY }}
 jobs:
   stamp:
     timeout-minutes: 5
@@ -23,6 +26,10 @@ jobs:
       changed: ${{ steps.stamp.outputs.changed }}
       buried: ${{ steps.stamp.outputs.buried }}
     steps:
+      - name: The Support page's service is set
+        run: |
+          test -n "$NORI_SUPPORT_URL" && test -n "$NORI_STRIPE_KEY" ||
+            { echo "::error::Set the repository variables NORI_SUPPORT_URL and NORI_STRIPE_KEY: without them the apps have no Support page"; exit 1; }
       - uses: actions/checkout@v7
       - id: stamp
         name: Version, whether master moved since the last nightly, and whether another release is listed above it

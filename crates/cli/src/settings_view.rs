@@ -108,6 +108,8 @@ pub enum Act {
     /// Asks where to save a backup, or which one to restore.
     Backup { restore: bool },
     CheckUpdate,
+    /// The Support page.
+    Support,
 }
 
 pub use nori_host::session::Chore;
@@ -895,6 +897,7 @@ pub fn open_row(row: Row) -> Option<Opened> {
         }
         Row::Link { action, .. } | Row::Action { action, enabled: true, .. } | Row::Button { action, .. } => match action {
             Act::Equalizer => Opened::View(View::Equalizer),
+            Act::Support => Opened::View(View::Support),
             Act::Downloads => Opened::View(View::Downloads),
             Act::AddServer => Opened::Login,
             Act::JoinJam => Opened::Overlay(Overlay::Join { text: String::new(), error: None, busy: false }),
@@ -1430,13 +1433,15 @@ fn about(own: &Own) -> Vec<Section> {
             info("Data kept in", own.data.clone()),
         ],
     };
+    // A build with a support service offers its page here.
+    let support = nori_core::support::support_service().map(|_| section("", vec![Row::Link { title: text::SUPPORT_TITLE.into(), status: String::new(), action: Act::Support }]));
     let credits = nori_core::credits::core_credits().into_iter().map(|c| info(&c.name, format!("{} · {} · {}", c.what, c.copyright, c.licence))).collect();
     let tui = vec![
         info("ratatui, crossterm", "The screen and the keys · The Ratatui developers, Timon Post · MIT".into()),
         info("ratatui-image", "Covers in the terminal: kitty, sixel, iTerm2, half blocks · Benjamin Große · MIT".into()),
         info("image, icy_sixel", "Pictures handed to the terminal · The image-rs developers, Mike Krüger · MIT or Apache-2.0".into()),
     ];
-    vec![version, section("The core", credits), section("The terminal client", tui)]
+    [Some(version), support, Some(section("The core", credits)), Some(section("The terminal client", tui))].into_iter().flatten().collect()
 }
 
 /// The value shown at a row's end (toggles are drawn by the ui).

@@ -133,6 +133,7 @@ impl<'a> Target<'a> {
 }
 
 const EQUALIZER: &str = "equalizer";
+const SUPPORT: &str = "support";
 const ADD_SERVER: &str = "add-server";
 const BACKUP: &str = "backup";
 const RESTORE: &str = "restore";
@@ -156,6 +157,8 @@ pub fn toggled(name: &str, on: bool) -> (&str, String) {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Act {
     Equalizer,
+    /// The Support page.
+    Support,
     AddServer,
     /// A server row's Edit: the profile's account sheet where its provider has one to sign in to, else
     /// the profile in the sign-in form.
@@ -199,6 +202,7 @@ impl Act {
         }
         match name {
             EQUALIZER => Some(Act::Equalizer),
+            SUPPORT => Some(Act::Support),
             ADD_SERVER => Some(Act::AddServer),
             BACKUP => Some(Act::Backup { restore: false }),
             RESTORE => Some(Act::Backup { restore: true }),
@@ -682,7 +686,12 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
             note("A new device is used from the next start of nori."),
         ];
         groups.push(("Output device".into(), output));
-        groups.push(("About".into(), vec![info("nori", format!("Version {}", env!("CARGO_PKG_VERSION")))]));
+        let mut about = vec![info("nori", format!("Version {}", env!("CARGO_PKG_VERSION")))];
+        // A build with a support service offers its page here.
+        if nori_core::support::support_service().is_some() {
+            about.push(Row { kind: LINK, name: SUPPORT.into(), title: "Support nori".into(), enabled: true, ..Default::default() });
+        }
+        groups.push(("About".into(), about));
     }
     groups
 }

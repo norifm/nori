@@ -21,6 +21,7 @@ mod plugged;
 pub mod remote;
 mod destination;
 pub mod session;
+pub mod support;
 mod sleep;
 mod tuning;
 

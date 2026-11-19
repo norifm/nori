@@ -657,6 +657,11 @@ impl ItemRenderer for SkiaItemRenderer<'_> {
                     path.fitted_path_events(item_rc)?;
 
                 let mut builder = skia_safe::PathBuilder::new();
+                // NORI: Fill as the Path's `fill-rule` says; it was always nonzero.
+                builder.set_fill_type(match path.fill_rule() {
+                    i_slint_core::items::FillRule::Evenodd => skia_safe::PathFillType::EvenOdd,
+                    _ => skia_safe::PathFillType::Winding,
+                });
 
                 for x in path_events.iter() {
                     match x {

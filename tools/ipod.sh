@@ -6,6 +6,7 @@
 #   run      launches it and checks that it is running
 #   tools/ipod.sh                build, then install run when an iPod is on USB
 #   tools/ipod.sh install run    just those steps
+# NORI_SUPPORT_URL and NORI_STRIPE_KEY, when set, go into the build: its Support page (docs/developers/support.md).
 # The SDK and the toolchains' caches stay in Docker's volume nori-ios-cache. install and run need
 # sshpass and libimobiledevice (iproxy).
 #
@@ -42,6 +43,7 @@ step_build() {
   docker run --rm -u "$(id -u):$(id -g)" -v "$root:$root" -v nori-ios-cache:/cache -w "$root" \
     -e HOME=/cache/home -e CARGO_HOME=/cache/cargo -e CARGO_TARGET_DIR=/cache/target \
     -e NORI_IOS_CACHE=/cache -e NORI_VERSION="$version" -e NORI_BUILD="$build_no" \
+    -e NORI_SUPPORT_URL -e NORI_STRIPE_KEY \
     nori-ios-build tools/ios-build/build.sh
 }
 
