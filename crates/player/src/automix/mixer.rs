@@ -264,10 +264,11 @@ impl Meter {
         Meter { band: cut.map(|hz| Coef::pass(rate, hz, false)), state: [[0.0; 2]; 4], power: [0.0; 4], k: 1.0 - (-1.0 / (METER_S * rate)).exp() }
     }
 
-    /// Feeds one frame of one deck, before (`at` 0 outgoing, 2 incoming) or after (1, 3) its processing.
+    /// Feeds one frame of one deck, before (`at` 0 outgoing, 2 incoming) or after (1, 3) its processing, in samples
+    /// `per_full` of full scale each.
     #[inline]
-    fn feed(&mut self, at: usize, x: &[f64]) {
-        let mono: f64 = x.iter().sum();
+    fn feed(&mut self, at: usize, x: &[f64], per_full: f64) {
+        let mono = x.iter().sum::<f64>() * per_full;
         let y = match &self.band {
             Some(c) => c.run(&mut self.state[at], mono),
             None => mono,
@@ -284,7 +285,7 @@ impl Meter {
 
 /// How long the meter's power is smoothed over, s.
 const METER_S: f64 = 0.03;
-/// Below this power a deck is too quiet to measure.
+/// Below this power, in full scale, a deck is too quiet to measure.
 const METER_FLOOR: f64 = 1e-8;
 
 /// A low- or high-pass sweep on one deck, two cascaded Butterworth sections per channel.
@@ -1109,8 +1110,8 @@ impl Mixer {
         let t = self.fades.t(p);
         let (g_out, g_in, held) = (self.fades.get(t, |f| f.out), self.fades.get(t, |f| f.inc), self.fades.get(t, |f| f.held));
         if let Some(m) = self.meter.as_mut() {
-            m.feed(0, &o[..ch]);
-            m.feed(2, &i[..ch]);
+            m.feed(0, &o[..ch], per_full);
+            m.feed(2, &i[..ch], per_full);
         }
         let (rate, entry) = (self.rate, self.sweep_entry);
         for f in [&mut self.high_pass, &mut self.low_pass].into_iter().flatten() {
@@ -1145,8 +1146,8 @@ impl Mixer {
             }
         }
         if let Some(m) = self.meter.as_mut() {
-            m.feed(1, &o[..ch]);
-            m.feed(3, &i[..ch]);
+            m.feed(1, &o[..ch], per_full);
+            m.feed(3, &i[..ch], per_full);
         }
         // The lows go to one deck at a time, so only the highs are held to one song's power, by a shelf
         // that is no filter at all once nothing is held.
@@ -1763,6 +1764,25 @@ mod tests {
         let y = mix(&p, &x, &rev);
         let level = rms(&y[9600..43200]) / rms(&x[9600..43200]);
         assert!((20.0 * level.log10()).abs() < 0.3, "{:.2} dB against the outgoing song alone", 20.0 * level.log10());
+    }
+
+    /// A deck too quiet to measure counts in full in either sample format: an incoming deck of a couple of 16-bit steps,
+    /// low-passed, holds the outgoing song down as far in 16-bit samples as in float ones.
+    #[test]
+    fn too_quiet_to_tell_is_one_level_in_either_format() {
+        let mut p = plan();
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (1000, 1000, 0, 0);
+        p.in_low_pass = Some(Sweep { start_ms: 0, end_ms: 1000, from_hz: 200.0, to_hz: 200.0 });
+        let tone: Vec<i16> = sine(440.0, 48000).iter().map(|v| (v * 32767.0).round() as i16).collect();
+        let hiss: Vec<i16> = noise(48000).iter().map(|v| (v * 5.0).round() as i16).collect();
+        let float = |x: &[i16]| -> Vec<f32> { x.iter().map(|v| *v as f32 / 32768.0).collect() };
+        let in_float = mix(&p, &float(&tone), &float(&hiss));
+        let mut m = Mixer::new(RATE as u32, 1);
+        m.configure(&p);
+        let mut in_16 = tone.clone();
+        m.process(&mut in_16, &hiss);
+        let off = in_float.iter().zip(&in_16).map(|(f, s)| (*f as f64 * 32768.0 - *s as f64).abs()).fold(0.0, f64::max);
+        assert!(off < 2.0, "16-bit samples {off:.0} steps off float ones");
     }
 
     /// A ride's incoming high-pass opens late in the lead: the deck is thin from where it comes in, not whole until
