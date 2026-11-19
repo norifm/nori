@@ -13,6 +13,8 @@ final class SupportPage: CardsPage {
     private var given: (url: String, seals: Int)?
     private var seen = -1
     private let book = StampBook()
+    /// The thanks over the window while it plays.
+    private var thanks: UIView?
     private let amounts = ChipStrip(spacing: 6, fit: true)
     private let other = UITextField()
     private let limit = label(Fonts.font(13, .regular, .footnote), Theme.secondary)
@@ -65,9 +67,107 @@ final class SupportPage: CardsPage {
         if choice.isEmpty { choice = p["first"] as? [String: Any] ?? [:] }
         let seals = p["seals"] as? [[String: Any]] ?? []
         if let g = given, seals.count > g.seals { given = nil }
-        book.show(seals, next: p["next"] as? Int ?? 0, fresh: seen >= 0 && seals.count > seen)
+        // A seal more than the page saw is thanked for, the newest when several came at once.
+        let fresh = seen >= 0 && seals.count > seen
+        book.show(seals, next: p["next"] as? Int ?? 0, thanked: fresh ? seals.count - 1 : book.thanked)
         seen = seals.count
         lay()
+        if fresh, let s = seals.last { thank(s) }
+    }
+
+    /// The thanks for `seal`, over the whole window: the page under a veil of its paper, the seal pressed down
+    /// in the middle as a stamp is, "Thank you" under it; then the seal carried to its empty
+    /// place in the book (scrolled into view) and pressed there, so the book's own takes over at rest. A tap
+    /// ends it at once. Under Reduce Motion it is the thanks alone, still.
+    private func thank(_ seal: [String: Any]) {
+        guard let window = view.window, thanks == nil else { return }
+        let season = seal["season"] as? Int ?? 0
+        let accent = UIColor(argb: UInt32(seal["accent"] as? Int ?? 0))
+        let cover = UIView(frame: window.bounds)
+        let veil = UIView(frame: cover.bounds)
+        veil.backgroundColor = Theme.background.withAlphaComponent(0.92)
+        let side: CGFloat = 140
+        let home = CGPoint(x: cover.bounds.midX, y: cover.bounds.midY - 34)
+        let big = SealView(season: season, accent: accent)
+        big.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        big.center = home
+        let words = label(Fonts.title(28), Theme.label)
+        words.text = Say.supportThanks
+        words.sizeToFit()
+        // 10 pt under the seal (drawn 2 of 24 inside its box) to the top of the capitals.
+        let top = home.y + side / 2 - side / 12 + 10 - (words.font.ascender - words.font.capHeight)
+        // A touch left of center: "Th" is heavy, "you" light, and centered it leaned right.
+        words.center = CGPoint(x: home.x - 1.5, y: top + words.bounds.height / 2)
+        cover.addSubview(veil)
+        cover.addSubview(big)
+        cover.addSubview(words)
+        cover.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(skipThanks)))
+        window.addSubview(cover)
+        thanks = cover
+        if Motion.plain {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in self?.endThanks() }
+            return
+        }
+        veil.alpha = 0
+        big.alpha = 0
+        big.transform = CGAffineTransform(translationX: 0, y: -32).scaledBy(x: 1.6, y: 1.6)
+        words.alpha = 0
+        words.transform = CGAffineTransform(translationX: 0, y: 10)
+        UIView.animate(withDuration: 0.32, delay: 0, options: .curveEaseOut, animations: { veil.alpha = 1 })
+        let fall = UIViewPropertyAnimator(duration: 0.44, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.55, y: 0), controlPoint2: CGPoint(x: 0.9, y: 0.45)))
+        fall.addAnimations { big.alpha = 1; big.transform = .identity }
+        fall.addCompletion { [weak self] _ in
+            guard let self = self, self.thanks === cover else { return }
+            UIView.animateKeyframes(withDuration: 0.22, delay: 0, options: [], animations: {
+                UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.35) { big.transform = CGAffineTransform(scaleX: 1.05, y: 0.95) }
+                UIView.addKeyframe(withRelativeStartTime: 0.35, relativeDuration: 0.65) { big.transform = .identity }
+            })
+            UIView.animate(withDuration: 0.42, delay: 0.14, options: .curveEaseOut, animations: { words.alpha = 1; words.transform = .identity }) { _ in
+                self.bringSlot()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) { self.carry(big, words: words, veil: veil, in: cover) }
+            }
+        }
+        fall.startAnimation(afterDelay: 0.12)
+    }
+
+    /// The thanked seal's empty place scrolled into the page's view.
+    private func bringSlot() {
+        guard let i = book.thanked else { return }
+        var v = book.superview
+        while let s = v, !(s is UIScrollView) { v = s.superview }
+        guard let scroll = v as? UIScrollView else { return }
+        scroll.scrollRectToVisible(book.convert(book.slot(i), to: scroll).insetBy(dx: 0, dy: -40), animated: true)
+    }
+
+    /// The seal carried from the middle to its empty place: lifted a little and turned to its tilt, set down,
+    /// pressed and settled, while the thanks and the veil go.
+    private func carry(_ big: SealView, words: UIView, veil: UIView, in cover: UIView) {
+        guard thanks === cover, let i = book.thanked else { return }
+        let to = book.convert(book.slot(i), to: cover)
+        let (dx, dy) = (to.midX - big.center.x, to.midY - big.center.y)
+        let k = to.width / big.bounds.width
+        let tilt = CGFloat((page["seals"] as? [[String: Any]])?[safe: i]?["tilt"] as? Double ?? 0) * .pi / 180
+        let pose = { (x: CGFloat, y: CGFloat, turn: CGFloat, sx: CGFloat, sy: CGFloat) in
+            CGAffineTransform(translationX: x, y: y).rotated(by: turn).scaledBy(x: sx, y: sy)
+        }
+        UIView.animate(withDuration: 0.22, delay: 0, options: .curveEaseIn, animations: { words.alpha = 0 })
+        UIView.animate(withDuration: 0.64, delay: 0.18, options: .curveEaseInOut, animations: { veil.alpha = 0 })
+        UIView.animateKeyframes(withDuration: 0.98, delay: 0, options: [.calculationModeCubic], animations: {
+            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.42) { big.transform = pose(dx * 0.35, dy * 0.35 - 36, tilt / 2, (1 + k) / 2 + 0.06, (1 + k) / 2 + 0.06) }
+            UIView.addKeyframe(withRelativeStartTime: 0.42, relativeDuration: 0.38) { big.transform = pose(dx, dy, tilt, k, k) }
+            UIView.addKeyframe(withRelativeStartTime: 0.8, relativeDuration: 0.09) { big.transform = pose(dx, dy, tilt, k * 1.06, k * 0.93) }
+            UIView.addKeyframe(withRelativeStartTime: 0.89, relativeDuration: 0.11) { big.transform = pose(dx, dy, tilt, k, k) }
+        }) { [weak self] _ in self?.endThanks(carried: true) }
+    }
+
+    @objc private func skipThanks() { endThanks() }
+
+    /// The thanks over: the seal in its place, the next empty place growing in beside it if it was carried.
+    private func endThanks(carried: Bool = false) {
+        guard let cover = thanks else { return }
+        thanks = nil
+        cover.removeFromSuperview()
+        book.landed(growing: carried && !Motion.plain)
     }
 
     private func choose(currency c: String? = nil, monthly m: Bool? = nil, pick p: Int? = nil, other o: String? = nil) {
@@ -116,7 +216,7 @@ final class SupportPage: CardsPage {
             given = (r.text, (page["seals"] as? [Any])?.count ?? 0)
             URL(string: r.text).map { UIApplication.shared.open($0) }
             lay()
-        case NORI_SUPPORT_MANAGE:
+        case NORI_SUPPORT_PAGE:
             URL(string: r.text).map { UIApplication.shared.open($0) }
         case NORI_SUPPORT_REFRESHED:
             read()
@@ -147,7 +247,10 @@ final class SupportPage: CardsPage {
         views.append(GroupCard([row([amountRow]), otherRow, GroupRow(Say.supportEveryMonth, trailing: monthly), currency]))
         views.append(indent(give))
         if page["running"] as? Bool == true {
-            views.append(GroupCard([GroupRow(Say.supportManage, chevron: true) { nori_ios_support_manage() }]))
+            views.append(GroupCard([
+                GroupRow(Say.supportManage, chevron: true) { nori_ios_support_page(0) },
+                GroupRow(Say.supportStop, chevron: true) { nori_ios_support_page(1) },
+            ]))
         }
         if let g = given {
             views.append(indent(words(Say.supportInSafari, Fonts.font(13, .regular, .footnote), Theme.secondary, lines: 0)))
@@ -226,6 +329,10 @@ final class CurrencyPage: CardsPage {
 final class StampBook: UIView {
     private var seals: [[String: Any]] = []
     private var coming = 0
+    /// The seal being thanked for: it keeps its empty place until it is carried in, and the next one waits.
+    private(set) var thanked: Int?
+    /// The next place growing in, drawn by its own view until it is whole.
+    private var growing: SealView?
     private let gap: CGFloat = 12
     private var height: NSLayoutConstraint?
 
@@ -237,19 +344,42 @@ final class StampBook: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// `fresh`: the last seal was just paid for, and is stamped down.
-    func show(_ seals: [[String: Any]], next: Int, fresh: Bool) {
+    func show(_ seals: [[String: Any]], next: Int, thanked: Int?) {
         self.seals = seals
         coming = next
+        self.thanked = thanked
         setNeedsLayout()
         setNeedsDisplay()
-        if fresh, !Motion.plain {
-            transform = CGAffineTransform(scaleX: 1.04, y: 1.04)
-            UIView.animate(withDuration: 0.38, delay: 0, usingSpringWithDamping: 0.5, initialSpringVelocity: 0, options: []) { self.transform = .identity }
+    }
+
+    /// The thanked seal is in its place; `growing`, the next place grows in beside it.
+    func landed(growing grows: Bool) {
+        thanked = nil
+        growing?.removeFromSuperview()
+        growing = nil
+        if grows {
+            let v = SealView(blank: coming)
+            v.frame = slot(seals.count)
+            v.alpha = 0
+            v.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
+            addSubview(v)
+            growing = v
+            UIView.animate(withDuration: 0.32, delay: 0.06, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [], animations: { v.alpha = 1; v.transform = .identity }) { [weak self] _ in
+                guard self?.growing === v else { return }
+                v.removeFromSuperview()
+                self?.growing = nil
+                self?.setNeedsDisplay()
+            }
         }
+        setNeedsDisplay()
     }
 
     private var side: CGFloat { max(0, (bounds.width - 4 * gap) / 5) }
+
+    /// Where the `i`th seal's place is.
+    func slot(_ i: Int) -> CGRect {
+        CGRect(x: CGFloat(i % 5) * (side + gap), y: CGFloat(i / 5) * (side + gap), width: side, height: side)
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -265,34 +395,45 @@ final class StampBook: UIView {
 
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext(), side > 0 else { return }
-        let place = { (i: Int) in CGRect(x: CGFloat(i % 5) * (self.side + self.gap), y: CGFloat(i / 5) * (self.side + self.gap), width: self.side, height: self.side) }
         for (i, s) in seals.enumerated() {
-            let r = place(i)
-            let k = r.width / 24
-            ctx.saveGState()
-            ctx.translateBy(x: r.midX, y: r.midY)
-            ctx.rotate(by: CGFloat(s["tilt"] as? Double ?? 0) * .pi / 180)
-            ctx.translateBy(x: -r.width / 2, y: -r.height / 2)
-            let body = UIBezierPath(roundedRect: CGRect(x: 2 * k, y: 2 * k, width: 20 * k, height: 20 * k), cornerRadius: 3.5 * k)
-            body.append(UIBezierPath(roundedRect: CGRect(x: 3.75 * k, y: 3.75 * k, width: 16.5 * k, height: 16.5 * k), cornerRadius: 2.1 * k))
-            body.append(UIBezierPath(roundedRect: CGRect(x: 4.35 * k, y: 4.35 * k, width: 15.3 * k, height: 15.3 * k), cornerRadius: 1.6 * k))
-            body.usesEvenOddFillRule = true
-            UIColor(argb: UInt32(s["accent"] as? Int ?? 0)).setFill()
-            body.fill()
-            kanji(s["season"] as? Int ?? 0, in: CGRect(x: 0, y: 0, width: r.width, height: r.height), scale: 0.62, color: Theme.background)
-            ctx.restoreGState()
+            if i == thanked {
+                StampBook.blank(s["season"] as? Int ?? 0, in: slot(i))
+            } else {
+                StampBook.seal(s["season"] as? Int ?? 0, UIColor(argb: UInt32(s["accent"] as? Int ?? 0)), tilt: CGFloat(s["tilt"] as? Double ?? 0), in: slot(i), ctx)
+            }
         }
-        let r = place(seals.count)
+        if thanked == nil, growing == nil { StampBook.blank(coming, in: slot(seals.count)) }
+    }
+
+    /// A seal of `season` in `r`: the chop in `accent` turned `tilt` degrees, the kanji cut out of it.
+    static func seal(_ season: Int, _ accent: UIColor, tilt: CGFloat, in r: CGRect, _ ctx: CGContext) {
+        let k = r.width / 24
+        ctx.saveGState()
+        ctx.translateBy(x: r.midX, y: r.midY)
+        ctx.rotate(by: tilt * .pi / 180)
+        ctx.translateBy(x: -r.width / 2, y: -r.height / 2)
+        let body = UIBezierPath(roundedRect: CGRect(x: 2 * k, y: 2 * k, width: 20 * k, height: 20 * k), cornerRadius: 3.5 * k)
+        body.append(UIBezierPath(roundedRect: CGRect(x: 3.75 * k, y: 3.75 * k, width: 16.5 * k, height: 16.5 * k), cornerRadius: 2.1 * k))
+        body.append(UIBezierPath(roundedRect: CGRect(x: 4.35 * k, y: 4.35 * k, width: 15.3 * k, height: 15.3 * k), cornerRadius: 1.6 * k))
+        body.usesEvenOddFillRule = true
+        accent.setFill()
+        body.fill()
+        kanji(season, in: CGRect(x: 0, y: 0, width: r.width, height: r.height), scale: 0.62, color: Theme.background)
+        ctx.restoreGState()
+    }
+
+    /// A seal's place before it is paid for in `r`: its frame and `season`'s kanji, quiet.
+    static func blank(_ season: Int, in r: CGRect) {
         let k = r.width / 24
         let frame = UIBezierPath(roundedRect: CGRect(x: r.minX + 3 * k, y: r.minY + 3 * k, width: 18 * k, height: 18 * k), cornerRadius: 3.5 * k)
         frame.lineWidth = 1.5 * k
         Theme.secondary.setStroke()
         frame.stroke()
-        kanji(coming, in: r, scale: 0.56, color: Theme.secondary.withAlphaComponent(0.85))
+        kanji(season, in: r, scale: 0.56, color: Theme.secondary.withAlphaComponent(0.85))
     }
 
     /// Season `season`'s kanji filled in `color`, `scale` of `r` about its middle.
-    private func kanji(_ season: Int, in r: CGRect, scale: CGFloat, color: UIColor) {
+    private static func kanji(_ season: Int, in r: CGRect, scale: CGFloat, color: UIColor) {
         let parts = [Iconoir.spring, Iconoir.summer, Iconoir.autumn, Iconoir.winter][max(0, min(3, season))]
         let k = r.width / 24 * scale
         let shift = CGAffineTransform(translationX: r.midX - 12 * k, y: r.midY - 12 * k).scaledBy(x: k, y: k)
@@ -302,6 +443,35 @@ final class StampBook: UIView {
             p.apply(shift)
             p.fill()
         }
+    }
+}
+
+/// One seal as its own view, upright (the thanks turns it), or (`blank`) a place before it is paid for.
+final class SealView: UIView {
+    private let season: Int
+    private let accent: UIColor?
+
+    init(season: Int, accent: UIColor) {
+        self.season = season
+        self.accent = accent
+        super.init(frame: .zero)
+        backgroundColor = .clear
+        contentMode = .redraw
+    }
+
+    init(blank season: Int) {
+        self.season = season
+        accent = nil
+        super.init(frame: .zero)
+        backgroundColor = .clear
+        contentMode = .redraw
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        if let a = accent { StampBook.seal(season, a, tilt: 0, in: bounds, ctx) } else { StampBook.blank(season, in: bounds) }
     }
 }
 

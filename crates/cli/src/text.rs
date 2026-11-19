@@ -165,6 +165,8 @@ pub const SUPPORT_OTHER: &str = "Other";
 pub const SUPPORT_EVERY_MONTH: &str = "Every month";
 pub const SUPPORT_CURRENCY: &str = "Currency";
 pub const SUPPORT_MANAGE: &str = "Manage monthly support";
+pub const SUPPORT_STOP: &str = "Stop monthly support";
+pub const SUPPORT_THANKS: &str = "Thank you";
 pub const SUPPORT_IN_BROWSER: &str = "Finish in your browser, or open this link:";
 pub const SUPPORT_OTHER_CURRENCY: &str = "Your monthly support is in another currency";
 

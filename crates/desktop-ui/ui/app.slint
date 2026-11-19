@@ -1250,6 +1250,13 @@ export struct Pane {
     radius: length,
 }
 
+// Where the Support page's empty place for the seal being thanked for is, which the thanks over the window
+// carries the seal to, and whether the page should bring it into view.
+global SupportSlot {
+    in-out property <Pane> at;
+    in-out property <bool> reveal;
+}
+
 // Where the dialog shown last has its pane, for the compositor (app.rs reads it while a dialog is open): the
 // lyrics' focus blur leaves it sharp.
 export global DialogPane {
@@ -6049,16 +6056,12 @@ global SealShape {
 }
 
 // A paid seal: the chop in its season's accent with the season's kanji cut out of it (the page shows
-// through), turned by `tilt` degrees. `fresh` is the one just paid for: it is stamped, landing from larger.
+// through), turned by `tilt` degrees.
 component PaidSeal inherits Rectangle {
     in property <int> season;
     in property <float> tilt;
-    in property <bool> fresh;
-    property <float> scale: root.fresh && !Motion.reduced ? 1.5 : 1;
     Rectangle {
         transform-rotation: root.tilt * 1deg;
-        transform-scale: root.scale;
-        animate transform-scale { duration: 380ms; easing: cubic-bezier(0.3, 1.9, 0.5, 1); }
         Path {
             width: 100%;
             height: 100%;
@@ -6077,16 +6080,18 @@ component PaidSeal inherits Rectangle {
             colour: Theme.ground;
         }
     }
-    init => {
-        if root.fresh {
-            root.scale = 1;
-        }
-    }
 }
 
 // The place the next seal goes: the frame and its season's kanji, uncolored, as a song not a favorite yet.
+// `grows`: it comes after a seal was carried in beside it, growing in.
 component NextSeal inherits Rectangle {
     in property <int> season;
+    in property <bool> grows;
+    property <float> shown: root.grows && !Motion.reduced ? 0 : 1;
+    opacity: min(root.shown, 1);
+    transform-scale: 0.6 + 0.4 * root.shown;
+    animate shown { duration: 320ms; delay: 60ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+    init => { root.shown = 1; }
     Path {
         width: 100%;
         height: 100%;
@@ -6107,6 +6112,133 @@ component NextSeal inherits Rectangle {
     }
 }
 
+// The thanks for a seal paid while the Support page is open (app.rs says which), over the window as a dialog is:
+// the page under a veil of its paper, the seal pressed down in the middle as a stamp is,
+// "Thank you" under it; then the seal carried to its empty place in the book (SupportSlot, brought into view
+// first) and pressed there, so the book's own takes over at rest. A click ends it at once; `done` says whether
+// the seal was carried. Under nori's Motion setting it is the thanks alone, still.
+component SupportThanks inherits Rectangle {
+    in property <int> season;
+    in property <float> tilt;
+    callback done(/* carried */ bool);
+    property <length> side: 168px;
+    property <length> home-x: (root.width - root.side) / 2;
+    property <length> home-y: (root.height - root.side - 26px) / 2 - 24px;
+    // 0 shown, 1 the veil coming, 2 the stamp falling, 3 pressed, 4 the thanks, 5 carried, 6 over.
+    property <int> step: 0;
+    property <duration> wait: 16ms;
+    property <float> veil: 0;
+    property <float> fall: 0;
+    property <float> squash: 0;
+    property <float> words: 0;
+    property <float> way: 0;
+    animate veil { duration: Motion.reduced ? 0ms : root.step >= 5 ? 640ms : 320ms; delay: root.step >= 5 && !Motion.reduced ? 180ms : 0ms; easing: ease-in-out; }
+    animate fall { duration: Motion.reduced ? 0ms : 440ms; easing: cubic-bezier(0.55, 0, 0.9, 0.45); }
+    animate squash { duration: root.step == 3 ? 77ms : 143ms; easing: ease-out; }
+    animate words { duration: Motion.reduced ? 0ms : root.step >= 5 ? 220ms : 420ms; delay: root.step >= 5 || Motion.reduced ? 0ms : 140ms; easing: ease-out; }
+    animate way { duration: 980ms; easing: linear; }
+    // The way to the book, in legs as the web's: lifted a little and turned, set down, pressed, settled.
+    property <Pane> to: SupportSlot.at;
+    property <float> k: root.to.width / root.side;
+    // The slot is where the window has it; this covers what its parent does.
+    property <length> dx: root.to.x - root.absolute-position.x + root.to.width / 2 - (root.home-x + root.side / 2);
+    property <length> dy: root.to.y - root.absolute-position.y + root.to.height / 2 - (root.home-y + root.side / 2);
+    property <float> a: clamp(root.way / 0.42, 0, 1);
+    property <float> b: clamp((root.way - 0.42) / 0.38, 0, 1);
+    property <float> c: clamp((root.way - 0.8) / 0.09, 0, 1);
+    property <float> d: clamp((root.way - 0.89) / 0.11, 0, 1);
+    property <float> ea: root.a * root.a * (3 - 2 * root.a);
+    // Set down slowing into its place.
+    property <float> eb: 1 - (1 - root.b) * (1 - root.b) * (1 - root.b);
+    property <float> ec: 1 - (1 - root.c) * (1 - root.c);
+    property <float> ed: root.d * root.d * (3 - 2 * root.d);
+    property <float> lifted: (1 + root.k) / 2 + 0.06;
+    property <length> off-x: root.way < 0.42 ? root.ea * root.dx * 0.35 : root.dx * 0.35 + root.eb * root.dx * 0.65;
+    property <length> off-y: root.way < 0.42 ? root.ea * (root.dy * 0.35 - 36px) : root.dy * 0.35 - 36px + root.eb * (root.dy * 0.65 + 36px);
+    property <float> size: root.step < 5 ? 1.6 - 0.6 * root.fall : root.way < 0.42 ? 1 + root.ea * (root.lifted - 1) : root.lifted + root.eb * (root.k - root.lifted);
+    property <float> wide: root.step < 5 ? 1 + 0.05 * root.squash : root.way < 0.89 ? 1 + 0.06 * root.ec : 1.06 - 0.06 * root.ed;
+    property <float> flat: root.step < 5 ? 1 - 0.05 * root.squash : root.way < 0.89 ? 1 - 0.07 * root.ec : 0.93 + 0.07 * root.ed;
+    property <float> turn: root.way < 0.42 ? root.ea * root.tilt / 2 : root.tilt / 2 + root.eb * root.tilt / 2;
+    TouchArea {
+        clicked => { root.finish(false); }
+    }
+    Rectangle {
+        background: Theme.ground.with-alpha(0.92 * root.veil);
+    }
+    PaidSeal {
+        width: root.side * root.size * root.wide;
+        height: root.side * root.size * root.flat;
+        x: root.home-x + root.side / 2 + root.off-x - self.width / 2;
+        y: root.home-y + root.side / 2 + (root.step < 5 ? -32px * (1 - root.fall) : root.off-y) - self.height / 2;
+        season: root.season;
+        tilt: root.turn;
+        opacity: root.step < 5 ? min(root.fall / 0.6, 1) : 1;
+    }
+    Text {
+        // A touch left of center: "Th" is heavy, "you" light, and centered it leaned right.
+        x: (root.width - self.width) / 2 - 1.5px;
+        // 10 px under the seal, drawn 2 of 24 (14 px) inside its box, to the top of the capitals, 14 px under
+        // the top of Literata's line.
+        y: root.home-y + root.side - 18px + (1 - root.words) * 10px;
+        text: "Thank you";
+        font-family: Type.title;
+        font-size: 34px;
+        font-weight: 700;
+        color: Theme.text;
+        opacity: root.words;
+    }
+    function finish(carried: bool) {
+        if root.step < 6 {
+            root.step = 6;
+            SupportSlot.reveal = false;
+            root.done(carried);
+        }
+    }
+    Timer {
+        interval: root.wait;
+        running: root.step < 6;
+        triggered => {
+            if Motion.reduced {
+                if root.step == 0 {
+                    root.step = 4;
+                    root.veil = 1;
+                    root.fall = 1;
+                    root.words = 1;
+                    root.wait = 1800ms;
+                } else {
+                    root.finish(false);
+                }
+            } else if root.step == 0 {
+                root.step = 1;
+                root.veil = 1;
+                root.wait = 120ms;
+            } else if root.step == 1 {
+                root.step = 2;
+                root.fall = 1;
+                root.wait = 440ms;
+            } else if root.step == 2 {
+                root.step = 3;
+                root.squash = 1;
+                root.wait = 77ms;
+            } else if root.step == 3 {
+                root.step = 4;
+                root.squash = 0;
+                root.words = 1;
+                SupportSlot.reveal = true;
+                root.wait = 1860ms;
+            } else if root.step == 4 {
+                root.step = 5;
+                root.words = 0;
+                root.veil = 0;
+                root.way = 1;
+                root.wait = 980ms;
+            } else {
+                root.finish(true);
+            }
+        }
+    }
+}
+
 // Supporting nori, as Android's page: the stamp book, a seal per payment in the accent of the season it was
 // paid in, five to a row filling the column, scrolling with faded edges above what to give, which always
 // stands whole at the foot: the amount (the offered ones as chips, then Other, typed), every month, the
@@ -6115,7 +6247,10 @@ component NextSeal inherits Rectangle {
 component SupportPage inherits Rectangle {
     in property <[SupportSeal]> seals;
     in property <int> next;
-    in property <int> fresh: -1;
+    // The seal being thanked for (-1 none): it keeps its empty place until it is carried in.
+    in property <int> thanked: -1;
+    // The last thanks carried its seal in: the next empty place grows in beside it.
+    in property <bool> landed;
     in property <[string]> amounts;
     // The offered amount chosen; -1 is Other.
     in property <int> pick;
@@ -6135,12 +6270,30 @@ component SupportPage inherits Rectangle {
     callback monthly-set(bool);
     callback currency-picked(int);
     callback give();
-    callback manage();
+    // Stripe's page for the monthly payment: its card and receipts, or (`stop`) stopping it.
+    callback open-page(/* stop */ bool);
     callback open-again();
     property <length> column: min(root.width - 64px, 520px);
     property <length> gap: 14px;
     property <length> side: (root.column - 4 * root.gap) / 5;
     property <int> rows: floor((root.seals.length + 1 + 4) / 5);
+    // Where the thanked seal's empty place is in the window, for the thanks; brought into view when asked.
+    property <Pane> slot: {
+        x: book.absolute-position.x + 32px + mod(max(root.thanked, 0), 5) * (root.side + root.gap),
+        y: book.absolute-position.y + flick.content-y + 8px + floor(max(root.thanked, 0) / 5) * (root.side + root.gap),
+        width: root.side, height: root.side, radius: 0,
+    };
+    init => { SupportSlot.at = self.slot; }
+    changed slot => { SupportSlot.at = self.slot; }
+    property <bool> reveal: SupportSlot.reveal;
+    changed reveal => {
+        if self.reveal && root.thanked >= 0 {
+            let top = 8px + floor(root.thanked / 5) * (root.side + root.gap);
+            if top + flick.content-y < 0 || top + root.side + flick.content-y > flick.height {
+                flick.content-y = clamp(-(top - (flick.height - root.side) / 2), min(0, flick.height - flick.content-height), 0);
+            }
+        }
+    }
     VerticalLayout {
         Heading {
             title: "Support nori";
@@ -6151,16 +6304,21 @@ component SupportPage inherits Rectangle {
             clip: true;
             flick := Flickable {
                 content-height: root.rows * (root.side + root.gap) + 24px;
-                for s[i] in root.seals: PaidSeal {
+                for s[i] in root.seals: Rectangle {
                     x: 32px + mod(i, 5) * (root.side + root.gap);
                     y: 8px + floor(i / 5) * (root.side + root.gap);
                     width: root.side;
                     height: root.side;
-                    season: s.season;
-                    tilt: s.tilt;
-                    fresh: i == root.fresh;
+                    if i == root.thanked: NextSeal {
+                        season: s.season;
+                    }
+                    if i != root.thanked: PaidSeal {
+                        season: s.season;
+                        tilt: s.tilt;
+                    }
                 }
-                NextSeal {
+                if root.thanked < 0: NextSeal {
+                    grows: root.landed;
                     x: 32px + mod(root.seals.length, 5) * (root.side + root.gap);
                     y: 8px + floor(root.seals.length / 5) * (root.side + root.gap);
                     width: root.side;
@@ -6285,9 +6443,17 @@ component SupportPage inherits Rectangle {
                     }
                 }
             }
-            if root.running: TextButton {
-                text: "Manage monthly support";
-                clicked => { root.manage(); }
+            if root.running: HorizontalLayout {
+                alignment: center;
+                spacing: 20px;
+                TextButton {
+                    text: "Manage monthly support";
+                    clicked => { root.open-page(false); }
+                }
+                TextButton {
+                    text: "Stop monthly support";
+                    clicked => { root.open-page(true); }
+                }
             }
             if root.waiting: HorizontalLayout {
                 spacing: 10px;
@@ -6892,7 +7058,9 @@ export component AppWindow inherits Window {
     // The Support page (view support, from About): see SupportPage.
     in property <[SupportSeal]> support-seals;
     in property <int> support-next;
-    in property <int> support-fresh: -1;
+    // The seal being thanked for (-1 none), and whether the last thanks carried its seal in.
+    in-out property <int> support-thanked: -1;
+    in-out property <bool> support-landed;
     in property <[string]> support-amounts;
     in property <int> support-pick;
     in property <string> support-other;
@@ -6909,7 +7077,7 @@ export component AppWindow inherits Window {
     callback support-monthly-set(bool);
     callback support-currency-picked(int);
     callback support-give();
-    callback support-manage();
+    callback support-page(bool);
     callback support-open-again();
     in property <bool> eq-on;
     in property <bool> eq-graphic;
@@ -8493,7 +8661,8 @@ export component AppWindow inherits Window {
                     SupportPage {
                         seals: root.support-seals;
                         next: root.support-next;
-                        fresh: root.support-fresh;
+                        thanked: root.support-thanked;
+                        landed: root.support-landed;
                         amounts: root.support-amounts;
                         pick: root.support-pick;
                         other: root.support-other;
@@ -8510,7 +8679,7 @@ export component AppWindow inherits Window {
                         monthly-set(on) => { root.support-monthly-set(on); }
                         currency-picked(i) => { root.support-currency-picked(i); }
                         give => { root.support-give(); }
-                        manage => { root.support-manage(); }
+                        open-page(stop) => { root.support-page(stop); }
                         open-again => { root.support-open-again(); }
                     }
                 }
@@ -9727,6 +9896,15 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
+            }
+        }
+
+        if root.view == View.support && root.support-thanked >= 0 && root.support-thanked < root.support-seals.length: SupportThanks {
+            season: root.support-seals[root.support-thanked].season;
+            tilt: root.support-seals[root.support-thanked].tilt;
+            done(carried) => {
+                root.support-landed = carried;
+                root.support-thanked = -1;
             }
         }
 

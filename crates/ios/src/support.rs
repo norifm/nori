@@ -4,7 +4,7 @@
 
 use std::ffi::c_char;
 
-use nori_core::support::{support_choice, support_currencies, support_first_choice, support_service, support_stamps, Cadence, SupportChoice, SupportPick, TypedAmount};
+use nori_core::support::{support_choice, support_currencies, support_first_choice, support_service, support_stamps, Cadence, SupportChoice, SupportPage, SupportPick, TypedAmount};
 use nori_host::support::{currency_name, money, number};
 use serde_json::{json, Value};
 
@@ -15,7 +15,7 @@ use crate::session::{c_text, report, server, REPORT_SUPPORT};
 pub const SUPPORT_FAILED: i32 = 0;
 pub const SUPPORT_GIVEN: i32 = 1;
 pub const SUPPORT_REFRESHED: i32 = 2;
-pub const SUPPORT_MANAGE: i32 = 3;
+pub const SUPPORT_PAGE: i32 = 3;
 
 /// What is chosen as the page shows it: the offered amounts as numbers, the pick (-1 for Other), what is
 /// typed, the limit it is past, and what Give gives.
@@ -114,13 +114,14 @@ pub extern "C" fn nori_ios_support_refresh() {
     });
 }
 
-/// Stripe's page where the monthly payment is changed or stopped: a `REPORT_SUPPORT` with its address
-/// (`SUPPORT_MANAGE`), or why not.
+/// Stripe's page for the monthly payment, its card and receipts or (`stop`) stopping it: a `REPORT_SUPPORT`
+/// with its address (`SUPPORT_PAGE`), or why not.
 #[no_mangle]
-pub extern "C" fn nori_ios_support_manage() {
+pub extern "C" fn nori_ios_support_page(stop: i32) {
     let Some((client, _)) = server() else { return };
-    nori_host::spawn("nori-support-manage", move || match nori_core::transport::block_on(client.support_manage()) {
-        Ok(url) => report(REPORT_SUPPORT, SUPPORT_MANAGE, 0, &url),
+    let page = if stop != 0 { SupportPage::Stop } else { SupportPage::Manage };
+    nori_host::spawn("nori-support-page", move || match nori_core::transport::block_on(client.support_page(page)) {
+        Ok(url) => report(REPORT_SUPPORT, SUPPORT_PAGE, 0, &url),
         Err(e) => failed(e),
     });
 }

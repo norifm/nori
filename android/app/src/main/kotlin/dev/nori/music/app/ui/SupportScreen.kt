@@ -1,5 +1,37 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.ui.draw.drawBehind
+import kotlinx.coroutines.async
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
@@ -79,6 +111,7 @@ import dev.nori.music.ffi.Stamp
 import dev.nori.music.ffi.SupportChoice
 import dev.nori.music.ffi.SupportPick
 import dev.nori.music.ffi.SupportCurrency
+import dev.nori.music.ffi.SupportPage
 import dev.nori.music.ffi.TypedAmount
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -154,6 +187,19 @@ fun SupportScreen(vm: SupportViewModel) {
     }
 
     val scroll = rememberScrollState()
+    // A seal that comes while the page is open is thanked for, the newest when several come at once. The
+    // book keeps its empty place while [thanked]; the thanks shows while [thanking], a little longer, so the
+    // book has drawn the seal in its place before the thanks' window goes.
+    var thanked by remember { mutableStateOf<Int?>(null) }
+    var thanking by remember { mutableStateOf<Int?>(null) }
+    var seen by remember { mutableIntStateOf(-1) }
+    var landed by remember { mutableStateOf(false) }
+    val slot = remember { Slot() }
+    var window by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    LaunchedEffect(stamps.size) {
+        if (seen >= 0 && stamps.size > seen) { landed = false; thanked = stamps.lastIndex; thanking = stamps.lastIndex }
+        seen = stamps.size
+    }
     // The page ends over the chrome, or over the keyboard while it is up, whichever is higher. What to give
     // stands at its foot, where the thumb is, always whole and riding up with the keyboard; the book takes
     // the room above it and scrolls there, its edges fading as the lyrics' do.
@@ -168,8 +214,11 @@ fun SupportScreen(vm: SupportViewModel) {
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         val page = MaterialTheme.colorScheme.background
-        Box(Modifier.weight(1f).fillMaxWidth().fadesUnderTitle(scroll, page).fadesAtFoot(scroll, page)) {
-            StampBook(stamps, vm.nextSeason, Modifier.verticalScroll(scroll).padding(top = 24.dp, bottom = Space.section))
+        Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { window = it }.fadesUnderTitle(scroll, page).fadesAtFoot(scroll, page)) {
+            // The seal that just came keeps its empty place from the frame it comes in, before the effect
+            // above starts its thanks.
+            val arriving = if (seen >= 0 && stamps.size > seen) stamps.lastIndex else null
+            StampBook(stamps, vm.nextSeason, thanked ?: arriving, landed, slot, Modifier.verticalScroll(scroll).padding(top = 24.dp, bottom = Space.section))
         }
         Column(Modifier.fillMaxWidth().padding(bottom = Space.row)) {
             GroupCard {
@@ -196,12 +245,31 @@ fun SupportScreen(vm: SupportViewModel) {
                 null, { focus.clearFocus(); vm.pay() }, Modifier.fillMaxWidth().padding(start = GROUP_MARGIN, end = GROUP_MARGIN, top = Space.row),
                 prominent = true, enabled = amount != null && paying != Paying.Starting,
             )
-            if (monthly) TextAction(say.supportManage, {
-                vm.manage { url -> runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } }
-            }, Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp))
+            if (monthly) Row(Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val open = { page: SupportPage ->
+                    vm.page(page) { url -> runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } }
+                }
+                TextAction(say.supportManage, { open(SupportPage.MANAGE) })
+                TextAction(say.supportStop, { open(SupportPage.STOP) })
+            }
         }
     }
     CurrencySheet(pickingCurrency, choice.currency, vm.allCurrencies, { pickingCurrency = false }) { c -> vm.pickCurrency(c); pickingCurrency = false }
+    thanking?.let { i ->
+        val s = stamps.getOrNull(i) ?: return@let
+        // Its place glides into the book's window, centered there, if it is not whole in it.
+        val bring: suspend () -> Unit = bring@{
+            val at = slot.at?.takeIf { it.isAttached }?.boundsInWindow() ?: return@bring
+            val room = window?.takeIf { it.isAttached }?.boundsInWindow() ?: return@bring
+            if (at.top < room.top || at.bottom > room.bottom) scroll.animateScrollBy(at.center.y - room.center.y, tween(600, easing = CubicBezierEasing(0.2f, 0.7f, 0.3f, 1f)))
+        }
+        // Two frames of the page's own window: the seal it was given is drawn.
+        val drawn: suspend () -> Unit = { scope.async { withFrameNanos {}; withFrameNanos {} }.await() }
+        Thanks(s, sealAccent(s.season), slot, bring, placed = { landed = true; thanked = null }, drawn = drawn) { carried ->
+            if (!carried) { landed = false; thanked = null }
+            thanking = null
+        }
+    }
 }
 
 /**
@@ -289,16 +357,14 @@ private fun currencyName(c: SupportCurrency): String =
 /** The seals, oldest first, five to a row from the start, and after them the next one's place: its outline and kanji, uncolored, as a seal not yet a favorite. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StampBook(stamps: List<Stamp>, next: dev.nori.music.ffi.look.Season, modifier: Modifier = Modifier) {
-    val papers = LocalPapers.current
-    val quiet = MaterialTheme.colorScheme.onSurfaceVariant
-    // A seal that comes while the page is open is stamped: the payment was the user's own touch.
-    var seen by remember { mutableIntStateOf(-1) }
-    val stamp = rememberStamp()
-    LaunchedEffect(stamps.size) {
-        if (seen >= 0 && stamps.size > seen) stamp.down()
-        seen = stamps.size
-    }
+private fun StampBook(
+    stamps: List<Stamp>,
+    next: dev.nori.music.ffi.look.Season,
+    thanked: Int?,
+    landed: Boolean,
+    slot: Slot,
+    modifier: Modifier = Modifier,
+) {
     BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = Space.gutter)) {
         // Five fill the row from edge to edge.
         val side = (maxWidth - SEAL_GAP * (SEALS_IN_ROW - 1)) / SEALS_IN_ROW
@@ -308,17 +374,173 @@ private fun StampBook(stamps: List<Stamp>, next: dev.nori.music.ffi.look.Season,
             maxItemsInEachRow = SEALS_IN_ROW,
         ) {
             stamps.forEachIndexed { i, s ->
-                val accent = remember(s.season, papers.darkTheme) {
-                    Color(dev.nori.music.ffi.look.palette(s.season, 1u, 1u, false, papers.darkTheme, false).accent.toInt())
-                }
-                val last = i == stamps.lastIndex
-                Seal(s, accent, side, if (last) Modifier.graphicsLayer { scaleX = stamp.scale.value; scaleY = stamp.scale.value } else Modifier)
+                // While it is thanked for, a seal still has its empty place, which it is carried to.
+                if (i == thanked) Blank(s.season, side, Modifier.onGloballyPositioned { slot.at = it })
+                else Seal(s, sealAccent(s.season), side)
             }
-            Canvas(Modifier.size(side)) {
-                scale(size.width / 24f, size.height / 24f, Offset.Zero) {
-                    drawPath(FRAME, quiet, style = Stroke(1.5f))
-                    drawPath(OUTLINED[next.ordinal], quiet, alpha = 0.85f)
+            if (thanked == null) {
+                // After a seal was carried in, the next place grows in beside it.
+                val shown = remember { Animatable(if (landed && !AppMotion.reduce) 0f else 1f) }
+                LaunchedEffect(shown) { shown.animateTo(1f, tween(320, delayMillis = 60, easing = CubicBezierEasing(0.2f, 0.9f, 0.3f, 1.2f))) }
+                Blank(next, side, Modifier.graphicsLayer { alpha = shown.value.coerceIn(0f, 1f); scaleX = 0.6f + 0.4f * shown.value; scaleY = scaleX })
+            }
+        }
+    }
+}
+
+/** A seal's place before it is paid for: [FRAME] with [season]'s kanji, uncolored. */
+@Composable
+private fun Blank(season: dev.nori.music.ffi.look.Season, side: Dp, modifier: Modifier = Modifier) {
+    val quiet = MaterialTheme.colorScheme.onSurfaceVariant
+    Canvas(modifier.size(side)) {
+        scale(size.width / 24f, size.height / 24f, Offset.Zero) {
+            drawPath(FRAME, quiet, style = Stroke(1.5f))
+            drawPath(OUTLINED[season.ordinal], quiet, alpha = 0.85f)
+        }
+    }
+}
+
+/** [season]'s accent in the appearance worn: a seal's color. */
+@Composable
+private fun sealAccent(season: dev.nori.music.ffi.look.Season): Color {
+    val dark = LocalPapers.current.darkTheme
+    return remember(season, dark) { Color(dev.nori.music.ffi.look.palette(season, 1u, 1u, false, dark, false).accent.toInt()) }
+}
+
+/** Where the book's empty place for the seal being thanked for is, once laid out. */
+private class Slot {
+    var at: LayoutCoordinates? = null
+}
+
+/** A seal's pose on its way: moved by [x], [y] px, turned [deg], scaled [sx] by [sy]. */
+private class Pose(val x: Float, val y: Float, val deg: Float, val sx: Float, val sy: Float = sx)
+
+private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+
+/** The way to the book: lifted a little and turned to the seal's tilt, set down, pressed, settled. Each
+ *  leg starts at its fraction of the way with its own easing, from its pose to the next. */
+private class Way(dx: Float, dy: Float, tilt: Float, k: Float, lift: Float) {
+    private val legs = listOf(
+        Triple(0f, CubicBezierEasing(0.45f, 0f, 0.55f, 1f), Pose(0f, 0f, 0f, 1f)),
+        Triple(0.42f, CubicBezierEasing(0.45f, 0f, 0.25f, 1f), Pose(dx * 0.35f, dy * 0.35f - lift, tilt / 2, (1 + k) / 2 + 0.06f)),
+        Triple(0.8f, CubicBezierEasing(0.3f, 0f, 0.5f, 1f), Pose(dx, dy, tilt, k)),
+        Triple(0.89f, CubicBezierEasing(0.4f, 0f, 0.3f, 1f), Pose(dx, dy, tilt, k * 1.06f, k * 0.93f)),
+        Triple(1f, LinearEasing, Pose(dx, dy, tilt, k)),
+    )
+
+    fun at(t: Float): Pose {
+        val i = legs.indexOfLast { it.first <= t }.coerceAtMost(legs.size - 2)
+        val (start, easing, from) = legs[i]
+        val (end, _, to) = legs[i + 1]
+        val e = easing.transform(((t - start) / (end - start)).coerceIn(0f, 1f))
+        return Pose(lerp(from.x, to.x, e), lerp(from.y, to.y, e), lerp(from.deg, to.deg, e), lerp(from.sx, to.sx, e), lerp(from.sy, to.sy, e))
+    }
+}
+
+/**
+ * The thanks for a seal paid while the page is open, over the whole app (its own window): the page under a
+ * veil of its paper, the seal pressed down in the middle as a stamp is, "Thank you" under
+ * it; then the seal carried to its empty place in the book ([slot], brought into view by [bring]) and
+ * pressed there, all on this seal, so the book's takes over at rest: once this window has drawn the seal
+ * at rest, [placed] puts it in the book, and the thanks goes once the page's window has [drawn] it there.
+ * Neither waits on a guess of how fast a frame is. A touch or back ends it at once;
+ * [done] says whether the seal was carried. Under Motion Reduced it is the thanks alone, still.
+ */
+@Composable
+private fun Thanks(stamp: Stamp, accent: Color, slot: Slot, bring: suspend () -> Unit, placed: () -> Unit, drawn: suspend () -> Unit, done: (carried: Boolean) -> Unit) {
+    val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val page = MaterialTheme.colorScheme.background
+    val veil = remember { Animatable(0f) }
+    val drop = remember { Animatable(0f) }
+    val press = remember { Animatable(0f) }
+    val words = remember { Animatable(0f) }
+    val flight = remember { Animatable(0f) }
+    var big by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var way by remember { mutableStateOf<Way?>(null) }
+    val finish by rememberUpdatedState(done)
+    var over by remember { mutableStateOf(false) }
+    val end = { carried: Boolean -> if (!over) { over = true; finish(carried) } }
+    Dialog({ end(false) }, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false, dismissOnClickOutside = false)) {
+        val view = LocalView.current
+        // The veil is ours: no dimming or window animation of the platform's.
+        SideEffect { (view.parent as? DialogWindowProvider)?.window?.let { it.setDimAmount(0f); it.setWindowAnimations(0) } }
+        LaunchedEffect(Unit) {
+            // The dialog's composition is the window's own; run on the app's clock whatever it inherited.
+            withContext(AppMotion) {
+                if (AppMotion.reduce) {
+                    veil.snapTo(1f); drop.snapTo(1f); press.snapTo(1f); words.snapTo(1f)
+                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                    delay(1800)
+                    return@withContext end(false)
                 }
+                coroutineScope {
+                    launch { veil.animateTo(1f, tween(320, easing = LinearOutSlowInEasing)) }
+                    drop.animateTo(1f, tween(440, delayMillis = 120, easing = CubicBezierEasing(0.55f, 0f, 0.9f, 0.45f)))
+                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                    launch { press.animateTo(1f, tween(220, easing = LinearEasing)) }
+                    words.animateTo(1f, tween(420, delayMillis = 140, easing = LinearOutSlowInEasing))
+                    launch { bring() }
+                    delay(1300)
+                }
+                val from = big?.takeIf { it.isAttached }
+                val to = slot.at?.takeIf { it.isAttached }
+                if (from == null || to == null) return@withContext end(false)
+                val a = from.positionOnScreen() + Offset(from.size.width / 2f, from.size.height / 2f)
+                val b = to.positionOnScreen() + Offset(to.size.width / 2f, to.size.height / 2f)
+                way = Way(b.x - a.x, b.y - a.y, stamp.tilt, to.size.width.toFloat() / from.size.width, with(density) { 36.dp.toPx() })
+                coroutineScope {
+                    launch { words.animateTo(0f, tween(220, easing = FastOutLinearInEasing)) }
+                    launch { veil.animateTo(0f, tween(640, delayMillis = 180, easing = FastOutSlowInEasing)) }
+                    launch { delay(784); haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+                    flight.animateTo(1f, tween(980, easing = LinearEasing))
+                }
+                // This window has drawn the seal at rest, then the page's has drawn it in the book.
+                withFrameNanos {}
+                withFrameNanos {}
+                placed()
+                drawn()
+                end(true)
+            }
+        }
+        Box(
+            Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { end(false) } },
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.fillMaxSize().graphicsLayer { alpha = veil.value }.background(page.copy(alpha = 0.92f)))
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Top) {
+                Box(Modifier.size(168.dp), contentAlignment = Alignment.Center) {
+                    Seal(stamp.copy(tilt = 0f), accent, 168.dp, Modifier.onGloballyPositioned { big = it }.graphicsLayer {
+                        val w = way
+                        if (w != null) {
+                            val p = w.at(flight.value)
+                            translationX = p.x; translationY = p.y; rotationZ = p.deg; scaleX = p.sx; scaleY = p.sy
+                        } else {
+                            val d = drop.value
+                            val fall = lerp(1.6f, 1f, d)
+                            // Pressed: a little wider and flatter at a third of the way, then itself.
+                            val q = press.value
+                            val squash = if (q < 0.35f) q / 0.35f else (1f - q) / 0.65f
+                            scaleX = fall * (1f + 0.05f * squash); scaleY = fall * (1f - 0.05f * squash)
+                            translationY = lerp(-32.dp.toPx(), 0f, d)
+                            alpha = (d / 0.6f).coerceIn(0f, 1f)
+                        }
+                    }.drawBehind {
+                        // The page under its cut kanji and border, as in the book: over the empty place it lands
+                        // on, that place's frame does not show through.
+                        val u = size.width / 24f
+                        drawRoundRect(page, Offset(2f * u, 2f * u), Size(20f * u, 20f * u), CornerRadius(3.5f * u))
+                    })
+                }
+                Text(
+                    say.supportThanks,
+                    // 10 dp under the seal to the top of its capitals: the seal is drawn 2 of 24 (14 dp) inside its
+                    // box, and Literata's line has 14 dp above the capitals.
+                    // A touch left of center: "Th" is heavy, "you" light, and centered it leaned right.
+                    Modifier.layout { m, c -> val p = m.measure(c); val cut = (14.dp + 14.dp - 10.dp).roundToPx(); layout(p.width, p.height - cut) { p.place(-(1.5).dp.roundToPx(), -cut) } }
+                        .graphicsLayer { alpha = words.value; translationY = (1f - words.value) * 10.dp.toPx() },
+                    style = titled(MaterialTheme.typography.headlineMedium.copy(fontSize = 31.sp)), color = MaterialTheme.colorScheme.onBackground,
+                )
             }
         }
     }

@@ -1221,7 +1221,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.support_shown();
     });
     on!(ui.on_support_give, h, |a| a.support_give());
-    on!(ui.on_support_manage, h, |a| a.support_manage());
+    on!(ui.on_support_page, h, |a, stop| a.support_page(stop));
     on!(ui.on_support_open_again, h, |a| {
         if let Some((url, _)) = &a.support.given {
             nori_host::desktop::open_in_browser(url);
@@ -4990,11 +4990,13 @@ impl App {
         });
     }
 
-    /// Opens Stripe's page where the monthly payment is changed or stopped, off this thread.
-    fn support_manage(&self) {
+    /// Opens Stripe's page for the monthly payment, its card and receipts or (`stop`) stopping it, off this
+    /// thread.
+    fn support_page(&self, stop: bool) {
         let Some(s) = &self.session else { return };
         let (client, tx) = (s.account().client().clone(), self.tx.clone());
-        nori_host::spawn("nori-support-manage", move || match nori_core::transport::block_on(client.support_manage()) {
+        let page = if stop { nori_core::support::SupportPage::Stop } else { nori_core::support::SupportPage::Manage };
+        nori_host::spawn("nori-support-page", move || match nori_core::transport::block_on(client.support_page(page)) {
             Ok(url) => nori_host::desktop::open_in_browser(&url),
             Err(e) => tx.send(Msg::Note { text: words::support_failed(&e), error: true }),
         });
@@ -5634,6 +5636,39 @@ mod tests {
         let few = foot(4, "few");
         let many = foot(40, "many");
         assert!(few == many, "what to give moved with the book");
+    }
+
+    #[test]
+    fn a_seal_paid_while_the_page_is_open_is_thanked_for_and_carried_to_its_place() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.set_view(View::Support);
+        ui.show().unwrap();
+        let mut support = crate::support::Support::default();
+        let today = crate::look::Today { month: 11, day: 19, southern: false };
+        let paid = |n: i64| (0..n).map(|i| 1_692_100_800 + i * 2_629_800).collect::<Vec<i64>>();
+        let prefs = |n| nori_core::settings::StoredPrefs { support: nori_core::settings::Supporter { paid: paid(n), ..Default::default() }, ..Default::default() };
+        support.fill(&ui, &prefs(10), today);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(ui.get_support_thanked(), -1, "the seals the page opened with are not thanked for");
+        support.fill(&ui, &prefs(11), today);
+        assert_eq!(ui.get_support_thanked(), 10, "the newest seal is thanked for");
+        let shots = std::env::var_os("NORI_DESKTOP_SHOTS");
+        for frame in 0..110 {
+            let shot = ui.window().take_snapshot().unwrap();
+            if let Some(dir) = &shots {
+                let mut ppm = format!("P6 {} {} 255\n", shot.width(), shot.height()).into_bytes();
+                ppm.extend(shot.as_bytes().chunks(4).flat_map(|p| [p[0], p[1], p[2]]));
+                let _ = std::fs::write(std::path::Path::new(dir).join(format!("thanks-{frame:03}.ppm")), ppm);
+            }
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(40));
+            slint::platform::update_timers_and_animations();
+        }
+        assert_eq!(ui.get_support_thanked(), -1, "the thanks ended");
+        assert!(ui.get_support_landed(), "the seal was carried to its place");
     }
 
     #[test]

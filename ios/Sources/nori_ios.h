@@ -73,7 +73,7 @@ typedef struct NoriReport {
 #define NORI_SUPPORT_FAILED 0
 #define NORI_SUPPORT_GIVEN 1
 #define NORI_SUPPORT_REFRESHED 2
-#define NORI_SUPPORT_MANAGE 3
+#define NORI_SUPPORT_PAGE 3
 
 typedef void (*NoriReportFn)(const NoriReport *report);
 
@@ -485,8 +485,9 @@ char *nori_ios_support_choice(const char *currency, int32_t monthly, int32_t pic
 void nori_ios_support_give(const char *currency, int32_t monthly, int32_t pick, const char *other, int64_t unix_s, int32_t offset_min, const char *zone);
 /// Asks what this app has paid; NORI_REPORT_SUPPORT (NORI_SUPPORT_REFRESHED) once the settings keep it.
 void nori_ios_support_refresh(void);
-/// The monthly payment's page; NORI_REPORT_SUPPORT answers with it.
-void nori_ios_support_manage(void);
+/// Stripe's page for the monthly payment, its card and receipts or (`stop` 1) stopping it;
+/// NORI_REPORT_SUPPORT answers with it.
+void nori_ios_support_page(int32_t stop);
 /// `text` as a QR code, JSON to free: { size, dark }, or "null".
 char *nori_ios_qr(const char *text);
 /// Index and storage numbers as JSON (free it).
