@@ -1,9 +1,9 @@
 //! Transitions between tracks inside one output stream: crossfades and AutoMix (beat-matched, with
 //! bass swap, filter sweep and tempo stretch). Sits between the decoder and the output ([`Downstream`]).
 //!
-//! Audio passes through until the outgoing track reaches the plan's start, then is held (up to the
-//! transition's length; the rest of the ending is dropped). When the next track begins, its opening is
-//! mixed into the hold.
+//! Audio passes through until the outgoing track reaches the plan's start, then is held (as far as the
+//! transition hears it; the rest of the ending is dropped). When the next track begins, its opening is
+//! mixed into the hold, over silence once the hold runs out, to the transition's end.
 //!
 //! The output format is latched by the first PCM stream and other streams are resampled to it. With
 //! [`TransitionEngine::follow_rate`], a stream nothing is mixed into reopens the output at its own
@@ -90,13 +90,18 @@ impl Plan {
     pub fn duration_us(&self) -> i64 {
         self.mixer.duration_ms * 1000
     }
-    /// Outgoing song time the transition plays, µs: its length, but under a bend; a loop's rounds counted.
+    /// Outgoing song time the transition spans, µs: its length, but under a bend; a loop's rounds counted. It may run
+    /// past what it hears of the song, and past the song's end.
     pub fn held_us(&self) -> i64 {
         (self.mixer.out_song_ms(self.mixer.duration_ms as f64) * 1000.0).round() as i64
     }
-    /// Outgoing audio the transition holds, µs of the song: what it plays, a loop's slice once.
+    /// Outgoing audio the transition holds, µs of the song: what it hears of it, a loop's slice once.
     fn hold_us(&self) -> i64 {
         (self.mixer.out_held_ms() * 1000.0).round() as i64
+    }
+    /// The hold's buffer, µs: what is held, and a mix read once through it runs on over silence after that.
+    fn tail_us(&self) -> i64 {
+        (self.hold_us() + self.seam_us()).max(self.duration_us())
     }
     /// Held past [`Plan::hold_us`]: a loop with too little before its slice for its seam fades what follows the
     /// slice out instead.
@@ -248,6 +253,13 @@ struct Hold {
     before: Before,
 }
 
+impl Hold {
+    /// The next song mixes into it: something is held, or nothing was to be (begun past what the mix hears).
+    fn mixes(&self) -> bool {
+        self.len > 0 || self.limit == 0
+    }
+}
+
 /// What was heard before a hold began.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Before {
@@ -260,8 +272,8 @@ enum Before {
 /// How a mix reads the held ending.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MixOut {
-    /// Once through, `read` bytes in.
-    Once { read: usize },
+    /// Once through, `read` bytes in of `end`: silence past what is held.
+    Once { read: usize, end: usize },
     /// An outro loop: at output frame `frame` of `frames`, read through `held` (frames).
     Looped { frame: usize, frames: usize, held: HeldLoop },
     /// Under a bend: `read` bytes of the ending in (through `held`, bytes, when looped), at output frame `frame` of
@@ -1030,6 +1042,12 @@ impl TransitionEngine {
         }
         let p = self.plan().cloned().expect("a plan exists past this point");
         let late_us = mix_phase.unwrap_or_else(|| (p.mixer.wall_of_out_heard(late_song_us as f64 / 1000.0) * 1000.0).round() as i64);
+        // Heard alone past where its mix stops hearing it, the song is not cut off for the rest of the mix.
+        if late && !landed && late_us as f64 >= p.mixer.out_heard_until_ms() * 1000.0 {
+            host.log(&format!("transition: the plan came {} ms into its mix, past what it hears of the song: not mixed", late_us / 1000));
+            self.flight.ending = Ending::LetGo;
+            return Some(self.pass(down, buf, whole, pts_us, gain));
+        }
         self.begin_hold(&p, out, late_us, if landed { Before::Nothing } else { Before::Song }, host.now_ms());
         if late {
             host.log(&format!("transition: late hold, {} ms in", late_us / 1000));
@@ -1114,7 +1132,7 @@ impl TransitionEngine {
     /// between two buffers can starve the output).
     fn prepare(&mut self, p: &Plan) {
         let Some(out) = self.out else { return };
-        let bytes = out.bytes(p.hold_us() + p.seam_us());
+        let bytes = out.bytes(p.tail_us());
         if bytes > 0 && self.tail.len() < bytes {
             self.tail.resize(bytes, 0);
         }
@@ -1168,7 +1186,7 @@ impl TransitionEngine {
         self.heard.audible_us = i64::MAX;
         // An outro loop is captured up to its slice's end, and past it what plays after its rounds.
         let hold_us = p.hold_us() + p.seam_us();
-        let bytes = out.bytes(hold_us);
+        let bytes = out.bytes(p.tail_us());
         if self.tail.len() < bytes {
             self.tail.resize(bytes, 0);
         }
@@ -1206,25 +1224,27 @@ impl TransitionEngine {
         self.end_stretch(host);
         let p = self.plan().cloned();
         let ending = self.flight.plan_for.clone().or_else(|| self.playing_id.clone());
-        if p.is_some() && self.out.is_some() && matches!(self.flight.phase, Phase::Hold(h) if h.len > 0) {
+        if p.is_some() && self.out.is_some() && matches!(self.flight.phase, Phase::Hold(h) if h.mixes()) {
             // The incoming stream, announced before this: its format is armed so stretch and skip are
             // measured in its own domain. One that cannot be converted lets the hold go unmixed.
             self.arm_staged_for(host, self.current_id.clone(), false);
         }
-        let mixed = matches!(self.flight.phase, Phase::Hold(h) if h.len > 0) && self.out.is_some();
+        let mixed = matches!(self.flight.phase, Phase::Hold(h) if h.mixes()) && self.out.is_some();
         self.flight.made = ending.map(|id| (id.serial, if mixed { p.clone() } else { None }));
         match (self.flight.phase, p, self.out) {
-            (Phase::Hold(h), Some(mut p), Some(out)) if h.len > 0 => {
+            (Phase::Hold(h), Some(mut p), Some(out)) if h.mixes() => {
                 self.flight.mix_source_id = self.current_id.clone().filter(|id| self.flight.held_id.as_ref() != Some(id));
                 self.playing_id = self.current_id.clone();
                 let mut late = h.late_us.clamp(0, p.duration_us());
                 let squeezed = p.mixer.out_loop.is_none() && h.len < h.limit;
                 if squeezed {
-                    // The song ended before the planned end: the mix runs over what was held, its fades with it.
+                    // The song ended before the mix stops hearing it: the mix is scaled to stop hearing it there, its fades
+                    // with it.
                     let m = &p.mixer;
-                    let ms = m.wall_of_out_song(m.out_song_ms(late as f64 / 1000.0) + out.us(h.len) as f64 / 1000.0).ceil() as i64;
-                    host.log(&format!("mixing: {} ended {} ms into its {} ms ending: the mix is made to fit", song(&self.flight.held_id), ms, p.duration_us() / 1000));
-                    p.mixer.squeeze(ms);
+                    let (ended, heard) = (m.wall_of_out_song(m.out_song_ms(late as f64 / 1000.0) + out.us(h.len) as f64 / 1000.0), m.out_heard_until_ms());
+                    host.log(&format!("mixing: {} ended {ended:.0} ms into the {heard:.0} ms its mix hears of it: the mix is made to fit", song(&self.flight.held_id)));
+                    let to = (ended * m.duration_ms as f64 / heard).ceil() as i64;
+                    p.mixer.squeeze(to);
                 }
                 // A bend, glide or rates need the outgoing stretcher made for them; without one both decks keep one speed
                 // (rates on one clock come in pairs).
@@ -1289,7 +1309,9 @@ impl TransitionEngine {
                 } else if let Some(held) = held {
                     MixOut::Looped { frame: frame_of_us(late), frames: (p.duration_us() * out.rate as i64 / 1_000_000).max(0) as usize, held }
                 } else {
-                    MixOut::Once { read: 0 }
+                    let end = out.bytes(p.duration_us() - late).max(len);
+                    self.tail[len..end].fill(0);
+                    MixOut::Once { read: 0, end }
                 };
                 if late != h.late_us || squeezed {
                     self.take_over(&p, late);
@@ -1549,11 +1571,11 @@ impl TransitionEngine {
         let fb = out.frame_bytes();
         let (len, mut mix_out) = match self.flight.phase {
             Phase::Mix { len, out } => (len, out),
-            _ => (0, MixOut::Once { read: 0 }),
+            _ => (0, MixOut::Once { read: 0, end: 0 }),
         };
         let frames = match mix_out {
             MixOut::Looped { frame, frames, .. } | MixOut::Bent { frame, frames, .. } => frames.saturating_sub(frame),
-            MixOut::Once { read } => (len - read) / fb,
+            MixOut::Once { read, end } => (end - read) / fb,
         };
         let frames = (src.len() / fb).min(frames);
         let mut used = 0;
@@ -1586,7 +1608,7 @@ impl TransitionEngine {
                     self.enqueue(c, at, None, pace, 1.0);
                     self.flight.mixed_end_us = Some(at + span_us(frames, pace, out));
                 }
-                MixOut::Once { read } => {
+                MixOut::Once { read, .. } => {
                     let r = *read;
                     if let Some((m, ..)) = self.mixer.as_mut() {
                         m.process_bytes(&mut self.tail[r..r + bytes], &src[..bytes], out.encoding);
@@ -1613,7 +1635,7 @@ impl TransitionEngine {
         }
         let done = match mix_out {
             MixOut::Looped { frame, frames, .. } | MixOut::Bent { frame, frames, .. } => frame >= frames,
-            MixOut::Once { read } => read >= len,
+            MixOut::Once { read, end } => read >= end,
         };
         if done {
             self.flight.phase = Phase::Pass;
@@ -1883,7 +1905,7 @@ impl TransitionEngine {
         }
         let (from, end) = match self.flight.phase {
             Phase::Hold(h) => (0, h.len),
-            Phase::Mix { len, out: MixOut::Once { read } } => (read.min(len), len),
+            Phase::Mix { len, out: MixOut::Once { read, .. } } => (read.min(len), len),
             Phase::Mix { len, out: MixOut::Bent { read, held, .. } } => (left_in_hold(read, len, held), len),
             Phase::Mix { len, out: MixOut::Looped { frame, held, .. } } => {
                 let fb = self.out.map_or(1, |o| o.frame_bytes());
@@ -3172,6 +3194,103 @@ mod tests {
         e.handle_discontinuity(&mut d, &mut h);
         // Takeover is 1 s into the fade, so 1 s into b.
         assert_eq!(e.heard().next_from_us, 1_000_000, "the next song is entered where the fade hands it over");
+    }
+
+    /// A 2 s mix that stops hearing the outgoing song half a second in, out of a song with only that half second left:
+    /// the mix runs its whole length over silence on the outgoing deck, never made to fit, and the incoming song takes
+    /// over at its end sample for sample, on a clock that runs on without a jump.
+    #[test]
+    fn a_mix_outlasts_the_outgoing_song() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        let mut p = fade("b", 1_000_000);
+        p.mixer.out_fade_end_ms = 500;
+        h.plans.insert("a".into(), p);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        feed(&mut e, &mut d, &mut h, &tone(8000, 1.5), 0);
+        let (passed, mixed_from) = (d.samples().len() / 2, d.taken.len());
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+        feed(&mut e, &mut d, &mut h, &numbered(0, 3 * RATE as usize), 1_500_000);
+        assert!(e.play_to_end_of_stream(&mut d, &mut h));
+        assert!(!h.log.iter().any(|l| l.contains("made to fit")), "{:?}", h.log);
+        let heard = frames_heard(&d);
+        let end = passed + 2 * RATE as usize;
+        assert_eq!(heard.len(), passed + 3 * RATE as usize, "the mix, then the rest of b");
+        assert!(heard[end..].iter().enumerate().all(|(j, &f)| f == ((2 * RATE as usize + j) % 16_000) as f64), "b alone from the mix's end, sample for sample");
+        let chunks: Vec<(i64, i64)> = d.taken[mixed_from..].iter().map(|(c, at)| (*at, FMT.us(c.len()))).collect();
+        for w in chunks.windows(2) {
+            assert!((w[1].0 - w[0].0 - w[0].1).abs() <= 1, "the clock runs on: {:?}", w);
+            d.position = Some(w[1].0);
+            assert_eq!(e.position_us(&mut d, &mut h, false), Some(w[1].0), "the position is the clock's");
+        }
+    }
+
+    /// A reverb rings on a second after the outgoing song's last frame, the incoming song silent: the mix runs past
+    /// the song (a stop glowing into the next song, the song itself gone with its fade), with no step where it ends.
+    #[test]
+    fn a_reverb_rings_on_after_the_song() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        let mut p = fade("b", 1_000_000);
+        let m = &mut p.mixer;
+        (m.duration_ms, m.out_fade_start_ms, m.out_fade_end_ms, m.in_fade_start_ms, m.in_fade_end_ms) = (3313, 531, 1131, 531, 831);
+        m.reverb = Some(crate::types::Reverb { send: crate::types::Window { start_ms: 0, end_ms: 1063 }, decay_s: 4.5, wet_db: -8.0, low_cut_hz: 250.0 });
+        h.plans.insert("a".into(), p);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        // The song ends where its fade does.
+        feed(&mut e, &mut d, &mut h, &sine(440.0, RATE, 2.131, 0), 0);
+        let passed = d.samples().len() / 2;
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+        feed(&mut e, &mut d, &mut h, &tone(0, 4.0), 2_131_000);
+        assert!(!h.log.iter().any(|l| l.contains("made to fit")), "{:?}", h.log);
+        let s: Vec<f64> = d.samples().iter().step_by(2).map(|&v| v as f64).collect();
+        let at = |secs: f64| passed + (secs * RATE as f64) as usize;
+        let rms = |from: f64, to: f64| (s[at(from)..at(to)].iter().map(|v| v * v).sum::<f64>() / (at(to) - at(from)) as f64).sqrt();
+        let db = 20.0 * (rms(2.081, 2.181) / (8000.0 / std::f64::consts::SQRT_2)).log10();
+        assert!(db > -30.0, "the reverb a second after the song, {db:.1} dB against the song");
+        let own = 8000.0 * std::f64::consts::TAU * 440.0 / RATE as f64;
+        let step = s[at(1.0)..at(1.3)].windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max);
+        assert!(step < own, "a step of {step:.0} where the song ends, the sine's own {own:.0}");
+    }
+
+    /// A seek into a mix past where it stops hearing the outgoing song: the mix plays on from there to its end, the
+    /// incoming song where the plan has it. A plan that comes once the song was heard alone past that lets it play on.
+    #[test]
+    fn a_seek_past_what_a_mix_hears_mixes_on() {
+        for landed in [true, false] {
+            let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+            let mut p = fade("b", 1_000_000);
+            (p.mixer.duration_ms, p.mixer.out_fade_start_ms, p.mixer.out_fade_end_ms, p.mixer.in_fade_start_ms, p.mixer.in_fade_end_ms) = (3313, 531, 1131, 531, 831);
+            if landed {
+                h.plans.insert("a".into(), p.clone());
+                e.flush(&mut h);
+            }
+            e.configure(&mut d, &mut h, stream("a", FMT));
+            if !landed {
+                feed(&mut e, &mut d, &mut h, &tone(1000, 1.0), 1_500_000);
+                h.plans.insert("a".into(), p);
+                e.replan();
+            }
+            // 2.5 s in: a second and a half into the mix, past what it hears of a, half a second of a left.
+            feed(&mut e, &mut d, &mut h, &tone(1000, 0.5), 2_500_000);
+            let passed = d.samples().len() / 2;
+            e.configure(&mut d, &mut h, stream("b", FMT));
+            e.handle_discontinuity(&mut d, &mut h);
+            if !landed {
+                assert!(h.log.iter().any(|l| l.contains("not mixed")) && passed == (1.5 * RATE as f64) as usize, "a plays on: {:?}", h.log);
+                continue;
+            }
+            // b is entered 1.5 s in: 1.7 s of it mixed, then a second more past the mix's 1.813 s left.
+            let first = (3.2 * RATE as f64) as usize;
+            feed(&mut e, &mut d, &mut h, &numbered(0, first), 0);
+            assert!(matches!(e.flight.phase, Phase::Mix { .. }), "the mix runs to its end: {:?}", h.log);
+            feed(&mut e, &mut d, &mut h, &numbered(first, RATE as usize), FMT.us(first * 4));
+            assert!(e.flight.phase == Phase::Pass && !h.log.iter().any(|l| l.contains("made to fit")), "{:?}", h.log);
+            let heard = frames_heard(&d);
+            let from = (1.5 * RATE as f64).round() as usize;
+            assert_eq!(heard.len() - passed, first + RATE as usize - from, "b from 1.5 s, where the plan has it");
+            assert!(heard[passed..].iter().enumerate().all(|(j, &f)| f == ((from + j) % 16_000) as f64), "b alone, its fade done");
+        }
     }
 
     #[test]

@@ -462,6 +462,16 @@ pub struct Brake {
     pub len_ms: i64,
 }
 
+/// A brake's read falls as `(1 - t)^(BRAKE_POWER - 1)`: it reaches `len / BRAKE_POWER` of the song.
+pub(crate) const BRAKE_POWER: f64 = 2.8;
+
+impl Brake {
+    /// How far its read reaches into the outgoing song, ms from its start.
+    pub fn read_ms(&self) -> f64 {
+        self.len_ms.max(0) as f64 / BRAKE_POWER
+    }
+}
+
 /// The incoming track transposed `semitones` into a key that blends with the outgoing one: so through the overlap,
 /// then gliding back to its own key over `ramp_ms` after it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -549,7 +559,8 @@ pub struct Bend {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransitionPlan {
     pub kind: TransitionKind,
-    /// Position in the outgoing track where the transition starts. It stops at `out_start_ms + duration_ms`.
+    /// Position in the outgoing track where the transition starts. It is heard up to [`TransitionPlan::out_heard_until_ms`];
+    /// the transition may run on past the song's end.
     pub out_start_ms: i64,
     /// Position in the incoming track that plays at the start of the transition.
     pub in_start_ms: i64,
@@ -869,9 +880,20 @@ impl TransitionPlan {
         self.wall_of_out_song(self.out_loop.map_or(song_ms, |l| l.read_of(song_ms)))
     }
 
-    /// Outgoing song time the engine holds for the transition, past its start.
+    /// Where the outgoing song stops being heard, ms into the transition: where its fader is down (its fade's end, or
+    /// its tail's) or its brake's read ends, the transition's end at the latest. Its deck is silent after it.
+    pub fn out_heard_until_ms(&self) -> f64 {
+        let len = self.duration_ms.max(0) as f64;
+        let fade_end = if self.out_fade_start_ms < 0 || self.out_fade_end_ms < self.out_fade_start_ms { len } else { (self.out_fade_end_ms.max(0) as f64).min(len) };
+        let fader = self.out_tail.map_or(fade_end, |t| fade_end.max((t.end_ms as f64).min(len)));
+        // Its read between frames takes the one after where it stands too.
+        let brake = self.brake.filter(|b| b.len_ms > 0).map_or(len, |b| b.start_ms.max(0) as f64 + b.read_ms() + 1.0);
+        fader.min(brake)
+    }
+
+    /// Outgoing song time the engine holds for the transition, past its start: what it hears of it.
     pub fn out_held_ms(&self) -> f64 {
-        let read = self.out_song_ms(self.duration_ms as f64);
+        let read = self.out_song_ms(self.out_heard_until_ms());
         self.out_loop.map_or(read, |l| l.held(read))
     }
 

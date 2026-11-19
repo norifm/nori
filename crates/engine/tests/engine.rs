@@ -4134,3 +4134,51 @@ fn a_cast_playing_the_songs_moves_the_queue_and_comes_back_where_it_was() {
     let ms = at as i64 * 500 / RATE as i64;
     assert!((40_000..40_500).contains(&ms), "on from where the device was: {ms} ms");
 }
+
+/// A song that stops a second before its file ends glows into the next one: the mix, its reverb ringing on, runs its
+/// whole length past the song's end, never made to fit; the next song takes over where the plan has it and plays on
+/// sample for sample, and the place shown runs on through the mix.
+#[test]
+fn a_glow_runs_on_past_the_song() {
+    let (a, b) = (common::sine(RATE, 200.0, 30.0, 6_000.0), common::sine(RATE, 900.0, 40.0, 6_000.0));
+    let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, beat_match: false, ..prefs_off() });
+    {
+        let mut app = live.0.lock();
+        app.analyses.insert("a".into(), TrackAnalysis { stop_ms: 29_000, vocal_start_ms: 5_000, vocal_end_ms: 29_100, ..measured("a", 128.0, 30_000) });
+        app.analyses.insert("b".into(), measured("b", 150.0, 40_000));
+    }
+    let files = vec![("a".to_string(), wav(&a), 30_000), ("b".to_string(), wav(&b), 40_000)];
+    let rig = Rig::build(files, live.clone(), Settings { auto_mix: true, ..Settings::default() }, Extra { pace: Some(5.0), ..Extra::default() });
+    rig.engine.play_at(0, 20_000);
+    let line = |l: &str| l.contains("transition a -> b: ReverbWash") && l.contains("glowing");
+    assert!(rig.wait_for(30, |_| live.0.lock().log.iter().any(|l| line(l))), "{:?}", live.0.lock().log);
+    let plan = live.0.lock().log.iter().find(|l| line(l)).cloned().expect("planned");
+    let num = |after: &str| plan.split(after).nth(1).and_then(|s| s.split([' ', ',']).next()).and_then(|n| n.parse::<i64>().ok()).expect("a number");
+    let (dur, start, delay) = (num("ReverbWash "), num(" ms at "), num("heard from "));
+    assert!(start + dur > 30_000 + 1_000, "the mix runs on past the song's end: {plan}");
+    let frames = |ms: i64| (ms * RATE as i64 / 1000) as usize;
+    // The place shown each 40 ms through the mix: a runs on, never past its end, then b.
+    assert!(rig.wait_for(60, |r| r.heard.lock().len() / 2 >= frames(start - 20_000 - 1_000)));
+    // Up to where a's file ends, b then that far into its own time.
+    let b_at_a_end = 30_000 - start - delay;
+    let mut places = vec![place(&rig)];
+    while places.last().is_some_and(|&(i, ms)| i == Some(0) || ms < b_at_a_end - 100) {
+        rig.run(40);
+        places.push(place(&rig));
+    }
+    for w in places.windows(2) {
+        let ((i, from), (j, to)) = (w[0], w[1]);
+        assert!(j >= i && (i != j || (0..=120).contains(&(to - from))), "the place runs on: {w:?} in {places:?}");
+    }
+    assert!(places.iter().all(|&(i, ms)| i != Some(0) || ms <= 30_000) && places.last().is_some_and(|p| p.0 == Some(1)), "{places:?}");
+    assert!(rig.wait_for(60, Rig::ended), "{:?}", live.0.lock().log);
+    let log = live.0.lock().log.clone();
+    assert!(!log.iter().any(|l| l.contains("made to fit")), "{log:?}");
+    // After the mix b alone, from where the plan has it then (it came in `delay` into the mix), to its end.
+    let heard = rig.heard.lock().clone();
+    let after = 2 * frames(start - 20_000 + dur);
+    let from = 2 * frames(dur - delay);
+    let n = heard.len() - after;
+    assert!(n.abs_diff(b.len() - from) <= 2, "b takes over on time, to the frame the plan's ms allow: {n} against {}: {plan}", b.len() - from);
+    assert_eq!(beyond_dither(&heard[after..], &b[b.len() - n..]), None, "b sample for sample after the mix, to its end");
+}

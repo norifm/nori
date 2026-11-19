@@ -1257,6 +1257,8 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
     let out_at = |t: f64| out_start + p.out_heard_ms(t * 1000.0) / 1000.0;
     let in_at = |t: f64| in_start + p.in_song_ms(t * 1000.0) / 1000.0;
     let heard_end = out_start + p.out_held_ms() / 1000.0;
+    // Where the mix stops hearing the outgoing song, s into it: a reverb may ring on after.
+    let heard_until = p.out_heard_until_ms() / 1000.0;
     let beat_a = 60.0 / a.bpm.max(1.0);
     // The bass swap, from where the incoming lows start to come in to where they are all in: a swap that starts on
     // a line and one that finishes on it are both on it.
@@ -1314,9 +1316,9 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
         Some(e) if !a.gaps.iter().any(|(g0, _)| (g0 - e).abs() < 0.01) => (out_start.min(a.music.1) - e).max(0.0),
         _ => 0.0,
     };
-    // The run-up (up to the swap, or the whole mix without one) laid over the outgoing song's dead ending: its
-    // closing breakdown, a gap, the silence after its music. The energy hole an exit is for.
-    let run_up = swap.map_or(dur, |(s0, _)| s0);
+    // The run-up (up to the swap, or as long as the outgoing song is heard without one) laid over the outgoing song's
+    // dead ending: its closing breakdown, a gap, the silence after its music. The energy hole an exit is for.
+    let run_up = swap.map_or(dur, |(s0, _)| s0).min(heard_until);
     let breakdown = a.exit.filter(|e| !a.gaps.iter().any(|(g0, _)| (g0 - e).abs() < 0.01));
     let dead_at = |t: f64| t >= a.music.1 || a.gaps.iter().any(|(g0, g1)| t >= *g0 && t < *g1) || breakdown.is_some_and(|e| t >= e);
     let dead_runup_s = (0..(run_up / 0.05) as usize)
@@ -1330,7 +1332,7 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
     // From where the incoming song comes in: before it the outgoing one plays alone.
     let sung_under_s = sung_s(ms(p.in_delay_ms).min(run_up), run_up);
     let end = a.exit.filter(|_| !a.gaps.is_empty()).unwrap_or(a.music.1);
-    let sung_lost_s = sung_s(swap.map_or(0.0, |(s0, _)| s0), dur) + a.voice.iter().map(|(v0, v1)| (v1.min(end) - v0.max(heard_end)).max(0.0)).sum::<f64>();
+    let sung_lost_s = sung_s(swap.map_or(0.0, |(s0, _)| s0), heard_until) + a.voice.iter().map(|(v0, v1)| (v1.min(end) - v0.max(heard_end)).max(0.0)).sum::<f64>();
     // Voices competing, with the plan as it is and with its separation taken out (the same window, gains and
     // other filters), which is what the separation buys.
     let competing = |p: &crate::types::TransitionPlan| -> (f64, f64) {

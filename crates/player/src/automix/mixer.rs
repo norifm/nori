@@ -8,7 +8,7 @@
 
 use crate::pcm::Encoding;
 use crate::stage::ceiling;
-use crate::types::{FadeCurve, TransitionPlan};
+use crate::types::{FadeCurve, TransitionPlan, BRAKE_POWER};
 use std::f64::consts::PI;
 
 const MAX_CHANNELS: usize = 8;
@@ -577,9 +577,9 @@ impl Room {
     }
 }
 
-/// The frames a brake of `len` reads: its slowing read ends `len / 2.8` in.
+/// The frames a brake of `len` reads: its slowing read ends `len / BRAKE_POWER` in.
 fn brake_kept(len: u64) -> usize {
-    (len as f64 / 2.8) as usize + 2
+    (len as f64 / BRAKE_POWER) as usize + 2
 }
 
 /// 0 outside `span`, 1 inside, ramped over `ramp` frames at both ends.
@@ -1095,7 +1095,7 @@ impl Mixer {
             let kept = k as usize * ch;
             self.brake_buf[kept..kept + ch].copy_from_slice(&o[..ch]);
         }
-        let x = len as f64 / 2.8 * (1.0 - (1.0 - k as f64 / len as f64).powf(2.8));
+        let x = len as f64 / BRAKE_POWER * (1.0 - (1.0 - k as f64 / len as f64).powf(BRAKE_POWER));
         let (j, f) = (x.floor() as usize, x - x.floor());
         let next = (j + 1).min(k as usize);
         for (c, v) in o[..ch].iter_mut().enumerate() {
