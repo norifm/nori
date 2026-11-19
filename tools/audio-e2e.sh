@@ -82,7 +82,8 @@ if want coldkey; then section "a play key with nori not running"
   key KEYCODE_MEDIA_PLAY
   declined() { adb logcat -d -s MediaButtonReceiver:I | grep -q "does not start the media button event target service"; }
   check "with nothing saved it is declined" wait_until 10 declined
-  check "and starts no service" bash -c "! adb shell dumpsys activity services '$pkg' | grep -q PlaybackService"
+  # A running service is a ServiceRecord; SystemUI's binding from before the force stop stays listed, dead.
+  check "and starts no service" bash -c "! adb shell dumpsys activity services '$pkg' | grep -q 'ServiceRecord{.*PlaybackService'"
   app_up >/dev/null
   "$app" play "$song" >/dev/null; sounds 20
 fi
