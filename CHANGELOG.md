@@ -6,6 +6,22 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-11-19
+
+### Added
+
+- The notification and lock screen show shuffle again
+- A downloaded playlist keeps its provider songs and follows edits
+- Plugins can add, hide and change the notification's buttons
+- Each profile can scrobble to ListenBrainz, Libre.fm and Last.fm (#164)
+
+### Fixed
+
+- An album page's cover fades into it and scrolls with its title, as the player's does
+- Plugins reach headphones from the terminal client on macOS
+- A plugin of rows alone shows them on the devices sheet
+- Headphones the phone renamed show their battery and controls
+
 ## [0.9.4] - 2026-11-16
 
 ### Added
