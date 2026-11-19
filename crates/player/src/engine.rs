@@ -1329,11 +1329,13 @@ impl TransitionEngine {
                 None => (p.duration_us(), p.ramp_us()),
             };
             let frames = |us: i64| (us * s_fmt.rate as i64 / 1_000_000).max(0) as u64;
+            // The stretcher's first frame is where the incoming song starts: after its delay, or late.
+            let from_us = (m.in_delay_ms * 1000).max(late);
             if m.in_rates.is_empty() {
-                s.configure(p.tempo_ratio() as f64, frames(glide_us - repeats_us - late), frames(ramp_us));
+                s.configure(p.tempo_ratio() as f64, frames(glide_us - from_us - repeats_us), frames(ramp_us));
             } else {
-                // The plan's knots in the stretcher's output frames, from where the incoming song starts.
-                let from_ms = (m.in_delay_ms as f64).max(late as f64 / 1000.0);
+                // The plan's knots in the stretcher's output frames.
+                let from_ms = from_us as f64 / 1000.0;
                 let at = |ms: f64| ((ms - from_ms).max(0.0) * s_fmt.rate as f64 / 1000.0).round() as u64;
                 self.knots.clear();
                 self.knots.push((0, m.in_ratio_at(from_ms)));
@@ -1342,7 +1344,7 @@ impl TransitionEngine {
             }
             // In its shifted key through the rest of the overlap, from where it starts, then back to its own.
             if let Some(k) = m.in_key {
-                let left_us = p.duration_us() - (m.in_delay_ms * 1000).max(late) - repeats_us;
+                let left_us = p.duration_us() - from_us - repeats_us;
                 s.transpose(k.semitones, frames(left_us), frames(k.ramp_ms * 1000));
             }
             self.flight.stretch = Some(Stretch { s, format: s_fmt });
@@ -2686,6 +2688,36 @@ mod tests {
             let step = entry.windows(2).map(|w| (w[1] as i32 - w[0] as i32).abs()).max().unwrap_or(0);
             assert!(step < 300, "{name}: a step of {step} as the stretcher takes over");
         }
+    }
+
+    /// A song that comes in a second into the mix keeps the mix's tempo to the mix's end and is back at its own a ramp
+    /// later (varispeed: 440 Hz again), not a second after that.
+    #[test]
+    fn a_delayed_song_ramps_back_from_the_mix_end() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        let mut p = fade("b", 1_000_000);
+        (p.mixer.tempo_ratio, p.mixer.keep_pitch, p.mixer.tempo_ramp_ms, p.mixer.in_delay_ms) = (1.1, false, 1000, 1000);
+        h.plans.insert("a".into(), p);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        feed(&mut e, &mut d, &mut h, &tone(0, 3.0), 0);
+        let passed = d.samples().len() / 2;
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+        let b: Vec<u8> = (0..6 * RATE as usize)
+            .flat_map(|i| {
+                let v = ((i as f64 * 440.0 * std::f64::consts::TAU / RATE as f64).sin() * 8000.0) as i16;
+                [v, v]
+            })
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        feed(&mut e, &mut d, &mut h, &b, 0);
+        let s: Vec<i16> = d.samples().iter().step_by(2).copied().collect();
+        let crossings = |from: f64, to: f64| {
+            let w = &s[passed + (from * RATE as f64) as usize..passed + (to * RATE as f64) as usize];
+            w.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count() as i64
+        };
+        assert!((crossings(1.4, 1.9) - 484).abs() <= 4, "the mix's tempo in the mix: {}", crossings(1.4, 1.9));
+        assert!((crossings(3.1, 3.6) - 440).abs() <= 4, "its own tempo a ramp after the mix: {}", crossings(3.1, 3.6));
     }
 
     /// The outgoing song follows its rates (varispeed): 1 for a second, rising to 1.1 by 1.5 s and holding it, so
