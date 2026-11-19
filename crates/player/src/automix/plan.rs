@@ -2940,7 +2940,8 @@ mod tests {
     }
 
     /// Smooth across a tempo gap, after a melt: the next pair glows out instead, both songs crossing at equal power
-    /// over two beats around an outgoing downbeat after its last line, the reverb ringing on, all within the song.
+    /// over two beats around an outgoing downbeat after its last line, the reverb ringing on, what is heard of the song
+    /// within it.
     #[test]
     fn smooth_glows_out_for_variety() {
         let a = TrackAnalysis { vocal_start_ms: 20_000, vocal_end_ms: 225_000, ..track(128.0) };
@@ -2950,7 +2951,7 @@ mod tests {
         let exit = p.out_start_ms + (p.out_fade_start_ms + p.out_fade_end_ms) / 2;
         assert!(on_downbeat(&a, exit as f64) && exit >= 225_000, "{p:?}");
         assert_eq!((p.in_fade_start_ms, p.in_fade_end_ms), (p.out_fade_start_ms, p.out_fade_end_ms), "one crossing");
-        assert!(p.reverb.is_some() && p.out_start_ms + p.duration_ms <= 240_000, "{p:?}");
+        assert!(p.reverb.is_some() && p.out_start_ms as f64 + p.out_held_ms() <= 240_000.0, "{p:?}");
         check_skip(&p, &a, &track(170.0), 240_000);
     }
 
@@ -3868,26 +3869,33 @@ mod tests {
         let beat: f64 = 60_000.0 / 128.0;
         let stop = (120.0 + 500.0 * beat) as i64;
         // Its ring-out found as a closing breakdown, or its stop alone (too short a ring for a bar of it), the last
-        // word ending on it.
+        // word ending on it; and its stop a second before its file ends, too little ring for the glow's reverb.
         let rung = TrackAnalysis { exit_ms: stop, ..track(128.0) };
         let cold = TrackAnalysis { stop_ms: stop, vocal_start_ms: 20_000, vocal_end_ms: stop + 100, ..track(128.0) };
+        let end = stop + 1000;
+        let clipped = TrackAnalysis { duration_ms: end, silence_end_ms: end, mixramp_end_ms: stop + 800, ..cold.clone() };
         let far_tempo = track(150.0);
         let far_keys = TrackAnalysis { key: camelot(6, false), ..far_tempo.clone() };
         let glow = beat.round() as i64;
         for (style, previous, lead) in [(MixStyle::Smooth, None, glow), (MixStyle::Smooth, Some(TransitionKind::ReverbWash), 0), (MixStyle::Dj, None, glow), (MixStyle::Dj, Some(TransitionKind::ReverbWash), 0)] {
-            for ((b, beat_match), a) in [(&far_tempo, true), (&far_keys, true), (&far_tempo, false), (&far_keys, false)].into_iter().flat_map(|x| [(x, &rung), (x, &cold)]) {
+            let songs = [(&rung, 240_000), (&cold, 240_000), (&clipped, end)];
+            for ((b, beat_match), (a, out_dur)) in [(&far_tempo, true), (&far_keys, true), (&far_tempo, false), (&far_keys, false)].into_iter().flat_map(|x| songs.map(|a| (x, a))) {
                 let s = AutoMixSettings { max_transition_s: 40.0, style, beat_match, previous, ..Default::default() };
-                let p = plan(Some(a), Some(b), 240_000, 240_000, &s);
+                let p = plan(Some(a), Some(b), out_dur, 240_000, &s);
                 let kind = if lead > 0 { TransitionKind::ReverbWash } else { TransitionKind::MixRampFade };
                 assert_eq!((p.kind, p.out_start_ms + lead, p.in_start_ms, p.in_delay_ms), (kind, stop, b.silence_start_ms, lead), "{style:?}: {p:?}");
-                assert_eq!(p.out_start_ms + p.duration_ms, a.silence_end_ms, "the ring-out is heard to its end: {p:?}");
                 assert!(p.in_fade_end_ms - p.in_fade_start_ms <= MIN_FADE_MS && p.low_pass.is_none(), "the next song comes in at once: {p:?}");
                 assert_eq!(p.out_fade_start_ms, lead, "the hit is heard whole: {p:?}");
                 assert_eq!(p.reverb.map(|r| r.send.end_ms), (lead > 0).then_some(2 * lead), "{p:?}");
-                let falls = if lead > 0 { lead + (4.0 * beat).round() as i64 } else { p.duration_ms };
+                let ring = a.silence_end_ms - stop;
+                let falls = if lead > 0 { lead + (4.0 * beat).round().min(ring as f64) as i64 } else { p.duration_ms };
                 assert_eq!(p.out_fade_end_ms, falls, "{p:?}");
                 assert!(p.out_tail.is_none(), "the glow carries it on, the song not played out under it: {p:?}");
-                check_skip(&p, a, b, 240_000);
+                // The ring-out heard to its end, the song's own or the reverb's after it; of the song nothing past it.
+                let rings = p.reverb.map_or(0, |r| r.send.end_ms + (r.decay_s * 500.0) as i64);
+                assert_eq!(p.duration_ms, (lead + ring).max(rings), "the ring-out is heard to its end: {p:?}");
+                assert!(p.out_start_ms as f64 + p.out_held_ms() <= a.silence_end_ms as f64 + 0.5, "{p:?}");
+                check_skip(&p, a, b, out_dur);
             }
         }
     }
@@ -3983,7 +3991,7 @@ mod tests {
             assert!((at - cross).abs() <= 1.0 && a.vocal_end_ms as f64 - at <= 4.0 * beat, "{p:?}");
             assert_eq!((p.in_fade_start_ms, p.in_fade_end_ms), (p.out_fade_start_ms, p.out_fade_end_ms), "one crossing");
             let send = p.reverb.expect(&p.reason).send;
-            assert!(send.start_ms <= p.out_fade_start_ms - (2.0 * beat) as i64 && p.out_start_ms + p.duration_ms <= 240_000, "{p:?}");
+            assert!(send.start_ms <= p.out_fade_start_ms - (2.0 * beat) as i64 && p.out_start_ms as f64 + p.out_held_ms() <= 240_000.0, "{p:?}");
             let r = plan(Some(a), Some(&b), 240_000, 240_000, &AutoMixSettings { previous: Some(TransitionKind::ReverbWash), ..smooth });
             assert!(r.kind == TransitionKind::FilterRide && r.reason.starts_with("rise"), "{}", r.reason);
             let (lp, swap) = (r.in_low_pass.expect(&r.reason), r.bass_swap.expect(&r.reason));

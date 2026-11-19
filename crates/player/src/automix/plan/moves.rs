@@ -609,6 +609,7 @@ pub(super) fn afterglow(p: &Pair) -> Option<Move> {
     let (_, at) = entry(Some(b), p.room.in_dur);
     let (mut m, send) = centred(p, TransitionKind::ReverbWash, &x, beat, at)?;
     m.reverb = Some(Reverb { send, decay_s: AFTERGLOW_DECAY_S, wet_db: AFTERGLOW_WET_DB, low_cut_hz: REVERB_LOW_CUT_HZ });
+    ring_room(&mut m, p.room);
     m.reason = format!("afterglow into the next song{}{}", x.reason(), tail(p.why_not));
     Some(Move { plan: m, worth: crossing_worth(suits(b, at) == Suits::Glow, &x) })
 }
@@ -714,11 +715,24 @@ pub(super) fn reverb_wash(p: &Pair) -> Option<Move> {
     (m.out_fade_start_ms, m.out_fade_end_ms) = (bar.round() as i64, (bar + 2.0 * beat).round() as i64);
     (m.in_fade_start_ms, m.in_fade_end_ms) = (land.round() as i64, (land + REVERB_IN_BARS * bar).round() as i64);
     m.in_gain_db = loudness_trim(Some(a), Some(b), s);
+    ring_room(&mut m, p.room);
     m.reason = format!("reverb wash into a calmer song{}", tail(p.why_not));
     Some(Move { plan: m, worth: REVERB_WORTH })
 }
 
 const REVERB_DECAY_S: f32 = 3.5;
+
+/// A reverb's room to ring: the mix runs on at least [`RING_MS_PER_DECAY_S`] a second of its decay past its send's end,
+/// the outgoing song gone or not, so it rings on by itself before the mixer fades it over the last half of that; within
+/// the longest mix and what the incoming song has. Nothing else moves.
+fn ring_room(m: &mut TransitionPlan, room: Room) {
+    let Some(r) = m.reverb else { return };
+    let need = r.send.end_ms + (r.decay_s as f64 * RING_MS_PER_DECAY_S).round() as i64;
+    let has = m.in_delay_ms + ((room.in_dur - m.in_start_ms) as f64 / m.tempo_ratio.max(1e-3)).floor() as i64;
+    m.lengthen(need.min(room.max_len).min(has));
+}
+
+const RING_MS_PER_DECAY_S: f64 = 500.0;
 const REVERB_WET_DB: f32 = -3.0;
 const REVERB_LOW_CUT_HZ: f32 = 250.0;
 const REVERB_IN_BARS: f64 = 2.0;
@@ -794,6 +808,7 @@ pub(super) fn stop(p: &Pair) -> Vec<Move> {
         (m.out_fade_start_ms, m.out_fade_end_ms) = (ms(lead), ms(lead + super::bar_ms(p.a)).min(m.duration_ms));
         (m.in_fade_start_ms, m.in_fade_end_ms) = (ms(lead), ms(lead) + dry.in_fade_end_ms);
         m.reverb = Some(Reverb { send: Window { start_ms: 0, end_ms: ms(2.0 * lead) }, decay_s: AFTERGLOW_DECAY_S, wet_db: AFTERGLOW_WET_DB, low_cut_hz: REVERB_LOW_CUT_HZ });
+        ring_room(&mut m, p.room);
         m.reason = format!("on its stop, its last hit glowing under the next song{}", tail(p.why_not));
         Move { plan: m, worth: if rings { STOP_GLOW_WORTH } else { CUT_STOP_GLOW_WORTH } }
     });
