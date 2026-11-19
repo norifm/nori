@@ -167,6 +167,9 @@ impl Shelf {
 /// A deck's lows during a bass swap: two low shelves at half the cut, together this far down when the deck has
 /// none (as far as a 4th-order high-pass at the cut takes them, and no further above it), dB.
 const SWAP_KILL_DB: f64 = -48.0;
+/// A deck's fader under this (-20 dB) is too quiet to take or keep all of a bass swap's lows: the other deck keeps a
+/// share of them, all of them once the fader is down.
+const SWAP_HEARD: f64 = 0.1;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Coef {
@@ -983,15 +986,20 @@ impl Mixer {
         let held = 1.0 / (out * out * heard_out + inc * inc * heard_in).sqrt().max(1.0);
         let (trim_out, trim_in) = trims(self.gap_db, self.trim_span.progress(p));
         // Beat-matched kicks land together and add up, so their lows change hands at equal gain. Other lows add in
-        // power: they change hands at equal power, held to the power of one song under the fades.
+        // power: they change hands at equal power. Either way the lows are held to one song's under the faders, and a
+        // deck too quiet to be heard has none to give or take: the other deck keeps them.
         let swap = self.swap.map(|s| {
             let swapped = raised_cos(s.progress(p));
+            let heard = |fader: f64| (fader / SWAP_HEARD).min(1.0);
+            let (own_out, own_in) = (1.0 - swapped * heard(inc), 1.0 - (1.0 - swapped) * heard(out));
             let (lows_out, lows_in) = if self.matched {
-                (1.0 - swapped, swapped)
+                let lows = out * own_out + inc * own_in;
+                let k = if lows > 0.0 { (out + inc).min(1.0) / lows } else { 1.0 };
+                (k * own_out, k * own_in)
             } else {
-                let (o, i) = ((1.0 - swapped).sqrt(), swapped.sqrt());
-                let k = ((out * out + inc * inc).min(1.0) / (out * out * o * o + inc * inc * i * i).max(f64::MIN_POSITIVE)).sqrt();
-                (k * o, k * i)
+                let lows = out * out * own_out + inc * inc * own_in;
+                let k = if lows > 0.0 { ((out * out + inc * inc).min(1.0) / lows).sqrt() } else { 1.0 };
+                (k * own_out.sqrt(), k * own_in.sqrt())
             };
             (self.swap_section(lows_out), self.swap_section(lows_in), self.hold_shelf.high(held))
         });
@@ -1549,6 +1557,47 @@ mod tests {
         }
     }
 
+    /// Beat-matched kicks land together: the same low tone on both decks, in phase, sums to one song's level through a
+    /// swap inside a longer in fade, as long as it, and after it.
+    #[test]
+    fn beat_matched_lows_hold_one_songs_level_through_a_swap() {
+        for (in_end_ms, at_ms, len_ms) in [(1500, 0, 375), (1500, 0, 1500), (500, 750, 375)] {
+            let mut p = plan();
+            p.kind = TransitionKind::BeatMatched;
+            p.fade_curve = FadeCurve::SineSquared;
+            (p.duration_ms, p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (3000, 0, 1500, 0, in_end_ms);
+            p.bass_swap = Some(BassSwap { at_ms, len_ms, cut_hz: 400.0 });
+            let bass = sine(50.0, 144_000);
+            let y = mix(&p, &bass, &bass);
+            let db = |at: usize| 20.0 * (rms(&y[at..at + 1920]) / rms(&bass[at..at + 1920])).log10();
+            let (worst, at) = (0..72_000).step_by(1920).map(|at| (db(at), at)).fold((0f64, 0), |w, d| if d.0.abs() > w.0.abs() { d } else { w });
+            assert!(worst.abs() < 0.5, "in fade to {in_end_ms} ms, swap {at_ms}+{len_ms} ms: {worst:+.1} dB at {:.2} s", at as f64 / RATE);
+        }
+    }
+
+    /// A swap while one deck is silent hands nothing over: the deck heard keeps its lows, whole and finite, with the
+    /// swap after the outgoing fade's end or over before the incoming fade starts.
+    #[test]
+    fn a_deck_not_heard_has_no_lows_to_give_or_take() {
+        let (a, b) = (sine(50.0, 96000), sine(80.0, 96000));
+        for kind in [TransitionKind::EqualPowerFade, TransitionKind::BeatMatched] {
+            // (out fade, in fade, swap start, swap length, where only one deck is heard, which).
+            for (out_fade, in_fade, at_ms, len_ms, (from, to), incoming) in [((0, 500), (0, 0), 600, 200, (500, 2000), true), ((500, 1000), (500, 1000), 0, 200, (0, 450), false)] {
+                let mut p = plan();
+                p.kind = kind;
+                (p.duration_ms, p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (2000, out_fade.0, out_fade.1, in_fade.0, in_fade.1);
+                p.bass_swap = Some(BassSwap { at_ms, len_ms, cut_hz: 200.0 });
+                let y = mix(&p, &a, &b);
+                let peak = y.iter().fold(0f32, |m, v| if v.is_finite() { m.max(v.abs()) } else { f32::INFINITY });
+                assert!(peak < 0.75, "{kind:?}, swap at {at_ms} ms: peaks at {peak}");
+                let deck = if incoming { &b } else { &a };
+                let (from, to) = (from * 48, to * 48);
+                let kept = rms(&y[from..to]) / rms(&deck[from..to]);
+                assert!((kept - 1.0).abs() < 0.02, "{kind:?}, swap at {at_ms} ms: the deck heard keeps {kept:.3} of its lows");
+            }
+        }
+    }
+
     /// The lows change hands and nothing else: through a bass swap and after it, the mids above the cut keep
     /// the level they had before it.
     #[test]
@@ -1802,8 +1851,8 @@ mod tests {
         let zeros = vec![0f32; 96000];
         let bass = sine(50.0, 96000);
         let y = mix(&p, &zeros, &bass);
-        assert!(rms(&y[9600..43200]) / rms(&bass) < 0.03, "the incoming bass waits for the swap");
-        assert!((rms(&y[57600..91200]) / rms(&bass) - 1.0).abs() < 0.02, "and comes in after it");
+        assert!(rms(&y[9600..19200]) / rms(&bass) < 0.03, "the incoming bass waits while the outgoing deck is heard");
+        assert!((rms(&y[28800..91200]) / rms(&bass) - 1.0).abs() < 0.02, "and is whole once that deck is gone, before the swap");
         // The swap at the start: the outgoing lows are gone before they reach the echo, its mids are not.
         let swapped = TransitionPlan { bass_swap: Some(BassSwap { at_ms: 0, len_ms: 1, cut_hz: 200.0 }), ..p.clone() };
         let unswapped = TransitionPlan { bass_swap: None, ..p };
