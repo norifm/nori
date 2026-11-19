@@ -1247,13 +1247,15 @@ impl TransitionEngine {
                 };
                 self.out_knots.clear();
                 let mix_out = if let (Some((start_ms, end_ms, to)), Some((st, ..))) = (glide, self.out_stretch.as_ref()) {
-                    // The stretcher takes over early enough to cross in at ratio 1, warmed on the bars before.
-                    let start = frames_of(start_ms);
-                    let from = start.saturating_sub(st.entry_frames()).max(st.latency_frames().min(start));
-                    let ramp = frames_of(end_ms - start_ms) as u64;
-                    self.flight.out_glide = Some(OutGlide { from, hold: (start - from) as u64, ramp, to, started: false });
-                    // The rates in the stretcher's own output frames, from where it takes over.
-                    let at = |ms: f64| ((ms.max(0.0) * out.rate as f64 / 1000.0) as u64).saturating_sub(from as u64);
+                    // The stretcher takes over early enough to cross in at ratio 1. A glide sooner than that after the
+                    // mix starts waits for it and ends as much sooner, so it plays the same song time.
+                    let (start, entry) = (frames_of(start_ms), st.entry_frames());
+                    let from = start.saturating_sub(entry);
+                    let short = entry - (start - from);
+                    let ramp = frames_of(end_ms - start_ms).saturating_sub(2 * short) as u64;
+                    self.flight.out_glide = Some(OutGlide { from, hold: entry as u64, ramp, to, started: false });
+                    // The rates in the stretcher's own output frames, from where it takes over; 1 until it has crossed in.
+                    let at = |ms: f64| ((ms.max(0.0) * out.rate as f64 / 1000.0) as u64).saturating_sub(from as u64).max(entry as u64);
                     self.out_knots.extend(rates.iter().map(|k| (at(k.at_ms), k.speed)));
                     MixOut::Bent { read: 0, frame: 0, frames: frames_of(p.mixer.duration_ms), held: held.map(|l| l.scaled(out.frame_bytes())) }
                 } else if let Some(held) = held {
@@ -2648,6 +2650,42 @@ mod tests {
         let glided = &s[passed + RATE as usize..passed + RATE as usize * 19 / 10];
         let crossings = glided.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count();
         assert!((crossings as i64 - 810).abs() <= 6, "the ending speeds up: {crossings} zero crossings");
+    }
+
+    /// A glide or rates from the mix's first frame, keeping pitch: the stretcher takes the ending over with no frame
+    /// dropped.
+    #[test]
+    fn a_glide_from_the_mix_start_drops_no_frame() {
+        let glide = |p: &mut Plan| p.mixer.out_glide = Some(crate::types::Glide { window: crate::types::Window { start_ms: 0, end_ms: 2000 }, to: 0.95 });
+        let rates = |p: &mut Plan| {
+            p.mixer.out_rates = [(0.0, 1.0), (400.0, 0.99), (2000.0, 0.99)].map(|(at_ms, speed)| crate::types::Rate { at_ms, speed }).to_vec();
+            p.mixer.in_rates = [(0.0, 1.0), (2000.0, 1.0)].map(|(at_ms, speed)| crate::types::Rate { at_ms, speed }).to_vec();
+        };
+        for (name, set) in [("glide", &glide as &dyn Fn(&mut Plan)), ("rates", &rates)] {
+            let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+            let mut p = fade("b", 1_000_000);
+            set(&mut p);
+            let held = p.held_us();
+            h.plans.insert("a".into(), p);
+            e.configure(&mut d, &mut h, stream("a", FMT));
+            // Never near zero: a dropped frame is a step of the whole level.
+            let a: Vec<u8> = (0..RATE as usize + FMT.bytes(held) / 4)
+                .flat_map(|i| {
+                    let v = 9000 + ((i as f64 * 220.0 * std::f64::consts::TAU / RATE as f64).sin() * 3000.0) as i16;
+                    [v, v]
+                })
+                .flat_map(i16::to_le_bytes)
+                .collect();
+            feed(&mut e, &mut d, &mut h, &a, 0);
+            let passed = d.samples().len() / 2;
+            e.configure(&mut d, &mut h, stream("b", FMT));
+            e.handle_discontinuity(&mut d, &mut h);
+            feed(&mut e, &mut d, &mut h, &vec![0u8; FMT.bytes(4_000_000)], 4_000_000);
+            let s: Vec<i16> = d.samples().iter().step_by(2).copied().collect();
+            let entry = &s[passed - 100..passed + RATE as usize / 2];
+            let step = entry.windows(2).map(|w| (w[1] as i32 - w[0] as i32).abs()).max().unwrap_or(0);
+            assert!(step < 300, "{name}: a step of {step} as the stretcher takes over");
+        }
     }
 
     /// The outgoing song follows its rates (varispeed): 1 for a second, rising to 1.1 by 1.5 s and holding it, so
