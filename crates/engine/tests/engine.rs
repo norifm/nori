@@ -2165,21 +2165,22 @@ fn beyond_dither(heard: &[i16], ideal: &[i16]) -> Option<usize> {
 
 // ---- settings changed while music plays ----
 
-/// A shared `sim::App` the test changes while the engine plays.
+/// A shared `sim::App` the test changes while the engine plays, and the plan every transition takes
+/// instead of the planner's, if any.
 #[derive(Clone)]
-struct Live(Arc<Mutex<sim::App>>);
+struct Live(Arc<Mutex<sim::App>>, Option<Plan>);
 
 impl Live {
     fn new(prefs: TransitionPrefs) -> Live {
         let mut app = sim::App::new();
         app.prefs = prefs;
-        Live(Arc::new(Mutex::new(app)))
+        Live(Arc::new(Mutex::new(app)), None)
     }
 }
 
 impl Host for Live {
     fn plan_for(&mut self, outgoing_id: &str) -> Option<Plan> {
-        self.0.lock().plan_for(outgoing_id)
+        self.1.clone().or_else(|| self.0.lock().plan_for(outgoing_id))
     }
 
     fn wants_analysis(&mut self, song_id: &str) -> Option<u64> {
@@ -4157,20 +4158,7 @@ fn a_glow_runs_on_past_the_song() {
     let (dur, start, delay) = (num("ReverbWash "), num(" ms at "), num("heard from "));
     assert!(start + dur > 30_000 + 1_000, "the mix runs on past the song's end: {plan}");
     let frames = |ms: i64| (ms * RATE as i64 / 1000) as usize;
-    // The place shown each 40 ms through the mix: a runs on, never past its end, then b.
-    assert!(rig.wait_for(60, |r| r.heard.lock().len() / 2 >= frames(start - 20_000 - 1_000)));
-    // Up to where a's file ends, b then that far into its own time.
-    let b_at_a_end = 30_000 - start - delay;
-    let mut places = vec![place(&rig)];
-    while places.last().is_some_and(|&(i, ms)| i == Some(0) || ms < b_at_a_end - 100) {
-        rig.run(40);
-        places.push(place(&rig));
-    }
-    for w in places.windows(2) {
-        let ((i, from), (j, to)) = (w[0], w[1]);
-        assert!(j >= i && (i != j || (0..=120).contains(&(to - from))), "the place runs on: {w:?} in {places:?}");
-    }
-    assert!(places.iter().all(|&(i, ms)| i != Some(0) || ms <= 30_000) && places.last().is_some_and(|p| p.0 == Some(1)), "{places:?}");
+    assert_place_follows(&places_through(&rig, start - 1_000, start + dur + 3_000), start, delay, start + dur);
     assert!(rig.wait_for(60, Rig::ended), "{:?}", live.0.lock().log);
     let log = live.0.lock().log.clone();
     assert!(!log.iter().any(|l| l.contains("made to fit")), "{log:?}");
@@ -4181,4 +4169,59 @@ fn a_glow_runs_on_past_the_song() {
     let n = heard.len() - after;
     assert!(n.abs_diff(b.len() - from) <= 2, "b takes over on time, to the frame the plan's ms allow: {n} against {}: {plan}", b.len() - from);
     assert_eq!(beyond_dither(&heard[after..], &b[b.len() - n..]), None, "b sample for sample after the mix, to its end");
+}
+
+/// A fade from a (30 s, played from 20 s) into b, `start` ms into a for `dur` ms with b coming in `delay` ms
+/// into it: ending at a's end or running on past it, b in at once or late.
+#[test]
+fn the_place_follows_the_ear_through_a_mix() {
+    use nori_player::automix::plan;
+    use nori_player::types::AutoMixSettings;
+    for (start, dur, delay) in [(24_000, 6_000, 0), (24_000, 6_000, 1_500), (26_000, 6_000, 0), (26_000, 6_000, 1_500)] {
+        let (a, b) = (common::sine(RATE, 200.0, 30.0, 6_000.0), common::sine(RATE, 900.0, 40.0, 6_000.0));
+        let s = AutoMixSettings { max_transition_s: dur as f32 / 1000.0, ..Default::default() };
+        let mut t = plan::plan(None, None, 30_000, 40_000, &s);
+        assert_eq!(t.duration_ms, dur);
+        (t.out_start_ms, t.in_start_ms, t.tempo_ratio, t.keep_pitch, t.tempo_ramp_ms, t.out_loop, t.in_delay_ms) = (start, 0, 1.0, true, 0, None, delay);
+        // A runs on to its end and no further; b fades in from its first sample.
+        (t.out_fade_start_ms, t.out_fade_end_ms, t.in_fade_start_ms, t.in_fade_end_ms) = (0, (30_000 - start).min(dur), delay, dur);
+        let mut live = Live::new(TransitionPrefs { auto_mix: true, beat_match: false, ..prefs_off() });
+        live.1 = Some(Plan { incoming_id: "b".into(), mixer: t });
+        let files = vec![("a".to_string(), wav(&a), 30_000), ("b".to_string(), wav(&b), 40_000)];
+        let rig = Rig::build(files, live.clone(), Settings { auto_mix: true, ..Settings::default() }, Extra { pace: Some(5.0), ..Extra::default() });
+        rig.engine.play_at(0, 20_000);
+        assert_place_follows(&places_through(&rig, start - 2_000, start + dur + 3_000), start, delay, start + dur);
+        assert!(!live.0.lock().log.iter().any(|l| l.contains("made to fit")), "{start} {dur} {delay}: {:?}", live.0.lock().log);
+    }
+}
+
+/// The place shown each 40 ms from when a (played from 20 s) is heard at `from_ms` until `to_ms` of its time
+/// (run on past its end), each with a's time heard then.
+fn places_through(rig: &Rig, from_ms: i64, to_ms: i64) -> Vec<(i64, (Option<usize>, i64))> {
+    let ear = |r: &Rig| 20_000 + (r.heard.lock().len() / 2) as i64 * 1000 / RATE as i64;
+    assert!(rig.wait_for(60, |r| ear(r) >= from_ms));
+    let mut places = vec![(ear(rig), place(rig))];
+    while places.last().is_some_and(|&(at, _)| at < to_ms) {
+        rig.run(40);
+        places.push((ear(rig), place(rig)));
+    }
+    places
+}
+
+/// The place shown is a's as heard until the mix starts at `start`, b's from where it came in (`delay` into the mix)
+/// once it ends at `end`; between them it never goes back, leaps ahead or runs past a's 30 s.
+fn assert_place_follows(places: &[(i64, (Option<usize>, i64))], start: i64, delay: i64, end: i64) {
+    let near = |shown: i64, heard: i64| (shown - heard).abs() <= 120;
+    for w in places.windows(2) {
+        let ((t0, (i, from)), (t1, (j, to))) = (w[0], w[1]);
+        assert!(j >= i && (i != j || (0..=t1 - t0 + 120).contains(&(to - from))), "the place runs on: {w:?} in {places:?}");
+    }
+    for &(at, shown) in places {
+        assert!(shown.0 != Some(0) || shown.1 <= 30_000, "a no further than its end: {shown:?} in {places:?}");
+        if at < start {
+            assert!(shown.0 == Some(0) && near(shown.1, at), "a as heard at {at} ms: {shown:?} in {places:?}");
+        } else if at > end {
+            assert!(shown.0 == Some(1) && near(shown.1, at - start - delay), "b as heard at a's {at} ms: {shown:?} in {places:?}");
+        }
+    }
 }
