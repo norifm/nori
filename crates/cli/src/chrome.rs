@@ -55,7 +55,7 @@ pub fn tabs(head: Rect) -> Vec<(View, Rect)> {
 pub fn tab_name(v: View) -> &'static str {
     match v {
         View::Home | View::Login => "Home",
-        View::Settings | View::Equalizer => "Settings",
+        View::Settings | View::Equalizer | View::Support => "Settings",
         View::Search => "Search",
         _ => "Library",
     }

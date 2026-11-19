@@ -43,6 +43,12 @@ fn zone(tz: Option<String>, link: Option<String>) -> Option<String> {
     link?.split_once("zoneinfo/").map(|(_, z)| z.to_string())
 }
 
+/// Opens `url` in the system's browser.
+pub fn open_in_browser(url: &str) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let _ = std::process::Command::new(opener).arg(url).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+}
+
 /// What removing a profile leaves open.
 #[derive(Debug, PartialEq)]
 pub enum ProfileRemoved {

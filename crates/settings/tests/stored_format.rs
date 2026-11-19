@@ -121,6 +121,7 @@ fn sample() -> StoredPrefs {
         home_rows: vec![HomeRow::Random, HomeRow::Pinned, HomeRow::Newest],
         pinned_playlists: vec!["p1".into(), "p2".into()],
         list_prefs: [("albums".to_string(), "grid".to_string())].into(),
+        support: nori_settings::settings::Supporter { login: "cus_1.k".into(), paid: vec![1_775_822_400, 1_784_548_800], monthly: true },
     }
 }
 

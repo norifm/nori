@@ -59,7 +59,7 @@ pub struct NoriSeasonNow {
 }
 
 /// The device's local month and day, and whether its zone is south of the equator.
-fn local_date(unix_s: i64, offset_min: i32, zone: &str) -> (u32, u32, bool) {
+pub(crate) fn local_date(unix_s: i64, offset_min: i32, zone: &str) -> (u32, u32, bool) {
     let (month, day) = utc_date(unix_s + i64::from(offset_min) * 60);
     (month, day, southern(zone))
 }

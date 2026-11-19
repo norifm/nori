@@ -67,6 +67,13 @@ typedef struct NoriReport {
 /// Downloaded songs offered an analysis: count of them, about ms minutes; flag 1 when an update changed the
 /// analysis, 0 when AutoMix was turned on. nori_ios_analyse_downloads is the yes.
 #define NORI_REPORT_ANALYSIS_OFFER 26
+/// The support service answered: flag NORI_SUPPORT_*, text the page to open or why not, index 1 when a
+/// monthly payment runs in another currency.
+#define NORI_REPORT_SUPPORT 27
+#define NORI_SUPPORT_FAILED 0
+#define NORI_SUPPORT_GIVEN 1
+#define NORI_SUPPORT_REFRESHED 2
+#define NORI_SUPPORT_MANAGE 3
 
 typedef void (*NoriReportFn)(const NoriReport *report);
 
@@ -466,6 +473,22 @@ void nori_ios_sync(void);
 int32_t nori_ios_hero(int32_t kind, const char *id, int32_t playing, int32_t buffering);
 /// The credits page's lists as JSON to free: {core, data}, each [{name, what, copyright, licence, file}].
 char *nori_ios_credits(void);
+
+/// 1 when this build has a support service, so a Support page.
+int32_t nori_ios_support_offered(void);
+/// The Support page as JSON to free (crates/ios/src/support.rs), "null" without a support service: seals
+/// (season, tilt, accent), the next season, whether a monthly payment runs, currencies, the first choice.
+char *nori_ios_support(int64_t unix_s, int32_t offset_min, const char *zone, int32_t dark, const char *region);
+/// A choice: pick -1 is Other. JSON to free.
+char *nori_ios_support_choice(const char *currency, int32_t monthly, int32_t pick, const char *other);
+/// Starts paying the choice on Stripe's checkout page; NORI_REPORT_SUPPORT answers.
+void nori_ios_support_give(const char *currency, int32_t monthly, int32_t pick, const char *other, int64_t unix_s, int32_t offset_min, const char *zone);
+/// Asks what this app has paid; NORI_REPORT_SUPPORT (NORI_SUPPORT_REFRESHED) once the settings keep it.
+void nori_ios_support_refresh(void);
+/// The monthly payment's page; NORI_REPORT_SUPPORT answers with it.
+void nori_ios_support_manage(void);
+/// `text` as a QR code, JSON to free: { size, dark }, or "null".
+char *nori_ios_qr(const char *text);
 /// Index and storage numbers as JSON (free it).
 char *nori_ios_facts(void);
 

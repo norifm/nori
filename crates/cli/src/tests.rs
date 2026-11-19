@@ -3256,3 +3256,44 @@ fn paired_devices_are_listed_picked_forgotten_and_paired_with_a_reason_when_not(
     a.handle(Msg::Paste(code.clone()));
     assert!(matches!(&a.overlay, Some(Overlay::Pair { text, .. }) if *text == code));
 }
+
+#[test]
+fn support_types_other_picks_a_currency_and_gives_in_the_browser() {
+    let mut a = app();
+    a.support = crate::support::Support::new("PL");
+    a.go(View::Support);
+    assert!(a.cmds.contains(&Cmd::SupportRefresh), "it asks what was paid as it opens");
+    // Amount is selected: → steps to the next amount, enter types Other.
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.support.choice.amount, Some(8_000));
+    key(&mut a, KeyCode::Enter);
+    chars(&mut a, "12,50");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!((a.support.choice.pick, a.support.choice.amount), (nori_core::support::SupportPick::Other, Some(1_250)));
+    // Currency, two lines down: enter picks from all of them.
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(&a.overlay, Some(Overlay::Picker { target: Target::SupportCurrency, .. })));
+    key(&mut a, KeyCode::Up);
+    key(&mut a, KeyCode::Up);
+    key(&mut a, KeyCode::Up);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.support.choice.currency.code, "EUR");
+    assert!(draw(&mut a, 90, 30).contains("Give €12.50"));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.as_slice(), [Cmd::SupportGive(c)] if c.amount == Some(1_250)));
+    // Its checkout page waits under Give until a new seal comes.
+    a.prefs.support.paid = vec![1_767_614_400, 1_775_822_400, 1_784_548_800, 1_792_065_600];
+    a.handle(Msg::SupportGiven(Ok(Some("https://checkout.stripe.com/c/pay/cs_test".into()))));
+    let s = draw(&mut a, 90, 50);
+    dump("support-given", &s);
+    assert!(s.contains("checkout.stripe.com/c/pay/cs_test"));
+    a.prefs.support.paid.push(1_792_065_600);
+    a.handle(Msg::SupportRefreshed);
+    assert_eq!(a.support.given, None);
+    key(&mut a, KeyCode::Esc);
+    assert_eq!(a.view, View::Settings);
+}

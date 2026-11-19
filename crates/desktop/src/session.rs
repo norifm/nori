@@ -63,6 +63,11 @@ pub enum Msg {
     AnalysisOffer(nori_core::automix::AnalysisOffer),
     /// The profile the sign-in form made, and what follows its opening when it was added.
     LoggedIn(Result<SavedServer, String>),
+    /// A payment started on Stripe's checkout page, its address opened in the browser (None: nothing
+    /// payable was chosen); or what to say of why not.
+    SupportGiven(Result<Option<String>, String>),
+    /// The support service told what this app has paid; the settings keep it.
+    SupportRefreshed,
     /// The account's sign-in answered.
     SignedIn(nori_core::providers::SignInResult),
     /// A scrobbling account for profile `profile` signed in, or why not.

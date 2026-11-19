@@ -513,6 +513,8 @@ pub struct App {
     hidden: bool,
     /// Motion is E-ink: the playing bars stand still.
     still: bool,
+    /// The Support page's choice and the payment it gave.
+    support: crate::support::Support,
     /// Lyrics are on screen (Now Playing's lyrics or the side sheet): only then are they fetched.
     lyrics_viewed: bool,
     lists: Lists,
@@ -795,6 +797,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             started: std::time::Instant::now(),
             hidden: false,
             still: false,
+            support: Default::default(),
             lyrics_viewed: false,
             facts: crate::settings::Facts::default(),
             plugged: Default::default(),
@@ -898,7 +901,15 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
         }
         a.plugins_read();
         let wake = a.me.clone();
-        a.compositor.on_wake(move || wake.with(|a| a.repaint()));
+        a.compositor.on_wake(move || {
+            wake.with(|a| {
+                a.repaint();
+                // Back from the browser, the payment given there may have gone through.
+                if a.ui().get_view() == View::Support {
+                    a.support_refresh();
+                }
+            })
+        });
         let prefs = a.root.app.settings.current().unwrap_or_default();
         match prefs.active_server().cloned() {
             Some(p) => a.open(p, None),
@@ -967,12 +978,6 @@ enum Asked {
     Curve,
     /// Opens this page: a newer release's.
     Page(String),
-}
-
-/// Opens `url` in the system's browser.
-fn open_in_browser(url: &str) {
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-    let _ = std::process::Command::new(opener).arg(url).spawn();
 }
 
 /// A kind of profile as its page shows it: `about`, the plugin's own words, in place of the note.
@@ -1190,7 +1195,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_scrobbler_help_opened, h, |a| {
         let kind = nori_core::scrobblers::scrobbler_kinds().get(a.ui().get_scrobbler_adding() as usize).copied();
         if let Some(page) = kind.and_then(nori_core::scrobblers::scrobbler_help_page) {
-            open_in_browser(&page);
+            nori_host::desktop::open_in_browser(&page);
         }
     });
     on!(ui.on_scrobbler_sign_in, h, |a| a.scrobbler_sign_in());
@@ -1199,6 +1204,29 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.sign_in_on(SignInEvent::Close);
     });
     on!(ui.on_open_sign_in_page, h, |a| a.open_sign_in_page());
+    on!(ui.on_support_picked, h, |a, at| {
+        a.support.pick(at);
+        a.support_shown();
+    });
+    on!(ui.on_support_typed, h, |a, text| {
+        a.support.typed(text.into());
+        a.support_shown();
+    });
+    on!(ui.on_support_monthly_set, h, |a, on| {
+        a.support.monthly(on);
+        a.support_shown();
+    });
+    on!(ui.on_support_currency_picked, h, |a, at| {
+        a.support.currency(at.max(0) as usize);
+        a.support_shown();
+    });
+    on!(ui.on_support_give, h, |a| a.support_give());
+    on!(ui.on_support_manage, h, |a| a.support_manage());
+    on!(ui.on_support_open_again, h, |a| {
+        if let Some((url, _)) = &a.support.given {
+            nori_host::desktop::open_in_browser(url);
+        }
+    });
     on!(ui.on_sign_in_code, h, |a| a.sign_in_code());
     on!(ui.on_open_code_page, h, |a| a.open_code_page());
     on!(ui.on_copy_code, h, |a| a.copy_code());
@@ -1404,7 +1432,7 @@ impl App {
     fn note_act(&self) {
         match self.note_asks.take() {
             Some(Asked::Curve) => self.on_session(|s| s.curve_answer()),
-            Some(Asked::Page(url)) => open_in_browser(&url),
+            Some(Asked::Page(url)) => nori_host::desktop::open_in_browser(&url),
             None => {}
         }
         let ui = self.ui();
@@ -1551,7 +1579,7 @@ impl App {
     /// The code's page, in the browser.
     fn open_code_page(&self) {
         if let SignInShown::Code { code: Some(c), .. } = &self.sign_in.shown {
-            open_in_browser(&c.url);
+            nori_host::desktop::open_in_browser(&c.url);
         }
     }
 
@@ -1626,6 +1654,12 @@ impl App {
             }
             View::Equalizer => {
                 self.settings_shown();
+                None
+            }
+            // Each time it opens, what was paid elsewhere (a monthly payment, another device).
+            View::Support => {
+                self.support_shown();
+                self.support_refresh();
                 None
             }
             _ => None,
@@ -3124,7 +3158,7 @@ impl App {
         let Some(kind) = self.root.app.settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
         let page = self.kinds().providers().into_iter().find(|i| i.kind == kind).and_then(|i| i.page().map(str::to_string));
         if let Some(url) = page {
-            open_in_browser(&url);
+            nori_host::desktop::open_in_browser(&url);
         }
     }
 
@@ -3443,7 +3477,7 @@ impl App {
             PluginAct::Install => return ask(words::PLUGIN_PATH, PluginAct::Install.name(), false),
             PluginAct::AddRepo => return ask(words::REPO_ADDRESS, PluginAct::AddRepo.name(), false),
             PluginAct::RemoveRepo(url) => return self.confirm(&words::remove_plugin(&url), "", words::REMOVE, PluginAct::RemoveRepo(url)),
-            PluginAct::Open(url) => return open_in_browser(&url),
+            PluginAct::Open(url) => return nori_host::desktop::open_in_browser(&url),
             PluginAct::Browser => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Browser)),
             PluginAct::Repos => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Repos)),
             PluginAct::Page(id) => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Plugin(id))),
@@ -4217,6 +4251,14 @@ impl App {
                     self.account_kept();
                 }
             }
+            Msg::SupportGiven(Ok(Some(url))) => {
+                let seals = self.root.app.settings.current().unwrap_or_default().support.paid.len();
+                self.support.given = Some((url, seals));
+                self.support_shown();
+            }
+            Msg::SupportGiven(Ok(None)) => {}
+            Msg::SupportGiven(Err(e)) => self.say(&e, true),
+            Msg::SupportRefreshed => self.support_shown(),
             Msg::SignedIn(r) => {
                 let signed_in = matches!(r, nori_core::providers::SignInResult::SignedIn { .. });
                 self.sign_in_on(SignInEvent::Answered { result: r });
@@ -4244,7 +4286,7 @@ impl App {
                 ui.set_scrobbler_busy(false);
                 match approval {
                     Ok(a) => {
-                        open_in_browser(&a.page);
+                        nori_host::desktop::open_in_browser(&a.page);
                         self.scrobbler_approved = Some(a.token);
                         ui.set_scrobbler_page_opened(true);
                     }
@@ -4915,6 +4957,49 @@ impl App {
     }
 
     /// The equalizer page's headphones (the AutoEQ list, searched) and saved profiles.
+    /// The Support page as the settings and its choice have it.
+    fn support_shown(&mut self) {
+        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let ui = self.ui();
+        self.support.fill(&ui, &prefs, crate::look::Today::now());
+    }
+
+    /// Asks the support service what this app has paid, off this thread; the settings keep the answer. Not
+    /// reached, the book stays as it was.
+    fn support_refresh(&self) {
+        let Some(s) = &self.session else { return };
+        let (client, tx) = (s.account().client().clone(), self.tx.clone());
+        nori_host::spawn("nori-support-refresh", move || {
+            if nori_core::transport::block_on(client.support_refresh()).is_ok() {
+                tx.send(Msg::SupportRefreshed);
+            }
+        });
+    }
+
+    /// Starts paying what is chosen on Stripe's checkout page and opens it in the browser, off this thread.
+    fn support_give(&self) {
+        let Some(s) = &self.session else { return };
+        let (client, tx, choice) = (s.account().client().clone(), self.tx.clone(), self.support.choice.clone());
+        let southern = crate::look::Today::now().southern;
+        nori_host::spawn("nori-support-give", move || {
+            let given = nori_host::support::checkout(&client, &choice, southern);
+            if let Ok(Some(url)) = &given {
+                nori_host::desktop::open_in_browser(url);
+            }
+            tx.send(Msg::SupportGiven(given.map_err(|e| words::support_failed(&e))));
+        });
+    }
+
+    /// Opens Stripe's page where the monthly payment is changed or stopped, off this thread.
+    fn support_manage(&self) {
+        let Some(s) = &self.session else { return };
+        let (client, tx) = (s.account().client().clone(), self.tx.clone());
+        nori_host::spawn("nori-support-manage", move || match nori_core::transport::block_on(client.support_manage()) {
+            Ok(url) => nori_host::desktop::open_in_browser(&url),
+            Err(e) => tx.send(Msg::Note { text: words::support_failed(&e), error: true }),
+        });
+    }
+
     fn eq_extras(&mut self) {
         let Some(s) = &self.session else { return };
         let ui = self.ui();
@@ -5034,6 +5119,7 @@ impl App {
     fn setting_action(&mut self, name: &str) {
         match Act::of(name) {
             Some(Act::Equalizer) => self.go(View::Equalizer),
+            Some(Act::Support) => self.go(View::Support),
             Some(Act::AddServer) => {
                 self.editing = None;
                 let ui = self.ui();
@@ -5515,6 +5601,39 @@ mod tests {
         assert_eq!(trail.forward(0.0), None, "a tab chosen forgets the pages ahead");
         trail.opened(PageAsk::Artist("ar".into()), opened_from(View::Search), 0.0);
         assert_eq!(trail.back(0.0).0, Back::Tab(View::Search), "an artist found by search goes back to the search");
+    }
+
+    #[test]
+    fn the_support_foot_stands_where_it_is_however_many_seals() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.set_view(View::Support);
+        ui.show().unwrap();
+        let mut support = crate::support::Support::default();
+        let today = crate::look::Today { month: 11, day: 18, southern: false };
+        // 2023-08 onward, a payment a month.
+        let paid = |n: i64| (0..n).map(|i| 1_692_100_800 + i * 2_629_800).collect::<Vec<i64>>();
+        let mut foot = |seals: i64, name: &str| {
+            let prefs = nori_core::settings::StoredPrefs { support: nori_core::settings::Supporter { paid: paid(seals), ..Default::default() }, ..Default::default() };
+            support.fill(&ui, &prefs, today);
+            ui.window().take_snapshot().unwrap();
+            slint::platform::update_timers_and_animations();
+            let shot = ui.window().take_snapshot().unwrap();
+            if let Some(dir) = std::env::var_os("NORI_DESKTOP_SHOTS") {
+                // As a PPM, which every image tool reads.
+                let mut ppm = format!("P6 {} {} 255\n", shot.width(), shot.height()).into_bytes();
+                ppm.extend(shot.as_bytes().chunks(4).flat_map(|p| [p[0], p[1], p[2]]));
+                let _ = std::fs::write(std::path::Path::new(&dir).join(format!("support-{name}.ppm")), ppm);
+            }
+            // From the card down.
+            shot.as_bytes()[560 * 1280 * 4..].to_vec()
+        };
+        let few = foot(4, "few");
+        let many = foot(40, "many");
+        assert!(few == many, "what to give moved with the book");
     }
 
     #[test]

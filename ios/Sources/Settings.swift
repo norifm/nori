@@ -129,6 +129,10 @@ final class SettingsGroupPage: CardsPage {
                 GroupRow(Say.freeSoftware, value: "AGPL-3.0"),
                 GroupRow(Say.licences, chevron: true) { push(CreditsPage()) },
             ]))
+            // A build with a support service offers its page here.
+            if nori_ios_support_offered() != 0 {
+                views.append(GroupCard([GroupRow(Say.supportTitle, chevron: true) { push(SupportPage()) }]))
+            }
         default:
             break
         }

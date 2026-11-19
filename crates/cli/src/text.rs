@@ -157,6 +157,44 @@ pub const RESTORE_DETAIL: &str = "Its settings replace these. Your profiles stay
 pub const BACKUP_SAVED: &str = "Backup saved";
 pub const BACKUP_PASSWORD: &str = "The backup's password";
 
+// The Support page.
+pub const SUPPORT_TITLE: &str = "Support nori";
+pub const SUPPORT_LINE: &str = "nori is and always will be free.";
+pub const SUPPORT_AMOUNT: &str = "Amount";
+pub const SUPPORT_OTHER: &str = "Other";
+pub const SUPPORT_EVERY_MONTH: &str = "Every month";
+pub const SUPPORT_CURRENCY: &str = "Currency";
+pub const SUPPORT_MANAGE: &str = "Manage monthly support";
+pub const SUPPORT_IN_BROWSER: &str = "Finish in your browser, or open this link:";
+pub const SUPPORT_OTHER_CURRENCY: &str = "Your monthly support is in another currency";
+
+/// The Give button: what `choice` comes to, or that nothing payable is chosen.
+pub fn support_give(choice: &nori_core::support::SupportChoice) -> String {
+    match choice.amount {
+        None => "Choose an amount".into(),
+        Some(a) if choice.cadence == nori_core::support::Cadence::Monthly => format!("Give {} a month", nori_host::support::money(a, &choice.currency)),
+        Some(a) => format!("Give {}", nori_host::support::money(a, &choice.currency)),
+    }
+}
+
+/// What is typed for Other says of itself once it is past a limit.
+pub fn support_limit(choice: &nori_core::support::SupportChoice) -> Option<String> {
+    use nori_core::support::TypedAmount;
+    match choice.typed? {
+        TypedAmount::TooLittle { least } => Some(format!("At least {}", nori_host::support::money(least, &choice.currency))),
+        TypedAmount::TooMuch { most } => Some(format!("At most {}", nori_host::support::money(most, &choice.currency))),
+        _ => None,
+    }
+}
+
+/// Why the support service could not be reached or refused.
+pub fn support_failed(e: &nori_core::transport::NetError) -> String {
+    match e {
+        nori_core::transport::NetError::Http { status: 409 } => SUPPORT_OTHER_CURRENCY.into(),
+        e => format!("The support service didn't answer ({e})"),
+    }
+}
+
 /// Asks for the file a backup is saved to, or restored from.
 pub fn backup_path(restore: bool) -> &'static str {
     if restore { "Backup file to restore" } else { "File to save the backup to" }
@@ -842,6 +880,7 @@ pub mod hints {
     pub const PLUGIN_REPOS: Hints = &[("enter", "add"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];
     pub const PROFILE_ROW: Hints = &[("enter", "switch"), ("e", "rename"), ("m", "scrobbling"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
+    pub const SUPPORT: Hints = &[("↑ ↓", "choose"), ("← →", "change"), ("enter", "type, pick or give"), ("R", "ask again"), ("esc", "back"), ("?", "keys")];
     pub const EQUALIZER: Hints = &[("← →", "choose"), ("↑ ↓", "change"), ("enter", "switch"), ("d", "remove a band"), ("?", "keys")];
     pub const DOWNLOADS: Hints = &[("enter", "play"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const PLAYING: Hints = &[("space", "play"), ("n p", "next, previous"), ("m", "menu"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];

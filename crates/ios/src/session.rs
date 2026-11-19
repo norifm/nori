@@ -80,6 +80,10 @@ pub const REPORT_PAIRED: i32 = 25;
 /// Downloaded songs offered an analysis: [`Report::index`] of them, about [`Report::ms`] minutes; `flag` 1
 /// when an update changed the analysis, 0 when AutoMix was turned on. `nori_ios_analyse_downloads` is the yes.
 pub const REPORT_ANALYSIS_OFFER: i32 = 26;
+/// The support service answered (`nori_ios_support_give`, `_refresh`, `_manage`): `flag` is a `SUPPORT_*`
+/// (crates/ios/src/support.rs), `text` the page to open or why not, `index` 1 when a monthly payment runs in
+/// another currency.
+pub const REPORT_SUPPORT: i32 = 27;
 
 pub const STATE_IDLE: i32 = 0;
 pub const STATE_PLAYING: i32 = 1;

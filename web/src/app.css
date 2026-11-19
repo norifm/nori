@@ -386,6 +386,39 @@ button.group-row:hover:enabled {
   height: 18px;
 }
 
+/* A sheet: opaque paper on the surface rising from the bottom over the scrim, a hairline along its top edge
+   and a quiet bar for a handle, no shadow. */
+dialog.sheet {
+  margin: auto auto 0;
+  width: 100%;
+  max-width: 560px;
+  max-height: 86vh;
+  padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+  border: 0;
+  border-top: var(--hairline) solid var(--hair);
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  background: var(--surface);
+  color: var(--ink);
+  animation: rise 240ms cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+dialog.sheet::backdrop {
+  background: var(--scrim);
+}
+@keyframes rise {
+  from {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+}
+dialog.sheet .handle {
+  display: block;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  margin: 0 auto 12px;
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+}
+
 /* A dialog: a card on the surface over the scrim, a hairline edge and the sheet's corners, no shadow. Its
    title, what it says (groups of rows too), then its buttons at the end, words in ink in line with the text. */
 dialog.card {

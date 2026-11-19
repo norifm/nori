@@ -42,6 +42,7 @@ def macos_container(workspace, output, target_platform, jobs, package_only):
         "--mount", f"type=bind,source={output.parent},target=/output",
         "--mount", "type=volume,source=nori-macos-cache,target=/cache",
         "--env", "CARGO_HOME=/cache/cargo", "--env", "CARGO_TARGET_DIR=/cache/target",
+        "--env", "NORI_SUPPORT_URL", "--env", "NORI_STRIPE_KEY",
         "--workdir", "/workspace", "nori-macos-build",
         "python3", "/tooling/tools/host-release/build.py", "--cross-macos", "--platform", target_platform,
         "--workspace", "/workspace", "--output", "/output", "--jobs", str(jobs),
@@ -150,6 +151,7 @@ def in_linux(arch, workspace, output, command):
         "--mount", f"type=volume,source={cache},target=/cache",
         "--mount", f"type=volume,source=nori-host-{arch}-home,target=/home/build",
         "--env", "CARGO_HOME=/cache/cargo", "--env", "CARGO_TARGET_DIR=/cache/target",
+        "--env", "NORI_SUPPORT_URL", "--env", "NORI_STRIPE_KEY",
         "--env", "SCCACHE_DIR=/cache/sccache", "--workdir", "/workspace", image, *command)
 
 

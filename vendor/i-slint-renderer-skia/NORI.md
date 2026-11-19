@@ -14,5 +14,8 @@ A wgpu 30 renderer can be made retained, as the OpenGL layers are: drawing into 
 holds its last frame repaints only what changed (`SkiaWGPU30Renderer::retained`,
 `render_to_texture_kept`), so a seek bar step repaints the bar, not the whole player.
 
+A Path fills by its `fill-rule`: the crate built every path nonzero, so an even-odd shape (the stamp
+book's seals, their inner border) filled solid.
+
 This crate is a workspace member so Bazel resolves its local source without absolute path repositories.
 Two style lints allow the existing upstream rendering callback signatures.

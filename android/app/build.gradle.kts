@@ -119,6 +119,10 @@ android {
 
     buildFeatures { compose = true; buildConfig = true }
 
+    // nori's words are English only; the libraries' translations (Stripe's sheet ships some 160) would only
+    // add weight, and a page half in another language.
+    androidResources { localeFilters += listOf("en") }
+
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
@@ -138,6 +142,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
+    // The Support page's payment sheet (cards, Google Pay, BLIK, Przelewy24, Revolut Pay, PayPal).
+    implementation(libs.stripe.paymentsheet)
     // The perf build's self test: its plain logic is tested on the JVM (src/testPerf).
     testImplementation("junit:junit:4.13.2")
 }

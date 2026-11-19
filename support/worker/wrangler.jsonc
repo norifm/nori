@@ -1,0 +1,10 @@
+// The support service (src/index.ts). Its Stripe key is a secret: `wrangler secret put STRIPE_SECRET`.
+// Deployed with `npx wrangler@4 deploy` from this folder.
+{
+  "name": "nori-support",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true }
+}

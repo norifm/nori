@@ -16,6 +16,7 @@ mod menu;
 mod motion;
 mod session;
 mod settings;
+mod support;
 mod sung;
 mod words;
 

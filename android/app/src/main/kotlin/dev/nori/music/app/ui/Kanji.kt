@@ -20,9 +20,12 @@ object Kanji {
     /** Not a favorite: the seal's outline with 好 in it. */
     val Seal: ImageVector @Composable get() = ImageVector.vectorResource(dev.nori.music.core.R.drawable.seal_outline)
 
+    /** The seasons' kanji as path data on a 24 grid, 春 夏 秋 冬, in [dev.nori.music.ffi.look.Season] order. */
+    val seasonPaths: List<String> = listOf(SPRING, SUMMER, AUTUMN, WINTER)
+
     /** The seasons' kanji, 春 夏 秋 冬, in [dev.nori.music.ffi.look.Season] order. */
     val seasons: List<ImageVector> by lazy {
-        listOf(SPRING, SUMMER, AUTUMN, WINTER).mapIndexed { i, p ->
+        seasonPaths.mapIndexed { i, p ->
             ImageVector.Builder("season$i", 24.dp, 24.dp, 24f, 24f)
                 .addPath(PathParser().parsePathString(p).toNodes(), fill = SolidColor(androidx.compose.ui.graphics.Color.Black))
                 .build()

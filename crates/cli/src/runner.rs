@@ -580,6 +580,10 @@ impl Runner {
                 if *on {
                     self.update_plugins();
                 }
+                // Back from the browser, the payment given there may have gone through.
+                if *on && app.view == View::Support {
+                    self.support_refresh();
+                }
                 // Under tmux, pictures sent while the pane was hidden were lost.
                 if *on && (std::mem::take(&mut self.unseen_cover) || crate::term::in_tmux()) {
                     self.repaint = true;
@@ -600,6 +604,7 @@ impl Runner {
                 return app.say(said, false);
             }
             Msg::Restored(Err(f)) => return app.say(crate::text::backup_failed(f), true),
+            Msg::SupportRefreshed => prefs_changed(app),
             Msg::Readme { id, blocks } => {
                 app.settings.readme_came(id, blocks.clone());
                 return app.dirty = true;
@@ -1174,6 +1179,27 @@ impl Runner {
             Cmd::Action(c) => s.action(c),
             Cmd::Curve => s.curve_answer(),
             Cmd::CheckUpdate => s.update_check(true),
+            Cmd::SupportGive(choice) => {
+                let (client, tx) = (s.account().client().clone(), self.tx.clone());
+                nori_host::spawn("nori-support-give", move || {
+                    let given = nori_host::support::checkout(&client, &choice, crate::art::Day::now().southern);
+                    if let Ok(Some(url)) = &given {
+                        nori_host::desktop::open_in_browser(url);
+                    }
+                    let _ = tx.send(Msg::SupportGiven(given.map_err(|e| crate::text::support_failed(&e))));
+                });
+            }
+            Cmd::SupportRefresh => self.support_refresh(),
+            Cmd::SupportManage => {
+                let (client, tx) = (s.account().client().clone(), self.tx.clone());
+                nori_host::spawn("nori-support-manage", move || {
+                    let page = block_on(client.support_manage());
+                    if let Ok(url) = &page {
+                        nori_host::desktop::open_in_browser(url);
+                    }
+                    let _ = tx.send(Msg::SupportManaged(page.map_err(|e| crate::text::support_failed(&e))));
+                });
+            }
             Cmd::AnalyseDownloads => s.analyse_downloads(),
             Cmd::SoundPage(page, on) => s.sound_page(page, on),
             Cmd::SearchTyped(text) => {
@@ -1233,6 +1259,20 @@ fn sound_edited(s: &Session, app: &mut App, effect: Option<u32>) {
 fn narrowed(app: &mut App) {
     app.settings.invalidate();
     app.dirty = true;
+}
+
+impl Runner {
+    /// Asks the support service what this app has paid, off this thread; the settings keep the answer.
+    /// Not reached, the book stays as it was.
+    fn support_refresh(&self) {
+        let Some(s) = &self.session else { return };
+        let (client, tx) = (s.account().client().clone(), self.tx.clone());
+        nori_host::spawn("nori-support-refresh", move || {
+            if block_on(client.support_refresh()).is_ok() {
+                let _ = tx.send(Msg::SupportRefreshed);
+            }
+        });
+    }
 }
 
 fn prefs_changed(app: &mut App) {

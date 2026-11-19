@@ -15,6 +15,7 @@ mod later;
 mod play;
 #[cfg(feature = "engine")]
 mod stream;
+mod support;
 
 use std::sync::Arc;
 
