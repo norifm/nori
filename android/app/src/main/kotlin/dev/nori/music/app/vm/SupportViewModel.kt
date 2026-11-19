@@ -8,6 +8,7 @@ import dev.nori.music.ffi.Payment
 import dev.nori.music.ffi.Stamp
 import dev.nori.music.ffi.SupportChoice
 import dev.nori.music.ffi.SupportCurrency
+import dev.nori.music.ffi.SupportPage
 import dev.nori.music.ffi.SupportPick
 import dev.nori.music.ffi.SupportService
 import dev.nori.music.net.lifted
@@ -94,10 +95,10 @@ class SupportViewModel(app: Application) : NoriViewModel(app) {
         if (paid) refresh()
     }
 
-    /** The page where the monthly payment is changed or stopped, for [open]. */
-    fun manage(open: (String) -> Unit) {
+    /** Stripe's [page] for the monthly payment (its card and receipts, or stopping it), for [open]. */
+    fun page(page: SupportPage, open: (String) -> Unit) {
         viewModelScope.launch {
-            runCatching { lifted { nori.client.supportManage() } }
+            runCatching { lifted { nori.client.supportPage(page) } }
                 .onSuccess(open)
                 .onFailure { e -> _paying.value = Paying.Failed(e.said ?: e.javaClass.simpleName, false) }
         }

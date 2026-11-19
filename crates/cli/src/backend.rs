@@ -112,7 +112,7 @@ pub enum Msg {
     /// payable was chosen), or what to say of why not.
     SupportGiven(Result<Option<String>, String>),
     /// Stripe's page for the monthly payment (opened in the browser), or what to say of why not.
-    SupportManaged(Result<String, String>),
+    SupportPage(Result<String, String>),
     /// The support service told what this app has paid, which the settings keep.
     SupportRefreshed,
     /// A message from the session with this id; dropped once another session is open.
@@ -144,7 +144,7 @@ impl Msg {
             Msg::Starred(_) => "star marks".into(),
             Msg::Remote => "remote".into(),
             Msg::SupportGiven(r) => format!("support given: {}", r.is_ok()),
-            Msg::SupportManaged(r) => format!("support manage page: {}", r.is_ok()),
+            Msg::SupportPage(r) => format!("support page: {}", r.is_ok()),
             Msg::SupportRefreshed => "support refreshed".into(),
             Msg::Overridden => "overrides".into(),
             Msg::Jam(r) => format!("jam opened: {}", r.is_ok()),

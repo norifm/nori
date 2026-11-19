@@ -160,23 +160,73 @@ async function stamps(env: Env, body: any): Promise<object> {
     if (!page.has_more) break;
     after = page.data[page.data.length - 1].id;
   }
-  const running = await stripe(env, "GET", "subscriptions", { customer: customer.id, status: "active", limit: 1 });
-  return { paid: paid.sort((a, b) => a - b), monthly: running.data.length > 0 };
+  return { paid: paid.sort((a, b) => a - b), monthly: !!(await running(env, customer.id)) };
 }
 
-/** Stripe's page for changing or stopping a monthly payment. */
+/** The customer's monthly payment that goes on next month: active and not set to stop. */
+async function running(env: Env, customer: string): Promise<any | undefined> {
+  const subs = await stripe(env, "GET", "subscriptions", { customer, status: "active", limit: 10 });
+  return subs.data.find((s: any) => !s.cancel_at_period_end);
+}
+
+/**
+ * The customer portal's two setups, found by their metadata and made the first time: `manage` changes the
+ * card and shows the receipts; `stop` also cancels, and only the Stop link opens it, so the thanks for the
+ * months given is on the page that confirms it. A monthly payment stops at the end of the month paid for.
+ */
+async function portal(env: Env, origin: string, use: "manage" | "stop"): Promise<string> {
+  const all = await stripe(env, "GET", "billing_portal/configurations", { active: true, limit: 100 });
+  const kept = all.data.find((c: any) => c.metadata?.nori === use);
+  if (kept) return kept.id;
+  const made = await stripe(env, "POST", "billing_portal/configurations", {
+    "features[subscription_cancel][enabled]": use === "stop",
+    "features[subscription_cancel][mode]": use === "stop" ? "at_period_end" : undefined,
+    "features[payment_method_update][enabled]": true,
+    "features[invoice_history][enabled]": true,
+    default_return_url: `${origin}/done`,
+    "metadata[nori]": use,
+  });
+  return made.id;
+}
+
+/** How many monthly payments the customer made that went through. */
+async function monthsPaid(env: Env, customer: string): Promise<number> {
+  let months = 0;
+  let after: string | undefined;
+  for (;;) {
+    const page = await stripe(env, "GET", "invoices", { customer, status: "paid", limit: 100, starting_after: after });
+    months += page.data.filter((i: any) => i.amount_paid > 0).length;
+    if (!page.has_more) return months;
+    after = page.data[page.data.length - 1].id;
+  }
+}
+
+/** The thanks on Stripe's page confirming a monthly payment stopped. */
+function thanksFor(months: number): string {
+  return months > 1 ? `Thank you for supporting nori for ${months} months.` : "Thank you for supporting nori for a month.";
+}
+
+/** Stripe's page for the card a monthly payment uses and its receipts. */
 async function manage(env: Env, origin: string, body: any): Promise<object> {
   const customer = await customerOf(env, body.login);
-  const configs = await stripe(env, "GET", "billing_portal/configurations", { is_default: true, limit: 1 });
-  if (!configs.data.length) {
-    await stripe(env, "POST", "billing_portal/configurations", {
-      "features[subscription_cancel][enabled]": true,
-      "features[payment_method_update][enabled]": true,
-      "features[invoice_history][enabled]": true,
-      "default_return_url": `${origin}/done`,
-    });
-  }
-  const session = await stripe(env, "POST", "billing_portal/sessions", { customer: customer.id, return_url: `${origin}/done` });
+  const session = await stripe(env, "POST", "billing_portal/sessions", { customer: customer.id, configuration: await portal(env, origin, "manage"), return_url: `${origin}/done` });
+  return { url: session.url };
+}
+
+/** Stripe's page stopping the monthly payment, which then thanks for the months given; 404 when none runs. */
+async function stop(env: Env, origin: string, body: any): Promise<object> {
+  const customer = await customerOf(env, body.login);
+  const sub = await running(env, customer.id);
+  if (!sub) throw new Failed(404, "no monthly payment");
+  const session = await stripe(env, "POST", "billing_portal/sessions", {
+    customer: customer.id,
+    configuration: await portal(env, origin, "stop"),
+    return_url: `${origin}/done`,
+    "flow_data[type]": "subscription_cancel",
+    "flow_data[subscription_cancel][subscription]": sub.id,
+    "flow_data[after_completion][type]": "hosted_confirmation",
+    "flow_data[after_completion][hosted_confirmation][custom_message]": thanksFor(await monthsPaid(env, customer.id)),
+  });
   return { url: session.url };
 }
 
@@ -248,6 +298,7 @@ export default {
         case "/start": return json(200, await start(env, url.origin, body));
         case "/stamps": return json(200, await stamps(env, body));
         case "/manage": return json(200, await manage(env, url.origin, body));
+        case "/stop": return json(200, await stop(env, url.origin, body));
         default: return json(404, { error: "not found" });
       }
     } catch (e) {

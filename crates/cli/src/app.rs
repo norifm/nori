@@ -173,8 +173,8 @@ pub enum Cmd {
     SupportGive(Box<nori_core::support::SupportChoice>),
     /// Asks the support service what this app has paid.
     SupportRefresh,
-    /// Opens Stripe's page where the monthly payment is changed or stopped.
-    SupportManage,
+    /// Opens Stripe's page for the monthly payment.
+    SupportPage(nori_core::support::SupportPage),
     /// Reads back the downloads an analysis was offered for (`Session::analyse_downloads`).
     AnalyseDownloads,
     Mouse(bool),
@@ -304,7 +304,7 @@ impl Cmd {
             Cmd::CheckUpdate => "check update".into(),
             Cmd::SupportGive(c) => format!("support give {:?} {}", c.amount, c.currency.code),
             Cmd::SupportRefresh => "support refresh".into(),
-            Cmd::SupportManage => "support manage".into(),
+            Cmd::SupportPage(page) => format!("support page {page:?}"),
             Cmd::AnalyseDownloads => "analyse downloads".into(),
             Cmd::SoundPage(page, on) => format!("sound page {page:?} {on}"),
             Cmd::Mouse(on) => format!("mouse {on}"),
@@ -1076,6 +1076,8 @@ pub enum Overlay {
     NewPlaylist { text: String, songs: Vec<String> },
     /// The jam's invite: its link and QR code.
     Invite { link: String },
+    /// The thanks for a seal paid while the Support page is open, of `season`; any key ends it.
+    Thanks { season: nori_look::theme::Season },
     JamSettings,
     /// An invite link pasted to join someone's jam, and why joining failed.
     Join { text: String, error: Option<String>, busy: bool },
@@ -1690,7 +1692,10 @@ impl App {
             }
             View::Search if self.search.view.is_none() => self.search.editing = true,
             // Each time it opens, what was paid elsewhere (a monthly payment, another device).
-            View::Support => self.cmds.push(Cmd::SupportRefresh),
+            View::Support => {
+                self.support.opened(self.prefs.support.paid.len());
+                self.cmds.push(Cmd::SupportRefresh);
+            }
             _ => {}
         }
     }
@@ -1830,11 +1835,18 @@ impl App {
                 self.support.gave(url, seals);
                 self.dirty = true;
             }
-            Msg::SupportGiven(Ok(None)) | Msg::SupportManaged(Ok(_)) => {}
-            Msg::SupportGiven(Err(e)) | Msg::SupportManaged(Err(e)) => self.say(e, true),
+            Msg::SupportGiven(Ok(None)) | Msg::SupportPage(Ok(_)) => {}
+            Msg::SupportGiven(Err(e)) | Msg::SupportPage(Err(e)) => self.say(e, true),
             // The runner has read the settings again.
+            // A seal more than the page saw is thanked for, the newest when several came at once.
             Msg::SupportRefreshed => {
-                self.support.seals(self.prefs.support.paid.len());
+                let paid = &self.prefs.support.paid;
+                if self.support.seals(paid.len()) && self.view == View::Support && self.overlay.is_none() {
+                    let southern = crate::art::Day::now().southern;
+                    if let Some(s) = nori_core::support::support_stamps(paid.clone(), southern).last() {
+                        self.overlay = Some(Overlay::Thanks { season: s.season });
+                    }
+                }
                 self.dirty = true;
             }
             Msg::Cover { art, colours, .. } => {
@@ -2616,7 +2628,7 @@ impl App {
                 _ => {}
             },
             Overlay::Invite { .. } if k.code == KeyCode::Char('s') => self.overlay = Some(Overlay::JamSettings),
-            Overlay::Invite { .. } => self.overlay = None,
+            Overlay::Invite { .. } | Overlay::Thanks { .. } => self.overlay = None,
             Overlay::JamSettings => match k.code {
                 KeyCode::Char('l') => {
                     if let Some(j) = &self.devices.jam { self.cmds.push(Cmd::JamAlong(!j.along)); }

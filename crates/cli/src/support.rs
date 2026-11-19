@@ -2,7 +2,7 @@
 //! checkout page given last while its seal has not come. Stripe's checkout page in the browser takes the
 //! payment (`nori_host::support::checkout`); its link and QR code are shown for a terminal with no browser.
 
-use nori_core::support::{support_choice, support_currencies, support_first_choice, Cadence, SupportChoice, SupportPick};
+use nori_core::support::{support_choice, support_currencies, support_first_choice, Cadence, SupportChoice, SupportPage, SupportPick};
 
 use crate::app::{Cmd, Overlay, Sel, Target};
 use crate::settings_view::Opened;
@@ -14,8 +14,9 @@ pub enum Line {
     EveryMonth,
     Currency,
     Give,
-    /// Stripe's page where a monthly payment is changed or stopped, while one runs.
+    /// Stripe's pages for a monthly payment, while one runs: its card and receipts, and stopping it.
     Manage,
+    Stop,
 }
 
 /// The checkout page given last: its address, and how many seals there were then.
@@ -31,6 +32,8 @@ pub struct Support {
     pub sel: Sel,
     /// Until a seal more than it saw comes.
     pub given: Option<Given>,
+    /// How many seals the book had as the page opened, and since: one more is thanked for.
+    seen: Option<usize>,
 }
 
 /// As it first opens on this computer: in the currency of the country its locale names.
@@ -43,14 +46,14 @@ impl Default for Support {
 impl Support {
     /// The page as it first opens in country `region`.
     pub fn new(region: &str) -> Support {
-        Support { choice: support_first_choice(region.to_string()), sel: Sel::default(), given: None }
+        Support { choice: support_first_choice(region.to_string()), sel: Sel::default(), given: None, seen: None }
     }
 
-    /// The page's lines; Manage while a monthly payment runs.
+    /// The page's lines; Manage and Stop while a monthly payment runs.
     pub fn lines(monthly: bool) -> Vec<Line> {
         let mut lines = vec![Line::Amount, Line::EveryMonth, Line::Currency, Line::Give];
         if monthly {
-            lines.push(Line::Manage);
+            lines.extend([Line::Manage, Line::Stop]);
         }
         lines
     }
@@ -105,7 +108,8 @@ impl Support {
                 Some(Opened::Overlay(Overlay::Picker { title: crate::text::SUPPORT_CURRENCY.into(), options, sel: Sel { at, ..Sel::default() }, target: Target::SupportCurrency }))
             }
             Line::Give => c.amount.map(|_| Opened::Cmds(vec![Cmd::SupportGive(Box::new(c.clone()))])),
-            Line::Manage => Some(Opened::Cmds(vec![Cmd::SupportManage])),
+            Line::Manage => Some(Opened::Cmds(vec![Cmd::SupportPage(SupportPage::Manage)])),
+            Line::Stop => Some(Opened::Cmds(vec![Cmd::SupportPage(SupportPage::Stop)])),
         }
     }
 
@@ -124,11 +128,20 @@ impl Support {
         self.given = Some(Given { url, seals });
     }
 
-    /// The book has `seals` now: a payment given went through once there is one more.
-    pub fn seals(&mut self, seals: usize) {
+    /// The page opened on a book of `seals`.
+    pub fn opened(&mut self, seals: usize) {
+        self.seen = Some(seals);
+    }
+
+    /// The book has `seals` now: a payment given went through once there is one more. Whether there are
+    /// more than the page saw, the newest to be thanked for.
+    pub fn seals(&mut self, seals: usize) -> bool {
         if self.given.as_ref().is_some_and(|g| seals > g.seals) {
             self.given = None;
         }
+        let more = self.seen.is_some_and(|n| seals > n);
+        self.seen = Some(seals);
+        more
     }
 
     fn toggle_monthly(&mut self) {

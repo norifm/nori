@@ -1190,14 +1190,14 @@ impl Runner {
                 });
             }
             Cmd::SupportRefresh => self.support_refresh(),
-            Cmd::SupportManage => {
+            Cmd::SupportPage(page) => {
                 let (client, tx) = (s.account().client().clone(), self.tx.clone());
-                nori_host::spawn("nori-support-manage", move || {
-                    let page = block_on(client.support_manage());
+                nori_host::spawn("nori-support-page", move || {
+                    let page = block_on(client.support_page(page));
                     if let Ok(url) = &page {
                         nori_host::desktop::open_in_browser(url);
                     }
-                    let _ = tx.send(Msg::SupportManaged(page.map_err(|e| crate::text::support_failed(&e))));
+                    let _ = tx.send(Msg::SupportPage(page.map_err(|e| crate::text::support_failed(&e))));
                 });
             }
             Cmd::AnalyseDownloads => s.analyse_downloads(),
