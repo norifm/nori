@@ -496,7 +496,7 @@ struct Flight {
     out_glide: Option<OutGlide>,
     /// Built with the plan (keep_pitch), used when the next track begins; see `prepare`.
     pending_stretch: Option<(ByteStretcher, bool)>,
-    /// The stream the mix is consuming.
+    /// The stream the mix is consuming; `None` while mixing until it is announced (after the boundary, as media3 does).
     mix_source_id: Option<StreamId>,
 }
 
@@ -720,6 +720,9 @@ impl TransitionEngine {
         }
         if new_stream {
             self.on_new_stream(host, sid);
+            if matches!(self.flight.phase, Phase::Mix { .. }) && self.flight.mix_source_id.is_none() {
+                self.flight.mix_source_id = id.clone();
+            }
         }
         if !self.lock_rate {
             // Bit-perfect: the output follows the native format.
@@ -869,8 +872,11 @@ impl TransitionEngine {
             Phase::Pass => 0,
         };
         if held > 0 && self.held_offset_us == stream_offset_us {
-            // All of it: a looped hold is read again.
+            // All of it: a looped hold is read again, and so is the seam baked from it as the mix began.
             crate::pcm::scale(&mut self.tail[..held], out.encoding, ratio);
+            if matches!(self.flight.phase, Phase::Mix { .. }) {
+                crate::pcm::scale(&mut self.seam, out.encoding, ratio);
+            }
         }
     }
 
@@ -1209,7 +1215,7 @@ impl TransitionEngine {
         self.flight.made = ending.map(|id| (id.serial, if mixed { p.clone() } else { None }));
         match (self.flight.phase, p, self.out) {
             (Phase::Hold(h), Some(mut p), Some(out)) if h.len > 0 => {
-                self.flight.mix_source_id = self.current_id.clone();
+                self.flight.mix_source_id = self.current_id.clone().filter(|id| self.flight.held_id.as_ref() != Some(id));
                 self.playing_id = self.current_id.clone();
                 let mut late = h.late_us.clamp(0, p.duration_us());
                 let squeezed = p.mixer.out_loop.is_none() && h.len < h.limit;
@@ -1713,10 +1719,11 @@ impl TransitionEngine {
         }
     }
 
-    /// The mix is done: arm the mixed-in stream's own staged format.
+    /// The mix is done: arm the mixed-in stream's own staged format (a stream announced ahead of it waits for its own
+    /// buffers).
     fn finish_conversion<H: Host>(&mut self, host: &mut H) {
-        self.flight.mix_source_id = None;
-        self.arm_staged_for(host, self.current_id.clone(), false);
+        let id = self.flight.mix_source_id.take();
+        self.arm_staged_for(host, id, false);
     }
 
     /// Timestamp for mixed or stretched output: the engine's own clock in the incoming song's time,
@@ -3043,6 +3050,30 @@ mod tests {
         assert!(s[..held].iter().all(|&v| v == 500) && s[held..].iter().all(|&v| v == 250) && s.len() > held, "held at 0.5, let go at 0.25");
     }
 
+    /// The level changed while a looped ending is mixed: each later wrap of the loop plays at the new level too, its
+    /// seam included.
+    #[test]
+    fn rescale_reaches_a_looped_endings_seam() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        let mut p = fade("b", 1_000_000);
+        p.mixer.out_loop = Some(OutLoop { at_ms: 500, ms: 500, rounds: None });
+        h.plans.insert("a".into(), p);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        e.set_gain(0.5);
+        feed(&mut e, &mut d, &mut h, &tone(8000, 3.0), 0);
+        let passed = d.samples().len() / 2;
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.set_gain(1.0);
+        e.handle_discontinuity(&mut d, &mut h);
+        feed(&mut e, &mut d, &mut h, &tone(0, 0.3), 3_000_000);
+        e.rescale(0, 0.5);
+        feed(&mut e, &mut d, &mut h, &tone(0, 2.7), 3_300_000);
+        let s: Vec<f64> = d.samples().iter().step_by(2).map(|&v| v as f64).collect();
+        let after = &s[passed + RATE as usize * 4 / 10..passed + RATE as usize * 2];
+        let step = after.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max);
+        assert!(step < 10.0, "a step of {step} where the loop wraps");
+    }
+
     #[test]
     fn no_plan_plays_gapless() {
         let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
@@ -3282,6 +3313,25 @@ mod tests {
         // Dithered after conversion: within a step.
         assert!(s[s.len() - 1000..].iter().all(|&v| (v + 8000).abs() <= 1), "b plays alone after the fade");
         assert_eq!(d.configured.len(), 1);
+    }
+
+    /// The song after next announced ahead while a mix into a converted song plays: the mixed-in song is converted to
+    /// its end, at the output's rate.
+    #[test]
+    fn a_song_announced_ahead_leaves_the_mixed_in_one_converted() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        h.plans.insert("a".into(), fade("b", 1_000_000));
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        feed(&mut e, &mut d, &mut h, &tone(0, 3.0), 0);
+        e.configure(&mut d, &mut h, stream("b", F48));
+        e.handle_discontinuity(&mut d, &mut h);
+        let passed = d.samples().len() / 2;
+        let b = tone_at(-8000, 48_000, 3.0);
+        feed_in(&mut e, &mut d, &mut h, &b[..F48.bytes(1_000_000)], F48, 3_000_000);
+        e.configure(&mut d, &mut h, stream("c", FMT));
+        feed_in(&mut e, &mut d, &mut h, &b[F48.bytes(1_000_000)..], F48, 4_000_000);
+        let secs = (d.samples().len() / 2 - passed) as f64 / RATE as f64;
+        assert!((secs - 3.0).abs() < 0.005, "b's 3 s play as 3 s, not {secs:.3}");
     }
 
     #[test]
