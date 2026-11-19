@@ -25,12 +25,19 @@ const OPEN_HIGH_PASS_HZ: f64 = 25.0;
 const VOX_Q: f64 = 0.35;
 /// An echo's or reverb's send window opens and closes over this long, so the repeats do not click.
 const SEND_RAMP_MS: f64 = 10.0;
-/// Freeverb's comb and all-pass lengths at 44.1 kHz, scaled to the rate.
+/// Freeverb's comb and all-pass lengths at 44.1 kHz, scaled to the rate, with two shorter all-passes for a denser onset.
 const COMB_FRAMES: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
-const ALLPASS_FRAMES: [usize; 4] = [556, 441, 341, 225];
-const ALLPASS_GAIN: f64 = 0.5;
-/// How much of the combs' highs each pass keeps back (Freeverb's default damping).
-const COMB_DAMP: f64 = 0.2;
+const ALLPASS_FRAMES: [usize; 6] = [556, 441, 341, 225, 179, 131];
+const ALLPASS_GAIN: f64 = 0.7;
+/// Each comb's delay swings this far either way, at its own slow rate, so its resonances wander and the tail does not
+/// ring with fixed pitches.
+const COMB_SWING_MS: f64 = 0.3;
+const COMB_SWING_HZ: [f64; 8] = [0.21, 0.27, 0.33, 0.37, 0.43, 0.47, 0.53, 0.59];
+/// Frames between comb delay updates; the delays glide between them.
+const COMB_SWING_STEP: usize = 32;
+/// The highs fall 60 dB in this share of the decay time (each comb's damping set by Jot's method).
+const HIGHS_HZ: f64 = 8000.0;
+const HIGHS_DECAY_SHARE: f64 = 0.36;
 
 /// Where in a transition the incoming song becomes the louder of the two, ms from its start, in 10 ms steps
 /// (from the gain curves only); the whole transition when it never does.
@@ -284,14 +291,17 @@ struct SweepFilter {
     low: bool,
     coef: Coef,
     state: [[[f64; 2]; MAX_CHANNELS]; 2],
-    /// Where the filter's fade-in is measured from: the sweep's start, or a seek that landed inside it.
+    /// Where the filter comes on, at its first cutoff until the sweep starts: the sweep's start, or where an incoming
+    /// deck comes in before it.
+    on_from: u64,
+    /// Where the filter's fade-in is measured from: where it comes on, or a seek that landed past that.
     entry_from: u64,
     /// A sweep that ends open fades its filter out from its end, and is off after that.
     open_from: Option<u64>,
 }
 
 impl SweepFilter {
-    fn new(rate: f64, span: Span, from: f64, to: f64, low: bool) -> Self {
+    fn new(rate: f64, span: Span, on_from: u64, from: f64, to: f64, low: bool) -> Self {
         let opens = if low { to >= OPEN_LOW_PASS_HZ } else { to <= OPEN_HIGH_PASS_HZ };
         let (from, to) = (from.min(rate * 0.45), to.min(rate * 0.45));
         SweepFilter {
@@ -301,7 +311,8 @@ impl SweepFilter {
             low,
             coef: Coef::pass(rate, from, low),
             state: [[[0.0; 2]; MAX_CHANNELS]; 2],
-            entry_from: span.start,
+            on_from,
+            entry_from: on_from,
             open_from: opens.then_some(span.end),
         }
     }
@@ -314,10 +325,10 @@ impl SweepFilter {
     /// ends.
     #[inline]
     fn wet(&mut self, rate: f64, entry: u64, p: u64) -> f64 {
-        if p < self.span.start || self.open_from.is_some_and(|o| p >= o + entry) {
+        if p < self.on_from || self.open_from.is_some_and(|o| p >= o + entry) {
             return 0.0;
         }
-        if (p - self.span.start).is_multiple_of(SWEEP_STEP) && p < self.span.end + SWEEP_STEP {
+        if p >= self.span.start && (p - self.span.start).is_multiple_of(SWEEP_STEP) && p < self.span.end + SWEEP_STEP {
             self.retune(rate, p);
         }
         let fade_in = (p - self.entry_from.min(p)) as f64 / entry as f64;
@@ -371,6 +382,13 @@ struct ReverbFx {
     /// Each comb's feedback (to 60 dB down in the decay time) and input gain (an even share of the send's power).
     feedback: [f64; 8],
     input: [f64; 8],
+    /// Each comb's loop low-pass, `y (1 - b) + b y[-1]`, for its highs' shorter decay.
+    damp: [f64; 8],
+    /// Each comb's delay at rest and its swing either way, frames.
+    delay: [f64; 8],
+    swing: f64,
+    /// The cosine and sine of each comb's swing turn per delay update.
+    turn: [[f64; 8]; 2],
     low_cut: Coef,
 }
 
@@ -397,14 +415,81 @@ impl Line {
     }
 }
 
-/// A small Schroeder reverb (Chowning's JCRev layout with Freeverb's lengths and damping): four all-passes in series
-/// diffuse a mono send, eight damped combs in parallel ring it, and two sign patterns over the combs make two
-/// decorrelated outputs.
+/// A delay line of one channel read at a delay gliding between fractional frames, through a Catmull-Rom cubic.
+#[derive(Default)]
+struct SwingLine {
+    /// The line, then its first 3 frames again, so the 4 frames an interpolation reads are always in a row.
+    buf: Vec<f32>,
+    len: usize,
+    pos: usize,
+    /// How far back the oldest of the 4 frames read is, and their weights and the weights' step per frame.
+    back: usize,
+    weights: [f32; 4],
+    step: [f32; 4],
+}
+
+impl SwingLine {
+    fn size(&mut self, len: usize) {
+        if self.buf.is_empty() {
+            (self.buf, self.len) = (vec![0.0; len + 3], len);
+        }
+    }
+
+    /// Glides the delay read from `from` to `to` frames (under a frame apart, over 2 and under the length) over the
+    /// next `frames` reads. The 4 frames read stay put, the cubic reaching a little past them when the glide crosses a
+    /// frame, and their weights move in a straight line, close to the cubic's own over so short a glide.
+    fn glide(&mut self, from: f64, to: f64, frames: usize) {
+        const CUBIC: [[f32; 4]; 4] = [[-0.5, 1.5, -1.5, 0.5], [1.0, -2.5, 2.0, -0.5], [-0.5, 0.0, 0.5, 0.0], [0.0, 1.0, 0.0, 0.0]];
+        let mid = ((from + to) / 2.0).ceil();
+        let weights = |delay: f64| -> [f32; 4] {
+            let f = (mid - delay) as f32;
+            std::array::from_fn(|j| ((CUBIC[0][j] * f + CUBIC[1][j]) * f + CUBIC[2][j]) * f + CUBIC[3][j])
+        };
+        let (start, end) = (weights(from), weights(to));
+        self.back = mid as usize + 1;
+        self.weights = start;
+        self.step = std::array::from_fn(|j| (end[j] - start[j]) / frames as f32);
+    }
+
+    #[inline]
+    fn read(&mut self) -> f64 {
+        let mut start = self.pos + self.len - self.back;
+        if start >= self.len {
+            start -= self.len;
+        }
+        let p: [f32; 4] = self.buf[start..start + 4].try_into().unwrap();
+        let wp: [f32; 4] = std::array::from_fn(|j| self.weights[j] * p[j]);
+        self.weights = std::array::from_fn(|j| self.weights[j] + self.step[j]);
+        ((wp[0] + wp[1]) + (wp[2] + wp[3])) as f64
+    }
+
+    #[inline]
+    fn write(&mut self, v: f64) {
+        let v = v as f32;
+        self.buf[self.pos] = v;
+        if self.pos < 3 {
+            self.buf[self.len + self.pos] = v;
+        }
+        self.pos += 1;
+        if self.pos == self.len {
+            self.pos = 0;
+        }
+    }
+}
+
+/// A small Schroeder reverb (Chowning's JCRev layout with Freeverb's lengths): six all-passes in series diffuse a mono
+/// send, eight damped combs in parallel ring it, each delay swinging slowly, and two sign patterns over the combs make
+/// two decorrelated outputs.
 #[derive(Default)]
 struct Room {
-    allpasses: [Line; 4],
-    combs: [Line; 8],
+    allpasses: [Line; 6],
+    combs: [SwingLine; 8],
+    /// Each comb's delay at rest, frames.
+    comb_frames: [usize; 8],
     damp: [f64; 8],
+    /// The cosine and sine of each comb's swing phase, and the frames until the delays are next updated.
+    swing: [[f64; 8]; 2],
+    glide_left: usize,
     low_state: [f64; 2],
 }
 
@@ -412,19 +497,31 @@ impl Room {
     /// Sizes the lines for `rate`, once.
     fn size(&mut self, rate: f64) {
         let frames = |n: usize| ((n as f64 * rate / 44_100.0).round() as usize).max(1);
-        for (l, n) in self.allpasses.iter_mut().zip(ALLPASS_FRAMES).chain(self.combs.iter_mut().zip(COMB_FRAMES)) {
+        self.comb_frames = COMB_FRAMES.map(frames);
+        for (l, n) in self.allpasses.iter_mut().zip(ALLPASS_FRAMES) {
             if l.buf.is_empty() {
                 l.buf = vec![0.0; frames(n)];
             }
         }
+        let swing = (COMB_SWING_MS * rate / 1000.0).ceil() as usize;
+        for (l, n) in self.combs.iter_mut().zip(self.comb_frames) {
+            l.size(n + swing + 3);
+        }
     }
 
     fn clear(&mut self) {
-        for l in self.allpasses.iter_mut().chain(&mut self.combs) {
+        for l in &mut self.allpasses {
+            l.buf.fill(0.0);
+            l.pos = 0;
+        }
+        for l in &mut self.combs {
             l.buf.fill(0.0);
             l.pos = 0;
         }
         (self.damp, self.low_state) = ([0.0; 8], [0.0; 2]);
+        // Apart in phase, so the combs never swing together.
+        self.swing = [std::array::from_fn(|k| (k as f64).cos()), std::array::from_fn(|k| (k as f64).sin())];
+        self.glide_left = 0;
     }
 
     /// One frame of the mono send in, the two outputs.
@@ -437,10 +534,21 @@ impl Room {
             a.write(v);
             x = w - ALLPASS_GAIN * v;
         }
+        if self.glide_left == 0 {
+            self.glide_left = COMB_SWING_STEP;
+            let ([cos, sin], [tc, ts]) = (&mut self.swing, &fx.turn);
+            for (k, c) in self.combs.iter_mut().enumerate() {
+                let from = fx.delay[k] + fx.swing * sin[k];
+                (cos[k], sin[k]) = (cos[k] * tc[k] - sin[k] * ts[k], sin[k] * tc[k] + cos[k] * ts[k]);
+                c.glide(from, fx.delay[k] + fx.swing * sin[k], COMB_SWING_STEP);
+            }
+        }
+        self.glide_left -= 1;
         let (mut l, mut r) = (0.0, 0.0);
         for (k, c) in self.combs.iter_mut().enumerate() {
             let y = c.read();
-            self.damp[k] = y * (1.0 - COMB_DAMP) + self.damp[k] * COMB_DAMP;
+            let b = fx.damp[k];
+            self.damp[k] = y * (1.0 - b) + self.damp[k] * b;
             c.write(x * fx.input[k] + self.damp[k] * fx.feedback[k]);
             l += y;
             r += if k % 2 == 0 { y } else { -y };
@@ -716,11 +824,16 @@ impl Mixer {
             self.highs_shelf = Shelf::at(rate, h.hz as f64);
             (from(h.at_ms, h.len_ms), db_to_gain((h.db as f64).clamp(-30.0, 0.0)))
         });
-        let sweep = |s: crate::types::Sweep, low| SweepFilter::new(rate, span(s.start_ms, s.end_ms), s.from_hz as f64, s.to_hz as f64, low);
-        self.high_pass = p.high_pass.map(|s| sweep(s, false));
-        self.low_pass = p.low_pass.map(|s| sweep(s, true));
-        self.in_high_pass = p.in_high_pass.map(|s| sweep(s, false));
-        self.in_low_pass = p.in_low_pass.map(|s| sweep(s, true));
+        // An incoming deck is filtered from where it comes in: heard whole before its sweep, it would thin as that starts.
+        let comes_in = self.in_fade.start;
+        let sweep = |s: crate::types::Sweep, low, incoming: bool| {
+            let span = span(s.start_ms, s.end_ms);
+            SweepFilter::new(rate, span, if incoming { span.start.min(comes_in) } else { span.start }, s.from_hz as f64, s.to_hz as f64, low)
+        };
+        self.high_pass = p.high_pass.map(|s| sweep(s, false, false));
+        self.low_pass = p.low_pass.map(|s| sweep(s, true, false));
+        self.in_high_pass = p.in_high_pass.map(|s| sweep(s, false, true));
+        self.in_low_pass = p.in_low_pass.map(|s| sweep(s, true, true));
         self.sweep_entry = frames(SWEEP_ENTRY_MS).max(1);
         self.duck = p.vocal_duck.filter(|d| d.db < 0.0).map(|d| {
             let end = frames(d.until_ms as f64).min(len);
@@ -753,16 +866,29 @@ impl Mixer {
             self.echo_buf[..e.delay * self.ch].fill(0.0);
             self.echo_pos = 0;
         }
-        let combs: [usize; 8] = std::array::from_fn(|k| self.room.combs[k].buf.len());
+        let combs = self.room.comb_frames;
         self.reverb = p.reverb.map(|r| {
             let decay = (r.decay_s as f64).clamp(0.1, 20.0);
             let feedback = combs.map(|n| 10f64.powf(-3.0 * n as f64 / (rate * decay)));
+            // Jot: the one-pole whose loop gain at the highs falls 60 dB in their share of the decay.
+            let cos_w = (2.0 * PI * HIGHS_HZ.min(rate * 0.45) / rate).cos();
+            let damp = std::array::from_fn(|k| {
+                let highs = 10f64.powf(-3.0 * combs[k] as f64 / (rate * decay * HIGHS_DECAY_SHARE));
+                let r2 = (feedback[k] / highs).powi(2);
+                let (a, b) = (r2 - 1.0, 2.0 * (r2 - cos_w));
+                (b - (b * b - 4.0 * a * a).sqrt()) / (2.0 * a)
+            });
+            let turn = COMB_SWING_HZ.map(|hz| (2.0 * PI * hz * COMB_SWING_STEP as f64 / rate).sin_cos());
             ReverbFx {
                 send: span(r.send.start_ms, r.send.end_ms),
                 tail: Span { start: len.saturating_sub(frames(decay * 250.0)), end: len },
                 wet: db_to_gain((r.wet_db as f64).clamp(-30.0, 0.0)),
                 input: feedback.map(|g| ((1.0 - g * g) / 8.0).sqrt()),
                 feedback,
+                damp,
+                delay: combs.map(|n| n as f64),
+                swing: COMB_SWING_MS * rate / 1000.0,
+                turn: [turn.map(|(_, c)| c), turn.map(|(s, _)| s)],
                 low_cut: Coef::pass(rate, r.low_cut_hz as f64, false),
             }
         });
@@ -782,16 +908,20 @@ impl Mixer {
     }
 
     /// Starts the clock `frames` into the transition, as if it had played up to there. Filters start clean;
-    /// a sweep already running fades in from here.
+    /// a sweep already running fades in from here, a brake under way takes what is left of its time.
     pub fn seek(&mut self, frames: u64) {
         self.pos = frames.min(self.len);
         self.fades = FadeRun::default();
         let (rate, pos) = (self.rate, self.pos);
         for f in [&mut self.low_pass, &mut self.high_pass, &mut self.in_low_pass, &mut self.in_high_pass].into_iter().flatten() {
-            if pos >= f.span.start {
+            if pos >= f.on_from {
                 f.retune(rate, pos);
                 f.entry_from = pos;
             }
+        }
+        // A brake landed in slows the audio from here: what it had kept is another transition's.
+        if let Some((start, len)) = self.brake.filter(|(start, _)| pos > *start) {
+            self.brake = Some((pos, (start + len).saturating_sub(pos).max(1)));
         }
     }
 
@@ -1050,6 +1180,9 @@ impl Mixer {
 mod tests {
     use super::*;
     use crate::types::{Band, BassSwap, Duck, Echo, MidDip, Reverb, Sweep, Tail, TransitionKind, VocalDuck, Window};
+    use rustfft::FftPlanner;
+    use rustfft::num_complex::Complex32;
+    use std::f64::consts::SQRT_2;
 
     const RATE: f64 = 48000.0;
 
@@ -1324,6 +1457,24 @@ mod tests {
         assert!(y[1500 * 48..2000 * 48].iter().all(|v| *v == 0.0), "nothing after it");
     }
 
+    /// A transition started inside its brake slows the audio it plays, not what an earlier brake kept.
+    #[test]
+    fn a_brake_landed_in_slows_what_plays_now() {
+        let mut p = outgoing_only(2000);
+        p.brake = Some(crate::types::Brake { start_ms: 0, len_ms: 2000 });
+        let zeros = vec![0f32; 96000];
+        let mut m = Mixer::new(RATE as u32, 1);
+        m.configure(&p);
+        let mut earlier = vec![0.8f32; 96000];
+        m.process(&mut earlier, &zeros);
+        m.configure(&p);
+        m.seek(24000);
+        let mut now = vec![0.2f32; 72000];
+        m.process(&mut now, &zeros[..72000]);
+        let loudest = now.iter().fold(0f32, |m, v| m.max(v.abs()));
+        assert!((now[0] - 0.2).abs() < 1e-6 && loudest <= 0.2 + 1e-6, "from {} up to {loudest}", now[0]);
+    }
+
     #[test]
     fn echo_out() {
         // The delay is fed after the fader: its repeats decay with the song.
@@ -1553,6 +1704,23 @@ mod tests {
         assert!((20.0 * level.log10()).abs() < 0.3, "{:.2} dB against the outgoing song alone", 20.0 * level.log10());
     }
 
+    /// A ride's incoming high-pass opens late in the lead: the deck is thin from where it comes in, not whole until
+    /// its sweep starts.
+    #[test]
+    fn an_incoming_sweep_filters_from_where_its_deck_comes_in() {
+        let mut p = plan();
+        p.duration_ms = 2000;
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (2000, 2000, 0, 2000);
+        let (zeros, tone) = (vec![0f32; 96000], sine(300.0, 96000));
+        let whole = mix(&p, &zeros, &tone);
+        p.in_high_pass = Some(Sweep { start_ms: 1000, end_ms: 2000, from_hz: 2_400.0, to_hz: 20.0 });
+        let thin = mix(&p, &zeros, &tone);
+        let held = rms(&thin[9600..43200]) / rms(&whole[9600..43200]);
+        assert!(held < 0.01, "300 Hz held out before the sweep: {held}");
+        let jump = thin.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0f32, f32::max);
+        assert!(jump < 0.5 * 2.0 * std::f32::consts::PI * 300.0 / 48000.0 * 1.2, "no clicks: {jump}");
+    }
+
     #[test]
     fn mid_dip_is_a_half_sine_on_the_named_decks() {
         let zeros = vec![0f32; 48000];
@@ -1655,7 +1823,7 @@ mod tests {
     }
 
     /// An impulse's reverb falls 60 dB in the decay time, in the octave around 1 kHz (the highs are damped, so they
-    /// fall sooner): the Schroeder integral of its tail, from 5 to 25 dB down, tripled.
+    /// fall sooner).
     #[test]
     fn reverb_decays_60_db_in_its_decay_time() {
         for decay in [1.0f32, 2.5] {
@@ -1667,14 +1835,7 @@ mod tests {
             y[1000] = 0.0;
             // Up to the tail's fade.
             let y = band_of(&y[..288000 - (decay as f64 * 250.0 * 48.0) as usize], 1_000.0);
-            let tail = &y[1000..];
-            let mut left: Vec<f64> = tail.iter().rev().scan(0.0, |e, v| {
-                *e += (*v as f64).powi(2);
-                Some(*e)
-            }).collect();
-            left.reverse();
-            let at = |db: f64| left.iter().position(|e| 10.0 * (e / left[0]).log10() <= db).unwrap() as f64 / RATE;
-            let rt60 = 3.0 * (at(-25.0) - at(-5.0));
+            let rt60 = rt60(&y[1000..].iter().map(|v| *v as f64).collect::<Vec<_>>(), RATE);
             assert!((rt60 / decay as f64 - 1.0).abs() < 0.15, "{decay} s: {rt60:.2} s to 60 dB down");
         }
     }
@@ -1727,6 +1888,83 @@ mod tests {
         let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>();
         let corr = dot(&l, &r) / (dot(&l, &l) * dot(&r, &r)).sqrt();
         assert!(corr.abs() < 0.3 && dot(&l, &l) > 0.0, "left and right correlate {corr:.2}");
+    }
+
+    /// The reverb of a click, from the click on, `secs` long, by a mono mixer at `rate`, before the tail's fade.
+    fn click_reverb(rate: u32, decay_s: f32, secs: f64) -> Vec<f64> {
+        let at = rate as usize / 50;
+        let len = at + (rate as f64 * secs) as usize;
+        let ms = (len as f64 * 1000.0 / rate as f64 + decay_s as f64 * 250.0).ceil() as i64 + 10;
+        let mut p = outgoing_only(ms);
+        p.reverb = reverb(Window { start_ms: 0, end_ms: ms }, decay_s);
+        let mut y = vec![0f32; len];
+        y[at] = 1.0;
+        let mut m = Mixer::new(rate, 1);
+        m.configure(&p);
+        m.process(&mut y, &vec![0f32; len]);
+        y[at] = 0.0;
+        y[at..].iter().map(|v| *v as f64).collect()
+    }
+
+    /// The time `h` takes to fall 60 dB: its Schroeder integral from 5 to 25 dB down, tripled.
+    fn rt60(h: &[f64], rate: f64) -> f64 {
+        let mut left: Vec<f64> = h.iter().rev().scan(0.0, |e, v| {
+            *e += v * v;
+            Some(*e)
+        }).collect();
+        left.reverse();
+        let at = |db: f64| left.iter().position(|e| 10.0 * (e / left[0]).log10() <= db).unwrap() as f64 / rate;
+        3.0 * (at(-25.0) - at(-5.0))
+    }
+
+    /// A slow tail has no pitched ringing: its spectrum over 200 Hz to 8 kHz strays from its smoothed self about as
+    /// much as noise's does (5.6 dB), not in the tall narrow peaks of combs that never move.
+    #[test]
+    fn reverb_tail_does_not_ring() {
+        let h = click_reverb(48000, 4.5, 1.3);
+        let n = 48000;
+        let mut buf: Vec<Complex32> = h[14400..14400 + n]
+            .iter()
+            .enumerate()
+            .map(|(i, v)| Complex32::new((v * (0.5 - 0.5 * (2.0 * PI * i as f64 / n as f64).cos())) as f32, 0.0))
+            .collect();
+        FftPlanner::new().plan_fft_forward(n).process(&mut buf);
+        // 1 Hz bins.
+        let db: Vec<f64> = buf[200..8000].iter().map(|c| 10.0 * ((c.norm_sqr() as f64) + 1e-30).log10()).collect();
+        let half = db.len() / 400;
+        let off: Vec<f64> = (half..db.len() - half)
+            .map(|i| db[i] - db[i - half..=i + half].iter().sum::<f64>() / (2 * half + 1) as f64)
+            .collect();
+        let mean = off.iter().sum::<f64>() / off.len() as f64;
+        let sd = (off.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / off.len() as f64).sqrt();
+        assert!(sd < 8.0, "the tail's spectrum strays {sd:.1} dB");
+    }
+
+    /// The onset is dense: 50 to 150 ms after a click, with the decay taken out, the reverb's samples are spread like
+    /// noise's (kurtosis 3), not a few sparse echoes.
+    #[test]
+    fn reverb_onset_is_dense() {
+        let decay = 3.5;
+        let h = click_reverb(48000, decay as f32, 0.15);
+        let flat: Vec<f64> = (2400..7200).map(|i| h[i] * 10f64.powf(3.0 * i as f64 / 48000.0 / decay)).collect();
+        let mean = flat.iter().sum::<f64>() / flat.len() as f64;
+        let moment = |k: i32| flat.iter().map(|v| (v - mean).powi(k)).sum::<f64>() / flat.len() as f64;
+        let kurtosis = moment(4) / moment(2).powi(2);
+        assert!(kurtosis < 4.0, "kurtosis {kurtosis:.1}");
+    }
+
+    /// The highs fade as fast at any sample rate: the octave around 8 kHz rings as long at 44.1 kHz as at 96 kHz.
+    #[test]
+    fn reverb_highs_decay_alike_at_any_rate() {
+        let rt8k = |rate: u32| {
+            let r = rate as f64;
+            let (hp, lp) = (Coef::pass(r, 8000.0 / SQRT_2, false), Coef::pass(r, 8000.0 * SQRT_2, true));
+            let (mut high, mut low) = ([[[0.0; 2]; MAX_CHANNELS]; 2], [[[0.0; 2]; MAX_CHANNELS]; 2]);
+            let band: Vec<f64> = click_reverb(rate, 3.5, 3.0).iter().map(|v| lp.run2(&mut low, 0, hp.run2(&mut high, 0, *v))).collect();
+            rt60(&band, r)
+        };
+        let (cd, hi_res) = (rt8k(44100), rt8k(96000));
+        assert!((hi_res / cd - 1.0).abs() < 0.1, "8 kHz falls 60 dB in {cd:.2} s at 44.1 kHz, {hi_res:.2} s at 96 kHz");
     }
 
     /// Mixing time of a 12 s stereo transition of each kind (`cargo test --release -p nori-player --lib

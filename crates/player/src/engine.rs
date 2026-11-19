@@ -32,6 +32,37 @@ const MAX_GAIN: f32 = 16.0;
 /// How long a `None` plan is trusted before asking again.
 const NULL_PLAN_RETRY_MS: i64 = 2_000;
 
+/// The crossfade where a loop wraps; a hard cut there ticks.
+const SEAM_MS: i64 = 5;
+
+/// A loop seam's length in frames at `rate`.
+fn seam_frames(rate: u32) -> usize {
+    rate as usize * SEAM_MS as usize / 1000
+}
+
+/// Fades `from` out under `to`, in place in `to` (frames of `fb` bytes): a raised cosine that starts as `from` and
+/// ends as `to`.
+fn crossfade(from: &[u8], to: &mut [u8], enc: crate::pcm::Encoding, fb: usize) {
+    let n = to.len() / fb;
+    for (i, (t, f)) in to.chunks_exact_mut(fb).zip(from.chunks_exact(fb)).enumerate() {
+        let w = 0.5 - 0.5 * (std::f64::consts::PI * (i as f64 + 0.5) / n as f64).cos();
+        match enc {
+            crate::pcm::Encoding::Pcm16 => {
+                for (t, f) in t.as_chunks_mut::<2>().0.iter_mut().zip(f.as_chunks::<2>().0) {
+                    let v = i16::from_le_bytes(*f) as f64 * (1.0 - w) + i16::from_le_bytes(*t) as f64 * w;
+                    *t = (v.round() as i16).to_le_bytes();
+                }
+            }
+            crate::pcm::Encoding::Float => {
+                for (t, f) in t.as_chunks_mut::<4>().0.iter_mut().zip(f.as_chunks::<4>().0) {
+                    let v = f32::from_le_bytes(*f) as f64 * (1.0 - w) + f32::from_le_bytes(*t) as f64 * w;
+                    *t = (v as f32).to_le_bytes();
+                }
+            }
+        }
+    }
+}
+
 /// Song time covered by `frames` of output at `pace` song frames each, µs.
 fn span_us(frames: usize, pace: f64, out: Format) -> i64 {
     (frames as f64 * pace * 1_000_000.0 / out.rate as f64).round() as i64
@@ -67,6 +98,11 @@ impl Plan {
     fn hold_us(&self) -> i64 {
         (self.mixer.out_held_ms() * 1000.0).round() as i64
     }
+    /// Held past [`Plan::hold_us`]: a loop with too little before its slice for its seam fades what follows the
+    /// slice out instead.
+    fn seam_us(&self) -> i64 {
+        self.mixer.out_loop.filter(|l| l.at_ms < SEAM_MS).map_or(0, |_| SEAM_MS * 1000)
+    }
     fn in_skip_us(&self) -> i64 {
         self.mixer.in_start_ms * 1000
     }
@@ -79,7 +115,7 @@ impl Plan {
     /// The outgoing loop in the hold, in frames at `rate`.
     fn held_loop(&self, rate: u32) -> Option<HeldLoop> {
         let frames = |ms: i64| (ms.max(0) as f64 * rate as f64 / 1000.0).round() as usize;
-        self.mixer.out_loop.map(|l| HeldLoop { at: frames(l.at_ms), len: frames(l.ms).max(1), rounds: l.rounds.map(|n| n.max(0) as usize) })
+        self.mixer.out_loop.map(|l| HeldLoop { at: frames(l.at_ms), len: frames(l.ms).max(1), rounds: l.rounds.map(|n| n.max(0) as usize), seam: None })
     }
     /// Whether the outgoing song changes speed: a bend, a glide or rates.
     fn out_stretching(&self) -> bool {
@@ -230,11 +266,26 @@ struct HeldLoop {
     at: usize,
     len: usize,
     rounds: Option<usize>,
+    /// Where its wraps read the engine's seam buffer.
+    seam: Option<Seam>,
+}
+
+/// The `n` (bytes or frames, as the loop) of a loop's rounds that are read from the seam buffer, next to a wrap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Seam {
+    /// The end of a round followed by another: its last `n` crossfaded into the `n` before the slice.
+    End(usize),
+    /// The start of a round after another: the `n` after the slice crossfaded into its first `n`.
+    Start(usize),
 }
 
 impl HeldLoop {
     fn scaled(self, k: usize) -> HeldLoop {
-        HeldLoop { at: self.at * k, len: self.len * k, ..self }
+        let seam = self.seam.map(|s| match s {
+            Seam::End(n) => Seam::End(n * k),
+            Seam::Start(n) => Seam::Start(n * k),
+        });
+        HeldLoop { at: self.at * k, len: self.len * k, seam, ..self }
     }
 }
 
@@ -250,6 +301,30 @@ fn ending_run(v: usize, len: usize, l: Option<HeldLoop>) -> (usize, usize) {
         (l.at + (v - l.at) % lp, l.at + lp)
     } else {
         ((v - looped.unwrap_or(0) + lp).min(len), len)
+    }
+}
+
+/// The run of the ending at `v` as [`ending_run`] has it, its loop's seam read from `seam` (both in units of `unit`
+/// bytes).
+fn held_run<'a>(tail: &'a [u8], seam: &'a [u8], v: usize, len: usize, l: Option<HeldLoop>, unit: usize) -> &'a [u8] {
+    let (at, end) = ending_run(v, len, l);
+    let raw = &tail[at * unit..end * unit];
+    let Some(l) = l.filter(|l| l.seam.is_some() && v >= l.at && l.at < len) else { return raw };
+    let lp = l.len.clamp(1, len - l.at);
+    let (round, off) = ((v - l.at) / lp, (v - l.at) % lp);
+    if l.rounds.is_some_and(|r| round > r) {
+        return raw;
+    }
+    match l.seam {
+        Some(Seam::End(n)) if l.rounds.is_none_or(|r| round < r) => {
+            if off + n >= lp {
+                &seam[(off + n - lp) * unit..n * unit]
+            } else {
+                &raw[..raw.len() - n * unit]
+            }
+        }
+        Some(Seam::Start(n)) if round > 0 && off < n => &seam[off * unit..n * unit],
+        _ => raw,
     }
 }
 
@@ -278,10 +353,12 @@ struct OutGlide {
 }
 
 /// The incoming song's opening looped: its first `frames` of output are kept as they play, then played again
-/// for `left` frames; what came after them waits in the stash. All of it carries song time at `pace`.
+/// for `left` frames; what came after them waits in the stash. All of it carries song time at `pace`. The `seam`
+/// frames after the slice are kept too, and faded out under its start for the repeats.
 #[derive(Clone, Copy)]
 struct Repeat {
     frames: usize,
+    seam: usize,
     captured: usize,
     left: usize,
     pace: f64,
@@ -443,6 +520,8 @@ pub struct TransitionEngine {
     /// The mixer with the rate and channel count it was built for.
     mixer: Option<(Mixer, u32, usize)>,
     loop_buf: Vec<u8>,
+    /// The outgoing loop's seam ([`Seam`]).
+    seam: Vec<u8>,
     /// The outgoing song's stretcher for a bend, with the pitch setting and format it was built for (in `prepare`).
     out_stretch: Option<(ByteStretcher, bool, Format)>,
     /// The incoming loop's slice, and the incoming audio after it waiting for the repeats.
@@ -522,6 +601,7 @@ impl TransitionEngine {
             stretch_pace: 1.0,
             mixer: None,
             loop_buf: Vec::new(),
+            seam: Vec::new(),
             out_stretch: None,
             loop_in: Vec::new(),
             stash: Vec::new(),
@@ -1011,9 +1091,13 @@ impl TransitionEngine {
     /// between two buffers can starve the output).
     fn prepare(&mut self, p: &Plan) {
         let Some(out) = self.out else { return };
-        let bytes = out.bytes(p.hold_us());
+        let bytes = out.bytes(p.hold_us() + p.seam_us());
         if bytes > 0 && self.tail.len() < bytes {
             self.tail.resize(bytes, 0);
+        }
+        let seam = seam_frames(out.rate) * out.frame_bytes();
+        if p.mixer.out_loop.is_some() && self.seam.len() < seam {
+            self.seam.resize(seam, 0);
         }
         self.ensure_mixer(out).prepare(&p.mixer);
         let keep = p.mixer.keep_pitch;
@@ -1021,12 +1105,12 @@ impl TransitionEngine {
             self.out_stretch = Some((ByteStretcher::new(out.rate, out.channels, keep), keep, out));
         }
         if let Some(l) = p.mixer.in_loop {
-            let bytes = out.bytes(l.ms * 1000);
+            let bytes = out.bytes(l.ms * 1000) + seam;
             if self.loop_in.len() < bytes {
                 self.loop_in.resize(bytes, 0);
             }
-            // What one stretched buffer past the slice can hold.
-            self.stash.reserve(1 << 17);
+            // What two stretched buffers past the slice can hold (the slice's seam may end in the second).
+            self.stash.reserve(1 << 18);
         }
         if p.stretching() {
             if self.flight.pending_stretch.as_ref().is_some_and(|(_, k)| *k != p.mixer.keep_pitch) {
@@ -1060,7 +1144,7 @@ impl TransitionEngine {
         self.heard.from = self.flight.held_id.as_ref().map(|h| h.serial);
         self.heard.audible_us = i64::MAX;
         // An outro loop is captured up to its slice's end, and past it what plays after its rounds.
-        let hold_us = p.hold_us();
+        let hold_us = p.hold_us() + p.seam_us();
         let bytes = out.bytes(hold_us);
         if self.tail.len() < bytes {
             self.tail.resize(bytes, 0);
@@ -1148,7 +1232,9 @@ impl TransitionEngine {
                 // The hold goes out as the mix now; the position already reported stands.
                 let frames_of = |ms: i64| (ms.max(0) * out.rate as i64 / 1000) as usize;
                 self.flight.out_glide = None;
-                let held = p.held_loop(out.rate);
+                // What the mix plays of the hold; a seam's audio past it is only held.
+                let len = h.len.min(out.bytes(p.hold_us()));
+                let held = p.held_loop(out.rate).map(|l| self.bake_seam(l, len, h.len, out));
                 // Under a bend the outgoing speed glides to the incoming tempo, under a glide to its own target, under
                 // rates from where they leave 1 along them.
                 let rates = &p.mixer.out_rates;
@@ -1183,7 +1269,7 @@ impl TransitionEngine {
                 self.flight.mix_from_us = None;
                 self.flight.resync_next = true;
                 self.flight.measure_next = true;
-                self.flight.phase = Phase::Mix { len: h.len, out: mix_out };
+                self.flight.phase = Phase::Mix { len, out: mix_out };
             }
             _ => {
                 self.abandon_transition(host);
@@ -1196,6 +1282,31 @@ impl TransitionEngine {
         }
         self.flight.ending = Ending::Ask;
         self.flight.plan_for = None;
+    }
+
+    /// Bakes the outgoing loop's seam from the hold (`len` bytes of it played, `held` held) into `self.seam`, and
+    /// gives the loop it; a loop that never wraps or a hold too short for a seam gets none.
+    fn bake_seam(&mut self, l: HeldLoop, len: usize, held: usize, out: Format) -> HeldLoop {
+        let fb = out.frame_bytes();
+        let (len, held) = (len / fb, held / fb);
+        if l.at >= len || l.rounds == Some(0) {
+            return l;
+        }
+        let lp = l.len.clamp(1, len - l.at);
+        let n = seam_frames(out.rate).min(lp);
+        // Faded out, faded in, and where.
+        let (from, to, seam) = match l.at {
+            at if at >= n => (at + lp - n, at - n, Seam::End(n)),
+            at if at + lp + n <= held => (at + lp, at, Seam::Start(n)),
+            _ => return l,
+        };
+        if self.seam.len() < n * fb {
+            self.seam.resize(n * fb, 0);
+        }
+        let buf = &mut self.seam[..n * fb];
+        buf.copy_from_slice(&self.tail[to * fb..(to + n) * fb]);
+        crossfade(&self.tail[from * fb..(from + n) * fb], buf, out.encoding, fb);
+        HeldLoop { seam: Some(seam), ..l }
     }
 
     /// Sets up the mix's incoming side once its format is known: the stretcher and the skip, in the
@@ -1239,7 +1350,7 @@ impl TransitionEngine {
         let pace = if p.stretching() { p.tempo_ratio() as f64 } else { 1.0 };
         self.flight.repeat = m.in_loop.filter(|_| late == 0).map(|l| {
             let frames = (out.bytes(l.ms * 1000) / out.frame_bytes()).max(1);
-            Repeat { frames, captured: 0, left: frames * l.repeats.max(0) as usize, pace }
+            Repeat { frames, seam: seam_frames(out.rate).min(frames), captured: 0, left: frames * l.repeats.max(0) as usize, pace }
         });
         let skip_frames = ((p.in_skip_us() + in_late_us).max(0) * s_fmt.rate as i64 + 500_000) / 1_000_000;
         self.flight.skip_left = skip_frames as usize * s_fmt.frame_bytes();
@@ -1312,15 +1423,20 @@ impl TransitionEngine {
         let src: &[u8] = converted.as_deref().unwrap_or(buffer);
         let pace = if stretched.is_some() { self.stretch_pace } else { 1.0 };
         let fb = out.frame_bytes();
-        // The loop's slice is kept as it plays; what follows it waits for the repeats.
+        // The loop's slice and its seam are kept as they play; what follows the slice waits for the repeats.
         let mut head = src.len();
-        if let Some(r) = self.flight.repeat.as_mut().filter(|r| r.captured < r.frames) {
-            let k = ((r.frames - r.captured) * fb).min(src.len());
+        if let Some(r) = self.flight.repeat.as_mut().filter(|r| r.captured < r.frames + r.seam) {
+            let k = ((r.frames + r.seam - r.captured) * fb).min(src.len());
             self.loop_in[r.captured * fb..r.captured * fb + k].copy_from_slice(&src[..k]);
+            head = (r.frames.saturating_sub(r.captured) * fb).min(src.len());
             r.captured += k / fb;
-            if k < src.len() {
-                self.stash.extend_from_slice(&src[k..]);
-                head = k;
+            if head < src.len() {
+                self.stash.extend_from_slice(&src[head..]);
+            }
+            if r.captured == r.frames + r.seam {
+                // Each repeat starts by fading out of what followed the slice.
+                let (slice, after) = self.loop_in.split_at_mut(r.frames * fb);
+                crossfade(&after[..r.seam * fb], &mut slice[..r.seam * fb], out.encoding, fb);
             }
         }
         self.mix_src(host, &src[..head], first_us, pace, out);
@@ -1336,7 +1452,7 @@ impl TransitionEngine {
     /// full and some are left.
     fn replay<D: Downstream, H: Host>(&mut self, down: &mut D, host: &mut H, out: Format) -> bool {
         let fb = out.frame_bytes();
-        while let Some(r) = self.flight.repeat.filter(|r| r.captured == r.frames) {
+        while let Some(r) = self.flight.repeat.filter(|r| r.captured == r.frames + r.seam) {
             if r.left > 0 {
                 let pos = r.frames - 1 - (r.left - 1) % r.frames;
                 let n = (r.frames - pos).min(r.left).min((16_384 / fb).max(1));
@@ -1466,14 +1582,14 @@ impl TransitionEngine {
         let (mut done, mut started) = (0, g.started);
         while done < n {
             if *frame == g.from && !started {
-                // The ending just before, in at most three runs (a loop's end and start, or its end and what follows).
+                // The ending just before, in at most four runs (what precedes a loop, its slice, a seam and the slice
+                // again, or the slice, a seam, the slice and what follows).
                 let mut v = read.saturating_sub((st.latency_frames() * fb).min(*read));
-                let mut runs: [&[u8]; 3] = [&[]; 3];
+                let mut runs: [&[u8]; 4] = [&[]; 4];
                 for r in runs.iter_mut() {
-                    let (at, end) = ending_run(v, len, lp);
-                    let k = (end - at).min(*read - v);
-                    *r = &self.tail[at..at + k];
-                    v += k;
+                    let run = held_run(&self.tail, &self.seam, v, len, lp, 1);
+                    *r = &run[..run.len().min(*read - v)];
+                    v += r.len();
                 }
                 st.glide(g.to, g.hold, g.ramp, &runs, enc);
                 if !self.out_knots.is_empty() {
@@ -1481,18 +1597,18 @@ impl TransitionEngine {
                 }
                 started = true;
             } else if *frame < g.from {
-                let (at, end) = ending_run(*read, len, lp);
-                let k = (g.from - *frame).min(n - done).min((end - at) / fb);
-                dst[done * fb..(done + k) * fb].copy_from_slice(&self.tail[at..at + k * fb]);
+                let run = held_run(&self.tail, &self.seam, *read, len, lp, 1);
+                let k = (g.from - *frame).min(n - done).min(run.len() / fb);
+                dst[done * fb..(done + k) * fb].copy_from_slice(&run[..k * fb]);
                 (*read, *frame, done) = (*read + k * fb, *frame + k, done + k);
                 if k == 0 {
                     break;
                 }
             } else {
                 // Past the held ending, silence pushes the stretcher's last frames out.
-                let (at, end) = ending_run(*read, len, lp);
-                let held = at < end;
-                let input = if held { &self.tail[at..end] } else { &SILENCE[..] };
+                let run = held_run(&self.tail, &self.seam, *read, len, lp, 1);
+                let held = !run.is_empty();
+                let input = if held { run } else { &SILENCE[..] };
                 let (used, made) = st.process(input, &mut dst[done * fb..], enc);
                 (*read, *frame, done) = (*read + if held { used } else { 0 }, *frame + made / fb, done + made / fb);
                 if made == 0 && used == 0 {
@@ -1511,14 +1627,14 @@ impl TransitionEngine {
     fn wrap_out(&self, hold_frames: usize, held: HeldLoop, from_frame: usize, dst: &mut [u8], frames: usize, fb: usize) {
         let mut i = 0;
         while i < frames {
-            let (at, end) = ending_run(from_frame + i, hold_frames, Some(held));
-            let run = (frames - i).min(end - at);
-            if run == 0 {
+            let run = held_run(&self.tail, &self.seam, from_frame + i, hold_frames, Some(held), fb);
+            let k = (frames - i).min(run.len() / fb);
+            if k == 0 {
                 dst[i * fb..frames * fb].fill(0);
                 break;
             }
-            dst[i * fb..(i + run) * fb].copy_from_slice(&self.tail[at * fb..(at + run) * fb]);
-            i += run;
+            dst[i * fb..(i + k) * fb].copy_from_slice(&run[..k * fb]);
+            i += k;
         }
     }
 
@@ -1963,6 +2079,7 @@ impl TransitionEngine {
         self.pool.clear();
         self.tail = Vec::new();
         self.loop_buf = Vec::new();
+        self.seam = Vec::new();
         self.out_stretch = None;
         self.loop_in = Vec::new();
         self.stash = Vec::new();
@@ -2267,8 +2384,10 @@ mod tests {
                 Some(n) if i >= q * (n as usize + 2) => i - n as usize * q,
                 _ => q + (i - q) % q,
             };
+            // The last frames of a round another follows are its seam (`an_outgoing_loop_wraps_without_a_step`).
+            let seam = |i: usize| i >= q && rounds.is_none_or(|n| (i - q) / q < n as usize) && (i - q) % q >= q - seam_frames(RATE);
             // Where the fade has the song loud enough to read.
-            for i in 0..3 * RATE as usize / 2 {
+            for i in (0..3 * RATE as usize / 2).filter(|&i| !seam(i)) {
                 let want = ((passed + heard(i)) % 20_000) as f64;
                 let (l, r) = (s[(passed + i) * 2] as f64, s[(passed + i) * 2 + 1] as f64);
                 let got = l / r * 20_000.0;
@@ -2277,13 +2396,53 @@ mod tests {
         }
     }
 
+    /// The largest step between two frames on the left channel of `s` (interleaved stereo).
+    fn largest_step(s: &[i16]) -> f64 {
+        s.iter().step_by(2).collect::<Vec<_>>().windows(2).map(|w| (*w[1] as f64 - *w[0] as f64).abs()).fold(0.0, f64::max)
+    }
+
+    /// The largest step a seamed loop of `len` frames of a 55 Hz sine at 8000 can make: the sine's own, plus the
+    /// seam's crossfade between the sine and itself shifted by `len` (at most their gap times the raised cosine's
+    /// steepest step, π/2n), plus rounding. A hard wrap steps by up to the whole gap.
+    fn seam_bound(len: usize) -> f64 {
+        let own = 8000.0 * std::f64::consts::TAU * 55.0 / RATE as f64;
+        let gap = 2.0 * 8000.0 * (std::f64::consts::PI * (len as f64 * 55.0 / RATE as f64).fract()).sin().abs();
+        own + gap * std::f64::consts::PI / (2.0 * seam_frames(RATE) as f64) + 3.0
+    }
+
+    /// A quarter-second outgoing loop of a 55 Hz sine (13.75 periods, so a hard wrap jumps a quarter period), after
+    /// the song's own time, at the hold's start, and released after its rounds: no step at its seams larger than
+    /// [`seam_bound`].
+    #[test]
+    fn an_outgoing_loop_wraps_without_a_step() {
+        let q = RATE as usize / 4;
+        for (at_ms, rounds) in [(250, None), (0, None), (250, Some(2))] {
+            let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+            let mut p = fade("b", 1_000_000);
+            p.mixer.out_loop = Some(OutLoop { at_ms, ms: 250, rounds });
+            h.plans.insert("a".into(), p);
+            e.configure(&mut d, &mut h, stream("a", FMT));
+            feed(&mut e, &mut d, &mut h, &sine(55.0, RATE, 3.0, 0), 0);
+            e.configure(&mut d, &mut h, stream("b", FMT));
+            e.handle_discontinuity(&mut d, &mut h);
+            feed(&mut e, &mut d, &mut h, &tone(0, 3.0), 3_000_000);
+            let step = largest_step(&d.samples());
+            assert!(step <= seam_bound(q), "at {at_ms} ms, {rounds:?}: a step of {step:.0}, over {:.0}", seam_bound(q));
+        }
+    }
+
     /// The next song ends inside a mix with an outgoing loop: what is left of the ending plays out once after the mix
     /// that was made. Cut in the song's own time before the loop: the rest of it and the slice. Cut in a released
-    /// loop's rounds: the song from the slice's end on, the slice not again.
+    /// loop's rounds: the song from the slice's end on, the slice not again. Cut in an endless loop at the hold's start:
+    /// nothing, not the song its seam was held for.
     #[test]
     fn a_cut_mix_plays_the_rest_of_its_ending_once() {
         // (loop, the song from where it goes on after the cut, s; what the ending holds, s)
-        let cases = [(OutLoop { at_ms: 1_000, ms: 250, rounds: None }, 0.6, 1.25), (OutLoop { at_ms: 250, ms: 250, rounds: Some(2) }, 0.5, 1.5)];
+        let cases = [
+            (OutLoop { at_ms: 1_000, ms: 250, rounds: None }, 0.6, 1.25),
+            (OutLoop { at_ms: 250, ms: 250, rounds: Some(2) }, 0.5, 1.5),
+            (OutLoop { at_ms: 0, ms: 250, rounds: None }, 0.25, 0.25),
+        ];
         for (l, on_s, held_s) in cases {
             let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
             let mut p = fade("b", 1_000_000);
@@ -2331,13 +2490,33 @@ mod tests {
             let made = (s.len() / 2 - passed) as f64 / RATE as f64;
             assert!((made - expected).abs() < 0.005, "ratio {ratio}: all of b plays, and the loop twice more: {made} s");
             let mix: Vec<i16> = s[passed * 2..].iter().step_by(2).copied().collect();
-            assert!(mix[l / 2..3 * l].iter().all(|&v| v > 100), "ratio {ratio}: the opening three times");
+            // Each repeat starts with its seam, faded in from what followed the slice.
+            let seamed = |i: usize| i % l < seam_frames(RATE);
+            assert!((l / 2..3 * l).filter(|&i| !seamed(i)).all(|i| mix[i] > 100), "ratio {ratio}: the opening three times");
             assert!(mix[3 * l + 2048..].iter().all(|&v| v < -100), "ratio {ratio}: then the rest of b");
             let pts: Vec<i64> = d.taken[mixed_from..].iter().map(|(_, at)| *at).collect();
             assert!(pts.windows(2).all(|w| w[0] <= w[1]), "ratio {ratio}: the clock never steps back: {pts:?}");
             let (last, at) = d.taken.last().expect("b played");
             assert!((at + FMT.us(last.len()) - 6_000_000).abs() < 2_000, "ratio {ratio}: b ends at its own time: {at}");
         }
+    }
+
+    /// A quarter-second incoming loop of a 55 Hz sine (13.75 periods), repeated twice: no step at its seams larger than
+    /// [`seam_bound`], nor where the song goes on after it.
+    #[test]
+    fn an_incoming_loop_wraps_without_a_step() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        let mut p = fade("b", 1_000_000);
+        p.mixer.in_loop = Some(crate::types::InLoop { ms: 250, repeats: 2 });
+        h.plans.insert("a".into(), p);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        feed(&mut e, &mut d, &mut h, &tone(0, 3.0), 0);
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+        feed(&mut e, &mut d, &mut h, &sine(55.0, RATE, 3.0, 0), 3_000_000);
+        assert!(e.play_to_end_of_stream(&mut d, &mut h));
+        let step = largest_step(&d.samples());
+        assert!(step <= seam_bound(RATE as usize / 4), "a step of {step:.0}, over {:.0}", seam_bound(RATE as usize / 4));
     }
 
     /// The last second of a 2 s mix bends 5 %: the outgoing song plays faster through it, so more of it is
@@ -2506,7 +2685,8 @@ mod tests {
     }
 
     /// A bent mix over a looped ending (varispeed): the half-second slice, 220 periods of 440 Hz, repeats with no
-    /// jump and speeds up over the bend; what follows it in the song (880 Hz) is never heard.
+    /// jump and speeds up over the bend; what follows it in the song (880 Hz past the 440 its seam fades out) is never
+    /// heard.
     #[test]
     fn a_bent_mix_over_a_looped_ending_speeds_the_loop_up() {
         let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
@@ -2517,7 +2697,7 @@ mod tests {
         e.configure(&mut d, &mut h, stream("a", FMT));
         let a: Vec<u8> = (0..3 * RATE as usize)
             .flat_map(|i| {
-                let hz = if i < 3 * RATE as usize / 2 { 440.0 } else { 880.0 };
+                let hz = if i < 3 * RATE as usize / 2 + seam_frames(RATE) { 440.0 } else { 880.0 };
                 let v = ((i as f64 * hz * std::f64::consts::TAU / RATE as f64).sin() * 8000.0) as i16;
                 [v, v]
             })
