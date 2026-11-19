@@ -391,6 +391,8 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     fetch_after: bool,
     /// Where the song being read started; cleared once the clock passes it (audio is audible).
     heard_from: Option<i64>,
+    /// Where playing went on from a pause; cleared once the clock passes it, behind the output's latency.
+    resumed_at: Option<i64>,
     periods: Vec<Period>,
     mode: Mode,
     /// Renderer position: from a seek or start, then from the engine once the output has a clock.
@@ -443,6 +445,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             upcoming: None,
             fetch_after: false,
             heard_from: None,
+            resumed_at: None,
             periods: Vec::new(),
             mode: Mode::Paused,
             position_us: None,
@@ -551,6 +554,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.periods = vec![Period { index: i, offset_us, duration_us: 0, gain: 1.0, serial }];
         self.on_serial = Some(serial);
         self.place(offset_us + from_ms * 1000);
+        self.resumed_at = None;
         self.heard_period = None;
         if r.ready() {
             return self.start_reading(i, from_ms, offset_us, r);
@@ -839,11 +843,16 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         }
     }
 
+    /// Plays on. From a pause, like a start, the place is unheard until the output's clock passes it.
     pub fn resume(&mut self) {
+        let from_silence = !self.playing();
         self.burst.restart();
         self.sink.play();
         self.mode = Mode::Playing;
         self.follow_clock();
+        if from_silence {
+            self.resumed_at = self.position_us;
+        }
     }
 
     /// Updates the clock for commands between render turns.
@@ -1002,18 +1011,19 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     fn fail(&mut self, i: usize, kind: PlaybackError, why: String) {
         let id = self.id_at(i);
         let next = self.next_of(i);
-        self.failures.push((id.clone(), why));
+        let said = format!("{id} will not play ({why})");
+        self.failures.push((id, why));
         let decided = match self.app.on_error(kind, next.is_some()) {
             Some(d) => d,
             None => self.errors.failed(kind, false, false, next.is_some()),
         };
         match (decided, next) {
             (OnError::Skip, Some(n)) => {
-                self.app.log(&format!("{id} will not play: skipped"));
+                self.app.log(&format!("{said}: skipped"));
                 self.jump(n, 0);
             }
             _ => {
-                self.app.log(&format!("{id} will not play: stopped"));
+                self.app.log(&format!("{said}: stopped"));
                 let halt = match decided {
                     OnError::Bridge => Halt::Bridge,
                     OnError::Wait => Halt::Wait,
@@ -1390,9 +1400,9 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.head.index()
     }
 
-    /// Playing from a start, jump or seek whose first sample the output's clock has not passed yet.
+    /// Playing from a start, jump, seek or pause whose first sample the output's clock has not passed yet.
     pub fn unheard(&self) -> bool {
-        self.heard_from.is_some()
+        self.heard_from.is_some() || self.resumed_at.is_some()
     }
 
     /// The song being read is waiting for bytes or still opening.
@@ -1438,6 +1448,9 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         let ended = self.sink.source_ended();
         if let Some(at) = self.call(|e, d, a| e.position_us(d, a, ended)) {
             self.place(at);
+            if self.resumed_at.is_some_and(|from| at > from) {
+                self.resumed_at = None;
+            }
             if let Some(p) = self.periods.iter().rev().find(|p| at >= p.offset_us).copied() {
                 // A new stream of the same song: repeat one looped.
                 if self.heard_period.is_some_and(|o| o != p.offset_us) && self.current == Some(p.index) {

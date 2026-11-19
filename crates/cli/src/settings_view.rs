@@ -3,7 +3,6 @@
 //! draws them. Rows send back a setting name and value (`setting_set`) or a level edit (`edit_level`).
 
 use crate::text;
-use nori_core::automix::store::Measured;
 use nori_core::settings::{season_follow_value, EqLevel, EqMode, SoundBand, StoredPrefs, ThemeSeason, EQ_RANGES};
 use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, LyricsSource, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsPart};
@@ -108,6 +107,7 @@ pub enum Act {
     AllowMobileAssets(String),
     /// Asks where to save a backup, or which one to restore.
     Backup { restore: bool },
+    CheckUpdate,
 }
 
 pub use nori_host::session::Chore;
@@ -142,7 +142,8 @@ pub enum Row {
     Repo { url: String, title: String, detail: String, removable: bool },
     /// A saved profile: enter switches to it; K J move it to place `up` or `down` where it can go, and e
     /// renames it from `name` where it may be (a jam guest's profiles stay as they are).
-    Server { id: String, label: String, detail: String, active: bool, up: Option<u32>, down: Option<u32>, name: Option<String> },
+    /// `name` and `scrobbling` are set when the profile may be changed here.
+    Server { id: String, label: String, detail: String, active: bool, up: Option<u32>, down: Option<u32>, name: Option<String>, scrobbling: Option<Scrobbling> },
     Button { title: String, action: Act },
     /// A lyrics service in the ranked list: enter switches it, ← → move it, `key` adds or changes its key.
     /// `asks_key`: switching it on asks for its key.
@@ -181,16 +182,12 @@ pub struct Storage {
     pub all_download_songs: u32,
     /// Each profile with downloads (the id its rows are kept under) and what they hold.
     pub download_profiles: Vec<(String, i64)>,
-    /// This profile's finished downloads, which its actions work on.
-    pub download_songs: u32,
     pub database: i64,
 }
 
 /// Non-setting facts shown on the page, loaded when Settings opens.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Facts {
-    /// Songs AutoMix has measured.
-    pub analysed: Measured,
     /// Offline index counts: songs, albums, artists.
     pub indexed: (u32, u32, u32),
     pub storage: Storage,
@@ -245,6 +242,14 @@ impl Alone {
             Alone::No | Alone::Plugins => None,
         }
     }
+}
+
+/// A profile's scrobbling list: its server first where it takes plays (its name, and being told them),
+/// then its accounts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scrobbling {
+    pub itself: Option<(String, bool)>,
+    pub accounts: Vec<nori_core::settings::SavedScrobbler>,
 }
 
 /// What the page shows beyond the settings: the terminal's own state, the kinds of profile and the
@@ -534,6 +539,18 @@ impl SettingsView {
     }
 
     /// m on a plugin: moving and removing it.
+    /// The selected profile's scrobbling list: its server first, where it takes plays, then its accounts;
+    /// picking one switches it, then each account removes one, then adding one.
+    pub fn scrobbling_menu(&self) -> Option<Overlay> {
+        let Some(Row::Server { id, label, scrobbling: Some(Scrobbling { itself, accounts }), .. }) = self.selected() else { return None };
+        let switch = |on: bool| if on { "off" } else { "on" };
+        let mut options: Vec<(String, String)> = itself.iter().map(|(name, on)| (text::scrobbler_itself_line(name, *on), format!("{}:", switch(*on)))).collect();
+        options.extend(accounts.iter().map(|a| (text::scrobbler_line(a), format!("{}:{}", switch(a.on), a.id))));
+        options.extend(accounts.iter().map(|a| (format!("Remove {}", text::scrobbler_name(a)), format!("remove:{}", a.id))));
+        options.push(("Add scrobbler".to_string(), "add".to_string()));
+        Some(Overlay::Picker { title: format!("Scrobbling for {label}"), options, sel: Sel::default(), target: Target::Scrobbling(id.clone()) })
+    }
+
     pub fn plugin_menu(&self) -> Option<Overlay> {
         let c = self.plugin_here()?;
         let can = |up| self.plugin_move(up).is_some();
@@ -587,12 +604,10 @@ fn page_facts(f: &Facts) -> PageFacts {
     PageFacts {
         parts: f.rules.settings.clone(),
         folders: f.folders.iter().map(|m| m.id.clone()).collect(),
-        analysed: f.analysed.songs,
         indexed_songs: f.indexed.0,
         stream_bytes: f.storage.stream,
         cover_bytes: f.storage.covers,
         lyrics_bytes: f.storage.lyrics,
-        download_songs: f.storage.download_songs,
         unsent_waiting: f.unsent.0,
         unsent_dropped: f.unsent.1,
         ..PageFacts::default()
@@ -621,7 +636,7 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
                         continue;
                     }
                     let identities = identity_row(&r, p, f, &own.kinds);
-                    rows.extend(flag_rows(&r, p, s).unwrap_or_else(|| row_of(r, p, s, f, &own.kinds).into_iter().collect()));
+                    rows.extend(flag_rows(&r, s).unwrap_or_else(|| row_of(r, p, s, f, &own.kinds).into_iter().collect()));
                     rows.extend(identities);
                 }
                 sections.push(section(section_title(sec.id), rows));
@@ -884,6 +899,7 @@ pub fn open_row(row: Row) -> Option<Opened> {
             Act::AddServer => Opened::Login,
             Act::JoinJam => Opened::Overlay(Overlay::Join { text: String::new(), error: None, busy: false }),
             Act::Chore(c) => Opened::Cmds(vec![Cmd::Action(c)]),
+            Act::CheckUpdate => Opened::Cmds(vec![Cmd::CheckUpdate]),
             Act::InstallPlugin => Opened::Overlay(Overlay::Input { title: text::PLUGIN_PATH.into(), text: String::new(), secret: false, target: Target::Install }),
             Act::PluginAction { plugin, row } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Act(plugin, row))]),
             Act::LookForPlugins => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Look)]),
@@ -1080,23 +1096,26 @@ fn section_title(id: SectionId) -> &'static str {
 const SEASON: &str = "Season";
 
 /// A setting's title and the line under it, which says only how things stand now.
-fn setting_words(name: &str, p: &StoredPrefs, s: &SettingsState) -> (String, String) {
+fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let title = match name {
         "crossfadeSec" => "Crossfade",
-        "autoMix" => "AutoMix",
-        "autoMixBetterBeats" => {
+        "autoMix" => {
             let state = match &s.beat_model {
-                BeatModel::Failed { why } if p.auto_mix_better_beats => format!("The download didn't work ({}). It tries again at the next song.", text::beat_failure(*why)),
-                BeatModel::Downloading if p.auto_mix_better_beats => format!("Downloading (about {} MB)…", s.beat_model_mb),
-                _ => "Uses more battery while songs are measured".into(),
+                BeatModel::Unavailable | BeatModel::Unused => String::new(),
+                BeatModel::Failed { why } => format!("The beat model's download didn't work ({}). It tries again at the next song.", text::beat_failure(*why)),
+                BeatModel::Downloading => format!("Downloading the beat model (about {} MB)…", s.beat_model_mb),
+                BeatModel::Absent | BeatModel::Ready => "Uses more battery while songs are measured".into(),
             };
-            return ("Better beat detection".into(), state);
+            return ("AutoMix".into(), state);
         }
         "skipExplicit" => "Skip explicit songs",
         "autoFill" => "When the queue ends",
         "autoFillBasis" => "Chosen by",
         "autoFillRemote" => "Include remote songs",
+        "updateCheck" => "Check for updates automatically",
+        "updateBeta" => "Beta updates",
         "bridgeOffline" => "Play downloads when offline",
+        "playOnBluetooth" => "Play when Bluetooth connects",
         "headphoneSound" => "Headphone sound",
         "compressor" => "Compressor",
         "replayGain" => "Volume leveling",
@@ -1112,7 +1131,6 @@ fn setting_words(name: &str, p: &StoredPrefs, s: &SettingsState) -> (String, Str
         "lyricsPreferWords" => "Prefer word-by-word lyrics",
         "playlistNotes" => "Playlist notes",
         "tasteModel" => "Keep listening history",
-        "scrobble" => "Tell the server what you play",
         "queueOffer" => "Continue from other devices",
         "thirdPartyLookups" => "Look things up online",
         "remoteControl" => "Remote control and jams",
@@ -1214,12 +1232,12 @@ fn season_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, dark: bool, tod
 }
 
 /// A set of independent flags as its title, then a switch for each; None for any other row.
-fn flag_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState) -> Option<Vec<Row>> {
+fn flag_rows(r: &settings_pages::SettingsRow, s: &SettingsState) -> Option<Vec<Row>> {
     let RowItem::Setting { spec, value, .. } = &r.item else { return None };
     if spec.kind != SettingKind::Flags {
         return None;
     }
-    let (title, detail) = setting_words(&spec.name, p, s);
+    let (title, detail) = setting_words(&spec.name, s);
     let switches = spec.options.iter().map(|flag| Row::Toggle {
         switch: Switch::Stores(spec.name.clone(), settings_model::flag_toggled(value.clone(), flag.clone())),
         title: format!("  {}", option_words(&spec.name, flag)),
@@ -1255,7 +1273,7 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
     let enabled = r.enabled;
     Some(match r.item {
         RowItem::Setting { spec, value, chips } => {
-            let (title, detail) = setting_words(&spec.name, p, s);
+            let (title, detail) = setting_words(&spec.name, s);
             let title = format!("{indent}{title}");
             match spec.kind {
                 SettingKind::Switch => Row::Toggle { switch: Switch::Setting(spec.name), title, detail, on: value == "true", enabled },
@@ -1291,7 +1309,6 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             let (indexed_songs, albums, artists) = f.indexed;
             let chore = |title: &str, detail: String, button: &str, chore| Row::Action { title: format!("{indent}{title}"), detail, button: button.into(), enabled, action: Act::Chore(chore) };
             match action {
-                SettingsAction::MeasureAgain => chore("Measured songs", text::measured(f.analysed), "Measure again", Chore::MeasureAgain),
                 SettingsAction::SyncLibrary => {
                     let counts = format!("{} · {} · {} on this device", counted(indexed_songs, "song", "songs"), counted(albums, "album", "albums"), counted(artists, "artist", "artists"));
                     chore("Offline search", counts, "Update", Chore::SyncLibrary)
@@ -1304,7 +1321,7 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
                 SettingsAction::JoinJam => Row::Button { title: text::JAM_JOIN.into(), action: Act::JoinJam },
                 SettingsAction::MakeBackup => Row::Action { title: text::BACK_UP.into(), detail: text::BACK_UP_DETAIL.into(), button: "Save".into(), enabled, action: Act::Backup { restore: false } },
                 SettingsAction::RestoreBackup => Row::Action { title: text::RESTORE.into(), detail: text::RESTORE_DETAIL.into(), button: "Open".into(), enabled, action: Act::Backup { restore: true } },
-                SettingsAction::AnalyseDownloads | SettingsAction::CheckUpdate => return None,
+                SettingsAction::CheckUpdate => Row::Action { title: "Check for updates".into(), detail: format!("Version {}", env!("CARGO_PKG_VERSION")), button: "Check".into(), enabled: true, action: Act::CheckUpdate },
             }
         }
         RowItem::Note { note } => Row::Note {
@@ -1350,11 +1367,16 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             if !sv.alt_url.trim().is_empty() {
                 parts.push("second address");
             }
-            let label = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or(words.name);
+            let label = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.clone());
             let movable = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
             let up = index.checked_sub(1).filter(|_| movable);
             let down = Some(index + 1).filter(|to| movable && (*to as usize) < p.servers.len());
-            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active, up, down, name: movable.then(|| sv.name.clone()) }
+            // The open profile's rules as its session has them; another's as the core reads the saved profile.
+            let scrobbling = movable.then(|| {
+                let takes = if active { f.rules.scrobbles } else { kinds.rules_of(sv.clone(), false).scrobbles };
+                Scrobbling { itself: takes.then(|| (words.name.clone(), !sv.scrobble_off)), accounts: sv.scrobblers.clone() }
+            });
+            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active, up, down, name: movable.then(|| sv.name.clone()), scrobbling }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             Row::Toggle { switch: Switch::Stores("musicFolders".into(), tapped), title: f.folders.get(index as usize)?.name.clone(), detail: String::new(), on, enabled }
@@ -1771,7 +1793,6 @@ mod tests {
             downloads: 3_000_000,
             all_download_songs: 5,
             download_profiles: vec![("a".into(), 2_000_000), ("b".into(), 1_000_000)],
-            download_songs: 3,
             ..Storage::default()
         };
         let stored = |storage: Storage| {
@@ -1801,7 +1822,6 @@ mod tests {
             auto_fill: Some(nori_core::settings::AutoFillKind::Songs),
             compressor: Some(nori_core::settings::CompressorPreset::Light),
             replay_gain: nori_core::settings::GainMode::Track,
-            scrobble: true,
             lyrics_online: true,
             third_party_lookups: true,
             servers: vec![server],

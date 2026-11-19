@@ -38,7 +38,7 @@ val EqKind.slope: Boolean get() = EQ.bandKinds[ordinal].slope
 fun newServer(id: String) = SavedServer(
     id = id, kind = ServerKind.Subsonic, name = "", url = "", altUrl = "", user = "", password = "", apiKey = "", legacyAuth = false, headers = emptyMap(),
     allowSelfSigned = false, clientCert = "", clientCertPassword = "", wifiOnly = false, musicFolderIds = emptyList(), altMaxBitRate = 0,
-    icon = dev.nori.music.ffi.settings.ProfileIcon.LETTER, picture = null,
+    icon = dev.nori.music.ffi.settings.ProfileIcon.LETTER, picture = null, scrobbleOff = false, scrobblers = emptyList(),
 )
 
 /** Its name, or else the host of its address (the core's `settings::label`). */
@@ -97,8 +97,28 @@ class Settings(private val context: Context) {
     internal val handle = core.uniffiCloneHandle()
 
     private val state = MutableStateFlow(load())
+
+    /** The settings as the user set them, which the settings screens show and edits start from. */
     val prefs: StateFlow<StoredPrefs> = state
     val value get() = state.value
+
+    /** Whether enabled plugins override some settings now ([asked]); while not, [effective] is [prefs]. */
+    @Volatile private var overridden = false
+    private val inEffect = MutableStateFlow(state.value)
+
+    /** The settings in effect: [prefs] with what enabled plugins override laid over them. What the app does reads these. */
+    val effective: StateFlow<StoredPrefs> = inEffect
+
+    /** [state] changed by [change], and [inEffect] with it. */
+    private fun set(change: (StoredPrefs) -> StoredPrefs) {
+        state.update(change)
+        laidAgain()
+    }
+
+    private fun laidAgain() {
+        val p = state.value
+        inEffect.value = if (overridden) core.effective() ?: p else p
+    }
 
     /**
      * What each change asks of the player, as the core says (settings_store.rs: APPLY_AUDIO 1,
@@ -126,7 +146,7 @@ class Settings(private val context: Context) {
             if (effect < 0) return
             kept = SoundBand(EqKind.entries[band[0].toInt()], band[1], band[2], band[3], BandChannel.entries[band[4].toInt()])
         }
-        state.update { p -> if (index in p.eqBands.indices) p.copy(eqBands = p.eqBands.toMutableList().also { it[index] = kept }) else p }
+        set { p -> if (index in p.eqBands.indices) p.copy(eqBands = p.eqBands.toMutableList().also { it[index] = kept }) else p }
         if (effect != 0) _effects.tryEmit(effect)
     }
 
@@ -135,7 +155,7 @@ class Settings(private val context: Context) {
         val r = SoundEdit.setLevel(handle, level.ordinal, value)
         if (r == -1L) return
         val kept = java.lang.Float.intBitsToFloat((r ushr 32).toInt())
-        state.update { p ->
+        set { p ->
             when (level) {
                 EqLevel.PREAMP -> p.copy(eqPreampDb = kept)
                 EqLevel.BALANCE -> p.copy(balance = kept)
@@ -153,7 +173,7 @@ class Settings(private val context: Context) {
         if (r == -1L) return
         val kept = java.lang.Float.intBitsToFloat((r ushr 32).toInt())
         // Moved by hand, the sliders are no longer a headphone correction (the core forgets it too).
-        state.update { p -> if (index in p.eqGraphic.indices) p.copy(eqGraphic = p.eqGraphic.toMutableList().also { it[index] = kept }, eqGraphicTarget = emptyList()) else p }
+        set { p -> if (index in p.eqGraphic.indices) p.copy(eqGraphic = p.eqGraphic.toMutableList().also { it[index] = kept }, eqGraphicTarget = emptyList()) else p }
         val effect = r.toInt()
         if (effect != 0) _effects.tryEmit(effect)
     }
@@ -162,12 +182,15 @@ class Settings(private val context: Context) {
      * A change by name the core has already kept (`setting_set`): taken in here, and nothing sent back.
      */
     fun took(change: SettingChange) {
-        state.value = change.prefs
+        receivers(state.value, change.prefs)
+        set { change.prefs }
         if (change.effect != 0u) _effects.tryEmit(change.effect.toInt())
     }
 
-    /** What a core call asks of the player besides a settings change (`MeasuredAgain`), told as a change's effect is. */
+    /** What a plugin's layer changed of the settings in effect; its effect is told as a change's is. */
     fun asked(effect: UInt) {
+        overridden = core.overridden()
+        laidAgain()
         if (effect != 0u) _effects.tryEmit(effect.toInt())
     }
 
@@ -177,7 +200,7 @@ class Settings(private val context: Context) {
      */
     fun soundTool(tool: SoundTool): Int {
         val c = core.soundTool(tool) ?: return state.value.eqBands.size
-        state.update { it.withSound(c.sound) }
+        set { it.withSound(c.sound) }
         if (c.effect != 0u) _effects.tryEmit(c.effect.toInt())
         return c.sound.eqBands.size
     }
@@ -187,8 +210,15 @@ class Settings(private val context: Context) {
         if (next == state.value) return
         // The core first: whatever reacts to the new value (on any thread) reads it from there.
         val effect = core.put(next)
-        state.value = next
+        receivers(state.value, next)
+        set { next }
         if (effect != 0u) _effects.tryEmit(effect.toInt())
+    }
+
+    /** The manifest receivers a setting turns on, changed only when it does. */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun receivers(before: StoredPrefs, after: StoredPrefs) {
+        if (before.playOnBluetooth != after.playOnBluetooth) dev.nori.music.playback.PlayOnBluetooth.enable(context, after.playOnBluetooth)
     }
 
     private fun load(): StoredPrefs = core.open(java.io.File(context.filesDir, dbFileName()).path)

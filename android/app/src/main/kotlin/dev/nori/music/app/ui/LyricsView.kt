@@ -110,7 +110,7 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean,
     val current = playerState.current?.id
     val looking = loaded.songId != current || loaded is dev.nori.music.ffi.lyrics.LyricsNow.Looking
     val settings: SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     val shown = LocalPlayerShown.current
     // When the screen stays on is the core's (`lyrics_keep_screen_on`).
     if (prefs.lyricsKeepScreenOn && shown) {
@@ -255,7 +255,7 @@ private val HEADER_FADE = FadeTimes(inMs = 220f, outMs = 160f)
 private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyrics, song: String?, playing: Boolean, following: Boolean, anchor: LyricsAnchor) {
     val lyrics = found.lyrics
     val settings: SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     val shown = LocalPlayerShown.current
     // Which line is lit, how long its change takes, how far the singing is and when to look again are all
     // the core's (crates/look/src/lyrics.rs); this only asks with the playhead and draws the answer.
@@ -315,7 +315,7 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
         lastMs[0] = shownMs
         if (hasBacking) backingSung = clock.atBackingSung
         var drawnAt = 0L
-        while (playing && live && isActive) {
+        while ((playing || vm.placeRuns) && live && isActive) {
             val wait = LyricsClock.wait(step)
             if (wait == 0) break
             // Display frames while the fill moves; asleep between words and after a line is sung, when
@@ -599,7 +599,7 @@ private fun LyricsHeader(vm: PlayerViewModel, actions: ActionsViewModel, song: d
             // A jam guest's seal would be the host's.
             val tap = LocalSealTap.current
             NoiseTitleButton(vm)
-            if (LocalRules.current.seals) TitleButton(if (starred) Kanji.Sealed else Kanji.Seal, say.favourite, starred, rememberStamp()) { tap(s, !starred) }
+            if (LocalRules.current.stars) TitleButton(if (starred) Kanji.Sealed else Kanji.Seal, say.favourite, starred, rememberStamp()) { tap(s, !starred) }
             TitleButton(Iconoir.MoreHoriz, say.more, false) { menu(s) }
         }
     }

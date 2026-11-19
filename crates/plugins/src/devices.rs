@@ -434,6 +434,10 @@ impl Plugins {
     fn output_device(&self, device: &BtDevice, connected: bool) {
         let audio = device.services.iter().any(|s| AUDIO.iter().any(|a| s.eq_ignore_ascii_case(a)));
         if audio && self.bluetooth_outputs.load(Ordering::Relaxed) {
+            let heard = self.output_connected.read().expect("not poisoned").clone();
+            if let Some(heard) = heard.filter(|_| connected) {
+                heard();
+            }
             let told = self.reaching(device, "hooks");
             let name = device.name.clone();
             self.tell_but(Hook::DeviceConnected, &told, || if connected { hooks::Event::DeviceConnected(name) } else { hooks::Event::DeviceDisconnected(name) });
@@ -450,13 +454,25 @@ impl Plugins {
         }
     }
 
-    /// Watches Bluetooth while an enabled plugin reaches devices, or hears outputs connect where
-    /// Bluetooth tells of them, and only then; called whenever the enabled plugins change. Devices no
-    /// plugin controls are offered again, and a plugin turned off lets its devices go.
+    /// Has `heard` told whenever an audio device connects, where the platform's Bluetooth tells of them
+    /// (the client plays on one connecting); None stops it.
+    pub fn hear_outputs_connect(&self, heard: Option<Arc<dyn Fn() + Send + Sync>>) {
+        let now = heard.is_some();
+        let was = std::mem::replace(&mut *self.output_connected.write().expect("not poisoned"), heard).is_some();
+        if now != was {
+            self.rewatch();
+        }
+    }
+
+    /// Watches Bluetooth while an enabled plugin reaches devices, or something hears outputs connect
+    /// where Bluetooth tells of them (a plugin's hook, the client), and only then; called whenever the
+    /// enabled plugins change. Devices no plugin controls are offered again, and a plugin turned off
+    /// lets its devices go.
     pub(crate) fn rewatch(&self) {
         let Some(platform) = self.radio.platform() else { return };
         let enabled: Vec<String> = self.running().into_iter().filter(|i| i.manifest.reaches_devices()).map(|i| i.manifest.id.clone()).collect();
-        let want = !enabled.is_empty() || (self.bluetooth_outputs.load(Ordering::Relaxed) && self.hears(Hook::DeviceConnected));
+        let outputs_heard = self.hears(Hook::DeviceConnected) || self.output_connected.read().expect("not poisoned").is_some();
+        let want = !enabled.is_empty() || (self.bluetooth_outputs.load(Ordering::Relaxed) && outputs_heard);
         let was = std::mem::replace(&mut *self.watching.lock().expect("not poisoned"), want);
         // Before watching: a platform may tell of connected devices as soon as it is watched.
         if want && !was {

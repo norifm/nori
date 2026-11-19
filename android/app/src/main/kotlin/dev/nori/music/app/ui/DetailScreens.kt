@@ -97,13 +97,14 @@ internal fun SongListPage(
 
 /**
  * The glyphs of a page's list head: what the core's `page_actions` offers [kind], in its order. Download and
- * Add to queue are done here ([artistId]: the artist's own songs); [own] answers the ones only
- * the page can do (Refresh, Edit) and a page without an answer shows no glyph for them.
+ * Add to queue are done here ([artistId]: the artist's own songs; [playlistId]: the playlist, downloaded whole
+ * and kept so); [own] answers the ones only the page can do (Refresh, Edit) and a page without an answer
+ * shows no glyph for them.
  */
 @Composable
 internal fun PageActionGlyphs(
     kind: PageKind, songs: List<Song>, done: Set<String>, actions: ActionsViewModel, artistId: String? = null,
-    own: (PageAction) -> (() -> Unit)? = { null },
+    playlistId: String? = null, own: (PageAction) -> (() -> Unit)? = { null },
 ) {
     val downloads = LocalRules.current.downloads
     val missing = remember(songs, done) { songs.filterNot { it.id in done } }
@@ -113,7 +114,7 @@ internal fun PageActionGlyphs(
     for (a in offered) when (a) {
         is PageAction.Download -> GlyphButton(
             if (a.act == DownloadAct.REMOVE) Iconoir.CheckCircle else Iconoir.Download,
-            say.downloadEntry(a.act, missing.size), quiet = true, onClick = downloadAction(a.act, songs, missing, actions),
+            say.downloadEntry(a.act, missing.size), quiet = true, onClick = downloadAction(a.act, songs, missing, actions, playlistId),
         )
         PageAction.DownloadEverything -> GlyphButton(Iconoir.Download, say.downloadEverything, quiet = true) { artistId?.let { actions.downloadArtist(it) } }
         PageAction.AddToQueue -> GlyphButton(Iconoir.Playlist, say.addToQueue, quiet = true) {
@@ -124,10 +125,10 @@ internal fun PageActionGlyphs(
     }
 }
 
-/** What a download [act] on [songs] does, [missing] being those not yet here. */
-private fun downloadAction(act: DownloadAct, songs: List<Song>, missing: List<Song>, actions: ActionsViewModel): () -> Unit = when (act) {
-    DownloadAct.ALL -> { { actions.download(songs) } }
-    DownloadAct.MISSING -> { { actions.download(missing) } }
+/** What a download [act] on [songs] does, [missing] being those not yet here; those of [playlist] are downloaded whole. */
+private fun downloadAction(act: DownloadAct, songs: List<Song>, missing: List<Song>, actions: ActionsViewModel, playlist: String?): () -> Unit = when (act) {
+    DownloadAct.ALL -> { { actions.download(songs, playlist) } }
+    DownloadAct.MISSING -> if (playlist != null) { { actions.download(songs, playlist) } } else { { actions.download(missing) } }
     DownloadAct.REMOVE -> { { actions.undownload(songs) } }
 }
 
@@ -252,7 +253,7 @@ fun AlbumScreen(id: String, actions: ActionsViewModel, vm: AlbumViewModel = view
 /** An album's page: [detail] null while the songs are on the wire, [failed] when they did not come. */
 @Composable
 private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actions: ActionsViewModel, vm: AlbumViewModel) {
-    val account = LocalRules.current.account
+    val stars = LocalRules.current.stars
     val list = rememberSongListState(actions)
     val nav = LocalNav.current
     val arrival = rememberArrival(detail != null)
@@ -265,6 +266,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(album.coverArt, CoverSize.CARD), vm.cover(album.coverArt, CoverSize.ROW)),
+        item = album.id,
         title = album.name,
         subtitle = album.artist,
         onSubtitle = album.artistId?.let { a ->
@@ -277,7 +279,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
         onShuffle = detail?.let { d -> { actions.shuffle(d.songs, from) } },
         queue = queue,
         actions = {
-            if (account) {
+            if (stars) {
                 val albumStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ALBUM, album.id, album.starred)
                 FavoriteButton(albumStarred) { actions.starAlbum(album.id, !albumStarred) }
             }
@@ -348,7 +350,7 @@ fun ArtistReleasesScreen(id: String, group: Int, vm: ArtistViewModel = viewModel
 /** An artist's page: [ui] null while the detail is on the wire, [failed] when it did not come. */
 @Composable
 private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: ActionsViewModel, vm: ArtistViewModel, leave: (String) -> Unit) {
-    val account = LocalRules.current.account
+    val stars = LocalRules.current.stars
     val list = rememberSongListState(actions)
     val nav = LocalNav.current
     val arrival = rememberArrival(ui != null)
@@ -368,6 +370,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
     HeroPage(
         coverUrl = vm.cover(artist.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(artist.coverArt, CoverSize.CARD), vm.cover(artist.coverArt, CoverSize.ROW)),
+        item = artist.id,
         title = artist.name,
         titleSize = 32.sp,
         onPlay = ui?.let { ready -> { actions.playArtist(ready.detail.artist.id) } },
@@ -376,7 +379,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
         // Only a queue this page's Play or Shuffle started (all the artist's songs), not any song by them.
         queue = rememberPageQueue(rememberOrigin(OriginKind.ARTIST, artist.id), ui?.detail?.queue),
         actions = {
-            if (account) {
+            if (stars) {
                 val artistStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ARTIST, artist.id, artist.starred)
                 FavoriteButton(artistStarred) { actions.starArtist(artist.id, !artistStarred) }
             }
@@ -471,7 +474,7 @@ private fun PlaylistPage(
     onFilter: (String) -> Unit,
 ) {
     val settings: SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     val list = rememberSongListState(actions)
     val arrival = rememberArrival(detail != null)
     val head = remember(detail, playlist) {
@@ -484,6 +487,7 @@ private fun PlaylistPage(
     HeroPage(
         coverUrl = vm.cover(playlist.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(playlist.coverArt, CoverSize.CARD), vm.cover(playlist.coverArt, CoverSize.ROW)),
+        item = playlist.id,
         title = playlist.name,
         subtitle = remember(playlist.comment, prefs.playlistNotes) { dev.nori.music.ffi.library.playlistDescription(playlist.comment, prefs.playlistNotes) },
         onPlay = detail?.let { d -> { actions.play(d.songs, from = from) } },
@@ -498,7 +502,7 @@ private fun PlaylistPage(
         },
         headLabel = head,
         headActions = {
-            PageActionGlyphs(PageKind.Playlist, detail?.songs.orEmpty(), list.downloaded, actions)
+            PageActionGlyphs(PageKind.Playlist, detail?.songs.orEmpty(), list.downloaded, actions, playlistId = id)
         },
     ) {
         when {
@@ -508,7 +512,7 @@ private fun PlaylistPage(
                 songRows(
                     detail.songs, actions, list,
                     cover = { vm.cover(it.coverArt, CoverSize.ROW) }, rows = shown, arrival = arrival, from = from,
-                    pageWhole = whole,
+                    pageWhole = whole, edits = { at -> actions.rowEdits(playlist, detail.songs, at) },
                 )
             }
             failed != null -> item(key = "fail") { LoadFailed(failed) }
@@ -529,7 +533,7 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
             name, page.songs, list.downloaded, from, actions,
             coverUrl = vm.cover(page.coverArt, CoverSize.FULL), coverStandIns = listOf(vm.cover(page.coverArt, CoverSize.ROW)),
             // As a mix's page has it: keep the genre's songs on the account as a playlist.
-            afterPlay = { if (LocalRules.current.account && page.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(name, page.songs) } },
+            afterPlay = { if (LocalRules.current.playlists && page.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(name, page.songs) } },
         ) {
             songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from, pageWhole = whole)
         }

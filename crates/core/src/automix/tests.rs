@@ -41,8 +41,6 @@ fn finish_stores_row_and_voice() {
     let secs = x.len() as f64 / s.rate as f64;
     assert!((voice.seconds() - secs).abs() < 0.5, "{} s of curve for {secs} s", voice.seconds());
     assert_eq!(core.analysis_voice("none").unwrap(), None);
-    core.measure_again().unwrap();
-    assert_eq!(core.analysis_voice("x").unwrap(), None);
 }
 
 impl Core {
@@ -87,4 +85,31 @@ fn beat_model_grid_survives_reanalysis() {
     let bytes: Vec<u8> = s.render().iter().flat_map(|v| v.to_le_bytes()).collect();
     let again = core.analysis_run("s".into(), bytes, s.rate as i32, 1, Encoding::Float).unwrap();
     assert_eq!((again.intro_grid_source, again.intro_bpm, again.outro_grid_source), (GRID_NEURAL, 90.0, GRID_CHECKED));
+}
+
+#[test]
+fn downloads_are_offered_an_analysis_when_automix_turns_on_and_once_per_version() {
+    use crate::settings::AutoMixMode::{Dj, Off, Smooth};
+    let dir = nori_testdir::TempDir::new("analysis-offer");
+    let settings = std::sync::Arc::new(crate::settings_store::Settings::default());
+    settings.open(&dir.join("app.db").to_string_lossy()).unwrap();
+    let core = Core::new(String::new(), "t".into(), std::sync::Arc::new(crate::queue::Session::new(settings.clone()))).unwrap();
+    core.download_queue(vec![crate::Song { id: "a".into(), ..Default::default() }]).unwrap();
+    core.download_settle(vec!["a".into()], vec![true]).unwrap();
+    assert_eq!(core.analysis_offer_on_switch(Smooth, Dj), None, "the styles share one analysis");
+    assert_eq!(core.analysis_offer_on_switch(Dj, Off), None);
+    assert_eq!(core.analysis_offer_on_switch(Off, Smooth).map(|o| (o.songs, o.reason)), Some((1, AnalysisReason::TurnedOn)));
+    assert_eq!(core.analysis_offer_at_start(), None, "AutoMix off: nothing to offer");
+    let mut p = settings.current().unwrap();
+    p.auto_mix = Smooth;
+    settings.put(p);
+    assert_eq!(core.analysis_offer_at_start().map(|o| o.reason), Some(AnalysisReason::Changed));
+    assert_eq!(core.analysis_offer_at_start(), None, "once per version");
+    crate::db::kv_put(&core.db.lock(), OFFERED_KEY, &(ANALYSIS_VERSION - 1).to_string()).unwrap();
+    assert!(core.analysis_offer_at_start().is_some(), "a newer version offers again");
+}
+
+#[test]
+fn a_wait_is_felt_in_minutes() {
+    assert_eq!([0, 29, 31, 3_570, 4_790, 7_000].map(felt_minutes), [0, 0, 1, 60, 80, 115]);
 }

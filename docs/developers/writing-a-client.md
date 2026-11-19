@@ -93,11 +93,12 @@ re-exports every domain crate by module name (`nori_core::playlist` is `nori_que
 | The one app database and its background writer | `nori-db` |
 | Records, `CoreError`, the log, numbers for display | `nori-model`: `model`, `alog`, `numbers`, `lines` |
 | Settings: one `StoredPrefs` field per setting, the model, the pages per client | `nori-settings`: `settings`, `settings_store`, `settings_model`, `settings_pages`, `credits` |
-| A backup of the settings, sound profiles and plugins, sealed with a password | `nori-backup` (`nori-core::backup`) |
+| A backup of the settings, sound profiles, favorites kept on this device and plugins, sealed with a password | `nori-backup` (`nori-core::backup`) |
 | Plugins: what repos offer, search, updates waiting, providers to offer on the first screen, a plugin's README and icon ([Plugins](plugins.md)) | `nori-plugins`: `offers_found`, `updates_waiting`, `provider_offers`, `offer_of`, `Plugins::offers_stand`, `Plugins::readme`, `Plugins::icon` |
 | Library, search, browse, mixes, smart playlists, history, favorites, M3U | `nori-library`: `library`, `search`, `browse`, `mixes`, `smart`, `history`, `stars`, `m3u` |
 | What each page shows, as data: discs, releases by kind, big buttons, row swipes, song menus, the car tree | `nori-library`: `pages`, `rows`, `menus`, `car` |
 | The queue: order, shuffle, autofill, radio, the offline bridge, scrobbling, the rules at each moment | `nori-queue`: `playlist`, `queue`, `autofill`, `bridge`, `scrobble`, `rules` |
+| Sending a play: to the server (its switch, the profile's rules) and the profile's ListenBrainz, Libre.fm and Last.fm accounts, plays they didn't take kept for later (`scrobbles_waiting`, 14 days); the kinds offered, in order, the fields each asks (the advanced ones folded away), where they come from, and when a form is complete; signing in to an account, Last.fm on its own page | `nori-core::scrobblers`: `Client::scrobble`, `scrobbler_kinds`, `scrobbler_fields`, `scrobbler_help_page`, `scrobbler_form_ready`, `scrobbler_sign_in` (`scrobbler_kinds_json` for JSON clients), `Client::scrobbler_approval` then `Client::sign_in_scrobbler`; accounts are `SavedServer::scrobblers` (`profile_scrobbler_put`, `profile_scrobbler_removed`) |
 | Decoding MP3, FLAC, AAC-LC, Vorbis, ALAC and Opus, gapless | `nori-player::decode` |
 | The sound chain: EQ, pre-amp, limiter, compressor, headphone sound, balance, mono, ReplayGain and leveling, speed and pitch, silence skip | `nori-player`: `dsp`, `graphic`, `compressor`, `spatial`, `gain`, `speed`, `sonic`, `silence`, `chain` |
 | Crossfade and AutoMix: analysis, planning, mixing; the optional neural beat tracker | `nori-player`: `transitions`, `automix`; `nori-automix` |
@@ -285,7 +286,11 @@ of this; Android's `PlaybackService` calls the same functions.
 - **Clearing the queue**: `Session::clear_upcoming` (`playlist_clear_upcoming`, `Op::Clear` on the device
   playing) takes the songs after the one playing in play order; for the same `UNDO_MS`,
   `Session::put_back_cleared` (`playlist_restore_all`, `Op::RestoreCleared`) puts them back where they
-  were. Clear shows only while songs follow the one playing, and not to a jam guest.
+  were.
+- **The queue's head**: `menus::queue_actions` says what it offers for the whole queue, in order: Clear
+  while songs follow the one playing, and Add to playlist (the queue in play order, into the client's
+  playlist picker) where the account's playlists take songs; nothing to a jam guest. Clear is a word,
+  Add to playlist the plus-circle glyph a mix's page keeps itself with.
 - **Search**: `SearchSession` answers each keystroke from the offline index and the server once typing
   pauses (`typed_with_index`, `answer`); its `SearchView` says where the answer stands as one
   `SearchShown` (blank, asking, failed, found, nothing found). An ask typed over ends at once with
@@ -309,6 +314,8 @@ of this; Android's `PlaybackService` calls the same functions.
 - **A profile's mark**: `SavedServer::icon` (`settings::ProfileIcon`, the picker's order `profile_icons`): its
   letter (`profile_letter`, the default), its provider's mark, or one of Iconoir's faces.
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.
+  Seals show on songs, albums and artists wherever `ProfileRules::stars` says; where the account can't
+  keep them (`stars_here`) the core keeps them on this device, and the client draws and calls the same.
 - **Fetching ahead**: the engine fetches the next song as soon as it is next, a provider's too: it plays
   anyway, and the server takes a while to fetch one from its provider, too long for a mix into it.
   `Client::precache_targets` names the songs after it (the `songs_ahead_wifi` and `songs_ahead_mobile`
@@ -322,6 +329,12 @@ of this; Android's `PlaybackService` calls the same functions.
   the last leaves. On the host the client says only `Session::sound_page(page, shown)`; the session's
   `apply` counts the changes.
 - **A download's covers**: `Core::download_cover_urls`, for the cover loader to `warm`.
+- **A playlist kept downloaded**: a playlist's page downloads it whole with `Core::download_playlist`
+  (all its songs, even for "the other 3"), which keeps it so; `Client::kept_playlists_sync` at launch
+  brings the kept ones up to date. Both answer a `KeptChange`: the downloads queued, and the songs to
+  delete (only those keeping brought, which no kept playlist holds). Removing all of a playlist's
+  downloads stops keeping it. On the host, `Handle::download_later(Fetch::Playlist)` or
+  `download_playlist`; the session syncs as it opens.
 
 ## The clients today
 

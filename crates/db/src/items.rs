@@ -130,6 +130,9 @@ pub fn album(r: &Row, at: usize) -> rusqlite::Result<Album> {
         created: r.get(g(15))?,
         explicit_status: explicit(number(r, g(16))?),
         music_brainz_id: r.get(g(17))?,
+        // Not kept: only an artist's page orders by them, and it reads the server's answer.
+        release_date: None,
+        original_release_date: None,
         subtitle: String::new(),
     }
     .dressed())

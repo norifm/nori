@@ -1,10 +1,11 @@
 //! Terminal setup and teardown (raw mode, alternate screen), restored on exit, error and panic. While the
 //! screen is ours, stderr goes to a log file so log lines cannot corrupt it.
 
+use std::fs::File;
 use std::io::{self, BufWriter, Write};
-use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste, EnableFocusChange};
@@ -16,8 +17,8 @@ use ratatui::Terminal;
 pub type Term = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
 
 // Globals because the panic hook has no handle to the terminal state.
-/// The original stderr, duplicated before redirecting to the log; -1 if not redirected.
-static STDERR: AtomicI32 = AtomicI32::new(-1);
+/// The original stderr, kept once stderr goes to the log.
+static STDERR: OnceLock<File> = OnceLock::new();
 /// Whether `enter` ran and `leave` has not.
 static ON: AtomicBool = AtomicBool::new(false);
 /// Verbose logging (`--debug` or NORI_DEBUG=1), process-wide like a logger level.
@@ -43,26 +44,50 @@ pub(crate) use debug;
 
 /// Redirects stderr to `log` (truncated), keeping the original for panic messages.
 pub fn stderr_to(log: &Path) {
-    let Ok(file) = std::fs::File::create(log) else { return };
+    let Ok(file) = File::create(log) else { return };
+    if let Some(original) = redirect_stderr(file) {
+        let _ = STDERR.set(original);
+    }
+}
+
+/// Makes `file` the process's stderr (fd 2), handing back the one it replaces.
+#[cfg(unix)]
+fn redirect_stderr(file: File) -> Option<File> {
+    use std::os::fd::{AsRawFd, FromRawFd};
     // SAFETY: plain descriptor calls on descriptors this process owns; the file stays open as fd 2.
     unsafe {
         let saved = libc::dup(2);
-        if saved >= 0 && libc::dup2(file.as_raw_fd(), 2) >= 0 {
-            STDERR.store(saved, Ordering::SeqCst);
+        if saved < 0 {
+            return None;
         }
+        let original = File::from_raw_fd(saved);
+        (libc::dup2(file.as_raw_fd(), 2) >= 0).then_some(original)
+    }
+}
+
+/// Makes `file` the process's standard error handle, which Rust's stderr looks up on each write, handing
+/// back the one it replaces.
+#[cfg(windows)]
+fn redirect_stderr(file: File) -> Option<File> {
+    use std::os::windows::io::{FromRawHandle, IntoRawHandle};
+    use windows_sys::Win32::System::Console::{GetStdHandle, SetStdHandle, STD_ERROR_HANDLE};
+    // SAFETY: the standard handles belong to this process; the log's handle stays open as stderr.
+    unsafe {
+        let saved = GetStdHandle(STD_ERROR_HANDLE);
+        if saved.is_null() || saved as isize == -1 {
+            return None;
+        }
+        let log = file.into_raw_handle();
+        (SetStdHandle(STD_ERROR_HANDLE, log) != 0).then(|| File::from_raw_handle(saved))
     }
 }
 
 /// Writes to the original stderr.
 fn to_terminal(text: &str) {
-    let fd: RawFd = match STDERR.load(Ordering::SeqCst) {
-        -1 => 2,
-        fd => fd,
+    let _ = match STDERR.get() {
+        Some(mut original) => original.write_all(text.as_bytes()),
+        None => io::stderr().write_all(text.as_bytes()),
     };
-    // SAFETY: a write to a descriptor this process owns.
-    unsafe {
-        libc::write(fd, text.as_ptr().cast(), text.len());
-    }
 }
 
 /// Enables raw mode, the alternate screen, bracketed paste, focus reports and optionally the mouse.

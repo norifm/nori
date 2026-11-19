@@ -415,14 +415,14 @@ internal fun JamSettings(j: JamView) {
             Text(words(R.string.jam_let_listen), style = MaterialTheme.typography.bodyLarge)
             Text(words(R.string.jam_let_listen_line), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        NoriSwitch(j.along, { vm.jamAlong(it) })
+        NoriSwitch(j.along, null)
     }
     Row(Modifier.fillMaxWidth().clickable { vm.jamRemoteSongs(!j.remoteSongs) }.padding(horizontal = Space.gutter, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text(words(R.string.jam_remote_songs), style = MaterialTheme.typography.bodyLarge)
             Text(words(R.string.jam_remote_songs_line), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        NoriSwitch(j.remoteSongs, { vm.jamRemoteSongs(it) })
+        NoriSwitch(j.remoteSongs, null)
     }
 }
 

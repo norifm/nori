@@ -243,13 +243,34 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         main.post { main.removeCallbacks(expire); expire.run() }
     }
 
+    private val _analysisOffer = kotlinx.coroutines.flow.MutableStateFlow<dev.nori.music.ffi.AnalysisOffer?>(null)
+    /** Downloaded songs offered an analysis (`Core::analysis_offer_*`), waiting for an answer. */
+    val analysisOffer: kotlinx.coroutines.flow.StateFlow<dev.nori.music.ffi.AnalysisOffer?> = _analysisOffer
+
+    /** Whether an update left the downloads to analyse again, asked of the core once per change, on the pool. */
+    fun offerAtStart() = io.execute {
+        runCatching { core.analysisOfferAtStart() }.onFailure { Log.w(TAG, "could not ask about the analysis", it) }.getOrNull()?.let { _analysisOffer.value = it }
+    }
+
+    /** AutoMix went from [before] to [after]: turned on, the downloads lacking its analysis are offered one. */
+    fun offerOnSwitch(before: dev.nori.music.ffi.settings.AutoMixMode, after: dev.nori.music.ffi.settings.AutoMixMode) {
+        if (before == after) return
+        io.execute { runCatching { core.analysisOfferOnSwitch(before, after) }.getOrNull()?.let { _analysisOffer.value = it } }
+    }
+
+    /** The answer to [analysisOffer]: a yes reads the downloads back ([analyse]); [done] hears how many. */
+    fun answerOffer(yes: Boolean, done: (Int) -> Unit) {
+        _analysisOffer.value = null
+        if (yes) analyse(done)
+    }
+
     /**
-     * "Analyse downloaded songs": the downloads with no analysis of the current version, and with [beats] those
-     * the beat model has not read, are read back as a download's are once saved, under the download service and
-     * its notification. [done] hears how many, on the main thread.
+     * The downloads with no analysis of the current version, and with AutoMix on those the beat model has not
+     * read, read back as a download's are once saved, under the download service and its notification. [done]
+     * hears how many, on the main thread.
      */
     fun analyse(done: (Int) -> Unit) = io.execute {
-        val ids = runCatching { core.downloadUnanalysed(runCatching { core.downloadBeats() }.getOrDefault(false)) }.getOrElse { Log.w(TAG, "could not list the downloads to analyse", it); emptyList() }
+        val ids = runCatching { core.downloadUnanalysed() }.getOrElse { Log.w(TAG, "could not list the downloads to analyse", it); emptyList() }
         val n = if (ids.isEmpty()) 0 else runCatching { dev.nori.music.playback.MeasureJni.processAnalyse(analyses(), ids.toTypedArray()) }.getOrDefault(0)
         if (n > 0) {
             watchMarks()
@@ -406,15 +427,30 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
      */
     fun download(songs: List<Song>) = io.execute { queued(runCatching { core.downloadQueue(songs) }) }
 
+    /** Downloads playlist [id], all of whose [songs] are given, and keeps it downloaded as it changes (the core's `download_playlist`). */
+    fun downloadPlaylist(id: String, songs: List<Song>) = io.execute {
+        runCatching { core.downloadPlaylist(id, songs) }.onSuccess(::kept).onFailure { Log.w(TAG, "could not download playlist $id", it) }
+    }
+
+    /** Does what keeping playlists downloaded changed: the songs queued download, covers too, and those that left go. */
+    fun kept(change: dev.nori.music.ffi.transfers.KeptChange) {
+        queued(Result.success(change.queued))
+        if (change.gone.isNotEmpty()) main.post { remove(change.gone) }
+        val ids = (change.queued.fresh + change.queued.again).toSet()
+        if (ids.isNotEmpty()) io.execute {
+            val covers = core.downloads(false).filter { it.id in ids }.mapNotNull { it.coverArt }
+            val loader = dev.nori.music.data.CoverLoader.get(context)
+            for (url in core.downloadCoverUrls(covers)) loader.warm(url)
+        }
+    }
+
     /** Every song of the offline index, in one call to the core; sync the library first so the index is complete. */
     fun downloadLibrary() = io.execute {
         queued(runCatching { core.downloadQueueLibrary() })
     }
 
-    /** With better beat detection on, the beat model reads these songs once saved, written down before any can finish. */
     private fun queued(result: Result<DownloadQueued>) {
         val q = result.getOrElse { Log.w(TAG, "could not queue downloads", it); return }
-        if (runCatching { core.downloadBeats() }.getOrDefault(false)) runCatching { core.downloadWantBeats(q.fresh + q.again) }.onFailure { Log.w(TAG, "could not ask for the beat model", it) }
         if (q.fresh.isNotEmpty()) publish()
         val requests = q.fresh.map(::request)
         val retries = q.again.map(::request)

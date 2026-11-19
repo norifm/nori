@@ -196,7 +196,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             headLabel = if (m.songs.isEmpty()) "" else say.listCaption(m.songs.size, m.songs.sumOf { it.duration.toLong() }),
             // After Play, as a record's seal stands there: keep the mix on the account as a playlist.
             actions = {
-                if (LocalRules.current.account && m.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(m.title, m.songs) }
+                if (LocalRules.current.playlists && m.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(m.title, m.songs) }
             },
             headActions = {
                 PageActionGlyphs(
@@ -332,7 +332,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
         GroupLabel(say.order)
         GroupCard {
             GroupRow(say.sortBy) { Pick(draft.sortField, schema.sorts, label = say::smartField) { draft = draft.copy(sortField = it) } }
-            GroupRow(say.descending, { draft = draft.copy(descending = !draft.descending) }) { NoriSwitch(draft.descending, { draft = draft.copy(descending = it) }) }
+            GroupRow(say.descending, { draft = draft.copy(descending = !draft.descending) }) { NoriSwitch(draft.descending, null) }
             GroupField(
                 remember(draft.limit) { dev.nori.music.ffi.library.smartLimitText(draft.limit) }, { draft = draft.copy(limit = dev.nori.music.ffi.library.smartLimitTyped(it)) },
                 label = say.limit, placeholder = say.noLimit, keyboardOptions = numbers, divider = false,

@@ -43,6 +43,9 @@ const MAX_BLIND_FADE_MS: i64 = 12_000;
 const MIN_FADE_MS: i64 = 300;
 /// Shortest MixRamp overlap: shorter overlaps on a fading ending are heard as no mix at all.
 const MIN_MIXRAMP_MS: i64 = 5_000;
+/// A track shorter than this is an interlude or a skit, a bridge between its neighbours: the third of
+/// it a transition may take can't hold an overlap heard as a mix, so it plays whole.
+pub(crate) const INTERLUDE_MS: i64 = 3 * MIN_MIXRAMP_MS;
 const BASS_CUT_HZ: f32 = 180.0;
 const SWEEP_FROM_HZ: f32 = 18_000.0;
 /// Where the outgoing low-pass of a beat-matched mix ends.
@@ -705,11 +708,11 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
     if out_dur <= 0 || in_dur <= 0 || max_len < MIN_FADE_MS {
         return blank(TransitionKind::Gapless, out_dur.max(0), 0, 0, "no room for a transition: gapless".into());
     }
+    if out_dur.min(in_dur) < INTERLUDE_MS {
+        return blank(TransitionKind::Gapless, out_dur, 0, 0, "an interlude plays whole: gapless".into());
+    }
     // Never more than a third of either track.
     let max_len = max_len.min(out_dur / 3).min(in_dur / 3);
-    if max_len < MIN_FADE_MS {
-        return blank(TransitionKind::Gapless, out_dur, 0, 0, "tracks too short: gapless".into());
-    }
     let (a, b) = (usable(out, out_dur).map(at_end), usable(inc, in_dur).map(at_start));
     let slows = a.as_ref().and_then(|(a, _, curve)| curve.as_ref()?.slows_from(bar_beats(a) as usize));
     let room = Room { out_dur, in_dur, max_len, slows };
@@ -2398,11 +2401,26 @@ mod tests {
         // Capped, and at most a third of a short track.
         let p = plan(None, None, 200_000, 180_000, &AutoMixSettings { max_transition_s: 30.0, ..Default::default() });
         assert_eq!(p.duration_ms, 12_000);
-        let p = plan(None, None, 200_000, 9_000, &AutoMixSettings { max_transition_s: 30.0, ..Default::default() });
-        assert_eq!(p.duration_ms, 3_000);
-        let p = plan(None, None, 200_000, 600, &s);
-        assert_eq!(p.kind, TransitionKind::Gapless);
+        let p = plan(None, None, 200_000, 36_000, &AutoMixSettings { max_transition_s: 30.0, ..Default::default() });
+        assert_eq!(p.duration_ms, 12_000);
+        let p = plan(None, None, 200_000, 33_000, &AutoMixSettings { max_transition_s: 30.0, ..Default::default() });
+        assert_eq!(p.duration_ms, 11_000);
+    }
 
+    /// An interlude or a skit plays whole: nothing is mixed into it or out of it, analysed or not.
+    #[test]
+    fn an_interlude_is_not_mixed() {
+        let s = AutoMixSettings { max_transition_s: 8.0, ..Default::default() };
+        let (song, skit) = (track(128.0), TrackAnalysis { duration_ms: 9_000, ..track(128.0) });
+        for (out, inc, out_ms, in_ms) in [(None, None, 200_000, 9_000), (None, None, 9_000, 200_000), (Some(&song), Some(&skit), 240_000, 9_000), (Some(&skit), Some(&song), 9_000, 240_000)] {
+            let p = plan(out, inc, out_ms, in_ms, &s);
+            assert_eq!((p.kind, p.out_start_ms, p.in_start_ms, p.duration_ms), (TransitionKind::Gapless, out_ms, 0, 0), "{}", p.reason);
+        }
+        assert_ne!(plan(None, None, 200_000, INTERLUDE_MS, &s).kind, TransitionKind::Gapless);
+    }
+
+    #[test]
+    fn stale_analysis_and_album_order() {
         // Stale analysis ignored.
         let a = TrackAnalysis { duration_ms: 300_000, ..track(128.0) };
         let p = plan(Some(&a), None, 240_000, 240_000, &AutoMixSettings::default());

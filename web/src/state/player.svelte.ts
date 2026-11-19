@@ -10,13 +10,14 @@ import { W } from "../words";
 import type { LyricsNow, Now, Song, Whole } from "./types";
 
 /** Where the song was at a moment of the page's clock, and how fast it runs on from there (0: it holds). */
-export type Anchor = { ms: number; at: number; pace: number; length: number };
+/** The place `ms` at `at` runs on at `pace` until `until` (page clock, ms). */
+export type Anchor = { ms: number; at: number; pace: number; until: number; length: number };
 
 /** The settings the player's own controls change. */
 
 class Player {
   now = $state.raw<Now | null>(null);
-  anchor = $state.raw<Anchor>({ ms: 0, at: 0, pace: 0, length: 0 });
+  anchor = $state.raw<Anchor>({ ms: 0, at: 0, pace: 0, until: 0, length: 0 });
   /** What the lyrics view shows, the lyrics found among it, and the lit line and how much of it is sung. */
   lyrics = $state.raw<LyricsNow | null>(null);
   shown = $derived(this.lyrics?.state === "shown" ? this.lyrics : null);
@@ -43,7 +44,7 @@ class Player {
   /** Where the song is at `t` on the page's clock. */
   position(t = performance.now()): number {
     const a = this.anchor;
-    return Math.max(0, Math.min(a.ms + (t - a.at) * a.pace, a.length || Infinity));
+    return Math.max(0, Math.min(a.ms + (Math.min(t, a.until) - a.at) * a.pace, a.length || Infinity));
   }
 
   /** The sound card, once it is made. */
@@ -189,10 +190,12 @@ class Player {
     const n = JSON.parse(await ask<string>("now")) as Now | null;
     const t = performance.now();
     const running = n?.state === "Playing" && !n.buffering;
-    const a: Anchor = { ms: n?.positionMs ?? 0, at: t, pace: running ? n!.pace || 1 : 0, length: (n?.song?.duration ?? 0) * 1000 };
+    const fading = !running && (n?.fadingMs ?? 0) > 0;
+    const until = running ? Infinity : t + (n?.fadingMs ?? 0);
+    const a: Anchor = { ms: n?.positionMs ?? 0, at: t, pace: running || fading ? n!.pace || 1 : 0, until, length: (n?.song?.duration ?? 0) * 1000 };
     // The position as it runs on is kept unless it is off by more than a frame or two.
     const was = this.anchor;
-    if (a.pace !== was.pace || a.length !== was.length || Math.abs(this.position(t) - a.ms) > 40) this.anchor = a;
+    if (a.pace !== was.pace || a.until !== was.until || a.length !== was.length || Math.abs(this.position(t) - a.ms) > 40) this.anchor = a;
     const key = JSON.stringify(n && { ...n, positionMs: 0 });
     if (key === this.key) return;
     this.key = key;

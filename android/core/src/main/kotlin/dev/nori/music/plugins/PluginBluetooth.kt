@@ -53,9 +53,11 @@ class PluginBluetooth(private val context: Context, private val plugins: () -> P
     fun granted(): Boolean = Build.VERSION.SDK_INT < 31 ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
+    // Its own name, which Android's audio output also carries; the alias the phone or the user gave it
+    // ("Someone's WH-1000XM6") would not match the output the music plays on.
     private fun device(d: BluetoothDevice) = BtDevice(
         d.address,
-        (if (Build.VERSION.SDK_INT >= 30) d.alias else null) ?: d.name.orEmpty(),
+        d.name.orEmpty(),
         d.uuids.orEmpty().map { it.uuid.toString().lowercase() },
         null, null,
     )

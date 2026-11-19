@@ -49,6 +49,8 @@ export type Now = {
   index: number | null;
   id: string | null;
   positionMs: number;
+  /** Paused while the fade is still heard: how much longer the place runs on, ms. */
+  fadingMs: number;
   pace: number;
   mixing: boolean;
   buffering: boolean;
@@ -139,3 +141,16 @@ export type ProfileIcon = "Letter" | "Provider" | "Sing" | "Surprise" | "Talking
 /** The profile signed in (the worker's `profile`): `letter` the one `Letter` shows, `icons` the picker's in
  * its order, `picks` whether its icon may be changed here. */
 export type Profile = { url: string; user: string; icon: ProfileIcon; letter: string; icons: ProfileIcon[]; picks: boolean };
+/** A scrobbling account of the profile signed in (`scrobblers`): `host` is empty for the kind's own service. */
+export type ScrobblerKind = "listenbrainz" | "librefm" | "lastfm";
+/** What adding an account asks (`scrobbler_kinds`), in order. */
+export type ScrobblerField = "token" | "apiKey" | "secret" | "user" | "password" | "address";
+export type ScrobblerKindForm = {
+  kind: ScrobblerKind;
+  /** Signing in with what the form asks, or on the service's page. */
+  signIn: "form" | "browser";
+  /** Where the form's fields come from, if anywhere. */
+  help: string | null;
+  fields: { id: ScrobblerField; required: boolean; advanced: boolean }[];
+};
+export type Scrobbler = { id: string; kind: ScrobblerKind; user: string; host: string; on: boolean };

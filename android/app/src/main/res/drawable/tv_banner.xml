@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A TV launcher's card for the app (320 x 180 dp): the mark on its rice-white plate. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/ic_launcher_background" />
+    <item android:drawable="@drawable/nori_mark" android:gravity="center" android:width="180dp" android:height="180dp" />
+</layer-list>

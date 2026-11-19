@@ -252,7 +252,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
         val c = nori.client
         if (remote == null || client !== c) {
             drop()
-            val p = nori.settings.value
+            val p = nori.settings.effective.value
             val kind = if (isGuest()) DeviceKind.GUEST else DeviceKind.PHONE
             remote = Remote(c, RemoteMe(deviceName(context), kind), player, shown, discovery)
             client = c
@@ -274,7 +274,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
 
     /** Whether the profile in use asks for a remote at all (`ProfileRules.remote`). */
     private fun wanted(): Boolean {
-        val p = nori.settings.value
+        val p = nori.settings.effective.value
         return p.server != null && nori.rules.remote && (p.remoteControl || isGuest())
     }
 
@@ -293,7 +293,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
         work {
             // As it stands when the worker gets to it: a later word said meanwhile is the one kept.
             // A guest's phone is no device of the host's account to control.
-            val serves = serving && nori.settings.value.remoteControl && !isGuest()
+            val serves = serving && nori.settings.effective.value.remoteControl && !isGuest()
             current()?.serve(serves)
             main.post { watchKeys(serves); watchScreen(serves) }
         }
@@ -327,7 +327,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
         work {
             val r = if (on) current() else remote
             r?.sight(sight())
-            r?.discoverActive(on && nori.settings.value.remoteControl && !isGuest())
+            r?.discoverActive(on && nori.settings.effective.value.remoteControl && !isGuest())
         }
     }
 

@@ -1,7 +1,7 @@
 //! A page's data laid out once when read: an album's discs, an artist's releases by kind, a list's
 //! filter and index letters, the big buttons, and the detail pages.
 
-use nori_model::model::{Album, Artist, DiscTitle, OriginKind, PageOrigin, Playlist, Song};
+use nori_model::model::{Album, Artist, DiscTitle, OriginKind, PageOrigin, Playlist, ReleaseDate, Song};
 
 /// One disc of an album and the positions of its songs.
 #[derive(Debug, Clone, PartialEq)]
@@ -103,10 +103,11 @@ pub struct ReleaseGroup {
 }
 
 /// An artist's releases by kind in [`ReleaseKind`] order (unknown tags last, as first seen), newest
-/// first within each, equal years in the server's order.
+/// first within each by [`Album::released`], else by year; equal dates in the server's order.
 pub fn release_groups(albums: &[Album]) -> Vec<ReleaseGroup> {
+    let released = |a: &Album| a.released().unwrap_or(ReleaseDate { year: a.year, month: None, day: None });
     let mut order: Vec<usize> = (0..albums.len()).collect();
-    order.sort_by(|&a, &b| albums[b].year.cmp(&albums[a].year));
+    order.sort_by_key(|&i| std::cmp::Reverse(released(&albums[i])));
     let mut groups: Vec<ReleaseGroup> = Vec::new();
     for i in order {
         let (kind, tag) = release_kind(&albums[i]);
@@ -535,6 +536,23 @@ mod tests {
         );
         let upper = release_groups(&[a(2003, &["EP"], false), a(2004, &["mixtape"], false)]);
         assert_eq!((upper[0].kind, upper[1].kind, upper[1].tag.as_str()), (ReleaseKind::Ep, ReleaseKind::Tagged, "Mixtape"));
+    }
+
+    #[test]
+    fn releases_go_newest_first_by_date_then_year() {
+        let date = |year, month, day| Some(ReleaseDate { year, month, day });
+        let a = |year: u32, release_date, original_release_date| Album { year, release_date, original_release_date, ..Default::default() };
+        for (k, (albums, order)) in [
+            (vec![a(2026, date(2026, Some(1), Some(9)), None), a(2026, date(2026, Some(3), Some(20)), None), a(2026, date(2026, Some(6), Some(5)), None)], vec![2, 1, 0]),
+            (vec![a(2026, date(2026, Some(6), Some(5)), None), a(2026, date(2026, Some(6), Some(12)), None), a(2026, date(2026, Some(6), None), None)], vec![1, 0, 2]),
+            (vec![a(2011, date(2011, Some(5), Some(2)), date(1997, Some(9), None)), a(2003, None, None)], vec![1, 0]),
+            (vec![a(2020, None, None), a(2026, None, None), a(2020, None, None), a(2026, date(2026, Some(2), None), None)], vec![3, 1, 0, 2]),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(release_groups(&albums)[0].albums, order, "case {k}");
+        }
     }
 
     #[test]

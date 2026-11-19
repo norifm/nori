@@ -238,23 +238,12 @@ fn join_everywhere(socket: &UdpSocket, group: &Ipv6Addr) -> std::io::Result<()> 
     if joined { Ok(()) } else { Err(last) }
 }
 
-/// The system's network interfaces, by index.
+/// The system's network interfaces that have an address, by index.
 fn interfaces() -> Vec<u32> {
-    // SAFETY: if_nameindex returns an array ended by a zero index, freed with if_freenameindex.
-    unsafe {
-        let list = libc::if_nameindex();
-        if list.is_null() {
-            return Vec::new();
-        }
-        let mut out = Vec::new();
-        let mut at = list;
-        while (*at).if_index != 0 {
-            out.push((*at).if_index);
-            at = at.add(1);
-        }
-        libc::if_freenameindex(list);
-        out
-    }
+    let mut out: Vec<u32> = if_addrs::get_if_addrs().unwrap_or_default().into_iter().filter_map(|i| i.index).collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 impl sockets::HostUdp for Host {

@@ -16,7 +16,7 @@ pub use nori_host::desktop::Root;
 use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot, ShelfItems};
 pub use nori_host::pages::ALBUM_PAGE;
 pub use nori_host::session::{Audio, Chore};
-use nori_host::session::{Note, Said};
+use nori_host::session::{Note, Said, UpdateFound};
 pub use nori_host::{db_path, Fetch};
 use nori_http::Http;
 use nori_look::cover::CoverColours;
@@ -57,10 +57,14 @@ pub enum Msg {
     Reachable(Result<(), String>),
     /// Another device set the volume (0 to 1).
     Volume(f32),
+    /// Downloaded songs to offer an analysis (`Said::AnalysisOffer`).
+    AnalysisOffer(nori_core::automix::AnalysisOffer),
     /// The core's star marks moved (a heart pressed here or on another device).
     Starred(nori_core::stars::StarMarks),
     /// The other devices, the one playing or the jam changed: read them again.
     Remote,
+    /// What plugins override of the settings changed: the settings are read again.
+    Overridden,
     /// Whether the jam asked for opened, or why not.
     Jam(Result<(), String>),
     /// A device paired (its name), or what to say of why not.
@@ -73,6 +77,14 @@ pub enum Msg {
     SignedIn(nori_core::providers::SignInResult),
     /// The account acts as another of its identities now, or why not.
     IdentityChosen(Result<(), String>),
+    /// A scrobbling account for saved profile `profile` signed in to, or why not.
+    ScrobblerSignedIn { profile: String, account: Result<nori_core::settings::SavedScrobbler, nori_core::transport::NetError> },
+    /// The token to allow on a scrobbling service's page for the account `form` describes, or why not.
+    ScrobblerApproval {
+        profile: String,
+        form: Box<nori_core::scrobblers::ScrobblerForm>,
+        approval: Result<nori_core::scrobblers::ScrobblerApproval, nori_core::transport::NetError>,
+    },
     /// The code to show came, or expired: the runner's `code`th code sign-in ([`nori_core::providers::code::CodeSignIn`]).
     CodeStep { code: u32, event: nori_core::providers::flow::SignInEvent },
     /// A plugin installed (its id), or why not.
@@ -121,14 +133,18 @@ impl Msg {
             Msg::LoggedIn(r) => format!("logged in: {}", r.is_ok()),
             Msg::Reachable(r) => format!("reachable: {}", r.is_ok()),
             Msg::Volume(v) => format!("volume {v}"),
+            Msg::AnalysisOffer(o) => format!("analysis offer {o:?}"),
             Msg::Starred(_) => "star marks".into(),
             Msg::Remote => "remote".into(),
+            Msg::Overridden => "overrides".into(),
             Msg::Jam(r) => format!("jam opened: {}", r.is_ok()),
             Msg::Joined(r) => format!("jam joined: {}", r.is_ok()),
             Msg::Paired(r) => format!("paired: {}", r.is_ok()),
             Msg::Left(said) => format!("jam left: {said}"),
             Msg::SignedIn(r) => format!("signed in: {}", matches!(r, nori_core::providers::SignInResult::SignedIn { .. })),
             Msg::IdentityChosen(r) => format!("identity chosen: {}", r.is_ok()),
+            Msg::ScrobblerSignedIn { account, .. } => format!("scrobbler signed in: {}", account.is_ok()),
+            Msg::ScrobblerApproval { approval, .. } => format!("scrobbler approval: {}", approval.is_ok()),
             Msg::CodeStep { code, event } => format!("code sign-in {code}: {}", if matches!(event, nori_core::providers::flow::SignInEvent::CodeExpired) { "expired" } else { "shown" }),
             Msg::Installed(r) => format!("plugin installed: {r:?}"),
             Msg::Preview(r) => format!("plugin preview: {:?}", r.as_ref().map(|p| &p.card.id)),
@@ -442,10 +458,17 @@ fn worded(s: Said) -> Option<Msg> {
         Said::JamEnded { host } => Msg::Left(crate::text::jam_ended(host.as_deref())),
         Said::Starred(marks) => Msg::Starred(marks),
         Said::Working => Msg::Reload(Req::Work),
+        Said::Overridden => Msg::Overridden,
         // The terminal draws no account pictures.
         Said::Pictured => return None,
         Said::Volume(v) => Msg::Volume(v),
         Said::Curve(n) => note(crate::text::curve_notice(&n), false),
+        Said::AnalysisOffer(o) => Msg::AnalysisOffer(o),
+        Said::Update(found) => match found {
+            UpdateFound::Newer { version, page } => note(format!("nori {version} is out: {page}"), false),
+            UpdateFound::Latest(latest) => note(format!("You have the latest version ({latest})"), false),
+            UpdateFound::Failed(e) => note(format!("Could not check: {}", net_error(&e)), true),
+        },
         Said::Engine(e) => Msg::Engine(e),
         Said::Lyrics(now) => Msg::Lyrics(now),
         Said::Search(v) => Msg::Search(v),
@@ -461,7 +484,6 @@ fn worded(s: Said) -> Option<Msg> {
             Note::Indexing => note("Filling the offline index…".into(), false),
             Note::Indexed(t) => note(format!("Offline index: {} songs, {} albums, {} artists", t.songs, t.albums, t.artists), false),
             Note::IndexStopped(e) => note(format!("The offline index stopped: {}", net_error(&e)), true),
-            Note::Forgot(n) => note(format!("Forgot {n} measured songs"), false),
             Note::CurveFailed(e) => note(format!("Could not fetch the AutoEQ curve: {}", net_error(&e)), true),
             Note::Done(chore) => note(
                 match chore {
@@ -515,7 +537,6 @@ fn unreachable(e: &NetError) -> String {
 /// Library, storage and device facts for the settings page.
 fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Option<&nori_engine::Store>, db: &PathBuf, cover_bytes: u64, offline: bool) -> Facts {
     let index = core.index_size().unwrap_or_default();
-    let downloads = core.downloads(true).unwrap_or_default();
     // Every profile's: they share this computer's download folder.
     let listed = core.downloads_by_profile().unwrap_or_default();
     let all_download_songs = listed.iter().map(|p| p.ids.len() as u32).sum();
@@ -525,7 +546,6 @@ fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Opti
         _ => Vec::new(),
     };
     Facts {
-        analysed: core.analysis_measured().unwrap_or_default(),
         indexed: (index.songs, index.albums, index.artists),
         storage: Storage {
             stream: store.map_or(0, |s| s.cache_bytes()) as i64,
@@ -534,7 +554,6 @@ fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Opti
             downloads: download_profiles.iter().map(|p| p.1).sum(),
             all_download_songs,
             download_profiles,
-            download_songs: downloads.len() as u32,
             database: std::fs::metadata(db).map(|m| m.len() as i64).unwrap_or(0),
         },
         folders,

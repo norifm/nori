@@ -29,7 +29,7 @@ class Release(unittest.TestCase):
         (self.root / "gradlew").chmod(0o755)
         self.output = self.root / "artifacts"
         self.output.mkdir()
-        self.apks = [self.output / f"nori-music-{VERSION}-{abi}.apk" for abi in ("arm64-v8a", "x86_64")]
+        self.apks = [self.output / f"nori-music-{VERSION}-{abi}.apk" for abi in ("arm64-v8a", "armeabi-v7a", "x86_64")]
         for apk in self.apks:
             apk.write_bytes(f"the worker's signed APK for {apk.name}".encode())
         self.apk = self.apks[0]

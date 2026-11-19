@@ -22,6 +22,11 @@ fn hex(bytes: &[u8]) -> String {
     s
 }
 
+/// The MD5 of `text`, in lower-case hex.
+pub fn md5_hex(text: &str) -> String {
+    hex(&Md5::digest(text.as_bytes()))
+}
+
 /// Percent-encodes `v` into `out` (RFC 3986 unreserved characters kept).
 fn encode(out: &mut String, v: &str) {
     const H: &[u8; 16] = b"0123456789ABCDEF";

@@ -45,6 +45,9 @@ import kotlinx.coroutines.launch
 class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false) {
     val progress = Animatable(if (startOpen) 1f else 0f).also { it.updateBounds(0f, 1f) }
 
+    /** Takes a remote's or a keyboard's focus into the player. */
+    val focus = androidx.compose.ui.focus.FocusRequester()
+
     /** The mini player's artwork, in root coordinates: where the cover flies from and back to. */
     var miniCover by mutableStateOf(Rect.Zero)
 

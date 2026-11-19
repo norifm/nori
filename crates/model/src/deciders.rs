@@ -51,6 +51,26 @@ pub enum ButtonAct {
     Nothing,
 }
 
+/// One of nori's own buttons beside previous, play and next on the media notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum NoriButton {
+    Favorite,
+    Shuffle,
+    Repeat,
+    Radio,
+}
+
+/// The media session's own buttons, in order, and what they show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SessionButtons {
+    pub buttons: Vec<NoriButton>,
+    /// The seal is filled.
+    pub starred: bool,
+    pub shuffling: bool,
+}
+
 /// The five roles of a season: page, surface, ink, accent, on (ARGB).
 pub type Roles = [u32; 5];
 

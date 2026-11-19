@@ -23,6 +23,7 @@ mod kept;
 mod lan;
 mod lyrics;
 mod manifest;
+mod notification;
 mod package;
 mod prepare;
 mod readme;
@@ -62,6 +63,7 @@ pub use host::{Side, Value};
 pub use kept::{KeptPlugin, KeptPlugins, PluginRestored, PluginReturn};
 pub use lan::{Cast, CastButton, CastKind, CastLook, CastTarget};
 pub use sink::{Encoding, Sink};
+pub use notification::{ButtonPress, NotificationButton};
 pub use manifest::{AssetSpec, DeviceFilter, Glyph, Hook, ItemKind, Manifest, MenuSpec, Permission, Place, Refusal, RowKind, RowSpec, Slot, WakeEvent, API, POINTS};
 pub use session::{Control, Found, Library, Moment, Profile, Repeat, Route};
 pub use wake::Command;
@@ -169,6 +171,9 @@ pub struct Plugins {
     /// Whether the platform's Bluetooth is how this client hears output devices connect (the desktop's
     /// BlueZ; Android has its audio device callback).
     pub(crate) bluetooth_outputs: std::sync::atomic::AtomicBool,
+    /// Told when an audio device connects, where the platform's Bluetooth tells of them
+    /// ([`Plugins::hear_outputs_connect`]).
+    pub(crate) output_connected: std::sync::RwLock<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// The app is away from the screen (Android's own report; every other client stays false).
     pub(crate) away: std::sync::atomic::AtomicBool,
     me: std::sync::Weak<Plugins>,
@@ -192,6 +197,8 @@ pub struct Plugins {
     marks: Arc<safe::Marks>,
     /// How this start runs the plugins.
     start: Mutex<Start>,
+    /// The notification's buttons last decided.
+    buttons: notification::Decided,
 }
 
 /// How a start runs the plugins.
@@ -260,6 +267,7 @@ impl Plugins {
             controls: Arc::default(),
             watching: Mutex::new(false),
             bluetooth_outputs: Default::default(),
+            output_connected: Default::default(),
             away: Default::default(),
             me: me.clone(),
             library: Default::default(),
@@ -274,6 +282,7 @@ impl Plugins {
             songs: Arc::default(),
             marks,
             start: Mutex::new(start),
+            buttons: Default::default(),
         });
         plugins.lan.set_plugins(Arc::downgrade(&plugins));
         if crashed {

@@ -171,7 +171,7 @@ fn downloads_and_measuring_over_core() {
     }
     metered_and_ahead(&client, &net, &store, &analyses);
     provider_next_fetched_ahead(&client, &store, &analyses);
-    downloads_read_back(&core, &net, &store, &analyses);
+    downloads_read_back(&core, &dir.join("nori.db"), &net, &store, &analyses);
 
     // AutoMix on: upcoming songs on disk are measured.
     let mut prefs = settings.current().unwrap();
@@ -252,9 +252,9 @@ fn downloads_and_measuring_over_core() {
     measurer.ask(Vec::new());
     assert!(!measurer.busy(), "nothing asked: nothing to measure");
 
-    // "Better beat detection" without a model decodes nothing more and says why.
+    // AutoMix's beat model without its file decodes nothing more and says why.
     let mut prefs = settings.current().unwrap();
-    prefs.auto_mix_better_beats = true;
+    prefs.auto_mix = nori_core::settings::AutoMixMode::Dj;
     settings.put(prefs);
     measurer.ask(core.session.measure());
     settle(&measurer);
@@ -397,8 +397,8 @@ fn downloads_take_up_rightly(core: &Arc<Core>, client: &Arc<Client>, store: &Arc
 }
 
 /// Unmeasured downloads are read back from disk once saved, one at a time, and their lyrics looked up,
-/// a provider's song's too; "Analyse downloaded songs" does the same for existing ones.
-fn downloads_read_back(core: &Arc<Core>, net: &NoApi, store: &Arc<Store>, analyses: &Arc<Analyses>) {
+/// a provider's song's too; the analysis offer's yes does the same for existing ones (`db`: the core's file).
+fn downloads_read_back(core: &Arc<Core>, db: &std::path::Path, net: &NoApi, store: &Arc<Store>, analyses: &Arc<Analyses>) {
     use nori_core::transfers::COMPLETED;
     let download_phase = |id: String| core.transfers().with(|t| t.phase(&id));
     assert!(!core.session.settings.prefs(|p| p.auto_mix.on()), "AutoMix is off");
@@ -423,10 +423,10 @@ fn downloads_read_back(core: &Arc<Core>, net: &NoApi, store: &Arc<Store>, analys
         assert_eq!(download_phase(id.into()), Some(nori_core::DownloadPhase::Done), "done with it");
     }
     // Already analysed: nothing to read back.
-    assert!(!core.download_unanalysed(false).unwrap().iter().any(|id| ids.contains(&id.as_str())));
-    // Analysis gone: read back again.
-    core.measure_again().unwrap();
-    let again: Vec<String> = core.download_unanalysed(false).unwrap().into_iter().filter(|id| ids.contains(&id.as_str())).collect();
+    assert!(!core.download_unanalysed().unwrap().iter().any(|id| ids.contains(&id.as_str())));
+    // Measured by an older analysis version: read back again.
+    nori_core::db::open(&db.to_string_lossy(), "").unwrap().execute("UPDATE track_analysis SET analysis_version = analysis_version - 1", []).unwrap();
+    let again: Vec<String> = core.download_unanalysed().unwrap().into_iter().filter(|id| ids.contains(&id.as_str())).collect();
     assert_eq!(again.len(), 2);
     assert_eq!(analyses.analyse(again), 2);
     analyses.wait();
@@ -434,7 +434,7 @@ fn downloads_read_back(core: &Arc<Core>, net: &NoApi, store: &Arc<Store>, analys
         assert!(core.analysis_get(id.into()).unwrap().is_some());
         assert_eq!(download_phase(id.into()), Some(nori_core::DownloadPhase::Done));
     }
-    assert!(core.transfers().with(|t| t.processing_at(0)).is_none_or(|p| p.analysing == 0 && p.beats == 0), "nothing left waiting");
+    assert!(core.transfers().with(|t| t.processing_at(0)).is_none_or(|p| p.analysing == 0), "nothing left waiting");
 }
 
 /// Whole songs, requests counted and signalled.

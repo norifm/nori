@@ -199,6 +199,12 @@ impl Host {
 }
 
 impl s::Host for Host {
+    fn buttons_changed(&mut self) {
+        if let Some(p) = self.plugins() {
+            p.buttons_changed(&self.id);
+        }
+    }
+
     fn now(&mut self) -> s::NowPlaying {
         let library = self.library().ok().filter(|_| self.may(Permission::PlaybackRead));
         let (moment, position_ms) = self.plugins().map(|p| p.moment()).unwrap_or_default();

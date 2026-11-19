@@ -11,7 +11,8 @@ use nori_core::browse::{album_sort_direction, album_sort_kept, album_sort_saved,
 use nori_core::cache_policy::{Page, Read};
 use nori_core::numbers::{self, POINT};
 use nori_core::client::Starrable;
-use nori_core::menus::{download_entries, page_actions, DownloadAct, PageAction, PageKind, SongDownload};
+use nori_core::client::Write;
+use nori_core::menus::{download_entries, page_actions, playlist_edit_write, playlist_edits, playlist_editable, DownloadAct, PageAction, PageKind, PlaylistEdit, SongDownload};
 use nori_core::pages::release_groups;
 use nori_core::mixes::board::{MixLookup, MixTile, FAVOURITES_MIX};
 use nori_core::stage::QueueRows;
@@ -103,6 +104,8 @@ struct List {
     token: u64,
     songs: Vec<Song>,
     origin: Option<PageOrigin>,
+    /// A playlist the account may change (the core's `playlist_editable`).
+    editable: bool,
 }
 
 static LISTS: Mutex<VecDeque<List>> = Mutex::new(VecDeque::new());
@@ -113,16 +116,29 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 pub(crate) fn keep_list(token: u64, songs: Vec<Song>, origin: Option<PageOrigin>) {
+    keep(List { token, songs, origin, editable: false });
+}
+
+fn keep(list: List) {
     let mut lists = lock(&LISTS);
-    lists.retain(|l| l.token != token);
-    lists.push_back(List {
-        token,
-        songs,
-        origin,
-    });
+    lists.retain(|l| l.token != list.token);
+    lists.push_back(list);
     while lists.len() > KEPT_LISTS {
         lists.pop_front();
     }
+}
+
+/// What row `index` of list `token` offers to change, when it is a playlist the account may change.
+pub(crate) fn list_edits(token: u64, index: u32) -> Vec<PlaylistEdit> {
+    lock(&LISTS).iter().find(|l| l.token == token).map_or_else(Vec::new, |l| playlist_edits(index, l.songs.len() as u32, l.editable))
+}
+
+/// The write `edit` of row `index` of list `token` asks for, when it is a playlist the account may change.
+pub(crate) fn list_edit_write(token: u64, index: u32, edit: PlaylistEdit) -> Option<Write> {
+    let lists = lock(&LISTS);
+    let l = lists.iter().find(|l| l.token == token).filter(|l| l.editable)?;
+    let id = l.origin.as_ref().filter(|o| o.kind == OriginKind::Playlist)?.id.clone();
+    playlist_edit_write(id, l.songs.iter().map(|s| s.id.clone()).collect(), index, edit)
 }
 
 /// The session closed: its lists name another server's songs.
@@ -827,8 +843,12 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
         }),
         PAGE_PLAYLIST => pages(&client, token, Read::PlaylistById { id: arg.clone() }, &|p| match p {
             Page::PlaylistPage { v } => {
-                keep_list(token, v.songs.clone(), Some(Fetch::Playlist(v.playlist.id.clone()).origin()));
                 let pl = &v.playlist;
+                let editable = with_session(|s| {
+                    let user = s.core.session.settings.current().and_then(|p| p.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
+                    playlist_editable(pl, &user, s.rules().playlists)
+                });
+                keep(List { token, songs: v.songs.clone(), origin: Some(Fetch::Playlist(pl.id.clone()).origin()), editable: editable.unwrap_or(false) });
                 Some(json!({
                     "head": {
                         "k": "playlist", "id": pl.id, "t": pl.name, "s": pl.owner.as_deref().unwrap_or(""),
@@ -869,11 +889,14 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
 
 /// The queue the player shows (`Handle::queue_shown`): this iPod's, the device's it mirrors (`remote`:
 /// read only but for a tap, which plays that song there), or a jam guest's host's (`jam`), each song
-/// with who asked for it in the jam (`by`) where someone did.
+/// with who asked for it in the jam (`by`) where someone did. `offers`: what its head offers for the whole
+/// queue, by name (`menus::queue_actions`).
 fn queue_json(s: &nori_host::session::Session) -> Value {
     let q = s.queue_shown(None);
     let shown = q.heard().map_or(-1, |i| i as i32);
     let mut v = queue_sections(&q.songs, &q.rows, q.view.repeat, q.view.shuffle, shown);
+    let offers = nori_core::menus::queue_actions(q.rows.order.len() as u32, q.upcoming().count() as u32, s.rules().playlists, s.guest);
+    v["head"]["offers"] = offers.iter().map(|a| format!("{a:?}")).collect();
     if q.mirrored {
         v["head"]["remote"] = json!(true);
     }
@@ -929,9 +952,9 @@ fn now_json(s: &nori_host::session::Session) -> Value {
     };
     let here = n.device.is_none() && !n.jam;
     let mut v = json!({
-        "state": state, "index": n.index.map_or(-1, |i| i as i64), "ms": n.position_now().max(0),
+        "state": state, "index": n.index.map_or(-1, |i| i as i64), "ms": n.position_now().max(0), "fadingMs": n.fading_ms(),
         "pace": n.pace, "repeat": n.repeat, "shuffle": n.shuffle, "len": n.len, "mixing": n.mixing,
-        "eq": here && s.core.session.settings.prefs(|p| p.eq_enabled), "remote": !n.jam && (!here || s.remote().is_some()),
+        "eq": here && s.core.session.settings.in_effect(|p| p.eq_enabled), "remote": !n.jam && (!here || s.remote().is_some()),
         "buffering": n.buffering, "volume": n.volume.map(|v| (v * 100.0).round() as i64), "jam": n.jam,
         "system": s.playback().shown_to_system(),
     });
@@ -1059,9 +1082,10 @@ fn entries_of(s: &nori_host::session::Session, songs: &[Song]) -> Value {
     Value::from(entries)
 }
 
-/// Runs download entry `act` (as [`entries_of`] codes it) on `songs`: the songs downloaded, or removed
-/// for 2.
-fn act_on(s: &nori_host::session::Session, songs: Vec<Song>, act: i32) -> i32 {
+/// Runs download entry `act` (as [`entries_of`] codes it) on `songs`, those of `playlist` when they are
+/// one's: the songs downloaded, or removed for 2. A playlist is downloaded whole, so it is kept
+/// downloaded as it changes.
+fn act_on(s: &nori_host::session::Session, songs: Vec<Song>, act: i32, playlist: Option<String>) -> i32 {
     let states = download_states(s, &songs);
     let picked = |want: fn(&(bool, bool)) -> bool| -> Vec<Song> {
         songs.iter().zip(&states).filter(|(_, st)| want(st)).map(|(song, _)| song.clone()).collect()
@@ -1077,7 +1101,10 @@ fn act_on(s: &nori_host::session::Session, songs: Vec<Song>, act: i32) -> i32 {
         _ => return 0,
     };
     let n = to_get.len() as i32;
-    s.download(to_get);
+    match playlist {
+        Some(id) => s.download_playlist(id, songs),
+        None => s.download(to_get),
+    }
     n
 }
 
@@ -1189,8 +1216,9 @@ pub extern "C" fn nori_ios_shuffle_library(albums: i32) -> i32 {
 /// Runs download entry `act` on list `token` ([`act_on`]).
 #[no_mangle]
 pub extern "C" fn nori_ios_download_act(token: u64, act: i32) -> i32 {
-    let Some((songs, _)) = list(token) else { return 0 };
-    with_session(|s| act_on(s, songs, act)).unwrap_or(0)
+    let Some((songs, origin)) = list(token) else { return 0 };
+    let playlist = origin.filter(|o| o.kind == OriginKind::Playlist).map(|o| o.id);
+    with_session(|s| act_on(s, songs, act, playlist)).unwrap_or(0)
 }
 
 /// [`nori_ios_download_entries`] for an album, playlist or artist by id, as a card's menu has it. Blocks.
@@ -1213,8 +1241,8 @@ pub unsafe extern "C" fn nori_ios_collection_download_entries(kind: i32, id: *co
 pub unsafe extern "C" fn nori_ios_collection_download_act(kind: i32, id: *const c_char, act: i32) -> i32 {
     let id = c_text(id);
     let Some((client, core)) = server() else { return 0 };
-    let songs = collection_songs(&core, &client, kind, id);
-    with_session(|s| act_on(s, songs, act)).unwrap_or(0)
+    let songs = collection_songs(&core, &client, kind, id.clone());
+    with_session(|s| act_on(s, songs, act, (kind == PAGE_PLAYLIST).then_some(id))).unwrap_or(0)
 }
 
 fn fetch(kind: i32, id: String) -> Option<Fetch> {
@@ -1864,6 +1892,19 @@ mod tests {
         }
         assert!(list(90).is_some(), "an extended list is the newest");
         assert!(list(91).is_none());
+    }
+
+    #[test]
+    fn only_an_own_playlists_rows_move_and_go() {
+        let _turn = lock(&ABI_IN_USE);
+        forget_lists();
+        let origin = Some(PageOrigin::new(OriginKind::Playlist, "p1"));
+        keep(List { token: 70, songs: vec![song("a"), song("b")], origin: origin.clone(), editable: true });
+        keep(List { token: 71, songs: vec![song("a"), song("b")], origin, editable: false });
+        assert_eq!(list_edits(70, 0), [PlaylistEdit::MoveDown, PlaylistEdit::Remove]);
+        assert_eq!(list_edit_write(70, 0, PlaylistEdit::MoveDown), Some(Write::ReplacePlaylist { id: "p1".into(), song_ids: vec!["b".into(), "a".into()] }));
+        assert_eq!(list_edits(71, 0), []);
+        assert_eq!(list_edit_write(71, 0, PlaylistEdit::Remove), None, "another's playlist asks for no write");
     }
 
     #[test]

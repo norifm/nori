@@ -6,6 +6,91 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-11-16
+
+### Added
+
+- Plugins' overrides reach everything nori does, remote control too
+- Plugins can tune AutoMix's longest transition, tempo and mix parts
+- Your playlists can be renamed and their songs moved or removed everywhere
+- The desktop and terminal can play when Bluetooth connects
+- A downloaded playlist stays downloaded as it changes
+
+### Fixed
+
+- A paused phone on mobile data stays listed and answers at once
+- Lyrics follow the music through a pause instead of jumping back
+
+### Performance
+
+- A song started part way no longer reads its cover first
+
+## [0.9.3] - 2026-11-16
+
+### Added
+
+- A service takes a profile for each account
+- A profile whose plugin can't run shows as unavailable
+- YouTube Music and SoundCloud playlists can be made and changed (#158)
+- The queue can be added to a playlist
+- A setting plays the queue when a Bluetooth device connects
+- nori runs on Android TV: a remote's D-pad moves through it, and the player and tabs sit in a dock below the page (refs #160)
+- The desktop and terminal clients come for Windows (refs #160)
+- An APK for 32-bit ARM phones and TV boxes (refs #160)
+
+### Fixed
+
+- A plugin's profile stays signed in after one of its calls fails
+- A favorite the account has nowhere for is kept on this device
+- An album page keeps its colors when its own cover arrives (fixes #155)
+- The play pill stays centered on a page without a seal
+- A track under 15 seconds plays whole instead of being mixed
+- Picking this device again keeps the queue on its way from the other one (fixes #159)
+- A command a nearby device's door misses goes through the server (refs #159)
+- A phone playing on mobile data hears another device at once (refs #159)
+- Switching profiles on the desktop no longer stalls the window
+- A profile with a picture names that icon Picture, not Letter
+
+### Performance
+
+- A paused phone on mobile data with its screen off leaves the server's device list
+
+## [0.9.2] - 2026-11-15
+
+Plugins move to plugin API 6: nori fetches their new versions (YouTube Music 0.7.0, SoundCloud 0.6.0
+and the rest) the first time it opens, and a plugin's profile waits for its update.
+
+### Added
+
+- YouTube Music and SoundCloud songs, albums and artists take a favorite kept on this device while
+  signed out (#156)
+
+### Fixed
+
+- An artist's releases go newest first by their release date, and YouTube Music and SoundCloud
+  singles and EPs sit on their own shelves (#153)
+
+## [0.9.1] - 2026-11-14
+
+### Added
+
+- Desktop, terminal and iPod get channels, renames and progress
+- Desktop and terminal say when a newer nori is out (refs #150)
+- Turning AutoMix on offers to analyze downloads, beats included
+- Desktop profiles drag by the row and remove from their … menu
+
+### Fixed
+
+- The web client builds again
+- The player's cover fades lower and shows a little under the title
+- Shuffle plays the playlist's songs before what autoplay added
+- The Mac window drags from the top bar's empty space (fixes #151)
+- Linux media controls name nori and show its icon, as KDE needs
+- A play press works after a call outlasts a long pause (fixes #149)
+- A search the server finds nothing for keeps the songs found here
+- The sign-in window shows its page on Linux, NVIDIA and AppImage too
+- Editing another profile's account no longer opens it or shows nothing
+
 ## [0.9.0] - 2026-11-13
 
 ### Added

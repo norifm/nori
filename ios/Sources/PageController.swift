@@ -129,7 +129,7 @@ class PageController: TablePage {
               rows[path.section].layout == .list else { return }
         let item = rows[path.section].section.items[path.row]
         guard item.kind == "song" else { return menu(for: item) }
-        SongMenu.show(item, token: token, index: item.index, from: self) { [weak self] page in
+        SongMenu.show(item, token: token, index: item.index, from: self, edited: { [weak self] in self?.reload() }) { [weak self] page in
             self?.navigationController?.pushViewController(page, animated: true)
         }
     }
@@ -283,12 +283,14 @@ class PageController: TablePage {
         }
     }
 
-    /// After Play: the record's seal, or a mix's Save as playlist (the account's).
+    /// After Play: the record's seal where seals are kept, or a playlist's pin and a mix's Save as
+    /// playlist (the account's).
     private func ownGlyphs(_ head: [String: Any]) -> [UIView] {
         let kind = head["k"] as? String ?? ""
         let item = Item(head)
-        guard Core.shared.rules.account, !item.external else { return [] }
+        guard !item.external else { return [] }
         if kind == "album" || kind == "artist" {
+            guard Core.shared.rules.stars else { return [] }
             let on = Core.shared.isFavorite(item)
             let seal = GlyphButton(on ? Glyph.sealedPage : Glyph.sealPage, Say.favorite)
             seal.look = look
@@ -299,6 +301,7 @@ class PageController: TablePage {
             }
             return [seal]
         }
+        guard Core.shared.rules.account else { return [] }
         if kind == "playlist" {
             // Pinned on this iPod: the server cannot star a playlist.
             let id = item.id
@@ -616,11 +619,11 @@ class PageController: TablePage {
         guard item.kind == "song" else { return none }
         let index = Int32(item.index)
         let action: UIContextualAction
-        if left && kind == NORI_PAGE_PLAYLIST {
-            let playlist = arg
-            action = UIContextualAction(style: .destructive, title: Say.removeFromPlaylist) { [weak self] _, _, done in
+        if left && nori_ios_playlist_edits(token, index) & NORI_EDIT_REMOVE != 0 {
+            let token = self.token
+            action = UIContextualAction(style: .destructive, title: Say.remove) { [weak self] _, _, done in
                 DispatchQueue.global(qos: .userInitiated).async {
-                    let ok = playlist.withCString { nori_ios_playlist_remove($0, index) } == 1
+                    let ok = nori_ios_playlist_edit(token, index, NORI_EDIT_REMOVE) == 1
                     DispatchQueue.main.async {
                         done(ok)
                         if ok { self?.reload() } else { Toast.show(Say.failed) }
@@ -683,7 +686,7 @@ class PageController: TablePage {
                 PageController.add(entries, to: sheet, from: self) { act in
                     item.id.withCString { nori_ios_collection_download_act(kind, $0, act) }
                 }
-                if kind != NORI_PAGE_PLAYLIST && !item.external && Core.shared.rules.account {
+                if kind != NORI_PAGE_PLAYLIST && !item.external && Core.shared.rules.stars {
                     let on = Core.shared.isFavorite(item)
                     sheet.add(on ? Say.removeFromFavorites : Say.addToFavorites, glyph: Glyph.draw(on ? Iconoir.seal : Iconoir.sealOutline, 20)) {
                         Core.shared.favorite(item, !on)

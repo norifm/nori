@@ -126,17 +126,84 @@ impl Nori {
 
     /// The profile signed in shows `icon` (a `ProfileIcon` by name, as `profile` lists them) on its circle.
     pub fn profile_icon(&self, icon: String) -> Result<(), JsValue> {
-        use nori_core::settings::{servers_updated, ProfileIcon, ServerList};
+        use nori_core::settings::ProfileIcon;
         let icon = ProfileIcon::ALL.into_iter().find(|i| format!("{i:?}") == icon).ok_or_else(|| error(format!("no profile icon {icon}")))?;
+        self.profile_changed(|p| SavedServer { icon, ..p })
+    }
+
+    /// The profile signed in, changed by `change` and kept; a jam guest's is its host's.
+    fn profile_changed(&self, change: impl FnOnce(SavedServer) -> SavedServer) -> Result<(), JsValue> {
+        use nori_core::settings::{servers_updated, ServerList};
         if !self.changes_profile() {
             return Err(error("a jam's guest changes no profile"));
         }
         let mut prefs = self.app.settings.current().unwrap_or_default();
         let profile = prefs.active_server().cloned().ok_or_else(|| error("not signed in"))?;
         let list = ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() };
-        prefs.servers = servers_updated(list, SavedServer { icon, ..profile }).servers;
+        prefs.servers = servers_updated(list, change(profile)).servers;
         self.app.settings.put(prefs);
         Ok(())
+    }
+
+    /// The scrobbling accounts of the profile signed in, as `[{ id, kind, user, host, on }]`: `kind`
+    /// as the settings store it, `host` the address's, empty for the kind's own service.
+    pub fn scrobblers(&self) -> String {
+        let accounts = self.active().map(|p| p.scrobblers).unwrap_or_default();
+        let rows: Vec<serde_json::Value> =
+            accounts.iter().map(|a| json!({ "id": a.id, "kind": a.kind.id(), "user": a.user, "host": nori_core::settings::label("", &a.url), "on": a.on })).collect();
+        serde_json::Value::from(rows).to_string()
+    }
+
+    /// Whether the profile signed in is told what plays itself, first in its scrobbling list: `{ on }`,
+    /// or `null` where its rules have it take none.
+    pub fn scrobble_itself(&self) -> String {
+        let shown = self.active().filter(|_| self.rules().scrobbles);
+        shown.map_or(serde_json::Value::Null, |p| json!({ "on": !p.scrobble_off })).to_string()
+    }
+
+    /// The profile signed in told what plays, or not.
+    pub fn scrobble_itself_switch(&self, on: bool) -> Result<(), JsValue> {
+        self.profile_changed(|p| nori_core::settings::profile_scrobble_switched(p, on))
+    }
+
+    /// The profile's scrobbling account `id` turned on or off.
+    pub fn scrobbler_switch(&self, id: String, on: bool) -> Result<(), JsValue> {
+        self.profile_changed(|mut p| {
+            p.scrobblers.iter_mut().filter(|a| a.id == id).for_each(|a| a.on = on);
+            p
+        })
+    }
+
+    /// The profile without its scrobbling account `id`.
+    pub fn scrobbler_remove(&self, id: String) -> Result<(), JsValue> {
+        self.profile_changed(|p| nori_core::settings::profile_scrobbler_removed(p, id))
+    }
+
+    /// The kinds of scrobbling account a profile can add, with the fields each asks
+    /// (`nori_core::scrobblers::scrobbler_kinds_json`).
+    pub fn scrobbler_kinds(&self) -> String {
+        nori_core::scrobblers::scrobbler_kinds_json()
+    }
+
+    /// A token to allow on a `kind` scrobbling service's page, with `fields` as [`Self::scrobbler_add`]
+    /// takes them, as `{ token, page }` (`Client::scrobbler_approval`).
+    pub async fn scrobbler_approval(&self, kind: String, fields: String) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let fields: serde_json::Value = serde_json::from_str(&fields).map_err(error)?;
+        let form = nori_core::scrobblers::ScrobblerForm::from_json(&kind, &fields, "").ok_or_else(|| error("no such scrobbler"))?;
+        let a = client.scrobbler_approval(form).await.map_err(error)?;
+        Ok(json!({ "token": a.token, "page": a.page }).to_string())
+    }
+
+    /// Signs in to a `kind` scrobbling account with `fields`, `{ id: typed }` by the field ids
+    /// [`Self::scrobbler_kinds`] gives, and the token `approved` on its page where it signs in there;
+    /// keeps it in the profile (`Client::sign_in_scrobbler`).
+    pub async fn scrobbler_add(&self, kind: String, fields: String, approved: String) -> Result<(), JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let fields: serde_json::Value = serde_json::from_str(&fields).map_err(error)?;
+        let form = nori_core::scrobblers::ScrobblerForm::from_json(&kind, &fields, &approved).ok_or_else(|| error("no such scrobbler"))?;
+        let account = client.sign_in_scrobbler(form).await.map_err(error)?;
+        self.profile_changed(|p| nori_core::settings::profile_scrobbler_put(p, account))
     }
 
     fn active(&self) -> Option<SavedServer> {
@@ -328,7 +395,7 @@ impl Nori {
     /// `system_dark`: the browser's color scheme, followed while the appearance is System.
     pub fn theme(&self, month: u32, day: u32, zone: String, system_dark: bool) -> String {
         use nori_look::theme::{roles, season_now, southern, SEASONS};
-        let prefs = self.app.settings.current().unwrap_or_default();
+        let prefs = self.app.settings.effective().unwrap_or_default();
         let (palette, dark) = nori_core::settings::theme_palette(&prefs, system_dark, month, day, southern(&zone));
         let r = roles(palette);
         let now = season_now(month, day, southern(&zone));
@@ -484,6 +551,12 @@ impl Nori {
         Value::from(drawn).to_string()
     }
 
+    /// What the queue's head offers, in order (`menus::queue_actions`), by name, for a queue of `songs` songs
+    /// of which `upcoming` follow the one playing; `guest`: a jam guest's.
+    pub fn queue_actions(&self, songs: u32, upcoming: u32, guest: bool) -> String {
+        Value::from(nori_core::menus::queue_actions(songs, upcoming, self.rules().playlists, guest).iter().map(|a| format!("{a:?}")).collect::<Vec<_>>()).to_string()
+    }
+
     /// What the head of a page's song list offers, in order (`menus::page_actions`), by name, for `kind`
     /// (`Album`, `Artist`, `Playlist`) with `songs` songs. A browser keeps no downloads.
     pub fn page_actions(&self, kind: String, songs: u32) -> Result<String, JsValue> {
@@ -495,6 +568,12 @@ impl Nori {
             _ => return Err(error(format!("no page {kind}"))),
         };
         Ok(Value::from(page_actions(kind, songs, 0, false).iter().map(|a| format!("{a:?}")).collect::<Vec<_>>()).to_string())
+    }
+
+    /// What row `index` of a playlist of `songs` songs offers to change, in order (`menus::playlist_edits`),
+    /// by name; nothing unless the account may change it.
+    pub fn playlist_edits(&self, index: u32, songs: u32, editable: bool) -> String {
+        Value::from(nori_core::menus::playlist_edits(index, songs, editable).iter().map(|e| format!("{e:?}")).collect::<Vec<_>>()).to_string()
     }
 
     /// The settings `names` (comma separated) as `{ name: value }`.
@@ -626,7 +705,7 @@ impl Nori {
             "artist" => Some(PageOrigin::new(OriginKind::Artist, id)),
             _ => None,
         };
-        let items: Vec<Value> = song_menu(song.clone(), song.starred, false, SongDownload::None, player, lyrics, rules.stars, rules.account, false, rules.radio, self.guest(), on)
+        let items: Vec<Value> = song_menu(song.clone(), song.starred, false, SongDownload::None, player, lyrics, rules.stars, rules.account, rules.playlists, false, rules.radio, self.guest(), on)
             .into_iter()
             .map(|m| {
                 let place = format!("{:?}", m.place);

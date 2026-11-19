@@ -55,7 +55,7 @@ webpki-roots = "1"
 # A plugin's UDP socket shares a well-known port (SSDP's) with the system's own listeners.
 socket2 = "0.6"
 # The interfaces an IPv6 group without a zone is joined on.
-libc = "0.2"
+if-addrs = "0.15"
 # Safe mode's marks of the plugin being called: a file a crash leaves as it was.
 memmap2 = "0.9"
 
@@ -64,6 +64,8 @@ memmap2 = "0.9"
 nori-sink-protocol = { path = "../sink-protocol" }
 nori-plugins = { path = ".", features = ["testing"] }
 nori-testdir = { path = "../testdir" }
+# tests/lan.rs: the interfaces an IPv6 group is heard on.
+libc = "0.2"
 async-trait = "0.1"
 # Manifests written as the SDK writes them.
 nori-plugin-sdk = { path = "../plugin-sdk" }

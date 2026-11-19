@@ -1,6 +1,6 @@
 //! nori's records as the plugin API's (`wit/types.wit`), and back.
 
-use nori_model::{Album, Artist, ArtistRef, ExplicitStatus, Playlist, ReplayGain, SearchResult, Song};
+use nori_model::{Album, Artist, ArtistRef, ExplicitStatus, Playlist, ReleaseDate, ReplayGain, SearchResult, Song};
 
 use crate::runtime::types as t;
 
@@ -18,6 +18,32 @@ fn explicit_out(e: ExplicitStatus) -> t::Explicit {
         ExplicitStatus::Clean => t::Explicit::Clean,
         ExplicitStatus::Explicit => t::Explicit::Explicit,
     }
+}
+
+/// The kinds by the OpenSubsonic release type naming each ([`Album::release_types`]).
+const RELEASE_TYPES: [(t::ReleaseKind, &str); 8] = [
+    (t::ReleaseKind::Album, "Album"),
+    (t::ReleaseKind::Ep, "EP"),
+    (t::ReleaseKind::Single, "Single"),
+    (t::ReleaseKind::Compilation, "Compilation"),
+    (t::ReleaseKind::Live, "Live"),
+    (t::ReleaseKind::Soundtrack, "Soundtrack"),
+    (t::ReleaseKind::Remix, "Remix"),
+    (t::ReleaseKind::Other, "Other"),
+];
+
+/// The kind of the first of `types` that names one; a compilation by its flag.
+fn kind_out(types: &[String], compilation: bool) -> Option<t::ReleaseKind> {
+    let named = types.iter().find_map(|name| RELEASE_TYPES.iter().find(|(_, n)| n.eq_ignore_ascii_case(name)).map(|(k, _)| *k));
+    named.or(compilation.then_some(t::ReleaseKind::Compilation))
+}
+
+fn date_in(d: t::ReleaseDate) -> ReleaseDate {
+    ReleaseDate { year: d.year, month: d.month, day: d.day }
+}
+
+fn date_out(d: ReleaseDate) -> t::ReleaseDate {
+    t::ReleaseDate { year: d.year, month: d.month, day: d.day }
 }
 
 pub fn song_in(s: t::Song) -> Song {
@@ -81,6 +107,8 @@ pub fn album_in(a: t::Album) -> Album {
         song_count: a.song_count,
         duration: a.duration,
         year: a.year,
+        release_date: a.released.map(date_in),
+        release_types: a.kind.and_then(|k| RELEASE_TYPES.iter().find(|(r, _)| *r == k)).map(|(_, name)| vec![name.to_string()]).unwrap_or_default(),
         genre: a.genre,
         starred: a.starred,
         is_external: a.external,
@@ -98,6 +126,8 @@ pub fn album_out(a: &Album) -> t::Album {
         song_count: a.song_count,
         duration: a.duration,
         year: a.year,
+        released: a.released().map(date_out),
+        kind: kind_out(&a.release_types, a.is_compilation),
         genre: a.genre.clone(),
         starred: a.starred,
         external: a.is_external,
@@ -150,7 +180,26 @@ mod tests {
         }
         .dressed();
         assert_eq!(song_in(song_out(&s)), s);
-        let a = Album { id: "al".into(), name: "N".into(), artist: "A".into(), year: 2001, ..Default::default() };
+        let a = Album {
+            id: "al".into(),
+            name: "N".into(),
+            artist: "A".into(),
+            year: 2001,
+            release_date: Some(ReleaseDate { year: 2001, month: Some(3), day: None }),
+            release_types: vec!["Single".into()],
+            ..Default::default()
+        };
         assert_eq!(album_in(album_out(&a)), Album { subtitle: nori_model::lines::album_subtitle("A", 2001), ..a });
+    }
+
+    #[test]
+    fn an_albums_kind_is_its_first_named_release_type() {
+        let kind = |types: &[&str], compilation| kind_out(&types.iter().map(|t| t.to_string()).collect::<Vec<_>>(), compilation);
+        assert_eq!(
+            [kind(&["Remastered", "ep"], false), kind(&["Album", "Live"], false), kind(&[], true), kind(&["mixtape"], false)],
+            [Some(t::ReleaseKind::Ep), Some(t::ReleaseKind::Album), Some(t::ReleaseKind::Compilation), None]
+        );
+        let single = t::Album { kind: Some(t::ReleaseKind::Single), ..album_out(&Album::default()) };
+        assert_eq!(album_in(single).release_types, ["Single"]);
     }
 }

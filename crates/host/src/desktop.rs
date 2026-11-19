@@ -43,6 +43,17 @@ fn zone(tz: Option<String>, link: Option<String>) -> Option<String> {
     link?.split_once("zoneinfo/").map(|(_, z)| z.to_string())
 }
 
+/// What removing a profile leaves open.
+#[derive(Debug, PartialEq)]
+pub enum ProfileRemoved {
+    /// It was not the one in use.
+    Elsewhere,
+    /// It was; this one takes over.
+    Opens(Box<SavedServer>),
+    /// It was the last.
+    Last,
+}
+
 /// A desktop client's object graph root (as Kotlin's `Nori`): the queue session over the settings, which
 /// every view reads, and the plugins installed under the data directory, opened at the first ask.
 pub struct Root {
@@ -60,11 +71,44 @@ impl Root {
         &self.data
     }
 
+    /// `profile`'s account apart from the session open on `open` (its core and profile), with a core and
+    /// client of its own, so editing it opens nothing else; `pictured` hears its picture change.
+    pub fn account(&self, http: Arc<Http>, profile: &SavedServer, open: Option<(Arc<nori_core::Core>, SavedServer)>, pictured: Box<dyn Fn() + Send + Sync>) -> Result<crate::account::Account, String> {
+        let core = nori_core::Core::new(crate::db_path(&self.data), nori_core::settings::server_db_id(&profile.id), self.app.clone()).map_err(|e| format!("the database: {e}"))?;
+        core.use_kinds(self.plugins().kinds.clone());
+        core.configure_profile(profile.clone()).map_err(|e| format!("the server: {e}"))?;
+        let client = nori_core::client::Client::new(core, http.clone(), nori_core::covers::CoverNet::over(http));
+        client.set_profile(crate::net(profile));
+        let give_back = open.filter(|(_, p)| p.kind == profile.kind);
+        Ok(crate::account::Account::new(client, self.app.settings.clone(), profile.id.clone(), pictured, give_back))
+    }
+
+    /// Removes saved profile `id` and, off this thread (a library is many rows), its rows in the database.
+    /// Which profile takes over from the one in use is the core's (`settings::servers_removed`).
+    pub fn remove_profile(&self, id: &str) -> ProfileRemoved {
+        let settings = &self.app.settings;
+        let mut prefs = settings.current().unwrap_or_default();
+        let was_active = prefs.active_server_id == id;
+        let list = nori_core::settings::ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: std::mem::take(&mut prefs.active_server_id) };
+        let left = nori_core::settings::servers_removed(list, id.to_string());
+        (prefs.servers, prefs.active_server_id) = (left.servers, left.active_server_id);
+        let next = prefs.active_server().cloned();
+        settings.put(prefs);
+        let (db, server) = (crate::db_path(&self.data), id.to_string());
+        crate::spawn("nori-forget", move || {
+            let _ = nori_core::db::db_forget_server(db, server);
+        });
+        match next {
+            _ if !was_active => ProfileRemoved::Elsewhere,
+            Some(p) => ProfileRemoved::Opens(Box::new(p)),
+            None => ProfileRemoved::Last,
+        }
+    }
+
     /// The plugins, laid over the settings, and the kinds of profile they and nori open.
     pub fn plugins(&self) -> &Plugged {
         self.plugins.get_or_init(|| {
             let watched = Arc::new(Watched::default());
-            let _ = watched.settings.set(Arc::downgrade(&self.app.settings));
             let host = nori_plugins::open(self.data.join("plugins"), self.app.settings.clone(), watched.clone());
             let _ = watched.plugins.set(Arc::downgrade(&host));
             // Watched only while an enabled plugin reaches devices or hears outputs connect (BlueZ and
@@ -192,11 +236,8 @@ type SignsIn = Box<dyn Fn(String, String) + Send + Sync>;
 /// pages ([`Watched::as_said`]), and commands go to D-Bus on Linux. The desktop has no wake: nothing starts it while it is closed.
 #[derive(Default)]
 pub struct Watched {
-    engine: std::sync::Mutex<Option<std::sync::Weak<nori_engine::Engine>>>,
     session: std::sync::Mutex<Option<std::sync::Weak<crate::session::Parts>>>,
     plugins: std::sync::OnceLock<std::sync::Weak<nori_plugins::Plugins>>,
-    /// The settings the plugins are laid over.
-    settings: OnceLock<std::sync::Weak<Settings>>,
     heard: std::sync::Mutex<Option<Hears>>,
     /// Told when a plugin's page or the devices plugins control changed ([`Watched::on_changed`]).
     changed: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
@@ -288,14 +329,9 @@ impl Watched {
 }
 
 impl nori_plugins::Client for Watched {
-    /// The engine takes all of its settings again, whatever `effect` says.
-    fn layer_changed(&self, _effect: u32) {
-        let engine = self.engine.lock().expect("not poisoned").as_ref().and_then(std::sync::Weak::upgrade);
-        let settings = self.settings.get().and_then(std::sync::Weak::upgrade);
-        if let (Some(engine), Some(settings)) = (engine, settings) {
-            if let Some(prefs) = settings.current() {
-                engine.set_settings(nori_engine::core::settings(&prefs, settings.layer()));
-            }
+    fn layer_changed(&self, effect: u32) {
+        if let Some(session) = self.session() {
+            session.overrides_changed(effect);
         }
     }
     fn status(&self, id: String, row: String, words: String, args: Vec<String>) {
@@ -416,6 +452,8 @@ impl nori_plugins::Client for Watched {
     fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {
         self.tell_changed();
     }
+    /// No notification here: MPRIS has no buttons of a player's own.
+    fn buttons_changed(&self) {}
 }
 
 /// The cpal device named `device` (else the system's default) at `volume` (0 to 1).
@@ -471,7 +509,7 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
         out: o.out,
         kinds: plugged.kinds.clone(),
     })?;
-    *plugged.watched.engine.lock().expect("not poisoned") = Some(Arc::downgrade(&session.engine));
+    *plugged.watched.session.lock().expect("not poisoned") = Some(session.weak());
     // A plugin's cast takes the music, and the sound card gets it back, at its volume, when it ends.
     let engine = Arc::downgrade(&session.engine);
     let (core, covers) = (session.core.clone(), session.covers.clone());
@@ -495,7 +533,6 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
             nori_plugins::Card::Back => engine.come_back(),
         }
     }));
-    *plugged.watched.session.lock().expect("not poisoned") = Some(session.weak());
     Ok(session)
 }
 

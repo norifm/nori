@@ -795,6 +795,9 @@ impl ApplicationHandler<Wake> for Runner {
             attrs
         };
         #[cfg(target_os = "linux")]
+        // X11's class and Wayland's app id alike (winit keeps one name for both).
+        let attrs = winit::platform::x11::WindowAttributesExtX11::with_name(attrs, crate::APP_ID, "nori");
+        #[cfg(target_os = "linux")]
         let attrs = match gl::window_attributes(el, attrs) {
             Ok(attrs) => attrs,
             Err(e) => { nori_core::alog::info(&format!("no window visual: {e}")); el.exit(); return; }

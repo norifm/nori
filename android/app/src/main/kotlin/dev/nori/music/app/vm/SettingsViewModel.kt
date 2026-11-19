@@ -126,8 +126,6 @@ data class StorageUi(
     val allDownloadSongs: Int = 0,
     /** Each profile with downloads (the id its rows are kept under) and what they hold. */
     val profileDownloads: List<Pair<String, Long>> = emptyList(),
-    /** This profile's finished downloads, which its actions work on. */
-    val downloadSongs: Int = 0,
     val indexBytes: Long = 0L,
     val busy: Boolean = false,
     /** Changes waiting for the server, and dropped unsent. */
@@ -137,6 +135,9 @@ data class StorageUi(
 
 class SettingsViewModel(app: Application) : NoriViewModel(app) {
     val prefs: StateFlow<StoredPrefs> = nori.settings.prefs
+
+    /** The settings in effect, with what enabled plugins override: what screens other than the settings wear and do. */
+    val effective: StateFlow<StoredPrefs> = nori.settings.effective
 
     /** The palette worn where the season's is [palette] (at night when [dark]): a plugin's season of its own, or null for the season's. */
     suspend fun look(palette: dev.nori.music.ffi.look.Palette, dark: Boolean): dev.nori.music.ffi.look.Palette? =
@@ -195,16 +196,15 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** What a settings page depends on besides the settings, from this platform. */
     val settingsFacts: StateFlow<SettingsFacts> by lazy {
-        combine(combine(dac, _sync, _storage, _analysed, _folders, ::factsOf), update, nori.plugins.names, _backup) { f, u, names, b -> f.copy(update = u, installsUpdates = nori.updates.installs, pluginNames = names, backup = b) }
+        combine(combine(dac, _sync, _storage, _folders, ::factsOf), update, nori.plugins.names, _backup) { f, u, names, b -> f.copy(update = u, installsUpdates = nori.updates.installs, pluginNames = names, backup = b) }
             .stateIn(
                 viewModelScope, SharingStarted.WhileSubscribed(5_000),
-                factsOf(dac.value, _sync.value, _storage.value, _analysed.value, _folders.value).copy(update = update.value, installsUpdates = nori.updates.installs, pluginNames = nori.plugins.names.value, backup = _backup.value),
+                factsOf(dac.value, _sync.value, _storage.value, _folders.value).copy(update = update.value, installsUpdates = nori.updates.installs, pluginNames = nori.plugins.names.value, backup = _backup.value),
             )
     }
 
-    private fun factsOf(d: DacState, s: SyncUi, st: StorageUi, analysed: dev.nori.music.ffi.automix.Measured, folders: List<MusicFolder>) = SettingsFacts(
+    private fun factsOf(d: DacState, s: SyncUi, st: StorageUi, folders: List<MusicFolder>) = SettingsFacts(
         dac = d,
-        analysed = analysed,
         sync = s,
         storage = st,
         folders = folders,
@@ -212,7 +212,10 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** A row's setting changed: its name and the value picked, which the core reads and applies; false for a name or value it does not take. */
     fun set(name: String, value: String): Boolean {
-        apply(nori.settings.core.settingSet(name, value) ?: return false)
+        val before = nori.settings.value.autoMix
+        val change = nori.settings.core.settingSet(name, value) ?: return false
+        apply(change)
+        nori.downloads.offerOnSwitch(before, change.prefs.autoMix)
         return true
     }
 
@@ -273,7 +276,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** A button on a settings row. */
     fun act(action: String) {
         when (action) {
-            "measure-again" -> clearAnalyses()
             "sync-library" -> syncLibrary()
             "download-library" -> downloadLibrary()
             "clear-stream" -> clearStreamCache()
@@ -347,7 +349,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             downloadBytes = nori.sources.downloadBytes(),
             allDownloadSongs = profiles.sumOf { it.ids.size },
             profileDownloads = profiles.map { it.profile to nori.sources.downloadBytes(it.ids) },
-            downloadSongs = nori.downloads.state.value.done.size,
             indexBytes = index.sumOf { dirBytes(files[it.toInt()]) },
             unsentWaiting = unsent?.waiting?.toInt() ?: 0,
             unsentDropped = unsent?.dropped?.toInt() ?: 0,
@@ -427,6 +428,12 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         combine(prefs.map { it.server to it.pluginsOff }.distinctUntilChanged(), nori.plugins.cards, nori.plugins.providers) { (server, _), _, _ -> server }
             .map { server -> server?.let { withContext(Dispatchers.IO) { nori.plugins.kinds.waits(it) } } }
             .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** What each saved profile that doesn't open here waits for, by its id: a list shows those unavailable. */
+    val profileWaits: StateFlow<Map<String, dev.nori.music.ffi.ProfileWait>> =
+        combine(prefs.map { it.servers to it.pluginsOff }.distinctUntilChanged(), nori.plugins.cards, nori.plugins.providers) { (servers, _), _, _ -> servers }
+            .map { servers -> withContext(Dispatchers.IO) { servers.mapNotNull { s -> nori.plugins.kinds.waits(s)?.let { s.id to it } }.toMap() } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     init {
         // Its plugin running now, the profile opens again, with it.
@@ -523,6 +530,15 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         viewModelScope.launch { nori.stopReminding() }
     }
 
+    /** One at a time, off the main thread: a client apart opens the database. */
+    private val accountLane = Dispatchers.IO.limitedParallelism(1)
+
+    /** The account part shows [profile]'s account (null: it left the screen); see `Nori.lookAtAccountOf`. */
+    fun accountOf(profile: SavedServer?) = viewModelScope.launch(accountLane) {
+        nori.lookAtAccountOf(profile)
+        if (profile != null) lookAtAccount()
+    }
+
     fun lookAtAccount() {
         viewModelScope.launch {
             val account = runCatching { nori.account() }.getOrNull()
@@ -578,9 +594,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     fun skipSignIn() { signInOn(dev.nori.music.ffi.SignInEvent.Close) }
 
-    /** Offers signing in, as a seal tapped while signed out does. */
-    fun offerSignIn() = viewModelScope.launch { signInOn(nori.signInOffer()) }
-
     /** Takes [event] on the pages of adding a profile; says what to do next. */
     fun addOn(event: dev.nori.music.ffi.AddEvent): dev.nori.music.ffi.AddDo {
         val step = dev.nori.music.ffi.addFlowOn(_add.value, event)
@@ -628,6 +641,60 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun switchServer(profile: SavedServer) = nori.activate(profile)
     fun updateServer(profile: SavedServer) = nori.updateServer(profile)
     fun setProfileIcon(profile: SavedServer, icon: dev.nori.music.ffi.settings.ProfileIcon) = nori.setProfileIcon(profile, icon)
+
+    /**
+     * Adding a scrobbling account: signing in, why the last try failed, and the token to allow on the
+     * service's page, once asked for.
+     */
+    data class ScrobblerAdd(val busy: Boolean = false, val failed: String? = null, val approval: dev.nori.music.ffi.ScrobblerApproval? = null)
+
+    private val _scrobblerAdd = MutableStateFlow(ScrobblerAdd())
+    val scrobblerAdd: StateFlow<ScrobblerAdd> = _scrobblerAdd
+
+    /**
+     * Signs in to the account [form] describes, with the token allowed on the service's page if one was
+     * asked for, and keeps it in [profile]; [added] is given the profile saved.
+     */
+    fun addScrobbler(profile: SavedServer, form: dev.nori.music.ffi.ScrobblerForm, added: (SavedServer) -> Unit) {
+        val approval = _scrobblerAdd.value.approval
+        _scrobblerAdd.value = ScrobblerAdd(busy = true, approval = approval)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { nori.signInScrobbler(form.copy(approved = approval?.token.orEmpty())) } }
+                .onSuccess { a -> _scrobblerAdd.value = ScrobblerAdd(); added(putScrobbler(profile, a)) }
+                .onFailure { e -> _scrobblerAdd.value = ScrobblerAdd(failed = dev.nori.music.net.Failures.describe(e), approval = approval) }
+        }
+    }
+
+    /** Asks for a token to allow nori with on the service's page, which the sheet then opens. */
+    fun askScrobblerApproval(form: dev.nori.music.ffi.ScrobblerForm) {
+        _scrobblerAdd.value = ScrobblerAdd(busy = true)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { nori.scrobblerApproval(form) } }
+                .onSuccess { _scrobblerAdd.value = ScrobblerAdd(approval = it) }
+                .onFailure { e -> _scrobblerAdd.value = ScrobblerAdd(failed = dev.nori.music.net.Failures.describe(e)) }
+        }
+    }
+
+    fun scrobblerAddReset() { _scrobblerAdd.value = ScrobblerAdd() }
+
+    /** [profile] with [account] in place of its namesake, or added; saved and returned. */
+    fun putScrobbler(profile: SavedServer, account: dev.nori.music.ffi.settings.SavedScrobbler): SavedServer =
+        dev.nori.music.ffi.settings.profileScrobblerPut(profile, account).also(nori::setScrobblers)
+
+    /**
+     * Whether [profile] is told what plays itself, so its scrobbling list starts with it: the open
+     * profile's rules as its core reports them, another's as the core reads them from the saved profile.
+     */
+    fun scrobblesItself(profile: SavedServer): Boolean =
+        if (profile.id == nori.settings.value.activeServerId) nori.rules.scrobbles else nori.plugins.kinds.rulesOf(profile, false).scrobbles
+
+    /** [profile] with its server told what plays, or not; saved and returned. */
+    fun switchServerScrobble(profile: SavedServer, on: Boolean): SavedServer =
+        dev.nori.music.ffi.settings.profileScrobbleSwitched(profile, on).also(nori::setScrobblers)
+
+    /** [profile] without account [id]; saved and returned. */
+    fun removeScrobbler(profile: SavedServer, id: String): SavedServer =
+        dev.nori.music.ffi.settings.profileScrobblerRemoved(profile, id).also(nori::setScrobblers)
     fun renameProfile(profile: SavedServer, name: String) = nori.renameProfile(profile, name)
     fun removeServer(id: String) = nori.removeServer(id)
 
@@ -893,20 +960,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         } catch (e: Exception) {
             _autoEq.update { it.copy(task = AutoEqTask.Failed(describeConnectionError(e))) }
         }
-    }
-
-    private val _analysed = MutableStateFlow(dev.nori.music.ffi.automix.Measured(0u, 0u))
-
-    fun refreshAnalysed() = viewModelScope.launch {
-        _analysed.value = withContext(Dispatchers.IO) { runCatching { nori.core.analysisMeasured() }.getOrDefault(dev.nori.music.ffi.automix.Measured(0u, 0u)) }
-    }
-
-    /** Forgets every measurement; the downloaded songs are measured again now, under the download service and its
-     *  notification, the others when they next play. */
-    fun clearAnalyses() = viewModelScope.launch {
-        withContext(Dispatchers.IO) { runCatching { nori.core.measureAgain() } }.getOrNull()?.let { nori.settings.asked(it.effect) }
-        refreshAnalysed()
-        nori.downloads.analyse { refreshAnalysed() }
     }
 
     // ---- downloads ----

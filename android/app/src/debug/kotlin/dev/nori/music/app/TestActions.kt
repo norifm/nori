@@ -34,9 +34,6 @@ object TestActions {
      */
     fun setByName(context: Context, settings: SettingsViewModel, name: String, value: String): Boolean {
         if (device(context, settings, name, value)) return true
-        // Not a setting: the one button on that screen a check needs, so a run can start from a phone
-        // that has measured nothing and see the measuring happen.
-        if (name == "clearAnalyses") { settings.clearAnalyses(); return true }
         // The "Streamed music" button: a check that needs a song to be fetched cannot have it cached.
         if (name == "clearStreamCache") { settings.clearStreamCache(); return true }
         // The "Lyrics" button under Storage, without its question.
@@ -209,11 +206,12 @@ object TestActions {
             // Everything not yet downloaded is dropped; finished downloads stay.
             "canceldownloads" -> actions.cancelAllDownloads()
             "star" -> songs.firstOrNull()?.let { actions.star(it, !nori.library.isStarred(dev.nori.music.data.StarKind.SONG, it.id, it.starred)) }
-            // "notification favourite" / "notification shuffle": the session command the notification's button sends,
-            // the seal's as it shows now (filled: unfavourite).
+            // "notification favourite" / "notification shuffle" / "notification plugin": the session command the
+            // notification's button sends, the seal's as it shows now (filled: unfavourite), a plugin's first.
             "notification" -> nori.player.pressSessionButton(
                 when {
                     ref == "shuffle" -> dev.nori.music.playback.PlaybackService.CMD_SHUFFLE
+                    ref == "plugin" -> dev.nori.music.playback.PlaybackService.CMD_PLUGIN_BUTTON
                     "sealed" in nori.player.sessionButtons.split(' ') -> dev.nori.music.playback.PlaybackService.CMD_UNFAVOURITE
                     else -> dev.nori.music.playback.PlaybackService.CMD_FAVOURITE
                 },

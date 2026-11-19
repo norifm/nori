@@ -33,8 +33,9 @@
 # release. A release already on GitHub without the iPod app is offered it first,
 # when only build, docs, test or chore commits came since.
 #
-# By default there is one APK per 64-bit ABI, each carrying only its own Rust core (half the size of
-# one carrying both): arm64-v8a is every phone of the last decade, x86_64 is emulators and Chromebooks.
+# By default there is one APK per ABI, each carrying only its own Rust core (a fraction of the size of
+# one carrying them all): arm64-v8a is every phone of the last decade, armeabi-v7a is the 32-bit ones
+# (older phones, Android TV boxes and sticks), x86_64 is emulators and Chromebooks.
 #
 # Leaves one directory holding everything a release page needs:
 #
@@ -58,7 +59,7 @@ set -euo pipefail
 tooling="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${NORI_RELEASE_WORKSPACE:-$tooling}"
 
-ABI=arm64-v8a,x86_64
+ABI=arm64-v8a,armeabi-v7a,x86_64
 RUN_TESTS=1
 IPOD=1
 HOSTS=1
@@ -478,7 +479,7 @@ if [ -n "$branch" ]; then git push origin "$branch"; fi
 git push origin "v$version"
 
 host_assets=()
-while IFS= read -r asset; do host_assets+=("$asset"); done < <(find "$out" -type f \( -name 'nori-desktop-*' -o -name 'nori-desktop_*' -o -name 'nori-cli-*' -o -name 'nori-cli_*' -o -name 'SHA256SUMS-macos-*' -o -name 'SHA256SUMS-linux-*' \))
+while IFS= read -r asset; do host_assets+=("$asset"); done < <(find "$out" -type f \( -name 'nori-desktop-*' -o -name 'nori-desktop_*' -o -name 'nori-cli-*' -o -name 'nori-cli_*' -o -name 'SHA256SUMS-macos-*' -o -name 'SHA256SUMS-linux-*' -o -name 'SHA256SUMS-windows-*' \))
 if [ "$existing" = 1 ]; then
   echo "==> adding the files to the release"
   gh release upload "v$version" "${apks[@]/#/$out/}" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} --clobber

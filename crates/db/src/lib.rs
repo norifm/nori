@@ -4,6 +4,7 @@
 pub mod background;
 mod upgrade;
 pub mod items;
+pub mod favorites;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Weak};
@@ -42,7 +43,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(text, tokenize='unicode61 remo
 CREATE TABLE IF NOT EXISTS cache(server TEXT NOT NULL, key TEXT NOT NULL, body BLOB NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(server, key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS kv(server TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(server, key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS pending(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, endpoint TEXT NOT NULL, params TEXT NOT NULL, queued_ms INTEGER NOT NULL DEFAULT 0, tries INTEGER NOT NULL DEFAULT 0, tried_ms INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS download_beats(server TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS autoeq(rowid INTEGER PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL, form TEXT NOT NULL, target TEXT NOT NULL, path TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS autoeq_missing(path TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS searches(server TEXT NOT NULL, query TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(server, query)) WITHOUT ROWID;
@@ -56,6 +56,11 @@ CREATE TABLE IF NOT EXISTS autofill_picks(server TEXT NOT NULL, kind INTEGER NOT
 CREATE TABLE IF NOT EXISTS smart_playlists(server TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, json TEXT NOT NULL, updated_ms INTEGER NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS track_analysis(server TEXT NOT NULL, song_id TEXT NOT NULL, analysis_version INTEGER NOT NULL, duration_ms INTEGER NOT NULL, bpm REAL NOT NULL, bpm_confidence REAL NOT NULL, beat_offset_ms REAL NOT NULL, stability REAL NOT NULL, downbeat_phase INTEGER NOT NULL, downbeat_confidence REAL NOT NULL, lufs REAL NOT NULL, key INTEGER NOT NULL, key_confidence REAL NOT NULL, silence_start_ms INTEGER NOT NULL, silence_end_ms INTEGER NOT NULL, mixramp_start_ms INTEGER NOT NULL, mixramp_end_ms INTEGER NOT NULL, intro_end_ms INTEGER NOT NULL, outro_start_ms INTEGER NOT NULL, outro_centroid REAL NOT NULL, intro_centroid REAL NOT NULL, outro_bpm REAL NOT NULL, outro_bpm_confidence REAL NOT NULL, outro_beat_offset_ms REAL NOT NULL, outro_stability REAL NOT NULL, outro_downbeat_phase INTEGER NOT NULL, intro_bpm REAL NOT NULL, intro_bpm_confidence REAL NOT NULL, intro_beat_offset_ms REAL NOT NULL, intro_stability REAL NOT NULL, intro_downbeat_phase INTEGER NOT NULL, beats_per_bar INTEGER NOT NULL DEFAULT 0, drop_ms INTEGER NOT NULL DEFAULT 0, exit_ms INTEGER NOT NULL DEFAULT 0, gap_ms INTEGER NOT NULL DEFAULT 0, gap_end_ms INTEGER NOT NULL DEFAULT 0, drop_runup_tonal_db REAL NOT NULL DEFAULT 0, intro_beats_per_bar INTEGER NOT NULL DEFAULT 0, outro_beats_per_bar INTEGER NOT NULL DEFAULT 0, intro_grid_source INTEGER NOT NULL DEFAULT 0, outro_grid_source INTEGER NOT NULL DEFAULT 0, last_drop_ms INTEGER NOT NULL DEFAULT 0, vocal_start_ms INTEGER NOT NULL DEFAULT 0, vocal_end_ms INTEGER NOT NULL DEFAULT 0, steady_intro_ms INTEGER NOT NULL DEFAULT 0, intro_grid_from_ms INTEGER NOT NULL DEFAULT 0, intro_grid_to_ms INTEGER NOT NULL DEFAULT 0, outro_grid_from_ms INTEGER NOT NULL DEFAULT 0, outro_grid_to_ms INTEGER NOT NULL DEFAULT 0, stop_ms INTEGER NOT NULL DEFAULT 0, analysed_ms INTEGER NOT NULL, intro_bars BLOB, outro_bars BLOB, intro_beats BLOB, outro_beats BLOB, edges BLOB, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS vocal_curve(server TEXT NOT NULL, song_id TEXT NOT NULL, curve BLOB NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS kept_playlists(server TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS kept_songs(server TEXT NOT NULL, playlist TEXT NOT NULL, song TEXT NOT NULL, PRIMARY KEY(server, playlist, song)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS kept_songs_song ON kept_songs(server, song);
+CREATE TABLE IF NOT EXISTS kept_brought(server TEXT NOT NULL, song TEXT NOT NULL, PRIMARY KEY(server, song)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS scrobbles_waiting(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, account TEXT NOT NULL, artist TEXT NOT NULL, title TEXT NOT NULL, album TEXT NOT NULL, duration INTEGER NOT NULL, track INTEGER NOT NULL, at_ms INTEGER NOT NULL);
 ";
 
 /// The app-wide tables.
@@ -66,9 +71,9 @@ CREATE TABLE IF NOT EXISTS profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, o
 ";
 
 /// Per-server tables, cleared when a profile is removed.
-const SERVER_TABLES: [&str; 15] = [
-    "items", "cache", "kv", "pending", "downloads", "download_beats", "searches", "plays", "song_stats", "server_plays", "mix_excluded", "autofill_picks", "smart_playlists", "track_analysis",
-    "vocal_curve",
+const SERVER_TABLES: [&str; 19] = [
+    "items", "cache", "kv", "pending", "downloads", "searches", "plays", "song_stats", "server_plays", "mix_excluded", "autofill_picks", "smart_playlists", "track_analysis",
+    "vocal_curve", "favorites_here", "kept_playlists", "kept_songs", "kept_brought", "scrobbles_waiting",
 ];
 
 /// Opens the database for `server`'s rows (in memory for an empty `path`).
@@ -92,10 +97,13 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
 
     c.execute_batch(items::DOWNLOADS)?;
     c.execute_batch(SCHEMA)?;
+    c.execute_batch(favorites::TABLE)?;
     add_pending_tries(&c)?;
     update_analysis_columns(&c)?;
     drop_old_lyrics(&c)?;
     drop_old_pages(&c)?;
+    // The obsolete table of downloads marked for the beat model.
+    c.execute_batch("DROP TABLE IF EXISTS download_beats")?;
     Ok(c)
 }
 
@@ -238,6 +246,8 @@ fn update_analysis_columns(c: &Connection) -> rusqlite::Result<()> {
 pub fn open_app(path: &str) -> rusqlite::Result<Connection> {
     let c = connect(path)?;
     c.execute_batch(APP_SCHEMA)?;
+    // A backup and a removed profile's rows reach it here.
+    c.execute_batch(favorites::TABLE)?;
     Ok(c)
 }
 

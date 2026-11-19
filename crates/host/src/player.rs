@@ -55,9 +55,11 @@ pub struct Now {
     pub song: Option<Song>,
     /// The song's list index.
     pub index: Option<usize>,
-    /// Where the song was at `at`; it runs on at `pace` while playing and not buffering.
+    /// Where the song was at `at`; it runs on at `pace` while playing and not buffering, and while a
+    /// pause's fade is still heard (`fading_until`).
     pub position_ms: i64,
     pub at: Instant,
+    pub fading_until: Option<Instant>,
     pub pace: f32,
     pub mixing: bool,
     pub buffering: bool,
@@ -76,9 +78,13 @@ pub struct Now {
 impl Now {
     /// Where the song is now.
     pub fn position_now(&self) -> i64 {
-        let runs = self.state == State::Playing && !self.buffering;
-        let pace = if runs { self.pace as f64 } else { 0.0 };
-        nori_remote::run_on(self.position_ms, self.at.elapsed().as_secs_f64() * 1000.0, pace, self.song.as_ref().map_or(0, |s| s.duration))
+        let ran = nori_engine::run_ms(self.state, self.buffering, self.at, self.fading_until, Instant::now());
+        nori_remote::run_on(self.position_ms, ran, self.pace as f64, self.song.as_ref().map_or(0, |s| s.duration))
+    }
+
+    /// Paused while the fade is still heard: how much longer the place runs on from now, ms.
+    pub fn fading_ms(&self) -> i64 {
+        self.fading_until.map_or(0, |u| u.saturating_duration_since(Instant::now()).as_millis() as i64)
     }
 
     /// The device or jam host's playback, as this player shows it.
@@ -96,6 +102,7 @@ impl Now {
             index: row.and(m.at).map(|a| a as usize),
             position_ms: e.position_ms(),
             at: Instant::now(),
+            fading_until: None,
             pace: m.rate as f32,
             mixing: m.playing && m.mixing,
             buffering: m.playing && m.buffering,
@@ -117,6 +124,7 @@ impl Now {
             index: None,
             position_ms: 0,
             at: Instant::now(),
+            fading_until: None,
             pace: 1.0,
             mixing: false,
             buffering: false,
@@ -207,6 +215,7 @@ impl Handle {
                 index: st.index,
                 position_ms: st.position_ms,
                 at: st.at,
+                fading_until: st.fading_until,
                 pace: st.pace,
                 mixing: st.mixing,
                 buffering: st.buffering,

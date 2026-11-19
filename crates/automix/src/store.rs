@@ -244,25 +244,6 @@ pub fn missing(c: &Connection, ids: &[String]) -> rusqlite::Result<Vec<String>> 
     Ok(out)
 }
 
-/// The songs measured, and how many of them are measured again when they next play.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
-pub struct Measured {
-    pub songs: u32,
-    pub outdated: u32,
-}
-
-pub fn measured(c: &Connection) -> rusqlite::Result<Measured> {
-    let mut st = c.prepare_cached(ROWS_AND_CURVES)?;
-    let mut rows = st.query([])?;
-    let mut m = Measured::default();
-    while let Some(r) = rows.next()? {
-        m.songs += 1;
-        m.outdated += u32::from(!current(r)?);
-    }
-    Ok(m)
-}
-
 /// A song measured as it is decoded, fed buffer by buffer.
 pub struct AnalysisStream {
     a: Analyzer,
@@ -383,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn outdated_rows_are_counted_apart() {
+    fn outdated_and_mute_rows_are_missing() {
         let c = nori_db::open("", "s").unwrap();
         let curve = VocalCurve { fps: 10.0, t0: 0.0, level: vec![1, 2, 3], loudness: vec![4, 5, 6] };
         for (id, version, voiced) in [("now", ANALYSIS_VERSION, true), ("old", ANALYSIS_VERSION - 1, true), ("mute", ANALYSIS_VERSION, false)] {
@@ -392,8 +373,7 @@ mod tests {
                 put_voice(&c, id, &curve).unwrap();
             }
         }
-        assert_eq!(measured(&c).unwrap(), Measured { songs: 3, outdated: 2 });
         let ids: Vec<String> = ["now", "old", "mute"].map(String::from).into();
-        assert_eq!(missing(&c, &ids).unwrap(), ["old", "mute"], "the same rows missing");
+        assert_eq!(missing(&c, &ids).unwrap(), ["old", "mute"]);
     }
 }

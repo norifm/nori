@@ -74,6 +74,8 @@ fun SongMenu(
     player: dev.nori.music.app.vm.PlayerViewModel? = null,
     /** The album or artist page it was opened on, which it does not offer to go to. */
     page: dev.nori.music.ffi.model.PageOrigin? = null,
+    /** What the playlist row it was opened on offers to change. */
+    edits: dev.nori.music.app.vm.RowEdits? = null,
 ) {
     // Which of the menu's stages is up, fresh each time the menu opens. The sheet slides down as the
     // sleep choices, the details or the playlist picker come up over it, and each of those leaves with
@@ -107,7 +109,7 @@ fun SongMenu(
             val lyrics = player?.let { p -> val l by p.lyrics.collectAsState(); hasWords(l, song.id) } == true
             var excluded by remember(song.id) { mutableStateOf(false) }
             LaunchedEffect(song.id) { excluded = actions.excludedFromMixes(song) }
-            val items = remember(song, starred, excluded, download, player != null, lyrics, rules, page) { dev.nori.music.ffi.library.songMenu(song, starred, excluded, download, player != null, lyrics, rules.stars, rules.account, rules.downloads, rules.radio, rules.asks, page) }
+            val items = remember(song, starred, excluded, download, player != null, lyrics, rules, page) { dev.nori.music.ffi.library.songMenu(song, starred, excluded, download, player != null, lyrics, rules.stars, rules.account, rules.playlists, rules.downloads, rules.radio, rules.asks, page) }
             val labels = remember(items) { items.map { say.songAction(it.action) } }
             val at = { place: dev.nori.music.ffi.library.SongMenuPlace -> items.indices.filter { items[it].place == place } }
             @Composable fun titleGlyph(n: Int) = when (val a = items[n].action) {
@@ -158,6 +160,16 @@ fun SongMenu(
             for (group in listOf(lines.filter { !items[it].more }, lines.filter { items[it].more })) {
                 if (group.isNotEmpty()) SheetGroup { group.forEachIndexed { k, n -> line(n, divider = k < group.lastIndex) } }
             }
+            if (edits != null) SheetGroup {
+                edits.edits.forEachIndexed { k, e ->
+                    val (label, glyph) = when (e) {
+                        dev.nori.music.ffi.library.PlaylistEdit.MOVE_UP -> say.moveUp to Iconoir.NavArrowUp
+                        dev.nori.music.ffi.library.PlaylistEdit.MOVE_DOWN -> say.moveDown to Iconoir.NavArrowDown
+                        dev.nori.music.ffi.library.PlaylistEdit.REMOVE -> say.removeFromPlaylist to Iconoir.Xmark
+                    }
+                    Item(label, glyph, divider = k < edits.edits.lastIndex) { edits.apply(e); onDismiss() }
+                }
+            }
             PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.SONG, dev.nori.music.ffi.plugins.Items.Songs(listOf(song)), onDismiss)
         }
     }
@@ -200,13 +212,15 @@ private fun SongNames(song: Song, names: List<dev.nori.music.ffi.library.SongAct
 }
 
 /**
- * An album's, playlist's or artist's card menu: play it, play it next, add it to the queue, and delete a
- * playlist of the account's own. A jam guest only asks.
+ * An album's, playlist's or artist's card menu: play it, play it next, add it to the queue, and rename or
+ * delete a playlist of the account's own. A jam guest only asks.
  */
 @Composable
 fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) {
     var deleting by remember { mutableStateOf<dev.nori.music.ffi.model.Playlist?>(null) }
+    var renaming by remember { mutableStateOf<dev.nori.music.ffi.model.Playlist?>(null) }
     DeleteQuestion(deleting, { it.name }, { actions.deletePlaylist(it.id) }, { deleting = null })
+    renaming?.let { p -> RenameDialog(p.name, p.name, { renaming = null }) { name -> actions.renamePlaylist(p.id, name); renaming = null } }
     NoriSheet(card, onDismiss) { card ->
         val (title, line, art) = when (card) {
             is CardItem.OfAlbum -> Triple(card.album.name, card.album.subtitle, card.album.coverArt)
@@ -221,6 +235,7 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
                 Item(say.addToQueue, Iconoir.Playlist, divider = false) { actions.queue(card, next = false); onDismiss() }
             }
             if (card is CardItem.OfPlaylist && actions.editable(card.playlist)) SheetGroup {
+                Item(say.rename, Iconoir.EditPencil) { renaming = card.playlist; onDismiss() }
                 Item(say.delete, Iconoir.Trash, divider = false) { deleting = card.playlist; onDismiss() }
             }
             when (card) {
@@ -469,7 +484,7 @@ fun SelectionBar(actions: ActionsViewModel) {
                 BarAction(say.play) { actions.play(songs); actions.clearSelection() }
                 BarAction(say.next) { actions.playNext(songs); actions.clearSelection() }
                 BarAction(say.queue) { actions.enqueue(songs); actions.clearSelection() }
-                if (LocalRules.current.account) BarAction(say.playlist) { picking = true }
+                if (LocalRules.current.playlists) BarAction(say.playlist) { picking = true }
                 if (LocalRules.current.downloads) BarAction(say.get) { actions.download(songs); actions.clearSelection() }
                 IconButton(actions::clearSelection) { Icon(Iconoir.Xmark, say.clearSelection, Modifier.size(20.dp)) }
             }

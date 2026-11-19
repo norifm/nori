@@ -112,6 +112,9 @@ class Say(private val r: Resources) {
     val delete: String = r.getString(R.string.delete)
     val edit: String = r.getString(R.string.edit)
     val rename: String = r.getString(R.string.rename)
+    val moveUp: String = r.getString(R.string.move_up)
+    val moveDown: String = r.getString(R.string.move_down)
+    val removeFromPlaylist: String = r.getString(R.string.remove_from_playlist)
     val save: String = r.getString(R.string.save)
     fun serviceKey(service: String): String = r.getString(R.string.settings_service_key, service)
     val betterLyricsKeyAsk: String = r.getString(R.string.settings_betterlyrics_key_ask)
@@ -418,6 +421,7 @@ class Say(private val r: Resources) {
             "slots" -> R.string.plugins_kind_slots
             "deciders" -> R.string.plugins_kind_deciders
             "preparation" -> R.string.plugins_kind_preparation
+            "notification" -> R.string.plugins_kind_notification
             else -> null
         }
     } + listOfNotNull(R.string.plugins_kind_overrides.takeIf { overrides })).joinToString(" · ") { r.getString(it) }
@@ -505,6 +509,17 @@ class Say(private val r: Resources) {
         name,
     )
     /** The button that opens it; none where nothing here can. */
+    /** A waiting profile's line in a list: that it can't be used, and why in a few words. */
+    fun profileUnavailable(wait: dev.nori.music.ffi.ProfileWait): String = r.getString(
+        when (wait) {
+            dev.nori.music.ffi.ProfileWait.INSTALL -> R.string.profile_unavailable_install
+            dev.nori.music.ffi.ProfileWait.UPDATE -> R.string.profile_unavailable_update
+            dev.nori.music.ffi.ProfileWait.TURN_ON -> R.string.profile_unavailable_turn_on
+            dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> R.string.profile_unavailable_plugins_on
+            dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> R.string.profile_unavailable_no_plugins
+        },
+    )
+
     fun profileWaitAction(name: String, wait: dev.nori.music.ffi.ProfileWait): String? = when (wait) {
         dev.nori.music.ffi.ProfileWait.INSTALL -> r.getString(R.string.profile_wait_install, name)
         dev.nori.music.ffi.ProfileWait.TURN_ON -> r.getString(R.string.profile_wait_turn_on, name)
@@ -513,9 +528,9 @@ class Say(private val r: Resources) {
     }
     val addProfile: String get() = r.getString(R.string.settings_add_server)
     val profileIcon: String get() = r.getString(R.string.profile_icon)
-    /** What [icon] is called on the picker: the letter, the provider's ([provider]), or the face. */
-    fun profileIconName(icon: dev.nori.music.ffi.settings.ProfileIcon, provider: String): String = when (icon) {
-        dev.nori.music.ffi.settings.ProfileIcon.LETTER -> r.getString(R.string.profile_icon_letter)
+    /** What [icon] is called on the picker: the letter (the [picture] in its place), the provider's ([provider]), or the face. */
+    fun profileIconName(icon: dev.nori.music.ffi.settings.ProfileIcon, provider: String, picture: Boolean): String = when (icon) {
+        dev.nori.music.ffi.settings.ProfileIcon.LETTER -> r.getString(if (picture) R.string.profile_icon_picture else R.string.profile_icon_letter)
         dev.nori.music.ffi.settings.ProfileIcon.PROVIDER -> provider
         dev.nori.music.ffi.settings.ProfileIcon.SING -> r.getString(R.string.profile_icon_sing)
         dev.nori.music.ffi.settings.ProfileIcon.SURPRISE -> r.getString(R.string.profile_icon_surprise)
@@ -561,6 +576,53 @@ class Say(private val r: Resources) {
     val clientCertPassword: String = r.getString(R.string.client_cert_password)
     val importClientCert: String = r.getString(R.string.import_client_cert)
     val replaceClientCert: String = r.getString(R.string.replace_client_cert)
+    val scrobbling: String = r.getString(R.string.scrobbling)
+    val scrobblingHint: String = r.getString(R.string.scrobbling_hint)
+    fun scrobbler(k: dev.nori.music.ffi.settings.ScrobblerKind): String = r.getString(
+        when (k) {
+            dev.nori.music.ffi.settings.ScrobblerKind.LISTEN_BRAINZ -> R.string.listenbrainz
+            dev.nori.music.ffi.settings.ScrobblerKind.LIBRE_FM -> R.string.librefm
+            dev.nori.music.ffi.settings.ScrobblerKind.LAST_FM -> R.string.lastfm
+        },
+    )
+    fun addScrobbler(k: dev.nori.music.ffi.settings.ScrobblerKind): String = r.getString(
+        when (k) {
+            dev.nori.music.ffi.settings.ScrobblerKind.LISTEN_BRAINZ -> R.string.add_listenbrainz
+            dev.nori.music.ffi.settings.ScrobblerKind.LIBRE_FM -> R.string.add_librefm
+            dev.nori.music.ffi.settings.ScrobblerKind.LAST_FM -> R.string.add_lastfm
+        },
+    )
+    fun scrobblerField(f: dev.nori.music.ffi.ScrobblerField): String = r.getString(
+        when (f) {
+            dev.nori.music.ffi.ScrobblerField.TOKEN -> R.string.listenbrainz_token
+            dev.nori.music.ffi.ScrobblerField.API_KEY -> R.string.lastfm_api_key
+            dev.nori.music.ffi.ScrobblerField.SECRET -> R.string.lastfm_secret
+            dev.nori.music.ffi.ScrobblerField.USER -> R.string.user
+            dev.nori.music.ffi.ScrobblerField.PASSWORD -> R.string.password
+            dev.nori.music.ffi.ScrobblerField.ADDRESS -> R.string.scrobbler_address
+        },
+    )
+    val addScrobblerAccount: String = r.getString(R.string.add_scrobbler_account)
+    val scrobblerBuiltIn: String = r.getString(R.string.scrobbler_built_in)
+    val addScrobblerTitle: String = r.getString(R.string.add_scrobbler_title)
+    /** What a [k] account costs, where it does. */
+    fun scrobblerCost(k: dev.nori.music.ffi.settings.ScrobblerKind): String? =
+        if (k == dev.nori.music.ffi.settings.ScrobblerKind.LAST_FM) r.getString(R.string.lastfm_cost) else null
+    /** The link to where a [k] account's form finds what it asks. */
+    fun scrobblerHelp(k: dev.nori.music.ffi.settings.ScrobblerKind): String =
+        r.getString(if (k == dev.nori.music.ffi.settings.ScrobblerKind.LAST_FM) R.string.lastfm_help else R.string.listenbrainz_help)
+    fun scrobblerContinue(k: dev.nori.music.ffi.settings.ScrobblerKind): String = r.getString(R.string.scrobbler_continue, scrobbler(k))
+    fun scrobblerAllow(k: dev.nori.music.ffi.settings.ScrobblerKind): String = r.getString(R.string.scrobbler_allow, scrobbler(k))
+    /** What a field of a [k] account says under it, if anything. */
+    fun scrobblerFieldHint(k: dev.nori.music.ffi.settings.ScrobblerKind, f: dev.nori.music.ffi.ScrobblerField): String? = when (f) {
+        dev.nori.music.ffi.ScrobblerField.PASSWORD -> R.string.scrobbler_password_hint
+        dev.nori.music.ffi.ScrobblerField.ADDRESS -> when (k) {
+            dev.nori.music.ffi.settings.ScrobblerKind.LISTEN_BRAINZ -> R.string.listenbrainz_address_hint
+            dev.nori.music.ffi.settings.ScrobblerKind.LIBRE_FM -> R.string.librefm_address_hint
+            dev.nori.music.ffi.settings.ScrobblerKind.LAST_FM -> null
+        }
+        else -> null
+    }?.let(r::getString)
     val underTheHood: String = r.getString(R.string.under_the_hood)
     val playback: String = r.getString(R.string.playback)
     val libraryAndSearch: String = r.getString(R.string.library_and_search)
@@ -1049,6 +1111,24 @@ class Say(private val r: Resources) {
     fun downloadingSongs(n: Int): String = r.getQuantityString(R.plurals.said_downloading, n, n)
     fun downloadsRemoved(n: Int): String = r.getQuantityString(R.plurals.said_downloads_removed, n, n)
     fun analysingDownloads(n: Int): String = r.getQuantityString(R.plurals.said_analysing_downloads, n, n)
+    fun analysisOfferTitle(n: Int): String = r.getQuantityString(R.plurals.analysis_offer_title, n, n)
+    fun analysisOfferWhy(reason: dev.nori.music.ffi.AnalysisReason): String = r.getString(when (reason) {
+        dev.nori.music.ffi.AnalysisReason.TURNED_ON -> R.string.analysis_offer_turned_on
+        dev.nori.music.ffi.AnalysisReason.CHANGED -> R.string.analysis_offer_changed
+    })
+    /** "About 5 min", "About 1 h 20 min": the core rounds the wait (`AnalysisOffer.minutes`). */
+    fun analysisOfferMinutes(minutes: Int): String = when {
+        minutes == 0 -> r.getString(R.string.analysis_offer_under_a_minute)
+        minutes < 60 -> r.getString(R.string.analysis_offer_minutes, minutes)
+        minutes % 60 == 0 -> r.getString(R.string.analysis_offer_hours, minutes / 60)
+        else -> r.getString(R.string.analysis_offer_hours_minutes, minutes / 60, minutes % 60)
+    }
+    val analysisOfferTime: String = r.getString(R.string.analysis_offer_time)
+    val analysisOfferBattery: String = r.getString(R.string.analysis_offer_battery)
+    val analysisOfferBatteryCost: String = r.getString(R.string.analysis_offer_battery_cost)
+    val analysisOfferCharging: String = r.getString(R.string.analysis_offer_charging)
+    val analysisOfferYes: String = r.getString(R.string.analysis_offer_yes)
+    val analysisOfferNo: String = r.getString(R.string.analysis_offer_no)
     /** After an M3U import: how many of its entries were found and went into [playlist]. */
     fun m3uImported(found: Int, entries: Int, playlist: String): String =
         if (found == 0) r.getString(R.string.m3u_none_found, entries) else r.getString(R.string.m3u_imported, found, entries, playlist)

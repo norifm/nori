@@ -134,12 +134,18 @@ struct Now {
     /// The lock screen shows it: not while another device plays (`Playback::shown_to_system`).
     var system = false
 
+    /// Paused while the fade is still heard: the place runs on this long after `stamp`.
+    var fadingMs = 0
+
     var playing: Bool { state == .playing }
 
-    /// The position extrapolated from the last read while playing and not buffering.
+    /// The place runs on: playing and not buffering, or paused while the fade is still heard.
+    var moving: Bool { (playing && !buffering) || Date().timeIntervalSince(stamp) * 1000 < Double(fadingMs) }
+
+    /// The position extrapolated from the last read while it runs on.
     var position: Int {
-        guard playing, !buffering else { return ms }
-        return ms + Int(Date().timeIntervalSince(stamp) * 1000 * pace)
+        let since = Date().timeIntervalSince(stamp) * 1000
+        return ms + Int((playing && !buffering ? since : min(since, Double(fadingMs))) * pace)
     }
 }
 
@@ -380,6 +386,7 @@ final class Core {
         n.state = PlayState(rawValue: d["state"] as? Int ?? 0) ?? .idle
         n.index = d["index"] as? Int ?? -1
         n.ms = d["ms"] as? Int ?? 0
+        n.fadingMs = d["fadingMs"] as? Int ?? 0
         n.pace = d["pace"] as? Double ?? 1
         n.mixing = d["mixing"] as? Bool ?? false
         n.repeatMode = d["repeat"] as? Int ?? 0
@@ -469,6 +476,8 @@ final class Core {
             NotificationCenter.default.post(name: .noriFavorites, object: nil)
         case NORI_REPORT_CURVE:
             askCurve(text, offered: flag != 0)
+        case NORI_REPORT_ANALYSIS_OFFER:
+            askAnalysis(songs: Int(count), minutes: Int(ms), changed: flag != 0)
         default:
             break
         }
@@ -483,6 +492,17 @@ final class Core {
         let ask = UIAlertController(title: offered ? Say.curveOffered : Say.curveApplied, message: curve, preferredStyle: .alert)
         ask.addAction(UIAlertAction(title: offered ? Say.curveApply : Say.curveUndo, style: .default) { _ in nori_ios_curve_answer() })
         ask.addAction(UIAlertAction(title: offered ? Say.curveNotNow : Say.curveKeep, style: .cancel))
+        shown.present(ask, animated: true)
+    }
+
+    /// Downloaded songs offered an analysis: why, how long and what it costs; Analyze reads them back.
+    private func askAnalysis(songs: Int, minutes: Int, changed: Bool) {
+        var top = UIApplication.shared.keyWindow?.rootViewController
+        while let next = top?.presentedViewController { top = next }
+        guard let shown = top else { return }
+        let ask = UIAlertController(title: Say.analysisOfferTitle(songs), message: Say.analysisOfferText(minutes: minutes, changed: changed), preferredStyle: .alert)
+        ask.addAction(UIAlertAction(title: Say.analysisOfferNo, style: .cancel))
+        ask.addAction(UIAlertAction(title: Say.analysisOfferYes, style: .default) { _ in nori_ios_analyse_downloads() })
         shown.present(ask, animated: true)
     }
 

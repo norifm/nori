@@ -31,7 +31,7 @@ struct Songs(Vec<(String, PathBuf, i64)>, #[allow(dead_code)] nori_testdir::Temp
 impl Songs {
     fn new() -> Songs {
         let dir = nori_testdir::TempDir::new("tempo");
-        let songs = [("a", 44_100, 12.0), ("b", 48_000, 30.0), ("c", 48_000, 30.0)];
+        let songs = [("a", 44_100, 15.0), ("b", 48_000, 30.0), ("c", 48_000, 30.0)];
         Songs(
             songs
                 .iter()
@@ -61,7 +61,7 @@ impl Library for Songs {
 /// A 3 s mix out of `a` at 8 s into `b` played 4 % fast (pitch not kept), ramped back over a second.
 fn beat_matched() -> Plan {
     let s = AutoMixSettings { max_transition_s: 3.0, ..Default::default() };
-    let mut t = plan::plan(None, None, 12_000, 30_000, &s);
+    let mut t = plan::plan(None, None, 15_000, 30_000, &s);
     (t.out_start_ms, t.in_start_ms, t.tempo_ratio, t.keep_pitch, t.tempo_ramp_ms) = (8_000, 0, 1.04, false, 1_000);
     Plan { incoming_id: "b".into(), mixer: t }
 }

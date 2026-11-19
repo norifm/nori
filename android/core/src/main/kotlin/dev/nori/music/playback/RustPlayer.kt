@@ -72,6 +72,7 @@ internal object RustPlayerJni {
     /** The engine reads its output once, now. */
     @JvmStatic @CriticalNative external fun look(h: Long)
     @JvmStatic @CriticalNative external fun mixing(h: Long): Boolean
+    @JvmStatic @CriticalNative external fun placeRuns(h: Long): Boolean
     @JvmStatic @CriticalNative external fun waiting(h: Long): Boolean
     @JvmStatic @CriticalNative external fun networkBack(h: Long)
     /**
@@ -420,6 +421,9 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      * its output again whenever that reading is a second old (nori_player::heard::screen_place).
      */
     fun shownMs(index: Int): Long = RustPlayerJni.shownMs(h, index)
+
+    /** The place still moves: playing and heard, or paused while the fade is still heard. */
+    val placeRuns: Boolean get() = RustPlayerJni.placeRuns(h)
 
     /** Jumps sent to the engine so far: a seek asked after this reading is sent as a later one. */
     val jumpsSent: Long get() = sent
@@ -1139,7 +1143,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     // Last, once everything above exists: from here on the engine's threads may call in.
     init {
         h = RustPlayerJni.create(
-            RustBridge(this), nori.currentClient.uniffiCloneHandle(), nori.analyses, Build.VERSION.SDK_INT, nori.settings.value.hiRes,
+            RustBridge(this), nori.currentClient.uniffiCloneHandle(), nori.analyses, Build.VERSION.SDK_INT, nori.settings.effective.value.hiRes,
             context.getSystemService(android.app.ActivityManager::class.java).memoryClass,
         )
         if (h == 0L) error = PlaybackException("the Rust player would not start", null, PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK)

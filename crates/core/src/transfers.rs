@@ -2,8 +2,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::cache_policy::{Page, Read};
+use crate::client::{Client, NetResult, Write};
 use crate::Core;
 
+pub use nori_transfers::kept::{KeptChange, KeptCheck};
 pub use nori_transfers::transfers::*;
 
 /// One profile's finished downloads: the id its rows are kept under (`server_db`) and its songs, newest first.
@@ -65,6 +68,16 @@ impl Core {
         self.queue_downloads(songs)
     }
 
+    /// Downloads playlist `id`'s `songs` and keeps it downloaded: songs added to it later are downloaded
+    /// as [`Client::kept_playlists_sync`] finds them, and those leaving it go when keeping it brought them.
+    /// Removing all its downloads stops keeping it.
+    pub fn download_playlist(&self, id: String, songs: Vec<crate::Song>) -> crate::Result<KeptChange> {
+        let held: Vec<String> = songs.iter().map(|s| s.id.clone()).collect();
+        let queued = self.download_queue(songs)?;
+        let gone = nori_transfers::kept::keep(&mut self.db.lock(), &id, &held, &queued.fresh)?;
+        Ok(KeptChange { queued, gone })
+    }
+
     /// Queues every indexed song, in index order ([`Core::download_queue`]).
     pub fn download_queue_library(&self) -> crate::Result<DownloadQueued> {
         self.downloads.with(|t| t.follow_quality(self.download_kbps()));
@@ -77,41 +90,19 @@ impl Core {
         self.queue_downloads(rows)
     }
 
-    /// Marks `ids` for the beat model once downloaded; stored, so it survives a process restart.
-    pub fn download_want_beats(&self, ids: Vec<String>) -> crate::Result<()> {
-        {
-            let mut c = self.db.lock();
-            let tx = c.transaction()?;
-            {
-                let mut add = tx.prepare_cached("INSERT OR IGNORE INTO download_beats(server, id) VALUES(sid(), ?1)")?;
-                for id in &ids {
-                    add.execute([id])?;
-                }
-            }
-            tx.commit()?;
-        }
-        self.downloads.with(|t| t.want_beats(&ids, true));
-        Ok(())
+    /// Downloaded songs lacking a current analysis or, with AutoMix on, the beat model's read, newest first.
+    pub fn download_unanalysed(&self) -> crate::Result<Vec<String>> {
+        let (ids, analyses, beats) = self.download_lacking()?;
+        Ok(ids.into_iter().filter(|id| analyses.contains(id) || beats.contains(id)).collect())
     }
 
-    /// Downloaded songs lacking a current analysis or (with `beats`) a beat model read, newest first; with
-    /// `beats` they are also marked via [`Core::download_want_beats`].
-    pub fn download_unanalysed(&self, beats: bool) -> crate::Result<Vec<String>> {
-        let ids: Vec<String> = self.download_ids(true)?.into_iter().filter(|id| crate::queue::analysable(id)).collect();
-        let mut missing: HashSet<String> = self.analysis_missing(ids.clone())?.into_iter().collect();
-        if beats {
-            missing.extend(self.analysis_neural_missing(ids.clone())?);
-        }
-        let ids: Vec<String> = ids.into_iter().filter(|id| missing.contains(id)).collect();
-        if beats {
-            self.download_want_beats(ids.clone())?;
-        }
-        Ok(ids)
+    /// Whether the beat model reads downloads once saved: with AutoMix on, in a build that has it.
+    pub fn download_beats(&self) -> bool {
+        nori_player::automix::beats::AVAILABLE && self.session.settings.in_effect(|p| p.auto_mix.on())
     }
 
     /// Records settled downloads in order: finished, or removed (`finished` false). One transaction.
     pub fn download_settle(&self, ids: Vec<String>, finished: Vec<bool>) -> crate::Result<()> {
-        let gone: Vec<String> = ids.iter().zip(&finished).filter(|(_, f)| !**f).map(|(id, _)| id.clone()).collect();
         // Read first: the in-memory table is asked per list row and must not wait for the statements.
         let mut state: HashMap<&str, HeldState> = {
             let held = self.downloads.held();
@@ -123,10 +114,6 @@ impl Core {
             {
                 let mut done = tx.prepare_cached("UPDATE downloads SET done=1 WHERE server=sid() AND id=?1")?;
                 let mut delete = tx.prepare_cached("DELETE FROM downloads WHERE server=sid() AND id=?1")?;
-                let mut unwanted = tx.prepare_cached("DELETE FROM download_beats WHERE server=sid() AND id=?1")?;
-                for id in &gone {
-                    unwanted.execute([id])?;
-                }
                 for (id, f) in ids.iter().zip(&finished) {
                     let now = state.get_mut(id.as_str()).expect("read above");
                     match (*now, *f) {
@@ -152,25 +139,11 @@ impl Core {
                 held.removed(id);
             }
         }
-        drop(held);
-        self.downloads.with(|t| t.want_beats(&gone, false));
         Ok(())
     }
 }
 
 impl Core {
-    /// Unmarks `ids` for the beat model (read, or no longer wanted).
-    pub fn download_beats_forget(&self, ids: &[String]) -> crate::Result<()> {
-        {
-            let c = self.db.lock();
-            let mut gone = c.prepare_cached("DELETE FROM download_beats WHERE server=sid() AND id=?1")?;
-            for id in ids {
-                gone.execute([id])?;
-            }
-        }
-        self.downloads.with(|t| t.want_beats(ids, false));
-        Ok(())
-    }
 
     /// The songs being or waiting to be downloaded (not failed), by id, without reading the songs.
     pub fn download_waiting(&self) -> crate::Result<std::collections::HashSet<String>> {
@@ -190,25 +163,31 @@ impl Core {
     }
 
     fn download_kbps(&self) -> i32 {
-        self.session.settings.prefs(|p| p.download.bit_rate)
+        self.session.settings.in_effect(|p| p.download.bit_rate)
+    }
+
+    /// The analysable downloads, newest first; those lacking a current analysis; and, with AutoMix on, those
+    /// with one that the beat model has not read.
+    pub(crate) fn download_lacking(&self) -> crate::Result<(Vec<String>, HashSet<String>, HashSet<String>)> {
+        let ids: Vec<String> = self.download_ids(true)?.into_iter().filter(|id| crate::queue::analysable(id)).collect();
+        let analyses = self.analysis_missing(ids.clone())?.into_iter().collect();
+        let beats = if self.download_beats() { self.analysis_neural_missing(ids.clone())?.into_iter().collect() } else { HashSet::new() };
+        Ok((ids, analyses, beats))
     }
 
     fn queue_downloads(&self, rows: Vec<crate::Song>) -> crate::Result<DownloadQueued> {
         let q = queue_rows(&mut self.db.lock(), rows)?;
         let mut held = self.downloads.held();
         q.fresh.iter().for_each(|id| held.queued(id));
+        drop(held);
+        let beats = self.download_beats();
+        self.downloads.with(|t| t.set_beats_ahead(beats));
         Ok(q)
     }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
-    /// Whether the beat model reads songs downloaded now: with better beat detection on, in a build
-    /// that has it.
-    pub fn download_beats(&self) -> bool {
-        nori_player::automix::beats::AVAILABLE && self.session.settings.prefs(|p| p.auto_mix.on() && p.auto_mix_better_beats)
-    }
-
     /// What downloaded songs still wait for, for the notification; `now` is the platform clock.
     pub fn download_processing(&self, now: i64) -> Option<Processing> {
         self.downloads.with(|t| t.processing_at(now))
@@ -246,17 +225,13 @@ impl Core {
                 let rows = st.query_map([], |r| r.get(0))?;
                 rows.filter_map(|r| r.ok()).collect()
             };
-            c.execute("DELETE FROM download_beats WHERE server=sid() AND id IN (SELECT id FROM downloads WHERE server=sid() AND done=0)", [])?;
             c.execute("DELETE FROM downloads WHERE server=sid() AND done=0", [])?;
             let mut held = self.downloads.held();
             ids.iter().for_each(|id| held.removed(id));
             ids
         };
         // After releasing the database: the tracker reads it under its own lock.
-        self.downloads.with(|t| {
-            ids.iter().for_each(|id| _ = t.forget(id));
-            t.want_beats(&ids, false);
-        });
+        self.downloads.with(|t| ids.iter().for_each(|id| _ = t.forget(id)));
         Ok(ids)
     }
 
@@ -298,6 +273,64 @@ impl Core {
     pub fn download_queue_counts(&self) -> crate::Result<DownloadQueueCounts> {
         let [active, queued, failed, _] = self.download_id_sections()?;
         Ok(DownloadQueueCounts { waiting: (active.len() + queued.len()) as u32, failed: failed.len() as u32 })
+    }
+}
+
+#[cfg_attr(feature = "ffi", uniffi::export)]
+impl Client {
+    /// Brings the playlists kept downloaded up to date with the source, when `check` is due
+    /// ([`nori_transfers::kept::check_due`]): songs added are queued, the songs that left them go when
+    /// keeping brought them, and a playlist no longer listed, or whose downloads were all removed, is let
+    /// go. Asks nothing while no playlist is kept.
+    pub async fn kept_playlists_sync(&self, check: KeptCheck) -> NetResult<KeptChange> {
+        let mut change = KeptChange::default();
+        let now = crate::db::now_ms();
+        let last = {
+            let mut last = self.kept_checked_ms.lock();
+            if !nori_transfers::kept::check_due(check, *last, now) {
+                return Ok(change);
+            }
+            last.replace(now)
+        };
+        let kept = nori_transfers::kept::kept(&mut self.core.db.lock())?;
+        if kept.is_empty() {
+            return Ok(change);
+        }
+        let listed = match self.read_now(Read::PlaylistList).await {
+            Ok(Page::Playlists { v }) => v,
+            Ok(_) => return Ok(change),
+            // Not looked at: coming back in sight tries again.
+            Err(e) => {
+                *self.kept_checked_ms.lock() = last;
+                return Err(e);
+            }
+        };
+        for id in kept {
+            if listed.iter().any(|p| p.id == id) {
+                // One that fails to come is looked at again next time; what the others changed stands.
+                let Ok(songs) = self.playlist_songs_of(id.clone()).await else { continue };
+                change.add(self.core.download_playlist(id, songs)?);
+            } else {
+                change.gone.extend(nori_transfers::kept::vanished(&mut self.core.db.lock(), &id)?);
+            }
+        }
+        Ok(change)
+    }
+
+    /// After this device's write `w` was taken: a kept playlist it changed (songs added, moved or removed,
+    /// or the playlist deleted) is brought up to date now, not at the next look.
+    pub async fn kept_playlist_written(&self, w: Write) -> NetResult<KeptChange> {
+        let (Write::AddToPlaylist { id, .. } | Write::RemoveFromPlaylist { id, .. } | Write::ReplacePlaylist { id, .. } | Write::DeletePlaylist { id }) = &w else {
+            return Ok(KeptChange::default());
+        };
+        if !nori_transfers::kept::kept(&mut self.core.db.lock())?.contains(id) {
+            return Ok(KeptChange::default());
+        }
+        if matches!(w, Write::DeletePlaylist { .. }) {
+            return Ok(KeptChange { gone: nori_transfers::kept::vanished(&mut self.core.db.lock(), id)?, ..Default::default() });
+        }
+        let songs = self.playlist_songs_of(id.clone()).await?;
+        Ok(self.core.download_playlist(id.clone(), songs)?)
     }
 }
 
@@ -392,34 +425,6 @@ mod tests {
             assert_eq!((q.fresh, q.again), (vec!["x".to_string(), "z".into()], vec!["y".to_string()]));
             assert_eq!(core.downloads(false).unwrap().len(), 3);
         }
-    }
-
-    #[test]
-    fn beat_marks_last_until_read() {
-        let core = core();
-        let wants = |id: &str| core.downloads.with(|t| t.wants_beats(id));
-        core.download_queue(vec![song("a"), song("b"), song("c")]).unwrap();
-        core.download_want_beats(vec!["a".into(), "b".into(), "c".into()]).unwrap();
-        assert!(wants("a") && wants("b"));
-        let rows = |core: &Core| {
-            let c = core.db.lock();
-            let mut st = c.prepare("SELECT id FROM download_beats ORDER BY id").unwrap();
-            st.query_map([], |r| r.get::<_, String>(0)).unwrap().map(Result::unwrap).collect::<Vec<_>>()
-        };
-        assert_eq!(rows(&core), ["a", "b", "c"]);
-        let reopened = Downloads::load(&core.db).unwrap();
-        assert!(reopened.with(|t| t.wants_beats("c")), "loaded with the table");
-        core.download_settle(vec!["b".into()], vec![false]).unwrap();
-        assert!(!wants("b"));
-        core.download_cancel_all().unwrap();
-        assert!(!wants("a") && !wants("c"));
-        assert!(rows(&core).is_empty());
-        core.download_queue(vec![song("d")]).unwrap();
-        core.download_want_beats(vec!["d".into()]).unwrap();
-        core.download_settle(vec!["d".into()], vec![true]).unwrap();
-        assert!(wants("d"), "downloaded, not read yet");
-        core.download_beats_forget(&["d".to_string()]).unwrap();
-        assert!(!wants("d") && rows(&core).is_empty(), "read");
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! Each extension point nori's tests check, in its plainest form (nori_plugins::testing).
 
-// The headphones are a plugin of their own: the test plugin's points go unused.
-#![cfg_attr(feature = "headphones", allow(dead_code))]
+// The headphones are a plugin of their own, and rows-only exports its lifecycle alone: the test
+// plugin's other points go unused.
+#![cfg_attr(any(feature = "headphones", feature = "rows-only"), allow(dead_code))]
 
 #[cfg(feature = "headphones")]
 mod headphones;
@@ -11,6 +12,7 @@ mod automix;
 mod deciders;
 mod lan;
 mod lyrics;
+mod notification;
 mod preparation;
 mod scrobbler;
 
@@ -89,6 +91,7 @@ mod unlinked;
 impl Lifecycle for Test {
     fn action(&mut self, id: String) {
         deciders::acted(&id);
+        notification::acted(&id);
         if hooked::action(&id) {
             return;
         }
@@ -229,6 +232,7 @@ impl Provider for Test {
             self.ended = Some(false);
         }
         Ok(match request {
+            provider::Request::Song(id) if id == "trap" => panic!("told to"),
             provider::Request::Search((query, ..)) => provider::Page::Found(Found { songs: vec![song(query)], albums: Vec::new(), artists: Vec::new(), playlists: Vec::new() }),
             provider::Request::Artists => provider::Page::Artists(["Followed", "Subscribed"].map(|name| Artist { id: format!("test-{name}"), name: name.into(), cover: None, image_url: None, album_count: None, starred: true, external: false }).into()),
             // One playlist, the channel's.
@@ -309,5 +313,7 @@ const MANIFEST: Manifest = Manifest {
     ..Manifest::new(if cfg!(feature = "second") { "fm.nori.test.second" } else { "fm.nori.test" })
 };
 
-#[cfg(not(feature = "headphones"))]
-nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots, preparation, automix, deciders, lyrics, scrobbler);
+#[cfg(feature = "rows-only")]
+nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle);
+#[cfg(not(any(feature = "headphones", feature = "rows-only")))]
+nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots, preparation, automix, deciders, lyrics, scrobbler, notification);

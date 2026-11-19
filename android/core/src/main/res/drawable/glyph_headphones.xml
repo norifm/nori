@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Iconoir headset: a plugin's glyph on the notification. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M3 13.74L2.454 13.88C1.453 14.13 0.75 15.03 0.75 16.06V18.17C0.75 19.2 1.453 20.1 2.454 20.35L4.411 20.84C4.837 20.95 5.25 20.63 5.25 20.19V14.04C5.25 13.6 4.837 13.28 4.411 13.39L3 13.74ZM3 13.74V13.18C3 7.585 7.029 3.052 12 3.052C16.97 3.052 21 7.585 21 13.18V13.74M21 13.74L21.55 13.88C22.55 14.13 23.25 15.03 23.25 16.06V18.17C23.25 19.2 22.55 20.1 21.55 20.35L19.59 20.84C19.16 20.95 18.75 20.63 18.75 20.19V14.04C18.75 13.6 19.16 13.28 19.59 13.39L21 13.74Z" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

@@ -70,14 +70,15 @@ pub enum SongDownload {
 
 /// The menu of `song`, most used first. `starred` and `excluded` (from mixes) as shown; `player`: opened from the player, which adds
 /// the sleep timer, and the lyrics' source and timing (greyed while it shows no `lyrics`). `stars`: songs carry seals ([`crate::browse::ProfileRules::stars`]). `account`: the
-/// profile has an account's playlists, mixes and shares (not a jam guest's, nor a
-/// profile without a Subsonic account). A provider's song has no mix or share actions: those need it
+/// profile has an account's mixes and shares (not a jam guest's, nor a
+/// profile without a Subsonic account); `playlists`: its account's playlists take songs
+/// ([`crate::browse::ProfileRules::playlists`]). A provider's song has no mix or share actions: those need it
 /// on the server. `guest`: a jam guest's, where Play next and Add to queue ask the host for the song and
 /// only the pages a guest may open are offered. `page`: the page it is opened on, whose own album or artist it
 /// does not offer to go to.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 #[allow(clippy::too_many_arguments)]
-pub fn song_menu(song: Song, starred: bool, excluded: bool, download: SongDownload, player: bool, lyrics: bool, stars: bool, account: bool, downloads: bool, radio: bool, guest: bool, page: Option<PageOrigin>) -> Vec<SongMenuItem> {
+pub fn song_menu(song: Song, starred: bool, excluded: bool, download: SongDownload, player: bool, lyrics: bool, stars: bool, account: bool, playlists: bool, downloads: bool, radio: bool, guest: bool, page: Option<PageOrigin>) -> Vec<SongMenuItem> {
     let mut out = Vec::with_capacity(16);
     let mut add = |action: SongAction, more: bool, enabled: bool| out.push(SongMenuItem { place: place_of(&action), action, more, enabled });
     if stars {
@@ -85,7 +86,7 @@ pub fn song_menu(song: Song, starred: bool, excluded: bool, download: SongDownlo
     }
     add(SongAction::PlayNext, false, true);
     add(SongAction::AddToQueue, false, true);
-    if account {
+    if playlists {
         add(SongAction::AddToPlaylist, false, true);
     }
     let here = |kind: &[OriginKind], id: &str| page.as_ref().is_some_and(|p| kind.contains(&p.kind) && p.id == id);
@@ -391,10 +392,84 @@ pub fn page_actions(kind: PageKind, songs: u32, missing: u32, downloads: bool) -
 }
 
 /// Whether the profile, signed in as `user`, may change `playlist`: add songs to it, remove them, rename
-/// and delete it. Only an account's own playlists: not a provider's, nor one another user shares.
+/// and delete it. Only where its `playlists` can be changed ([`crate::browse::ProfileRules::playlists`]),
+/// and only the account's own: not a provider's, nor one another user shares or made.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn playlist_editable(playlist: &Playlist, user: &str, account: bool) -> bool {
-    account && !is_provider_id(&playlist.id) && playlist.owner.as_deref().is_none_or(|o| o.eq_ignore_ascii_case(user))
+pub fn playlist_editable(playlist: &Playlist, user: &str, playlists: bool) -> bool {
+    playlists && !is_provider_id(&playlist.id) && playlist.owner.as_deref().is_none_or(|o| o.eq_ignore_ascii_case(user))
+}
+
+/// A change a song row of the account's own playlist offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum PlaylistEdit {
+    MoveUp,
+    MoveDown,
+    Remove,
+}
+
+/// What row `index` of a playlist of `songs` songs offers to change, in order; nothing unless the
+/// playlist is `editable` ([`playlist_editable`]).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn playlist_edits(index: u32, songs: u32, editable: bool) -> Vec<PlaylistEdit> {
+    if !editable || index >= songs {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(3);
+    if index > 0 {
+        out.push(PlaylistEdit::MoveUp);
+    }
+    if index + 1 < songs {
+        out.push(PlaylistEdit::MoveDown);
+    }
+    out.push(PlaylistEdit::Remove);
+    out
+}
+
+/// What the server is asked for `edit` of row `index` of playlist `id`, which holds `song_ids`: a move
+/// sends every song in the new order, a removal the row. None for a row the edit can't reach.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn playlist_edit_write(id: String, mut song_ids: Vec<String>, index: u32, edit: PlaylistEdit) -> Option<nori_net::requests::Write> {
+    use nori_net::requests::Write;
+    let at = index as usize;
+    let to = match edit {
+        PlaylistEdit::Remove => return (at < song_ids.len()).then_some(Write::RemoveFromPlaylist { id, index: index as i32 }),
+        PlaylistEdit::MoveUp => at.checked_sub(1)?,
+        PlaylistEdit::MoveDown => at + 1,
+    };
+    if to >= song_ids.len() {
+        return None;
+    }
+    song_ids.swap(at, to);
+    Some(Write::ReplacePlaylist { id, song_ids })
+}
+
+/// Something the queue's head offers for the whole queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum QueueAction {
+    /// Takes out the songs after the one playing.
+    Clear,
+    /// The whole queue, in play order, into a playlist of the account: a new one or one it has.
+    AddToPlaylist,
+}
+
+/// What the queue's head offers, in order, for a queue of `songs` songs of which `upcoming` follow the one
+/// playing. `playlists`: the account's playlists take songs ([`crate::browse::ProfileRules::playlists`]).
+/// A jam `guest` sees the host's queue, which is not its to keep or change: nothing.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn queue_actions(songs: u32, upcoming: u32, playlists: bool, guest: bool) -> Vec<QueueAction> {
+    let mut out = Vec::with_capacity(2);
+    if guest {
+        return out;
+    }
+    if upcoming > 0 {
+        out.push(QueueAction::Clear);
+    }
+    if playlists && songs > 0 {
+        out.push(QueueAction::AddToPlaylist);
+    }
+    out
 }
 
 /// A playlist offered to take some songs, with which of them it has already.
@@ -449,6 +524,29 @@ pub fn download_missing<'a>(songs: impl IntoIterator<Item = &'a str>, done: impl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Adding to a playlist follows the profile's playlists, not its Subsonic account: a provider's
+    /// account has them without one.
+    #[test]
+    fn the_queue_offers_what_it_can_take() {
+        use QueueAction::*;
+        // songs, upcoming, playlists, guest
+        for (songs, upcoming, playlists, guest, want) in [
+            (5, 3, true, false, vec![Clear, AddToPlaylist]),
+            (5, 0, true, false, vec![AddToPlaylist]),
+            (5, 3, false, false, vec![Clear]),
+            (0, 0, true, false, vec![]),
+            (5, 3, true, true, vec![]),
+        ] {
+            assert_eq!(queue_actions(songs, upcoming, playlists, guest), want, "{songs} songs, {upcoming} upcoming, playlists {playlists}, guest {guest}");
+        }
+    }
+
+    #[test]
+    fn adding_to_a_playlist_follows_the_profiles_playlists() {
+        let has = |account: bool, playlists: bool| song_menu(Song::default(), false, false, SongDownload::None, false, false, true, account, playlists, false, false, false, None).iter().any(|i| i.action == SongAction::AddToPlaylist);
+        assert_eq!([has(false, true), has(true, false), has(true, true)], [true, false, true]);
+    }
 
     #[test]
     fn a_partly_downloaded_page_offers_the_rest_and_removal() {
@@ -537,7 +635,7 @@ mod tests {
     #[test]
     fn downloads_without_an_account() {
         for (state, action) in [(SongDownload::None, SongAction::Download), (SongDownload::Pending, SongAction::StopDownload), (SongDownload::Done, SongAction::RemoveDownload)] {
-            let menu = actions(&song_menu(Song::default(), false, false, state, false, false, false, false, true, true, false, None));
+            let menu = actions(&song_menu(Song::default(), false, false, state, false, false, false, false, false, true, true, false, None));
             assert!(menu.contains(&(action, false)));
             assert!(!menu.contains(&(SongAction::AddToPlaylist, false)));
         }
@@ -545,7 +643,7 @@ mod tests {
 
     #[test]
     fn radio_without_an_account() {
-        let menu = actions(&song_menu(Song::default(), false, false, SongDownload::None, false, false, false, false, false, true, false, None));
+        let menu = actions(&song_menu(Song::default(), false, false, SongDownload::None, false, false, false, false, false, false, true, false, None));
         assert!(menu.contains(&(SongAction::Radio, true)));
         assert!(!menu.contains(&(SongAction::Share, true)));
     }
@@ -553,24 +651,24 @@ mod tests {
     #[test]
     fn song_menus() {
         let s = Song { id: "1".into(), album_id: Some("al".into()), artist_id: Some("ar".into()), artist: "Björk".into(), ..Default::default() };
-        let m = song_menu(s.clone(), false, false, SongDownload::None, false, false, true, true, true, true, false, None);
+        let m = song_menu(s.clone(), false, false, SongDownload::None, false, false, true, true, true, true, true, false, None);
         assert_eq!(
-            actions(&song_menu(s.clone(), false, false, SongDownload::None, true, false, false, false, false, false, true, None)),
+            actions(&song_menu(s.clone(), false, false, SongDownload::None, true, false, false, false, false, false, false, true, None)),
             [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Details, false)],
             "a jam guest asks for songs and opens what it may read"
         );
         use SongAction::*;
         assert_eq!(
-            actions(&song_menu(s.clone(), false, false, SongDownload::None, true, true, false, false, false, false, false, None)),
+            actions(&song_menu(s.clone(), false, false, SongDownload::None, true, true, false, false, false, false, false, false, None)),
             [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Lyrics, true), (SleepTimer, true), (Details, true)],
             "without an account only the queue, the pages and what plays here"
         );
-        let without = song_menu(s.clone(), false, false, SongDownload::None, true, false, true, true, true, true, false, None);
+        let without = song_menu(s.clone(), false, false, SongDownload::None, true, false, true, true, true, true, true, false, None);
         assert_eq!(without.iter().find(|i| i.action == Lyrics).map(|i| i.enabled), Some(false), "no lyrics: the line is there, greyed");
         assert!(m.iter().all(|i| i.enabled), "everything else is offered");
-        assert!(!actions(&song_menu(s.clone(), false, false, SongDownload::None, false, true, true, true, true, true, false, None)).iter().any(|(a, _)| *a == Lyrics), "only the player's menu has it");
+        assert!(!actions(&song_menu(s.clone(), false, false, SongDownload::None, false, true, true, true, true, true, true, false, None)).iter().any(|(a, _)| *a == Lyrics), "only the player's menu has it");
         assert_eq!(
-            actions(&song_menu(s, true, false, SongDownload::None, false, false, true, false, false, false, false, None))[..3],
+            actions(&song_menu(s, true, false, SongDownload::None, false, false, true, false, false, false, false, false, None))[..3],
             [(Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false)],
             "seals without an account: still no playlists or downloads"
         );
@@ -590,7 +688,7 @@ mod tests {
             artists: vec![ArtistRef { id: "a".into(), name: "A".into() }, ArtistRef { id: String::new(), name: "Nobody".into() }, ArtistRef { id: "b".into(), name: "B".into() }],
             ..Default::default()
         };
-        let m = song_menu(s, true, false, SongDownload::Pending, true, false, true, true, true, true, false, None);
+        let m = song_menu(s, true, false, SongDownload::Pending, true, false, true, true, true, true, true, false, None);
         assert_eq!(
             actions(&m),
             [
@@ -600,7 +698,7 @@ mod tests {
                 (Radio, true), (Lyrics, true), (SleepTimer, true), (Details, true),
             ]
         );
-        let done = song_menu(Song::default(), false, false, SongDownload::Done, false, false, true, true, true, true, false, None);
+        let done = song_menu(Song::default(), false, false, SongDownload::Done, false, false, true, true, true, true, true, false, None);
         assert!(done.iter().any(|i| i.action == SongAction::RemoveDownload));
     }
 
@@ -609,7 +707,7 @@ mod tests {
         use SongMenuPlace::*;
         let s = Song { id: "1".into(), album_id: Some("al".into()), artist_id: Some("ar".into()), artist: "A".into(), ..Default::default() };
         let of = |want: SongMenuPlace| -> Vec<SongAction> {
-            song_menu(s.clone(), false, false, SongDownload::None, true, true, true, true, true, true, false, None).into_iter().filter(|i| i.place == want).map(|i| i.action).collect()
+            song_menu(s.clone(), false, false, SongDownload::None, true, true, true, true, true, true, true, false, None).into_iter().filter(|i| i.place == want).map(|i| i.action).collect()
         };
         use SongAction::*;
         assert_eq!(of(Title), [Favourite { on: true }, Details]);
@@ -621,7 +719,7 @@ mod tests {
     #[test]
     fn a_radio_needs_either_the_provider_or_the_index() {
         let has = |radio: bool, account: bool, id: &str| {
-            song_menu(Song { id: id.into(), ..Default::default() }, false, false, SongDownload::None, false, false, false, account, false, radio, false, None).iter().any(|i| i.action == SongAction::Radio)
+            song_menu(Song { id: id.into(), ..Default::default() }, false, false, SongDownload::None, false, false, false, account, account, false, radio, false, None).iter().any(|i| i.action == SongAction::Radio)
         };
         assert_eq!([has(true, false, "1"), has(false, true, "1"), has(false, true, "ext-deezer-song-9"), has(false, false, "1")], [true, true, false, false]);
     }
@@ -630,7 +728,7 @@ mod tests {
     fn excluding_is_a_toggle() {
         let s = Song { id: "1".into(), ..Default::default() };
         for (excluded, on) in [(false, true), (true, false)] {
-            let menu = song_menu(s.clone(), false, excluded, SongDownload::None, false, false, false, true, false, false, false, None);
+            let menu = song_menu(s.clone(), false, excluded, SongDownload::None, false, false, false, true, true, false, false, false, None);
             assert!(menu.iter().any(|i| i.action == SongAction::ExcludeFromMixes { on }), "{excluded}");
         }
     }
@@ -657,7 +755,7 @@ mod tests {
         let s = Song { id: "1".into(), album_id: Some("al".into()), artist_id: Some("ar".into()), artist: "A".into(), ..Default::default() };
         let pair = Song { artists: vec![r("ar", "A"), r("b", "B")], ..s.clone() };
         let goes = |song: &Song, page: Option<PageOrigin>| -> Vec<String> {
-            song_menu(song.clone(), false, false, SongDownload::None, false, false, false, false, false, false, false, page)
+            song_menu(song.clone(), false, false, SongDownload::None, false, false, false, false, false, false, false, false, page)
                 .into_iter()
                 .filter_map(|i| match i.action {
                     SongAction::GoToAlbum { id } => Some(format!("album {id}")),
@@ -746,4 +844,29 @@ mod tests {
         assert_eq!(download_glyphs(&[D::Done, D::Pending, D::None], true), [DownloadGlyph::Done, DownloadGlyph::Ring, DownloadGlyph::None]);
     }
 
+    #[test]
+    fn a_playlist_row_offers_its_moves_and_removal() {
+        use PlaylistEdit::*;
+        assert_eq!(playlist_edits(0, 3, true), [MoveDown, Remove]);
+        assert_eq!(playlist_edits(1, 3, true), [MoveUp, MoveDown, Remove]);
+        assert_eq!(playlist_edits(2, 3, true), [MoveUp, Remove]);
+        assert_eq!(playlist_edits(0, 1, true), [Remove]);
+        assert!(playlist_edits(1, 3, false).is_empty() && playlist_edits(3, 3, true).is_empty());
+    }
+
+    #[test]
+    fn a_playlist_edit_asks_for_its_write() {
+        use nori_net::requests::Write;
+        let ids = || vec!["a".to_string(), "b".into(), "a".into()];
+        let order = |w: Option<Write>| match w {
+            Some(Write::ReplacePlaylist { song_ids, .. }) => song_ids,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(order(playlist_edit_write("p".into(), ids(), 2, PlaylistEdit::MoveUp)), ["a", "a", "b"]);
+        assert_eq!(order(playlist_edit_write("p".into(), ids(), 0, PlaylistEdit::MoveDown)), ["b", "a", "a"]);
+        assert!(matches!(playlist_edit_write("p".into(), ids(), 2, PlaylistEdit::Remove), Some(Write::RemoveFromPlaylist { index: 2, .. })), "the row, not the first of its song");
+        assert!(playlist_edit_write("p".into(), ids(), 0, PlaylistEdit::MoveUp).is_none());
+        assert!(playlist_edit_write("p".into(), ids(), 2, PlaylistEdit::MoveDown).is_none());
+        assert!(playlist_edit_write("p".into(), ids(), 3, PlaylistEdit::Remove).is_none());
+    }
 }

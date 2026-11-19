@@ -132,6 +132,14 @@ class PluginHost(
     /** A plugin's cast while one runs: the devices sheet shows it, the playback service plays along. */
     val cast: StateFlow<Cast?> = _cast
 
+    private val _decidesButtons = MutableStateFlow(false)
+    /** Whether a plugin decides the notification's buttons: only then does the playback service ask for them. */
+    val decidesButtons: StateFlow<Boolean> = _decidesButtons
+
+    private val _buttonsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** A plugin's notification buttons would answer otherwise now. */
+    val buttonsChanged: SharedFlow<Unit> = _buttonsChanged
+
     private val lan: LanGlue = LanGlue(context) { plugins }
     @Volatile private var opened = false
 
@@ -192,6 +200,7 @@ class PluginHost(
                 runCatching { context.unregisterReceiver(screen) }
             }
         }
+        override fun buttonsChanged() { _buttonsChanged.tryEmit(Unit) }
         override fun asset(id: String, name: String, state: AssetState) {
             _assets.update { all -> all + (id to all[id].orEmpty().map { a -> if (a.name == name) a.copy(state = state) else a }) }
         }
@@ -274,7 +283,15 @@ class PluginHost(
         _castTargets.value = plugins.castTargets()
         _findsOutputs.value = plugins.findsOutputs()
         _assets.value = _cards.value.associate { c -> c.id to plugins.assets(c.id) }
+        _decidesButtons.value = plugins.decidesButtons()
     }
+
+    /** The notification's buttons while queued song [song] plays, given nori's own: the deciding plugin's, its labels in the app's language. */
+    suspend fun notificationButtons(song: String?, own: dev.nori.music.ffi.model.SessionButtons, repeat: dev.nori.music.ffi.plugins.Repeat): List<dev.nori.music.ffi.plugins.NotificationButton> =
+        withContext(Dispatchers.IO) { plugins.notificationButtons(song, own, repeat, lang) }
+
+    /** Plugin [plugin]'s own notification button was pressed: its [action] runs. */
+    suspend fun notificationPress(plugin: String, action: String) = withContext(Dispatchers.IO) { plugins.notificationPress(plugin, action) }
 
     /** Whether an installed plugin reaches Bluetooth devices, so the permission is asked for. */
     suspend fun reachesBluetooth(): Boolean = withContext(Dispatchers.IO) { plugins.reachesBluetooth() }

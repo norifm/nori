@@ -58,21 +58,18 @@ fn usage() -> ! {
     std::process::exit(2)
 }
 
-/// $XDG_DATA_HOME/nori, else ~/.local/share/nori.
-fn data_dir() -> PathBuf {
-    if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
-        return PathBuf::from(d).join("nori");
-    }
-    match std::env::var_os("HOME") {
-        Some(h) => PathBuf::from(h).join(".local/share/nori"),
-        None => std::env::temp_dir().join("nori"),
-    }
-}
-
 fn main() {
     // The sign-in window, started by the terminal as a process of its own (runner.rs `SignInWindow`).
     #[cfg(feature = "sign-in-window")]
     nori_sign_in_window::serve_if_asked();
+    // Headphones' Bluetooth needs the main thread's run loop.
+    #[cfg(target_os = "macos")]
+    nori_host::beside_main_run_loop(run);
+    #[cfg(not(target_os = "macos"))]
+    run();
+}
+
+fn run() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let script = args.iter().any(|a| matches!(a.as_str(), "--script" | "--search" | "--play" | "--wav" | "--devices" | "--songs" | "--download"));
     if script {
@@ -81,7 +78,7 @@ fn main() {
         return;
     }
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let mut o = Options { data: data_dir(), device: None, images: None, mouse: None, login: None, provider: None, install_plugin: None, offline: false, mpris: true, paint: None };
+    let mut o = Options { data: nori_host::data_dir(), device: None, images: None, mouse: None, login: None, provider: None, install_plugin: None, offline: false, mpris: true, paint: None };
     let (mut url, mut user, mut password) = (env("NORI_URL"), env("NORI_USER"), env("NORI_PASSWORD"));
     if env("NORI_DEBUG").is_some_and(|v| v != "0") {
         term::set_debug(true);

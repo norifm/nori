@@ -6,12 +6,9 @@ the owner asks for it, and delete its line once it ships.
 ## First
 
 **Queue**
-- Clear the upcoming songs (Android).
-- Save the queue as a playlist.
 - Total and remaining time in the queue header.
 
 **Playlists**
-- Rename, reorder, remove songs.
 - Add to several playlists at once, with an "already in this playlist" hint.
 
 **Library and search**
@@ -32,7 +29,7 @@ the owner asks for it, and delete its line once it ships.
 - Pause and resume.
 - Stop when storage runs low.
 - Store covers with the download, so the image cache can't evict them.
-- Auto-download rules: keep a playlist or the favorites downloaded.
+- Auto-download rules: keep the favorites downloaded.
 - Keep a song that is already in the stream cache as a download, without fetching it again.
 
 **AutoMix**
@@ -48,10 +45,10 @@ the owner asks for it, and delete its line once it ships.
 
 Plan: `docs/research/plugins.md`. These go there instead of becoming settings:
 - casting: Snapcast, UPnP/DLNA, Chromecast;
-- headphone control (ANC, battery) over Bluetooth;
 - the removed sound knobs (crossfade curves, crossfeed levels, compressor, expander, loudness
-  compensation) and the hardcoded values, as overrides and sound-stage plugins;
-- autoplay when headphones connect, headset click mapping, audio focus behavior;
+  compensation) and the other hardcoded values, as overrides and sound-stage plugins (AutoMix's limits
+  are tunables now: mix-tuning);
+- headset click mapping, audio focus behavior;
 - lyrics over Bluetooth (the line in the title field);
 - automation intents for Tasker-style apps.
 
@@ -81,5 +78,5 @@ When everything above is done; each behind a switch:
 
 ## Not planned
 
-Other server types, local files, Wear OS, Android TV, audiobook mode, star ratings, Genius, a grid/list
+Other server types, local files, Wear OS, audiobook mode, star ratings, Genius, a grid/list
 toggle, the A-Z rail.

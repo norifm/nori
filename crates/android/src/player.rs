@@ -56,6 +56,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"shownMs", c"(JI)J", shown_ms),
         native!(c"look", c"(J)V", look),
         native!(c"mixing", c"(J)Z", mixing),
+        native!(c"placeRuns", c"(J)Z", place_runs),
         native!(c"waiting", c"(J)Z", waiting),
         native!(c"networkBack", c"(J)V", network_back),
         native!(c"focus", c"(JI)V", focus),
@@ -1696,6 +1697,11 @@ extern "system" fn network_back(h: jlong) {
 
 extern "system" fn mixing(h: jlong) -> jboolean {
     player(h).is_some_and(|p| p.engine.status_with(|s| s.mixing)) as jboolean
+}
+
+/// The place still moves: playing and heard, or paused while the fade is still heard.
+extern "system" fn place_runs(h: jlong) -> jboolean {
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.runs_now())) as jboolean
 }
 
 /// Tells `remote` (a `Remote.uniffiCloneHandle()`, taken over) where the engine is now, at the media

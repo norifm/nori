@@ -133,6 +133,8 @@ pub enum Cmd {
     /// Adds songs to the playlist `id`, or makes one called `name` of them.
     AddToPlaylist { id: String, songs: Vec<String> },
     NewPlaylist { name: String, songs: Vec<String> },
+    /// A change of playlist `id` (renamed, a song moved or taken out), and what is said once it is made.
+    EditPlaylist { id: String, write: nori_core::client::Write, said: String },
     /// Reads which of these songs are downloaded.
     ReadDownloads(Vec<String>),
     /// Draws the mix again.
@@ -162,6 +164,10 @@ pub enum Cmd {
     Action(Chore),
     /// The answer to the last AutoEQ note (`Session::curve_answer`).
     Curve,
+    /// Checks for a newer nori now (`Session::update_check`).
+    CheckUpdate,
+    /// Reads back the downloads an analysis was offered for (`Session::analyse_downloads`).
+    AnalyseDownloads,
     Mouse(bool),
     Images(bool),
     Paint(bool),
@@ -179,6 +185,8 @@ pub enum Cmd {
     SwitchServer(String),
     /// Saved profile `0` renamed `1`; blank, it is called after its provider again.
     RenameProfile(String, String),
+    /// Saved profile `profile`'s scrobbling accounts changed, or one signed in to and added.
+    Scrobbler { profile: String, change: ScrobblerChange },
     /// The account acts as its identity at this place from now on.
     ChooseIdentity(u32),
     /// Moves the music to this device, or here (None).
@@ -284,6 +292,8 @@ impl Cmd {
             Cmd::Setting(k, v) => format!("setting {k}={v}"),
             Cmd::Action(a) => format!("action {a:?}"),
             Cmd::Curve => "curve".into(),
+            Cmd::CheckUpdate => "check update".into(),
+            Cmd::AnalyseDownloads => "analyse downloads".into(),
             Cmd::SoundPage(page, on) => format!("sound page {page:?} {on}"),
             Cmd::Mouse(on) => format!("mouse {on}"),
             Cmd::Images(on) => format!("images {on}"),
@@ -744,6 +754,8 @@ pub struct Now {
     pub state: State,
     pub position_ms: i64,
     pub at: Instant,
+    /// Paused while the music heard fades out: the place runs on until then.
+    pub fading_until: Option<Instant>,
     pub speed: f32,
     pub mixing: bool,
     pub buffering: bool,
@@ -751,16 +763,17 @@ pub struct Now {
 
 impl Default for Now {
     fn default() -> Self {
-        Now { state: State::Idle, position_ms: 0, at: Instant::now(), speed: 1.0, mixing: false, buffering: false }
+        Now { state: State::Idle, position_ms: 0, at: Instant::now(), fading_until: None, speed: 1.0, mixing: false, buffering: false }
     }
 }
 
 impl Now {
     pub fn position(&self, now: Instant) -> i64 {
-        match self.state {
-            State::Playing if !self.buffering => self.position_ms + (now.saturating_duration_since(self.at).as_secs_f64() * 1000.0 * self.speed as f64) as i64,
-            _ => self.position_ms,
-        }
+        self.position_ms + (nori_engine::run_ms(self.state, self.buffering, self.at, self.fading_until, now) * self.speed as f64) as i64
+    }
+
+    pub fn runs(&self, now: Instant) -> bool {
+        nori_engine::runs(self.state, self.buffering, self.fading_until, now)
     }
 }
 
@@ -1063,6 +1076,19 @@ pub enum Overlay {
     Account { kind: nori_core::settings::ServerKind, ways: Vec<nori_core::providers::SignIn>, user: String, pasting: bool, text: String, flow: SignInFlow, window_failed: bool },
 }
 
+/// A change to a profile's scrobbling accounts.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScrobblerChange {
+    /// The profile's server told what plays, or not.
+    Itself(bool),
+    Switch { id: String, on: bool },
+    Remove(String),
+    /// Sign in to the account the form describes and keep it.
+    SignIn(Box<nori_core::scrobblers::ScrobblerForm>),
+    /// Ask for a token to allow on the service's page for the account the form describes.
+    Approve(Box<nori_core::scrobblers::ScrobblerForm>),
+}
+
 /// What a picker sets.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
@@ -1094,6 +1120,15 @@ pub enum Target {
     Sleep(Vec<nori_core::menus::SleepChoice>),
     /// Saved profile `0`'s new name.
     ProfileName(String),
+    /// A line of saved profile `0`'s scrobbling accounts ([`crate::settings_view::SettingsView::scrobbling_menu`]).
+    Scrobbling(String),
+    /// The kind of scrobbling account to add to saved profile `0`.
+    ScrobblerKind(String),
+    /// The next field of a scrobbling account being added to `profile`: `step` of
+    /// [`nori_core::scrobblers::scrobbler_fields`].
+    ScrobblerField { profile: String, form: Box<nori_core::scrobblers::ScrobblerForm>, step: usize },
+    /// Playlist `0`'s new name.
+    PlaylistName(String),
     /// Which of the account's identities it acts as, by its place among them.
     Identity,
 }
@@ -1111,6 +1146,32 @@ impl Target {
             }
             Target::Sleep(choices) => value.parse().ok().and_then(|i: usize| choices.get(i).copied()).map(Cmd::Sleep),
             Target::ProfileName(id) => Some(Cmd::RenameProfile(id, value)),
+            Target::Scrobbling(profile) => {
+                let (what, id) = value.split_once(':')?;
+                let change = match what {
+                    "on" | "off" if id.is_empty() => ScrobblerChange::Itself(what == "on"),
+                    "on" | "off" => ScrobblerChange::Switch { id: id.to_string(), on: what == "on" },
+                    "remove" => ScrobblerChange::Remove(id.to_string()),
+                    _ => return None,
+                };
+                Some(Cmd::Scrobbler { profile, change })
+            }
+            Target::ScrobblerField { profile, form, step } => {
+                use nori_core::scrobblers::{scrobbler_fields, scrobbler_form_with, scrobbler_sign_in, ScrobblerSignIn};
+                let field = scrobbler_fields(form.kind)[step].field;
+                let form = Box::new(scrobbler_form_with(*form, field, value));
+                let change = match scrobbler_sign_in(form.kind) {
+                    ScrobblerSignIn::Form => ScrobblerChange::SignIn(form),
+                    ScrobblerSignIn::Browser => ScrobblerChange::Approve(form),
+                };
+                Some(Cmd::Scrobbler { profile, change })
+            }
+            Target::ScrobblerKind(_) => None,
+            Target::PlaylistName(id) => {
+                let name = value.trim().to_string();
+                let said = crate::text::playlist_renamed(&name);
+                (!name.is_empty()).then(|| Cmd::EditPlaylist { id: id.clone(), write: nori_core::client::Write::RenamePlaylist { id, name }, said })
+            }
             Target::Identity => value.parse().ok().map(Cmd::ChooseIdentity),
             Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
             Target::Plugin { plugin, row, kind } => {
@@ -1204,6 +1265,7 @@ pub enum Button {
     Shuffle,
     Repeat,
     Clear,
+    Keep,
     Panel(Panel),
     Full,
     PlayAll,
@@ -1321,7 +1383,10 @@ pub struct App {
     pub reduced_motion: bool,
     /// The transport button or the seal just pressed, until its flash ends.
     pub flash: Option<(Button, Instant)>,
+    /// The settings as the user set them, which the settings and equalizer screens show.
     pub prefs: StoredPrefs,
+    /// The settings in effect, with what enabled plugins override: what the other screens wear and do.
+    pub effective: StoredPrefs,
     pub volume: f32,
     pub mouse: bool,
     pub images: bool,
@@ -1356,6 +1421,7 @@ impl App {
     pub fn new(prefs: StoredPrefs) -> App {
         App {
             paint: true,
+            effective: prefs.clone(),
             prefs,
             volume: 1.0,
             mouse: true,
@@ -1385,9 +1451,9 @@ impl App {
         self.dirty = true;
     }
 
-    /// Takes the stored settings and updates what depends on them.
-    pub fn prefs_changed(&mut self, prefs: StoredPrefs) {
-        self.prefs = prefs;
+    /// Takes the stored settings and those in effect, and updates what depends on them.
+    pub fn prefs_changed(&mut self, prefs: StoredPrefs, effective: StoredPrefs) {
+        (self.prefs, self.effective) = (prefs, effective);
         self.retheme();
         self.settings.invalidate();
         self.dirty = true;
@@ -1396,10 +1462,10 @@ impl App {
     pub fn retheme(&mut self) {
         let day = crate::art::Day::now();
         let dark = crate::art::terminal_dark(std::env::var("COLORFGBG").ok().as_deref());
-        self.dark = self.prefs.theme.is_dark(dark);
-        self.look = Theme::season(&self.shared, &self.prefs, day, dark, self.paint, self.colors);
+        self.dark = self.effective.theme.is_dark(dark);
+        self.look = Theme::season(&self.shared, &self.effective, day, dark, self.paint, self.colors);
         self.theme = match &self.colours {
-            Some(c) if self.prefs.theme.covers_tint_pages() && self.images => Theme::dyed(c.edge, &self.prefs, day, self.dark, self.paint, self.colors),
+            Some(c) if self.effective.theme.covers_tint_pages() && self.images => Theme::dyed(c.edge, &self.effective, day, self.dark, self.paint, self.colors),
             _ => self.look,
         };
     }
@@ -1785,8 +1851,12 @@ impl App {
             Msg::Volume(v) if self.devices.active.is_none() => self.volume = v,
             Msg::Volume(_) => self.dirty = false,
             Msg::Starred(marks) => self.marks = marks,
-            // The runner read the devices into `devices`.
-            Msg::Remote => {}
+            Msg::AnalysisOffer(offer) => {
+                let (title, lines) = crate::text::analysis_offer(&offer);
+                self.overlay = Some(Overlay::Confirm { title, lines, yes: crate::text::ANALYZE.into(), cmd: Box::new(Cmd::AnalyseDownloads) });
+            }
+            // The runner read the devices into `devices`, and the settings in effect.
+            Msg::Remote | Msg::Overridden => {}
             Msg::Jam(Ok(())) => {
                 self.panel = Panel::Queue;
                 self.invite();
@@ -1818,8 +1888,18 @@ impl App {
                 }
                 _ => self.dirty = false,
             },
-            // The runner opens the profile again as the identity chosen.
-            Msg::IdentityChosen(Ok(())) => {}
+            // The runner opens the profile again as the identity chosen, and keeps a scrobbling account.
+            Msg::IdentityChosen(Ok(())) | Msg::ScrobblerSignedIn { .. } => {}
+            // Signing in waits for the page allowing nori, then Done.
+            Msg::ScrobblerApproval { profile, form, approval } => match approval {
+                Ok(a) => {
+                    let kind = form.kind;
+                    let form = Box::new(nori_core::scrobblers::ScrobblerForm { approved: a.token, ..*form });
+                    let cmd = Box::new(Cmd::Scrobbler { profile, change: ScrobblerChange::SignIn(form) });
+                    self.overlay = Some(crate::text::scrobbler_allow(kind, &a.page, cmd));
+                }
+                Err(e) => self.say(crate::text::scrobbler_refused(&e), true),
+            },
             Msg::IdentityChosen(Err(e)) => self.say(crate::text::identity_failed(&e), true),
             // The runner opens these, and the profiles a jam is joined and left with.
             Msg::SignedIn(r) => match &mut self.overlay {
@@ -2114,7 +2194,7 @@ impl App {
     pub fn next_wake(&self, now: Instant) -> Option<Instant> {
         let mut at: Option<Instant> = None;
         let mut sooner = |t: Instant| at = Some(at.map_or(t, |a| a.min(t)));
-        if self.in_sight && self.now.state == State::Playing && !self.now.buffering {
+        if self.in_sight && self.now.runs(now) {
             if self.shown.clock {
                 let pos = self.now.position(now).max(0);
                 let left = 1000 - pos % 1000;
@@ -2483,6 +2563,11 @@ impl App {
                                 self.cmds.extend(cmd);
                                 sheet
                             }
+                            Target::Scrobbling(profile) if value == "add" => Some(crate::text::scrobbler_kinds(profile)),
+                            Target::ScrobblerKind(profile) => {
+                                let kind = nori_core::settings::ScrobblerKind::from_id(&value);
+                                kind.map(|kind| crate::text::scrobbler_field(profile, Box::new(nori_core::scrobblers::ScrobblerForm { kind, ..Default::default() }), 0))
+                            }
                             target => {
                                 self.cmds.extend(target.cmd(value));
                                 None
@@ -2653,6 +2738,12 @@ impl App {
                         // A repo that isn't nori's is added only once the user says they trust it.
                         Target::AddRepo if !typed.trim().is_empty() => self.overlay = Some(crate::settings_view::trust_repo(typed.trim())),
                         Target::AddRepo => {}
+                        // Each field of an account being added asks the next, the last signs in.
+                        Target::ScrobblerField { profile, form, step } if step + 1 < nori_core::scrobblers::scrobbler_fields(form.kind).len() => {
+                            let field = nori_core::scrobblers::scrobbler_fields(form.kind)[step].field;
+                            let form = nori_core::scrobblers::scrobbler_form_with(*form, field, typed);
+                            self.overlay = Some(crate::text::scrobbler_field(profile, Box::new(form), step + 1));
+                        }
                         Target::BackupFile { restore } if !typed.trim().is_empty() => {
                             let target = Target::BackupPassword { restore, path: typed.trim().to_string() };
                             self.overlay = Some(Overlay::Input { title: crate::text::BACKUP_PASSWORD.into(), text: String::new(), secret: true, target });
@@ -2687,7 +2778,7 @@ impl App {
             Action::SeekBack | Action::SeekForward | Action::SeekBackLong | Action::SeekForwardLong if !self.offers(|c| c.seek) => self.dirty = false,
             Action::Shuffle | Action::Repeat if self.guest() => self.dirty = false,
             Action::MoveUp | Action::MoveDown if self.queue_in_focus() && !self.offers(|c| c.reorder) => self.dirty = false,
-            Action::Remove | Action::Undo | Action::Clear if self.guest() && self.queue_in_focus() => self.dirty = false,
+            Action::Remove | Action::Undo if self.guest() && self.queue_in_focus() => self.dirty = false,
             Action::TogglePlay => {
                 self.pressed(Button::Toggle);
                 self.cmds.push(Cmd::Toggle);
@@ -2844,7 +2935,7 @@ impl App {
                 let item = if self.focus == Focus::Main { self.selected() } else { None };
                 self.jam_with(item);
             }
-            Action::Menu if self.on_settings() => match self.settings.plugin_menu() {
+            Action::Menu if self.on_settings() => match self.settings.plugin_menu().or_else(|| self.settings.scrobbling_menu()) {
                 Some(o) => self.overlay = Some(o),
                 None => self.dirty = false,
             },
@@ -2852,7 +2943,8 @@ impl App {
             Action::Undo if self.queue_in_focus() => self.cmds.push(Cmd::Undo),
             Action::Undo => self.dirty = false,
             Action::Clear if self.queue_in_focus() => self.clear_queue(),
-            Action::Clear => self.dirty = false,
+            Action::Keep if self.queue_in_focus() => self.keep_queue(),
+            Action::Clear | Action::Keep => self.dirty = false,
             Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.move_here(a == Action::MoveUp) {
                 Some(c) => self.cmds.push(c),
                 None => self.dirty = false,
@@ -3248,8 +3340,7 @@ impl App {
                     Item::Mix(m) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Mix(m.id), next)),
                 }
             }
-            // Hearts are where songs carry them, downloads the account's.
-            (Action::Star, _) if !self.rules.stars && self.rules.stars_after_sign_in => self.cmds.push(Cmd::OfferSignIn),
+            // Seals are where songs carry them, downloads the account's.
             (Action::Star, _) if !self.rules.stars => self.dirty = false,
             (Action::Download, _) if !self.rules.downloads => self.dirty = false,
             (Action::Download, item) => match item {
@@ -3365,7 +3456,7 @@ impl App {
 
     /// A song picked from a list, per the `tap_action` setting (not offered here; default PlayList).
     fn tap(&mut self, songs: Vec<Song>, i: usize) {
-        match self.prefs.tap_action {
+        match self.effective.tap_action {
             TapAction::PlayOne => self.cmds.push(Cmd::Play { songs: vec![songs[i].clone()], start: 0, shuffle: false, from: None }),
             TapAction::Queue => self.cmds.push(Cmd::Enqueue(vec![songs[i].clone()], false)),
             TapAction::PlayNext => self.cmds.push(Cmd::Enqueue(vec![songs[i].clone()], true)),
@@ -3505,6 +3596,8 @@ impl App {
             PageAction::Download { act: DownloadAct::Remove } => {
                 self.ask_remove(songs.iter().map(|s| s.id.clone()).collect());
             }
+            // A playlist is downloaded whole, so it is kept downloaded as it changes.
+            PageAction::Download { act: DownloadAct::Missing } if matches!(fetch, Some(Fetch::Playlist(_))) => self.cmds.extend(fetch.map(Cmd::DownloadFetch)),
             PageAction::Download { act: DownloadAct::Missing } => {
                 let missing: Vec<Song> = songs.into_iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).collect();
                 self.cmds.push(Cmd::Download(missing));
@@ -3563,12 +3656,27 @@ impl App {
         self.queue.as_ref().and_then(|q| Some(q.order.len() - 1 - q.order.iter().position(|&i| i as i32 == q.index)?)).unwrap_or(0)
     }
 
-    /// Clears the queue, its undo on u; nothing for a jam guest, whose queue is the host's.
+    /// What the queue's head offers for the whole queue (the core's `queue_actions`).
+    pub fn queue_offers(&self) -> Vec<nori_core::menus::QueueAction> {
+        nori_core::menus::queue_actions(self.queue.as_ref().map_or(0, |q| q.order.len() as u32), self.upcoming() as u32, self.rules.playlists, self.guest())
+    }
+
+    /// Clears the queue, its undo on u, where the queue offers it.
     fn clear_queue(&mut self) {
-        if self.guest() || self.upcoming() == 0 {
-            self.dirty = false;
-        } else {
+        if self.queue_offers().contains(&nori_core::menus::QueueAction::Clear) {
             self.cmds.push(Cmd::Clear);
+        } else {
+            self.dirty = false;
+        }
+    }
+
+    /// The queue's songs in play order go into a playlist picked next, where the queue offers it.
+    fn keep_queue(&mut self) {
+        let songs: Vec<String> = self.queue.as_ref().map(|q| q.order.iter().filter_map(|&i| Some(q.songs.get(i as usize)?.id.clone())).collect()).unwrap_or_default();
+        if self.queue_offers().contains(&nori_core::menus::QueueAction::AddToPlaylist) {
+            self.pick_playlist(songs);
+        } else {
+            self.dirty = false;
         }
     }
 
@@ -4103,6 +4211,7 @@ impl App {
             Button::Shuffle => self.do_action(Action::Shuffle),
             Button::Repeat => self.do_action(Action::Repeat),
             Button::Clear => self.clear_queue(),
+            Button::Keep => self.keep_queue(),
             Button::Panel(p) => self.set_panel(p),
             Button::Full => self.toggle_full(),
             Button::PlayAll => self.play_all(false),

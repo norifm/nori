@@ -280,6 +280,9 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         return out
     }
 
+    /** The place shown still moves: this phone's while playing and heard or while a pause's fade is heard, another device's while it plays. */
+    val placeRuns: Boolean get() = engine()?.takeIf { mirror == null }?.placeRuns ?: _state.value.playing
+
     /** The service's engine, on the main thread only (where it lives): null with no service. */
     private fun engine(): EnginePlayer? =
         PlaybackService.rustPlayer?.takeIf { android.os.Looper.myLooper() == android.os.Looper.getMainLooper() }
@@ -763,8 +766,11 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         if (on) with { send(it) } else controller?.let { send(it) }
     }
 
-    /** Presses one of the session's own buttons (the notification's heart or shuffle) the way the notification does; for the test bridge. */
-    fun pressSessionButton(action: String) = with { it.sendCustomCommand(SessionCommand(action, Bundle.EMPTY), Bundle.EMPTY) }
+    /** Presses one of the session's buttons (the notification's seal, shuffle or a plugin's) the way the notification does, with what the button carries; for the test bridge. */
+    fun pressSessionButton(action: String) = with { c ->
+        val shown = c.mediaButtonPreferences.firstNotNullOfOrNull { b -> b.sessionCommand?.takeIf { it.customAction == action } }
+        c.sendCustomCommand(shown ?: SessionCommand(action, Bundle.EMPTY), Bundle.EMPTY)
+    }
 
     /** The notification's extra buttons as the session last published them, e.g. "sealed shuffle_off"; for the test bridge. */
     val sessionButtons: String get() = controller?.mediaButtonPreferences.orEmpty().joinToString(" ") {
@@ -773,6 +779,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             it.iconResId == R.drawable.seal_outline -> "seal"
             it.icon == androidx.media3.session.CommandButton.ICON_SHUFFLE_ON -> "shuffle_on"
             it.icon == androidx.media3.session.CommandButton.ICON_SHUFFLE_OFF -> "shuffle_off"
+            it.sessionCommand?.customAction == PlaybackService.CMD_PLUGIN_BUTTON -> "plugin:" + it.sessionCommand?.customExtras?.getString(PlaybackService.ARG_ACTION)
             else -> it.sessionCommand?.customAction ?: "?"
         }
     }

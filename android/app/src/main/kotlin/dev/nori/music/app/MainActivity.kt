@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         Nori.get(this).remotes.appShown(true)
         // Binding starts the playback service, which builds a player on this thread. Let the first frame out first.
-        window.decorView.post { Looper.myQueue().addIdleHandler { startedPlugins(); if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress(); updatePlugins() }; false } }
+        window.decorView.post { Looper.myQueue().addIdleHandler { startedPlugins(); if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress(); updatePlugins(); actions.shown() }; false } }
         started = true
     }
 

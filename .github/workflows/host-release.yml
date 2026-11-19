@@ -42,7 +42,12 @@ jobs:
             platform: macos-aarch64
           - runner: ${{ inputs.macos_on_linux && 'ubuntu-22.04' || 'macos-26' }}
             platform: macos-x86_64
+          - runner: windows-2025
+            platform: windows-x86_64
     runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
     env:
       RUSTC_WRAPPER: ''
       CARGO_INCREMENTAL: '0'

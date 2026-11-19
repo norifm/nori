@@ -42,7 +42,8 @@ use crate::types::{BarProfile, Beat, TrackAnalysis};
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 27: how each end bar repeats 4 and 8 bars on, for loop seams.
+/// Bump when stored rows should be measured again, the beat model's ends too (a new model is a bump). 27: how each end bar
+/// repeats 4 and 8 bars on, for loop seams.
 pub const ANALYSIS_VERSION: i32 = 27;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.

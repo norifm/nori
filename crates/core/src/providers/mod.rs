@@ -53,6 +53,17 @@ pub trait Provider: Send + Sync {
         false
     }
 
+    /// Whether favorites its account can't keep are kept on this device (`ProfileRules::stars_here`).
+    fn favorites_here(&self) -> bool {
+        false
+    }
+
+    /// Whether the account open keeps favorites of `kind`. One it has nowhere for is kept on this
+    /// device, where the provider keeps any ([`Provider::favorites_here`]).
+    fn keeps_favorites(&self, _kind: crate::client::Starrable) -> bool {
+        true
+    }
+
     /// `read` asked of the source now; None when it has nothing for such a read (the empty page). How
     /// its answer is kept, how long it is fresh and what the session lays over it are the core's
     /// (cache_policy.rs).
@@ -582,17 +593,18 @@ impl Kinds {
 }
 
 /// The profile a login saves. A new profile for one already saved takes over that profile's id (and its
-/// library and downloads), music folder, bitrate cap, icon and, if the form's is empty, name; what the form
+/// library and downloads), music folder, bitrate cap, icon, scrobbling accounts and, if the form's is empty, name; what the form
 /// does not ask (a signed-in account's name) stays the saved one's. A profile is the saved one of its
-/// kind with the same address and user; without an address in the form, the kind's saved one. A
-/// profile already saved is returned as it is.
+/// kind with the same address and user; a kind whose form asks no address has nothing to tell its
+/// profiles apart by, so each login adds one (an account each). A profile already saved is returned as
+/// it is.
 fn server_for_login(info: &ProviderInfo, list: ServerList, profile: SavedServer) -> SavedServer {
     if list.servers.iter().any(|s| s.id == profile.id) {
         return profile;
     }
     let address = |url: &str| url.trim().trim_end_matches('/').to_ascii_lowercase();
     let same = |s: &&SavedServer| {
-        s.kind == profile.kind && (!info.asks(FormField::Address) || (address(&s.url) == address(&profile.url) && s.user.trim().eq_ignore_ascii_case(profile.user.trim())))
+        s.kind == profile.kind && info.asks(FormField::Address) && address(&s.url) == address(&profile.url) && s.user.trim().eq_ignore_ascii_case(profile.user.trim())
     };
     match list.servers.iter().find(same) {
         Some(saved) => SavedServer {
@@ -602,6 +614,7 @@ fn server_for_login(info: &ProviderInfo, list: ServerList, profile: SavedServer)
             music_folder_ids: saved.music_folder_ids.clone(),
             alt_max_bit_rate: saved.alt_max_bit_rate,
             icon: saved.icon,
+            scrobblers: saved.scrobblers.clone(),
             ..profile
         },
         None => profile,
@@ -712,7 +725,8 @@ impl Core {
                 provider
             }
         };
-        provider.configure(self, &profile)
+        provider.configure(self, &profile)?;
+        self.load_favorites_here()
     }
 
     /// What the profile plays from.
@@ -880,18 +894,31 @@ mod tests {
     #[test]
     fn a_login_finds_the_saved_server() {
         let icon = crate::settings::ProfileIcon::Think;
-        let kept = SavedServer { name: "Home".into(), music_folder_ids: vec!["3".into()], alt_max_bit_rate: 96, icon, ..saved("a1", ServerKind::Subsonic, "https://music.example.com", "ann") };
+        let scrobblers = vec![crate::settings::SavedScrobbler { id: "c".into(), on: true, key: "k".into(), ..Default::default() }];
+        let kept = SavedServer { name: "Home".into(), music_folder_ids: vec!["3".into()], alt_max_bit_rate: 96, icon, scrobblers: scrobblers.clone(), ..saved("a1", ServerKind::Subsonic, "https://music.example.com", "ann") };
         let list = ServerList { servers: vec![kept.clone()], active_server_id: "a1".into() };
         let form = saved("new", ServerKind::Subsonic, "HTTPS://music.example.com/ ", "Ann");
         let k = Kinds::builtin();
         let login = k.login_profile(list.clone(), form.clone());
         assert_eq!((login.id.as_str(), login.name.as_str(), login.music_folder_ids.as_slice(), login.alt_max_bit_rate, login.user.as_str(), login.icon), ("a1", "Home", &["3".to_string()][..], 96, "Ann", icon));
+        assert_eq!(login.scrobblers, scrobblers);
         let stranger = saved("s", ServerKind::Subsonic, "https://music.example.com", "bob");
         assert_eq!(k.login_profile(list.clone(), stranger.clone()), stranger);
         let elsewhere = saved("e", ServerKind::Subsonic, "https://other.example.com", "ann");
         assert_eq!(k.login_profile(list.clone(), elsewhere.clone()), elsewhere);
         let edited = SavedServer { url: "https://moved.example.com".into(), ..kept };
         assert_eq!(k.login_profile(list, edited.clone()), edited);
+    }
+
+    /// A kind that asks no address (a service's account) takes a profile per login.
+    #[test]
+    fn a_login_without_an_address_adds_a_profile() {
+        let info = ProviderInfo { kind: ServerKind::Plugin { id: "x".into() }, fields: vec![FieldSpec { what: FormField::Name, advanced: false }], sign_in: Vec::new(), identities: None };
+        let first = saved("a1", info.kind.clone(), "", "");
+        let list = ServerList { servers: vec![first.clone()], active_server_id: "a1".into() };
+        let second = saved("a2", info.kind.clone(), "", "");
+        assert_eq!(server_for_login(&info, list.clone(), second.clone()), second);
+        assert_eq!(server_for_login(&info, list, first.clone()), first);
     }
 
     /// A login to a saved server keeps that profile's library, music folder, bitrate cap and place in the

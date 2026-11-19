@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
@@ -43,6 +44,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,10 +63,10 @@ import androidx.compose.foundation.layout.windowInsetsPadding
  * edge under the status bar and dissolves into the page, the page wears the colour the artwork ends
  * on, and the title, the artist and the two big buttons sit centred underneath it.
  *
- * The dissolve is the point. The wash starts from the average colour of the cover's own bottom rows,
- * so there is no line where the picture stops - it simply runs out of picture. Everything is static:
- * one gradient, no blur, no animation, so an open page costs nothing between frames. Scrolling moves
- * the artwork in the draw phase only, so it never recomposes.
+ * The dissolve is the point. The artwork fades into the page as the player's sleeve does
+ * ([SoftSleeve]): its last stretch blurs and eases out, so there is no line where the picture stops - it
+ * simply runs out of picture. Nothing animates, so an open page costs nothing between frames. Scrolling
+ * moves the picture in the draw phase only, so it never recomposes, and the fade scrolls with the title.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -73,6 +75,12 @@ fun HeroPage(
     title: String,
     /** The same cover at the sizes lists ask for: drawn at once while [coverUrl] loads. */
     coverStandIns: List<String?> = emptyList(),
+    /**
+     * The record the page is of (its id), for a page that opens on what a row knew and is then answered:
+     * its colors are measured once from the first cover it has. The answer may name that cover by
+     * another address (a larger rendition), and measured again the page would change color while read.
+     */
+    item: String? = null,
     /** The artist line under the title, in ink; tapping it opens [onSubtitle]. */
     subtitle: String? = null,
     /** The title's size: Literata 27 for a record, larger for an artist. */
@@ -113,7 +121,7 @@ fun HeroPage(
     content: LazyListScope.() -> Unit,
 ) {
     val settings: SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     // Pages wear their cover's colours except in Midnight (the core's rule).
     val tinted = LocalPapers.current.coversTint
     // The picture that stands at the top of the page: the cover, or the mosaic of a page of several records.
@@ -127,9 +135,8 @@ fun HeroPage(
     // provider's too, whose file the core keeps in memory): the full one is a download away, and the
     // page wore the theme's colours until it came.
     val context = androidx.compose.ui.platform.LocalContext.current
-    val measured = remember(lead, coverStandIns) {
-        coverStandIns.firstOrNull { it != null && dev.nori.music.data.CoverLoader.get(context).kept(it) != null } ?: lead
-    }
+    val pick = { coverStandIns.firstOrNull { it != null && dev.nori.music.data.CoverLoader.get(context).kept(it) != null } ?: lead }
+    val measured = if (item != null) remember(item, lead != null, pick) else remember(lead, coverStandIns, pick)
     val palette = if (tinted) rememberCoverPalette(measured) else null
     // Shuffle stays labelled Shuffle (never Pause); it lights while this page's queue is shuffling.
     val player: PlayerViewModel = viewModel()
@@ -167,37 +174,23 @@ fun HeroPage(
                     val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(side, side + HERO_DEEPER.roundToPx()))
                     layout(placeable.width, placeable.height) { placeable.place(0, 0) }
                 }
-                    // Parallax and fade, read in the draw phase: scrolling never recomposes the hero.
-                    .graphicsLayer {
-                        val scrolled = heroScroll(size.height)
-                        translationY = scrolled * 0.4f
-                        alpha = 1f - (scrolled / size.height).coerceIn(0f, 1f) * 0.5f
-                    },
+                    // Fade, read in the draw phase: scrolling never recomposes the hero.
+                    .graphicsLayer { alpha = 1f - (heroScroll(size.height) / size.height).coerceIn(0f, 1f) * 0.5f },
             ) {
-                picture(Modifier.fillMaxSize())
-                val look = LocalLook.current
+                // The parallax, also in the draw phase: the picture lags the page, clipped to its box.
+                val lag = Modifier.fillMaxSize().clipToBounds().graphicsLayer { translationY = heroScroll(size.height) * 0.4f }
+                // The cover fades into the page as the player's sleeve does: its last stretch blurs and eases
+                // out with no slope at either end, so there is no row where the picture is seen to stop, and
+                // the title stands where that fade is nearly over. The blur and the fade are the page's, not
+                // the picture's: they scroll with the title, as the player's go with it when it shrinks, and
+                // only the picture behind them lags. The fade ends on the page inside the box, so the lag
+                // never slides a seam into view.
+                SoftSleeve(Modifier.fillMaxSize()) { picture(lag) }
+                // Just enough shade under the status bar for white icons on a pale cover.
                 Box(
-                    Modifier.fillMaxSize().drawWithCache {
-                        // The whole dissolve happens inside the artwork, and finishes on the
-                        // page colour rather than on the cover's edge colour: a second gradient
-                        // below would be squeezed into a few dozen pixels as the parallax slides
-                        // the picture down over it, and a colour ramp that steep across the full
-                        // width is a line. The stops are the look's (nori_look::dress), made
-                        // into brushes once per size.
-                        val at = stage.heroStops
-                        val dissolve = Brush.verticalGradient(
-                            at[0] to Color.Transparent,
-                            at[1] to look.color(CoverLook.HERO_EDGE),
-                            at[2] to look.color(CoverLook.HERO_MID),
-                            at[3] to look.color(CoverLook.BACKGROUND),
-                        )
-                        // Just enough shade under the status bar for white icons on a pale cover.
+                    lag.drawWithCache {
                         val shade = Brush.verticalGradient(0f to Color.Black.copy(alpha = stage.statusShade), stage.statusShadeTo to Color.Transparent)
-                        onDrawWithContent {
-                            drawContent()
-                            drawRect(dissolve)
-                            drawRect(shade)
-                        }
+                        onDrawBehind { drawRect(shade) }
                     },
                 )
             } else if (art != null) Box(
@@ -251,7 +244,8 @@ fun HeroPage(
                     { press(buttons.playPress, onPlay) }, Modifier.weight(1f),
                     prominent = true, enabled = buttons.playEnabled,
                 )
-                actions()
+                // The seal's place is kept on a page without one, so the pill stays in the middle.
+                Row(Modifier.widthIn(min = GLYPH_TARGET), Arrangement.spacedBy(4.dp), Alignment.CenterVertically) { actions() }
             } else Row(
                 Modifier.fillMaxWidth().padding(start = Space.tight, end = Space.tight, top = 2.dp),
                 Arrangement.Center, Alignment.CenterVertically,

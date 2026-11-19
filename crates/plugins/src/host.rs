@@ -135,6 +135,9 @@ pub trait Side: Send + Sync {
     fn asset(&self, _id: &str, _name: &str, _state: crate::AssetState) {}
     /// Say each change of the settings to [`crate::Plugins`] from now on, or stop.
     fn watch_settings(&self, _on: bool) {}
+    /// A plugin's notification buttons would answer otherwise now: the client asks for them again
+    /// ([`crate::Plugins::notification_buttons`]).
+    fn buttons_changed(&self) {}
     /// The user's switch turns every plugin off (their own switches kept).
     fn all_off(&self) -> bool {
         false

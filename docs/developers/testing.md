@@ -33,7 +33,7 @@ For the shared queue, nextest, Bazel and running several emulators, see
 | --- | --- |
 | player | the sound chain sample by sample (decoders, ReplayGain, equalizer, compressor, limiter, speed, silence skipping), AutoMix analysis on synthetic songs of known tempo, key and structure, the planner (never panicking over any stored row: `automix/plan_fuzz.rs`; each style's mixes of synthetic pairs scored against their known drops, phrases, keys and singing, and held to those scores; each end's beats by level, Lock@10/Lock@20 and bar starts, and every beat-matched mix by where both songs' true beats land: `automix/eval.rs`), the mixer and the engine's loops and tempo bends, and the whole player on a simulated output (`sim`, `tests/pipeline`): gapless joins, crossfades, levels, controls |
 | engine | the player on its own thread, on the virtual clock of `tests/common`: loading, fetching ahead, the stream cache, offload on a simulated chip (`paths.rs`), radio, tempo, stretched mixes (`stretch.rs`), estimated transcode lengths and their 416 (`estimated.rs`, `transcode.rs`), streams that hang (`hung.rs`), never playing silent (`silent.rs`), one fetch per song (`one_fetch.rs`), settings changed while playing (`replan.rs`), albums kept gapless (`album.rs`), jam guests listening along (`along.rs`), pushed and late-decoded songs for the web (`pushed.rs`, `driven.rs`, `later.rs`), FLAC and ALAC decoding to what was encoded in every shape ffmpeg makes, and Opus decoding with no packet refused in every mode and frame length libopus makes, with a digest to compare a change with (`decoders.rs`), the core's queue (`core.rs`) |
-| core | the FFI surface over real SQLite: index and search, smart playlists, mixes, history, lyrics, covers, AutoEQ, the Subsonic client against a fake transport, transfers, the car's tree; whole flows against an in-memory server (`tests/scenario.rs`); remote control and jams over an in-memory relay (`tests/remote.rs`); listens kept by profile (`tests/scrobble.rs`); Kotlin twins (`tests/twins.rs`) |
+| core | the FFI surface over real SQLite: index and search, smart playlists, mixes, history, lyrics, covers, AutoEQ, the Subsonic client against a fake transport, transfers, the car's tree; whole flows against an in-memory server (`tests/scenario.rs`); remote control and jams over an in-memory relay (`tests/remote.rs`); listens kept by profile (`tests/scrobble.rs`); plays sent to ListenBrainz, Libre.fm and Last.fm accounts against a fake transport (`scrobblers.rs`); Kotlin twins (`tests/twins.rs`) |
 | host | the shared session: queue saving, profiles and jam guest profiles, signing out, autofill and radio (`refill_tests.rs`), remote control and volume (`remote.rs`), LAN jams, pairing (each reason it fails, a code good for one device, a device on two networks paired, joined and found at the address that answers, forgetting one device on both sides), a guest without the host's plugin searching and streaming through the host (`tests/lan_jam.rs`) |
 | lyrics | every format, the services' answers, trust and fitting, the race between services, sync against synthetic sung songs (`sync.rs`) |
 | covers | decoders against Pillow's output, the scaler, disk and memory caches, the loader |
@@ -213,7 +213,7 @@ A new device check needs a line here saying why Rust cannot test it.
 | --- | --- | --- |
 | `lyrics` | lyrics cross the binding; the next song's lyrics are cached ahead and arrive after an offline skip | the Android binding and the network going |
 | `status-bar` | the status bar's icons stay right after a theme change under an album page (local server) | what the window was told, which only the system reports |
-| `notification` | the session's seal and shuffle act and redraw, and the system's notification has the seal without shuffle; its cover is drawn once and then served from disk | the media session, the cover provider's readers |
+| `notification` | the session's seal and shuffle act and redraw, and the system's notification shows both; its cover is drawn once and then served from disk | the media session, the cover provider's readers |
 | `album-page` | the Play and Shuffle pills answer for the page's own queue; holding a song opens its menu | Compose taps and gestures |
 | `bridge` | downloads stand in while the server is out of reach, and the album comes back with the network | the network really going and coming |
 | `download-notification` | tapping the download notification opens the queue | the notification's intent |
@@ -249,6 +249,11 @@ app's listener, then restores adb's previous state.
   `"car play <id>"` and `"car voice <words>[|artist|album|playlist|genre|song]"`, logging each row under
   the tag `noricar`. `adb shell content read --uri content://dev.nori.music.carart/c/<cover id>` reads a
   picture. Android Auto itself is checked on a phone with the Desktop Head Unit.
+- **A TV**: an Android TV emulator (a `tv` system image, 1080p) and `adb shell input keyevent 19`-`23`
+  (up, down, left, right, center) walk the remote's focus: the side chrome, into the page beside it,
+  into the player and back. `uiautomator dump` marks the focused node. adb's keys come from a virtual
+  device, which a text field ignores for moving focus, so leaving a field with the D-pad needs a real
+  remote.
 
 ## Desktop
 

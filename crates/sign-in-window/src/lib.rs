@@ -12,6 +12,10 @@ use nori_core::settings::ServerKind;
 
 mod window;
 
+/// WebKitGTK's switch for its GPU-buffer renderer; set by the user, theirs stands.
+#[cfg(target_os = "linux")]
+const WEBKIT_DMABUF: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+
 /// The window, when this process was started as one: call first thing in `main`. Returns otherwise.
 pub fn serve_if_asked() {
     let mut args = std::env::args().skip(1);
@@ -40,7 +44,15 @@ impl SignInWindow {
     /// [`SignInWindow::open`] at `start`: a page the provider's plugin asked for (`sign-in.open`).
     pub fn open_at(kinds: Arc<Kinds>, kind: ServerKind, title: String, start: String, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
         let me = std::env::current_exe().ok()?;
-        let mut child = Command::new(me).arg("--sign-in").arg(title).arg(start).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+        let mut window = Command::new(me);
+        // WebKitGTK hands the page's frames to the window as GPU buffers, which fail silently where its
+        // graphics libraries do not fit the system's driver (an AppImage's bundled ones, NVIDIA's): the
+        // window stays blank. Shared memory works with every driver, and a sign-in page costs nothing to draw.
+        #[cfg(target_os = "linux")]
+        if std::env::var_os(WEBKIT_DMABUF).is_none() {
+            window.env(WEBKIT_DMABUF, "1");
+        }
+        let mut child = window.arg("--sign-in").arg(title).arg(start).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
         let (out, id) = (child.stdout.take()?, child.id());
         let watch = std::thread::Builder::new().name("nori-sign-in-window".into()).spawn(move || {
             for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {

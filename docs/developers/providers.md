@@ -34,8 +34,8 @@ so it can hold that profile's state (a session, resolved streams).
 |---|---|
 | `info` | the add form's fields (`FieldSpec`: a `FormField` such as name, address, user; plain or advanced) and how the account signs in, the first way offered first (`SignIn::WebPage { start_url }`, `SignIn::Code`, `SignIn::Paste`) |
 | `ready`, `check` | whether the form can be sent; checking a profile before it is kept (a server is pinged) |
-| `rules` | the profile's `ProfileRules`: library sections, favorites, downloads, radio, remote control and jams, scrobbles, its own Home feed, and the same for a jam guest |
-| `configure` | points the `Core` at the profile |
+| `rules` | the profile's `ProfileRules`: library sections, favorites, playlist changes (a Subsonic account's; a plugin's signed in with Playlists in its Library), downloads, radio, remote control and jams, scrobbles, its own Home feed, and the same for a jam guest |
+| `configure` | points the `Core` at the profile. A plugin is told the profile open (`open`), and told again when its instance starts anew after a failed call (`Worker::opens`) |
 | `read`, `parse`, `scope`, `gone` | the core's `Read`s (search, album, artist, playlist, Home feed, library sections) as a `Page` (`Answer::Page`), or as the raw answer the core keeps on disk and has `parse` read again (`Answer::Raw`, a Subsonic server's); what else an answer depends on (a server's music folders); which error means the item is gone |
 | `write` | favorites, playlists and the rest of `Write`, where it has somewhere to send them |
 | `stream`, `ahead`, `resolver` | where a song streams from and its cache key; how far ahead songs may be fetched; a `ResolveStream` that turns stream addresses into the URLs they open at, called by the engine's byte source (`nori_engine::core::resolving`), which reads a URL served as an HLS playlist as its segments (`crates/engine/src/hls.rs`) |
@@ -54,6 +54,17 @@ A provider only fetches and sends. Everything else is the core's page store
   and is asked anew when stale. A page asked anew that has not changed is not shown again.
 - The session's favorites are laid over every page as it is read: items unmarked this session leave the
   favorites, items marked join them before the source lists them.
+- Favorites the account can't keep (a plugin's provider signed out, or one without an account) are kept
+  on this device (`ProfileRules::stars_here`, `Provider::favorites_here`; `crates/core/src/favorites.rs`):
+  `Client::star` keeps the item's record (title, artist, album, cover; enough to draw its row and open
+  it) in the profile's `favorites_here` table, never sending, queueing or streaming anything. The record is
+  the one this session showed (the queue, a download, a kept page), else the source's page of the item.
+  Seals then show on songs, albums and artists as an account's would, and the favorites list the
+  source's with those kept here after them, each item once. Signed in, seals go to the account; one kept
+  here from before is unsealed here, and on the account too when it lists it. A kind of item the
+  account has nowhere for (`Provider::keeps_favorites`; a plugin's `write` answering `unsupported`: an
+  album or an artist on YouTube Music) is kept here while signed in too. They are not indexed or
+  synced, go with the profile when it is removed, and are in a backup.
 - A write makes the pages of its kind stale (`cache_policy::stale`). They still show, offline too, until
   the source answers anew.
 - Home stays as first shown for the whole session. A refresh merges the new feed into it, so nothing
@@ -74,7 +85,7 @@ A client asks the core and draws:
 |---|---|
 | the first screen | a new profile starts here: `Kinds::providers`, in order, then quieter `nori_plugins::provider_offers`, what repos offer that isn't on. One not installed opens its plugin page; once its install begins (`AddEvent::InstallBegan`) the page gives way to the first screen, which shows it installing (`AddPage::Installing`), and once installed it is turned on and chosen; refused, its page shows again. One installed but off just turns on. The pages are `providers::flow::AddFlow`: the client hands it each `AddEvent` and draws the `AddPage` and `AddSend` it is left with, doing the `AddDo` it answers. Choosing a kind runs `ProviderInfo::first_step`: a form to fill, titled with the provider's name; a sign-in page or code first and nothing to fill (a name alone doesn't count), a page with its sign-in and Continue as guest; nothing at all, added at once (`AddDo::Connect`), its page showing only if that fails. A profile goes out once at a time, and how a new one was asked for (`AfterAdding`) comes back only with its acceptance (`AddDo::Open`); its page stays while the pages close, which start afresh when opened again. Back from a page chooses again. With every plugin off (`pluginsOff`) no plugin is offered. Repos that can't be read leave `Kinds::providers` |
 | the add form | the chosen kind's `ProviderInfo` fields, advanced ones folded away; `Kinds::server_ready` says whether it can be sent |
-| logging in | `log_in`: `Kinds::login_profile`, then `Kinds::check_profile`; keeps the profile as the active one |
+| logging in | `log_in`: `Kinds::login_profile`, then `Kinds::check_profile`; keeps the profile as the active one. A login to a saved server's address and user is that profile again; a kind that asks no address (a service's account) takes a profile per login |
 | opening a profile | `Kinds::waits` first, for a plugin's profile; then `Core::configure_profile`; the engine's byte source wrapped by `nori_engine::core::resolving` |
 | its account | `Client::sign_in_due(added)` says what to show once a profile opens, or its account changed: the sign-in offered or its page opened after adding, nothing (and no more reminders) after adding as a guest, and the offer again when the provider ended the session, until told to stop reminding. `Client::sign_in_offer` is the offer asked for. What shows, one dialog at a time, and the sign-in on its way are `providers::flow::SignInFlow` |
 | signing in | for a `SignIn::WebPage`, a page of the app's own at `start_url` whose addresses (each page, and each address it refuses to open: an OAuth redirect to an app's own address) and cookies go to `Kinds::sign_in_done` until it says done, then to `Client::sign_in`; for `SignIn::Code`, the code shown large with a button opening its page in the system's browser and one copying it: `Client::sign_in_with_code` asks for it and checks it on a thread of its own (`providers::code::CodeSignIn`) while `SignInFlow::checks_code` holds, its events (`CodeShown`, `CodeExpired`, `Answered`) going to the flow, and an expired one offers a new code; for `SignIn::Paste`, a box to paste into. The offer's sign-in opens the first way (`Client::sign_in_open`). `Client::account` says where it stands |

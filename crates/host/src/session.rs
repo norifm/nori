@@ -17,6 +17,7 @@ use nori_core::playlist::{Hand, QueueEdit};
 use nori_core::lyrics_follow::LyricsNow;
 use nori_core::rules::{queue_keep, BridgeStep, QueueMoment};
 use nori_core::search::{SearchSession, SearchView};
+use nori_core::update::UpdateCheck;
 use nori_core::settings::{SavedServer, SettingChange, StoredPrefs};
 use nori_core::settings_store::{APPLY_AUDIO, APPLY_GAIN, CACHE_LIMIT, PLAYER, REPLAN, SOUND};
 use nori_core::transport::{block_on, Exchange, FailureKind, NetError, Transport, TransportError, TransportResponse};
@@ -58,6 +59,39 @@ pub enum Said {
     Working,
     /// The profile in use keeps another picture of its account: its marks are drawn again.
     Pictured,
+    /// What an update check found ([`Handle::update_check`]).
+    Update(UpdateFound),
+    /// Downloaded songs to offer an analysis: AutoMix was turned on, or an update changed the analysis
+    /// ([`Handle::analysis_offer`]). The client asks, and answers yes through [`Handle::analyse_downloads`].
+    AnalysisOffer(nori_core::automix::AnalysisOffer),
+    /// What plugins override of the settings changed: the client draws again what it reads of the
+    /// settings in effect.
+    Overridden,
+}
+
+/// What an update check found that is worth saying: a newer release always, the rest only when the
+/// check was asked for.
+#[derive(Debug, Clone)]
+pub enum UpdateFound {
+    /// A newer release, installed from its `page` (a desktop build does not update itself).
+    Newer { version: String, page: String },
+    /// This build is the newest, `latest`.
+    Latest(String),
+    Failed(NetError),
+}
+
+impl UpdateFound {
+    /// What to say of `check`'s outcome; None for nothing (not due, or nothing newer when not `asked`).
+    fn of(check: Result<UpdateCheck, NetError>, asked: bool) -> Option<UpdateFound> {
+        let found = match check {
+            Ok(UpdateCheck::NotDue) => return None,
+            Ok(UpdateCheck::NoApk { version, page }) => UpdateFound::Newer { version, page },
+            Ok(UpdateCheck::Available { update, .. }) => UpdateFound::Newer { version: update.version, page: update.page },
+            Ok(UpdateCheck::UpToDate { latest }) => UpdateFound::Latest(latest),
+            Err(e) => UpdateFound::Failed(e),
+        };
+        (asked || matches!(found, UpdateFound::Newer { .. })).then_some(found)
+    }
 }
 
 /// Something done or failed, for the status line.
@@ -73,8 +107,6 @@ pub enum Note {
     Indexed(IngestStats),
     IndexStopped(NetError),
     Done(Chore),
-    /// Forgot this many songs' measurements.
-    Forgot(u32),
     /// An AutoEQ curve could not be fetched.
     CurveFailed(NetError),
 }
@@ -84,7 +116,6 @@ pub enum Note {
 pub enum Chore {
     SyncLibrary,
     DownloadLibrary,
-    MeasureAgain,
     ClearStream,
     ClearCovers,
     ClearLyrics,
@@ -312,6 +343,8 @@ pub struct Parts {
     pub guest: bool,
     /// The saved profile open.
     profile_id: String,
+    /// Its account: signing in and out, who it acts as.
+    account: crate::account::Account,
     /// The rules the client was last told of ([`Parts::account_changed`]).
     rules_shown: parking_lot::Mutex<ProfileRules>,
     discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
@@ -433,7 +466,10 @@ impl Session {
         let device = if guest { nori_core::remote::RemoteMe { kind: nori_remote::wire::DeviceKind::Guest, ..o.device } } else { o.device };
         #[cfg(feature = "desktop")]
         let media = o.mpris.map(|m| crate::remote::Media::new(m, covers.clone(), core.clone()));
+        let pictured = o.out.clone();
+        let account = crate::account::Account::new(client.clone(), core.session.settings.clone(), o.profile.id.clone(), Box::new(move || pictured(Said::Pictured)), None);
         let parts = Parts {
+            account,
             core,
             client,
             engine,
@@ -473,15 +509,28 @@ impl Session {
         #[cfg(feature = "desktop")]
         h.player_shown(true);
         h.follow_remote();
-        h.keep_picture();
+        #[cfg(feature = "desktop")]
+        h.follow_bluetooth();
+        h.account.keep_picture();
         if !h.offline && h.rules().downloads && h.core.download_counts().pending > 0 {
             h.start_downloads();
         }
+        h.sync_kept(nori_core::transfers::KeptCheck::Opened);
         Ok(Session { h })
     }
 
-    /// Saves the queue and stops the engine.
+    /// Saves the queue and stops the engine, as the client quits: the remote's last sends go first, so
+    /// the device leaves the others' lists at once.
     pub fn close(&self) {
+        let remote = self.remote();
+        self.end();
+        if let Some(r) = remote {
+            r.sent();
+        }
+    }
+
+    /// Saves the queue and stops the engine and the remote, which sends what it still has meanwhile.
+    fn end(&self) {
         #[cfg(feature = "desktop")]
         if let Some(m) = &self.media {
             m.mpris.serve(None);
@@ -492,14 +541,14 @@ impl Session {
         self.engine.stop();
     }
 
-    /// Closes the session as `next` takes over (None: the sign-in). A jam guest's profile is left for
-    /// good then: the jam is told, and its rows are forgotten.
+    /// Closes the session as `next` takes over (None: the sign-in), without waiting on the network. A
+    /// jam guest's profile is left for good then: the jam is told, and its rows are forgotten.
     pub fn close_for(&self, next: Option<&SavedServer>) {
         let left = self.guest && next.is_none_or(|p| p.id != self.profile_id);
         if let Some(r) = self.remote().filter(|_| left) {
             r.jam_leave();
         }
-        self.close();
+        self.end();
         if left {
             forget_guest_rows(self.db.to_string_lossy().into_owned(), &self.profile_id);
         }
@@ -572,6 +621,42 @@ impl Handle {
                 me.sync();
             }
             let _ = me.client.flush_pending().await;
+        });
+    }
+
+    /// Checks for a newer release of nori: `asked` from the settings, else once a day while the setting
+    /// is on (a client that shows updates asks as a session opens). [`UpdateFound::of`] says what is
+    /// said.
+    pub fn update_check(&self, asked: bool) {
+        let me = self.clone();
+        self.run(async move {
+            let check = me.client.update_check(asked, env!("CARGO_PKG_VERSION").into(), Vec::new()).await;
+            if let Some(found) = UpdateFound::of(check, asked) {
+                (me.out)(Said::Update(found));
+            }
+        });
+    }
+
+    /// Offers the downloads an analysis when an update changed it, once per change, with AutoMix on (a
+    /// client asks as a session opens).
+    pub fn analysis_offer(&self) {
+        let me = self.clone();
+        self.run(async move {
+            if let Some(offer) = me.core.analysis_offer_at_start() {
+                (me.out)(Said::AnalysisOffer(offer));
+            }
+        });
+    }
+
+    /// Reads back the downloads lacking an analysis or the beat model's read (`Core::download_unanalysed`),
+    /// under the downloads' progress.
+    pub fn analyse_downloads(&self) {
+        let Some(d) = self.downloader.clone() else { return };
+        let out = self.out.clone();
+        self.run(async move {
+            if d.measure_saved() > 0 {
+                out(Said::Working);
+            }
         });
     }
 
@@ -776,6 +861,9 @@ impl Handle {
         // The player shows on every page of a desktop client while it is seen.
         #[cfg(feature = "desktop")]
         self.player_shown(seen);
+        if seen {
+            self.sync_kept(nori_core::transfers::KeptCheck::Shown);
+        }
         let Some(remote) = self.remote() else { return };
         remote.clone().sight(if seen { nori_core::remote::Sight::Screen } else { nori_core::remote::Sight::Nothing });
         if seen {
@@ -783,9 +871,25 @@ impl Handle {
         }
     }
 
+    /// With `playOnBluetooth` on, a Bluetooth audio device connecting plays, as a play press does; the
+    /// plugin host is how the desktop hears them, and watches Bluetooth only while this is on.
+    #[cfg(feature = "desktop")]
+    fn follow_bluetooth(&self) {
+        let Some(plugins) = &self.plugins else { return };
+        let on = self.core.session.settings.effective().is_some_and(|p| p.play_on_bluetooth);
+        let me = self.weak();
+        plugins.hear_outputs_connect(on.then(|| {
+            Arc::new(move || {
+                if let Some(parts) = me.upgrade() {
+                    Handle::of(parts).resume();
+                }
+            }) as Arc<dyn Fn() + Send + Sync>
+        }));
+    }
+
     /// Makes or drops the remote as the settings say, and serves while remote control is on.
     fn follow_remote(&self) {
-        let prefs = self.core.session.settings.current().unwrap_or_default();
+        let prefs = self.core.session.settings.effective().unwrap_or_default();
         if self.offline || !self.rules().remote || !(prefs.remote_control || self.guest) {
             return self.remotes.set(None);
         }
@@ -945,9 +1049,66 @@ impl Handle {
         self.start_downloads();
     }
 
-    /// [`Handle::download`] of what `what` names, once fetched.
+    /// [`Handle::download`] of what `what` names, once fetched; a playlist is kept downloaded as it
+    /// changes (`Core::download_playlist`).
     pub fn download_later(&self, what: Fetch) {
-        self.fetched(what, |me, songs| me.download(songs));
+        match what {
+            Fetch::Playlist(id) => self.fetched(Fetch::Playlist(id.clone()), move |me, songs| me.download_playlist(id, songs)),
+            what => self.fetched(what, |me, songs| me.download(songs)),
+        }
+    }
+
+    /// Downloads playlist `id`, all of whose `songs` are given, and keeps it downloaded as it changes
+    /// (`Core::download_playlist`).
+    pub fn download_playlist(&self, id: String, songs: Vec<Song>) {
+        match self.core.download_playlist(id, songs) {
+            Ok(change) => {
+                self.note(Note::Downloading(change.queued.fresh.len() + change.queued.again.len()));
+                self.kept_changed(change);
+            }
+            Err(e) => self.note(Note::DownloadFailed(e)),
+        }
+    }
+
+    /// Brings the playlists kept downloaded up to date with the server when `check` is due
+    /// (`Client::kept_playlists_sync`).
+    fn sync_kept(&self, check: nori_core::transfers::KeptCheck) {
+        if self.offline || !self.rules().downloads {
+            return;
+        }
+        let me = self.clone();
+        self.run(async move {
+            if let Ok(change) = me.client.kept_playlists_sync(check).await {
+                me.kept_changed(change);
+            }
+        });
+    }
+
+    /// Sends `w`, a change to a playlist, and waits for the server to take it; a kept playlist it changed
+    /// then follows before this returns (`Client::kept_playlist_written`). Not on a UI thread.
+    pub fn write_playlist(&self, w: nori_core::client::Write) -> Result<(), NetError> {
+        block_on(self.client.write(w.clone()))?;
+        if !self.offline && self.rules().downloads {
+            if let Ok(change) = block_on(self.client.kept_playlist_written(w)) {
+                self.kept_changed(change);
+            }
+        }
+        Ok(())
+    }
+
+    /// Does what keeping playlists downloaded changed: the songs queued download, covers too, and those
+    /// gone are deleted.
+    fn kept_changed(&self, change: nori_core::transfers::KeptChange) {
+        for id in &change.gone {
+            self.download_remove(id);
+        }
+        let queued: std::collections::HashSet<&String> = change.queued.fresh.iter().chain(&change.queued.again).collect();
+        if queued.is_empty() {
+            return;
+        }
+        let songs: Vec<Song> = self.core.downloads(false).unwrap_or_default().into_iter().filter(|s| queued.contains(&s.id)).collect();
+        warm_covers(&self.core, self.covers.as_ref(), &songs);
+        self.start_downloads();
     }
 
     /// Where song `id`'s download stands.
@@ -983,10 +1144,15 @@ impl Handle {
 
     /// Sets a setting by name and applies its effects, as Android's player does. None if no such setting.
     pub fn setting(&self, name: &str, value: &str) -> Option<SettingChange> {
+        let remote = |p: &StoredPrefs| p.remote_control;
+        let (before, remote_before) = (self.core.session.settings.prefs(|p| p.auto_mix), self.core.session.settings.in_effect(remote));
         let change = self.core.session.settings.edit_by_name(name, value)?;
         self.took(&change);
-        if matches!(name, "remoteControl" | "jam") {
+        if self.core.session.settings.in_effect(remote) != remote_before {
             self.follow_remote();
+        }
+        if let Some(offer) = self.core.analysis_offer_on_switch(before, change.prefs.auto_mix) {
+            (self.out)(Said::AnalysisOffer(offer));
         }
         Some(change)
     }
@@ -995,10 +1161,23 @@ impl Handle {
     /// nori's plugin host, and applies them.
     pub fn lay_overrides(&self, overrides: Vec<(String, String)>) {
         let settings = &self.core.session.settings;
+        let before = settings.effective();
         let effect = settings.set_layer(nori_core::overrides::Layer { overrides, ..settings.layer() });
-        if let Some(prefs) = settings.current() {
+        if effect != 0 || settings.effective() != before {
+            self.overrides_changed(effect);
+        }
+    }
+
+    /// The settings in effect changed with what plugins override: applies `effect` and follows remote
+    /// control.
+    pub fn overrides_changed(&self, effect: u32) {
+        if let Some(prefs) = self.core.session.settings.current() {
             self.apply(effect, &prefs);
         }
+        self.follow_remote();
+        #[cfg(feature = "desktop")]
+        self.follow_bluetooth();
+        (self.out)(Said::Overridden);
     }
 
     /// Applies the settings a backup restored (`nori_backup::restore`), as [`Session::setting`] does a
@@ -1010,6 +1189,8 @@ impl Handle {
 
     fn took(&self, change: &SettingChange) {
         self.apply(change.effect, &change.prefs);
+        #[cfg(feature = "desktop")]
+        self.follow_bluetooth();
         if let Some(store) = self.store.as_ref().filter(|_| change.effect & CACHE_LIMIT != 0) {
             store.set_limit(change.prefs.cache_mb.max(0) as u64 * 1024 * 1024);
         }
@@ -1161,21 +1342,9 @@ impl Handle {
         block_on(self.search.answer(self.client.clone(), query, error))
     }
 
-    /// Signs the profile's account in with `answer` (cookies pasted from a browser); signed in, the
-    /// profile keeps the account's name, which a session opened on it again reads as signed in.
-    pub fn sign_in(&self, answer: String) -> nori_core::providers::SignInResult {
-        let r = block_on(self.client.sign_in(answer));
-        self.signed_in(&r);
-        r
-    }
-
-    /// How a sign-in went, whichever way it went (a page, pasting, a code): signed in, the profile keeps
-    /// the account's name.
-    pub fn signed_in(&self, r: &nori_core::providers::SignInResult) {
-        if let nori_core::providers::SignInResult::SignedIn { name } = r {
-            self.keep_account(name);
-            self.keep_picture();
-        }
+    /// The profile's account: signing it in and out, who it acts as.
+    pub fn account(&self) -> &crate::account::Account {
+        &self.account
     }
 
     /// What the app offers over the profile (a guest's: the host's library, read only), as the core
@@ -1191,63 +1360,9 @@ impl Handle {
         let mut shown = self.rules_shown.lock();
         (now != *shown).then(|| {
             *shown = now;
-            self.keep_picture();
+            self.account.keep_picture();
             self.client.account()
         })
-    }
-
-    /// Signs the profile's account out here; the profile forgets the account's name and picture.
-    pub fn sign_out(&self) {
-        self.client.sign_out();
-        self.keep_account("");
-        if self.profile_look(|s| s.picture.take().is_some()) {
-            (self.out)(Said::Pictured);
-        }
-    }
-
-    fn keep_account(&self, name: &str) {
-        self.profile_look(|s| {
-            s.user = name.to_string();
-            true
-        });
-    }
-
-    /// Changes this session's saved profile with `change`, kept when it says it changed something.
-    fn profile_look(&self, change: impl FnOnce(&mut SavedServer) -> bool) -> bool {
-        let settings = &self.core.session.settings;
-        let Some(mut prefs) = settings.current() else { return false };
-        let Some(s) = prefs.servers.iter_mut().find(|s| s.id == self.profile_id) else { return false };
-        let changed = change(s);
-        if changed {
-            settings.put(prefs);
-        }
-        changed
-    }
-
-    /// Keeps the picture of the account as it acts now on the profile, for its circle
-    /// (`Client::account_picture`); says [`Said::Pictured`] when it changed.
-    fn keep_picture(&self) {
-        let h = self.clone();
-        self.run(async move {
-            let picture = h.client.account_picture().await;
-            if h.profile_look(|s| std::mem::replace(&mut s.picture, picture.clone()) != picture) {
-                (h.out)(Said::Pictured);
-            }
-        });
-    }
-
-    /// Those the signed-in account may act as, its own first, the one it acts as chosen
-    /// (`Client::identities`); empty when it is only itself.
-    pub fn identities(&self) -> Result<Vec<nori_core::providers::Identity>, NetError> {
-        block_on(self.client.identities())
-    }
-
-    /// Acts as [`Handle::identities`]' entry `index` from now on: the library is the new one's, and the
-    /// profile keeps its picture.
-    pub fn choose_identity(&self, index: u32) -> Result<(), NetError> {
-        block_on(self.client.choose_identity(index))?;
-        self.keep_picture();
-        Ok(())
     }
 
     /// Stars or unstars on the server (queued when offline); says so when it fails.
@@ -1306,20 +1421,6 @@ impl Handle {
                     d.clear();
                 }
             }
-            Chore::MeasureAgain => {
-                let Ok(m) = self.core.measure_again() else { return };
-                self.applied(m.effect);
-                // The downloads are measured again now, the other songs as they next play.
-                if let Some(d) = self.downloader.clone() {
-                    let out = self.out.clone();
-                    self.run(async move {
-                        if d.measure_saved() > 0 {
-                            out(Said::Working);
-                        }
-                    });
-                }
-                return self.note(Note::Forgot(m.forgot));
-            }
         }
         self.note(Note::Done(chore));
     }
@@ -1341,17 +1442,9 @@ impl Handle {
             }
             _ => None,
         };
-        if let Some(send) = send.filter(|s| self.rules().scrobbles && (s.submit_id.is_some() || s.now_playing_id.is_some())) {
+        if let Some(send) = send.filter(|s| s.counted.is_some() || s.playing.is_some()) {
             let client = self.client.clone();
-            self.run(async move {
-                // Offline, writes wait in the pending queue with their original time.
-                if let Some(id) = send.submit_id {
-                    let _ = client.write(nori_core::client::Write::Scrobble { id, submission: true, time_ms: Some(send.submit_at) }).await;
-                }
-                if let Some(id) = send.now_playing_id {
-                    let _ = client.write(nori_core::client::Write::Scrobble { id, submission: false, time_ms: None }).await;
-                }
-            });
+            self.run(async move { client.scrobble(send).await });
         }
         match e {
             Event::Song { .. } => self.arrived(),
@@ -1750,9 +1843,8 @@ fn queueable(songs: Vec<Song>) -> Vec<Song> {
     if songs.len() == 1 { songs } else { songs.into_iter().filter(|s| !s.is_provider()).collect() }
 }
 
-/// Queues `songs` but providers' for download, their covers fetched to disk too; what to say of it.
+/// Queues `songs` for download, their covers fetched to disk too; what to say of it.
 fn queue_downloads(core: &Core, covers: Option<&Arc<Loader>>, songs: Vec<Song>) -> Note {
-    let songs: Vec<Song> = songs.into_iter().filter(|s| !s.is_provider()).collect();
     warm_covers(core, covers, &songs);
     match core.download_queue(songs) {
         Ok(q) => Note::Downloading(q.fresh.len() + q.again.len()),
@@ -1836,6 +1928,18 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn an_update_check_says_a_newer_release_and_the_rest_only_when_asked() {
+        let newer = || Ok(UpdateCheck::NoApk { version: "1.0.0".into(), page: "p".into() });
+        let latest = || Ok(UpdateCheck::UpToDate { latest: "0.9.0".into() });
+        let failed = || Err(NetError::Http { status: 500 });
+        let said = |check, asked| UpdateFound::of(check, asked);
+        assert!(matches!(said(newer(), false), Some(UpdateFound::Newer { version, page }) if version == "1.0.0" && page == "p"));
+        assert!([said(latest(), false), said(failed(), false), said(Ok(UpdateCheck::NotDue), false)].iter().all(Option::is_none), "a check of its own says nothing else");
+        assert!(matches!(said(latest(), true), Some(UpdateFound::Latest(v)) if v == "0.9.0"));
+        assert!(matches!(said(failed(), true), Some(UpdateFound::Failed(NetError::Http { status: 500 }))));
+    }
+
     #[cfg(feature = "desktop")]
     #[test]
     fn a_cast_with_a_volume_is_the_volume_shown() {
@@ -1853,7 +1957,7 @@ mod tests {
         core.download_queue(vec![song("done")]).unwrap();
         core.download_settle(vec!["done".into()], vec![true]).unwrap();
         let said = queue_downloads(&core, None, vec![song("done"), song("new"), song("ext-1")]);
-        assert!(matches!(said, Note::Downloading(1)), "the finished and the provider's song are not downloaded");
+        assert!(matches!(said, Note::Downloading(2)), "the finished song is not downloaded again; a provider's is");
     }
 
     #[test]
@@ -2001,6 +2105,29 @@ mod tests {
                 s.close();
             }
         }
+    }
+
+    /// A plugin turning remote control off drops the remote while the switch stays on; every plugin off
+    /// or the override gone, it is made again.
+    #[test]
+    fn a_plugins_override_of_remote_control_is_followed() {
+        let dir = nori_testdir::TempDir::new("host-remote-override");
+        let settings = nori_core::settings_store::Settings::new();
+        settings.open(&db_path(dir.path())).unwrap();
+        let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
+        let profile = SavedServer { id: "own".into(), url: "http://127.0.0.1:9".into(), user: "ann".into(), ..Default::default() };
+        let s = Session::open(test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)))).unwrap();
+        assert!(s.remote().is_some());
+        s.lay_overrides(vec![("remoteControl".into(), "false".into())]);
+        assert!(s.remote().is_none());
+        assert_eq!(settings.with_prefs(|p| p.remote_control), Some(true), "the switch stays as set");
+        s.setting("pluginsOff", "true");
+        assert!(s.remote().is_some(), "every plugin off");
+        s.setting("pluginsOff", "false");
+        assert!(s.remote().is_none());
+        s.lay_overrides(Vec::new());
+        assert!(s.remote().is_some());
+        s.close();
     }
 
     /// A song's request the server never answers is dropped with its song: the connection closes.

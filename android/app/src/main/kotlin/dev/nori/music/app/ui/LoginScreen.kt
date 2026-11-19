@@ -64,10 +64,15 @@ fun providerWords(vm: SettingsViewModel, kind: dev.nori.music.ffi.settings.Serve
  * account's name to the form being edited.
  */
 @Composable
-private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (String) -> Unit) {
+private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, profile: String, signed: (String) -> Unit) {
     val ui by vm.account.collectAsStateWithLifecycle()
-    val name = vm.prefs.collectAsStateWithLifecycle().value.server?.user.orEmpty()
-    LaunchedEffect(Unit) { vm.lookAtAccount() }
+    val prefs by vm.prefs.collectAsStateWithLifecycle()
+    val name = prefs.servers.firstOrNull { it.id == profile }?.user.orEmpty()
+    // Another profile's account through a client of its own while this shows; nothing else opens.
+    androidx.compose.runtime.DisposableEffect(profile) {
+        vm.accountOf(prefs.servers.firstOrNull { it.id == profile })
+        onDispose { vm.accountOf(null) }
+    }
     LaunchedEffect(name) { signed(name) }
     GroupLabel(say.account)
     if (ui.account == AccountState.SIGNED_IN) {
@@ -320,8 +325,9 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
                     enabled = !busy && ready,
                 )
             }
-            // Signing in is the profile in use's: its core asks the provider.
-            if (info != null && info.signIn.isNotEmpty() && !adding && p.id == vm.prefs.value.activeServerId) AccountPart(vm, info) { name -> p = p.copy(user = name) }
+            if (info != null && info.signIn.isNotEmpty() && !adding) AccountPart(vm, info, p.id) { name -> p = p.copy(user = name) }
+            val saved = vm.prefs.collectAsStateWithLifecycle().value.servers.firstOrNull { it.id == p.id }?.takeIf { !adding }
+            if (saved != null) ScrobblingPart(vm, saved) { changed -> p = p.copy(scrobblers = changed.scrobblers) }
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -433,10 +439,13 @@ fun WaitingProfile(vm: SettingsViewModel, wait: dev.nori.music.ffi.ProfileWait) 
                     }, Modifier.fillMaxWidth().padding(top = 4.dp).testTag("profile-wait"), prominent = true)
                 }
             }
-            val others = prefs.servers.filter { it.id != profile.id }
-            if (others.isNotEmpty()) GroupLabel(say.profiles)
+            // This profile too, unavailable, so the list is the one the user knows.
+            GroupLabel(say.profiles)
             GroupCard {
-                others.forEach { other -> ProfileLine(vm, other, active = false, divider = true) { vm.switchServer(other) } }
+                prefs.servers.forEach { saved ->
+                    val active = saved.id == profile.id
+                    ProfileLine(vm, saved, active, divider = true, onClick = if (active) null else ({ vm.switchServer(saved) }))
+                }
                 GroupRow(say.addProfile, { adding = true }, icon = Iconoir.Plus, divider = false)
             }
         }

@@ -9,6 +9,8 @@ performance come first; the UI speaks nori's own design language, Nori Seasons (
 cargo test -j4 --workspace                          # all Rust tests; never -j above 4 (the machine runs out of memory)
 cargo test -j4 -p <crate>                           # one crate while iterating
 tools/check.sh rust --workspace                     # nextest, queued across worktrees; doctests separately
+tools/check.sh web                                  # CI's wasm clippy of both web modules
+tools/check.sh ipod                                 # the iPod crate alone: its host without the desktop parts
 tools/check.sh android                              # queued debug APK with incremental optimized Rust
 tools/device-check.sh smoke                         # lease one device from NORI_E2E_DEVICES
 python3 tools/rust.py test --workspace               # optional Bazel native tests; shared worktree cache
@@ -31,7 +33,9 @@ tools/ipod.sh [build install run]                   # the iPod app's .ipa, built
 tools/ipod-bench.sh nori|music                      # iPod battery/CPU for 30 min, unplugged, SSH over Wi-Fi (NORI_IPOD_HOST)
 ```
 
-Before committing: `cargo test -j4 --workspace` and a build. If the change reaches Android, also
+Before committing: `cargo test -j4 --workspace` and a build; `tools/check.sh web` and `tools/check.sh ipod`
+when it touches a crate those clients use (core, host, engine, remote): natively nori-web is empty, and
+a workspace build gives the host the desktop parts the iPod leaves out. If the change reaches Android, also
 `tools/smoke.sh` plus the `--only` sections it touches. The full e2e suites run once per batch.
 Use `tools/check.sh` or `tools/with-resource.py build <command>` for heavy commands across agents.
 Device scripts lease their emulator; `tools/device-check.sh` allocates from `NORI_E2E_DEVICES`.
@@ -123,10 +127,10 @@ asks; `docs/research/plugins.md` is the plugin plan.
   client would need it too, it belongs in Rust. A rule written in two languages is a bug. A feature
   only one platform can have (Android Auto, widgets, launcher shortcuts, the iPod's lock screen) may
   live wholly in that client; what it shows still comes from the core where the core already has it.
-- Clients keep parity: a screen, control or fix asked for on one client (Android, the desktop, the web,
-  the terminal, the iPod) is meant for every client that has that screen, even when the request names
-  only one. When the request does not say, ask after building it whether the other clients get it too,
-  and list the ones still missing it.
+- Clients keep parity: every change and fix (a screen, a control, a behavior) is made in every client
+  (Android, the desktop, the web, the terminal, the iPod) that has that screen or feature, in the same
+  change, even when the request names only one, unless the request says otherwise. A client left out
+  is named in the report with why (it has no such screen, no plugins).
 - The core returns data and enums, never user-facing text. Words live in each client: Android string
   resources (`strings.xml`, `strings_ui.xml`, read via `ui/Say.kt`), `crates/cli/src/text.rs`,
   the desktop's `words.rs`. Logs, perf report and self test are English.

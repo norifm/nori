@@ -52,13 +52,19 @@ impl SearchSession {
         Ok(Some(s.view()))
     }
 
-    /// Applies the server's answer to `query`; None if stale.
+    /// Applies the server's answer to `query`; None if stale. A server that finds nothing where the index
+    /// (a copy of its library) found something did not search it (Navidrome skips one letter): the index's
+    /// answer stands as the server's.
     pub fn server(&self, query: String, result: SearchResult) -> Option<SearchView> {
         let split = search_split(result, &query);
         let mut s = self.session.lock();
         if s.query() != query {
             return None;
         }
+        let split = match s.answer.take_split() {
+            Some(index) if found_nothing(&split.everything) && !found_nothing(&index.everything) => index,
+            _ => split,
+        };
         s.answer = Answer::Server(split);
         Some(s.view())
     }
@@ -202,6 +208,13 @@ pub(crate) mod tests {
         let only_playlists = SearchResult { playlists: vec![crate::Playlist { id: "yt-VLa".into(), ..Default::default() }], ..Default::default() };
         assert!(matches!(s.server("x".into(), only_playlists).unwrap().answer, SearchShown::Found { .. }));
         assert_eq!(s.scope(SearchScope::Library).answer.result().map_or(0, |r| r.songs.len()), 0);
+        // The index found something the server did not search for: its answer stays.
+        s.scope(SearchScope::Everything);
+        let indexed = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        crate::db::index(&mut indexed.db.lock(), &[], &[], &[crate::Song { id: "1".into(), title: "Dogs".into(), ..Default::default() }]).unwrap();
+        assert!(matches!(s.typed_with_index(indexed.clone(), "d".into()).answer, SearchShown::Asking { index: Some(_) }));
+        let v = s.server("d".into(), SearchResult::default()).unwrap();
+        assert_eq!(v.answer.result().map(|r| r.songs.len()), Some(1), "{:?}", v.answer);
 
         // Short queries are not remembered.
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();

@@ -15,7 +15,7 @@ built yet, is `docs/research/plugins.md`.
 | plugins' sound stages in the chain | `crates/player/src/stage.rs` |
 | overrides laid over the settings | `crates/settings/src/overrides.rs` |
 | plugins' providers | `crates/core/src/providers/plugin.rs`, through `Kinds` |
-| nori's own plugins | [nori-plugins](https://github.com/norifm/nori-plugins): orbit (a sound stage), playback (speed and pitch as overrides), youtube-music (a provider) |
+| nori's own plugins | [nori-plugins](https://github.com/norifm/nori-plugins): orbit (a sound stage), playback (speed and pitch as overrides), mix-tuning (AutoMix's limits), remote-switch (a row on the devices sheet overriding a setting), youtube-music (a provider) |
 
 ## Writing one
 
@@ -91,7 +91,8 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
   when it is turned on (with a lifecycle) or first called ([`Worker`](../../crates/plugins/src/worker.rs)):
   its calls may block (its HTTP waits on the core's transport there), and the core's executors never
   wait on one. A call whose caller has gone (a search typed over) is skipped. Each call has a fuel
-  budget; a trap or a spent budget fails that call, and the next starts a fresh instance (started again).
+  budget; a trap or a spent budget fails that call, and the next starts a fresh instance (started again, and
+  a provider's told the profile open again).
 - **Requests side by side.** `http.fetch` waits for its answer; `http.start`, `wait` and `take` put up to
   16 requests on their way at once, each on a thread of its own. The SDK's `fetching::send` and
   `fetching::run` drive them from async code, so a `join_all` of requests takes as long as the slowest.
@@ -305,13 +306,22 @@ A plugin changes nori's values by key, never by writing the settings: the user's
 are, and turning the plugin off brings nori's own values back.
 
 - A key is a setting's name (`crossfadeSec`), or a tunable's: a value with no setting
-  (`playback.speed`, `playback.pitch`, `silence.skip`, `queue.previousAlwaysSkips`; `Tunables`).
+  (`playback.speed`, `playback.pitch`, `silence.skip`, `queue.previousAlwaysSkips`; `Tunables`), and
+  AutoMix's limits in place of its style's (`autoMix.longestSec` up to 40, `autoMix.tempoPct` up to 12,
+  `autoMix.beatMatch`, `autoMix.bassSwap`, `autoMix.filters`, `autoMix.keepPitch`; `MixTunables`), which
+  the planner reads through `Settings::transition_prefs` and which replan when they change. This is where
+  the knobs a few people want go, instead of the settings.
 - The host keeps a plugin's overrides in its store and lays the enabled plugins' over the settings in
   their order (`Layer`, held by the app's `Settings`); a later plugin's value of a key wins. A setting's
   override goes through that setting's own codec and range.
+- Everything nori does reads the settings in effect (`Settings::effective`, `with_effective`,
+  `in_effect`; Android's `Settings.effective`); only the settings screens, and edits that write the
+  settings back, read the stored ones (`current`, `with_prefs`, `prefs`; Android's `prefs`).
 - The layer changes when a plugin overrides or clears a key, a row changes, or a plugin is turned on or
-  off, moved or removed; the client then derives the engine's settings again
-  (`nori_engine::core::settings(stored, layer)`), as for a settings change. Nothing is read per buffer.
+  off, moved or removed; when that changes the settings in effect the client hears `layer_changed`,
+  derives the engine's settings again (`nori_engine::core::settings(stored, layer)`) as for a settings
+  change, and follows the rest: remote control is made or dropped (`Handle::overrides_changed`), and
+  the desktop dresses its windows again (`Said::Overridden`). Nothing is read per buffer.
 
 ## Sound stages
 
@@ -382,7 +392,8 @@ nori decides and with a 100 ms budget per call; past it, or with none enabled, n
 ## Slots
 
 Places in nori's screens a plugin fills, each named in its manifest (`places`, `menu`) and drawn by the
-client from what the plugin answers (`crates/plugins/src/slots.rs`); one not named is never asked.
+client from what the plugin answers (`crates/plugins/src/slots.rs`); one not named is never asked. Each
+that calls the plugin needs it to export `slots`; devices calls nothing, so a plugin of rows alone fills it.
 
 | place | the plugin answers | the client |
 |---|---|---|
@@ -416,6 +427,27 @@ no enabled plugin exports the point (`Deciders::deciding`), no input is built an
 `mixes` is AutoMix's (AutoMix seams). On Android double and triple presses stay media3's own (it counts
 them); a long press reaches the decider.
 
+## Notification buttons
+
+A plugin exporting `notification` may decide the buttons beside previous, play and next on Android's
+media notification, lock screen and car (`crates/plugins/src/notification.rs`). nori's own are the core's
+(`Core::session_buttons_now`: the seal and a radio for a library song, shuffle and repeat); the plugin
+gets them in order with what plays (the song, the seal's state, shuffle, repeat) and answers its own
+list, or none for nori's. It may keep, reorder or leave out nori's, give one a glyph of nori's set
+(`types.glyph`, the SDK's `Glyph`) and a label from its strings, and add its own, each with a glyph and a
+label; a press of its own runs its lifecycle `action(id)` (`Plugins::notification_press`).
+
+| point | runs | budget | nori checks |
+|---|---|---|---|
+| notification | the song, the seal, shuffle or repeat changed, or the plugin called `session.buttons-changed`; on Android, off the main thread (`Plugins::notification_buttons`) | fuel only | each of nori's buttons at most once and only those it shows now; a plugin's own has a glyph and a label. Else nori's |
+
+The first enabled plugin exporting it whose answer holds decides; nori's stand otherwise. What was asked
+and answered is kept, so the same song and state ask nothing. While no enabled plugin exports it
+(`Plugins::decides_buttons`, which Android keeps as a flow read when plugins change), the playback
+service draws nori's buttons with no call into the plugin host. Android maps the glyphs to drawables
+of the app's Iconoir set (`glyph_*.xml`, tools/glyphs.py). Only Android has such a notification: MPRIS,
+the iPod's lock screen and a browser's media session have no buttons of a player's own.
+
 ## Device control
 
 A plugin names the Bluetooth devices it reaches in its manifest (`devices`: a name pattern with `*`, a
@@ -428,8 +460,10 @@ lists them, and a channel opens to no other. The install sheet says it reaches B
   through a client `Profile1`), and on macOS IOBluetooth for classic devices and RFCOMM and CoreBluetooth
   for GATT (`crates/host/src/macbt/`). There a device is its classic address (a device only on LE, its
   CoreBluetooth identifier, listed when connected to the system with a common service), and GATT to a
-  classic device goes to the LE peripheral of its name. IOBluetooth runs on a thread of its own whose run
-  loop sleeps between events; CoreBluetooth's delegate on a dispatch queue. Both are made at the first
+  classic device goes to the LE peripheral of its name. IOBluetooth is called on a thread of its own and
+  tells of channels, their data and devices on the main thread's run loop, which the client runs (the
+  terminal client runs itself on another thread for it, `beside_main_run_loop`); CoreBluetooth's delegate
+  runs on a dispatch queue. Both are made at the first
   need and let go once nothing is watched or open. The app's `Info.plist` gives
   `NSBluetoothAlwaysUsageDescription` (`tools/host-release/app.py`).
 - **Watched only while needed.** The platform is told to watch devices connecting only while an enabled
@@ -511,7 +545,7 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
 ```json
 {"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "about": "…", "source": "https://github.com/…",
   "readme": "orbit/README.md", "icon": "orbit/icon.png", "points": ["sound-stage"],
-  "versions": [{"version": "1.2.0", "api": 5, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
+  "versions": [{"version": "1.2.0", "api": 7, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
     "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
 ```
 
@@ -579,7 +613,19 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
 Its `rules` name the Library sections it fills, and each is a `read`: Albums `albums` (sort, count,
 offset), Artists `artists` (whole), Songs `songs` (count, offset, in its own order; fewer than asked ends
 the list), Playlists `playlists`, Favorites `starred` (its `found`'s songs, albums and artists). A read
-it has nothing for answers `none`, the empty page.
+it has nothing for answers `none`, the empty page. Where its rules say `stars` false (signed out, or no
+account), nori keeps the seals on this device, adds Favorites itself and never asks `starred`
+([Providers](providers.md)).
+
+Where its rules say `account` and list Playlists, nori offers playlist changes
+(`ProfileRules::playlists`) and sends them to `write`: `create-playlist`, `add-to-playlist`,
+`remove-from-playlist` (the index into the songs its `playlist` page lists), `rename-playlist`,
+`delete-playlist`. Only a playlist naming no `owner` is offered them: the account's own. One the
+account follows, or the service makes, names who made it.
+
+An artist's page shelves its albums by `kind` (none: with the albums) and orders each shelf newest first
+by `released`, else by `year`, releases of the same day in the plugin's order (`release_groups`). A
+source that gives only years keeps its own order within a year.
 
 A provider whose sign-in ways include `code` answers `start-code` with a code, the page the user allows it
 on in any browser where they are signed in, the seconds between checks and, if it knows, how long it lasts,
@@ -633,7 +679,9 @@ platform grants (Android's Bluetooth permission) is asked again when a plugin ne
 
 The rest of a backup: every stored setting as the settings table keeps it (read back through `load`,
 so an older backup moves on as an older database does), the server profiles with their passwords among
-them, and the saved sound profiles. A restore keeps the profiles here beside the backup's (one with the
+them, the saved sound profiles, and every profile's favorites kept on this device (a provider's account
+couldn't keep them), restored beside those here under the profile each lands as (`same_profile`); a
+backup from before them restores without. A restore keeps the profiles here beside the backup's (one with the
 same id, or the same address and user, stays as it is here) and the profile in use stays in use. Not
 in a backup: each profile's library index, history, downloads and caches (the server has them, or
 they are fetched again), its smart playlists (a profile's library data, not settings), and `app_kv`
@@ -660,6 +708,8 @@ they are fetched again), its smart playlists (a profile's library data, not sett
   the tap feeds them, refinements and plans.
   `tests/lyrics.rs` and `tests/scrobbler.rs`: its lyrics service in nori's race and its scrobbles.
 - `cargo test -p nori-plugins --test deciders`: each decider over the test plugin, nori's checks, the budget.
+- `cargo test -p nori-plugins --test notification`: the fixture's notification buttons in place of nori's,
+  those nori refuses, asked again only on a change or the plugin's word, and its own button's press.
   Their seams with a fake: `cargo test -p nori-queue deciders`, `-p nori-core autofill profiles`.
 - `cargo test -p nori-engine --test engine another_card`: a card swapped mid-song plays on from there.
 - `cargo test -p nori-player --test pipeline stage`: stages in the chain on the virtual clock: kept

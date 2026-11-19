@@ -33,6 +33,20 @@ export struct LibraryTabs {
     favorites: bool,
 }
 
+// A profile's scrobbling account as its dialog lists it.
+export struct ScrobblerLine {
+    id: string,
+    title: string,
+    detail: string,
+    on: bool,
+}
+
+// A kind of scrobbling account to add: its service, and what it costs where it does.
+export struct ScrobblerKindLine {
+    name: string,
+    cost: string,
+}
+
 export struct Mark {
     icon: image,
     letter: string,
@@ -1377,12 +1391,14 @@ component ChoiceLine inherits Rectangle {
                 overflow: elide;
             }
         }
-        if root.full: Icon {
-            y: (parent.height - self.height) / 2;
-            glyph: Icons.check;
-            colour: Theme.text;
-            width: 18px;
-            height: 18px;
+        if root.full: VerticalLayout {
+            alignment: center;
+            Icon {
+                glyph: Icons.check;
+                colour: Theme.text;
+                width: 18px;
+                height: 18px;
+            }
         }
     }
     if root.divider: Rectangle {
@@ -1395,6 +1411,59 @@ component ChoiceLine inherits Rectangle {
     ta := TouchArea {
         enabled: !root.full;
         mouse-cursor: root.full ? default : pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A line on a dialog's group that goes somewhere: its glyph, title and a quiet line under it.
+component GoLine inherits Rectangle {
+    in property <string> title;
+    in property <string> line;
+    in property <Glyph> glyph;
+    in property <bool> divider: true;
+    callback clicked;
+    height: root.line == "" ? 40px : 48px;
+    border-radius: MenuShape.inner;
+    background: ta.has-hover ? Theme.hover : transparent;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 13px;
+                overflow: elide;
+            }
+            if root.line != "": Text {
+                text: root.line;
+                color: Theme.dim;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                glyph: root.glyph;
+                colour: Theme.dim;
+                width: 16px;
+                height: 16px;
+            }
+        }
+    }
+    if root.divider: Rectangle {
+        x: 8px;
+        y: parent.height - 1px;
+        width: parent.width - 16px;
+        height: 1px;
+        background: Theme.hairline;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
 }
@@ -1491,12 +1560,14 @@ component MenuLine inherits Rectangle {
             width: 18px;
             height: 18px;
         }
-        if root.chosen: Icon {
-            y: (parent.height - self.height) / 2;
-            glyph: Icons.check;
-            colour: Theme.dim;
-            width: 16px;
-            height: 16px;
+        if root.chosen: VerticalLayout {
+            alignment: center;
+            Icon {
+                glyph: Icons.check;
+                colour: Theme.dim;
+                width: 16px;
+                height: 16px;
+            }
         }
     }
     if root.divider: Rectangle {
@@ -2250,6 +2321,8 @@ global SongLines {
         if kind == 16 { return Icons.quote-message; }
         if kind == 17 { return Icons.half-moon; }
         if kind == 18 { return Icons.minus-circle; }
+        if kind == 20 { return Icons.nav-arrow-up; }
+        if kind == 21 { return Icons.nav-arrow-down; }
         return Icons.info-circle;
     }
 }
@@ -3206,12 +3279,14 @@ component DevicesView inherits Rectangle {
                     line: d.line;
                     lit: d.active;
                     clicked => { root.pick(d.id); }
-                    if d.active: Icon {
-                        y: (parent.height - self.height) / 2;
-                        glyph: Icons.check;
-                        colour: Theme.accent;
-                        width: 16px;
-                        height: 16px;
+                    if d.active: VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            glyph: Icons.check;
+                            colour: Theme.accent;
+                            width: 16px;
+                            height: 16px;
+                        }
                     }
                 }
                 if d.note != "": HorizontalLayout {
@@ -3829,8 +3904,12 @@ component QueueView inherits Rectangle {
     in property <[SongRow]> queue;
     in property <string> from;
     in property <int> covers-rev;
-    // Its songs can be taken out, moved and cleared (here or on the device playing).
+    // Its songs can be taken out and moved (here or on the device playing).
     in property <bool> editable: true;
+    // What its head offers for the whole queue (the core's `queue_actions`): clearing what follows the
+    // song playing, and keeping it all as a playlist.
+    in property <bool> clearable;
+    in property <bool> keepable;
     // Rows move up and down: the list plays in its order (not shuffled).
     in property <bool> movable;
     // "Removed “Song”" or "Cleared 3 songs" for a few seconds after, with Undo beside it.
@@ -3840,6 +3919,7 @@ component QueueView inherits Rectangle {
     // A right press on a row, where in the window it was.
     callback menu(SongRow, length, length);
     callback clear;
+    callback keep;
     // A row's song taken out, by its list index.
     callback remove(int);
     // The song at a list index moved to another's.
@@ -3878,8 +3958,6 @@ component QueueView inherits Rectangle {
     }
     // The row of the song playing: songs land after it.
     property <int> playing-row: -1;
-    // Songs follow the one playing: the last row is neither played nor playing.
-    property <bool> clearable: root.editable && root.queue.length > 0 && !root.queue[root.queue.length - 1].played && !root.queue[root.queue.length - 1].playing;
     // As Android's queue, rows go soft at both ends: a row scrolled up is gone once 20 px of it are, one
     // going down fades over the last 64 px. `top` is where it is in sight, `h` its height.
     pure function edge(top: length, h: length) -> float {
@@ -3895,7 +3973,7 @@ component QueueView inherits Rectangle {
             covers-rev: root.covers-rev;
             art(a, s, r) => { return root.art(a, s, r); }
         }
-        if root.from != "" || root.clearable: HorizontalLayout {
+        if root.from != "" || root.clearable || root.keepable: HorizontalLayout {
             vertical-stretch: 0;
             padding-left: 8px;
             padding-bottom: 4px;
@@ -3911,6 +3989,14 @@ component QueueView inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 text: "Clear";
                 clicked => { root.clear(); }
+            }
+            if root.keepable: IconButton {
+                y: (parent.height - self.height) / 2;
+                glyph: Icons.plus-circle;
+                quiet: true;
+                accessible-role: button;
+                accessible-label: "Add to playlist";
+                clicked => { root.keep(); }
             }
         }
         queue-scroll := Flickable {
@@ -4231,12 +4317,14 @@ component Chooser inherits Rectangle {
                             vertical-alignment: center;
                             overflow: elide;
                         }
-                        if i == root.chosen: Icon {
-                            y: (parent.height - self.height) / 2;
-                            glyph: Icons.check;
-                            colour: Theme.dim;
-                            width: 18px;
-                            height: 18px;
+                        if i == root.chosen: VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                glyph: Icons.check;
+                                colour: Theme.dim;
+                                width: 18px;
+                                height: 18px;
+                            }
                         }
                     }
                     oa := TouchArea {
@@ -4317,7 +4405,7 @@ global UsageColors {
     }
 }
 
-// The row of a hand-ranked list held by its handle and dragged to another place: its list (the rows' kind)
+// The row of a hand-ranked list held and dragged to another place: its list (the rows' kind)
 // and which (empty: none), where its middle stood and how tall it is, how far it has moved, and how many
 // places it has passed (down +).
 global RankDrag {
@@ -4332,8 +4420,8 @@ global RankDrag {
     in-out property <bool> landing;
 }
 
-// A row of a list ranked by hand (the lyrics services, the profiles): what it holds, then, where it is
-// `movable`, a handle that drags it to another place (its rank in `item.chosen`). The rows it passes step
+// A row of a list ranked by hand (the lyrics services, the profiles): what it holds; where it is `movable`,
+// the row itself is dragged to another place (its rank in `item.chosen`). The rows it passes step
 // out of its way, whatever their heights.
 component RankPlate inherits Rectangle {
     in property <SettingRow> item;
@@ -4361,58 +4449,61 @@ component RankPlate inherits Rectangle {
         border-top-right-radius: root.item.first || root.held ? 18px : 0;
         border-bottom-left-radius: root.item.last || root.held ? 18px : 0;
         border-bottom-right-radius: root.item.last || root.held ? 18px : 0;
-        if root.clickable: TouchArea {
-            clicked => { root.clicked(); }
+        // A press clicks; moved a few points (when it may move), the row is dragged to another place.
+        TouchArea {
+            enabled: root.clickable || root.movable;
+            mouse-cursor: root.held ? MouseCursor.grabbing : MouseCursor.default;
+            property <length> start;
+            property <bool> dragged;
+            pointer-event(e) => {
+                if e.button != PointerEventButton.left {
+                    return;
+                }
+                if e.kind == PointerEventKind.down {
+                    self.start = self.absolute-position.y + self.mouse-y;
+                    self.dragged = false;
+                }
+                if e.kind == PointerEventKind.up && root.held {
+                    RankDrag.landing = true;
+                    if RankDrag.by != 0 {
+                        root.placed(root.item.name, RankDrag.by);
+                    }
+                    RankDrag.held = "";
+                    RankDrag.dy = 0;
+                    RankDrag.by = 0;
+                }
+            }
+            moved => {
+                if !root.movable {
+                    return;
+                }
+                let dy = self.absolute-position.y + self.mouse-y - self.start;
+                if !root.held && (dy > 4px || dy < -4px) {
+                    self.dragged = true;
+                    RankDrag.by = 0;
+                    RankDrag.from = root.item.chosen;
+                    RankDrag.mid = root.mid;
+                    RankDrag.tall = root.height;
+                    RankDrag.kind = root.item.kind;
+                    RankDrag.held = root.item.name;
+                }
+                if root.held {
+                    RankDrag.dy = dy;
+                }
+            }
+            clicked => {
+                if root.clickable && !self.dragged {
+                    root.clicked();
+                }
+            }
         }
         line := HorizontalLayout {
             padding-left: 16px;
-            padding-right: root.movable ? 6px : 14px;
+            padding-right: 14px;
             padding-top: 12px;
             padding-bottom: 12px;
             spacing: 12px;
             @children
-            if root.movable: Rectangle {
-                width: 32px;
-                Icon {
-                    glyph: Icons.menu;
-                    colour: root.held ? Theme.text : Theme.dim;
-                    width: 18px;
-                    height: 18px;
-                }
-                handle := TouchArea {
-                    mouse-cursor: root.held ? MouseCursor.grabbing : MouseCursor.grab;
-                    property <length> start;
-                    pointer-event(e) => {
-                        if e.button != PointerEventButton.left {
-                            return;
-                        }
-                        if e.kind == PointerEventKind.down {
-                            self.start = self.absolute-position.y + self.mouse-y;
-                            RankDrag.by = 0;
-                            RankDrag.dy = 0;
-                            RankDrag.from = root.item.chosen;
-                            RankDrag.mid = root.mid;
-                            RankDrag.tall = root.height;
-                            RankDrag.kind = root.item.kind;
-                            RankDrag.held = root.item.name;
-                        }
-                        if e.kind == PointerEventKind.up && root.held {
-                            RankDrag.landing = true;
-                            if RankDrag.by != 0 {
-                                root.placed(root.item.name, RankDrag.by);
-                            }
-                            RankDrag.held = "";
-                            RankDrag.dy = 0;
-                            RankDrag.by = 0;
-                        }
-                    }
-                    moved => {
-                        if root.held {
-                            RankDrag.dy = self.absolute-position.y + self.mouse-y - self.start;
-                        }
-                    }
-                }
-            }
         }
         Rectangle {
             x: 14px;
@@ -4620,12 +4711,14 @@ component ProfileLine inherits Rectangle {
                 overflow: elide;
             }
         }
-        if root.on: Icon {
-            y: (parent.height - self.height) / 2;
-            glyph: Icons.check;
-            colour: Theme.accent;
-            width: 16px;
-            height: 16px;
+        if root.on: VerticalLayout {
+            alignment: center;
+            Icon {
+                glyph: Icons.check;
+                colour: Theme.accent;
+                width: 16px;
+                height: 16px;
+            }
         }
     }
     ta := TouchArea {
@@ -4719,12 +4812,14 @@ component SettingLine inherits VerticalLayout {
                 wrap: word-wrap;
             }
         }
-        if root.item.on: Icon {
-            y: (parent.height - self.height) / 2;
-            glyph: Icons.check;
-            colour: Theme.accent;
-            width: 18px;
-            height: 18px;
+        if root.item.on: VerticalLayout {
+            alignment: center;
+            Icon {
+                glyph: Icons.check;
+                colour: Theme.accent;
+                width: 18px;
+                height: 18px;
+            }
         }
         if root.item.options.length > 0: IconButton {
             y: (parent.height - self.height) / 2;
@@ -4739,7 +4834,7 @@ component SettingLine inherits VerticalLayout {
                     VerticalLayout {
                         padding: MenuShape.inset;
                         for o[i] in root.item.options: MenuRow {
-                            icon: i == 0 ? Icons.edit-pencil : Icons.settings;
+                            icon: o == "Remove" ? Icons.trash : o == "Edit" ? Icons.settings : Icons.edit-pencil;
                             text: o;
                             clicked => {
                                 profile-menu.close();
@@ -6573,6 +6668,13 @@ export component AppWindow inherits Window {
     in property <bool> ask-field;
     in property <bool> ask-secret;
     in-out property <string> ask-text;
+    // Downloaded songs offered an analysis: the question, why, and how long it takes; a yes is
+    // `analyse-downloads`.
+    in-out property <bool> analysis-open;
+    in property <string> analysis-title;
+    in property <string> analysis-why;
+    in property <string> analysis-time;
+    callback analyse-downloads();
     in-out property <string> key-service;
     in-out property <string> key-title;
     in-out property <string> key-text;
@@ -6589,6 +6691,9 @@ export component AppWindow inherits Window {
     // Where the queue's songs come from.
     in property <string> queue-from;
     callback clear-queue();
+    callback keep-queue();
+    in property <bool> queue-clearable;
+    in property <bool> queue-keepable;
     // The playing song's menu with the player's own lines, and one chosen.
     callback player-menu() -> [SongGo];
     callback player-act(int, string);
@@ -6662,7 +6767,7 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open;
+    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbling-profile != "" || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open;
     // What plugins say under the player's output, and a plugin's still drawn as Now Playing's cover.
     in property <[string]> plugin-status;
     in property <image> sleeve;
@@ -6688,6 +6793,43 @@ export component AppWindow inherits Window {
     in-out property <string> profile-rename-name;
     in property <string> profile-rename-blank;
     callback rename-profile(string, string);
+    // The profile whose scrobbling accounts show (its id; empty while none does) and its accounts; the
+    // dialog's step (0 the accounts, 1 the kinds to add, 2 the kind `scrobbler-adding`'s form); the form:
+    // the fields that kind asks (the key's label, empty when not asked; the address folded under
+    // Advanced), the help link's words (empty for none), whether it signs in on the service's page and
+    // the page was opened, what is typed, signing in, and why it failed.
+    in-out property <string> scrobbling-profile;
+    in property <[ScrobblerLine]> scrobblers;
+    // The profile's own server or provider, first in the list, where it takes plays: its name (empty
+    // for none) and being told them.
+    in property <string> scrobbler-server;
+    in property <bool> scrobbler-server-on;
+    in property <[ScrobblerKindLine]> scrobbler-kinds;
+    in-out property <int> scrobbler-step;
+    in property <int> scrobbler-adding;
+    in property <string> scrobbler-key-label;
+    in property <bool> scrobbler-key-hidden;
+    in property <bool> scrobbler-asks-secret;
+    in property <bool> scrobbler-asks-user;
+    in property <bool> scrobbler-asks-address;
+    in property <string> scrobbler-address-hint;
+    in-out property <bool> scrobbler-advanced;
+    in property <string> scrobbler-help;
+    in property <bool> scrobbler-browser;
+    in property <bool> scrobbler-page-opened;
+    in-out property <string> scrobbler-key;
+    in-out property <string> scrobbler-secret;
+    in-out property <string> scrobbler-user;
+    in-out property <string> scrobbler-password;
+    in-out property <string> scrobbler-url;
+    in property <bool> scrobbler-busy;
+    in property <string> scrobbler-failed;
+    callback scrobbler-toggled(string, bool);
+    callback scrobbler-removed(string);
+    callback scrobbler-server-toggled(bool);
+    callback scrobbler-add(int);
+    callback scrobbler-help-opened();
+    callback scrobbler-sign-in();
     // Deleting the playlist shown, asked first.
     in-out property <bool> delete-open;
     callback delete-playlist();
@@ -8497,6 +8639,9 @@ export component AppWindow inherits Window {
                     jump(i) => { root.jump(i); }
                     menu(s, x, y) => { root.row-menu-at(3, s.index, s.title, s.album != "" ? s.artist + " · " + s.album : s.artist, s.art, x, y); }
                     clear => { root.clear-queue(); }
+                keep => { root.keep-queue(); }
+                clearable: root.queue-clearable;
+                keepable: root.queue-keepable;
                     remove(i) => { root.remove-queued(i); }
                     move(f, t) => { root.move-queued(f, t); }
                     undo => { root.undo-removed(); }
@@ -9175,6 +9320,9 @@ export component AppWindow inherits Window {
                 jump(i) => { root.jump(i); }
                 menu(s, x, y) => { root.row-menu-at(3, s.index, s.title, s.album != "" ? s.artist + " · " + s.album : s.artist, s.art, x, y); }
                 clear => { root.clear-queue(); }
+                keep => { root.keep-queue(); }
+                clearable: root.queue-clearable;
+                keepable: root.queue-keepable;
                 remove(i) => { root.remove-queued(i); }
                 move(f, t) => { root.move-queued(f, t); }
                 undo => { root.undo-removed(); }
@@ -9298,6 +9446,45 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.ask-open = false;
                         root.setting-typed(root.ask-name, root.ask-text);
+                    }
+                }
+            }
+        }
+
+        if root.analysis-open: Dialog {
+            title: root.analysis-title;
+            sheet-width: 400px;
+            dismissed => { root.analysis-open = false; }
+            Text {
+                text: root.analysis-why;
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            DialogGroup {
+                InfoLine {
+                    label: "Time";
+                    value: root.analysis-time;
+                }
+                InfoLine {
+                    label: "Battery";
+                    value: "A lot. Best while charging";
+                    divider: false;
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Not now";
+                    clicked => { root.analysis-open = false; }
+                }
+                Capsule {
+                    text: "Analyze";
+                    clicked => {
+                        root.analysis-open = false;
+                        root.analyse-downloads();
                     }
                 }
             }
@@ -9579,6 +9766,172 @@ export component AppWindow inherits Window {
             }
         }
 
+        if root.scrobbling-profile != "": Dialog {
+            title: root.scrobbler-step == 0 ? "Scrobbling" : root.scrobbler-step == 1 ? "Add a scrobbler" : "Add " + root.scrobbler-kinds[root.scrobbler-adding].name;
+            // Wide enough for the note to stay one line: a wrapped line isn't counted in the sheet's height.
+            sheet-width: 460px;
+            dismissed => { root.scrobbling-profile = ""; }
+            if root.scrobbler-step == 0: VerticalLayout {
+                spacing: 12px;
+                Text {
+                    text: "Plays go to each one that's on, whatever this profile plays from.";
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                DialogGroup {
+                    if root.scrobbler-server != "": HorizontalLayout {
+                        padding: 8px;
+                        padding-right: 38px;
+                        ToggleLine {
+                            title: root.scrobbler-server;
+                            detail: "Built in";
+                            on: root.scrobbler-server-on;
+                            toggled(on) => { root.scrobbler-server-toggled(on); }
+                        }
+                    }
+                    for line in root.scrobblers: HorizontalLayout {
+                        padding: 8px;
+                        spacing: 4px;
+                        ToggleLine {
+                            title: line.title;
+                            detail: line.detail;
+                            on: line.on;
+                            toggled(on) => { root.scrobbler-toggled(line.id, on); }
+                        }
+                        IconButton {
+                            y: (parent.height - self.height) / 2;
+                            glyph: Icons.xmark;
+                            size: 26px;
+                            icon: 13px;
+                            ink: Theme.dim;
+                            clicked => { root.scrobbler-removed(line.id); }
+                        }
+                    }
+                    GoLine {
+                        title: "Add scrobbler";
+                        glyph: Icons.plus-circle;
+                        divider: false;
+                        clicked => { root.scrobbler-step = 1; }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    Capsule {
+                        text: "Done";
+                        clicked => { root.scrobbling-profile = ""; }
+                    }
+                }
+            }
+            if root.scrobbler-step == 1: VerticalLayout {
+                spacing: 12px;
+                DialogGroup {
+                    for k[i] in root.scrobbler-kinds: GoLine {
+                        title: k.name;
+                        line: k.cost;
+                        glyph: Icons.nav-arrow-right;
+                        divider: i < root.scrobbler-kinds.length - 1;
+                        clicked => { root.scrobbler-add(i); }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    SmallButton {
+                        text: "Back";
+                        clicked => { root.scrobbler-step = 0; }
+                    }
+                }
+            }
+            if root.scrobbler-step == 2: VerticalLayout {
+                spacing: 8px;
+                if root.scrobbler-key-label != "": Field {
+                    placeholder: root.scrobbler-key-label;
+                    secret: root.scrobbler-key-hidden;
+                    text <=> root.scrobbler-key;
+                    init => { self.take-focus(); }
+                }
+                if root.scrobbler-asks-secret: Field {
+                    placeholder: "Shared secret";
+                    secret: true;
+                    text <=> root.scrobbler-secret;
+                }
+                if root.scrobbler-asks-user: Field {
+                    placeholder: "User";
+                    text <=> root.scrobbler-user;
+                    init => { if root.scrobbler-key-label == "" { self.take-focus(); } }
+                }
+                if root.scrobbler-asks-user: Field {
+                    placeholder: "Password";
+                    secret: true;
+                    text <=> root.scrobbler-password;
+                    accepted => { root.scrobbler-sign-in(); }
+                }
+                if root.scrobbler-asks-user: Text {
+                    text: "The password signs in once; only the session is kept.";
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                if root.scrobbler-help != "" || root.scrobbler-asks-address: DialogGroup {
+                    if root.scrobbler-help != "": GoLine {
+                        title: root.scrobbler-help;
+                        glyph: Icons.share-ios;
+                        divider: root.scrobbler-asks-address;
+                        clicked => { root.scrobbler-help-opened(); }
+                    }
+                    if root.scrobbler-asks-address: GoLine {
+                        title: "Advanced";
+                        glyph: root.scrobbler-advanced ? Icons.nav-arrow-up : Icons.nav-arrow-down;
+                        divider: false;
+                        clicked => { root.scrobbler-advanced = !root.scrobbler-advanced; }
+                    }
+                    if root.scrobbler-asks-address && root.scrobbler-advanced: VerticalLayout {
+                        padding: 6px;
+                        spacing: 6px;
+                        Field {
+                            placeholder: "Address (optional)";
+                            text <=> root.scrobbler-url;
+                            accepted => { root.scrobbler-sign-in(); }
+                        }
+                        Text {
+                            text: root.scrobbler-address-hint;
+                            color: Theme.dim;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                if root.scrobbler-page-opened: Text {
+                    text: "Allow nori on " + root.scrobbler-kinds[root.scrobbler-adding].name + " in your browser, then press Done.";
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                if root.scrobbler-failed != "": Text {
+                    text: root.scrobbler-failed;
+                    color: Theme.danger;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    SmallButton {
+                        y: (parent.height - self.height) / 2;
+                        text: "Back";
+                        clicked => { root.scrobbler-step = 1; }
+                    }
+                    Capsule {
+                        text: root.scrobbler-busy ? "Connecting…"
+                            : !root.scrobbler-browser ? "Add"
+                            : root.scrobbler-page-opened ? "Done"
+                            : "Continue on " + root.scrobbler-kinds[root.scrobbler-adding].name;
+                        clicked => { root.scrobbler-sign-in(); }
+                    }
+                }
+            }
+        }
+
         if root.delete-open: Dialog {
             title: "Delete “" + root.page-title + "”?";
             dismissed => { root.delete-open = false; }
@@ -9743,12 +10096,14 @@ export component AppWindow inherits Window {
                                         overflow: elide;
                                     }
                                 }
-                                if id.chosen: Icon {
-                                    y: (parent.height - self.height) / 2;
-                                    glyph: Icons.check;
-                                    colour: Theme.accent;
-                                    width: 18px;
-                                    height: 18px;
+                                if id.chosen: VerticalLayout {
+                                    alignment: center;
+                                    Icon {
+                                        glyph: Icons.check;
+                                        colour: Theme.accent;
+                                        width: 18px;
+                                        height: 18px;
+                                    }
                                 }
                             }
                             if i < root.signin-identities.length - 1: Rectangle {
@@ -10306,6 +10661,8 @@ export component TopBar inherits Window {
     callback search-step(int);
     callback search-accepted();
     callback search-escaped();
+    callback drag-window();
+    callback zoom-window();
     // The search field moved or changed its width (`search-end`, `search-width`): its preview follows it.
     callback search-placed();
     out property <length> search-end: content.field-end;
@@ -10323,6 +10680,12 @@ export component TopBar inherits Window {
         background: Theme.ground.with-alpha(Chrome.tint);
         border-width: 1px;
         border-color: Theme.outline;
+    }
+    // The pill's empty stretches move the window, as a toolbar's do; its tabs and fields keep their presses.
+    TitleStrip {
+        height: parent.height;
+        drag => { root.drag-window(); }
+        zoom => { root.zoom-window(); }
     }
     content := TopContent {
         width: parent.width;

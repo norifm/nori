@@ -36,6 +36,10 @@ pub struct Client {
     pub(crate) autoeq_fetching: AtomicBool,
     /// When the last AutoEQ index fetch failed (profiles.rs).
     pub(crate) autoeq_failed_ms: parking_lot::Mutex<Option<i64>>,
+    /// When the playlists kept downloaded were last looked at (transfers.rs).
+    pub(crate) kept_checked_ms: parking_lot::Mutex<Option<i64>>,
+    /// Plays are going to the scrobbling accounts (scrobblers.rs).
+    pub(crate) scrobbling: AtomicBool,
     /// Told the profile's second address, so covers are keyed alike through both.
     covers: Arc<crate::covers::CoverNet>,
 }
@@ -106,7 +110,7 @@ impl Client {
 impl Client {
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(core: Arc<Core>, transport: Arc<dyn Transport>, covers: Arc<crate::covers::CoverNet>) -> Arc<Self> {
-        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), replaying: Default::default(), dropped: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), autoeq_failed_ms: Default::default() })
+        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), replaying: Default::default(), dropped: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), autoeq_failed_ms: Default::default(), kept_checked_ms: Default::default(), scrobbling: AtomicBool::new(false) })
     }
 
     /// Sets the profile's addresses, folder and bitrate cap.
@@ -172,6 +176,9 @@ pub(crate) mod tests {
         /// Each request pends once before answering, as a real one would.
         pub pends: Mutex<bool>,
         pub metered: Mutex<bool>,
+        /// While true, every request waits, as one to a slow server would; set false through [`Fake::release`].
+        pub held: Mutex<bool>,
+        released: nori_tasks::Notify,
     }
 
     impl Fake {
@@ -184,12 +191,17 @@ pub(crate) mod tests {
         pub fn asked(&self) -> Vec<String> {
             self.asked.lock().iter().map(|(u, _)| u.clone()).collect()
         }
+        pub fn release(&self) {
+            *self.held.lock() = false;
+            self.released.notify();
+        }
     }
 
     #[async_trait::async_trait]
     impl Transport for Fake {
         async fn get(&self, url: String, timeout_ms: u32) -> Result<TransportResponse, TransportError> {
             self.asked.lock().push((url, timeout_ms));
+            self.released.until(|| !*self.held.lock()).await;
             if *self.pends.lock() {
                 let mut pended = false;
                 std::future::poll_fn(|cx| {

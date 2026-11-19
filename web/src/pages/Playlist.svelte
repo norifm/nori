@@ -31,11 +31,13 @@
     order.splice(to, 0, ...order.splice(i, 1));
     return library.change({ kind: "reorderPlaylist", id, songIds: order });
   };
-  const edits = (_: Song, i: number): Item[] => !pl?.editable ? [] : [
-    ...(i > 0 ? [{ label: W.moveUp, icon: "nav-arrow-up", run: () => moved(i, i - 1) }] : []),
-    ...(i < songs.length - 1 ? [{ label: W.moveDown, icon: "nav-arrow-down", run: () => moved(i, i + 1) }] : []),
-    { label: W.removeFromPlaylist, icon: "xmark", run: () => library.change({ kind: "removeFromPlaylist", id, index: i }) },
-  ];
+  const edit: Record<string, (i: number) => Item> = {
+    MoveUp: (i) => ({ label: W.moveUp, icon: "nav-arrow-up", run: () => moved(i, i - 1) }),
+    MoveDown: (i) => ({ label: W.moveDown, icon: "nav-arrow-down", run: () => moved(i, i + 1) }),
+    Remove: (i) => ({ label: W.removeFromPlaylist, icon: "xmark", run: () => library.change({ kind: "removeFromPlaylist", id, index: i }) }),
+  };
+  const edits = async (_: Song, i: number): Promise<Item[]> =>
+    (JSON.parse(await ask<string>("playlist_edits", i, songs.length, !!pl?.editable)) as string[]).map((e) => edit[e](i));
   const more = (e: MouseEvent) =>
     ui.drop(e, [
       {

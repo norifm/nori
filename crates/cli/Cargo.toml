@@ -14,7 +14,7 @@ default = ["sign-in-window"]
 # The provider's sign-in page in a window (the system's web view: WebKitGTK on Linux), from this program.
 # Off for a machine without a desktop: signing in then takes pasted cookies.
 sign-in-window = ["dep:nori-sign-in-window"]
-# "Better beat detection": the measurer runs Beat This! through tract (nori-engine's feature). Off unless asked
+# The beat model for AutoMix: the measurer runs Beat This! through tract (nori-engine's feature). Off unless asked
 # for, so a plain build links nothing of it.
 neural-beats = ["nori-engine/neural-beats"]
 
@@ -40,9 +40,15 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm"]
 # Without its default features: no chafa, and image with no codecs (nori-covers decodes). MIT.
 ratatui-image = { version = "10.0.8", default-features = false, features = ["crossterm"] }
 image = { version = "0.25", default-features = false }
-libc = "0.2"
 # Text cut to the columns it has (already in the tree through ratatui). MIT or Apache-2.0.
 unicode-width = "0.2"
+
+# stderr sent to the log while the screen is ours (term.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
 [dev-dependencies]
 nori-testdir = { path = "../testdir" }

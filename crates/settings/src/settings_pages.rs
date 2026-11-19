@@ -3,7 +3,7 @@
 //! settings a client offers and when a row applies are decided here once.
 
 use crate::settings::{GainMode, StoredPrefs};
-use crate::settings_model::{value_of, BeatModel, SettingSpec, SettingsState};
+use crate::settings_model::{value_of, SettingSpec, SettingsState};
 
 /// Which client the settings are drawn by: each offers what its platform has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,10 +114,8 @@ pub enum SettingsLink {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SettingsAction {
-    MeasureAgain,
     SyncLibrary,
     DownloadLibrary,
-    AnalyseDownloads,
     ClearStream,
     ClearCovers,
     ClearLyrics,
@@ -193,15 +191,12 @@ pub struct PageFacts {
     pub car: bool,
     /// The active server's music folders, by id.
     pub folders: Vec<String>,
-    /// Songs AutoMix has measured.
-    pub analysed: u32,
     /// Songs in the offline index.
     pub indexed_songs: u32,
     pub syncing: bool,
     pub stream_bytes: i64,
     pub cover_bytes: i64,
     pub lyrics_bytes: i64,
-    pub download_songs: u32,
     /// A cache is being cleared.
     pub storage_busy: bool,
     /// Changes waiting for the server, and dropped unsent since the profile opened.
@@ -333,12 +328,6 @@ impl Page<'_> {
             row(RowItem::Note { note: SettingsNote::HeldByDac }).shown(s.untouched),
             self.chips("autoMix").enabled(live),
         ];
-        if s.beat_model != BeatModel::Unavailable {
-            between.push(self.setting("autoMixBetterBeats").under().enabled(live && p.auto_mix.on()));
-        }
-        if !self.web() {
-            between.push(row(RowItem::Action { action: SettingsAction::MeasureAgain }).under().enabled(p.auto_mix.on() && self.f.analysed > 0));
-        }
         // AutoMix plans its own transitions, so the plain crossfade gives way to it.
         between.push(self.setting("crossfadeSec").enabled(live && !p.auto_mix.on()));
         let mut queue = vec![
@@ -347,8 +336,10 @@ impl Page<'_> {
             self.setting("autoFillBasis").under().enabled(p.auto_fill.is_some()),
             self.setting("autoFillRemote").under().enabled(p.auto_fill.is_some()),
         ];
+        // A browser has no downloads, and hears no Bluetooth devices connect.
         if !self.web() {
             queue.push(self.setting("bridgeOffline"));
+            queue.push(self.setting("playOnBluetooth"));
         }
         vec![(SectionId::Between, between), (SectionId::Queue, queue)]
     }
@@ -451,7 +442,7 @@ impl Page<'_> {
         if !self.web() {
             out.push((SectionId::Search, vec![row(RowItem::Action { action: SettingsAction::SyncLibrary }).enabled(!self.f.syncing)]));
         }
-        out.push((SectionId::History, vec![self.setting("tasteModel"), self.setting("scrobble")]));
+        out.push((SectionId::History, vec![self.setting("tasteModel")]));
         out.push((SectionId::Online, vec![self.setting("thirdPartyLookups")]));
         let mut devices = vec![self.setting("remoteControl")];
         match self.client {
@@ -475,10 +466,8 @@ impl Page<'_> {
         }
         streaming.push(self.setting("cacheMb"));
         let mut downloads = vec![self.setting("download"), row(RowItem::Action { action: SettingsAction::DownloadLibrary }).enabled(f.indexed_songs > 0)];
-        match self.client {
-            SettingsClient::Phone => downloads.push(row(RowItem::Action { action: SettingsAction::AnalyseDownloads }).enabled(f.download_songs > 0)),
-            SettingsClient::Terminal => downloads.push(row(RowItem::Link { to: SettingsLink::Downloads })),
-            SettingsClient::Desktop | SettingsClient::Web => {}
+        if self.client == SettingsClient::Terminal {
+            downloads.push(row(RowItem::Link { to: SettingsLink::Downloads }));
         }
         let clear = |action, bytes: i64| row(RowItem::Action { action }).enabled(!f.storage_busy && bytes > 0);
         // What is kept and what clears it, no settings: the cache's size is streaming's.
@@ -496,8 +485,9 @@ impl Page<'_> {
         vec![(SectionId::Streaming, streaming), (SectionId::Downloads, downloads), (SectionId::Storage, storage), (SectionId::Backup, backup)]
     }
 
+    /// Updates: every client a release installs, the web's always the newest.
     fn about(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
-        if !self.phone() {
+        if self.web() {
             return Vec::new();
         }
         let mut updates = vec![row(RowItem::Action { action: SettingsAction::CheckUpdate }), self.setting("updateCheck")];
@@ -595,7 +585,7 @@ mod tests {
         // The equalizer's own screen has these, and the Plugins page its switch.
         let elsewhere = ["eq", "eqMode", "eqPreampDb", "limiterThresholdDb", "mono", "limiter", "eqLayout", "pluginsOff"];
         for s in crate::settings_model::specs() {
-            if elsewhere.contains(&s.name.as_str()) || (s.name == "autoMixBetterBeats" && !nori_player::automix::beats::AVAILABLE) {
+            if elsewhere.contains(&s.name.as_str()) {
                 continue;
             }
             assert!(on_pages.contains(&s.name), "{} is on no page", s.name);
@@ -641,6 +631,7 @@ mod tests {
             for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
                 assert!(phone.iter().any(|n| n == phone_only) && !has.iter().any(|n| n == phone_only), "{phone_only} offered by {client:?}");
             }
+            assert!(has.iter().any(|n| n == "playOnBluetooth"), "{client:?} plays when Bluetooth connects");
             assert!(rows.iter().any(|r| matches!(r.item, RowItem::LyricsSource { .. })), "the services are on the lyrics page");
             assert!(!pages(client, &ALL_PARTS).contains(&SettingsPage::LyricsSources));
         }
@@ -666,7 +657,7 @@ mod tests {
         for kept in ["autoMix", "crossfadeSec", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season"] {
             assert!(has.iter().any(|n| n == kept), "{kept} is on the web's pages");
         }
-        for left in ["theme", "bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
+        for left in ["theme", "bridgeOffline", "playOnBluetooth", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
             assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
         }
         let links: Vec<_> = rows.iter().filter_map(|r| match r.item {
@@ -732,7 +723,5 @@ mod tests {
             _ => None,
         }).collect();
         assert_eq!(folders, [(true, "2".to_string()), (true, "1".to_string())]);
-        let measure = rows.iter().find(|r| matches!(r.item, RowItem::Action { action: SettingsAction::MeasureAgain })).unwrap();
-        assert!(!measure.enabled && measure.depth == 1, "nothing measured yet");
     }
 }

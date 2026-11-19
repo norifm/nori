@@ -9,7 +9,7 @@ use nori_time::Instant;
 
 use nori_model::{alog, DownloadPhase, Song};
 use parking_lot::{Mutex, MutexGuard};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 /// Finished songs the downloads screen keeps listing this session.
 pub const RECENT: usize = 50;
@@ -136,10 +136,8 @@ pub struct Saved {
     pub measuring: bool,
     /// Has an analysis of the current version.
     pub analysed: bool,
-    /// The beat model is available and enabled.
+    /// The beat model reads downloads (AutoMix on, in a build that has it).
     pub model_on: bool,
-    /// The beat model is wanted for this download (it was on when it was asked for).
-    pub beats_wanted: bool,
     /// The model has read both ends of the current analysis.
     pub beats_done: bool,
 }
@@ -152,13 +150,13 @@ pub struct Needs {
 }
 
 /// What `s` needs once saved. Always an analysis (also used for lyrics sync and untagged loudness); the
-/// beat model when on and wanted and not done for the current analysis.
+/// beat model when it reads downloads and has not read the current analysis.
 pub fn needs(s: Saved) -> Needs {
     if !s.analysable {
         return Needs::default();
     }
     let fresh = s.measuring || !s.analysed;
-    Needs { analysis: fresh, beats: s.model_on && s.beats_wanted && (fresh || !s.beats_done) }
+    Needs { analysis: fresh, beats: s.model_on && (fresh || !s.beats_done) }
 }
 
 /// Monotonic ms for timing steps.
@@ -371,6 +369,22 @@ impl Throughput {
 struct Pace {
     took_ms: i64,
     done: i64,
+}
+
+/// The `app_kv` key of this device's learned [`Pace`]s, kept across runs: `took_ms done` per [`Work`].
+const PACES_KEY: &str = "work_paces";
+
+fn paces_text(paces: &[Pace; 3]) -> String {
+    paces.iter().map(|p| format!("{} {}", p.took_ms, p.done)).collect::<Vec<_>>().join(" ")
+}
+
+/// Unreadable text is no learning: the guesses stand.
+fn paces_from(text: &str) -> [Pace; 3] {
+    let n: Vec<i64> = text.split(' ').filter_map(|v| v.parse().ok()).collect();
+    if n.len() != 6 || n.iter().any(|v| *v < 0) {
+        return [Pace::default(); 3];
+    }
+    [0, 1, 2].map(|i| Pace { took_ms: n[2 * i], done: n[2 * i + 1] })
 }
 
 impl Pace {
@@ -587,8 +601,8 @@ pub struct Tracker {
     info: HashMap<String, Info>,
     /// Songs being analysed as their bytes arrive.
     analysing: HashSet<String>,
-    /// Downloads the beat model reads once saved (mirrors the download_beats table).
-    beats_wanted: HashSet<String>,
+    /// The beat model reads downloads once saved, as the batch was queued ([`Tracker::set_beats_ahead`]).
+    beats_ahead: bool,
     /// Waiters on mark changes, woken after the lock is released when `wake` is set.
     wakers: Vec<Waker>,
     wake: bool,
@@ -878,6 +892,21 @@ impl Tracker {
         self.lanes[work.lane()] = Lane { step: Some((id.to_string(), work, now)), since: now };
     }
 
+    /// Stores the paces when the database is free; a later step stores what this one missed.
+    fn keep_paces(&self) {
+        let Some(c) = self.db.as_ref().and_then(|d| d.try_lock()) else { return };
+        let _ = c.execute("INSERT OR REPLACE INTO app_kv(key, value) VALUES(?1, ?2)", [PACES_KEY, &paces_text(&self.paces)]);
+    }
+
+    /// Seconds to read back `analyses` songs needing the classical analysis (the beat model reading their
+    /// ends in the same decode when `beats`) and `beats_only` needing only the model, one at a time at the
+    /// learned paces.
+    pub fn read_back_s(&self, analyses: u32, beats_only: u32, beats: bool) -> i64 {
+        let per = |w: Work| self.paces[w as usize].per_song_s(w);
+        let each = per(Work::Analysis) + if beats { per(Work::Beats) } else { 0.0 };
+        (analyses as f64 * each + beats_only as f64 * per(Work::Beats)).round() as i64
+    }
+
     /// Whether saved song `id` still waits for `work`.
     pub fn waits(&self, id: &str, work: Work) -> bool {
         self.marks.get(id).is_some_and(|m| m.0.waits(work))
@@ -904,6 +933,7 @@ impl Tracker {
             let pace = &mut self.paces[work as usize];
             pace.took_ms += ms.max(0);
             pace.done += 1;
+            self.keep_paces();
         }
         self.mark(id, phase.without(work), at)
     }
@@ -1008,19 +1038,9 @@ impl Tracker {
         m
     }
 
-    /// Replaces or changes the set of downloads the beat model reads once saved.
-    pub fn want_beats(&mut self, ids: &[String], on: bool) {
-        for id in ids {
-            if on {
-                self.beats_wanted.insert(id.clone());
-            } else {
-                self.beats_wanted.remove(id);
-            }
-        }
-    }
-
-    pub fn wants_beats(&self, id: &str) -> bool {
-        self.beats_wanted.contains(id)
+    /// Whether the beat model reads the songs downloading now once saved, for the time left.
+    pub fn set_beats_ahead(&mut self, on: bool) {
+        self.beats_ahead = on;
     }
 
     /// An earlier process left `id` failed: marked so, unless this one already marked it. Returns its
@@ -1113,7 +1133,7 @@ impl Tracker {
         let (mut lyrics_to_come, mut beats_to_come, mut analysing) = (0, 0, false);
         for id in &self.batch.open {
             lyrics_to_come += 1;
-            beats_to_come += self.beats_wanted.contains(id) as i32;
+            beats_to_come += self.beats_ahead as i32;
             analysing |= self.analysing.contains(id);
             let (length, bytes) = self.open_slots().find(|s| s.id == *id).map_or((0, 0), |s| (s.length, s.bytes));
             let size = if length > 0 { length as f64 } else { self.info.get(id).map_or(0, |i| i.estimate) as f64 * ratio };
@@ -1363,9 +1383,9 @@ impl Downloads {
     pub fn load(db: &Arc<Mutex<Connection>>) -> nori_model::Result<Downloads> {
         let c = db.lock();
         let held = Held::load(&c)?;
-        let mut st = c.prepare("SELECT id FROM download_beats WHERE server=sid()")?;
-        let beats_wanted = st.query_map([], |r| r.get(0))?.filter_map(|r| r.ok()).collect();
-        let tracker = Tracker { db: Some(db.clone()), beats_wanted, ..Tracker::default() };
+        let paces: Option<String> = c.query_row("SELECT value FROM app_kv WHERE key=?1", [PACES_KEY], |r| r.get(0)).optional()?;
+        let paces = paces.map_or([Pace::default(); 3], |t| paces_from(&t));
+        let tracker = Tracker { db: Some(db.clone()), paces, ..Tracker::default() };
         Ok(Downloads { tracker: Mutex::new(tracker), held: Mutex::new(held) })
     }
 
@@ -1472,7 +1492,6 @@ pub struct DownloadQueueCounts {
 /// Queues the new `songs` behind everything queued; unfinished ones already queued are returned as
 /// `again`, finished ones skipped.
 pub fn queue_rows(c: &mut Connection, songs: impl IntoIterator<Item = Song>) -> nori_model::Result<DownloadQueued> {
-    use rusqlite::OptionalExtension;
     let tx = c.transaction()?;
     let mut out = DownloadQueued::default();
     {
@@ -1756,12 +1775,11 @@ mod tests {
         assert_eq!(needs_of(Saved { measuring: true, ..base }), (true, false), "streaming analysis in progress");
         assert_eq!(needs_of(base), (true, false), "no current analysis");
         assert_eq!(needs_of(Saved { analysed: true, ..base }), (false, false));
-        let ml = Saved { model_on: true, beats_wanted: true, ..base };
+        let ml = Saved { model_on: true, ..base };
         assert_eq!(needs_of(ml), (true, true));
         assert_eq!(needs_of(Saved { analysed: true, ..ml }), (false, true));
         assert_eq!(needs_of(Saved { analysed: true, beats_done: true, ..ml }), (false, false));
         assert_eq!(needs_of(Saved { analysed: true, beats_done: true, measuring: true, ..ml }), (true, true), "measured again: its ends too");
-        assert_eq!(needs_of(Saved { beats_wanted: false, ..ml }), (true, false), "not wanted for this download");
         assert_eq!(needs_of(Saved { model_on: false, ..ml }), (true, false), "the model is off");
         assert_eq!(needs_of(Saved { analysable: false, ..ml }), (false, false), "a radio stream");
 
