@@ -15,7 +15,12 @@ went through, each in the accent of the season it was paid in (`nori_core::suppo
     or an incomplete subscription (monthly) for the app's payment sheet, or a Checkout page for the browser.
     `season` is the one the payment is stamped in, as the app counts it on its side of the equator.
   - `POST /stamps` `{login}`: every payment that went through, and whether a monthly one runs.
-  - `POST /manage` `{login}`: Stripe's customer portal, to change or stop a monthly payment.
+  - `POST /manage` `{login}`: Stripe's customer portal for a monthly payment's card and receipts.
+  - `POST /stop` `{login}`: Stripe's page stopping the monthly payment (at the end of the month paid for);
+    the page confirming it thanks for the months given, counted from the paid invoices. The two pages are
+    two portal configurations the Worker makes the first time, known by their `nori` metadata: cancelling
+    only in `stop`, so the thanks is never skipped. A monthly payment set to stop no longer counts as
+    running.
   - `GET /done`: where Checkout and the portal send the browser back: paid (`?paid=1&season=…`), the seal of
     that season stamped and thanks; left (`?left=1`), the seal's empty place; back from the portal, the way
     back alone.
@@ -27,6 +32,12 @@ went through, each in the accent of the season it was paid in (`nori_core::suppo
   `#/support/paid`). The desktop, the terminal and the iPod open Checkout in the browser and ask the service
   again when they come back into focus; the terminal also shows the page's link and a QR code, the iPod a QR
   code to pay from a phone, as iOS 12's Safari may be too old for Checkout.
+- A seal more than the page opened with (a payment just made, a month's) is thanked for, the newest when
+  several come at once: over the whole app the page is veiled, the seal is pressed down in the middle with
+  "Thank you" under it, then carried to its empty place in the book, which the next empty place then grows
+  in beside. A touch ends it; under the Motion setting it is the thanks alone, still. The terminal shows it
+  as a box until a key. A client asks the service only while the page is open, so the thanks never plays
+  anywhere else.
 
 ## Builds
 

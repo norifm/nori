@@ -55,6 +55,8 @@
     <string name="support_least">At least %1$s</string>
     <string name="support_most">At most %1$s</string>
     <string name="support_manage">Manage monthly support</string>
+    <string name="support_stop">Stop monthly support</string>
+    <string name="support_thanks">Thank you</string>
     <string name="support_other_currency">Your monthly support is in another currency</string>
     <string name="support_failed">The payment didn\'t go through</string>
     <string name="report_problem_detail">Shares the app\'s log of the last day, what is playing and the settings you changed, to attach to an issue</string>

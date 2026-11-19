@@ -1,7 +1,7 @@
 //! The Support page's calls: the stamp book and the build's support service, what is chosen (the core's
 //! `support_choice`), and paying through Stripe's Payment Element on the page.
 
-use nori_core::support::{support_choice, support_currencies, support_first_choice, support_service, support_stamps, Cadence, PayIn, Payment, SupportChoice, SupportPick, TypedAmount};
+use nori_core::support::{support_choice, support_currencies, support_first_choice, support_service, support_stamps, Cadence, PayIn, Payment, SupportChoice, SupportPage, SupportPick, TypedAmount};
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
 
@@ -79,10 +79,10 @@ impl Nori {
         Ok(())
     }
 
-    /// Stripe's page where the monthly payment is changed or stopped.
-    pub async fn support_manage(&self) -> Result<String, JsValue> {
+    /// Stripe's page for the monthly payment: its card and receipts, or (`stop`) stopping it.
+    pub async fn support_page(&self, stop: bool) -> Result<String, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        client.support_manage().await.map_err(said)
+        client.support_page(if stop { SupportPage::Stop } else { SupportPage::Manage }).await.map_err(said)
     }
 }
 

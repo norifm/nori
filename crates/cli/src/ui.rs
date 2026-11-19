@@ -990,7 +990,9 @@ fn support(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let give = Span::styled(format!(" [ {} ] ", crate::text::support_give(c)), if chosen(L::Give) { t.select(focused) } else if c.amount.is_some() { bold().fg(t.ink) } else { t.dim() });
     foot.push(Line::from(give));
     if monthly {
-        foot.push(Line::from(Span::styled(format!(" [ {} ] ", crate::text::SUPPORT_MANAGE), if chosen(L::Manage) { t.select(focused) } else { t.dim() })));
+        let action = |l, words| Span::styled(format!(" [ {words} ] "), if chosen(l) { t.select(focused) } else { t.dim() });
+        foot.push(Line::from(action(L::Manage, crate::text::SUPPORT_MANAGE)));
+        foot.push(Line::from(action(L::Stop, crate::text::SUPPORT_STOP)));
     }
     if let Some(g) = &p.given {
         foot.push(Line::default());
@@ -2070,6 +2072,23 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             lines.push(Line::from(""));
             lines.push(Line::from(crate::text::JAM_SETTINGS_BACK));
             put(f, Paragraph::new(lines), inner);
+        }
+        // The seal in its season's accent, as a stamp, and the thanks under it.
+        Overlay::Thanks { season } => {
+            let accent = nori_look::theme::palette(Some(*season), 1, 1, false, app.dark, false).accent;
+            let ink = Style::default().bg(crate::art::argb(accent)).fg(t.page).add_modifier(Modifier::BOLD);
+            let kanji = ["春", "夏", "秋", "冬"][*season as usize];
+            let lines = vec![
+                Line::from(""),
+                Line::from(Span::styled("        ", ink)),
+                Line::from(Span::styled(format!("   {kanji}   "), ink)),
+                Line::from(Span::styled("        ", ink)),
+                Line::from(""),
+                Line::from(Span::styled(crate::text::SUPPORT_THANKS, bold().fg(t.ink))),
+            ];
+            let r = centred(area, 24, lines.len() as u16 + 3);
+            let inner = popup(f, r, Span::raw(""), t);
+            put(f, Paragraph::new(lines).alignment(Alignment::Center), inner);
         }
         Overlay::Invite { link } => {
             let code = nori_core::remote::qr_code(link.clone());

@@ -143,6 +143,8 @@ class Say(private val r: Resources) {
     fun supportLeast(amount: String): String = r.getString(R.string.support_least, amount)
     fun supportMost(amount: String): String = r.getString(R.string.support_most, amount)
     val supportManage: String = r.getString(R.string.support_manage)
+    val supportStop: String = r.getString(R.string.support_stop)
+    val supportThanks: String = r.getString(R.string.support_thanks)
     val supportOtherCurrency: String = r.getString(R.string.support_other_currency)
     val supportFailed: String = r.getString(R.string.support_failed)
     val reportProblemDetail: String = r.getString(R.string.report_problem_detail)

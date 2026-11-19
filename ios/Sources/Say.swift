@@ -488,6 +488,8 @@ enum Say {
     static func supportLeast(_ amount: String) -> String { "At least \(amount)" }
     static func supportMost(_ amount: String) -> String { "At most \(amount)" }
     static let supportManage = "Manage monthly support"
+    static let supportStop = "Stop monthly support"
+    static let supportThanks = "Thank you"
     static let supportInSafari = "Finish in Safari, or scan to pay on your phone"
     static let supportOtherCurrency = "Your monthly support is in another currency"
     static let supportFailed = "The support service didn't answer"

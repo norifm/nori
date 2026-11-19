@@ -32,6 +32,15 @@ pub enum PayIn {
     Browser,
 }
 
+/// Stripe's pages for a monthly payment: `Manage` changes its card and shows the receipts; `Stop` stops it,
+/// and thanks for the months given on the page that confirms it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SupportPage {
+    Manage,
+    Stop,
+}
+
 /// A currency support is offered in: its ISO code, how many digits its minor unit has, and the amounts
 /// offered for each cadence, in minor units (any other is typed).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -347,10 +356,14 @@ impl Client {
         Ok(self.settings().change(|p| crate::settings::StoredPrefs { support: now, ..p.clone() }))
     }
 
-    /// The page where a monthly payment is changed or stopped.
-    pub async fn support_manage(&self) -> NetResult<String> {
+    /// The address of Stripe's `page` for the monthly payment.
+    pub async fn support_page(&self, page: SupportPage) -> NetResult<String> {
         let login = self.settings().prefs(|p| p.support.login.clone());
-        let link: Link = self.support_call("manage", serde_json::json!({ "login": login })).await?;
+        let path = match page {
+            SupportPage::Manage => "manage",
+            SupportPage::Stop => "stop",
+        };
+        let link: Link = self.support_call(path, serde_json::json!({ "login": login })).await?;
         Ok(link.url)
     }
 }

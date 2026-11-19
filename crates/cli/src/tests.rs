@@ -3294,6 +3294,15 @@ fn support_types_other_picks_a_currency_and_gives_in_the_browser() {
     a.prefs.support.paid.push(1_792_065_600);
     a.handle(Msg::SupportRefreshed);
     assert_eq!(a.support.given, None);
+    // The seals that came while the page was open are thanked for, the newest's season shown; a key ends it.
+    assert!(matches!(a.overlay, Some(Overlay::Thanks { season: nori_look::theme::Season::Autumn })));
+    let s = draw(&mut a, 90, 50);
+    dump("support-thanks", &s);
+    assert!(s.contains(crate::text::SUPPORT_THANKS));
+    key(&mut a, KeyCode::Esc);
+    assert!(a.overlay.is_none());
+    a.handle(Msg::SupportRefreshed);
+    assert!(a.overlay.is_none(), "a seal is thanked for once");
     key(&mut a, KeyCode::Esc);
     assert_eq!(a.view, View::Settings);
 }

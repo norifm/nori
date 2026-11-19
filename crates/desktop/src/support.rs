@@ -14,7 +14,7 @@ pub struct Support {
     pub choice: SupportChoice,
     /// The checkout page's address, and how many seals the book had when it was given.
     pub given: Option<(String, usize)>,
-    /// How many seals the book had when last drawn: one more comes stamped.
+    /// How many seals the book had when last drawn: one more is thanked for.
     seen: Option<usize>,
 }
 
@@ -59,7 +59,11 @@ impl Support {
         }
         let stamps = support_stamps(prefs.support.paid.clone(), today.southern);
         let seals: Vec<SupportSeal> = stamps.iter().map(|s| SupportSeal { season: s.season as i32, tilt: s.tilt }).collect();
-        ui.set_support_fresh(if self.seen.is_some_and(|n| paid > n) { paid as i32 - 1 } else { -1 });
+        // A seal more than the page saw is thanked for, the newest when several came at once.
+        if self.seen.is_some_and(|n| paid > n) {
+            ui.set_support_landed(false);
+            ui.set_support_thanked(paid as i32 - 1);
+        }
         self.seen = Some(paid);
         ui.set_support_seals(ModelRc::new(VecModel::from(seals)));
         ui.set_support_next(nori_look::theme::season_now(today.month, today.day, today.southern).season as i32);

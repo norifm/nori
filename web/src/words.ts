@@ -373,8 +373,10 @@ export const W = {
   supportMost: (amount: string) => `At most ${amount}`,
   supportPay: (amount: string) => `Pay ${amount}`,
   supportManage: "Manage monthly support",
+  supportStop: "Stop monthly support",
   supportOtherCurrency: "Your monthly support is in another currency",
   supportFailed: "The payment didn't go through",
+  supportThanks: "Thank you",
   currencyNames: { EUR: "Euro", USD: "US Dollar", GBP: "British Pound", PLN: "Polish Zloty", CHF: "Swiss Franc", CZK: "Czech Koruna", SEK: "Swedish Krona", NOK: "Norwegian Krone", DKK: "Danish Krone", CAD: "Canadian Dollar", AUD: "Australian Dollar", JPY: "Japanese Yen" } as Record<string, string>,
   eq: {
     graphic: "Graphic",
