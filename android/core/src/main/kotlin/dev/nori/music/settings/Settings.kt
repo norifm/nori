@@ -118,6 +118,27 @@ class Settings(private val context: Context) {
     private fun laidAgain() {
         val p = state.value
         inEffect.value = if (overridden) core.effective() ?: p else p
+        receivers(inEffect.value)
+    }
+
+    /** Whether [dev.nori.music.playback.PlayOnBluetooth] was last turned on here; null before the first look. */
+    private var playsOnBluetooth: Boolean? = null
+
+    /**
+     * The manifest receivers the settings in effect turn on, changed only when that setting does. Looked at
+     * once on start too: settings restored with the app's data (a new phone) bring the setting back but not
+     * the receiver's state.
+     */
+    @Synchronized
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun receivers(p: StoredPrefs) {
+        if (p.playOnBluetooth == playsOnBluetooth) return
+        playsOnBluetooth = p.playOnBluetooth
+        dev.nori.music.playback.PlayOnBluetooth.enable(context, p.playOnBluetooth)
+    }
+
+    init {
+        receivers(inEffect.value)
     }
 
     /**
@@ -182,7 +203,6 @@ class Settings(private val context: Context) {
      * A change by name the core has already kept (`setting_set`): taken in here, and nothing sent back.
      */
     fun took(change: SettingChange) {
-        receivers(state.value, change.prefs)
         set { change.prefs }
         if (change.effect != 0u) _effects.tryEmit(change.effect.toInt())
     }
@@ -210,15 +230,8 @@ class Settings(private val context: Context) {
         if (next == state.value) return
         // The core first: whatever reacts to the new value (on any thread) reads it from there.
         val effect = core.put(next)
-        receivers(state.value, next)
         set { next }
         if (effect != 0u) _effects.tryEmit(effect.toInt())
-    }
-
-    /** The manifest receivers a setting turns on, changed only when it does. */
-    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-    private fun receivers(before: StoredPrefs, after: StoredPrefs) {
-        if (before.playOnBluetooth != after.playOnBluetooth) dev.nori.music.playback.PlayOnBluetooth.enable(context, after.playOnBluetooth)
     }
 
     private fun load(): StoredPrefs = core.open(java.io.File(context.filesDir, dbFileName()).path)

@@ -66,12 +66,14 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
-        <receiver android:name="dev.nori.music.plugins.PluginBluetoothReceiver" android:enabled="false" android:exported="false">
+        <!-- Exported: the Bluetooth stack sends these from its own process (uid bluetooth), which a receiver
+             that is not exported never hears. Only the system may send the action; each receiver checks it. -->
+        <receiver android:name="dev.nori.music.plugins.PluginBluetoothReceiver" android:enabled="false" android:exported="true">
             <intent-filter>
                 <action android:name="android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
-        <receiver android:name="dev.nori.music.playback.PlayOnBluetooth" android:enabled="false" android:exported="false">
+        <receiver android:name="dev.nori.music.playback.PlayOnBluetooth" android:enabled="false" android:exported="true">
             <intent-filter>
                 <action android:name="android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED" />
             </intent-filter>

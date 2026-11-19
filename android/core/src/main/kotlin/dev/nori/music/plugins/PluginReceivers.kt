@@ -56,8 +56,7 @@ class PluginBootReceiver : BroadcastReceiver() {
 /** A Bluetooth audio device connected: the plugins that want it hear `woke("bluetooth-connected")`. */
 class PluginBluetoothReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val state = intent.getIntExtra(android.bluetooth.BluetoothProfile.EXTRA_STATE, -1)
-        if (state != android.bluetooth.BluetoothProfile.STATE_CONNECTED) return
+        if (!dev.nori.music.playback.audioDeviceConnected(intent)) return
         PluginReceivers.handle(this, context) { it.woke(WakeEvent.BLUETOOTH_CONNECTED) }
     }
 }

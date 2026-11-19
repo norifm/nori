@@ -605,7 +605,8 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     @Composable
     fun RowOf(at: Int, row: SettingRow, divider: Boolean) = androidx.compose.runtime.key((row as? SettingRow.Placed)?.id ?: "#$at") {
             when (row) {
-                is SettingRow.Toggle -> Toggle(row.title, row.detail, row.on, enabled = row.enabled, key = row.key) { on ->
+                // Without the permission (settings restored on a new phone) it cannot play on a connection: shown off, a tap asks.
+                is SettingRow.Toggle -> Toggle(row.title, row.detail, row.on && (row.name != "playOnBluetooth" || bluetoothAllowed()), enabled = row.enabled, key = row.key) { on ->
                     if (on && row.name == "playOnBluetooth" && !bluetoothAllowed()) askBluetooth.launch(android.Manifest.permission.BLUETOOTH_CONNECT) else vm.set(row.name, on.toString())
                 }
                 is SettingRow.Choice -> Choice(row, divider) { v -> vm.set(row.name, v) }
