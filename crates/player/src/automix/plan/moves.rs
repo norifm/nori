@@ -401,7 +401,8 @@ pub(super) fn filter_ride(p: &Pair) -> Option<Move> {
         let t = t as f64;
         let fits = |lead: f64| t - lead - music <= MAX_SKIP_MS as f64 && voices(t - lead) >= lead;
         let lead = phrased(whole(room(RIDE_BARS).min(t - music)), room(RIDE_SECTION_BARS).min(t - music), &fits);
-        (lead >= RIDE_MIN_MS && fits(lead)).then_some((t - lead, lead, what))
+        // A lead on a section may be up to half a beat more than the song has before it arrives: it starts at its top.
+        (lead >= RIDE_MIN_MS && fits(lead)).then_some(((t - lead).max(0.0), lead, what))
     });
     let (from, lead, lands) = match landed {
         Some((from, lead, what)) => (from, lead, Some(what)),

@@ -583,7 +583,7 @@ fn hold_through_line(p: &mut TransitionPlan, a: Option<&TrackAnalysis>, s: &Auto
     }
     (p.out_fade_start_ms, p.out_fade_end_ms) = (hold, p.out_fade_end_ms.max(hold + fall));
     if let Some(l) = p.low_pass.as_mut() {
-        l.start_ms = l.start_ms.max(hold);
+        (l.start_ms, l.end_ms) = (l.start_ms.max(hold), l.end_ms.max(p.out_fade_end_ms));
     }
     if s.filter_effects && p.vocal_duck.is_none_or(|d| d.until_ms < hold) {
         p.vocal_duck = Some(VocalDuck { until_ms: hold, release_ms: (p.duration_ms - hold).min(500), db: VOCAL_DUCK_DB, hz: VOCAL_DUCK_HZ });
@@ -3002,6 +3002,26 @@ mod tests {
         assert!((flat_hp.start_ms as f64 - (0.5 * lead / bar).floor() * bar).abs() <= 1.0, "halfway with drums all through: {flat:?}");
     }
 
+    /// A ride that starts on a section of the outgoing song may need a little more lead than the next song has before
+    /// its drop: the song starts at its top, its drop within half a beat of the exit.
+    #[test]
+    fn a_ride_starts_inside_the_next_song() {
+        let beat: f64 = 60_000.0 / 128.0;
+        let bar = 4.0 * beat;
+        let (a, b) = (profiled(track(128.0), band), profiled(loose(TrackAnalysis { key: camelot(6, false), ..track(170.0) }), band));
+        let flat = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        assert_eq!(flat.kind, TransitionKind::FilterRide, "{}", flat.reason);
+        // A section six bars before the exit, the drop a little under six bars into the next song.
+        let section = (flat.out_start_ms + flat.in_fade_end_ms) as f64 - 6.0 * bar;
+        let sectioned = TrackAnalysis { outro_bars: a.outro_bars.iter().map(|x| if (x.start_ms as f64) < section - 1.0 { BarProfile { level_db: -6.0, ..*x } } else { BarProfile { change: if (x.start_ms as f64 - section).abs() < 1.0 { 1.0 } else { 0.0 }, ..*x } }).collect(), ..a.clone() };
+        let dropping = TrackAnalysis { drop_ms: b.silence_start_ms + (6.0 * bar - 0.3 * beat) as i64, ..b.clone() };
+        let p = plan(Some(&sectioned), Some(&dropping), 240_000, 240_000, &dj());
+        assert!(p.kind == TransitionKind::FilterRide && p.reason.contains("its drop on the exit"), "{}", p.reason);
+        assert!(p.in_start_ms >= 0, "starts {} ms before the song does: {p:?}", -p.in_start_ms);
+        assert!(((p.in_start_ms + p.in_fade_end_ms - dropping.drop_ms) as f64).abs() <= 0.5 * beat, "the drop at the exit: {p:?}");
+        assert!((p.out_start_ms as f64 - section).abs() <= 1.0, "from the section: {p:?}");
+    }
+
     /// A live recording's opening talk to the crowd (voice, no band, the voice stopping as the band comes in) is not
     /// mixed over: the next song comes in where its band does, its singing taken from where it sings after that. An
     /// opening sung over no band, singing on as the band comes in, is part of the song.
@@ -3819,6 +3839,24 @@ mod tests {
             assert!(p.out_start_ms + p.out_fade_start_ms >= vocal_end - 1, "{style:?} falls over the line: {p:?}");
             assert!((p.out_fade_end_ms - p.out_fade_start_ms) as f64 >= bar - 1.0, "{style:?}: {p:?}");
             check_skip(&p, &a, &b, 240_000);
+        }
+    }
+
+    /// A fade between clashing keys darkens the outgoing song. Held through a line sung past the fade, it darkens over
+    /// its fall: the sweep still runs forward.
+    #[test]
+    fn a_held_fade_darkens_as_it_falls() {
+        let bar = 4.0 * 60_000.0 / 128.0;
+        let (a, vocal_end) = sung_until(2.0);
+        let a = TrackAnalysis { mixramp_end_ms: vocal_end - (2.0 * bar) as i64, ..a };
+        let b = TrackAnalysis { bpm: 95.0, intro_bpm: 95.0, key: camelot(6, false), ..track(95.0) };
+        for style in [MixStyle::Smooth, MixStyle::Dj] {
+            let s = AutoMixSettings { style, max_transition_s: 30.0, max_tempo_change_pct: style.tempo_pct(), ..Default::default() };
+            let p = plan(Some(&a), Some(&b), 240_000, 240_000, &s);
+            let lp = p.low_pass.expect(&p.reason);
+            assert_eq!(p.kind, TransitionKind::MixRampFade, "{style:?}: {}", p.reason);
+            assert!(lp.start_ms >= p.out_fade_start_ms && lp.end_ms > lp.start_ms, "{style:?}: {p:?}");
+            assert_eq!(lp.end_ms, p.out_fade_end_ms, "{style:?}: dark once it is gone: {p:?}");
         }
     }
 
