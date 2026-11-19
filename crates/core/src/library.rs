@@ -320,7 +320,7 @@ pub(crate) mod tests {
         // Before the player has taken up the queue saved for this start, that queue is what is here.
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
         let songs: Vec<Song> = ["a", "b"].iter().map(|id| Song { id: id.to_string(), ..Default::default() }).collect();
-        c.core.save_queue(crate::PlayQueue { songs, index: 1, position_ms: 0, origin: None }).unwrap();
+        c.core.save_queue(crate::PlayQueue { songs, index: 1, position_ms: 0, ..Default::default() }).unwrap();
         fake.answer(r#"{"subsonic-response":{"status":"ok","playQueue":{"current":"b","position":5,"changedBy":"web","entry":[{"id":"a","isDir":false},{"id":"b","isDir":false}]}}}"#);
         assert_eq!(block(c.queue_offer(false, None)).unwrap(), None, "saved here for the next start");
 

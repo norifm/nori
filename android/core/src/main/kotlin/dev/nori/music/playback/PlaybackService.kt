@@ -453,9 +453,10 @@ class PlaybackService : MediaLibraryService() {
             if (!playWhenReady) keepQueue(dev.nori.music.ffi.queue.QueueMoment.PAUSED)
         }
 
-        override fun onShuffleModeEnabledChanged(on: Boolean) { refreshButtons(); remoteState(); prefetchLyrics() }
+        // Kept with the queue, which comes back shuffled and repeating as it was left.
+        override fun onShuffleModeEnabledChanged(on: Boolean) { refreshButtons(); remoteState(); prefetchLyrics(); keepQueue(dev.nori.music.ffi.queue.QueueMoment.EDITED) }
 
-        override fun onRepeatModeChanged(repeatMode: Int) { refreshButtons(); remoteState() }
+        override fun onRepeatModeChanged(repeatMode: Int) { refreshButtons(); remoteState(); keepQueue(dev.nori.music.ffi.queue.QueueMoment.EDITED) }
 
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
@@ -754,12 +755,15 @@ class PlaybackService : MediaLibraryService() {
             if (resetPosition) setMediaItems(mediaItems, C.INDEX_UNSET, C.TIME_UNSET) else setMediaItems(mediaItems, wrappedPlayer.currentMediaItemIndex, wrappedPlayer.currentPosition)
         override fun setMediaItems(mediaItems: List<MediaItem>, startIndex: Int, startPositionMs: Long) {
             offlineBridge?.abandon()
-            // A list shuffled ahead (a weighted shuffle) plays in its order (MediaItems.shuffled).
+            // A list shuffled ahead (a weighted shuffle, a saved queue) plays in its order (MediaItems.shuffled).
             val order = mediaItems.firstOrNull()?.shuffledAs()
             // The page it was started from, if any (MediaItems.origin): a new queue replaces the last one's.
             val origin = mediaItems.firstOrNull()?.origin()
-            val c = if (order != null) nori.session.playlistSetShuffled(ids(mediaItems), order.map { it.toUInt() }, origin)
+            val c = if (order != null) nori.session.playlistSetShuffled(ids(mediaItems), order.map { it.toUInt() }, startIndex.takeIf { it >= 0 }?.toUInt(), origin)
             else nori.session.playlistSet(ids(mediaItems), startIndex.coerceAtMost(mediaItems.size - 1).takeIf { it >= 0 }?.toUInt(), wrappedPlayer.shuffleModeEnabled, origin)
+            // Songs that say how they came in (a saved queue's, MediaItems.queued) keep it.
+            val hands = mediaItems.map { it.queuedAs() ?: Hand.NO }
+            if (hands.any { it != Hand.NO }) nori.session.playlistMark(hands)
             super.setMediaItems(mediaItems, c.at?.toInt() ?: 0, if (startIndex == C.INDEX_UNSET) C.TIME_UNSET else startPositionMs)
             onQueueSet?.invoke()
         }
@@ -941,8 +945,22 @@ class PlaybackService : MediaLibraryService() {
         if (q.songs.isEmpty() || player.mediaItemCount > 0) return@launch
         // Not prepared: nothing touches the network until the user presses play. The core keeps the index
         // inside the queue it hands back.
-        // With the page it was started from, so that page still answers for it.
-        controls.setMediaItems(startedFrom(held(q.songs), q.origin), q.index.toInt(), q.positionMs.toLong())
+        controls.setMediaItems(resumed(q), q.index.toInt(), q.positionMs.toLong())
+    }
+
+    /**
+     * The saved queue [q] as the player's items, with the page it was started from (so that page still
+     * answers for it), and its shuffle and repeat set on the player: the play order rides on the first item
+     * (MediaItems.shuffled) and each song's mark on it (MediaItems.queued), so the core takes them as they were.
+     */
+    private fun resumed(q: dev.nori.music.ffi.model.PlayQueue): List<MediaItem> {
+        controls.shuffleModeEnabled = q.order != null
+        controls.repeatMode = q.repeat.toInt()
+        val hands = dev.nori.music.ffi.queue.queueSavedHands(q.songs.size.toUInt(), q.queued, q.auto)
+        val made = held(q.songs).mapIndexed { i, item -> if (hands[i] == Hand.NO) item else item.queued(hands[i]) }.toMutableList()
+        val order = q.order
+        if (order != null && made.isNotEmpty()) made[0] = made[0].shuffled(order.map { it.toInt() }.toIntArray())
+        return startedFrom(made, q.origin)
     }
 
     /**
@@ -1108,9 +1126,11 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
-        override fun onPlaybackResumption(session: MediaSession, controller: MediaSession.ControllerInfo): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future {
+        override fun onPlaybackResumption(session: MediaSession, controller: MediaSession.ControllerInfo, isForPlayback: Boolean): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future {
             val q = withContext(Dispatchers.IO) { nori.core.loadQueue() }
-            MediaSession.MediaItemsWithStartPosition(startedFrom(held(q.songs), q.origin), q.index.toInt(), q.positionMs.toLong())
+            // Asked only to show what would play (the system's media controls), the player is left as it is.
+            val items = if (isForPlayback) resumed(q) else startedFrom(held(q.songs), q.origin)
+            MediaSession.MediaItemsWithStartPosition(items, q.index.toInt(), q.positionMs.toLong())
         }
 
         override fun onGetLibraryRoot(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, params: LibraryParams?): ListenableFuture<LibraryResult<MediaItem>> {
@@ -1193,7 +1213,7 @@ class PlaybackService : MediaLibraryService() {
     private suspend fun spoken(query: String, extras: Bundle?): MediaSession.MediaItemsWithStartPosition {
         if (query.isBlank()) {
             val q = withContext(Dispatchers.IO) { runCatching { nori.core.loadQueue() }.getOrNull() }
-            if (q != null && q.songs.isNotEmpty()) return MediaSession.MediaItemsWithStartPosition(startedFrom(held(q.songs), q.origin), q.index.toInt(), q.positionMs.toLong())
+            if (q != null && q.songs.isNotEmpty()) return MediaSession.MediaItemsWithStartPosition(resumed(q), q.index.toInt(), q.positionMs.toLong())
         }
         val tiles = withContext(Dispatchers.IO) { runCatching { nori.core.mixCards(nori.settings.effective.value.tasteModel) }.getOrDefault(emptyList()) }
         val mix = if (query.isBlank()) tiles.firstOrNull { it.name == dev.nori.music.ffi.library.MixName.QUICK_PICKS } ?: tiles.firstOrNull()

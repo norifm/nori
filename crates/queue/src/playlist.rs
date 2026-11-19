@@ -318,6 +318,19 @@ impl Session {
     }
 }
 
+/// The marks of a saved queue of `len` songs (`PlayQueue`): those at `queued` added by hand, those at
+/// `auto` by the queue itself, the rest the list's.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn queue_saved_hands(len: u32, queued: Vec<u32>, auto: Vec<u32>) -> Vec<Hand> {
+    let mut hands = vec![Hand::No; len as usize];
+    for (at, hand) in queued.into_iter().map(|i| (i, Hand::Last)).chain(auto.into_iter().map(|i| (i, Hand::Auto))) {
+        if let Some(h) = hands.get_mut(at as usize) {
+            *h = hand;
+        }
+    }
+    hands
+}
+
 /// The queue as it is now: its songs, and the current one's index.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -355,13 +368,14 @@ impl Session {
         self.shuffled(at)
     }
 
-    /// Sets a queue shuffled into `order` (list indexes, a weighted shuffle), from its first song.
-    /// Shuffle off then plays the list in order from the song playing.
+    /// Sets a queue shuffled into `order` (list indexes: a weighted shuffle, or a saved queue's), from list
+    /// index `start` (None: the order's first song). Shuffle off then plays the list in order from the song
+    /// playing.
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_set_shuffled"))]
-    pub fn set_shuffled(&self, ids: Vec<String>, order: Vec<u32>, origin: Option<PageOrigin>) -> QueueChange {
+    pub fn set_shuffled(&self, ids: Vec<String>, order: Vec<u32>, start: Option<u32>, origin: Option<PageOrigin>) -> QueueChange {
         let mut q = self.queue.lock();
         q.set_origin(origin);
-        let start = order.first().map_or(0, |&i| i as usize);
+        let start = start.or(order.first().copied()).map_or(0, |i| i as usize);
         let at = q.list.set_in_order(ids, start, order.into_iter().map(|i| i as usize).collect(), seed());
         drop(q);
         self.shuffled(at)
@@ -435,6 +449,13 @@ impl Session {
             p.current()
         });
         self.shuffled(at.at.map(|a| a as usize))
+    }
+
+    /// Marks each song of the queue with how it came in (`hands`, one per song): a saved queue's marks
+    /// ([`saved_hands`]) put back.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_mark"))]
+    pub fn mark(&self, hands: Vec<Hand>) {
+        self.queue.lock().list.mark(hands);
     }
 
     /// Shows shuffle as `on` right away, before the queue change that follows.
@@ -655,7 +676,7 @@ pub(crate) mod tests {
         assert!(s.from_page(&album));
         assert_eq!(s.origin_gen(), gen);
 
-        s.set_shuffled(ids(&["r1", "r2"]), vec![1, 0], Some(artist.origin()));
+        s.set_shuffled(ids(&["r1", "r2"]), vec![1, 0], None, Some(artist.origin()));
         assert!(s.from_page(&artist) && !s.from_page(&album));
         s.set(ids(&["radio:1"]), Some(0), false, None);
         assert_eq!(s.origin(), None);
@@ -721,7 +742,7 @@ pub(crate) mod tests {
     fn a_page_shuffle_turned_off_plays_the_page_in_order() {
         let s = session(&["o0"], 0);
         let names = |s: &Session| s.playlist(|p| p.play_order().map(|i| p.ids()[i].clone()).collect::<Vec<_>>());
-        assert_eq!(s.set_shuffled(ids(&["p1", "p2", "p3", "p4"]), vec![2, 0, 3, 1], None).at, Some(2), "starts on the order's first");
+        assert_eq!(s.set_shuffled(ids(&["p1", "p2", "p3", "p4"]), vec![2, 0, 3, 1], None, None).at, Some(2), "starts on the order's first");
         s.moved_to(0);
         s.shuffle(false);
         assert_eq!(s.playlist(|p| p.current_id().map(str::to_string)).as_deref(), Some("p1"), "the song playing goes on");
@@ -736,7 +757,7 @@ pub(crate) mod tests {
         assert!(!s.shuffle_shown());
         s.show_shuffle(true);
         assert!(s.shuffle_shown());
-        s.set_shuffled(ids(&["s1", "s2"]), vec![1, 0], None);
+        s.set_shuffled(ids(&["s1", "s2"]), vec![1, 0], None, None);
         assert!(s.shuffle_shown(), "a weighted shuffle stays lit");
         s.take(0, ids(&["s3"]), vec![Hand::Last]);
         assert!(s.shuffle_shown());

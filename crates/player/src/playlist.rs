@@ -324,6 +324,15 @@ impl Playlist {
         at
     }
 
+    /// Marks each song with how it came into the queue (`hands`, one per song, in list order); a list of
+    /// another length leaves the marks as they were.
+    pub fn mark(&mut self, hands: Vec<Hand>) {
+        if hands.len() == self.ids.len() {
+            self.hand = hands;
+            self.rev += 1;
+        }
+    }
+
     /// Shows shuffle on/off at once, before the change itself arrives.
     pub fn show_shuffle(&mut self, on: bool) {
         self.lit = on;

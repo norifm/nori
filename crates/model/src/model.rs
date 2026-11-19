@@ -530,6 +530,18 @@ pub struct PlayQueue {
     /// The page the queue was started from; None if unknown.
     #[cfg_attr(feature = "ffi", uniffi(default))]
     pub origin: Option<PageOrigin>,
+    /// The play order under shuffle (indexes into `songs`, each once); None: list order, shuffle off.
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub order: Option<Vec<u32>>,
+    /// media3's repeat mode (`nori_player::playlist::REPEAT_*`).
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub repeat: u8,
+    /// Indexes of the songs added by hand (Play next, Add to queue).
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub queued: Vec<u32>,
+    /// Indexes of the songs the queue added itself (autofill).
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub auto: Vec<u32>,
 }
 
 /// A song's download state. `Queued` is shown for a waiting song with no stored mark; the last three are
