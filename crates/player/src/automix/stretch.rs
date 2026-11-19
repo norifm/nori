@@ -16,6 +16,14 @@ const MAX_RATIO: f64 = 2.0;
 const MAX_OUT: usize = (BLOCK as f64 / MIN_RATIO) as usize + 8;
 /// Crossfade from the stretched to the plain signal, frames.
 const XFADE: usize = 1024;
+/// Back at ratio 1 the vocoder's phases are turned to the input's ([`nori_stretch::Stretch::set_relock`]) before
+/// the crossfade, so it blends two equal signals: by up to this many radians per hop. The turn detunes a partial by
+/// `RELOCK / (2π · hop)` while it lasts (0.4 Hz), and a faster one dips the bass, ...
+const RELOCK: f32 = 0.1;
+/// ... until a block's difference from the plain signal is this share of its energy (-40 dB), ...
+const RELOCKED: f32 = 1e-4;
+/// ... or for at most this many hops (2 s).
+const RELOCK_HOPS: f64 = 50.0;
 /// Signalsmith Stretch's analysis hop in the preset used, seconds (`presetCheaper`: 40 ms).
 const SIGNALSMITH_HOP_S: f64 = 0.04;
 /// The smallest ratio offset Signalsmith Stretch follows cleanly, in frames per hop: closer to 1 it loses up to
@@ -225,6 +233,9 @@ impl Stretcher {
     /// linear ramp to 1 over `ramp` output frames, then the hand-over. Resets the engine.
     pub fn configure(&mut self, ratio: f64, hold: u64, ramp: u64) {
         let ratio = bounded(ratio);
+        if let Engine::Signalsmith(s) = &mut self.engine {
+            s.set_relock(0.0);
+        }
         (self.ratio0, self.to, self.hold, self.ramp, self.out_pos, self.frac) = (ratio, 1.0, hold, ramp, 0, 0.0);
         self.knots.clear();
         (self.pend_read, self.pend_len, self.raw_pos) = (0, 0, 0);
@@ -395,11 +406,19 @@ impl Stretcher {
         let ch = self.ch;
         let n = input.len() / ch;
         let r = self.ratio_now();
-        let settled = (self.hold + self.ramp).max(self.key.end());
-        if r == 1.0 && self.to == 1.0 && self.state == State::Active && self.out_pos >= settled + (self.latency + BLOCK) as u64 {
-            self.state = State::Fading(0);
-            if let Engine::Vari(v) = &mut self.engine {
-                v.phase = v.pos - v.pos.round();
+        // Back at ratio 1 in its own key the vocoder's phases turn to the input's; from `settled` on everything in
+        // flight was made at 1.
+        let done = (self.hold + self.ramp).max(self.key.end());
+        let back = r == 1.0 && self.to == 1.0 && self.state == State::Active && self.out_pos >= done;
+        let settled = done + (self.latency + BLOCK) as u64;
+        let mut relocked = false;
+        match &mut self.engine {
+            Engine::Signalsmith(s) => s.set_relock(if back || matches!(self.state, State::Fading(_)) { RELOCK } else { 0.0 }),
+            Engine::Vari(v) => {
+                if back && self.out_pos >= settled {
+                    self.state = State::Fading(0);
+                    v.phase = v.pos - v.pos.round();
+                }
             }
         }
         let produced = match self.state {
@@ -448,6 +467,12 @@ impl Stretcher {
                                 }
                             }
                         }
+                        if back && self.out_pos >= settled {
+                            let (made, plain) = (&self.pend[..m * ch], &self.stage[..m * ch]);
+                            let diff: f32 = made.iter().zip(plain).map(|(a, b)| (a - b) * (a - b)).sum();
+                            let energy: f32 = plain.iter().map(|v| v * v).sum();
+                            relocked = diff <= RELOCKED * energy || self.out_pos >= settled + (RELOCK_HOPS * self.hop) as u64;
+                        }
                         // A pitch-keeping stretch loosens how the partials line up, so a master limited to full
                         // scale peaks over it: rounded off under it, as the song itself peaks.
                         for v in &mut self.pend[..m * ch] {
@@ -471,6 +496,9 @@ impl Stretcher {
                             v.phase = 0.0;
                         }
                     }
+                }
+                if relocked {
+                    self.state = State::Fading(0);
                 }
                 made
             }
@@ -949,6 +977,91 @@ mod tests {
             let want = hold as f64 + ramp * (1.0 + to) / 2.0 + (made - ramp) * to;
             assert!((content - want).abs() < 0.002 * want, "keep_pitch {keep}: {content:.0} frames of the song, {want:.0} expected");
         }
+    }
+
+    /// The left channel through two 250 Hz Butterworth low-passes (RBJ biquads).
+    fn bass(x: &[f32]) -> Vec<f64> {
+        let w = 2.0 * std::f64::consts::PI * 250.0 / 44_100.0;
+        let alpha = w.sin() / std::f64::consts::SQRT_2;
+        let a0 = 1.0 + alpha;
+        let b = [(1.0 - w.cos()) / 2.0 / a0, (1.0 - w.cos()) / a0, (1.0 - w.cos()) / 2.0 / a0];
+        let a = [-2.0 * w.cos() / a0, (1.0 - alpha) / a0];
+        let mut y: Vec<f64> = x.iter().step_by(2).map(|v| *v as f64).collect();
+        for _ in 0..2 {
+            let mut s = [0.0; 2];
+            for v in &mut y {
+                let o = b[0] * *v + s[0];
+                s[0] = b[1] * *v - a[0] * o + s[1];
+                s[1] = b[2] * *v - a[1] * o;
+                *v = o;
+            }
+        }
+        y
+    }
+
+    /// Sustained bass under a few partials and a little noise, stereo.
+    fn bass_line(frames: usize) -> Vec<f32> {
+        let mut r = crate::automix::eval::Rng(9);
+        (0..frames)
+            .flat_map(|i| {
+                let t = i as f64 / 44_100.0;
+                let tone = |f: f64, a: f64| a * (2.0 * std::f64::consts::PI * f * t).sin();
+                let v = tone(55.0, 0.3) + tone(82.4, 0.2) + tone(440.0, 0.05) + tone(659.3, 0.04) + tone(1318.5, 0.02);
+                let v = (v + r.signed() * 0.01) as f32;
+                [v, v]
+            })
+            .collect()
+    }
+
+    /// Through the hand-over back from a stretch the bass keeps its level, whatever phase the stretch left it at.
+    #[test]
+    fn hand_over_keeps_the_bass() {
+        let rate = 44_100usize;
+        let mut levels = Vec::new();
+        for (ratio, hold) in [(1.03, 1.0), (0.97, 1.3), (1.05, 0.7), (0.95, 1.6), (1.02, 2.1), (1.06, 1.15)] {
+            let x = bass_line(rate * 10);
+            let mut s = Stretcher::new(rate as u32, 2, true);
+            let (hold, ramp) = ((hold * rate as f64) as usize, rate / 2);
+            s.configure(ratio, hold as u64, ramp as u64);
+            let settled = hold + ramp + s.latency_frames() + BLOCK;
+            let mut buf = vec![0f32; 2048 * 2];
+            let (mut out, mut pos) = (Vec::new(), 0);
+            while pos < x.len() && !s.bypassed() {
+                let (u, m) = s.process(&x[pos..(pos + 512 * 2).min(x.len())], &mut buf);
+                out.extend_from_slice(&buf[..m * 2]);
+                pos += u * 2;
+            }
+            let bypassed_at = out.len() / 2;
+            assert!(bypassed_at < settled + rate * 3 / 2, "ratio {ratio}: handed over {} frames after settling", bypassed_at - settled);
+            loop {
+                let m = s.drain(&mut buf);
+                out.extend_from_slice(&buf[..m * 2]);
+                if m * 2 < buf.len() {
+                    break;
+                }
+            }
+            out.extend_from_slice(&x[pos..]);
+            // At ratio 1 output frame `j` plays input frame `song(j)`.
+            let song = |j: usize| (j as isize + (x.len() as isize - out.len() as isize) / 2) as usize;
+            assert!(out[bypassed_at * 2..] == x[song(bypassed_at) * 2..], "ratio {ratio}: not the input after the hand-over");
+            let (low_out, low_in) = (bass(&out), bass(&x));
+            let energy = |v: &[f64]| v.iter().map(|v| v * v).sum::<f64>();
+            let worst = |dbs: &mut dyn Iterator<Item = f64>| dbs.fold(0.0, |m: f64, db| if db.abs() > m.abs() { db } else { m });
+            // From the crossfade on, every 256 frames against the input at the same song time; the crossfade starts in
+            // the block that ends its first `XFADE` frames.
+            let crossfade = worst(&mut ((bypassed_at - XFADE - BLOCK) / 256..(bypassed_at + rate) / 256)
+                .map(|w| 10.0 * (energy(&low_out[w * 256..(w + 1) * 256]) / energy(&low_in[song(w * 256)..song((w + 1) * 256)])).log10()));
+            // Before it the phases differ from the input's, so over one beat of the two bass notes (two periods of
+            // 55 Hz, three of 82.4), whose level does not depend on their phases.
+            let beat = 1605;
+            let own = energy(&low_in[rate..rate + beat]);
+            let relock = worst(&mut (hold + ramp - rate / 2..bypassed_at).step_by(128).map(|f| 10.0 * (energy(&low_out[f..f + beat]) / own).log10()));
+            levels.push((ratio, (crossfade * 100.0).round() / 100.0, (relock * 100.0).round() / 100.0));
+        }
+        assert!(
+            levels.iter().all(|(_, crossfade, relock)| crossfade.abs() < 1.0 && relock.abs() < 1.0),
+            "the bass off its own level (ratio, in the crossfade, before it), dB: {levels:?}"
+        );
     }
 
     #[test]

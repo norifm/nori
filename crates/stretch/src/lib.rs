@@ -4,7 +4,8 @@
 //! Ported from Signalsmith Stretch, Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd., and Signalsmith
 //! Linear, Copyright (c) 2025 Signalsmith Audio, both MIT (see LICENSE in this crate). Only what nori uses is here:
 //! the cheaper preset with its split computation, `process`, `flush`, `reset` and transposition; no seeking, formants
-//! or custom frequency maps.
+//! or custom frequency maps. One addition is nori's own: `set_relock`, which brings the phases back to the input's at
+//! ratio 1.
 //!
 //! The original spreads each block's work over the interval that reads its output, a step per output sample, so a
 //! small audio callback costs about the same each time. nori fills seconds of output at once, so a block's work
@@ -150,6 +151,8 @@ pub struct Stretch {
     smoothed_energy: Vec<f32>,
     peaks: Vec<(f32, f32)>,
     output_map: Vec<(f32, f32)>,
+    /// The turn each bin's phase prediction takes toward its input's per block ([`Stretch::set_relock`]).
+    relock: Option<Complex32>,
 }
 
 impl Stretch {
@@ -201,6 +204,7 @@ impl Stretch {
             smoothed_energy: vec![0.0; bands],
             peaks: Vec::with_capacity(bands),
             output_map: vec![(0.0, 1.0); bands],
+            relock: None,
         }
     }
 
@@ -219,6 +223,13 @@ impl Stretch {
     /// Frames between the center of the effect and the output `process` returns.
     pub fn output_latency(&self) -> usize {
         self.stft.synthesis_latency() + self.stft.interval()
+    }
+
+    /// Turns each bin's phase prediction toward its input's by up to `radians` per block: at ratio 1 the output
+    /// then becomes the input. 0, the default, is the plain phase vocoder; at another ratio the turn works against
+    /// the stretch.
+    pub fn set_relock(&mut self, radians: f32) {
+        self.relock = (radians > 0.0).then(|| Complex32::from_polar(1.0, radians));
     }
 
     /// Back to the configured state: silent history, nothing in flight.
@@ -434,6 +445,18 @@ impl Stretch {
             *prediction_input = *input;
             let phase = *output * mul_conj(*input, *prev_input);
             *output = phase / (prev_energy.max(*prediction_energy) + NOISE_FLOOR);
+        }
+        if let Some(turn) = self.relock {
+            // Each prediction turned toward its input by `turn`, or onto it when closer.
+            for (output, (input, energy)) in self.output.iter_mut().zip(self.input.iter().zip(&self.input_energy)) {
+                let size = (energy * output.norm_sqr()).sqrt();
+                let toward = mul_conj(*input, *output);
+                if toward.re >= turn.re * size {
+                    *output = *input * (output.norm_sqr() / (energy + NOISE_FLOOR)).sqrt();
+                } else {
+                    *output *= if toward.im >= 0.0 { turn } else { turn.conj() };
+                }
+            }
         }
     }
 
