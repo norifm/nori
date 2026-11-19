@@ -13,7 +13,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
@@ -25,10 +24,6 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -461,10 +456,7 @@ private fun Thanks(stamp: Stamp, accent: Color, slot: Slot, bring: suspend () ->
     val finish by rememberUpdatedState(done)
     var over by remember { mutableStateOf(false) }
     val end = { carried: Boolean -> if (!over) { over = true; finish(carried) } }
-    Dialog({ end(false) }, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false, dismissOnClickOutside = false)) {
-        val view = LocalView.current
-        // The veil is ours: no dimming or window animation of the platform's.
-        SideEffect { (view.parent as? DialogWindowProvider)?.window?.let { it.setDimAmount(0f); it.setWindowAnimations(0) } }
+    NoriDialog(true, { end(false) }, style = DialogStyle.Bare, scrim = 0f) {
         LaunchedEffect(Unit) {
             // The dialog's composition is the window's own; run on the app's clock whatever it inherited.
             withContext(AppMotion) {

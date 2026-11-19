@@ -114,8 +114,11 @@ private fun AppStatusBar() {
     }
 }
 
-/** How a dialog arrives: a card in the middle over a scrim, or a page over the whole screen. */
-enum class DialogStyle { Card, Page }
+/**
+ * How a dialog arrives: a card in the middle over a scrim, a page over the whole screen, or (Bare) a moment
+ * over the whole screen that draws and moves all of itself: no scrim, it comes and goes at once.
+ */
+enum class DialogStyle { Card, Page, Bare }
 
 /** [NoriDialog] with nothing to hand its content: shown while [visible]. */
 @Composable
@@ -157,7 +160,10 @@ fun <T : Any> NoriDialog(
         val shownAt = remember { Animatable(0f) }
         LaunchedEffect(open) {
             // The dialog's composition is the window's own; run on the app's clock whatever it inherited.
-            withContext(AppMotion) { shownAt.animateTo(if (open) 1f else 0f, if (open) AppMotion.show() else AppMotion.fadeOut()) }
+            withContext(AppMotion) {
+                if (style == DialogStyle.Bare) shownAt.snapTo(if (open) 1f else 0f)
+                else shownAt.animateTo(if (open) 1f else 0f, if (open) AppMotion.show() else AppMotion.fadeOut())
+            }
             if (!open) held = null
         }
         val plain = AppMotion.reduce
@@ -178,7 +184,7 @@ fun <T : Any> NoriDialog(
                 DialogStyle.Card -> Modifier.windowInsetsPadding(statusBarRoom.union(gestureBarRoom)).imePadding().padding(horizontal = 24.dp, vertical = 24.dp).widthIn(max = 560.dp)
                     // The card's own taps stay the card's.
                     .pointerInput(Unit) { detectTapGestures { } }
-                DialogStyle.Page -> Modifier.fillMaxSize()
+                DialogStyle.Page, DialogStyle.Bare -> Modifier.fillMaxSize()
             }
             Box(
                 card.graphicsLayer {
@@ -187,9 +193,10 @@ fun <T : Any> NoriDialog(
                     if (!plain) when (style) {
                         DialogStyle.Card -> { val s = 0.92f + 0.08f * p; scaleX = s; scaleY = s }
                         DialogStyle.Page -> translationY = (1f - p) * size.height / 24f
+                        DialogStyle.Bare -> {}
                     }
                 },
-                propagateMinConstraints = style == DialogStyle.Page,
+                propagateMinConstraints = style != DialogStyle.Card,
             ) {
                 // A dialog put up from a sheet is not in it.
                 CompositionLocalProvider(LocalInSheet provides false) { content(shown) }
