@@ -1,6 +1,8 @@
 //! Queue movement rules: placing hand-added songs, shuffle, prefetch and measure-ahead ranges, error
 //! handling, refilling past the end, and previous/repeat. Works on indexes; the platform holds the list.
 
+use crate::playlist::Hand;
+
 /// Where added songs go and, when shuffling, the new play order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
@@ -29,12 +31,14 @@ pub fn place(n: usize, cur: usize, chosen: impl Fn(usize) -> bool, order: Option
 }
 
 /// The play order when shuffle is turned on: the current song first, the hand-added run after it in
-/// order, the rest shuffled.
-pub(crate) fn shuffle_around(n: usize, cur: usize, hand: impl Fn(usize) -> bool, seed: u64) -> Vec<usize> {
-    let run = (cur + 1..n).find(|&i| !hand(i)).unwrap_or(n);
+/// order, the rest shuffled, the queue's own songs (autofill) after the ones the user chose.
+pub(crate) fn shuffle_around(n: usize, cur: usize, hand: impl Fn(usize) -> Hand, seed: u64) -> Vec<usize> {
+    let run = (cur + 1..n).find(|&i| !hand(i).by_user()).unwrap_or(n);
+    let (mut chosen, mut own): (Vec<usize>, Vec<usize>) = (0..cur).chain(run..n).partition(|&i| hand(i) != Hand::Auto);
+    shuffle(&mut chosen, seed);
+    shuffle(&mut own, seed);
     let mut order = Vec::with_capacity(n);
-    order.extend((cur..run).chain(0..cur).chain(run..n));
-    shuffle(&mut order[run - cur..], seed);
+    order.extend((cur..run).chain(chosen).chain(own));
     order
 }
 
@@ -320,7 +324,7 @@ mod tests {
         assert_eq!(p.order, Some(vec![3, 0, 4, 5, 1, 2]));
 
         // Shuffle keeps current and hand added first.
-        let o = shuffle_around(7, 1, |i| i == 2 || i == 3, 42);
+        let o = shuffle_around(7, 1, |i| if i == 2 || i == 3 { Hand::Next } else { Hand::No }, 42);
         assert_eq!(&o[..3], &[1, 2, 3]);
         let mut rest = o[3..].to_vec();
         rest.sort();

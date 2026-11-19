@@ -77,6 +77,9 @@ pub const REPORT_WAITING: i32 = 24;
 /// A device paired (`flag` 1, [`Report::text`] its name) or not (`flag` 0: [`Report::index`] is why, a
 /// `NORI_PAIR_*` code, [`Report::text`] the device's name when its code says it).
 pub const REPORT_PAIRED: i32 = 25;
+/// Downloaded songs offered an analysis: [`Report::index`] of them, about [`Report::ms`] minutes; `flag` 1
+/// when an update changed the analysis, 0 when AutoMix was turned on. `nori_ios_analyse_downloads` is the yes.
+pub const REPORT_ANALYSIS_OFFER: i32 = 26;
 
 pub const STATE_IDLE: i32 = 0;
 pub const STATE_PLAYING: i32 = 1;
@@ -153,8 +156,8 @@ fn deliver_one(said: Said) {
         }
         Said::JamEnded { host } => return crate::jam::left(Some(host.clone())),
         // The state events say what these do to the music; the app draws nothing of them. The Downloads
-        // page follows the work while it shows, and the iPod draws no account pictures.
-        Said::Engine(Event::LongPause | Event::Focus(_)) | Said::Working | Said::Pictured => return,
+        // page follows the work while it shows, and the iPod draws no account pictures, nor update notes yet.
+        Said::Engine(Event::LongPause | Event::Focus(_)) | Said::Working | Said::Pictured | Said::Update(_) | Said::Overridden => return,
         _ => {}
     }
     emit(&said);
@@ -259,7 +262,13 @@ fn pack(said: &Said) -> Packed {
         }
         Said::Starred(_) => p.kind = REPORT_STARRED,
         // Dropped before (deliver_one).
-        Said::Working | Said::Pictured => {}
+        Said::Working | Said::Pictured | Said::Update(_) | Said::Overridden => {}
+        Said::AnalysisOffer(o) => {
+            p.kind = REPORT_ANALYSIS_OFFER;
+            p.index = o.songs as i32;
+            p.ms = o.minutes.into();
+            p.flag = i32::from(o.reason == nori_core::automix::AnalysisReason::Changed);
+        }
         Said::Curve(n) => {
             p.kind = REPORT_CURVE;
             let (output, curve, offer) = match n {
@@ -362,7 +371,6 @@ pub const NOTE_INDEXING: i32 = 11;
 pub const NOTE_INDEXED: i32 = 12;
 pub const NOTE_INDEX_STOPPED: i32 = 13;
 pub const NOTE_DONE: i32 = 14;
-pub const NOTE_FORGOT: i32 = 15;
 pub const NOTE_CURVE_FAILED: i32 = 16;
 
 /// A note as its code, a count where it has one, and the failure's English detail for the log.
@@ -381,7 +389,6 @@ fn note(n: &Note) -> (i32, i32, String) {
         Note::Indexed(t) => (NOTE_INDEXED, count(t.songs as usize), String::new()),
         Note::IndexStopped(e) => (NOTE_INDEX_STOPPED, 0, e.to_string()),
         Note::Done(_) => (NOTE_DONE, 0, String::new()),
-        Note::Forgot(n) => (NOTE_FORGOT, count(*n as usize), String::new()),
         Note::CurveFailed(e) => (NOTE_CURVE_FAILED, 0, e.to_string()),
     }
 }
@@ -530,6 +537,7 @@ fn start_queue(
     if !offline {
         session.check();
     }
+    session.analysis_offer();
     {
         let mut slot = SESSION.lock().unwrap_or_else(|e| e.into_inner());
         if slot.is_some() {

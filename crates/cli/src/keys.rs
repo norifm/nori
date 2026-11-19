@@ -71,6 +71,8 @@ pub enum Action {
     Undo,
     /// Takes the songs after the one playing out of the queue.
     Clear,
+    /// The whole queue into a playlist picked next.
+    Keep,
     MoveUp,
     MoveDown,
     // Lyrics
@@ -203,6 +205,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(Edit, "d / delete", Action::Remove, "Take it out (of the queue, or off this computer); forget a paired device; refuse a jam request (enter accepts)", [(Char('d'), N), (Delete, N)]),
     b!(Edit, "u", Action::Undo, "Put back what was just taken out of the queue", [(Char('u'), N)]),
     b!(Edit, "c", Action::Clear, "Clear the queue: the songs after the one playing go", [(Char('c'), N)]),
+    b!(Edit, "w", Action::Keep, "Add the whole queue to a playlist, or make a new one of it", [(Char('w'), N)]),
     b!(Edit, "K / J", Action::MoveUp, "Move it up or down", [(Char('K'), S), (Char('K'), N)]),
     b!(Edit, "", Action::MoveDown, "", [(Char('J'), S), (Char('J'), N)]),
     b!(Lyrics, "[ ]", Action::Later, "Words later or sooner, for lyrics timed wrong", [(Char('['), N)]),
@@ -225,7 +228,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(Values, "K / J", Action::MoveUp, "Move a profile or a plugin up or down the order", [(Char('K'), S), (Char('K'), N)]),
     b!(Values, "", Action::MoveDown, "", [(Char('J'), S), (Char('J'), N)]),
     b!(Values, "d / delete", Action::Remove, "Remove a plugin or a repo", [(Char('d'), N), (Delete, N)]),
-    b!(Values, "m", Action::Menu, "A plugin's menu: move it, remove it", [(Char('m'), N)]),
+    b!(Values, "m", Action::Menu, "A plugin's menu: move it, remove it; a profile's scrobbling accounts", [(Char('m'), N)]),
     b!(Values, "/", Action::Search, "In the plugin browser, search the plugins", [(Char('/'), N)]),
     b!(Values, "← → / h l", Action::Decrease, "Change the value (seek with , and . here)", [(Left, N), (Char('h'), N)]),
     b!(Values, "", Action::Increase, "", [(Right, N), (Char('l'), N)]),

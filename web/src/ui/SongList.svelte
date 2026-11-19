@@ -23,7 +23,7 @@
     moved,
     one = false,
     extra = () => [],
-  }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; rows?: number[]; shown?: number; moved?: (from: number, to: number) => unknown; one?: boolean; extra?: (s: Song, i: number) => Item[] } = $props();
+  }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; rows?: number[]; shown?: number; moved?: (from: number, to: number) => unknown; one?: boolean; extra?: (s: Song, i: number) => Item[] | Promise<Item[]> } = $props();
   const playingId = $derived(player.song?.id);
   let all = $state(false);
   const at = $derived(rows ?? songs.map((_, i) => i));

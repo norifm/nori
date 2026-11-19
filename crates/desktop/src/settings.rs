@@ -2,7 +2,6 @@
 //! setting name and the picked value.
 
 use std::collections::{HashMap, HashSet};
-use nori_core::automix::store::Measured;
 use nori_core::numbers::{self, POINT};
 use nori_core::settings::{season_follow_value, season_of, EqLevel, Level, StoredPrefs, ThemeSeason};
 use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, SettingKind, SettingsState};
@@ -98,7 +97,6 @@ fn appearance_pick(p: &StoredPrefs) -> i32 {
 /// Non-setting facts the pages show (sizes, counts, devices).
 #[derive(Default, Clone)]
 pub struct Facts {
-    pub analysed: Measured,
     pub indexed: (u32, u32, u32),
     pub stream_bytes: u64,
     pub cover_bytes: u64,
@@ -108,8 +106,6 @@ pub struct Facts {
     pub all_download_songs: u32,
     /// Each profile with downloads (the id its rows are kept under) and what they hold.
     pub download_profiles: Vec<(String, u64)>,
-    /// This profile's finished downloads, which its actions work on.
-    pub download_songs: u32,
     pub database_bytes: u64,
     pub folders: Vec<(String, String)>,
     pub devices: Vec<String>,
@@ -140,6 +136,7 @@ const EQUALIZER: &str = "equalizer";
 const ADD_SERVER: &str = "add-server";
 const BACKUP: &str = "backup";
 const RESTORE: &str = "restore";
+const CHECK_UPDATE: &str = "check-update";
 const BACKUP_PASSWORD: &str = "backup-password";
 const RESTORE_PASSWORD: &str = "restore-password";
 
@@ -160,11 +157,15 @@ pub fn toggled(name: &str, on: bool) -> (&str, String) {
 pub enum Act {
     Equalizer,
     AddServer,
-    /// A server row's Edit: the account sheet of the profile in use where its provider has one to sign
-    /// in to, else the profile in the sign-in form.
+    /// A server row's Edit: the profile's account sheet where its provider has one to sign in to, else
+    /// the profile in the sign-in form.
     Edit(String),
     /// A server row's Rename: its name asked for.
     Rename(String),
+    /// A server row's Scrobbling: its scrobbling accounts' dialog.
+    Scrobbling(String),
+    /// A server row's Remove: asked first ([`REMOVE_PROFILE`]).
+    Remove(String),
     /// Switch to the server with this id.
     Server(String),
     Chore(Chore),
@@ -172,6 +173,7 @@ pub enum Act {
     Backup { restore: bool },
     /// Asks for the password of the backup at `path`.
     BackupPassword { restore: bool, path: String },
+    CheckUpdate,
 }
 
 impl Act {
@@ -186,6 +188,12 @@ impl Act {
         if let Some(id) = name.strip_prefix("rename:") {
             return Some(Act::Rename(id.to_string()));
         }
+        if let Some(id) = name.strip_prefix("scrobbling:") {
+            return Some(Act::Scrobbling(id.to_string()));
+        }
+        if let Some(id) = name.strip_prefix("remove:") {
+            return Some(Act::Remove(id.to_string()));
+        }
         if let Some((what, path)) = name.split_once(':').filter(|(what, _)| matches!(*what, BACKUP_PASSWORD | RESTORE_PASSWORD)) {
             return Some(Act::BackupPassword { restore: what == RESTORE_PASSWORD, path: path.to_string() });
         }
@@ -194,6 +202,7 @@ impl Act {
             ADD_SERVER => Some(Act::AddServer),
             BACKUP => Some(Act::Backup { restore: false }),
             RESTORE => Some(Act::Backup { restore: true }),
+            CHECK_UPDATE => Some(Act::CheckUpdate),
             _ => CHORES.into_iter().find(|c| chore_name(*c) == name).map(Act::Chore),
         }
     }
@@ -201,14 +210,13 @@ impl Act {
 
 pub use nori_host::session::Chore;
 
-const CHORES: [Chore; 6] = [Chore::SyncLibrary, Chore::DownloadLibrary, Chore::MeasureAgain, Chore::ClearStream, Chore::ClearCovers, Chore::ClearLyrics];
+const CHORES: [Chore; 5] = [Chore::SyncLibrary, Chore::DownloadLibrary, Chore::ClearStream, Chore::ClearCovers, Chore::ClearLyrics];
 
 /// A chore's row name in the UI.
 fn chore_name(c: Chore) -> &'static str {
     match c {
         Chore::SyncLibrary => "sync-library",
         Chore::DownloadLibrary => "download-library",
-        Chore::MeasureAgain => "measure-again",
         Chore::ClearStream => "clear-stream",
         Chore::ClearCovers => "clear-covers",
         Chore::ClearLyrics => "clear-lyrics",
@@ -332,21 +340,23 @@ fn section_title(id: SectionId) -> &'static str {
 fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let (title, detail) = match name {
         "crossfadeSec" => ("Crossfade", ""),
-        "autoMix" => ("AutoMix", ""),
-        "autoMixBetterBeats" => {
-            let mb = s.beat_model_mb;
+        "autoMix" => {
             let detail = match &s.beat_model {
-                BeatModel::Downloading => format!("Downloading (about {mb} MB)…"),
-                BeatModel::Failed { .. } => "The download didn't work. It tries again at the next song.".into(),
-                _ => "Uses more battery while songs are measured".into(),
+                BeatModel::Unavailable | BeatModel::Unused => String::new(),
+                BeatModel::Downloading => format!("Downloading the beat model (about {} MB)…", s.beat_model_mb),
+                BeatModel::Failed { .. } => "The beat model's download didn't work. It tries again at the next song.".into(),
+                BeatModel::Absent | BeatModel::Ready => "Uses more battery while songs are measured".into(),
             };
-            return ("Better beat detection".into(), detail);
+            return ("AutoMix".into(), detail);
         }
         "skipExplicit" => ("Skip explicit songs", ""),
         "autoFill" => ("When the queue ends", ""),
         "autoFillBasis" => ("Chosen by", ""),
         "autoFillRemote" => ("Include remote songs", ""),
+        "updateCheck" => ("Check automatically", "At most once a day, from GitHub"),
+        "updateBeta" => ("Beta updates", "Test versions of the next release. They may have bugs"),
         "bridgeOffline" => ("Play downloads when offline", ""),
+        "playOnBluetooth" => ("Play when Bluetooth connects", "Headphones, a speaker or a car: the queue goes on where it stopped"),
         "autoEqAuto" => ("AutoEQ for headphones", ""),
         "autoEqDownload" => ("Keep the AutoEQ list", ""),
         "profilePerOutput" => ("Remember sound per device", ""),
@@ -364,7 +374,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "lyricsOnline" => ("Find missing lyrics online", ""),
         "lyricsPreferWords" => ("Prefer word-by-word lyrics", ""),
         "tasteModel" => ("Keep listening history", ""),
-        "scrobble" => ("Tell the server what you play", ""),
         "thirdPartyLookups" => ("Look things up online", ""),
         "remoteControl" => ("Remote control and jams", ""),
         "wifi" => ("Streaming quality", ""),
@@ -522,7 +531,6 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             let (songs, albums, artists) = f.indexed;
             let bytes = |b: u64| numbers::bytes(b as i64, POINT);
             match a {
-                SettingsAction::MeasureAgain => action("Measured songs", words::measured(f.analysed), "Measure again", enabled, Chore::MeasureAgain),
                 SettingsAction::SyncLibrary => {
                     let counts = format!("{} · {} · {} on this Mac", words::count(songs, "song", "songs"), words::count(albums, "album", "albums"), words::count(artists, "artist", "artists"));
                     action("Offline search", counts, if f.syncing { "Updating…" } else { "Update" }, enabled, Chore::SyncLibrary)
@@ -534,7 +542,8 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
                 SettingsAction::AddServer => Row { kind: BUTTON, name: ADD_SERVER.into(), title: "Add profile".into(), enabled: true, ..Default::default() },
                 SettingsAction::MakeBackup => Row { kind: ACTION, name: BACKUP.into(), title: words::BACK_UP.into(), detail: words::BACK_UP_DETAIL.into(), button: "Save".into(), enabled, ..Default::default() },
                 SettingsAction::RestoreBackup => Row { kind: ACTION, name: RESTORE.into(), title: words::RESTORE.into(), detail: words::RESTORE_DETAIL.into(), button: "Open".into(), enabled, ..Default::default() },
-                SettingsAction::AnalyseDownloads | SettingsAction::JoinJam | SettingsAction::CheckUpdate => return None,
+                SettingsAction::CheckUpdate => Row { kind: ACTION, name: CHECK_UPDATE.into(), title: "Check for updates".into(), detail: format!("Version {}", env!("CARGO_PKG_VERSION")), button: "Check".into(), enabled: true, ..Default::default() },
+                SettingsAction::JoinJam => return None,
             }
         }
         RowItem::Note { note: n } => note(match n {
@@ -557,9 +566,11 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             let mut menu = Vec::new();
             if edits {
                 menu.push(("Rename".to_string(), format!("rename:{}", sv.id)));
-                if editable(kinds, sv, active) {
+                if editable(kinds, sv) {
                     menu.push(("Edit".to_string(), format!("edit:{}", sv.id)));
                 }
+                menu.push(("Scrobbling".to_string(), format!("scrobbling:{}", sv.id)));
+                menu.push(("Remove".to_string(), format!("remove:{}", sv.id)));
             }
             Row {
                 kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, options: menu, rank: index as i32,
@@ -585,10 +596,13 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
 
 /// Whether profile `sv` has an Edit page: a field besides its name (renamed from its menu), or, in use, an
 /// account to sign in to.
-fn editable(kinds: &Kinds, sv: &SavedServer, active: bool) -> bool {
+fn editable(kinds: &Kinds, sv: &SavedServer) -> bool {
     use nori_core::providers::FormField;
-    kinds.providers().into_iter().find(|i| i.kind == sv.kind).is_some_and(|i| i.fields.iter().any(|f| !f.advanced && f.what != FormField::Name) || (active && !i.sign_in.is_empty()))
+    kinds.providers().into_iter().find(|i| i.kind == sv.kind).is_some_and(|i| i.fields.iter().any(|f| !f.advanced && f.what != FormField::Name) || !i.sign_in.is_empty())
 }
+
+/// The ask sheet's name for removing profile `id`, once confirmed.
+pub const REMOVE_PROFILE: &str = "remove-profile:";
 
 /// Display name and description of a lyrics service by core id.
 fn service(id: &str) -> Option<(&'static str, &'static str)> {
@@ -615,13 +629,11 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
     let facts = PageFacts {
         parts: f.rules.settings.clone(),
         folders: f.folders.iter().map(|(_, id)| id.clone()).collect(),
-        analysed: f.analysed.songs,
         indexed_songs: f.indexed.0,
         syncing: f.syncing,
         stream_bytes: f.stream_bytes as i64,
         cover_bytes: f.cover_bytes as i64,
         lyrics_bytes: f.lyrics_bytes as i64,
-        download_songs: f.download_songs,
         unsent_waiting: f.unsent.0,
         unsent_dropped: f.unsent.1,
         ..PageFacts::default()
@@ -1116,7 +1128,7 @@ pub fn profile_items(p: &Plugged, prefs: &StoredPrefs, kinds: &Kinds) -> Vec<cra
 
 /// The icons `sv`'s circle can show, each as it would show it, named (`provider` names its provider's mark).
 pub fn icon_picker(p: &Plugged, sv: &SavedServer, label: &str, provider: &str) -> IconPicker {
-    let choices: Vec<IconChoice> = ProfileIcon::ALL.iter().map(|&icon| IconChoice { name: words::profile_icon_name(icon, provider).into(), mark: profile_mark(p, &SavedServer { icon, ..sv.clone() }, label) }).collect();
+    let choices: Vec<IconChoice> = ProfileIcon::ALL.iter().map(|&icon| IconChoice { name: words::profile_icon_name(icon, provider, sv.picture.is_some()).into(), mark: profile_mark(p, &SavedServer { icon, ..sv.clone() }, label) }).collect();
     let chosen = ProfileIcon::ALL.iter().position(|&i| i == sv.icon).expect("ALL holds every icon");
     IconPicker { choices: ModelRc::new(VecModel::from(choices)), chosen: chosen as i32 }
 }
@@ -1537,7 +1549,6 @@ mod tests {
             download_bytes: 3 << 20,
             all_download_songs: 5,
             download_profiles: profiles,
-            download_songs: 3,
             ..Default::default()
         };
         let p = StoredPrefs { servers: vec![SavedServer { id: "a".into(), name: "Home".into(), ..Default::default() }], active_server_id: "a".into(), ..Default::default() };
@@ -1595,7 +1606,7 @@ mod tests {
 
     #[test]
     fn row_names_resolve() {
-        let p = StoredPrefs { auto_mix: nori_core::settings::AutoMixMode::Dj, auto_fill: Some(nori_core::settings::AutoFillKind::Songs), compressor: Some(nori_core::settings::CompressorPreset::Light), scrobble: true, ..StoredPrefs::default() };
+        let p = StoredPrefs { auto_mix: nori_core::settings::AutoMixMode::Dj, auto_fill: Some(nori_core::settings::AutoFillKind::Songs), compressor: Some(nori_core::settings::CompressorPreset::Light), ..StoredPrefs::default() };
         let f = Facts::default();
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {
@@ -1617,6 +1628,7 @@ mod tests {
         assert_eq!(Act::of(ADD_SERVER), Some(Act::AddServer));
         assert_eq!(Act::of("server:7"), Some(Act::Server("7".into())));
         assert_eq!(Act::of("edit:7"), Some(Act::Edit("7".into())));
+        assert_eq!(Act::of("scrobbling:7"), Some(Act::Scrobbling("7".into())));
         assert_eq!(Act::of(&backup_password(true, "C:/b:k.noribackup")), Some(Act::BackupPassword { restore: true, path: "C:/b:k.noribackup".into() }), "a path with colons");
         assert_eq!(Act::of(&backup_password(false, "/a")), Some(Act::BackupPassword { restore: false, path: "/a".into() }));
     }
@@ -1927,6 +1939,14 @@ mod tests {
         let faces = [MarkGlyph::Sing, MarkGlyph::Surprise, MarkGlyph::Talking, MarkGlyph::LookUp, MarkGlyph::Satisfied, MarkGlyph::Think];
         assert_eq!(glyphs, [[MarkGlyph::None, MarkGlyph::Server].as_slice(), &faces].concat());
         assert_eq!((choices[0].mark.letter.as_str(), picker.chosen), ("Z", 6));
+    }
+
+    /// A profile with a picture shows it where its letter would be, so that choice is named for the picture.
+    #[test]
+    fn the_icon_picker_names_a_picture_for_what_it_is() {
+        let sv = SavedServer { user: "zoe".into(), picture: Some("https://example.com/zoe.jpg".into()), ..Default::default() };
+        let picker = icon_picker(&Plugged::default(), &sv, "home", "YouTube Music");
+        assert_eq!(slint::Model::row_data(&picker.choices, 0).map(|c| c.name.to_string()).as_deref(), Some("Picture"));
     }
 
     /// A tile is empty until the icon is heard of, then the icon, or the letter for a plugin with none;

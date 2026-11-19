@@ -14,6 +14,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusGroup
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -123,6 +126,13 @@ class PageChange(val over: NavBackStackEntry, val under: NavBackStackEntry, val 
 class Pages(private val controller: NavHostController, val navigator: PageNavigator, private val scope: CoroutineScope) {
     /** The width the pages fill, px. */
     var width by mutableFloatStateOf(0f)
+
+    /** Takes a remote's or a keyboard's focus into the page in front. */
+    val focus = androidx.compose.ui.focus.FocusRequester()
+
+    /** Whether a remote's or a keyboard's focus is on a page (not the chrome or the player). */
+    var focused by mutableStateOf(false)
+        internal set
 
     // What is shown changes in composition, as the stack does (changeTo), and from the motion's own coroutines;
     // only the latter are told to the composition, by [shownVersion]: it already knows of its own changes.
@@ -304,12 +314,20 @@ fun PageStack(controller: NavHostController, pages: Pages, start: String, modifi
     val holder = rememberSaveableStateHolder()
     val started = remember(top) { pages.changeTo(top) }
     // A page shown with no change (the first, or one replaced at once) is in place, and resumed, straight away.
-    LaunchedEffect(top, started) { if (started != null) pages.run(started) else pages.navigator.settle() }
+    // The page covered lets go of its focus: a field on it kept the keyboard up over the page opened. A remote's
+    // or a keyboard's focus moves on into the page opened once it is in place; on the chrome (a tab just chosen)
+    // it stays.
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val input = androidx.compose.ui.platform.LocalInputModeManager.current
+    LaunchedEffect(top, started) {
+        val held = pages.focused
+        val keys = held && input.inputMode == androidx.compose.ui.input.InputMode.Keyboard
+        if (held && !keys) focus.clearFocus()
+        if (started != null) pages.run(started) else pages.navigator.settle()
+        if (keys) pages.focus.requestFocus()
+    }
     val change = pages.change
     HoldIslands(change != null)
-    // Let go of the focus of a page as it is covered: a field on it kept the keyboard up over the page opened.
-    val focus = androidx.compose.ui.platform.LocalFocusManager.current
-    LaunchedEffect(top) { focus.clearFocus() }
     // The page under the one on top is composed once the main thread has nothing else to do, so composing it
     // never holds up the frame a change of page ends on.
     val idle = rememberIdle(top)
@@ -317,7 +335,7 @@ fun PageStack(controller: NavHostController, pages: Pages, start: String, modifi
         change != null -> listOf(change.under to Role.UNDER, change.over to Role.OVER)
         else -> listOfNotNull(stack.getOrNull(stack.size - 2)?.takeIf { idle }?.let { it to Role.HIDDEN }, top to Role.TOP)
     }
-    Box(modifier.fillMaxSize().onSizeChanged { pages.width = it.width.toFloat() }) {
+    Box(modifier.fillMaxSize().onSizeChanged { pages.width = it.width.toFloat() }.onFocusChanged { pages.focused = it.hasFocus }) {
         for ((entry, role) in shown) key(entry.id) {
             ShownPage(pages, entry, role, change) {
                 entry.LocalOwnersProvider(holder) { (entry.destination as PageNavigator.Destination).content(entry) }
@@ -366,7 +384,10 @@ private fun ShownPage(pages: Pages, entry: NavBackStackEntry, role: Role, change
             .swipeBack(pages, enabled = swipes),
     ) {
         CompositionLocalProvider(LocalPageFront provides front) {
-            Box(Modifier.fillMaxSize().padding(start = outStart, end = outEnd)) { content() }
+            Box(
+                Modifier.fillMaxSize().padding(start = outStart, end = outEnd)
+                    .then(if (front) Modifier.focusRequester(pages.focus) else Modifier).focusGroup(),
+            ) { content() }
         }
     }
 }

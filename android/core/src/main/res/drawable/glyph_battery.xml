@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Iconoir battery-75: a plugin's glyph on the notification. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M23 10V14" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M1 16V8C1 6.89543 1.89543 6 3 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H3C1.89543 18 1 17.1046 1 16Z" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" />
+    <path android:pathData="M4 14.4V9.6C4 9.26863 4.26863 9 4.6 9H13.4C13.7314 9 14 9.26863 14 9.6V14.4C14 14.7314 13.7314 15 13.4 15H4.6C4.26863 15 4 14.7314 4 14.4Z" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" />
+</vector>

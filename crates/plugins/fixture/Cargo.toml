@@ -21,6 +21,8 @@ song = []
 second = []
 # Its lifecycle's start panics.
 fails-to-start = []
+# Its rows and lifecycle alone, as a plugin that only shows a switch.
+rows-only = []
 
 [dependencies]
 nori-plugin-sdk = { path = "../../plugin-sdk" }

@@ -1,6 +1,5 @@
 //! User-facing wording for numbers and errors (mirrors the terminal's text.rs).
 
-use nori_core::automix::store::Measured;
 use nori_core::numbers;
 use nori_core::pages::{ReleaseGroup, ReleaseKind};
 use nori_core::profiles::CurveNotice;
@@ -35,6 +34,54 @@ pub fn provider(kind: &ServerKind, plugin_name: Option<String>) -> ProviderWords
 /// The words of `kind`, a plugin's named in its own words.
 pub fn provider_of(kinds: &nori_core::providers::Kinds, kind: &ServerKind) -> ProviderWords {
     provider(kind, kinds.plugin_name(kind.clone(), "en".into()))
+}
+
+/// A scrobbling account's service.
+pub fn scrobbler(kind: nori_core::settings::ScrobblerKind) -> &'static str {
+    match kind {
+        nori_core::settings::ScrobblerKind::ListenBrainz => "ListenBrainz",
+        nori_core::settings::ScrobblerKind::LibreFm => "Libre.fm",
+        nori_core::settings::ScrobblerKind::LastFm => "Last.fm",
+    }
+}
+
+/// What a `kind` account costs, where it does.
+pub fn scrobbler_cost(kind: nori_core::settings::ScrobblerKind) -> &'static str {
+    match kind {
+        nori_core::settings::ScrobblerKind::LastFm => "Needs Last.fm Pro",
+        nori_core::settings::ScrobblerKind::ListenBrainz | nori_core::settings::ScrobblerKind::LibreFm => "",
+    }
+}
+
+/// The link to where a `kind` account's form finds what it asks (`scrobbler_help_page`).
+pub fn scrobbler_help(kind: nori_core::settings::ScrobblerKind) -> &'static str {
+    match nori_core::scrobblers::scrobbler_help_page(kind).map(|_| kind) {
+        Some(nori_core::settings::ScrobblerKind::LastFm) => "Get an API key",
+        Some(_) => "Get your token",
+        None => "",
+    }
+}
+
+/// What a `kind` account's address is for.
+pub fn scrobbler_address_hint(kind: nori_core::settings::ScrobblerKind) -> &'static str {
+    match kind {
+        nori_core::settings::ScrobblerKind::ListenBrainz => "Empty for ListenBrainz. Maloja, Koito: their ListenBrainz API address.",
+        nori_core::settings::ScrobblerKind::LibreFm => "Empty for Libre.fm. Another GNU FM server: its API address.",
+        nori_core::settings::ScrobblerKind::LastFm => "",
+    }
+}
+
+/// Who a scrobbling account is, and where, when not its kind's own service.
+pub fn scrobbler_detail(a: &nori_core::settings::SavedScrobbler) -> String {
+    [a.user.clone(), nori_core::settings::label("", &a.url)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
+}
+
+/// Why a scrobbling account didn't sign in.
+pub fn scrobbler_failure(e: &nori_core::transport::NetError) -> String {
+    match e {
+        nori_core::transport::NetError::Transport { .. } => "Couldn’t reach it.".into(),
+        e => format!("Refused: {e}"),
+    }
 }
 
 pub const SHOW_ALL: &str = "Show all";
@@ -144,6 +191,11 @@ pub fn remove_downloads(n: usize) -> (String, &'static str) {
     if n == 1 { ("Remove the download?".into(), "It no longer plays offline.") } else { (format!("Remove {n} downloads?"), "They no longer play offline.") }
 }
 
+/// Asks before profile `name` is removed: the question, and what goes with it.
+pub fn remove_profile(name: &str) -> (String, &'static str) {
+    (format!("Remove {name}?"), "What nori keeps for it on this computer goes with it.")
+}
+
 /// Asks before removing `name`.
 pub fn remove_plugin(name: &str) -> String {
     format!("Remove {name}?")
@@ -218,6 +270,7 @@ pub fn plugin_is(points: &[String], overrides: bool) -> String {
             "lyrics" => "a lyrics source",
             "scrobbler" => "a scrobbler",
             "device-control" => "a device control",
+            "notification" => "a notification control",
             "hooks" | "deciders" | "slots" | "preparation" => "a playback helper",
             _ => continue,
         };
@@ -614,6 +667,7 @@ pub fn playlist_deleted(name: &str) -> String {
 }
 
 pub const REMOVE_FROM_PLAYLIST: &str = "Remove from playlist";
+pub const MOVED: &str = "Moved";
 
 pub fn playlist_failed(e: &str) -> String {
     format!("The playlist could not be changed: {e}")
@@ -965,10 +1019,12 @@ pub fn profile_label(p: &nori_core::settings::SavedServer, kinds: &nori_core::pr
     Some(nori_core::settings::label(&p.name, &p.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| provider_of(kinds, &p.kind).name)
 }
 
-/// What a profile's icon is called on its picker: its provider's mark by the provider's name (`provider`).
-pub fn profile_icon_name(icon: nori_core::settings::ProfileIcon, provider: &str) -> String {
+/// What a profile's icon is called on its picker: its provider's mark by the provider's name (`provider`), the
+/// letter by the picture that stands in its place when the profile has one.
+pub fn profile_icon_name(icon: nori_core::settings::ProfileIcon, provider: &str, picture: bool) -> String {
     use nori_core::settings::ProfileIcon;
     match icon {
+        ProfileIcon::Letter if picture => "Picture",
         ProfileIcon::Letter => "Letter",
         ProfileIcon::Provider => provider,
         ProfileIcon::Sing => "Singing",
@@ -1021,14 +1077,24 @@ pub fn profile_use(outputs: &[String]) -> String {
     if outputs.is_empty() { String::new() } else { format!("Used on {}", outputs.join(", ")) }
 }
 
-/// The "Measured songs" line: how many are measured, and how many wait to be measured again.
-pub fn measured(m: Measured) -> String {
-    let all = format!("{} measured for tempo and beats.", count(m.songs, "song", "songs"));
-    match m.outdated {
-        0 => all,
-        n if n == m.songs => format!("{all} All are measured again when they next play."),
-        1 => format!("{all} 1 is measured again when it next plays."),
-        n => format!("{all} {n} are measured again when they next play."),
+/// The dialog offering downloaded songs an analysis: its title, why, and how long it takes.
+pub fn analysis_offer(o: &nori_core::automix::AnalysisOffer) -> (String, &'static str, String) {
+    use nori_core::automix::AnalysisReason;
+    let title = format!("Analyze {} downloaded {}?", o.songs, if o.songs == 1 { "song" } else { "songs" });
+    let why = match o.reason {
+        AnalysisReason::TurnedOn => "AutoMix mixes songs best once they're analyzed. Otherwise each is analyzed when it plays.",
+        AnalysisReason::Changed => "AutoMix's analysis changed in this update. Otherwise each is analyzed again when it plays.",
+    };
+    (title, why, about(o.minutes))
+}
+
+/// "About 5 min", "About 1 h 20 min".
+fn about(minutes: u32) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, 0) => "Under a minute".into(),
+        (0, m) => format!("About {m} min"),
+        (h, 0) => format!("About {h} h"),
+        (h, m) => format!("About {h} h {m} min"),
     }
 }
 
@@ -1099,6 +1165,15 @@ mod tests {
         assert_eq!(progress(&Progress::Fetching(waiting)), ["Waiting for a network", "0 of 4", ""]);
         let work = Processing { lyrics: 2, analysing: 3, beats: 0, eta_s: 12, permille: 400 };
         assert_eq!(progress(&Progress::Processing { work, after_fetching: true }), ["Finding lyrics for 2 songs…", "3 to analyze", "12 s left"]);
+    }
+
+    #[test]
+    fn an_analysis_offer_says_how_long_it_takes() {
+        use nori_core::automix::{AnalysisOffer, AnalysisReason};
+        let (title, why, time) = analysis_offer(&AnalysisOffer { songs: 1, reason: AnalysisReason::TurnedOn, minutes: 80 });
+        assert_eq!((title.as_str(), time.as_str()), ("Analyze 1 downloaded song?", "About 1 h 20 min"));
+        assert!(why.starts_with("AutoMix mixes"));
+        assert_eq!([about(0), about(5), about(60)], ["Under a minute", "About 5 min", "About 1 h"]);
     }
 
     #[test]

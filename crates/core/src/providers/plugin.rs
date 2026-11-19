@@ -39,12 +39,14 @@ pub(crate) struct PluginProvider {
     open: RwLock<SavedServer>,
     /// Where its account stands, as it last said (asked with its rules).
     account: RwLock<AccountState>,
+    /// The kinds of favorite the account said it has nowhere for, since its rules were last asked.
+    unkept: RwLock<Vec<Starrable>>,
 }
 
 impl PluginProvider {
     pub(crate) fn new(id: &str, plugins: Arc<Plugins>) -> Option<PluginProvider> {
         let worker = plugins.worker(id)?;
-        Some(PluginProvider { id: id.to_string(), plugins, worker, info: std::sync::OnceLock::new(), rules: RwLock::new(None), open: RwLock::default(), account: RwLock::new(AccountState::SignedOut) })
+        Some(PluginProvider { id: id.to_string(), plugins, worker, info: std::sync::OnceLock::new(), rules: RwLock::new(None), open: RwLock::default(), account: RwLock::new(AccountState::SignedOut), unkept: RwLock::default() })
     }
 
     fn kind(&self) -> ServerKind {
@@ -70,8 +72,9 @@ impl PluginProvider {
             Some(w::AccountState::Ended) => AccountState::Ended,
             Some(w::AccountState::SignedOut) | None => AccountState::SignedOut,
         };
+        self.unkept.write().clear();
         let ahead = said.as_ref().and_then(|r| r.ahead).map(|a| a as usize);
-        let rules = rules(said, !self.info().sign_in.is_empty(), guest);
+        let rules = rules(said, guest);
         *self.rules.write() = Some((rules.clone(), ahead));
         rules
     }
@@ -97,8 +100,9 @@ fn profile_of(p: &SavedServer) -> w::Profile {
     w::Profile { id: p.id.clone(), name: p.name.clone(), address: p.url.clone(), user: p.user.clone(), password: p.password.clone(), api_key: p.api_key.clone() }
 }
 
-/// nori's rules from what the plugin said; `signs_in` when its account signs in at all.
-fn rules(said: Option<w::ProfileRules>, signs_in: bool, guest: bool) -> ProfileRules {
+/// nori's rules from what the plugin said. Where its account can't keep favorites, they are kept on
+/// this device, and Library has them.
+fn rules(said: Option<w::ProfileRules>, guest: bool) -> ProfileRules {
     use SettingsPart::*;
     let r = said.unwrap_or(w::ProfileRules { account: false, downloads: false, radio: false, feed: false, stars: false, scrobbles: false, sections: Vec::new(), measures: true, ahead: None });
     let sections = r.sections.iter().map(|s| match s {
@@ -113,18 +117,25 @@ fn rules(said: Option<w::ProfileRules>, signs_in: bool, guest: bool) -> ProfileR
         w::LibrarySection::Radio => LibrarySection::Radio,
         w::LibrarySection::Downloads => LibrarySection::Downloads,
     });
+    let stars_here = !r.stars && !guest;
+    let mut sections: Vec<LibrarySection> = if guest { Vec::new() } else { sections.collect() };
+    if stars_here && !sections.contains(&LibrarySection::Favourites) {
+        sections.push(LibrarySection::Favourites);
+    }
     let mut shown = ProfileRules {
         asks: guest,
         account: false,
+        // Signed in, with its playlists in Library: their changes go to its `write`.
+        playlists: r.account && r.sections.contains(&w::LibrarySection::Playlists) && !guest,
         downloads: r.downloads && !guest,
         radio: r.radio && !guest,
         indexed: false,
-        sections: if guest { Vec::new() } else { sections.collect() },
+        sections,
         settings: vec![Profiles, ServerOptions, Look, Playback, Sound, Lyrics, Downloads, Storage, About],
         remote: true,
         measures: r.measures && !guest,
-        stars: r.stars && !guest,
-        stars_after_sign_in: signs_in && !r.account && !guest,
+        stars: !guest,
+        stars_here,
         scrobbles: r.scrobbles && !guest,
         feed: r.feed,
         mixes: r.account && !guest,
@@ -277,14 +288,25 @@ impl Provider for PluginProvider {
         *core.server.write() = crate::api::Server::default();
         *self.open.write() = profile.clone();
         let p = profile_of(profile);
-        self.now(move |s, x| x.nori_plugin_provider().call_open(s, &p));
+        self.worker.opens(move |s, x| x.nori_plugin_provider().call_open(s, &p));
         let guest = nori_remote::is_guest_key(&profile.api_key);
         core.set_rules(self.ask_rules(profile, guest));
         *core.account.write() = None;
         Ok(())
     }
 
+    fn favorites_here(&self) -> bool {
+        true
+    }
+
+    fn keeps_favorites(&self, kind: Starrable) -> bool {
+        !self.unkept.read().contains(&kind)
+    }
+
     async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>> {
+        if matches!(read, Read::StarredItems) && self.rules.read().as_ref().is_some_and(|(r, _)| r.stars_here) {
+            return Ok(None);
+        }
         let Some(asked) = request(&read) else { return Ok(None) };
         let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_read(s, &asked)).await.ok_or_else(stopped)?;
         let said = self.heard(client, said)?;
@@ -292,8 +314,18 @@ impl Provider for PluginProvider {
     }
 
     async fn write(&self, client: &Client, c: Write) -> NetResult<()> {
+        let star = match &c {
+            Write::Star { kind, .. } => Some(*kind),
+            _ => None,
+        };
         let Some(c) = change(c) else { return Err(super::nowhere("place for this change")) };
         let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_write(s, &c)).await.ok_or_else(stopped)?;
+        if let (Some(kind), Err(t::Error { kind: t::ErrorKind::Unsupported, .. })) = (star, &said) {
+            let mut unkept = self.unkept.write();
+            if !unkept.contains(&kind) {
+                unkept.push(kind);
+            }
+        }
         self.heard(client, said)
     }
 
@@ -493,5 +525,36 @@ impl nori_plugins::Media for Client {
     fn cover_url(&self, id: &str, size: u32) -> Option<String> {
         let url = self.core.cover_address(id.to_string(), size);
         url.starts_with("http").then_some(url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where the account can't keep favorites (signed out, or none at all), seals are kept here and
+    /// Library has them; signed in, they are the account's; a guest has none.
+    #[test]
+    fn favorites_the_account_cant_keep_are_kept_here() {
+        let said = |stars: bool| Some(w::ProfileRules { account: stars, downloads: true, radio: true, feed: true, stars, scrobbles: false, sections: vec![w::LibrarySection::History], measures: true, ahead: None });
+        let out = rules(said(false), false);
+        assert_eq!((out.stars, out.stars_here), (true, true));
+        assert_eq!(out.sections, [LibrarySection::History, LibrarySection::Favourites]);
+        let signed_in = rules(said(true), false);
+        assert_eq!((signed_in.stars, signed_in.stars_here, signed_in.sections), (true, false, vec![LibrarySection::History]));
+        let guest = rules(said(false), true);
+        assert_eq!((guest.stars, guest.stars_here, guest.sections.len()), (false, false, 0));
+    }
+
+    /// Signed in with its playlists in Library, they can be made and changed; not signed out, without
+    /// them, or as a guest.
+    #[test]
+    fn an_accounts_playlists_can_be_changed() {
+        let said = |account: bool, sections: Vec<w::LibrarySection>| Some(w::ProfileRules { account, downloads: true, radio: true, feed: true, stars: account, scrobbles: false, sections, measures: true, ahead: None });
+        let lists = || vec![w::LibrarySection::Playlists];
+        assert!(rules(said(true, lists()), false).playlists);
+        assert!(!rules(said(false, lists()), false).playlists);
+        assert!(!rules(said(true, Vec::new()), false).playlists);
+        assert!(!rules(said(true, lists()), true).playlists);
     }
 }

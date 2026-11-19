@@ -10,8 +10,9 @@ details behind them.
 | --- | --- |
 | Every build | Rust stable through rustup; sccache (`cargo install --locked sccache`), since `.cargo/config.toml` sends every compile through it |
 | Rust tests | FFmpeg 8 or newer on the `PATH`: the engine tests encode their fixtures with it |
-| Android | Android SDK and NDK (`ANDROID_NDK_HOME`, or the newest under `$ANDROID_HOME/ndk`), a JDK 17 or newer, `rustup target add aarch64-linux-android x86_64-linux-android`, `cargo install cargo-ndk` |
+| Android | Android SDK and NDK (`ANDROID_NDK_HOME`, or the newest under `$ANDROID_HOME/ndk`), a JDK 17 or newer, `rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android`, `cargo install cargo-ndk` |
 | Desktop and terminal on macOS | Xcode's command line tools |
+| Desktop and terminal on Windows | the MSVC build tools (Visual Studio's C++ workload), as CI's `windows-2025` runner has them |
 | Desktop and terminal on Linux | `build-essential pkg-config clang libasound2-dev libfontconfig1-dev libfreetype6-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev` (Ubuntu names, as `tools/host-release/Dockerfile` installs them; WebKitGTK is for the sign-in window) |
 | The iPod app, Linux release packages | Docker |
 | Optional | `brew install cargo-nextest bazelisk` for `tools/check.sh rust` and the Bazel backend |
@@ -56,6 +57,8 @@ Heavy work goes through one machine-wide queue, so worktrees and agents take tur
 | --- | --- |
 | `tools/check.sh rust --workspace` | `cargo nextest run` with four build jobs and four test threads; `-p <crate>` for one crate |
 | `tools/check.sh rust-doc --workspace` | the doctests, which nextest skips |
+| `tools/check.sh web` | CI's wasm clippy of both web modules, with the NDK's clang for the C parts; nori-web is empty natively, so nothing else checks it |
+| `tools/check.sh ipod` | clippy of nori-ios alone, so the host builds without the desktop parts a workspace build turns on |
 | `tools/check.sh android [GRADLE OPTIONS]` | `./gradlew :app:assembleDebug` |
 | `tools/check.sh bazel <command> [...]` | a Bazel command |
 | `python3 tools/with-resource.py build <command>` | any other command, in the same queue |
@@ -408,12 +411,13 @@ tools/with-resource.py build tools/release.sh --publish --beta --live  # publish
   contents, asks before building, and needs `--allow-untested-macos` when unattended.
 - Mac packages are ad-hoc signed, not notarized: a DMG for the desktop, an archive for the terminal.
   Linux gets Debian packages, AppImages and a Flatpak (Freedesktop 25.08 runtime, `nori-cli`
-  included).
+  included). Windows (x86-64) gets a zip per client, unsigned, built only on a Windows worker: CI's
+  release and nightly runs have it, a release made on this Mac goes without.
 
 ### Desktop and terminal packages alone
 
 ```sh
-tools/with-resource.py build tools/host-release.sh                                   # all four platforms
+tools/with-resource.py build tools/host-release.sh                                   # all but Windows
 tools/with-resource.py build tools/host-release.sh --source v0.7.0                   # a committed revision
 tools/with-resource.py build tools/host-release.sh --platform linux-x86_64           # one platform, in Docker
 tools/with-resource.py build tools/host-release.sh --native --platform linux-x86_64  # on this worker, no Docker
@@ -430,7 +434,7 @@ volumes.
 
 | Workflow | Does |
 | --- | --- |
-| Full release (`release.yml`) | Android, iPod, all four desktop platforms and the workspace tests from a chosen revision; uploads a `release` artifact, or publishes with `publish` (and `draft` off for a public one). Signing needs the secrets `NORI_RELEASE_KEYSTORE_BASE64` and `NORI_KEYSTORE_PROPERTIES` |
+| Full release (`release.yml`) | Android, iPod, the desktop platforms (Windows too) and the workspace tests from a chosen revision; uploads a `release` artifact, or publishes with `publish` (and `draft` off for a public one). Signing needs the secrets `NORI_RELEASE_KEYSTORE_BASE64` and `NORI_KEYSTORE_PROPERTIES` |
 | Checks (`checks.yml`) | on every push, to any branch: clippy with warnings as errors (the workspace, and the web crate for wasm), the workspace tests, the web client's build (wasm, svelte-check, Vite), the Android Kotlin compile and the iPod app's build (when ios/ or a crate it links changes) |
 | Nightly (`nightly.yml`) | at 02:00 UTC when master moved since the last one (or by hand): replaces the one prerelease tagged `nightly` with the "nori nightly" APK, the desktop and terminal packages and the iPod app. It is signed with the release key, and every package is built as `<x.y.z>-nightly.<commit time>` (`tools/bump-version.sh`, uncommitted): its files are named for it, the apps report it, and it is the release's title, which nori nightly's updater reads to offer the next night's build (`update.rs`, its nightly channel). Stable and beta builds never see it. Its notes are one line, and it stays the first release listed: one published after it has it made again over the same commit and files, with no build |
 | Desktop and CLI release (`host-release.yml`) | the desktop and terminal packages; uploads to a release when given its tag. Also callable from other workflows |

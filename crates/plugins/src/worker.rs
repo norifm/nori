@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use wasmtime::component::Component;
 use wasmtime::Store;
@@ -21,10 +21,14 @@ pub struct Running {
 
 type Job = Box<dyn FnOnce(&mut Option<Running>) + Send>;
 
+/// What an instance is told before its calls ([`Worker::opens`]).
+type Opening = Arc<dyn Fn(&mut Store<Host>, &Plugin) -> wasmtime::Result<()> + Send + Sync>;
+
 /// The handle the core calls a plugin through.
 #[derive(Clone)]
 pub struct Worker {
     jobs: mpsc::Sender<Job>,
+    opening: Arc<Mutex<Option<Opening>>>,
 }
 
 impl Worker {
@@ -33,6 +37,8 @@ impl Worker {
         let linker = runtime::linker(&component)?;
         let (jobs, rx) = mpsc::channel::<Job>();
         let name = format!("plugin {}", manifest.id);
+        let opening: Arc<Mutex<Option<Opening>>> = Arc::default();
+        let told = opening.clone();
         std::thread::Builder::new()
             .name(name)
             .spawn(move || {
@@ -51,6 +57,10 @@ impl Worker {
                     mark.calling(|| {
                         if running.is_none() {
                             running = make().map_err(|e| nori_model::alog::info(&format!("plugin {}: can't start: {e}", manifest.id))).ok();
+                            let open = told.lock().expect("not poisoned").clone();
+                            if let Some(open) = open {
+                                attempt(&mut running, |store, plugin| open(store, plugin));
+                            }
                         }
                         if let Some(r) = running.as_mut() {
                             let _ = r.store.set_fuel(runtime::CALL_FUEL);
@@ -60,7 +70,17 @@ impl Worker {
                 }
             })
             .map_err(|e| Refusal::Unreadable(e.to_string()))?;
-        Ok(Worker { jobs })
+        Ok(Worker { jobs, opening })
+    }
+
+    /// Tells the instance `f` now, and each fresh one (started after a failed call) before its calls:
+    /// what a plugin keeps in memory, such as the profile open.
+    pub fn opens(&self, f: impl Fn(&mut Store<Host>, &Plugin) -> wasmtime::Result<()> + Send + Sync + 'static) {
+        let (f, opening): (Opening, _) = (Arc::new(f), self.opening.clone());
+        let _ = self.jobs.send(Box::new(move |running| {
+            *opening.lock().expect("not poisoned") = Some(f.clone());
+            attempt(running, |store, plugin| f(store, plugin));
+        }));
     }
 
     /// Runs `f` on the plugin's thread without waiting for it.

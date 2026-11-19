@@ -151,7 +151,7 @@ impl SettingsStore {
             prefs.eq_mode = crate::settings::EqMode::Parametric;
         }
         let legacy = crate::settings::legacy(&raw);
-        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || crate::settings::pure_black(&raw) || crate::settings::old_screen_defaults(&raw) || crate::settings::switched(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") {
+        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || crate::settings::pure_black(&raw) || crate::settings::old_screen_defaults(&raw) || crate::settings::switched(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") || raw.contains_key(crate::settings::SCROBBLE_KEY) {
             write(&mut c, &prefs)?;
         }
         if legacy {
@@ -284,10 +284,13 @@ impl Settings {
         if *held == layer {
             return 0;
         }
-        let audio = if held.stages != layer.stages || held.preparing != layer.preparing || Tunables::with(&held.overrides) != Tunables::with(&layer.overrides) { APPLY_AUDIO } else { 0 };
+        let (was, now) = (Tunables::with(&held.overrides), Tunables::with(&layer.overrides));
+        let sound = |t: Tunables| Tunables { mix: Default::default(), ..t };
+        let audio = if held.stages != layer.stages || held.preparing != layer.preparing || sound(was) != sound(now) { APPLY_AUDIO } else { 0 };
+        let mix = if was.mix != now.mix { REPLAN } else { 0 };
         let settings = self.with_prefs(|p| effects(&effective(p, &held.overrides), &effective(p, &layer.overrides))).unwrap_or(0);
         *held = layer;
-        audio | settings
+        audio | mix | settings
     }
 }
 
@@ -307,6 +310,25 @@ impl Settings {
         Ok(prefs)
     }
 
+    /// The transitions as the planner plans them: the settings in effect, with AutoMix's limits
+    /// plugins set; None before they are open.
+    pub fn transition_prefs(&self) -> Option<nori_model::TransitionPrefs> {
+        let mix = crate::overrides::Tunables::with(&self.layer().overrides).mix;
+        self.with_effective(|p| mix.over(p.transition_prefs()))
+    }
+
+    /// A copy of the settings in effect: the user's with what the enabled plugins override laid over
+    /// them; None before they are open.
+    pub fn effective(&self) -> Option<StoredPrefs> {
+        self.with_effective(StoredPrefs::clone)
+    }
+
+    /// Whether enabled plugins override some settings, also while every plugin is off; while none do,
+    /// the settings in effect are the stored ones.
+    pub fn overridden(&self) -> bool {
+        !self.layer.lock().overrides.is_empty()
+    }
+
     /// Replaces the settings. Returns the effect bits; 0 when nothing changed or the settings are not open.
     pub fn put(&self, prefs: StoredPrefs) -> u32 {
         self.with_store(|s| s.edit(|_| prefs)).unwrap_or(0)
@@ -320,7 +342,7 @@ impl Settings {
 }
 
 impl Settings {
-    /// `f` over the open settings, the beat model's file following its switch under the same lock, so
+    /// `f` over the open settings, the beat model's file following AutoMix under the same lock, so
     /// concurrent edits reach it in the order they were kept.
     fn write<R>(&self, f: impl FnOnce(&mut Option<SettingsStore>) -> R) -> R {
         let watch = self.watch.read().clone();
@@ -328,7 +350,7 @@ impl Settings {
         let before = watch.as_ref().and_then(|_| Some(k.as_ref()?.prefs.clone()));
         let r = f(&mut k);
         if let Some(s) = k.as_ref() {
-            self.model.switched(s.prefs.auto_mix_better_beats, &self.writer);
+            self.model.switched(s.prefs.auto_mix.on(), &self.writer);
         }
         let after = k.as_ref().map(|s| s.prefs.clone());
         drop(k);
@@ -426,8 +448,7 @@ impl Settings {
     /// it lacks, older forms moved on), the profiles here kept beside the backup's
     /// (`settings::servers_restored`). `server`: the profile in use changed.
     pub fn restore(&self, backed: &serde_json::Map<String, Value>) -> SettingChange {
-        let raw: HashMap<String, PrefValue> = backed.iter().filter_map(|(k, v)| Some((k.clone(), value_from(v.clone())?))).collect();
-        let restored = load(&raw);
+        let restored = backed_prefs(backed);
         let here = self.prefs(StoredPrefs::clone);
         let list = crate::settings::servers_restored(ServerList { servers: here.servers, active_server_id: here.active_server_id.clone() }, ServerList { servers: restored.servers.clone(), active_server_id: restored.active_server_id.clone() });
         let prefs = StoredPrefs { servers: list.servers, active_server_id: list.active_server_id, ..restored };
@@ -457,23 +478,54 @@ impl Settings {
         Ok(())
     }
 
-    /// A copy of the live settings; None before they are open.
+    /// A copy of the settings as the user set them, which the settings screens show and edits start
+    /// from; None before they are open. What nori does reads [`Settings::effective`].
     pub fn current(&self) -> Option<StoredPrefs> {
         self.with_prefs(StoredPrefs::clone)
     }
 
-    /// `f` applied to the live settings without copying them; None before they are open.
+    /// `f` applied to the settings as the user set them, without copying them; None before they are open.
     pub fn with_prefs<R>(&self, f: impl FnOnce(&StoredPrefs) -> R) -> Option<R> {
         self.kept.read().as_ref().map(|k| f(&k.prefs))
     }
 
-    /// `f` applied to the live settings, or to the defaults before they are open.
+    /// `f` applied to the settings as the user set them, or to the defaults before they are open.
     pub fn prefs<R>(&self, f: impl FnOnce(&StoredPrefs) -> R) -> R {
         match self.kept.read().as_ref() {
             Some(k) => f(&k.prefs),
             None => f(&StoredPrefs::default()),
         }
     }
+
+    /// `f` applied to the settings in effect: the user's with what the enabled plugins override laid
+    /// over them; None before they are open.
+    pub fn with_effective<R>(&self, f: impl FnOnce(&StoredPrefs) -> R) -> Option<R> {
+        let overrides = self.layer.lock().overrides.clone();
+        self.kept.read().as_ref().map(|k| laid_over(&k.prefs, &overrides, f))
+    }
+
+    /// `f` applied to the settings in effect, or to the defaults before they are open.
+    pub fn in_effect<R>(&self, f: impl FnOnce(&StoredPrefs) -> R) -> R {
+        let overrides = self.layer.lock().overrides.clone();
+        match self.kept.read().as_ref() {
+            Some(k) => laid_over(&k.prefs, &overrides, f),
+            None => laid_over(&StoredPrefs::default(), &overrides, f),
+        }
+    }
+}
+
+/// `f` applied to `stored` with `overrides` laid over it, copied only when there are some.
+fn laid_over<R>(stored: &StoredPrefs, overrides: &[(String, String)], f: impl FnOnce(&StoredPrefs) -> R) -> R {
+    if stored.plugins_off || overrides.is_empty() {
+        return f(stored);
+    }
+    f(&crate::overrides::effective(stored, overrides))
+}
+
+/// The settings a backup keeps ([`Settings::backed_up`]), read as stored ones are.
+pub fn backed_prefs(backed: &serde_json::Map<String, Value>) -> StoredPrefs {
+    let raw: HashMap<String, PrefValue> = backed.iter().filter_map(|(k, v)| Some((k.clone(), value_from(v.clone())?))).collect();
+    load(&raw)
 }
 
 /// An equalizer screen tool (sliders are [`Settings::edit_band`] and [`Settings::edit_level`]).
@@ -664,6 +716,28 @@ mod tests {
         assert_eq!((kept.crossfade_sec, kept.theme, kept.cache_mb), (4, ThemeMode::Light, 4096));
     }
 
+    /// The one scrobbling switch, off, turns every saved profile's off, once: a profile turned on again
+    /// stays on.
+    #[test]
+    fn the_old_scrobbling_switch_moves_into_each_profile_once() {
+        let dir = nori_testdir::TempDir::new("scrobble-migration");
+        let path = dir.join("nori.db").display().to_string();
+        let servers = ["a", "b"].map(|id| crate::settings::SavedServer { id: id.into(), ..Default::default() }).to_vec();
+        for (old, off) in [(true, false), (false, true)] {
+            {
+                let mut c = db::open_app(&path).unwrap();
+                write(&mut c, &StoredPrefs { servers: servers.clone(), ..Default::default() }).unwrap();
+                c.execute("INSERT INTO settings VALUES ('scrobble', ?1)", [to_json(&PrefValue::Flag { v: old })]).unwrap();
+            }
+            let mut migrated = SettingsStore::open(&path, Writer::default()).unwrap();
+            assert!(migrated.prefs.servers.iter().all(|s| s.scrobble_off == off), "old switch {old}");
+            assert!(!read(&migrated.db.lock()).unwrap().contains_key("scrobble"));
+            migrated.prefs.servers[0].scrobble_off = false;
+            write(&mut migrated.db.lock(), &migrated.prefs).unwrap();
+            assert!(!SettingsStore::open(&path, Writer::default()).unwrap().prefs.servers[0].scrobble_off);
+        }
+    }
+
     #[test]
     fn remote_migration_is_saved_once() {
         let dir = nori_testdir::TempDir::new("remote-migration");
@@ -739,7 +813,22 @@ mod tests {
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), APPLY_AUDIO, "a tunable");
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), 0, "the same layer");
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25"), ("crossfadeSec", "6")])), APPLY_AUDIO | REPLAN, "a setting's own effect");
+        assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25"), ("crossfadeSec", "6"), ("autoMix.longestSec", "20")])), REPLAN, "AutoMix's limits replan");
+        assert_eq!(s.transition_prefs().map(|p| p.auto_mix_max_s), Some(20));
         assert_eq!(s.set_layer(Layer::default()), APPLY_AUDIO | REPLAN, "turned off, both go back");
+    }
+
+    #[test]
+    fn what_plugins_override_is_in_effect_while_the_stored_settings_stay() {
+        use crate::overrides::Layer;
+        let dir = nori_testdir::TempDir::new("settings-in-effect");
+        let s = Settings::new();
+        s.open(dir.path().join("app.db").to_str().unwrap()).unwrap();
+        s.set_layer(Layer { overrides: vec![("remoteControl".into(), "false".into())], ..Layer::default() });
+        assert_eq!((s.with_prefs(|p| p.remote_control), s.with_effective(|p| p.remote_control)), (Some(true), Some(false)));
+        assert!(!s.in_effect(|p| p.remote_control) && s.overridden());
+        s.edit_by_name("pluginsOff", "true").unwrap();
+        assert_eq!(s.effective().map(|p| p.remote_control), Some(true), "every plugin off");
     }
 
     #[test]
@@ -867,7 +956,7 @@ mod tests {
         let (prefs, _) = open_old("old-changed", &stored_062(true));
         let kinds: Vec<_> = prefs.servers.iter().map(|s| (s.id.as_str(), s.kind.id())).collect();
         assert_eq!(kinds, vec![("a1", "fm.nori.youtube-music")], "its built-in YouTube Music profile the plugin's");
-        assert_eq!((prefs.active_server_id.as_str(), prefs.theme, prefs.cache_mb, prefs.auto_mix_better_beats), ("a1", ThemeMode::Midnight, 4096, true), "the rest as it was, pure black with dark becoming Midnight");
+        assert_eq!((prefs.active_server_id.as_str(), prefs.theme, prefs.cache_mb, prefs.limiter), ("a1", ThemeMode::Midnight, 4096, true), "the rest as it was, pure black with dark becoming Midnight");
     }
 
     #[test]

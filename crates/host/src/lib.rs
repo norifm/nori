@@ -6,11 +6,14 @@
 mod bluez;
 #[cfg(all(feature = "desktop", any(test, target_os = "macos")))]
 mod btids;
+pub mod account;
 #[cfg(feature = "desktop")]
 pub mod desktop;
 mod lyrics;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
 mod macbt;
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+pub use macbt::beside_main_run_loop;
 pub mod pages;
 pub mod player;
 #[cfg(feature = "desktop")]
@@ -60,15 +63,38 @@ pub fn keep_log(data: &std::path::Path) {
     }));
 }
 
+/// Where the desktop and terminal clients keep their data, the same folder for both: $XDG_DATA_HOME/nori,
+/// else ~/.local/share/nori; on Windows %LOCALAPPDATA%\nori.
+pub fn data_dir() -> std::path::PathBuf {
+    use std::path::PathBuf;
+    let set = |name| std::env::var_os(name).filter(|d| !d.is_empty()).map(PathBuf::from);
+    if let Some(d) = set("XDG_DATA_HOME") {
+        return d.join("nori");
+    }
+    let home = if cfg!(windows) { set("LOCALAPPDATA") } else { set("HOME").map(|h| h.join(".local/share")) };
+    home.unwrap_or_else(std::env::temp_dir).join("nori")
+}
+
 /// This computer's name, as the account's other devices list it (remote control). A browser has none.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub fn device_name() -> String {
+    let name = host_name();
+    let name = name.trim_end_matches(".local");
+    if name.is_empty() { "nori".into() } else { name.into() }
+}
+
+#[cfg(unix)]
+fn host_name() -> String {
     let mut buf = [0u8; 256];
     // SAFETY: the buffer is writable for its whole length; gethostname writes a NUL-terminated name into it.
     let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
-    let name = if ok { String::from_utf8_lossy(buf.split(|b| *b == 0).next().unwrap_or_default()).into_owned() } else { String::new() };
-    let name = name.trim_end_matches(".local").to_string();
-    if name.is_empty() { "nori".into() } else { name }
+    if ok { String::from_utf8_lossy(buf.split(|b| *b == 0).next().unwrap_or_default()).into_owned() } else { String::new() }
+}
+
+/// Windows sets it for every process.
+#[cfg(windows)]
+fn host_name() -> String {
+    std::env::var("COMPUTERNAME").unwrap_or_default()
 }
 
 /// Why a jam was not joined.
@@ -137,6 +163,26 @@ pub fn profile_look(settings: &Settings, id: &str, look: impl FnOnce(&mut SavedS
 /// Saved profile `id` renamed; blank, it is called after its provider again.
 pub fn profile_renamed(settings: &Settings, id: &str, name: &str) {
     profile_look(settings, id, |p| p.name = name.trim().to_string());
+}
+
+/// Saved profile `id` with `account` in place of its namesake among its scrobbling accounts, or added.
+pub fn scrobbler_kept(settings: &Settings, id: &str, account: nori_core::settings::SavedScrobbler) {
+    profile_look(settings, id, |p| *p = nori_core::settings::profile_scrobbler_put(std::mem::take(p), account));
+}
+
+/// Saved profile `id`'s scrobbling account `account` turned on or off.
+pub fn scrobbler_switched(settings: &Settings, id: &str, account: &str, on: bool) {
+    profile_look(settings, id, |p| p.scrobblers.iter_mut().filter(|a| a.id == account).for_each(|a| a.on = on));
+}
+
+/// Saved profile `id`'s server or provider told what plays, or not.
+pub fn server_scrobble_switched(settings: &Settings, id: &str, on: bool) {
+    profile_look(settings, id, |p| *p = nori_core::settings::profile_scrobble_switched(std::mem::take(p), on));
+}
+
+/// Saved profile `id` without its scrobbling account `account`.
+pub fn scrobbler_removed(settings: &Settings, id: &str, account: &str) {
+    profile_look(settings, id, |p| *p = nori_core::settings::profile_scrobbler_removed(std::mem::take(p), account.to_string()));
 }
 
 /// Runs `f` on a named thread.
@@ -349,6 +395,25 @@ impl PlaceSeen {
 
 #[cfg(test)]
 mod tests {
+    use nori_core::settings::{SavedScrobbler, SavedServer, StoredPrefs};
+
+    /// A profile's scrobbling account is added, switched and removed in place; another profile's isn't.
+    #[test]
+    fn scrobbling_accounts_change_in_their_profile() {
+        let settings = nori_core::settings_store::Settings::default();
+        settings.open("").unwrap();
+        let profile = |id: &str| SavedServer { id: id.into(), ..Default::default() };
+        settings.put(StoredPrefs { servers: vec![profile("a"), profile("b")], ..Default::default() });
+        let account = |id: &str| SavedScrobbler { id: id.into(), on: true, ..Default::default() };
+        super::scrobbler_kept(&settings, "a", account("x"));
+        super::scrobbler_kept(&settings, "a", account("y"));
+        super::scrobbler_switched(&settings, "a", "x", false);
+        super::scrobbler_removed(&settings, "a", "y");
+        let servers = settings.current().unwrap().servers;
+        assert_eq!(servers[0].scrobblers, [SavedScrobbler { on: false, ..account("x") }]);
+        assert!(servers[1].scrobblers.is_empty());
+    }
+
     /// In a process of its own: the hook is the whole process's.
     #[test]
     fn a_panic_is_kept_in_the_log() {

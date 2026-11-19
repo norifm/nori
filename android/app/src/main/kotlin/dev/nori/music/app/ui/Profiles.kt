@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -110,7 +111,7 @@ fun ProfileIconPicker(vm: SettingsViewModel, profile: SavedServer?, onDismiss: (
                     Box(
                         Modifier.size(PICKED).clip(CircleShape).border(ring, CircleShape)
                             .clickable { vm.setProfileIcon(shown, icon); onDismiss() }.testTag("profile-icon-${icon.name.lowercase()}")
-                            .clearAndSetSemantics { contentDescription = say.profileIconName(icon, provider); selected = chosen; role = androidx.compose.ui.semantics.Role.RadioButton },
+                            .clearAndSetSemantics { contentDescription = say.profileIconName(icon, provider, shown.picture != null); selected = chosen; role = androidx.compose.ui.semantics.Role.RadioButton },
                         Alignment.Center,
                     ) { ProfileMark(shown, label, PICKED - 10.dp, icon = icon) }
                 }
@@ -172,8 +173,11 @@ fun ProfileLine(
     detail: String? = null, onMark: (() -> Unit)? = null, trailing: @Composable () -> Unit = {}, onClick: (() -> Unit)?,
 ) {
     val label = profileLabel(vm, profile)
-    val who = detail ?: profile.user.ifBlank { providerWords(vm, profile.kind).noUser }
-    Column(modifier.fillMaxWidth()) {
+    // A profile whose plugin doesn't run here is dimmed and says so.
+    val waits by vm.profileWaits.collectAsStateWithLifecycle()
+    val wait = waits[profile.id]
+    val who = wait?.let(say::profileUnavailable) ?: detail ?: profile.user.ifBlank { providerWords(vm, profile.kind).noUser }
+    Column(modifier.fillMaxWidth().alpha(if (wait != null) 0.5f else 1f)) {
         Row(
             Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
                 .padding(start = GROUP_INSET, end = 4.dp, top = 10.dp, bottom = 10.dp),

@@ -17,12 +17,30 @@ impl Client {
         self.read_each(read, |p| shown.show(p)).await
     }
 
-    /// Stars or unstars: the mark is shown at once via `marked`, then the write is sent (queued offline).
-    /// A server refusal restores the previous mark and returns the error.
+    /// Stars or unstars: the mark is shown at once via `marked`, then the write is sent (queued offline),
+    /// or, where the account can't keep favorites or has nowhere for one of this kind, the item is kept
+    /// on this device (favorites.rs). An item kept here from before is unstarred here, and on the account
+    /// only when it lists it. A refusal restores the previous mark and returns the error.
     pub async fn star(&self, kind: Starrable, id: String, on: bool, marked: Arc<dyn StarsShown>) -> NetResult<()> {
         let m = self.core.stars.lock().mark(kind, id.clone(), on);
         marked.marks(m.marks);
-        let sent = self.write(Write::Star { kind, id: id.clone(), on }).await;
+        let provider = self.core.provider();
+        let nowhere = || provider.favorites_here() && !provider.keeps_favorites(kind);
+        let sent = if self.core.rules().stars_here || nowhere() {
+            self.star_here(kind, &id, on).await
+        } else if !on && self.core.here.lock().has(kind, &id) {
+            let listed = self.core.listed.lock().has(kind, &id);
+            match self.star_here(kind, &id, false).await {
+                Ok(()) if listed => self.write(Write::Star { kind, id: id.clone(), on }).await,
+                done => done,
+            }
+        } else {
+            match self.write(Write::Star { kind, id: id.clone(), on }).await {
+                // The account said only now that it has nowhere for one of this kind.
+                Err(_) if nowhere() => self.star_here(kind, &id, on).await,
+                sent => sent,
+            }
+        };
         if sent.is_err() {
             let restored = self.core.stars.lock().restore(kind, id.clone(), on, m.previous);
             marked.marks(restored);
@@ -81,10 +99,14 @@ impl Client {
     /// ([`crate::menus::playlist_choices`]). Each page is the stored one while fresh, else asked, the
     /// playlists' together.
     pub async fn playlist_choices(&self, song_ids: Vec<String>) -> NetResult<Vec<crate::menus::PlaylistChoice>> {
-        let Some(user) = self.core.account.read().as_ref().map(|a| a.user.clone()) else { return Ok(Vec::new()) };
-        let account = self.core.rules().account;
+        let playlists = self.core.rules().playlists;
+        if !playlists {
+            return Ok(Vec::new());
+        }
+        // A provider without a Subsonic account names no user: its own playlists name no owner.
+        let user = self.core.account.read().as_ref().map(|a| a.user.clone()).unwrap_or_default();
         let Some(Page::Playlists { v }) = self.cached_or_fetched(Read::PlaylistList).await? else { return Ok(Vec::new()) };
-        let mine: Vec<_> = v.into_iter().filter(|p| crate::menus::playlist_editable(p, &user, account)).collect();
+        let mine: Vec<_> = v.into_iter().filter(|p| crate::menus::playlist_editable(p, &user, playlists)).collect();
         let pages = futures_util::future::join_all(mine.iter().map(|p| self.cached_or_fetched(Read::PlaylistById { id: p.id.clone() }))).await;
         let held = pages.into_iter().map(|page| match page {
             Ok(Some(Page::PlaylistPage { v })) => Some(v.songs.into_iter().map(|s| s.id).collect()),
@@ -130,7 +152,7 @@ impl Client {
     /// not taken that up yet. Never asked with the offer switched off, nor for a profile without an
     /// account's things (a jam guest's, whose Home is the host's).
     pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> NetResult<Option<QueueOffer>> {
-        if playing || !self.settings().prefs(|p| p.queue_offer) || !self.core.rules().account {
+        if playing || !self.settings().in_effect(|p| p.queue_offer) || !self.core.rules().account {
             return Ok(None);
         }
         let here = shown.or_else(|| self.core.session.snapshot().0).or_else(|| {

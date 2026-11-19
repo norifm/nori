@@ -521,7 +521,7 @@ impl Nori {
     pub fn lyrics_now(&self, frame_ms: u32) -> String {
         let lyrics = self.live.lyrics.borrow();
         let Some((song, pick, clock)) = lyrics.as_ref() else { return "null".into() };
-        let sweep = self.app.settings.prefs(|p| p.lyrics_sweep);
+        let sweep = self.app.settings.in_effect(|p| p.lyrics_sweep);
         let step = clock.advance(self.position_now(), sweep, true, true);
         let wait = clock.wait_ms(&step, sweep, frame_ms as u64).unwrap_or(0);
         json!({ "song": song, "active": step.frame.active, "glide": step.frame.glide_ms, "swept": sweep && swept(pick, step.frame.active), "sung": step.frame.sung, "wait": wait }).to_string()
@@ -539,7 +539,7 @@ impl Nori {
         let Some((_, pick, clock)) = lyrics.as_ref().filter(|(_, pick, _)| pick.lyrics.synced) else { return "null".into() };
         let ms = clock.tap(line);
         let active = clock.shown().active;
-        let swept = self.app.settings.prefs(|p| p.lyrics_sweep) && swept(pick, active);
+        let swept = self.app.settings.in_effect(|p| p.lyrics_sweep) && swept(pick, active);
         drop(lyrics);
         self.seek(ms as f64);
         json!({ "active": active, "swept": swept, "ms": ms }).to_string()
@@ -589,6 +589,7 @@ impl Nori {
                 "index": n.index,
                 "id": n.song.as_ref().map(|s| s.id.clone()),
                 "positionMs": n.position_now(),
+                "fadingMs": n.fading_ms(),
                 "pace": n.pace,
                 "mixing": n.mixing,
                 "buffering": n.buffering,
@@ -886,8 +887,8 @@ fn told(s: &Said) -> Option<Value> {
         Said::Volume(v) => json!({ "kind": "volume", "volume": v }),
         Said::Curve(_) => return None,
         Said::Starred(_) => json!({ "kind": "starred" }),
-        // The page keeps no downloads and no account pictures.
-        Said::Working | Said::Pictured => return None,
+        // The page keeps no downloads and no account pictures, and the server it comes from updates it.
+        Said::Working | Said::Pictured | Said::Update(_) | Said::AnalysisOffer(_) | Said::Overridden => return None,
     })
 }
 

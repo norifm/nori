@@ -216,7 +216,7 @@ fn hold_released_when_next_song_fails() {
     p.play_from(0);
     assert!(p.run_until(120_000, |p| p.current() == Some(2)), "{:?}", p.app.log);
     p.run_for(5_000);
-    assert!(p.app.logged("b will not play: skipped"), "{:?}", p.app.log);
+    assert!(p.app.logged("b will not play (b is broken): skipped"), "{:?}", p.app.log);
     let heard = p.sink.heard_samples();
     assert!(heard[..a.len()] == a[..], "a to its very end, its held ending played out unmixed");
     assert!(heard[a.len()..] == c[..heard.len() - a.len()], "then c from its start");

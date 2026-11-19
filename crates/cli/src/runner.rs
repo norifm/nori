@@ -184,10 +184,11 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     if let Some(file) = &o.install_plugin {
         root.install_plugin(file)?;
     }
+    // A provider given on the command line: its saved profile, or a new one, made active.
     if let Some(kind) = o.provider.clone() {
-        let list = nori_core::settings::ServerList { servers: prefs.servers.clone(), active_server_id: prefs.active_server_id.clone() };
-        let form = SavedServer { id: nori_core::settings::new_server_id(), kind, ..Default::default() };
-        prefs = nori_core::providers::profile_activated(prefs, root.plugins().kinds.login_profile(list, form));
+        let saved = prefs.servers.iter().find(|s| s.kind == kind).cloned();
+        let profile = saved.unwrap_or_else(|| SavedServer { id: nori_core::settings::new_server_id(), kind, ..Default::default() });
+        prefs = nori_core::providers::profile_activated(prefs, profile);
         root.app.settings.put(prefs.clone());
     }
     let mouse = o.mouse.unwrap_or_else(|| own::flag(&root.app.settings, own::MOUSE, true));
@@ -221,7 +222,7 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     app.settings.own.kinds = root.plugins().kinds.clone();
     app.settings.own.device = own::text(&root.app.settings, own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
-    let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
+    let mpris = o.mpris.then(|| nori_mpris::Mpris::start("").ok().map(Arc::new)).flatten();
     app.shared = root.app.clone();
     app.settings.own.shared = root.app.clone();
     let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, code: None, codes: 0, o };
@@ -295,6 +296,8 @@ impl Runner {
         match Session::open(o) {
             Ok(s) => {
                 s.check();
+                s.update_check(false);
+                s.analysis_offer();
                 if !app.in_sight {
                     s.in_sight(false);
                 }
@@ -308,7 +311,7 @@ impl Runner {
                 let keep = (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server.clone(), app.settings.own.clone(), app.colors, app.paint, app.reduced_motion);
                 *app = App::new(prefs);
                 (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server, app.settings.own, app.colors, app.paint, app.reduced_motion) = keep;
-                app.retheme();
+                prefs_changed(app);
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
                 app.output = self.o.device.clone().or_else(|| own::text(&self.root.app.settings, own::DEVICE)).unwrap_or_default();
                 match self.session.as_ref().and_then(|s| s.client.sign_in_due(added)) {
@@ -583,6 +586,7 @@ impl Runner {
                 }
             }
             Msg::Remote | Msg::Jam(_) => self.remote_read(app),
+            Msg::Overridden => prefs_changed(app),
             // The plugin installed is shown, and asked to be turned on, from its card.
             Msg::Installed(_) => self.plugin(app, crate::app::PluginCmd::Read),
             Msg::BackedUp(r) => return app.say(r.as_ref().map_or_else(crate::text::backup_failed, |_| crate::text::BACKUP_SAVED.into()), r.is_err()),
@@ -611,7 +615,7 @@ impl Runner {
                     let (h, tx) = ((**s).clone(), self.tx.clone());
                     let title = format!("Sign in to {}", crate::text::provider_of(&app.settings.own.kinds, &kind).name);
                     self.sign_in_window = nori_sign_in_window::SignInWindow::open_at(app.settings.own.kinds.clone(), kind, title, url.clone(), move |_, cookies| {
-                        let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
+                        let _ = tx.send(Msg::SignedIn(h.account().sign_in(cookies)));
                     });
                 }
                 let _ = (plugin, url);
@@ -620,6 +624,14 @@ impl Runner {
             Msg::IdentityChosen(Ok(())) => {
                 app.handle(m);
                 return self.reopen(app);
+            }
+            Msg::ScrobblerSignedIn { profile, account } => {
+                app.say(crate::text::scrobbler_added(account), account.is_err());
+                if let Ok(account) = account {
+                    nori_host::scrobbler_kept(&self.root.app.settings, profile, account.clone());
+                    prefs_changed(app);
+                }
+                return;
             }
             Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => {
                 #[cfg(feature = "sign-in-window")]
@@ -676,7 +688,7 @@ impl Runner {
         let Some(s) = &self.session else { return };
         let remote = s.remote();
         let guest = s.guest;
-        let jams = guest || self.root.app.settings.prefs(|p| p.remote_control);
+        let jams = guest || self.root.app.settings.in_effect(|p| p.remote_control);
         let d = &mut app.devices;
         // A guest's music is the jam's: it moves to no other device.
         d.on = remote.is_some() && !guest;
@@ -738,7 +750,7 @@ impl Runner {
             r.watch(devices_open);
         }
         let now = s.now();
-        app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, speed: now.pace, mixing: now.mixing, buffering: now.buffering });
+        app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, fading_until: now.fading_until, speed: now.pace, mixing: now.mixing, buffering: now.buffering });
         let id = now.song.as_ref().map(|s| s.id.clone());
         if id != self.heard {
             self.heard = id.clone();
@@ -778,7 +790,7 @@ impl Runner {
         };
         let now = Instant::now();
         let force = app.lyrics_wake.is_some_and(|t| t <= now);
-        let (_, wait) = l.advance(app.now.position(now), app.prefs.lyrics_sweep, force);
+        let (_, wait) = l.advance(app.now.position(now), app.effective.lyrics_sweep, force);
         app.lyrics_wake = wait.map(|ms| now + std::time::Duration::from_millis(ms));
     }
 
@@ -869,7 +881,7 @@ impl Runner {
                     let (h, tx) = ((**s).clone(), self.tx.clone());
                     let title = format!("Sign in to {}", crate::text::provider_of(&app.settings.own.kinds, kind).name);
                     self.sign_in_window = nori_sign_in_window::SignInWindow::open(app.settings.own.kinds.clone(), kind.clone(), title, move |_, cookies| {
-                        let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
+                        let _ = tx.send(Msg::SignedIn(h.account().sign_in(cookies)));
                     });
                     if self.sign_in_window.is_some() {
                         // Its cookies are the answer: one is on its way (already so when a key opened it).
@@ -894,13 +906,13 @@ impl Runner {
                 let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
                 let h = (**s).clone();
                 nori_host::spawn("nori-sign-in", move || {
-                    let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
+                    let _ = tx.send(Msg::SignedIn(h.account().sign_in(cookies)));
                 });
                 return;
             }
             Cmd::SignOut => {
                 if let Some(s) = &self.session {
-                    s.sign_out();
+                    s.account().sign_out();
                 }
                 return self.reopen(app);
             }
@@ -950,18 +962,45 @@ impl Runner {
                 nori_host::profile_renamed(&self.root.app.settings, &id, &name);
                 return prefs_changed(app);
             }
+            Cmd::Scrobbler { profile, change } => {
+                let settings = &self.root.app.settings;
+                match change {
+                    crate::app::ScrobblerChange::Itself(on) => nori_host::server_scrobble_switched(settings, &profile, on),
+                    crate::app::ScrobblerChange::Switch { id, on } => nori_host::scrobbler_switched(settings, &profile, &id, on),
+                    crate::app::ScrobblerChange::Remove(id) => nori_host::scrobbler_removed(settings, &profile, &id),
+                    crate::app::ScrobblerChange::SignIn(form) => {
+                        let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
+                        let client = s.client.clone();
+                        nori_host::spawn("nori-scrobbler", move || {
+                            let account = nori_core::transport::block_on(client.sign_in_scrobbler(*form));
+                            let _ = tx.send(Msg::ScrobblerSignedIn { profile, account });
+                        });
+                        return;
+                    }
+                    crate::app::ScrobblerChange::Approve(form) => {
+                        let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
+                        let client = s.client.clone();
+                        nori_host::spawn("nori-scrobbler", move || {
+                            let approval = nori_core::transport::block_on(client.scrobbler_approval((*form).clone()));
+                            let _ = tx.send(Msg::ScrobblerApproval { profile, form, approval });
+                        });
+                        return;
+                    }
+                }
+                return prefs_changed(app);
+            }
             Cmd::ChooseIdentity(index) => {
                 let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
                 let h = (**s).clone();
                 nori_host::spawn("nori-identity", move || {
-                    let _ = tx.send(Msg::IdentityChosen(h.choose_identity(index).map_err(|e| crate::text::net_error(&e))));
+                    let _ = tx.send(Msg::IdentityChosen(h.account().choose_identity(index).map_err(|e| crate::text::net_error(&e))));
                 });
                 return;
             }
             Cmd::SwitchServer(id) => {
                 let settings = &self.root.app.settings;
                 let Some(p) = nori_host::profile_picked(settings, &id) else { return };
-                app.prefs_changed(settings.current().unwrap_or_default());
+                prefs_changed(app);
                 self.open(app, p, None);
                 app.go(View::Home);
                 return;
@@ -1013,12 +1052,13 @@ impl Runner {
             },
             Cmd::AddToPlaylist { id, songs } => {
                 let name = app.library.playlists.ready().and_then(|v| v.iter().find(|p| p.id == id)).map(|p| p.name.clone()).unwrap_or_default();
-                self.playlist_write(s, nori_core::client::Write::AddToPlaylist { id, song_ids: songs }, crate::text::added_to(&name));
+                self.playlist_write(s, nori_core::client::Write::AddToPlaylist { id, song_ids: songs }, crate::text::added_to(&name), None);
             }
             Cmd::NewPlaylist { name, songs } => {
                 let said = crate::text::created(&name);
-                self.playlist_write(s, nori_core::client::Write::CreatePlaylist { name, song_ids: songs }, said);
+                self.playlist_write(s, nori_core::client::Write::CreatePlaylist { name, song_ids: songs }, said, None);
             }
+            Cmd::EditPlaylist { id, write, said } => self.playlist_write(s, write, said, Some(id)),
             Cmd::RedrawMix(mix) => {
                 let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
                 nori_host::spawn("nori-mix", move || {
@@ -1133,6 +1173,8 @@ impl Runner {
             }
             Cmd::Action(c) => s.action(c),
             Cmd::Curve => s.curve_answer(),
+            Cmd::CheckUpdate => s.update_check(true),
+            Cmd::AnalyseDownloads => s.analyse_downloads(),
             Cmd::SoundPage(page, on) => s.sound_page(page, on),
             Cmd::SearchTyped(text) => {
                 let v = s.search_typed(&text);
@@ -1150,7 +1192,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::Scrobbler { .. } | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
         }
     }
 
@@ -1158,16 +1200,20 @@ impl Runner {
 
 impl Runner {
     /// Changes a playlist on the server, then says `said` and has the playlists read again.
-    fn playlist_write(&self, s: &Session, w: nori_core::client::Write, said: String) {
-        let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+    /// Asks for `w`, then says `said` and reads the playlists again, and playlist `page` when its page changed.
+    fn playlist_write(&self, s: &Session, w: nori_core::client::Write, said: String, page: Option<String>) {
+        let (handle, tx, id) = (nori_host::session::Handle::clone(s), self.tx.clone(), s.id);
         nori_host::spawn("nori-playlist", move || {
             let send = |m: Msg| {
                 let _ = tx.send(Msg::From(id, Box::new(m)));
             };
-            match block_on(client.write(w)) {
+            match handle.write_playlist(w) {
                 Ok(()) => {
                     send(Msg::Note { text: said, error: false });
                     send(Msg::Reload(crate::backend::Req::Playlists));
+                    if let Some(id) = page {
+                        send(Msg::Reload(crate::backend::Req::Playlist(id)));
+                    }
                 }
                 Err(e) => send(Msg::Note { text: crate::text::net_error(&e), error: true }),
             }
@@ -1190,8 +1236,9 @@ fn narrowed(app: &mut App) {
 }
 
 fn prefs_changed(app: &mut App) {
-    if let Some(p) = app.shared.settings.current() {
-        app.prefs_changed(p);
+    let settings = &app.shared.settings;
+    if let (Some(p), Some(e)) = (settings.current(), settings.effective()) {
+        app.prefs_changed(p, e);
     }
 }
 
@@ -1216,7 +1263,7 @@ impl nori_core::providers::code::CodeHeard for Heard {
     fn heard(&self, event: SignInEvent) {
         let _ = self.tx.send(match event {
             SignInEvent::Answered { result } => {
-                self.session.signed_in(&result);
+                self.session.account().signed_in(&result);
                 Msg::SignedIn(result)
             }
             event => Msg::CodeStep { code: self.code, event },

@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::client::{Client, NetResult};
-use crate::settings::StoredPrefs;
 use crate::{Core, Song};
 
 pub use nori_lyrics::race::*;
@@ -271,7 +270,7 @@ impl Client {
 
 impl Client {
     pub(crate) fn lyrics_asked(&self) -> LyricsLookup {
-        self.settings().with_prefs(lyrics_lookup).unwrap_or_else(|| lyrics_lookup(&StoredPrefs::default()))
+        self.settings().in_effect(lyrics_lookup)
     }
 
     /// Song `id`'s lyrics looked up and cached, shown nowhere.
@@ -893,7 +892,7 @@ pub(crate) mod tests {
         use std::task::{Context, Waker};
         let (c, fake) = setup();
         c.core.session.settings.open("").unwrap();
-        c.core.session.settings.put(StoredPrefs { auto_mix: nori_settings::settings::AutoMixMode::Off, ..StoredPrefs::default() });
+        c.core.session.settings.put(crate::settings::StoredPrefs { auto_mix: nori_settings::settings::AutoMixMode::Off, ..Default::default() });
         let (a, _, answer, secs) = late_lyrics();
         let s = Song { id: "sync2".into(), title: "Offset".into(), duration: secs, ..song() };
         let other = Song { id: "other".into(), ..s.clone() };

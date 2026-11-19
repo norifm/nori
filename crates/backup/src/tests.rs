@@ -78,7 +78,7 @@ impl Device {
         let mut entries = Vec::new();
         for (id, features, versions) in listed {
             let (pkg, sha) = package(features);
-            let v: Vec<String> = versions.iter().map(|v| format!(r#"{{"version": "{v}", "api": 5, "url": "{id}-{v}.noriplugin", "sha256": "{sha}"}}"#)).collect();
+            let v: Vec<String> = versions.iter().map(|v| format!(r#"{{"version": "{v}", "api": 7, "url": "{id}-{v}.noriplugin", "sha256": "{sha}"}}"#)).collect();
             entries.push(format!(r#"{{"id": "{id}", "name": "{id}", "versions": [{}]}}"#, v.join(",")));
             serves.extend(versions.iter().map(|v| (format!("https://friend.example/nori/{id}-{v}.noriplugin"), pkg.clone())));
         }
@@ -95,6 +95,18 @@ impl Device {
     /// Once its lifecycle has started, what it set then is in its store.
     fn started(&self, id: &str) {
         assert_eq!(nori_tasks::block_on(self.plugins.worker(id).unwrap().call(|_, _| Ok(1))), Some(1));
+    }
+
+    /// The favorites kept here for `profile`, by id.
+    fn favorites(&self, profile: &str) -> Vec<String> {
+        let c = nori_db::open(&self._dir.join("nori.db").display().to_string(), profile).unwrap();
+        nori_db::favorites::favorites(&c).unwrap().into_iter().map(|f| f.id).collect()
+    }
+
+    fn keep_favorite(&self, profile: &str, id: &str, sealed_ms: i64) {
+        let c = nori_db::open(&self._dir.join("nori.db").display().to_string(), profile).unwrap();
+        let record = format!(r#"{{"id":"{id}","title":"Song {id}"}}"#);
+        nori_db::favorites::keep(&c, &Favorite { kind: ItemKind::Song, id: id.into(), record, sealed_ms }).unwrap();
     }
 
     fn restore(&self, file: &[u8], password: &str) -> Result<Restored, BackupError> {
@@ -171,7 +183,7 @@ fn a_restore_puts_back_what_it_finds() {
     kept.plugins.push(KeptPlugin { repo: None, ..kept.plugins[0].clone() });
     kept.plugins.last_mut().unwrap().id = "fm.nori.sideloaded".into();
     kept.plugins.push(KeptPlugin { id: "fm.nori.dropped".into(), ..kept.plugins[1].clone() });
-    let contents = Contents { settings: a.settings.backed_up(), sound_profiles: Vec::new(), plugins: kept };
+    let contents = Contents { settings: a.settings.backed_up(), sound_profiles: Vec::new(), plugins: kept, favorites: Vec::new() };
     let file = seal::seal(&serde_json::to_vec(&contents).unwrap(), "pw", CHEAP).unwrap();
 
     let b = Device::new("backup-found");
@@ -212,4 +224,41 @@ fn a_backup_that_cant_be_opened_changes_nothing() {
     assert_eq!(make_at(&a.settings, &a.plugins, "", CHEAP), Err(BackupError::NoPassword));
     assert_eq!(b.settings.current(), before);
     assert!(b.plugins.installed().is_empty() && b.settings.sound_profiles().unwrap().is_empty());
+}
+
+/// The favorites kept on a device come back under their profile, beside those here; a backup's profile
+/// that is one here takes them as that one.
+#[test]
+fn favorites_kept_here_come_back() {
+    let a = set_up();
+    let other = SavedServer { id: "s2".into(), url: "https://other.example".into(), user: "me".into(), ..SavedServer::default() };
+    a.settings.put(StoredPrefs { servers: [a.settings.current().unwrap().servers, vec![other]].concat(), ..a.settings.current().unwrap() });
+    a.keep_favorite("s1", "yt-1", 2);
+    a.keep_favorite("s1", "yt-2", 1);
+    a.keep_favorite("s2", "sc-1", 3);
+    let file = make_at(&a.settings, &a.plugins, "pw", CHEAP).unwrap();
+
+    let b = Device::new("backup-favorites");
+    b.serve(&[]);
+    let mine = SavedServer { id: "h1".into(), url: "https://music.example".into(), user: "me".into(), ..SavedServer::default() };
+    b.settings.put(StoredPrefs { servers: vec![mine], active_server_id: "h1".into(), ..StoredPrefs::default() });
+    b.keep_favorite("h1", "here-1", 9);
+    b.restore(&file, "pw").unwrap();
+    assert_eq!(b.favorites("h1"), ["here-1", "yt-1", "yt-2"], "the backup's s1 is h1 here");
+    assert_eq!(b.favorites("s2"), ["sc-1"]);
+    assert!(b.favorites("s1").is_empty());
+}
+
+/// A backup made before favorites were kept here still restores.
+#[test]
+fn a_backup_without_favorites_restores() {
+    let a = set_up();
+    let mut contents = serde_json::to_value(Contents { settings: a.settings.backed_up(), sound_profiles: Vec::new(), plugins: KeptPlugins::default(), favorites: Vec::new() }).unwrap();
+    contents.as_object_mut().unwrap().remove("favorites");
+    let file = seal::seal(&serde_json::to_vec(&contents).unwrap(), "pw", CHEAP).unwrap();
+    let b = Device::new("backup-before-favorites");
+    b.serve(&[]);
+    let r = b.restore(&file, "pw").unwrap();
+    assert_eq!(r.settings.prefs.crossfade_sec, 4);
+    assert!(b.favorites("s1").is_empty());
 }

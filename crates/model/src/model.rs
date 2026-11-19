@@ -75,6 +75,27 @@ impl<'de> Deserialize<'de> for ExplicitStatus {
     }
 }
 
+/// When a release came out (OpenSubsonic `ItemDate`), month and day where the source gives them; dates
+/// order by year, then month, then day, a missing part before any.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct ReleaseDate {
+    pub year: u32,
+    pub month: Option<u8>,
+    pub day: Option<u8>,
+}
+
+/// An `ItemDate`, any part of which may be missing; None without a year.
+fn item_date<'de, D: Deserializer<'de>>(d: D) -> Result<Option<ReleaseDate>, D::Error> {
+    #[derive(Deserialize)]
+    struct ItemDate {
+        year: Option<u32>,
+        month: Option<u8>,
+        day: Option<u8>,
+    }
+    Ok(Option::<ItemDate>::deserialize(d)?.and_then(|i| Some(ReleaseDate { year: i.year.filter(|&y| y > 0)?, month: i.month, day: i.day })))
+}
+
 /// A string or numeric id as a string; empty when absent.
 pub fn id_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     Ok(opt_id(d)?.unwrap_or_default())
@@ -277,6 +298,14 @@ pub struct Album {
     pub created: Option<String>,
     pub explicit_status: ExplicitStatus,
     pub music_brainz_id: Option<String>,
+    /// OpenSubsonic: when this release came out.
+    #[serde(deserialize_with = "item_date")]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub release_date: Option<ReleaseDate>,
+    /// OpenSubsonic: when its music first came out (a reissue's original release).
+    #[serde(deserialize_with = "item_date")]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub original_release_date: Option<ReleaseDate>,
     /// Card subtitle ([`crate::lines::album_subtitle`]), filled when read.
     #[serde(skip)]
     #[cfg_attr(feature = "ffi", uniffi(default))]
@@ -284,6 +313,11 @@ pub struct Album {
 }
 
 impl Album {
+    /// When its music came out, as far as the source says: the original release, else this one.
+    pub fn released(&self) -> Option<ReleaseDate> {
+        self.original_release_date.or(self.release_date)
+    }
+
     /// A provider's album, not yet in the library.
     pub fn is_provider(&self) -> bool {
         self.is_external || is_provider_id(&self.id)
@@ -1032,6 +1066,22 @@ mod tests {
             assert_eq!(song.explicit_status, status, "{wire}");
             let kept: Song = serde_json::from_str(&serde_json::to_string(&song).unwrap()).unwrap();
             assert_eq!(kept.explicit_status, status, "{wire} stored and read back");
+        }
+    }
+
+    #[test]
+    fn an_album_comes_out_on_its_original_release_date() {
+        let date = |year, month, day| Some(ReleaseDate { year, month, day });
+        for (wire, released) in [
+            (r#""releaseDate":{"year":2011,"month":5,"day":2},"originalReleaseDate":{"year":1997,"month":9}"#, date(1997, Some(9), None)),
+            (r#""releaseDate":{"year":2011,"month":5,"day":2},"originalReleaseDate":{}"#, date(2011, Some(5), Some(2))),
+            (r#""releaseDate":{"month":5}"#, None),
+            (r#""year":2011"#, None),
+        ] {
+            let album: Album = serde_json::from_str(&format!(r#"{{"id":"1",{wire}}}"#)).unwrap();
+            assert_eq!(album.released(), released, "{wire}");
+            let kept: Album = serde_json::from_str(&serde_json::to_string(&album).unwrap()).unwrap();
+            assert_eq!(kept, album, "{wire} stored and read back");
         }
     }
 }

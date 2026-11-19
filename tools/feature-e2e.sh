@@ -97,8 +97,7 @@ remember_settings offload autoMix eq remoteControl
 id=$(long_song)
 
 if want scrobble; then section scrobble
-  remember_settings scrobble
-  "$app" set scrobble true >/dev/null
+  # The fixture profile tells its server what plays (SavedServer::scrobble_off left off).
   "$app" set autoMix off >/dev/null
   scrobble_first=$(song_id 'Long Track 01'); scrobble_second=$(song_id 'Long Track 02'); scrobble_third=$(song_id 'Long Track 03')
   count() { api getSong "&id=$1" | python3 -c 'import json,sys;print(json.load(sys.stdin)["subsonic-response"]["song"].get("playCount",0))'; }
@@ -137,7 +136,7 @@ import hashlib, json, pathlib, sys
 repo = pathlib.Path(sys.argv[1]); pkg = next(repo.glob("orbit-*.noriplugin"))
 version = pkg.stem.removeprefix("orbit-")
 (repo / "index.json").write_text(json.dumps({"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "versions": [
-    {"version": version, "api": 5, "url": pkg.name, "sha256": hashlib.sha256(pkg.read_bytes()).hexdigest()}]}]}))
+    {"version": version, "api": 7, "url": pkg.name, "sha256": hashlib.sha256(pkg.read_bytes()).hexdigest()}]}]}))
 INDEX
   plugins_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
   python3 -m http.server "$plugins_port" --bind 127.0.0.1 --directory "$repo" >/dev/null 2>&1 &
@@ -519,11 +518,11 @@ if want notification; then section "the notification's seal and shuffle"
     check "the notification fixture is the current song" wait_for title "Far Song Three" 10
   fi
   buttons=$(field notification); echo "     buttons: $buttons"
-  check "the session has a seal and a shuffle button" bash -c '[[ "'"$buttons"'" == *seal* && "'"$buttons"'" == *shuffle* ]]'
+  check "the notification has a seal and a shuffle button" bash -c '[[ "'"$buttons"'" == *seal* && "'"$buttons"'" == *shuffle* ]]'
   # What the system's notification and lock screen draw: the platform session's custom actions, by name.
   system_actions() { adb shell dumpsys media_session | grep -o "custom actions=\[.*" | grep -o "mName='[^,]*"; }
-  only_the_seal() { [ "$(system_actions)" = "mName='Add to favorites" ] || [ "$(system_actions)" = "mName='Remove from favorites" ]; }
-  check "the system's notification has only the seal ($(system_actions | tr '\n' ' '))" wait_until 10 only_the_seal
+  seal_and_shuffle() { local a; a=$(system_actions); [[ "$a" == *favorites* && "$a" == *Shuffle* ]]; }
+  check "the system's notification has the seal and shuffle ($(system_actions | tr '\n' ' '))" wait_until 10 seal_and_shuffle
   was=$(field starred); flip=$([ "$was" = True ] && echo False || echo True)
   "$app" do "notification favourite" >/dev/null
   check "the notification's seal stars the song in the app ($was -> $flip)" wait_for starred "$flip" 10
@@ -736,8 +735,6 @@ print('$a' if all(not x['id'].startswith('ext-') and x.get('suffix')!='Remote' f
 fi
 
 if want download-albums; then section "downloaded albums on the phone and through the car's media browser"
-  remember_settings autoMixBetterBeats
-  "$app" set autoMixBetterBeats false >/dev/null
   album_id=$(mix_album); first_id=$(song_id "Long Track 01"); third_id=$(song_id "Long Track 03")
   car_log=$(mktemp)
   "$app" do "undownload album:$album_id" >/dev/null

@@ -1,4 +1,4 @@
-package nori:plugin@5.0.0;
+package nori:plugin@7.0.0;
 
 /// What plugins and nori say to each other about music: records of nori's own, never its internals.
 interface types {
@@ -70,6 +70,25 @@ interface types {
         rating: u8,
     }
 
+    /// When a release came out; month and day where the source gives them.
+    record release-date {
+        year: u32,
+        month: option<u8>,
+        day: option<u8>,
+    }
+
+    /// What a release is, which picks its shelf on the artist's page.
+    enum release-kind {
+        album,
+        ep,
+        single,
+        compilation,
+        live,
+        soundtrack,
+        remix,
+        other,
+    }
+
     record album {
         id: string,
         name: string,
@@ -80,6 +99,10 @@ interface types {
         song-count: u32,
         duration: u32,
         year: u32,
+        /// Orders releases of the same year; none where the source gives only the year.
+        released: option<release-date>,
+        /// None where the source doesn't say; nori shelves it with the albums.
+        kind: option<release-kind>,
         genre: option<string>,
         starred: bool,
         external: bool,
@@ -170,6 +193,32 @@ interface types {
         hdmi,
         cast,
         other,
+    }
+
+    /// A glyph from nori's own set, drawn in each client's style.
+    enum glyph {
+        sparkle,
+        info,
+        share,
+        link,
+        search,
+        heart,
+        download,
+        add,
+        play,
+        tune,
+        headphones,
+        speaker,
+        battery,
+        touch,
+        timer,
+        gauge,
+        wave,
+        bluetooth,
+        gear,
+        globe,
+        key,
+        person,
     }
 
     /// A service found on the LAN by mDNS.

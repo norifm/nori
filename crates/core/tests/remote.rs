@@ -835,6 +835,7 @@ fn returning_here_does_not_wait_for_a_dead_device() {
         phone.remote.clone().serve(true);
         let ghost = phone.until("the phone published", |_| relay.hub.lock().rooms.values().flat_map(|r| &r.members).find(|m| m.id == phone.remote.id() && m.state.as_ref().is_some_and(|s| s.playing)).cloned());
         phone.remote.clone().stop();
+        phone.remote.sent();
         relay.hub.lock().rooms.entry("u:ann".into()).or_default().members.push(ghost);
         let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
         desk.queued(&["local"]);
@@ -1152,9 +1153,9 @@ fn a_handoff_counts_one_listen() {
         desk.core.session.scrobble_track(Some("long".into()), TrackChange::Moved, true, now, nori_core::db::now_ms(), 0);
         let donor = phone.core.session.scrobble_track(None, TrackChange::Ended, false, now, nori_core::db::now_ms(), 0);
         let receiver = desk.core.session.scrobble_track(None, TrackChange::Ended, false, now + heard, nori_core::db::now_ms() + heard, 0);
-        assert_eq!(donor.submit_id, None, "the old device no longer owns the listen");
-        assert_eq!(receiver.submit_id.as_deref(), Some("long"), "time heard on both devices qualifies");
-        assert_eq!(receiver.submit_at, started, "the original start belongs to the same listen");
+        assert_eq!(donor.counted, None, "the old device no longer owns the listen");
+        assert_eq!(receiver.counted.map(|s| s.id).as_deref(), Some("long"), "time heard on both devices qualifies");
+        assert_eq!(receiver.counted_at, started, "the original start belongs to the same listen");
         desk.core.session.settings.writer.flush();
         assert!(phone.core.history_recent(10, None, true).unwrap().0.is_empty(), "the donor does not record the listen again");
         let history = desk.core.history_recent(10, None, true).unwrap().0;
@@ -1392,43 +1393,28 @@ fn a_jam_opened_while_a_poll_is_held_hears_its_first_request() {
     relay.close();
 }
 
-/// A device that only serves, with nothing on its screen, polls the relay every few minutes on a metered
-/// network rather than after every answer, and at once again when something shows; unmetered, it polls
-/// after each. The account's other device changes once a minute, answering the polls held.
+/// A device listed at the relay hears it: paused, with nothing on its screen, on a metered network, it
+/// still asks again as each poll is answered, so what another device asks of it arrives at once.
 #[test]
-fn out_of_sight_on_mobile_data_a_device_polls_the_relay_less() {
-    for metered in [false, true] {
-        let relay = Relay::new();
-        relay.metered.store(metered, Ordering::Relaxed);
-        let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-        phone.playing(&["s1", "s2"], 0);
-        desk.playing(&["s3"], 0);
-        phone.remote.clone().serve(true);
-        desk.remote.clone().serve(true);
-        phone.remote.clone().sight(Sight::Nothing);
-        relay.sim.pass(Duration::from_secs(60));
-        let id = phone.remote.id();
-        let polls = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.poll") && a.ends_with(id.as_str())).count();
-        let before = polls();
-        for minute in 0..10 {
-            desk.remote.clone().played(Playing { playing: minute % 2 == 1, position_ms: 5_000, volume: Some(40), ..Default::default() });
-            relay.sim.pass(Duration::from_secs(60));
-        }
-        let ten_minutes = polls() - before;
-        if metered {
-            assert!((1..=3).contains(&ten_minutes), "{ten_minutes} polls in ten minutes on mobile data, out of sight");
-            phone.remote.clone().sight(Sight::Screen);
-            let shown = polls();
-            relay.sim.pass(Duration::from_secs(1));
-            assert!(polls() > shown, "in sight, it polls again at once");
-        } else {
-            assert!(ten_minutes >= 9, "{ten_minutes} polls in ten minutes, unmetered");
-        }
-        phone.remote.stop();
-        desk.remote.stop();
-        relay.close();
-    }
+fn out_of_sight_on_mobile_data_a_paused_device_hears_the_relay() {
+    let relay = Relay::new();
+    relay.metered.store(true, Ordering::Relaxed);
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().played(Playing { playing: false, position_ms: 5_000, volume: Some(40), ..Default::default() });
+    phone.remote.clone().serve(true);
+    desk.remote.clone().serve(true);
+    phone.remote.clone().sight(Sight::Nothing);
+    relay.sim.pass(Duration::from_secs(400));
+    let id = phone.remote.id();
+    assert!(relay.parked(&id), "its poll is held");
+    desk.remote.clone().send(id, Op::Play);
+    relay.sim.pass(Duration::from_secs(1));
+    assert_eq!(phone.ops.try_recv().ok(), Some(Op::Play), "asked to play, it hears within a second");
+    phone.remote.stop();
+    desk.remote.stop();
+    relay.close();
 }
 
 #[test]
@@ -2188,8 +2174,10 @@ fn hand_offs_in_a_circle_are_followed_once() {
     let (phone_id, laptop_id) = (phone.remote.id(), laptop.remote.id());
     let published = |id: &str| relay.hub.lock().rooms.values().flat_map(|r| &r.members).find(|m| m.id == id && m.state.is_some()).cloned();
     let mut members = phone.until("both published", |_| Some([published(&phone_id)?, published(&laptop_id)?]));
-    phone.remote.clone().stop();
-    laptop.remote.clone().stop();
+    for d in [&phone, &laptop] {
+        d.remote.clone().stop();
+        d.remote.sent();
+    }
     for (m, to) in members.iter_mut().zip([&laptop_id, &phone_id]) {
         let state = m.state.as_mut().unwrap();
         state.playing = false;
@@ -2350,12 +2338,41 @@ fn a_stopped_device_leaves_the_lists_at_once() {
     desk.remote.clone().watch(true);
     desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
 
-    // Its leaving reaches the relay late: stopping waits for it, as a client quits right after.
+    // Its leaving reaches the relay late: a client quitting right after waits for it.
     relay.leave_late.store(true, Ordering::Relaxed);
     phone.remote.clone().stop();
+    phone.remote.sent();
     let listed = relay.hub.lock().rooms["u:ann"].members.iter().any(|m| m.id == phone_id);
     assert!(!listed, "the relay was told before the stop returned");
     desk.until("the phone gone", |r| r.devices().is_empty().then_some(()));
+    relay.close();
+}
+
+/// A device's remote made again at once, as switching to another profile of the same account does,
+/// stays listed though the one before still had its leaving to send.
+#[test]
+fn a_device_made_again_at_once_stays_listed() {
+    let relay = Relay::new();
+    let dir = nori_testdir::TempDir::new("remote-made-again");
+    let phone = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
+    phone.playing(&["s1"], 0);
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.remote.clone().watch(true);
+    let listed = |r: &Remote| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state);
+    desk.until("the phone", listed);
+
+    relay.leave_late.store(true, Ordering::Relaxed);
+    phone.remote.clone().stop();
+    let again = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
+    assert_eq!(again.remote.id(), phone_id, "the same device");
+    again.playing(&["s1"], 0);
+    again.remote.clone().serve(true);
+    desk.sim.pass(Duration::from_secs(5));
+    let in_room = relay.hub.lock().rooms["u:ann"].members.iter().any(|m| m.id == phone_id);
+    assert!(in_room, "the leave of the remote before took the device off the relay");
+    assert!(listed(&desk.remote).is_some(), "the desk lost the phone");
     relay.close();
 }
 
@@ -3259,6 +3276,7 @@ fn waiting(sim: &Native, what: &str, left: Duration) {
 fn stop(d: &Device) {
     let at = d.sim.now_us();
     d.remote.clone().stop();
+    d.remote.sent();
     assert_eq!(d.sim.now_us(), at, "stopping waited, timers {:?}", d.sim.waits());
 }
 
@@ -3348,6 +3366,7 @@ fn leaving_gives_up_the_held_poll_and_leaves_nothing_waiting() {
     assert!(sim.waits().is_empty(), "no timer waits: {:?}", sim.waits());
     assert_eq!(Arc::strong_count(&guest.remote), 1, "no task of the remote runs");
     phone.remote.clone().stop();
+    phone.remote.sent();
     assert_eq!(Arc::strong_count(&phone.remote), 1, "no task of the remote runs");
     relay.close();
 }

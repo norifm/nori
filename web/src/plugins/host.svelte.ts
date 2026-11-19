@@ -4,6 +4,7 @@
 import { untrack } from "svelte";
 import { ask, onPlayerUp, onRestart, unlessElsewhere } from "../rpc";
 import { player } from "../state/player.svelte";
+import { refreshTheme } from "../state/theme.svelte";
 import { sleeves } from "../state/sleeve.svelte";
 import { ui } from "../state/ui.svelte";
 import * as db from "./db";
@@ -199,10 +200,10 @@ class Plugins {
     }
   }
 
-  /** Tells the core what the plugins running override, in their order: the last says. */
+  /** Tells the core what the plugins running override, in their order: the last says. The page then wears the look in effect. */
   private lay() {
     const overrides = this.installed.flatMap((i) => this.runningOf(i.plugin.id)?.overrides ?? []);
-    void ask("plugin_overrides", JSON.stringify(overrides)).catch(unlessElsewhere);
+    void ask("plugin_overrides", JSON.stringify(overrides)).then(refreshTheme).catch(unlessElsewhere);
   }
 
   /** What's on, in the sound card, once there is one. */

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use nori_core::browse::AlbumSort;
 use nori_core::lyrics_follow::LyricsNow;
-use nori_core::menus::PageKind;
+use nori_core::menus::{PageKind, PlaylistEdit};
 use nori_core::offer::Offered;
 use nori_core::paged::Paged;
 use nori_core::search::{SearchShown, SearchView};
@@ -34,7 +34,7 @@ use crate::words;
 use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
 use nori_core::providers::AfterAdding;
 
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, ScrobblerLine, Shelf, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -464,11 +464,16 @@ pub struct App {
     autoeq_hits: Vec<nori_core::AutoEqEntry>,
     /// The output playing now, as the engine names it.
     output: String,
+    /// The token allowed on a scrobbling service's page for the account being added, once asked for.
+    scrobbler_approved: Option<String>,
     /// Home's feed shelves' songs, by shelf (a source's own Home).
     feed_songs: Vec<Vec<Song>>,
     profiles: Vec<nori_core::SoundProfile>,
     /// The sign-in window's process while it is open (nori-sign-in).
     sign_in_window: Option<nori_sign_in_window::SignInWindow>,
+    /// The account sheet opened on a profile other than the one in use: its account and profile, until the
+    /// sheet closes.
+    apart: Option<(nori_host::account::Account, SavedServer)>,
     /// The code sign-in running while the account sheet shows its code, with its number; and how many
     /// have run.
     code: Option<(u32, Arc<nori_core::providers::code::CodeSignIn>)>,
@@ -549,14 +554,17 @@ pub struct App {
     taken: Option<Taken>,
     undo_timer: Timer,
     note: Timer,
+    /// What the note's button answers, while it shows one.
+    note_asks: std::cell::Cell<Option<Asked>>,
     /// Follows what the downloads are doing, each second while they do something.
     work: Timer,
     search: Timer,
     /// The hosted jam's invite link its QR code was drawn for, and whether a jam is hosted.
     jam_link: String,
     jam_hosting: bool,
-    /// The song whose menu opened the playlist picker, and the playlists offered for it.
-    menu_song: Option<Song>,
+    /// The songs the playlist picker is open for (one whose menu asked, or the queue's), and the playlists
+    /// offered for them.
+    picking: Vec<String>,
     /// The downloads asked to be removed, waiting for the ask sheet's yes.
     removing: Vec<String>,
     picker: Vec<nori_core::menus::PlaylistChoice>,
@@ -657,6 +665,8 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
     bar.on_search_step(to_main_with(ui, |m, by| m.invoke_search_step(by)));
     bar.on_search_accepted(to_main(ui, |m| m.invoke_search_accepted()));
     bar.on_search_escaped(to_main(ui, |m| m.set_search_preview_open(false)));
+    bar.on_drag_window(to_main(ui, |m| m.invoke_drag_window()));
+    bar.on_zoom_window(to_main(ui, |m| m.invoke_zoom_window()));
     let (pill, main) = (bar.as_weak(), ui.as_weak());
     bar.on_search_placed(move || {
         let (Some(bar), Some(ui)) = (pill.upgrade(), main.upgrade()) else { return };
@@ -736,7 +746,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             compositor,
             tx,
             inbox,
-            mpris: nori_mpris::Mpris::for_app(&format!("nori.desktop{}", std::process::id())).ok().map(Arc::new),
+            mpris: nori_mpris::Mpris::for_app(crate::APP_ID).ok().map(Arc::new),
             root,
             http: Http::new(),
             session: None,
@@ -759,9 +769,11 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             autoeq_query: String::new(),
             autoeq_hits: Vec::new(),
             output: String::new(),
+            scrobbler_approved: None,
             feed_songs: Vec::new(),
             profiles: Vec::new(),
             sign_in_window: None,
+            apart: None,
             code: None,
             codes: 0,
             want: Vec::new(),
@@ -808,11 +820,12 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             taken: None,
             undo_timer: Timer::default(),
             note: Timer::default(),
+            note_asks: Default::default(),
             work: Timer::default(),
             search: Timer::default(),
             jam_link: String::new(),
             jam_hosting: false,
-            menu_song: None,
+            picking: Vec::new(),
             removing: Vec::new(),
             picker: Vec::new(),
             sleep_choices: Vec::new(),
@@ -946,6 +959,14 @@ fn stop(app: &RefCell<App>) {
         settings.keep_app_value(session::own::VOLUME, s.volume().to_string());
         s.close();
     }
+}
+
+/// What the note's button answers.
+enum Asked {
+    /// The session's last AutoEQ notice.
+    Curve,
+    /// Opens this page: a newer release's.
+    Page(String),
 }
 
 /// Opens `url` in the system's browser.
@@ -1150,6 +1171,29 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_sign_out, h, |a| a.sign_out());
     on!(ui.on_choose_identity, h, |a, i| a.choose_identity(i));
     on!(ui.on_rename_profile, h, |a, id, name| a.rename_profile(&id, &name));
+    on!(ui.on_scrobbler_toggled, h, |a, id, on| {
+        let profile = a.ui().get_scrobbling_profile().to_string();
+        nori_host::scrobbler_switched(&a.root.app.settings, &profile, &id, on);
+        a.scrobblers_shown();
+    });
+    on!(ui.on_scrobbler_server_toggled, h, |a, on| {
+        let profile = a.ui().get_scrobbling_profile().to_string();
+        nori_host::server_scrobble_switched(&a.root.app.settings, &profile, on);
+        a.scrobblers_shown();
+    });
+    on!(ui.on_scrobbler_removed, h, |a, id| {
+        let profile = a.ui().get_scrobbling_profile().to_string();
+        nori_host::scrobbler_removed(&a.root.app.settings, &profile, &id);
+        a.scrobblers_shown();
+    });
+    on!(ui.on_scrobbler_add, h, |a, i| a.scrobbler_add(i as usize));
+    on!(ui.on_scrobbler_help_opened, h, |a| {
+        let kind = nori_core::scrobblers::scrobbler_kinds().get(a.ui().get_scrobbler_adding() as usize).copied();
+        if let Some(page) = kind.and_then(nori_core::scrobblers::scrobbler_help_page) {
+            open_in_browser(&page);
+        }
+    });
+    on!(ui.on_scrobbler_sign_in, h, |a| a.scrobbler_sign_in());
     on!(ui.on_sign_in_quiet, h, |a| a.sign_in_quiet());
     on!(ui.on_signin_closed, h, |a| {
         a.sign_in_on(SignInEvent::Close);
@@ -1198,6 +1242,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.go(View::Settings);
     });
     on!(ui.on_clear_queue, h, |a| a.clear_queue());
+    on!(ui.on_keep_queue, h, |a| a.keep_queue());
+    on!(ui.on_analyse_downloads, h, |a| a.on_session(|s| s.analyse_downloads()));
     on!(ui.on_remove_queued, h, |a, i| a.remove_queued(i.max(0) as usize));
     on!(ui.on_move_queued, h, |a, from, to| {
         a.on_session(|s| s.move_song(from.max(0) as usize, to.max(0) as usize));
@@ -1246,6 +1292,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_setting_typed, h, |a, name, text| match (crate::settings::PluginAct::of(&name), crate::settings::Act::of(&name)) {
         _ if name == words::REMOVE_DOWNLOADS => a.remove_asked(),
+        _ if name.starts_with(crate::settings::REMOVE_PROFILE) => a.remove_profile(&name[crate::settings::REMOVE_PROFILE.len()..]),
         (Some(act), _) => a.plugin_typed(act, text.to_string()),
         (None, Some(act)) => a.backup_typed(act, text.to_string()),
         (None, None) => a.setting(&name, &text),
@@ -1329,11 +1376,13 @@ impl App {
     }
 
     fn say(&self, text: &str, error: bool) {
+        self.note_asks.take();
         self.note_for(text, error, "", Duration::from_millis(if error { 5000 } else { 2500 }));
     }
 
-    /// A note with a button, up long enough to be answered.
-    fn ask(&self, text: &str, action: &str) {
+    /// A note with a button answering `asked`, up long enough to be answered.
+    fn ask(&self, text: &str, action: &str, asked: Asked) {
+        self.note_asks.set(Some(asked));
         self.note_for(text, false, action, Duration::from_secs(8));
     }
 
@@ -1351,9 +1400,13 @@ impl App {
         });
     }
 
-    /// The note's button: the session's last AutoEQ notice answered.
+    /// The note's button: the session's last AutoEQ notice answered, or a release's page opened.
     fn note_act(&self) {
-        self.on_session(|s| s.curve_answer());
+        match self.note_asks.take() {
+            Some(Asked::Curve) => self.on_session(|s| s.curve_answer()),
+            Some(Asked::Page(url)) => open_in_browser(&url),
+            None => {}
+        }
         let ui = self.ui();
         ui.set_note("".into());
         ui.set_note_action("".into());
@@ -1376,13 +1429,15 @@ impl App {
         match Session::open(&self.root, self.http.clone(), profile, self.tx.clone(), self.mpris.clone()) {
             Ok(s) => {
                 s.check();
+                s.update_check(false);
+                s.analysis_offer();
                 if self.hidden {
                     s.in_sight(false);
                 }
                 ui.set_volume(s.volume());
                 ui.set_downloads(s.rules().downloads);
-                // Albums and artists carry the account's seals, as on Android.
-                ui.set_page_can_star(s.rules().account && s.rules().stars);
+                // Albums and artists carry seals where songs do, as on Android.
+                ui.set_page_can_star(s.rules().stars);
                 ui.set_favorites_offered(s.rules().stars);
                 ui.set_library_tabs(library_tabs(&s.rules()));
                 self.session = Some(s);
@@ -1454,6 +1509,10 @@ impl App {
     /// Takes `event` on the account sheet and shows where that leaves it; false for an answer not to send.
     fn sign_in_on(&mut self, event: SignInEvent) -> bool {
         let send = self.sign_in.on(event);
+        if self.sign_in.shown == SignInShown::Closed {
+            // The plugin goes back to the profile in use.
+            self.apart = None;
+        }
         if !self.sign_in.checks_code() {
             self.code = None;
         }
@@ -1479,13 +1538,13 @@ impl App {
 
     /// The account sheet's code step: a new code asked for, shown and checked while the step shows.
     fn sign_in_code(&mut self) {
-        let Some(s) = &self.session else { return };
-        let (client, h) = (s.client.clone(), (***s).clone());
+        let Some(account) = self.sheet_account() else { return };
+        let client = account.client().clone();
         if !self.sign_in_on(SignInEvent::Code) {
             return;
         }
         self.codes += 1;
-        let heard = CodeHeard { session: h, tx: self.tx.clone(), code: self.codes };
+        let heard = CodeHeard { account, tx: self.tx.clone(), code: self.codes };
         self.code = Some((self.codes, client.sign_in_with_code(Arc::new(heard))));
     }
 
@@ -1640,7 +1699,8 @@ impl App {
             _ => PageLayout::List,
         });
         ui.set_page_mix(matches!(ask, PageAsk::Mix(_)));
-        ui.set_page_pinnable(matches!(ask, PageAsk::Playlist(_)));
+        // A pin is kept here beside the account's playlists, as on Android.
+        ui.set_page_pinnable(matches!(ask, PageAsk::Playlist(_)) && self.account());
         ui.set_page_title("".into());
         ui.set_page_sub("".into());
         ui.set_page_sub_artist("".into());
@@ -1669,7 +1729,7 @@ impl App {
     /// The page's cover, whose colors the page wears, or none. Its header is the cover's own wash, undyed, as
     /// Android's page shows the cover itself and lets it melt into the dyed page; none where pages wear no cover.
     fn page_colours(&mut self, c: Option<&CoverColours>) {
-        let tinted = self.root.app.settings.prefs(|p| p.theme.covers_tint_pages());
+        let tinted = self.root.app.settings.in_effect(|p| p.theme.covers_tint_pages());
         self.ui().set_page_wash(c.filter(|_| tinted).map(|c| wash(c, None)).unwrap_or_default());
         self.page_cover = c.cloned();
         self.repaint();
@@ -1703,14 +1763,14 @@ impl App {
 
     /// A cover's wash on the season's paper, as its page is dyed; none where pages wear no cover.
     fn dyed_wash(&self, c: &CoverColours) -> Option<Image> {
-        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.effective().unwrap_or_default();
         crate::look::dye(&prefs, self.compositor.system_dark(), crate::look::Today::now(), c).map(|d| wash(c, Some(&d)))
     }
 
     /// The look of the page the app is on: the season's, or a cover's.
     fn page_look(&self) -> crate::look::Look {
         let ui = self.ui();
-        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.effective().unwrap_or_default();
         let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
         let cover = if ui.get_full_player() {
             self.now_cover.as_ref()
@@ -1728,7 +1788,7 @@ impl App {
     /// Dresses every window in the page's look, cross-fading from the one worn unless motion is reduced.
     fn repaint(&mut self) {
         let want = self.page_look();
-        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.effective().unwrap_or_default();
         self.ui().set_covers_tint(prefs.theme.covers_tint_pages());
         // nori's Motion setting, as on Android: animations run unless it asks for less.
         let motion = prefs.motion;
@@ -1903,7 +1963,7 @@ impl App {
             Data::Page(PageGot::Playlist(d)) if shown => {
                 ui.set_page_starred(nori_core::browse::playlist_pinned(&self.root.app.settings, &d.playlist.id));
                 ui.set_page_title(d.playlist.name.as_str().into());
-                let notes = self.root.app.settings.prefs(|p| p.playlist_notes);
+                let notes = self.root.app.settings.in_effect(|p| p.playlist_notes);
                 ui.set_page_sub(nori_core::pages::playlist_description(d.playlist.comment.clone(), notes).unwrap_or_default().into());
                 ui.set_page_caption(if d.songs.is_empty() { String::new() } else { words::songs_caption(d.songs.len(), d.seconds) }.into());
                 self.set_page_art(d.playlist.cover_art.clone());
@@ -1918,7 +1978,7 @@ impl App {
                 ui.set_page_title(words::mix_name(m.name).into());
                 ui.set_page_caption(if m.songs.is_empty() { String::new() } else { words::songs_caption(m.songs.len(), m.seconds) }.into());
                 ui.set_page_covers(ModelRc::new(VecModel::from(m.covers.iter().map(SharedString::from).collect::<Vec<_>>())));
-                ui.set_page_can_save(self.session.as_ref().is_some_and(|s| s.rules().account) && !m.songs.is_empty());
+                ui.set_page_can_save(self.session.as_ref().is_some_and(|s| s.rules().playlists) && !m.songs.is_empty());
                 self.set_page_art(m.covers.first().cloned());
                 self.page_songs = m.songs;
                 self.page = Some(PageShown::Mix(Some((m.id.clone(), words::mix_name(m.name).to_string()))));
@@ -1966,6 +2026,7 @@ impl App {
         let Some(fetch) = self.page_fetch.clone() else { return };
         match act {
             0 | 3 => self.on_session(|s| s.download_later(fetch)),
+            1 if matches!(fetch, Fetch::Playlist(_)) => self.on_session(|s| s.download_later(fetch)),
             1 => {
                 let Some(s) = &self.session else { return };
                 let ids: Vec<&str> = self.page_songs.iter().map(|s| s.id.as_str()).collect();
@@ -2428,9 +2489,17 @@ impl App {
             PageLayout::List => None,
         });
         let mut lines = self.menu_lines(one, false, page);
-        if list == 0 && self.page_playlist().is_some() {
+        if list == 0 {
+            let edits = nori_core::menus::playlist_edits(i as u32, self.page_songs.len() as u32, self.page_playlist().is_some());
             let at = lines.iter().position(|l| l.kind == 7).map_or(lines.len(), |p| p + 1);
-            lines.insert(at, SongGo { title: words::REMOVE_FROM_PLAYLIST.into(), kind: 18, id: SharedString::default(), place: SongPlace::Main, enabled: true, filled: false });
+            lines.splice(at..at, edits.into_iter().map(|e| {
+                let (title, kind) = match e {
+                    PlaylistEdit::MoveUp => (words::MOVE_UP, 20),
+                    PlaylistEdit::MoveDown => (words::MOVE_DOWN, 21),
+                    PlaylistEdit::Remove => (words::REMOVE_FROM_PLAYLIST, 18),
+                };
+                SongGo { title: title.into(), kind, id: SharedString::default(), place: SongPlace::Main, enabled: true, filled: false }
+            }));
         }
         ModelRc::new(VecModel::from(lines))
     }
@@ -2451,7 +2520,7 @@ impl App {
         let lyrics = player && self.lyrics.as_ref().is_some_and(|l| !l.is_empty());
         let excluded = s.core.mix_excluded_songs().is_ok_and(|ids| ids.contains(&one.id));
         let quality = words::quality(&one);
-        let items = song_menu(one, starred.unwrap_or_default(), excluded, download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, s.rules().asks, page);
+        let items = song_menu(one, starred.unwrap_or_default(), excluded, download, player, lyrics, starred.is_some(), s.rules().account, s.rules().playlists, s.rules().downloads, s.rules().radio, s.rules().asks, page);
         let lines = items.into_iter().map(|m| {
             let (kind, id) = match &m.action {
                 A::Favourite { .. } => (0, String::new()),
@@ -2506,7 +2575,9 @@ impl App {
         match how {
             -1 if list == 3 => self.on_session(|s| s.jump(i)),
             -1 => self.on_session(|s| s.play(songs, i, false, origin)),
-            18 => self.remove_from_playlist(i),
+            18 => self.edit_playlist(i, PlaylistEdit::Remove),
+            20 => self.edit_playlist(i, PlaylistEdit::MoveUp),
+            21 => self.edit_playlist(i, PlaylistEdit::MoveDown),
             _ => self.song_act(one, how),
         }
     }
@@ -2537,15 +2608,7 @@ impl App {
             3 => self.on_session(|s| s.download(vec![one])),
             4 => self.on_session(|s| s.play_later(Fetch::Radio(one.id), false)),
             5 | 6 => self.on_session(|s| s.enqueue(vec![one], how == 5)),
-            7 => {
-                let ui = self.ui();
-                ui.set_picker_name("".into());
-                ui.set_picker_naming(false);
-                ui.set_picker_open(true);
-                self.picker_shown(Vec::new());
-                self.ask_choices(one.id.clone());
-                self.menu_song = Some(one);
-            }
+            7 => self.pick_playlist(vec![one.id]),
             8 => self.ask_remove(vec![one.id]),
             9 => self.on_session(|s| s.download_remove(&one.id)),
             10 => self.on_session(|s| s.star(nori_core::client::Starrable::Song, one.id, true)),
@@ -2651,21 +2714,37 @@ impl App {
         });
     }
 
-    /// Asks the core which playlists song `id` may go into and what each has of it, shown when they come.
-    fn ask_choices(&self, id: String) {
+    /// Opens the playlist picker for `songs`: the core is asked which playlists they may go into and what
+    /// each has of them, shown when they come.
+    fn pick_playlist(&mut self, songs: Vec<String>) {
+        let ui = self.ui();
+        ui.set_picker_name("".into());
+        ui.set_picker_naming(false);
+        ui.set_picker_open(true);
+        self.picker_shown(Vec::new());
+        self.picking = songs.clone();
         let Some(client) = self.session.as_ref().map(|s| s.client.clone()) else { return };
         let tx = self.tx.clone();
         nori_host::spawn("nori-choices", move || {
-            let choices = nori_core::transport::block_on(client.playlist_choices(vec![id.clone()])).unwrap_or_default();
-            tx.send(Msg::Choices(id, choices));
+            let choices = nori_core::transport::block_on(client.playlist_choices(songs.clone())).unwrap_or_default();
+            tx.send(Msg::Choices(songs, choices));
         });
     }
 
-    /// The picker's playlists, each saying what it has of the song.
+    /// The queue's songs in play order go into a playlist picked next.
+    fn keep_queue(&mut self) {
+        let songs: Vec<String> = self.queue.as_ref().map(|q| q.rows.order.iter().filter_map(|&i| Some(q.songs.get(i as usize)?.id.clone())).collect()).unwrap_or_default();
+        if !songs.is_empty() {
+            self.pick_playlist(songs);
+        }
+    }
+
+    /// The picker's playlists, each saying what it has of the songs.
     fn picker_shown(&mut self, choices: Vec<nori_core::menus::PlaylistChoice>) {
+        let asked = self.picking.len() as u32;
         let shown = choices.iter().map(|c| PlaylistChoice {
             title: c.playlist.name.as_str().into(),
-            sub: words::playlist_holds(c.holds, 1, c.playlist.song_count).into(),
+            sub: words::playlist_holds(c.holds, asked, c.playlist.song_count).into(),
             art: c.playlist.cover_art.clone().unwrap_or_default().into(),
             full: c.adds.is_empty(),
         });
@@ -2676,13 +2755,16 @@ impl App {
     /// Whether the profile may change `p` (the core's `playlist_editable`), signed in as its user.
     fn editable(&self, p: &nori_core::Playlist) -> bool {
         let user = self.root.app.settings.current().and_then(|prefs| prefs.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
-        nori_core::menus::playlist_editable(p, &user, self.account())
+        nori_core::menus::playlist_editable(p, &user, self.session.as_ref().is_some_and(|s| s.rules().playlists))
     }
 
-    /// Adds the song whose menu asked to the picker's playlist `i`, or to a new one named `name`.
+    /// Adds the songs the picker is open for to its playlist `i`, or to a new one named `name`.
     fn add_to_playlist(&mut self, to: Result<usize, String>) {
         self.ui().set_picker_open(false);
-        let Some(song) = self.menu_song.take() else { return };
+        let songs = std::mem::take(&mut self.picking);
+        if songs.is_empty() {
+            return;
+        }
         match to {
             Ok(i) => {
                 let Some(c) = self.picker.get(i) else { return };
@@ -2692,7 +2774,7 @@ impl App {
             Err(name) => {
                 let name = name.trim().to_string();
                 if !name.is_empty() {
-                    self.playlist_write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: vec![song.id] }, words::playlist_created(&name), PlaylistChange::Made);
+                    self.playlist_write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: songs }, words::playlist_created(&name), PlaylistChange::Made);
                 }
             }
         }
@@ -2706,11 +2788,13 @@ impl App {
         }
     }
 
-    /// Takes entry `index` out of the playlist shown.
-    fn remove_from_playlist(&self, index: usize) {
+    /// Moves entry `index` of the playlist shown, or takes it out.
+    fn edit_playlist(&self, index: usize, edit: PlaylistEdit) {
         let Some(p) = self.page_playlist() else { return };
-        let write = nori_core::client::Write::RemoveFromPlaylist { id: p.id.clone(), index: index as i32 };
-        self.playlist_write(write, words::removed_from_playlist(&p.name), PlaylistChange::Changed(p.id.clone()));
+        let ids = self.page_songs.iter().map(|s| s.id.clone()).collect();
+        let Some(write) = nori_core::menus::playlist_edit_write(p.id.clone(), ids, index as u32, edit) else { return };
+        let done = if edit == PlaylistEdit::Remove { words::removed_from_playlist(&p.name) } else { words::MOVED.into() };
+        self.playlist_write(write, done, PlaylistChange::Changed(p.id.clone()));
     }
 
     /// Names the playlist shown `name`.
@@ -2733,10 +2817,10 @@ impl App {
 
     /// Sends `write` to the server; `done` is said once it took it.
     fn playlist_write(&self, write: nori_core::client::Write, done: String, change: PlaylistChange) {
-        let Some(client) = self.session.as_ref().map(|s| s.client.clone()) else { return };
+        let Some(handle) = self.session.as_ref().map(|s| nori_host::session::Handle::clone(s)) else { return };
         let tx = self.tx.clone();
         nori_host::spawn("nori-playlist-write", move || {
-            let note = match nori_core::transport::block_on(client.write(write)) {
+            let note = match handle.write_playlist(write) {
                 Ok(()) => Msg::Playlist { text: done, change },
                 Err(e) => Msg::Note { text: words::playlist_failed(&words::net_error(&e)), error: true },
             };
@@ -2827,9 +2911,6 @@ impl App {
 
     /// Flips `s`'s heart, once: through the device playing while it has the song, else here.
     fn star(&mut self, s: &Song) {
-        if self.session.as_ref().is_some_and(|x| !x.rules().stars && x.rules().stars_after_sign_in) {
-            return self.ask_sign_in();
-        }
         let on = !self.starred(s);
         self.on_session(|x| x.star_song(s.id.clone(), on, self.there()));
         self.mark_playing();
@@ -2866,6 +2947,15 @@ impl App {
         self.session.as_ref().is_some_and(|s| s.guest)
     }
 
+    /// The place shown still moves: here while playing and heard or while a pause's fade is heard,
+    /// elsewhere while the music plays.
+    fn place_runs(&self) -> bool {
+        match (&self.playback, &self.session) {
+            (Playback::Here, Some(s)) => s.engine.status_with(|st| st.runs_now()),
+            _ => self.ui().get_playing(),
+        }
+    }
+
     /// Whether the player offers `control`: a jam guest's by its role (the core's jam controls), this
     /// computer's own player all of them.
     fn offers(&self, control: fn(&nori_core::remote::Controls) -> nori_core::remote::Reach) -> bool {
@@ -2878,33 +2968,30 @@ impl App {
         self.session.as_ref().is_some_and(|s| s.rules().account)
     }
 
-    /// `s`'s heart as the lists show it; none where songs carry no hearts (`ProfileRules::stars`), or one
-    /// that asks to sign in.
+    /// `s`'s seal as the lists show it; none where songs carry no seals (`ProfileRules::stars`).
     fn heart(&self, s: &Song) -> Option<bool> {
-        self.session.as_ref().is_some_and(|x| x.rules().stars || x.rules().stars_after_sign_in).then(|| self.starred(s))
+        self.session.as_ref().is_some_and(|x| x.rules().stars).then(|| self.starred(s))
     }
 
     /// Joins the jam `link` invites to, as a guest profile of its own.
     /// Signs the account of the profile in use in with cookies pasted from a browser.
     fn sign_in(&mut self, answer: String) {
-        if self.session.is_none() || answer.trim().is_empty() || !self.sign_in_on(SignInEvent::Sent) {
+        let Some(account) = self.sheet_account() else { return };
+        if answer.trim().is_empty() || !self.sign_in_on(SignInEvent::Sent) {
             return;
         }
-        let Some(s) = &self.session else { return };
-        let (h, tx) = ((***s).clone(), self.tx.clone());
-        nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(h.sign_in(answer))));
+        let tx = self.tx.clone();
+        nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(account.sign_in(answer))));
     }
 
-    /// The account sheet of the profile in use, as its server's Edit and a seal tapped while signed out open
-    /// it: who is signed in, or Sign in (the provider's own page in a window) with pasting folded under it.
-    /// A server row's Edit: the profile in use's account sheet where its provider signs in to one, else
-    /// the profile in the sign-in form, saved over itself.
+    /// A server row's Edit: the profile's account sheet where its provider signs in to one, else the
+    /// profile in the sign-in form, saved over itself.
     fn edit_profile(&mut self, id: String) {
         let prefs = self.root.app.settings.current().unwrap_or_default();
         let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
         let providers = self.kinds().providers();
-        if id == prefs.active_server_id && providers.iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
-            return self.ask_sign_in();
+        if providers.iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
+            return if id == prefs.active_server_id { self.ask_sign_in() } else { self.account_apart(profile) };
         }
         let ui = self.ui();
         if let Some(info) = providers.iter().find(|i| i.kind == profile.kind).or(providers.first()) {
@@ -2922,6 +3009,24 @@ impl App {
         self.go(View::Login);
     }
 
+    /// Removes profile `id`, as its ask sheet confirmed; the one in use gives way to the next, or the first
+    /// screen when it was the last.
+    fn remove_profile(&mut self, id: &str) {
+        let active = self.root.app.settings.current().is_some_and(|p| p.active_server_id == id);
+        if active {
+            if let Some(s) = self.session.take() {
+                s.close_for(None);
+            }
+        }
+        match self.root.remove_profile(id) {
+            nori_host::desktop::ProfileRemoved::Elsewhere => {}
+            nori_host::desktop::ProfileRemoved::Opens(next) => self.open(*next, None),
+            nori_host::desktop::ProfileRemoved::Last => self.choose_provider(),
+        }
+        self.profiles_shown();
+        self.settings_shown();
+    }
+
     /// The account changed under the open profile: its seals and downloads follow, and a session the
     /// source ended asks to sign in again.
     fn account_changed(&mut self) {
@@ -2931,7 +3036,7 @@ impl App {
         let offer = s.client.sign_in_due(None);
         let ui = self.ui();
         ui.set_downloads(rules.downloads);
-        ui.set_page_can_star(rules.account && rules.stars);
+        ui.set_page_can_star(rules.stars);
         ui.set_favorites_offered(rules.stars);
         ui.set_library_tabs(library_tabs(&rules));
         self.mirror();
@@ -3444,14 +3549,44 @@ impl App {
 
     /// The account sheet, as asked for: the account's row, a seal tapped while signed out.
     fn ask_sign_in(&mut self) {
-        if let Some(offer) = self.session.as_ref().map(|s| s.client.sign_in_offer()) {
+        if let Some(offer) = self.sheet_account().map(|a| a.client().sign_in_offer()) {
             self.offer_sign_in(offer);
+        }
+    }
+
+    /// The account the sheet works on: the profile it was opened on apart from the one in use, else the
+    /// open session's.
+    fn sheet_account(&self) -> Option<nori_host::account::Account> {
+        self.apart.as_ref().map(|(a, _)| a.clone()).or_else(|| self.session.as_ref().map(|s| s.account().clone()))
+    }
+
+    /// The profile the account sheet is about, as the settings keep it now.
+    fn sheet_profile(&self) -> Option<SavedServer> {
+        let prefs = self.root.app.settings.current()?;
+        match &self.apart {
+            Some((_, p)) => prefs.servers.iter().find(|s| s.id == p.id).cloned(),
+            None => prefs.active_server().cloned(),
+        }
+    }
+
+    /// The account sheet of saved profile `profile`, not the one in use: a client of its own signs it in
+    /// and out, so nothing else opens.
+    fn account_apart(&mut self, profile: SavedServer) {
+        let open = self.session.as_ref().zip(self.root.app.settings.current().and_then(|p| p.active_server().cloned())).map(|(s, p)| (s.core.clone(), p));
+        let tx = self.tx.clone();
+        match self.root.account(self.http.clone(), &profile, open, Box::new(move || tx.send(Msg::Pictured))) {
+            Ok(account) => {
+                let offer = account.client().sign_in_offer();
+                self.apart = Some((account, profile));
+                self.offer_sign_in(offer);
+            }
+            Err(said) => self.say(&said, true),
         }
     }
 
     /// The account sheet, opened by `offer`.
     fn offer_sign_in(&mut self, offer: SignInEvent) {
-        let Some(profile) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) else { return };
+        let Some(profile) = self.sheet_profile() else { return };
         self.sign_in_on(offer);
         let ended = self.sign_in.shown == SignInShown::Offered { ended: true };
         let user = if ended { String::new() } else { profile.user.clone() };
@@ -3473,9 +3608,9 @@ impl App {
 
     /// Asks who the signed-in account may act as: [`Msg::Identities`] answers.
     fn read_identities(&self) {
-        let Some(s) = &self.session else { return };
-        let (h, tx) = ((***s).clone(), self.tx.clone());
-        nori_host::spawn("nori-identities", move || tx.send(Msg::Identities(h.identities().unwrap_or_default())));
+        let Some(account) = self.sheet_account() else { return };
+        let tx = self.tx.clone();
+        nori_host::spawn("nori-identities", move || tx.send(Msg::Identities(account.identities().unwrap_or_default())));
     }
 
     /// The account sheet's channels, each with its picture once it came, the one the account acts as checked.
@@ -3501,13 +3636,13 @@ impl App {
 
     /// The account acts as its `index`th identity from now on, checked at once; the profile opens again as it.
     fn choose_identity(&mut self, index: i32) {
-        let Some(s) = &self.session else { return };
-        let (h, tx) = ((***s).clone(), self.tx.clone());
+        let Some(account) = self.sheet_account() else { return };
+        let tx = self.tx.clone();
         for (i, id) in self.identities.iter_mut().enumerate() {
             id.chosen = i as i32 == index;
         }
         self.identities_shown();
-        nori_host::spawn("nori-identity", move || tx.send(Msg::IdentityChosen(h.choose_identity(index.max(0) as u32).map_err(|e| words::net_error(&e)))));
+        nori_host::spawn("nori-identity", move || tx.send(Msg::IdentityChosen(account.choose_identity(index.max(0) as u32).map_err(|e| words::net_error(&e)))));
     }
 
     /// Asks for the account pictures in `addresses` not yet decoded; each shows where it is drawn once it came.
@@ -3554,6 +3689,99 @@ impl App {
     }
 
     /// Saved profile `id` renamed; blank, it is called after its provider again.
+    /// The scrobbling dialog's accounts, as the settings keep them now, and its form emptied.
+    fn scrobblers_shown(&mut self) {
+        let ui = self.ui();
+        let id = ui.get_scrobbling_profile().to_string();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let Some(profile) = prefs.servers.iter().find(|s| s.id == id) else { return };
+        // The open profile's rules as its session has them; another's as the core reads the saved profile.
+        let itself = match &self.session {
+            Some(s) if prefs.active_server_id == id => s.rules().scrobbles,
+            _ => self.kinds().rules_of(profile.clone(), false).scrobbles,
+        };
+        ui.set_scrobbler_server(if itself { words::provider_of(self.kinds(), &profile.kind).name.into() } else { "".into() });
+        ui.set_scrobbler_server_on(!profile.scrobble_off);
+        let lines: Vec<ScrobblerLine> = profile
+            .scrobblers
+            .iter()
+            .map(|a| ScrobblerLine { id: a.id.as_str().into(), title: words::scrobbler(a.kind).into(), detail: words::scrobbler_detail(a).into(), on: a.on })
+            .collect();
+        ui.set_scrobblers(std::rc::Rc::new(slint::VecModel::from(lines)).into());
+        for set in [AppWindow::set_scrobbler_key, AppWindow::set_scrobbler_secret, AppWindow::set_scrobbler_user, AppWindow::set_scrobbler_password, AppWindow::set_scrobbler_url, AppWindow::set_scrobbler_failed] {
+            set(&ui, "".into());
+        }
+        ui.set_scrobbler_busy(false);
+    }
+
+    /// The scrobbling dialog's form for adding kind `i` of [`nori_core::scrobblers::scrobbler_kinds`],
+    /// with the fields that kind asks, empty.
+    fn scrobbler_add(&mut self, i: usize) {
+        use nori_core::scrobblers::{ScrobblerField, ScrobblerSignIn};
+        let Some(&kind) = nori_core::scrobblers::scrobbler_kinds().get(i) else { return };
+        let fields: Vec<ScrobblerField> = nori_core::scrobblers::scrobbler_fields(kind).into_iter().map(|a| a.field).collect();
+        let ui = self.ui();
+        let key = if fields.contains(&ScrobblerField::Token) { "User token" } else if fields.contains(&ScrobblerField::ApiKey) { "API key" } else { "" };
+        ui.set_scrobbler_key_label(key.into());
+        ui.set_scrobbler_key_hidden(fields.contains(&ScrobblerField::Token));
+        ui.set_scrobbler_asks_secret(fields.contains(&ScrobblerField::Secret));
+        ui.set_scrobbler_asks_user(fields.contains(&ScrobblerField::User));
+        ui.set_scrobbler_asks_address(fields.contains(&ScrobblerField::Address));
+        ui.set_scrobbler_address_hint(words::scrobbler_address_hint(kind).into());
+        ui.set_scrobbler_help(words::scrobbler_help(kind).into());
+        ui.set_scrobbler_browser(nori_core::scrobblers::scrobbler_sign_in(kind) == ScrobblerSignIn::Browser);
+        ui.set_scrobbler_advanced(false);
+        for set in [AppWindow::set_scrobbler_key, AppWindow::set_scrobbler_secret, AppWindow::set_scrobbler_user, AppWindow::set_scrobbler_password, AppWindow::set_scrobbler_url, AppWindow::set_scrobbler_failed] {
+            set(&ui, "".into());
+        }
+        self.scrobbler_approved = None;
+        ui.set_scrobbler_page_opened(false);
+        ui.set_scrobbler_adding(i as i32);
+        ui.set_scrobbler_step(2);
+    }
+
+    /// The form's kind, and what is typed into it.
+    fn scrobbler_form(&self) -> Option<nori_core::scrobblers::ScrobblerForm> {
+        let ui = self.ui();
+        let kind = *nori_core::scrobblers::scrobbler_kinds().get(ui.get_scrobbler_adding() as usize)?;
+        Some(nori_core::scrobblers::ScrobblerForm {
+            kind,
+            url: ui.get_scrobbler_url().into(),
+            key: ui.get_scrobbler_key().into(),
+            secret: ui.get_scrobbler_secret().into(),
+            user: ui.get_scrobbler_user().into(),
+            password: ui.get_scrobbler_password().into(),
+            approved: self.scrobbler_approved.clone().unwrap_or_default(),
+        })
+    }
+
+    /// The scrobbling dialog's form sent, on a thread of its own: a kind signing in on its page asks for
+    /// the token to allow there first, which opens the page; then, or for the others, the account signs in.
+    fn scrobbler_sign_in(&mut self) {
+        use nori_core::scrobblers::ScrobblerSignIn;
+        let ui = self.ui();
+        let Some(form) = self.scrobbler_form() else { return };
+        if ui.get_scrobbler_busy() || !nori_core::scrobblers::scrobbler_form_ready(&form) {
+            return;
+        }
+        let Some(client) = self.session.as_ref().map(|s| s.client.clone()) else { return };
+        ui.set_scrobbler_busy(true);
+        ui.set_scrobbler_failed("".into());
+        let tx = self.tx.clone();
+        if nori_core::scrobblers::scrobbler_sign_in(form.kind) == ScrobblerSignIn::Browser && self.scrobbler_approved.is_none() {
+            nori_host::spawn("nori-scrobbler", move || {
+                let approval = nori_core::transport::block_on(client.scrobbler_approval(form)).map_err(|e| words::scrobbler_failure(&e));
+                tx.send(Msg::ScrobblerApproval(approval));
+            });
+            return;
+        }
+        let profile = ui.get_scrobbling_profile().to_string();
+        nori_host::spawn("nori-scrobbler", move || {
+            let account = nori_core::transport::block_on(client.sign_in_scrobbler(form)).map_err(|e| words::scrobbler_failure(&e));
+            tx.send(Msg::ScrobblerSignedIn { profile, account });
+        });
+    }
+
     fn rename_profile(&mut self, id: &str, name: &str) {
         nori_host::profile_renamed(&self.root.app.settings, id, name);
         self.ui().set_profile_renaming("".into());
@@ -3564,19 +3792,19 @@ impl App {
     /// The provider's own sign-in page in a window of its own (this program again, `--sign-in`: the system's
     /// web view); where that cannot start, the sheet unfolds pasting with why.
     fn sign_in_window(&mut self) {
-        let Some(kind) = self.root.app.settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
+        let Some(kind) = self.sheet_profile().map(|sv| sv.kind) else { return };
         self.sign_in_page(kind, None);
     }
 
     /// Opens `kind`'s sign-in window, at `start` where its plugin asked for that page.
     fn sign_in_page(&mut self, kind: nori_core::settings::ServerKind, start: Option<String>) {
-        let Some(s) = &self.session else { return };
+        let Some(account) = self.sheet_account() else { return };
         if self.sign_in_window.as_mut().is_some_and(|w| w.open_now()) {
             return;
         }
-        let (h, tx) = ((***s).clone(), self.tx.clone());
+        let tx = self.tx.clone();
         let title = format!("Sign in to {}", words::provider_of(self.kinds(), &kind).name);
-        let done = move |id, cookies| tx.send(Msg::SignInWindowDone(id, h.sign_in(cookies)));
+        let done = move |id, cookies| tx.send(Msg::SignInWindowDone(id, account.sign_in(cookies)));
         let window = match start {
             Some(start) => nori_sign_in_window::SignInWindow::open_at(self.kinds().clone(), kind, title, start, done),
             None => nori_sign_in_window::SignInWindow::open(self.kinds().clone(), kind, title, done),
@@ -3592,11 +3820,23 @@ impl App {
     }
 
     fn sign_out(&mut self) {
-        self.on_session(|s| s.sign_out());
+        let Some(account) = self.sheet_account() else { return };
+        account.sign_out();
         self.identities.clear();
         self.identities_shown();
         self.sign_in_on(SignInEvent::SignedOut);
-        self.reopen();
+        self.account_kept();
+    }
+
+    /// The sheet's account signed in or out: the profile in use opens again as it is now; another
+    /// profile's row shows who it is.
+    fn account_kept(&mut self) {
+        if self.apart.is_some() {
+            self.profiles_shown();
+            self.settings_shown();
+        } else {
+            self.reopen();
+        }
     }
 
     /// Opens the profile in use again, as the settings now keep it (its account signed in or out), on the
@@ -3722,8 +3962,8 @@ impl App {
             Msg::Note { text, error } => self.say(&text, error),
             Msg::Playlist { text, change } => self.playlist_changed(&text, change),
             Msg::Shared(Some(link)) => self.copy(link, words::LINK_COPIED),
-            Msg::Choices(id, choices) => {
-                if self.ui().get_picker_open() && self.menu_song.as_ref().is_some_and(|s| s.id == id) {
+            Msg::Choices(songs, choices) => {
+                if self.ui().get_picker_open() && self.picking == songs {
                     self.picker_shown(choices);
                 }
             }
@@ -3733,7 +3973,16 @@ impl App {
                 self.offer_shown();
             }
             Msg::Shared(None) => self.say(words::SHARE_FAILED, true),
-            Msg::Ask { text, action } => self.ask(&text, &action),
+            Msg::Ask { text, action } => self.ask(&text, &action, Asked::Curve),
+            Msg::Update { version, page } => self.ask(&format!("nori {version} is out"), "Get it", Asked::Page(page)),
+            Msg::AnalysisOffer(offer) => {
+                let (title, why, time) = words::analysis_offer(&offer);
+                let ui = self.ui();
+                ui.set_analysis_title(title.into());
+                ui.set_analysis_why(why.into());
+                ui.set_analysis_time(time.into());
+                ui.set_analysis_open(true);
+            }
             Msg::Reachable(Err(e)) => self.say(&e, true),
             Msg::Reachable(Ok(())) | Msg::From(..) => {}
             Msg::Cast => {
@@ -3775,6 +4024,7 @@ impl App {
             }
             Msg::JamEnded(host) => self.left(&words::jam_ended(host.as_deref())),
             Msg::Working => self.follow_work(),
+            Msg::Overridden => self.repaint(),
             Msg::Pictured => {
                 self.profiles_shown();
                 self.settings_shown();
@@ -3803,7 +4053,7 @@ impl App {
                 }
                 if let Some(s) = &self.session {
                     let core = s.core.clone();
-                    let taste = self.root.app.settings.prefs(|p| p.taste_model);
+                    let taste = self.root.app.settings.in_effect(|p| p.taste_model);
                     let id = nori_core::mixes::board::FAVOURITES_MIX;
                     if let nori_core::mixes::board::MixLookup::Ready { sheet } = core.mix_page(id.into()) {
                         self.data(Req::Page(PageAsk::Mix(id.into())), Ok(Data::Page(PageGot::Mix(Box::new(sheet)))));
@@ -3964,7 +4214,7 @@ impl App {
                 let signed_in = matches!(r, nori_core::providers::SignInResult::SignedIn { .. });
                 self.sign_in_on(SignInEvent::Answered { result: r });
                 if signed_in {
-                    self.reopen();
+                    self.account_kept();
                 }
             }
             Msg::SignedIn(r) => {
@@ -3972,7 +4222,33 @@ impl App {
                 self.sign_in_on(SignInEvent::Answered { result: r });
                 if signed_in {
                     self.ui().set_signin_text("".into());
-                    self.reopen();
+                    self.account_kept();
+                }
+            }
+            Msg::ScrobblerSignedIn { profile, account } => {
+                let ui = self.ui();
+                ui.set_scrobbler_busy(false);
+                match account {
+                    Ok(account) => {
+                        nori_host::scrobbler_kept(&self.root.app.settings, &profile, account);
+                        if ui.get_scrobbling_profile().as_str() == profile {
+                            ui.set_scrobbler_step(0);
+                            self.scrobblers_shown();
+                        }
+                    }
+                    Err(why) => ui.set_scrobbler_failed(why.into()),
+                }
+            }
+            Msg::ScrobblerApproval(approval) => {
+                let ui = self.ui();
+                ui.set_scrobbler_busy(false);
+                match approval {
+                    Ok(a) => {
+                        open_in_browser(&a.page);
+                        self.scrobbler_approved = Some(a.token);
+                        ui.set_scrobbler_page_opened(true);
+                    }
+                    Err(why) => ui.set_scrobbler_failed(why.into()),
                 }
             }
             Msg::LoggedIn(r) => match r {
@@ -4098,7 +4374,7 @@ impl App {
     fn lyrics_step(&mut self, force: bool) {
         let ui = self.ui();
         let at = self.position_now();
-        let playing = ui.get_playing();
+        let runs = self.place_runs();
         let Some(l) = &mut self.lyrics else { return };
         let full = ui.get_full_player() && ui.get_full_panel() == Panel::Lyrics;
         let side = ui.get_inspector() == Panel::Lyrics;
@@ -4126,7 +4402,7 @@ impl App {
         ui.set_lyric_now(now.now.into());
         ui.set_lyric_mix(now.mix);
         ui.set_lyric_rest(now.rest.into());
-        match now.wait.filter(|_| playing && !self.hidden) {
+        match now.wait.filter(|_| runs && !self.hidden) {
             Some(ms) => {
                 let me = self.me.clone();
                 self.lyrics_timer.start(TimerMode::SingleShot, Duration::from_millis(ms), move || me.with(|a| a.lyrics_step(false)));
@@ -4461,7 +4737,7 @@ impl App {
         let ui = self.ui();
         let g = ui.global::<crate::Jam>();
         let guest = self.guest();
-        let jams = guest || self.root.app.settings.prefs(|p| p.remote_control);
+        let jams = guest || self.root.app.settings.in_effect(|p| p.remote_control);
         let remote = self.session.as_ref().and_then(|s| s.remote()).filter(|_| jams);
         let unsupported = remote.as_ref().is_some_and(|r| r.jam_start() == nori_core::remote::JamStart::Unsupported);
         let view = remote.as_ref().and_then(|r| r.jam_view());
@@ -4772,6 +5048,30 @@ impl App {
                 self.open(p, None);
             }
             Some(Act::Edit(id)) => self.edit_profile(id),
+            Some(Act::Scrobbling(id)) => {
+                let ui = self.ui();
+                ui.set_scrobbling_profile(id.as_str().into());
+                let kinds: Vec<crate::ScrobblerKindLine> = nori_core::scrobblers::scrobbler_kinds()
+                    .into_iter()
+                    .map(|k| crate::ScrobblerKindLine { name: words::scrobbler(k).into(), cost: words::scrobbler_cost(k).into() })
+                    .collect();
+                ui.set_scrobbler_kinds(std::rc::Rc::new(slint::VecModel::from(kinds)).into());
+                ui.set_scrobbler_step(0);
+                self.scrobblers_shown();
+            }
+            Some(Act::Remove(id)) => {
+                let prefs = self.root.app.settings.current().unwrap_or_default();
+                let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };
+                let (title, note) = words::remove_profile(&words::profile_label(p, self.kinds()));
+                let ui = self.ui();
+                ui.set_ask_title(title.into());
+                ui.set_ask_note(note.into());
+                ui.set_ask_name(format!("{}{id}", crate::settings::REMOVE_PROFILE).into());
+                ui.set_ask_button(words::REMOVE.into());
+                ui.set_ask_field(false);
+                ui.set_ask_text("".into());
+                ui.set_ask_open(true);
+            }
             Some(Act::Rename(id)) => {
                 let prefs = self.root.app.settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };
@@ -4782,6 +5082,10 @@ impl App {
             }
             Some(Act::Backup { restore }) => self.ask_field(words::backup_path(restore), name, false),
             Some(Act::BackupPassword { .. }) => {}
+            Some(Act::CheckUpdate) => {
+                self.on_session(|s| s.update_check(true));
+                self.say("Checking…", false);
+            }
             Some(Act::Chore(c)) => {
                 self.on_session(|s| s.action(c));
                 self.on_session(|s| s.facts());
@@ -4918,6 +5222,9 @@ impl App {
                 Some(SongRow { by: q.by.get(&s.id).cloned().unwrap_or_default().into(), played: at < now, ..row(s, i as usize, at == now) })
             }).collect();
             self.queue_shown(rows);
+            let offers = nori_core::menus::queue_actions(q.rows.order.len() as u32, q.upcoming().count() as u32, self.session.as_ref().is_some_and(|s| s.rules().playlists), ui.global::<crate::Jam>().get_guest());
+            ui.set_queue_clearable(offers.contains(&nori_core::menus::QueueAction::Clear));
+            ui.set_queue_keepable(offers.contains(&nori_core::menus::QueueAction::AddToPlaylist));
             ui.set_queue_from(queue_from(q.upcoming().map(|(_, s)| s)).into());
             self.queue = Some(q);
         }
@@ -5145,7 +5452,7 @@ fn show_in<T: Clone + PartialEq + 'static>(shown: ModelRc<T>, rows: Vec<T>, set:
 /// What the `code`th code sign-in says, as the app's messages; signed in, the session finishes it as any
 /// sign-in.
 struct CodeHeard {
-    session: nori_host::session::Handle,
+    account: nori_host::account::Account,
     tx: Tx,
     code: u32,
 }
@@ -5154,7 +5461,7 @@ impl nori_core::providers::code::CodeHeard for CodeHeard {
     fn heard(&self, event: SignInEvent) {
         self.tx.send(match event {
             SignInEvent::Answered { result } => {
-                self.session.signed_in(&result);
+                self.account.signed_in(&result);
                 Msg::SignedIn(result)
             }
             event => Msg::CodeStep { code: self.code, event },
@@ -6060,6 +6367,7 @@ mod tests {
         let row = |i: i32, n: i32| SongRow { title: format!("Song {n}").into(), index: i, playing: i == 0, ..Default::default() };
         let queue = Rc::new(VecModel::from((0..6).map(|i| row(i, i)).collect::<Vec<_>>()));
         ui.set_queue(ModelRc::from(queue.clone()));
+        ui.set_queue_clearable(true);
         let moves = Rc::new(RefCell::new(Vec::new()));
         let (seen, model) = (moves.clone(), queue.clone());
         // As the app does: the session moves the song and the rows are read again, in their new order.
@@ -6098,7 +6406,7 @@ mod tests {
         assert!(landed.as_slice() == settled.as_slice(), "the rows land in place, without sliding back first");
     }
 
-    /// A lyrics service dragged by its handle past two others moves two places down, once let go.
+    /// A lyrics service dragged past two others moves two places down, once let go.
     #[test]
     fn a_lyrics_service_is_dragged_to_its_rank() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -6123,8 +6431,8 @@ mod tests {
         };
         pass(1000);
         use slint::platform::{PointerEventButton::Left, WindowEvent::*};
-        // The first service's handle; the rows below it stand 56 px apart.
-        let at = |y: f32| slint::LogicalPosition::new(978.0, y);
+        // The first service's name; the rows below it stand 56 px apart.
+        let at = |y: f32| slint::LogicalPosition::new(500.0, y);
         ui.window().dispatch_event(PointerMoved { position: at(532.0) });
         ui.window().dispatch_event(PointerPressed { position: at(532.0), button: Left });
         for y in (532..=662).step_by(10) {
@@ -6136,8 +6444,8 @@ mod tests {
         assert_eq!(*moved.borrow(), [(6, "LYRICS_PLUS".to_string(), 2)]);
     }
 
-    /// A profile dragged by its handle above the one before it moves one place up, once let go; a jam
-    /// guest's profiles have no handle.
+    /// A profile dragged above the one before it moves one place up, once let go; a jam guest's profiles
+    /// stay in place.
     #[test]
     fn a_profile_is_dragged_to_its_place() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -6165,9 +6473,9 @@ mod tests {
             ui.window().take_snapshot().unwrap();
         };
         use slint::platform::{PointerEventButton::Left, WindowEvent::*};
-        // Up the handles' column from the foot of the page: each press dragged 70 px up, until one moves a row.
+        // Up the names' column from the foot of the page: each press dragged 70 px up, until one moves a row.
         let drag = || {
-            let at = |y: f32| slint::LogicalPosition::new(978.0, y);
+            let at = |y: f32| slint::LogicalPosition::new(500.0, y);
             for y in (100..=780).rev().step_by(6) {
                 let y = y as f32;
                 ui.window().dispatch_event(PointerMoved { position: at(y) });
@@ -6323,7 +6631,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_shows_only_with_songs_after_the_one_playing() {
+    fn the_queue_head_shows_what_the_queue_offers() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
@@ -6331,17 +6639,20 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.show().unwrap();
         ui.set_inspector(Panel::Queue);
-        let row = |index: i32, played: bool, playing: bool| SongRow { index, title: format!("Song {index}").into(), played, playing, ..Default::default() };
-        let clear = |rows: Vec<SongRow>| {
-            ui.set_queue(ModelRc::new(VecModel::from(rows)));
+        ui.set_queue(ModelRc::new(VecModel::from(vec![SongRow { title: "Song".into(), playing: true, ..Default::default() }])));
+        for (clearable, keepable) in [(false, false), (true, false), (false, true), (true, true)] {
+            ui.set_queue_clearable(clearable);
+            ui.set_queue_keepable(keepable);
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
-            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "QueueView")
-                .flat_map(|q| q.query_descendants().match_predicate(|e| e.accessible_label().is_some_and(|l| l == "Clear")).find_all())
-                .count()
-        };
-        assert_eq!(clear(vec![row(0, true, false), row(1, false, true)]), 0, "nothing after the song playing");
-        assert_eq!(clear(vec![row(0, true, false), row(1, false, true), row(2, false, false)]), 1);
+            let shown = |label: &'static str| {
+                i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "QueueView")
+                    .flat_map(|q| q.query_descendants().match_predicate(move |e| e.accessible_label().is_some_and(|l| l == label)).find_all())
+                    .count()
+                    == 1
+            };
+            assert_eq!((shown("Clear"), shown("Add to playlist")), (clearable, keepable));
+        }
     }
 
     #[test]

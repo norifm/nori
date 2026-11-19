@@ -5,12 +5,14 @@ import UIKit
 enum SongMenu {
     /// Shows song `index` of list `token`'s menu over `host`, laid out as Android's: the song with its seal
     /// and details, its names opening their pages, its format with the bare glyphs, then the lines in two
-    /// groups. `player`: opened from the player card; `go` opens a page (album, artist).
+    /// groups. `player`: opened from the player card; `go` opens a page (album, artist); `edited`: the song
+    /// moved in or left its playlist.
     static func show(_ song: Item, token: UInt64, index: Int, from host: UIViewController, player: Bool = false,
-                     go: @escaping (UIViewController) -> Void) {
+                     edited: (() -> Void)? = nil, go: @escaping (UIViewController) -> Void) {
         let starred: Int32 = Core.shared.isFavorite(song) ? 1 : 0
         DispatchQueue.global(qos: .userInitiated).async {
             let d = takenJSON(nori_ios_song_menu(token, Int32(index), starred, player ? 1 : 0)) as? [String: Any]
+            let edits = nori_ios_playlist_edits(token, Int32(index))
             DispatchQueue.main.async {
                 guard let d else { return }
                 let items = d["items"] as? [[String: Any]] ?? []
@@ -30,6 +32,16 @@ enum SongMenu {
                     sheet.add(Say.songAction(a, item), glyph: glyph(a, item), enabled: item["enabled"] as? Bool ?? true,
                               more: item["more"] as? Bool ?? false) {
                         act(a, item, song: song, token: token, index: index, details: details, host: host, go: go)
+                    }
+                }
+                let lines: [(Int32, String, [GlyphPart])] = [(NORI_EDIT_MOVE_UP, Say.moveUp, Iconoir.navArrowUp),
+                                                             (NORI_EDIT_MOVE_DOWN, Say.moveDown, Iconoir.navArrowDown),
+                                                             (NORI_EDIT_REMOVE, Say.removeFromPlaylist, Iconoir.xmark)]
+                for (edit, words, glyph) in lines where edits & edit != 0 {
+                    sheet.add(words, glyph: Glyph.draw(glyph, 20), destructive: edit == NORI_EDIT_REMOVE) {
+                        off({ nori_ios_playlist_edit(token, Int32(index), edit) }) { ok in
+                            if ok == 1 { edited?() } else { Toast.show(Say.failed) }
+                        }
                     }
                 }
                 sheet.show(from: host)
@@ -178,16 +190,27 @@ enum SongMenu {
 
     /// The playlists, a new one first; the song goes into the one picked.
     static func pickPlaylist(token: UInt64, index: Int, from host: UIViewController) {
+        pickPlaylist(from: host, add: { nori_ios_playlist_add(token, Int32(index), $0) }, create: { nori_ios_playlist_create(token, Int32(index), $0) })
+    }
+
+    /// The playlists, a new one first; the whole queue goes into the one picked.
+    static func pickPlaylistForQueue(from host: UIViewController) {
+        pickPlaylist(from: host, add: { nori_ios_queue_playlist_add($0) }, create: { nori_ios_queue_playlist_create($0) })
+    }
+
+    /// The playlists, a new one first: `add` puts what was asked about into the playlist whose id it is
+    /// given, `create` into a new one of the name it is given; each answers 1 when done.
+    private static func pickPlaylist(from host: UIViewController, add: @escaping (UnsafePointer<CChar>) -> Int32, create: @escaping (UnsafePointer<CChar>) -> Int32) {
         var asked: UInt64 = 0
         asked = Core.shared.read(NORI_PAGE_PLAYLISTS) { a in
             // The stored copy is enough to pick from; the server's later answer is not waited for.
             Core.shared.forget(asked)
             let playlists = a.sections.flatMap { $0.items }.filter { $0.kind == "playlist" }
             let sheet = Sheet(Say.addToPlaylist)
-            sheet.add(Say.newPlaylist) { newPlaylist(token: token, index: index, from: host) }
+            sheet.add(Say.newPlaylist) { newPlaylist(from: host, create: create) }
             for p in playlists {
                 sheet.add(p.title) {
-                    off({ p.id.withCString { nori_ios_playlist_add(token, Int32(index), $0) } }) { done in
+                    off({ p.id.withCString { add($0) } }) { done in
                         Toast.show(done == 1 ? Say.addedToPlaylist(p.title) : Say.failed)
                     }
                 }
@@ -196,7 +219,7 @@ enum SongMenu {
         }
     }
 
-    private static func newPlaylist(token: UInt64, index: Int, from host: UIViewController) {
+    private static func newPlaylist(from host: UIViewController, create: @escaping (UnsafePointer<CChar>) -> Int32) {
         let ask = UIAlertController(title: Say.newPlaylist, message: nil, preferredStyle: .alert)
         ask.view.tintColor = .black
         ask.addTextField { field in
@@ -207,7 +230,7 @@ enum SongMenu {
         ask.addAction(UIAlertAction(title: Say.create, style: .default) { _ in
             let name = ask.textFields?.first?.text?.trimmingCharacters(in: .whitespaces) ?? ""
             guard !name.isEmpty else { return }
-            off({ name.withCString { nori_ios_playlist_create(token, Int32(index), $0) } }) { done in
+            off({ name.withCString { create($0) } }) { done in
                 Toast.show(done == 1 ? Say.playlistCreated(name) : Say.failed)
             }
         })

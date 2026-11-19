@@ -73,11 +73,6 @@ pub(crate) struct ReadBack {
     lyrics_ended: Condvar,
 }
 
-/// The build has the beat model and AutoMix with "Better beat detection" is on.
-fn model_on(core: &Core) -> bool {
-    nori_player::automix::beats::AVAILABLE && core.session.settings.with_prefs(|p| p.auto_mix.on() && p.auto_mix_better_beats).unwrap_or(false)
-}
-
 /// What `id` needs once saved; `measuring`: it is being measured as it arrives.
 fn needs_of(core: &Core, id: &str, measuring: bool) -> (Needs, Saved) {
     let one = vec![id.to_string()];
@@ -86,8 +81,7 @@ fn needs_of(core: &Core, id: &str, measuring: bool) -> (Needs, Saved) {
         analysable,
         measuring,
         analysed: analysable && core.analysis_missing(one.clone()).is_ok_and(|m| m.is_empty()),
-        model_on: model_on(core),
-        beats_wanted: core.transfers().with(|t| t.wants_beats(id)),
+        model_on: core.download_beats(),
         beats_done: analysable && core.analysis_neural_missing(one).is_ok_and(|m| m.is_empty()),
     };
     (transfers::needs(saved), saved)
@@ -127,8 +121,6 @@ impl Analyses {
             let (needs, s) = needs_of(core, &id, measuring);
             if core.transfers().with(|t| t.plan(&id, needs, download.then_some(needs.analysis && !s.measuring))) {
                 line.push(id);
-            } else if !needs.beats && core.transfers().with(|t| t.wants_beats(&id)) && s.beats_done {
-                let _ = core.download_beats_forget(std::slice::from_ref(&id));
             }
         }
         let n = line.len() as u32;
@@ -225,7 +217,6 @@ impl Analyses {
         let read = beats && (classical || !core.analysis_neural_missing(one).unwrap_or_default().is_empty());
         if beats && !read {
             tracker.with(|t| t.work_done(id, Work::Beats));
-            let _ = core.download_beats_forget(&[id.to_string()]);
         }
         if !classical && !read {
             return;
@@ -271,7 +262,6 @@ impl Analyses {
                 crate::arriving::give_memory_back();
             }
             tracker.with(|t| t.work_done(id, Work::Beats));
-            let _ = core.download_beats_forget(&[id.to_string()]);
         }
         if let (Some(a), Some(b)) = (cpu, crate::arriving::thread_cpu_ms()) {
             nori_core::alog::info(&format!("reading {id} back took {} ms of CPU", b.saturating_sub(a)));

@@ -9,6 +9,7 @@ import dev.nori.music.downloads.DownloadMark
 import dev.nori.music.ffi.model.Artist
 import dev.nori.music.ffi.transfers.DownloadQueueCounts
 import dev.nori.music.ffi.transfers.DownloadSections
+import dev.nori.music.ffi.transfers.KeptCheck
 import dev.nori.music.net.said
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -41,6 +42,9 @@ import dev.nori.music.app.ui.say
 import dev.nori.music.settings.server
 
 /** Everything that can be done to a song, album or playlist from any screen. One instance per activity. */
+/** The changes a playlist's row offers, and what does one. */
+class RowEdits(val edits: List<dev.nori.music.ffi.library.PlaylistEdit>, val apply: (dev.nori.music.ffi.library.PlaylistEdit) -> Unit)
+
 class ActionsViewModel(app: Application) : NoriViewModel(app) {
     private val _messages = Channel<String>(Channel.CONFLATED)
     /** One-line confirmations and failures, for a snackbar or whatever the UI uses. */
@@ -52,6 +56,17 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
 
     // A process started in the background could not restart the download service; with a screen up it can.
     init { nori.downloads.resume() }
+
+    // Asked once the app is on screen: an update that changed the analysis offers the downloads a new one.
+    init { nori.downloads.offerAtStart() }
+
+    /**
+     * The app came on screen: playlists kept downloaded follow the server's changes, looked at again at most
+     * every half hour (the core's `kept_playlists_sync`); with none kept nothing is asked.
+     */
+    fun shown() {
+        viewModelScope.launch { runCatching { nori.library.syncKept(KeptCheck.SHOWN) }.onSuccess(nori.downloads::kept) }
+    }
 
     // What plugins show while they run, said as the app's own messages are.
     init { viewModelScope.launch { nori.plugins.notices.collect { _messages.trySend(it.line) } } }
@@ -128,7 +143,7 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /** What swiping a song row right and left does, as set in Settings. */
-    val swipes: Pair<SwipeAction, SwipeAction> get() = nori.settings.value.let { it.swipeRight to it.swipeLeft }
+    val swipes: Pair<SwipeAction, SwipeAction> get() = nori.settings.effective.value.let { it.swipeRight to it.swipeLeft }
 
     // By id: the core has the artist's albums from reading the page, so they need not be handed back.
     fun playArtist(artistId: String, shuffle: Boolean = false) = attempt(null) {
@@ -217,10 +232,16 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     private val _mobileDownload = MutableStateFlow<List<Song>?>(null)
     /** Songs asked for on mobile data, waiting for a yes before they download. */
     val mobileDownload: StateFlow<List<Song>?> = _mobileDownload.asStateFlow()
+    /** The playlist [mobileDownload] is, when it is one. */
+    private var mobilePlaylist: String? = null
 
-    fun download(songs: List<Song>) {
+    /** Downloads [songs]; all of [playlist]'s, when given, which is then kept downloaded as it changes. */
+    fun download(songs: List<Song>, playlist: String? = null) {
         viewModelScope.launch {
-            if (withContext(Dispatchers.IO) { nori.http.metered }) _mobileDownload.value = songs else downloadNow(songs)
+            if (withContext(Dispatchers.IO) { nori.http.metered }) {
+                mobilePlaylist = playlist
+                _mobileDownload.value = songs
+            } else downloadNow(songs, playlist)
         }
     }
 
@@ -228,20 +249,26 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     fun downloadOnMobileData(yes: Boolean) {
         val songs = _mobileDownload.value ?: return
         _mobileDownload.value = null
-        if (yes) downloadNow(songs)
+        if (yes) downloadNow(songs, mobilePlaylist)
     }
 
-    private fun downloadNow(songs: List<Song>) {
-        nori.downloads.download(songs)
+    private fun downloadNow(songs: List<Song>, playlist: String?) {
+        if (playlist != null) nori.downloads.downloadPlaylist(playlist, songs) else nori.downloads.download(songs)
         warmCovers(songs)
         _messages.trySend(say.downloadingSongs(songs.size))
     }
 
-    /**
-     * Settings' "Analyse downloaded songs": the downloads with no current analysis, and those the beat model has
-     * not read if it is on and wanted, are read back one at a time under the download service.
-     */
-    fun analyseDownloads() = nori.downloads.analyse { n -> _messages.trySend(if (n > 0) say.analysingDownloads(n) else say.nothingToAnalyse) }
+    /** The downloads lacking an analysis, read back one at a time under the download service. */
+    fun analyseDownloads() = nori.downloads.analyse(::analysing)
+
+    /** Downloaded songs offered an analysis, waiting for a yes or a not now. */
+    val analysisOffer: StateFlow<dev.nori.music.ffi.AnalysisOffer?> = nori.downloads.analysisOffer
+
+    fun answerAnalysis(yes: Boolean) = nori.downloads.answerOffer(yes, ::analysing)
+
+    private fun analysing(n: Int) {
+        _messages.trySend(if (n > 0) say.analysingDownloads(n) else say.nothingToAnalyse)
+    }
 
     /**
      * Fetches the artwork of songs being downloaded onto the disk; which covers, at which addresses, is
@@ -314,9 +341,24 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     fun addToPlaylist(c: PlaylistChoice) = attempt(say.addedToPlaylist(c.playlist.name)) { nori.library.addToPlaylist(c.playlist.id, c.adds) }
     /** Keeps a mix as a playlist on the account, named by the core (`saved_mix_name`) so a second save does not repeat a name. */
     /** Whether [p] is the account's own, to change or delete (the core's `playlist_editable`). */
-    fun editable(p: Playlist): Boolean = dev.nori.music.ffi.library.playlistEditable(p, nori.settings.value.server?.user.orEmpty(), nori.rules.account)
+    fun editable(p: Playlist): Boolean = dev.nori.music.ffi.library.playlistEditable(p, nori.settings.value.server?.user.orEmpty(), nori.rules.playlists)
 
     fun deletePlaylist(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) } }
+
+    fun renamePlaylist(id: String, name: String) {
+        val named = name.trim()
+        if (named.isNotEmpty()) viewModelScope.launch { runCatching { nori.library.renamePlaylist(id, named) } }
+    }
+
+    /** What row [at] of [playlist], which holds [songs], offers to change (the core's `playlist_edits`); null for nothing. */
+    fun rowEdits(playlist: Playlist, songs: List<Song>, at: Int): RowEdits? {
+        val edits = dev.nori.music.ffi.library.playlistEdits(at.toUInt(), songs.size.toUInt(), editable(playlist))
+        if (edits.isEmpty()) return null
+        return RowEdits(edits) { edit ->
+            val w = dev.nori.music.ffi.library.playlistEditWrite(playlist.id, songs.map { it.id }, at.toUInt(), edit)
+            if (w != null) viewModelScope.launch { runCatching { nori.library.editPlaylist(w) } }
+        }
+    }
 
     fun saveAsPlaylist(title: String, songs: List<Song>) = viewModelScope.launch {
         try {

@@ -1,5 +1,8 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusGroup
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -198,6 +201,9 @@ internal fun searchFocusKey(): Int = searchTaps.intValue
 val LocalNav = staticCompositionLocalOf<Nav> { error("no nav") }
 val LocalSongMenu = staticCompositionLocalOf<(Song) -> Unit> { {} }
 
+/** A playlist row's song menu, with the changes the row offers ([dev.nori.music.app.vm.RowEdits]). */
+val LocalSongRowMenu = staticCompositionLocalOf<(Song, dev.nori.music.app.vm.RowEdits) -> Unit> { { _, _ -> } }
+
 /** The album or artist page [entry] shows, as the song menu is told it. */
 private fun pageOf(entry: androidx.navigation.NavBackStackEntry?): dev.nori.music.ffi.model.PageOrigin? {
     val id = entry?.arguments?.getString("id") ?: return null
@@ -217,11 +223,8 @@ val LocalPlayerMenu = staticCompositionLocalOf<(Song) -> Unit> { {} }
 /** Opens the devices sheet (RemoteScreens.DevicesHost): where the music plays. */
 val LocalDevices = staticCompositionLocalOf<() -> Unit> { {} }
 
-/** A song's seal tapped: the like flipped, or, signed out where an account would keep it, the sign-in offer. */
+/** A song's seal tapped: the favorite flipped, on the account or, where it can't keep one, on this phone. */
 val LocalSealTap = staticCompositionLocalOf<(dev.nori.music.ffi.model.Song, Boolean) -> Unit> { { _, _ -> } }
-
-/** Whether songs show a seal: a like, or one that asks to sign in (`ProfileRules`). */
-val dev.nori.music.ffi.library.ProfileRules.seals: Boolean get() = stars || starsAfterSignIn
 
 /** Says one line in the app's message pill at the top ([ActionsViewModel.tell]). */
 val LocalMessages = staticCompositionLocalOf<(String) -> Unit> { {} }
@@ -259,7 +262,7 @@ private data class Session(val loggedIn: Boolean, val profile: String?, val gues
 @Composable
 fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.LaunchRoute?>? = null) {
     val settings: SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val prefs by settings.effective.collectAsStateWithLifecycle()
     androidx.compose.runtime.SideEffect {
         AppMotion.reduce = prefs.motion != dev.nori.music.ffi.settings.Motion.FULL
         AppMotion.still = prefs.motion == dev.nori.music.ffi.settings.Motion.EINK
@@ -310,16 +313,21 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
         LaunchedEffect(sheet) {
             androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect { playerWasOpen = it }
         }
+        val pages = rememberPages(controller, pageNavigator)
+        val chromeFocus = remember { androidx.compose.ui.focus.FocusRequester() }
         // The player covers the page, so a field on it (search) lets go of its focus: held under the player,
         // the keyboard came back over it whenever the window got its focus back (from the background, a menu).
+        // A remote's or a keyboard's focus moves on to what is shown, the player or the page.
         val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
         val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        val input = androidx.compose.ui.platform.LocalInputModeManager.current
         LaunchedEffect(sheet) {
             androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect { open ->
-                if (open) { focusManager.clearFocus(force = true); keyboard?.hide() }
+                if (input.inputMode == androidx.compose.ui.input.InputMode.Keyboard) (if (open) sheet.focus else pages.focus).requestFocus()
+                else if (open) focusManager.clearFocus(force = true)
+                if (open) keyboard?.hide()
             }
         }
-        val pages = rememberPages(controller, pageNavigator)
         val nav = remember(controller) { Nav(controller, sheet, pages) }
         // A jam just joined opens on it: the player, turned to the queue with the jam over it.
         if (guest) {
@@ -333,6 +341,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
         var menuCard by remember { mutableStateOf<dev.nori.music.app.vm.CardItem?>(null) }
         var menuFromPlayer by remember { mutableStateOf(false) }
         var menuPage by remember { mutableStateOf<dev.nori.music.ffi.model.PageOrigin?>(null) }
+        var menuEdits by remember { mutableStateOf<dev.nori.music.app.vm.RowEdits?>(null) }
         var devicesOpen by remember { mutableStateOf(false) }
         // Said on the profile the phone went back to: the guest's page is fading out by then.
         if (!guest) LaunchedEffect(Unit) { remote.ended.collect { snackbar.showSnackbar(say.jamEnded(it), withDismissAction = true) } }
@@ -374,8 +383,6 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
         // other build has an empty one (src/noTest), so a release carries none of it.
         dev.nori.music.app.TestDriver(controller, nav, sheet, settings, actions, player) { devicesOpen = true }
 
-        // Whether the beat model also reads what is being downloaded, when the settings say to ask.
-
         // The perf build's recorder starts a new stretch when the player goes up or away. See PerfHooks.
         dev.nori.music.app.PerfHooks.recorder?.let { r ->
             LaunchedEffect(sheet, r) { androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect(r::playerOpen) }
@@ -403,6 +410,10 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
         val lyricsKeepOn = remember { mutableStateOf(false) }
         val config = androidx.compose.ui.platform.LocalConfiguration.current
         val wide = isWide(config.screenWidthDp, config.screenHeightDp)
+        // A phone on its side puts the chrome beside the page; a TV keeps it below, docked (ChromeDock), where a
+        // remote finds it and its words read across.
+        val tv = (config.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+        val side = wide && !tv
         // The bars the app has put away, set below where they are decided, read by its dialogs' windows.
         val hiddenBars = remember { mutableStateOf(HiddenBars(status = false)) }
         CompositionLocalProvider(
@@ -412,11 +423,12 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             LocalPages provides pages,
             LocalPlayerSheet provides sheet,
             LocalDownloadMarks provides rememberDownloadMarks(actions),
-            LocalSongMenu provides { menuSong = it; menuFromPlayer = false; menuPage = pageOf(controller.currentBackStackEntry) },
+            LocalSongMenu provides { menuSong = it; menuFromPlayer = false; menuPage = pageOf(controller.currentBackStackEntry); menuEdits = null },
+            LocalSongRowMenu provides { s, edits -> menuSong = s; menuFromPlayer = false; menuPage = pageOf(controller.currentBackStackEntry); menuEdits = edits },
             LocalCardMenu provides { menuCard = it },
-            LocalPlayerMenu provides { menuSong = it; menuFromPlayer = true },
+            LocalPlayerMenu provides { menuSong = it; menuFromPlayer = true; menuEdits = null },
             LocalDevices provides { devicesOpen = true },
-            LocalSealTap provides { s, on -> if (rules.stars) actions.star(s, on) else settings.offerSignIn() },
+            LocalSealTap provides { s, on -> actions.star(s, on) },
             LocalMessages provides actions::tell,
             LocalRules provides rules,
             LocalAsked provides asked,
@@ -426,6 +438,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             PairingRequest()
             MobileDownloadQuestion(actions)
             RemoveDownloadsQuestion(actions)
+            AnalysisOfferQuestion(actions)
             val route = controller.currentBackStackEntryAsState().value?.destination?.route
             // The tab the page on screen belongs to, which is the one that stays lit, as Apple's does: a
             // settings group, or an album opened from Home, is still inside that tab. Lit only on the tab
@@ -500,14 +513,14 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             // On its side the chrome stands on the edge the phone's bottom turned to (SideChrome): the right one
             // way round, the left the other, or beside a car's driver. The camera is on the opposite side.
             val rotation = remember(config) { barsView.display?.rotation ?: android.view.Surface.ROTATION_0 }
-            val chromeLeft = wide && (rotation == android.view.Surface.ROTATION_270 || coverAtEnd)
+            val chromeLeft = side && (rotation == android.view.Surface.ROTATION_270 || coverAtEnd)
             androidx.compose.runtime.SideEffect {
-                sheet.edge = if (!wide) SheetEdge.BOTTOM else if (chromeLeft) SheetEdge.LEFT else SheetEdge.RIGHT
+                sheet.edge = if (!side) SheetEdge.BOTTOM else if (chromeLeft) SheetEdge.LEFT else SheetEdge.RIGHT
             }
             var sideRoom by remember { mutableStateOf(0.dp) }
             val cutout = androidx.compose.foundation.layout.WindowInsets.displayCutout.asPaddingValues()
-            val pageStart = if (!wide) 0.dp else if (chromeLeft) sideRoom else cutout.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
-            val pageEnd = if (!wide) 0.dp else if (chromeLeft) cutout.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) else sideRoom
+            val pageStart = if (!side) 0.dp else if (chromeLeft) sideRoom else cutout.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
+            val pageEnd = if (!side) 0.dp else if (chromeLeft) cutout.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) else sideRoom
             // A turn of the phone: the system dissolves the old layout into the new (MainActivity), the chrome is
             // laid out again where it already lay, and its glyphs turn upright from where they were.
             val turn = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -534,12 +547,12 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
               val covered by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value >= 1f } }
               CompositionLocalProvider(LocalWide provides wide, LocalCoverAtEnd provides coverAtEnd, LocalPageStart provides pageStart, LocalPageEnd provides pageEnd) {
               CompositionLocalProvider(LocalPageCovered provides covered) {
-              Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (covered) 0f else 1f }) {
+              Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (covered) 0f else 1f }.fenced { !sheet.isOpen }) {
               // The strips the camera and the chrome stand in are the app's own page; a tinted page paints them over
               // itself (HeroPage), so its colour comes and goes with the page. Painted here in the chrome's
               // colour, which follows a page on a slower fade of its own, they held the album's colour at the
               // screen's edges while the page slid away.
-              if (wide) {
+              if (side) {
                   val bg = MaterialTheme.colorScheme.background
                   val strip = Modifier.fillMaxHeight().drawBehind { drawRect(bg) }
                   Box(strip.width(pageStart).align(Alignment.CenterStart))
@@ -595,7 +608,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
               }
               // Upright, what runs on under the bar fades into the page's colour across the bar's room, as a row on its
               // side does under the strip the chrome stands in (bleedsToEdges); the page's colour is the chrome's look's.
-              if (!wide) Box(
+              if (!side) Box(
                   Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(chromeHeight + EDGE_REACH).coversPage().drawBehind {
                       val reach = EDGE_REACH.toPx()
                       val fade = edgeFade(chromeLook.color(CoverLook.CHROME_PAGE), size.height - reach, reach)
@@ -605,19 +618,24 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
               Box(
                   Modifier.align(Alignment.BottomCenter).padding(start = pageStart, end = pageEnd).coversPage()
                       .onGloballyPositioned { chromeHeight = with(density) { it.size.height.toDp() } }
-                      .then(if (wide) Modifier else Modifier.keepsTouches()),
+                      .then(if (side) Modifier else Modifier.keepsTouches())
+                      // Up from it goes into the page, whose rows run on under it; Back on a tab's own page
+                      // comes down to it (ChromeBack).
+                      .focusProperties { up = pages.focus }.focusRequester(chromeFocus),
               ) {
                   // The now playing bar has a heart now, and it reads the stars the user has just
                   // changed from here like every other one. Outside this, it saw only the server's
                   // answer, so a tap on it changed nothing until the song came round again.
                   CompositionLocalProvider(LocalStarMarks provides marks, LocalBackdrop provides backdrop, LocalGlyphTurn provides { turn.value }) {
-                      BottomChrome(player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook)
+                      BottomChrome(player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook, below = !side)
                   }
               }
-              if (wide) CompositionLocalProvider(LocalStarMarks provides marks, LocalGlyphTurn provides { turn.value }) {
+              if (side) CompositionLocalProvider(LocalStarMarks provides marks, LocalGlyphTurn provides { turn.value }) {
                   SideChrome(
                       player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook, chromeLeft,
                       Modifier.align(if (chromeLeft) Alignment.CenterStart else Alignment.CenterEnd).coversPage()
+                          // A page's rows run on under the chrome, so none lies wholly beside it for a remote to find.
+                          .focusProperties { if (chromeLeft) right = pages.focus else left = pages.focus }
                           .onGloballyPositioned { sideRoom = with(density) { it.size.width.toDp() } }.keepsTouches(),
                   )
               }
@@ -656,10 +674,11 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
               }
             }
             EdgeBack(pages, sheet)
+            if (tv) ChromeBack(pages, sheet, chromeFocus)
             SheetBack(sheet)
             SelectionBack(actions, sheet, controller)
             }
-            SongMenu(menuSong, actions, onDismiss = { menuSong = null }, player = player.takeIf { menuFromPlayer }, page = menuPage.takeUnless { menuFromPlayer })
+            SongMenu(menuSong, actions, onDismiss = { menuSong = null }, player = player.takeIf { menuFromPlayer }, page = menuPage.takeUnless { menuFromPlayer }, edits = menuEdits.takeUnless { menuFromPlayer })
             CardMenu(menuCard, actions, onDismiss = { menuCard = null })
             DevicesHost(devicesOpen) { devicesOpen = false }
             // A jam that would not start says so, whichever menu started it.
@@ -689,6 +708,17 @@ private fun SheetBack(sheet: PlayerSheet) {
 }
 
 /**
+ * On a TV, Back on a tab's own page takes the remote down to the chrome first, a page's length below; Back
+ * from there goes on as it would. Registered after the pages' own (EdgeBack), so it goes first.
+ */
+@Composable
+private fun ChromeBack(pages: Pages, sheet: PlayerSheet, chrome: androidx.compose.ui.focus.FocusRequester) {
+    val stack by pages.navigator.backStack.collectAsState()
+    val root = stack.lastOrNull()?.destination?.route in Pages.ROOTS
+    androidx.activity.compose.BackHandler(root && pages.focused && !sheet.isOpen) { chrome.requestFocus() }
+}
+
+/**
  * Back while songs are selected lets go of them and stays on the page; registered after the pages'
  * own, so it goes first. Not while the player is up: back puts the player away first. And any change of
  * page - back, a tap, a tab, a link - ends the selection, so the bar never outlives the list it was for.
@@ -708,6 +738,13 @@ private fun androidx.navigation.NavGraphBuilder.page(
     route: String, inset: Boolean = true,
     content: @Composable (androidx.navigation.NavBackStackEntry) -> Unit,
 ) = addPage(route) { entry -> if (inset) Inset { content(entry) } else content(entry) }
+
+/**
+ * A remote's D-pad or a keyboard moves into this part of the screen only while [open]: the player put away
+ * is still composed below the window, and the page under an open player is still there.
+ */
+private fun Modifier.fenced(open: () -> Boolean): Modifier =
+    focusProperties { onEnter = { if (!open()) cancelFocusChange() } }.focusGroup()
 
 /**
  * The player sheet over everything else, present only while it is open or moving. The page behind
@@ -756,7 +793,8 @@ private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
             // is underneath: the list the player was opened from, playing a song nobody could see.
             // Being hit at all is enough to keep a touch here; nothing is consumed, so every control
             // inside works as before.
-            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } },
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
+            .focusRequester(sheet.focus).fenced { sheet.isOpen },
     ) {
         CompositionLocalProvider(LocalChromeInset provides 0.dp, LocalPlayerShown provides shown) { content() }
     }
@@ -850,6 +888,38 @@ private fun RemoveDownloadsQuestion(actions: ActionsViewModel) {
             text = { androidx.compose.material3.Text(say.removeDownloadsText(asked.size)) },
             confirmButton = { TextAction(say.remove, { actions.removeAsked(true) }, destructive = true) },
             dismissButton = { TextAction(say.cancel, { actions.removeAsked(false) }) },
+        )
+    }
+}
+
+/**
+ * Downloaded songs offered an analysis: why, then how long it takes and what it costs as two facts on a
+ * plate a step up from the card, its corners concentric with the card's.
+ */
+@Composable
+private fun AnalysisOfferQuestion(actions: ActionsViewModel) {
+    val offer by actions.analysisOffer.collectAsStateWithLifecycle()
+    NoriDialog(offer, { actions.answerAnalysis(false) }) { o ->
+        val scheme = androidx.compose.material3.MaterialTheme.colorScheme
+        AlertCard(
+            title = { androidx.compose.material3.Text(say.analysisOfferTitle(o.songs.toInt())) },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    androidx.compose.material3.Text(say.analysisOfferWhy(o.reason))
+                    androidx.compose.material3.Surface(
+                        Modifier.padding(top = 16.dp).fillMaxWidth(),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(Radius.sheet - 20.dp),
+                        color = scheme.surfaceContainerHigh, contentColor = scheme.onSurface, border = hairlineBorder(),
+                    ) {
+                        androidx.compose.foundation.layout.Column {
+                            GroupRow(say.analysisOfferTime, value = say.analysisOfferMinutes(o.minutes.toInt()), minHeight = 44.dp)
+                            GroupRow(say.analysisOfferBattery, subtitle = say.analysisOfferCharging, value = say.analysisOfferBatteryCost, minHeight = 44.dp, divider = false)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextAction(say.analysisOfferYes, { actions.answerAnalysis(true) }) },
+            dismissButton = { TextAction(say.analysisOfferNo, { actions.answerAnalysis(false) }) },
         )
     }
 }

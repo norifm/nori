@@ -11,8 +11,10 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PLATFORMS = ("macos-aarch64", "macos-x86_64", "linux-aarch64", "linux-x86_64")
-ARCHES = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64"}
+PLATFORMS = ("macos-aarch64", "macos-x86_64", "linux-aarch64", "linux-x86_64", "windows-x86_64")
+# Windows packages build only on a Windows worker (CI); the others here too, natively or in Docker.
+LOCAL = tuple(p for p in PLATFORMS if not p.startswith("windows-"))
+ARCHES = {"arm64": "aarch64", "aarch64": "aarch64", "ARM64": "aarch64", "x86_64": "x86_64", "AMD64": "x86_64"}
 
 
 def run(*args, **kwargs):
@@ -69,7 +71,7 @@ def native(workspace, output, target_platform, jobs, test, package_only, target_
     Linux of another architecture, and leaves the binaries there; `binaries`: packages those instead.
     `flatpak`: "with" the other packages, "without" it, or "only" it (for another architecture too)."""
     system, arch = target_platform.split("-", 1)
-    current = {"Darwin": "macos", "Linux": "linux"}[platform.system()]
+    current = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}[platform.system()]
     cross = arch != ARCHES[platform.machine()]
     if system != current or (system == "linux" and cross and compile_into is None and flatpak != "only"):
         raise SystemExit(f"{target_platform} requires a matching native worker")
@@ -169,7 +171,7 @@ def main():
     parser.add_argument("--binaries", help=argparse.SUPPRESS)
     parser.add_argument("--flatpak", choices=("with", "without", "only"), default="with", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    selected = args.platforms or list(PLATFORMS)
+    selected = args.platforms or list(LOCAL)
     if args.native and not args.platforms:
         parser.error("--native requires --platform")
     cross_platforms = {p for p in selected if p.startswith("macos-") and
@@ -197,7 +199,7 @@ def main():
                 cross_macos(workspace, target_output, target_platform, args.jobs, args.package_only)
             elif target_platform in cross_platforms:
                 macos_container(workspace, target_output, target_platform, args.jobs, args.package_only)
-            elif args.native or target_platform.startswith("macos-"):
+            elif args.native or target_platform.startswith(("macos-", "windows-")):
                 native(workspace, target_output, target_platform, args.jobs, not args.no_test, args.package_only, target_dir,
                        args.binaries, args.compile_into, args.flatpak)
             else:

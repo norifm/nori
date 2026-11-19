@@ -52,7 +52,7 @@ const UPCOMING: usize = 8;
 impl Session {
     /// The upcoming ids to prefetch on this network (`nori_player::queue::precache_range`).
     pub fn precache(&self, metered: bool) -> Vec<String> {
-        let (count, mixing) = self.settings.prefs(|p| {
+        let (count, mixing) = self.settings.in_effect(|p| {
             (q::precache_count(metered, p.songs_ahead_wifi, p.songs_ahead_mobile), q::mixing(self.planner.transitions_off(), p.crossfade_sec, p.auto_mix.on()))
         });
         self.playlist(|p| {
@@ -73,7 +73,7 @@ impl Session {
     /// as many after it as are prepared ahead on either network (only those on the device are measured);
     /// empty when the profile measures nothing.
     pub fn measure(&self) -> Vec<String> {
-        let ahead = self.settings.prefs(|p| p.songs_ahead_wifi.max(p.songs_ahead_mobile).max(0) as usize);
+        let ahead = self.settings.in_effect(|p| p.songs_ahead_wifi.max(p.songs_ahead_mobile).max(0) as usize);
         let n = if self.planner.measures() { 1 + ahead } else { 0 };
         self.playlist(|p| p.upcoming().take(UPCOMING).take(n).map(|i| &p.ids()[i]).filter(|id| crate::queue::analysable(id)).cloned().collect())
     }
@@ -81,7 +81,7 @@ impl Session {
     /// A song failed to play: what to do (`nori_player::queue::on_error`). `bridge_ready`: the platform
     /// can hand a network failure to the offline bridge.
     pub fn error(&self, kind: PlaybackError, offload_refused: bool, bridge_ready: bool) -> OnError {
-        let bridge = self.settings.prefs(|p| p.bridge_offline);
+        let bridge = self.settings.in_effect(|p| p.bridge_offline);
         let has_next = self.playlist(|p| p.next().is_some());
         let mut c = self.controls.lock();
         c.last_error = Some(kind);
@@ -121,7 +121,7 @@ impl Session {
     /// Everything a new song asks of the platform. Stateful steps (refill fetch, sleep countdown) are
     /// taken here, so ask once per song and never on a repeat-one loop.
     pub fn song_arrived(&self) -> SongSteps {
-        let on = self.settings.prefs(|p| p.bridge_offline);
+        let on = self.settings.in_effect(|p| p.bridge_offline);
         let (bridging, parked, left) = self.playlist(|p| (p.bridging(), p.next_is_parked(), p.left_bridge()));
         SongSteps {
             save_after_ms: queue_keep(QueueMoment::Song).save_after_ms,
@@ -143,7 +143,7 @@ impl Session {
     /// Upcoming queue entries whose lyrics are warmed on this network, as many as the songs prepared
     /// ahead; provider tracks have no work.
     pub fn lyrics_ahead(&self, metered: bool) -> Vec<(u64, String)> {
-        let count = self.settings.prefs(|p| q::precache_count(metered, p.songs_ahead_wifi, p.songs_ahead_mobile));
+        let count = self.settings.in_effect(|p| q::precache_count(metered, p.songs_ahead_wifi, p.songs_ahead_mobile));
         self.playlist(|p| {
             let repeat = crate::playlist::walk_repeat(p);
             std::iter::successors(p.next(), |&i| p.next_of(i, repeat))

@@ -701,7 +701,7 @@ fn queue_panel_editing() {
     key(&mut a, KeyCode::Char('Q'));
     assert_eq!((a.full, a.panel, a.focus), (true, Panel::Queue, Focus::Panel));
     let s = draw(&mut a, 160, 30);
-    assert!(s.contains("▶ Song 1") && s.contains("Playing next  5 songs") && s.contains("Clear   Shuffle   Repeat") && s.contains("c clear"), "{s}");
+    assert!(s.contains("▶ Song 1") && s.contains("Playing next  5 songs") && s.contains("Clear   Save   Shuffle   Repeat") && s.contains("c clear") && s.contains("w save"), "{s}");
     dump("queue", &s);
     assert_eq!(a.queue_sel.at, 1, "the queue opens on the song playing");
     let sent = a.cmds.len();
@@ -714,6 +714,10 @@ fn queue_panel_editing() {
     assert_eq!(a.cmds.last(), Some(&Cmd::Undo), "u puts it back");
     key(&mut a, KeyCode::Char('c'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Clear), "c clears what plays after");
+    key(&mut a, KeyCode::Char('w'));
+    let ids: Vec<String> = (0..5).map(|i| format!("s{i}")).collect();
+    assert!(matches!(&a.overlay, Some(Overlay::Picker { target: Target::Playlist { songs, .. }, .. }) if *songs == ids), "w offers the whole queue to a playlist");
+    key(&mut a, KeyCode::Esc);
     key(&mut a, KeyCode::Char('K'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Move(2, 1)));
     key(&mut a, KeyCode::Enter);
@@ -873,7 +877,7 @@ fn equalizer_screen() {
     // The parametric one draws its own bands, and d takes the one chosen out.
     let mut p = StoredPrefs { eq_enabled: true, eq_mode: nori_core::settings::EqMode::Parametric, ..StoredPrefs::default() };
     p.eq_bands = (0..3).map(|i| nori_core::settings::SoundBand { kind: nori_core::EqKind::Peaking, freq: 100.0 * 10f32.powi(i), gain_db: 0.0, q: 1.0, channel: nori_core::settings::BandChannel::Both }).collect();
-    a.prefs_changed(p);
+    a.prefs_changed(p.clone(), p);
     a.go(View::Equalizer);
     let s = draw(&mut a, 160, 44);
     assert!(s.contains("Add a band") && s.contains("Parametric"), "{s}");
@@ -945,16 +949,23 @@ fn seeking() {
     assert!(matches!(a.cmds.last(), Some(Cmd::Seek(_))), ". seeks over the cards too");
 }
 
-/// Signed out of a provider whose account would carry likes, the seal says where to sign in.
+/// Signed out of a provider, whose seals are kept on this device, an album page and its songs carry
+/// the seal, and pressing it seals the item.
 #[test]
-fn a_signed_out_like_says_where_to_sign_in() {
+fn a_signed_out_provider_seals_on_this_device() {
     let mut a = app();
-    a.rules = nori_core::browse::ProfileRules { account: false, stars: false, stars_after_sign_in: true, ..Default::default() };
-    a.go(View::Songs);
-    a.handle(Msg::Data(songs_req(), Ok(Data::Songs(vec![song("yt-1", "One", 200)], false))));
-    key(&mut a, KeyCode::Char('f'));
-    assert!(matches!(a.cmds.last(), Some(Cmd::OfferSignIn)));
-    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Star(..))));
+    a.rules = nori_core::browse::ProfileRules { account: false, stars: true, stars_here: true, ..Default::default() };
+    a.go(View::Albums);
+    a.open_album("yt-al".into());
+    let songs = vec![song("yt-1", "One", 200), Song { starred: true, ..song("yt-2", "Two", 200) }];
+    a.handle(Msg::Data(Req::Album("yt-al".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("yt-al", "Three"), songs, vec![]))))));
+    let s = draw(&mut a, 170, 40);
+    let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
+    assert!(s.contains("Three 好") && line("Two").contains('好') && !line("One").contains('好'), "{s}");
+    let star = hit_rect(&a, Hit::Button(crate::app::Button::Star));
+    click(&mut a, star.x + 1, star.y);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Album, "yt-al".into(), true)));
+    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::OfferSignIn)));
 }
 
 fn account(user: &str, ended: bool) -> Overlay {
@@ -1060,6 +1071,44 @@ fn a_playlists_seal_pins_it() {
     assert_eq!(a.cmds.last(), Some(&Cmd::Pin("pl-1".into(), true)));
     draw(&mut a, 170, 40);
     assert!(seal_filled(&a, crate::app::Button::Star), "shown at once");
+}
+
+/// The account's own playlist: a row's menu moves it or takes it out, the page's renames it; another
+/// user's offers neither.
+#[test]
+fn an_own_playlists_rows_move_and_go() {
+    use crate::menu::{MenuAct, MenuLine};
+    use nori_core::client::Write;
+    use nori_core::menus::PlaylistEdit;
+    let page = |owner: Option<&str>| {
+        let mut a = app();
+        a.rules = nori_core::browse::ProfileRules { playlists: true, ..Default::default() };
+        a.open_playlist("own-1".into());
+        let pl = nori_core::Playlist { id: "own-1".into(), name: "Rain".into(), owner: owner.map(Into::into), ..Default::default() };
+        let detail = nori_core::PlaylistDetail::new(pl, vec![song("1", "One", 200), song("2", "Two", 200), song("3", "Three", 200)]);
+        a.handle(Msg::Data(Req::Playlist("own-1".into()), Ok(Data::Playlist(Box::new(detail)))));
+        draw(&mut a, 170, 40);
+        key(&mut a, KeyCode::Down);
+        key(&mut a, KeyCode::Char('m'));
+        a
+    };
+    let lines = |a: &App| match &a.overlay {
+        Some(Overlay::Menu { lines, .. }) => lines.clone(),
+        _ => panic!("no menu"),
+    };
+    let mut a = page(None);
+    let edits: Vec<MenuLine> = [PlaylistEdit::MoveUp, PlaylistEdit::MoveDown, PlaylistEdit::Remove].map(|e| MenuLine::Act(MenuAct::Edit(e))).into();
+    assert!(lines(&a).windows(3).any(|w| w == edits.as_slice()), "{:?}", lines(&a));
+    assert!(lines(&a).contains(&MenuLine::Act(MenuAct::RenamePlaylist)));
+    let up = lines(&a).iter().position(|l| *l == edits[0]).unwrap();
+    if let Some(Overlay::Menu { sel, .. }) = &mut a.overlay {
+        sel.at = up;
+    }
+    key(&mut a, KeyCode::Enter);
+    let order = vec!["2".to_string(), "1".into(), "3".into()];
+    assert!(a.cmds.contains(&Cmd::EditPlaylist { id: "own-1".into(), write: Write::ReplacePlaylist { id: "own-1".into(), song_ids: order }, said: "Moved".into() }), "{:?}", a.cmds);
+    let a = page(Some("someone-else"));
+    assert!(!lines(&a).iter().any(|l| matches!(l, MenuLine::Act(MenuAct::Edit(_) | MenuAct::RenamePlaylist))), "{:?}", lines(&a));
 }
 
 #[test]
@@ -1249,7 +1298,7 @@ fn idle() {
     assert_eq!(a.next_wake(now), None, "idle: no timer at all");
     a.now.state = State::Paused;
     assert_eq!(a.next_wake(now), None, "paused: no timer at all");
-    a.now = crate::app::Now { state: State::Playing, position_ms: 12_300, at: now, speed: 1.0, mixing: false, buffering: false };
+    a.now = crate::app::Now { state: State::Playing, position_ms: 12_300, at: now, fading_until: None, speed: 1.0, mixing: false, buffering: false };
     let wake = a.next_wake(now).unwrap();
     let ms = wake.duration_since(now).as_millis();
     assert!((690..=710).contains(&ms), "the next whole second of the song: {ms}");
@@ -1281,7 +1330,7 @@ fn idle() {
 fn clock_wakes_only_where_drawn() {
     let mut a = app();
     let now = Instant::now();
-    a.now = crate::app::Now { state: State::Playing, position_ms: 12_300, at: now, speed: 1.0, mixing: false, buffering: false };
+    a.now = crate::app::Now { state: State::Playing, position_ms: 12_300, at: now, fading_until: None, speed: 1.0, mixing: false, buffering: false };
     a.song = Some(Song { id: "s".into(), title: "Song".into(), duration: 200, ..Default::default() });
     draw(&mut a, 60, 10);
     assert_eq!(a.next_wake(now), None, "a bar without a clock needs no tick");
@@ -1864,7 +1913,7 @@ fn the_main_screens() {
         a.server = "music.example".into();
         a.heard(Some(tracks[1].clone()));
         a.queue = Some(nori_core::playlist::PlaylistView { songs: tracks.clone(), len: 5, list_rev: 1, order: (0..5).collect(), queued: vec![], index: 1, shuffle: false, repeat: 0, bridging: false, rev: 1 });
-        a.now = crate::app::Now { state: State::Playing, position_ms: 95_000, at: Instant::now(), speed: 1.0, mixing: false, buffering: false };
+        a.now = crate::app::Now { state: State::Playing, position_ms: 95_000, at: Instant::now(), fading_until: None, speed: 1.0, mixing: false, buffering: false };
         for (name, s) in screens(&mut a, w, h, mode) {
             let want = match name {
                 "home" => "Kind of Blue",
@@ -2068,7 +2117,7 @@ fn the_menu_lists_what_the_core_offers() {
     a.handle(Msg::Data(Req::Album("al-1".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
     key(&mut a, KeyCode::Char('m'));
     let Some(Overlay::Menu { lines, folded, .. }) = &a.overlay else { panic!("no menu") };
-    let core: Vec<MenuLine> = nori_core::menus::song_menu(songs[0].clone(), false, false, nori_core::menus::SongDownload::None, false, false, true, true, true, a.rules.radio, false, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, "al-1")))
+    let core: Vec<MenuLine> = nori_core::menus::song_menu(songs[0].clone(), false, false, nori_core::menus::SongDownload::None, false, false, true, true, true, true, a.rules.radio, false, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, "al-1")))
         .into_iter()
         .filter(|i| !i.more && !matches!(i.action, SongAction::Details | SongAction::Share | SongAction::AddToLibrary))
         .map(|i| MenuLine::Act(MenuAct::Song(i.action)))
@@ -2596,6 +2645,7 @@ impl nori_plugins::Client for Heard {
     fn commands(&self, _: Vec<nori_plugins::Command>) {}
     fn watch_screen(&self, _: bool) {}
     fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
+    fn buttons_changed(&self) {}
 }
 
 /// The test plugin installed in `dir`, on, over settings of its own.
@@ -2618,7 +2668,7 @@ fn a_plugin_says_what_it_is_before_it_is_installed() {
     dump("plugins-preview", &s);
     assert!(s.contains(&format!("Install Test {}?", preview.card.version)) && s.contains("enter install · esc cancel"), "{s}");
     let Some(Overlay::Confirm { lines, .. }) = &a.overlay else { panic!("no sheet") };
-    assert_eq!(lines, &["It's a playback helper, a music source, a sound effect, a mixer, a lyrics source, a scrobbler. It changes playback values.", "Connects to allowed.example and devices on your network. Changes playback.speed. Sees what plays and the queue. Controls playback and the queue. Searches your library. Uses your server's API as you. Wakes at each lyric line while music plays. Starts nori while it is closed (on a phone). Lets other apps run: ping. Keeps up to 1 MB of cache. Downloads 1 MB of files.", "Unsigned", "It turns on once installed."]);
+    assert_eq!(lines, &["It's a playback helper, a music source, a sound effect, a mixer, a lyrics source, a scrobbler, a notification control. It changes playback values.", "Connects to allowed.example and devices on your network. Changes playback.speed. Sees what plays and the queue. Controls playback and the queue. Searches your library. Uses your server's API as you. Wakes at each lyric line while music plays. Starts nori while it is closed (on a phone). Lets other apps run: ping. Keeps up to 1 MB of cache. Downloads 1 MB of files.", "Unsigned", "It turns on once installed."]);
     key(&mut a, KeyCode::Enter);
     let Some(Cmd::Plugin(crate::app::PluginCmd::InstallPreview(p))) = a.cmds.pop() else { panic!("not installed") };
     assert_eq!(plugins.install_preview(*p), Ok(nori_plugins::testing::FIXTURE.into()));
@@ -3063,6 +3113,78 @@ fn a_profile_moves_with_k_and_j() {
     key(&mut a, KeyCode::Char('J'));
     assert!(a.cmds.is_empty(), "{:?}", a.cmds);
     assert!(!draw(&mut a, 140, 40).contains("K J move"));
+}
+
+/// A profile's m lists its server, then its scrobbling accounts: picking one switches it, another line
+/// removes an account, and adding picks a kind, asks each field it asks in turn, then signs in, Last.fm
+/// after its page allowed nori.
+#[test]
+fn a_profiles_scrobbling_accounts_are_switched_removed_and_added() {
+    use crate::app::ScrobblerChange;
+    use nori_core::settings::{SavedScrobbler, ScrobblerKind};
+    let lb = SavedScrobbler { id: "x".into(), kind: ScrobblerKind::ListenBrainz, on: true, user: "lee".into(), ..Default::default() };
+    let sv = nori_core::settings::SavedServer { id: "a".into(), url: "http://a".into(), scrobblers: vec![lb], ..Default::default() };
+    let mut a = App::new(StoredPrefs { servers: vec![sv], active_server_id: "a".into(), ..StoredPrefs::default() });
+    a.go(View::Settings);
+    a.settings.set_facts(crate::settings_view::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() });
+    select_row(&mut a, |r| matches!(r, Row::Server { id, .. } if id == "a"));
+    a.cmds.clear();
+    let change = |a: &mut App| match a.cmds.pop() {
+        Some(Cmd::Scrobbler { profile, change }) if profile == "a" => change,
+        other => panic!("{other:?}"),
+    };
+    key(&mut a, KeyCode::Char('m'));
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("OpenSubsonic · built in · on") && s.contains("ListenBrainz · lee · on") && s.contains("Remove ListenBrainz · lee") && s.contains("Add scrobbler"), "{s}");
+    // m, then picks the line `n` down.
+    let pick = |a: &mut App, n: usize| {
+        key(a, KeyCode::Char('m'));
+        for _ in 0..n {
+            key(a, KeyCode::Down);
+        }
+        key(a, KeyCode::Enter);
+    };
+    key(&mut a, KeyCode::Esc);
+    pick(&mut a, 0);
+    assert_eq!(change(&mut a), ScrobblerChange::Itself(false));
+    pick(&mut a, 1);
+    assert_eq!(change(&mut a), ScrobblerChange::Switch { id: "x".into(), on: false });
+    pick(&mut a, 2);
+    assert_eq!(change(&mut a), ScrobblerChange::Remove("x".into()));
+
+    // Add scrobbler, then a kind: n lines down the kinds.
+    let add = |a: &mut App, n: usize| {
+        pick(a, 3);
+        for _ in 0..n {
+            key(a, KeyCode::Down);
+        }
+        key(a, KeyCode::Enter);
+    };
+    add(&mut a, 1);
+    for typed in ["ann", "pw", ""] {
+        assert!(a.cmds.is_empty(), "{:?}", a.cmds);
+        chars(&mut a, typed);
+        key(&mut a, KeyCode::Enter);
+    }
+    let form = nori_core::scrobblers::ScrobblerForm { kind: ScrobblerKind::LibreFm, user: "ann".into(), password: "pw".into(), ..Default::default() };
+    assert_eq!(change(&mut a), ScrobblerChange::SignIn(Box::new(form)));
+    assert!(a.overlay.is_none());
+
+    // Last.fm asks its key and secret, then for the page allowing nori, and signs in with its token on Done.
+    add(&mut a, 2);
+    for typed in ["key", "secret"] {
+        chars(&mut a, typed);
+        key(&mut a, KeyCode::Enter);
+    }
+    let form = nori_core::scrobblers::ScrobblerForm { kind: ScrobblerKind::LastFm, key: "key".into(), secret: "secret".into(), ..Default::default() };
+    assert_eq!(change(&mut a), ScrobblerChange::Approve(Box::new(form.clone())));
+    let page = "https://www.last.fm/api/auth/?api_key=key&token=tk";
+    let approval = Ok(nori_core::scrobblers::ScrobblerApproval { token: "tk".into(), page: page.into() });
+    a.handle(Msg::ScrobblerApproval { profile: "a".into(), form: Box::new(form.clone()), approval });
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains(page), "{s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(change(&mut a), ScrobblerChange::SignIn(Box::new(nori_core::scrobblers::ScrobblerForm { approved: "tk".into(), ..form })));
 }
 
 #[test]

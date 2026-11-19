@@ -29,7 +29,7 @@ pub fn pairs(p: &[(&str, String)]) -> Vec<(String, String)> {
 pub use nori_model::Starrable;
 
 /// Every change the app asks the server for.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Write {
     Star { kind: Starrable, id: String, on: bool },

@@ -15,6 +15,11 @@ pub struct SearchSplit {
     pub providers: Option<SearchResult>,
 }
 
+/// No song, album, artist or playlist.
+pub fn found_nothing(r: &SearchResult) -> bool {
+    r.songs.is_empty() && r.albums.is_empty() && r.artists.is_empty() && r.playlists.is_empty()
+}
+
 pub fn split(r: SearchResult) -> SearchSplit {
     let has_providers = r.songs.iter().any(|s| s.is_external) || r.albums.iter().any(|a| a.is_external) || r.artists.iter().any(|a| a.is_external) || r.playlists.iter().any(|p| is_provider_id(&p.id));
     if !has_providers {
@@ -252,7 +257,7 @@ impl Session {
             Answer::Failed { index, fallback } => SearchShown::Failed { index: shown(index), fallback: fallback.clone() },
             Answer::Server(split) => {
                 let result = split.shown(self.scope);
-                if result.songs.is_empty() && result.albums.is_empty() && result.artists.is_empty() && result.playlists.is_empty() {
+                if found_nothing(&result) {
                     SearchShown::NothingFound
                 } else {
                     SearchShown::Found { result }

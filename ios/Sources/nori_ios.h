@@ -64,6 +64,9 @@ typedef struct NoriReport {
 /// A device paired (flag 1, text its name) or not (flag 0: count is why, a NORI_PAIR_FAILED_* code, text the
 /// device's name when its code says it).
 #define NORI_REPORT_PAIRED 25
+/// Downloaded songs offered an analysis: count of them, about ms minutes; flag 1 when an update changed the
+/// analysis, 0 when AutoMix was turned on. nori_ios_analyse_downloads is the yes.
+#define NORI_REPORT_ANALYSIS_OFFER 26
 
 typedef void (*NoriReportFn)(const NoriReport *report);
 
@@ -129,6 +132,30 @@ char *nori_ios_profile_icons(void);
 void nori_ios_set_server_icon(const char *data_dir, const char *id, const char *icon);
 /// Renames saved server `id`; blank, it is called after its provider again.
 void nori_ios_rename_server(const char *data_dir, const char *id, const char *name);
+/// Server `id`'s scrobbling accounts as JSON to free: [{id, kind, user, host, on}], `kind` "listenbrainz",
+/// "librefm" or "lastfm", `host` empty for the kind's own service.
+char *nori_ios_scrobblers(const char *data_dir, const char *id);
+/// Whether server `id` is told what plays itself, first in its scrobbling list: 1 on, 0 off, -1 where
+/// its rules have it take none.
+int32_t nori_ios_scrobble_itself(const char *data_dir, const char *id);
+/// Server `id` told what plays itself (non-zero), or not.
+void nori_ios_switch_scrobble_itself(const char *data_dir, const char *id, int32_t on);
+/// Server `id`'s scrobbling account `account` on (non-zero) or off.
+void nori_ios_switch_scrobbler(const char *data_dir, const char *id, const char *account, int32_t on);
+/// Server `id` without its scrobbling account `account`.
+void nori_ios_remove_scrobbler(const char *data_dir, const char *id, const char *account);
+/// The kinds of scrobbling account a profile can add, in order, as JSON to free:
+/// [{kind, signIn: "form"|"browser", help, fields: [{id, required, advanced}]}].
+char *nori_ios_scrobbler_kinds(void);
+/// A token to allow on the service's page for the account `form` describes (as nori_ios_add_scrobbler
+/// takes it), as JSON to free: {token, page}. Blocks on the network. NULL when there is none, a
+/// NORI_LOGIN_ code in `code` and `detail` as nori_ios_login's.
+char *nori_ios_scrobbler_approval(const char *form, int32_t *code, char **detail);
+/// Signs in to the scrobbling account `form` describes, JSON {kind, fields: {id: typed}, approved} by
+/// the ids nori_ios_scrobbler_kinds gives, `approved` the token allowed on the service's page where it
+/// signs in there, and keeps it in server `id`. Blocks on the network. A NORI_LOGIN_ code; `detail` as
+/// nori_ios_login's.
+int32_t nori_ios_add_scrobbler(const char *data_dir, const char *id, const char *form, char **detail);
 /// Makes server `id` the active one: 1, or 0 for an unknown id. Takes effect at nori_ios_reopen.
 int32_t nori_ios_pick_server(const char *data_dir, const char *id);
 void nori_ios_remove_server(const char *data_dir, const char *id);
@@ -196,7 +223,6 @@ void nori_ios_forget(const char *id);
 #define NORI_NOTE_INDEXED 12
 #define NORI_NOTE_INDEX_STOPPED 13
 #define NORI_NOTE_DONE 14
-#define NORI_NOTE_FORGOT 15
 #define NORI_NOTE_CURVE_FAILED 16
 
 /// Pages for `nori_ios_read`. `arg`: the id for album/artist/playlist/mix, the name for a genre, the
@@ -383,6 +409,8 @@ int32_t nori_ios_device_adopt(const char *output, const char *name, const char *
 void nori_ios_device_forget(const char *output);
 /// The answer to the last AutoEQ report (NORI_REPORT_CURVE): the curve offered applied, or the one applied undone.
 void nori_ios_curve_answer(void);
+/// The yes to the last NORI_REPORT_ANALYSIS_OFFER: the downloads are read back.
+void nori_ios_analyse_downloads(void);
 
 /// The AutoEQ list's hits, JSON to free: {short, count, hits: [{name, source, form, target, path}]}.
 char *nori_ios_autoeq_browse(const char *query);
@@ -407,7 +435,14 @@ char *nori_ios_song_share(uint64_t token, int32_t index);
 /// Playlist edits. Block; 1 when done.
 int32_t nori_ios_playlist_add(uint64_t token, int32_t index, const char *playlist);
 int32_t nori_ios_playlist_create(uint64_t token, int32_t index, const char *name);
-int32_t nori_ios_playlist_remove(const char *playlist, int32_t index);
+int32_t nori_ios_queue_playlist_add(const char *playlist);
+int32_t nori_ios_queue_playlist_create(const char *name);
+/// What a song of a playlist list offers to change, as bits (0 unless the account may change it), and one done.
+#define NORI_EDIT_MOVE_UP 1
+#define NORI_EDIT_MOVE_DOWN 2
+#define NORI_EDIT_REMOVE 4
+int32_t nori_ios_playlist_edits(uint64_t token, int32_t index);
+int32_t nori_ios_playlist_edit(uint64_t token, int32_t index, int32_t edit);
 /// A tap on a song row: plays the list from it, or keeps the playing song going (1: open the player).
 int32_t nori_ios_tap_song(uint64_t token, int32_t index);
 /// A song row's swipe to the left (left 1) or right, by the swipeLeft/swipeRight settings: -1 nothing.

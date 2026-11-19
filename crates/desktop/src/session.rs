@@ -14,7 +14,7 @@ use nori_covers::loader::Ticket;
 use nori_covers::memory::Image;
 use nori_engine::Event;
 use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot};
-use nori_host::session::{Chore, Note, Said};
+use nori_host::session::{Chore, Note, Said, UpdateFound};
 pub use nori_host::Fetch;
 use nori_http::Http;
 use nori_look::cover::CoverColours;
@@ -56,10 +56,19 @@ pub enum Msg {
     Playlist { text: String, change: PlaylistChange },
     /// A note with a button, answered with [`nori_host::session::Handle::curve_answer`].
     Ask { text: String, action: String },
+    /// A newer nori is out: a note whose button opens its release `page`.
+    Update { version: String, page: String },
+    /// Downloaded songs to offer an analysis: asked in a dialog, answered with
+    /// [`nori_host::session::Handle::analyse_downloads`].
+    AnalysisOffer(nori_core::automix::AnalysisOffer),
     /// The profile the sign-in form made, and what follows its opening when it was added.
     LoggedIn(Result<SavedServer, String>),
     /// The account's sign-in answered.
     SignedIn(nori_core::providers::SignInResult),
+    /// A scrobbling account for profile `profile` signed in, or why not.
+    ScrobblerSignedIn { profile: String, account: Result<nori_core::settings::SavedScrobbler, String> },
+    /// The token to allow on a scrobbling service's page, and that page, or why there is none.
+    ScrobblerApproval(Result<nori_core::scrobblers::ScrobblerApproval, String>),
     /// The sign-in window (its process id) came back on a signed-in page, and the core's answer.
     SignInWindowDone(u32, nori_core::providers::SignInResult),
     /// The `code`th code sign-in's code came, or expired.
@@ -91,6 +100,8 @@ pub enum Msg {
     Working,
     /// The profile in use keeps another picture of its account.
     Pictured,
+    /// What plugins override of the settings changed.
+    Overridden,
     /// Those the signed-in account may act as, its own first; empty when it is only itself or they could
     /// not be read.
     Identities(Vec<nori_core::providers::Identity>),
@@ -99,7 +110,7 @@ pub enum Msg {
     /// A link to a song from the server, to copy; None when it made none.
     Shared(Option<String>),
     /// The playlists song `0` may go into, each with what it has of it; empty when they could not be read.
-    Choices(String, Vec<nori_core::menus::PlaylistChoice>),
+    Choices(Vec<String>, Vec<nori_core::menus::PlaylistChoice>),
     /// A queue another device or app left on the server, worth offering here, or none.
     Offer(Option<nori_core::library::QueueOffer>),
     /// A plugin installed (its id), or why not.
@@ -276,7 +287,6 @@ impl Session {
         let cover_bytes = self.covers.as_ref().and_then(|l| l.disk()).map_or(0, |d| d.bytes());
         nori_host::spawn("nori-facts", move || {
             let index = core.index_size().unwrap_or_default();
-            let downloads = core.downloads(true).unwrap_or_default();
             // Every profile's: they share this computer's download folder.
             let listed = core.downloads_by_profile().unwrap_or_default();
             let all_download_songs = listed.iter().map(|p| p.ids.len() as u32).sum();
@@ -287,7 +297,6 @@ impl Session {
                 _ => Vec::new(),
             };
             send(Msg::Facts(Box::new(crate::settings::Facts {
-                analysed: core.analysis_measured().unwrap_or_default(),
                 indexed: (index.songs, index.albums, index.artists),
                 stream_bytes: store.as_ref().map_or(0, |s| s.cache_bytes()),
                 cover_bytes,
@@ -295,7 +304,6 @@ impl Session {
                 download_bytes: profiles.iter().map(|p| p.1).sum(),
                 all_download_songs,
                 download_profiles: profiles,
-                download_songs: downloads.len() as u32,
                 database_bytes: std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0),
                 folders,
                 devices: CpalOutput::devices(),
@@ -333,6 +341,13 @@ fn worded(s: Said) -> Msg {
         Said::Starred(_) => Msg::Starred,
         Said::Working => Msg::Working,
         Said::Pictured => Msg::Pictured,
+        Said::Overridden => Msg::Overridden,
+        Said::Update(found) => match found {
+            UpdateFound::Newer { version, page } => Msg::Update { version, page },
+            UpdateFound::Latest(latest) => note(format!("You have the latest version ({latest})"), false),
+            UpdateFound::Failed(e) => note(format!("Could not check: {}", net_error(&e)), true),
+        },
+        Said::AnalysisOffer(o) => Msg::AnalysisOffer(o),
         Said::Curve(n) => {
             let (text, action) = crate::words::curve_notice(&n);
             Msg::Ask { text, action: action.into() }
@@ -348,7 +363,6 @@ fn worded(s: Said) -> Msg {
             Note::Indexing => note("Filling the offline index…".into(), false),
             Note::Indexed(t) => note(format!("Offline index: {} songs", t.songs), false),
             Note::IndexStopped(e) => note(format!("The offline index stopped: {}", net_error(&e)), true),
-            Note::Forgot(n) => note(format!("Forgot {n} measured songs"), false),
             Note::CurveFailed(e) => note(format!("Could not fetch the AutoEQ curve: {}", net_error(&e)), true),
             Note::Done(chore) => note(
                 match chore {

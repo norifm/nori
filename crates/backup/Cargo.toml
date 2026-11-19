@@ -17,6 +17,8 @@ ffi = ["dep:uniffi", "nori-model/ffi", "nori-settings/ffi", "nori-plugins/ffi"]
 uniffi = { workspace = true, optional = true }
 nori-model = { path = "../model" }
 nori-settings = { path = "../settings" }
+# The favorites kept on this device, every profile's.
+nori-db = { path = "../db" }
 nori-plugins = { path = "../plugins" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

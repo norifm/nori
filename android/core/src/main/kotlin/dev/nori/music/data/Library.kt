@@ -76,6 +76,8 @@ object Covers {
 class Library(
     private val coreOf: () -> Core,
     private val clientOf: () -> Client,
+    /** What a playlist write changed in the playlists kept downloaded, for the downloads to do. */
+    private val keptChanged: (dev.nori.music.ffi.transfers.KeptChange) -> Unit,
 ) {
     // Resolved on every use, which is always on an IO thread: the core belongs to the active server profile
     // and building it costs ~100 ms the UI thread should not pay.
@@ -313,7 +315,12 @@ class Library(
     private val _playlistsVersion = MutableStateFlow(0)
     val playlistsVersion: StateFlow<Int> = _playlistsVersion.asStateFlow()
 
-    private suspend fun writePlaylist(w: Write) { write(w); _playlistsVersion.update { it + 1 } }
+    /** A playlist write; a kept playlist it changed follows at once (the core's `kept_playlist_written`). */
+    private suspend fun writePlaylist(w: Write) {
+        write(w)
+        _playlistsVersion.update { it + 1 }
+        runCatching { withContext(Dispatchers.IO) { lifted { client.keptPlaylistWritten(w) } } }.onSuccess(keptChanged)
+    }
 
     suspend fun createPlaylist(name: String, songIds: List<String>) = writePlaylist(Write.CreatePlaylist(name, songIds))
 
@@ -325,18 +332,16 @@ class Library(
 
     suspend fun deletePlaylist(id: String) = writePlaylist(Write.DeletePlaylist(id))
 
-    /** Not worth queueing: by the time it could be replayed it is no longer true. */
-    suspend fun nowPlaying(id: String) { call(Read.NowPlaying(id)) { it } }
+    suspend fun renamePlaylist(id: String, name: String) = writePlaylist(Write.RenamePlaylist(id, name))
+
+    /** A row's move or removal, as the core words it (`playlist_edit_write`). */
+    suspend fun editPlaylist(w: Write) = writePlaylist(w)
 
     suspend fun createRadio(name: String, streamUrl: String) = write(Write.CreateRadio(name, streamUrl))
     suspend fun deleteRadio(id: String) = write(Write.DeleteRadio(id))
 
     /** A public link to a song or album; the server must have sharing enabled. */
     suspend fun share(id: String): String = call(Read.ShareLink(id)) { (it as Page.ShareUrl).v }
-
-
-    /** [submission] false marks "now playing"; true counts the play. */
-    suspend fun scrobble(id: String, submission: Boolean, timeMs: Long? = null) = write(Write.Scrobble(id, submission, timeMs))
 
     // ---- queue hand-off between devices ----
 
@@ -359,6 +364,10 @@ class Library(
         withContext(Dispatchers.IO) { core.albumsIndexed(sort, reversed, offset.toUInt(), size.toUInt()) }
 
     suspend fun sync(): IngestStats = withContext(Dispatchers.IO) { lifted { client.syncLibrary() } }
+
+    /** Brings the playlists kept downloaded up to date with the server when [check] is due (the core's `kept_playlists_sync`). */
+    suspend fun syncKept(check: dev.nori.music.ffi.transfers.KeptCheck): dev.nori.music.ffi.transfers.KeptChange =
+        withContext(Dispatchers.IO) { lifted { client.keptPlaylistsSync(check) } }
 
     suspend fun indexSize(): IngestStats = withContext(Dispatchers.IO) { core.indexSize() }
 

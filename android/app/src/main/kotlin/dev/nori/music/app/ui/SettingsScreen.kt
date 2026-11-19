@@ -101,7 +101,7 @@ fun Toggle(title: String, detail: String, value: Boolean, enabled: Boolean = tru
     GroupRow(
         title, if (enabled) ({ onChange(!value) }) else null, Modifier.spotlight(key).alpha(if (enabled) 1f else DIMMED),
         subtitle = detail, divider = divider,
-        trailing = { NoriSwitch(value, if (enabled) onChange else null) },
+        trailing = { NoriSwitch(value, null) },
     )
 }
 
@@ -343,18 +343,17 @@ fun SettingsScreen(vm: SettingsViewModel) {
             }
             return@Column
         }
-        val scroll = rememberLazyListState()
-        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(top = 8.dp, bottom = LocalChromeInset.current)) {
-            item(key = "groups") {
-                GroupCard {
-                    groups.forEachIndexed { i, g ->
-                        GroupRow(g.title, { nav.settingsGroup(g.id) }, subtitle = g.summary, icon = groupIcon(g.id), chevron = true, divider = i < groups.lastIndex || perf)
-                        // Plugins go before About, the last group.
-                        if (i == groups.lastIndex - 1) GroupRow(say.plugins, nav::plugins, subtitle = say.pluginsSummary, icon = Iconoir.Sparks, chevron = true)
-                    }
-                    // Only the perf build has a recorder, and with it the last row (docs/developers/building.md).
-                    if (perf) GroupRow(say.performance, { nav.go("perf") }, subtitle = say.performanceDetail, icon = Iconoir.DashboardSpeed, chevron = true, divider = false)
+        // One card, in a plain column: a remote reaches its rows below the screen, which a lazy list's one item hid.
+        val scroll = rememberScrollState()
+        Column(Modifier.fadesUnderTitle(scroll).verticalScroll(scroll).padding(top = 8.dp, bottom = LocalChromeInset.current)) {
+            GroupCard {
+                groups.forEachIndexed { i, g ->
+                    GroupRow(g.title, { nav.settingsGroup(g.id) }, subtitle = g.summary, icon = groupIcon(g.id), chevron = true, divider = i < groups.lastIndex || perf)
+                    // Plugins go before About, the last group.
+                    if (i == groups.lastIndex - 1) GroupRow(say.plugins, nav::plugins, subtitle = say.pluginsSummary, icon = Iconoir.Sparks, chevron = true)
                 }
+                // Only the perf build has a recorder, and with it the last row (docs/developers/building.md).
+                if (perf) GroupRow(say.performance, { nav.go("perf") }, subtitle = say.performanceDetail, icon = Iconoir.DashboardSpeed, chevron = true, divider = false)
             }
         }
     }
@@ -368,7 +367,6 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
     val facts by vm.settingsFacts.collectAsStateWithLifecycle()
     // The page's facts, fetched while it is open: the songs AutoMix measured, what is stored on the
     // phone, the server's music folders.
-    LaunchedEffect(id, p.autoMix) { if (id == "playing" && p.autoMix != dev.nori.music.ffi.settings.AutoMixMode.OFF) vm.refreshAnalysed() }
     LaunchedEffect(id) { if (id == "data") vm.refreshStorage() }
     if (id == "sound") LifecycleStartEffect(vm) { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.SOUND, true); onStopOrDispose { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.SOUND, false) } }
     LaunchedEffect(id, p.activeServerId) { if (id == "servers") vm.loadMusicFolders() }
@@ -412,9 +410,9 @@ private fun BackupPasswordDialog(restore: Boolean, onDismiss: () -> Unit, onDone
     )
 }
 
-/** A profile's new [name]; left blank, it goes back to [shown], its provider's. */
+/** A new name for what is called [name]; [shown] stands in the field while it is blank. */
 @Composable
-private fun RenameDialog(name: String, shown: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+internal fun RenameDialog(name: String, shown: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var text by remember { mutableStateOf(name) }
     AlertCard(
         title = { Text(say.rename) },
@@ -450,6 +448,9 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     val p by vm.prefs.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<SavedServer?>(null) }
     var asking by remember { mutableStateOf<Pair<String, dev.nori.music.app.vm.ActionAsk>?>(null) }
+    // Android tells an app of a Bluetooth device connecting only with this permission: asked as the switch turns on.
+    val askBluetooth = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) vm.set("playOnBluetooth", "true") }
+    val bluetoothAllowed = { android.os.Build.VERSION.SDK_INT < 31 || androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED }
     NoriDialog(editing, { editing = null }, DialogStyle.Page) { e -> LoginScreen(vm, e) { editing = null } }
     // A backup's file, picked first; its password is asked next (`restore`: a backup to open).
     var backupFile by remember { mutableStateOf<Pair<android.net.Uri, Boolean>?>(null) }
@@ -472,8 +473,6 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                 )
             }
             "downloads" -> nav.downloads()
-            // Asks first whether the beat model reads them too, as Download does.
-            "analyse-downloads" -> actions?.analyseDownloads()
             "add-server" -> { vm.openLogin(null); editing = vm.newProfile() }
             "backup" -> saveBackup.launch(dev.nori.music.ffi.backup.backupFileName())
             "restore" -> openBackup.launch(arrayOf("*/*"))
@@ -603,7 +602,9 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     @Composable
     fun RowOf(at: Int, row: SettingRow, divider: Boolean) = androidx.compose.runtime.key((row as? SettingRow.Placed)?.id ?: "#$at") {
             when (row) {
-                is SettingRow.Toggle -> Toggle(row.title, row.detail, row.on, enabled = row.enabled, key = row.key) { on -> vm.set(row.name, on.toString()) }
+                is SettingRow.Toggle -> Toggle(row.title, row.detail, row.on, enabled = row.enabled, key = row.key) { on ->
+                    if (on && row.name == "playOnBluetooth" && !bluetoothAllowed()) askBluetooth.launch(android.Manifest.permission.BLUETOOTH_CONNECT) else vm.set(row.name, on.toString())
+                }
                 is SettingRow.Choice -> Choice(row, divider) { v -> vm.set(row.name, v) }
                 is SettingRow.ChipChoice -> ChipChoice(row, divider) { v -> vm.set(row.name, v) }
                 is SettingRow.Flags -> Flags(row, divider) { v -> vm.set(row.name, v) }

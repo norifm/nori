@@ -1,6 +1,5 @@
 //! The terminal client's English: formatted times, sizes, decibels, counts, captions and messages.
 
-use nori_core::automix::store::Measured;
 use nori_core::beat_model::BeatFailure;
 use nori_core::lyrics_sources::LyricsOrigin;
 use nori_core::numbers::{self, POINT};
@@ -247,6 +246,7 @@ pub fn plugin_is(points: &[String], overrides: bool) -> String {
             "lyrics" => "a lyrics source",
             "scrobbler" => "a scrobbler",
             "device-control" => "a device control",
+            "notification" => "a notification control",
             "hooks" | "deciders" | "slots" | "preparation" => "a playback helper",
             _ => continue,
         };
@@ -421,6 +421,89 @@ pub fn clock(ms: i64) -> String {
 }
 
 pub const RENAME_PROFILE: &str = "Rename profile";
+
+pub fn scrobbler(kind: nori_core::settings::ScrobblerKind) -> &'static str {
+    match kind {
+        nori_core::settings::ScrobblerKind::ListenBrainz => "ListenBrainz",
+        nori_core::settings::ScrobblerKind::LibreFm => "Libre.fm",
+        nori_core::settings::ScrobblerKind::LastFm => "Last.fm",
+    }
+}
+
+/// A scrobbling account: its service, and who, where not the kind's own service.
+pub fn scrobbler_name(a: &nori_core::settings::SavedScrobbler) -> String {
+    [scrobbler(a.kind).to_string(), a.user.clone(), nori_core::settings::label("", &a.url)].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
+}
+
+/// The profile's server's line, first in its scrobbling list: picking it switches it.
+pub fn scrobbler_itself_line(name: &str, on: bool) -> String {
+    format!("{name} · built in · {}", if on { "on" } else { "off" })
+}
+
+/// A scrobbling account's line in its profile's list: picking it switches it.
+pub fn scrobbler_line(a: &nori_core::settings::SavedScrobbler) -> String {
+    format!("{} · {}", scrobbler_name(a), if a.on { "on" } else { "off" })
+}
+
+/// What field `field` of a `kind` account being added asks.
+fn scrobbler_prompt(kind: nori_core::settings::ScrobblerKind, field: nori_core::scrobblers::ScrobblerField) -> &'static str {
+    use nori_core::scrobblers::ScrobblerField;
+    use nori_core::settings::ScrobblerKind;
+    match (field, kind) {
+        (ScrobblerField::Token, _) => "ListenBrainz user token (from listenbrainz.org/settings)",
+        (ScrobblerField::ApiKey, _) => "Last.fm API key (from last.fm/api/account/create)",
+        (ScrobblerField::Secret, _) => "Shared secret",
+        (ScrobblerField::User, _) => "User",
+        (ScrobblerField::Password, _) => "Password (signs in once; only the session is kept)",
+        (ScrobblerField::Address, ScrobblerKind::LibreFm) => "Address (enter for Libre.fm; another GNU FM server: its API address)",
+        (ScrobblerField::Address, _) => "Address (enter for ListenBrainz; Maloja, Koito: their ListenBrainz API address)",
+    }
+}
+
+/// What a `kind` account costs, where it does.
+fn scrobbler_cost(kind: nori_core::settings::ScrobblerKind) -> Option<&'static str> {
+    (kind == nori_core::settings::ScrobblerKind::LastFm).then_some("needs Last.fm Pro")
+}
+
+/// The kinds of account `profile` can add, to pick from.
+pub fn scrobbler_kinds(profile: String) -> crate::app::Overlay {
+    let options = nori_core::scrobblers::scrobbler_kinds()
+        .into_iter()
+        .map(|k| ([Some(scrobbler(k)), scrobbler_cost(k)].into_iter().flatten().collect::<Vec<_>>().join(" · "), k.id().to_string()))
+        .collect();
+    crate::app::Overlay::Picker { title: "Add a scrobbler".into(), options, sel: Default::default(), target: crate::app::Target::ScrobblerKind(profile) }
+}
+
+/// The prompt for field `step` of the account being added to `profile`.
+pub fn scrobbler_field(profile: String, form: Box<nori_core::scrobblers::ScrobblerForm>, step: usize) -> crate::app::Overlay {
+    use nori_core::scrobblers::ScrobblerField;
+    let field = nori_core::scrobblers::scrobbler_fields(form.kind)[step].field;
+    let secret = matches!(field, ScrobblerField::Token | ScrobblerField::Secret | ScrobblerField::Password);
+    let title = scrobbler_prompt(form.kind, field).into();
+    crate::app::Overlay::Input { title, text: String::new(), secret, target: crate::app::Target::ScrobblerField { profile, form, step } }
+}
+
+/// The page to allow nori on for a `kind` account, then Done runs `cmd`, which signs in.
+pub fn scrobbler_allow(kind: nori_core::settings::ScrobblerKind, page: &str, cmd: Box<crate::app::Cmd>) -> crate::app::Overlay {
+    let lines = vec![format!("Open this page and allow nori on {}, then press enter:", scrobbler(kind)), page.to_string()];
+    crate::app::Overlay::Confirm { title: format!("Sign in on {}", scrobbler(kind)), lines, yes: "Done".into(), cmd }
+}
+
+/// Why a scrobbling service gave no page to allow nori on.
+pub fn scrobbler_refused(e: &NetError) -> String {
+    match e {
+        NetError::Transport { .. } => "Couldn't reach the scrobbling service".into(),
+        e => format!("The scrobbling service refused it: {e}"),
+    }
+}
+
+/// A scrobbling account added, or why it wasn't.
+pub fn scrobbler_added(r: &Result<nori_core::settings::SavedScrobbler, NetError>) -> String {
+    match r {
+        Ok(a) => format!("{} added", scrobbler_name(a)),
+        Err(e) => scrobbler_refused(e),
+    }
+}
 
 /// What the settings call those an account may act as.
 pub fn identities_title(kind: nori_core::providers::IdentityKind) -> &'static str {
@@ -670,14 +753,27 @@ pub fn eq_bypass(why: EqBypass) -> &'static str {
     }
 }
 
-/// The "Measured songs" line: how many are measured, and how many wait to be measured again.
-pub fn measured(m: Measured) -> String {
-    let all = format!("{} measured for tempo and beats.", count(m.songs.into(), "song", "songs"));
-    match m.outdated {
-        0 => all,
-        n if n == m.songs => format!("{all} All are measured again when they next play."),
-        1 => format!("{all} 1 is measured again when it next plays."),
-        n => format!("{all} {n} are measured again when they next play."),
+pub const ANALYZE: &str = "Analyze";
+
+/// The question when downloaded songs are offered an analysis: its title, and its lines.
+pub fn analysis_offer(o: &nori_core::automix::AnalysisOffer) -> (String, Vec<String>) {
+    use nori_core::automix::AnalysisReason;
+    let title = format!("Analyze {} downloaded {}?", o.songs, if o.songs == 1 { "song" } else { "songs" });
+    let why = match o.reason {
+        AnalysisReason::TurnedOn => "AutoMix mixes songs best once they are analyzed.",
+        AnalysisReason::Changed => "AutoMix's analysis changed in this update.",
+    };
+    let cost = format!("It takes {} and uses a lot of battery, so it is best while charging.", about(o.minutes));
+    (title, vec![why.into(), cost, "Otherwise each is analyzed when it plays.".into()])
+}
+
+/// "about 5 min", "about 1 h 20 min".
+fn about(minutes: u32) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, 0) => "under a minute".into(),
+        (0, m) => format!("about {m} min"),
+        (h, 0) => format!("about {h} h"),
+        (h, m) => format!("about {h} h {m} min"),
     }
 }
 
@@ -745,11 +841,11 @@ pub mod hints {
     pub const PLUGIN_BROWSER: Hints = &[("enter", "open"), ("/", "search"), ("← →", "repo"), ("esc", "back"), ("?", "keys")];
     pub const PLUGIN_REPOS: Hints = &[("enter", "add"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];
-    pub const PROFILE_ROW: Hints = &[("enter", "switch"), ("e", "rename"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
+    pub const PROFILE_ROW: Hints = &[("enter", "switch"), ("e", "rename"), ("m", "scrobbling"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
     pub const EQUALIZER: Hints = &[("← →", "choose"), ("↑ ↓", "change"), ("enter", "switch"), ("d", "remove a band"), ("?", "keys")];
     pub const DOWNLOADS: Hints = &[("enter", "play"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const PLAYING: Hints = &[("space", "play"), ("n p", "next, previous"), ("m", "menu"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
-    pub const QUEUE: Hints = &[("enter", "play"), ("d", "remove"), ("c", "clear"), ("K J", "move"), ("s r", "shuffle, repeat"), ("tab", "panel"), ("esc", "back")];
+    pub const QUEUE: Hints = &[("enter", "play"), ("d", "remove"), ("c", "clear"), ("w", "save"), ("K J", "move"), ("s r", "shuffle, repeat"), ("tab", "panel"), ("esc", "back")];
     pub const LYRICS: Hints = &[("enter", "play from the line"), ("[ ]", "timing"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
     pub const DEVICES: Hints = &[("enter", "play there"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
 }
@@ -759,6 +855,8 @@ pub const SHOW_ALL: &str = "Show all";
 pub const PLAY: &str = "Play";
 pub const SHUFFLE: &str = "Shuffle";
 pub const CLEAR: &str = "Clear";
+/// In the queue's head: the whole queue into a playlist.
+pub const SAVE: &str = "Save";
 pub const UP_NEXT: &str = "Playing next";
 pub const BACK: &str = "Back";
 pub const VOLUME: &str = "Volume";
@@ -842,8 +940,25 @@ pub fn menu_act(a: &crate::menu::MenuAct, missing: usize) -> String {
         MenuAct::ShufflePage => SHUFFLE.into(),
         MenuAct::SaveMix => SAVE_AS_PLAYLIST.into(),
         MenuAct::Page(p) => page_action(*p, missing),
+        MenuAct::Edit(nori_core::menus::PlaylistEdit::MoveUp) => "Move up".into(),
+        MenuAct::Edit(nori_core::menus::PlaylistEdit::MoveDown) => "Move down".into(),
+        MenuAct::Edit(nori_core::menus::PlaylistEdit::Remove) => "Remove from playlist".into(),
+        MenuAct::RenamePlaylist => "Rename".into(),
         MenuAct::Plugin(e) => e.label.clone(),
     }
+}
+
+pub const RENAME_PLAYLIST: &str = "Rename playlist";
+pub const MOVED: &str = "Moved";
+
+/// A song taken out of a playlist: "Removed from Road trip".
+pub fn removed_from(name: &str) -> String {
+    format!("Removed from {name}")
+}
+
+/// A playlist named anew: "Renamed to Road trip".
+pub fn playlist_renamed(name: &str) -> String {
+    format!("Renamed to {name}")
 }
 
 /// A playlist made: "Created nori discover".
@@ -1284,6 +1399,15 @@ mod tests {
         assert_eq!(fetching(waiting), ("Waiting for a network · 0 of 4".into(), String::new()));
         let work = Processing { lyrics: 0, analysing: 1, beats: 2, eta_s: 12, permille: 400 };
         assert_eq!(progress(&Progress::Processing { work, after_fetching: true }), ("Analyzing 1 song".into(), "12 s left".into()));
+    }
+
+    #[test]
+    fn an_analysis_offer_says_how_long_it_takes() {
+        use nori_core::automix::{AnalysisOffer, AnalysisReason};
+        let (title, lines) = analysis_offer(&AnalysisOffer { songs: 240, reason: AnalysisReason::Changed, minutes: 80 });
+        assert_eq!(title, "Analyze 240 downloaded songs?");
+        assert_eq!(lines[..2], ["AutoMix's analysis changed in this update.", "It takes about 1 h 20 min and uses a lot of battery, so it is best while charging."]);
+        assert_eq!([about(0), about(5), about(60)], ["under a minute", "about 5 min", "about 1 h"]);
     }
 
     #[test]

@@ -22,10 +22,13 @@ struct Fake {
     feeds: Mutex<u32>,
     /// The source ended the session; and whether the client was told to stop reminding of it.
     ended: Mutex<(bool, bool)>,
+    /// Album pages read.
+    albums_read: Mutex<u32>,
 }
 
+/// Signed out, its favorites are kept on this device.
 fn rules(signed_in: bool) -> ProfileRules {
-    ProfileRules { account: false, indexed: false, remote: false, stars: signed_in, scrobbles: signed_in, feed: true, mixes: signed_in, ..profile_rules(false) }
+    ProfileRules { account: false, playlists: signed_in, indexed: false, remote: false, stars: true, stars_here: !signed_in, scrobbles: signed_in, feed: true, mixes: signed_in, ..profile_rules(false) }
 }
 
 fn album() -> AlbumDetail {
@@ -56,10 +59,32 @@ impl Provider for Fake {
         Ok(())
     }
 
+    fn favorites_here(&self) -> bool {
+        true
+    }
+
+    /// Its account has hearts for songs alone.
+    fn keeps_favorites(&self, kind: Starrable) -> bool {
+        kind == Starrable::Song
+    }
+
     async fn read(&self, _: &Client, read: Read) -> NetResult<Option<Answer>> {
         Ok(match read {
+            Read::StarredItems => {
+                let hearts = self.hearts.lock();
+                Some(Page::StarredPage { v: crate::Starred::new(Vec::new(), Vec::new(), album().songs.into_iter().filter(|s| hearts.contains(&s.id)).collect()) })
+            }
             Read::Search { query, .. } => Some(Page::Found { v: SearchResult { songs: album().songs.into_iter().filter(|s| s.title.to_lowercase().contains(&query)).collect(), ..Default::default() } }),
-            Read::AlbumById { id } if id == "f-al" => Some(Page::AlbumPage { v: album() }),
+            Read::AlbumById { id } if id == "f-al" => {
+                *self.albums_read.lock() += 1;
+                Some(Page::AlbumPage { v: album() })
+            }
+            // Its own playlist names no owner; one it follows names who made it.
+            Read::PlaylistList => {
+                let list = |id: &str, owner: Option<&str>| crate::Playlist { id: id.into(), name: id.into(), owner: owner.map(str::to_string), ..Default::default() };
+                Some(Page::Playlists { v: vec![list("f-own", None), list("f-followed", Some("someone"))] })
+            }
+            Read::PlaylistById { id } if id == "f-own" => Some(Page::PlaylistPage { v: crate::PlaylistDetail::new(crate::Playlist { id, ..Default::default() }, vec![album().songs.remove(0)]) }),
             Read::HomeFeed => {
                 Moment::default().await;
                 let mut n = self.feeds.lock();
@@ -76,8 +101,12 @@ impl Provider for Fake {
 
     async fn write(&self, _: &Client, w: Write) -> NetResult<()> {
         match w {
-            Write::Star { kind: Starrable::Song, id, on: true } if self.signed_in.lock().is_some() => {
-                self.hearts.lock().push(id);
+            Write::Star { kind: Starrable::Song, id, on } if self.signed_in.lock().is_some() => {
+                let mut hearts = self.hearts.lock();
+                hearts.retain(|h| *h != id);
+                if on {
+                    hearts.push(id);
+                }
                 Ok(())
             }
             _ => Err(super::nowhere("write")),
@@ -166,7 +195,7 @@ mod tests {
         let core = Core::new(db, "fake".into(), Default::default()).unwrap();
         let provider = Arc::new(Fake::default());
         core.install(ServerKind::default(), provider.clone());
-        core.provider().configure(&core, &SavedServer::default()).unwrap();
+        core.configure_profile(SavedServer::default()).unwrap();
         (Client::new(core, Arc::new(Wire::default()), Default::default()), provider)
     }
 
@@ -285,5 +314,96 @@ mod tests {
         block(c.write(heart)).unwrap();
         assert_eq!(*provider.hearts.lock(), ["f-1"]);
         assert!(!c.core.pending_any().unwrap(), "nothing queued for a server");
+    }
+
+    fn star(c: &Client, kind: Starrable, id: &str, on: bool) -> NetResult<()> {
+        block(c.star(kind, id.into(), on, Arc::new(crate::providers::harness::Marked)))
+    }
+
+    fn favorites(c: &Client) -> Vec<String> {
+        let Ok(Page::StarredPage { v }) = block(c.read_now(Read::StarredItems)) else { panic!("favorites") };
+        v.albums.iter().map(|a| format!("album {}", a.id)).chain(v.songs.iter().map(|s| format!("{} {}", s.id, s.title))).collect()
+    }
+
+    /// Signed out, a seal keeps the item on this device: its record, as the page showed it, is in the
+    /// favorites in this session and the next, and nothing is asked of the source, queued or played.
+    #[test]
+    fn signed_out_a_seal_is_kept_here() {
+        let dir = nori_testdir::TempDir::new("fake-favorites-here");
+        let db = dir.join("nori.db").to_str().unwrap().to_string();
+        let (c, fake) = fake_at(db.clone());
+        assert!(c.core.rules().stars && c.core.rules().stars_here);
+        block(c.cached_or_fetched(Read::AlbumById { id: "f-al".into() })).unwrap();
+        star(&c, Starrable::Song, "f-2", true).unwrap();
+        star(&c, Starrable::Album, "f-al", true).unwrap();
+        assert_eq!(*fake.albums_read.lock(), 1, "the record shown was kept: nothing asked again");
+        assert!(fake.hearts.lock().is_empty() && !c.core.pending_any().unwrap(), "nothing sent or queued for the source");
+        assert!(c.session().playlist(|p| p.ids().is_empty()) && c.precache_targets(false).is_empty(), "nothing queued or fetched");
+        assert_eq!(favorites(&c), ["album f-al", "f-2 Two"]);
+        assert!(c.core.starred(Starrable::Song, "f-2", false));
+        drop(c);
+
+        let (c, _) = fake_at(db);
+        assert!(c.core.starred(Starrable::Album, "f-al", false), "kept across sessions");
+        assert_eq!(favorites(&c), ["album f-al", "f-2 Two"]);
+        star(&c, Starrable::Song, "f-2", false).unwrap();
+        assert_eq!(favorites(&c), ["album f-al"]);
+        assert!(!c.core.starred(Starrable::Song, "f-2", false));
+    }
+
+    /// An item this session didn't show is kept as the source's page of it has it; one the source
+    /// doesn't have can't be sealed, and its mark goes back.
+    #[test]
+    fn a_seal_reads_the_record_it_lacks() {
+        let (c, fake) = fake();
+        star(&c, Starrable::Album, "f-al", true).unwrap();
+        assert_eq!((*fake.albums_read.lock(), favorites(&c)), (1, vec!["album f-al".to_string()]));
+        assert!(star(&c, Starrable::Song, "nowhere", true).is_err());
+        assert!(!c.core.starred(Starrable::Song, "nowhere", false), "the mark went back");
+    }
+
+    /// Signed in, a seal goes to the account and the favorites are the account's with those kept here
+    /// before after them; one kept here goes from here, and from the account only when it lists it.
+    #[test]
+    fn signed_in_seals_go_to_the_account_beside_those_kept_here() {
+        let (c, fake) = fake();
+        block(c.cached_or_fetched(Read::AlbumById { id: "f-al".into() })).unwrap();
+        star(&c, Starrable::Song, "f-1", true).unwrap();
+        star(&c, Starrable::Song, "f-2", true).unwrap();
+        block(c.sign_in("let me in".into()));
+        assert!(c.core.rules().stars && !c.core.rules().stars_here);
+        star(&c, Starrable::Song, "f-2", true).unwrap();
+        assert_eq!(*fake.hearts.lock(), ["f-2"], "the account's");
+        assert_eq!(favorites(&c), ["f-2 Two", "f-1 One"], "the account's first, each once");
+        star(&c, Starrable::Song, "f-1", false).unwrap();
+        star(&c, Starrable::Song, "f-2", false).unwrap();
+        assert!(fake.hearts.lock().is_empty(), "the account listed it");
+        assert!(favorites(&c).is_empty());
+    }
+
+    /// Signed in, songs can be added to the account's own playlists, each knowing which it holds; the
+    /// ones it follows, and signed out, none.
+    #[test]
+    fn songs_go_to_the_accounts_own_playlists() {
+        let (c, _) = fake();
+        let choices = |c: &Client| -> Vec<(String, Vec<String>, u32)> { block(c.playlist_choices(vec!["f-1".into(), "f-2".into()])).unwrap().into_iter().map(|p| (p.playlist.id, p.adds, p.holds)).collect() };
+        assert!(choices(&c).is_empty(), "signed out");
+        block(c.sign_in("let me in".into()));
+        assert_eq!(choices(&c), [("f-own".to_string(), vec!["f-2".to_string()], 1)]);
+    }
+
+    /// Signed in, a seal the account has nowhere for (an album's) is kept on this device, and goes
+    /// from here; nothing of it is sent.
+    #[test]
+    fn signed_in_a_seal_the_account_cant_keep_is_kept_here() {
+        let (c, fake) = fake();
+        block(c.sign_in("let me in".into()));
+        star(&c, Starrable::Song, "f-2", true).unwrap();
+        star(&c, Starrable::Album, "f-al", true).unwrap();
+        assert_eq!(*fake.hearts.lock(), ["f-2"], "the album went nowhere");
+        assert!(c.core.starred(Starrable::Album, "f-al", false));
+        assert_eq!(favorites(&c), ["album f-al", "f-2 Two"]);
+        star(&c, Starrable::Album, "f-al", false).unwrap();
+        assert_eq!(favorites(&c), ["f-2 Two"]);
     }
 }

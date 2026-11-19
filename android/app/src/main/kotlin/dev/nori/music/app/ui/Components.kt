@@ -574,7 +574,7 @@ private val RESTING = floatArrayOf(0.532f, 0.856f, 0.64f, 0.748f)
 
 /** What every song list draws its rows with: the song playing, the songs downloaded and selected, and the row's menu. */
 @androidx.compose.runtime.Immutable
-data class SongListState(val playingId: String?, val downloaded: Set<String>, val selected: Set<String>, val menu: (Song) -> Unit)
+data class SongListState(val playingId: String?, val downloaded: Set<String>, val selected: Set<String>, val menu: (Song) -> Unit, val rowMenu: (Song, dev.nori.music.app.vm.RowEdits) -> Unit)
 
 @Composable
 fun rememberSongListState(actions: ActionsViewModel): SongListState {
@@ -584,7 +584,8 @@ fun rememberSongListState(actions: ActionsViewModel): SongListState {
     val selection by actions.selection.collectAsStateWithLifecycle()
     val selected = remember(selection) { selection.mapTo(HashSet()) { it.id } }
     val menu = LocalSongMenu.current
-    return remember(playing, done, selected, menu) { SongListState(playing, done, selected, menu) }
+    val rowMenu = LocalSongRowMenu.current
+    return remember(playing, done, selected, menu, rowMenu) { SongListState(playing, done, selected, menu, rowMenu) }
 }
 
 /**
@@ -619,9 +620,11 @@ fun LazyListScope.songRows(
     from: dev.nori.music.ffi.model.PageOrigin? = null,
     /** The page's head says every one of [songs] is downloaded ([rememberPageWhole]): their rows carry no mark of it. */
     pageWhole: Boolean = false,
+    /** What the row at a place in [songs] offers to change, shown in its menu: a playlist's own rows. */
+    edits: ((Int) -> dev.nori.music.app.vm.RowEdits?)? = null,
 ) {
     val (onRight, onLeft) = actions.swipes
-    val (playingId, downloaded, selected, menu) = list
+    val (playingId, downloaded, selected, menu, rowMenu) = list
     val count = rows?.size ?: songs.size
     items(
         count,
@@ -636,12 +639,13 @@ fun LazyListScope.songRows(
         val moving = animated || appear
         val sheet = LocalPlayerSheet.current
         val modifier = if (moving) itemMotion() else Modifier
+        val opened = { edits?.invoke(at)?.let { rowMenu(s, it) } ?: menu(s) }
         SongRow(
             s, if (numbered) null else remember(s) { cover(s) },
-            onClick = { if (actions.tap(songs, at, from, playing = s.id == playingId)) sheet.open() }, onMenu = { menu(s) },
+            onClick = { if (actions.tap(songs, at, from, playing = s.id == playingId)) sheet.open() }, onMenu = opened,
             modifier = if (arrival != null) modifier.arriving(arrival) else modifier,
             number = if (numbered) s.track.toInt() else null, playing = s.id == playingId, downloaded = s.id in downloaded,
-            selected = s.id in selected, onLongClick = { menu(s) },
+            selected = s.id in selected, onLongClick = opened,
             swipeRight = rowSwipe(onRight, s, actions), swipeLeft = rowSwipe(onLeft, s, actions),
             line = lines?.getOrNull(k) ?: s.line, pageWhole = pageWhole,
         )

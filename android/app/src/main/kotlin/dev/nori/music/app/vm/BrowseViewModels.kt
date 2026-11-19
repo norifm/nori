@@ -457,9 +457,9 @@ class ArtistViewModel(app: Application) : DetailViewModel<ArtistUi>(app) {
 }
 
 class PlaylistViewModel(app: Application) : DetailViewModel<PlaylistDetail>(app) {
-    private val version = MutableStateFlow(0)
+    /** Read again after a playlist changed here (renamed, a song moved or taken out). */
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun load(id: String) = version.flatMapLatest { nori.library.playlist(id) }
+    override fun load(id: String) = nori.library.playlistsVersion.flatMapLatest { nori.library.playlist(id) }
 }
 
 /** A genre's songs, and the cover its tile in search shows. */

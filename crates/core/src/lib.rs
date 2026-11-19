@@ -29,6 +29,8 @@ pub mod remote;
 pub mod jam_pick;
 pub mod destination;
 pub mod providers;
+pub mod scrobblers;
+mod favorites;
 #[cfg(feature = "neural-beats")]
 pub mod model_download;
 
@@ -128,7 +130,9 @@ pub struct Core {
     /// This session's star changes, overlaid on the server's favourites.
     stars: Mutex<stars::StarMarks>,
     /// The favourites the source listed last, under this session's marks.
-    listed: Mutex<stars::Listed>,
+    listed: Mutex<stars::Ids>,
+    /// The favourites kept on this device (favorites.rs).
+    here: Mutex<stars::Ids>,
     remote: Mutex<std::sync::Weak<remote::Remote>>,
     cache_revision: AtomicU64,
     /// A provider's answers this session, by cache key, with when they came ([`Client::kept_stored`]).
@@ -234,9 +238,10 @@ impl Core {
         self.downloads.clone()
     }
 
-    /// Whether an item shows starred: this session's mark over its record's flag (`listed`).
+    /// Whether an item shows starred: this session's mark over its record's flag (`listed`), the
+    /// source's favourites and those kept here.
     pub fn starred(&self, kind: client::Starrable, id: &str, listed: bool) -> bool {
-        let listed = self.listed.lock().starred(kind, id, listed);
+        let listed = listed || self.listed.lock().has(kind, id) || self.here.lock().has(kind, id);
         self.stars.lock().starred(kind, id, listed)
     }
 
@@ -262,7 +267,8 @@ impl Core {
             server: RwLock::new(api::Server::default()),
             board: Mutex::new(mixes::board::Board::default()),
             stars: Mutex::new(stars::StarMarks::default()),
-            listed: Mutex::new(stars::Listed::default()),
+            listed: Mutex::default(),
+            here: Mutex::default(),
             remote: Mutex::default(),
             cache_revision: AtomicU64::new(0),
             kept: Mutex::default(),

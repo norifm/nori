@@ -7,6 +7,7 @@ import plistlib
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 import dmg
@@ -39,6 +40,14 @@ for archive in output.glob("*.tar.gz"):
             if not dmg.runs_here(binary):
                 print(f"Verified {archive.name} without running it")
                 continue
+        result = subprocess.run([str(binary), "--help"], capture_output=True, text=True)
+        assert f"usage: nori-{client}" in result.stdout + result.stderr, result.stderr
+        print(f"Verified {archive.name}")
+for archive in output.glob("*.zip"):
+    with tempfile.TemporaryDirectory(prefix="nori-package-check-") as directory:
+        zipfile.ZipFile(archive).extractall(directory)
+        client = "cli" if archive.name.startswith("nori-cli-") else "desktop"
+        binary = next(Path(directory).iterdir()) / f"nori-{client}.exe"
         result = subprocess.run([str(binary), "--help"], capture_output=True, text=True)
         assert f"usage: nori-{client}" in result.stdout + result.stderr, result.stderr
         print(f"Verified {archive.name}")

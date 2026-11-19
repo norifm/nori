@@ -311,6 +311,8 @@ struct Card {
     /// last paused.
     loud_until_us: u64,
     paused_us: u64,
+    /// With [`Extra::periods`]: each pull's frames and when it is heard, µs.
+    pulls: Vec<(u64, usize)>,
 }
 
 /// Frames the card pulls at a time.
@@ -333,6 +335,7 @@ impl common::Device for Card {
             self.block.resize(frames * feed.format().channels, 0);
             let got = feed.pull_i16(&mut self.block);
             self.said.pulled(self.now_us + delay_us, got, rate);
+            self.pulls.push((self.now_us + delay_us, got));
             let ch = feed.format().channels;
             if let Some(last) = self.block[..got * ch].iter().rposition(|v| v.abs() >= 100) {
                 self.loud_until_us = self.now_us + delay_us + (last / ch) as u64 * 1_000_000 / rate as u64;
@@ -571,6 +574,7 @@ impl Rig {
             now_us: 0,
             loud_until_us: 0,
             paused_us: 0,
+            pulls: Vec::new(),
         }));
         let out = Recorder { card: card.clone(), opened: Arc::default(), shut: Arc::default(), watch: Arc::default(), flushes: Arc::default(), shallow: Arc::default() };
         let (opened, shut, watch, flushes, shallow) = (out.opened.clone(), out.shut.clone(), out.watch.clone(), out.flushes.clone(), out.shallow.clone());
@@ -1217,6 +1221,57 @@ fn pause_fades_to_silence_heard() {
     let c = rig.card.lock();
     assert!(c.paused_us + 10_000 >= c.loud_until_us, "paused at {} µs, music heard until {} µs", c.paused_us, c.loud_until_us);
     assert!(rig.heard.lock().iter().any(|&v| v > 2000 && v < 6000), "a ramp down, not a cut");
+}
+
+/// Behind a device that plays each pull later (a cpal stream over Bluetooth), the place said follows the
+/// ear through a pause and play: it runs on through the fade still heard, stops where the music stops,
+/// and moves again only once the music is heard again.
+#[test]
+fn the_place_said_follows_the_ear_through_a_pause() {
+    let a = vec![8000i16; RATE as usize * 2 * 30];
+    let extra = Extra { periods: Some((RATE as usize / 100, 250_000)), ..Extra::default() };
+    let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings { fade_ms: 150, ..Settings::default() }, extra);
+    // What the ear has heard by now, ms.
+    let ear = |r: &Rig| {
+        let c = r.card.lock();
+        c.pulls.iter().filter(|p| p.0 <= c.now_us).map(|p| p.1).sum::<usize>() as i64 * 1000 / RATE as i64
+    };
+    // Paused before a sample is heard: no fade is heard, so the place does not run on.
+    rig.engine.play_at(0, 0);
+    rig.engine.pause();
+    rig.run(20);
+    let s = rig.engine.status();
+    assert_eq!(s.positions_at(s.at + Duration::from_secs(10), s.buffering).0, s.position_ms, "paused unheard: {s:?}");
+    rig.engine.play();
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 3));
+    rig.engine.pause();
+    rig.run(20);
+    let s = rig.engine.status();
+    let runs_to = s.positions_at(s.at + Duration::from_secs(10), s.buffering).0;
+    rig.run(1_000);
+    let (stopped, heard) = (rig.engine.status().position_ms, ear(&rig));
+    assert!((runs_to - heard).abs() < 30, "said during the fade to run on to {runs_to} ms, the music stopped at {heard} ms");
+    assert!((stopped - heard).abs() < 30, "stopped at {stopped} ms, the music at {heard} ms");
+    rig.engine.play();
+    let mut early = Vec::new();
+    for _ in 0..100 {
+        rig.run(5);
+        let s = rig.engine.status();
+        let moving = s.state == State::Playing && !s.buffering;
+        if s.position_ms < stopped - 30 || (moving && (ear(&rig) <= heard || s.position_ms > ear(&rig) + 30)) {
+            early.push((s.position_ms, s.buffering, ear(&rig)));
+        }
+    }
+    assert!(early.is_empty(), "said moving before the music is heard again, or back before the pause (place, held, ear): {early:?}");
+    let s = rig.engine.status();
+    assert!(s.state == State::Playing && !s.buffering && ear(&rig) > stopped + 200, "and plays on: {s:?}, the ear at {} ms", ear(&rig));
+
+    // Sent back before the music is heard again: the place from the seek on is heard.
+    rig.engine.pause();
+    rig.run(1_000);
+    rig.engine.play();
+    rig.engine.seek(1_000);
+    assert!(rig.wait_for(2, |r| !r.engine.status().buffering && r.engine.status().position_ms < 2_000), "plays from 1 s: {:?}", rig.engine.status());
 }
 
 /// A pause says where the music stopped: the place a client reads as it hears of the pause is the one
@@ -1930,6 +1985,29 @@ fn the_audio_focus_holds_the_music_in_order() {
     assert_eq!(holds(&rig).last(), Some(&Hold::Lost));
 }
 
+/// A call outlasting the long pause: the client stops the music it let go, and the call's end must not
+/// read as the focus back to play on (Android's player went on wanting to play, stopped).
+#[test]
+fn music_let_go_during_a_call_stays_paused() {
+    use nori_player::focus::{Focus, Hold};
+    let a = music(60.0, 19);
+    let songs: [(&str, &[i16]); 1] = [("a", &a)];
+    let rig = Rig::build(files(&songs), sim::App::new(), Settings::default(), Extra { idle_release_ms: Some(300), ..Extra::default() });
+    let door = FocusDoor::default();
+    door.0.lock().0 = true;
+    rig.engine.ask_focus_of(Box::new(door.clone()));
+    rig.engine.go_to(0, 0);
+    rig.engine.play();
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2));
+    rig.engine.focus(Focus::LostTransient);
+    assert!(rig.wait_for(5, |r| r.events.lock().contains(&Event::LongPause)));
+    rig.engine.pause();
+    rig.run(500);
+    let holds: Vec<Hold> = rig.events.lock().iter().filter_map(|e| if let Event::Focus(h) = e { Some(*h) } else { None }).collect();
+    assert_eq!(holds, [Hold::Held, Hold::Lost], "held by the call, then over for good");
+    assert_eq!(door.0.lock().2, 1, "the focus given back");
+}
+
 #[test]
 fn released_at_once_when_the_music_moves_away() {
     let a = music(12.0, 19);
@@ -2006,6 +2084,26 @@ fn device_gets_own_sound() {
     // Faded in over the chain's 10 ms.
     let off = heard[at + 2 * RATE as usize / 50..].iter().position(|&v| (v - 4000).abs() > 1);
     assert_eq!(off, None, "the headphones' sound from then on");
+}
+
+/// A song started part way leaves its cover tag unread: it is seeked over, not fetched first.
+#[test]
+fn a_song_started_part_way_skips_its_tag() {
+    let a: Vec<i16> = music(30.0 * 8_000.0 / RATE as f64, 83);
+    let syncsafe = |n: usize| [(n >> 21) as u8 & 0x7f, (n >> 14) as u8 & 0x7f, (n >> 7) as u8 & 0x7f, n as u8 & 0x7f];
+    // A 500 KB cover: five seconds on this link.
+    let tag = 500_000;
+    let mut file = [b"ID3".as_slice(), &[3, 0, 0], &syncsafe(tag)].concat();
+    file.resize(10 + tag, 0);
+    file.extend_from_slice(&common::wav(8_000, &a));
+    let extra = Extra::default();
+    extra.server.slow.lock().push(("a".into(), Duration::from_millis(150)));
+    extra.server.paced.lock().push(("a".into(), vec![(0, 100_000)]));
+    let rig = Rig::build(vec![("a".into(), file, 30_000)], sim::App::new(), Settings::default(), extra);
+    rig.engine.play_at(0, 20_000);
+    let from = 20 * 8_000 * 2;
+    assert!(rig.wait_for(10, |r| r.heard.lock().windows(256).any(|w| w == &a[from..from + 256])), "heard from 20 s");
+    assert!(rig.now_ms() < 2_000, "heard from 20 s after {} ms", rig.now_ms());
 }
 
 #[test]
@@ -2133,6 +2231,24 @@ fn playing(songs: &[(&str, &[i16])], app: impl App + Send + 'static, settings: S
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 2));
     rig
+}
+
+/// A start an output plays seconds late (a Bluetooth headset taken by another device) is logged with what
+/// the engine holds, and once heard, after how long.
+#[test]
+fn a_start_heard_late_is_logged() {
+    let a = vec![8000i16; RATE as usize * 2 * 30];
+    let live = Live::new(prefs_off());
+    let extra = Extra { periods: Some((RATE as usize / 100, 5_000_000)), ..Extra::default() };
+    let rig = Rig::build(files(&[("a", &a)]), live.clone(), Settings::default(), extra);
+    let said = |what: &str| live.0.lock().log.iter().any(|l| l.contains(what));
+    rig.engine.play_at(0, 0);
+    rig.run(2_500);
+    assert!(!said("no music heard"), "not yet: {:?}", live.0.lock().log);
+    rig.run(1_000);
+    assert!(said("playing, and no music heard for 3") && said("ring "), "{:?}", live.0.lock().log);
+    assert!(rig.wait_for(10, |r| !r.engine.status().buffering), "heard in the end");
+    assert!(said("music heard after "), "{:?}", live.0.lock().log);
 }
 
 #[test]

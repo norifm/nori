@@ -46,7 +46,7 @@
       } catch (e) {
         return unlessElsewhere(e);
       }
-      if (gone || a.pace === 0 || wait <= 0 || document.hidden) return;
+      if (gone || a.pace === 0 || performance.now() >= a.until || wait <= 0 || document.hidden) return;
       if (wait <= 20) frame = requestAnimationFrame(() => void step());
       else timer = setTimeout(() => void step(), wait / a.pace);
     };

@@ -1,16 +1,18 @@
 //! What the extension points' tests share: the test plugin installed and on, over a side that notes
 //! what it shows.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nori_model::deciders::Deciders;
 use nori_plugins::testing::{fixture, FIXTURE};
 use nori_plugins::{Plugins, Side, Value};
 
-/// Notes the notices the plugin shows: words and args.
+/// Notes the notices the plugin shows (words and args), and how often its notification buttons changed.
 #[derive(Default)]
 pub struct Noted {
     pub notices: Mutex<Vec<(String, Vec<String>)>>,
+    pub buttons_changed: AtomicU32,
 }
 
 impl Side for Noted {
@@ -25,6 +27,9 @@ impl Side for Noted {
     fn shown(&self, _: &str, _: &str, _: bool, _: bool) {}
     fn notice(&self, _: &str, _: bool, words: &str, args: &[String]) {
         self.notices.lock().unwrap().push((words.to_string(), args.to_vec()));
+    }
+    fn buttons_changed(&self) {
+        self.buttons_changed.fetch_add(1, Ordering::Relaxed);
     }
 }
 
