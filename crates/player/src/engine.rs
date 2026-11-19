@@ -1442,7 +1442,7 @@ impl TransitionEngine {
                 break;
             }
             let n = self.flight.lead_left.min(SILENCE.len() / fb * fb);
-            self.mix_src(host, &SILENCE[..n], self.flight.lead_at_us, 1.0, out);
+            self.mix_src(host, &SILENCE[..n], self.offset_us + self.flight.lead_at_us, 1.0, out);
             self.flight.lead_at_us += out.us(n);
             self.flight.lead_left -= n;
             if !self.drain(down) && self.flight.lead_left > 0 {
