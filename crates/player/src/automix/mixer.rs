@@ -710,6 +710,9 @@ pub struct Mixer {
     in_high_pass: Option<SweepFilter>,
     in_low_pass: Option<SweepFilter>,
     sweep_entry: u64,
+    /// Entered while the outgoing song played alone: over this span the output crosses from it, as it played, into the
+    /// mix ([`Mixer::enter`]).
+    from_dry: Option<Span>,
     /// The duck's release span and how much of the band-pass is subtracted before it.
     duck: Option<(Span, f64)>,
     duck_coef: Coef,
@@ -762,6 +765,7 @@ impl Mixer {
             in_high_pass: None,
             in_low_pass: None,
             sweep_entry: 1,
+            from_dry: None,
             duck: None,
             duck_coef: Coef::default(),
             duck_state: [[0.0; 2]; MAX_CHANNELS],
@@ -825,6 +829,7 @@ impl Mixer {
         };
         self.pos = 0;
         self.fades = FadeRun::default();
+        self.from_dry = None;
         self.len = len;
         self.brake = p.brake.filter(|b| b.len_ms > 0).map(|b| (frames(b.start_ms as f64), frames(b.len_ms as f64).max(1)));
         self.curve = p.fade_curve;
@@ -939,6 +944,13 @@ impl Mixer {
         if let Some((start, len)) = self.brake.filter(|(start, _)| pos > *start) {
             self.brake = Some((pos, (start + len).saturating_sub(pos).max(1)));
         }
+    }
+
+    /// [`Mixer::seek`] where the outgoing song played alone until now: the output crosses from it into the mix as a
+    /// sweep fades in, so neither deck steps to its level there.
+    pub fn enter(&mut self, frames: u64) {
+        self.seek(frames);
+        self.from_dry = Some(Span { start: self.pos, end: self.pos + self.sweep_entry });
     }
 
     pub fn done(&self) -> bool {
@@ -1104,6 +1116,7 @@ impl Mixer {
         if !(self.fades.start..self.fades.end).contains(&p) {
             self.fades = self.fade_run(p);
         }
+        let dry = self.from_dry.filter(|s| p < s.end).map(|s| (raised_cos(s.progress(p)), *o));
         if let Some((start, len)) = self.brake.filter(|(start, _)| p >= *start) {
             self.brake_frame(p - start, len, o);
         }
@@ -1189,6 +1202,11 @@ impl Mixer {
             let level = self.fades.get(t, |f| f.verb) * r.wet;
             for (c, x) in o[..ch].iter_mut().enumerate() {
                 *x += level * if c % 2 == 0 { l } else { rr };
+            }
+        }
+        if let Some((w, dry)) = dry {
+            for (x, d) in o[..ch].iter_mut().zip(dry) {
+                *x = d + (*x - d) * w;
             }
         }
         for x in &mut o[..ch] {
