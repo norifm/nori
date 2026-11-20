@@ -4,10 +4,11 @@ import UIKit
 /// in the accent of the season it was paid in, five to a row), then what to give in one card (the amounts
 /// offered and Other, typed; every month; the currency on a page of its own) and Give, which opens Stripe's
 /// checkout page in Safari. While that page waits, a line says so with a QR code to pay from a phone, for a
-/// Safari too old for the checkout page. The choice and its words' amounts are the core's
+/// Safari too old for the checkout page. While a monthly payment runs or is set to stop, a row over the card
+/// opens its page (`MonthlyPage`). The choice and its words' amounts are the core's
 /// (crates/ios/src/support.rs).
 final class SupportPage: CardsPage {
-    private var page: [String: Any] = [:]
+    private(set) var page: [String: Any] = [:]
     private var choice: [String: Any] = [:]
     /// The checkout page given, until a seal more than then comes.
     private var given: (url: String, seals: Int)?
@@ -54,7 +55,7 @@ final class SupportPage: CardsPage {
     private var offered: [String] { choice["offered"] as? [String] ?? [] }
     private var pick: Int { choice["pick"] as? Int ?? 0 }
 
-    private func read() {
+    func read() {
         let zone = TimeZone.current
         let region = Locale.current.regionCode ?? ""
         let p = zone.identifier.withCString { z in
@@ -218,7 +219,7 @@ final class SupportPage: CardsPage {
             lay()
         case NORI_SUPPORT_PAGE:
             URL(string: r.text).map { UIApplication.shared.open($0) }
-        case NORI_SUPPORT_REFRESHED:
+        case NORI_SUPPORT_REFRESHED, NORI_SUPPORT_MONTHLY:
             read()
         default:
             Toast.show(r.otherCurrency ? Say.supportOtherCurrency : Say.supportFailed)
@@ -244,21 +245,24 @@ final class SupportPage: CardsPage {
         let amountRow = UIStackView(arrangedSubviews: [words(Say.supportAmount, Fonts.font(16), Theme.label), amounts])
         amountRow.axis = .vertical
         amountRow.spacing = 10
-        views.append(GroupCard([row([amountRow]), otherRow, GroupRow(Say.supportEveryMonth, trailing: monthly), currency]))
-        views.append(indent(give))
-        if page["running"] as? Bool == true {
-            views.append(GroupCard([
-                GroupRow(Say.supportManage, chevron: true) { nori_ios_support_page(0) },
-                GroupRow(Say.supportStop, chevron: true) { nori_ios_support_page(1) },
-            ]))
-        }
+        let ends = (page["ends"] as? NSNumber).map { Day.words($0.int64Value, short: true) }
+        let running = page["running"] as? Bool == true
+        let monthlyCard = running || ends != nil ? GroupCard([
+            GroupRow(Say.supportMonthly, value: ends.map(Say.supportEnds) ?? Say.supportMonthlyOn, icon: Glyph.draw(Iconoir.calendar, 20), chevron: true) { [weak self] in
+                guard let self = self else { return }
+                self.navigationController?.pushViewController(MonthlyPage(self), animated: true)
+            },
+        ]) : nil
+        let card = GroupCard([row([amountRow]), otherRow, GroupRow(Say.supportEveryMonth, trailing: monthly), currency])
+        if let m = monthlyCard { views.append(m) }
+        views += [card, indent(give)]
         if let g = given {
             views.append(indent(words(Say.supportInSafari, Fonts.font(13, .regular, .footnote), Theme.secondary, lines: 0)))
             if let code = (g.url.withCString { takenJSON(nori_ios_qr($0)) }) as? [String: Any] { views.append(indent(QRCode(code))) }
         }
         set(views)
         column.setCustomSpacing(Space.section, after: views[1])
-        column.setCustomSpacing(Space.row, after: views[2])
+        for v in [monthlyCard, card].compactMap({ $0 }) { column.setCustomSpacing(Space.row, after: v) }
     }
 
     /// `views` in a row of the card, inset as its rows are.
@@ -280,21 +284,109 @@ final class SupportPage: CardsPage {
     }
 }
 
-/// A `NORI_REPORT_SUPPORT` as the Support page reads it.
+/// A `NORI_REPORT_SUPPORT` as the Support page reads it: its flag, the page to open or why not, and its index
+/// (1 for a refusal when a monthly payment runs in another currency; the months a stopped one paid for).
 final class SupportAnswer {
     let flag: Int32
     let text: String
-    let otherCurrency: Bool
-    init(flag: Int32, text: String, otherCurrency: Bool) {
+    let index: Int
+    var otherCurrency: Bool { flag == NORI_SUPPORT_FAILED && index == 1 }
+    init(flag: Int32, text: String, index: Int) {
         self.flag = flag
         self.text = text
-        self.otherCurrency = otherCurrency
+        self.index = index
     }
 }
 
 extension Notification.Name {
     /// The support service answered: the object is a `SupportAnswer`.
     static let noriSupport = Notification.Name("noriSupport")
+}
+
+/// The monthly payment, as Android's sheet: what it is doing (every month, or when it ends), the thanks for the
+/// months one that just stopped paid for, its card and receipts on Stripe's page in Safari, then stopping it
+/// in Spring's rose or keeping it going. It reads the Support page's state, which reads it again once the
+/// service answers.
+final class MonthlyPage: CardsPage {
+    private weak var source: SupportPage?
+    private var thanked: Int?
+    private var asking = false
+
+    init(_ source: SupportPage) {
+        self.source = source
+        super.init(nibName: nil, bundle: nil)
+        title = Say.supportMonthly
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        NotificationCenter.default.addObserver(self, selector: #selector(answered(_:)), name: .noriSupport, object: nil)
+        lay()
+    }
+
+    @objc private func answered(_ n: Notification) {
+        guard let r = n.object as? SupportAnswer else { return }
+        if r.flag == NORI_SUPPORT_MONTHLY { thanked = r.index > 0 ? r.index : nil }
+        guard r.flag == NORI_SUPPORT_MONTHLY || r.flag == NORI_SUPPORT_FAILED else { return }
+        asking = false
+        source?.read()
+        lay()
+    }
+
+    private func lay() {
+        let page = source?.page ?? [:]
+        let ends = (page["ends"] as? NSNumber).map { Day.words($0.int64Value) }
+        guard ends != nil || page["running"] as? Bool == true else {
+            navigationController?.popViewController(animated: true)
+            return
+        }
+        var views: [UIView] = [words(ends.map(Say.supportEnds) ?? Say.supportEveryMonth, Fonts.font(15), Theme.secondary)]
+        if let n = thanked, ends != nil { views.append(words(Say.supportThanksMonths(n), Fonts.font(16), Theme.label, lines: 0)) }
+        let card = PillButton(Say.supportCard, Glyph.draw(Iconoir.creditCard, 18), prominent: false)
+        card.addTarget(self, action: #selector(cardTapped), for: .touchUpInside)
+        views.append(card)
+        let then: PillButton
+        if ends != nil {
+            then = PillButton(Say.supportKeep, Glyph.draw(Iconoir.refresh, 18), prominent: false)
+        } else {
+            then = PillButton(Say.supportStop, Glyph.draw(Iconoir.prohibition, 18), prominent: false)
+            let rose = UIColor(argb: UInt32(page["stop"] as? Int ?? 0))
+            then.backgroundColor = rose.withAlphaComponent(0.12)
+            then.tintColor = rose
+            then.setTitleColor(rose, for: .normal)
+            then.layer.borderWidth = 0
+        }
+        then.alpha = asking ? 0.38 : 1
+        then.addTarget(self, action: #selector(thenTapped), for: .touchUpInside)
+        views.append(then)
+        set(views.map { v in
+            let s = UIStackView(arrangedSubviews: [v])
+            s.isLayoutMarginsRelativeArrangement = true
+            s.layoutMargins = UIEdgeInsets(top: 0, left: Space.gutter, bottom: 8, right: Space.gutter)
+            return s
+        })
+    }
+
+    @objc private func cardTapped() { nori_ios_support_manage() }
+
+    /// Stops the monthly payment, or keeps one set to stop going.
+    @objc private func thenTapped() {
+        guard !asking else { return }
+        asking = true
+        nori_ios_support_monthly(source?.page["ends"] is NSNumber ? 0 : 1)
+        lay()
+    }
+}
+
+/// Unix seconds as the iPod writes a day of the year: "December 20", or `short` "Dec 20" where room is tight.
+enum Day {
+    static func words(_ s: Int64, short: Bool = false) -> String {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate(short ? "MMMd" : "MMMMd")
+        return f.string(from: Date(timeIntervalSince1970: TimeInterval(s)))
+    }
 }
 
 /// The currencies support is offered in, the one chosen checked; a tap picks one and goes back.

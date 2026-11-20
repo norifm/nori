@@ -8,7 +8,6 @@ import dev.nori.music.ffi.Payment
 import dev.nori.music.ffi.Stamp
 import dev.nori.music.ffi.SupportChoice
 import dev.nori.music.ffi.SupportCurrency
-import dev.nori.music.ffi.SupportPage
 import dev.nori.music.ffi.SupportPick
 import dev.nori.music.ffi.SupportService
 import dev.nori.music.net.lifted
@@ -45,7 +44,18 @@ class SupportViewModel(app: Application) : NoriViewModel(app) {
     val nextSeason: dev.nori.music.ffi.look.Season =
         dev.nori.music.ffi.supportStamps(listOf(System.currentTimeMillis() / 1000), southern).first().season
 
-    val monthly: StateFlow<Boolean> = nori.settings.prefs.map { it.support.monthly }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    /** The monthly payment: none, running, or set to stop. */
+    val monthly: StateFlow<Monthly> = nori.settings.prefs
+        .map { p -> p.support.ends?.let { Monthly.Ends(it) } ?: if (p.support.monthly) Monthly.Running else Monthly.None }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Monthly.None)
+
+    private val _thanked = MutableStateFlow<Int?>(null)
+    /** The months a monthly payment just stopped paid for, thanked for in its sheet. */
+    val thanked: StateFlow<Int?> = _thanked
+
+    private val _asking = MutableStateFlow(false)
+    /** Stopping or keeping the monthly payment is being asked of the service. */
+    val asking: StateFlow<Boolean> = _asking
 
     private val first = dev.nori.music.ffi.supportFirstChoice(java.util.Locale.getDefault().country)
     private val currency = MutableStateFlow(first.currency.code)
@@ -95,12 +105,43 @@ class SupportViewModel(app: Application) : NoriViewModel(app) {
         if (paid) refresh()
     }
 
-    /** Stripe's [page] for the monthly payment (its card and receipts, or stopping it), for [open]. */
-    fun page(page: SupportPage, open: (String) -> Unit) {
+    /** Stripe's page for the monthly payment's card and receipts, for [open]. */
+    fun manage(open: (String) -> Unit) {
         viewModelScope.launch {
-            runCatching { lifted { nori.client.supportPage(page) } }
-                .onSuccess(open)
-                .onFailure { e -> _paying.value = Paying.Failed(e.said ?: e.javaClass.simpleName, false) }
+            runCatching { lifted { nori.client.supportManage() } }.onSuccess(open).onFailure(::failed)
         }
     }
+
+    /** Stops the monthly payment at the end of the month paid for. */
+    fun stop() = ask {
+        val s = lifted { nori.client.supportStop() }
+        s.change?.let(nori.settings::took)
+        _thanked.value = s.months.toInt()
+    }
+
+    /** Keeps a monthly payment set to stop going. */
+    fun keep() = ask {
+        lifted { nori.client.supportKeep() }?.let(nori.settings::took)
+        _thanked.value = null
+    }
+
+    private fun ask(call: suspend () -> Unit) {
+        if (_asking.value) return
+        _asking.value = true
+        viewModelScope.launch {
+            runCatching { call() }.onFailure(::failed)
+            _asking.value = false
+        }
+    }
+
+    private fun failed(e: Throwable) {
+        _paying.value = Paying.Failed(e.said ?: e.javaClass.simpleName, false)
+    }
+}
+
+/** A monthly payment: none, running, or set to stop at [Ends.s] (Unix seconds), which can still be kept going. */
+sealed interface Monthly {
+    data object None : Monthly
+    data object Running : Monthly
+    data class Ends(val s: Long) : Monthly
 }

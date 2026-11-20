@@ -1221,7 +1221,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.support_shown();
     });
     on!(ui.on_support_give, h, |a| a.support_give());
-    on!(ui.on_support_page, h, |a, stop| a.support_page(stop));
+    on!(ui.on_support_card, h, |a| a.support_card());
+    on!(ui.on_support_stop, h, |a| a.support_monthly(true));
+    on!(ui.on_support_keep, h, |a| a.support_monthly(false));
     on!(ui.on_support_open_again, h, |a| {
         if let Some((url, _)) = &a.support.given {
             nori_host::desktop::open_in_browser(url);
@@ -4259,6 +4261,17 @@ impl App {
             Msg::SupportGiven(Ok(None)) => {}
             Msg::SupportGiven(Err(e)) => self.say(&e, true),
             Msg::SupportRefreshed => self.support_shown(),
+            Msg::SupportMonthly(r) => {
+                self.support.asking = false;
+                match r {
+                    Ok(months) => self.support.thanked_months = months,
+                    Err(e) => {
+                        self.ui().set_support_monthly_open(false);
+                        self.say(&e, true);
+                    }
+                }
+                self.support_shown();
+            }
             Msg::SignedIn(r) => {
                 let signed_in = matches!(r, nori_core::providers::SignInResult::SignedIn { .. });
                 self.sign_in_on(SignInEvent::Answered { result: r });
@@ -4990,15 +5003,32 @@ impl App {
         });
     }
 
-    /// Opens Stripe's page for the monthly payment, its card and receipts or (`stop`) stopping it, off this
-    /// thread.
-    fn support_page(&self, stop: bool) {
+    /// Opens Stripe's page for the monthly payment's card and receipts, off this thread.
+    fn support_card(&self) {
         let Some(s) = &self.session else { return };
         let (client, tx) = (s.account().client().clone(), self.tx.clone());
-        let page = if stop { nori_core::support::SupportPage::Stop } else { nori_core::support::SupportPage::Manage };
-        nori_host::spawn("nori-support-page", move || match nori_core::transport::block_on(client.support_page(page)) {
+        nori_host::spawn("nori-support-card", move || match nori_core::transport::block_on(client.support_manage()) {
             Ok(url) => nori_host::desktop::open_in_browser(&url),
             Err(e) => tx.send(Msg::Note { text: words::support_failed(&e), error: true }),
+        });
+    }
+
+    /// Stops the monthly payment (`stop`) or keeps one set to stop going, off this thread.
+    fn support_monthly(&mut self, stop: bool) {
+        let Some(client) = self.session.as_ref().map(|s| s.account().client().clone()) else { return };
+        if self.support.asking {
+            return;
+        }
+        self.support.asking = true;
+        self.support_shown();
+        let tx = self.tx.clone();
+        nori_host::spawn("nori-support-monthly", move || {
+            let done = if stop {
+                nori_core::transport::block_on(client.support_stop()).map(|s| Some(s.months))
+            } else {
+                nori_core::transport::block_on(client.support_keep()).map(|_| None)
+            };
+            tx.send(Msg::SupportMonthly(done.map_err(|e| words::support_failed(&e))));
         });
     }
 
@@ -5612,6 +5642,8 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.global::<crate::Chrome>().set_top_x(190.0);
+        ui.global::<crate::Chrome>().set_top_w(900.0);
         ui.set_view(View::Support);
         ui.show().unwrap();
         let mut support = crate::support::Support::default();
@@ -5645,6 +5677,8 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.global::<crate::Chrome>().set_top_x(190.0);
+        ui.global::<crate::Chrome>().set_top_w(900.0);
         ui.set_view(View::Support);
         ui.show().unwrap();
         let mut support = crate::support::Support::default();

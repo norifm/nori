@@ -14,18 +14,25 @@ went through, each in the accent of the season it was paid in (`nori_core::suppo
   - `POST /start` `{currency, amount, monthly, login?, in: "app" | "browser", season}`: a PaymentIntent (once)
     or an incomplete subscription (monthly) for the app's payment sheet, or a Checkout page for the browser.
     `season` is the one the payment is stamped in, as the app counts it on its side of the equator.
-  - `POST /stamps` `{login}`: every payment that went through, and whether a monthly one runs.
+  - `POST /stamps` `{login}`: every payment that went through, whether a monthly one runs, and when one
+    set to stop ends (`ends`, Unix seconds, else null).
   - `POST /manage` `{login}`: Stripe's customer portal for a monthly payment's card and receipts.
-  - `POST /stop` `{login}`: Stripe's page stopping the monthly payment (at the end of the month paid for);
-    the page confirming it thanks for the months given, counted from the paid invoices. The two pages are
-    two portal configurations the Worker makes the first time, known by their `nori` metadata: cancelling
-    only in `stop`, so the thanks is never skipped. A monthly payment set to stop no longer counts as
+  - `POST /stop` `{login, in: "app"}`: stops the monthly payment at the end of the month paid for, and
+    answers when it ends and how many months it paid for, counted from the paid invoices. Without `in`
+    (builds from before the app stopped it itself): Stripe's page doing it, whose confirmation thanks for
+    the months given. The two portal pages are two configurations the Worker makes the first time, known
+    by their `nori` metadata: cancelling only in `stop`. A monthly payment set to stop no longer counts as
     running.
+  - `POST /keep` `{login}`: keeps a monthly payment set to stop going.
   - `GET /done`: where Checkout and the portal send the browser back: paid (`?paid=1&season=…`), the seal of
     that season stamped and thanks; left (`?left=1`), the seal's empty place; back from the portal, the way
     back alone.
 - `crates/host/src/support.rs`: what the clients that pay in the browser share: money and currency names
   as English writes them, the country a choice starts in, and starting a Checkout page.
+- While a monthly payment runs or is set to stop, a "Monthly support" row over what to give opens its sheet
+  (a page of its own on the iPod, a picker in the terminal): what it is doing, its card and receipts on
+  Stripe's page, and Stop, in Spring's rose, or Keep going. Stopping and keeping are the core's
+  `support_stop` and `support_keep`; the settings keep when it ends (`Supporter::ends`).
 - Clients, each with the page from About (Settings on the web): Android shows Stripe's PaymentSheet (the
   `paymentsheet` library, Google Pay included); the web mounts Stripe's Payment Element in a sheet
   (`web/src/pages/Support.svelte` over `crates/web/src/support.rs`; a bank's page returns to
@@ -52,9 +59,10 @@ host packages and the web image put them in every build (into Docker too, throug
 build goes out without the page. Gradle rebuilds the core when they change.
 
 The Worker runs twice, the same code: `nori-support` over Stripe's test mode, for development, and
-`nori-support-live` over live mode, the one the repository variables name. Deploying: `cd support/worker
-&& npx wrangler@4 deploy` (add `--name nori-support-live` for the live one), its Stripe key set once with
-`npx wrangler@4 secret put STRIPE_SECRET` (the same `--name`). The live key is a restricted one: write on
+`nori-support-live` over live mode, which answers at `https://support.norifm.com` (the repository
+variable's address) and at `https://nori-support-live.norifm-org.workers.dev`, which builds made before the
+domain still use. Deploying: `cd support/worker && npx wrangler@4 deploy` (add `--env live` for the live
+one), its Stripe key set once with `npx wrangler@4 secret put STRIPE_SECRET` (the same `--env`). The live key is a restricted one: write on
 Customers, PaymentIntents, Products, Checkout Sessions, Customer portal, Prices and Subscriptions, read on
 Charges and Invoices, nothing else.
 

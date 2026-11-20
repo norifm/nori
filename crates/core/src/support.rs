@@ -32,15 +32,6 @@ pub enum PayIn {
     Browser,
 }
 
-/// Stripe's pages for a monthly payment: `Manage` changes its card and shows the receipts; `Stop` stops it,
-/// and thanks for the months given on the page that confirms it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum SupportPage {
-    Manage,
-    Stop,
-}
-
 /// A currency support is offered in: its ISO code, how many digits its minor unit has, and the amounts
 /// offered for each cadence, in minor units (any other is typed).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,6 +297,9 @@ struct Started {
 struct Book {
     paid: Vec<i64>,
     monthly: bool,
+    /// Missing from a service older than stopping in the app.
+    #[serde(default)]
+    ends: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -313,10 +307,27 @@ struct Link {
     url: String,
 }
 
+#[derive(Deserialize)]
+struct Stopped {
+    ends: i64,
+    months: u32,
+}
+
+/// A monthly payment stopped: when it ends (Unix seconds; it can be kept going until then), how many
+/// months it paid for, and the settings saying so.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SupportStopped {
+    pub ends_s: i64,
+    pub months: u32,
+    pub change: Option<SettingChange>,
+}
+
 /// The supporter as the service last told it (`paid` oldest first), `login` kept.
-fn told(was: &Supporter, mut paid: Vec<i64>, monthly: bool) -> Supporter {
+fn told(was: &Supporter, book: Book) -> Supporter {
+    let mut paid = book.paid;
     paid.sort_unstable();
-    Supporter { login: was.login.clone(), paid, monthly }
+    Supporter { login: was.login.clone(), paid, monthly: book.monthly, ends: book.ends }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -340,7 +351,7 @@ impl Client {
             (None, Some(url)) => Payment::InBrowser { url },
             (None, None) => return Err(NetError::Parse { reason: "support start: no secret or url".into() }),
         };
-        let change = (started.login != login).then(|| self.settings().change(|p| crate::settings::StoredPrefs { support: Supporter { login: started.login, ..p.support.clone() }, ..p.clone() })).flatten();
+        let change = (started.login != login).then(|| self.supporter(|s| Supporter { login: started.login, ..s })).flatten();
         Ok(SupportStart { payment, change })
     }
 
@@ -352,23 +363,39 @@ impl Client {
             return Ok(None);
         }
         let book: Book = self.support_call("stamps", serde_json::json!({ "login": was.login })).await?;
-        let now = told(&was, book.paid, book.monthly);
+        let now = told(&was, book);
         Ok(self.settings().change(|p| crate::settings::StoredPrefs { support: now, ..p.clone() }))
     }
 
-    /// The address of Stripe's `page` for the monthly payment.
-    pub async fn support_page(&self, page: SupportPage) -> NetResult<String> {
+    /// The address of Stripe's page for the monthly payment's card and receipts.
+    pub async fn support_manage(&self) -> NetResult<String> {
         let login = self.settings().prefs(|p| p.support.login.clone());
-        let path = match page {
-            SupportPage::Manage => "manage",
-            SupportPage::Stop => "stop",
-        };
-        let link: Link = self.support_call(path, serde_json::json!({ "login": login })).await?;
+        let link: Link = self.support_call("manage", serde_json::json!({ "login": login })).await?;
         Ok(link.url)
+    }
+
+    /// Stops the monthly payment at the end of the month paid for.
+    pub async fn support_stop(&self) -> NetResult<SupportStopped> {
+        let login = self.settings().prefs(|p| p.support.login.clone());
+        let stopped: Stopped = self.support_call("stop", serde_json::json!({ "login": login, "in": "app" })).await?;
+        let change = self.supporter(|s| Supporter { monthly: false, ends: Some(stopped.ends), ..s });
+        Ok(SupportStopped { ends_s: stopped.ends, months: stopped.months, change })
+    }
+
+    /// Keeps a monthly payment set to stop going.
+    pub async fn support_keep(&self) -> NetResult<Option<SettingChange>> {
+        let login = self.settings().prefs(|p| p.support.login.clone());
+        let _: serde_json::Value = self.support_call("keep", serde_json::json!({ "login": login })).await?;
+        Ok(self.supporter(|s| Supporter { monthly: true, ends: None, ..s }))
     }
 }
 
 impl Client {
+    /// Changes the supporter in the settings: the change, None when nothing changed.
+    fn supporter(&self, to: impl FnOnce(Supporter) -> Supporter) -> Option<SettingChange> {
+        self.settings().change(|p| crate::settings::StoredPrefs { support: to(p.support.clone()), ..p.clone() })
+    }
+
     async fn support_call<T: serde::de::DeserializeOwned>(&self, path: &str, body: serde_json::Value) -> NetResult<T> {
         let base = SERVICE_URL.filter(|u| !u.is_empty()).ok_or_else(|| NetError::Parse { reason: "this build has no support service".into() })?;
         let request = Exchange { url: format!("{}/{path}", base.trim_end_matches('/')), json: Some(body.to_string()), timeout_ms: TIMEOUT_MS, ..Default::default() };
@@ -440,6 +467,15 @@ mod tests {
             assert_eq!(support_currency_for(region.into()), want, "{region}");
             assert!(support_currencies().iter().any(|c| c.code == want));
         }
+    }
+
+    #[test]
+    fn the_book_told_keeps_the_login_and_when_monthly_support_ends() {
+        let was = Supporter { login: "cus_1.k".into(), paid: vec![5], monthly: true, ends: None };
+        let book: Book = serde_json::from_str(r#"{"paid":[9,5],"monthly":false,"ends":1787227200}"#).unwrap();
+        assert_eq!(told(&was, book), Supporter { login: "cus_1.k".into(), paid: vec![5, 9], monthly: false, ends: Some(1_787_227_200) });
+        let older: Book = serde_json::from_str(r#"{"paid":[5],"monthly":true}"#).unwrap();
+        assert_eq!(told(&was, older).ends, None, "a service from before stopping in the app");
     }
 
     #[test]

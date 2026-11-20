@@ -1,7 +1,7 @@
 //! The Support page's calls: the stamp book and the build's support service, what is chosen (the core's
 //! `support_choice`), and paying through Stripe's Payment Element on the page.
 
-use nori_core::support::{support_choice, support_currencies, support_first_choice, support_service, support_stamps, Cadence, PayIn, Payment, SupportChoice, SupportPage, SupportPick, TypedAmount};
+use nori_core::support::{support_choice, support_currencies, support_first_choice, support_service, support_stamps, Cadence, PayIn, Payment, SupportChoice, SupportPick, TypedAmount};
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
 
@@ -35,8 +35,8 @@ impl Nori {
     }
 
     /// The build's support service (null without one: no page), the stamp book on that side of the equator
-    /// (`zone`'s), the season `month`/`day` stamps in, whether a monthly payment runs, the currencies offered
-    /// and what is first chosen in country `region`.
+    /// (`zone`'s), the season `month`/`day` stamps in, whether a monthly payment runs and when one set to stop
+    /// ends (Unix seconds), the currencies offered and what is first chosen in country `region`.
     pub fn support(&self, month: u32, day: u32, zone: String, region: String) -> String {
         let Some(service) = support_service() else { return "null".into() };
         let southern = nori_look::theme::southern(&zone);
@@ -48,6 +48,7 @@ impl Nori {
             "seals": seals,
             "next": nori_look::theme::season_now(month, day, southern).season as u8,
             "running": prefs.support.monthly,
+            "ends": prefs.support.ends,
             "currencies": support_currencies().iter().map(|c| c.code.clone()).collect::<Vec<_>>(),
             "first": chosen(&support_first_choice(region)),
         })
@@ -79,10 +80,24 @@ impl Nori {
         Ok(())
     }
 
-    /// Stripe's page for the monthly payment: its card and receipts, or (`stop`) stopping it.
-    pub async fn support_page(&self, stop: bool) -> Result<String, JsValue> {
+    /// Stripe's page for the monthly payment's card and receipts.
+    pub async fn support_manage(&self) -> Result<String, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        client.support_page(if stop { SupportPage::Stop } else { SupportPage::Manage }).await.map_err(said)
+        client.support_manage().await.map_err(said)
+    }
+
+    /// Stops the monthly payment at the end of the month paid for: how many months it paid for. The
+    /// settings keep when it ends.
+    pub async fn support_stop(&self) -> Result<u32, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        Ok(client.support_stop().await.map_err(said)?.months)
+    }
+
+    /// Keeps a monthly payment set to stop going.
+    pub async fn support_keep(&self) -> Result<(), JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        client.support_keep().await.map_err(said)?;
+        Ok(())
     }
 }
 

@@ -3258,6 +3258,39 @@ fn paired_devices_are_listed_picked_forgotten_and_paired_with_a_reason_when_not(
 }
 
 #[test]
+fn monthly_support_stops_and_keeps_going_in_the_app() {
+    let mut a = app();
+    a.support = crate::support::Support::new("PL");
+    a.prefs.support = nori_core::settings::Supporter { login: "cus_1.k".into(), paid: vec![1_792_065_600], monthly: true, ends: None };
+    a.go(View::Support);
+    // The monthly payment is the first line: enter offers its card and receipts, then stopping it.
+    let s = draw(&mut a, 90, 30);
+    dump("support-monthly", &s);
+    assert!(s.contains("Monthly support") && s.contains("On ›"));
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(&a.overlay, Some(Overlay::Picker { target: Target::SupportMonthly, options, .. }) if options.iter().map(|o| o.1.as_str()).eq(["card", "stop"])));
+    dump("support-monthly-picker", &draw(&mut a, 90, 30));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds, [Cmd::SupportMonthly { stop: true }]);
+    a.handle(Msg::SupportMonthly(Ok(Some(9))));
+    assert!(a.note.as_ref().is_some_and(|n| n.0 == "Thank you for 9 months of support."));
+    // Set to stop, it says when it ends and offers keeping it going instead.
+    a.prefs.support = nori_core::settings::Supporter { monthly: false, ends: Some(1_797_768_000), ..a.prefs.support.clone() };
+    let s = draw(&mut a, 90, 30);
+    dump("support-monthly-ends", &s);
+    assert!(s.contains("Ends December 20"));
+    a.support.sel.at = 0;
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(&a.overlay, Some(Overlay::Picker { options, .. }) if options.iter().map(|o| o.1.as_str()).eq(["card", "keep"])));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds, [Cmd::SupportMonthly { stop: false }]);
+}
+
+#[test]
 fn support_types_other_picks_a_currency_and_gives_in_the_browser() {
     let mut a = app();
     a.support = crate::support::Support::new("PL");

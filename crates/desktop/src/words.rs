@@ -1169,7 +1169,17 @@ pub fn support_limit(c: &nori_core::support::SupportChoice) -> String {
     }
 }
 
-/// Why the support service could not start a payment or open the monthly one's page.
+/// When a monthly payment set to stop ends, on `day`.
+pub fn support_ends(day: &str) -> String {
+    format!("Ends {day}")
+}
+
+/// The thanks for the `n` months a monthly payment that just stopped paid for.
+pub fn support_thanks_months(n: u32) -> String {
+    if n == 1 { "Thank you for a month of support.".into() } else { format!("Thank you for {n} months of support.") }
+}
+
+/// Why the support service could not start a payment, stop or keep the monthly one, or open its page.
 pub fn support_failed(e: &NetError) -> String {
     match e {
         NetError::Http { status: 409 } => "Your monthly support is in another currency".into(),

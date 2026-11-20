@@ -173,8 +173,10 @@ pub enum Cmd {
     SupportGive(Box<nori_core::support::SupportChoice>),
     /// Asks the support service what this app has paid.
     SupportRefresh,
-    /// Opens Stripe's page for the monthly payment.
-    SupportPage(nori_core::support::SupportPage),
+    /// Opens Stripe's page for the monthly payment's card and receipts.
+    SupportCard,
+    /// Stops the monthly payment (`stop`) or keeps one set to stop going.
+    SupportMonthly { stop: bool },
     /// Reads back the downloads an analysis was offered for (`Session::analyse_downloads`).
     AnalyseDownloads,
     Mouse(bool),
@@ -304,7 +306,8 @@ impl Cmd {
             Cmd::CheckUpdate => "check update".into(),
             Cmd::SupportGive(c) => format!("support give {:?} {}", c.amount, c.currency.code),
             Cmd::SupportRefresh => "support refresh".into(),
-            Cmd::SupportPage(page) => format!("support page {page:?}"),
+            Cmd::SupportCard => "support card".into(),
+            Cmd::SupportMonthly { stop } => format!("support monthly stop {stop}"),
             Cmd::AnalyseDownloads => "analyse downloads".into(),
             Cmd::SoundPage(page, on) => format!("sound page {page:?} {on}"),
             Cmd::Mouse(on) => format!("mouse {on}"),
@@ -1149,6 +1152,8 @@ pub enum Target {
     SupportOther,
     /// The Support page's currency.
     SupportCurrency,
+    /// What to do with the monthly payment: its card and receipts, stopping it or keeping it going.
+    SupportMonthly,
 }
 
 impl Target {
@@ -1192,7 +1197,7 @@ impl Target {
             }
             Target::Identity => value.parse().ok().map(Cmd::ChooseIdentity),
             // The Support page keeps these itself.
-            Target::SupportOther | Target::SupportCurrency => None,
+            Target::SupportOther | Target::SupportCurrency | Target::SupportMonthly => None,
             Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
             Target::Plugin { plugin, row, kind } => {
                 use nori_plugins::{RowKind, Value};
@@ -1835,8 +1840,9 @@ impl App {
                 self.support.gave(url, seals);
                 self.dirty = true;
             }
-            Msg::SupportGiven(Ok(None)) | Msg::SupportPage(Ok(_)) => {}
-            Msg::SupportGiven(Err(e)) | Msg::SupportPage(Err(e)) => self.say(e, true),
+            Msg::SupportGiven(Ok(None)) | Msg::SupportCard(Ok(_)) | Msg::SupportMonthly(Ok(None)) => self.dirty = true,
+            Msg::SupportMonthly(Ok(Some(months))) => self.say(crate::text::support_thanks_months(months), false),
+            Msg::SupportGiven(Err(e)) | Msg::SupportCard(Err(e)) | Msg::SupportMonthly(Err(e)) => self.say(e, true),
             // The runner has read the settings again.
             // A seal more than the page saw is thanked for, the newest when several came at once.
             Msg::SupportRefreshed => {
@@ -2612,6 +2618,10 @@ impl App {
                                 self.support.currency(value);
                                 None
                             }
+                            Target::SupportMonthly => {
+                                self.cmds.push(if value == "card" { Cmd::SupportCard } else { Cmd::SupportMonthly { stop: value == "stop" } });
+                                None
+                            }
                             Target::Scrobbling(profile) if value == "add" => Some(crate::text::scrobbler_kinds(profile)),
                             Target::ScrobblerKind(profile) => {
                                 let kind = nori_core::settings::ScrobblerKind::from_id(&value);
@@ -2929,7 +2939,7 @@ impl App {
                 }
                 match self.view {
                     View::Equalizer => self.eq_step(up),
-                    View::Support => self.support.step(self.prefs.support.monthly, up),
+                    View::Support => self.support.step(&self.prefs.support, up),
                     View::Settings => {
                         let cmds = self.settings.step(up);
                         self.cmds.extend(cmds);
@@ -3157,7 +3167,7 @@ impl App {
                 (&mut self.downloads_sel, len)
             }
             View::Equalizer => (&mut self.eq_sel, crate::settings_view::eq_rows(&self.prefs).len()),
-            View::Support => (&mut self.support.sel, crate::support::Support::lines(self.prefs.support.monthly).len()),
+            View::Support => (&mut self.support.sel, crate::support::Support::lines(&self.prefs.support).len()),
             View::Settings => {
                 self.settings.pages(&self.prefs);
                 return Some(self.settings.list());
@@ -3363,7 +3373,7 @@ impl App {
             }
             Focus::Main if self.page().is_none() && self.view == View::Support => {
                 if a == Action::Open {
-                    match self.support.open(self.prefs.support.monthly) {
+                    match self.support.open(&self.prefs.support) {
                         Some(crate::settings_view::Opened::Cmds(c)) => self.cmds.extend(c),
                         Some(crate::settings_view::Opened::Overlay(o)) => self.overlay = Some(o),
                         _ => {}

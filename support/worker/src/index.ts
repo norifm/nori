@@ -160,13 +160,17 @@ async function stamps(env: Env, body: any): Promise<object> {
     if (!page.has_more) break;
     after = page.data[page.data.length - 1].id;
   }
-  return { paid: paid.sort((a, b) => a - b), monthly: !!(await running(env, customer.id)) };
+  const { running, stopping } = await monthly(env, customer.id);
+  return { paid: paid.sort((a, b) => a - b), monthly: !!running, ends: stopping?.cancel_at ?? null };
 }
 
-/** The customer's monthly payment that goes on next month: active and not set to stop. */
-async function running(env: Env, customer: string): Promise<any | undefined> {
+/**
+ * The customer's monthly payment that goes on next month (active, not set to stop), and one set to stop
+ * at the end of the month paid for, which can still be kept going.
+ */
+async function monthly(env: Env, customer: string): Promise<{ running?: any; stopping?: any }> {
   const subs = await stripe(env, "GET", "subscriptions", { customer, status: "active", limit: 10 });
-  return subs.data.find((s: any) => !s.cancel_at_period_end);
+  return { running: subs.data.find((s: any) => !s.cancel_at_period_end), stopping: subs.data.find((s: any) => s.cancel_at_period_end) };
 }
 
 /**
@@ -213,11 +217,19 @@ async function manage(env: Env, origin: string, body: any): Promise<object> {
   return { url: session.url };
 }
 
-/** Stripe's page stopping the monthly payment, which then thanks for the months given; 404 when none runs. */
+/**
+ * Stops the monthly payment at the end of the month paid for: in the app (`in: "app"`), when it ends and
+ * how many months it paid for; else Stripe's page doing it, which then thanks for the months given (builds
+ * from before the app stopped it itself). 404 when none runs.
+ */
 async function stop(env: Env, origin: string, body: any): Promise<object> {
   const customer = await customerOf(env, body.login);
-  const sub = await running(env, customer.id);
+  const sub = (await monthly(env, customer.id)).running;
   if (!sub) throw new Failed(404, "no monthly payment");
+  if (body.in === "app") {
+    const stopped = await stripe(env, "POST", `subscriptions/${sub.id}`, { cancel_at_period_end: true });
+    return { ends: stopped.cancel_at, months: await monthsPaid(env, customer.id) };
+  }
   const session = await stripe(env, "POST", "billing_portal/sessions", {
     customer: customer.id,
     configuration: await portal(env, origin, "stop"),
@@ -228,6 +240,15 @@ async function stop(env: Env, origin: string, body: any): Promise<object> {
     "flow_data[after_completion][hosted_confirmation][custom_message]": thanksFor(await monthsPaid(env, customer.id)),
   });
   return { url: session.url };
+}
+
+/** Keeps a monthly payment set to stop going; 404 when none is. */
+async function keep(env: Env, body: any): Promise<object> {
+  const customer = await customerOf(env, body.login);
+  const sub = (await monthly(env, customer.id)).stopping;
+  if (!sub) throw new Failed(404, "no monthly payment stopping");
+  await stripe(env, "POST", `subscriptions/${sub.id}`, { cancel_at_period_end: false });
+  return {};
 }
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" };
@@ -299,6 +320,7 @@ export default {
         case "/stamps": return json(200, await stamps(env, body));
         case "/manage": return json(200, await manage(env, url.origin, body));
         case "/stop": return json(200, await stop(env, url.origin, body));
+        case "/keep": return json(200, await keep(env, body));
         default: return json(404, { error: "not found" });
       }
     } catch (e) {

@@ -68,6 +68,9 @@ pub enum Msg {
     SupportGiven(Result<Option<String>, String>),
     /// The support service told what this app has paid; the settings keep it.
     SupportRefreshed,
+    /// The monthly payment stopped (the months it paid for) or was kept going (None); or what to say of why
+    /// not. The settings keep what changed.
+    SupportMonthly(Result<Option<u32>, String>),
     /// The account's sign-in answered.
     SignedIn(nori_core::providers::SignInResult),
     /// A scrobbling account for profile `profile` signed in, or why not.
