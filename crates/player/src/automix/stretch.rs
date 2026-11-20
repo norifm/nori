@@ -10,15 +10,27 @@
 pub const BLOCK: usize = 256;
 /// Ratio bounds; the minimum bounds the output of one block.
 const MIN_RATIO: f64 = 0.5;
+/// The most knots a schedule follows: a beat each over a long mix and the ease after it.
+pub const MAX_KNOTS: usize = 512;
 const MAX_RATIO: f64 = 2.0;
 const MAX_OUT: usize = (BLOCK as f64 / MIN_RATIO) as usize + 8;
 /// Crossfade from the stretched to the plain signal, frames.
 const XFADE: usize = 1024;
+/// Back at ratio 1 the vocoder's phases are turned to the input's ([`nori_stretch::Stretch::set_relock`]) before
+/// the crossfade, so it blends two equal signals: by up to this many radians per hop. The turn detunes a partial by
+/// `RELOCK / (2π · hop)` while it lasts (0.4 Hz), and a faster one dips the bass, ...
+const RELOCK: f32 = 0.1;
+/// ... until a block's difference from the plain signal is this share of its energy (-40 dB), ...
+const RELOCKED: f32 = 1e-4;
+/// ... or for at most this many hops (2 s).
+const RELOCK_HOPS: f64 = 50.0;
 /// Signalsmith Stretch's analysis hop in the preset used, seconds (`presetCheaper`: 40 ms).
 const SIGNALSMITH_HOP_S: f64 = 0.04;
 /// The smallest ratio offset Signalsmith Stretch follows cleanly, in frames per hop: closer to 1 it loses up to
 /// 2.6 dB. Such ratios are snapped to 1 or to this offset (0.07 % of tempo at 44.1 kHz).
 const SIGNALSMITH_CLEAR_FRAMES: f64 = 2.5;
+/// Transposed, frequencies above this move by a fixed amount rather than in proportion, which keeps the highs clean.
+const TONALITY_HZ: f32 = 8_000.0;
 pub(crate) const MAX_CHANNELS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -49,6 +61,8 @@ enum Engine {
 pub struct Stretcher {
     ch: usize,
     engine: Engine,
+    /// A schedule of (output frame, ratio) knots, linear between them, that rules the ratio when not empty.
+    knots: Vec<(u64, f64)>,
     ratio0: f64,
     /// The ratio the schedule ends at; 1 hands over to the plain signal.
     to: f64,
@@ -80,6 +94,34 @@ pub struct Stretcher {
     /// taken by [`Stretcher::take_content`].
     given: u64,
     content: f64,
+    /// The key schedule: semitones for `hold` output frames, then a linear glide to none over `ramp`.
+    key: KeySchedule,
+    /// The transposition the engine was last given, semitones, and its tonality limit (of the sample rate).
+    keyed: f32,
+    tonality: f32,
+}
+
+#[derive(Clone, Copy, Default)]
+struct KeySchedule {
+    semitones: f32,
+    hold: u64,
+    ramp: u64,
+}
+
+impl KeySchedule {
+    fn at(&self, frame: u64) -> f32 {
+        if frame < self.hold {
+            self.semitones
+        } else if frame < self.hold + self.ramp {
+            self.semitones * (1.0 - (frame - self.hold) as f32 / self.ramp as f32)
+        } else {
+            0.0
+        }
+    }
+
+    fn end(&self) -> u64 {
+        if self.semitones == 0.0 { 0 } else { self.hold + self.ramp }
+    }
 }
 
 #[inline]
@@ -158,6 +200,7 @@ impl Stretcher {
         Stretcher {
             ch,
             engine,
+            knots: Vec::with_capacity(MAX_KNOTS),
             ratio0: 1.0,
             to: 1.0,
             hold: 0,
@@ -180,6 +223,9 @@ impl Stretcher {
             hop,
             given: 0,
             content: 0.0,
+            key: KeySchedule::default(),
+            keyed: 0.0,
+            tonality: TONALITY_HZ / rate.max(8000) as f32,
         }
     }
 
@@ -187,9 +233,14 @@ impl Stretcher {
     /// linear ramp to 1 over `ramp` output frames, then the hand-over. Resets the engine.
     pub fn configure(&mut self, ratio: f64, hold: u64, ramp: u64) {
         let ratio = bounded(ratio);
+        if let Engine::Signalsmith(s) = &mut self.engine {
+            s.set_relock(0.0);
+        }
         (self.ratio0, self.to, self.hold, self.ramp, self.out_pos, self.frac) = (ratio, 1.0, hold, ramp, 0, 0.0);
+        self.knots.clear();
         (self.pend_read, self.pend_len, self.raw_pos) = (0, 0, 0);
         (self.given, self.content) = (0, 0.0);
+        self.key = KeySchedule::default();
         self.raw.fill(0.0);
         if (ratio - 1.0).abs() < 1e-6 && ramp == 0 {
             self.state = State::Direct;
@@ -200,6 +251,8 @@ impl Stretcher {
         match &mut self.engine {
             Engine::Signalsmith(s) => {
                 s.reset();
+                s.set_transpose_factor(1.0, None);
+                self.keyed = 0.0;
                 // Output frame j holds input (j - out_latency) * ratio - in_latency: drop the difference once.
                 self.drop = (s.input_latency() as f64 / ratio + s.output_latency() as f64).round() as usize;
                 self.lead = s.output_latency() as u64;
@@ -222,6 +275,39 @@ impl Stretcher {
         if let Engine::Signalsmith(_) = self.engine {
             self.state = State::Entering(0);
         }
+    }
+
+    /// Starts following `knots` (output frame, ratio; at most [`MAX_KNOTS`], the rest dropped) from the next frame,
+    /// linear between them and the last one's ratio after; a last ratio of 1 hands over to the plain signal once
+    /// reached. Allocates nothing.
+    pub fn follow(&mut self, knots: &[(u64, f64)]) {
+        let (first, last) = (knots.first().map_or(1.0, |k| k.1), knots.last().map_or((0, 1.0), |k| *k));
+        // Never the direct path: the schedule is the stretcher's to keep.
+        self.configure(first, last.0, 1);
+        self.to = bounded(last.1);
+        self.knots.extend(knots.iter().take(MAX_KNOTS).map(|&(at, r)| (at, bounded(r))));
+    }
+
+    /// After a [`Stretcher::glide`]: follows `knots` (output frame, ratio; at most [`MAX_KNOTS`]) in place of its ramp,
+    /// the last one's ratio after. Allocates nothing.
+    pub fn along(&mut self, knots: &[(u64, f64)]) {
+        self.knots.clear();
+        self.knots.extend(knots.iter().take(MAX_KNOTS).map(|&(at, r)| (at, bounded(r))));
+        if let Some(&(_, r)) = self.knots.last() {
+            self.to = r;
+        }
+    }
+
+    /// After a schedule is set: transposes by `semitones` for `hold` output frames, then glides back to the song's own
+    /// key over `ramp`, the stretcher kept on until then. Varispeed cannot transpose: there it does nothing.
+    pub fn transpose(&mut self, semitones: f32, hold: u64, ramp: u64) {
+        if !matches!(self.engine, Engine::Signalsmith(_)) || semitones == 0.0 {
+            return;
+        }
+        if self.state == State::Direct {
+            self.configure(self.ratio0, self.hold, self.ramp.max(1));
+        }
+        self.key = KeySchedule { semitones, hold, ramp };
     }
 
     /// Feeds the input just before a [`Stretcher::glide`], oldest first, as its history; at least
@@ -277,6 +363,15 @@ impl Stretcher {
 
     /// The ratio the schedule gives output frame `at`.
     fn schedule(&self, at: u64) -> f64 {
+        if let (Some(&(f0, r0)), Some(&(_, rn))) = (self.knots.first(), self.knots.last()) {
+            if at <= f0 {
+                return r0;
+            }
+            let i = self.knots.partition_point(|k| k.0 <= at);
+            let Some(&(f1, r1)) = self.knots.get(i) else { return rn };
+            let (fa, ra) = self.knots[i - 1];
+            return ra + (r1 - ra) * (at - fa) as f64 / (f1 - fa).max(1) as f64;
+        }
         if at < self.hold {
             self.ratio0
         } else if at < self.hold + self.ramp {
@@ -311,10 +406,19 @@ impl Stretcher {
         let ch = self.ch;
         let n = input.len() / ch;
         let r = self.ratio_now();
-        if r == 1.0 && self.to == 1.0 && self.state == State::Active && self.out_pos >= self.hold + self.ramp + (self.latency + BLOCK) as u64 {
-            self.state = State::Fading(0);
-            if let Engine::Vari(v) = &mut self.engine {
-                v.phase = v.pos - v.pos.round();
+        // Back at ratio 1 in its own key the vocoder's phases turn to the input's; from `settled` on everything in
+        // flight was made at 1.
+        let done = (self.hold + self.ramp).max(self.key.end());
+        let back = r == 1.0 && self.to == 1.0 && self.state == State::Active && self.out_pos >= done;
+        let settled = done + (self.latency + BLOCK) as u64;
+        let mut relocked = false;
+        match &mut self.engine {
+            Engine::Signalsmith(s) => s.set_relock(if back || matches!(self.state, State::Fading(_)) { RELOCK } else { 0.0 }),
+            Engine::Vari(v) => {
+                if back && self.out_pos >= settled {
+                    self.state = State::Fading(0);
+                    v.phase = v.pos - v.pos.round();
+                }
             }
         }
         let produced = match self.state {
@@ -333,6 +437,11 @@ impl Stretcher {
                 let fade = if let State::Fading(done) = self.state { Some((done, XFADE)) } else { None };
                 let made = match &mut self.engine {
                     Engine::Signalsmith(s) => {
+                        let key = self.key.at((self.synth + self.lead).saturating_sub(self.drop_total));
+                        if key != self.keyed {
+                            s.set_transpose_factor(2f32.powf(key / 12.0), Some(self.tonality));
+                            self.keyed = key;
+                        }
                         let want = n as f64 / r + self.frac;
                         let m = (want.floor() as usize).min(MAX_OUT);
                         self.frac = want - m as f64;
@@ -358,6 +467,17 @@ impl Stretcher {
                                 }
                             }
                         }
+                        if back && self.out_pos >= settled {
+                            let (made, plain) = (&self.pend[..m * ch], &self.stage[..m * ch]);
+                            let diff: f32 = made.iter().zip(plain).map(|(a, b)| (a - b) * (a - b)).sum();
+                            let energy: f32 = plain.iter().map(|v| v * v).sum();
+                            relocked = diff <= RELOCKED * energy || self.out_pos >= settled + (RELOCK_HOPS * self.hop) as u64;
+                        }
+                        // A pitch-keeping stretch loosens how the partials line up, so a master limited to full
+                        // scale peaks over it: rounded off under it, as the song itself peaks.
+                        for v in &mut self.pend[..m * ch] {
+                            *v = crate::stage::ceiling(*v);
+                        }
                         if let State::Entering(done) = self.state {
                             let done = done + m.saturating_sub(self.drop.min(m));
                             self.state = if done >= XFADE { State::Active } else { State::Entering(done) };
@@ -376,6 +496,9 @@ impl Stretcher {
                             v.phase = 0.0;
                         }
                     }
+                }
+                if relocked {
+                    self.state = State::Fading(0);
                 }
                 made
             }
@@ -568,14 +691,17 @@ mod tests {
         out
     }
 
-    /// Noise through a stretch of `ratio` held for `hold` s and ramped back over `ramp` s, then handed over: its
-    /// level every 100 ms against the noise's own, dB.
-    fn noise_levels(keep: bool, ratio: f64, hold: f64, ramp: f64) -> Vec<f64> {
+    /// `x` (stereo, 44.1 kHz) through a stretch of `ratio` held for `hold` s and ramped back over `ramp` s, then
+    /// handed over.
+    fn stretched(x: &[f32], keep: bool, ratio: f64, hold: f64, ramp: f64) -> Vec<f32> {
         let rate = 44100;
         let mut s = Stretcher::new(rate, 2, keep);
         s.configure(ratio, (hold * rate as f64) as u64, (ramp * rate as f64) as u64);
-        let mut r = crate::automix::eval::Rng(5);
-        let x: Vec<f32> = (0..((hold + ramp + 3.0) * rate as f64) as usize * 2).map(|_| (r.signed() * 0.3) as f32).collect();
+        played(&mut s, x)
+    }
+
+    /// Stereo `x` through `s` as the engine plays it: the plain input once it is bypassed, what is left drained.
+    fn played(s: &mut Stretcher, x: &[f32]) -> Vec<f32> {
         let mut out = Vec::new();
         let mut buf = vec![0f32; 2048 * 2];
         let mut pos = 0;
@@ -599,9 +725,64 @@ mod tests {
                 }
             }
         }
-        let power = |v: &[f32]| v.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / v.len() as f64;
+        out
+    }
+
+    /// Transposed two semitones for two seconds, then back over two: a tone moves up and comes back to its own pitch,
+    /// the stretcher bypassed once it has.
+    #[test]
+    fn a_key_shift_moves_the_pitch_and_comes_back() {
+        let rate = 44100;
+        let x: Vec<f32> = (0..rate * 8).flat_map(|i| [0.3 * (std::f32::consts::TAU * 440.0 * i as f32 / rate as f32).sin(); 2]).collect();
+        let mut s = Stretcher::new(rate as u32, 2, true);
+        s.configure(1.0, 0, 0);
+        s.transpose(2.0, 2 * rate as u64, 2 * rate as u64);
+        let y = played(&mut s, &x);
+        let hz = |from: f64| {
+            let (a, b) = ((from * rate as f64) as usize, ((from + 0.5) * rate as f64) as usize);
+            y[a * 2..b * 2].chunks(2).collect::<Vec<_>>().windows(2).filter(|w| w[0][0] <= 0.0 && w[1][0] > 0.0).count() as f64 / 0.5
+        };
+        let up = 440.0 * 2f64.powf(2.0 / 12.0);
+        assert!((hz(1.0) - up).abs() < 4.0, "shifted: {:.1} Hz, not {up:.1}", hz(1.0));
+        assert!((hz(6.0) - 440.0).abs() < 4.0, "back: {:.1} Hz", hz(6.0));
+        assert!(s.bypassed() && y.len() == x.len(), "handed back to the plain song");
+    }
+
+    fn power(v: &[f32]) -> f64 {
+        v.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / v.len() as f64
+    }
+
+    /// Noise through [`stretched`]: its level every 100 ms against the noise's own, dB.
+    fn noise_levels(keep: bool, ratio: f64, hold: f64, ramp: f64) -> Vec<f64> {
+        let mut r = crate::automix::eval::Rng(5);
+        let x: Vec<f32> = (0..((hold + ramp + 3.0) * 44100.0) as usize * 2).map(|_| (r.signed() * 0.3) as f32).collect();
         let own = power(&x);
-        out.chunks(4410 * 2).filter(|c| c.len() == 4410 * 2).map(|c| 10.0 * (power(c) / own).log10()).collect()
+        stretched(&x, keep, ratio, hold, ramp).chunks(4410 * 2).filter(|c| c.len() == 4410 * 2).map(|c| 10.0 * (power(c) / own).log10()).collect()
+    }
+
+    /// A master limited to full scale, stretched: the stretch loosens how its partials line up, which raised its peaks
+    /// 1.5 dB over full scale, so a limiter after pulled the song down and pumped while it was stretched. Its peaks stay
+    /// under full scale and its level holds.
+    #[test]
+    fn a_loud_master_stays_under_full_scale() {
+        // Partials and a little noise, driven into full scale: a few hundredths of the samples flattened there.
+        let mut r = crate::automix::eval::Rng(9);
+        let parts = [(110.0, 0.5), (220.0, 0.35), (330.0, 0.3), (523.0, 0.25), (1250.0, 0.15), (2900.0, 0.1)];
+        let x: Vec<f32> = (0..44100 * 8)
+            .flat_map(|i| {
+                let t = i as f64 / 44100.0;
+                let tone: f64 = parts.iter().enumerate().map(|(k, (hz, a))| a * (core::f64::consts::TAU * hz * t + k as f64).sin()).sum();
+                let v = ((tone + 0.15 * r.signed()) * 0.75).clamp(-0.99, 0.99) as f32;
+                [v, v]
+            })
+            .collect();
+        for ratio in [0.95, 1.002, 1.08] {
+            let y = stretched(&x, true, ratio, 10.0, 0.0);
+            let held = &y[44100 * 2..44100 * 7 * 2];
+            let peak = held.iter().fold(0f32, |m, v| m.max(v.abs()));
+            let level = 10.0 * (power(held) / power(&x)).log10();
+            assert!(peak <= 1.0 && level > -0.5, "ratio {ratio}: peaks at {:+.2} dBFS, level {level:+.2} dB", 20.0 * peak.log10());
+        }
     }
 
     #[test]
@@ -796,6 +977,91 @@ mod tests {
             let want = hold as f64 + ramp * (1.0 + to) / 2.0 + (made - ramp) * to;
             assert!((content - want).abs() < 0.002 * want, "keep_pitch {keep}: {content:.0} frames of the song, {want:.0} expected");
         }
+    }
+
+    /// The left channel through two 250 Hz Butterworth low-passes (RBJ biquads).
+    fn bass(x: &[f32]) -> Vec<f64> {
+        let w = 2.0 * std::f64::consts::PI * 250.0 / 44_100.0;
+        let alpha = w.sin() / std::f64::consts::SQRT_2;
+        let a0 = 1.0 + alpha;
+        let b = [(1.0 - w.cos()) / 2.0 / a0, (1.0 - w.cos()) / a0, (1.0 - w.cos()) / 2.0 / a0];
+        let a = [-2.0 * w.cos() / a0, (1.0 - alpha) / a0];
+        let mut y: Vec<f64> = x.iter().step_by(2).map(|v| *v as f64).collect();
+        for _ in 0..2 {
+            let mut s = [0.0; 2];
+            for v in &mut y {
+                let o = b[0] * *v + s[0];
+                s[0] = b[1] * *v - a[0] * o + s[1];
+                s[1] = b[2] * *v - a[1] * o;
+                *v = o;
+            }
+        }
+        y
+    }
+
+    /// Sustained bass under a few partials and a little noise, stereo.
+    fn bass_line(frames: usize) -> Vec<f32> {
+        let mut r = crate::automix::eval::Rng(9);
+        (0..frames)
+            .flat_map(|i| {
+                let t = i as f64 / 44_100.0;
+                let tone = |f: f64, a: f64| a * (2.0 * std::f64::consts::PI * f * t).sin();
+                let v = tone(55.0, 0.3) + tone(82.4, 0.2) + tone(440.0, 0.05) + tone(659.3, 0.04) + tone(1318.5, 0.02);
+                let v = (v + r.signed() * 0.01) as f32;
+                [v, v]
+            })
+            .collect()
+    }
+
+    /// Through the hand-over back from a stretch the bass keeps its level, whatever phase the stretch left it at.
+    #[test]
+    fn hand_over_keeps_the_bass() {
+        let rate = 44_100usize;
+        let mut levels = Vec::new();
+        for (ratio, hold) in [(1.03, 1.0), (0.97, 1.3), (1.05, 0.7), (0.95, 1.6), (1.02, 2.1), (1.06, 1.15)] {
+            let x = bass_line(rate * 10);
+            let mut s = Stretcher::new(rate as u32, 2, true);
+            let (hold, ramp) = ((hold * rate as f64) as usize, rate / 2);
+            s.configure(ratio, hold as u64, ramp as u64);
+            let settled = hold + ramp + s.latency_frames() + BLOCK;
+            let mut buf = vec![0f32; 2048 * 2];
+            let (mut out, mut pos) = (Vec::new(), 0);
+            while pos < x.len() && !s.bypassed() {
+                let (u, m) = s.process(&x[pos..(pos + 512 * 2).min(x.len())], &mut buf);
+                out.extend_from_slice(&buf[..m * 2]);
+                pos += u * 2;
+            }
+            let bypassed_at = out.len() / 2;
+            assert!(bypassed_at < settled + rate * 3 / 2, "ratio {ratio}: handed over {} frames after settling", bypassed_at - settled);
+            loop {
+                let m = s.drain(&mut buf);
+                out.extend_from_slice(&buf[..m * 2]);
+                if m * 2 < buf.len() {
+                    break;
+                }
+            }
+            out.extend_from_slice(&x[pos..]);
+            // At ratio 1 output frame `j` plays input frame `song(j)`.
+            let song = |j: usize| (j as isize + (x.len() as isize - out.len() as isize) / 2) as usize;
+            assert!(out[bypassed_at * 2..] == x[song(bypassed_at) * 2..], "ratio {ratio}: not the input after the hand-over");
+            let (low_out, low_in) = (bass(&out), bass(&x));
+            let energy = |v: &[f64]| v.iter().map(|v| v * v).sum::<f64>();
+            let worst = |dbs: &mut dyn Iterator<Item = f64>| dbs.fold(0.0, |m: f64, db| if db.abs() > m.abs() { db } else { m });
+            // From the crossfade on, every 256 frames against the input at the same song time; the crossfade starts in
+            // the block that ends its first `XFADE` frames.
+            let crossfade = worst(&mut ((bypassed_at - XFADE - BLOCK) / 256..(bypassed_at + rate) / 256)
+                .map(|w| 10.0 * (energy(&low_out[w * 256..(w + 1) * 256]) / energy(&low_in[song(w * 256)..song((w + 1) * 256)])).log10()));
+            // Before it the phases differ from the input's, so over one beat of the two bass notes (two periods of
+            // 55 Hz, three of 82.4), whose level does not depend on their phases.
+            let beat = 1605;
+            let own = energy(&low_in[rate..rate + beat]);
+            let relock = worst(&mut (hold + ramp - rate / 2..bypassed_at).step_by(128).map(|f| 10.0 * (energy(&low_out[f..f + beat]) / own).log10()));
+            levels.push((ratio, (crossfade * 100.0).round() / 100.0, (relock * 100.0).round() / 100.0));
+        }
+        assert!(
+            levels.iter().all(|(_, crossfade, relock)| crossfade.abs() < 1.0 && relock.abs() < 1.0),
+            "the bass off its own level (ratio, in the crossfade, before it), dB: {levels:?}"
+        );
     }
 
     #[test]

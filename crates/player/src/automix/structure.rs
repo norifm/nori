@@ -104,6 +104,30 @@ fn lag_similarity(rows: &[Vec<f64>], lag: usize) -> f64 {
     total / (centred.len() - lag) as f64
 }
 
+/// Which of every `meter` of `beats` (seconds, in order) starts a bar: the one the kick rises on and the chords change
+/// on most, as [`downbeat`] reads them on a grid. A list of beats keeps its bars where a band drifts off any grid.
+pub(crate) fn bar_phase(f: &Features, beats: &[f64], meter: usize) -> usize {
+    if meter < 2 || beats.len() < 2 * meter + 2 {
+        return 0;
+    }
+    let rise = low_rise(f);
+    let (mut kick, mut change) = (Vec::with_capacity(beats.len()), Vec::with_capacity(beats.len()));
+    for i in 1..beats.len() - 1 {
+        let reach = (((beats[i + 1] - beats[i]) / 8.0) * f.fps).round().max(1.0) as isize;
+        kick.push(peak_near(&rise, frame_of(f, beats[i]), reach));
+        let (before, after) = (chroma_between(f, beats[i - 1], beats[i]), chroma_between(f, beats[i], beats[i + 1]));
+        change.push(1.0 - after.iter().zip(&before).map(|(a, b)| a * b).sum::<f64>());
+    }
+    z(&mut kick);
+    z(&mut change);
+    let mut score = vec![(0.0, 0usize); meter];
+    for (k, (a, b)) in kick.iter().zip(&change).enumerate() {
+        let s = &mut score[(k + 1) % meter];
+        (s.0, s.1) = (s.0 + a + b, s.1 + 1);
+    }
+    (0..meter).max_by(|x, y| (score[*x].0 / score[*x].1.max(1) as f64).total_cmp(&(score[*y].0 / score[*y].1.max(1) as f64))).unwrap_or(0)
+}
+
 /// Downbeat phase and metre over `music` (seconds). `meter` is the bar length when already known.
 pub fn downbeat(t: &Tempo, f: &Features, music: (f64, f64), meter: Option<i64>) -> Downbeat {
     if t.period_s <= 0.0 || t.bpm <= 0.0 {
@@ -579,6 +603,14 @@ pub(crate) fn key_distance(a: i32, b: i32) -> Option<i32> {
     Some(d.min(12 - d) + ((a > 12) != (b > 12)) as i32)
 }
 
+/// Camelot `code` transposed `semitones`: a semitone moves it seven steps round the wheel, the mode kept.
+pub(crate) fn transposed_key(code: i32, semitones: i32) -> i32 {
+    if !(1..=24).contains(&code) {
+        return code;
+    }
+    ((code - 1) % 12 + 7 * semitones).rem_euclid(12) + 1 + if code > 12 { 12 } else { 0 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,6 +628,8 @@ mod tests {
         assert_eq!(key_distance(camelot(0, false), camelot(7, false)), Some(1), "a fifth up");
         assert_eq!(key_distance(camelot(0, false), camelot(6, false)), Some(6), "tritone");
         assert_eq!(key_distance(camelot(0, false), camelot(0, false)), Some(0));
+        assert_eq!(transposed_key(camelot(0, false), 2), camelot(2, false), "C major up two is D major");
+        assert_eq!(transposed_key(camelot(9, true), -1), camelot(8, true), "A minor down one is G# minor");
         assert_eq!(key_distance(0, 5), None);
     }
 

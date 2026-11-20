@@ -635,7 +635,7 @@ fn simulated(songs: &[(&str, &[i16])], prefs: TransitionPrefs) -> Vec<i16> {
 }
 
 fn crossfade(secs: i32) -> TransitionPrefs {
-    TransitionPrefs { crossfade_s: secs, keep_albums: true, ..prefs_off() }
+    TransitionPrefs { crossfade_s: secs, ..prefs_off() }
 }
 
 #[test]
@@ -2165,21 +2165,22 @@ fn beyond_dither(heard: &[i16], ideal: &[i16]) -> Option<usize> {
 
 // ---- settings changed while music plays ----
 
-/// A shared `sim::App` the test changes while the engine plays.
+/// A shared `sim::App` the test changes while the engine plays, and the plan every transition takes
+/// instead of the planner's, if any.
 #[derive(Clone)]
-struct Live(Arc<Mutex<sim::App>>);
+struct Live(Arc<Mutex<sim::App>>, Option<Plan>);
 
 impl Live {
     fn new(prefs: TransitionPrefs) -> Live {
         let mut app = sim::App::new();
         app.prefs = prefs;
-        Live(Arc::new(Mutex::new(app)))
+        Live(Arc::new(Mutex::new(app)), None)
     }
 }
 
 impl Host for Live {
     fn plan_for(&mut self, outgoing_id: &str) -> Option<Plan> {
-        self.0.lock().plan_for(outgoing_id)
+        self.1.clone().or_else(|| self.0.lock().plan_for(outgoing_id))
     }
 
     fn wants_analysis(&mut self, song_id: &str) -> Option<u64> {
@@ -3199,7 +3200,7 @@ fn next_spam_keeps_playing() {
             }
         }
         let mut app = sim::App::new();
-        app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() };
+        app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() };
         for (id, _) in &songs {
             app.analyses.insert(id.clone(), measured(id, 120.0, ms));
         }
@@ -3247,7 +3248,7 @@ fn seek_near_the_end_through_the_fade() {
     let songs: Vec<Vec<i16>> = (0..3).map(|k| music(40.0, 90 + k)).collect();
     let files: Vec<(String, Vec<u8>, i64)> = ["a", "b", "c"].iter().zip(&songs).map(|(id, s)| (id.to_string(), wav(s), 40_000)).collect();
     let mut app = sim::App::new();
-    app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() };
+    app.prefs = TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() };
     let extra = Extra::default();
     for id in ["a", "b", "c"] {
         extra.server.slow.lock().push((id.into(), Duration::from_millis(300)));
@@ -3703,7 +3704,7 @@ fn shuffle_near_mix_keeps_audio() {
         })
     }) {
         let what = format!("shuffle {when_ms} ms from the mix, holding {hold_ms} ms, seed {seed}, notification delayed {delay_ms} ms");
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
         for (id, _) in songs {
             live.0.lock().analyses.insert(id.into(), gridless(id, 40_000, if id == "a" { 30_000 } else { 0 }, 0));
         }
@@ -3730,10 +3731,10 @@ fn shuffle_near_mix_keeps_audio() {
 
 // ---- a MixRamp fade out of a song with no beat grid, left before its end ----
 
-/// An analysis with no usable beat grid (as the phone's Go Slowly and Black Star): leaving at `exit_ms`
-/// (0: at the end), a quiet head of `head_ms`.
+/// An analysis with no beat at all, so nothing but a MixRamp fade fits (no move can be timed on it): leaving at
+/// `exit_ms` (0: at the end), a quiet head of `head_ms`.
 fn gridless(id: &str, ms: i64, exit_ms: i64, head_ms: i64) -> TrackAnalysis {
-    TrackAnalysis { bpm_confidence: 0.3, stability: 0.2, outro_bpm_confidence: 0.3, outro_stability: 0.2, intro_bpm_confidence: 0.3, intro_stability: 0.2, exit_ms, mixramp_start_ms: head_ms, mixramp_end_ms: ms - 1_000, ..measured(id, 108.0, ms) }
+    TrackAnalysis { bpm: 0.0, outro_bpm: 0.0, intro_bpm: 0.0, bpm_confidence: 0.0, stability: 0.0, exit_ms, mixramp_start_ms: head_ms, mixramp_end_ms: ms - 1_000, ..measured(id, 108.0, ms) }
 }
 
 /// The level of `hz` in each 20 ms of the left channel of `heard`.
@@ -3792,7 +3793,7 @@ enum Meddle {
 #[test]
 fn mixes_keep_their_length() {
     let (a, b) = (common::sine(RATE, 200.0, 40.0, 6_000.0), common::sine(RATE, 900.0, 40.0, 6_000.0));
-    let automix = |on: bool| TransitionPrefs { auto_mix: on, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() };
+    let automix = |on: bool| TransitionPrefs { auto_mix: on, auto_mix_max_s: 12, ..prefs_off() };
     use Meddle::*;
     // (ms heard from the mix's start when it comes (before it: negative), what comes, what the device holds)
     let cases = [
@@ -3912,7 +3913,7 @@ fn mixramp_fades_out_after_seek() {
     for (head_ms, before_ms, hold_ms, end_ms, meanwhile) in cases {
         let what = format!("head {head_ms} ms, seek {before_ms} ms before the mix, the device holding {hold_ms} ms, the music to {end_ms} ms, {meanwhile:?}");
         let a = &a[..end_ms as usize * 48 * 2];
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
         {
             let mut app = live.0.lock();
             app.analyses.insert("a".into(), gridless("a", 40_000, 30_000, 0));
@@ -3964,7 +3965,7 @@ fn seek_into_ending_lands() {
     let (a, b) = (music(40.0, 80), music(40.0, 81));
     for (to_ms, fade_ms) in [(4_100, 0), (4_100, 150), (12_000, 150), (24_000, 0), (24_000, 150), (31_000, 150)] {
         let what = format!("to {to_ms} ms, a {fade_ms} ms dip");
-        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, keep_albums: false, ..prefs_off() });
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
         {
             let mut app = live.0.lock();
             app.analyses.insert("a".into(), gridless("a", 40_000, 30_000, 0));
@@ -4133,4 +4134,94 @@ fn a_cast_playing_the_songs_moves_the_queue_and_comes_back_where_it_was() {
     // Played on from 40 s, said 100 ms before it came back.
     let ms = at as i64 * 500 / RATE as i64;
     assert!((40_000..40_500).contains(&ms), "on from where the device was: {ms} ms");
+}
+
+/// A song that stops a second before its file ends glows into the next one: the mix, its reverb ringing on, runs its
+/// whole length past the song's end, never made to fit; the next song takes over where the plan has it and plays on
+/// sample for sample, and the place shown runs on through the mix.
+#[test]
+fn a_glow_runs_on_past_the_song() {
+    let (a, b) = (common::sine(RATE, 200.0, 30.0, 6_000.0), common::sine(RATE, 900.0, 40.0, 6_000.0));
+    let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, beat_match: false, ..prefs_off() });
+    {
+        let mut app = live.0.lock();
+        app.analyses.insert("a".into(), TrackAnalysis { stop_ms: 29_000, vocal_start_ms: 5_000, vocal_end_ms: 29_100, ..measured("a", 128.0, 30_000) });
+        app.analyses.insert("b".into(), measured("b", 150.0, 40_000));
+    }
+    let files = vec![("a".to_string(), wav(&a), 30_000), ("b".to_string(), wav(&b), 40_000)];
+    let rig = Rig::build(files, live.clone(), Settings { auto_mix: true, ..Settings::default() }, Extra { pace: Some(5.0), ..Extra::default() });
+    rig.engine.play_at(0, 20_000);
+    let line = |l: &str| l.contains("transition a -> b: ReverbWash") && l.contains("glowing");
+    assert!(rig.wait_for(30, |_| live.0.lock().log.iter().any(|l| line(l))), "{:?}", live.0.lock().log);
+    let plan = live.0.lock().log.iter().find(|l| line(l)).cloned().expect("planned");
+    let num = |after: &str| plan.split(after).nth(1).and_then(|s| s.split([' ', ',']).next()).and_then(|n| n.parse::<i64>().ok()).expect("a number");
+    let (dur, start, delay) = (num("ReverbWash "), num(" ms at "), num("heard from "));
+    assert!(start + dur > 30_000 + 1_000, "the mix runs on past the song's end: {plan}");
+    let frames = |ms: i64| (ms * RATE as i64 / 1000) as usize;
+    assert_place_follows(&places_through(&rig, start - 1_000, start + dur + 3_000), start, delay, start + dur);
+    assert!(rig.wait_for(60, Rig::ended), "{:?}", live.0.lock().log);
+    let log = live.0.lock().log.clone();
+    assert!(!log.iter().any(|l| l.contains("made to fit")), "{log:?}");
+    // After the mix b alone, from where the plan has it then (it came in `delay` into the mix), to its end.
+    let heard = rig.heard.lock().clone();
+    let after = 2 * frames(start - 20_000 + dur);
+    let from = 2 * frames(dur - delay);
+    let n = heard.len() - after;
+    assert!(n.abs_diff(b.len() - from) <= 2, "b takes over on time, to the frame the plan's ms allow: {n} against {}: {plan}", b.len() - from);
+    assert_eq!(beyond_dither(&heard[after..], &b[b.len() - n..]), None, "b sample for sample after the mix, to its end");
+}
+
+/// A fade from a (30 s, played from 20 s) into b, `start` ms into a for `dur` ms with b coming in `delay` ms
+/// into it: ending at a's end or running on past it, b in at once or late.
+#[test]
+fn the_place_follows_the_ear_through_a_mix() {
+    use nori_player::automix::plan;
+    use nori_player::types::AutoMixSettings;
+    for (start, dur, delay) in [(24_000, 6_000, 0), (24_000, 6_000, 1_500), (26_000, 6_000, 0), (26_000, 6_000, 1_500)] {
+        let (a, b) = (common::sine(RATE, 200.0, 30.0, 6_000.0), common::sine(RATE, 900.0, 40.0, 6_000.0));
+        let s = AutoMixSettings { max_transition_s: dur as f32 / 1000.0, ..Default::default() };
+        let mut t = plan::plan(None, None, 30_000, 40_000, &s);
+        assert_eq!(t.duration_ms, dur);
+        (t.out_start_ms, t.in_start_ms, t.tempo_ratio, t.keep_pitch, t.tempo_ramp_ms, t.out_loop, t.in_delay_ms) = (start, 0, 1.0, true, 0, None, delay);
+        // A runs on to its end and no further; b fades in from its first sample.
+        (t.out_fade_start_ms, t.out_fade_end_ms, t.in_fade_start_ms, t.in_fade_end_ms) = (0, (30_000 - start).min(dur), delay, dur);
+        let mut live = Live::new(TransitionPrefs { auto_mix: true, beat_match: false, ..prefs_off() });
+        live.1 = Some(Plan { incoming_id: "b".into(), mixer: t });
+        let files = vec![("a".to_string(), wav(&a), 30_000), ("b".to_string(), wav(&b), 40_000)];
+        let rig = Rig::build(files, live.clone(), Settings { auto_mix: true, ..Settings::default() }, Extra { pace: Some(5.0), ..Extra::default() });
+        rig.engine.play_at(0, 20_000);
+        assert_place_follows(&places_through(&rig, start - 2_000, start + dur + 3_000), start, delay, start + dur);
+        assert!(!live.0.lock().log.iter().any(|l| l.contains("made to fit")), "{start} {dur} {delay}: {:?}", live.0.lock().log);
+    }
+}
+
+/// The place shown each 40 ms from when a (played from 20 s) is heard at `from_ms` until `to_ms` of its time
+/// (run on past its end), each with a's time heard then.
+fn places_through(rig: &Rig, from_ms: i64, to_ms: i64) -> Vec<(i64, (Option<usize>, i64))> {
+    let ear = |r: &Rig| 20_000 + (r.heard.lock().len() / 2) as i64 * 1000 / RATE as i64;
+    assert!(rig.wait_for(60, |r| ear(r) >= from_ms));
+    let mut places = vec![(ear(rig), place(rig))];
+    while places.last().is_some_and(|&(at, _)| at < to_ms) {
+        rig.run(40);
+        places.push((ear(rig), place(rig)));
+    }
+    places
+}
+
+/// The place shown is a's as heard until the mix starts at `start`, b's from where it came in (`delay` into the mix)
+/// once it ends at `end`; between them it never goes back, leaps ahead or runs past a's 30 s.
+fn assert_place_follows(places: &[(i64, (Option<usize>, i64))], start: i64, delay: i64, end: i64) {
+    let near = |shown: i64, heard: i64| (shown - heard).abs() <= 120;
+    for w in places.windows(2) {
+        let ((t0, (i, from)), (t1, (j, to))) = (w[0], w[1]);
+        assert!(j >= i && (i != j || (0..=t1 - t0 + 120).contains(&(to - from))), "the place runs on: {w:?} in {places:?}");
+    }
+    for &(at, shown) in places {
+        assert!(shown.0 != Some(0) || shown.1 <= 30_000, "a no further than its end: {shown:?} in {places:?}");
+        if at < start {
+            assert!(shown.0 == Some(0) && near(shown.1, at), "a as heard at {at} ms: {shown:?} in {places:?}");
+        } else if at > end {
+            assert!(shown.0 == Some(1) && near(shown.1, at - start - delay), "b as heard at a's {at} ms: {shown:?} in {places:?}");
+        }
+    }
 }

@@ -14,7 +14,7 @@ pub struct Listen {
 }
 
 // Player types, redeclared below for uniffi.
-pub use nori_player::types::{AutoMixSettings, EqBand, EqKind, FadeCurve, MixStyle, NamedPreset, PresetKind, TrackAnalysis};
+pub use nori_player::types::{AutoMixSettings, BarProfile, Beat, Edge, EqBand, EqKind, FadeCurve, MixStyle, NamedPreset, PresetKind, TrackAnalysis, TransitionKind};
 
 /// `starred` is a timestamp on the wire and a bool once stored.
 fn flag<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
@@ -838,6 +838,7 @@ pub struct TrackAnalysis {
     pub exit_ms: i64,
     pub gap_ms: i64,
     pub gap_end_ms: i64,
+    pub stop_ms: i64,
     pub drop_runup_tonal_db: f32,
     pub intro_beats_per_bar: i32,
     pub outro_beats_per_bar: i32,
@@ -847,13 +848,46 @@ pub struct TrackAnalysis {
     pub vocal_start_ms: i64,
     pub vocal_end_ms: i64,
     pub steady_intro_ms: i64,
-    pub steady_end_ms: i64,
-    pub steady_exit_ms: i64,
     pub intro_grid_from_ms: i64,
     pub intro_grid_to_ms: i64,
     pub outro_grid_from_ms: i64,
     pub outro_grid_to_ms: i64,
+    pub intro_bars: Vec<BarProfile>,
+    pub outro_bars: Vec<BarProfile>,
+    pub intro_beats: Vec<Beat>,
+    pub outro_beats: Vec<Beat>,
+    pub head: Option<Edge>,
+    pub tail: Option<Edge>,
     pub analysed_ms: i64,
+}
+
+#[cfg(feature = "ffi")]
+#[uniffi::remote(Record)]
+pub struct Beat {
+    pub at_ms: i64,
+    pub downbeat: bool,
+    pub sure: bool,
+}
+
+#[cfg(feature = "ffi")]
+#[uniffi::remote(Record)]
+pub struct Edge {
+    pub db: f32,
+    pub bands: Vec<f32>,
+}
+
+#[cfg(feature = "ffi")]
+#[uniffi::remote(Record)]
+pub struct BarProfile {
+    pub start_ms: i64,
+    pub level_db: f32,
+    pub low_db: f32,
+    pub pulse: f32,
+    pub voice: f32,
+    pub change: f32,
+    pub repeat1: Option<f32>,
+    pub repeat4: Option<f32>,
+    pub repeat8: Option<f32>,
 }
 
 #[cfg(feature = "ffi")]
@@ -865,11 +899,30 @@ pub struct AutoMixSettings {
     pub bass_swap: bool,
     pub filter_effects: bool,
     pub keep_pitch: bool,
-    pub same_album_in_order: bool,
+    pub gapless: bool,
     pub match_loudness: bool,
     pub out_tag_bpm: f32,
     pub in_tag_bpm: f32,
     pub style: MixStyle,
+    pub previous: Option<TransitionKind>,
+}
+
+#[cfg(feature = "ffi")]
+#[uniffi::remote(Enum)]
+pub enum TransitionKind {
+    Gapless,
+    EqualPowerFade,
+    MixRampFade,
+    BeatMatched,
+    EchoOut,
+    Cut,
+    FilterRide,
+    FilterOut,
+    Brake,
+    ReverbWash,
+    BeatlessBlend,
+    LoopRamp,
+    LayeredMix,
 }
 
 #[cfg(feature = "ffi")]
@@ -963,7 +1016,6 @@ pub struct TransitionPrefs {
     pub bass_swap: bool,
     pub filter_effects: bool,
     pub keep_pitch: bool,
-    pub keep_albums: bool,
     pub replay_gain: bool,
     pub style: MixStyle,
 }

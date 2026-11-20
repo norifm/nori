@@ -1111,7 +1111,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
             };
             return ("AutoMix".into(), state);
         }
-        "crossfadeKeepAlbums" => "Keep albums gapless",
         "skipExplicit" => "Skip explicit songs",
         "autoFill" => "When the queue ends",
         "autoFillBasis" => "Chosen by",

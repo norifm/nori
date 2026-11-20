@@ -60,7 +60,6 @@
     <string name="settings_beat_model_wrong_file">the file that arrived was not the right one</string>
     <string name="settings_beat_model_storage">it could not be saved</string>
     <string name="settings_beat_model_failed">The beat model\'s download didn\'t work (%1$s). It tries again at the next song.</string>
-    <string name="settings_keep_albums">Keep albums gapless</string>
     <string name="settings_skip_explicit">Skip explicit songs</string>
     <string name="settings_auto_fill">When the queue ends</string>
     <string name="settings_auto_fill_stop">Stop</string>
@@ -369,7 +368,6 @@
 
     <!-- What the search also finds a row by: the jargon someone might type, and the rows' own words. -->
     <string name="settings_hint_crossfade">One song fades into the next</string>
-    <string name="settings_hint_keep_albums">No mixing between songs of the same album</string>
     <string name="settings_hint_automix">Blends songs matching the beat: smooth, or DJ mixes with loops, tempo bends, risers and double drops</string>
     <string name="settings_hint_skip_explicit">Songs your server marks explicit</string>
     <string name="settings_hint_auto_fill">Keep playing, autofill, songs, albums, more music</string>

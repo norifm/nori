@@ -223,7 +223,6 @@ private val SERVICE_HINTS: Map<String, Int> = mapOf(
 private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "crossfadeSec" to (R.string.settings_crossfade to R.string.settings_hint_crossfade),
     "autoMix" to (R.string.settings_automix to R.string.settings_hint_automix),
-    "crossfadeKeepAlbums" to (R.string.settings_keep_albums to R.string.settings_hint_keep_albums),
     "skipExplicit" to (R.string.settings_skip_explicit to R.string.settings_hint_skip_explicit),
     "autoFill" to (R.string.settings_auto_fill to R.string.settings_hint_auto_fill),
     "autoFillBasis" to (R.string.settings_auto_fill_basis to R.string.settings_hint_auto_fill_basis),

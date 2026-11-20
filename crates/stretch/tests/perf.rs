@@ -49,4 +49,10 @@ fn stretch_a_minute() {
         let theirs = time(&x, ratio, |i, o| cpp.process(i, o));
         println!("perf: stretch at {ratio}: port {ours:7.1} ms, C++ {theirs:7.1} ms per minute");
     }
+    for relock in [0.0, 0.1] {
+        let mut port = nori_stretch::Stretch::preset_cheaper(2, RATE as f32);
+        port.set_relock(relock);
+        let ours = time(&x, 1.0, |i, o| port.process(i, o));
+        println!("perf: at 1 with a re-lock of {relock}: port {ours:7.1} ms per minute");
+    }
 }

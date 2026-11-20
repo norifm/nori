@@ -2226,7 +2226,7 @@ mod tests {
         let queue = nori_engine::SharedQueue::default();
         queue.0.lock().set(ids.clone(), Some(0), false, 0);
         let mut app = nori_player::sim::App::new();
-        app.prefs = nori_player::transitions::TransitionPrefs { auto_mix: true, keep_albums: false, ..nori_player::sim::prefs_off() };
+        app.prefs = nori_player::transitions::TransitionPrefs { auto_mix: true, ..nori_player::sim::prefs_off() };
         // Pre-measured, so the simulated app doesn't analyse on the engine thread.
         for id in &ids {
             let a = nori_player::types::TrackAnalysis { song_id: id.clone(), analysis_version: nori_player::automix::ANALYSIS_VERSION, duration_ms: ms, bpm: 120.0, bpm_confidence: 1.0, lufs: -14.0, silence_end_ms: ms, mixramp_end_ms: ms, outro_start_ms: ms - 8_000, ..Default::default() };

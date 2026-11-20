@@ -105,7 +105,7 @@ pub fn track(id: &str, samples: &[i16]) -> Track {
 
 /// A plain crossfade of `secs`, AutoMix off.
 pub fn crossfade(secs: i32) -> TransitionPrefs {
-    TransitionPrefs { crossfade_s: secs, keep_albums: true, ..prefs_off() }
+    TransitionPrefs { crossfade_s: secs, ..prefs_off() }
 }
 
 pub fn left(s: &[i16]) -> Vec<f64> {

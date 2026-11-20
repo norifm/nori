@@ -651,9 +651,6 @@ pub struct StoredPrefs {
     /// Stored as a switch before the styles: on reads as Smooth ([`load`]).
     #[setting("autoMix", PICK, default = AutoMixMode::Off, show = K::Choice(AutoMixMode::NAMES), effect = APPLY_AUDIO | REPLAN)]
     pub auto_mix: AutoMixMode,
-    /// Songs of one album that follow each other in order play gapless, with AutoMix or a crossfade.
-    #[setting("crossfadeKeepAlbums", FLAG, default = true, show = K::Switch, effect = REPLAN)]
-    pub crossfade_keep_albums: bool,
     // The queue.
     #[setting("skipExplicit", FLAG, default = false, show = K::Switch)]
     pub skip_explicit: bool,
@@ -1004,7 +1001,6 @@ impl StoredPrefs {
             bass_swap: true,
             filter_effects: true,
             keep_pitch: true,
-            keep_albums: self.crossfade_keep_albums,
             // AutoMix skips its loudness matching under volume leveling.
             replay_gain: self.replay_gain != GainMode::Off,
             style: self.auto_mix.style(),
