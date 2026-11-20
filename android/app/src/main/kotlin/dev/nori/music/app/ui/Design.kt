@@ -742,6 +742,9 @@ private val ACTION_SIDE = 46.dp
 /** How much of a [PillButton] shows while it is not offered. */
 private const val DISABLED_PILL = 0.38f
 
+// How strongly a tinted pill's plate takes its tint.
+private const val TINT_PLATE = 0.12f
+
 /**
  * The button the page is built around: a full pill, tinted with the page's accent. [prominent] is the
  * one the eye should land on (Play); the others sit on a translucent version of the same colour.
@@ -752,12 +755,13 @@ private const val DISABLED_PILL = 0.38f
 @Composable
 fun PillButton(
     text: String, icon: ImageVector?, onClick: () -> Unit, modifier: Modifier = Modifier,
-    prominent: Boolean = false, enabled: Boolean = true,
+    prominent: Boolean = false, enabled: Boolean = true, tint: Color? = null,
 ) {
-    // The plates lean darker as the page gets paler, continuously (nori_look::dress): looked up.
+    // The plates lean darker as the page gets paler, continuously (nori_look::dress): looked up. A [tint]
+    // (stopping something) colors the words and a faint plate.
     val look = LocalLook.current
-    val container = look.color(if (prominent) CoverLook.PILL else CoverLook.PILL_PLATE)
-    val content = look.color(if (prominent) CoverLook.PILL_INK else CoverLook.TINT_INK)
+    val container = tint?.copy(alpha = TINT_PLATE) ?: look.color(if (prominent) CoverLook.PILL else CoverLook.PILL_PLATE)
+    val content = tint ?: look.color(if (prominent) CoverLook.PILL_INK else CoverLook.TINT_INK)
     // Not offered now (nothing to give, busy): the plate fades back, as the tap that changed it asked.
     val shown by androidx.compose.animation.core.animateFloatAsState(if (enabled) 1f else DISABLED_PILL, AppMotion.settle(), label = "pill")
     Surface(

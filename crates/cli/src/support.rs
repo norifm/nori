@@ -2,7 +2,8 @@
 //! checkout page given last while its seal has not come. Stripe's checkout page in the browser takes the
 //! payment (`nori_host::support::checkout`); its link and QR code are shown for a terminal with no browser.
 
-use nori_core::support::{support_choice, support_currencies, support_first_choice, Cadence, SupportChoice, SupportPage, SupportPick};
+use nori_core::settings::Supporter;
+use nori_core::support::{support_choice, support_currencies, support_first_choice, Cadence, SupportChoice, SupportPick};
 
 use crate::app::{Cmd, Overlay, Sel, Target};
 use crate::settings_view::Opened;
@@ -10,13 +11,13 @@ use crate::settings_view::Opened;
 /// A line of the page, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Line {
+    /// The monthly payment, while one runs or is set to stop: what it is doing; enter picks its card and
+    /// receipts, stopping it or keeping it going.
+    Monthly,
     Amount,
     EveryMonth,
     Currency,
     Give,
-    /// Stripe's pages for a monthly payment, while one runs: its card and receipts, and stopping it.
-    Manage,
-    Stop,
 }
 
 /// The checkout page given last: its address, and how many seals there were then.
@@ -49,23 +50,20 @@ impl Support {
         Support { choice: support_first_choice(region.to_string()), sel: Sel::default(), given: None, seen: None }
     }
 
-    /// The page's lines; Manage and Stop while a monthly payment runs.
-    pub fn lines(monthly: bool) -> Vec<Line> {
-        let mut lines = vec![Line::Amount, Line::EveryMonth, Line::Currency, Line::Give];
-        if monthly {
-            lines.extend([Line::Manage, Line::Stop]);
-        }
-        lines
+    /// The page's lines for `supporter`; Monthly first while a monthly payment runs or is set to stop.
+    pub fn lines(supporter: &Supporter) -> Vec<Line> {
+        let monthly = (supporter.monthly || supporter.ends.is_some()).then_some(Line::Monthly);
+        monthly.into_iter().chain([Line::Amount, Line::EveryMonth, Line::Currency, Line::Give]).collect()
     }
 
-    pub fn line(&self, monthly: bool) -> Option<Line> {
-        Self::lines(monthly).get(self.sel.at).copied()
+    pub fn line(&self, supporter: &Supporter) -> Option<Line> {
+        Self::lines(supporter).get(self.sel.at).copied()
     }
 
     /// ← →: the amount before or after (Other last), the currency before or after, every month or once.
-    pub fn step(&mut self, monthly: bool, on: bool) {
+    pub fn step(&mut self, supporter: &Supporter, on: bool) {
         let c = &self.choice;
-        match self.line(monthly) {
+        match self.line(supporter) {
             Some(Line::Amount) => {
                 let n = c.offered.len() as i64;
                 let at = match c.pick {
@@ -88,10 +86,18 @@ impl Support {
     }
 
     /// enter: the amount for Other is asked for, the currency picked from all, the monthly switch flips,
-    /// and Give and Manage go to the runner.
-    pub fn open(&mut self, monthly: bool) -> Option<Opened> {
+    /// Give goes to the runner, and the monthly payment offers its card and receipts, then stopping it or
+    /// keeping it going.
+    pub fn open(&mut self, supporter: &Supporter) -> Option<Opened> {
         let c = &self.choice;
-        match self.line(monthly)? {
+        match self.line(supporter)? {
+            Line::Monthly => {
+                use crate::text::{SUPPORT_CARD, SUPPORT_KEEP, SUPPORT_MONTHLY, SUPPORT_STOP};
+                let title = format!("{SUPPORT_MONTHLY} · {}", crate::text::support_monthly(supporter.ends));
+                let then = if supporter.ends.is_some() { (SUPPORT_KEEP, "keep") } else { (SUPPORT_STOP, "stop") };
+                let options = [(SUPPORT_CARD, "card"), then].map(|(words, value)| (words.to_string(), value.to_string())).to_vec();
+                Some(Opened::Overlay(Overlay::Picker { title, options, sel: Sel::default(), target: Target::SupportMonthly }))
+            }
             Line::Amount => {
                 self.choose(c.currency.code.clone(), c.cadence, SupportPick::Other);
                 let text = self.choice.other.clone();
@@ -108,8 +114,6 @@ impl Support {
                 Some(Opened::Overlay(Overlay::Picker { title: crate::text::SUPPORT_CURRENCY.into(), options, sel: Sel { at, ..Sel::default() }, target: Target::SupportCurrency }))
             }
             Line::Give => c.amount.map(|_| Opened::Cmds(vec![Cmd::SupportGive(Box::new(c.clone()))])),
-            Line::Manage => Some(Opened::Cmds(vec![Cmd::SupportPage(SupportPage::Manage)])),
-            Line::Stop => Some(Opened::Cmds(vec![Cmd::SupportPage(SupportPage::Stop)])),
         }
     }
 

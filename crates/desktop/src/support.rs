@@ -16,11 +16,15 @@ pub struct Support {
     pub given: Option<(String, usize)>,
     /// How many seals the book had when last drawn: one more is thanked for.
     seen: Option<usize>,
+    /// The months a monthly payment just stopped paid for, thanked for in its dialog.
+    pub thanked_months: Option<u32>,
+    /// Stopping or keeping the monthly payment is being asked of the service.
+    pub asking: bool,
 }
 
 impl Default for Support {
     fn default() -> Support {
-        Support { choice: support_first_choice(nori_host::support::region_here()), given: None, seen: None }
+        Support { choice: support_first_choice(nori_host::support::region_here()), given: None, seen: None, thanked_months: None, asking: false }
     }
 }
 
@@ -83,7 +87,13 @@ impl Support {
         ui.set_support_currency(all.iter().position(|x| x.code == c.currency.code).unwrap_or(0) as i32);
         ui.set_support_give_words(crate::words::support_give(c.amount.map(|a| money(a, &c.currency)).as_deref(), c.cadence == Cadence::Monthly).into());
         ui.set_support_can_give(c.amount.is_some());
-        ui.set_support_running(prefs.support.monthly);
+        let s = &prefs.support;
+        let ends = s.ends.map(|e| crate::words::support_ends(&nori_host::support::day(e)));
+        ui.set_support_monthly_value(ends.clone().unwrap_or_else(|| if s.monthly { "On".into() } else { String::new() }).into());
+        ui.set_support_monthly_line(ends.clone().unwrap_or_else(|| "Every month".into()).into());
+        ui.set_support_ends(ends.is_some());
+        ui.set_support_thanked_months(self.thanked_months.filter(|_| ends.is_some()).map(crate::words::support_thanks_months).unwrap_or_default().into());
+        ui.set_support_asking(self.asking);
         ui.set_support_waiting(self.given.is_some());
     }
 }

@@ -958,12 +958,16 @@ fn support(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     if area.height < 8 || area.width < 24 {
         return;
     }
-    let monthly = app.prefs.support.monthly;
+    let supporter = &app.prefs.support;
     let p = &app.support;
     let c = &p.choice;
-    let chosen = |l: L| focused && p.line(monthly) == Some(l);
-    let label = |l: L, words: &str| Span::styled(format!(" {} ", pad(words, 14)), if chosen(l) { t.select(focused) } else { Style::default().fg(t.ink) });
+    let chosen = |l: L| focused && p.line(supporter) == Some(l);
+    let label = |l: L, words: &str| Span::styled(format!(" {} ", pad(words, 16)), if chosen(l) { t.select(focused) } else { Style::default().fg(t.ink) });
     let mut foot: Vec<Line> = Vec::new();
+    if crate::support::Support::lines(supporter).contains(&L::Monthly) {
+        foot.push(Line::from(vec![label(L::Monthly, crate::text::SUPPORT_MONTHLY), Span::styled(format!(" {} ›", crate::text::support_monthly(supporter.ends)), t.dim())]));
+        foot.push(Line::default());
+    }
     let mut amounts = vec![label(L::Amount, crate::text::SUPPORT_AMOUNT)];
     let at = match c.pick {
         nori_core::support::SupportPick::Offered { index } => Some(index as usize),
@@ -977,7 +981,7 @@ fn support(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     foot.push(Line::from(amounts));
     if at.is_none() {
         let typed = if c.other.is_empty() { Span::styled("0", t.dim()) } else { Span::styled(c.other.clone(), bold().fg(t.ink)) };
-        let mut l = vec![Span::raw(format!(" {} ", pad("", 14))), typed];
+        let mut l = vec![Span::raw(format!(" {} ", pad("", 16))), typed];
         if let Some(limit) = crate::text::support_limit(c) {
             l.push(Span::styled(format!("   {limit}"), t.dim()));
         }
@@ -989,11 +993,6 @@ fn support(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     foot.push(Line::default());
     let give = Span::styled(format!(" [ {} ] ", crate::text::support_give(c)), if chosen(L::Give) { t.select(focused) } else if c.amount.is_some() { bold().fg(t.ink) } else { t.dim() });
     foot.push(Line::from(give));
-    if monthly {
-        let action = |l, words| Span::styled(format!(" [ {words} ] "), if chosen(l) { t.select(focused) } else { t.dim() });
-        foot.push(Line::from(action(L::Manage, crate::text::SUPPORT_MANAGE)));
-        foot.push(Line::from(action(L::Stop, crate::text::SUPPORT_STOP)));
-    }
     if let Some(g) = &p.given {
         foot.push(Line::default());
         foot.push(Line::from(Span::styled(format!(" {}", crate::text::SUPPORT_IN_BROWSER), t.dim())));

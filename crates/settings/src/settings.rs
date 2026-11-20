@@ -530,13 +530,15 @@ pub fn profile_letter(profile: SavedServer, label: String) -> String {
 }
 
 /// The app as a supporter of nori: the login the support service knows it by (empty before the first
-/// payment), when each payment was made (Unix seconds, oldest first) and whether a monthly one runs.
+/// payment), when each payment was made (Unix seconds, oldest first), whether a monthly one runs, and
+/// when one set to stop ends (Unix seconds; it can still be kept going until then).
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Supporter {
     pub login: String,
     pub paid: Vec<i64>,
     pub monthly: bool,
+    pub ends: Option<i64>,
 }
 
 /// One saved server profile. Each has its own rows in the index database.
@@ -856,7 +858,7 @@ const SERVERS: Custom<Vec<SavedServer>> = Custom {
 /// `{"login":…,"paid":[…],"monthly":…}`; the default when unreadable.
 const SUPPORT: Custom<Supporter> = Custom {
     load: |t, d| t.and_then(|j| serde_json::from_str::<Value>(j).ok()).and_then(|v| supporter_from(&v)).unwrap_or(d),
-    save: |s| serde_json::json!({ "login": s.login, "paid": s.paid, "monthly": s.monthly }).to_string(),
+    save: |s| serde_json::json!({ "login": s.login, "paid": s.paid, "monthly": s.monthly, "ends": s.ends }).to_string(),
     // Set by name only by the test bridge, in the stored form.
     set: Some(|t| serde_json::from_str::<Value>(t).ok().and_then(|v| supporter_from(&v))),
     show: None,
@@ -867,6 +869,8 @@ fn supporter_from(v: &Value) -> Option<Supporter> {
         login: v.get("login")?.as_str()?.to_string(),
         paid: v.get("paid")?.as_array()?.iter().map(Value::as_i64).collect::<Option<_>>()?,
         monthly: v.get("monthly")?.as_bool()?,
+        // Missing in what builds before it stored.
+        ends: v.get("ends").and_then(Value::as_i64),
     })
 }
 
