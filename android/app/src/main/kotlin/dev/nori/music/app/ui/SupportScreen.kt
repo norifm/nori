@@ -57,6 +57,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -98,6 +99,7 @@ import com.stripe.android.paymentsheet.PaymentSheet
 import com.stripe.android.paymentsheet.PaymentSheetResult
 import com.stripe.android.paymentsheet.rememberPaymentSheet
 import dev.nori.music.app.R
+import dev.nori.music.app.vm.Monthly
 import dev.nori.music.app.vm.Paying
 import dev.nori.music.app.vm.SupportViewModel
 import dev.nori.music.ffi.Cadence
@@ -106,8 +108,8 @@ import dev.nori.music.ffi.Stamp
 import dev.nori.music.ffi.SupportChoice
 import dev.nori.music.ffi.SupportPick
 import dev.nori.music.ffi.SupportCurrency
-import dev.nori.music.ffi.SupportPage
 import dev.nori.music.ffi.TypedAmount
+import dev.nori.music.look.CoverLook
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -124,6 +126,8 @@ fun SupportScreen(vm: SupportViewModel) {
     val tell = LocalMessages.current
     val stamps by vm.stamps.collectAsStateWithLifecycle()
     val monthly by vm.monthly.collectAsStateWithLifecycle()
+    val thankedMonths by vm.thanked.collectAsStateWithLifecycle()
+    val asking by vm.asking.collectAsStateWithLifecycle()
     val choice by vm.choice.collectAsStateWithLifecycle()
     val paying by vm.paying.collectAsStateWithLifecycle()
     // Each time the page comes back (from the sheet, the browser, another app), it asks what was paid.
@@ -168,6 +172,7 @@ fun SupportScreen(vm: SupportViewModel) {
     val ime = WindowInsets.ime
     val scope = rememberCoroutineScope()
     var pickingCurrency by remember { mutableStateOf(false) }
+    var seeingMonthly by remember { mutableStateOf(false) }
     // Each tap on Other asks for the keyboard again, also when Other is already chosen.
     var askedOther by remember { mutableIntStateOf(0) }
     // The currency sheet rises once the keyboard is down. A sheet is a window of its own: put up while the
@@ -216,6 +221,12 @@ fun SupportScreen(vm: SupportViewModel) {
             StampBook(stamps, vm.nextSeason, thanked ?: arriving, landed, slot, Modifier.verticalScroll(scroll).padding(top = 24.dp, bottom = Space.section))
         }
         Column(Modifier.fillMaxWidth().padding(bottom = Space.row)) {
+            if (monthly != Monthly.None) GroupCard(Modifier.padding(bottom = Space.row)) {
+                GroupRow(
+                    say.supportMonthly, { focus.clearFocus(); seeingMonthly = true }, icon = Iconoir.Calendar, chevron = true, divider = false,
+                    value = (monthly as? Monthly.Ends)?.let { say.supportEnds(day(it.s, short = true)) } ?: say.supportMonthlyOn,
+                )
+            }
             GroupCard {
                 AmountRow(
                     choice, askedOther,
@@ -240,16 +251,14 @@ fun SupportScreen(vm: SupportViewModel) {
                 null, { focus.clearFocus(); vm.pay() }, Modifier.fillMaxWidth().padding(start = GROUP_MARGIN, end = GROUP_MARGIN, top = Space.row),
                 prominent = true, enabled = amount != null && paying != Paying.Starting,
             )
-            if (monthly) Row(Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val open = { page: SupportPage ->
-                    vm.page(page) { url -> runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } }
-                }
-                TextAction(say.supportManage, { open(SupportPage.MANAGE) })
-                TextAction(say.supportStop, { open(SupportPage.STOP) })
-            }
         }
     }
     CurrencySheet(pickingCurrency, choice.currency, vm.allCurrencies, { pickingCurrency = false }) { c -> vm.pickCurrency(c); pickingCurrency = false }
+    MonthlySheet(
+        seeingMonthly, monthly, thankedMonths, asking, close = { seeingMonthly = false },
+        card = { vm.manage { url -> runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) } } },
+        stop = vm::stop, keep = vm::keep,
+    )
     thanking?.let { i ->
         val s = stamps.getOrNull(i) ?: return@let
         // Its place glides into the book's window, centered there, if it is not whole in it.
@@ -344,6 +353,46 @@ private fun CurrencySheet(open: Boolean, current: SupportCurrency, all: List<Sup
         }
     }
 }
+
+/**
+ * The monthly payment: what it is doing (every month, or when it ends), the thanks for the months a
+ * payment just stopped paid for, its card and receipts (Stripe's page), and stopping it in Spring's rose
+ * or keeping one set to stop going.
+ */
+@Composable
+private fun MonthlySheet(
+    open: Boolean, monthly: Monthly, thanked: Int?, asking: Boolean, close: () -> Unit,
+    card: () -> Unit, stop: () -> Unit, keep: () -> Unit,
+) {
+    NoriSheet(open && monthly != Monthly.None, close) {
+        Column(Modifier.windowInsetsPadding(gestureBarRoom).padding(start = GROUP_MARGIN, end = GROUP_MARGIN, bottom = Space.row)) {
+            Row(Modifier.padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = TileShape, color = LocalLook.current.color(CoverLook.PILL_PLATE)) {
+                    Icon(Iconoir.Calendar, null, Modifier.padding(11.dp).size(22.dp))
+                }
+                Column(Modifier.padding(start = 12.dp)) {
+                    Text(say.supportMonthly, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+                    Text(
+                        (monthly as? Monthly.Ends)?.let { say.supportEnds(day(it.s)) } ?: say.supportEveryMonth,
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (thanked != null && monthly is Monthly.Ends) Text(
+                say.supportThanksMonths(thanked), Modifier.padding(start = 4.dp, end = 4.dp, bottom = 14.dp),
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            PillButton(say.supportCard, Iconoir.CreditCard, card, Modifier.fillMaxWidth())
+            if (monthly is Monthly.Ends) PillButton(say.supportKeep, Iconoir.Refresh, keep, Modifier.fillMaxWidth().padding(top = 8.dp), enabled = !asking)
+            else PillButton(say.supportStop, Iconoir.Prohibition, stop, Modifier.fillMaxWidth().padding(top = 8.dp), enabled = !asking, tint = sealAccent(dev.nori.music.ffi.look.Season.SPRING))
+        }
+    }
+}
+
+/** Unix seconds [s] as the phone says a day of the year: "December 20", or [short] "Dec 20" where room is tight. */
+private fun day(s: Long, short: Boolean = false): String =
+    java.time.Instant.ofEpochSecond(s).atZone(java.time.ZoneId.systemDefault())
+        .format(java.time.format.DateTimeFormatter.ofPattern(android.text.format.DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), if (short) "dMMM" else "dMMMM")))
 
 /** [c]'s name as the phone says it: "Euro", "Polish Zloty". */
 private fun currencyName(c: SupportCurrency): String =

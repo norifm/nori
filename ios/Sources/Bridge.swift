@@ -460,7 +460,7 @@ final class Core {
         case NORI_REPORT_JAM_LEFT:
             switchProfile(count == 0 ? Say.jamLeft : Say.jamEnded(text))
         case NORI_REPORT_SUPPORT:
-            NotificationCenter.default.post(name: .noriSupport, object: SupportAnswer(flag: flag, text: text, otherCurrency: count == 1))
+            NotificationCenter.default.post(name: .noriSupport, object: SupportAnswer(flag: flag, text: text, index: Int(count)))
         case NORI_REPORT_VOLUME:
             systemVolume?.set(Float(ms) / 1000)
         case NORI_REPORT_ERROR:

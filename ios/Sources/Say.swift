@@ -487,8 +487,13 @@ enum Say {
     static func supportGive(_ amount: String, monthly: Bool) -> String { monthly ? "Give \(amount) a month" : "Give \(amount)" }
     static func supportLeast(_ amount: String) -> String { "At least \(amount)" }
     static func supportMost(_ amount: String) -> String { "At most \(amount)" }
-    static let supportManage = "Manage monthly support"
-    static let supportStop = "Stop monthly support"
+    static let supportMonthly = "Monthly support"
+    static let supportMonthlyOn = "On"
+    static func supportEnds(_ day: String) -> String { "Ends \(day)" }
+    static let supportCard = "Card and receipts"
+    static let supportStop = "Stop"
+    static let supportKeep = "Keep going"
+    static func supportThanksMonths(_ n: Int) -> String { n == 1 ? "Thank you for a month of support." : "Thank you for \(n) months of support." }
     static let supportThanks = "Thank you"
     static let supportInSafari = "Finish in Safari, or scan to pay on your phone"
     static let supportOtherCurrency = "Your monthly support is in another currency"

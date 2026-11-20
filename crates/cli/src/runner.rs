@@ -604,7 +604,7 @@ impl Runner {
                 return app.say(said, false);
             }
             Msg::Restored(Err(f)) => return app.say(crate::text::backup_failed(f), true),
-            Msg::SupportRefreshed => prefs_changed(app),
+            Msg::SupportRefreshed | Msg::SupportMonthly(Ok(_)) => prefs_changed(app),
             Msg::Readme { id, blocks } => {
                 app.settings.readme_came(id, blocks.clone());
                 return app.dirty = true;
@@ -1190,14 +1190,21 @@ impl Runner {
                 });
             }
             Cmd::SupportRefresh => self.support_refresh(),
-            Cmd::SupportPage(page) => {
+            Cmd::SupportCard => {
                 let (client, tx) = (s.account().client().clone(), self.tx.clone());
-                nori_host::spawn("nori-support-page", move || {
-                    let page = block_on(client.support_page(page));
+                nori_host::spawn("nori-support-card", move || {
+                    let page = block_on(client.support_manage());
                     if let Ok(url) = &page {
                         nori_host::desktop::open_in_browser(url);
                     }
-                    let _ = tx.send(Msg::SupportPage(page.map_err(|e| crate::text::support_failed(&e))));
+                    let _ = tx.send(Msg::SupportCard(page.map_err(|e| crate::text::support_failed(&e))));
+                });
+            }
+            Cmd::SupportMonthly { stop } => {
+                let (client, tx) = (s.account().client().clone(), self.tx.clone());
+                nori_host::spawn("nori-support-monthly", move || {
+                    let done = if stop { block_on(client.support_stop()).map(|s| Some(s.months)) } else { block_on(client.support_keep()).map(|_| None) };
+                    let _ = tx.send(Msg::SupportMonthly(done.map_err(|e| crate::text::support_failed(&e))));
                 });
             }
             Cmd::AnalyseDownloads => s.analyse_downloads(),

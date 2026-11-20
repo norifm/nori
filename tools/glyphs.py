@@ -78,6 +78,7 @@ GLYPHS = {
     "ClockRotateRight": ("clock-rotate-right", "regular", False),
     "ViewGrid": ("view-grid", "regular", False),
     "Calendar": ("calendar", "regular", False),
+    "CreditCard": ("credit-card", "regular", False),
     "Folder": ("folder", "regular", False),
     "Server": ("server", "regular", False),
     "Play": ("play", "regular", False),

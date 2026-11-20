@@ -1255,6 +1255,8 @@ export struct Pane {
 global SupportSlot {
     in-out property <Pane> at;
     in-out property <bool> reveal;
+    // The middle of the page's column in the window, where the monthly payment's dialog stands.
+    in-out property <length> middle;
 }
 
 // Where the dialog shown last has its pane, for the compositor (app.rs reads it while a dialog is open): the
@@ -1268,6 +1270,8 @@ export global DialogPane {
 component Dialog inherits Rectangle {
     in property <string> title;
     in property <length> sheet-width: 380px;
+    // Where its middle stands in the window, over the page that opened it; negative: the window's middle.
+    in property <length> middle: -1px;
     callback dismissed;
     property <Pane> pane: { x: sheet.absolute-position.x, y: sheet.absolute-position.y, width: sheet.width, height: sheet.height, radius: sheet.border-radius };
     init => { DialogPane.at = self.pane; }
@@ -1277,7 +1281,7 @@ component Dialog inherits Rectangle {
         clicked => { root.dismissed(); }
     }
     sheet := MenuSheet {
-        x: (parent.width - self.width) / 2;
+        x: root.middle < 0 ? (parent.width - self.width) / 2 : clamp(root.middle - root.absolute-position.x - self.width / 2, 16px, parent.width - self.width - 16px);
         y: 80px;
         width: min(root.sheet-width, parent.width - 32px);
         height: min(body.preferred-height, parent.height - 120px);
@@ -6261,8 +6265,8 @@ component SupportPage inherits Rectangle {
     in property <int> currency;
     in property <string> give-words;
     in property <bool> can-give;
-    // A monthly payment runs: Manage changes or stops it.
-    in property <bool> running;
+    // What the monthly payment is doing ("On", "Ends December 20"); empty while none runs.
+    in property <string> monthly-value;
     // A checkout page is open in the browser.
     in property <bool> waiting;
     callback picked(int);
@@ -6270,21 +6274,28 @@ component SupportPage inherits Rectangle {
     callback monthly-set(bool);
     callback currency-picked(int);
     callback give();
-    // Stripe's page for the monthly payment: its card and receipts, or (`stop`) stopping it.
-    callback open-page(/* stop */ bool);
+    // The monthly payment's dialog: its card and receipts, stopping it or keeping it going.
+    callback see-monthly();
     callback open-again();
-    property <length> column: min(root.width - 64px, 520px);
+    // One reading column under the top pill, in its middle, as Settings' is.
+    property <length> column: min(Chrome.top-w, 520px);
+    property <length> left: Chrome.top-x + (Chrome.top-w - root.column) / 2;
     property <length> gap: 14px;
     property <length> side: (root.column - 4 * root.gap) / 5;
     property <int> rows: floor((root.seals.length + 1 + 4) / 5);
     // Where the thanked seal's empty place is in the window, for the thanks; brought into view when asked.
     property <Pane> slot: {
-        x: book.absolute-position.x + 32px + mod(max(root.thanked, 0), 5) * (root.side + root.gap),
+        x: book.absolute-position.x + root.left + mod(max(root.thanked, 0), 5) * (root.side + root.gap),
         y: book.absolute-position.y + flick.content-y + 8px + floor(max(root.thanked, 0) / 5) * (root.side + root.gap),
         width: root.side, height: root.side, radius: 0,
     };
-    init => { SupportSlot.at = self.slot; }
+    property <length> middle: self.absolute-position.x + root.left + root.column / 2;
+    init => {
+        SupportSlot.at = self.slot;
+        SupportSlot.middle = self.middle;
+    }
     changed slot => { SupportSlot.at = self.slot; }
+    changed middle => { SupportSlot.middle = self.middle; }
     property <bool> reveal: SupportSlot.reveal;
     changed reveal => {
         if self.reveal && root.thanked >= 0 {
@@ -6295,9 +6306,25 @@ component SupportPage inherits Rectangle {
         }
     }
     VerticalLayout {
-        Heading {
-            title: "Support nori";
-            caption: "nori is and always will be free.";
+        VerticalLayout {
+            padding-left: root.left;
+            padding-right: root.width - root.left - root.column;
+            padding-top: Chrome.top-room + 8px;
+            padding-bottom: 16px;
+            spacing: 2px;
+            Text {
+                text: "Support nori";
+                color: Theme.text;
+                font-family: Type.title;
+                font-size: 34px;
+                font-weight: 700;
+                letter-spacing: -0.5px;
+            }
+            Text {
+                text: "nori is and always will be free.";
+                color: Theme.dim;
+                font-size: 13px;
+            }
         }
         book := Rectangle {
             vertical-stretch: 1;
@@ -6305,7 +6332,7 @@ component SupportPage inherits Rectangle {
             flick := Flickable {
                 content-height: root.rows * (root.side + root.gap) + 24px;
                 for s[i] in root.seals: Rectangle {
-                    x: 32px + mod(i, 5) * (root.side + root.gap);
+                    x: root.left + mod(i, 5) * (root.side + root.gap);
                     y: 8px + floor(i / 5) * (root.side + root.gap);
                     width: root.side;
                     height: root.side;
@@ -6319,7 +6346,7 @@ component SupportPage inherits Rectangle {
                 }
                 if root.thanked < 0: NextSeal {
                     grows: root.landed;
-                    x: 32px + mod(root.seals.length, 5) * (root.side + root.gap);
+                    x: root.left + mod(root.seals.length, 5) * (root.side + root.gap);
                     y: 8px + floor(root.seals.length / 5) * (root.side + root.gap);
                     width: root.side;
                     height: root.side;
@@ -6342,11 +6369,49 @@ component SupportPage inherits Rectangle {
         }
         foot := VerticalLayout {
             vertical-stretch: 0;
-            padding-left: 32px;
-            padding-right: root.width - 32px - root.column;
+            padding-left: root.left;
+            padding-right: root.width - root.left - root.column;
             padding-top: 16px;
             padding-bottom: 24px;
             spacing: 12px;
+            if root.monthly-value != "": Rectangle {
+                height: 48px;
+                border-radius: 18px;
+                background: monthly-touch.has-hover ? Theme.hover : Theme.panel;
+                border-width: 1px;
+                border-color: Theme.hairline;
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 12px;
+                    spacing: 14px;
+                    Icon {
+                        y: (parent.height - self.height) / 2;
+                        glyph: Icons.calendar;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "Monthly support";
+                        color: Theme.text;
+                        font-size: 15px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.monthly-value;
+                        color: Theme.dim;
+                        font-size: 13.5px;
+                        vertical-alignment: center;
+                    }
+                    Icon {
+                        y: (parent.height - self.height) / 2;
+                        glyph: Icons.nav-arrow-right;
+                        colour: Theme.dim;
+                    }
+                }
+                monthly-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.see-monthly(); }
+                }
+            }
             Rectangle {
                 border-radius: 18px;
                 background: Theme.panel;
@@ -6441,18 +6506,6 @@ component SupportPage inherits Rectangle {
                     if root.can-give {
                         root.give();
                     }
-                }
-            }
-            if root.running: HorizontalLayout {
-                alignment: center;
-                spacing: 20px;
-                TextButton {
-                    text: "Manage monthly support";
-                    clicked => { root.open-page(false); }
-                }
-                TextButton {
-                    text: "Stop monthly support";
-                    clicked => { root.open-page(true); }
                 }
             }
             if root.waiting: HorizontalLayout {
@@ -7070,14 +7123,24 @@ export component AppWindow inherits Window {
     in property <int> support-currency;
     in property <string> support-give-words;
     in property <bool> support-can-give;
-    in property <bool> support-running;
     in property <bool> support-waiting;
+    // The monthly payment: what its row says (empty while none runs), the line under its dialog's title,
+    // whether it is set to stop, the thanks for the months one that just stopped paid for, and whether
+    // stopping or keeping it is being asked.
+    in property <string> support-monthly-value;
+    in property <string> support-monthly-line;
+    in property <bool> support-ends;
+    in property <string> support-thanked-months;
+    in property <bool> support-asking;
+    in-out property <bool> support-monthly-open;
     callback support-picked(int);
     callback support-typed(string);
     callback support-monthly-set(bool);
     callback support-currency-picked(int);
     callback support-give();
-    callback support-page(bool);
+    callback support-card();
+    callback support-stop();
+    callback support-keep();
     callback support-open-again();
     in property <bool> eq-on;
     in property <bool> eq-graphic;
@@ -8672,14 +8735,14 @@ export component AppWindow inherits Window {
                         currency: root.support-currency;
                         give-words: root.support-give-words;
                         can-give: root.support-can-give;
-                        running: root.support-running;
+                        monthly-value: root.support-monthly-value;
                         waiting: root.support-waiting;
                         picked(i) => { root.support-picked(i); }
                         typed(t) => { root.support-typed(t); }
                         monthly-set(on) => { root.support-monthly-set(on); }
                         currency-picked(i) => { root.support-currency-picked(i); }
                         give => { root.support-give(); }
-                        open-page(stop) => { root.support-page(stop); }
+                        see-monthly => { root.support-monthly-open = true; }
                         open-again => { root.support-open-again(); }
                     }
                 }
@@ -9905,6 +9968,54 @@ export component AppWindow inherits Window {
             done(carried) => {
                 root.support-landed = carried;
                 root.support-thanked = -1;
+            }
+        }
+
+        // The monthly payment, as Android's sheet: what it is doing, the thanks once it stops, its card and
+        // receipts on Stripe's page, then stopping it in Spring's rose or keeping it going.
+        if root.support-monthly-open && root.support-monthly-value != "": Dialog {
+            title: "Monthly support";
+            middle: SupportSlot.middle;
+            dismissed => { root.support-monthly-open = false; }
+            Text {
+                text: root.support-monthly-line;
+                color: Theme.dim;
+                font-size: 13.5px;
+            }
+            if root.support-thanked-months != "": Text {
+                text: root.support-thanked-months;
+                color: Theme.text;
+                font-size: 15px;
+                wrap: word-wrap;
+            }
+            Capsule {
+                width: 348px;
+                size: 40px;
+                text: "Card and receipts";
+                icon: Icons.credit-card;
+                ink: Theme.plate;
+                label: Theme.plate-ink;
+                clicked => { root.support-card(); }
+            }
+            if root.support-ends: Capsule {
+                width: 348px;
+                size: 40px;
+                text: "Keep going";
+                icon: Icons.refresh;
+                ink: Theme.plate;
+                label: Theme.plate-ink;
+                opacity: root.support-asking ? 0.38 : 1;
+                clicked => { if !root.support-asking { root.support-keep(); } }
+            }
+            if !root.support-ends: Capsule {
+                width: 348px;
+                size: 40px;
+                text: "Stop";
+                icon: Icons.prohibition;
+                ink: Theme.season-accents[0].with-alpha(0.12);
+                label: Theme.season-accents[0];
+                opacity: root.support-asking ? 0.38 : 1;
+                clicked => { if !root.support-asking { root.support-stop(); } }
             }
         }
 

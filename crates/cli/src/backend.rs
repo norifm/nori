@@ -111,8 +111,12 @@ pub enum Msg {
     /// A payment started on Stripe's checkout page (its address, opened in the browser; None when nothing
     /// payable was chosen), or what to say of why not.
     SupportGiven(Result<Option<String>, String>),
-    /// Stripe's page for the monthly payment (opened in the browser), or what to say of why not.
-    SupportPage(Result<String, String>),
+    /// Stripe's page for the monthly payment's card and receipts (opened in the browser), or what to say of
+    /// why not.
+    SupportCard(Result<String, String>),
+    /// The monthly payment stopped (the months it paid for) or was kept going (None), which the settings
+    /// keep; or what to say of why not.
+    SupportMonthly(Result<Option<u32>, String>),
     /// The support service told what this app has paid, which the settings keep.
     SupportRefreshed,
     /// A message from the session with this id; dropped once another session is open.
@@ -144,7 +148,8 @@ impl Msg {
             Msg::Starred(_) => "star marks".into(),
             Msg::Remote => "remote".into(),
             Msg::SupportGiven(r) => format!("support given: {}", r.is_ok()),
-            Msg::SupportPage(r) => format!("support page: {}", r.is_ok()),
+            Msg::SupportCard(r) => format!("support card: {}", r.is_ok()),
+            Msg::SupportMonthly(r) => format!("support monthly: {r:?}"),
             Msg::SupportRefreshed => "support refreshed".into(),
             Msg::Overridden => "overrides".into(),
             Msg::Jam(r) => format!("jam opened: {}", r.is_ok()),

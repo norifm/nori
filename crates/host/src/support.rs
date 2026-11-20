@@ -1,5 +1,6 @@
 //! The Support page of the clients whose payment Stripe's checkout page takes in the browser (the desktop,
-//! the terminal, the iPod): money as it is written, the country a choice starts in, and starting a payment.
+//! the terminal, the iPod): money and days as they are written, the country a choice starts in, and starting a
+//! payment.
 
 use nori_core::client::{Client, NetResult};
 use nori_core::support::{PayIn, Payment, SupportChoice, SupportCurrency};
@@ -69,6 +70,14 @@ pub fn region_here() -> String {
     ["LC_ALL", "LC_MONETARY", "LANG"].into_iter().filter_map(|v| std::env::var(v).ok()).map(|l| region(&l)).find(|r| !r.is_empty()).unwrap_or_default()
 }
 
+const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/// Unix seconds `s` as English writes a day of the year, by this computer's clock: "December 20".
+pub fn day(s: i64) -> String {
+    let (month, day) = nori_look::theme::utc_date(s + nori_core::library::local_offset_s(s));
+    format!("{} {day}", MONTHS[month as usize - 1])
+}
+
 /// Starts paying what `choice` comes to on Stripe's checkout page: the page's address, for the browser.
 /// None while nothing payable is chosen. `southern`: this side of the equator is, for the season stamped.
 pub fn checkout(client: &Client, choice: &SupportChoice, southern: bool) -> NetResult<Option<String>> {
@@ -99,6 +108,13 @@ mod tests {
         for c in support_currencies() {
             assert_ne!(currency_name(&c.code), c.code, "{}", c.code);
         }
+    }
+
+    #[test]
+    fn a_day_as_english_writes_it() {
+        // Noon UTC, the same day by any clock within twelve hours of it.
+        assert_eq!(day(1_797_768_000), "December 20");
+        assert_eq!(day(1_767_268_800), "January 1");
     }
 
     #[test]

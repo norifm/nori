@@ -2,7 +2,9 @@
   // Supporting nori, as Android's page: the stamp book, a seal per payment in the accent of the season it was
   // paid in, five to a row; then what to give, which stays at the foot of the window whole while the book
   // scrolls under it: the amount (the offered ones as chips, then Other, typed), every month, the currency,
-  // and Give, which opens Stripe's Payment Element in a sheet. What is chosen and what it comes to are the
+  // and Give, which opens Stripe's Payment Element in a sheet. While a monthly payment runs (or is set to stop),
+  // a row over them opens its sheet: its card and receipts on Stripe's page, and stopping it, in Spring's
+  // rose, or keeping it going. What is chosen and what it comes to are the
   // core's (crates/web/src/support.rs); the words and the money as the browser writes it are here.
   // A method that pays on its own page (a bank's) comes back to `#/support/paid`. A seal that comes while the
   // page is open is thanked for: the page veiled, the seal stamped in the middle with the thanks under it, then
@@ -13,9 +15,10 @@
   import { today, worn } from "../state/theme.svelte";
   import { W } from "../words";
   import Page from "../ui/Page.svelte";
+  import Icon from "../ui/Icon.svelte";
 
   type Choice = { currency: string; digits: number; monthly: boolean; offered: number[]; pick: number; other: string; typed: { least?: number; most?: number } | null; amount: number | null };
-  type Book = { key: string; test: boolean; seals: { season: number; tilt: number }[]; next: number; running: boolean; currencies: string[]; first: Choice };
+  type Book = { key: string; test: boolean; seals: { season: number; tilt: number }[]; next: number; running: boolean; ends: number | null; currencies: string[]; first: Choice };
   type Stripe = {
     elements: (o: object) => { create: (kind: string, o?: object) => { mount: (el: HTMLElement) => void } };
     confirmPayment: (o: object) => Promise<{ error?: { message?: string } }>;
@@ -223,12 +226,41 @@
     veiled?.getAnimations({ subtree: true }).forEach((a) => a.finish());
   }
 
-  /** Stripe's page for the monthly payment: its card and receipts, or (`stop`) stopping it. */
-  async function open(stop: boolean) {
+  // The monthly payment's sheet, and the months a payment just stopped paid for, thanked for in it.
+  let seeing = $state(false);
+  let monthlySheet = $state<HTMLDialogElement>();
+  let thankedMonths = $state(0);
+  let asking = $state(false);
+  $effect(() => {
+    if (seeing && monthlySheet && !monthlySheet.open) monthlySheet.showModal();
+  });
+  /** Unix seconds as the browser writes a day of the year: "December 20", or `short` "Dec 20" where room is tight. */
+  const day = (s: number, short = false) => new Date(s * 1000).toLocaleDateString(navigator.language, { month: short ? "short" : "long", day: "numeric" });
+  /** Stripe's page for the monthly payment's card and receipts. */
+  async function card() {
     try {
-      location.href = await ask<string>("support_page", stop);
+      location.href = await ask<string>("support_manage");
     } catch {
       said = W.supportFailed;
+      monthlySheet?.close();
+    }
+  }
+  /** Stops the monthly payment (`stop`) or keeps one set to stop going; the book then reads what changed. */
+  async function monthly(stop: boolean) {
+    if (asking) return;
+    asking = true;
+    try {
+      if (stop) thankedMonths = await ask<number>("support_stop");
+      else {
+        await ask("support_keep");
+        thankedMonths = 0;
+      }
+      await read();
+    } catch {
+      said = W.supportFailed;
+      monthlySheet?.close();
+    } finally {
+      asking = false;
     }
   }
 </script>
@@ -259,6 +291,16 @@
       {#if !thanks}{@render blank(book.next)}{/if}
     </div>
     <div class="foot">
+      {#if book.running || book.ends}
+        <div class="group">
+          <button class="group-row" onclick={() => (seeing = true)}>
+            <Icon name="calendar" />
+            <span class="words"><span>{W.supportMonthly}</span></span>
+            <span class="value">{book.ends ? W.supportEnds(day(book.ends, true)) : W.supportMonthlyOn}</span>
+            <Icon name="nav-arrow-right" />
+          </button>
+        </div>
+      {/if}
       <div class="group">
         <div class="group-row amount">
           <span class="words">{W.supportAmount}</span>
@@ -290,12 +332,6 @@
       <button class="pill give" disabled={!choice.amount || starting} onclick={() => void give()}>
         {choice.amount ? W.supportGive(money(choice.amount, choice), choice.monthly) : W.supportChoose}
       </button>
-      {#if book.running}
-        <div class="monthly">
-          <button class="text-action" onclick={() => void open(false)}>{W.supportManage}</button>
-          <button class="text-action" onclick={() => void open(true)}>{W.supportStop}</button>
-        </div>
-      {/if}
       {#if said && !paying}<p class="said">{said}</p>{/if}
     </div>
   {/if}
@@ -311,6 +347,26 @@
       </div>
       <p class="thank">{W.supportThanks}</p>
     </div>
+  </dialog>
+{/if}
+
+{#if seeing && book && (book.running || book.ends)}
+  <dialog class="sheet monthly" bind:this={monthlySheet} onclose={() => (seeing = false)} onclick={(e) => e.target === monthlySheet && monthlySheet?.close()} aria-label={W.supportMonthly}>
+    <span class="handle"></span>
+    <div class="head">
+      <span class="mark"><Icon name="calendar" /></span>
+      <div>
+        <h3>{W.supportMonthly}</h3>
+        <p class="sub">{book.ends ? W.supportEnds(day(book.ends)) : W.supportEveryMonth}</p>
+      </div>
+    </div>
+    {#if thankedMonths && book.ends}<p class="thanked">{W.supportThanksMonths(thankedMonths)}</p>{/if}
+    <button class="pill quiet" onclick={() => void card()}><Icon name="credit-card" />{W.supportCard}</button>
+    {#if book.ends}
+      <button class="pill quiet" disabled={asking} onclick={() => void monthly(false)}><Icon name="refresh" />{W.supportKeep}</button>
+    {:else}
+      <button class="pill quiet stop" style:--stop={worn.tiles[0]?.accent} disabled={asking} onclick={() => void monthly(true)}><Icon name="prohibition" />{W.supportStop}</button>
+    {/if}
   </dialog>
 {/if}
 
@@ -484,9 +540,50 @@
   }
   .monthly {
     display: flex;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 4px 20px;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .monthly .head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 4px 4px 8px;
+  }
+  .monthly .mark {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--r-tile);
+    background: var(--veil);
+  }
+  .monthly .mark :global(.icon) {
+    width: 22px;
+    height: 22px;
+  }
+  .monthly h3 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .monthly .sub {
+    margin: 2px 0 0;
+    font-size: 14px;
+  }
+  .thanked {
+    margin: 0 4px 6px;
+  }
+  .monthly .pill {
+    width: 100%;
+    min-height: 50px;
+  }
+  .monthly .pill:disabled {
+    opacity: 0.38;
+  }
+  /* Stopping is Spring's rose in every season: its words and a faint plate. */
+  .monthly .stop {
+    color: var(--stop);
+    background: color-mix(in srgb, var(--stop) 12%, transparent);
   }
   .said {
     margin: 0;

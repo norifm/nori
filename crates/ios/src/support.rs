@@ -4,7 +4,7 @@
 
 use std::ffi::c_char;
 
-use nori_core::support::{support_choice, support_currencies, support_first_choice, support_service, support_stamps, Cadence, SupportChoice, SupportPage, SupportPick, TypedAmount};
+use nori_core::support::{support_choice, support_currencies, support_first_choice, support_service, support_stamps, Cadence, SupportChoice, SupportPick, TypedAmount};
 use nori_host::support::{currency_name, money, number};
 use serde_json::{json, Value};
 
@@ -16,6 +16,8 @@ pub const SUPPORT_FAILED: i32 = 0;
 pub const SUPPORT_GIVEN: i32 = 1;
 pub const SUPPORT_REFRESHED: i32 = 2;
 pub const SUPPORT_PAGE: i32 = 3;
+/// The monthly payment stopped (index: the months it paid for) or was kept going (index 0); the settings keep it.
+pub const SUPPORT_MONTHLY: i32 = 4;
 
 /// What is chosen as the page shows it: the offered amounts as numbers, the pick (-1 for Other), what is
 /// typed, the limit it is past, and what Give gives.
@@ -50,8 +52,9 @@ pub extern "C" fn nori_ios_support_offered() -> i32 {
 
 /// The Support page as JSON to free, `null` for a build without a support service: the seals (each its
 /// season, tilt and its season's accent, dark or light as `dark`), the season a payment made now is stamped
-/// in (the local date as for `nori_ios_look`), whether a monthly payment runs, the currencies (code and
-/// name) and what is first chosen in country `region`.
+/// in (the local date as for `nori_ios_look`), whether a monthly payment runs and when one set to stop ends
+/// (Unix seconds), the rose stopping is drawn in, the currencies (code and name) and what is first chosen in
+/// country `region`.
 ///
 /// # Safety
 /// `zone` and `region` are NUL-terminated UTF-8, or `NULL`.
@@ -70,6 +73,9 @@ pub unsafe extern "C" fn nori_ios_support(unix_s: i64, offset_min: i32, zone: *c
         "seals": seals,
         "next": nori_look::theme::season_now(month, day, southern).season as u8,
         "running": paid.monthly,
+        "ends": paid.ends,
+        // Stopping is Spring's rose in every season.
+        "stop": nori_look::theme::Season::Spring.palette(dark != 0).accent,
         "currencies": support_currencies().iter().map(|c| json!({ "code": c.code, "name": currency_name(&c.code) })).collect::<Vec<_>>(),
         "first": chosen(&support_first_choice(c_text(region))),
     }))
@@ -114,15 +120,28 @@ pub extern "C" fn nori_ios_support_refresh() {
     });
 }
 
-/// Stripe's page for the monthly payment, its card and receipts or (`stop`) stopping it: a `REPORT_SUPPORT`
-/// with its address (`SUPPORT_PAGE`), or why not.
+/// Stripe's page for the monthly payment's card and receipts: a `REPORT_SUPPORT` with its address
+/// (`SUPPORT_PAGE`), or why not.
 #[no_mangle]
-pub extern "C" fn nori_ios_support_page(stop: i32) {
+pub extern "C" fn nori_ios_support_manage() {
     let Some((client, _)) = server() else { return };
-    let page = if stop != 0 { SupportPage::Stop } else { SupportPage::Manage };
-    nori_host::spawn("nori-support-page", move || match nori_core::transport::block_on(client.support_page(page)) {
+    nori_host::spawn("nori-support-manage", move || match nori_core::transport::block_on(client.support_manage()) {
         Ok(url) => report(REPORT_SUPPORT, SUPPORT_PAGE, 0, &url),
         Err(e) => failed(e),
+    });
+}
+
+/// Stops the monthly payment (`stop` 1) at the end of the month paid for, or keeps one set to stop going: a
+/// `REPORT_SUPPORT` (`SUPPORT_MONTHLY`, index the months a stopped one paid for), or why not.
+#[no_mangle]
+pub extern "C" fn nori_ios_support_monthly(stop: i32) {
+    let Some((client, _)) = server() else { return };
+    nori_host::spawn("nori-support-monthly", move || {
+        let done = if stop != 0 { nori_core::transport::block_on(client.support_stop()).map(|s| s.months) } else { nori_core::transport::block_on(client.support_keep()).map(|_| 0) };
+        match done {
+            Ok(months) => report(REPORT_SUPPORT, SUPPORT_MONTHLY, months as i32, ""),
+            Err(e) => failed(e),
+        }
     });
 }
 

@@ -1,10 +1,20 @@
-// The support service (src/index.ts). Its Stripe key is a secret: `wrangler secret put STRIPE_SECRET`.
-// Deployed with `npx wrangler@4 deploy` from this folder.
+// The support service (src/index.ts). Its Stripe key is a secret: `wrangler secret put STRIPE_SECRET`
+// (with `--env live` for the live one).
+// Deployed from this folder: `npx wrangler@4 deploy` over Stripe's test mode, `npx wrangler@4 deploy
+// --env live` over live mode, which answers at support.norifm.com and, for builds made before it, at its
+// workers.dev address.
 {
   "name": "nori-support",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
   "preview_urls": false,
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  "env": {
+    "live": {
+      "name": "nori-support-live",
+      "workers_dev": true,
+      "routes": [{ "pattern": "support.norifm.com", "custom_domain": true }]
+    }
+  }
 }

@@ -164,8 +164,10 @@ pub const SUPPORT_AMOUNT: &str = "Amount";
 pub const SUPPORT_OTHER: &str = "Other";
 pub const SUPPORT_EVERY_MONTH: &str = "Every month";
 pub const SUPPORT_CURRENCY: &str = "Currency";
-pub const SUPPORT_MANAGE: &str = "Manage monthly support";
-pub const SUPPORT_STOP: &str = "Stop monthly support";
+pub const SUPPORT_MONTHLY: &str = "Monthly support";
+pub const SUPPORT_CARD: &str = "Card and receipts";
+pub const SUPPORT_STOP: &str = "Stop";
+pub const SUPPORT_KEEP: &str = "Keep going";
 pub const SUPPORT_THANKS: &str = "Thank you";
 pub const SUPPORT_IN_BROWSER: &str = "Finish in your browser, or open this link:";
 pub const SUPPORT_OTHER_CURRENCY: &str = "Your monthly support is in another currency";
@@ -187,6 +189,19 @@ pub fn support_limit(choice: &nori_core::support::SupportChoice) -> Option<Strin
         TypedAmount::TooMuch { most } => Some(format!("At most {}", nori_host::support::money(most, &choice.currency))),
         _ => None,
     }
+}
+
+/// What a monthly payment is doing: on, or ending on a day (Unix seconds `ends`).
+pub fn support_monthly(ends: Option<i64>) -> String {
+    match ends {
+        Some(e) => format!("Ends {}", nori_host::support::day(e)),
+        None => "On".into(),
+    }
+}
+
+/// The thanks for the `n` months a monthly payment that just stopped paid for.
+pub fn support_thanks_months(n: u32) -> String {
+    if n == 1 { "Thank you for a month of support.".into() } else { format!("Thank you for {n} months of support.") }
 }
 
 /// Why the support service could not be reached or refused.
