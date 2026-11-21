@@ -227,14 +227,16 @@ class CoverLoader private constructor(context: Context) {
         private val height: Int,
         private val then: (Bitmap?, Int) -> Unit,
     ) : CoverPixels.Waiter, Runnable {
-        private var ticket = 0L
-        private var over = false
+        private val ticket = java.util.concurrent.atomic.AtomicLong(0L)
+        private val over = java.util.concurrent.atomic.AtomicBoolean(false)
         @Volatile private var got: Bitmap? = null
         @Volatile private var status = CoverPixels.OK
 
         internal fun start() {
-            ticket = CoverPixels.request(loader, url, width, height, this)
-            if (ticket == 0L) { over = true; then(null, CoverPixels.UNREADABLE) }
+            val t = CoverPixels.request(loader, url, width, height, this)
+            if (t == 0L) { over.set(true); then(null, CoverPixels.UNREADABLE); return }
+            ticket.set(t)
+            if (over.get()) CoverPixels.cancel(ticket.getAndSet(0L))
         }
 
         /** On a loader thread. */
@@ -246,10 +248,8 @@ class CoverLoader private constructor(context: Context) {
 
         /** Back on the main thread with the call back. */
         override fun run() {
-            if (over) return
-            over = true
-            CoverPixels.cancel(ticket)
-            ticket = 0L
+            if (!over.compareAndSet(false, true)) return
+            CoverPixels.cancel(ticket.getAndSet(0L))
             val b = got
             got = null
             // Smaller than asked for, or asked for at its own size: that is the whole picture.
@@ -259,10 +259,8 @@ class CoverLoader private constructor(context: Context) {
 
         /** The view has gone: its cover is not wanted, and it is not handed on. */
         fun cancel() {
-            if (over) return
-            over = true
-            CoverPixels.cancel(ticket)
-            ticket = 0L
+            if (!over.compareAndSet(false, true)) return
+            CoverPixels.cancel(ticket.getAndSet(0L))
         }
     }
 

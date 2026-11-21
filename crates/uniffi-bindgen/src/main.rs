@@ -45,21 +45,55 @@ fn nullable_futures(kt: &str) -> String {
 }
 
 /// NORI: upstream's await does not hear the coroutine's cancellation, so a flow that let go of a call
-/// waited for all of it (`flatMapLatest` joins the call it cancels). Awaits are made cancellable and tell
-/// the Rust future, which is dropped with its handle (crates/android/build.rs). Async Kotlin calls Rust
-/// makes are kept by their oneshot handle, so a Rust future dropped mid-call cancels them.
+/// waited for all of it (`flatMapLatest` joins the call it cancels). Each `awaitRustFuture*` is routed
+/// through [`AWAIT_FUTURE`], which catches synchronous exceptions from `poll` (so `suspendCancellableCoroutine`
+/// detaches its `ChildContinuation` instead of firing `invokeOnCancellation` after `free`) and reference-counts
+/// the future handle across `cancel` and `free` (so a concurrent cancel can never touch a freed handle).
+/// Async Kotlin calls Rust makes are kept by their oneshot handle, so a Rust future dropped mid-call cancels them.
 fn cancellable(kt: &str) -> String {
     let mut out = String::with_capacity(kt.len());
-    let mut future = None;
+    let mut lines = kt.split_inclusive('\n').peekable();
     let mut call = false;
-    for line in kt.split_inclusive('\n') {
+    let mut awaits = 0usize;
+    while let Some(line) = lines.next() {
         if let Some(id) = line.strip_prefix("suspend fun awaitRustFuture").and_then(|l| l.strip_suffix("(\n")) {
-            future = Some(id.to_string());
-        }
-        if line.trim() == "val futureReady = kotlin.coroutines.suspendCoroutine<kotlin.Boolean> { continuation ->" {
-            let id = future.as_deref().expect("an await is inside its awaitRustFuture function");
-            out.push_str(&line.replacen("kotlin.coroutines.suspendCoroutine", "kotlinx.coroutines.suspendCancellableCoroutine", 1));
-            out.push_str(&format!("                continuation.invokeOnCancellation {{ Scaffolding.rustFutureCancel{id}(rustFuture) }}\n"));
+            let mut header = String::from(line);
+            for h in lines.by_ref() {
+                header.push_str(h);
+                if h == "{\n" {
+                    break;
+                }
+            }
+            let mut body = String::new();
+            for b in lines.by_ref() {
+                body.push_str(b);
+                if b == "}\n" {
+                    break;
+                }
+            }
+            assert!(
+                body.contains("kotlin.coroutines.suspendCoroutine<kotlin.Boolean>")
+                    && body.contains(&format!("Scaffolding.rustFuturePoll{id}("))
+                    && body.contains(&format!("Scaffolding.rustFutureFree{id}(rustFuture)")),
+                "awaitRustFuture{id} has an unexpected shape",
+            );
+            let completion = format!("CompleteRustFuture{id}");
+            out.push_str(&header);
+            if body.contains(&completion) {
+                let ret = body
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| l.starts_with("return completion.value"))
+                    .expect("a value-returning awaitRustFuture returns completion.value");
+                out.push_str(&format!(
+                    "    val completion = {completion}()\n    uniffiAwaitFuture(rustFuture, {{ f, c -> Scaffolding.rustFuturePoll{id}(f, c, completion) }}, Scaffolding::rustFutureCancel{id}, Scaffolding::rustFutureFree{id})\n    {ret}\n}}\n",
+                ));
+            } else {
+                out.push_str(&format!(
+                    "    uniffiAwaitFuture(rustFuture, Scaffolding::rustFuturePoll{id}, Scaffolding::rustFutureCancel{id}, Scaffolding::rustFutureFree{id})\n}}\n",
+                ));
+            }
+            awaits += 1;
         } else if line.trim() == "kotlinx.coroutines.GlobalScope.launch uniffiCoroutineBlock@ {" {
             call = true;
             out.push_str(&line.replacen(".launch ", ".launch(start = kotlinx.coroutines.CoroutineStart.LAZY) ", 1));
@@ -70,9 +104,66 @@ fn cancellable(kt: &str) -> String {
             out.push_str(line);
         }
     }
+    assert!(awaits > 0, "expected at least one awaitRustFuture function");
+    out.push_str(AWAIT_FUTURE);
     out.push_str(KOTLIN_CALLS);
     out
 }
+
+const AWAIT_FUTURE: &str = "
+/** NORI: polls a Rust future cancellably, keeping its handle alive across any concurrent cancel until both await and cancel finish. */
+internal suspend fun uniffiAwaitFuture(
+    rustFuture: kotlin.Long,
+    poll: (kotlin.Long, kotlin.coroutines.Continuation<kotlin.Boolean>) -> kotlin.Int,
+    cancel: (kotlin.Long) -> Unit,
+    free: (kotlin.Long) -> Unit,
+) {
+    val refs = java.util.concurrent.atomic.AtomicInteger(1)
+    val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+    fun cancelOnce() {
+        if (!cancelled.compareAndSet(false, true)) return
+        while (true) {
+            val n = refs.get()
+            if (n == 0) return
+            if (refs.compareAndSet(n, n + 1)) break
+        }
+        try {
+            cancel(rustFuture)
+        } finally {
+            if (refs.decrementAndGet() == 0) free(rustFuture)
+        }
+    }
+    try {
+        while (true) {
+            val futureReady = kotlinx.coroutines.suspendCancellableCoroutine<kotlin.Boolean> { continuation ->
+                continuation.invokeOnCancellation { cancelOnce() }
+                val pollResult = try {
+                    poll(rustFuture, continuation)
+                } catch (e: Throwable) {
+                    continuation.resumeWith(Result.failure(e))
+                    return@suspendCancellableCoroutine
+                }
+                when (pollResult) {
+                    UNIFFI_RUST_FUTURE_PENDING -> {}
+                    UNIFFI_RUST_FUTURE_COMPLETE -> continuation.resumeWith(Result.success(true))
+                    UNIFFI_RUST_FUTURE_CANCELLED -> continuation.resumeWith(
+                        Result.failure(kotlin.coroutines.cancellation.CancellationException())
+                    )
+                    else -> continuation.resumeWith(
+                        Result.failure(uniffi.InternalException(\"Error polling Rust future (code: $pollResult)\"))
+                    )
+                }
+            }
+            if (futureReady) return
+        }
+    } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+        cancelOnce()
+        throw e
+    } finally {
+        if (refs.decrementAndGet() == 0) free(rustFuture)
+    }
+}
+";
 
 const KOTLIN_CALLS: &str = "
 /** NORI: the async Kotlin calls Rust waits for, by oneshot handle (held by Rust while it waits, so never reused). */
@@ -159,9 +250,61 @@ mod tests {
 
     #[test]
     fn awaits_and_kotlin_calls_cancel() {
-        let kt = "suspend fun awaitRustFuture7(\n    rustFuture: kotlin.Long,\n)\n{\n            val futureReady = kotlin.coroutines.suspendCoroutine<kotlin.Boolean> { continuation ->\n            }\n}\nfun dispatch(\n) {\n    kotlinx.coroutines.GlobalScope.launch uniffiCoroutineBlock@ {\n        try {\n        }\n    }\n}\n";
+        let kt = "\
+suspend fun awaitRustFuture0(
+    rustFuture: kotlin.Long,
+)
+{
+    try {
+        while(true) {
+            val futureReady = kotlin.coroutines.suspendCoroutine<kotlin.Boolean> { continuation ->
+                val pollResult = Scaffolding.rustFuturePoll0(
+                    rustFuture,
+                    continuation,
+            )
+            }
+            if (futureReady) {
+                return
+            }
+        }
+    } finally {
+        Scaffolding.rustFutureFree0(rustFuture)
+    }
+}
+suspend fun awaitRustFuture7(
+    rustFuture: kotlin.Long,
+) : kotlin.String?
+{
+    try {
+        val completion = CompleteRustFuture7();
+        while(true) {
+            val futureReady = kotlin.coroutines.suspendCoroutine<kotlin.Boolean> { continuation ->
+                val pollResult = Scaffolding.rustFuturePoll7(
+                    rustFuture,
+                    continuation,
+                    completion,
+            )
+            }
+            if (futureReady) {
+                return completion.value
+            }
+        }
+    } finally {
+        Scaffolding.rustFutureFree7(rustFuture)
+    }
+}
+fun dispatch(
+) {
+    kotlinx.coroutines.GlobalScope.launch uniffiCoroutineBlock@ {
+        try {
+        }
+    }
+}
+";
         let fixed = super::cancellable(kt);
-        assert!(fixed.contains("kotlinx.coroutines.suspendCancellableCoroutine<kotlin.Boolean> { continuation ->\n                continuation.invokeOnCancellation { Scaffolding.rustFutureCancel7(rustFuture) }\n"));
+        assert!(fixed.contains("uniffiAwaitFuture(rustFuture, Scaffolding::rustFuturePoll0, Scaffolding::rustFutureCancel0, Scaffolding::rustFutureFree0)"));
+        assert!(fixed.contains("val completion = CompleteRustFuture7()\n    uniffiAwaitFuture(rustFuture, { f, c -> Scaffolding.rustFuturePoll7(f, c, completion) }, Scaffolding::rustFutureCancel7, Scaffolding::rustFutureFree7)\n    return completion.value\n"));
+        assert!(fixed.contains("internal suspend fun uniffiAwaitFuture("));
         assert!(fixed.contains("GlobalScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) uniffiCoroutineBlock@ {\n        try {\n        }\n    }.let { uniffiKotlinCalls.start(uniffiOneshotHandle, it) }\n}\n"));
     }
 }

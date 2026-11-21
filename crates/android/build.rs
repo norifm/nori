@@ -46,7 +46,7 @@ fn cancellable_calls(scaffolding: &str) -> String {
         if function.contains("fn Java_uniffi_Scaffolding_rustFutureFree") {
             assert_eq!(function.matches(FREE).count(), 1, "a generated future free drops one handle");
             freed += 1;
-            return function.replacen(FREE, &format!("let uniffi_dropped = ::std::mem::replace(&mut *(*ptr).future.lock().unwrap(), ::std::boxed::Box::pin(::std::future::pending()));\n        drop(uniffi_dropped);\n        {FREE}"), 1);
+            return function.replacen(FREE, &format!("let uniffi_dropped = ::std::mem::replace(&mut *(*ptr).future.lock().unwrap_or_else(|e| e.into_inner()), ::std::boxed::Box::pin(::std::future::pending()));\n        drop(uniffi_dropped);\n        {FREE}"), 1);
         }
         function.split("let (uniffi_sender, uniffi_receiver)").enumerate().map(|(i, part)| {
             if i == 0 { return part.to_string(); }
