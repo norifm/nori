@@ -6739,7 +6739,7 @@ component TopContent inherits Rectangle {
         // while typed in, as far as the pill has room beside the tabs; typing shows what it finds in a preview
         // under it.
         field := Rectangle {
-            property <length> wanted: input.has-focus ? (root.previewing ? (root.named ? SearchShape.wide : SearchShape.narrow) : root.named ? 280px : 220px) : root.named ? 180px : 36px;
+            property <length> wanted: root.previewing ? (root.named ? SearchShape.wide : SearchShape.narrow) : input.has-focus ? (root.named ? 280px : 220px) : root.named ? 180px : 36px;
             animate wanted { duration: Motion.reduced ? 0ms : 200ms; enabled: !Motion.reduced; easing: ease-out; }
             y: (parent.height - self.height) / 2;
             min-width: 36px;
@@ -6748,10 +6748,10 @@ component TopContent inherits Rectangle {
             height: 36px;
             border-radius: 18px;
             clip: true;
-            // As Android's search field: a capsule raised on the surface, outlined in the accent while it has the keys.
+            // As Android's search field: a capsule raised on the surface, outlined in the accent while active.
             background: touch-search.has-hover && !input.has-focus ? Theme.raised : Theme.panel;
             border-width: 1px;
-            border-color: input.has-focus ? Theme.accent : Theme.hairline;
+            border-color: input.has-focus || root.previewing ? Theme.accent : Theme.hairline;
             HorizontalLayout {
                 padding-left: 10px;
                 padding-right: 12px;
@@ -6759,7 +6759,7 @@ component TopContent inherits Rectangle {
                 Icon {
                     y: (parent.height - self.height) / 2;
                     glyph: Icons.search;
-                    colour: input.has-focus || root.view == View.search ? Theme.accent : Theme.dim;
+                    colour: input.has-focus || root.previewing || root.view == View.search ? Theme.accent : Theme.dim;
                     width: 18px;
                     height: 18px;
                 }
