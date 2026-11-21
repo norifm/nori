@@ -221,11 +221,24 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // A plugin's sleeve for the song (the artwork slot), asked once per song while the app is in front: a
     // still picture takes the cover's place, a loop plays over it while the sleeve is at rest (SleeveMotion.kt).
     // Kept while the player is put away, so a loop coming back goes on from its last frame.
-    val artwork = vm.artwork.collectAsStateWithLifecycle().value
+    val artwork = vm.artwork.collectAsStateWithLifecycle().value?.takeIf { it.songId == state.current?.id }?.artwork
     val coverUrl = artwork?.takeIf { !it.looping }?.url ?: vm.cover(state.current?.coverArt, CoverSize.FULL)
+    // A provider's song wears its cover too (it is on screen); only its neighbours' are never measured ahead.
+    val rowUrl = vm.cover(state.current?.coverArt, CoverSize.ROW)
+    val inView = LocalPlayerShown.current
+    var started by remember { mutableStateOf(false) }
+    var returning by remember { mutableStateOf(false) }
+    androidx.lifecycle.compose.LifecycleStartEffect(Unit) {
+        started = true
+        onStopOrDispose { started = false; returning = true }
+    }
+    androidx.compose.runtime.SideEffect {
+        if (started && returning) returning = false
+    }
+    val visible = inView && !returning
     // One picture for the sleeve and for the cover in flight (see SleeveArt).
     val answered by vm.answered.collectAsStateWithLifecycle()
-    val sleeveArt = rememberSleeveArt(coverUrl, answered)
+    val sleeveArt = rememberSleeveArt(coverUrl, rowUrl, answered, visible)
     // Nothing of the loop exists until a song has had one: no player, no surface, no touch watcher. Once
     // made it stays, so a loop leaving with its song fades out rather than vanishing.
     val loop = artwork?.takeIf { it.looping }?.url
@@ -240,7 +253,6 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // The next song's sleeve is asked for and warmed while the player is in view and the app in front,
     // so its poster and loop are there when it comes; never further ahead, and nothing while hidden.
     val ahead = state.queue.getOrNull(state.nextIndex)
-    val inView = LocalPlayerShown.current
     androidx.lifecycle.compose.LifecycleResumeEffect(inView, ahead?.id) {
         val job = if (inView && ahead != null) vm.warmArtwork(ahead, CoverSize.FULL) else null
         onPauseOrDispose { job?.cancel() }
@@ -252,8 +264,6 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     if (motion != null) MotionDirector(vm, motion, loop, state.current?.id, sheet, onArtwork = panel == Panel.ART && showing == Panel.ART && !flying)
     // The player wears the cover's colours except in Midnight (the core's rule).
     val tinted = LocalPapers.current.coversTint
-    // A provider's song wears its cover too (it is on screen); only its neighbours' are never measured ahead.
-    val rowUrl = vm.cover(state.current?.coverArt, CoverSize.ROW)
     val tint = if (tinted) rememberCoverTint(rowUrl) else CoverTint(rowUrl, null)
     val found = tint.palette
     // The colours of the record on its way in, already worked out by the time it is asked for (the now
@@ -294,7 +304,14 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // See below, where it is latched.
     var held by remember { mutableStateOf<PagePalette?>(null) }
     val arrivingNow by androidx.compose.runtime.rememberUpdatedState(arriving)
-    val inViewNow by androidx.compose.runtime.rememberUpdatedState(inView)
+    val visibleNow by androidx.compose.runtime.rememberUpdatedState(visible)
+    // Returning from the background (first composition after ON_START) or hidden behind the app: take the new
+    // song's colors on this frame instead of flashing the old ones and fading after opening.
+    if (!visible && tint.url == rowUrl && found != null && found != palette) {
+        palette = found
+        fadingFrom = null
+        shift.adopted = rowUrl
+    }
     LaunchedEffect(tint) {
         // Still the last song's colours, which the song after it must not be given: colours worked out
         // for a song skipped past are dropped.
@@ -305,7 +322,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         // one from its end would put the page there in one frame.
         if (fadingFrom != null) {
             if (washFade.value < 1f) {
-                if (!AppMotion.reduce && inViewNow) washFade.fadeByFrames(1f, stage.colourFadeMs * (1f - washFade.value)) else washFade.snapTo(1f)
+                if (!AppMotion.reduce && visibleNow) washFade.fadeByFrames(1f, stage.colourFadeMs * (1f - washFade.value)) else washFade.snapTo(1f)
             }
             fadingFrom = null
         }
@@ -323,8 +340,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         val carried = found != null && (held == found ||
             shift.amount > 0.9f && shift.towards == rowUrl && arrivingNow == found)
         val from = if (carried) null else (palette ?: neutral)
-        // Behind the app, the page takes the new colours at once: a fade there was frames nobody saw.
-        val fades = from != null && !AppMotion.reduce && inViewNow
+        // Behind the app or returning from background, the page takes the new colours at once.
+        val fades = from != null && !AppMotion.reduce && visibleNow
         // Back to its start before the colours change under it, not after. Taking the fade over from one
         // still running can wait a frame for it to let go, and on that frame the new colours were drawn
         // at the old fade's strength over the old ones: the page changed, went back, and changed again.
@@ -584,7 +601,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             nextSong?.let { vm.cover(it.coverArt, CoverSize.FULL) },
                             previousTintUrl, nextTintUrl,
                             Songs(state.current?.id, previousSong?.id, nextSong?.id),
-                            slide, shift, motion,
+                            slide, shift, motion, visible,
                         )
                     }
                 } else {
@@ -946,6 +963,7 @@ private fun Artwork(
     slide: SleeveSlide, shift: PageShift,
     /** A plugin's looping sleeve, or null when the song has none. */
     motion: SleeveMotion?,
+    live: Boolean,
 ) {
     Box(Modifier.fillMaxWidth(), Alignment.TopCenter) {
         Box(
@@ -958,7 +976,7 @@ private fun Artwork(
             val answered by vm.answered.collectAsStateWithLifecycle()
             SleeveCarousel(
                 art, currentUrl, previousUrl, nextUrl, previousTint, nextTint, songs,
-                onPrevious = vm::previousItem, onNext = vm::next, answered = answered, slide = slide, shift = shift, motion = motion,
+                onPrevious = vm::previousItem, onNext = vm::next, answered = answered, slide = slide, shift = shift, motion = motion, live = live,
             )
             // Just enough shade under the status bar for its icons to read on a pale cover; the same
             // amount the album page uses, and invisible against anything darker.
@@ -1429,6 +1447,8 @@ private class SleeveArt {
     /** What is showing, fading in over [previous] at [fade]. */
     var current by mutableStateOf<androidx.compose.ui.graphics.painter.Painter?>(null)
     val fade = androidx.compose.animation.core.Animatable(1f)
+    /** Drawn at full strength immediately (set during composition when snapping while hidden or returning). */
+    var snapped by mutableStateOf(false)
     /** The picture being left, at [previousAlpha]. */
     var previous by mutableStateOf<androidx.compose.ui.graphics.painter.Painter?>(null)
     val previousAlpha = androidx.compose.animation.core.Animatable(1f)
@@ -1518,6 +1538,7 @@ private fun SleeveCarousel(
     answered: Long,
     slide: SleeveSlide, shift: PageShift,
     motion: SleeveMotion?,
+    live: Boolean,
 ) {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
@@ -1610,11 +1631,10 @@ private fun SleeveCarousel(
     // loaded yet, reduced motion, the player out of sight - changes as it did.
     val passing = remember { Passing() }
     var askedId by remember { mutableStateOf<String?>(null) }
-    val onScreen = LocalPlayerShown.current
     val incoming = art.cover?.takeIf { it.url == currentUrl }?.painter
     val go = when {
         songs.current == null || passing.id == null || songs.current == passing.id -> 0
-        AppMotion.reduce || !onScreen || holding || moving?.isActive == true || landing != null || songs.current == askedId -> 0
+        AppMotion.reduce || !live || holding || moving?.isActive == true || landing != null || songs.current == askedId -> 0
         incoming == null -> 0
         songs.previous == passing.id && before.image != null -> 1
         songs.next == passing.id && after.image != null -> -1
@@ -2209,13 +2229,38 @@ private fun liftedScale(l: Float, width: Float, side: Float): Float {
 
 
 @Composable
-private fun rememberSleeveArt(url: String?, answered: Long): SleeveArt {
+private fun rememberSleeveArt(url: String?, standInUrl: String?, answered: Long, live: Boolean): SleeveArt {
     val art = remember { SleeveArt() }
     // Taken from the composition, as [url] is: an answer is never read ahead of the song it answers with.
     val answeredNow by androidx.compose.runtime.rememberUpdatedState(answered)
-    val cover = rememberCover(url, CoverSize.FULL)
+    val liveNow by androidx.compose.runtime.rememberUpdatedState(live)
+    val cover = rememberCover(url, CoverSize.FULL, standIns = listOf(standInUrl))
     art.cover = cover
     val picture = cover.painter
+    // While hidden or on the first composition after returning from background, switch during composition
+    // so the first rendered frame already has the current song's cover (or its stand-in) and never
+    // flashes the old song's cover and animates it away.
+    if (!live && art.clearedFor == null) {
+        if (picture != null && (picture !== art.current || art.shownUrl != url)) {
+            art.current = picture
+            art.previous = null
+            art.shownUrl = url
+            art.settledUrl = url
+            art.loading = false
+            art.snapped = true
+            art.snapNext = false
+            art.fadeFrom = -1f
+        } else if (picture == null && art.shownUrl != url) {
+            art.current = null
+            art.previous = null
+            art.shownUrl = null
+            art.settledUrl = null
+            art.loading = cover.state == CoverImage.LOADING
+            art.snapped = false
+            art.snapNext = false
+            art.fadeFrom = -1f
+        }
+    }
     // Run again when a record slides in for another song without its picture (see clearFor), and not when
     // the song it slid in for arrives and takes that over: this song's own fade is not to be cut short.
     val elsewhere = art.clearedFor?.takeIf { it.asked != url }
@@ -2242,16 +2287,20 @@ private fun rememberSleeveArt(url: String?, answered: Long): SleeveArt {
                 art.loading = false
                 val swiped = art.snapNext.also { art.snapNext = false }
                 val from = art.fadeFrom.also { art.fadeFrom = -1f }
-                val instant = swiped || from < 0f && art.current == null && art.previous == null && cover.fromMemory
+                val upgraded = art.shownUrl == url
+                val instant = !liveNow || swiped || upgraded || from < 0f && art.current == null && art.previous == null && cover.fromMemory
                 // The picture on screen stays underneath at full strength while the new one covers it; one
                 // already fading out to the plate carries on from where it is.
                 art.current?.let { art.previous = it; art.previousAlpha.snapTo(1f) }
                 art.current = picture
-                if (instant || AppMotion.reduce) art.fade.snapTo(1f)
-                else {
+                if (instant || AppMotion.reduce) {
+                    art.snapped = true
+                    art.fade.snapTo(1f)
+                } else {
                     // A record that slid in with the picture part way in hands the sleeve that much of it.
                     val start = from.coerceAtLeast(0f)
                     art.fade.snapTo(start)
+                    art.snapped = false
                     val ms = if (art.previous == null) PICTURE_IN_MS else PICTURE_OVER_MS
                     art.fade.animateTo(1f, androidx.compose.animation.core.tween((ms * (1f - start)).toInt().coerceAtLeast(1)))
                 }
@@ -2267,11 +2316,19 @@ private fun rememberSleeveArt(url: String?, answered: Long): SleeveArt {
                 // in for another one and was not taken up, the cover's state moved): it finishes from where
                 // it got to. Left there, the picture stayed faint over the plate for the rest of the song.
                 art.loading = false
-                if (AppMotion.reduce) art.fade.snapTo(1f)
-                else art.fade.animateTo(1f, androidx.compose.animation.core.tween(((1f - art.fade.value) * PICTURE_IN_MS).toInt().coerceAtLeast(1)))
+                if (!liveNow || AppMotion.reduce) {
+                    art.snapped = true
+                    art.fade.snapTo(1f)
+                } else {
+                    art.snapped = false
+                    art.fade.animateTo(1f, androidx.compose.animation.core.tween(((1f - art.fade.value) * PICTURE_IN_MS).toInt().coerceAtLeast(1)))
+                }
                 art.previous = null
                 art.shownUrl = url
                 art.settledUrl = url
+            } else if (art.fade.value < 1f) {
+                art.fade.snapTo(1f)
+                art.snapped = false
             }
             cover.state == CoverImage.LOADING -> {
                 if (art.current == null) art.loading = true
@@ -2299,7 +2356,7 @@ private fun SleeveImage(art: SleeveArt, modifier: Modifier, plate: Boolean = tru
     Box(if (plate) modifier.drawBehind { drawRect(art.plate) } else modifier) {
         PlateSheen(art, sheen)
         art.previous?.let { androidx.compose.foundation.Image(it, null, Modifier.fillMaxSize().graphicsLayer { alpha = art.previousAlpha.value }, contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
-        art.current?.let { androidx.compose.foundation.Image(it, null, Modifier.fillMaxSize().graphicsLayer { alpha = art.fade.value }, contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
+        art.current?.let { androidx.compose.foundation.Image(it, null, Modifier.fillMaxSize().graphicsLayer { alpha = if (art.snapped) 1f else art.fade.value }, contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
     }
 }
 

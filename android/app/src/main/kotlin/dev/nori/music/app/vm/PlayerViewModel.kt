@@ -140,21 +140,24 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
             }
         }.flowOn(kotlinx.coroutines.Dispatchers.IO)
 
+    /** A plugin's sleeve paired with the song it belongs to, so a replayed value is never shown on another song. */
+    data class SongArtwork(val songId: String, val artwork: dev.nori.music.ffi.plugins.Artwork)
+
     /**
      * The sleeve a plugin gives the song playing (the artwork slot), or null for nori's own cover. Asked
      * only while the player collects this, which is while it is open, once per song; a new song starts
      * from null, so the last one's loop steps back at once rather than playing on under the new cover.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val artwork: StateFlow<dev.nori.music.ffi.plugins.Artwork?> = state.map { it.current }.distinctUntilChanged { a, b -> a?.id == b?.id }
+    val artwork: StateFlow<SongArtwork?> = state.map { it.current }.distinctUntilChanged { a, b -> a?.id == b?.id }
         .flatMapLatest { song ->
-            kotlinx.coroutines.flow.flow<dev.nori.music.ffi.plugins.Artwork?> {
+            kotlinx.coroutines.flow.flow<SongArtwork?> {
                 // The answer [warmArtwork] already had for it comes at once, without asking again.
                 val warmed = warm?.takeIf { it.song == song?.id }
-                if (warmed != null) emit(warmed.artwork)
+                if (warmed != null) emit(warmed.artwork?.let { SongArtwork(warmed.song, it) })
                 else {
                     emit(null)
-                    if (song != null) emit(runCatching { nori.plugins.artwork(song) }.getOrNull())
+                    if (song != null) emit(runCatching { nori.plugins.artwork(song) }.getOrNull()?.let { SongArtwork(song.id, it) })
                 }
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -189,8 +192,8 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
      */
     private val motionLazy = lazy {
         nori.motionPlayer { status ->
-            val shown = artwork.value ?: return@motionPlayer
             val song = state.value.current ?: return@motionPlayer
+            val shown = artwork.value?.takeIf { it.songId == song.id }?.artwork ?: return@motionPlayer
             viewModelScope.launch { nori.plugins.artworkFailed(shown, song, status) }
         }
     }
