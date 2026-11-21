@@ -76,6 +76,13 @@ impl Plan {
     pub fn out_loop_us(&self) -> i64 {
         self.mixer.out_loop_ms.unwrap_or(0) * 1000
     }
+    /// Outgoing bytes held when entering this transition `late_us` in.
+    fn hold_bytes(&self, late_us: i64, out: Format) -> usize {
+        let late = late_us.clamp(0, self.duration_us());
+        let hold_us = if self.out_loop_us() > 0 { self.out_loop_us() } else if late_us > 0 { self.duration_us() } else { self.held_us() };
+        let late_hold = if self.out_loop_us() > 0 { 0 } else { late };
+        out.bytes((hold_us - late_hold).max(0))
+    }
     fn stretching(&self) -> bool {
         (self.tempo_ratio() - 1.0).abs() > 1e-4
     }
@@ -249,11 +256,12 @@ struct Repeat {
     pace: f64,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 enum Landing {
     #[default]
     None,
-    Track,
+    /// Just flushed (seek, jump or remake): `None` before the first buffer, then that buffer's pts.
+    Track(Option<i64>),
     Mix(i64),
 }
 /// A queued piece of output.
@@ -828,8 +836,11 @@ impl TransitionEngine {
         if self.playing_id.is_none() {
             self.playing_id = self.current_id.clone();
         }
-        let landing = std::mem::take(&mut self.landing);
-        let landed = !matches!(landing, Landing::None);
+        let landing = self.landing;
+        if matches!(landing, Landing::Track(None)) {
+            self.landing = Landing::Track(Some(pts_us));
+        }
+        let landed_here = matches!(landing, Landing::Track(None) | Landing::Mix(_));
         let mix_phase = match landing {
             Landing::Mix(us) => Some(us),
             _ => None,
@@ -847,18 +858,29 @@ impl TransitionEngine {
             let frames = (start_us - track_pos) * out.rate as i64 ;
             (frames + if frames >= 0 { 500_000 } else { -500_000 }) / 1_000_000
         });
-        // Past the start but inside the transition (a seek): hold what is left. Past its end: nothing to hold.
-        let skip_transition = p.is_some_and(|(_, duration_us)| start_frame < -duration_us * out.rate as i64 / 1_000_000);
+        // Past the start but inside the transition (a seek): hold what is left. At or past its end: nothing to hold.
+        let skip_transition = p.is_some_and(|(_, duration_us)| start_frame <= -duration_us * out.rate as i64 / 1_000_000);
         if start_frame >= frames || skip_transition {
+            if matches!(landing, Landing::Mix(_)) || matches!(self.landing, Landing::Track(Some(at)) if pts_us - at >= DRY_US) {
+                self.landing = Landing::None;
+            }
             return Some(self.pass(down, buf, whole, pts_us, gain));
         }
+        self.landing = Landing::None;
         let late = start_frame < 0;
         // A leader's plan come after the music here passed its start: not mixed from somewhere in it; the
         // leader's change of song is followed instead. Landed in it (started there), what is left mixes,
         // as there.
-        if late && !landed && matches!(self.plans, Plans::Led(_)) {
+        if late && !landed_here && matches!(self.plans, Plans::Led(_)) {
             host.log(&format!("transition: the leader's plan came {} ms after its start: not mixed", -start_frame * 1000 / out.rate as i64));
             self.flight.ending = Ending::LetGo;
+            return Some(self.pass(down, buf, whole, pts_us, gain));
+        }
+        let late_us = mix_phase.unwrap_or_else(|| {
+            if late { -start_frame * 1_000_000 / out.rate as i64 } else { 0 }
+        });
+        // Nothing of the overlap is left to hold: play the remainder unmixed instead of swallowing it.
+        if self.plan().is_some_and(|p| p.hold_bytes(late_us, out) == 0) {
             return Some(self.pass(down, buf, whole, pts_us, gain));
         }
         let before = start_frame.max(0) as usize * fb;
@@ -866,9 +888,6 @@ impl TransitionEngine {
             let head = self.copy_of(&buf[..before]);
             self.enqueue(head, pts_us, Some(self.offset_us), 1.0, gain);
         }
-        let late_us = mix_phase.unwrap_or_else(|| {
-            if late { -start_frame * 1_000_000 / out.rate as i64 } else { 0 }
-        });
         // Played from inside, the transition keeps both decks at one speed: the loop and the bend are for one
         // played whole.
         if let (true, Ending::Planned(p)) = (late_us > 0, &mut self.flight.ending) {
@@ -888,8 +907,10 @@ impl TransitionEngine {
             None => "holding the ending, no sound still in the sink".to_string(),
             Some(r) => format!("holding the ending, {} ms of sound still in the sink", r / 1000),
         });
-        // Landing in or at the transition, the sink holds only what was before the cut: the hold is meant.
-        if let Some(runway) = runway.filter(|&r| r < DRY_US && !late && !landed) {
+        // Landing in, at, or within DRY_US before the transition, the sink holds only what was decoded
+        // since the cut: the hold is meant.
+        let near_landing = landed_here || matches!(landing, Landing::Track(Some(at)) if held_from - at < DRY_US);
+        if let Some(runway) = runway.filter(|&r| r < DRY_US && !late && !near_landing) {
             // Decode never got ahead (the next track still fetching): don't hold.
             host.log(&format!("transition: no runway ({} ms), letting the ending play", runway / 1000));
             self.abandon_transition(host);
@@ -1005,7 +1026,6 @@ impl TransitionEngine {
         self.held_song = self.song.clone();
         self.heard.next_rate = if p.stretching() { p.tempo_ratio() } else { 1.0 };
         self.take_over(p, late_us);
-        let late = late_us.clamp(0, p.duration_us());
         self.heard.from = self.flight.held_id.as_ref().map(|h| h.serial);
         self.heard.audible_us = i64::MAX;
         // Outro loop: only the loop slice is captured.
@@ -1014,9 +1034,7 @@ impl TransitionEngine {
         if self.tail.len() < bytes {
             self.tail.resize(bytes, 0);
         }
-        // A late hold only holds what is left of the overlap.
-        let late_hold = if p.out_loop_us() > 0 { 0 } else { late };
-        let limit = out.bytes((hold_us - late_hold).max(0));
+        let limit = p.hold_bytes(late_us, out);
         self.flight.phase = Phase::Hold(Hold { len: 0, limit, held_us: 0, at_ms, late_us });
     }
 
@@ -1834,7 +1852,7 @@ impl TransitionEngine {
     pub fn flush<H: Host>(&mut self, host: &mut H) {
         self.clear(host);
         self.fresh = true;
-        self.landing = Landing::Track;
+        self.landing = Landing::Track(None);
     }
 
     pub(crate) fn land_in_mix(&mut self, phase_us: i64) {
@@ -2379,6 +2397,33 @@ mod tests {
         assert!(h.log.iter().any(|l| l.contains("holding the ending")), "{:?}", h.log);
         assert!(!h.log.iter().any(|l| l.contains("no runway")), "{:?}", h.log);
         assert!(d.samples().is_empty(), "the ending waits for the next song");
+    }
+
+    #[test]
+    fn seek_just_before_mix_still_holds() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        h.plans.insert("a".into(), fade("b", 2_000_000));
+        d.position = Some(1_500_000);
+        e.flush(&mut h);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        // Seek 500 ms before the mix start, decoded in 100 ms chunks (< DRY_US runway).
+        for step in 0..10 {
+            feed(&mut e, &mut d, &mut h, &tone(1000, 0.1), 1_500_000 + step * 100_000);
+        }
+        assert!(e.holding(), "seek within DRY_US before mix start still holds: {:?}", h.log);
+        assert!(!h.log.iter().any(|l| l.contains("no runway")), "{:?}", h.log);
+    }
+
+    #[test]
+    fn seek_at_mix_end_passes_remaining_audio() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        // Fade 1 s..3 s; seek right to 3 s with 1 s of song left.
+        h.plans.insert("a".into(), fade("b", 1_000_000));
+        e.flush(&mut h);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        feed(&mut e, &mut d, &mut h, &tone(1000, 1.0), 3_000_000);
+        assert!(!e.holding(), "nothing left of the mix to hold: {:?}", h.log);
+        assert_eq!(d.samples().len(), RATE as usize * 2, "remaining audio plays instead of being dropped");
     }
 
     #[test]

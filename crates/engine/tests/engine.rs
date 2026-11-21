@@ -3284,6 +3284,27 @@ fn seek_into_distant_mix_plays_on() {
 }
 
 #[test]
+fn seek_just_before_mix_still_mixes() {
+    let (a, b) = (music(40.0, 62), music(40.0, 63));
+    let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..prefs_off() });
+    {
+        let mut app = live.0.lock();
+        app.analyses.insert("a".into(), measured("a", 120.0, 40_000));
+        app.analyses.insert("b".into(), measured("b", 120.0, 40_000));
+    }
+    let rig = playing(&[("a", &a), ("b", &b)], live.clone(), Settings { auto_mix: true, ..Settings::default() });
+    // Mix starts at 26.25 s; seek ~1 s before it (within DRY_US = 1.5 s).
+    let before = rig.heard.lock().len();
+    rig.engine.seek(25_250);
+    assert!(rig.wait_for(30, Rig::ended), "{:?} {:?}", rig.engine.status(), live.0.lock().log);
+    let log = live.0.lock().log.clone();
+    assert!(log.iter().any(|l| l.contains("mixing: the next track arrived")), "{log:?}");
+    assert!(!log.iter().any(|l| l.contains("no runway")), "{log:?}");
+    // The second of `a` before the mix start was heard before entering the mix.
+    heard_from(&rig, before, &a, 25_250, RATE as usize / 2).unwrap();
+}
+
+#[test]
 fn same_plan_again_changes_nothing() {
     let (a, b) = (music(30.0, 56), music(20.0, 57));
     let live = Live::new(crossfade(6));
