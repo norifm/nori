@@ -1656,14 +1656,20 @@ private fun SleeveCarousel(
         androidx.compose.runtime.derivedStateOf { naturalUrl != null && (natural.value != 0f || art.shownUrl != naturalUrl) }
     }
     val naturalNow by androidx.compose.runtime.rememberUpdatedState(natural)
+    val liveNow by androidx.compose.runtime.rememberUpdatedState(live)
     val nextIdNow by androidx.compose.runtime.rememberUpdatedState(songs.next)
     val previousIdNow by androidx.compose.runtime.rememberUpdatedState(songs.previous)
+    var naturalJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     LaunchedEffect(natural) {
         if (natural.value == 0f) return@LaunchedEffect
         // The same lift, slide and settle as a press on the transport (see the buttons' `run` below).
-        launch { lift.animateTo(1f, spring(dampingRatio = 1f, stiffness = 1200f, visibilityThreshold = 0.001f)) }
-        settleByFrames(natural, BUTTON_STIFFNESS)
-        lift.animateTo(0f, spring(dampingRatio = 1f, stiffness = 600f, visibilityThreshold = 0.001f))
+        val job = launch {
+            launch { lift.animateTo(1f, spring(dampingRatio = 1f, stiffness = 1200f, visibilityThreshold = 0.001f)) }
+            settleByFrames(natural, BUTTON_STIFFNESS)
+            lift.animateTo(0f, spring(dampingRatio = 1f, stiffness = 600f, visibilityThreshold = 0.001f))
+        }
+        naturalJob = job
+        try { job.join() } finally { if (naturalJob === job) naturalJob = null }
     }
 
     // The loop plays only on a record at rest: none held, lifted, sliding (a skip or a song changing by itself) or waiting to land.
@@ -1726,6 +1732,7 @@ private fun SleeveCarousel(
      * goes into [offset], so what moves it next starts from where it can be seen.
      */
     suspend fun takeOver() {
+        naturalJob?.cancelAndJoin()
         val n = naturalNow.value
         if (n == 0f) return
         naturalNow.snapTo(0f)
@@ -1874,9 +1881,31 @@ private fun SleeveCarousel(
     LaunchedEffect(moving, holding) {
         // Whatever happened - a move that turned out to have nothing to move to, a landing cancelled
         // by a finger that then went nowhere - a record with nobody holding it and nothing to do
-        // belongs flat in its sleeve. This is the one place that is guaranteed to run after every move.
+        // belongs centered and flat in its sleeve. Run as `moving` so any new drag or press cancels it.
         moving?.join()
-        if (!holding && lift.value != 0f) lift.animateTo(0f, down)
+        if (!holding && (offset != 0f || lift.value != 0f)) {
+            moving = scope.launch {
+                if (!liveNow || AppMotion.reduce) {
+                    offset = 0f
+                    if (lift.value != 0f) lift.snapTo(0f)
+                } else {
+                    if (offset != 0f) launch {
+                        androidx.compose.animation.core.animate(offset, 0f, 0f, spring(dampingRatio = 1f, stiffness = 520f, visibilityThreshold = 1f)) { value, _ -> offset = value }
+                    }
+                    if (lift.value != 0f) launch { lift.animateTo(0f, down) }
+                }
+            }
+        }
+    }
+    LaunchedEffect(live) {
+        if (!live) {
+            naturalJob?.cancelAndJoin()
+            if (naturalNow.value != 0f) naturalNow.snapTo(0f)
+            if (!holding && moving?.isActive != true) {
+                offset = 0f
+                if (lift.value != 0f) lift.snapTo(0f)
+            }
+        }
     }
     androidx.compose.runtime.DisposableEffect(slide) {
         val run: (Int) -> Boolean = { go ->
