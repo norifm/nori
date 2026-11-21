@@ -7013,7 +7013,8 @@ mod tests {
         // An 800 px window's pill on macOS, up to the widest pill; the current tab is named even while the
         // others are not.
         for room in [616.0f32, 700.0, 879.0, 880.0, 960.0, 1040.0] {
-            for (focused, previewing) in [(false, false), (true, false), (true, true)] {
+            let mut preview_w = None;
+            for (focused, previewing) in [(false, false), (true, false), (true, true), (false, true)] {
                 let bar = TopBar::new().unwrap();
                 bar.window().set_size(slint::LogicalSize::new(room, 48.0));
                 bar.set_room(room);
@@ -7030,6 +7031,15 @@ mod tests {
                     bar.window().take_snapshot().unwrap();
                 }
                 let case = format!("room {room}, focused {focused}, previewing {previewing}");
+                if previewing {
+                    match preview_w {
+                        None => preview_w = Some(bar.get_search_width()),
+                        Some(w) if (bar.get_search_width() - w).abs() > 0.5 => {
+                            off.push(format!("{case}: previewing field shrank from {w} to {} without focus", bar.get_search_width()));
+                        }
+                        _ => {}
+                    }
+                }
                 let span = |e: &ElementHandle| (e.absolute_position().x, e.absolute_position().x + e.size().width);
                 let last_tab = ElementHandle::find_by_element_type_name(&bar, "TabButton").map(|e| span(&e).1).fold(0.0, f32::max);
                 // The field: its words start 35 px in from its left edge, and it is as wide as the bar says.
