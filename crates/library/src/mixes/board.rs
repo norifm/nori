@@ -1,6 +1,6 @@
 //! The "For you" row: its mixes, each drawn once per day (or week) or on request, and the favourites.
-//! Tiles, pages and playback read the same draw, held in memory per core; the same seed over the same
-//! index draws the same mix after a restart, so nothing is stored.
+//! Tiles, pages and playback read the same draw, kept per core and stored, so a restart shows the
+//! period's draw at once and the same one: a draw again over an index that has grown since would differ.
 
 use std::collections::HashMap;
 
@@ -171,7 +171,7 @@ pub struct MixWarm {
 // ---- the boards ------------------------------------------------------------
 
 /// One mix as drawn: its songs, the period it was drawn for and which draw of that period it is.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Drawn {
     pub songs: Vec<Song>,
     pub period: i64,
@@ -184,6 +184,19 @@ pub struct Board {
     pub drawn: HashMap<&'static str, Drawn>,
     /// None until the app has handed the starred songs over once.
     pub favourites: Option<Vec<Song>>,
+}
+
+impl Board {
+    /// The draws [`Board::stored`] wrote; those of mixes this build no longer has are left out.
+    pub fn from_stored(stored: &str) -> Board {
+        let drawn: HashMap<String, Drawn> = serde_json::from_str(stored).unwrap_or_default();
+        Board { drawn: drawn.into_iter().filter_map(|(id, d)| Some((spec_of(&id)?.id, d))).collect(), favourites: None }
+    }
+
+    /// The draws, as the next run reads them back.
+    pub fn stored(&self) -> String {
+        serde_json::to_string(&self.drawn).unwrap_or_default()
+    }
 }
 
 /// A draw that fails reads as an empty one, which then falls back to the server's random songs.

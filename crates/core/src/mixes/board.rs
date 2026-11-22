@@ -6,6 +6,9 @@ use nori_library::search::distinct;
 
 pub use nori_library::mixes::board::*;
 
+/// The `kv` key the draws are stored under (cleared with the library, `db::clear_library`).
+pub(crate) const STORED: &str = "mix_draws";
+
 impl Core {
     fn board<R>(&self, f: impl FnOnce(&mut Board) -> R) -> R {
         f(&mut self.board.lock())
@@ -114,7 +117,13 @@ impl Core {
             }
         };
         let drawn = Drawn { songs: distinct(songs, |s| &s.id), period, generation };
-        self.board(|b| b.drawn.insert(spec.id, drawn));
+        let stored = self.board(|b| {
+            b.drawn.insert(spec.id, drawn);
+            b.stored()
+        });
+        if let Err(e) = db::kv_put(&self.db.lock(), STORED, &stored) {
+            crate::alog::info(&format!("mixes: the draw is not stored: {e}"));
+        }
         MixDraw::Drawn
     }
 }
@@ -186,6 +195,29 @@ pub(crate) mod tests {
         assert_eq!(cards[2].id, "discover");
         assert_eq!(cards[2].covers.len(), 4);
         assert!(cards[1].covers.is_empty());
+    }
+
+    #[test]
+    fn a_draw_and_its_redraws_outlast_a_restart() {
+        let dir = nori_testdir::TempDir::new("mix-draws");
+        let path = dir.path().join("nori.db").to_string_lossy().into_owned();
+        let today = 20_000;
+        let drawn = {
+            let core = Core::new(path.clone(), "t".into(), Default::default()).unwrap();
+            let all: Vec<Song> = (0..60).map(|i| song(&format!("s{i}"), "t", &format!("Artist {}", i % 12), &format!("LP {i}"), "Rock", 1990)).collect();
+            db::index(&mut core.db.lock(), &[], &[], &all).unwrap();
+            assert_eq!(core.mix_draw("discover".into(), today, false, None), MixDraw::Drawn);
+            assert_eq!(core.mix_draw("discover".into(), today, true, None), MixDraw::Drawn);
+            // Listening since would draw another mix from the same seed.
+            db::index(&mut core.db.lock(), &[], &[], &[song("new", "t", "Someone", "New LP", "Rock", 2020)]).unwrap();
+            sheet(&core, "discover").songs
+        };
+        let core = Core::new(path, "t".into(), Default::default()).unwrap();
+        assert_eq!(core.mix_cards(true)[2].covers.len(), 4, "the tile has its covers before any draw");
+        assert_eq!(core.mix_draw("discover".into(), today, false, None), MixDraw::Kept);
+        assert_eq!(sheet(&core, "discover").songs, drawn);
+        assert_eq!(core.mix_draw("discover".into(), today, true, None), MixDraw::Drawn);
+        assert_ne!(sheet(&core, "discover").songs, drawn, "the next redraw, not the one already shown");
     }
 
     #[test]

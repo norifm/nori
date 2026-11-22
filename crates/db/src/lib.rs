@@ -377,7 +377,7 @@ pub fn count(c: &Connection, kind: ItemKind) -> rusqlite::Result<u32> {
 pub fn clear_library(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch(
         "DELETE FROM fts WHERE rowid IN (SELECT rowid FROM items WHERE server=sid()); DELETE FROM items WHERE server=sid();
-         DELETE FROM cache WHERE server=sid(); DELETE FROM pending WHERE server=sid(); DELETE FROM kv WHERE server=sid() AND key='queue';
+         DELETE FROM cache WHERE server=sid(); DELETE FROM pending WHERE server=sid(); DELETE FROM kv WHERE server=sid() AND key IN ('queue', 'mix_draws');
          DELETE FROM server_plays WHERE server=sid();",
     )
 }

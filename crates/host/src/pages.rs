@@ -1,9 +1,11 @@
 //! The library's pages as the clients read them, each on a thread of its own: the stored copy first,
-//! then the server's when it differs. Home's shelves come in the core's order (`browse::home_shelves`).
+//! then the server's when it differs. Home's shelves come in the core's order (`browse::home_shelves`),
+//! all that is stored at once (`home::home_kept`), then the server's answers.
 
-use nori_core::browse::{favorites_in_order, home_pinned, home_row_more, home_row_page, home_rows_shown, home_shelves, shelf_albums_read, AlbumSort, HomeShelf};
+use nori_core::browse::{favorites_in_order, home_pinned, home_row_more, home_row_page, home_shelves, shelf_albums_read, AlbumSort, HomeShelf};
+pub use nori_core::home::ShelfItems;
+use nori_core::home::{shelf_items, shelf_read};
 use nori_core::cache_policy::{Page, Read};
-use nori_core::client::Client;
 use nori_core::library::QueueOffer;
 use nori_core::mixes::board::{MixLookup, MixSheet, MixTile};
 use nori_core::settings::HomeRow;
@@ -74,19 +76,18 @@ pub enum HomePart {
     Shelf { at: usize, items: ShelfItems },
 }
 
-/// What a Home shelf holds.
-pub enum ShelfItems {
-    Albums(Vec<Album>),
-    Playlists(Vec<Playlist>),
-    Songs(Vec<Song>),
-}
-
 impl Handle {
     /// The queue another device or app left on the server, worth offering against what the player shows
     /// (`Client::queue_offer`); none when it cannot be asked. Blocks.
     pub fn queue_offer(&self) -> Option<QueueOffer> {
         let now = self.now();
         block_on(self.client.queue_offer(now.playing, now.song.map(|s| s.id))).ok().flatten()
+    }
+
+    /// [`Handle::queue_offer`] as the server last answered, at once: shown before it is asked again.
+    pub fn queue_offer_kept(&self) -> Option<QueueOffer> {
+        let now = self.now();
+        self.client.queue_offer_kept(now.playing, now.song.map(|s| s.id)).ok().flatten()
     }
 
     /// The queue Home offered (`offer::Offered::close`) was taken up (`take`: it plays from its song and
@@ -173,8 +174,7 @@ impl Handle {
     /// The Home rows the profile shows, in the order kept: a jam guest's only the server's album shelves
     /// (`browse::home_rows_shown`).
     pub fn home_rows(&self) -> Vec<HomeRow> {
-        let kept = self.core.session.settings.prefs(|p| p.home_rows.clone());
-        home_rows_shown(kept, self.rules().account)
+        self.client.home_rows()
     }
 
     /// [`Handle::home_rows`] that are shelves of albums, for a Home that draws only albums.
@@ -183,8 +183,9 @@ impl Handle {
     }
 
     /// Reads Home on a thread of its own: with `mixes`, "For you" first; then a source's own (its feed),
-    /// else the shelves of `rows` (some of [`Handle::home_rows`]). `each` gets every part as it comes; an error
-    /// only while nothing has come.
+    /// else the shelves of `rows` (some of [`Handle::home_rows`]). Everything stored comes at once, then the
+    /// server's answers where they differ; a shelf with nothing stored comes once the server answers, empty
+    /// if it has nothing. `each` gets every part as it comes; an error only while nothing has come.
     pub fn read_home(&self, rows: Vec<HomeRow>, mixes: bool, each: impl Fn(Result<HomePart, NetError>) + Send + 'static) {
         let me = self.clone();
         crate::spawn("nori-home", move || me.home(rows, mixes, &each));
@@ -192,81 +193,69 @@ impl Handle {
 
     fn home(&self, rows: Vec<HomeRow>, mixes: bool, each: &dyn Fn(Result<HomePart, NetError>)) {
         let client = &self.client;
-        // The mixes and the favourites are the profile's where it has them (`ProfileRules::mixes`).
-        let mixes = mixes.then_some(self.rules().mixes);
-        let taste = self.core.session.settings.in_effect(|p| p.taste_model);
-        // The favourites' tile follows the starred songs: stored at once, the server's after.
-        let stored = mixes.filter(|&account| account).map(|_| client.mix_favourites_stored());
-        let tiles = |account: bool| if account { self.core.mix_cards(taste) } else { Vec::new() };
-        let sent = mixes.map(|account| {
-            let t = tiles(account);
-            each(Ok(HomePart::Mixes(t.clone())));
-            t
-        });
-        let mut any = sent.is_some();
-        // A source's own Home: its feed under "For you", as on Android.
+        let kept = match client.home_kept(rows.clone(), mixes) {
+            Ok(kept) => kept,
+            Err(e) => return each(Err(e)),
+        };
+        if mixes {
+            each(Ok(HomePart::Mixes(kept.mixes.clone())));
+        }
+        if let Some(feed) = &kept.feed {
+            each(Ok(HomePart::Feed(feed.clone())));
+        }
+        for (at, items) in kept.shelves.iter().enumerate() {
+            if let Some(items) = items {
+                each(Ok(HomePart::Shelf { at, items: items.clone() }));
+            }
+        }
+        let mut any = mixes || kept.feed.is_some() || kept.shelves.iter().any(Option::is_some);
+        let mut answered = |r: Result<(), NetError>| match r {
+            Ok(()) => {
+                any = true;
+                true
+            }
+            Err(e) if !any => {
+                each(Err(e));
+                false
+            }
+            Err(_) => true,
+        };
         if self.rules().feed {
-            let r = read_pages(client, Read::HomeFeed, |p| {
-                if let Page::Feed { v } = p {
+            let r = block_on(client.read_refreshed(Read::HomeFeed)).map(|page| {
+                if let Some(Page::Feed { v }) = page {
                     each(Ok(HomePart::Feed(v)));
                 }
             });
-            if let Err(e) = r {
-                return each(Err(e));
+            if !answered(r) {
+                return;
             }
         }
         let pins = self.core.session.settings.prefs(|p| p.pinned_playlists.clone());
         let rows = if self.rules().feed { Vec::new() } else { rows };
-        for (at, shelf) in home_shelves(rows).into_iter().enumerate() {
-            let r = match shelf {
-                HomeShelf::Albums { sort, size, follows_stars } => {
-                    shelf_pages(client, shelf_albums_read(sort, size, follows_stars, 0), at, each, |p| if let Page::Albums { v } = p { Some(ShelfItems::Albums(v)) } else { None })
-                }
-                HomeShelf::Playlists { take } => shelf_pages(client, Read::PlaylistList, at, each, |p| if let Page::Playlists { v } = p { Some(ShelfItems::Playlists(v.into_iter().take(take as usize).collect())) } else { None }),
-                HomeShelf::Pinned => shelf_pages(client, Read::PlaylistList, at, each, |p| if let Page::Playlists { v } = p { Some(ShelfItems::Playlists(home_pinned(v, pins.clone()))) } else { None }),
-                HomeShelf::Songs { sort, descending, limit } => {
-                    let songs = self.core.browse_songs(sort, descending, false, 0, 0, 0, limit).unwrap_or_default();
-                    each(Ok(HomePart::Shelf { at, items: ShelfItems::Songs(songs) }));
-                    Ok(())
-                }
-            };
-            match r {
-                Ok(()) => any = true,
-                Err(e) if !any => return each(Err(e)),
-                Err(_) => {}
+        for (at, shelf) in home_shelves(rows).iter().enumerate() {
+            let Some(read) = shelf_read(shelf) else { continue };
+            let r = block_on(client.read_refreshed(read)).map(|page| match page.and_then(|p| shelf_items(shelf, p, &pins)) {
+                Some(items) => each(Ok(HomePart::Shelf { at, items })),
+                None if kept.shelves.get(at).is_none_or(Option::is_none) => each(Ok(HomePart::Shelf { at, items: ShelfItems::Albums { v: Vec::new() } })),
+                None => {}
+            });
+            if !answered(r) {
+                return;
             }
         }
-        if let (Some(account), Some(sent)) = (mixes, sent) {
-            match stored {
-                Some(Ok(f)) if f.fresh => {}
-                Some(s) => {
-                    let _ = block_on(client.mix_favourites_refresh(s.ok().and_then(|f| f.digest)));
+        if mixes && self.rules().mixes {
+            match client.mix_favourites_stored() {
+                Ok(f) if f.fresh => {}
+                stored => {
+                    let _ = block_on(client.mix_favourites_refresh(stored.ok().and_then(|f| f.digest)));
                 }
-                None => {}
             }
-            if account {
-                block_on(client.mix_warm_all());
-            }
-            let now = tiles(account);
-            if now != sent {
+            block_on(client.mix_warm_all());
+            let now = self.core.mix_cards(self.core.session.settings.in_effect(|p| p.taste_model));
+            if now != kept.mixes {
                 each(Ok(HomePart::Mixes(now)));
             }
         }
     }
 }
 
-/// Reads one Home shelf's pages; a shelf the server has nothing for comes empty, rather than staying
-/// unread.
-fn shelf_pages(client: &Client, read: Read, at: usize, each: &dyn Fn(Result<HomePart, NetError>), make: impl Fn(Page) -> Option<ShelfItems>) -> Result<(), NetError> {
-    let mut got = false;
-    read_pages(client, read, |p| {
-        if let Some(items) = make(p) {
-            got = true;
-            each(Ok(HomePart::Shelf { at, items }));
-        }
-    })?;
-    if !got {
-        each(Ok(HomePart::Shelf { at, items: ShelfItems::Albums(Vec::new()) }));
-    }
-    Ok(())
-}

@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import dev.nori.music.settings.server
+import dev.nori.music.settings.loggedIn
 
 /**
  * The object graph, built by hand: there are a dozen long-lived objects and a DI
@@ -202,6 +203,7 @@ class Nori private constructor(private val context: Context) {
         val t = android.os.SystemClock.elapsedRealtime()
         kotlinx.coroutines.runBlocking { plugins.refresh() }
         core; http; sources
+        if (settings.value.loggedIn) player.showSaved()
         dev.nori.music.NoriLog.i("core ready in ${android.os.SystemClock.elapsedRealtime() - t} ms")
     }
 

@@ -54,6 +54,8 @@ import dev.nori.music.ffi.model.Album
 @Composable
 fun HomeScreen(actions: ActionsViewModel, settings: dev.nori.music.app.vm.SettingsViewModel, vm: HomeViewModel = viewModel()) {
     val load by vm.ui.collectAsStateWithLifecycle()
+    val first = LocalFirstFrame.current
+    androidx.compose.runtime.SideEffect { first.claim(load !is dev.nori.music.app.vm.Load.Loading) }
     val nav = LocalNav.current
     // "For you" is the profile's where it has one (`ProfileRules.mixes`): a jam guest's Home is the host's shelves.
     val mixes = LocalRules.current.mixes

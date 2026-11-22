@@ -1913,7 +1913,7 @@ impl App {
                 self.feed_songs = feed.into_iter().filter(|f| !(f.songs.is_empty() && f.albums.is_empty() && f.playlists.is_empty() && f.artists.is_empty())).map(|f| f.songs).collect();
             }
             Data::Home(HomePart::Shelf { at, items }) => {
-                let ShelfItems::Albums(albums) = items else { return };
+                let ShelfItems::Albums { v: albums } = items else { return };
                 if let Some(mut shelf) = self.shelves.row_data(at) {
                     shelf.cards = cards(moved(Some(&shelf), albums.iter().map(album_card).collect()).into_iter());
                     shelf.loaded = true;
@@ -2132,7 +2132,12 @@ impl App {
         let Some(s) = &self.session else { return };
         let (h, tx) = (nori_host::session::Handle::clone(s), self.tx.clone());
         nori_host::spawn("nori-queue-offer", move || {
-            tx.send(Msg::Offer(h.queue_offer()));
+            let kept = h.queue_offer_kept();
+            tx.send(Msg::Offer(kept.clone()));
+            let found = h.queue_offer();
+            if found != kept {
+                tx.send(Msg::Offer(found));
+            }
         });
     }
 

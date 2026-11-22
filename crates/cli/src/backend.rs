@@ -373,9 +373,9 @@ impl Session {
                     Ok(HomePart::Shelf { at, items }) => {
                         use crate::app::Item;
                         let items = match items {
-                            ShelfItems::Albums(v) => v.into_iter().map(Item::Album).collect(),
-                            ShelfItems::Playlists(v) => v.into_iter().map(Item::Playlist).collect(),
-                            ShelfItems::Songs(v) => (0..v.len()).map(|n| Item::Song(v.clone(), n)).collect(),
+                            ShelfItems::Albums { v } => v.into_iter().map(Item::Album).collect(),
+                            ShelfItems::Playlists { v } => v.into_iter().map(Item::Playlist).collect(),
+                            ShelfItems::Songs { v } => (0..v.len()).map(|n| Item::Song(v.clone(), n)).collect(),
                         };
                         send(Ok(Data::HomeRow(at, Some(rows[at]), crate::text::home_row(rows[at]).into(), items)))
                     }

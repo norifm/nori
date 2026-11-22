@@ -167,6 +167,8 @@ pub(crate) fn kept_as(read: &Read) -> Option<(String, i64)> {
         Read::FolderIndex => ("page:folders".into(), HOUR),
         Read::FolderById { id } => (format!("page:folder/{id}"), BROWSE),
         Read::HomeFeed => ("page:home".into(), BROWSE),
+        // Kept only to offer at once what the server last said; always asked again.
+        Read::PullQueue => ("page:queue".into(), 0),
         Read::MusicFolders
         | Read::Ping
         | Read::Search { .. }
@@ -178,8 +180,7 @@ pub(crate) fn kept_as(read: &Read) -> Option<(String, i64)> {
         | Read::AlbumSongs { .. }
         | Read::PlaylistSongs { .. }
         | Read::NowPlaying { .. }
-        | Read::ShareLink { .. }
-        | Read::PullQueue => return None,
+        | Read::ShareLink { .. } => return None,
     })
 }
 

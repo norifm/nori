@@ -152,15 +152,23 @@ impl Client {
     /// not taken that up yet. Never asked with the offer switched off, nor for a profile without an
     /// account's things (a jam guest's, whose Home is the host's).
     pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> NetResult<Option<QueueOffer>> {
-        if playing || !self.settings().in_effect(|p| p.queue_offer) || !self.core.rules().account {
+        if !self.offers(playing) {
             return Ok(None);
         }
-        let here = shown.or_else(|| self.core.session.snapshot().0).or_else(|| {
-            let saved = self.core.load_queue().ok()?;
-            saved.songs.get(saved.index as usize).map(|s| s.id.clone())
-        });
-        let Page::Queue { v, by } = self.read_now(Read::PullQueue).await? else { return Ok(None) };
-        Ok(queue_offer(v, &by, here.as_deref(), playing, self.queue_place(QUEUE_PUSHED).as_ref(), self.queue_place(QUEUE_SEEN).as_ref()))
+        let stored = self.read_stored(Read::PullQueue)?;
+        let page = match self.read_refresh(Read::PullQueue, stored.digest).await? {
+            Some(page) => Some(page),
+            None => stored.page,
+        };
+        Ok(self.offer_of(page, playing, shown))
+    }
+
+    /// [`Client::queue_offer`] as the server last answered, without asking it: at once.
+    pub fn queue_offer_kept(&self, playing: bool, shown: Option<String>) -> NetResult<Option<QueueOffer>> {
+        if !self.offers(playing) {
+            return Ok(None);
+        }
+        Ok(self.offer_of(self.read_stored(Read::PullQueue)?.page, playing, shown))
     }
 
     /// `offer` was taken or turned down: that queue is not offered again.
@@ -255,6 +263,22 @@ pub(crate) const QUEUE_PUSHED: &str = "queue_pushed";
 pub(crate) const QUEUE_SEEN: &str = "queue_seen";
 
 impl Client {
+    /// Whether a queue is offered at all: not while playing, nor with the offer off or no account's things.
+    fn offers(&self, playing: bool) -> bool {
+        !playing && self.settings().in_effect(|p| p.queue_offer) && self.core.rules().account
+    }
+
+    /// The offer the server's queue `page` makes against the song shown here (else the queue's, else the one
+    /// saved for the next start).
+    fn offer_of(&self, page: Option<Page>, playing: bool, shown: Option<String>) -> Option<QueueOffer> {
+        let Some(Page::Queue { v, by }) = page else { return None };
+        let here = shown.or_else(|| self.core.session.snapshot().0).or_else(|| {
+            let saved = self.core.load_queue().ok()?;
+            saved.songs.get(saved.index as usize).map(|s| s.id.clone())
+        });
+        queue_offer(v, &by, here.as_deref(), playing, self.queue_place(QUEUE_PUSHED).as_ref(), self.queue_place(QUEUE_SEEN).as_ref())
+    }
+
     fn queue_place(&self, key: &str) -> Option<QueuePlace> {
         nori_db::kv_get(&self.core.db.lock(), key).ok().flatten().and_then(|j| serde_json::from_str(&j).ok())
     }

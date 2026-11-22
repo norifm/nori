@@ -290,6 +290,8 @@ char *nori_ios_save_list(uint64_t token, const char *title);
 /// The queue left on the server to offer on Home, JSON to free: {song, index, count, app}, NULL for none.
 /// Blocks.
 char *nori_ios_queue_offer(void);
+/// nori_ios_queue_offer as the server last answered, without asking it: at once.
+char *nori_ios_queue_offer_kept(void);
 /// 1 while the offer still stands against what plays; one that does not is let go.
 int32_t nori_ios_queue_offer_stands(void);
 /// The offer taken (1: it plays where it was left) or turned down; not offered again.

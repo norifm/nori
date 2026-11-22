@@ -31,7 +31,17 @@ fn shown() -> (Option<String>, bool) {
 /// name of the app that left it, null for nori), or null for none. Blocks.
 #[no_mangle]
 pub extern "C" fn nori_ios_queue_offer() -> *mut c_char {
-    let Some(found) = with_session(|s| s.queue_offer()) else { return std::ptr::null_mut() };
+    with_session(|s| s.queue_offer()).map_or(std::ptr::null_mut(), offered)
+}
+
+/// [`nori_ios_queue_offer`] as the server last answered, without asking it: at once.
+#[no_mangle]
+pub extern "C" fn nori_ios_queue_offer_kept() -> *mut c_char {
+    with_session(|s| s.queue_offer_kept()).map_or(std::ptr::null_mut(), offered)
+}
+
+/// `found` kept as the offer, as JSON to free, or null when it does not stand.
+fn offered(found: Option<nori_core::library::QueueOffer>) -> *mut c_char {
     let (here, playing) = shown();
     let mut kept = offer();
     let Some(o) = kept.found(found, here, playing) else { return std::ptr::null_mut() };

@@ -14,8 +14,13 @@
   type Offer = { songs: Song[]; index: number; positionMs: number };
   let offer = $state.raw<Offer | null>(null);
   let vars = $state("");
-  // Asked each time Home is drawn, while nothing plays here.
-  void ask<string>("queue_offer", player.playing, player.song?.id ?? null).then((j) => (offer = JSON.parse(j)), () => {});
+  // Asked each time Home is drawn, while nothing plays here: as the server last answered, so the card is
+  // there with the page, then as it answers now.
+  const shown = [player.playing, player.song?.id ?? null] as const;
+  void ask<string>("queue_offer_kept", ...shown)
+    .then((j) => (offer = JSON.parse(j)), () => {})
+    .then(() => ask<string>("queue_offer", ...shown))
+    .then((j) => (offer = JSON.parse(j)), () => {});
   // Music started, or the player came to show the offered song: the core lets the offer go.
   $effect(() => {
     const here = player.song?.id ?? null;

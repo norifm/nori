@@ -1097,7 +1097,12 @@ impl Runner {
             Cmd::LookForOffer => {
                 let (h, tx, id) = ((**s).clone(), self.tx.clone(), s.id);
                 nori_host::spawn("nori-offer", move || {
-                    let _ = tx.send(Msg::From(id, Box::new(Msg::Offer(h.queue_offer()))));
+                    let kept = h.queue_offer_kept();
+                    let _ = tx.send(Msg::From(id, Box::new(Msg::Offer(kept.clone()))));
+                    let found = h.queue_offer();
+                    if found != kept {
+                        let _ = tx.send(Msg::From(id, Box::new(Msg::Offer(found))));
+                    }
                 });
             }
             Cmd::TakeOffer(offer) => s.queue_offer_closed(offer, true),
