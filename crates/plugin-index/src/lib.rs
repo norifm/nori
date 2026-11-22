@@ -2,6 +2,7 @@
 //! install ([`package`]): pure, with no plugin host, so the web client reads it too. [`web_blocks`] is the
 //! one rule, for a listing and an install.
 
+pub mod address;
 pub mod package;
 pub mod readme;
 pub mod section;
@@ -43,6 +44,9 @@ pub fn found<T>(mut list: Vec<T>, query: &str, name: impl Fn(&T) -> &str, about:
 /// What a repo's `index.json` holds.
 #[derive(Debug, Deserialize)]
 pub struct Index {
+    /// What the repo calls itself.
+    #[serde(default)]
+    pub name: Option<String>,
     pub plugins: Vec<Listed>,
 }
 

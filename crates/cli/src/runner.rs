@@ -523,8 +523,13 @@ impl Runner {
                 });
             }
             PluginCmd::Hold(id, held) => host.hold(id, held),
-            PluginCmd::AddRepo(url) => {
-                host.add_repo(url);
+            PluginCmd::AddRepo(typed) => {
+                return nori_host::spawn("nori-plugin-repo", move || {
+                    let _ = tx.send(Msg::RepoAdded(block_on(host.add_repo(typed))));
+                });
+            }
+            PluginCmd::RenameRepo(url, name) => {
+                host.rename_repo(url, name);
                 return self.plugin(app, PluginCmd::Look);
             }
             PluginCmd::RemoveRepo(url) => {

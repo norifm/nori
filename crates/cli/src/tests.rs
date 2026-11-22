@@ -2218,7 +2218,7 @@ fn select_row(a: &mut App, pick: impl Fn(&Row) -> bool) {
 }
 
 fn official() -> nori_plugins::Repo {
-    nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true }
+    nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true, name: None }
 }
 
 fn card(id: &str, name: &str, rows: Vec<nori_plugins::PluginRow>) -> nori_plugins::PluginCard {
@@ -2459,10 +2459,10 @@ fn a_plugins_menu_moves_and_removes_it() {
 fn the_browser_searches_narrows_and_opens_the_offer_shown() {
     use crate::app::PluginCmd;
     use crate::settings_view::Shelf;
-    let friend = nori_plugins::Repo { url: "https://friend.example/nori/index.json".into(), official: false };
+    let friend = nori_plugins::Repo { url: "https://friend.example/nori/index.json".into(), official: false, name: Some("friend.example".into()) };
     let shelf = Shelf::Read(nori_plugins::Offers {
         offers: vec![offer("Lyrics plus", &official(), None), offer("Gain", &official(), Some("1.0.0")), offer("Radio", &friend, Some("2.0.0"))],
-        failed: vec![nori_plugins::RepoFailure { repo: nori_plugins::Repo { url: "https://gone.example/index.json".into(), official: false }, reason: "HTTP 404".into() }],
+        failed: vec![nori_plugins::RepoFailure { repo: nori_plugins::Repo { url: "https://gone.example/index.json".into(), official: false, name: Some("gone.example".into()) }, problem: nori_plugins::RepoProblem::NotFound }],
     });
     let gain = nori_plugins::PluginCard { repo: Some(nori_plugins::OFFICIAL.into()), version: "1.0.0".into(), ..card("dev.example.gain", "Gain", Vec::new()) };
     let mut a = plugins_app(vec![gain], vec![official(), friend.clone()], shelf);
@@ -2478,7 +2478,7 @@ fn the_browser_searches_narrows_and_opens_the_offer_shown() {
     assert!(line("Lyrics plus").contains("nori's own") && line("Lyrics plus").contains("Install ›"), "{s}");
     assert!(line("Gain about").contains("Update ›"), "{s}");
     assert!(line("Radio about").contains("Installed ›") && line("Radio about").contains("friend.example"), "{s}");
-    assert!(s.contains("Couldn't reach gone.example") && !s.contains("HTTP 404"), "one quiet line:\n{s}");
+    assert!(s.contains("gone.example · Not found"), "one quiet line:\n{s}");
     assert!(s.find("Gain about") < s.find("Lyrics plus"), "by name:\n{s}");
 
     // The chips narrow to a repo.
@@ -2513,34 +2513,53 @@ fn the_browser_searches_narrows_and_opens_the_offer_shown() {
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(1, 0))), "enter lands on Update, its place in the offers read");
 
-    // Adding a repo warns first: cancelled, nothing is added; confirmed, it is.
+    // A repo added is renamed with e, and removed with d.
     key(&mut a, KeyCode::Esc);
     follow(&mut a, "Repos");
     let s = draw(&mut a, 140, 40);
     dump("plugins-repos", &s);
     assert!(s.contains("2 plugins") && s.contains("friend.example") && s.contains("1 plugin"), "what each offers:\n{s}");
     select_row(&mut a, |r| matches!(r, Row::Repo { removable: true, .. }));
+    key(&mut a, KeyCode::Char('e'));
+    assert!(matches!(&a.overlay, Some(Overlay::Input { text, .. }) if text == "friend.example"), "its name to edit");
+    "friend.example".chars().for_each(|_| key(&mut a, KeyCode::Backspace));
+    chars(&mut a, "Friend");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::RenameRepo(friend.url.clone(), "Friend".into()))));
+    a.settings.own.repos[1].name = Some("Friend".into());
+    a.settings.invalidate();
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-repos-renamed", &s);
+    assert!(s.contains("Friend ") && !s.contains("friend.example "), "called as the core names it:\n{s}");
     key(&mut a, KeyCode::Char('d'));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::RemoveRepo(friend.url.clone()))));
     assert_eq!(a.cmds, [Cmd::SoundPage(nori_core::tuning::SoundPage::Plugin, false)], "the plugin's page left");
     a.cmds.clear();
-    let add = |a: &mut App| {
-        select_row(a, |r| matches!(r, Row::Button { title, .. } if title == "Add repo"));
-        key(a, KeyCode::Enter);
-        chars(a, " https://new.example/index.json ");
-        key(a, KeyCode::Enter);
-    };
-    add(&mut a);
-    let s = draw(&mut a, 140, 40);
-    dump("plugins-trust", &s);
-    assert!(s.contains("This repo isn't nori's") && s.contains("https://new.example/index.json") && s.contains("enter add · esc cancel"), "{s}");
-    assert!(a.cmds.is_empty(), "nothing added before the warning is answered");
-    key(&mut a, KeyCode::Esc);
-    assert!(a.overlay.is_none() && a.cmds.is_empty());
-    add(&mut a);
+    // Adding a repo warns as it asks; the sheet stays while it is looked for and says why it wasn't added.
+    select_row(&mut a, |r| matches!(r, Row::Button { title, .. } if title == "Add repo"));
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::AddRepo("https://new.example/index.json".into()))));
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-add-repo", &s);
+    assert!(s.contains("This repo isn't nori's") && s.contains("user/repo or https://…/index.json"), "the warning and what to type:\n{s}");
+    key(&mut a, KeyCode::Enter);
+    assert!(a.cmds.is_empty(), "nothing typed, nothing looked for");
+    chars(&mut a, " someone/plugins");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::AddRepo("someone/plugins".into()))));
+    chars(&mut a, "x");
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-add-repo-looking", &s);
+    assert!(s.contains("Looking…") && s.contains("someone/plugins▏"), "no typing while it is looked for:\n{s}");
+    a.handle(Msg::RepoAdded(nori_plugins::RepoAdd::Failed { problem: nori_plugins::RepoProblem::NotFound }));
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-add-repo-failed", &s);
+    assert!(s.contains("Not found") && !s.contains("Looking…"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::AddRepo("someone/plugins".into()))), "asked again");
+    a.handle(Msg::RepoAdded(nori_plugins::RepoAdd::Added { repo: friend.clone() }));
+    assert!(a.overlay.is_none(), "added, the sheet goes");
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Look)), "and the repos are read again");
 }
 
 /// A plugin only offered has a page with Install; its README comes after, wrapped to the page, and one
@@ -3036,7 +3055,7 @@ fn the_account_pages_keys_say_how_it_goes_on() {
 fn every_plugin_off_leads_a_provider_to_the_switch() {
     use crate::settings_view::Shelf;
     let mut a = app();
-    let repo = nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true };
+    let repo = nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true, name: None };
     let offer = nori_plugins::Offer { repo, id: "a.new".into(), name: "New".into(), about: None, source: None, readme: None, icon: None, points: vec!["provider".into()], category: nori_plugins::Category::Service, versions: Vec::new(), installed: None, state: nori_plugins::OfferState::New };
     a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![offer], failed: Vec::new() });
     assert_eq!(a.provider_lines().len(), 2);
@@ -3090,7 +3109,7 @@ fn a_repo_failing_leaves_the_kinds() {
     use crate::settings_view::Shelf;
     let dir = nori_testdir::TempDir::new("cli-login-failed");
     let mut a = app_with_provider(&dir);
-    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: Vec::new(), failed: vec![nori_plugins::RepoFailure { repo: official(), reason: "offline".into() }] });
+    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: Vec::new(), failed: vec![nori_plugins::RepoFailure { repo: official(), problem: nori_plugins::RepoProblem::Unreachable }] });
     let s = draw(&mut a, 100, 40);
     assert!(s.contains("OpenSubsonic") && s.contains("Test"), "{s}");
 }

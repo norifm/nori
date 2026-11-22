@@ -53,7 +53,7 @@ pub use bluetooth::{Bluetooth, BtDevice, BtFailure};
 pub use devices::{controlled_on_output, next_noise, output_device, Battery, ControlledDevice, Noise};
 pub use safe::{LastExit, SafeStart, Stopped};
 pub use readme::ReadmeBlock;
-pub use repo::{offer_for, offer_of, offers_found, offers_to_update, plugin_display_name, provider_offers, updates_waiting, Offer, OfferState, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
+pub use repo::{offer_for, offer_of, offers_found, offers_to_update, plugin_display_name, provider_offers, repo_called, updates_waiting, AddedRepos, Offer, OfferState, Offers, Repo, RepoAdd, RepoFailure, RepoProblem, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
 pub use view::{categories_shown, one_page, page_rows, row_on_device_page, PluginCard, PluginPreview, PluginRow};
 pub use assets::{AssetLine, AssetState};
@@ -121,8 +121,8 @@ struct Index {
     #[serde(default)]
     plugin: Vec<IndexEntry>,
     /// Repos the user added (nori's own is always there).
-    #[serde(default)]
-    repos: Vec<String>,
+    #[serde(flatten)]
+    repos: AddedRepos,
     /// When updates were last looked for, device ms.
     #[serde(default)]
     checked_ms: i64,
@@ -162,7 +162,7 @@ pub struct Plugins {
     lan: Arc<lan::Lan>,
     pub(crate) transport: Transported,
     /// The repos the user added, as the index keeps them.
-    repos: Mutex<Vec<String>>,
+    repos: Mutex<AddedRepos>,
     /// When updates were last looked for, device ms.
     checked_ms: Mutex<i64>,
     /// The platform's Bluetooth, the devices connected and the links plugins hold.
@@ -444,13 +444,19 @@ impl Plugins {
         Ok(manifest)
     }
 
-    pub(crate) fn added_repos(&self) -> Vec<String> {
+    pub(crate) fn added_repos(&self) -> AddedRepos {
         self.repos.lock().expect("not poisoned").clone()
     }
 
-    pub(crate) fn keep_repos(&self, repos: Vec<String>) {
-        *self.repos.lock().expect("not poisoned") = repos;
-        self.keep(&self.installed());
+    /// Changes the repos the user added with `change`, and keeps them if it did.
+    pub(crate) fn change_repos(&self, change: impl FnOnce(&mut AddedRepos)) {
+        let mut repos = self.repos.lock().expect("not poisoned");
+        let was = repos.clone();
+        change(&mut repos);
+        if *repos != was {
+            drop(repos);
+            self.keep(&self.installed());
+        }
     }
 
     pub(crate) fn checked_ms(&self) -> i64 {

@@ -316,7 +316,8 @@ pub fn restored(r: &nori_core::backup::Restored) -> String {
 }
 
 pub const ADD_REPO: &str = "Add repo";
-pub const REPO_ADDRESS: &str = "Repo address (its index.json)";
+pub const REPO_HINT: &str = "user/repo or https://…/index.json";
+pub const RENAME_REPO: &str = "Rename repo";
 pub const TRUST_REPO: &str = "This repo isn't nori's. Its plugins can do what their pages say; add it only if you trust it.";
 
 /// A question's keys: enter does `yes`.
@@ -324,7 +325,6 @@ pub fn confirm_keys(yes: &str) -> String {
     format!("enter {} · esc cancel", yes.to_lowercase())
 }
 
-pub const ADD: &str = "Add";
 pub const REMOVE: &str = "Remove";
 
 /// Asks before removing plugin `name`.
@@ -351,12 +351,12 @@ pub fn info_line(name: &str, l: &nori_plugins::InfoLine) -> String {
     }
 }
 
-/// Where a plugin to install comes from: the repo at `url`, which will update it.
-pub fn from_repo(url: &str) -> String {
-    if url == nori_plugins::OFFICIAL {
-        return "From nori's own repo, which keeps it up to date.".into();
+/// Where a plugin to install comes from: the repo at `url` among `repos`, which will update it.
+pub fn from_repo(url: &str, repos: &[nori_plugins::Repo]) -> String {
+    match nori_plugins::repo_called(url.into(), repos.to_vec()) {
+        Some(name) => format!("From {name}, which keeps it up to date."),
+        None => "From nori's own repo, which keeps it up to date.".into(),
     }
-    format!("From {}, which keeps it up to date.", host(url))
 }
 pub const INSTALLED_ON: &str = "It turns on once installed.";
 
@@ -437,23 +437,25 @@ pub fn plugin_may(c: &nori_plugins::PluginCard) -> Vec<String> {
     said
 }
 
-/// A repo by its host; nori's own by name.
+pub const OFFICIAL_REPO: &str = "nori's own";
+
+/// A repo as the core calls it; nori's own by name.
 pub fn repo_name(r: &nori_plugins::Repo) -> String {
-    if r.official {
-        return "nori's own".into();
+    r.name.clone().unwrap_or_else(|| OFFICIAL_REPO.into())
+}
+
+/// Why a repo couldn't be read or added.
+pub fn repo_problem(p: nori_plugins::RepoProblem) -> &'static str {
+    match p {
+        nori_plugins::RepoProblem::Unreachable => "No connection",
+        nori_plugins::RepoProblem::NotFound => "Not found",
+        nori_plugins::RepoProblem::NotARepo => "Not a nori repo",
     }
-    host(&r.url).to_string()
 }
 
-/// The host in `url`.
-fn host(url: &str) -> &str {
-    let rest = url.split_once("://").map_or(url, |(_, r)| r);
-    rest.split('/').next().unwrap_or(rest)
-}
-
-/// A repo that couldn't be read.
-pub fn repo_failed(r: &nori_plugins::Repo) -> String {
-    format!("Couldn't reach {}", host(&r.url))
+/// A repo that couldn't be read, in the browser.
+pub fn repo_failed(f: &nori_plugins::RepoFailure) -> String {
+    format!("{} · {}", repo_name(&f.repo), repo_problem(f.problem))
 }
 pub const NOT_SET: &str = "Not set";
 
@@ -964,7 +966,7 @@ pub mod hints {
     pub const PLUGIN_ROW: Hints = &[("enter", "open"), ("← →", "off, on"), ("m", "menu"), ("K J", "move"), ("d", "remove"), ("?", "keys")];
     pub const PLUGIN_PAGE: Hints = &[("enter", "switch or open"), ("← →", "change"), ("m", "move, remove"), ("esc", "back"), ("?", "keys")];
     pub const PLUGIN_BROWSER: Hints = &[("enter", "open"), ("/", "search"), ("← →", "repo"), ("esc", "back"), ("?", "keys")];
-    pub const PLUGIN_REPOS: Hints = &[("enter", "add"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
+    pub const PLUGIN_REPOS: Hints = &[("enter", "add"), ("e", "rename"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];
     pub const PROFILE_ROW: Hints = &[("enter", "switch"), ("e", "rename"), ("m", "scrobbling"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
     pub const SUPPORT: Hints = &[("↑ ↓", "choose"), ("← →", "change"), ("enter", "type, pick or give"), ("R", "ask again"), ("esc", "back"), ("?", "keys")];
@@ -1362,6 +1364,7 @@ pub const INVITE_ROOM: &str = "Make the window bigger to show the QR code.";
 pub const JAM_GUEST: &str = "Jam";
 pub const JAM_JOIN: &str = "Join a jam";
 pub const JOIN_TITLE: &str = " Join a jam · enter joins, esc drops ";
+pub const ADD_REPO_TITLE: &str = " Add repo · enter adds, esc drops ";
 pub const JOIN_HOW: &str = "Paste the invite link the host sent you:";
 pub const JOINING: &str = "Joining…";
 pub const NOT_AN_INVITE: &str = "That is not a jam invite. Paste the whole link the host sent you.";

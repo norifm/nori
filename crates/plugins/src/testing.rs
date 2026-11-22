@@ -98,7 +98,7 @@ pub fn installed_by_an_older_nori(dir: &Path, repo: Option<&str>, held: bool) {
     std::fs::write(folder.join(crate::package::MANIFEST), nori_plugin_index::section::custom_section(wasm, "nori:plugin").unwrap()).unwrap();
     crate::store::Store::new(folder.join("store")).set("kept", b"yes");
     let entry = crate::IndexEntry { id: FIXTURE.into(), enabled: true, repo: repo.map(Into::into), held, key: None, crashed: false };
-    let index = crate::Index { plugin: vec![entry], repos: repo.into_iter().map(Into::into).collect(), checked_ms: 0 };
+    let index = crate::Index { plugin: vec![entry], repos: crate::AddedRepos { repos: repo.into_iter().map(Into::into).collect(), ..Default::default() }, checked_ms: 0 };
     std::fs::write(dir.join("index.json"), serde_json::to_vec(&index).unwrap()).unwrap();
 }
 

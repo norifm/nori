@@ -2393,6 +2393,27 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             let inner = popup(f, r, Span::styled(crate::text::PAIR_TITLE, bold().fg(t.ink)), t);
             put(f, Paragraph::new(lines), Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(1) });
         }
+        Overlay::AddRepo { text: typed, problem, busy } => {
+            let w = 72.min(area.width);
+            let iw = w.saturating_sub(4).max(1) as usize;
+            let mut lines: Vec<Line> = wrap(crate::text::TRUST_REPO, iw).into_iter().map(|l| Line::from(Span::styled(l, t.dim()))).collect();
+            lines.push(Line::from(""));
+            // The end of a long address, where typing goes; the hint while nothing is typed.
+            let shown: String = typed.chars().rev().take(iw.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect();
+            lines.push(match typed.is_empty() {
+                true => Line::from(vec![Span::styled("▏", Style::default().fg(t.ink)), Span::styled(crate::text::REPO_HINT, t.dim())]),
+                false => Line::from(Span::styled(format!("{shown}▏"), Style::default().fg(t.ink))),
+            });
+            lines.push(Line::from(""));
+            lines.push(match (problem, *busy) {
+                (_, true) => Line::from(Span::styled(crate::text::LOOKING, t.dim())),
+                (Some(p), false) => Line::from(Span::styled(crate::text::repo_problem(*p), Style::default().fg(Color::LightRed))),
+                (None, false) => Line::from(""),
+            });
+            let r = centred(area, w, lines.len() as u16 + 3);
+            let inner = popup(f, r, Span::styled(crate::text::ADD_REPO_TITLE, bold().fg(t.ink)), t);
+            put(f, Paragraph::new(lines), Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(1) });
+        }
         Overlay::Join { text: typed, error, busy } => {
             let w = 72.min(area.width);
             let r = centred(area, w, 7);

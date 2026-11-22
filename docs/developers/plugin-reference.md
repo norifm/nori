@@ -388,7 +388,7 @@ built for each API, so each nori installs the newest version it runs.
 A repo is a static `index.json` with its packages, on any host. nori's own repo is nori-plugins' index.
 
 ```json
-{"plugins": [{"id": "com.example.balance", "name": "Balance", "about": "…",
+{"name": "Example plugins", "plugins": [{"id": "com.example.balance", "name": "Balance", "about": "…",
   "source": "https://…", "readme": "balance/README.md", "icon": "balance/icon.png",
   "points": ["sound-stage"], "imports": ["types"], "net": [], "category": "playback",
   "versions": [{"version": "0.2.0", "api": 7, "released": "2026-11-02", "url": "balance-0.2.0.noriplugin",
@@ -397,6 +397,7 @@ A repo is a static `index.json` with its packages, on any host. nori's own repo 
 
 | Field | Required | What it holds |
 |---|---|---|
+| The top `name` | No | The repo's name in the clients' lists, until the user renames it |
 | `id`, `name` | Yes | The plugin's id and name |
 | `about`, `source` | No | One line about it, and where its code is |
 | `readme`, `icon` | No | URLs of its README and icon, absolute or relative to the index |
@@ -409,6 +410,21 @@ A repo is a static `index.json` with its packages, on any host. nori's own repo 
 | `key`, `signature` | No | The author's ed25519 public key and its signature over the package's sha256 |
 
 nori shows only the versions built for its own API. It checks a package's sha256 before anything else.
+
+### Where nori looks for a repo
+
+The user types a repo's address in **Add repo**. nori tries each place it can be, in order, and adds the
+first that answers with an index:
+
+| The user types | nori tries |
+|---|---|
+| `user/repo`, or its `github.com` URL | `raw.githubusercontent.com/user/repo/main/index.json`, then the same on `master`, then `user.github.io/repo/index.json` |
+| A URL that ends in `.json` | That URL |
+| Any other URL, with or without `https://` | That URL, then `index.json` under it |
+
+A repo with no `name` in its index is called by its repository's name on GitHub, else by its host. The
+address resolution is `nori_plugin_index::address`, and adding is `Plugins::add_repo`. When no place
+answers with an index, the client says why: no connection, not found, or not a nori repo.
 
 ### Signatures
 

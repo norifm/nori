@@ -502,10 +502,11 @@ impl SettingsView {
         self.selected().cloned().map_or_else(Vec::new, |row| step_row(row, up))
     }
 
-    /// The selected lyrics service's key, to add or change, or the selected profile's new name.
+    /// The selected lyrics service's key, to add or change, or the selected profile's or repo's new name.
     pub fn key(&self) -> Option<Overlay> {
         match self.selected()? {
             Row::Server { id, name: Some(name), .. } => Some(Overlay::Input { title: text::RENAME_PROFILE.into(), text: name.clone(), secret: false, target: Target::ProfileName(id.clone()) }),
+            Row::Repo { url, title, removable: true, .. } => Some(Overlay::Input { title: text::RENAME_REPO.into(), text: title.clone(), secret: false, target: Target::RepoName(url.clone()) }),
             Row::Ranked { id, title, enabled: true, key: KeyAction::Add | KeyAction::Change, .. } => match key_input(id, title) {
                 Opened::Overlay(o) => Some(o),
                 _ => None,
@@ -747,7 +748,7 @@ fn browser(own: &Own) -> Vec<Section> {
     match &own.shelf {
         Shelf::Unasked | Shelf::Asking => rows.push(Row::Note { text: text::LOOKING.into() }),
         Shelf::Read(Offers { offers, failed }) => {
-            rows.extend(failed.iter().map(|f| Row::Note { text: text::repo_failed(&f.repo) }));
+            rows.extend(failed.iter().map(|f| Row::Note { text: text::repo_failed(f) }));
             let found = nori_plugins::offers_found(offers.clone(), own.query.clone(), own.repo_shown.clone());
             if found.is_empty() {
                 rows.push(Row::Note { text: text::NONE_FOUND.into() });
@@ -776,8 +777,10 @@ fn repos_page(own: &Own) -> Vec<Section> {
     let mut rows = vec![Row::Button { title: text::ADD_REPO.into(), action: Act::AddRepo }];
     rows.extend(own.repos.iter().map(|r| {
         let line = match &own.shelf {
-            Shelf::Read(o) if o.failed.iter().any(|f| f.repo.url == r.url) => text::repo_failed(r),
-            Shelf::Read(o) => text::plugin_count(o.offers.iter().filter(|x| x.repo.url == r.url).count()),
+            Shelf::Read(o) => match o.failed.iter().find(|f| f.repo.url == r.url) {
+                Some(f) => text::repo_problem(f.problem).into(),
+                None => text::plugin_count(o.offers.iter().filter(|x| x.repo.url == r.url).count()),
+            },
             _ => text::LOOKING.into(),
         };
         let detail = if r.official { line } else { format!("{} · {line}", r.url) };
@@ -889,11 +892,6 @@ fn plugin_page(own: &Own, id: &str) -> Page {
     Page { title, summary, sections }
 }
 
-/// The warning before adding the repo at `url`, which isn't nori's.
-pub fn trust_repo(url: &str) -> Overlay {
-    Overlay::Confirm { title: text::ADD_REPO.into(), lines: vec![text::TRUST_REPO.into(), url.into()], yes: text::ADD.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::AddRepo(url.into()))) }
-}
-
 /// Offer `o`, at place `at` in those read: its versions to install one of (when `free`: nothing is on
 /// its way), and where its code is.
 fn versions(card: Option<&PluginCard>, at: usize, o: &Offer, free: bool) -> Section {
@@ -955,7 +953,7 @@ pub fn open_row(row: Row) -> Option<Opened> {
             Act::LookForPlugins => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Look)]),
             Act::Page(page) => Opened::Plugins(page),
             Act::GetPlugin { offer, version } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Get(offer, version))]),
-            Act::AddRepo => Opened::Overlay(Overlay::Input { title: text::REPO_ADDRESS.into(), text: String::new(), secret: false, target: Target::AddRepo }),
+            Act::AddRepo => Opened::Overlay(Overlay::AddRepo { text: String::new(), problem: None, busy: false }),
             Act::AllowMobileAssets(id) => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::AllowMobileAssets(id))]),
             Act::Restart(id) => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(id, true))]),
             Act::Backup { restore } => Opened::Overlay(backup_asked(restore)),

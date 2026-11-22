@@ -120,6 +120,12 @@ impl Side for Session {
 
 const ID: &str = FIXTURE;
 
+/// Adds the repo at `url`, which answers an empty index until the test serves its own.
+fn add_repo(session: &Session, plugins: &Plugins, url: &str) {
+    session.web.serves.lock().unwrap().push((url.into(), br#"{"plugins": []}"#.to_vec()));
+    assert!(matches!(nori_tasks::block_on(plugins.add_repo(url.into())), nori_plugins::RepoAdd::Added { .. }));
+}
+
 #[test]
 fn a_new_install_turns_on_and_an_update_keeps_its_switch() {
     let dir = nori_testdir::TempDir::new("plugins-on");
@@ -274,7 +280,7 @@ fn a_repo_offers_and_installs_the_version_asked() {
     let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
     plugins.set_transport(Some(session.web.clone()));
     let repo = "https://friend.example/nori/index.json";
-    plugins.add_repo(repo.into());
+    add_repo(&session, &plugins, repo);
     assert_eq!(plugins.repos().iter().map(|r| (r.url.as_str(), r.official)).collect::<Vec<_>>(), vec![(nori_plugins::OFFICIAL, true), (repo, false)]);
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
@@ -308,8 +314,8 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
     plugins.set_transport(Some(session.web.clone()));
     let (own, other) = ("https://own.example/index.json", "https://other.example/index.json");
-    plugins.add_repo(own.into());
-    plugins.add_repo(other.into());
+    add_repo(&session, &plugins, own);
+    add_repo(&session, &plugins, other);
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
     let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "about": "Loud covers", "readme": "t.md", "icon": "t.png", "points": ["provider"], "versions": [{{"version": "{v}", "api": 7, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
@@ -362,8 +368,8 @@ fn offers_read_earlier_follow_what_is_installed() {
     let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
     plugins.set_transport(Some(session.web.clone()));
     let (own, other) = ("https://own.example/index.json", "https://other.example/index.json");
-    plugins.add_repo(other.into());
-    plugins.add_repo(own.into());
+    add_repo(&session, &plugins, other);
+    add_repo(&session, &plugins, own);
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
     let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{{"version": "{v}", "api": 7, "url": "t.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
@@ -431,8 +437,8 @@ fn updates_come_daily_from_a_plugins_own_repo_unless_held() {
     let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
     plugins.set_transport(Some(session.web.clone()));
     let (own, other) = ("https://own.example/index.json", "https://other.example/index.json");
-    plugins.add_repo(own.into());
-    plugins.add_repo(other.into());
+    add_repo(&session, &plugins, own);
+    add_repo(&session, &plugins, other);
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
     let index = |versions: &[&str]| {
@@ -577,7 +583,7 @@ fn the_key_a_plugin_is_first_signed_by_signs_every_update() {
     let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
     plugins.set_transport(Some(session.web.clone()));
     let repo = "https://friend.example/index.json";
-    plugins.add_repo(repo.into());
+    add_repo(&session, &plugins, repo);
     let pkg = package();
     let ((sha, a, by_a), (_, b, by_b)) = (signed(&pkg, 1), signed(&pkg, 2));
     let listed = |v: &str, key: &str, signature: &str| format!(r#"{{"version": "{v}", "api": 7, "url": "t-{v}.noriplugin", "sha256": "{sha}", "key": "{key}", "signature": "{signature}"}}"#);
