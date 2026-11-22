@@ -132,7 +132,23 @@ class CoverLoader private constructor(context: Context) {
      * kind, [CoverPixels.HTTP] plus the status, ...).
      */
     fun request(url: String, width: Int, height: Int, done: (Bitmap?, Int) -> Unit): Request =
-        Request(url, width, height, done).also { it.start() }
+        Request(url, width, height, false, done).also { it.start() }
+
+    /**
+     * Decodes [urls] into memory from what the device keeps (memory, disk), each to fit [side] pixels square,
+     * and returns once each has its answer: a page drawing them next finds them here and draws them at once
+     * (a view wanting more is shown these while its own comes). A cover not kept is left for its view to
+     * fetch; nothing waits on the network. Main thread.
+     */
+    suspend fun keepFromDevice(urls: Collection<String>, side: Int) {
+        val left = urls.filterTo(LinkedHashSet()) { kept(it)?.fits(side, side) != true && !Covers.isProvider(it) }
+        if (left.isEmpty()) return
+        kotlinx.coroutines.suspendCancellableCoroutine { c ->
+            var waiting = left.size
+            val asked = left.map { url -> Request(url, side, side, true) { _, _ -> if (--waiting == 0 && c.isActive) c.resumeWith(Result.success(Unit)) }.also { it.start() } }
+            c.invokeOnCancellation { main.post { asked.forEach { it.cancel() } } }
+        }
+    }
 
     /**
      * Warms covers that are about to be drawn: fetched and decoded at their own size, into memory, so they
@@ -159,13 +175,14 @@ class CoverLoader private constructor(context: Context) {
     /**
      * The pages for the cover at [url], its own ([plain]) and on AMOLED [black], worked out by the core from the
      * cover's own pixels, decoded once to fit [side]: no Bitmap in between but the wash it draws into.
-     * Null when there is no cover. Reads the disk and may wait for the network: off the main thread.
+     * Null when there is no cover. Reads the disk and, unless [kept] (the file on disk only: null for one not
+     * kept), may wait for the network: off the main thread.
      */
-    fun colours(url: String, side: Int, plain: Boolean, black: Boolean): Pages? {
+    fun colours(url: String, side: Int, plain: Boolean, black: Boolean, kept: Boolean = false): Pages? {
         val out = if (plain) IntArray(CoverLook.LEN) else null
         val wash = if (plain) Bitmap.createBitmap(CoverLook.WASH, CoverLook.WASH, Bitmap.Config.ARGB_8888) else null
         val onBlack = if (black) IntArray(CoverLook.LEN) else null
-        val got = CoverPixels.colours(loader, url, side, out, wash, onBlack)
+        val got = CoverPixels.colours(loader, url, side, kept, out, wash, onBlack)
         if (got == 0) return null
         return Pages(
             plain = if (got and CoverPixels.PLAIN != 0 && out != null) CoverLook.Colours(out, if (got and CoverPixels.WASH != 0) wash else null) else null,
@@ -225,6 +242,7 @@ class CoverLoader private constructor(context: Context) {
         private val url: String,
         private val width: Int,
         private val height: Int,
+        private val kept: Boolean,
         private val then: (Bitmap?, Int) -> Unit,
     ) : CoverPixels.Waiter, Runnable {
         private val ticket = java.util.concurrent.atomic.AtomicLong(0L)
@@ -233,7 +251,7 @@ class CoverLoader private constructor(context: Context) {
         @Volatile private var status = CoverPixels.OK
 
         internal fun start() {
-            val t = CoverPixels.request(loader, url, width, height, this)
+            val t = CoverPixels.request(loader, url, width, height, kept, this)
             if (t == 0L) { over.set(true); then(null, CoverPixels.UNREADABLE); return }
             ticket.set(t)
             if (over.get()) CoverPixels.cancel(ticket.getAndSet(0L))

@@ -30,13 +30,13 @@ pub(crate) static CLASS: Class = Class {
     methods: &[
         native!(c"open", c"(JLjava/lang/String;JZZ)J", open),
         native!(c"close", c"(J)V", close),
-        native!(c"request", c"(JLjava/lang/String;IILdev/nori/music/look/CoverPixels$Waiter;)J", request),
+        native!(c"request", c"(JLjava/lang/String;IIZLdev/nori/music/look/CoverPixels$Waiter;)J", request),
         native!(c"cancel", c"(J)V", cancel),
         native!(c"warm", c"(JLjava/lang/String;)V", warm),
         native!(c"clear", c"(J)V", clear),
         native!(c"rest", c"(J)V", rest),
         native!(c"show", c"(JZ)V", show),
-        native!(c"colours", c"(JLjava/lang/String;I[ILandroid/graphics/Bitmap;[I)I", colours),
+        native!(c"colours", c"(JLjava/lang/String;IZ[ILandroid/graphics/Bitmap;[I)I", colours),
         native!(c"decodeFile", c"(Ljava/lang/String;Landroid/graphics/Bitmap;Z)I", decode_file),
         native!(c"isProvider", c"(Ljava/lang/String;)Z", is_provider),
         native!(c"key", c"(JLjava/lang/String;)J", key),
@@ -55,6 +55,8 @@ const UNKNOWN: jint = 3;
 const BROKEN: jint = 4;
 /// Cancelled or loader closed; asking again works.
 const CLOSED: jint = 5;
+/// Asked from what is kept only, and the file is not.
+const NOT_KEPT: jint = 6;
 /// Plus the transport's `FailureKind` ordinal.
 const NETWORK: jint = 100;
 /// Plus the HTTP status.
@@ -313,6 +315,7 @@ fn code(e: &nori_covers::Error) -> jint {
         nori_covers::Error::Decode(DecodeError::Target) => BAD_BITMAP,
         nori_covers::Error::Decode(_) | nori_covers::Error::Panicked(_) => BROKEN,
         nori_covers::Error::Closed => CLOSED,
+        nori_covers::Error::NotKept => NOT_KEPT,
         nori_covers::Error::Transport { kind, .. } => NETWORK + *kind as jint,
         nori_covers::Error::Status(s) => HTTP + jint::from(*s),
     }
@@ -377,14 +380,18 @@ extern "system" fn close(_: JNIEnv, _: JClass, h: jlong) {
     }
 }
 
-/// Requests the cover at `url` filling `width` x `height` (0 x 0: natural size, at most 2048 a side);
-/// `waiter.done` is called once with the Bitmap or null and a status. Returns a ticket handle that
-/// [`cancel`] must take back exactly once; 0 when there is no loader.
-extern "system" fn request(env: JNIEnv, _: JClass, h: jlong, url: JString, width: jint, height: jint, waiter: JObject) -> jlong {
+/// Requests the cover at `url` filling `width` x `height` (0 x 0: natural size, at most 2048 a side), with
+/// `kept` from what is kept only (`NOT_KEPT` rather than a fetch); `waiter.done` is called once with the
+/// Bitmap or null and a status. Returns a ticket handle that [`cancel`] must take back exactly once; 0 when
+/// there is no loader.
+extern "system" fn request(env: JNIEnv, _: JClass, h: jlong, url: JString, width: jint, height: jint, kept: jboolean, waiter: JObject) -> jlong {
     let Some(loader) = loader(h) else { return 0 };
     let Ok(waiter) = env.new_global_ref(&waiter) else { return 0 };
     let (w, h) = (width.max(0) as u32, height.max(0) as u32);
-    let ticket = with_str(&env, &url, |url| loader.request(url, w, h, move |r| deliver(&waiter, r)));
+    let ticket = with_str(&env, &url, |url| {
+        let done = move |r| deliver(&waiter, r);
+        if kept != 0 { loader.request_kept(url, w, h, done) } else { loader.request(url, w, h, done) }
+    });
     ticket.map_or(0, |t| Box::into_raw(Box::new(t)) as jlong)
 }
 
@@ -456,14 +463,15 @@ const BLACK: jint = 4;
 
 /// Page colours (`look::page`) for the cover at `url`, decoded to fit `side` x `side` without a Bitmap:
 /// its page into `out` and `wash`, AMOLED black into `black`, each when not null (one decode for
-/// both). Returns the bits written; 0 for no cover. May hit the network: off the main thread.
+/// both). With `kept`, from the file kept on disk only (a miss is 0, and the file is fetched for next time).
+/// Returns the bits written; 0 for no cover. May hit the network without `kept`: off the main thread.
 #[allow(clippy::too_many_arguments)]
-extern "system" fn colours(env: JNIEnv, _: JClass, h: jlong, url: JString, side: jint, out: JIntArray, wash: JObject, black: JIntArray) -> jint {
+extern "system" fn colours(env: JNIEnv, _: JClass, h: jlong, url: JString, side: jint, kept: jboolean, out: JIntArray, wash: JObject, black: JIntArray) -> jint {
     let Some(loader) = loader(h) else { return 0 };
     let mut c = loader.paint().colours.lock().pop().unwrap_or_default();
     // Unwinding out of a JNI native aborts the app.
     let answer = panic::catch_unwind(AssertUnwindSafe(|| {
-        let read = with_str(&env, &url, |url| loader.read(url, &mut c.bytes).is_ok());
+        let read = with_str(&env, &url, |url| if kept != 0 { loader.kept(url, &mut c.bytes) } else { loader.read(url, &mut c.bytes).is_ok() });
         if read != Some(true) {
             return 0;
         }
@@ -562,6 +570,7 @@ mod tests {
         assert_eq!(code(&nori_covers::Error::Decode(DecodeError::Corrupt("x".into()))), BROKEN);
         assert_eq!(code(&nori_covers::Error::Status(404)), 1404);
         assert_eq!(code(&nori_covers::Error::Closed), CLOSED);
+        assert_eq!(code(&nori_covers::Error::NotKept), NOT_KEPT);
         let timeout = nori_covers::Error::Transport { kind: nori_core::transport::FailureKind::Timeout, detail: None };
         assert_eq!(code(&timeout), NETWORK + 4, "FailureKind's own order, which Kotlin reads its name from");
     }

@@ -649,3 +649,22 @@ fn resting() {
     }
 }
 
+
+#[test]
+fn a_kept_only_request_never_asks_the_server() {
+    let d = dir("kept-only");
+    let server = Server::new(200);
+    let loader = Loader::new(config(Some(d.to_path_buf()), 2), CoverNet::over(server.clone()));
+    let kept = |w| {
+        let (tx, rx) = mpsc::channel();
+        let _ticket = loader.request_kept(PHOTO, w, w, move |r| tx.send(r).unwrap());
+        answers(&rx, 1).remove(0)
+    };
+    assert_eq!(kept(16), Err(Error::NotKept));
+    assert_eq!(server.calls(), 0, "not fetched");
+    loader.load(PHOTO, 8, 8).unwrap();
+    assert_eq!(server.calls(), 1);
+    loader.trim();
+    assert_eq!(kept(16).unwrap().width, 16, "decoded from the disk");
+    assert_eq!(server.calls(), 1);
+}

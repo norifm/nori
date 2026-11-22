@@ -56,10 +56,9 @@ data class MixPage(
 /** The core names the covers; the list rendition of each, so they are cache hits. */
 private val tileSize: Int get() = dev.nori.music.data.Covers.rules.row.toInt()
 private fun NoriViewModel.card(t: MixTile) = MixCard(t.id, dev.nori.music.app.ui.say.mixName(t.name), t.covers.mapNotNull { cover(it, tileSize) }, t.favourites)
-/** The row's [tiles] for [server] as Home opened with them (`home_kept`), so the tiles' first frame has their covers. */
-internal fun NoriViewModel.keepCards(server: String, taste: Boolean, tiles: List<MixTile>) {
-    MixStore.lastCards = Triple(server, taste, tiles.map { card(it) })
-}
+/** The row's [tiles] for [server] as Home opened with them (`home_kept`), so the tiles' first frame has their covers; the cards. */
+internal fun NoriViewModel.keepCards(server: String, taste: Boolean, tiles: List<MixTile>): List<MixCard> =
+    tiles.map { card(it) }.also { MixStore.lastCards = Triple(server, taste, it) }
 private fun NoriViewModel.page(s: MixSheet) = MixPage(s.id, dev.nori.music.app.ui.say.mixName(s.name), s.songs, s.covers.mapNotNull { cover(it, tileSize) }, s.refreshable, s.favourites)
 
 /**

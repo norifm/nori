@@ -111,7 +111,7 @@ object Bench {
                 left.countDown()
             }
         }
-        val tickets = urls.map { CoverPixels.request(loader, it, 300, 300, waiter) }
+        val tickets = urls.map { CoverPixels.request(loader, it, 300, 300, false, waiter) }
         left.await(60, java.util.concurrent.TimeUnit.SECONDS)
         tickets.forEach(CoverPixels::cancel)
         return failed.get() + left.count.toInt()
