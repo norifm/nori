@@ -162,6 +162,7 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, pages: PluginP
     val refused by vm.refused.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.loadOffers() }
     val updates by vm.updates.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
     val prefs by sound.prefs.collectAsStateWithLifecycle()
     val off = prefs.pluginsOff
     val strength by animateFloatAsState(if (off) DIMMED else 1f, label = "plugins off")
@@ -186,7 +187,7 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, pages: PluginP
                     updates.forEachIndexed { i, o ->
                         val to = o.versions.first().version
                         PluginLine(vm, o.id, o, o.name, null, say.pluginUpdateLine(o.installed.orEmpty(), to), i < updates.lastIndex, Modifier.testTag("update-${o.id}"), { pages.open(o.id) }) {
-                            TextAction(say.pluginUpdate, { vm.previewOffer(o) })
+                            TextAction(if (busy == o.id) say.pluginInstalling else say.pluginUpdate, { vm.previewOffer(o) }, enabled = busy == null)
                         }
                     }
                 }
@@ -220,6 +221,7 @@ fun PluginBrowser(vm: PluginsViewModel, pages: PluginPages) {
     val shown by vm.repoShown.collectAsStateWithLifecycle()
     val repos by vm.repos.collectAsStateWithLifecycle()
     val refused by vm.refused.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.previewFile(uri) }
     LaunchedEffect(Unit) { vm.loadOffers() }
     Column(Modifier.fillMaxSize()) {
@@ -246,8 +248,8 @@ fun PluginBrowser(vm: PluginsViewModel, pages: PluginPages) {
                 val version = o.versions.firstOrNull()?.version.orEmpty()
                 PluginLine(vm, o.id, o, o.name, o.about, say.pluginOfferLine(version, repoName(o.repo.url, o.repo.official)), true, Modifier.testTag("offer-${o.id}"), { pages.open(o.id) }, Space.gutter) {
                     when (o.state) {
-                        OfferState.NEW -> TextAction(say.pluginInstall, { vm.previewOffer(o) })
-                        OfferState.UPDATE -> TextAction(say.pluginUpdate, { vm.previewOffer(o) })
+                        OfferState.NEW -> TextAction(if (busy == o.id) say.pluginInstalling else say.pluginInstall, { vm.previewOffer(o) }, enabled = busy == null)
+                        OfferState.UPDATE -> TextAction(if (busy == o.id) say.pluginInstalling else say.pluginUpdate, { vm.previewOffer(o) }, enabled = busy == null)
                         OfferState.INSTALLED -> Quiet(say.pluginUpToDate)
                     }
                 }
@@ -443,6 +445,7 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
     val notice by vm.notice.collectAsStateWithLifecycle()
     val offers by vm.offers.collectAsStateWithLifecycle()
     val refused by vm.refused.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
     var removing by remember { mutableStateOf<PluginCard?>(null) }
     LaunchedEffect(Unit) { vm.loadOffers() }
     val at = cards.indexOfFirst { it.id == id }
@@ -473,12 +476,14 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
             notice?.takeIf { it.plugin == id }?.let { n ->
                 Text(n.line, style = MaterialTheme.typography.bodySmall, color = if (n.problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            val installing = vm.installing.collectAsStateWithLifecycle().value == id
             if (card == null && newest != null) PillButton(
-                if (installing) say.pluginInstalling else say.pluginInstall, null, { vm.previewVersion(newest) },
-                Modifier.fillMaxWidth().testTag("plugin-install"), prominent = true, enabled = !installing,
+                if (busy == id) say.pluginInstalling else say.pluginInstall, null, { vm.previewVersion(id, newest) },
+                Modifier.fillMaxWidth().testTag("plugin-install"), prominent = true, enabled = busy == null,
             )
-            if (offer?.state == OfferState.UPDATE && newest != null) PillButton(say.pluginUpdateTo(newest.version), null, { vm.previewVersion(newest) }, Modifier.fillMaxWidth().testTag("plugin-update"), prominent = true)
+            if (offer?.state == OfferState.UPDATE && newest != null) PillButton(
+                if (busy == id) say.pluginInstalling else say.pluginUpdateTo(newest.version), null, { vm.previewVersion(id, newest) },
+                Modifier.fillMaxWidth().testTag("plugin-update"), prominent = true, enabled = busy == null,
+            )
             refused?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("plugin-refused")) }
         }
         if (card != null) {
@@ -508,7 +513,7 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
                     GroupRow(
                         v.version, minHeight = 44.dp, value = v.released, divider = i < versions.lastIndex || offer?.source != null,
                         trailing = {
-                            if (v.version != (card?.version ?: newest?.version)) TextAction(say.pluginInstall, { vm.previewVersion(v) }, Modifier.padding(start = 8.dp))
+                            if (v.version != (card?.version ?: newest?.version)) TextAction(say.pluginInstall, { vm.previewVersion(id, v) }, Modifier.padding(start = 8.dp), enabled = busy == null)
                         },
                     )
                 }

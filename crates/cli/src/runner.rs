@@ -435,9 +435,12 @@ impl Runner {
             PluginCmd::Install(path) => nori_host::spawn("nori-plugin-preview", move || {
                 let _ = tx.send(Msg::Preview(host.preview_file(path, "en".into())));
             }),
-            PluginCmd::InstallPreview(p) => nori_host::spawn("nori-plugin-install", move || {
-                let _ = tx.send(Msg::Installed(host.install_preview(*p)));
-            }),
+            PluginCmd::InstallPreview(p) => {
+                app.settings.own.getting = Some(p.card.id.clone());
+                nori_host::spawn("nori-plugin-install", move || {
+                    let _ = tx.send(Msg::Installed(host.install_preview(*p)));
+                });
+            }
             PluginCmd::Menu(entry, items) => {
                 return nori_host::spawn("nori-plugin-menu", move || block_on(host.run_menu(entry, items)));
             }
@@ -510,7 +513,11 @@ impl Runner {
             }
             PluginCmd::Get(offer, version) => {
                 let crate::settings_view::Shelf::Read(offers) = &app.settings.own.shelf else { return };
-                let Some(v) = offers.offers.get(offer as usize).and_then(|o| o.versions.get(version as usize)).cloned() else { return };
+                let Some((id, v)) = offers.offers.get(offer as usize).and_then(|o| Some((o.id.clone(), o.versions.get(version as usize)?.clone()))) else { return };
+                if app.settings.own.getting.is_some() {
+                    return;
+                }
+                app.settings.own.getting = Some(id);
                 nori_host::spawn("nori-plugin-get", move || {
                     let _ = tx.send(Msg::Preview(block_on(host.preview_version(v, "en".into()))));
                 });

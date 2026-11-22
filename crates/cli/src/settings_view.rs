@@ -297,6 +297,9 @@ pub struct Own {
     pub readme: Vec<ReadmeBlock>,
     /// Columns a plugin's words wrap to; none before the first draw.
     pub wrap: usize,
+    /// The plugin whose package is on its way for its install sheet, or whose install is: no other
+    /// version is got meanwhile.
+    pub getting: Option<String>,
 }
 
 impl Own {
@@ -460,6 +463,12 @@ impl SettingsView {
         }
         self.own.readme_asked = Some(asked);
         Some(Cmd::Plugin(PluginCmd::Readme(id, offer.map(Box::new))))
+    }
+
+    /// The package asked for came, or was refused, or its install ended: a version may be got again.
+    pub fn got(&mut self) {
+        self.own.getting = None;
+        self.invalidate();
     }
 
     /// Plugin `id`'s README came; the page may have moved on.
@@ -833,7 +842,11 @@ fn plugin_page(own: &Own, id: &str) -> Page {
             (_, OfferState::Update) => Some(text::update_to(&v.version)),
             _ => None,
         };
-        head.extend(label.map(|title| Row::Button { title, action: Act::GetPlugin { offer: at as u32, version: 0 } }));
+        head.extend(label.map(|title| match &own.getting {
+            Some(getting) if getting == id => info(text::INSTALLING, String::new()),
+            Some(_) => info(&title, String::new()),
+            None => Row::Button { title, action: Act::GetPlugin { offer: at as u32, version: 0 } },
+        }));
     }
     let mut sections = vec![section("", head)];
     if let Some(c) = card {
@@ -870,7 +883,7 @@ fn plugin_page(own: &Own, id: &str) -> Page {
         }
     }
     if let Some((at, o)) = found {
-        sections.push(versions(card, at, o));
+        sections.push(versions(card, at, o, own.getting.is_none()));
     }
     sections.retain(|s| !s.rows.is_empty());
     Page { title, summary, sections }
@@ -881,8 +894,9 @@ pub fn trust_repo(url: &str) -> Overlay {
     Overlay::Confirm { title: text::ADD_REPO.into(), lines: vec![text::TRUST_REPO.into(), url.into()], yes: text::ADD.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::AddRepo(url.into()))) }
 }
 
-/// Offer `o`, at place `at` in those read: its versions to install one of, and where its code is.
-fn versions(card: Option<&PluginCard>, at: usize, o: &Offer) -> Section {
+/// Offer `o`, at place `at` in those read: its versions to install one of (when `free`: nothing is on
+/// its way), and where its code is.
+fn versions(card: Option<&PluginCard>, at: usize, o: &Offer, free: bool) -> Section {
     let mut rows: Vec<Row> = o
         .versions
         .iter()
@@ -893,7 +907,7 @@ fn versions(card: Option<&PluginCard>, at: usize, o: &Offer) -> Section {
                 title: v.version.clone(),
                 detail: v.released.clone().unwrap_or_default(),
                 button: (if here { text::INSTALLED } else { text::INSTALL }).into(),
-                enabled: !here,
+                enabled: !here && free,
                 action: Act::GetPlugin { offer: at as u32, version: i as u32 },
             }
         })

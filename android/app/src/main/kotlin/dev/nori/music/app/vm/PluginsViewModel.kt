@@ -114,6 +114,15 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     /** The plugin whose install is on its way. */
     val installing: StateFlow<String?> = _installing
 
+    private val _fetching = MutableStateFlow<String?>(null)
+
+    /**
+     * The plugin whose package is on its way, for its install sheet, or whose install is: no other version is
+     * asked for meanwhile, so a tap again on a slow connection doesn't fetch it twice and show its sheet twice.
+     */
+    val busy: StateFlow<String?> = combine(_fetching, _installing) { f, i -> f ?: i }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     /** The connected devices plugins control. */
     val controlled = host.controlled
 
@@ -174,10 +183,17 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Shows the install sheet of [offer]'s newest version. */
-    fun previewOffer(offer: Offer) = offer.versions.firstOrNull()?.let(::previewVersion)
+    fun previewOffer(offer: Offer) = offer.versions.firstOrNull()?.let { previewVersion(offer.id, it) }
 
-    /** Shows the install sheet of [version], newer or older than the one here. */
-    fun previewVersion(version: Version) = viewModelScope.launch { previewing { host.previewVersion(version) } }
+    /** Shows the install sheet of plugin [id]'s [version], newer or older than the one here, unless one is [busy]. */
+    fun previewVersion(id: String, version: Version) {
+        if (_fetching.value != null || _installing.value != null) return
+        _fetching.value = id
+        viewModelScope.launch {
+            previewing { host.previewVersion(version) }
+            _fetching.value = null
+        }
+    }
 
     private suspend fun previewing(read: suspend () -> PluginPreview) {
         _preview.value = refusing(read)

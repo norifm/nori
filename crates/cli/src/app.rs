@@ -2015,10 +2015,12 @@ impl App {
                 }
             },
             Msg::Preview(Ok(p)) => {
+                self.settings.got();
                 let turns_on = self.settings.alone.offer() == Some(p.card.id.as_str()) || !self.settings.own.plugins.iter().any(|c| c.id == p.card.id);
                 self.overlay = Some(preview_sheet(p, turns_on));
             }
             Msg::Installed(Ok(id)) => {
+                self.settings.got();
                 self.say(crate::text::PLUGIN_INSTALLED, false);
                 if self.settings.alone.offer() == Some(id.as_str()) {
                     while self.settings.leave() {}
@@ -2026,7 +2028,10 @@ impl App {
                     self.cmds.push(Cmd::Plugin(PluginCmd::TurnOnChosen(id)));
                 }
             }
-            Msg::Installed(Err(e)) | Msg::Preview(Err(e)) => self.say(crate::text::plugin_refused(&e), true),
+            Msg::Installed(Err(e)) | Msg::Preview(Err(e)) => {
+                self.settings.got();
+                self.say(crate::text::plugin_refused(&e), true);
+            }
             Msg::PickedInstalled { plugin, on } => {
                 self.cmds.push(Cmd::Plugin(PluginCmd::Read));
                 self.welcome_on(if on { WelcomeEvent::Installed { plugin } } else { WelcomeEvent::InstallRefused { plugin } });

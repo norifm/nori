@@ -2576,6 +2576,35 @@ fn an_offered_plugins_page_shows_its_readme() {
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(0, 0))));
 }
 
+/// While a package is on its way its page says so and nothing is got again: on a slow connection each
+/// Enter fetched the plugin again, and each fetch asked to install it once more.
+#[test]
+fn nothing_is_got_while_a_package_is_on_its_way() {
+    use crate::app::PluginCmd;
+    use crate::settings_view::Shelf;
+    let shelf = Shelf::Read(nori_plugins::Offers { offers: vec![offer("Lyrics plus", &official(), None)], failed: Vec::new() });
+    let mut a = plugins_app(Vec::new(), vec![official()], shelf);
+    follow(&mut a, "Get plugins");
+    select_row(&mut a, |r| matches!(r, Row::Offer { .. }));
+    key(&mut a, KeyCode::Enter);
+    a.settings.own.getting = Some("dev.example.lyrics-plus".into());
+    a.settings.invalidate();
+    let s = draw(&mut a, 60, 40);
+    assert!(s.contains("Installing…"), "{s}");
+    a.cmds.clear();
+    select_row(&mut a, |r| matches!(r, Row::Info { title, .. } if title == "Installing…"));
+    key(&mut a, KeyCode::Enter);
+    select_row(&mut a, |r| matches!(r, Row::Action { detail, .. } if detail == "2026-06-01"));
+    key(&mut a, KeyCode::Enter);
+    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Plugin(PluginCmd::Get(..)))), "{:?}", a.cmds);
+
+    a.handle(Msg::Preview(Err(nori_plugins::Refusal::Api(6))));
+    let s = draw(&mut a, 60, 40);
+    assert!(!s.contains("Installing…"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(0, 1))), "the version chosen is got");
+}
+
 #[test]
 fn words_wrap_to_the_width() {
     let wrapped = crate::text::wrapped;
