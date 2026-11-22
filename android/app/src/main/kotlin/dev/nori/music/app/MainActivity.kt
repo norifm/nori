@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -123,8 +122,9 @@ class MainActivity : ComponentActivity() {
         Nori.get(this).updates.resumed()
         super.onStart()
         Nori.get(this).remotes.appShown(true)
-        // Binding starts the playback service, which builds a player on this thread. Let the first frame out first.
-        window.decorView.post { Looper.myQueue().addIdleHandler { startedPlugins(); if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress(); updatePlugins(); actions.shown() }; false } }
+        // Binding starts the playback service, which builds a player on this thread: right after the next frame is
+        // out, not once the main thread goes idle, which a page's items arriving keep it from for most of a second.
+        android.view.Choreographer.getInstance().postFrameCallback { android.os.Handler(mainLooper).post { startedPlugins(); if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress(); updatePlugins(); actions.shown() } } }
         started = true
     }
 
