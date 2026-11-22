@@ -43,7 +43,7 @@ settings it overrides, its rows, and its permissions. The install sheet shows th
 A plugin fills one or more extension points, each a trait of the SDK. A method the plugin does not
 write answers as nori would on its own, so a plugin writes only what it changes:
 
-| Extension point | What it adds | nori's own plugin that uses it |
+| Extension point | What it adds | A plugin of nori's that uses it |
 |---|---|---|
 | `lifecycle` | Calls when it starts, when a row changes and when an action runs | `playback`, `remote-switch` |
 | `hooks` | nori's events: playback, songs, the queue, favorites, outputs, lyric lines, the output picker, timers | `speaker` |
@@ -140,5 +140,7 @@ lists the plugin but does not run it until its repo has a build for that API.
 - [Plugin reference](plugin-reference.md): the manifest, rows, strings, packages, permissions, limits
   and repos.
 - [The plugin host](plugin-host.md): how nori installs, checks, compiles and runs plugins.
-- The plugins in [nori-plugins](https://github.com/norifm/nori-plugins) are working examples: `orbit`
-  for a sound stage, `youtube-music` for a provider, `sony` for device control, `speaker` for a cast.
+- nori's plugins are working examples: in [nori-plugins](https://github.com/norifm/nori-plugins),
+  `youtube-music` for a provider and `sony` for device control; in
+  [nori-dev-plugins](https://github.com/norifm/nori-dev-plugins), the plugins for developers, `orbit` for
+  a sound stage, `speaker` for a cast and `showcase` for every slot and kind of row.

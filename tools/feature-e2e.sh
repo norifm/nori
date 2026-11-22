@@ -124,9 +124,10 @@ if want scrobble; then section scrobble
   "$app" do pause >/dev/null
 fi
 
-# The packed plugins (nori-plugins' tools/pack.py, dist/<name>-<version>.noriplugin).
+# The packed plugins (tools/pack.py's dist/<name>-<version>.noriplugin): nori-plugins' and nori-dev-plugins'.
 plugins_dist=${NORI_PLUGINS_DIST:-$here/../../nori-plugins/dist}
-plugin_package() { ls "$plugins_dist/$1"-[0-9]*.noriplugin 2>/dev/null | sort -V | tail -1; }
+dev_plugins_dist=${NORI_DEV_PLUGINS_DIST:-$here/../../nori-dev-plugins/dist}
+plugin_package() { ls "$plugins_dist/$1"-[0-9]*.noriplugin "$dev_plugins_dist/$1"-[0-9]*.noriplugin 2>/dev/null | sort -V | tail -1; }
 # Orbit's package as a repo of this computer's, over HTTP the emulator reaches: its index.json beside it.
 serve_plugins() {
   local repo; repo=$(mktemp -d)
@@ -182,7 +183,7 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   adb shell input keyevent 4
   check "the browser offers orbit" wait_until 30 on_screen 'text="Orbit"'
   adb exec-out screencap -p > "$shots/browser.png"
-  # This repo's orbit, not the official repo's beside it.
+  # Only this repo's plugins, not the official repo's beside it.
   tapnode text 10.0.2.2
   check "the repo's filter shows its orbit only" wait_until 10 off_screen 'text="Moving covers"'
   tapnode text Orbit
