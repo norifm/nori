@@ -94,14 +94,29 @@ const HELD_LONG_US: i64 = 30_000_000;
 /// connected, or whose channel reset, can be talked to.
 const OFFER_AGAIN: [Duration; 4] = [Duration::from_millis(1_000), Duration::from_millis(3_000), Duration::from_millis(8_000), Duration::from_millis(20_000)];
 
-/// Which plugin controls which connected device, the offers under way, and how often each device was
-/// offered again.
+/// One device's offer state: whether an offer is running, its retry schedule, and consecutive channel losses.
 #[derive(Default)]
-pub(crate) struct Controls(Mutex<Vec<Control>>, Mutex<std::collections::BTreeSet<String>>, Mutex<std::collections::BTreeMap<String, usize>>, Mutex<std::collections::BTreeMap<String, u32>>);
+struct Attempts {
+    offering: bool,
+    /// Bumped whenever a retry schedule ends or restarts so an earlier sleeping timer stops at once.
+    schedule: u64,
+    /// A retry timer for `schedule` is waiting to fire.
+    waiting: bool,
+    tries: usize,
+    losses: u32,
+}
+
+/// Which plugin controls which connected device, and each device's offer and retry state.
+#[derive(Default)]
+pub(crate) struct Controls {
+    held: Mutex<Vec<Control>>,
+    attempts: Mutex<std::collections::BTreeMap<String, Attempts>>,
+    changed: nori_tasks::Notify,
+}
 
 impl Controls {
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Control>> {
-        self.0.lock().expect("not poisoned")
+        self.held.lock().expect("not poisoned")
     }
 
     /// `plugin` no longer controls anything; whether it did.
@@ -112,36 +127,64 @@ impl Controls {
         c.len() != had
     }
 
-    /// `device` is being offered to the plugins from now on, unless it already is; whether it now is.
-    fn offering(&self, device: &str) -> bool {
-        self.1.lock().expect("not poisoned").insert(device.to_string())
+    /// Starts offering `device`, unless an offer or a retry timer is already under way.
+    fn start_offer(&self, device: &str) -> bool {
+        let mut map = self.attempts.lock().expect("not poisoned");
+        let a = map.entry(device.to_string()).or_default();
+        if a.offering || a.waiting {
+            return false;
+        }
+        a.offering = true;
+        true
     }
 
-    /// The offer of `device` ended.
-    fn offered(&self, device: &str) {
-        self.1.lock().expect("not poisoned").remove(device);
+    /// Claims the scheduled retry for `device` if `schedule` is still current and waiting.
+    fn retry_due(&self, device: &str, schedule: u64) -> bool {
+        let mut map = self.attempts.lock().expect("not poisoned");
+        let Some(a) = map.get_mut(device) else { return false };
+        if a.schedule != schedule || !a.waiting || a.offering {
+            return false;
+        }
+        a.waiting = false;
+        a.offering = true;
+        true
     }
 
-    /// How long to leave `device` before offering it again; None once it has had its tries.
-    fn next_try(&self, device: &str) -> Option<Duration> {
-        let mut tries = self.2.lock().expect("not poisoned");
-        let n = tries.entry(device.to_string()).or_insert(0);
-        let wait = OFFER_AGAIN.get(*n).copied();
-        *n += 1;
-        wait
+    fn waiting_on(&self, device: &str, schedule: u64) -> bool {
+        self.attempts.lock().expect("not poisoned").get(device).is_some_and(|a| a.schedule == schedule && a.waiting)
+    }
+
+    /// The active offer of `device` ended without scheduling a retry.
+    fn finish_offer(&self, device: &str) {
+        if let Some(a) = self.attempts.lock().expect("not poisoned").get_mut(device) {
+            a.offering = false;
+        }
+    }
+
+    /// Ends the active offer of `device` and, if tries remain, schedules the next wait atomically.
+    fn schedule_retry(&self, device: &str) -> Option<(Duration, u64)> {
+        let mut map = self.attempts.lock().expect("not poisoned");
+        let a = map.entry(device.to_string()).or_default();
+        a.offering = false;
+        let wait = OFFER_AGAIN.get(a.tries).copied()?;
+        a.tries += 1;
+        a.waiting = true;
+        Some((wait, a.schedule))
     }
 
     /// `device` lost its channel, having held it for a good while or not; how many it has lost in a row.
     fn lost_channel(&self, device: &str, held_long: bool) -> u32 {
-        let mut losses = self.3.lock().expect("not poisoned");
-        let n = losses.entry(device.to_string()).or_insert(0);
-        *n = if held_long { 1 } else { *n + 1 };
-        *n
+        let mut map = self.attempts.lock().expect("not poisoned");
+        let a = map.entry(device.to_string()).or_default();
+        a.losses = if held_long { 1 } else { a.losses + 1 };
+        a.losses
     }
 
     /// `device` starts again with no channels lost.
     fn forgive(&self, device: &str) {
-        self.3.lock().expect("not poisoned").remove(device);
+        if let Some(a) = self.attempts.lock().expect("not poisoned").get_mut(device) {
+            a.losses = 0;
+        }
     }
 
     /// When `plugin` took control of `device`, on the plugin tasks' clock.
@@ -149,9 +192,56 @@ impl Controls {
         self.lock().iter().find(|c| c.device.id == device).map(|c| c.taken_us)
     }
 
-    /// `device` has all its tries again.
+    /// `device` has all its tries again, canceling any sleeping retry timer.
     fn fresh_tries(&self, device: &str) {
-        self.2.lock().expect("not poisoned").remove(device);
+        let was = {
+            let mut map = self.attempts.lock().expect("not poisoned");
+            let a = map.entry(device.to_string()).or_default();
+            let was = a.waiting;
+            a.tries = 0;
+            a.waiting = false;
+            a.schedule += 1;
+            was
+        };
+        if was {
+            self.changed.notify();
+        }
+    }
+
+    /// `device` disconnected: clears its offer, tries, losses and any sleeping retry timer.
+    fn disconnected(&self, device: &str) {
+        let was = {
+            let mut map = self.attempts.lock().expect("not poisoned");
+            let a = map.entry(device.to_string()).or_default();
+            let was = a.waiting;
+            a.offering = false;
+            a.tries = 0;
+            a.waiting = false;
+            a.losses = 0;
+            a.schedule += 1;
+            was
+        };
+        if was {
+            self.changed.notify();
+        }
+    }
+
+    /// Cancels every waiting retry timer (watching stopped).
+    fn clear_retries(&self) {
+        let had = {
+            let mut map = self.attempts.lock().expect("not poisoned");
+            let mut had = false;
+            for a in map.values_mut() {
+                had |= a.waiting;
+                a.waiting = false;
+                a.tries = 0;
+                a.schedule += 1;
+            }
+            had
+        };
+        if had {
+            self.changed.notify();
+        }
     }
 
     /// The devices `plugin` controls.
@@ -250,9 +340,9 @@ impl Around {
     /// Asks the plugins in `rest`, in turn, whether one handles `device`; the first that does controls it.
     fn ask(self, mut rest: std::vec::IntoIter<(String, Worker)>, device: BtDevice) {
         let Some((id, w)) = rest.next() else {
-            self.controls.offered(&device.id);
-            if let Some(p) = self.me.upgrade() {
-                p.offer_again(device);
+            match self.me.upgrade() {
+                Some(p) => p.offer_again(device),
+                None => self.controls.finish_offer(&device.id),
             }
             return;
         };
@@ -262,7 +352,7 @@ impl Around {
                 self.ask(rest, device);
                 return handles.map(|_| ());
             }
-            self.controls.offered(&device.id);
+            self.controls.finish_offer(&device.id);
             self.controls.fresh_tries(&device.id);
             // It went, or its plugin was turned off, while the plugin was answering.
             if !self.me.upgrade().is_some_and(|me| me.may_control(&id, &device.id)) {
@@ -341,14 +431,32 @@ impl Plugins {
         }
     }
 
-    /// Offers `device` to the plugins that may control it, unless one does.
+    /// Offers `device` to the plugins that may control it, unless one does or an offer or retry is already under way.
     fn offer(&self, device: BtDevice) {
-        if self.controls.of(&device.id).is_some() || !self.controls.offering(&device.id) {
+        if self.controls.of(&device.id).is_some() || !self.controls.start_offer(&device.id) {
             return;
         }
+        self.offer_now(device);
+    }
+
+    /// Offers `device` when its scheduled retry timer fires, if that schedule is still current.
+    fn retry_offer(&self, id: &str, schedule: u64) {
+        if self.controls.of(id).is_some() {
+            return;
+        }
+        let Some(device) = self.radio.connected().into_iter().find(|d| d.id == id) else {
+            return;
+        };
+        if !self.controls.retry_due(id, schedule) {
+            return;
+        }
+        self.offer_now(device);
+    }
+
+    fn offer_now(&self, device: BtDevice) {
         let askers: Vec<(String, Worker)> = self.reaching(&device, "device-control").into_iter().filter_map(|id| Some((id.clone(), self.worker(&id)?))).collect();
         if askers.is_empty() {
-            self.controls.offered(&device.id);
+            self.controls.finish_offer(&device.id);
             return;
         }
         self.around().ask(askers.into_iter(), device);
@@ -362,18 +470,24 @@ impl Plugins {
     /// Offers `device` again in a while, if it has tries left and is still connected by then; out of tries,
     /// plugins there only for devices and controlling none stop running.
     fn offer_again(&self, device: BtDevice) {
-        let Some(wait) = self.controls.next_try(&device.id) else {
+        if !self.radio.connected().iter().any(|d| d.id == device.id) {
+            self.controls.finish_offer(&device.id);
+            return;
+        }
+        let Some((wait, schedule)) = self.controls.schedule_retry(&device.id) else {
             let idle = |id: &String| self.controls.of_plugin(id).is_empty() && self.installed().iter().any(|i| i.manifest.id == *id && only_for_devices(&i.manifest));
             let ids = self.reaching(&device, "device-control");
             self.workers.lock().expect("not poisoned").retain(|id, _| !(ids.contains(id) && idle(id)));
             return;
         };
-        let (tasks, me) = (self.tasks(), self.me.clone());
+        let (tasks, controls, me) = (self.tasks(), self.controls.clone(), self.me.clone());
         let task = async move {
-            tasks.sleep(wait).await;
-            let Some(p) = me.upgrade() else { return };
-            if let Some(d) = p.radio.connected().into_iter().find(|d| d.id == device.id) {
-                p.offer(d);
+            let cancelled = || !controls.waiting_on(&device.id, schedule);
+            if !crate::timers::before(tasks.sleep(wait), controls.changed.until(cancelled)).await || cancelled() {
+                return;
+            }
+            if let Some(p) = me.upgrade() {
+                p.retry_offer(&device.id, schedule);
             }
         };
         self.tasks().spawn(Box::pin(task));
@@ -491,6 +605,7 @@ impl Plugins {
             self.gate.active(plugin, Active::Device, false);
         }
         if !want {
+            self.controls.clear_retries();
             self.radio.set_connected(Vec::new());
         } else if !was {
             for d in platform.connected() {
@@ -498,6 +613,9 @@ impl Plugins {
             }
         } else {
             for d in self.radio.connected() {
+                if self.controls.of(&d.id).is_none() {
+                    self.controls.fresh_tries(&d.id);
+                }
                 self.offer(d);
             }
         }
@@ -532,9 +650,7 @@ impl Plugins {
     }
 
     pub fn bluetooth_disconnected(&self, id: String) {
-        self.controls.offered(&id);
-        self.controls.fresh_tries(&id);
-        self.controls.forgive(&id);
+        self.controls.disconnected(&id);
         let device = self.radio.connected().into_iter().find(|d| d.id == id);
         if !self.radio.went(&id) {
             return;

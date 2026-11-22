@@ -502,3 +502,78 @@ fn a_plugin_with_no_state_for_its_device_lets_it_go_and_it_is_offered_again() {
     session.until("let go", || session.notice("gone") == Some(vec!["AA".into()]));
     session.until("offered again", || channels(&fake) == 2 && !plugins.controlled("en".into()).is_empty());
 }
+
+#[test]
+fn retry_timers_do_not_overlap_on_repeated_connect_events_or_look_again() {
+    let (_dir, _session, fake, plugins) = open("plugins-device-retry-single", Vec::new());
+    let clock = Arc::new(nori_tasks::Native::simulated("plugin-retry-clock", 0).unwrap());
+    plugins.use_tasks(clock.clone());
+    *fake.refusals.lock().unwrap() = 99;
+    plugins.install(&fixture("headphones")).unwrap();
+    let buds = device("AA", "Test Buds Pro");
+    fake.later.lock().unwrap().push(buds.clone());
+    let refused = || 99 - *fake.refusals.lock().unwrap();
+    let settle = || {
+        for _ in 0..4 {
+            clock.settle();
+            if let Some(w) = plugins.worker(ID) {
+                let _ = nori_tasks::block_on(w.call(|_, _| Ok(1)));
+            }
+        }
+    };
+
+    // First connect fails and schedules the 1s retry; repeated connect events while waiting must not
+    // fire extra attempts or stack a second timer.
+    plugins.bluetooth_connected(buds.clone());
+    settle();
+    assert_eq!(refused(), 1);
+    assert_eq!(clock.waits().len(), 1);
+
+    plugins.bluetooth_connected(buds.clone());
+    plugins.bluetooth_connected(buds.clone());
+    settle();
+    assert_eq!(refused(), 1, "repeated connect events while waiting do not double-offer");
+    assert_eq!(clock.waits().len(), 1, "only one retry timer is waiting");
+
+    // Advance past 1s so the 3s retry is scheduled, then look_for_devices resets the schedule and
+    // cancels the earlier 3s timer instead of running both in parallel.
+    clock.pass(nori_time::Duration::from_millis(1_000));
+    settle();
+    assert_eq!(refused(), 2);
+
+    *fake.unannounced.lock().unwrap() = true;
+    plugins.look_for_devices();
+    settle();
+    assert_eq!(refused(), 3, "look_for_devices tries at once");
+    assert_eq!(clock.waits().len(), 1, "old 3s timer was canceled");
+
+    // Run through the entire fresh schedule (1s, 3s, 8s, 20s): exactly 4 more retries (total 7),
+    // never an extra one from the old 3s timer.
+    for ms in [1_000, 3_000, 8_000, 20_000, 20_000] {
+        clock.pass(nori_time::Duration::from_millis(ms));
+        settle();
+    }
+    assert_eq!(refused(), 7, "fresh schedule runs 1 + 4 tries with no stale timer firing");
+    assert!(clock.waits().is_empty(), "out of tries leaves no waiting timer");
+
+    // Disconnect while a retry timer is pending and reconnect: the old timer is dropped immediately
+    // and never fires on the new link.
+    plugins.bluetooth_disconnected("AA".into());
+    plugins.bluetooth_connected(buds.clone());
+    settle();
+    assert_eq!(refused(), 8);
+    assert_eq!(clock.waits().len(), 1);
+    clock.pass(nori_time::Duration::from_millis(500));
+    plugins.bluetooth_disconnected("AA".into());
+    settle();
+    assert!(clock.waits().is_empty(), "disconnect drops the waiting retry timer");
+    plugins.bluetooth_connected(buds);
+    settle();
+    assert_eq!(refused(), 9);
+    clock.pass(nori_time::Duration::from_millis(600));
+    settle();
+    assert_eq!(refused(), 9, "the timer from before disconnect does not fire at 1000ms");
+    clock.pass(nori_time::Duration::from_millis(400));
+    settle();
+    assert_eq!(refused(), 10, "the new connection's own 1s retry fires on time");
+}
