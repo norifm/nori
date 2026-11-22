@@ -40,6 +40,8 @@ pub struct Offer {
     pub icon: Option<String>,
     /// The extension points it fills, when its repo says.
     pub points: Vec<String>,
+    /// Other when its repo doesn't say.
+    pub category: crate::Category,
     /// The versions this nori runs, newest first.
     pub versions: Vec<Version>,
     /// The version installed here, if it is.
@@ -122,7 +124,7 @@ fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
                 .collect();
             versions.sort_by_cached_key(|v| std::cmp::Reverse(nori_plugin_index::version_numbers(&v.version)));
             let (readme, icon) = (l.readme.map(|r| resolved(&repo.url, &r)), l.icon.map(|i| resolved(&repo.url, &i)));
-            (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, readme, icon, points: l.points, versions, installed: None, state: OfferState::New })
+            (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, readme, icon, points: l.points, category: crate::Category::named(l.category.as_deref()), versions, installed: None, state: OfferState::New })
         })
         .collect())
 }

@@ -136,7 +136,7 @@ serve_plugins() {
 import hashlib, json, pathlib, sys
 repo = pathlib.Path(sys.argv[1]); pkg = next(repo.glob("orbit-*.noriplugin"))
 version = pkg.stem.removeprefix("orbit-")
-(repo / "index.json").write_text(json.dumps({"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "versions": [
+(repo / "index.json").write_text(json.dumps({"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "category": "playback", "versions": [
     {"version": version, "api": 7, "url": pkg.name, "sha256": hashlib.sha256(pkg.read_bytes()).hexdigest()}]}]}))
 INDEX
   plugins_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
@@ -181,6 +181,9 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   tapnode text Add
   check "the repo is listed" wait_until 30 on_screen '10.0.2.2'
   adb shell input keyevent 4
+  # A page per category: orbit is on Playback's, beside the official repo's AutoMix tuning.
+  check "the browser has a page per category" wait_until 30 on_screen 'text="Playback"'
+  tapnode text Playback
   check "the browser offers orbit" wait_until 30 on_screen 'text="Orbit"'
   adb exec-out screencap -p > "$shots/browser.png"
   # Only this repo's plugins, not the official repo's beside it.

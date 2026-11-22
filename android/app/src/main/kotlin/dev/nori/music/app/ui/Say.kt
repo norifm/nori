@@ -425,6 +425,12 @@ class Say(private val r: Resources) {
     val pluginsSummary: String get() = r.getString(R.string.plugins_summary)
     val pluginsEmpty: String get() = r.getString(R.string.plugins_empty)
     val pluginsInstalled: String get() = r.getString(R.string.plugins_installed_list)
+    fun pluginCategory(c: dev.nori.music.ffi.plugins.Category): String = r.getString(when (c) {
+        dev.nori.music.ffi.plugins.Category.SERVICE -> R.string.plugins_category_service
+        dev.nori.music.ffi.plugins.Category.DEVICE -> R.string.plugins_category_device
+        dev.nori.music.ffi.plugins.Category.PLAYBACK -> R.string.plugins_category_playback
+        dev.nori.music.ffi.plugins.Category.OTHER -> R.string.plugins_category_other
+    })
     val pluginsInstallFile: String get() = r.getString(R.string.plugins_install_file)
     fun pluginVersion(v: String): String = r.getString(R.string.plugins_version, v)
     val pluginMoveUp: String get() = r.getString(R.string.plugins_move_up)

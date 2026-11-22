@@ -851,6 +851,10 @@
     <string name="plugins_summary">Music sources, sounds and more</string>
     <string name="plugins_empty">Plugins add music sources, sounds and more.</string>
     <string name="plugins_installed_list">Installed</string>
+    <string name="plugins_category_service">Services</string>
+    <string name="plugins_category_device">Devices</string>
+    <string name="plugins_category_playback">Playback</string>
+    <string name="plugins_category_other">More</string>
     <string name="plugins_install_file">Install from file</string>
     <string name="plugins_version">Version %1$s</string>
     <string name="plugins_move_up">Move up</string>

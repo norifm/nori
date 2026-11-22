@@ -11,7 +11,7 @@ use nori_core::providers::Kinds;
 use nori_core::MusicFolder;
 use std::collections::{HashMap, HashSet};
 
-use nori_plugins::{AssetLine, AssetState, ControlledDevice, Offer, OfferState, Offers, PluginCard, PluginRow, ReadmeBlock, Repo, RowKind, Value};
+use nori_plugins::{AssetLine, AssetState, Category, ControlledDevice, Offer, OfferState, Offers, PluginCard, PluginRow, ReadmeBlock, Repo, RowKind, Value};
 
 use crate::app::{Cmd, Overlay, PluginCmd, Sel, SoundToolCmd, Target, View};
 use crate::art::Day;
@@ -290,6 +290,8 @@ pub struct Own {
     /// The browser's search, and the repo it is narrowed to.
     pub query: String,
     pub repo_shown: Option<String>,
+    /// The category the browser shows; none for its first.
+    pub category_shown: Option<Category>,
     /// What the README was last asked for ([`SettingsView::readme_wanted`]), and what came.
     pub readme_asked: Option<(String, Option<String>, Option<String>)>,
     pub readme: Vec<ReadmeBlock>,
@@ -699,6 +701,19 @@ fn plugins_page(own: &Own, all_off: bool) -> Vec<Section> {
     sections
 }
 
+/// Of `offers`, those of the category shown (`shown`, else the first), and the chips choosing it when
+/// there are several.
+fn by_category(offers: &[Offer], shown: Option<Category>) -> (Option<Row>, Vec<&Offer>) {
+    let categories = nori_plugins::categories_shown(offers.iter().map(|o| o.category).collect());
+    if categories.len() < 2 {
+        return (None, offers.iter().collect());
+    }
+    let shown = shown.filter(|c| categories.contains(c)).unwrap_or(categories[0]);
+    let options = categories.iter().map(|c| (text::category(*c).to_string(), c.name().to_string())).collect();
+    let chips = Row::Choice { target: Target::PluginCategory, title: text::SHOW.into(), chips: true, options, shown: text::category(shown).into(), enabled: true };
+    (Some(chips), offers.iter().filter(|o| o.category == shown).collect())
+}
+
 /// What the repos offer: searched, narrowed to one repo when there are several, each opening its page.
 fn browser(own: &Own) -> Vec<Section> {
     let mut tools = vec![Row::Text { title: text::SEARCH_PLUGINS.into(), shown: own.query.clone(), secret: false, target: Target::PluginSearch }];
@@ -719,7 +734,9 @@ fn browser(own: &Own) -> Vec<Section> {
             if found.is_empty() {
                 rows.push(Row::Note { text: text::NONE_FOUND.into() });
             }
-            rows.extend(found.iter().filter_map(|o| {
+            let (chips, found) = by_category(&found, own.category_shown);
+            rows.extend(chips);
+            rows.extend(found.into_iter().filter_map(|o| {
                 let mut detail: Vec<String> = o.about.iter().cloned().collect();
                 detail.push(o.versions.first()?.version.clone());
                 detail.push(text::repo_name(&o.repo));

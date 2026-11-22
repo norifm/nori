@@ -57,6 +57,8 @@ export type Offer = {
   id: string;
   name: string;
   about: string | null;
+  /** One of `section::CATEGORIES`. */
+  category: string;
   icon: string | null;
   readme: string | null;
   source: string | null;

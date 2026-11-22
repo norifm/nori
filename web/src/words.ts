@@ -217,6 +217,8 @@ export const W = {
     Unknown: "Not checked for a browser yet",
   },
   pluginsInstalled: "Installed",
+  /** A category of plugins (`section::CATEGORIES`), as its page is called. */
+  pluginCategory: (c: string) => ({ service: "Services", device: "Devices", playback: "Playback" })[c] ?? "More",
   pluginInstall: "Install",
   pluginInstalling: "Installing…",
   pluginInstallFailed: "Couldn’t install it. Nothing changed.",

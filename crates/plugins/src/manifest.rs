@@ -40,6 +40,34 @@ pub struct Manifest {
     pub assets: Vec<AssetSpec>,
 }
 
+/// The page of Get plugins a plugin is listed on, as its manifest says and its repo's index repeats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Category {
+    /// A music service to play from.
+    Service,
+    /// Headphones, speakers and other devices.
+    Device,
+    /// How music plays and sounds.
+    Playback,
+    Other,
+}
+
+impl Category {
+    /// In [`nori_plugin_index::section::CATEGORIES`]' order.
+    const ALL: [Category; 4] = [Category::Service, Category::Device, Category::Playback, Category::Other];
+
+    /// Its name in an index.
+    pub fn name(self) -> &'static str {
+        nori_plugin_index::section::CATEGORIES[self as usize]
+    }
+
+    /// The category an index names, as [`nori_plugin_index::section::category_named`] reads it.
+    pub fn named(name: Option<&str>) -> Category {
+        Category::ALL[nori_plugin_index::section::category_named(name) as usize]
+    }
+}
+
 /// What a plugin may do beyond its own data and rows; the install sheet lists them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -487,6 +515,19 @@ mod tests {
         assert_eq!(read.places, vec![Place::Artwork, Place::Devices]);
     }
 
+    /// The SDK writes the category last, as its byte in `CATEGORIES`' order: what a repo's `pack.py` reads
+    /// into its index.
+    #[test]
+    fn the_category_is_the_last_byte_in_the_indexs_order() {
+        for (said, read) in [(sdk::Category::Service, Category::Service), (sdk::Category::Device, Category::Device), (sdk::Category::Playback, Category::Playback), (sdk::Category::Other, Category::Other)] {
+            let m = sdk::Manifest { category: said, ..sdk::Manifest::new("fm.nori.c") };
+            let bytes: [u8; 256] = sdk::encode::<256>(&m, "1.2.3", 0);
+            let last = bytes[sdk::encoded_len(&m, "1.2.3") - 1] as usize;
+            assert_eq!(Category::named(nori_plugin_index::section::CATEGORIES.get(last).copied()), read);
+        }
+        assert_eq!((Category::named(Some("lyrics")), Category::named(None)), (Category::Other, Category::Other), "one this nori doesn't know, or none");
+    }
+
     #[test]
     fn session_hooks_wakes_and_storage_read_back() {
         const ASSETS: [sdk::Asset; 1] = [sdk::Asset { name: "model.bin", url: "https://x.example/m", size: 5 << 30, sha256: "ab" }];
@@ -554,16 +595,19 @@ mod tests {
     fn manifests_of_each_older_sdk_read_with_none_of_what_came_after() {
         const FILTERS: [sdk::DeviceFilter; 1] = [sdk::DeviceFilter::ANY.name("WH-*")];
         // The bytes an empty group takes: the devices' count, then the permissions', hooks' and wakes'
-        // counts, the commands' count, the cache quota and the assets' count; the rows' pages' count.
-        let (devices, session, pages) = (2, 2 * 3 + 2 + 4 + 2, 2);
+        // counts, the commands' count, the cache quota and the assets' count; the rows' pages' count; the
+        // category.
+        let (devices, session, pages, category) = (2, 2 * 3 + 2 + 4 + 2, 2, 1);
         let full = sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, hooks: &[sdk::Hook::SongChanged], ..sdk::Manifest::new("fm.nori.new") };
         for (m, cut, has_devices, has_hooks) in [
             // Released plugins: nothing after the places.
-            (sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") }, devices + session + pages, false, false),
+            (sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") }, devices + session + pages + category, false, false),
             // Built with devices, before the session's fields.
-            (sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, ..sdk::Manifest::new("fm.nori.devices") }, session + pages, true, false),
+            (sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, ..sdk::Manifest::new("fm.nori.devices") }, session + pages + category, true, false),
             // Built before the rows' pages.
-            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, pages, true, true),
+            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, pages + category, true, true),
+            // Built before categories.
+            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, category, true, true),
             (full, 0, true, true),
         ] {
             let bytes: [u8; 1024] = sdk::encode::<1024>(&m, "1.0.0", 1 << 1);

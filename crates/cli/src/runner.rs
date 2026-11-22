@@ -488,6 +488,10 @@ impl Runner {
                 app.settings.own.repo_shown = repo;
                 return narrowed(app);
             }
+            PluginCmd::ShowCategory(category) => {
+                app.settings.own.category_shown = Some(category);
+                return narrowed(app);
+            }
             PluginCmd::Get(offer, version) => {
                 let crate::settings_view::Shelf::Read(offers) = &app.settings.own.shelf else { return };
                 let Some(v) = offers.offers.get(offer as usize).and_then(|o| o.versions.get(version as usize)).cloned() else { return };

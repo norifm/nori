@@ -8,6 +8,14 @@ pub const API: u32 = 7;
 /// The extension points in the order of `wit/`'s `plugin` world exports: a section's bits, in turn.
 pub const POINTS: [&str; 12] = ["lifecycle", "hooks", "provider", "sound-stage", "preparation", "automix", "deciders", "slots", "device-control", "lyrics", "scrobbler", "notification"];
 
+/// A plugin's categories, in the order the SDK writes them; the last is a plugin's that names none.
+pub const CATEGORIES: [&str; 4] = ["service", "device", "playback", "other"];
+
+/// Into [`CATEGORIES`]: the category an index names, if it names one this host knows, else the last.
+pub fn category_named(name: Option<&str>) -> u8 {
+    CATEGORIES.iter().position(|c| Some(*c) == name).unwrap_or(CATEGORIES.len() - 1) as u8
+}
+
 /// A row's kinds, in the order the SDK writes them.
 pub const ROW_KINDS: [&str; 14] = ["Switch", "Choice", "Level", "Secret", "Text", "Action", "Status", "Section", "Note", "Link", "Flags", "Page", "Segments", "Meter"];
 
@@ -185,6 +193,7 @@ impl Section {
                 (r.page, r.glyph) = (i.opt_str()?, Some(i.byte()?).filter(|g| *g != u8::MAX));
             }
         }
+        // Its category follows; a client reads it from the index (`Listed::category`).
         Some(Section { id, version, api, bits, stage, net, signin, overrides, rows, menu, places, devices, later })
     }
 

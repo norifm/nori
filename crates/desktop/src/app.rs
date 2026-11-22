@@ -3441,6 +3441,11 @@ impl App {
             self.plugged.repo_shown = (*i as usize).checked_sub(1).and_then(|at| self.plugged.repos.get(at)).map(|r| r.url.clone());
             return self.plugins_shown();
         }
+        if let (PluginAct::Category, nori_plugins::Value::Choice(i)) = (&act, &v) {
+            let (all, _) = crate::settings::categories(&crate::settings::found(&self.plugged), None);
+            self.plugged.category_shown = all.get(*i as usize).copied();
+            return self.plugins_shown();
+        }
         let host = self.plugin_host();
         match (act, v) {
             (PluginAct::Turn(id), nori_plugins::Value::Switch(on)) => host.turn(id, on),
@@ -3524,7 +3529,7 @@ impl App {
                 return;
             }
             PluginAct::AllowMobile(id) => host.allow_mobile_assets(id),
-            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Flags(..) | PluginAct::DeviceOpen(_) | PluginAct::DeviceBack | PluginAct::Search | PluginAct::Chip => return,
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Flags(..) | PluginAct::DeviceOpen(_) | PluginAct::DeviceBack | PluginAct::Search | PluginAct::Chip | PluginAct::Category => return,
         }
         self.plugins_read();
     }
@@ -7194,7 +7199,7 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         let repo = nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true };
         let version = nori_plugins::Version { repo: repo.url.clone(), version: "1.0.0".into(), released: None, url: String::new(), sha256: String::new(), key: None, signature: None };
-        let offer = nori_plugins::Offer { repo, id: "a.new".into(), name: "New".into(), about: None, source: None, readme: None, icon: None, points: vec!["provider".into()], versions: vec![version], installed: None, state: nori_plugins::OfferState::New };
+        let offer = nori_plugins::Offer { repo, id: "a.new".into(), name: "New".into(), about: None, source: None, readme: None, icon: None, points: vec!["provider".into()], category: nori_plugins::Category::Service, versions: vec![version], installed: None, state: nori_plugins::OfferState::New };
         let plugged = Plugged { shelf: Shelf::Read(nori_plugins::Offers { offers: vec![offer], failed: Vec::new() }), ..Default::default() };
         let (prefs, facts) = (nori_core::settings::StoredPrefs::default(), crate::settings::Facts::default());
         ui.set_provider_rows(provider_rows(&plugged, &nori_core::providers::Kinds::builtin(), &prefs, &facts, crate::look::Today::now()));
