@@ -43,7 +43,7 @@ panic = "abort"
 strip = true
 ```
 
-The SDK comes from nori's repository. `Cargo.lock` pins the commit that your plugin builds against.
+The SDK comes from nori's repository, at the commit `Cargo.lock` pins.
 
 ## 2. Write the sound stage
 
@@ -93,8 +93,7 @@ changes. It calls `process` with each block of samples, the left channel first a
 manifest puts the stage in the master slot, after nori's equalizer. It gives the plugin one row, a
 slider from -1 to 1 that starts at 0. The id is reverse DNS: use a domain of your own.
 
-Balance keeps no state between blocks, so it needs no `save` or `restore`. The trait's other methods
-answer as nori would without them.
+Balance keeps no state between blocks, so it needs no `save` or `restore`.
 
 ## 3. Add its words
 
@@ -198,8 +197,6 @@ Add a switch that swaps the two sides.
 
    The sheet says "Install Balance 0.2.0?". After you click **Install**, Balance's page shows the
    **Balance** slider where you left it, and the new **Swap sides** switch.
-
-An update keeps the plugin's values, its place among the plugins and whether it is on.
 
 ## Next steps
 

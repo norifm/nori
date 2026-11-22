@@ -1,9 +1,9 @@
 # Performance
 
 This page shows how to measure what nori costs and how to make it cheaper. It covers the engine on the
-host, CPU and heap profiles, the perf build on a phone, and the adb tools. For the desktop app's window,
-memory and GPU, see [Desktop profiling](desktop-performance.md). For the iPod app's battery, see
-[iPod internals](ipod-internals.md). The performance rules in AGENTS.md apply to every change.
+host, CPU and heap profiles, the perf build on a phone, and the adb tools. For the desktop app, see
+[Desktop profiling](desktop-performance.md). For the iPod app's battery, see
+[iPod internals](ipod-internals.md).
 
 ## The method
 
@@ -31,28 +31,23 @@ tools/perf-host.sh                # against the latest release tag, two runs eac
 tools/perf-host.sh v0.9.4 3       # against that revision, three runs each
 ```
 
-It plays minutes of music through the engine on the test clock, with no phone or emulator. It checks out
-the other revision in a scratch worktree, and gives it the bench's files if it is older than them. The
-two sides run one after the other, never at once.
-
-The bench is the ignored test `crates/engine/tests/perf_bench.rs`. Each case prints one line per run:
+It plays minutes of music through the engine on the test clock, with no phone or emulator. The other
+revision builds in a scratch worktree, and the two sides run one after the other. The bench is the
+ignored test `crates/engine/tests/perf_bench.rs`. Each case prints one line per run:
 
 ```text
 perf: plain      music  4.00 min | wakes/min     ... | cpu ms/min ... | allocs/min ... | alloc KB/min ... | peak MB ... | sound <digest>
 ```
 
-Read the figures per minute of music:
+The figures are per minute of music:
 
-- **wakes/min** is how often the engine thread woke. While music plays, the engine should sleep for
-  seconds between bursts.
+- **wakes/min** counts the engine thread's wakes. While music plays, it should sleep for seconds
+  between bursts.
 - **cpu ms/min** is the CPU time of every thread except the test thread.
-- **allocs/min** and **alloc KB/min** count the allocations. The audio path must not allocate.
-- **peak MB** is the heap's peak.
-- **sound** is a digest of what the test card heard.
+- **sound** is a digest of what the test card heard. Under `== sound`, the script says whether the two
+  revisions sound "the same" or the output "differs".
 
-Under `== sound`, the script says for each case whether the two revisions sound "the same", or the
-output "differs". A revision whose report has no digest is "not compared". Only a comparison made on
-one machine means anything.
+Only a comparison made on one machine means anything.
 
 ### Run the bench directly
 
@@ -70,8 +65,6 @@ codec cases need FFmpeg. These variables change a run:
 | `NORI_PERF_MINUTES=10` | Plays each case this long, for a profiler |
 | `NORI_WAKES=1` | Prints each sleep's length and the runs of short sleeps |
 | `NORI_HEAP_STACKS=<dir>` | Writes where each case allocated to `<dir>/<case>.folded` |
-
-A run of short sleeps under `NORI_WAKES=1` is a timer that fires on a guess that does not come true.
 
 ## Profile the CPU and the heap
 
@@ -133,13 +126,10 @@ These tests print a digest of their output, to compare before and after a change
 | FLAC, MP3, ALAC, Vorbis and AAC decoding | `cargo test --release -p nori-engine --test engine decoders::digest -- --ignored --nocapture` |
 | Opus decoding, by mode, rate and frame length | `cargo test --release -p nori-engine --test engine decoders::opus_digest -- --ignored --nocapture` |
 
-`decoders::digest` prints a digest per shape of song. `decoders::digest_alac` prints one codec's.
-
 ## Measure on a phone with the perf build
 
-The perf build measures what the app costs on a real phone in real use, with no computer attached.
-[Building](building.md) shows how to build and install it. Its recorder starts with the app, and its page
-is **Settings › Performance**.
+[The perf build](building.md#the-perf-build) records what the app costs on a real phone in real use,
+with no computer attached. Its page is **Settings › Performance**.
 
 ### Run a fair battery test
 
@@ -163,12 +153,9 @@ The recorder cuts the app's life into stretches. Each stretch is spent in one of
 - Screen on, paused.
 - Charging. The recorder leaves it out of every battery figure.
 
-- A stretch also ends when a setting that changes the cost changes. These settings are the equalizer,
-  AutoMix, crossfade, offload, hi-res and bit-perfect.
-- Each stretch lists those settings, and whether offload was wanted.
-- The recorder drops stretches under 3 seconds, and keeps the rest for 14 days.
-- The stretch under way shows as "Now". It is lost if the process dies.
-- **Start fresh** forgets every stretch.
+A stretch also ends when the equalizer, AutoMix, crossfade, offload, hi-res or bit-perfect changes, and
+it lists those settings. The recorder drops stretches under 3 seconds and keeps the rest for 14 days.
+The stretch under way, "Now", is lost if the process dies.
 
 ### What each figure means
 
@@ -186,20 +173,12 @@ The recorder cuts the app's life into stretches. Each stretch is spent in one of
 | network | Bytes received and sent (`TrafficStats`) |
 
 The battery figures are the whole phone's. CPU, wakeups, allocations and PSS are the app's alone. A
-phone without a charge counter shows the drop of its battery level in %. "By state" sums the stretches
-of each state, with the share of time in offload.
+phone without a charge counter shows the drop of its battery level in %.
 
-Under each stretch, the page shows three more parts:
-
-- **Threads by wakeups** lists the six threads that woke most, with their wakeups/s and CPU. The Rust
-  threads carry their own names: `nori-engine`, `nori-track`, `nori-load` and others.
-- **Output** shows the last AudioTrack as the platform describes it, against what nori asked for. That
-  is the rate, channels, encoding, buffer, performance mode, offload, route and underruns.
-- **Timeline** lists up to 150 timestamped events. They include songs, changed settings, the service
-  starting or ending, outputs opened or released, offload, underruns, errors and buffer switches.
-
-Offloaded stretches also show the engine wake lock's held time, `nori-engine`'s wakeups, and the audio
-chip's data requests per second.
+Under each stretch, the page shows the threads that woke most and the last AudioTrack against what nori
+asked for. A timeline lists up to 150 events. The Rust threads carry their own names, such as
+`nori-engine`. Offloaded stretches also show the engine wake lock's held time and the audio chip's data
+requests per second.
 
 The core (`crates/perf`) files each stretch under its state, does the arithmetic and writes the report.
 Android only reads the counters (`android/app/src/perf`).
@@ -223,30 +202,22 @@ With each break, the recorder saves the app's own recent log: the core's and Kot
 
 ### Report, benchmarks and self test
 
-- **Share report** sends plain text through Android's share sheet. It holds the device, the Android
-  version, the build, the table by state, the latest stretches, and the benchmark results. Then come the
-  app's own log, the crash buffer, the last uncaught exception and the last 400 logcat lines.
-- The report is at most 60 000 characters. Its columns line up in a monospaced font.
+- **Share report** sends plain text through Android's share sheet. It holds the device and build, the
+  figures and benchmark results, the app's own log, the crash buffer and the last 400 logcat lines.
 - **Run call benchmark** times calls into the core against the same work in Kotlin.
 - **Run cover benchmark** times the core's cover decoding. Browse some albums first, so covers are cached.
-- Both run the same code as the debug build's `bench` and `coverbench` commands
-  (`android/app/src/bench`). Their cost lands in the stretch under way.
-- **Run self test** plays songs from the library, downloads first. It checks playback, the controls,
-  offload, settings applied live, lyrics and covers. It takes about six minutes, and then puts back the
-  settings, the queue and the position.
+- Both benchmarks run the debug build's `bench` and `coverbench` code (`android/app/src/bench`). Their
+  cost lands in the stretch under way.
+- **Run self test** plays songs from the library and checks playback, the controls, offload, settings
+  applied live, lyrics and covers. It takes about six minutes, then puts back the settings, the queue and
+  the position.
 
-### What the recorder costs
+### The recorder adds no wakeups
 
-Nothing ticks. The recorder reads the counters only when something changes:
-
-- The screen, the power or playback changes.
-- The app comes to the front or leaves it, or the player opens or closes.
-- A setting that ends a stretch changes.
-- The Performance page opens.
-
-With the screen off and music playing, that is only a song change, which wakes the app anyway. So the
-recorder adds no wakeups of its own. It collects frame timings only while the app is on screen. It reads
-logcat only when you share the report or show the page's log.
+Nothing ticks. The recorder reads the counters only when something changes: the screen, the power,
+playback, the app in front, the player or a stretch's setting. With the
+screen off and music playing, that is only a song change, which wakes the app anyway. It collects frame
+timings only while the app is on screen, and reads logcat only for the report or the page's log.
 
 ## Measure Android over adb
 
@@ -295,8 +266,7 @@ only what is allocated after it attaches.
   the radio is up. Look for URLs that change, so that caches miss.
 - **Frames.** An interface draws only what changed, once. Count the frames per second while music plays
   and nothing on screen moves.
-- **Wakeups.** The engine sleeps for seconds between bursts while music plays. A run of short sleeps
-  under `NORI_WAKES=1` is a timer that fires too early.
+- **Wakeups.** A run of short sleeps under `NORI_WAKES=1` is a timer that fires too early.
 - **Plugins.** A host call per buffer, not per sample. A plugin gets events only while it listens.
 - **Dependencies.** Look for two versions of one crate (`cargo tree -d`), and for a crate used for one
   function. A small Rust port can replace a C or C++ library.

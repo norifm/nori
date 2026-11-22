@@ -155,6 +155,9 @@ def lint(path, advice, disabled):
             heading = stripped.lstrip("#").strip()
             if title_case(heading):
                 add(number, "title-case", "headings are sentence case", heading)
+            if re.search(r"\bcosts?\b", heading, re.I):
+                add(number, "cost-heading", 'reads as a price to a glancing reader; say "Battery use" or "Data use"',
+                    heading)
             if heading.endswith((".", ":")):
                 add(number, "heading-punctuation", "no end punctuation", heading)
 

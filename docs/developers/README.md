@@ -2,7 +2,8 @@
 
 These pages explain how nori is built, for people who change its code or write plugins for it. They
 describe the code on `master`. The user docs, for listeners, are at
-[norifm.com/docs](https://norifm.com/docs/).
+[norifm.com/docs](https://norifm.com/docs/), from `src/content/docs/docs/` in the website's repository,
+`norifm/norifm.com`.
 
 [AGENTS.md](../../AGENTS.md) is the working agreement for people and agents alike: the commands, what
 belongs in the core and what in a client, and the rules for code, tests and commits. Read it with
@@ -10,18 +11,15 @@ these pages.
 
 ## Where to start
 
-Pick the path for what you came to do:
-
-- **You want to fix a bug or add a feature.** Read [Architecture](architecture.md), then
-  [Building](building.md) and [Testing](testing.md). [Contributing](contributing.md) says how a change
-  lands.
-- **You want to write or port a client.** Read [Architecture](architecture.md), then
+- **Fix a bug or add a feature.** Read [Architecture](architecture.md), then [Building](building.md)
+  and [Testing](testing.md). [Contributing](contributing.md) says how a change lands.
+- **Write or port a client.** Read [Architecture](architecture.md), then
   [Writing a client](writing-a-client.md) and [Providers](providers.md).
-- **You want to write a plugin.** Start with [Plugins](plugins.md), build one with the
+- **Write a plugin.** Start with [Plugins](plugins.md), build one with the
   [plugin tutorial](plugin-tutorial.md), and look things up in the [plugin reference](plugin-reference.md).
-- **You want to change the plugin host.** Read [The plugin host](plugin-host.md).
-- **You want to make nori faster or lighter.** Read [Performance](perf.md). For the desktop app, also
-  read [Desktop profiling](desktop-performance.md).
+- **Change the plugin host.** Read [The plugin host](plugin-host.md).
+- **Make nori faster or lighter.** Read [Performance](perf.md). For the desktop app, also read
+  [Desktop profiling](desktop-performance.md).
 
 ## The pages
 
@@ -42,7 +40,4 @@ Pick the path for what you came to do:
 | [iPod internals](ipod-internals.md) | iPod work | The iPod app: its build, its audio, its limits |
 | [Supporting nori](support.md) | Support page work | The Support page and its payment service |
 
-## What is not here
-
-- The user docs live in the website's repository, `norifm/norifm.com`, under `src/content/docs/docs/`.
-- `TODO.md` lists ideas for later, and `docs/research/` holds research and plans. Neither is published.
+`TODO.md` lists ideas for later, and `docs/research/` holds research and plans. Neither is published.

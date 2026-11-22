@@ -1,8 +1,7 @@
 # Desktop profiling
 
-This page shows how to measure the desktop app's CPU, memory and GPU, and lists the cost rules its
-code keeps. It covers the desktop app (`crates/desktop`) on Linux and macOS. For the engine and Android,
-see [Performance](perf.md).
+This page shows how to measure the desktop app's CPU, memory and GPU on Linux and macOS, and lists the
+cost rules its code keeps. For the engine and Android, see [Performance](perf.md).
 
 ## Before you measure
 
@@ -59,8 +58,8 @@ plays that album first, so you profile while music plays. [Performance](perf.md)
 ### What a normal profile looks like
 
 - While a song plays, the window draws one frame per step of the seek bar. A step is a quarter pixel of
-  the bar on screen, or the next second of its times (`nori_look::motion::wait_ms`, Android's rule).
-- So on a 2x display, an 80 s song steps about 27 times a second, and a four-minute song about 9 times.
+  the bar, or the next second of its times (`nori_look::motion::wait_ms`). On a 2x display, a
+  four-minute song steps about 9 times a second.
 - Each step repaints only the bar and its playhead, about 2 % of the player.
 - Idle, the window costs under 1 ms a second.
 - mdns-sd checks the network interfaces once a minute.
@@ -84,43 +83,26 @@ plays that album first, so you profile while music plays. [Performance](perf.md)
 
 ## Rules the desktop app keeps
 
-The desktop app's code keeps these cost rules. Each has a test, so a change that breaks one fails:
+The desktop app keeps these cost rules. Tests in `crates/desktop` guard most of them:
 
-| Rule | Code | Test |
-| --- | --- | --- |
-| Only what is on screen holds covers | `crates/desktop-ui/ui/app.slint` | `home_keeps_pick_covers`, `album_views_release_offscreen_covers` |
-| The cover cache is bounded | `SMALL_BYTES`, `LARGE_BYTES` in `crates/desktop/src/app.rs` | `cover_bursts_keep_the_cache_bounded` |
-| A hidden page does not draw | `crates/desktop/src/app.rs` | `fullscreen_does_not_draw_the_hidden_page` |
-| Covers survive the compositor's layers | `compositor.rs`, `compositor/gl.rs` | `cover_pixels_survive_async_layers_and_mosaics` (macOS) |
-| Layers resize without losing pixels | `compositor/gl.rs` | `layers_resize_without_losing_pixels_or_blur` (X11, `--ignored`) |
-| A change draws one frame | `app.slint`, `compositor.rs` | `a_seek_step_draws_the_player_once` (macOS) |
-| A layer repaints only what changed | `compositor.rs`, `vendor/i-slint-renderer-skia` | `a_seek_step_repaints_only_what_moved` (macOS) |
-| Redraws wait for the next frame | `compositor.rs` | `redraw_bursts_wait_for_the_next_frame` |
-| Resizing does not animate | `crates/desktop/src/app.rs` | `resizing_does_not_animate_layout` |
-| Seeks and volume animate between updates | `crates/desktop/src/app.rs` | `volume_and_seek_animate_between_updates` |
-| Wheels scroll with deceleration | `compositor.rs` | `wheel_scroll_moves_over_time` |
-
-The rules in more detail:
-
-- **Covers.** Home shelves and Top Picks cards hold covers only in the viewport. Grid rows hold them only
-  in view, and queue rows only while the queue is open. Offscreen items would evict visible covers and
-  download them again.
-- **Cover cache.** Decoded covers live in the desktop app's own cache: 32 MiB of small covers and 24 MiB
-  of large ones.
-- **Hidden pages.** A hidden layer, or a page under the opaque full player, does not draw.
-- **Compositor.** Linux draws every layer through one Skia OpenGL context, which owns its cover
-  textures. Borrowed Vulkan images caused NVIDIA GPU faults. macOS uses wgpu with the `MemoryUsage` hint.
-  Each Skia context has a 16 MiB resource cache.
-- **Freed memory.** On Linux with glibc, the mmap threshold is 256 KiB and the trim threshold 128 KiB
-  (`crates/desktop/src/main.rs`). So freed cover and analysis buffers go back to the system.
+- **Covers on screen only.** Home shelves, Top Picks cards and grid rows hold covers only in view, and
+  queue rows only while the queue is open (`crates/desktop-ui/ui/app.slint`). Offscreen items would evict
+  visible covers and download them again.
+- **A bounded cover cache.** Decoded covers live in the app's own cache: 32 MiB of small covers and 24 MiB
+  of large ones (`SMALL_BYTES`, `LARGE_BYTES` in `crates/desktop/src/app.rs`).
+- **Hidden pages do not draw.** Neither does a page under the opaque full player.
+- **One compositor context.** Linux draws every layer through one Skia OpenGL context, which owns its
+  cover textures. Borrowed Vulkan images caused NVIDIA GPU faults. macOS uses wgpu with the
+  `MemoryUsage` hint. Each Skia context has a 16 MiB resource cache (`compositor.rs`, `compositor/gl.rs`).
+- **Freed memory goes back.** On Linux with glibc, the mmap threshold is 256 KiB and the trim threshold
+  128 KiB (`crates/desktop/src/main.rs`).
 - **One frame per change.** An animation that can be instant is turned off with `enabled`. An animation
-  of 0 ms still reads the animation clock and draws again on the next tick. The composite is one render
-  pass, and the code writes uniforms only when they change.
-- **Retained layers.** A layer keeps its texture between frames and repaints only what changed. On macOS
-  that is `SkiaWGPU30Renderer::retained`. The OpenGL layers on Linux do the same.
-- **Frame pacing.** Redraws coalesce at the monitor's refresh interval. With nothing to redraw, there is
-  no frame timer. Composited X11 presents with Immediate, and everything else with AutoVsync.
-- **Resizing.** A window resize changes the layout at once. Only opening and closing a panel animates.
-- **Seek bar.** The seek bar follows playback in small steps, without animating a whole layer. Large
-  seeks and incoming volume changes animate.
-- **Scrolling.** Mouse wheels scroll with deceleration, as Slint's own winit backend does.
+  of 0 ms still reads the animation clock and draws again on the next tick. The composite is
+  one render pass, and uniforms are written only when they change.
+- **Retained layers.** A layer keeps its texture between frames and repaints only what changed
+  (`SkiaWGPU30Renderer::retained` on macOS, the OpenGL layers on Linux).
+- **Frame pacing.** Redraws coalesce at the monitor's refresh interval, and with nothing to redraw there
+  is no frame timer. Composited X11 presents with Immediate, and everything else with AutoVsync.
+- **Little animation.** A window resize changes the layout at once, and only opening and closing a panel
+  animates. The seek bar follows playback in small steps without animating a layer. Large seeks,
+  incoming volume changes and mouse-wheel deceleration animate.

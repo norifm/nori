@@ -30,7 +30,7 @@ flowchart LR
 
 ## The providers
 
-The core has three providers. The table lists where each one lives and which clients build it.
+The core has three providers:
 
 | Provider | Module | Built by |
 |---|---|---|
@@ -75,9 +75,8 @@ The client shows the wait in place of the profile and opens the profile once its
 A LAN jam's guest profile never waits. It keeps the host's kind, because its songs are that provider's,
 but it plays through the host. `Core::configure_profile` gives it a `HostedProvider`.
 
-A YouTube Music profile saved while YouTube Music was built in has the stored kind `youtubeMusic`.
-`ServerKind::from_id` reads it as a profile of the `fm.nori.youtube-music` plugin, without its old user
-name. The user signs in again through the plugin.
+`ServerKind::from_id` reads the stored kind `youtubeMusic` as a profile of the `fm.nori.youtube-music`
+plugin, without its user name. The user signs in again through the plugin.
 
 ## What a provider answers
 
@@ -154,92 +153,47 @@ the same way for every provider:
 
 Some accounts cannot keep favorites: a plugin's provider while signed out, or one without an account.
 For them the core keeps favorites on this device (`ProfileRules::stars_here`,
-`crates/core/src/favorites.rs`).
-
-`Client::star` then stores the item's record in the `favorites_here` table: its title, artist, album
-and cover, enough to draw its row and open it. It sends, queues and streams nothing. The favorites list
-shows the source's favorites first, then those kept here, each item once.
+`crates/core/src/favorites.rs`). `Client::star` then stores enough of the item to draw its row and open
+it, in the `favorites_here` table, and sends nothing. The favorites list shows the source's favorites
+first, then those kept here, each item once.
 
 Once the account signs in, new seals go to the account. An item kind the account has nowhere for
-(`Provider::keeps_favorites` answers false) stays on this device while signed in too. YouTube Music
-albums and artists are kept this way. Favorites kept here are not indexed or synced. They go with the
-profile when it is removed, and a backup holds them.
+(`Provider::keeps_favorites` answers false) stays on this device while signed in too. Favorites kept
+here are not indexed or synced. They go with the profile when it is removed, and a backup holds them.
 
 ## What a client does
 
-A client asks the core and draws the answer. The steps below are the same on every client.
+A client asks the core and draws the answer, the same way on every client.
 
-### The first screen
-
-A new profile starts on the first screen. It lists `Kinds::providers` in order, then, less prominently,
-`nori_plugins::provider_offers`: providers that plugin repos offer and that are not on. A repo that
-cannot be read offers nothing. With every plugin off, no plugin is offered.
-
-The pages of adding a profile are `providers::flow::AddFlow`. The client hands it each `AddEvent`, draws
-the `AddPage` and `AddSend` that result, and does the `AddDo` it answers:
-
-- Choosing a plugin that is not installed opens its plugin page (`AddPage::Offered`). Once its install
-  begins (`AddEvent::InstallBegan`), the first screen shows it installing (`AddPage::Installing`). Once
-  installed, it is turned on and chosen. A refused install shows its page again.
-- Choosing a plugin that is installed but off turns it on.
-- Choosing a kind runs `ProviderInfo::first_step`. Its `FirstStep` says what the kind's page shows:
-  - `Form`: a form with fields to fill. A name field alone does not count.
-  - `Account`: the sign-in and **Continue as guest**, for a kind with no fields but a sign-in page or
-    code.
-  - `AddNow`: nothing. The profile is added at once (`AddDo::Connect`), and its page shows only if that
-    fails.
-- One profile is on its way at a time. The flow learns how a new profile was asked for (`AfterAdding`)
-  only when the profile is accepted (`AddDo::Open`).
-- Back from a kind's page returns to the first screen.
-
-### The add form and logging in
-
-The form shows the chosen kind's `ProviderInfo` fields, with the advanced ones folded away.
-`Kinds::server_ready` says whether it can be sent.
-
-`providers::log_in` runs `Kinds::login_profile`, then `Kinds::check_profile`, and keeps the profile as
-the active one. A login to a saved server's address and user is that saved profile again. A kind that
-asks no address, such as a service's account, gets a new profile for each login.
-
-### Opening a profile
-
-For a plugin's profile, the client asks `Kinds::waits` first. It then calls `Core::configure_profile`
-and wraps the engine's byte source with `nori_engine::core::resolving`.
-
-### The account
-
-`Client::sign_in_due` says what to show once a profile opens or its account changes:
-
-| Moment | What shows |
-|---|---|
-| After adding | The sign-in offer, or its page |
-| After adding as a guest | Nothing, and no reminders after that |
-| The provider ended the session | The offer again, until the user stops the reminder |
-
-`Client::sign_in_offer` is the offer when the user asks for it, for example from a seal tapped while
-signed out. `providers::flow::SignInFlow` holds what shows, one dialog at a time, and the sign-in on its
-way. `Client::account` says where the account stands.
+- **The first screen** lists `Kinds::providers` in order. Below them, less prominently, it lists
+  `nori_plugins::provider_offers`: providers that plugin repos offer and that are not on.
+- **Adding a profile** is `providers::flow::AddFlow`. The client hands it each `AddEvent`, draws the
+  `AddPage` that results, and does the `AddDo` it answers. Choosing an offered plugin opens its plugin
+  page to install it, and choosing one that is off turns it on. A kind's `FirstStep` says whether its
+  page is a form, a sign-in (`Account`), or nothing (`AddNow`). One profile is on its way at a time.
+- **Logging in** is `providers::log_in`. It runs `Kinds::login_profile`, then `Kinds::check_profile`,
+  and keeps the profile as the active one. A login to a saved server's address and user is that saved
+  profile again.
+- **Opening a profile** asks `Kinds::waits` first, for a plugin's profile. It then calls
+  `Core::configure_profile` and wraps the engine's byte source with `nori_engine::core::resolving`.
+- **The account.** `Client::sign_in_due` says what to show once a profile opens or its account changes.
+  After adding, it is the sign-in offer, and after adding as a guest, nothing. After the provider ended
+  the session, it is the offer again, until the user stops the reminder. `providers::flow::SignInFlow`
+  holds what shows, one dialog at a time.
+- **Covers.** A client builds cover URLs from `Core::cover_prefix`, with the id and size appended.
+  Without a prefix, it asks `Core::cover_address` for each cover.
 
 ### Signing in
 
-Each `SignIn` way has its own screen:
+Each `SignIn` way needs its own screen in every client:
 
 - `SignIn::WebPage` opens a page of the app's own at `start_url`. The page reports each address it
-  shows, with its cookies, to `Kinds::sign_in_done`. It also reports each address it refuses to open,
-  such as an OAuth redirect to an app's own address. Once `Kinds::sign_in_done` answers done, the
-  cookies go to `Client::sign_in`.
-- `SignIn::Code` shows the code large, with two buttons. One opens the code's page in the system
-  browser, and one copies the code. `Client::sign_in_with_code` asks for the code. It checks the code on
-  its own thread (`providers::code::CodeSignIn`) while `SignInFlow::checks_code` holds, and its events
-  (`CodeShown`, `CodeExpired`, `Answered`) go to the flow. An expired code offers a new one.
+  shows, with its cookies, to `Kinds::sign_in_done`, and each address it refuses to open, such as an
+  OAuth redirect. Once that answers done, the cookies go to `Client::sign_in`.
+- `SignIn::Code` shows the code large, with a button that opens its page in the system browser and one
+  that copies it. `Client::sign_in_with_code` checks the code on its own thread
+  (`providers::code::CodeSignIn`), and its events go to the flow. An expired code offers a new one.
 - `SignIn::Paste` shows a box to paste into.
-
-The offer's sign-in opens the first way (`Client::sign_in_open`).
-
-### Covers
-
-A client builds cover URLs from `Core::cover_prefix`, with the id and size appended. Without a prefix,
-it asks `Core::cover_address` for each cover.
 
 ### Words for each kind
 

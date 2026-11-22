@@ -3,10 +3,9 @@
 This page shows which tests to run for a change, how to run them, and how to write new ones. Run every
 command from the repository's root. To install the tools, see [Building](building.md).
 
-Rust holds every decision about playback, the queue, the library, lyrics, remote control and settings.
-The Rust tests cover all of it, on a virtual clock where time matters. Device checks cover only what Rust
-cannot reach. That is the audio output, media3, the media session, audio focus, routing, JNI, the
-service, the screens and a force stop.
+Rust holds every decision, and the Rust tests cover it, on a virtual clock where time matters. Device
+checks cover only what Rust cannot reach, such as the audio output, media3, the media session, JNI
+and the screens.
 
 ## Which tests to run
 
@@ -42,41 +41,22 @@ tools/check.sh rust-doc --workspace          # the doctests, which nextest skips
 
 The tests need two things that are easy to miss:
 
-- FFmpeg 8 or newer on the `PATH`. The engine tests encode their fixtures with it. Without FFmpeg, those
-  tests print "ffmpeg is not installed: skipped" and pass. FFmpeg 4 writes different AAC edit lists and
-  cannot make the gapless fixtures.
+- FFmpeg 8 or newer on the `PATH`, to encode the engine's fixtures. Without FFmpeg, those tests print
+  "ffmpeg is not installed: skipped" and pass. FFmpeg 4 cannot make the gapless fixtures.
 - The `wasm32-wasip2` target, for the plugin host's tests: `rustup target add wasm32-wasip2`. Without
   it, a test fails with "the fixture builds (rustup target add wasm32-wasip2)".
 
-### What each crate's tests cover
+### Where the harnesses are
 
-- nori-player tests the sound chain sample by sample: decoders, ReplayGain, equalizer, compressor,
-  limiter, speed and silence skipping. It also tests AutoMix analysis on synthetic songs of known tempo,
-  key and structure.
-- The AutoMix planner never panics over any stored row (`automix/plan_fuzz.rs`). `automix/eval.rs`
-  scores each style's mixes of synthetic pairs and holds them to those scores.
-- `crates/player/tests/pipeline` runs the whole player on a simulated output: gapless joins, crossfades,
-  levels and controls.
-- nori-engine tests the player on its own thread, on the virtual clock in `tests/common`. The list
-  below names its main files.
-- nori-core tests the FFI surface over real SQLite, and the Subsonic client against a fake transport.
-  The file `tests/scenario.rs` runs whole flows against an in-memory server. The file `tests/remote.rs` runs
-  remote control and jams over an in-memory relay.
-- nori-host tests the shared session: queue saving, profiles, signing out, autofill and radio
-  (`refill_tests.rs`), and remote control. `tests/lan_jam.rs` covers LAN jams and pairing.
-- nori-lyrics tests every format, the services' answers, the race between services, and sync against
-  synthetic sung songs (`sync.rs`).
-- nori-covers tests its decoders against Pillow's output, the scaler, the disk and memory caches, and
-  the loader.
-- nori-settings holds the stored keys and encodings to a golden copy (`tests/stored_format.rs`).
-- nori-android tests the AudioTrack writer on a simulated track (`track.rs`, `track/air.rs`). It checks
-  every JNI door against its Kotlin `external fun` (`lib.rs`).
-- nori-ios tests `IosOutput` on a simulated sink, and the session behind the C ABI on `WavOutput`.
-- nori-cli and nori-desktop test their screens: ratatui's `TestBackend`, and Slint's testing backend on
-  virtual time.
-- nori-testdir checks that every file under a crate's `tests/` is in a test binary
-  (`tests/registered.rs`). It also checks that the Layout table in AGENTS.md matches the crates
-  (`tests/agents_map.rs`).
+- `crates/player/tests/pipeline` runs the whole player on a simulated output.
+- `crates/engine/tests` runs the player on its own thread, on the virtual clock in `tests/common`.
+- `crates/core/tests/scenario.rs` runs whole flows against an in-memory server, and `tests/remote.rs`
+  runs remote control and jams over an in-memory relay.
+- `crates/android/src/track.rs` tests the AudioTrack writer on a simulated track, and `lib.rs` checks
+  every JNI door against its Kotlin `external fun`.
+- nori-cli and nori-desktop test their screens with ratatui's `TestBackend` and Slint's testing backend.
+- nori-testdir checks that every test file is in a test binary, and that AGENTS.md's Layout table
+  matches the crates.
 
 These files in `crates/engine/tests` cover the engine's harder cases:
 
@@ -97,16 +77,14 @@ These files in `crates/engine/tests` cover the engine's harder cases:
 
 ### Kotlin twins
 
-Some Rust code is a port of Kotlin code, and the two must give the same answers. The script
-`tools/twins.sh` runs the Kotlin originals in `crates/*/testdata/twins/*.kt` on the JVM. It writes their
-answers next to them.
+Some Rust code is a port of Kotlin code, and the two must give the same answers. `tools/twins.sh` runs
+the Kotlin originals in `crates/*/testdata/twins/*.kt` on the JVM and writes their answers beside them.
 `crates/core/tests/twins.rs` holds the Rust versions to those answers. Run `tools/twins.sh` again after
 you change either side.
 
 ## Write a Rust test
 
-A bug fix starts with a test that fails on the bug. AGENTS.md has the full rules for tests. These are the
-mechanics that trip people up.
+AGENTS.md has the rules for tests. These are the mechanics that trip people up.
 
 ### Register a new test file
 
@@ -122,18 +100,13 @@ Engine tests run on a clock that only the test moves:
 - Move time with the rig: `run`, `wait_for` and `until`. Never call `thread::sleep`.
 - Anything that wakes the engine outside a command goes through `Virtual::woke_engine`.
 - Assert on what the test card heard, not on the engine's status.
-- The clock stands still while the engine waits for bytes and while a loader takes bytes in. The wait
-  ends after `BYTES_WAIT` (2 s of real time) without progress.
-- The engine lets its loaders finish before it reads what they hold (`let_loaders_run`). So an in-memory
-  server acts as an instant network, however the threads are scheduled.
-- The loaders' stalls and retries come from the clock's `nori_engine::Waits`, which the virtual clock
-  shortens. A server paced on the clock stops it at each time it waits for (`Virtual::wait_until`).
+- The clock stands still while the engine waits for bytes, up to `BYTES_WAIT` (2 s of real time)
+  without progress. An in-memory server acts as an instant network, however the threads are scheduled.
+- A server paced on the clock stops it at each time it waits for (`Virtual::wait_until`).
 
 ### Keep the suite fast
 
-- Make each test song once per binary, cached by length and seed. See `music()` in `engine.rs` and
-  `pipeline/common.rs`, `steady()` in `levels.rs`, and the FFmpeg encodes in `paths.rs` and
-  `estimated.rs`.
+- Make each test song once per binary, cached by length and seed, as `music()` in `engine.rs` does.
 - Give a table of slow cases a thread per case (`each` in `automix/tests.rs`), or make one test per row.
 - Tests build nori-player, nori-engine, nori-android, nori-ios and every dependency at opt-level 2.
   Other workspace crates, nori-core among them, are unoptimized, so keep their test data small.
@@ -160,14 +133,11 @@ change, run the test with `NORI_BLESS=1` to write a new golden copy.
 ### Compare against a reference render
 
 - `crates/engine/tests/common/reference.rs` renders offline what the card should hear when the sound
-  changes mid-play: equalizer, compressor, speed, silence skipping. It switches at the frame the engine
-  logged.
-- The `*_changes_seamlessly*` tests in `engine.rs` compare the card with that render, sample for sample.
-  They cover crossfades, stretched mixes, seeks and pauses.
+  changes mid-play, switching at the frame the engine logged. The `*_changes_seamlessly*` tests compare
+  the card with it, sample for sample.
 - `reference::clicks` finds jumps where no exact render exists.
-- `crates/android/src/track/air.rs` models the Android mixer: periods, volume ramps, output latency, and
-  Bluetooth's late and jittery timestamps. It checks that every frame is heard once, with no gap, level
-  step or click.
+- `crates/android/src/track/air.rs` models the Android mixer, with Bluetooth's late and jittery
+  timestamps. It checks that every frame is heard once, with no gap, level step or click.
 
 ## Run the Kotlin unit tests
 
@@ -175,21 +145,9 @@ change, run the test with `NORI_BLESS=1` to write a new golden copy.
 ./gradlew :core:testDebugUnitTest :app:testDebugUnitTest
 ```
 
-They need no device. They cover what the Kotlin keeps:
-
-| Test | What it checks |
-| --- | --- |
-| `QueueEditsTest` | Queue edits, drag and undo |
-| `CoverTurnTest`, `CoverFetchTest` | The player's cover across fast skips and loads out of order |
-| `RustBodyTest` | The stream bridge hands bytes to Rust before the next network read |
-| `PastEndTest` | A read past the end is told apart from a dropped network |
-| `HeardTest` | A song's lyrics follow only that song's playhead |
-| `TestBridgeTest` | Release code reaches the test bridge only through `TestDriver` |
-| `SelfTestLogicTest` | The perf self test's logic |
-| `InitOrderTest` | No field that a constructor's thread reads comes after the thread starts |
-
-Other tests cover formatting, frame fades, cover placement, overlays, song lists, selection and setting
-keys.
+They need no device, and cover what the Kotlin keeps: queue edits, the player's cover, the stream
+bridge, formatting and the screens' state. `InitOrderTest` checks that no field a constructor's thread
+reads comes after the thread starts.
 
 ## Run the device checks
 
@@ -205,11 +163,9 @@ To run the smoke check against the local server:
 NORI_E2E_SERVER=local tools/smoke.sh
 ```
 
-The script starts the local server and its proxy when they are not running, and leaves them running. It
-prints each section's start time and a PASS or FAIL line per check. It exits non-zero on a failure.
-
-When a check fails, the script saves the accessibility tree and a screenshot under
-`build/e2e/<serial>/failures/`.
+The script starts the local server and its proxy when they are not running. It prints a PASS or FAIL
+line per check and exits non-zero on a failure. A failed check saves the accessibility tree and a
+screenshot under `build/e2e/<serial>/failures/`.
 
 ### Choose the sections
 
@@ -240,7 +196,6 @@ tools/device-check.sh --install android/app/build/outputs/apk/debug/app-debug.ap
 tools/device-check.sh audio --only tuning,restart
 ```
 
-- `tools/device-check.sh [--install APK] smoke|audio|feature [--only SECTIONS]` is the full form.
 - `smoke.sh`, `audio-e2e.sh` and `feature-e2e.sh`, run directly, lease their `ANDROID_SERIAL`.
 - Do not drive a leased device with `tools/app.sh` or adb from elsewhere.
 - Each emulator gets its own Navidrome account (`nori-e2e-<serial>`), proxy port, terminal peer and logs.
@@ -250,19 +205,17 @@ tools/device-check.sh audio --only tuning,restart
 
 ### Helpers for device checks
 
-- `tools/app.sh` drives the debug build: `launch`, `open`, `play`, `set`, `do` and `state`. It reads only
-  its own request's reply. `python3 tools/test-app.py` checks that without a device.
+- `tools/app.sh` drives the debug build: `launch`, `open`, `play`, `set`, `do` and `state`.
 - `tools/e2e-lib.sh` has the waits. `wait_for <field> <value> <timeout>` polls `tools/app.sh state`.
   The value `!v` waits for anything else, and `>n` and `<n` compare numbers.
 - `wait_until <timeout> <command>` waits for a command to succeed. `sounds` and `silent` wait for the
   app's AudioTrack to start or stop.
-- The only fixed waits are durations under test: 20 s paused in the background, and the ten-second burst
-  cycle. Never add a fixed sleep.
-- `tools/ui-dump.sh` reads the visible accessibility tree, through `tools/UiDump.java`, built on demand.
-  It does not wait for an animating player to go idle.
-- The jam checks need an octo-fiesta relay on `localhost:5274`. Its `/nori/jam` page must offer "Open in
-  nori". `tools/jam-server.sh` starts one from the octo-fiesta checkout beside this one.
-  `NORI_OCTO_ROOT` names another checkout. The script says so when the relay on that port is outdated.
+- The only fixed waits are durations under test, such as 20 s paused in the background. Never add a
+  fixed sleep.
+- `tools/ui-dump.sh` reads the visible accessibility tree. It does not wait for an animating player to
+  go idle.
+- The jam checks need an octo-fiesta relay on `localhost:5274`. `tools/jam-server.sh` starts one from the
+  octo-fiesta checkout beside this one, or the one `NORI_OCTO_ROOT` names.
 - The `remote` and `youtube-music` sections run the terminal app as the other device, in tmux.
 
 ## The local server
@@ -271,9 +224,8 @@ tools/device-check.sh audio --only tuning,restart
 with the user `admin` and the password `admin`.
 
 - It runs in Docker or Podman. A Navidrome already answering on port 4533 is used as it is.
-- Its music is in the main checkout's `.dev/`, shared by every worktree. `NORI_DEV_ROOT` names another
-  folder.
-- It makes the music with FFmpeg on its first run.
+- It makes its music with FFmpeg on its first run, in the main checkout's `.dev/`, shared by every
+  worktree. `NORI_DEV_ROOT` names another folder.
 - The emulator reaches it at `http://10.0.2.2:4533`.
 
 Besides its generated albums, it seeds these fixtures:
@@ -290,9 +242,8 @@ Tracks 05 and 06 of the Long Album have timed LRC lyrics beside them.
 
 ### The lying proxy
 
-Each emulator signs in as its own `nori-e2e-<serial>` account, through `tools/lying-proxy.py`. The proxy
-listens on port 4534 for `emulator-5554` (`http://10.0.2.2:4534` from the emulator). It acts as a
-real server does in its worst cases:
+Each emulator signs in as its own `nori-e2e-<serial>` account, through `tools/lying-proxy.py`, on port
+4534 for `emulator-5554`. The proxy acts as a real server does in its worst cases:
 
 - It states a transcoded stream a quarter longer than its bytes, then closes the connection short.
 - It answers 416 to a range past the real end. Navidrome does the same when a transcode comes out
@@ -387,20 +338,18 @@ app's listener, then restores adb's previous state.
 
 ### Checked by hand
 
-- **Updates.** The core decides which release and APK to offer (`update.rs`). Android does the download
-  and PackageInstaller. In a debug build, `tools/app.sh do "update 0.3.0"` pretends to be 0.3.0 and
-  shows the banner. To install in place, build an older release with
+- **Updates.** The core decides which release to offer (`update.rs`), and Android downloads and installs
+  it. In a debug build, `tools/app.sh do "update 0.3.0"` pretends to be 0.3.0 and shows the banner. To
+  install in place, build an older release with
   `./gradlew :app:assembleRelease -PpretendVersion=0.3.9 -PrustTargets=x86_64` and install it. Then tap
   **Check for updates** and **Update**.
 - **The car.** The core builds the tree, search and voice answers (`car.rs`). A debug build walks them
-  through a media browser with `tools/app.sh do "car root"`, `"car tree <id>"`, `"car search <words>"`,
-  `"car play <id>"` and `"car voice <words>[|artist|album|playlist|genre|song]"`. It logs each row under
-  the tag `noricar`. `adb shell content read --uri content://dev.nori.music.carart/c/<cover id>` reads a
-  picture. Check Android Auto itself on a phone with the Desktop Head Unit.
+  with `tools/app.sh do "car root"`, `"car tree <id>"`, `"car search <words>"`, `"car play <id>"` and
+  `"car voice <words>[|artist|album|playlist|genre|song]"`, and logs each row under the tag `noricar`.
+  Check Android Auto itself on a phone with the Desktop Head Unit.
 - **A TV.** Use an Android TV emulator (a `tv` system image, 1080p). The key events 19 to 23 (up,
-  down, left, right, center) walk the remote's focus: `adb shell input keyevent 19`. `uiautomator dump` marks the focused
-  node. A text field ignores adb's virtual keys for moving focus, so leaving a field with the D-pad needs
-  a real remote.
+  down, left, right, center) walk the remote's focus: `adb shell input keyevent 19`. Leaving a text field
+  with the D-pad needs a real remote.
 
 ## Test the desktop app
 
@@ -410,19 +359,14 @@ The desktop UI tests run on Slint's testing backend, with virtual time:
 cargo test -j4 -p nori-desktop
 ```
 
-They cover collections, shelves, covers released offscreen, menus, panels, and animation only where
-something changed. Playback and queue decisions stay in the Rust virtual-clock tests.
-
 The rendering tests need a GPU:
 
-- On macOS, `cargo test -j4 -p nori-desktop compositor::tests:: -- --nocapture` runs the Metal tests.
-  The "macOS rendering checks" workflow runs them too.
-- On Linux, run the command below. It checks every pixel through live resizes, repaints, mosaics and
-  the blur. Run it on the native driver, because VirtualGL can leave enlarged regions empty.
-
 ```sh
-DISPLAY=:0 cargo test -j4 -p nori-desktop layers_resize_without_losing_pixels_or_blur -- --ignored
+cargo test -j4 -p nori-desktop compositor::tests:: -- --nocapture                         # macOS, Metal
+DISPLAY=:0 cargo test -j4 -p nori-desktop layers_resize_without_losing_pixels_or_blur -- --ignored  # Linux
 ```
+
+On Linux, run it on the native driver, because VirtualGL can leave enlarged regions empty.
 
 ### Drive the running desktop app
 
@@ -451,21 +395,15 @@ python3 tools/desktop-app.py do pause
 | `profiles` | Nothing, and opens the profiles menu |
 | `state` | Nothing, and prints the UI's state |
 
-- Without `--control-socket`, the app starts no listener.
 - Each instance needs its own socket and data folder. The app never replaces an existing socket.
-- The socket is owner-only (0600), and the app removes it on a normal exit.
-- The reply is the UI's actual state. Playback requests finish later, so wait for the state to change
-  before you assert.
+- Playback requests finish after the reply, so wait for the state to change before you assert.
 - Run unattended checks in Xvfb, with a private audio sink, so the owner's desktop and audio stay free.
-- On Linux, check interactive window resizing under a window manager on a 1920 × 1080 Xvfb screen.
 
 To measure the desktop app's CPU, heap and GPU, see [Desktop profiling](desktop-performance.md).
 
 ## Test the web client
 
-The engine and the session decide what the web client plays, and Rust tests them. See pushed bytes in
-`pushed.rs` and `driven.rs`, decoders that answer later as WebCodecs does in `later.rs`, and
-`crates/host`.
+Rust tests what the web client plays (`pushed.rs`, `driven.rs` and `later.rs` in the engine's tests).
 The browser checks cover only what Rust cannot reach: the worker, the AudioWorklet, the browser's
 decoders, OPFS, streaming `fetch` and the pages.
 
@@ -480,10 +418,6 @@ node web/check/check.mjs http://localhost:8080/ play,seekbar     # only these ph
 The checks drive headless Chrome, at Google Chrome's macOS path by default. `CHROME` names another
 browser. The phases are `browse`, `profile`, `play`, `lyrics`, `skip`, `queue`, `instant`, `automix`,
 `crossfade`, `codecs`, `seekbar`, `edit`, `crash`, `reopen`, `tabs`, `offline`, `early` and `slowstart`.
-
-They check sign-in, browsing and search, and playback with no gaps in the AudioWorklet. They also check
-lyrics and the seek bar. A pause must be heard within its 150 ms fade, and a seek or skip within 100 ms
-of its fade. A crossfade and an AutoMix transition must have no silence over 20 ms.
 
 Two variables add phases on a slow network:
 
@@ -508,15 +442,8 @@ node web/check/shots.mjs http://localhost:8081/ <folder>      # screenshots of b
 
 ## Test the iPod app
 
-`cargo test -p nori-ios` covers what Rust can reach:
-
-- `IosOutput` on a simulated sink. The tests check the granted format, the latency sum, shallow
-  switching, a route change and a failed reopen. Nothing allocates on the render path.
-- The session behind the C ABI on `WavOutput`. The tests play two downloaded songs through the controls,
-  edit the queue, save on background and send a memory warning.
-- Remote control on the virtual clock, and the doors the screens read.
-
-Check these on the device:
+`cargo test -p nori-ios` tests `IosOutput` on a simulated sink, and the session behind the C ABI on
+`WavOutput`. Check these on the device:
 
 - AURemoteIO itself. Play the engine's test tone, a sine, through the jack for a minute. It must not
   underrun at 93 ms, at 10 ms, or across a Bluetooth route change.

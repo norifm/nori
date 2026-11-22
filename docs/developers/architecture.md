@@ -2,8 +2,7 @@
 
 nori is one Rust core with a thin client for each platform. Every decision lives once, in Rust, and is
 tested there. A client draws, holds the words, and wires the operating system: its audio output, HTTP
-client, media controls and permissions. This page is for a contributor who needs the whole picture
-before changing code. It covers every client.
+client, media controls and permissions. This page covers every client.
 
 ```mermaid
 ---
@@ -137,27 +136,25 @@ sequenceDiagram
   E-->>UI: Event::Song, Event::State, as Said::Engine
 ```
 
-1. A double-click on a row in `crates/desktop-ui/ui/app.slint` calls the page's `song` callback.
-   `App::song` in `crates/desktop/src/app.rs` calls `Handle::play` with the page's songs and the page
-   it came from (`PageOrigin`).
-2. `Handle::play_kept` in `crates/host/src/session.rs` checks two cases first. A jam guest sends the
-   pick to the host (`jam_play`). While another device plays, the pick goes to that device.
-3. Otherwise, the handle edits the core's queue: `queue::Session::register`, then `set`, which answers
-   a `QueueChange`. It sends the engine `Command::QueueChanged` and schedules the queue save. Then
-   `Engine::play_at` sends `Command::PlayAt` over a channel and wakes the `nori-engine` thread.
-4. On its thread, the engine reads the queue through `CoreQueue` and locates the song through
-   `CoreLibrary::locate`. A download opens as a file. Any other song opens through the stream cache.
+1. A double-click on a row in `crates/desktop-ui/ui/app.slint` reaches `App::song`
+   (`crates/desktop/src/app.rs`). It calls `Handle::play` with the page's songs and its `PageOrigin`.
+2. The handle (`crates/host/src/session.rs`) routes the pick first. A jam guest sends it to the host.
+   While another device plays, it goes to that device.
+3. Otherwise, the handle sets the core's queue (`queue::Session::register`, then `set`), which answers
+   a `QueueChange`. It sends the engine `Command::QueueChanged` and `Command::PlayAt`, and schedules the
+   queue save. Each command wakes the `nori-engine` thread.
+4. The engine reads the queue through `CoreQueue` and locates the song through `CoreLibrary::locate`. A
+   download opens as a file. Any other song opens through the stream cache.
 5. If the cache does not hold the whole song, a `nori-load` thread fetches it. The bytes go through
-   `nori_engine::core::resolving` (when the provider resolves addresses), the session's `Audio` (which
-   refuses when offline), and `nori-http`. The loader writes into the stream cache, fills up to its high
-   mark, closes the connection, and sleeps.
+   the provider's resolver (`nori_engine::core::resolving`), the session's `Audio` (which refuses when
+   offline), and `nori-http`. The loader fills the cache up to its high mark, closes the connection, and
+   sleeps.
 6. The engine demuxes with symphonia (`crates/engine/src/demux.rs`) and decodes with
-   `nori_player::decode`. `nori_player::pipeline::Player` runs the transition engine and the sound
-   chain. It writes the result into a lock-free ring (`RingTrack`) that holds 10 s.
-7. cpal's callback thread pulls from the ring's `Feed`. When the ring drops below its low mark, the pull
+   `nori_player::decode`. `nori_player::pipeline::Player` runs the transitions and the sound chain into
+   a lock-free ring (`RingTrack`) that holds 10 s.
+7. cpal's callback thread pulls from the ring's `Feed`. The pull that drops the ring below its low mark
    wakes the engine for its next burst.
-8. The engine reports `Event::Song` and `Event::State`. The session passes them to the client as
-   `Said::Engine`. The desktop app moves the report to its Slint event loop, and `App::follow` reads
+8. The engine's `Event::Song` and `Event::State` reach the client as `Said::Engine`. `App::follow` reads
    `Session::now` to draw the player.
 
 ### On Android
@@ -190,29 +187,26 @@ sequenceDiagram
   E-->>M: events, then signal()
 ```
 
-1. Tapping a row calls `ActionsViewModel.tap`. The ViewModel asks the core what a tap does
-   (`tapPlan`). For `TapPlan.PLAY_LIST`, it calls `PlayerConnection.play`.
-2. `PlayerConnection` is a media3 `MediaController` on `PlaybackService`. It calls `setMediaItems`,
-   `prepare` and `play`.
-3. In `PlaybackService`, the `Controls` player edits the core's queue first, with `playlistSet` over
-   uniffi. The core answers a `QueueChange`. Then `Controls` passes the items on to `EnginePlayer` in
+1. Tapping a row calls `ActionsViewModel.tap`, which asks the core what a tap does (`tapPlan`). To
+   play the list, it calls `PlayerConnection.play`, a media3 `MediaController` on `PlaybackService`.
+2. In `PlaybackService`, the `Controls` player edits the core's queue first (`playlistSet`), and the
+   core answers a `QueueChange`. Then `Controls` passes the items on to `EnginePlayer` in
    `RustPlayer.kt`. That media3 player only mirrors the core's queue for the session.
-4. `EnginePlayer` calls the engine through JNI doors: `queueChanged`, `goTo` and `play`. Each one sends
-   a command over a channel and wakes the `nori-engine` thread.
-5. The engine locates the song through `AndroidLibrary::locate` in `crates/android/src/player.rs`. A
+3. `EnginePlayer` calls the engine through JNI doors: `queueChanged`, `goTo` and `play`. Each one sends
+   a command and wakes the `nori-engine` thread.
+4. The engine locates the song through `AndroidLibrary::locate` (`crates/android/src/player.rs`). A
    download, or a song already whole in the stream cache, opens as a file. Any other song opens
    through `JavaBytes`.
-6. `JavaBytes` calls up into Kotlin (`RustBridge.open`). Kotlin opens the song through media3's
-   `CacheDataSource`, over OkHttp. A `nori-load` thread reads the body in bursts. On Android, media3's
+5. `JavaBytes` calls up into Kotlin (`RustBridge.open`), which opens the song through media3's
+   `CacheDataSource` over OkHttp. A `nori-load` thread reads the body in bursts. On Android, media3's
    cache is the stream cache, and the engine's own `Store` is not used.
-7. The engine demuxes and decodes as on the desktop. HE-AAC decodes through MediaCodec
-   (`crates/android/src/mediacodec.rs`). The sound chain writes into the ring.
-8. The `nori-track` writer thread (`crates/android/src/track.rs`) holds an AudioTrack with room for a
+6. The engine demuxes and decodes as on the desktop. HE-AAC decodes through MediaCodec
+   (`crates/android/src/mediacodec.rs`).
+7. The `nori-track` writer thread (`crates/android/src/track.rs`) holds an AudioTrack with room for a
    10 s burst and margin. It sleeps until 1 s is left, then moves the whole ring into the AudioTrack.
    That wakes the engine for its next burst, about once every ten seconds.
-9. The engine's events go back through the `signal` up-call. `EnginePlayer` drains them on the main
-   thread and updates its state. The media session and the notification follow. `PlayerConnection`
-   publishes a `PlayerState` that the ViewModels read.
+8. The engine's events go back through the `signal` up-call. `EnginePlayer` drains them on the main
+   thread, and the media session, the notification and `PlayerConnection`'s `PlayerState` follow.
 
 When offload is allowed, the engine skips decoding. It hands compressed packets to an offload
 AudioTrack (`JavaOffload`) and can sleep for minutes. `nori_player::policy` allows offload only when
@@ -258,7 +252,7 @@ These rules hold everywhere. Some of them are absences, which code cannot show y
 | A provider | `crates/core/src/providers/` ([Providers](providers.md)) |
 | A plugin extension point | `wit/plugin.wit` and `crates/plugins` ([The plugin host](plugin-host.md)) |
 | A sound stage from a plugin | `crates/player/src/stage.rs` |
-| A JNI door | `crates/android/src/lib.rs` and the Kotlin `external fun` |
+| A JNI door | `crates/android/src/lib.rs` and the Kotlin `external fun` ([Calling the core cheaply](writing-a-client.md#calling-the-core-cheaply)) |
 | Words | Each client's words file, listed under [Rules that hold](#rules-that-hold) |
 | A new crate | Its row in `AGENTS.md`, checked by `crates/testdir/tests/agents_map.rs` |
 
@@ -271,10 +265,6 @@ it: Android in `vm/SettingsPages.kt` and `strings.xml`, the terminal app in
 A new core crate also goes into the list in `crates/android/build.rs`, the dependencies of
 `nori-android`, and the `ffi` feature of `nori-core`. If it exports an interface, it also goes into the
 binding inputs in `android/core/build.gradle.kts`.
-
-A JNI door is registered with `RegisterNatives`, never exported by a `Java_` name. A door with only
-primitives is `@CriticalNative`. A short door over arrays or buffers is `@FastNative`. The Kotlin
-`external fun` and the Rust function must agree.
 
 ## Tests
 

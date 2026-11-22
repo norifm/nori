@@ -1,8 +1,7 @@
 # Plugin reference
 
-This page lists what a plugin author looks up: the manifest, rows, strings, the package, the extension
-points, the host interfaces, permissions, limits and repos. It describes plugin API 7. For what a plugin
-is, see [Plugins](plugins.md). For a first plugin, see the [plugin tutorial](plugin-tutorial.md).
+This page lists the manifest, rows, strings, the package, the extension points, the host interfaces,
+permissions, limits and repos of plugin API 7. For what a plugin is, see [Plugins](plugins.md).
 
 The API is the WIT in `wit/`. `types.wit`, `host.wit` and `net.wit` hold what a plugin calls.
 `plugin.wit` holds what it exports, and the `plugin` world. The SDK, `crates/plugin-sdk`, is that WIT as
@@ -12,7 +11,7 @@ Rust. WIT names become snake case, and a Rust keyword gets a trailing `_`: `sett
 ## Manifest
 
 The manifest is a `nori_plugin_sdk::Manifest` constant, passed to `plugin!`. Start from
-`Manifest::new(id)` and set the fields the plugin needs:
+`Manifest::new(id)`:
 
 ```rust
 const MANIFEST: Manifest = Manifest {
@@ -23,13 +22,11 @@ const MANIFEST: Manifest = Manifest {
 nori_plugin_sdk::plugin!(MyPlugin, MANIFEST, lifecycle, hooks);
 ```
 
-These are the fields:
-
 | Field | Type | Default | What it declares |
 |---|---|---|---|
 | `id` | `&str` | Required | The plugin's id, in reverse DNS: two or more parts of letters, digits, `-` and `_` |
 | `stage` | `Option<Slot>` | `None` | A sound stage's slot: `Slot::Master` or `Slot::Song` |
-| `net` | `&[&str]` | Empty | Hosts it may reach over HTTP and sockets. `*.` takes in subdomains. `lan` opens private addresses |
+| `net` | `&[&str]` | Empty | Hosts it may reach over HTTP and sockets, with `*.` and `lan` |
 | `signin` | `&[&str]` | Empty | Hosts whose cookies a provider's sign-in page hands back |
 | `overrides` | `&[&str]` | Empty | nori's values it may override, by key |
 | `rows` | `&[Row]` | Empty | Its page's rows, in order |
@@ -43,11 +40,12 @@ These are the fields:
 | `cache_mb` | `u32` | 0 | Its cache's quota, in MB |
 | `assets` | `&[Asset]` | Empty | Large files nori downloads for it |
 
-`plugin!` writes the manifest into the wasm's `nori:plugin` custom section. It adds the version from the
-crate's `Cargo.toml`, the API version, and the extension points named after the manifest. nori calls only the points that `plugin!` names. The others answer as
-nori would.
+In `net`, a leading `*.` takes in a host's subdomains, and `lan` opens private addresses.
 
-nori reads what a plugin calls from the component's imports, so the manifest does not list them.
+`plugin!` writes the manifest into the wasm's `nori:plugin` custom section. It adds the version from the
+crate's `Cargo.toml`, the API version, and the extension points named after the manifest. nori calls
+only those points. nori reads which host interfaces a plugin calls from the component's imports, so the
+manifest does not list them.
 
 ### Menu actions, places and device filters
 
@@ -69,9 +67,8 @@ with `assets.read` once its `asset-ready` event comes.
 
 ## Rows
 
-Rows are what nori draws on the plugin's page, in each client's own look. A row's `id` is its label's
-key in the strings. It is also the key that nori keeps the row's value under. nori keeps the values, so the page
-draws while the plugin is not running.
+Rows are what nori draws on the plugin's page. A row's `id` is its label's key in the strings, and the
+key nori keeps its value under. nori keeps the values, so the page draws while the plugin is not running.
 
 | Kind | SDK constructor | Its value | A sound stage reads |
 |---|---|---|---|
@@ -91,7 +88,7 @@ draws while the plugin is not running.
 | Page | `Row::page(id)` | None: opens the rows placed on it | Nothing |
 
 A sound stage reads its rows' numbers in manifest order, in `Inputs::rows`. Only switches, choices,
-segments and levels count, so other rows take no place in that list.
+segments and levels take a place in that list.
 
 These modifiers change a row:
 
@@ -109,9 +106,8 @@ The glyphs are `Sparkle`, `Info`, `Share`, `Link`, `Search`, `Heart`, `Download`
 
 ## Strings
 
-A plugin's words live in `strings/<lang>.toml`, one file per language, such as `strings/en.toml` and
-`strings/de.toml`. Each line is `key = "text"`, a TOML basic string. Comments and other lines are
-skipped.
+A plugin's words live in `strings/<lang>.toml`, one file per language, such as `strings/de.toml`. Each
+line is `key = "text"`, a TOML basic string. Other lines are skipped.
 
 | Key | Holds |
 |---|---|
@@ -163,7 +159,7 @@ nori refuses a package, and changes nothing, when one of these holds:
 ## Extension points
 
 Each point is a trait of the SDK, named in `plugin!` by its snake-case name. A method the plugin does not
-write answers with nori's own answer: `None`, "unsupported", empty, or what it was handed.
+write gives nori's own answer: `None`, "unsupported", empty, or what it was handed.
 
 | Point | Trait | Its calls |
 |---|---|---|
@@ -207,8 +203,8 @@ transitions, so each side of a mix has its own.
 ### Deciders
 
 nori works out its own answer first. Then each enabled plugin with `deciders` gets the inputs and the
-answer so far, in the user's order. It returns another answer, or `None`. nori checks each answer before it uses it
-or hands it on. A refused answer, a failed call or one past its budget keeps the answer so far.
+answer so far, in the user's order, and returns another answer or `None`. nori checks each answer before
+it uses it or hands it on. A refused answer, a failed call or one past its budget keeps the answer so far.
 
 | Decider | When nori asks | Budget | What nori checks |
 |---|---:|---:|---|
@@ -235,7 +231,7 @@ all of these hold:
 - A tempo change is beat-matched and within the user's limit.
 - An echo is where nori planned one.
 
-nori keeps a refined analysis only when its tempo is 40 to 250 BPM or none, and its cues are inside the
+nori keeps a refined analysis only when its tempo is 40 to 250 BPM or none. Its cues must be inside the
 song and in order. Otherwise nori's own plan or analysis stands.
 
 ### Notification buttons
@@ -246,8 +242,8 @@ strings. A press of its own button calls `lifecycle.action(id)`. Only Android ha
 
 ## Host interfaces
 
-A plugin may call each interface its component imports. The ones in this table that need something fail
-with `refused` without it, and nori logs why.
+A plugin may call each interface its component imports. A call that lacks what the table names fails
+with `refused`, and nori logs why.
 
 | Interface | What it gives | What it needs |
 |---|---|---|
@@ -285,7 +281,7 @@ held to the range.
 ## Permissions
 
 A permission lets a plugin use part of the `session` or `timers` interface. The install sheet lists each
-one. This table shows Android's words:
+one, in the words this table shows for Android:
 
 | Permission | Allows | The install sheet says |
 |---|---|---|
@@ -334,10 +330,9 @@ The media buttons are `play-pause`, `play`, `pause`, `next`, `previous` and `sto
 
 ## Overrides
 
-An override key is the name of one of nori's settings, such as `crossfadeSec` or `remoteControl`. It
-can also be a tunable: a value with no setting. A setting's override goes through that
-setting's own checks. Turning the plugin off removes its overrides. When two plugins override one key,
-the later one in the user's order wins.
+An override key is the name of one of nori's settings, such as `crossfadeSec`, or a tunable: a value
+with no setting. A setting's override goes through that setting's own checks. Turning the plugin off
+removes its overrides. When two plugins override one key, the later one in the user's order wins.
 
 | Tunable | Range | What it sets |
 |---|---|---|
@@ -366,10 +361,10 @@ The AutoMix tunables replace what the user's AutoMix style sets.
 | Timers without an active session, at most once per | 15 minutes |
 | An icon | 256 KiB |
 
-Each call has a fuel budget, which wasmtime counts as the call runs. A plugin's own call has
-20,000,000,000, a decider's 2,000,000,000 and a sound stage's block 400,000,000. A call that runs out fails. After
-a failed call, the next call starts a fresh instance. A sound stage that fails is bypassed until the
-next seek or song.
+Each call also has a fuel budget, which wasmtime counts as the call runs. It is 20,000,000,000 for a
+plugin's own call, 2,000,000,000 for a decider's and 400,000,000 for a sound stage's block. A call that runs out
+fails, and the next call starts a fresh instance. A sound stage that fails is bypassed until the next
+seek or song.
 
 ## API version
 
