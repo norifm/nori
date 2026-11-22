@@ -10,8 +10,10 @@ fifth of a page's words, jump from heading to heading, and see the first two wor
 from search, on any page. Write every page for that reader.
 
 Most bad docs fail on content, not on wording. They cover the easy parts evenly, skip the hard parts (what
-fails, what it costs, what the feature does not do), repeat facts, drift between names for one thing, and
-state things nobody checked. Fix the content first. The wording rules come second, and the lint comes last.
+fails, what it needs, what the feature does not do), repeat facts, drift between names for one thing, and
+state things nobody checked. The opposite failure is as common: a page that says everything the code does.
+A reader needs what changes what they do or what they understand, and nothing else. Fix the content first.
+The wording rules come second, and the lint comes last.
 
 ## The process
 
@@ -24,12 +26,14 @@ Do these steps in order, for every page.
 2. **Gather.** Read the code before you write. List every fact the page will state (a setting's label and
    default, a limit, a path, a command, an error, which clients have it) with the file it came from. The
    code is the source. The current docs are only a lead: they can be stale.
-   Collect the hard parts on purpose: what can go wrong and how to recover, what it costs (battery, data,
-   a server it needs), what it does not do.
+   Collect the hard parts on purpose, but only the ones a reader will meet: what commonly goes wrong and
+   how to recover, what it needs (a server, an account), its battery or data use when it is noticeable,
+   what it does not do.
 3. **Write** the page in its shape ([references/page-shapes.md](references/page-shapes.md)), with the
    wording rules below.
 4. **Cut.** For each sentence, ask: what does the reader lose if I delete it? If the answer is "nothing",
-   delete it. Then remove the habits in [references/ai-tells.md](references/ai-tells.md).
+   delete it. Apply [What to leave out](#what-to-leave-out). Then remove the habits in
+   [references/ai-tells.md](references/ai-tells.md). Expect to cut a third of a first draft.
 5. **Check.** Run the lint, then re-read the page against your fact list:
 
    ```sh
@@ -56,6 +60,31 @@ belongs.
 User pages never explain the implementation. They link one level down, to a "How it works" page, with
 link text that names it ("[How AutoMix picks a transition](...)"). The "How it works" page may link to the
 developer docs. Never more than two levels.
+
+## What to leave out
+
+A fact belongs on a page only if it changes what the reader does or what they understand. True is not
+enough. Leave out:
+
+- **What the screen already says.** A message that explains itself, a confirmation dialog's text, an
+  **Undo** after every action, a list's sort order.
+- **Trivia.** How two devices with one name are told apart, which list a row appears in on one client,
+  what happens in a case few readers will meet.
+- **Every client's path, in prose.** When the steps differ per client, give one small table (app, how),
+  or name the most common path and put the others in the client pages.
+- **Label differences between clients.** One line on the client's page, or the settings reference. Not
+  on every feature page.
+- **Mechanism on a user page.** Why it works goes to "How it works". The feature page says what you get.
+- **Restated defaults and limits that do not matter.** Keep a default when a reader would change it.
+  Keep a limit when a reader will hit it.
+- **Reassurance and asides.** "You can change this later", "This is optional", "nori handles this for
+  you".
+- **On developer pages:** anything the code states better (each field, each branch, each test name).
+  State each part's job, its rules, where it lives and how the parts connect. Everything a contributor
+  needs to change the design safely, nothing they would find by reading one function.
+
+Rough lengths, as a check, not a target: a feature page 200 to 450 words, a "How it works" page 400 to
+600, a how-to as long as its steps. A page much longer than that holds two topics, or trivia.
 
 ## Wording
 
@@ -95,7 +124,9 @@ are in [references/ste.md](references/ste.md).
 ## Structure and formatting
 
 - **Headings** are sentence case, with no end punctuation, and at most three levels (`##`, `###`).
-  A heading names what is under it: "When AutoMix does not mix", not "Limitations".
+  A heading names what is under it: "When AutoMix does not mix", not "Limitations". A reader who only
+  glances reads the headings: never "What it costs" for battery or data, which reads as a price. Write
+  "Battery use" or "Battery and data use".
 - **Steps** are a numbered list. Introduce them with a sentence. One action per step, location first:
   "In **Settings › Sound**, tap **Equalizer**." Put the result after the action. If a step can fail, the
   next line says how to recover.
@@ -127,8 +158,10 @@ the page it belongs to.
 
 ### Diagrams
 
-Draw a diagram only when the layout carries information: parts and what flows between them, layers,
-states, or messages over time. A list of steps is a numbered list, not a flowchart. A diagram never holds
+Draw a diagram when the layout carries information: parts and what flows between them, layers, an order
+that matters (what plays next), a fallback (what nori tries first, then next), states, or messages over
+time. Look for one on every page that has such a structure: readers who glance see a diagram before any
+text. A list of steps is a numbered list, not a flowchart. A diagram never holds
 a fact the text does not state: the text around it must make sense without it.
 
 - **User docs (norifm.com):** write a `flow` or a `stack` block. The site renders them as themed boxes,

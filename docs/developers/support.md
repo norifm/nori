@@ -26,12 +26,11 @@ sequenceDiagram
 ## The parts
 
 - `crates/core/src/support.rs` decides what the page offers and talks to the service. It holds the
-  currencies and their amounts, and what a choice comes to (`support_choice`). It also checks typed
-  amounts (`support_typed`) and makes the seals (`support_stamps`). `Client` makes the calls: `support_start`,
-  `support_refresh`, `support_manage`, `support_stop` and `support_keep`.
-- The `support` setting (`Supporter`) keeps what the app knows. That is its login, when it paid, whether a
-  monthly payment runs, and when one set to stop ends. No settings page shows it, but a settings backup carries
-  it.
+  currencies and their amounts, checks typed amounts, and makes the seals (`support_stamps`). `Client`
+  makes the calls, such as `support_start` and `support_stop`.
+- The `support` setting (`Supporter`) keeps what the app knows. That is its login, when it paid,
+  whether a monthly payment runs, and when one set to stop ends. No settings page shows it, but a backup
+  carries it.
 - `crates/host/src/support.rs` serves the clients that pay in the browser. It writes money and currency
   names in English, picks the country a choice starts in, and starts a Checkout page (`checkout`).
 - `support/worker/src/index.ts` is the whole service. `support/worker/wrangler.jsonc` configures its two
@@ -85,9 +84,8 @@ oldest first. The `monthly` field is true while a monthly payment runs and is no
 `ends` field is when one set to stop ends, or null.
 
 `/stop` sets the monthly payment to stop at the end of the month paid for. It answers when it ends and
-how many months it paid for, counted from the paid invoices. A request without `in` comes from an older
-build. The Worker then answers with Stripe's portal page, which stops the payment and thanks you for the
-months given.
+how many months it paid for, counted from the paid invoices. A request without `in` gets Stripe's portal
+page instead, for builds that do not send it.
 
 `/keep` keeps a monthly payment that is set to stop.
 
@@ -123,22 +121,12 @@ Each client pays in one of two ways. The core's `PayIn` says which one.
 
 The iPod shows the QR code because iOS 12's Safari might be too old for Checkout.
 
-While a monthly payment runs or is set to stop, a **Monthly support** row opens its sheet. The iPod opens
-a page of its own, and the terminal a picker. The sheet says what the payment is doing and opens
-**Card and receipts** on Stripe's page. It also offers **Stop**, in Spring's rose, or **Keep going**.
-These call the core's `support_stop` and `support_keep`, and the settings keep the end date
+While a monthly payment runs or is set to stop, the page offers **Stop**, in Spring's rose, or **Keep
+going**. These call the core's `support_stop` and `support_keep`, and the settings keep the end date
 (`Supporter::ends`).
 
-### The thanks
-
-When the page gets a seal it did not show when it opened, it thanks you for it. If several come at once,
-it thanks you for the newest. A veil covers the page, and the seal presses down in the middle with
-**Thank you** under it. Then the seal moves to its empty place in the book, and the next empty place grows
-beside it. A touch ends it. With reduced motion, only the still thanks shows. That is nori's Motion setting, or
-the system's Reduce Motion on the iPod. The terminal shows a box until you press a key.
-
-A client asks the service only while the Support page is open. So the thanks never plays on another
-screen.
+A client asks the service only while the Support page is open, so the thanks never plays on another
+screen. When the page gets seals it did not show when it opened, it thanks you for the newest one.
 
 ## Give a build its Support page
 

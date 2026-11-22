@@ -83,20 +83,12 @@ These are the modules of `crates/ios/src/`:
 
 These are the files of `ios/Sources/`:
 
-- `main.swift` and `AppDelegate.swift` start the app and make the data directory. `AppDelegate` opens
-  the session off the main thread. It passes on background, foreground, memory warnings and `nori://jam`
-  links.
+- `AppDelegate.swift` opens the session off the main thread. It passes on background, foreground,
+  memory warnings and `nori://jam` links.
 - `Bridge.swift` holds `Core`. It turns the library's reports into notifications on the main thread and
   sends page and cover requests.
-- `Shell.swift` holds the tabs, the bottom chrome, the mini player, Search and Downloads.
-- `Home.swift`, `Library.swift`, `Pages.swift`, `PageController.swift` and `Hero.swift` draw Home, the
-  library's sections, and the album, artist, playlist, genre, mix and smart playlist pages.
-- `Player.swift` holds the player card, its transition, the lyrics sheet and `NowPlaying`.
-- `Queue.swift` holds the queue sheet, which also shows a jam host's queue to a guest.
-- `SongMenu.swift` holds the song menu and the sleep timer.
-- `Settings.swift`, `Sound.swift`, `Servers.swift`, `Login.swift` and `About.swift` hold Settings,
-  Appearance, the equalizer, each output's sound and AutoEQ, the servers, the login form, and the credits.
-- `Support.swift` holds the Support page.
+- `Shell.swift` holds the tabs, the bottom chrome and the mini player. The pages each have their own
+  file, such as `Home.swift`, `Pages.swift`, `Player.swift`, `Queue.swift` and `Settings.swift`.
 - `Devices.swift` holds the output picker, the devices sheet, joining a jam, Bonjour and the system
   volume.
 - `Covers.swift` holds `CoverCache` and `CoverView`.
@@ -206,14 +198,9 @@ iOS keeps the volume, and nori does not scale samples for it. Swift observes the
 (`outputVolume`) and passes it to `nori_ios_volume`, so other devices see it. A volume set from another
 device moves the system volume through a hidden `MPVolumeView` (`SystemVolume` in `Devices.swift`).
 
-`NowPlaying` in `Player.swift` registers `MPRemoteCommandCenter` for play, pause, toggle, next, previous
-and changing the position. These commands come from the EarPods remote, the lock screen, Control Center
-and Bluetooth. Each one goes to `nori_ios_media_key`, which calls the session's `media_key`.
-`MPNowPlayingInfoCenter` gets the song, the times, the place in the queue and the artwork. It updates on
-each change, never on a timer.
-
-Everything else the engine does also works here. That includes gapless playback, crossfade, AutoMix, the
-equalizer, volume leveling, the sleep timer and the offline bridge.
+`NowPlaying` in `Player.swift` registers `MPRemoteCommandCenter`, whose commands come from the EarPods
+remote, the lock screen, Control Center and Bluetooth. Each one goes to `nori_ios_media_key`, which calls
+the session's `media_key`. `MPNowPlayingInfoCenter` updates on each change, never on a timer.
 
 ## The interface
 
@@ -229,12 +216,11 @@ guide shows the screens. These are the rules a contributor needs:
   active and music plays.
 - The core's `LyricClock` paces the lyrics page. A display link runs only while a word fill moves,
   and a one-shot timer waits between lines. Nothing runs while paused, buffering or hidden.
-- Settings has the groups Playback, Sound, Appearance, Lyrics, Library and About. Swift picks the rows
-  (`SettingsGroup`) over the core's settings model (`nori_ios_settings`, `nori_ios_set`). It leaves out
-  settings that only a phone has: metered network, offload, bit-perfect and USB.
+- Swift picks the settings rows (`SettingsGroup`) over the core's settings model (`nori_ios_settings`,
+  `nori_ios_set`). It leaves out settings that only a phone has: metered network, offload, bit-perfect
+  and USB.
 - `Theme.swift` reads the palette from `nori_ios_look`. It rebuilds the views when the theme or season
-  changes. It also rebuilds them when the app becomes active on another day. iOS 12 has no dark mode, so
-  System is Night.
+  changes, and when the app becomes active on another day.
 - Inter is the font for everything, and Literata for page titles. `UIFontMetrics` scales both for Dynamic
   Type.
 - Animations run as Core Animation layer properties on the render server. The system's Reduce Motion
@@ -244,31 +230,23 @@ guide shows the screens. These are the rules a contributor needs:
 ### Covers
 
 Swift asks for a cover at the view's pixel size. The library hands it over as RGBA, which becomes a
-`CGImage` without a copy. The library asks the server for two renditions only, 320 and 800 px
-(`cover_rendition`).
-
-`CoverCache` holds up to 16 MB of decoded covers. While a size loads, it shows the sharpest picture
-already decoded. When a song starts, the library warms the covers of its neighbors in the queue into the
-disk cache.
+`CGImage` without a copy. `CoverCache` holds up to 16 MB of decoded covers. While a size loads, it
+shows the sharpest picture already decoded. When a song starts, the library warms the covers of its
+neighbors in the queue into the disk cache.
 
 ## Remote control and jams
 
 Remote control runs only while the `remoteControl` setting is on. The session's remote serves the LAN
-door and the relay, as on the desktop. `Devices.swift` announces the door over Bonjour. While the core
-asks (`nori_ios_on_bonjour`), it also looks for the account's other devices. While another device plays,
-the player, the queue sheet and the lock screen show and control its music. When the app is paused in the
-background, iOS suspends it, and its door stops with it.
+door and the relay, as on the desktop. Swift does the Bonjour part: `Devices.swift` announces the door,
+and it looks for the account's other devices while the core asks (`nori_ios_on_bonjour`). When the app
+is paused in the background, iOS suspends it, and its door stops with it.
 
-The iPod joins a jam only as a guest. You can paste an invite link, or open a `nori://jam` link from the
-relay's invite page. Either way, a guest profile opens in place of your own (`nori_host::jam_joined`).
-**Leave** in the queue sheet opens your own profile again. A guest follows `ProfileRules`
-(`nori_ios_rules`): it has only this iPod's own settings, and no favorites, playlists or downloads. A tap
-or **Play next** asks the host. **Listen Here** plays along through the engine's follow path.
+The iPod joins a jam only as a guest, from a pasted invite link or a `nori://jam` link. A guest profile
+opens in place of your own (`nori_host::jam_joined`), and it follows `ProfileRules` (`nori_ios_rules`).
 
 ## Memory, storage and network
 
-- The engine may hold 96 MB of decoded audio (`MEMORY_MB` in `session.rs`). `load_control` bounds a song's
-  window to it.
+- `MEMORY_MB` in `session.rs` is 96, so `load_control` lets the engine hold 24 MB of audio ahead.
 - A memory warning empties `CoverCache` and the core's decoded covers (`nori_ios_memory_warning`). Swift
   keeps no pages: it reads, draws and drops them.
 - The data lives in `Library/Application Support/nori/`, excluded from backups. It holds `nori.db`, the
@@ -290,8 +268,7 @@ or **Play next** asks the host. **Listen Here** plays along through the engine's
 - **Hosting a jam.** The iPod can only join one.
 - **Background downloads.** Nothing downloads while the app is suspended. There is no `NSURLSession`
   background session.
-- **Offload.** An `OffloadOutput` over `AVQueuePlayer` could let the media server play whole files while
-  nothing touches the samples. It is untried.
+- **Offload.** The library has no `OffloadOutput`, so nori decodes every song itself.
 - **nori's Motion setting.** The iPod follows the system's Reduce Motion, not the `motion` setting.
 - **The core's settings pages.** Swift picks its own rows (`SettingsGroup`, `Say.settings`) instead of
   reading `settings_pages`. `SettingsClient` has no iPod variant.
@@ -333,20 +310,12 @@ A release carries the `.ipa`: the release workflow's `ipod` job runs `tools/ipod
 
 ### What the build does
 
-`tools/ios-build/build.sh` runs inside the container:
-
-1. On the first run, it downloads theos' iPhoneOS 16.5 SDK and checks its SHA-256.
-2. It also downloads swift.org's macOS toolchain once and takes three parts from it. These are the
-   `libswiftCompatibility*.a` libraries, Darwin's API notes and clang's `libclang_rt.ios.a`.
-3. It builds `libnori_ios.a` with `cargo build --profile dist --target aarch64-apple-ios -p nori-ios`.
-   `IPHONEOS_DEPLOYMENT_TARGET` is 12.2.
-4. It compiles `NoriAudio.m` with one `clang` call.
-5. It compiles and links the app with one `swiftc` call (`-O -wmo`), with lld and `-dead_strip`. There is
-   no Xcode project.
-6. It copies the resources: the launch image, the icons, Inter and Literata, and the license texts from
-   `android/app/src/main/assets/licences`.
-7. It signs the executable with `ldid -S` and `ios/entitlements.plist`, then zips `Payload/nori.app` as
-   the `.ipa`.
+`tools/ios-build/build.sh` runs inside the container. There is no Xcode project. It downloads theos'
+iPhoneOS 16.5 SDK and parts of swift.org's macOS toolchain once, and checks the SDK's SHA-256. It builds
+`libnori_ios.a` with Cargo (`--profile dist --target aarch64-apple-ios`, deployment target 12.2). It
+compiles `NoriAudio.m` with one `clang` call. One `swiftc` call (`-O -wmo`) compiles the app and links
+it through lld. It signs the executable with `ldid -S` and `ios/entitlements.plist`, then zips
+`Payload/nori.app` as the `.ipa`.
 
 The downloads, Cargo's home and Cargo's target directory stay in the Docker volume `nori-ios-cache`. They
 cannot live in a folder that Docker shares from a Mac. The SDK is an archive of symlinks that cannot be

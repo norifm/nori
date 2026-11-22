@@ -1,8 +1,7 @@
 # Contributing
 
-You contribute to nori with a pull request on [GitHub](https://github.com/norifm/nori). This page says
-what to read and run before you commit. It also says how to write the commit, and where the docs for
-your change go. nori is licensed AGPL-3.0-or-later ([LICENSE](../../LICENSE)).
+You contribute to nori with a pull request on [GitHub](https://github.com/norifm/nori). nori is
+licensed AGPL-3.0-or-later ([LICENSE](../../LICENSE)).
 
 ## Before you start
 

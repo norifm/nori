@@ -6,8 +6,8 @@ client and the iPod app. A client gives it the open profile's transport, the set
 what only the platform can do, and draws what it answers. With no plugin on, it reads a few small files
 and does nothing else: no engine, no compiling, no thread.
 
-This page is for contributors who change the host. For what a plugin can do, see [Plugins](plugins.md).
-For the manifest, the limits and the API, see the [plugin reference](plugin-reference.md).
+For what a plugin can do, see [Plugins](plugins.md). For the manifest, the limits and the API, see the
+[plugin reference](plugin-reference.md).
 
 ```mermaid
 flowchart LR
@@ -65,22 +65,21 @@ start.
 work, in this order:
 
 1. It reads the package's files and the manifest from the wasm's `nori:plugin` section.
-2. It checks the manifest's API version, id, override keys, assets and stage slot. `Plugins::admits`
-   checks the pinned key. The override keys must pass `nori_settings::overrides::overridable`.
+2. It checks the manifest's API version, id, override keys (`nori_settings::overrides::overridable`),
+   assets and stage slot. `Plugins::admits` checks the pinned key.
 3. It writes the files to `.<id>.new/` beside the installed version, with `manifest.bin`.
 4. It compiles the component there (`runtime::component`). A component that imports a call of an
    interface not in `runtime::LINKED` is refused as `Refusal::Needs`.
 5. It moves the old version's `store/`, `cache/` and `assets/` into the new folder, and swaps the
    folders.
 
+A package from a repo is fetched first, and `nori_plugin_index::package::checked` compares its sha256
+and verifies its signature before step 1. The install sheet runs steps 1 and 2 only.
+
 What an install keeps of the version it replaces is one rule for both hosts,
 `nori_plugin_index::standing::installed_over`. An update keeps its switch, its place and whether it is
 kept at its version. A new plugin goes last and turns on. A plugin that can't start stays installed,
 and its failure goes to the log.
-
-A package from a repo is fetched first. Before step 1, `nori_plugin_index::package::checked` compares its
-sha256 and verifies its signature. `preview_file` and `preview_version` run steps 1 and 2 without
-installing, for the install sheet.
 
 ### Compiling
 
@@ -97,9 +96,9 @@ Each running plugin has its own instance on a thread of its own, the `Worker` (`
 call. Its calls may block: its HTTP waits on the core's transport there, so the core's executors never
 wait on a plugin.
 
-- **Fresh instances.** A call that traps or spends its fuel fails. The instance is dropped, and the next
-  job makes a fresh one: it runs `lifecycle.start` again, and the opening a provider asked for
-  (`Worker::opens`) is told again.
+- **Fresh instances.** A call that traps or spends its fuel fails, and the instance is dropped. The
+  next job makes a fresh one, which runs `lifecycle.start` again and hears the provider's opening again
+  (`Worker::opens`).
 - **Fuel.** Each job gets `runtime::CALL_FUEL`. A decider's call gets `worker::DECIDE_FUEL`, and
   `Worker::decide` waits at most its budget. An answer that comes later is dropped.
 - **Callers that left.** A `call` whose caller has gone, such as a search typed over, is skipped when
@@ -118,11 +117,10 @@ A plugin's store is a file per key in `store/`, 1 MB in all (`store::STORE_CAP`)
 are the host's: its rows' values (`nori/row/`) and its overrides (`nori/override/`). A plugin cannot
 write them.
 
-The cache is a file per key in `cache/`, up to the manifest's quota. A put over the quota lets the least
-recently used go. Assets are fetched through the open profile's transport in 4 MB range requests,
+The cache is a file per key in `cache/`, up to the manifest's quota. A put over the quota drops the
+keys used longest ago. Assets are fetched through the open profile's transport in 4 MB range requests,
 hashed as they come, and kept by sha256 in `assets/`. On a metered network an asset waits until the
-user allows mobile data for that plugin (`Plugins::allow_mobile_assets`). The client shows each asset's
-state on the plugin's page (`Plugins::assets`, `Client::asset`).
+user allows mobile data for that plugin (`Plugins::allow_mobile_assets`).
 
 An update keeps the store, the cache and the assets. Removing the plugin removes them.
 
@@ -132,16 +130,14 @@ An update keeps the store, the cache and the assets. Removing the plugin removes
 It sends the request through the open profile's `Transport`, nori's one connection pool. `http.start`
 puts up to 16 requests on their way at once, each on a thread of its own. `wait` and `take` collect
 their answers.
-A wait unmarks the call for safe mode.
 
-Plugin HTTP goes through the client's proxy, as nori's own requests do. On Android, that is OkHttp's
-handling of the system's proxy. On the desktop and terminal apps, `nori-http` uses the proxy that
-`ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY` names, except for `NO_PROXY`. That proxy may be `http://` or
-`https://`, with TLS to the proxy and then CONNECT. `nori-http` has no SOCKS support.
+Plugin HTTP takes the client's proxy, as nori's own requests do. On Android that is the system's proxy.
+On the desktop and terminal apps, `nori-http` takes it from `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY`,
+except for `NO_PROXY`. It has no SOCKS support.
 
 Sockets never go through a proxy: a socket is mostly for the LAN, and an HTTP proxy carries no UDP. TLS
-on a socket is rustls with ring, checked against webpki's roots, one pinned certificate, or nothing for
-a private address only.
+on a socket is rustls with ring. It checks against webpki's roots or one pinned certificate, and only a
+private address may skip the check.
 
 ## Sound stages on the audio path
 
@@ -150,10 +146,10 @@ The engine makes a `Stage` per chain. A stage has an instance of its own on the 
 every import linked to a trap, so it never waits on anything.
 
 - A block goes in as one `list<f32>` and comes back the same length. The SDK exports `process` and
-  `save` by hand without a post-return (`stage_abi`), so the host reads the answer in the plugin's
-  memory. The host allocates nothing per block.
-- Each block gets `BLOCK_FUEL`. A trap or a block over its fuel bypasses the stage until the next reset,
-  a seek or another song, which makes a fresh instance. Audio never waits for a plugin.
+  `save` by hand without a post-return (`stage_abi`). The host reads the answer in the plugin's memory
+  and allocates nothing per block.
+- Each block gets `BLOCK_FUEL`. A trap or a block over its fuel bypasses the stage until the next reset
+  (a seek or another song), which makes a fresh instance.
 - The inputs (`nori_player::stage::Inputs`) are copied into the plugin's memory when they change, never
   per block. A change of a row, the volume or the route is a sound change, spliced in.
 - At every mark the chain saves the stage, and a splice restores it, so music made again is the same,
@@ -163,9 +159,9 @@ every import linked to a trap, so it never waits on anything.
 
 The plugins with `preparation` or `automix` hear each song as the player reads it. The reader's tap
 (`nori_player::stage::Tap`) copies decoded samples into a feed and never waits. What the feed can't take
-is dropped. One thread, `nori-prepare` (`prepare.rs`), holds an instance of each such plugin, wakes when
-a feed is half full or the song ends, and sleeps while nothing is read. If no plugin wants a song, the
-tap copies nothing more. Prepared data is kept in memory for the last four songs and reaches the
+is dropped. One thread, `nori-prepare` (`prepare.rs`), holds an instance of each such plugin. It wakes
+when a feed is half full or the song ends, and sleeps while nothing is read. If no plugin wants a song,
+the tap copies nothing more. Prepared data is kept in memory for the last four songs and reaches the
 plugin's stage as the song's facts.
 
 ## Hooks, timers and wakes
@@ -227,7 +223,7 @@ sink streams (a deep sink's only during a burst), and its media session shows th
 ### Deep sinks
 
 A deep sink is a device that holds tens of seconds of audio, such as a speaker with PSRAM. It takes
-nori's audio as a phone's AudioTrack does: a burst, then nothing until it runs low, so the phone's radio
+nori's audio as a phone's AudioTrack does: a burst, then nothing until it runs low. The phone's radio
 and CPU sleep between bursts. The host speaks the protocol, `nori-sink-protocol`
 (`crates/sink-protocol`, `no_std` with `alloc`, so firmware uses the same code). The plugin only finds
 the device, connects, calls `audio-out.to-socket` with `pace.deep`, and starts the cast. No plugin code
@@ -256,7 +252,7 @@ The host sends `Hello` and waits 3 s for `Caps`. Nothing else comes first. Then 
 | `Cover` | 0x0c | `id: u32`, JPEG | A cover at the size `Caps` asked |
 | `Now` | 0x0d | `id, title, artist, album, duration_ms, cover, at_ms` | The song that follows, and where in it the audio starts |
 
-In `Format`, codec 0 is PCM, 1 is FLAC and 2 is MP3, and `bits` is PCM's width (16 or 24), or 0 for an
+In `Format`, codec 0 is PCM, 1 is FLAC and 2 is MP3. `bits` is PCM's width (16 or 24), or 0 for an
 encoded codec. 24-bit PCM is packed in 3 bytes. A FLAC song's first `Encoded` frame is `fLaC` and its
 STREAMINFO block. `Gain` comes only before encoded songs: in PCM, nori applied the gain to the samples.
 The device answers `Flush` with `Flushed` and `Status`, and `Pause` and `Resume` with `Status`. A
@@ -288,13 +284,13 @@ These rules hold for the stream:
 - **Credit, not TCP.** The device reads its socket always. Under half its depth, it sends one `Want` and
   a `Status`. The host writes exactly that much audio, then nothing until the next `Want`. Encoded audio
   goes in whole packets, so the last one can overshoot the credit by less than a packet.
-- **Control frames first.** Control frames never wait behind audio, and the host keeps its send buffer
-  at 64 KB, so a seek or a pause is heard in milliseconds.
+- **Control frames first.** Control frames never wait behind audio. The host keeps its send buffer at
+  64 KB, so a seek or a pause is heard in milliseconds.
 - **No timer.** The pump sleeps between `Want`s and wakes only for the device, the engine or the socket.
   The device sends `Status` with each `Want` and in answer to `Pause`, `Resume`, `Depth` and `Flush`,
   never on a period. The host runs the position on by its own clock.
 - **Flushes.** A seek or a jump drops everything. A sound change keeps what the device holds up to the
-  frame where the music was made again, so the change is heard within a fraction of a second.
+  frame where the music was made again. The change is heard within a fraction of a second.
 - **Each song's own format.** With no rate asked, each song goes at its own rate and channels. The engine
   reopens its output between songs of different formats, never inside a mix, and a deep sink takes the
   `Format` in its stream.
@@ -303,7 +299,7 @@ These rules hold for the stream:
   the file's seek table or bitrate. ReplayGain is a `Gain` at each song's start, and fades are `Ramp`s.
   An MP3 that joins its album gaplessly plays as PCM, because MP3 encoder gaps are not sent.
 - **Now playing.** At each song's first frame, the host sends `Now`, with how far into the song it
-  starts, and the song's cover once before it if `Caps.cover` asked a size. Covers come from nori's
+  starts. If `Caps.cover` asked a size, the song's cover comes once before it. Covers come from nori's
   cover cache, JPEG only. A cover not on disk yet is fetched in the background and goes with the
   album's next song.
 
@@ -325,10 +321,11 @@ its platform's Bluetooth as a `Bluetooth` (`bluetooth.rs`), with `Plugins::use_b
 
 - Android uses `BluetoothSocket` and `BluetoothGatt` (`PluginBluetooth.kt`).
 - Linux uses BlueZ over the system bus (`crates/host/src/bluez.rs`).
-- macOS uses IOBluetooth and CoreBluetooth (`crates/host/src/macbt/`).
+- macOS uses IOBluetooth and CoreBluetooth (`crates/host/src/macbt/`). IOBluetooth reports on the main
+  thread's run loop, so the terminal app runs itself on another thread
+  (`nori_host::beside_main_run_loop`).
 
-IOBluetooth reports on the main thread's run loop, so the terminal app runs itself on another thread
-(`nori_host::beside_main_run_loop`).
+These rules hold on every platform:
 
 - The platform watches devices connecting only while an enabled plugin reaches devices. With none, no
   receiver, bus connection or thread exists. On Android, `BLUETOOTH_CONNECT` is asked for when such a
@@ -336,25 +333,25 @@ IOBluetooth reports on the main thread's run loop, so the terminal app runs itse
 - A device that connects is offered to the enabled `device-control` plugins that reach it, in their
   order (`handles`). The first that says yes controls it while it stays connected. nori asks for its
   `state` then, after each notification and after `set-noise`, never on a timer.
-- A device nobody took, or whose channel was lost, is offered again a few times over half a minute,
-  and when the app comes to the front. A lost channel is taken back at most three times in a row.
-- What clients draw comes from `Plugins::controlled`: each device's batteries, the level the output row
-  shows, its noise control and modes, and the controlling plugin's card.
+- A device nobody took, or whose channel was lost, is offered again a few times over half a minute. It
+  is offered again when the app comes to the front, too. A lost channel is taken back at most three times in a row.
+- Clients draw what `Plugins::controlled` gives: batteries, noise control and the controlling plugin's
+  card.
 
 ## Safe mode and the switch over every plugin
 
 `safe.rs` keeps `plugins/safe`, a small file the host maps into memory, locked while one run has it.
 Each call into a plugin is marked in its slot with an atomic store as it starts and one as it ends.
 Loading compiled code counts as a call. The kernel keeps the file however nori stops. A wait inside a
-call (an HTTP answer, a socket's or a channel's read) is unmarked, so the system ending nori while a
+call (an HTTP answer, a socket's or a channel's read) is unmarked. So the system ending nori while a
 plugin waits blames no plugin.
 
 - At the next start, a plugin nori stopped in is turned off and logged, and its card says so
   (`Stopped::Crashed`). `take_safe_start()` answers `SafeStart::Crashed` once, for the client to say.
 - A start that never reached `started()`, with no plugin marked, starts the next run with every plugin
   paused (`SafeStart::AllOff`). Their own switches stay. The run after that runs them again.
-- Where the platform says how the last run ended (`Client::last_exit`, Android's `ApplicationExitInfo`
-  on API 30 and later), a run the user or the system ended is `LastExit::Killed`. Then only a panic in a
+- A platform can say how the last run ended (`Client::last_exit`, Android's `ApplicationExitInfo` on
+  API 30 and later). After a run the user or the system ended (`LastExit::Killed`), only a panic in a
   call turns its plugin off.
 - A second nori over the same folder reads and marks nothing.
 
@@ -365,12 +362,10 @@ and the perf build's self test.
 
 ## Backups
 
-A backup (`crates/backup`) keeps the plugins as `Plugins::kept` gives them, in their order. For each
-one, it keeps its id, version and repo, whether it is on or kept at its version, and every value in its
-store. `Plugins::restore`
-fetches each plugin from its repo at the version backed up, else the newest that repo lists, then
-writes its store back. Each plugin's `PluginReturn` says how it came back: `AsKept`, `Other`, `FromFile`
-or `Unavailable`. A backup leaves out `cache/` and `assets/`, which the plugin fetches again.
+A backup (`crates/backup`) keeps the plugins as `Plugins::kept` gives them, in their order: each one's
+id, version, repo, switches and store. `Plugins::restore` fetches each plugin from its repo at the
+version backed up, else the newest that repo lists, then writes its store back. A plugin installed from
+a file does not come back. A backup leaves out `cache/` and `assets/`, which the plugin fetches again.
 
 ## The web host
 
@@ -414,7 +409,7 @@ installed, none of this loads: `nori-plugins` in `localStorage` says one is.
   `WEB_IMPORTS` in `crates/plugin-index` if the web host answers it. Update the fingerprint in
   `tests/api.rs`. The API version stays.
 - **A changed record, function or export, or a new extension point.** This is a new API. Raise `API` in
-  `crates/plugin-index/src/section.rs` and in the SDK's `manifest.rs`, and the package version in
+  `crates/plugin-index/src/section.rs` and in the SDK's `manifest.rs`. Raise the package version in
   `wit/` and in the export names in the SDK's `build.rs` and the host's `stage.rs`. A new point also goes
   at the end of `POINTS`, whose order is the manifest's bits, and of `POINTS` in nori-plugins'
   `tools/pack.py`. Then release every plugin for the new API.
@@ -427,28 +422,23 @@ installed, none of this loads: `nori-plugins` in `localStorage` says one is.
 ## Tests
 
 Run the host's tests with `cargo test -j4 -p nori-plugins`. They build the test plugin in
-`crates/plugins/fixture/` to wasm, so they need `rustup target add wasm32-wasip2`.
+`crates/plugins/fixture/` to wasm, so they need `rustup target add wasm32-wasip2`. `tests/lan.rs` also
+needs an IPv6 interface with multicast.
 
 - `tests/api.rs` pins the WIT's fingerprint to the API version. It fails on any WIT change until the
   fingerprint, or the API, follows.
-- `tests/host.rs` runs the fixture: its stage and kept state, no allocation per block, overrides, HTTP
-  refused outside its hosts, a plugin needing an unlinked interface (`unlinked` feature), signatures and
-  the pinned key, safe mode, the switch over every plugin, and a plugin built for API 3
-  (`testing::older_api_package`).
-- `tests/lan.rs` covers TLS each way, UDP over IPv4 and IPv6, multicast groups and the lock, mDNS
-  browsing, the door, a proxied song URL and casts. It needs an IPv6 interface with multicast.
-- `tests/devices.rs` runs device control over a fake Bluetooth, with the fixture's `headphones` build.
-- `tests/session.rs` covers the session's calls and permissions, events built only when heard, lyric
-  wakes, timers and their gate, the cache, assets and wakes, on a simulated clock.
-- `tests/preparation.rs`, `tests/deciders.rs`, `tests/notification.rs`, `tests/lyrics.rs` and
-  `tests/scrobbler.rs` cover their extension points.
+- `tests/host.rs` runs the fixture through the host: install checks, stages, overrides, HTTP and safe
+  mode. The other files in `tests/` each cover one area: the LAN, devices, the session and each
+  extension point.
 
 Other crates test their side of the seam:
 
-- `cargo test -j4 -p nori-player --test pipeline stage`: stages in the chain on the virtual clock.
-- `cargo test -j4 -p nori-automix mixing`: what nori checks of a plan and a refinement.
-- `cargo test -j4 -p nori-settings overrides`: values overridden without being written.
-- `cargo test -j4 -p nori-engine --test engine another_card`: a card swapped mid-song plays on.
-- `cargo test -j4 -p nori-backup`: a backup's round trip with plugins and their stores.
+```sh
+cargo test -j4 -p nori-player --test pipeline stage       # stages in the chain, on the virtual clock
+cargo test -j4 -p nori-automix mixing                     # what nori checks of a plan and a refinement
+cargo test -j4 -p nori-settings overrides                 # values overridden without being written
+cargo test -j4 -p nori-engine --test engine another_card  # a card swapped mid-song plays on
+cargo test -j4 -p nori-backup                             # a backup's round trip with plugins
+```
 
 For the test tiers and the local server, see [Testing](testing.md).

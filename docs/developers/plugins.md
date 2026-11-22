@@ -5,10 +5,9 @@ your headphones. It is a WebAssembly component that you write in
 Rust with nori's SDK, `nori-plugin-sdk`. nori runs it in a sandbox, and it reaches only what its manifest
 declares.
 
-This page is for plugin authors. It says what a plugin can and cannot do. To build one, follow the
+This page says what a plugin can and cannot do. To build one, follow the
 [plugin tutorial](plugin-tutorial.md). To look up a field, a row or a limit, see the
-[plugin reference](plugin-reference.md). To change how nori runs plugins, see
-[The plugin host](plugin-host.md).
+[plugin reference](plugin-reference.md).
 
 ## How a plugin fits into nori
 
@@ -37,13 +36,12 @@ flowchart LR
 
 The manifest is a Rust constant in the plugin's code. The SDK's `plugin!` macro writes it into the wasm,
 and nori reads it before it runs any of the plugin. It names the plugin's id, the hosts it may reach, the
-settings it overrides, its rows, and its permissions. The install sheet shows the user what the manifest
-allows. The [plugin reference](plugin-reference.md) lists every field.
+settings it overrides, its rows, and its permissions. The install sheet shows the user what it allows.
 
 ## What a plugin can add
 
-A plugin fills one or more extension points. Each point is a trait of the SDK. A method the plugin does
-not write answers as nori would on its own, so a plugin writes only what it changes. The points are:
+A plugin fills one or more extension points, each a trait of the SDK. A method the plugin does not
+write answers as nori would on its own, so a plugin writes only what it changes:
 
 | Extension point | What it adds | nori's own plugin that uses it |
 |---|---|---|
@@ -64,12 +62,10 @@ For a provider, also read [Providers](providers.md): it says what nori expects o
 
 ## What a plugin can use
 
-Beyond its extension points, a plugin calls nori's host interfaces. Each one that reaches beyond the
-plugin's own data needs a line in its manifest, and the install sheet says so.
+A plugin calls nori's host interfaces. Each one that reaches beyond the plugin's own data needs a line
+in its manifest, and the install sheet says so.
 
-- A page of rows that nori draws from the manifest, in each client's own look. Rows are switches,
-  choices, sliders, text fields, actions, status lines, links and pages of their own. nori keeps their
-  values, and a plugin draws nothing itself.
+- A page of rows that nori draws from the manifest, in each client's own look. nori keeps their values.
 - Overrides of nori's settings, and of values with no setting, such as speed, pitch and AutoMix's
   limits. The user's own settings stay as they are, and come back when the plugin is off.
 - HTTP to the hosts its manifest names, through nori's own connection pool and proxy.
@@ -85,8 +81,6 @@ plugin's own data needs a line in its manifest, and the install sheet says so.
   cast sends nori's audio to a device, or has a device play the songs itself.
 - Bluetooth links over RFCOMM or GATT, to the devices its manifest's filters match.
 - Notices, which are short lines shown to the user in the plugin's own words, and lines in nori's log.
-
-The [plugin reference](plugin-reference.md) lists every host interface with what it needs.
 
 ## What a plugin cannot do
 
@@ -108,7 +102,7 @@ The sandbox holds these rules for every plugin:
 A Rust plugin's standard library works inside these limits. Randomness and the clocks answer. Files,
 stdin, stdout and std's own sockets trap: write to nori's log with the `log` interface.
 
-nori never downloads native code. It compiles each plugin from its wasm when it is installed.
+nori never downloads native code. It compiles each plugin from its wasm at install.
 
 ## Which clients run plugins
 
@@ -124,10 +118,8 @@ Every client except the iPod app runs plugins. Some parts need what only some pl
 
 The desktop and terminal apps run commands from other apps on Linux only. The web client runs only the
 `lifecycle`, `hooks`, `sound-stage` and `slots` extension points. There, a plugin can use its rows, the
-settings, its store and cache, HTTP, timers, notices and the log, and nothing else.
-
-In a browser, a plugin's requests need the server that serves the web client to carry them. See
-[The plugin host](plugin-host.md) for how the web client runs plugins.
+settings, its store and cache, HTTP, timers, notices and the log. Its HTTP needs the server that serves
+the web client to carry it.
 
 ## How plugins reach listeners
 
@@ -136,8 +128,8 @@ nori lists its own repo, [nori-plugins](https://github.com/norifm/nori-plugins),
 add other repos by address, after a warning. A listener can also install a package from a file.
 
 A repo can sign each version with its author's ed25519 key. The first signed version a user installs
-pins that key. Every later version must be signed with it. nori updates each plugin from the repo it came
-from, at most once a day, unless the user keeps its version.
+pins that key, and every later version must be signed with it. nori updates each plugin from the repo it
+came from, at most once a day, unless the user keeps its version.
 
 A plugin is built for one plugin API version, which is 7 in this nori. A nori with another API version
 lists the plugin but does not run it until its repo has a build for that API.
@@ -148,5 +140,5 @@ lists the plugin but does not run it until its repo has a build for that API.
 - [Plugin reference](plugin-reference.md): the manifest, rows, strings, packages, permissions, limits
   and repos.
 - [The plugin host](plugin-host.md): how nori installs, checks, compiles and runs plugins.
-- The plugins in [nori-plugins](https://github.com/norifm/nori-plugins) are working examples: `orbit` for a sound stage, `youtube-music` for a provider, `sony` for device control, `speaker`
-  for a cast.
+- The plugins in [nori-plugins](https://github.com/norifm/nori-plugins) are working examples: `orbit`
+  for a sound stage, `youtube-music` for a provider, `sony` for device control, `speaker` for a cast.

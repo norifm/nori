@@ -31,7 +31,7 @@ In **Settings › Playback › Between songs**, set **AutoMix** to **Smooth** or
 - The songs are not measured yet. nori fades instead.
 - ...
 
-## What it costs                          ← battery, data, storage, a server it needs; leave out if nothing
+## Battery and data use                  ← only when noticeable; never "cost", which reads as a price
 
 [How AutoMix works](../how-it-works/automix.md) explains how nori plans a mix.   ← one level down
 ```
