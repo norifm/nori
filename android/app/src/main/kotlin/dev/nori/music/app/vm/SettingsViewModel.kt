@@ -294,6 +294,10 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             change.prefs.server?.let(nori::updateServer)
             return
         }
+        took(change)
+    }
+
+    private fun took(change: SettingChange) {
         nori.settings.took(change)
         if ((change.effect and CACHE_LIMIT) != 0u) applyCacheLimit()
     }
@@ -310,13 +314,17 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         BackupUi.Saved
     }
 
-    /** Restores the backup at [uri] with [password], then takes in the settings it brought back. */
+    /**
+     * Restores the backup at [uri] with [password], then takes in the settings it brought back. With no profile
+     * here before (the welcome's), the backup's profile is in use now and opens the app.
+     */
     fun restoreBackup(uri: android.net.Uri, password: String) = backupStep(true) {
         val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw java.io.IOException("no stream for $uri")
         }
         val r = nori.plugins.restore(file, password)
-        apply(r.settings)
+        took(r.settings)
+        if (r.settings.server) r.settings.prefs.server?.let(nori::activate)
         BackupUi.Restored(r.plugins)
     }
 
