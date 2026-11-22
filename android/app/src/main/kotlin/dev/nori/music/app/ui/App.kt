@@ -309,8 +309,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
         var playerWasOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
         val sheet = remember { PlayerSheet(sheetScope, startOpen = playerWasOpen) }
         // The player on its way up or down, or a cover in flight between panels, moves what islands draw.
-        val sheetMoving by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value > 0f && sheet.progress.value < 1f || sheet.panelFlight } }
-        HoldIslands(sheetMoving)
+        HoldIslandsWhileMoving(sheet)
         LaunchedEffect(sheet) {
             androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect { playerWasOpen = it }
         }
@@ -545,10 +544,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             Box(Modifier.fillMaxSize().onGloballyPositioned { sheet.rootSize = it.size }.then(if (protecting) Modifier.burnInProtection(touches, { drift }, { dim }) else Modifier)) {
               // Everything under the player. Once the player covers it completely it is not drawn at all (a
               // layer at zero alpha is skipped), and what ticks on the page stops (LocalPageCovered).
-              val covered by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value >= 1f } }
               CompositionLocalProvider(LocalWide provides wide, LocalCoverAtEnd provides coverAtEnd, LocalPageStart provides pageStart, LocalPageEnd provides pageEnd) {
-              CompositionLocalProvider(LocalPageCovered provides covered) {
-              Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (covered) 0f else 1f }.fenced { !sheet.isOpen }) {
+              CoveredByPlayer(sheet) {
+              Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (sheet.progress.value >= 1f) 0f else 1f }.fenced { !sheet.isOpen }) {
               // The strips the camera and the chrome stand in are the app's own page; a tinted page paints them over
               // itself (HeroPage), so its colour comes and goes with the page. Painted here in the chrome's
               // colour, which follows a page on a slower fade of its own, they held the album's colour at the
@@ -691,6 +689,24 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
 }
 
 /**
+ * The player on its way up or down, or a cover in flight between panels, moves what islands draw. Read in
+ * a scope of its own: read where the app is put together, the sheet starting or stopping recomposed all of it,
+ * on the first frame of every move.
+ */
+@Composable
+private fun HoldIslandsWhileMoving(sheet: PlayerSheet) {
+    val moving by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value > 0f && sheet.progress.value < 1f || sheet.panelFlight } }
+    HoldIslands(moving)
+}
+
+/** [content] told whether the open player covers it ([LocalPageCovered]), from a scope of its own, as above. */
+@Composable
+private fun CoveredByPlayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
+    val covered by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value >= 1f } }
+    CompositionLocalProvider(LocalPageCovered provides covered, content = content)
+}
+
+/**
  * Back puts the player away while it is up. Registered after the pages' own (EdgeBack), so it goes first; and
  * its own small scope, so the sheet opening and closing recomposes this and not the whole app.
  */
@@ -762,6 +778,7 @@ private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
     val warm = rememberIdle(Unit)
     if (!shown && !warm) return
     val radius = with(androidx.compose.ui.platform.LocalDensity.current) { 14.dp.toPx() }
+    val corners = remember { CornerShapes() }
     if (shown) Box(
         Modifier.fillMaxSize().drawBehind {
             drawRect(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f * sheet.progress.value))
@@ -780,13 +797,11 @@ private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
             // it. At full strength on the first frame of a drag, a whole dark page would appear out of
             // nothing before it had moved anywhere.
             alpha = if (parked) 0f else (sheet.progress.value / 0.1f).coerceIn(0f, 1f)
-            // Its leading corners: the top ones, or on its side the two facing the page.
-            val r = (radius * (1f - sheet.progress.value).coerceIn(0f, 1f) * 4f).coerceAtMost(radius)
-            shape = when (sheet.edge) {
-                SheetEdge.BOTTOM -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, topEnd = r)
-                SheetEdge.RIGHT -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, bottomStart = r)
-                SheetEdge.LEFT -> androidx.compose.foundation.shape.RoundedCornerShape(topEnd = r, bottomEnd = r)
-            }
+            // Its leading corners: the top ones, or on its side the two facing the page. All four are rounded
+            // alike, since while it is moved off its place the trailing two are past the window's edge: a shape
+            // with corners of two sizes is clipped through a mask drawn on the CPU on every frame of the move,
+            // and one with even corners by the GPU as it draws.
+            shape = corners.of((radius * (1f - sheet.progress.value).coerceIn(0f, 1f) * 4f).coerceAtMost(radius))
             // Open, it has no corners to cut, and what bleeds past the screen's edges (Modifier.bleed) stays.
             clip = sheet.progress.value < 1f
         }

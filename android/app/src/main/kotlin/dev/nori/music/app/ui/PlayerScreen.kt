@@ -79,6 +79,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -1161,7 +1162,7 @@ internal fun SoftSleeve(
     // but takes the page's tint - grey on white, cream on cream, whatever the page is, nothing fixed. A
     // coloured page keeps the band's colours, as its wash does. Which it is, and the tint, are the look's
     // (nori_look::dress); read in the draw phase.
-    val band = if (android.os.Build.VERSION.SDK_INT >= 31) remember(blurPx) { BandEffect(blurPx) } else null
+    val band = if (android.os.Build.VERSION.SDK_INT >= 31) remember(blurPx) { BandEffect(blurPx / BAND_SCALE) } else null
     val look = LocalLook.current
     // On its side the sleeve's soft edge is its right one, towards the controls: the same band and blur,
     // turned. [sleeve] is then its right edge and width.
@@ -1209,36 +1210,71 @@ internal fun SoftSleeve(
                     cut[0] = (full * stage.softFrom - BAND_REACH * blurPx).toInt().coerceIn(0, full)
                     val placeable = measurable.measure(constraints.copy(minHeight = full - cut[0], maxHeight = full - cut[0]))
                     layout(constraints.maxWidth, full) { placeable.place(0, cut[0]) }
-                })
-                // At nought the layer is skipped whole, blur and all.
-                .graphicsLayer {
-                    compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
-                    alpha = blur.read().coerceIn(0f, 1f)
-                    // Added to the sharp picture's share, not laid over it, which would take that share away twice.
-                    blendMode = androidx.compose.ui.graphics.BlendMode.Plus
-                }
-                .drawWithCache {
-                    // Where the blurred copy shows: nowhere above the band's upper reach, all of it by the
-                    // time the rub-out is under way. Eased, so its own start is no line. One brush per
-                    // size and place, not one per frame.
-                    // Cropped, this box starts `cut` rows down the sleeve.
-                    val (bottom, height) = if (cropped) (size.height + cut[0]).let { (it - cut[0]) to it.toFloat() } else edge(size)
-                    val top = bottom - height
-                    val mask = if (across) alphaGradient(stage.acrossSoft, Color.Black, top + height * (1f - stage.acrossMelt), top + height, true)
-                    else alphaGradient(stage.soft, Color.Black, top + height * stage.softFrom, top + height * stage.softTo, false)
-                    onDrawWithContent {
-                        drawContent()
-                        drawRect(mask, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
-                    }
-                },
+                }),
         ) {
-            Box(Modifier.fillMaxSize().graphicsLayer { renderEffect = band.of(look) }) {
-                // The whole sleeve's picture, moved up by the rows the box leaves out.
-                Box(if (!cropped) Modifier.fillMaxSize() else Modifier.layout { measurable, constraints ->
-                    val full = constraints.maxHeight + cut[0]
-                    val placeable = measurable.measure(constraints.copy(minHeight = full, maxHeight = full))
-                    layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(0, -cut[0]) }
-                }) { Unturned(mirror) { content(true) } }
+            // The blurred copy is drawn, blurred and masked at a [BAND_SCALE]th of the screen's resolution and
+            // stretched back over its box: a blur this wide leaves no detail that needs the pixels. At full size
+            // its two layers and the blur's output were among a frame's largest textures, made again on every
+            // frame the picture moves (the player opening), and with the sharp sleeve's they outgrew the GPU's
+            // cache, so every frame of the flight allocated its textures anew.
+            var whole by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+            Box(
+                Modifier
+                    .layout { measurable, constraints ->
+                        val w = constraints.maxWidth
+                        val h = constraints.maxHeight
+                        if (whole.width != w || whole.height != h) whole = androidx.compose.ui.unit.IntSize(w, h)
+                        val small = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(reduced(w), reduced(h)))
+                        layout(w, h) {
+                            // At nought the layer is skipped whole, blur and all.
+                            small.placeWithLayer(0, 0) {
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+                                scaleX = w / small.width.toFloat()
+                                scaleY = h / small.height.toFloat()
+                                compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                                alpha = blur.read().coerceIn(0f, 1f)
+                                // Added to the sharp picture's share, not laid over it, which would take that share away twice.
+                                blendMode = androidx.compose.ui.graphics.BlendMode.Plus
+                            }
+                        }
+                    }
+                    .drawWithCache {
+                        // Where the blurred copy shows: nowhere above the band's upper reach, all of it by the
+                        // time the rub-out is under way. Eased, so its own start is no line. One brush per
+                        // size and place, not one per frame. Worked out on the box's whole size and drawn shrunk.
+                        // Cropped, this box starts `cut` rows down the sleeve.
+                        val full = Size(whole.width.toFloat(), whole.height.toFloat())
+                        val (bottom, height) = if (cropped) (full.height + cut[0]).let { (it - cut[0]) to it } else edge(full)
+                        val top = bottom - height
+                        val mask = if (across) alphaGradient(stage.acrossSoft, Color.Black, top + height * (1f - stage.acrossMelt), top + height, true)
+                        else alphaGradient(stage.soft, Color.Black, top + height * stage.softFrom, top + height * stage.softTo, false)
+                        onDrawWithContent {
+                            drawContent()
+                            if (full.width > 0f && full.height > 0f) {
+                                scale(size.width / full.width, size.height / full.height, Offset.Zero) {
+                                    drawRect(mask, size = full, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                                }
+                            }
+                        }
+                    },
+            ) {
+                Box(Modifier.fillMaxSize().graphicsLayer { renderEffect = band.of(look) }) {
+                    // The whole sleeve's picture at its own size, shrunk, and moved up by the rows the box leaves out.
+                    Box(Modifier.layout { measurable, constraints ->
+                        val w = whole.width.coerceAtLeast(1)
+                        val h = whole.height.coerceAtLeast(1)
+                        val shift = if (cropped) cut[0] else 0
+                        val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(w, h + shift))
+                        layout(constraints.maxWidth, constraints.maxHeight) {
+                            placeable.placeWithLayer(0, 0) {
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+                                scaleX = constraints.maxWidth / w.toFloat()
+                                scaleY = constraints.maxHeight / h.toFloat()
+                                translationY = -shift * scaleY
+                            }
+                        }
+                    }) { Unturned(mirror) { content(true) } }
+                }
             }
         }
     }
@@ -1284,6 +1320,12 @@ private class SleeveFade {
 private val BAND_BLUR = 22.dp
 private const val BAND_REACH = 3f
 
+/** How many times smaller the band's blurred copy is drawn and blurred than the screen shows it. */
+private const val BAND_SCALE = 4
+
+/** A side of [BAND_SCALE] times fewer pixels, rounded up so the stretched copy covers its box. */
+private fun reduced(side: Int): Int = ((side + BAND_SCALE - 1) / BAND_SCALE).coerceAtLeast(1)
+
 /** [content] turned back the right way round inside something turned round ([turned]), or as it is. */
 @Composable
 private fun Unturned(turned: Boolean, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
@@ -1300,7 +1342,9 @@ private fun Unturned(turned: Boolean, content: @Composable androidx.compose.foun
 @Composable
 private fun SleeveShade(strength: FloatReader) {
     Box(
-        Modifier.fillMaxSize().graphicsLayer { alpha = strength.read() }.drawWithCache {
+        // One rect: its alpha needs no offscreen copy of the whole square, which on every frame of a flight
+        // was a texture the size of the cover.
+        Modifier.fillMaxSize().graphicsLayer { alpha = strength.read(); compositingStrategy = CompositingStrategy.ModulateAlpha }.drawWithCache {
             val shade = Brush.verticalGradient(
                 0f to Color.Black.copy(alpha = stage.statusShade), 1f to Color.Transparent,
                 startY = 0f, endY = size.height * stage.statusShadeTo,
@@ -1350,7 +1394,7 @@ private fun smooth(x: Float, from: Float, to: Float): Float {
 @Composable
 private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, measured: Boolean, motion: SleeveMotion?) {
     val flying by remember { androidx.compose.runtime.derivedStateOf { sheet.progress.value < 1f } }
-    if (!flying || !measured || sheet.miniCover == Rect.Zero) return
+    if (!measured || sheet.miniCover == Rect.Zero) return
     val density = androidx.compose.ui.platform.LocalDensity.current
     val thumbRadius = with(density) { 7.dp.toPx() }
     val shapes = remember { CornerShapes() }
@@ -1359,7 +1403,9 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
     // takes over with its own. Without it both were missing for the whole flight and appeared on the frame
     // the sleeve took over, and went on the first frame of a pull down.
     val dressed = FloatReader { smooth(sheet.progress.value, 0.5f, 1f) }
-    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+    // Kept while the player is open, only not drawn: built afresh on the first frame of every pull down,
+    // its composition, the sleeve's shader and its layers made that frame miss its turn.
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().drawWithContent { if (flying) drawContent() }) {
         val w = constraints.maxWidth.toFloat()
         val h = w / SLEEVE
         val side = with(density) { h.toDp() }
