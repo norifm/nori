@@ -28,6 +28,18 @@ enum Command {
     Shot(PathBuf),
     /// Opens the profiles menu under the top pill.
     Profiles,
+    /// Fills the sign-in form shown with a server's address, user and password, and sends it.
+    Login { url: String, user: String, password: String },
+    /// Picks the welcome's row at this index, or opens that sign-in.
+    WelcomePick(i32),
+    WelcomeContinue,
+    /// Gives the answer at this index to the first-run question shown.
+    SetupAnswer(i32),
+    SetupBack,
+    /// Picks the appearance at this index (System, Day, Night, Midnight), as its tile or chip does.
+    Appearance(i32),
+    /// Presses and releases the left button at this point of the window, in logical pixels.
+    Click(f32, f32),
 }
 
 #[derive(Deserialize)]
@@ -56,6 +68,10 @@ struct State {
     artist: String,
     note: String,
     note_error: bool,
+    /// The first-run question shown, -1 outside the questions.
+    setup: i32,
+    /// The welcome's sign-ins show.
+    welcome_signing: bool,
 }
 
 fn dispatch(ui: &AppWindow, command: Command) -> State {
@@ -90,6 +106,25 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
             ui.invoke_settings_tab_chosen(t);
         }
         Command::Profiles => ui.invoke_show_profiles(),
+        Command::Login { url, user, password } => {
+            ui.set_login_url(url.into());
+            ui.set_login_user(user.into());
+            ui.set_login_password(password.into());
+            ui.invoke_login();
+        }
+        Command::WelcomePick(i) => ui.invoke_welcome_picked(i),
+        Command::WelcomeContinue => ui.invoke_welcome_continue(),
+        Command::SetupAnswer(i) => ui.invoke_setup_answer(i),
+        Command::SetupBack => ui.invoke_setup_back(),
+        Command::Appearance(i) => ui.invoke_setting_chosen(crate::settings::APPEARANCE.into(), i),
+        Command::Click(x, y) => {
+            use slint::platform::{PointerEventButton, WindowEvent};
+            let position = slint::LogicalPosition::new(x, y);
+            let button = PointerEventButton::Left;
+            for event in [WindowEvent::PointerMoved { position }, WindowEvent::PointerPressed { position, button }, WindowEvent::PointerReleased { position, button }] {
+                ui.window().dispatch_event(event);
+            }
+        }
         Command::Shot(path) => {
             if let Err(e) = shot(ui, &path) {
                 eprintln!("nori: shot {}: {e}", path.display());
@@ -113,6 +148,8 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
         playing: ui.get_playing(), buffering: ui.get_buffering(), animating: ui.window().has_active_animations(), position_ms: ui.get_position_ms(),
         duration_ms: ui.get_duration_ms(), title: ui.get_now_title().to_string(),
         artist: ui.get_now_artist().to_string(), note: ui.get_note().to_string(), note_error: ui.get_note_error(),
+        setup: if ui.get_setup_open() { ui.get_setup_at() } else { -1 },
+        welcome_signing: ui.get_welcome_signing(),
     }
 }
 

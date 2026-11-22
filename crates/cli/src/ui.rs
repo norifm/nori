@@ -235,6 +235,9 @@ impl<'a> Marks<'a> {
 /// The seal: a liked song's mark in rows.
 const SEAL: &str = "好";
 
+/// Each season's mark, in `Season` order.
+const KANJI: [&str; 4] = ["春", "夏", "秋", "冬"];
+
 /// A song table row; `number` 0 shows none, `playing` shows a marker instead; its mark as `marks` say.
 fn song_line(s: &Song, marks: &Marks, number: usize, w: usize, t: &Theme, playing: bool, album: bool) -> Line<'static> {
     let c = columns(w, album);
@@ -287,8 +290,12 @@ pub fn draw(f: &mut Frame, app: &mut App, mut art: Option<&mut Art>) {
     let area = f.area();
     let t = app.look;
     put(f, Block::default().style(t.ground()), area);
-    if app.view == View::Login {
-        login(f, area, app, &t);
+    if app.view == View::Login || app.setup.is_some() {
+        if app.setup.is_some() {
+            setup(f, area, app, &t);
+        } else {
+            login(f, area, app, &t);
+        }
         overlay(f, area, app, &t);
         crate::art::finish(f.buffer_mut(), app.colors);
         return;
@@ -1014,7 +1021,7 @@ fn support(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let day = crate::art::Day::now();
     let stamps = nori_core::support::support_stamps(app.prefs.support.paid.clone(), day.southern);
     let next = nori_look::theme::season_now(day.month, day.day, day.southern).season;
-    let kanji = |s: nori_look::theme::Season| ["春", "夏", "秋", "冬"][s as usize];
+    let kanji = |s: nori_look::theme::Season| KANJI[s as usize];
     let mut cells: Vec<Span> = stamps
         .iter()
         .map(|s| {
@@ -1902,57 +1909,158 @@ fn track_bar(f: &mut Frame, r: Rect, share: f32, t: &Theme) {
 // ---- the login and what goes on top ----
 
 fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
-    if app.login_choosing() {
+    if app.welcome() {
+        welcome(f, area, app, t)
+    } else if app.login_choosing() {
         provider_choice(f, area, app, t)
     } else {
         sign_in_form(f, area, app, t)
     }
 }
 
-/// The first screen: what a new profile plays from, those not on yet quieter, then the saved servers.
-fn provider_choice(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+/// The first screen's lines: each kind a profile can be of with what it is, then the plugins offered, quiet.
+fn provider_rows(app: &App) -> Vec<(String, Option<&'static str>, bool)> {
     use crate::app::ProviderLine;
-    let servers = app.prefs.servers.len() as u16;
-    let lines: Vec<(String, Option<&str>, bool)> = app
-        .provider_lines()
+    app.provider_lines()
         .into_iter()
         .map(|p| match p {
             ProviderLine::Kind(kind @ nori_core::settings::ServerKind::Subsonic) => (app.provider_words(&kind).name, Some(crate::text::PROVIDER_SUBSONIC_ABOUT), false),
             ProviderLine::Kind(kind) => (app.provider_words(&kind).name, None, false),
             ProviderLine::Offered { name, .. } => (name, None, true),
         })
+        .collect()
+}
+
+/// One of [`provider_rows`] in `w` columns.
+fn provider_row((name, about, offered): &(String, Option<&str>, bool), w: usize, t: &Theme) -> Line<'static> {
+    let mut spans = vec![Span::styled(fit(name, w).into_owned(), if *offered { t.dim() } else { Style::default().fg(t.ink) })];
+    spans.extend(about.map(|a| Span::styled(format!("  {a}"), t.dim())));
+    Line::from(spans)
+}
+
+/// Why adding the profile failed, in red, or else `keys`.
+fn add_line(app: &App, keys: &str, t: &Theme) -> Span<'static> {
+    match app.login.flow.failure().map(crate::text::add_failure) {
+        Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
+        None => Span::styled(format!("  {keys}"), t.dim()),
+    }
+}
+
+/// The first run's welcome: where the music is, any number of sources picked (their plugins installing),
+/// then, with several picked, each one's sign-in; Continue under them.
+fn welcome(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    use nori_core::providers::flow::{WelcomePage, WelcomeSource};
+    let flow = app.welcome.clone();
+    let signing = flow.page == WelcomePage::SigningIn;
+    let installing = match &flow.page {
+        WelcomePage::Installing { left } => left.clone(),
+        _ => Vec::new(),
+    };
+    let sources = if signing { flow.picked.clone() } else { app.welcome_sources() };
+    let offered = app.provider_lines();
+    let words = |source: &WelcomeSource| match source {
+        WelcomeSource::Kind { kind } => (app.provider_words(kind).name, (*kind == nori_core::settings::ServerKind::Subsonic).then_some(crate::text::PROVIDER_SUBSONIC_ABOUT)),
+        WelcomeSource::Offered { plugin } => {
+            let name = offered.iter().find_map(|l| match l {
+                crate::app::ProviderLine::Offered { id, name } if id == plugin => Some(name.clone()),
+                _ => None,
+            });
+            (name.unwrap_or_else(|| plugin.clone()), None)
+        }
+    };
+    // Each line's words and its mark: picked or not, installing, or on the sign-ins Connect or a check.
+    let lines: Vec<(String, Option<&str>, Span)> = sources
+        .iter()
+        .map(|source| {
+            let (name, about) = words(source);
+            let mark = match source {
+                WelcomeSource::Kind { kind } if signing && flow.added.contains(kind) => Span::styled("✓", t.current()),
+                _ if signing => Span::styled(crate::text::WELCOME_CONNECT, Style::default().fg(t.ink)),
+                WelcomeSource::Offered { plugin } if installing.contains(plugin) => Span::styled("···", t.dim()),
+                _ if flow.picked.contains(source) => Span::styled("●", Style::default().fg(t.accent)),
+                _ => Span::styled("○", Style::default().fg(t.line)),
+            };
+            (name, about, mark)
+        })
         .collect();
+    let refused: Vec<String> = flow.refused.iter().map(|id| words(&WelcomeSource::Offered { plugin: id.clone() }).0).collect();
+    let rows = (lines.len() as u16).min(area.height.saturating_sub(14));
+    let col = centred(area, 64, 12 + rows);
+    text(f, row_of(col, 0), if signing { crate::text::WELCOME_SIGN_IN } else { crate::text::WELCOME_TITLE }, bold().fg(t.ink));
+    if !signing {
+        text(f, row_of(col, 2), &crate::text::WELCOME_WHERE.to_uppercase(), t.dim());
+    }
+    let card = Rect { y: col.y + if signing { 2 } else { 3 }, height: rows + 2, ..col };
+    put(f, card_block(t), card);
+    let inner = Rect { x: card.x + 2, y: card.y + 1, width: card.width.saturating_sub(4), height: rows };
+    // The lines, then Continue: the keys move through both.
+    let sel = &mut app.login.choice;
+    sel.fit(rows as usize, lines.len() + 1);
+    for (n, i) in (sel.top..lines.len().min(sel.top + rows as usize)).enumerate() {
+        let r = Rect { y: inner.y + n as u16, height: 1, ..inner };
+        let (name, about, mark) = &lines[i];
+        let mut left = vec![Span::styled(name.clone(), Style::default().fg(t.ink))];
+        left.extend(about.map(|a| Span::styled(format!("  {a}"), t.dim())));
+        let mut line = spread(left, mark.clone(), r.width as usize);
+        if i == sel.at {
+            let st = t.select(true);
+            line.spans.iter_mut().for_each(|s| s.style = s.style.patch(st));
+            line = line.style(st);
+        }
+        put(f, Paragraph::new(line), r);
+        app.hits.push((r, Hit::Row(ListRef::Providers, i)));
+    }
+    let mut y = card.y + card.height;
+    if !refused.is_empty() {
+        text(f, Rect { x: col.x + 2, y, width: col.width.saturating_sub(2), height: 1 }, &crate::text::welcome_refused(&refused), Style::default().fg(Color::LightRed));
+    }
+    y += 1;
+    if !signing {
+        let restore = format!(" {} ", crate::text::RESTORE);
+        let rr = Rect { x: col.x + 1, y, width: restore.width() as u16, height: 1 };
+        put(f, Paragraph::new(Span::styled(restore, t.dim())), rr);
+        app.hits.push((rr, Hit::Button(Button::WelcomeRestore)));
+    }
+    if let Some((said, error, _)) = &app.note {
+        text(f, Rect { x: col.x + 2, y: y + 1, width: col.width.saturating_sub(2), height: 1 }, said, if *error { Style::default().fg(Color::LightRed) } else { t.dim() });
+    }
+    let continues = row_of(col, y + 3 - col.y);
+    let (words, enabled) = match &flow.page {
+        WelcomePage::Installing { .. } => (crate::text::INSTALLING, false),
+        WelcomePage::SigningIn => (crate::text::SETUP_CONTINUE, !flow.added.is_empty()),
+        _ => (crate::text::SETUP_CONTINUE, !flow.picked.is_empty()),
+    };
+    pill(f, continues, words, enabled, app.login.choice.at == lines.len(), t);
+    app.hits.push((continues, Hit::Button(Button::WelcomeContinue)));
+    let keys = if signing { crate::text::WELCOME_SIGN_IN_KEYS } else { crate::text::WELCOME_KEYS };
+    put(f, Paragraph::new(add_line(app, keys, t)), row_of(continues, 1));
+}
+
+/// The first screen when adding another profile: what it plays from, those not on yet quieter, then the
+/// saved profiles.
+fn provider_choice(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    let servers = app.prefs.servers.len() as u16;
+    let lines = provider_rows(app);
     let rows = (lines.len() as u16).min(area.height.saturating_sub(10));
-    let r = centred(area, 64, 7 + rows + if servers > 0 { servers + 2 } else { 0 });
+    let r = centred(area, 64, 9 + rows + servers);
     let title = format!(" nori · {} ", crate::text::PROVIDER_CHOOSE);
     let inner = popup(f, r, Span::styled(title, bold().fg(t.ink)), t);
     let bottom = inner.y + inner.height;
     let mut y = inner.y + 1;
+    let height = rows.min(bottom.saturating_sub(y));
+    let msg = add_line(app, crate::text::PROVIDER_SAVED_KEYS, t);
     let App { login, prefs, hits, .. } = app;
     let choosing = !login.on_list;
-    let height = rows.min(bottom.saturating_sub(y));
-    let quiet = t.dim();
-    let ink = Style::default().fg(t.ink);
-    list(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height }, &mut login.choice, lines.len(), ListRef::Providers, hits, t, choosing, &|i, w| {
-        let (name, about, offered) = &lines[i];
-        let mut spans = vec![Span::styled(fit(name, w).into_owned(), if *offered { quiet } else { ink })];
-        spans.extend(about.map(|a| Span::styled(format!("  {a}"), quiet)));
-        Line::from(spans)
-    });
+    list(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height }, &mut login.choice, lines.len(), ListRef::Providers, hits, t, choosing, &|i, w| provider_row(&lines[i], w, t));
     y += height + 1;
     let plugins = format!(" {} › ", crate::text::PLUGINS);
     let pr = Rect { x: inner.x + 2, y, width: plugins.width() as u16, height: 1 };
     put(f, Paragraph::new(Span::styled(plugins, t.dim())), pr);
     hits.push((pr, Hit::Button(Button::LoginPlugins)));
     y += 2;
-    let keys = if servers > 0 { crate::text::PROVIDER_SAVED_KEYS } else { crate::text::PROVIDER_KEYS };
-    let msg = match login.flow.failure().map(crate::text::add_failure) {
-        Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
-        None => Span::styled(format!("  {keys}"), t.dim()),
-    };
     put(f, Paragraph::new(msg).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x, y, width: inner.width, height: 2.min(bottom.saturating_sub(y)) });
     y += 2;
-    if servers > 0 && y + 1 < bottom {
+    if y + 1 < bottom {
         text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(2), height: 1 }, "Or use a saved server", bold().fg(t.ink));
         y += 1;
         let area = Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: servers.min(bottom - y) };
@@ -1960,6 +2068,154 @@ fn provider_choice(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         let focused = login.on_list;
         list(f, area, &mut login.sel, names.len(), ListRef::Profiles, hits, t, focused, &|i, w| Line::from(fit(&names[i], w).into_owned()));
     }
+}
+
+// ---- the first run's questions ----
+
+/// The first run's page shown, over the app opening under it: a bar with Back, the steps and Skip, then
+/// the question with a preview of the answer chosen, its answers and Continue, or the look.
+fn setup(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    let Some(s) = app.setup.clone() else { return };
+    let step = s.step();
+    let look = step == nori_core::setup::SetupStep::Look;
+    let answers = nori_core::setup::setup_answers(step);
+    let height = if look { 17 } else { 14 + 3 * answers.len() as u16 };
+    let col = centred(Rect { x: area.x + 2, width: area.width.saturating_sub(4), ..area }, 64, height);
+    // The bar: Back while there is a page before, the steps as dots (the one shown a pill in the accent), Skip.
+    if s.at > 0 {
+        let back = format!("‹ {}", crate::text::SETUP_BACK);
+        let br = Rect { width: back.width() as u16, ..row_of(col, 0) };
+        put(f, Paragraph::new(Span::styled(back, t.dim())), br);
+        app.hits.push((br, Hit::Button(Button::SetupBack)));
+    }
+    let dots: Vec<Span> = (0..s.steps.len()).flat_map(|i| [Span::styled(if i == s.at { "━━" } else { "•" }, Style::default().fg(if i == s.at { t.accent } else { t.line })), Span::raw(" ")]).collect();
+    put(f, Paragraph::new(Line::from(dots)).alignment(Alignment::Center), row_of(col, 0));
+    if !look {
+        let skip = crate::text::SETUP_SKIP;
+        let sr = Rect { x: col.x + col.width - skip.width() as u16, width: skip.width() as u16, ..row_of(col, 0) };
+        put(f, Paragraph::new(Span::styled(skip, t.dim())), sr);
+        app.hits.push((sr, Hit::Button(Button::SetupSkip)));
+    }
+    text(f, row_of(col, 2), crate::text::setup_step(step), bold().fg(t.ink));
+    let body = below(col, 4);
+    if look {
+        look_page(f, body, app, &s, t);
+    } else {
+        let chosen = s.answered(step);
+        let preview = Rect { height: 5, ..body };
+        put(f, card_block(t), preview);
+        if step == nori_core::setup::SetupStep::Listening {
+            listening_preview(f, Rect { x: preview.x + 2, y: preview.y + 2, width: preview.width.saturating_sub(4), height: 2 }, chosen, t);
+        }
+        let list = Rect { y: preview.y + 6, height: 3 * answers.len() as u16 + 1, ..body };
+        put(f, card_block(t), list);
+        for (i, a) in answers.iter().enumerate() {
+            let row = Rect { x: list.x + 1, y: list.y + 1 + 3 * i as u16, width: list.width.saturating_sub(2), height: 2 };
+            if s.line == i {
+                f.buffer_mut().set_style(row.intersection(area), t.select(true));
+            }
+            let (name, about) = crate::text::setup_answer(*a);
+            text(f, Rect { x: row.x + 1, width: row.width.saturating_sub(5), ..row }, name, bold().fg(t.ink));
+            text(f, Rect { x: row.x + 1, y: row.y + 1, width: row.width.saturating_sub(2), height: 1 }, about, t.dim());
+            if chosen == Some(*a) {
+                text(f, Rect { x: row.x + row.width - 3, width: 1, ..row }, "✓", t.current());
+            }
+            if i + 1 < answers.len() {
+                let hair = format!("├{}┤", "─".repeat(row.width as usize));
+                text(f, Rect { x: list.x, y: row.y + 2, width: list.width, height: 1 }, &hair, Style::default().fg(t.hair));
+            }
+            app.hits.push((row, Hit::Row(ListRef::Setup, i)));
+        }
+        let continues = row_of(col, height - 3);
+        pill(f, continues, crate::text::SETUP_CONTINUE, chosen.is_some(), s.line == answers.len(), t);
+        app.hits.push((continues, Hit::Button(Button::SetupContinue)));
+    }
+    text(f, row_of(col, height - 1), &format!("  {}", crate::text::setup_keys(look, s.at > 0)), t.dim());
+}
+
+/// A grouped card's outline on the raised surface.
+fn card_block(t: &Theme) -> Block<'static> {
+    Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(t.hair)).style(t.raised())
+}
+
+/// A prominent pill across `r`: the page's paper on the ink; quiet while it can't be used; marked while it
+/// has the keys.
+fn pill(f: &mut Frame, r: Rect, words: &str, enabled: bool, keys: bool, t: &Theme) {
+    let words = if keys { format!("› {words} ‹") } else { words.to_string() };
+    let style = match (enabled, t.painted) {
+        (true, true) => Style::default().bg(t.ink).fg(t.page).add_modifier(Modifier::BOLD),
+        (true, false) => Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
+        (false, _) => t.raised().patch(t.dim()),
+    };
+    put(f, Paragraph::new(Span::styled(words, style)).alignment(Alignment::Center).style(style), r);
+}
+
+/// What the listening answer chosen does to four albums, by name: apart with a clean cut with no mixing
+/// (and before an answer), each fading in over the one before with AutoMix, drawn close with the DJ,
+/// their names' ends fading into each other over the beat.
+fn listening_preview(f: &mut Frame, r: Rect, chosen: Option<nori_core::setup::SetupAnswer>, t: &Theme) {
+    use nori_core::setup::SetupAnswer as A;
+    let names = crate::text::SETUP_ALBUMS;
+    // The widest a name is drawn: the longest are cut so the four fit with the widest cut between them.
+    let room = (r.width as usize).saturating_sub(9);
+    let longest = names.iter().map(|n| n.width()).max().unwrap_or(0);
+    let wide = (1..=longest).rev().find(|w| names.iter().map(|n| n.width().min(*w)).sum::<usize>() <= room).unwrap_or(1);
+    let ink = |share: f32| Style::default().fg(t.lit(share));
+    let shades = |shades: &[(&'static str, f32)]| -> Vec<Span<'static>> { shades.iter().map(|(c, share)| Span::styled(*c, ink(*share))).collect() };
+    let (between, edge) = match chosen {
+        Some(A::AutoMix) => (shades(&[("░", 0.4), ("▒", 0.6), ("▓", 0.8)]), 0),
+        Some(A::AutoMixDj) => (shades(&[("▒", 0.5), ("▓", 0.7)]), 3),
+        _ => (vec![Span::styled(" │ ", Style::default().fg(t.line))], 0),
+    };
+    let mut spans = Vec::new();
+    for (i, name) in names.iter().enumerate() {
+        if i > 0 {
+            spans.extend(between.iter().cloned());
+        }
+        // The first and last `edge` letters fade in from the one before and out into the next.
+        let name = fit(name, wide);
+        let n = name.chars().count();
+        spans.extend(name.chars().enumerate().map(|(j, c)| {
+            let fading_in = if i > 0 && j < edge { (j + 1) as f32 / (edge + 1) as f32 } else { 1.0 };
+            let fading_out = if i + 1 < names.len() && n - j <= edge { (n - j) as f32 / (edge + 1) as f32 } else { 1.0 };
+            Span::styled(c.to_string(), ink(fading_in.min(fading_out)))
+        }));
+    }
+    let line = Line::from(spans);
+    let w = (line.width() as u16).min(r.width);
+    let group = Rect { x: r.x + (r.width - w) / 2, width: w, height: 1, ..r };
+    put(f, Paragraph::new(line), group);
+    if chosen == Some(A::AutoMixDj) {
+        put(f, Paragraph::new(Span::styled("╵ ".repeat(w as usize / 2), ink(0.32))), Rect { y: group.y + 1, ..group });
+    }
+}
+
+/// The look: Settings' own season and appearance sections as Settings draws them, each change taken at
+/// once; then Start listening.
+fn look_page(f: &mut Frame, area: Rect, app: &mut App, s: &crate::app::Setup, t: &Theme) {
+    let sections = app.setup_look();
+    let mut y = area.y;
+    let mut at = 0;
+    for section in &sections {
+        put(f, Paragraph::new(setting_line(&SLine::Title(&section.title), area.width as usize, t)), Rect { y, height: 1, ..area });
+        y += 1;
+        for row in &section.rows {
+            let r = Rect { y, height: 1, ..area };
+            let mut line = setting_line(&SLine::Row(row), r.width as usize, t);
+            if s.line == at {
+                let st = t.select(true);
+                line.spans.iter_mut().for_each(|s| s.style = s.style.patch(st));
+                line = line.style(st);
+            }
+            put(f, Paragraph::new(line), r);
+            app.hits.push((r, Hit::Row(ListRef::Setup, at)));
+            (y, at) = (y + 1, at + 1);
+        }
+        y += 1;
+    }
+    let start = Rect { y, height: 1, ..area };
+    pill(f, start, crate::text::SETUP_START, true, s.line == at, t);
+    app.hits.push((start, Hit::Button(Button::SetupStart)));
 }
 
 /// The chosen kind's page: its form, or with an account and nothing to fill, two ways on.
@@ -2076,7 +2332,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         Overlay::Thanks { season } => {
             let accent = nori_look::theme::palette(Some(*season), 1, 1, false, app.dark, false).accent;
             let ink = Style::default().bg(crate::art::argb(accent)).fg(t.page).add_modifier(Modifier::BOLD);
-            let kanji = ["春", "夏", "秋", "冬"][*season as usize];
+            let kanji = KANJI[*season as usize];
             let lines = vec![
                 Line::from(""),
                 Line::from(Span::styled("        ", ink)),

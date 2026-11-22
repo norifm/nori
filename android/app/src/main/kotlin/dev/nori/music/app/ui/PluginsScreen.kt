@@ -310,19 +310,19 @@ internal fun PluginTile(vm: PluginsViewModel, id: String, offer: Offer?, name: S
 
 /** A plugin as a provider to choose: its tile, name and about. */
 @Composable
-fun ProviderLine(vm: PluginsViewModel, id: String, offer: Offer?, name: String, about: String?, divider: Boolean, modifier: Modifier, open: () -> Unit) {
+fun ProviderLine(vm: PluginsViewModel, id: String, offer: Offer?, name: String, about: String?, divider: Boolean, modifier: Modifier, trailing: @Composable () -> Unit = {}, open: () -> Unit) {
     val installing = vm.installing.collectAsStateWithLifecycle().value == id
     TiledLine({ PluginTile(vm, id, offer, name, 44.dp) }, name, about, say.pluginInstalling.takeIf { installing }, divider, modifier, open, GROUP_INSET) {
-        if (installing) LoadingDots(dot = 5.dp)
+        if (installing) LoadingDots(dot = 5.dp) else trailing()
     }
 }
 
 /** The provider nori has without a plugin: as [ProviderLine], with [glyph] on its tile. */
 @Composable
-fun ProviderLine(glyph: ImageVector, name: String, about: String?, divider: Boolean, modifier: Modifier, open: () -> Unit) {
+fun ProviderLine(glyph: ImageVector, name: String, about: String?, divider: Boolean, modifier: Modifier, trailing: @Composable () -> Unit = {}, open: () -> Unit) {
     TiledLine({
         Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest, TileShape), Alignment.Center) { Icon(glyph, null, Modifier.size(26.dp)) }
-    }, name, about, null, divider, modifier, open, GROUP_INSET) {}
+    }, name, about, null, divider, modifier, open, GROUP_INSET, trailing)
 }
 
 /** A plugin in a list: its tile, name, what it is on up to two lines, a quiet [line], and what ends the row. */

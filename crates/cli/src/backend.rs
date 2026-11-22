@@ -89,6 +89,8 @@ pub enum Msg {
     CodeStep { code: u32, event: nori_core::providers::flow::SignInEvent },
     /// A plugin installed (its id), or why not.
     Installed(Result<String, nori_plugins::Refusal>),
+    /// A plugin picked on the welcome installed and on, or not.
+    PickedInstalled { plugin: String, on: bool },
     /// A plugin to install, as its sheet shows it, or why it can't be.
     Preview(Result<nori_plugins::PluginPreview, nori_plugins::Refusal>),
     /// The plugins' lines in `song`'s info and under the player's output.
@@ -162,6 +164,7 @@ impl Msg {
             Msg::ScrobblerApproval { approval, .. } => format!("scrobbler approval: {}", approval.is_ok()),
             Msg::CodeStep { code, event } => format!("code sign-in {code}: {}", if matches!(event, nori_core::providers::flow::SignInEvent::CodeExpired) { "expired" } else { "shown" }),
             Msg::Installed(r) => format!("plugin installed: {r:?}"),
+            Msg::PickedInstalled { plugin, on } => format!("plugin picked: {plugin} on: {on}"),
             Msg::Preview(r) => format!("plugin preview: {:?}", r.as_ref().map(|p| &p.card.id)),
             Msg::Slots { song, info, status } => format!("plugins on {song}: {} info groups, {} status lines", info.len(), status.len()),
             Msg::Updated(u) => format!("{} plugins updated", u.len()),

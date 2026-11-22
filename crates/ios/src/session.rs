@@ -1507,4 +1507,25 @@ mod tests {
         });
         assert!(got_now.recv_timeout(Duration::from_secs(5)).is_ok(), "the main thread waited for the server");
     }
+
+    #[test]
+    fn a_first_run_answer_sets_its_settings_in_the_open_session() {
+        use nori_core::settings::AutoMixMode;
+        let _one = one_session();
+        let raw = crate::pages::nori_ios_setup();
+        let questions: serde_json::Value = serde_json::from_str(&copy_c(raw)).unwrap();
+        unsafe { crate::nori_ios_free(raw) };
+        assert_eq!(questions[0]["step"], "Listening");
+        assert_eq!(questions[1]["step"], "Look", "no question about mobile data: {questions}");
+        assert_eq!(questions[0]["answers"][2], "AutoMixDj");
+        assert_eq!(crate::pages::nori_ios_setup_answer(0, 2), 0, "nothing open");
+
+        let dir = nori_testdir::TempDir::new("ios-setup");
+        let _close = Close;
+        super::start(dir.path(), profile(), Box::new(WavOutput::new(dir.path().join("heard.wav"), 2.0)), true, None).unwrap();
+        assert_eq!(crate::pages::nori_ios_setup_answer(0, 2), 1);
+        assert_eq!(crate::pages::nori_ios_setup_answer(1, 0), 0, "the look offers no answers");
+        let prefs = super::with_session(|s| s.core.session.settings.current().unwrap()).unwrap();
+        assert_eq!(prefs.auto_mix, AutoMixMode::Dj);
+    }
 }

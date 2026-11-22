@@ -179,7 +179,8 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
   the page blurred inside; content scrolls under them. Panels float as sheets over the page; opening one
   moves nothing else.
 - Words are short and plain: a title names the thing, a control says what it does. Settings say only
-  what is not obvious from their name (a state, a cost), never what the setting does.
+  what is not obvious from their name (a state, a cost), never what the setting does. A page's title
+  stands alone: no line of explanation or reassurance under it.
 - Nothing animates unless the user touched it, except a page's newer answer replacing what it showed (its
   saved copy, a refresh): its items move to their places, come and go (`itemMotion`). nori's Motion setting
   (not the system's) turns flourishes into direct changes.

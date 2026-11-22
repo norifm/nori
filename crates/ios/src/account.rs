@@ -3,6 +3,7 @@
 use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 
+use nori_core::providers::flow::{WelcomeDo, WelcomeEvent, WelcomeFlow, WelcomeSource};
 use nori_core::providers::{log_in, FormField, Kinds};
 use nori_core::settings::{profile_icons, profile_letter, servers_removed, ProfileIcon, SavedServer, ServerKind, ServerList, StoredPrefs};
 use nori_core::settings_store::Settings;
@@ -253,6 +254,66 @@ pub extern "C" fn nori_ios_providers() -> *mut c_char {
         })
         .collect();
     owned(&serde_json::Value::from(rows).to_string()).into_raw()
+}
+
+/// [`nori_ios_welcome_on`]'s events: a kind picked or dropped, Continue, a profile of a kind added, and back
+/// from a kind's form.
+pub const WELCOME_TOGGLED: i32 = 0;
+pub const WELCOME_CONTINUE: i32 = 1;
+pub const WELCOME_ADDED: i32 = 2;
+pub const WELCOME_BACK: i32 = 3;
+/// What [`nori_ios_welcome_on`] asks next: nothing, or the first run's questions.
+pub const WELCOME_NOTHING: i32 = 0;
+pub const WELCOME_QUESTIONS: i32 = 1;
+
+/// A new first-run welcome (`WelcomeFlow`), the app's to hold and give to [`nori_ios_welcome_free`].
+#[no_mangle]
+pub extern "C" fn nori_ios_welcome_new() -> *mut WelcomeFlow {
+    Box::into_raw(Box::default())
+}
+
+/// # Safety
+/// `flow` came from [`nori_ios_welcome_new`] and is not used after.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_welcome_free(flow: *mut WelcomeFlow) {
+    // SAFETY: the caller's.
+    drop(unsafe { Box::from_raw(flow) });
+}
+
+/// The welcome takes `event` (`WELCOME_*`; `kind` the kind toggled or added, as the settings store it) and
+/// answers what the app does next. The iPod offers no plugins, so nothing is ever to install.
+///
+/// # Safety
+/// `flow` came from [`nori_ios_welcome_new`]; `kind` is NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_welcome_on(flow: *mut WelcomeFlow, event: i32, kind: *const c_char) -> i32 {
+    // SAFETY: the caller's.
+    let flow = unsafe { &mut *flow };
+    let kind = || ServerKind::from_id(&text(kind));
+    let event = match event {
+        WELCOME_TOGGLED => kind().map(|kind| WelcomeEvent::Toggled { source: WelcomeSource::Kind { kind } }),
+        WELCOME_CONTINUE => Some(WelcomeEvent::Continue),
+        WELCOME_ADDED => kind().map(|kind| WelcomeEvent::Added { kind }),
+        WELCOME_BACK => Some(WelcomeEvent::Back),
+        _ => None,
+    };
+    match event.map(|e| flow.on(e)) {
+        Some(WelcomeDo::Questions) => WELCOME_QUESTIONS,
+        _ => WELCOME_NOTHING,
+    }
+}
+
+/// The welcome as JSON to free: `{picked: [kind], one}`, the kinds picked as the settings store them, and
+/// `one` the kind whose form shows now, or null.
+///
+/// # Safety
+/// `flow` came from [`nori_ios_welcome_new`].
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_welcome(flow: *const WelcomeFlow) -> *mut c_char {
+    // SAFETY: the caller's.
+    let flow = unsafe { &*flow };
+    let picked: Vec<String> = flow.picked.iter().filter_map(|s| if let WelcomeSource::Kind { kind } = s { Some(kind.id().to_string()) } else { None }).collect();
+    owned(&serde_json::json!({ "picked": picked, "one": flow.one().map(|k| k.id().to_string()) }).to_string()).into_raw()
 }
 
 /// Checks the profile with its provider (a server is pinged) and, when it passes, saves it as the
@@ -533,6 +594,12 @@ mod tests {
         Ok(())
     }
 
+    /// Changes to the saved list go to the open session's settings when one is open: these tests wait for
+    /// the tests that open one.
+    fn no_session() -> std::sync::MutexGuard<'static, ()> {
+        crate::pages::ABI_IN_USE.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn profile(id: &str, user: &str) -> SavedServer {
         SavedServer {
             id: id.into(),
@@ -543,7 +610,30 @@ mod tests {
     }
 
     #[test]
+    fn a_server_picked_on_the_welcome_shows_its_form_then_the_questions() {
+        let read = |flow: *const WelcomeFlow| -> serde_json::Value {
+            let raw = unsafe { nori_ios_welcome(flow) };
+            let v = serde_json::from_str(unsafe { CStr::from_ptr(raw) }.to_str().unwrap()).unwrap();
+            unsafe { crate::nori_ios_free(raw) };
+            v
+        };
+        let server = CString::new("subsonic").unwrap();
+        let on = |flow, event| unsafe { nori_ios_welcome_on(flow, event, server.as_ptr()) };
+        let flow = nori_ios_welcome_new();
+        assert_eq!(on(flow, WELCOME_TOGGLED), WELCOME_NOTHING);
+        assert_eq!(read(flow), serde_json::json!({ "picked": ["subsonic"], "one": null }));
+        on(flow, WELCOME_CONTINUE);
+        assert_eq!(read(flow)["one"], "subsonic");
+        on(flow, WELCOME_BACK);
+        assert_eq!(read(flow)["one"], serde_json::Value::Null, "back on the sources");
+        on(flow, WELCOME_CONTINUE);
+        assert_eq!(on(flow, WELCOME_ADDED), WELCOME_QUESTIONS);
+        unsafe { nori_ios_welcome_free(flow) };
+    }
+
+    #[test]
     fn a_picked_server_becomes_active_and_a_removed_one_hands_over() {
+        let _turn = no_session();
         let dir = nori_testdir::TempDir::new("ios-pick");
         keep(dir.path(), profile("one", "ada")).unwrap();
         keep(dir.path(), profile("two", "bob")).unwrap();
@@ -571,6 +661,7 @@ mod tests {
     /// name, else the address's host.
     #[test]
     fn a_chosen_icon_is_listed_with_its_letter() {
+        let _turn = no_session();
         let dir = nori_testdir::TempDir::new("ios-icon");
         keep(dir.path(), profile("one", "ada")).unwrap();
         keep(dir.path(), SavedServer { url: "https://music.example.com/x".into(), ..profile("two", "") }).unwrap();
@@ -583,6 +674,7 @@ mod tests {
 
     #[test]
     fn a_renamed_server_is_listed_by_its_new_name_and_by_its_user_once_blank() {
+        let _turn = no_session();
         let dir = nori_testdir::TempDir::new("ios-rename");
         keep(dir.path(), profile("one", "ada")).unwrap();
         rename(dir.path(), "one", "  Kitchen ").unwrap();

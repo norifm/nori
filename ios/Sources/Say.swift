@@ -357,10 +357,11 @@ enum Say {
     static let connect = "Connect"
     static let connecting = "Connecting…"
     /// A kind of profile's words (the core's providers, by the name the settings store them under):
-    /// what it is called, what adding one does, and the login page's button. The only words a provider
-    /// needs here.
+    /// what it is called, what it plays from (the welcome's line), what adding one does, and the login page's
+    /// button. The only words a provider needs here.
     struct ProviderWords {
         let name: String
+        let about: String
         let note: String
         let add: String
     }
@@ -368,10 +369,26 @@ enum Say {
     static func provider(_ kind: String) -> ProviderWords {
         switch kind {
         case "subsonic":
-            return ProviderWords(name: "Your server", note: "Navidrome, octo-fiesta or any Subsonic server", add: connect)
+            return ProviderWords(name: "OpenSubsonic", about: "Navidrome and other servers", note: "Navidrome, octo-fiesta or any Subsonic server", add: connect)
         default:
             // A plugin's kind, which the iPod never offers.
-            return ProviderWords(name: "Plugin", note: "", add: connect)
+            return ProviderWords(name: "Plugin", about: "", note: "", add: connect)
+        }
+    }
+    // The first run: the welcome, then the questions once its first profile is in (nori-settings setup.rs).
+    static let welcomeTitle = "Welcome to nori"
+    static let welcomeWhere = "Where's your music?"
+    static let setupBack = "Back"
+    static let setupSkip = "Skip"
+    static let setupStart = "Start listening"
+    /// A first-run question's title, by its name in the core. The iPod is never asked about mobile data.
+    static func setupStep(_ step: String) -> String { step == "Listening" ? "Between songs" : "Make it yours" }
+    /// A first-run answer's name and the line under it, by its name in the core.
+    static func setupAnswer(_ answer: String) -> (name: String, line: String) {
+        switch answer {
+        case "NoMixing": return ("No mixing", "Songs play whole, one after another")
+        case "AutoMix": return ("AutoMix", "Blends each song into the next, on the beat")
+        default: return ("DJ", "Loops, tempo bends and drops, like a DJ")
         }
     }
     static let serverUrl = "Server URL"

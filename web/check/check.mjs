@@ -14,6 +14,7 @@
 import fs from "node:fs";
 import zlib from "node:zlib";
 import puppeteer from "puppeteer-core";
+import { signIn } from "./signin.mjs";
 
 const url = process.argv[2] ?? "http://localhost:8080/";
 // Phases by name, comma separated; all without.
@@ -62,9 +63,7 @@ async function hash(h, top) {
 
 await page.goto(url, { waitUntil: "load" });
 await page.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 30000 });
-await page.waitForFunction(() => window.nori.page === "home" || document.querySelector("#login"), { timeout: 30000 });
-if (await page.$("#login")) await page.click("#login button");
-await page.waitForFunction(() => window.nori.page === "home", { timeout: 30000 });
+await signIn(page);
 const start = await facts();
 report.start = { coreMs: start.coreMs, loginMs: start.loginMs, homeAlbums: start.albums };
 expect(start.albums > 0, "the home page shows albums");
@@ -137,8 +136,7 @@ async function early(at) {
   await p.setCacheEnabled(false);
   await p.goto(at, { waitUntil: "load" });
   await p.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 120000 });
-  if (await p.$("#login")) await p.click("#login button");
-  await p.waitForFunction(() => window.nori.page === "home", { timeout: 120000 });
+  await signIn(p, 120000);
   const shown = await p.evaluate(() => performance.now());
   const id = (await p.evaluate(async () => JSON.parse(await window.ask("read", JSON.stringify({ kind: "albums", sort: "alphabeticalByName", size: 50, offset: 0 }))).albums.find((a) => a.name === "Second Wind")?.id));
   await p.evaluate((x) => (location.hash = `#/album/${x}`), id);
@@ -673,8 +671,7 @@ async function slowStart(at) {
   await p.setViewport({ width: 1280, height: 800 });
   await p.goto(at, { waitUntil: "load" });
   await p.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 60000 });
-  if (await p.$("#login")) await p.click("#login button");
-  await p.waitForFunction(() => window.nori.page === "home", { timeout: 60000 });
+  await signIn(p, 60000);
   const id = await p.evaluate(async () => JSON.parse(await window.ask("read", JSON.stringify({ kind: "albums", sort: "alphabeticalByName", size: 100, offset: 0 }))).albums.find((a) => a.name === "Playback")?.id);
   await p.evaluate((x) => (location.hash = `#/album/${x}`), id);
   await p.waitForSelector(".songs li .play");

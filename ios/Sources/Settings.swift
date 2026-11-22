@@ -209,14 +209,25 @@ final class AppearancePage: CardsPage {
     }
 
     private func lay() {
+        let rows = GroupCard([GroupRow(Say.homeRows, chevron: true) { [weak self] in
+            self?.navigationController?.pushViewController(HomeRowsPage(), animated: true)
+        }])
+        let between = UIView()
+        between.heightAnchor.constraint(equalToConstant: 10).isActive = true
+        set(AppearancePage.controls { [weak self] in self?.change(mode: $0, season: $1) } + [between, rows])
+    }
+
+    /// The `theme` setting's chips, then the season's tiles (the one worn ringed) and following the calendar
+    /// under them: here and on the first run's last question. `picked` takes the settings' new values.
+    static func controls(_ picked: @escaping (_ mode: String, _ season: String) -> Void) -> [UIView] {
         let modes = ChipStrip(spacing: 2, fit: true)
         modes.set(Theme.modes.map(Say.mode), chosen: Theme.modes.firstIndex(of: Theme.mode) ?? 0)
-        modes.picked = { [weak self] i in self?.change(mode: Theme.modes[i], season: Theme.season) }
+        modes.picked = { i in picked(Theme.modes[i], Theme.season) }
         let following = Theme.season == "FOLLOW"
         let now = Theme.calendar()
         let worn = following ? Int(now.season) : Theme.seasons.firstIndex(of: Theme.season) ?? 0
         let tiles = UIStackView(arrangedSubviews: Theme.tiles().enumerated().map { i, p in
-            SeasonTile(i, p, chosen: i == worn) { [weak self] in self?.change(mode: Theme.mode, season: Theme.seasons[i]) }
+            SeasonTile(i, p, chosen: i == worn) { picked(Theme.mode, Theme.seasons[i]) }
         })
         tiles.distribution = .fillEqually
         tiles.spacing = 10
@@ -225,23 +236,23 @@ final class AppearancePage: CardsPage {
         let follow = UISwitch()
         follow.isOn = following
         follow.onTintColor = Theme.switchOn
-        follow.addAction { [weak self] in
-            // Off keeps the season the calendar has now.
-            self?.change(mode: Theme.mode, season: follow.isOn ? "FOLLOW" : Theme.seasons[Int(now.season)])
-        }
+        // Off keeps the season the calendar has now.
+        follow.addAction { picked(Theme.mode, follow.isOn ? "FOLLOW" : Theme.seasons[Int(now.season)]) }
         let followCard = GroupCard([GroupRow(Say.followSeasons, subtitle: Say.seasonNow(now), trailing: follow)])
         let gap = UIView()
         gap.heightAnchor.constraint(equalToConstant: 10).isActive = true
-        let rows = GroupCard([GroupRow(Say.homeRows, chevron: true) { [weak self] in
-            self?.navigationController?.pushViewController(HomeRowsPage(), animated: true)
-        }])
-        let between = UIView()
-        between.heightAnchor.constraint(equalToConstant: 10).isActive = true
-        set([GroupLabel(Say.appearance), modeRow(modes), GroupLabel(Say.season), tiles, gap, followCard, between, rows])
+        return [GroupLabel(Say.appearance), modeRow(modes), GroupLabel(Say.season), tiles, gap, followCard]
+    }
+
+    /// The `theme` and `season` settings set; true when the colors moved and the interface wants building again.
+    static func wear(mode: String, season: String) -> Bool {
+        _ = "theme".withCString { n in mode.withCString { v in nori_ios_set(n, v) } }
+        _ = "season".withCString { n in season.withCString { v in nori_ios_set(n, v) } }
+        return Theme.keep(mode: mode, season: season)
     }
 
     /// The modes' chips on a card, the same room above and below them.
-    private func modeRow(_ chips: ChipStrip) -> UIView {
+    private static func modeRow(_ chips: ChipStrip) -> UIView {
         let holder = UIView()
         chips.translatesAutoresizingMaskIntoConstraints = false
         holder.addSubview(chips)
@@ -255,9 +266,7 @@ final class AppearancePage: CardsPage {
     }
 
     private func change(mode: String, season: String) {
-        _ = "theme".withCString { n in mode.withCString { v in nori_ios_set(n, v) } }
-        _ = "season".withCString { n in season.withCString { v in nori_ios_set(n, v) } }
-        guard Theme.keep(mode: mode, season: season) else { return lay() }
+        guard AppearancePage.wear(mode: mode, season: season) else { return lay() }
         (UIApplication.shared.delegate as? AppDelegate)?.restyle(showing: AppearancePage())
     }
 }

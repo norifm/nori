@@ -654,6 +654,15 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
     Page { title, summary, sections }
 }
 
+/// The first run's look: the Look page's season and theme sections, as Settings draws them for the
+/// profile's `rules`; `dark`: the interface is dark.
+pub fn setup_look(p: &StoredPrefs, own: &Own, dark: bool, rules: nori_core::browse::ProfileRules, today: Day) -> Vec<Section> {
+    let state = settings_model::state(p, settings_model::Output::default(), &own.shared.settings.model);
+    let facts = Facts { rules, ..Facts::default() };
+    let theme = section_title(SectionId::Theme);
+    page(Gid::Core(SettingsPage::Look), p, &state, &facts, &Own { dark, ..own.clone() }, today).sections.into_iter().filter(|s| s.title == SEASON || s.title == theme).collect()
+}
+
 /// The terminal's own group.
 fn own_page(o: &Own, f: &Facts) -> Vec<Section> {
     let toggle = |switch, title: &str, detail: &str, on, enabled| Row::Toggle { switch, title: title.into(), detail: detail.into(), on, enabled };
@@ -935,7 +944,7 @@ pub fn open_row(row: Row) -> Option<Opened> {
             Act::AddRepo => Opened::Overlay(Overlay::Input { title: text::REPO_ADDRESS.into(), text: String::new(), secret: false, target: Target::AddRepo }),
             Act::AllowMobileAssets(id) => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::AllowMobileAssets(id))]),
             Act::Restart(id) => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(id, true))]),
-            Act::Backup { restore } => Opened::Overlay(Overlay::Input { title: text::backup_path(restore).into(), text: String::new(), secret: false, target: Target::BackupFile { restore } }),
+            Act::Backup { restore } => Opened::Overlay(backup_asked(restore)),
         },
         Row::Text { title, shown, target: Target::PluginSearch, .. } => Opened::Overlay(Overlay::Input { title, text: shown, secret: false, target: Target::PluginSearch }),
         Row::Text { title, secret, target, .. } => Opened::Overlay(Overlay::Input { title, text: String::new(), secret, target }),
@@ -950,6 +959,11 @@ pub fn open_row(row: Row) -> Option<Opened> {
         Row::Season { value, picked: false, enabled: true, .. } => Opened::Cmds(vec![Cmd::Setting("season".into(), value)]),
         _ => return None,
     })
+}
+
+/// Asks for the file a backup is saved to, or restored from; its password is asked next.
+pub fn backup_asked(restore: bool) -> Overlay {
+    Overlay::Input { title: text::backup_path(restore).into(), text: String::new(), secret: false, target: Target::BackupFile { restore } }
 }
 
 /// ← or → on `row`: previous or next option, off or on, a slider step.

@@ -25,6 +25,7 @@ use nori_host::session::{read_pages, Chore};
 use nori_host::pages::{HomePart, ShelfItems};
 use nori_host::Fetch;
 use nori_core::settings::HomeRow;
+use nori_core::setup::{setup_answers, setup_covers, setup_settings, SetupAnswer, SetupStep};
 use serde_json::{json, Value};
 
 use crate::paging;
@@ -1342,8 +1343,35 @@ pub unsafe extern "C" fn nori_ios_cover(token: u64, id: *const c_char, px: u32) 
         if let Some(image) = image {
             let (w, h) = (image.width, image.height);
             hand(token, w, h, image, |i| &i.pixels);
-        } else if let Some(cb) = *lock(&COVER_HOOK) {
-            unsafe { cb(token, 0, 0, std::ptr::null(), 0, std::ptr::null_mut()) };
+        } else {
+            hand_none(token);
+        }
+    });
+}
+
+/// Tells the cover callback the picture for `token` will not come.
+fn hand_none(token: u64) {
+    if let Some(cb) = *lock(&COVER_HOOK) {
+        unsafe { cb(token, 0, 0, std::ptr::null(), 0, std::ptr::null_mut()) };
+    }
+}
+
+/// How many covers the first run's AutoMix question plays (`setup::setup_covers`).
+#[no_mangle]
+pub extern "C" fn nori_ios_setup_covers() -> u32 {
+    setup_covers().len() as u32
+}
+
+/// Cover `index` of those, decoded `px` square off the caller's thread and handed to the cover callback with
+/// `token`; none for an index past them.
+#[no_mangle]
+pub extern "C" fn nori_ios_setup_cover(token: u64, index: u32, px: u32) {
+    nori_host::spawn("nori-ios-setup-cover", move || {
+        let side = px as usize;
+        let decoded = setup_covers().get(index as usize).and_then(|bytes| nori_covers::Decoder::new().decode(bytes, side, side, nori_covers::Alpha::Straight).ok());
+        match decoded {
+            Some(pixels) => hand(token, px, px, pixels, Vec::as_slice),
+            None => hand_none(token),
         }
     });
 }
@@ -1654,6 +1682,34 @@ pub unsafe extern "C" fn nori_ios_set(name: *const c_char, value: *const c_char)
     with_session(|s| i32::from(s.setting(&name, &value).is_some())).unwrap_or(0)
 }
 
+/// The first run's questions: the iPod touch has no mobile data, so none about it.
+fn setup_steps() -> Vec<SetupStep> {
+    nori_core::setup::setup_steps(false)
+}
+
+/// The first run's questions as JSON to free, in order: `[{step, answers}]`, each by its name in the core
+/// (`Listening`, `Look`; `Albums`, `Blended`, ...).
+#[no_mangle]
+pub extern "C" fn nori_ios_setup() -> *mut c_char {
+    let named = |a: &SetupAnswer| format!("{a:?}");
+    let steps: Vec<Value> = setup_steps().into_iter().map(|s| json!({ "step": format!("{s:?}"), "answers": setup_answers(s).iter().map(named).collect::<Vec<_>>() })).collect();
+    owned(&json!(steps))
+}
+
+/// Answer `answer` of question `step` (`nori_ios_setup`'s indices) given: the settings it stands for set as
+/// `nori_ios_set` sets one. 0 for no such answer or no open session.
+#[no_mangle]
+pub extern "C" fn nori_ios_setup_answer(step: u32, answer: u32) -> i32 {
+    let Some(answer) = setup_steps().get(step as usize).and_then(|s| setup_answers(*s).get(answer as usize).copied()) else { return 0 };
+    with_session(|s| {
+        for pick in setup_settings(answer) {
+            s.setting(&pick.name, &pick.value);
+        }
+        1
+    })
+    .unwrap_or(0)
+}
+
 /// Points across the drawn curve.
 const CURVE_SAMPLES: u32 = 97;
 
@@ -1809,6 +1865,31 @@ mod tests {
             title: id.into(),
             ..Song::default()
         }
+    }
+
+    #[test]
+    fn the_setup_covers_come_decoded_and_one_past_them_comes_empty() {
+        use std::sync::mpsc::{channel, Sender};
+        let _turn = lock(&ABI_IN_USE);
+        /// A picture handed: its token, width, height and bytes.
+        type Handed = (u64, u32, u32, usize);
+        static GOT: Mutex<Option<Sender<Handed>>> = Mutex::new(None);
+        unsafe extern "C" fn got(token: u64, w: u32, h: u32, _: *const u8, len: usize, owner: *mut std::ffi::c_void) {
+            if let Some(sent) = &*lock(&GOT) {
+                let _ = sent.send((token, w, h, len));
+            }
+            unsafe { nori_ios_cover_release(owner) };
+        }
+        let (sent, came) = channel();
+        *lock(&GOT) = Some(sent);
+        let hook = *lock(&COVER_HOOK);
+        *lock(&COVER_HOOK) = Some(got);
+        nori_ios_setup_cover(1, 0, 8);
+        nori_ios_setup_cover(2, nori_ios_setup_covers(), 8);
+        let mut got: Vec<_> = (0..2).filter_map(|_| came.recv_timeout(std::time::Duration::from_secs(10)).ok()).collect();
+        *lock(&COVER_HOOK) = hook;
+        got.sort();
+        assert_eq!(got, [(1, 8, 8, 8 * 8 * 4), (2, 0, 0, 0)]);
     }
 
     #[test]

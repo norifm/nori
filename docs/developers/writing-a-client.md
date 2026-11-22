@@ -217,6 +217,7 @@ session does all of this. Android calls the same functions from Kotlin.
 | Home's queue offer | `Client::queue_offer_kept` at once, then `Client::queue_offer`, kept by `offer::Offered` | `Handle::queue_offer_kept`, `Handle::queue_offer` |
 | Lyrics for the song heard | `Client::lyrics_for`, `lyrics_follow::LyricsHeard` | `Handle::lyrics_heard`, `Said::Lyrics` |
 | Adding a profile, signing in | `providers::flow`: `AddFlow`, `SignInFlow` | `Account::signed_in` |
+| The first run | `providers::flow::WelcomeFlow`, then `setup::setup_steps`, `setup_answers`, `setup_settings` and `setup_covers` | The client |
 | A favorite | `Client::star` | The same |
 | A playlist kept downloaded | `Core::download_playlist`, `Client::kept_playlists_sync` | `Handle::download_playlist` |
 
@@ -236,6 +237,13 @@ These rules hold behind the answers:
   shows another device's playback shows the lyrics that device sends.
 - **Keeping a playlist deletes only what keeping brought.** A song that no kept playlist holds, and that
   keeping downloaded, is deleted.
+- **The first run starts with no profile.** The welcome takes any number of sources: the kinds there
+  are and the provider plugins that repos offer. The plugins picked install and turn on without their
+  sheet. Then each source signs in: one picked opens its own page, several are listed, and the app opens
+  under them once a profile is in. The questions follow (the mobile data one only where the device has
+  it), each answer changed by name as any setting is. The AutoMix question plays the same four covers on
+  every client, and the look is Settings' own appearance and season rows. Profiles added later, and
+  restored ones, skip it.
 - **The profiles keep the user's order** (`StoredPrefs::servers`). Every list and switcher shows them in
   that order, and switching keeps it.
 
