@@ -50,7 +50,7 @@ Every file is on the [latest release](https://github.com/norifm/nori/releases/la
 | iPod touch, 6th generation | iOS 12.2 or later, jailbroken | `nori-ipod-<version>.ipa` |
 
 On Android, take `armeabi-v7a` for 32-bit phones and TV boxes, and `x86_64` for emulators and
-Chromebooks. The [install guide](https://norifm.com/docs/start/install/#desktop-and-terminal) covers
+Chromebooks. The [install guide](https://norifm.com/docs/start/install/#windows-macos-and-linux) covers
 the desktop and terminal packages. The [iPod guide](https://norifm.com/docs/clients/ipod/) covers the
 iPod. A web client is in development in `web/` and is not released yet.
 
