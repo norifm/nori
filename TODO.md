@@ -40,6 +40,11 @@ the owner asks for it, and delete its line once it ships.
 - Check on a phone, frame by frame: the sleeve's soft bottom through swipes, sheet pulls and panel
   changes; sung lyrics (word-timed, duets, backing vocals); a skip to a
   song whose cover isn't loaded.
+- The full player in an Android View of its own over the app, so a move only shifts that view on the
+  render thread, with no Compose layout per frame. With Battery Saver on, the first 3–4 frames of each
+  open and close still miss their deadline: the move starts on slow cores, and Compose places every
+  element of the player again on each frame (12–18% of the main thread). Needs the cover's flight from
+  the mini player, the islands, insets, Back and TV focus to work across the two views.
 
 ## Plugins
 
