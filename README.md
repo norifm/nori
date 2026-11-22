@@ -14,8 +14,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/casiopea-album-page.png" width="260" alt="Casiopea's album playing Space Road">&nbsp;
-  <img src="docs/screenshots/casiopea-full-player.png" width="260" alt="The full player halfway through Space Road">
+  <img src="docs/screenshots/rainbow-goblins-album-page.png" width="260" alt="The Rainbow Goblins playing Seven Goblins">&nbsp;
+  <img src="docs/screenshots/rainbow-goblins-full-player.png" width="260" alt="The full player halfway through Seven Goblins">
 </p>
 
 ## What it does
