@@ -226,7 +226,7 @@ pub fn add_flow_on(flow: AddFlow, event: AddEvent) -> AddStep {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct WelcomeFlow {
     pub page: WelcomePage,
-    /// The sources picked, in the order they were offered.
+    /// The sources picked, in the order they were picked.
     pub picked: Vec<WelcomeSource>,
     /// Plugins picked that would not install: their sources are dropped.
     pub refused: Vec<String>,
@@ -373,6 +373,24 @@ pub fn welcome_on(flow: WelcomeFlow, event: WelcomeEvent) -> WelcomeStep {
     let mut flow = flow;
     let then = flow.on(event);
     WelcomeStep { flow, then }
+}
+
+/// The welcome's sources from the kinds the app has (`kinds`, as the providers list them) and the provider
+/// plugins a repo offers that aren't on (`offered`, by id): nori's own kinds, then every plugin's by its id,
+/// installed or offered, so a plugin keeps its row as it installs.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn welcome_sources(kinds: Vec<ServerKind>, offered: Vec<String>) -> Vec<WelcomeSource> {
+    let mut plugins: Vec<(String, WelcomeSource)> = offered.into_iter().map(|id| (id.clone(), WelcomeSource::Offered { plugin: id })).collect();
+    let mut sources = Vec::new();
+    for kind in kinds {
+        match &kind {
+            ServerKind::Plugin { id } => plugins.push((id.clone(), WelcomeSource::Kind { kind })),
+            ServerKind::Subsonic => sources.push(WelcomeSource::Kind { kind }),
+        }
+    }
+    plugins.sort_by(|a, b| a.0.cmp(&b.0));
+    sources.extend(plugins.into_iter().map(|(_, s)| s));
+    sources
 }
 
 /// [`WelcomeFlow::one`].
@@ -635,6 +653,15 @@ mod tests {
         assert_eq!(f.page, WelcomePage::Picking, "back while nothing is added");
         f.on(WelcomeEvent::Continue);
         assert_eq!(f.on(WelcomeEvent::Added { kind: ServerKind::Subsonic }), WelcomeDo::Questions);
+    }
+
+    #[test]
+    fn a_plugin_keeps_its_row_as_it_installs() {
+        let server = WelcomeSource::Kind { kind: ServerKind::Subsonic };
+        let offered_both = welcome_sources(vec![ServerKind::Subsonic], vec!["sc".into(), "yt".into()]);
+        assert_eq!(offered_both, [server.clone(), offered("sc"), offered("yt")]);
+        let yt_installed = welcome_sources(vec![ServerKind::Subsonic, kind("yt")], vec!["sc".into()]);
+        assert_eq!(yt_installed, [server, offered("sc"), WelcomeSource::Kind { kind: kind("yt") }]);
     }
 
     #[test]

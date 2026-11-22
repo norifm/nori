@@ -94,7 +94,7 @@ private fun WelcomeSources(vm: SettingsViewModel, plugins: dev.nori.music.app.vm
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     androidx.compose.runtime.LaunchedEffect(Unit) { plugins.loadOffers() }
     val installing = (flow.page as? WelcomePage.Installing)?.left.orEmpty()
-    val sources = providers.map { WelcomeSource.Kind(it.kind) } + offers.map { WelcomeSource.Offered(it.id) }
+    val sources = remember(providers, offers) { dev.nori.music.ffi.welcomeSources(providers.map { it.kind }, offers.map { it.id }) }
     val next = {
         val then = vm.welcomeOn(WelcomeEvent.Continue)
         if (then is WelcomeDo.Install) scope.launch {
