@@ -178,19 +178,20 @@ async function monthly(env: Env, customer: string): Promise<{ running?: any; sto
  * card and shows the receipts; `stop` also cancels, and only the Stop link opens it, so the thanks for the
  * months given is on the page that confirms it. A monthly payment stops at the end of the month paid for.
  */
-async function portal(env: Env, origin: string, use: "manage" | "stop"): Promise<string> {
+async function portal(env: Env, origin: string, use: "manage" | "stop" | "login"): Promise<any> {
   const all = await stripe(env, "GET", "billing_portal/configurations", { active: true, limit: 100 });
   const kept = all.data.find((c: any) => c.metadata?.nori === use);
-  if (kept) return kept.id;
-  const made = await stripe(env, "POST", "billing_portal/configurations", {
-    "features[subscription_cancel][enabled]": use === "stop",
-    "features[subscription_cancel][mode]": use === "stop" ? "at_period_end" : undefined,
+  if (kept) return kept;
+  const stops = use !== "manage";
+  return stripe(env, "POST", "billing_portal/configurations", {
+    "features[subscription_cancel][enabled]": stops,
+    "features[subscription_cancel][mode]": stops ? "at_period_end" : undefined,
     "features[payment_method_update][enabled]": true,
     "features[invoice_history][enabled]": true,
+    "login_page[enabled]": use === "login" ? true : undefined,
     default_return_url: `${origin}/done`,
     "metadata[nori]": use,
   });
-  return made.id;
 }
 
 /** How many monthly payments the customer made that went through. */
@@ -213,7 +214,7 @@ function thanksFor(months: number): string {
 /** Stripe's page for the card a monthly payment uses and its receipts. */
 async function manage(env: Env, origin: string, body: any): Promise<object> {
   const customer = await customerOf(env, body.login);
-  const session = await stripe(env, "POST", "billing_portal/sessions", { customer: customer.id, configuration: await portal(env, origin, "manage"), return_url: `${origin}/done` });
+  const session = await stripe(env, "POST", "billing_portal/sessions", { customer: customer.id, configuration: (await portal(env, origin, "manage")).id, return_url: `${origin}/done` });
   return { url: session.url };
 }
 
@@ -232,7 +233,7 @@ async function stop(env: Env, origin: string, body: any): Promise<object> {
   }
   const session = await stripe(env, "POST", "billing_portal/sessions", {
     customer: customer.id,
-    configuration: await portal(env, origin, "stop"),
+    configuration: (await portal(env, origin, "stop")).id,
     return_url: `${origin}/done`,
     "flow_data[type]": "subscription_cancel",
     "flow_data[subscription_cancel][subscription]": sub.id,
@@ -271,6 +272,48 @@ const KANJI: Record<string, string> = {
   winter: "M15.96 4.02Q16.07 3.94 16.29 3.72Q16.51 3.5 16.65 3.39Q16.8 3.28 16.88 3.28Q17.02 3.28 17.59 3.8Q18.16 4.33 18.68 4.92Q19.19 5.5 19.19 5.65Q19.08 5.85 18.88 5.92Q18.67 5.98 18.2 6.01Q16.6 8.56 14.22 10.49Q17.43 11.99 22.3 12.56V12.82Q21.46 13.02 20.92 13.64Q20.38 14.25 20.18 15.22Q15.39 14.06 12.51 11.75Q8.13 14.56 2.08 15.53L1.95 15.24Q7.36 13.46 11.05 10.36Q9.6 8.75 8.7 6.75Q6.06 9.46 3.07 10.8L2.89 10.62Q4.04 9.74 5.14 8.45Q6.24 7.15 7.16 5.63Q7.73 4.71 8.21 3.51Q8.68 2.31 8.85 1.39Q12.31 2.31 12.31 2.59Q12.31 2.66 12.13 2.71L11.71 2.79Q11.12 3.78 10.39 4.77H15.19ZM9.91 5.39Q9.51 5.89 9.1 6.34Q10.24 8.1 12.18 9.35Q14.09 7.44 15.19 5.39ZM9.18 13.99Q10.06 13.95 10.39 13.95Q12.11 13.95 13.22 14.31Q14.33 14.67 14.83 15.21Q15.32 15.75 15.32 16.32Q15.32 16.81 15 17.14Q14.68 17.47 14.2 17.47Q13.96 17.47 13.72 17.38Q13.1 16.7 11.82 15.82Q10.55 14.94 9.1 14.28ZM6.32 17.99Q7.47 17.95 7.97 17.95Q11.21 17.95 13.27 18.48Q15.32 19.01 16.22 19.77Q17.13 20.52 17.13 21.27Q17.13 21.76 16.8 22.05Q16.47 22.35 15.96 22.35Q15.74 22.35 15.48 22.29Q14.16 21.32 11.63 20.17Q9.1 19.03 6.26 18.28Z",
 };
 
+/** A page on `season`'s paper, light or dark as the system is; `css` adds to its style. */
+function paper(season: string, title: string, css: string, body: string): string {
+  const [page, ink, accent, darkPage, darkInk, darkAccent] = PAPERS[season];
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title><style>
+:root{color-scheme:light dark;--page:${page};--ink:${ink};--accent:${accent};--quiet:color-mix(in srgb,var(--ink) 55%,var(--page))}
+@media (prefers-color-scheme:dark){:root{--page:${darkPage};--ink:${darkInk};--accent:${darkAccent}}}
+body{margin:0;min-height:100vh;background:var(--page);color:var(--ink);font:17px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;padding:16px;box-sizing:border-box}
+h1{margin:0;font:600 24px/1.2 Inter,system-ui,sans-serif;letter-spacing:-.01em}
+p{margin:0;color:var(--quiet)}
+${css}
+</style></head><body>${body}</body></html>`;
+}
+
+/**
+ * What the service is, for whoever opens its address: how to stop monthly support in the app, and, for an
+ * app that no longer knows its payments, Stripe's sign-in by email, where it can be stopped too. Without
+ * that sign-in (Stripe not answering), the page says to try again later.
+ */
+async function home(env: Env, origin: string): Promise<string> {
+  const signIn = await portal(env, origin, "login").then((c) => c.login_page?.url as string | undefined, () => undefined);
+  const way = signIn
+    ? `<a class="button" href="${signIn}">Sign in with your email</a>`
+    : "<p>Stripe isn't answering right now. Try again later.</p>";
+  return paper("autumn", "Support nori", `
+body{display:grid;place-items:center}
+main{max-width:34rem;display:grid;gap:12px}
+h2{margin:20px 0 0;font:600 18px/1.3 Inter,system-ui,sans-serif}
+a{color:inherit;text-decoration-color:var(--quiet)}
+a:hover{text-decoration-color:var(--accent)}
+.button{justify-self:start;margin-top:4px;padding:12px 20px;border-radius:999px;background:var(--ink);color:var(--page);text-decoration:none;font-weight:600}
+.button:hover{background:var(--accent)}`, `<main>
+<h1>Support nori</h1>
+<h2>Stop monthly support</h2>
+<p>In nori, open Support nori and tap Stop next to Monthly support. It stops at the end of the month you paid for.</p>
+<h2>nori no longer shows your payments?</h2>
+<p>After clearing nori's data, reinstalling it or moving to a new device, restore a backup made in nori and your payments come back. Without one, sign in with the email on your Stripe receipt. Stripe sends you a code, and you can stop or change monthly support there.</p>
+${way}
+<p><a href="https://norifm.com/docs/using/support-nori/">About supporting nori</a></p>
+</main>`);
+}
+
 /**
  * Where Checkout and the customer portal send the browser back. Paid: the seal of the season it was stamped
  * in pressed onto the page, and thanks. Left Checkout: the seal's empty place, nothing paid. Back from the
@@ -281,7 +324,6 @@ function done(url: URL): string {
   const left = url.searchParams.get("left") === "1";
   const given = url.searchParams.get("season") ?? "";
   const season = SEASONS.includes(given) ? given : "autumn";
-  const [page, ink, accent, darkPage, darkInk, darkAccent] = PAPERS[season];
   const kanji = `<path d="${KANJI[season]}" transform="translate(12 12) scale(.62) translate(-12 -12)"/>`;
   const seal = !paid && !left
     ? ""
@@ -289,25 +331,21 @@ function done(url: URL): string {
     ? `<svg class="seal stamped" viewBox="0 0 24 24" aria-hidden="true"><defs><mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><rect width="24" height="24" fill="#fff"/><g fill="#000">${kanji}</g></mask></defs><g transform="rotate(-4 12 12)"><path d="${BODY}" fill-rule="evenodd" fill="var(--accent)" mask="url(#cut)"/></g></svg>`
     : `<svg class="seal" viewBox="0 0 24 24" aria-hidden="true"><path d="${FRAME}" fill="none" stroke="var(--quiet)" stroke-width="1.5"/><g fill="var(--quiet)" opacity=".85"><path d="${KANJI[season]}" transform="translate(12 12) scale(.56) translate(-12 -12)"/></g></svg>`;
   const words = paid ? "<h1>Thanks.</h1><p>You can go back to nori now.</p>" : left ? "<p>Nothing was paid. You can go back to nori now.</p>" : "<p>You can go back to nori now.</p>";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nori</title><style>
-:root{color-scheme:light dark;--page:${page};--ink:${ink};--accent:${accent};--quiet:color-mix(in srgb,var(--ink) 55%,var(--page))}
-@media (prefers-color-scheme:dark){:root{--page:${darkPage};--ink:${darkInk};--accent:${darkAccent}}}
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--page);color:var(--ink);font:17px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;padding:16px;box-sizing:border-box;text-align:center}
+  return paper(season, "nori", `
+body{display:grid;place-items:center;text-align:center}
 main{display:flex;flex-direction:column;align-items:center;gap:10px}
 .seal{width:96px;height:96px;margin-bottom:18px}
 .stamped{animation:stamp .5s cubic-bezier(.3,1.6,.5,1)}
 @keyframes stamp{from{transform:scale(1.5)}to{transform:scale(1)}}
-@media (prefers-reduced-motion:reduce){.stamped{animation:none}}
-h1{margin:0;font:600 24px/1.2 Inter,system-ui,sans-serif;letter-spacing:-.01em}
-p{margin:0;color:var(--quiet)}
-</style></head><body><main>${seal}${words}</main></body></html>`;
+@media (prefers-reduced-motion:reduce){.stamped{animation:none}}`, `<main>${seal}${words}</main>`);
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/done") return new Response(done(url), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    const html = (text: string) => new Response(text, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    if (request.method === "GET" && url.pathname === "/done") return html(done(url));
+    if (request.method === "GET" && url.pathname === "/") return html(await home(env, url.origin));
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     if (request.method !== "POST") return new Response("not found", { status: 404 });
     const json = (status: number, body: object) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...CORS } });
