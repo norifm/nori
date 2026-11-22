@@ -1,0 +1,425 @@
+{
+  "colors": {
+    "autumn": {
+      "dark": {
+        "accent": "#e8743b",
+        "hair": "#312d29",
+        "ink": "#f3ede3",
+        "ink2": "#a49f97",
+        "on": "#7fa27f",
+        "page": "#110e0a",
+        "surface": "#1c1813"
+      },
+      "light": {
+        "accent": "#b64d1d",
+        "hair": "#d8d2c9",
+        "ink": "#241d16",
+        "ink2": "#6d675f",
+        "on": "#36563c",
+        "page": "#f6f0e6",
+        "surface": "#fffdf8"
+      }
+    },
+    "spring": {
+      "dark": {
+        "accent": "#e9a0b1",
+        "hair": "#2f2f34",
+        "ink": "#ecebef",
+        "ink2": "#9f9fa3",
+        "on": "#6fc3d1",
+        "page": "#101015",
+        "surface": "#1b1b20"
+      },
+      "light": {
+        "accent": "#b14c66",
+        "hair": "#d6d5d9",
+        "ink": "#26262a",
+        "ink2": "#6e6d71",
+        "on": "#2c7f8f",
+        "page": "#f3f2f6",
+        "surface": "#fdfdfe"
+      }
+    },
+    "summer": {
+      "dark": {
+        "accent": "#9aa6ee",
+        "hair": "#292b33",
+        "ink": "#e8eaf0",
+        "ink2": "#9b9da3",
+        "on": "#8fbf74",
+        "page": "#0a0c14",
+        "surface": "#15171f"
+      },
+      "light": {
+        "accent": "#4b5bb0",
+        "hair": "#d2d4da",
+        "ink": "#202229",
+        "ink2": "#686a71",
+        "on": "#4f7f3a",
+        "page": "#eff1f7",
+        "surface": "#fdfdfe"
+      }
+    },
+    "winter": {
+      "dark": {
+        "accent": "#7fb0e0",
+        "hair": "#2b2d30",
+        "ink": "#ebedef",
+        "ink2": "#9d9fa2",
+        "on": "#9a9fa6",
+        "page": "#0b0d11",
+        "surface": "#16181c"
+      },
+      "light": {
+        "accent": "#2e5c8a",
+        "hair": "#d4d6d9",
+        "ink": "#212326",
+        "ink2": "#6a6c6f",
+        "on": "#6b7077",
+        "page": "#f2f4f6",
+        "surface": "#fdfdfe"
+      }
+    }
+  },
+  "countries": {
+    "AD": "EUR",
+    "AT": "EUR",
+    "AU": "AUD",
+    "BE": "EUR",
+    "BG": "EUR",
+    "CA": "CAD",
+    "CH": "CHF",
+    "CY": "EUR",
+    "CZ": "CZK",
+    "DE": "EUR",
+    "DK": "DKK",
+    "EE": "EUR",
+    "ES": "EUR",
+    "FI": "EUR",
+    "FR": "EUR",
+    "GB": "GBP",
+    "GR": "EUR",
+    "HR": "EUR",
+    "IE": "EUR",
+    "IT": "EUR",
+    "JP": "JPY",
+    "LI": "CHF",
+    "LT": "EUR",
+    "LU": "EUR",
+    "LV": "EUR",
+    "MC": "EUR",
+    "ME": "EUR",
+    "MT": "EUR",
+    "NL": "EUR",
+    "NO": "NOK",
+    "PL": "PLN",
+    "PT": "EUR",
+    "SE": "SEK",
+    "SI": "EUR",
+    "SK": "EUR",
+    "SM": "EUR",
+    "US": "USD",
+    "VA": "EUR",
+    "XK": "EUR"
+  },
+  "currencies": [
+    {
+      "code": "EUR",
+      "digits": 2,
+      "least": 100,
+      "monthly": [
+        300,
+        500,
+        1000,
+        1500,
+        2500
+      ],
+      "most": 500000,
+      "once": [
+        500,
+        1000,
+        2000,
+        3000,
+        5000
+      ]
+    },
+    {
+      "code": "USD",
+      "digits": 2,
+      "least": 100,
+      "monthly": [
+        300,
+        500,
+        1000,
+        1500,
+        2500
+      ],
+      "most": 500000,
+      "once": [
+        500,
+        1000,
+        2000,
+        3000,
+        5000
+      ]
+    },
+    {
+      "code": "GBP",
+      "digits": 2,
+      "least": 100,
+      "monthly": [
+        300,
+        500,
+        1000,
+        1500,
+        2500
+      ],
+      "most": 500000,
+      "once": [
+        500,
+        1000,
+        2000,
+        3000,
+        5000
+      ]
+    },
+    {
+      "code": "PLN",
+      "digits": 2,
+      "least": 500,
+      "monthly": [
+        1000,
+        2000,
+        4000,
+        6000,
+        10000
+      ],
+      "most": 2000000,
+      "once": [
+        2000,
+        4000,
+        8000,
+        12500,
+        25000
+      ]
+    },
+    {
+      "code": "CHF",
+      "digits": 2,
+      "least": 100,
+      "monthly": [
+        300,
+        500,
+        1000,
+        1500,
+        2500
+      ],
+      "most": 500000,
+      "once": [
+        500,
+        1000,
+        2000,
+        3000,
+        5000
+      ]
+    },
+    {
+      "code": "CZK",
+      "digits": 2,
+      "least": 2500,
+      "monthly": [
+        7500,
+        12500,
+        25000,
+        35000,
+        50000
+      ],
+      "most": 10000000,
+      "once": [
+        10000,
+        25000,
+        50000,
+        75000,
+        100000
+      ]
+    },
+    {
+      "code": "SEK",
+      "digits": 2,
+      "least": 1000,
+      "monthly": [
+        3000,
+        5000,
+        10000,
+        15000,
+        25000
+      ],
+      "most": 5000000,
+      "once": [
+        5000,
+        10000,
+        20000,
+        30000,
+        50000
+      ]
+    },
+    {
+      "code": "NOK",
+      "digits": 2,
+      "least": 1000,
+      "monthly": [
+        3000,
+        5000,
+        10000,
+        15000,
+        25000
+      ],
+      "most": 5000000,
+      "once": [
+        5000,
+        10000,
+        20000,
+        30000,
+        50000
+      ]
+    },
+    {
+      "code": "DKK",
+      "digits": 2,
+      "least": 1000,
+      "monthly": [
+        2500,
+        4000,
+        7500,
+        11000,
+        19000
+      ],
+      "most": 4000000,
+      "once": [
+        4000,
+        7500,
+        15000,
+        22500,
+        37500
+      ]
+    },
+    {
+      "code": "CAD",
+      "digits": 2,
+      "least": 100,
+      "monthly": [
+        300,
+        500,
+        1000,
+        1500,
+        2500
+      ],
+      "most": 500000,
+      "once": [
+        500,
+        1000,
+        2000,
+        3000,
+        5000
+      ]
+    },
+    {
+      "code": "AUD",
+      "digits": 2,
+      "least": 100,
+      "monthly": [
+        300,
+        500,
+        1000,
+        1500,
+        2500
+      ],
+      "most": 500000,
+      "once": [
+        500,
+        1000,
+        2000,
+        3000,
+        5000
+      ]
+    },
+    {
+      "code": "JPY",
+      "digits": 0,
+      "least": 100,
+      "monthly": [
+        300,
+        500,
+        1000,
+        1500,
+        2500
+      ],
+      "most": 500000,
+      "once": [
+        500,
+        1000,
+        2000,
+        3000,
+        5000
+      ]
+    }
+  ],
+  "elsewhere": "USD",
+  "first": 1,
+  "seasons": {
+    "north": [
+      {
+        "day": 1,
+        "month": 1,
+        "season": "winter"
+      },
+      {
+        "day": 4,
+        "month": 2,
+        "season": "spring"
+      },
+      {
+        "day": 5,
+        "month": 5,
+        "season": "summer"
+      },
+      {
+        "day": 7,
+        "month": 8,
+        "season": "autumn"
+      },
+      {
+        "day": 7,
+        "month": 11,
+        "season": "winter"
+      }
+    ],
+    "south": [
+      {
+        "day": 1,
+        "month": 1,
+        "season": "summer"
+      },
+      {
+        "day": 6,
+        "month": 2,
+        "season": "autumn"
+      },
+      {
+        "day": 9,
+        "month": 5,
+        "season": "winter"
+      },
+      {
+        "day": 6,
+        "month": 8,
+        "season": "spring"
+      },
+      {
+        "day": 4,
+        "month": 11,
+        "season": "summer"
+      }
+    ]
+  }
+}

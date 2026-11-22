@@ -1,6 +1,10 @@
-// The support service: starts a payment to nori with Stripe and tells an app what it has paid. An app
-// is known by its login, "<Stripe customer id>.<secret>"; the customer keeps the secret's SHA-256 in
-// its metadata. Stripe holds every record, so the Worker keeps no state of its own.
+// The support service: starts a payment to nori with Stripe and tells an app what it has paid, and its own
+// page, where a browser supports nori and stops monthly support. An app is known by its login,
+// "<Stripe customer id>.<secret>", and a browser by the same login in a cookie; the customer keeps the
+// secret's SHA-256 in its metadata. Stripe holds every record, so the Worker keeps no state of its own.
+// What the page offers and its colors are the core's (offered.json, written by crates/core/src/support.rs).
+
+import offered from "./offered.json";
 
 export interface Env {
   STRIPE_SECRET: string;
@@ -78,7 +82,8 @@ async function product(env: Env): Promise<string> {
   }
 }
 
-async function start(env: Env, origin: string, body: any): Promise<object> {
+/** Starts a payment; `page`: from the service's own page, which Checkout comes back to. */
+async function start(env: Env, origin: string, body: any, page = false): Promise<{ login: string; url?: string; secret?: string }> {
   const { currency, amount, monthly } = body;
   if (typeof currency !== "string" || !/^[a-z]{3}$/.test(currency)) throw new Failed(400, "currency");
   if (!Number.isInteger(amount) || amount <= 0) throw new Failed(400, "amount");
@@ -99,9 +104,11 @@ async function start(env: Env, origin: string, body: any): Promise<object> {
     };
     const session = await stripe(env, "POST", "checkout/sessions", {
       mode: monthly ? "subscription" : "payment",
+      // As a payment in the app: nori is the seller (Managed Payments, on by default, would make Stripe it).
+      "managed_payments[enabled]": false,
       customer: id,
-      success_url: `${origin}/done?paid=1${season}`,
-      cancel_url: `${origin}/done?left=1`,
+      success_url: `${origin}/done?paid=1${season}${page ? "&on=page" : ""}`,
+      cancel_url: page ? `${origin}/` : `${origin}/done?left=1`,
       ...(monthly ? {} : { submit_type: "donate", "payment_intent_data[description]": "Support nori", "payment_intent_data[metadata][nori]": "support" }),
       ...line,
     });
@@ -143,6 +150,19 @@ async function clearMonthly(env: Env, customer: string, currency: string) {
 /** Every payment the customer made that went through, oldest first (Unix seconds), and whether a monthly one runs. */
 async function stamps(env: Env, body: any): Promise<object> {
   const customer = await customerOf(env, body.login);
+  const paid = await paidBy(env, customer);
+  const { running, stopping } = await monthly(env, customer.id);
+  return { paid, monthly: !!running, ends: stopping?.cancel_at ?? null };
+}
+
+/**
+ * When the customer's payments that went through were made, oldest first (Unix seconds). The email a
+ * payment gave becomes the customer's, so Stripe's receipts reach it from then on. Stripe sends a receipt
+ * only to an address it has when the payment goes through, and an app's sheet gives one only with the
+ * payment: while the customer has none, no payment had a receipt, so each is sent now, to the address it gave.
+ */
+async function paidBy(env: Env, customer: any): Promise<number[]> {
+  const unsent = !customer.email;
   const paid: number[] = [];
   let after: string | undefined;
   for (;;) {
@@ -150,18 +170,19 @@ async function stamps(env: Env, body: any): Promise<object> {
     for (const p of page.data) {
       if (p.status !== "succeeded" || p.latest_charge?.refunded) continue;
       paid.push(p.created);
-      // The email the payment gave becomes the customer's, so Stripe's receipts reach it.
-      const email = p.latest_charge?.billing_details?.email;
-      if (!customer.email && email) {
+      const charge = p.latest_charge;
+      const email = charge?.billing_details?.email;
+      if (!email) continue;
+      if (!customer.email) {
         await stripe(env, "POST", `customers/${customer.id}`, { email });
         customer.email = email;
       }
+      if (unsent && !charge.receipt_email) await stripe(env, "POST", `charges/${charge.id}`, { receipt_email: email });
     }
     if (!page.has_more) break;
     after = page.data[page.data.length - 1].id;
   }
-  const { running, stopping } = await monthly(env, customer.id);
-  return { paid: paid.sort((a, b) => a - b), monthly: !!running, ends: stopping?.cancel_at ?? null };
+  return paid.sort((a, b) => a - b);
 }
 
 /**
@@ -211,10 +232,10 @@ function thanksFor(months: number): string {
   return months > 1 ? `Thank you for supporting nori for ${months} months.` : "Thank you for supporting nori for a month.";
 }
 
-/** Stripe's page for the card a monthly payment uses and its receipts. */
-async function manage(env: Env, origin: string, body: any): Promise<object> {
+/** Stripe's page for the card a monthly payment uses and its receipts, which goes `back` when done. */
+async function manage(env: Env, origin: string, body: any, back = `${origin}/done`): Promise<{ url: string }> {
   const customer = await customerOf(env, body.login);
-  const session = await stripe(env, "POST", "billing_portal/sessions", { customer: customer.id, configuration: (await portal(env, origin, "manage")).id, return_url: `${origin}/done` });
+  const session = await stripe(env, "POST", "billing_portal/sessions", { customer: customer.id, configuration: (await portal(env, origin, "manage")).id, return_url: back });
   return { url: session.url };
 }
 
@@ -254,14 +275,97 @@ async function keep(env: Env, body: any): Promise<object> {
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" };
 
-const SEASONS = ["spring", "summer", "autumn", "winter"];
-// Each season's paper, ink and accent, light and dark (crates/look/src/theme.rs).
-const PAPERS: Record<string, [string, string, string, string, string, string]> = {
-  spring: ["#F3F2F6", "#26262A", "#B14C66", "#101015", "#ECEBEF", "#E9A0B1"],
-  summer: ["#EFF1F7", "#202229", "#4B5BB0", "#0A0C14", "#E8EAF0", "#9AA6EE"],
-  autumn: ["#F6F0E6", "#241D16", "#B64D1D", "#110E0A", "#F3EDE3", "#E8743B"],
-  winter: ["#F2F4F6", "#212326", "#2E5C8A", "#0B0D11", "#EBEDEF", "#7FB0E0"],
-};
+type Currency = (typeof offered.currencies)[number];
+type Season = "spring" | "summer" | "autumn" | "winter";
+const SEASONS: string[] = ["spring", "summer", "autumn", "winter"];
+
+/** The season on `date` on that side of the equator. */
+function seasonOn(date: Date, southern: boolean): Season {
+  const starts = offered.seasons[southern ? "south" : "north"];
+  const [month, day] = [date.getUTCMonth() + 1, date.getUTCDate()];
+  const begun = starts.filter((s) => s.month < month || (s.month === month && s.day <= day));
+  return (begun[begun.length - 1] ?? starts[starts.length - 1]).season as Season;
+}
+
+/** Who is asking, as Cloudflare places them: their country, side of the equator, time zone and language. */
+type Visitor = { country: string; southern: boolean; zone?: string; locale: string };
+
+function visitor(request: Request): Visitor {
+  const cf = (request as { cf?: Record<string, unknown> }).cf ?? {};
+  const asked = (request.headers.get("Accept-Language") ?? "").split(",")[0].split(";")[0].trim();
+  const locale = asked && Intl.NumberFormat.supportedLocalesOf(asked).length ? asked : "en";
+  return { country: String(cf.country ?? ""), southern: Number(cf.latitude) < 0, zone: typeof cf.timezone === "string" ? cf.timezone : undefined, locale };
+}
+
+/** `minor` units of `c` as the visitor's language writes money: "€10", "40 zł"; whole amounts without decimals. */
+function money(minor: number, c: Currency, v: Visitor): string {
+  const digits = minor % 10 ** c.digits === 0 ? 0 : c.digits;
+  return new Intl.NumberFormat(v.locale, { style: "currency", currency: c.code, minimumFractionDigits: digits, maximumFractionDigits: digits }).format(minor / 10 ** c.digits);
+}
+
+const plain = (minor: number, c: Currency, v: Visitor) => new Intl.NumberFormat(v.locale, { maximumFractionDigits: c.digits }).format(minor / 10 ** c.digits);
+
+/** Unix seconds as the visitor writes a day: "Dec 22". */
+const day = (s: number, v: Visitor) => new Date(s * 1000).toLocaleDateString(v.locale, { month: "short", day: "numeric", timeZone: v.zone });
+
+const NAMES = new Intl.DisplayNames(["en"], { type: "currency" });
+
+/**
+ * What the page has chosen, from its form or query: the currency (the visitor's country's first), every
+ * month or once, the amount picked for each (an index into the amounts offered, or "other") and what is typed
+ * for Other.
+ */
+type Choice = { currency: Currency; monthly: boolean; once: string; month: string; other: string };
+
+function choiceFrom(q: URLSearchParams, v: Visitor): Choice {
+  const code = q.get("currency") ?? (offered.countries as Record<string, string>)[v.country] ?? offered.elsewhere;
+  const currency = offered.currencies.find((c) => c.code === code) ?? offered.currencies[0];
+  const pick = (name: string, amounts: number[]) => {
+    const p = q.get(name) ?? "";
+    return p === "other" || (/^\d$/.test(p) && Number(p) < amounts.length) ? p : String(offered.first);
+  };
+  return { currency, monthly: q.get("every") === "month", once: pick("once", currency.once), month: pick("month", currency.monthly), other: q.get("other") ?? "" };
+}
+
+/** What a choice comes to in minor units, or why it can't be paid. */
+function amountOf(c: Choice, v: Visitor): { minor: number } | { said: string } {
+  const pick = c.monthly ? c.month : c.once;
+  if (pick !== "other") return { minor: (c.monthly ? c.currency.monthly : c.currency.once)[Number(pick)] };
+  const typed = Number(c.other) * 10 ** c.currency.digits;
+  const minor = Math.round(typed);
+  if (!c.other || !Number.isFinite(typed) || Math.abs(typed - minor) > 1e-6) return { said: "Choose an amount" };
+  if (minor < c.currency.least) return { said: `At least ${money(c.currency.least, c.currency, v)}` };
+  if (minor > c.currency.most) return { said: `At most ${money(c.currency.most, c.currency, v)}` };
+  return { minor };
+}
+
+// The browser's login: HttpOnly, so no script on the page reads it; SameSite=Lax, so no other site's form
+// sends it along (and each form's Origin is checked too). It lasts as long as a browser keeps one (400 days).
+const COOKIE = "nori_login";
+const keepLogin = (login: string) => `${COOKIE}=${login}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=34560000`;
+const CLEAR_LOGIN = `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
+
+function loginIn(request: Request): string | undefined {
+  return (request.headers.get("Cookie") ?? "").match(/(?:^|;\s*)nori_login=([^;]*)/)?.[1] || undefined;
+}
+
+/** The customer a login names; undefined for one Stripe doesn't know or whose secret is wrong. */
+async function known(env: Env, login: string | undefined): Promise<any> {
+  if (!login) return undefined;
+  return customerOf(env, login).catch((e) => {
+    if (e instanceof Failed && e.status === 401) return undefined;
+    throw e;
+  });
+}
+
+/** What a browser that has supported nori has given: when each payment was, and its monthly payment. */
+type Given = { paid: number[]; running?: any; stopping?: any; months: number };
+
+async function given(env: Env, customer: any): Promise<Given> {
+  const [paid, { running, stopping }] = await Promise.all([paidBy(env, customer), monthly(env, customer.id)]);
+  return { paid, running, stopping, months: stopping ? await monthsPaid(env, customer.id) : 0 };
+}
+
 // The seal (android SupportScreen.kt's SEAL_BODY) and the seasons' kanji (Kanji.kt), on a 24 grid.
 const BODY = "M5.5,2H18.5A3.5,3.5 0 0 1 22,5.5V18.5A3.5,3.5 0 0 1 18.5,22H5.5A3.5,3.5 0 0 1 2,18.5V5.5A3.5,3.5 0 0 1 5.5,2ZM5.85,3.75H18.15A2.1,2.1 0 0 1 20.25,5.85V18.15A2.1,2.1 0 0 1 18.15,20.25H5.85A2.1,2.1 0 0 1 3.75,18.15V5.85A2.1,2.1 0 0 1 5.85,3.75ZM5.95,4.35H18.05A1.6,1.6 0 0 1 19.65,5.95V18.05A1.6,1.6 0 0 1 18.05,19.65H5.95A1.6,1.6 0 0 1 4.35,18.05V5.95A1.6,1.6 0 0 1 5.95,4.35Z";
 const FRAME = "M6.5,3H17.5A3.5,3.5 0 0 1 21,6.5V17.5A3.5,3.5 0 0 1 17.5,21H6.5A3.5,3.5 0 0 1 3,17.5V6.5A3.5,3.5 0 0 1 6.5,3Z";
@@ -272,80 +376,244 @@ const KANJI: Record<string, string> = {
   winter: "M15.96 4.02Q16.07 3.94 16.29 3.72Q16.51 3.5 16.65 3.39Q16.8 3.28 16.88 3.28Q17.02 3.28 17.59 3.8Q18.16 4.33 18.68 4.92Q19.19 5.5 19.19 5.65Q19.08 5.85 18.88 5.92Q18.67 5.98 18.2 6.01Q16.6 8.56 14.22 10.49Q17.43 11.99 22.3 12.56V12.82Q21.46 13.02 20.92 13.64Q20.38 14.25 20.18 15.22Q15.39 14.06 12.51 11.75Q8.13 14.56 2.08 15.53L1.95 15.24Q7.36 13.46 11.05 10.36Q9.6 8.75 8.7 6.75Q6.06 9.46 3.07 10.8L2.89 10.62Q4.04 9.74 5.14 8.45Q6.24 7.15 7.16 5.63Q7.73 4.71 8.21 3.51Q8.68 2.31 8.85 1.39Q12.31 2.31 12.31 2.59Q12.31 2.66 12.13 2.71L11.71 2.79Q11.12 3.78 10.39 4.77H15.19ZM9.91 5.39Q9.51 5.89 9.1 6.34Q10.24 8.1 12.18 9.35Q14.09 7.44 15.19 5.39ZM9.18 13.99Q10.06 13.95 10.39 13.95Q12.11 13.95 13.22 14.31Q14.33 14.67 14.83 15.21Q15.32 15.75 15.32 16.32Q15.32 16.81 15 17.14Q14.68 17.47 14.2 17.47Q13.96 17.47 13.72 17.38Q13.1 16.7 11.82 15.82Q10.55 14.94 9.1 14.28ZM6.32 17.99Q7.47 17.95 7.97 17.95Q11.21 17.95 13.27 18.48Q15.32 19.01 16.22 19.77Q17.13 20.52 17.13 21.27Q17.13 21.76 16.8 22.05Q16.47 22.35 15.96 22.35Q15.74 22.35 15.48 22.29Q14.16 21.32 11.63 20.17Q9.1 19.03 6.26 18.28Z",
 };
 
-/** A page on `season`'s paper, light or dark as the system is; `css` adds to its style. */
-function paper(season: string, title: string, css: string, body: string): string {
-  const [page, ink, accent, darkPage, darkInk, darkAccent] = PAPERS[season];
+/** A seal in the accent of the season it was paid in, the kanji cut out of it. */
+const seal = (season: string, cls = "seal") =>
+  `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${BODY}" fill-rule="evenodd" fill="var(--${season})"/><path d="${KANJI[season]}" fill="var(--page)" transform="translate(12 12) scale(.62) translate(-12 -12)"/></svg>`;
+
+/** The next seal's empty place: its outline and kanji, quiet. */
+const blank = (season: string) =>
+  `<svg class="seal" viewBox="0 0 24 24" aria-hidden="true"><path d="${FRAME}" fill="none" stroke="var(--ink2)" stroke-width="1.5"/><path d="${KANJI[season]}" fill="var(--ink2)" transform="translate(12 12) scale(.56) translate(-12 -12)"/></svg>`;
+
+// The apps' icons (iconoir), as the web client's sprite has them.
+const ICONS: Record<string, string> = {
+  calendar: '<path d="M15 4V2M15 4V6M15 4H10.5M3 10V19C3 20.1046 3.89543 21 5 21H19C20.1046 21 21 20.1046 21 19V10H3Z"/><path d="M3 10V6C3 4.89543 3.89543 4 5 4H7"/><path d="M7 2V6"/><path d="M21 10V6C21 4.89543 20.1046 4 19 4H18.5"/>',
+  card: '<path d="M22 9V17C22 18.1046 21.1046 19 20 19H4C2.89543 19 2 18.1046 2 17V7C2 5.89543 2.89543 5 4 5H20C21.1046 5 22 5.89543 22 7V9ZM22 9H6"/>',
+  stop: '<path d="M19.1414 5C17.3265 3.14864 14.7974 2 12 2C6.47715 2 2 6.47715 2 12C2 14.7255 3.09032 17.1962 4.85857 19M19.1414 5C20.9097 6.80375 22 9.27455 22 12C22 17.5228 17.5228 22 12 22C9.20261 22 6.67349 20.8514 4.85857 19M19.1414 5L4.85857 19"/>',
+  keep: '<path d="M19.91 13.2C19.33 17.05 16.01 20 12 20C7.582 20 4 16.42 4 12C4 7.582 7.582 4 12 4C15.28 4 18.1 5.975 19.33 8.8"/><path d="M16 8.8H19.52C19.79 8.8 20 8.585 20 8.32V4.8"/>',
+  arrow: '<path d="M9 6L15 12L9 18"/>',
+};
+const icon = (name: string) =>
+  `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+
+const escape = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+/**
+ * A page on `season`'s paper, light or dark as the system is, in the apps' roles (page, surface, ink, its
+ * quiet share, the hairline, the accent, on) and their parts: grouped rows, chips, pills, the switch.
+ */
+function paper(season: Season, title: string, css: string, body: string): string {
+  const colors = offered.colors as Record<string, Record<"light" | "dark", Record<string, string>>>;
+  const roles = (dark: boolean) => {
+    const mode = dark ? "dark" : "light";
+    const own = Object.entries(colors[season][mode]).map(([k, v]) => `--${k}:${v}`);
+    return [...own, ...SEASONS.map((s) => `--${s}:${colors[s][mode].accent}`)].join(";");
+  };
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title><style>
-:root{color-scheme:light dark;--page:${page};--ink:${ink};--accent:${accent};--quiet:color-mix(in srgb,var(--ink) 55%,var(--page))}
-@media (prefers-color-scheme:dark){:root{--page:${darkPage};--ink:${darkInk};--accent:${darkAccent}}}
-body{margin:0;min-height:100vh;background:var(--page);color:var(--ink);font:17px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;padding:16px;box-sizing:border-box}
-h1{margin:0;font:600 24px/1.2 Inter,system-ui,sans-serif;letter-spacing:-.01em}
-p{margin:0;color:var(--quiet)}
+<title>${title}</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Literata:opsz,wght@7..72,700&display=swap">
+<style>
+:root{color-scheme:light dark;${roles(false)};--line:color-mix(in srgb,var(--ink) 10%,transparent);--veil:color-mix(in srgb,var(--ink) 6%,transparent);--raised:color-mix(in srgb,var(--ink) 5%,var(--surface));--off:color-mix(in srgb,var(--ink) 16%,var(--page));--font:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--display:Literata,Georgia,serif}
+@media (prefers-color-scheme:dark){:root{${roles(true)}}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--page);color:var(--ink);font:15px/20px var(--font);-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+a{color:inherit;text-decoration:none}
+button,input,select{font:inherit;color:inherit}
+button{background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+h1{margin:0;font:700 31px/40px var(--display);letter-spacing:-.3px}
+p{margin:0}
+.icon{width:20px;height:20px;flex:none;display:block}
+.group{background:var(--surface);border:.5px solid var(--hair);border-radius:18px;overflow:hidden}
+.group-row{position:relative;display:flex;align-items:center;gap:14px;width:100%;min-height:52px;padding:8px 14px;font-size:16px;line-height:21px;text-align:left}
+.group-row::after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:1px;background:var(--line)}
+.group-row:has(>.icon:first-child)::after{left:48px}
+.group-row:last-child::after{display:none}
+a.group-row:hover{background:color-mix(in srgb,var(--ink) 5%,transparent)}
+.words{flex:1;min-width:0;display:flex;flex-direction:column}
+.value,.sub{font-size:13.5px;color:var(--ink2);white-space:nowrap}
+.sub{font-size:13px;line-height:17px;white-space:normal}
+.group-row>.icon:last-child:not(:first-child){color:var(--ink2);margin-left:-10px}
+.pill{display:inline-flex;align-items:center;justify-content:center;gap:7px;width:100%;min-height:50px;padding:0 16px;border-radius:999px;background:var(--ink);color:var(--page);font-size:15px;font-weight:600;white-space:nowrap}
+.pill.quiet{background:var(--veil);color:var(--ink)}
+.pill .icon{width:18px;height:18px}
 ${css}
 </style></head><body>${body}</body></html>`;
 }
 
 /**
- * What the service is, for whoever opens its address: how to stop monthly support in the app, and, for an
- * app that no longer knows its payments, Stripe's sign-in by email, where it can be stopped too. Without
- * that sign-in (Stripe not answering), the page says to try again later.
+ * The support page, as the apps' Support page: the stamp book, one seal for each payment this browser made
+ * and the next one's empty place; while a monthly payment runs or is set to stop, its row and Stop (Spring's
+ * rose) or Keep going; then what to give (the amount, every month, the currency) and Give, which opens
+ * Checkout. A payment made in an app is reached by Stripe's sign-in by email (the `login` portal). It
+ * works without scripts: the form shows the amounts of the cadence chosen, and a changed currency
+ * reloads it.
  */
-async function home(env: Env, origin: string): Promise<string> {
-  const signIn = await portal(env, origin, "login").then((c) => c.login_page?.url as string | undefined, () => undefined);
-  const way = signIn
-    ? `<a class="button" href="${signIn}">Sign in with your email</a>`
-    : "<p>Stripe isn't answering right now. Try again later.</p>";
-  return paper("autumn", "Support nori", `
-body{display:grid;place-items:center}
-main{max-width:34rem;display:grid;gap:12px}
-h2{margin:20px 0 0;font:600 18px/1.3 Inter,system-ui,sans-serif}
-a{color:inherit;text-decoration-color:var(--quiet)}
-a:hover{text-decoration-color:var(--accent)}
-.button{justify-self:start;margin-top:4px;padding:12px 20px;border-radius:999px;background:var(--ink);color:var(--page);text-decoration:none;font-weight:600}
-.button:hover{background:var(--accent)}`, `<main>
+async function home(env: Env, origin: string, v: Visitor, choice: Choice, customer: any, said = ""): Promise<string> {
+  const [mine, signIn] = await Promise.all([
+    customer ? given(env, customer) : undefined,
+    portal(env, origin, "login").then((c) => c.login_page?.url as string | undefined, () => undefined),
+  ]);
+  const now = seasonOn(new Date(), v.southern);
+  const book = (mine?.paid ?? []).map((s) => seal(seasonOn(new Date(s * 1000), v.southern))).join("") + blank(now);
+  const c = choice.currency;
+  const runs = mine?.running?.items?.data?.[0]?.price;
+  const monthlyRow = mine?.running
+    ? `<div class="group"><div class="group-row">${icon("calendar")}<span class="words">Monthly support</span><span class="value">${escape(money(runs.unit_amount, offered.currencies.find((o) => o.code === runs.currency.toUpperCase()) ?? c, v))}</span></div></div>
+<form method="post" action="/monthly/card"><button class="pill quiet">${icon("card")}Card and receipts</button></form>
+<form method="post" action="/monthly/stop"><button class="pill quiet stop">${icon("stop")}Stop</button></form>`
+    : mine?.stopping
+    ? `<div class="group"><div class="group-row">${icon("calendar")}<span class="words">Monthly support</span><span class="value">Ends ${escape(day(mine.stopping.cancel_at, v))}</span></div></div>
+${mine.months ? `<p class="thanked">${mine.months === 1 ? "Thank you for a month of support." : `Thank you for ${mine.months} months of support.`}</p>` : ""}
+<form method="post" action="/monthly/card"><button class="pill quiet">${icon("card")}Card and receipts</button></form>
+<form method="post" action="/monthly/keep"><button class="pill quiet">${icon("keep")}Keep going</button></form>`
+    : "";
+  const chips = (name: "once" | "month", amounts: number[], picked: string) =>
+    `<div class="choices ${name}" role="radiogroup" aria-label="Amount">${amounts
+      .map((a, i) => `<input type="radio" name="${name}" value="${i}" id="${name}-${i}"${picked === String(i) ? " checked" : ""}><label class="chip" for="${name}-${i}">${escape(plain(a, c, v))}</label>`)
+      .join("")}<input type="radio" name="${name}" value="other" id="${name}-other"${picked === "other" ? " checked" : ""}><label class="chip" for="${name}-other">Other</label></div>`;
+  // Give names the amount picked; for Other, the amount typed is only known once sent.
+  const gives = (name: "once" | "month", amounts: number[], suffix: string) =>
+    amounts.map((a, i) => `<span class="says ${name}-${i}">Give ${escape(money(a, c, v))}${suffix}</span>`).join("") + `<span class="says ${name}-other">Give</span>`;
+  const cadence = { once: ".give:not(:has(.switch:checked))", month: ".give:has(.switch:checked)" };
+  const shows = (["once", "month"] as const)
+    .flatMap((name) => [...(name === "once" ? c.once : c.monthly).map((_, i) => String(i)), "other"].map((i) => `${cadence[name]}:has(#${name}-${i}:checked) .says.${name}-${i}`))
+    .join(",");
+  const currencies = offered.currencies.map((o) => `<option value="${o.code}"${o.code === c.code ? " selected" : ""}>${escape(NAMES.of(o.code) ?? o.code)}</option>`).join("");
+  const step = c.digits ? `0.${"0".repeat(c.digits - 1)}1` : "1";
+  return paper(now, "Support nori", `
+main{max-width:560px;margin:0 auto;padding:24px 20px 40px;display:flex;flex-direction:column}
+.line{margin-top:2px;color:var(--ink2)}
+.book{display:grid;grid-template-columns:repeat(auto-fill,min(72px,calc((100% - 56px)/5)));gap:14px;margin:24px 0 26px}
+.seal{display:block;width:100%;height:auto;aspect-ratio:1}
+.foot,.give{display:flex;flex-direction:column;gap:12px}
+.foot{margin-bottom:12px}
+.pill.stop{color:var(--spring);background:color-mix(in srgb,var(--spring) 12%,transparent)}
+.thanked{margin:0 4px}
+.amount{flex-direction:column;align-items:stretch;gap:10px;padding-block:12px}
+.choices{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.choices input,.give>input{position:absolute;opacity:0;pointer-events:none}
+.chip{display:flex;align-items:center;justify-content:center;height:34px;border-radius:999px;border:.5px solid transparent;color:var(--ink2);font-size:14px;font-weight:500;white-space:nowrap;cursor:pointer}
+.choices input:checked+.chip{background:var(--raised);border-color:var(--hair);color:var(--ink)}
+.choices input:focus-visible+.chip{outline:2px solid var(--accent);outline-offset:2px}
+.give:has(.switch:checked) .choices.once,.give:not(:has(.switch:checked)) .choices.month{display:none}
+.other{display:none;min-height:60px}
+${cadence.once}:has(#once-other:checked) .other,${cadence.month}:has(#month-other:checked) .other{display:flex}
+.typed{flex:1;min-width:0;border:0;background:none;color:var(--ink);font:600 28px/1 var(--font);letter-spacing:-.01em;caret-color:var(--accent);outline:none;-moz-appearance:textfield}
+.typed::-webkit-inner-spin-button,.typed::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.limit{color:var(--ink2);font-size:13px}
+.switch{appearance:none;width:51px;height:31px;border-radius:16px;background:var(--off);position:relative;cursor:pointer;flex:none;margin:0;transition:background 180ms}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;transition:transform 180ms}
+.switch:checked{background:var(--on)}
+.switch:checked::after{transform:translateX(20px)}
+select.value{border:0;background:none;font-size:15px;text-align:right;cursor:pointer}
+.says{display:none}
+${shows}{display:inline}
+.said{text-align:center;color:var(--ink2);font-size:14px}
+.away{margin-top:26px}
+@media (min-width:720px){h1,.line{text-align:center}}
+@media (prefers-reduced-motion:reduce){.switch,.switch::after{transition:none}}`, `<main>
 <h1>Support nori</h1>
-<h2>Stop monthly support</h2>
-<p>In nori, open Support nori and tap Stop next to Monthly support. It stops at the end of the month you paid for.</p>
-<h2>nori no longer shows your payments?</h2>
-<p>After clearing nori's data, reinstalling it or moving to a new device, restore a backup made in nori and your payments come back. Without one, sign in with the email on your Stripe receipt. Stripe sends you a code, and you can stop or change monthly support there.</p>
-${way}
-<p><a href="https://norifm.com/docs/using/support-nori/">About supporting nori</a></p>
+<p class="line">nori is and always will be free.</p>
+<div class="book">${book}</div>
+${monthlyRow ? `<div class="foot">${monthlyRow}</div>` : ""}
+<form class="give" method="post" action="/give">
+<div class="group">
+<div class="group-row amount"><span>Amount</span>${chips("once", c.once, choice.once)}${chips("month", c.monthly, choice.month)}</div>
+<label class="group-row other"><input class="typed" type="number" name="other" min="0" step="${step}" inputmode="decimal" placeholder="0" aria-label="Other" value="${escape(choice.other)}">${said.startsWith("At ") ? `<span class="limit">${escape(said)}</span>` : ""}</label>
+<label class="group-row"><span class="words">Every month</span><input type="checkbox" class="switch" name="every" value="month"${choice.monthly ? " checked" : ""}></label>
+<label class="group-row"><span class="words">Currency</span><select class="value" name="currency" onchange="location.search=new URLSearchParams(new FormData(this.form))">${currencies}</select></label>
+</div>
+<noscript><button class="pill quiet" formmethod="get" formaction="/">Change currency</button></noscript>
+<button class="pill">${gives("once", c.once, "")}${gives("month", c.monthly, " a month")}</button>
+${said && !said.startsWith("At ") ? `<p class="said">${escape(said)}</p>` : ""}
+</form>
+${signIn ? `<div class="group away"><a class="group-row" href="${escape(signIn)}"><span class="words"><span>Sign in with your email</span><span class="sub">Paid in the app</span></span>${icon("arrow")}</a></div>` : ""}
 </main>`);
 }
 
 /**
  * Where Checkout and the customer portal send the browser back. Paid: the seal of the season it was stamped
- * in pressed onto the page, and thanks. Left Checkout: the seal's empty place, nothing paid. Back from the
- * portal: the way back alone. The paper is the season's, light or dark as the system is.
+ * in pressed onto the page, and thanks; from the support page, the way back to it. Left Checkout: the seal's
+ * empty place, nothing paid. Back from the portal: the way back to nori.
  */
 function done(url: URL): string {
   const paid = url.searchParams.get("paid") === "1";
   const left = url.searchParams.get("left") === "1";
+  const page = url.searchParams.get("on") === "page";
   const given = url.searchParams.get("season") ?? "";
-  const season = SEASONS.includes(given) ? given : "autumn";
-  const kanji = `<path d="${KANJI[season]}" transform="translate(12 12) scale(.62) translate(-12 -12)"/>`;
-  const seal = !paid && !left
-    ? ""
-    : paid
-    ? `<svg class="seal stamped" viewBox="0 0 24 24" aria-hidden="true"><defs><mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><rect width="24" height="24" fill="#fff"/><g fill="#000">${kanji}</g></mask></defs><g transform="rotate(-4 12 12)"><path d="${BODY}" fill-rule="evenodd" fill="var(--accent)" mask="url(#cut)"/></g></svg>`
-    : `<svg class="seal" viewBox="0 0 24 24" aria-hidden="true"><path d="${FRAME}" fill="none" stroke="var(--quiet)" stroke-width="1.5"/><g fill="var(--quiet)" opacity=".85"><path d="${KANJI[season]}" transform="translate(12 12) scale(.56) translate(-12 -12)"/></g></svg>`;
-  const words = paid ? "<h1>Thanks.</h1><p>You can go back to nori now.</p>" : left ? "<p>Nothing was paid. You can go back to nori now.</p>" : "<p>You can go back to nori now.</p>";
+  const season = (SEASONS.includes(given) ? given : "autumn") as Season;
+  const mark = paid ? seal(season, "seal stamped") : left ? blank(season) : "";
+  const words = paid
+    ? `<h1>Thank you</h1>${page ? `<a class="pill back" href="/">Support nori</a>` : "<p>Go back to nori.</p>"}`
+    : left ? "<p>Nothing was paid.</p>" : "<p>Go back to nori.</p>";
   return paper(season, "nori", `
-body{display:grid;place-items:center;text-align:center}
+body{display:grid;place-items:center;text-align:center;padding:16px}
 main{display:flex;flex-direction:column;align-items:center;gap:10px}
+p{color:var(--ink2)}
 .seal{width:96px;height:96px;margin-bottom:18px}
+.back{width:auto;margin-top:14px;padding:0 24px}
 .stamped{animation:stamp .5s cubic-bezier(.3,1.6,.5,1)}
 @keyframes stamp{from{transform:scale(1.5)}to{transform:scale(1)}}
-@media (prefers-reduced-motion:reduce){.stamped{animation:none}}`, `<main>${seal}${words}</main>`);
+@media (prefers-reduced-motion:reduce){.stamped{animation:none}}`, `<main>${mark}${words}</main>`);
 }
+
+/** The page's forms: what they ask, answered with the page again or a way on (303). */
+async function form(env: Env, request: Request, url: URL): Promise<Response> {
+  const html = (status: number, text: string, cookie?: string) =>
+    new Response(text, { status, headers: { "Content-Type": "text/html; charset=utf-8", ...(cookie ? { "Set-Cookie": cookie } : {}) } });
+  const to = (location: string, cookie?: string) => new Response(null, { status: 303, headers: { Location: location, ...(cookie ? { "Set-Cookie": cookie } : {}) } });
+  const v = visitor(request);
+  const had = loginIn(request);
+  const customer = await known(env, had);
+  const forgotten = had && !customer ? CLEAR_LOGIN : undefined;
+  if (request.method === "GET") return html(200, await home(env, url.origin, v, choiceFrom(url.searchParams, v), customer), forgotten);
+  if (request.headers.get("Origin") !== url.origin) return new Response("forbidden", { status: 403 });
+  const asked = new URLSearchParams(await request.text());
+  const login = customer ? had : undefined;
+  if (url.pathname === "/give") {
+    const choice = choiceFrom(asked, v);
+    const amount = amountOf(choice, v);
+    if ("said" in amount) return html(400, await home(env, url.origin, v, choice, customer, amount.said), forgotten);
+    const season = seasonOn(new Date(), v.southern);
+    try {
+      const started = await start(env, url.origin, { currency: choice.currency.code.toLowerCase(), amount: amount.minor, monthly: choice.monthly, login: login ?? null, in: "browser", season }, true);
+      return to(started.url!, keepLogin(started.login));
+    } catch (e) {
+      if (!(e instanceof Failed)) throw e;
+      console.log(`/give: ${e.message}`);
+      const said = e.status === 409 ? "Your monthly support is in another currency" : "The payment didn't go through";
+      return html(e.status, await home(env, url.origin, v, choice, customer, said), forgotten);
+    }
+  }
+  if (!login) return to("/", forgotten);
+  try {
+    if (url.pathname === "/monthly/stop") await stop(env, url.origin, { login, in: "app" });
+    else if (url.pathname === "/monthly/keep") await keep(env, { login });
+    else if (url.pathname === "/monthly/card") return to((await manage(env, url.origin, { login }, `${url.origin}/`)).url);
+    else return new Response("not found", { status: 404 });
+  } catch (e) {
+    // No monthly payment to stop or keep (stopped elsewhere meanwhile): the page shows what there is.
+    if (!(e instanceof Failed && e.status === 404)) throw e;
+  }
+  return to("/");
+}
+
+const PAGE = ["/", "/give", "/monthly/stop", "/monthly/keep", "/monthly/card"];
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const html = (text: string) => new Response(text, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    const html = (text: string, status = 200) => new Response(text, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
     if (request.method === "GET" && url.pathname === "/done") return html(done(url));
-    if (request.method === "GET" && url.pathname === "/") return html(await home(env, url.origin));
+    if ((request.method === "GET" && url.pathname === "/") || (request.method === "POST" && PAGE.includes(url.pathname) && url.pathname !== "/")) {
+      try {
+        return await form(env, request, url);
+      } catch (e) {
+        console.log(`${url.pathname}: ${(e as Error).message}`);
+        return html(paper(seasonOn(new Date(), visitor(request).southern), "Support nori", "body{display:grid;place-items:center;padding:16px}p{color:var(--ink2)}", "<p>Stripe isn't answering. Try again later.</p>"), 502);
+      }
+    }
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     if (request.method !== "POST") return new Response("not found", { status: 404 });
     const json = (status: number, body: object) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...CORS } });
