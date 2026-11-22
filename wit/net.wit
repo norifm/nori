@@ -65,7 +65,7 @@ interface audio-out {
     variant pace {
         /// In real time, a little ahead, as `encoding` (a snapserver's source, a small speaker).
         real-time,
-        /// nori-sink-protocol, which the host speaks (docs/developers/plugins.md, "Deep sinks"): the
+        /// nori-sink-protocol, which the host speaks (docs/developers/plugin-host.md, "Deep sinks"): the
         /// device holds tens of seconds and asks for bursts, and says what it decodes, the rates and
         /// widths it takes and its cover size. The depth preferred, ms (the host fits it to the
         /// device's buffer). `encoding` is not used.

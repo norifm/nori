@@ -3,7 +3,7 @@
 //! being paced by TCP. Every frame is `u32` length (little-endian, the bytes after it), a kind byte, and
 //! its fields, little-endian. Strings are a `u16` length and UTF-8; an option is a byte (0 none, 1 some)
 //! and the value. A frame decodes borrowing the bytes it came in, so firmware copies no audio.
-//! The whole protocol is in docs/developers/plugins.md ("Deep sinks").
+//! The whole protocol is in docs/developers/plugin-host.md ("Deep sinks").
 
 #![cfg_attr(not(test), no_std)]
 

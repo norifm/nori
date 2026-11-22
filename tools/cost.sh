@@ -2,7 +2,7 @@
 # tools/cost.sh LABEL [SECONDS]: what the app costs on screen as it is now, from a debug build over adb:
 # CPU % of a core, wakeups/s (context switches of all its threads), frames/s and GCs/min over the window,
 # the six busiest threads, and the threads that woke most (a thread waking with little CPU still costs a
-# phone battery: wakeups/min). Set ANDROID_SERIAL for the device. See docs/developers/building.md.
+# phone battery: wakeups/min). Set ANDROID_SERIAL for the device. See docs/developers/perf.md.
 
 label=$1; secs=${2:-30}
 cd "$(dirname "$0")/.."; m=$(mktemp -d)

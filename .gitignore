@@ -8,7 +8,8 @@
 /.idea
 *.iml
 /.dev
-/.claude
+/.claude/*
+!/.claude/skills/
 *.jks
 /keystore.properties
 logcat*.log
