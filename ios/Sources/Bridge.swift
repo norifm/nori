@@ -370,6 +370,13 @@ final class Core {
         return t
     }
 
+    /// Cover `index` of the first run's AutoMix question (`nori_ios_setup_covers`) at `px`.
+    func setupCover(_ index: Int, px: Int, done: @escaping (UIImage?) -> Void) {
+        let t = token()
+        covers[t] = done
+        nori_ios_setup_cover(t, UInt32(index), UInt32(px))
+    }
+
     func cancelCover(_ token: UInt64) {
         covers[token] = nil
         nori_ios_cover_cancel(token)

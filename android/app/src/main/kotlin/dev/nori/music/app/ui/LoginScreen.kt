@@ -167,14 +167,14 @@ private fun Check(title: String, detail: String, value: Boolean, divider: Boolea
 private val SWITCHES = setOf(Field.LEGACY_AUTH, Field.SELF_SIGNED, Field.WIFI_ONLY)
 
 /**
- * First run, and "add / edit server" from settings ([initial] and [onClose] set). A profile being added
- * picks its kind first (the core's `providers`); the form then has the fields that kind's provider asks,
- * its advanced ones folded away.
+ * "Add / edit server" from settings ([initial] and [onClose] set), and a profile of [kind] the welcome chose. A
+ * profile being added picks its kind first (the core's `providers`) unless [kind] is given; the form then has
+ * the fields that kind's provider asks, its advanced ones folded away.
  */
 @Composable
-fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: (() -> Unit)? = null) {
+fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: ServerKind? = null, onClose: (() -> Unit)? = null) {
     val add by vm.add.collectAsStateWithLifecycle()
-    var p by remember { mutableStateOf(initial ?: vm.newProfile()) }
+    var p by remember { mutableStateOf(initial ?: vm.newProfile().let { n -> kind?.let { n.copy(kind = it) } ?: n }) }
     val adding = remember { initial == null || vm.prefs.value.servers.none { it.id == initial.id } }
     val providers by vm.providers.collectAsStateWithLifecycle()
     val info = providers.firstOrNull { it.kind == p.kind }
@@ -184,6 +184,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
     var certPassword by remember { mutableStateOf("") }
     val pickCert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) p = vm.importClientCert(p, uri, certPassword) }
     LaunchedEffect(vm) { vm.added.collect { onClose?.invoke() } }
+    LaunchedEffect(kind) { if (kind != null) vm.chooseKind(kind) { dev.nori.music.ffi.settings.serverFromForm(p, headers) } }
     // Gone, the next form starts afresh (the core's `AddFlow`).
     androidx.compose.runtime.DisposableEffect(vm) { onDispose { vm.addOn(dev.nori.music.ffi.AddEvent.Start) } }
     val busy = add.send is dev.nori.music.ffi.AddSend.Sending
@@ -267,12 +268,13 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
     // A new profile starts by choosing what it plays from; back from its form chooses again. One with
     // nothing to ask is added as soon as it's chosen, its page showing only a failure (the core's `AddFlow`).
     val page = add.page
-    androidx.activity.compose.BackHandler(adding && page is dev.nori.music.ffi.AddPage.Provider) { vm.addOn(dev.nori.music.ffi.AddEvent.Back) }
+    // Back from a kind's page chooses again; a kind chosen before (the welcome's) closes instead.
+    androidx.activity.compose.BackHandler(adding && page is dev.nori.music.ffi.AddPage.Provider) { if (kind != null) onClose?.invoke() else vm.addOn(dev.nori.music.ffi.AddEvent.Back) }
     if (adding && page !is dev.nori.music.ffi.AddPage.Provider) {
-        ProviderChoice(vm, onClose) { kind ->
-            p = p.copy(kind = kind)
-            vm.chooseKind(kind) { dev.nori.music.ffi.settings.serverFromForm(p, headers) }
-        }
+        if (kind == null) ProviderChoice(vm, onClose) { chosen ->
+            p = p.copy(kind = chosen)
+            vm.chooseKind(chosen) { dev.nori.music.ffi.settings.serverFromForm(p, headers) }
+        } else Surface(Modifier.fillMaxSize()) {}
         return
     }
     // Nothing to ask: an account's provider offers signing in or going on as a guest.

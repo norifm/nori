@@ -160,6 +160,19 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
         previewing { host.previewFile(file.path) }
     }
 
+    /**
+     * Installs [offer]'s newest version without its sheet and turns it on, for the first run's welcome where
+     * picking it asked for it; one installed already only turns on. Whether it is on.
+     */
+    suspend fun installPicked(offer: Offer): Boolean {
+        if (cards.value.none { it.id == offer.id }) {
+            val version = offer.versions.firstOrNull() ?: return false
+            refusing { host.installPreview(host.previewVersion(version)) } ?: return false
+        }
+        host.turn(offer.id, true)
+        return true
+    }
+
     /** Shows the install sheet of [offer]'s newest version. */
     fun previewOffer(offer: Offer) = offer.versions.firstOrNull()?.let(::previewVersion)
 

@@ -94,6 +94,10 @@ pub enum Msg {
     Cast,
     /// The jam asked for opened, or why not.
     Jam(Result<(), String>),
+    /// The first run's preview covers, decoded (`setup::decode_covers`).
+    SetupCovers(Vec<Vec<u8>>),
+    /// A plugin picked on the welcome installed and on, or not.
+    WelcomeInstalled { plugin: String, on: bool },
     /// A device paired (its name), or what to say of why not.
     Paired(Result<String, String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.

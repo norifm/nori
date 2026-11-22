@@ -9,12 +9,13 @@ use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
 use nori_core::paged::Paged;
 use nori_core::library::QueueOffer;
 use nori_core::offer::Offered;
-use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, SignInEvent, SignInFlow, SignInShown};
+use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, SignInEvent, SignInFlow, SignInShown, WelcomeDo, WelcomeEvent, WelcomeFlow, WelcomePage, WelcomeSource};
 use nori_core::providers::{AfterAdding, FirstStep};
 use nori_core::menus::{DownloadAct, PageAction, PageKind, SongDownload};
 use nori_core::mixes::board::{MixSheet, MixTile};
 use nori_core::model::HistoryEntry;
 use nori_core::settings::HomeRow;
+use nori_core::setup::{SetupAnswer, SetupStep};
 use nori_core::client::Starrable;
 use nori_core::playlist::PlaylistView;
 use nori_core::remote::wire::Pending;
@@ -247,6 +248,9 @@ pub enum PluginCmd {
     Turn(String, bool),
     /// Turns on the plugin chosen on the first screen, and opens its form.
     TurnOnChosen(String),
+    /// Installs the plugins picked on the welcome, with no sheet (picking them was the ask), and turns them
+    /// on; each answers with [`Msg::PickedInstalled`].
+    InstallPicked(Vec<String>),
     /// Moves the plugin to this place in the order.
     Place(String, u32),
     Uninstall(String),
@@ -747,6 +751,31 @@ pub struct Login {
     pub flow: AddFlow,
     /// Selection among the first screen's providers ([`App::provider_lines`]).
     pub choice: Sel,
+}
+
+/// The first run's questions (the core's `setup_steps`), over the app once the install's first profile
+/// is in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Setup {
+    pub steps: Vec<SetupStep>,
+    /// The page shown, as an index into `steps`.
+    pub at: usize,
+    /// The answer given to each question, its check and what the preview shows.
+    pub answers: Vec<(SetupStep, SetupAnswer)>,
+    /// The line with the keys: an answer, then Continue; on the look, each setting row, then Start
+    /// listening.
+    pub line: usize,
+}
+
+impl Setup {
+    pub fn step(&self) -> SetupStep {
+        self.steps[self.at]
+    }
+
+    /// The answer given to `step`, if it was answered.
+    pub fn answered(&self, step: SetupStep) -> Option<SetupAnswer> {
+        self.answers.iter().find(|(s, _)| *s == step).map(|(_, a)| *a)
+    }
 }
 
 /// A line of the first screen.
@@ -1267,6 +1296,8 @@ pub enum ListRef {
     Devices,
     Profiles,
     Providers,
+    /// A first-run page's answers, or the look's setting rows.
+    Setup,
     Picker,
     Menu,
     Help,
@@ -1312,6 +1343,13 @@ pub enum Button {
     Connect,
     /// The login's way to Settings › Plugins.
     LoginPlugins,
+    /// The welcome's Restore a backup.
+    WelcomeRestore,
+    WelcomeContinue,
+    SetupBack,
+    SetupSkip,
+    SetupContinue,
+    SetupStart,
     LoginSignIn,
     LoginGuest,
     /// Plays the queue offered on Home, or turns it down.
@@ -1375,6 +1413,10 @@ pub struct App {
     pub eq_sel: Sel,
     pub support: crate::support::Support,
     pub login: Login,
+    /// The first run's welcome: the sources picked, their plugins installing, their sign-ins.
+    pub welcome: WelcomeFlow,
+    /// The first run's questions while they show.
+    pub setup: Option<Setup>,
     pub lyrics: Words,
     pub lyrics_sel: Option<usize>,
     pub lyrics_wake: Option<Instant>,
@@ -1985,6 +2027,10 @@ impl App {
                 }
             }
             Msg::Installed(Err(e)) | Msg::Preview(Err(e)) => self.say(crate::text::plugin_refused(&e), true),
+            Msg::PickedInstalled { plugin, on } => {
+                self.cmds.push(Cmd::Plugin(PluginCmd::Read));
+                self.welcome_on(if on { WelcomeEvent::Installed { plugin } } else { WelcomeEvent::InstallRefused { plugin } });
+            }
             Msg::Slots { song, info, status } => {
                 if self.song.as_ref().is_some_and(|s| s.id == song) {
                     self.slots.info = Some((song, info));
@@ -2346,6 +2392,10 @@ impl App {
             self.overlay_key(k);
             return;
         }
+        if self.setup.is_some() {
+            self.setup_key(k);
+            return;
+        }
         if self.view == View::Login {
             self.login_key(k);
             return;
@@ -2474,6 +2524,96 @@ impl App {
         self.login.flow.choosing()
     }
 
+    /// Whether the first screen is the welcome: the install has no profile yet, or the welcome's sign-ins
+    /// are under way.
+    pub fn welcome(&self) -> bool {
+        self.login_choosing() && (self.prefs.servers.is_empty() || self.welcome.page != WelcomePage::Picking)
+    }
+
+    /// What the welcome offers: the kinds a profile can be of, then the provider plugins the repos offer.
+    pub fn welcome_sources(&self) -> Vec<WelcomeSource> {
+        self.provider_lines()
+            .into_iter()
+            .map(|l| match l {
+                ProviderLine::Kind(kind) => WelcomeSource::Kind { kind },
+                ProviderLine::Offered { id, .. } => WelcomeSource::Offered { plugin: id },
+            })
+            .collect()
+    }
+
+    /// Takes `event` on the welcome and does what it asks: installs the plugins picked, or once a profile
+    /// is in, the first run's questions over the app. The one source picked signs in on its own page.
+    pub fn welcome_on(&mut self, event: WelcomeEvent) {
+        let page = self.welcome.page.clone();
+        match self.welcome.on(event) {
+            WelcomeDo::Install { plugins } => self.cmds.push(Cmd::Plugin(PluginCmd::InstallPicked(plugins))),
+            WelcomeDo::Questions => {
+                self.welcome = WelcomeFlow::default();
+                self.go(View::Home);
+                self.setup_start();
+            }
+            WelcomeDo::Nothing => {}
+        }
+        if self.welcome.page != page {
+            self.login.choice = Sel::default();
+        }
+        if let Some(kind) = self.welcome.one().filter(|_| self.login_choosing()) {
+            self.provider_chosen(kind);
+        }
+        self.dirty = true;
+    }
+
+    /// A profile of `kind` in, from the welcome's sign-ins: the questions follow, or the other sources'
+    /// sign-ins stay over the app.
+    pub fn welcome_added(&mut self, kind: ServerKind) {
+        if self.welcome.page != WelcomePage::SigningIn {
+            return;
+        }
+        self.welcome_on(WelcomeEvent::Added { kind });
+        if self.welcome.page == WelcomePage::SigningIn {
+            self.view = View::Login;
+        }
+    }
+
+    /// A key on the welcome: ↑ ↓ through the sources (on the sign-ins, those picked) and Continue; enter
+    /// picks a source, or opens a picked one's sign-in.
+    fn welcome_key(&mut self, k: KeyEvent) {
+        let signing = self.welcome.page == WelcomePage::SigningIn;
+        let lines = if signing { self.welcome.picked.len() } else { self.welcome_sources().len() };
+        let at = self.login.choice.at;
+        match k.code {
+            KeyCode::Up | KeyCode::Char('k') => self.login.choice.by(-1, lines + 1),
+            KeyCode::Down | KeyCode::Char('j') => self.login.choice.by(1, lines + 1),
+            KeyCode::Enter | KeyCode::Char(' ') if at == lines => self.welcome_on(WelcomeEvent::Continue),
+            KeyCode::Enter | KeyCode::Char(' ') => self.welcome_line(at),
+            KeyCode::Char('c') => self.welcome_on(WelcomeEvent::Continue),
+            KeyCode::Char('r') if !signing => self.overlay = Some(crate::settings_view::backup_asked(true)),
+            KeyCode::Char('p') if !signing => self.plugins_alone(Alone::Plugins),
+            KeyCode::Esc if signing => self.welcome_on(WelcomeEvent::Back),
+            KeyCode::Esc | KeyCode::Char('q') => self.quit = true,
+            _ => self.dirty = false,
+        }
+    }
+
+    /// The welcome's line `at`: a source picked or dropped, or on the sign-ins, a picked one's form.
+    fn welcome_line(&mut self, at: usize) {
+        match self.welcome.page {
+            WelcomePage::Picking => {
+                if let Some(source) = self.welcome_sources().into_iter().nth(at) {
+                    self.welcome_on(WelcomeEvent::Toggled { source });
+                }
+            }
+            WelcomePage::SigningIn => {
+                if let Some(WelcomeSource::Kind { kind }) = self.welcome.picked.get(at).cloned() {
+                    if !self.welcome.added.contains(&kind) {
+                        self.provider_chosen(kind);
+                    }
+                }
+            }
+            WelcomePage::Installing { .. } | WelcomePage::Done => {}
+        }
+    }
+
     /// The account page shows: a provider with an account and nothing to fill.
     pub fn login_account(&self) -> bool {
         self.login.flow.step() == Some(FirstStep::Account)
@@ -2505,7 +2645,9 @@ impl App {
     }
 
     fn login_key(&mut self, k: KeyEvent) {
-        if self.login_choosing() {
+        if self.welcome() {
+            self.welcome_key(k)
+        } else if self.login_choosing() {
             self.provider_key(k)
         } else {
             self.form_key(k)
@@ -2568,6 +2710,10 @@ impl App {
             KeyCode::Enter => self.connect(AfterAdding::Remind),
             KeyCode::Esc => {
                 l.flow.on(AddEvent::Back);
+                // The one source picked signs in on its own page: back is the welcome's sources.
+                if self.welcome.one().is_some() {
+                    self.welcome_on(WelcomeEvent::Back);
+                }
             }
             KeyCode::Backspace if at.is_some() => {
                 l.fields[l.focus].pop();
@@ -2591,6 +2737,109 @@ impl App {
         if let AddDo::Send { .. } = l.flow.on(AddEvent::Send { ready, added }) {
             self.cmds.push(Cmd::Login(Box::new(draft)));
         }
+    }
+
+    /// The first run's questions, once the install's first profile is in; this computer streams over no
+    /// mobile network.
+    pub fn setup_start(&mut self) {
+        self.setup = Some(Setup { steps: nori_core::setup::setup_steps(false), at: 0, answers: Vec::new(), line: 0 });
+        self.setup_to(0);
+    }
+
+    /// The first run's look: Settings' own season and appearance sections, as the settings stand.
+    pub fn setup_look(&self) -> Vec<crate::settings_view::Section> {
+        crate::settings_view::setup_look(&self.prefs, &self.settings.own, self.dark, self.rules.clone(), crate::art::Day::now())
+    }
+
+    /// The run's page `at`, the keys on the answer given there before.
+    fn setup_to(&mut self, at: usize) {
+        let Some(s) = &mut self.setup else { return };
+        s.at = at;
+        let given = s.answered(s.step());
+        s.line = nori_core::setup::setup_answers(s.step()).into_iter().position(|a| Some(a) == given).unwrap_or(0);
+        self.dirty = true;
+    }
+
+    /// The next page; Skip leaves the question's settings as they are.
+    fn setup_next(&mut self) {
+        let Some(s) = &self.setup else { return };
+        if s.at + 1 < s.steps.len() {
+            let at = s.at + 1;
+            self.setup_to(at);
+        }
+    }
+
+    fn setup_back(&mut self) {
+        if let Some(at) = self.setup.as_ref().and_then(|s| s.at.checked_sub(1)) {
+            self.setup_to(at);
+        }
+    }
+
+    /// `answer` to the question shown: its settings changed by name at once (the core's `setup_settings`).
+    fn setup_answer(&mut self, answer: SetupAnswer) {
+        let Some(s) = &mut self.setup else { return };
+        let step = s.step();
+        s.answers.retain(|(at, _)| *at != step);
+        s.answers.push((step, answer));
+        self.cmds.extend(nori_core::setup::setup_settings(answer).into_iter().map(|p| Cmd::Setting(p.name, p.value)));
+    }
+
+    /// Continue: the next page, once the question shown is answered.
+    fn setup_continue(&mut self) {
+        if self.setup.as_ref().is_some_and(|s| s.answered(s.step()).is_some()) {
+            self.setup_next();
+        }
+    }
+
+    fn setup_key(&mut self, k: KeyEvent) {
+        let Some(s) = &mut self.setup else { return };
+        let step = s.step();
+        if step == SetupStep::Look {
+            return self.look_key(k);
+        }
+        let answers = nori_core::setup::setup_answers(step);
+        match k.code {
+            KeyCode::Up | KeyCode::Char('k') => s.line = s.line.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => s.line = (s.line + 1).min(answers.len()),
+            KeyCode::Enter | KeyCode::Char(' ') => match answers.get(s.line).copied() {
+                Some(answer) => self.setup_answer(answer),
+                None => self.setup_continue(),
+            },
+            KeyCode::Char('c') => self.setup_continue(),
+            KeyCode::Char('s') => self.setup_next(),
+            KeyCode::Esc => self.setup_back(),
+            _ => self.dirty = false,
+        }
+    }
+
+    /// A key on the look: ↑ ↓ through Settings' rows and Start listening; ← → and enter as Settings
+    /// has them, each change taken at once.
+    fn look_key(&mut self, k: KeyEvent) {
+        let rows: Vec<crate::settings_view::Row> = self.setup_look().into_iter().flat_map(|s| s.rows).collect();
+        let Some(s) = &mut self.setup else { return };
+        let row = rows.get(s.line).cloned();
+        match (k.code, row) {
+            (KeyCode::Up | KeyCode::Char('k'), _) => s.line = s.line.saturating_sub(1),
+            (KeyCode::Down | KeyCode::Char('j'), _) => s.line = (s.line + 1).min(rows.len()),
+            (KeyCode::Left | KeyCode::Char('h'), Some(row)) => self.cmds.extend(crate::settings_view::step_row(row, false)),
+            (KeyCode::Right | KeyCode::Char('l'), Some(row)) => self.cmds.extend(crate::settings_view::step_row(row, true)),
+            (KeyCode::Enter | KeyCode::Char(' '), None) => self.setup = None,
+            (KeyCode::Enter | KeyCode::Char(' '), Some(row)) => match crate::settings_view::open_row(row) {
+                Some(Opened::Cmds(c)) => self.cmds.extend(c),
+                Some(Opened::Overlay(o)) => self.overlay = Some(o),
+                _ => {}
+            },
+            (KeyCode::Esc, _) => self.setup_back(),
+            _ => self.dirty = false,
+        }
+    }
+
+    /// A click on a first-run page's line `i`: an answer, or on the look a setting row.
+    fn setup_clicked(&mut self, i: usize) {
+        if let Some(s) = &mut self.setup {
+            s.line = i;
+        }
+        self.setup_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     }
 
     fn overlay_key(&mut self, k: KeyEvent) {
@@ -3049,7 +3298,7 @@ impl App {
 
     /// The session closed: nothing plays any more, and signing in is what is left.
     pub fn session_ended(&mut self) {
-        (self.now, self.lyrics_wake) = (Now::default(), None);
+        (self.now, self.lyrics_wake, self.setup) = (Now::default(), None, None);
         self.go(View::Login);
         self.choose_provider();
     }
@@ -4189,7 +4438,7 @@ impl App {
                     sel.by(d, lines.len());
                 }
             }
-            ListRef::Profiles | ListRef::Providers => {}
+            ListRef::Profiles | ListRef::Providers | ListRef::Setup => {}
             _ => {
                 self.focus = l.focus();
                 if let Some((sel, len)) = self.list() {
@@ -4313,6 +4562,12 @@ impl App {
             Button::LoginSignIn => self.connect(AfterAdding::SignIn),
             Button::LoginGuest => self.connect(AfterAdding::Guest),
             Button::LoginPlugins => self.plugins_alone(Alone::Plugins),
+            Button::WelcomeRestore => self.overlay = Some(crate::settings_view::backup_asked(true)),
+            Button::WelcomeContinue => self.welcome_on(WelcomeEvent::Continue),
+            Button::SetupBack => self.setup_back(),
+            Button::SetupSkip => self.setup_next(),
+            Button::SetupContinue => self.setup_continue(),
+            Button::SetupStart => self.setup = None,
             Button::Resume => self.take_offer(true),
             Button::Dismiss => self.take_offer(false),
         }
@@ -4352,11 +4607,13 @@ impl App {
             ListRef::Providers => {
                 self.login.on_list = false;
                 self.login.choice.at = i;
-                if again {
+                // The welcome's sources are picked with a click.
+                if again || self.welcome() {
                     self.login_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 }
                 return;
             }
+            ListRef::Setup => return self.setup_clicked(i),
             ListRef::Help => return,
             _ => {}
         }

@@ -16,6 +16,7 @@ use nori_core::paged::Paged;
 use nori_core::search::{SearchShown, SearchView};
 use nori_core::settings::SavedServer;
 use nori_core::Song;
+use nori_core::providers::flow::{WelcomeDo, WelcomeEvent, WelcomeFlow, WelcomePage, WelcomeSource};
 use nori_covers::loader::Ticket;
 use nori_covers::memory::Image as Picture;
 use nori_engine::{Event, State};
@@ -28,7 +29,7 @@ use crate::compositor::{Compositor, Focus, Raised};
 use crate::session::{self, CoverKey, CoverSize, Data, Fetch, Msg, PlaylistChange, Req, Session, Tx};
 use nori_host::pages::{HomePart, PageAsk, PageGot, ShelfItems};
 use nori_host::player::{Playback, QueueShown};
-use crate::settings::{Act, Target};
+use crate::settings::{Act, SourceMark, Target};
 use crate::sung::Part;
 use crate::words;
 use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
@@ -530,6 +531,11 @@ pub struct App {
     sign_in: SignInFlow,
     /// The profile in use while its plugin doesn't run here, opened once it does.
     waiting: Option<SavedServer>,
+    /// The first run's welcome (the core's), and the sources its first page lists, by row.
+    welcome: WelcomeFlow,
+    welcome_sources: Vec<WelcomeSource>,
+    /// The first run's questions, from the welcome's first profile until they are answered.
+    setup: Option<crate::setup::Setup>,
     /// The plugins' menu actions by `Card::kind` ([`MENU_KINDS`]).
     plugin_menus: [Vec<nori_plugins::MenuEntry>; 4],
     /// The song whose details are shown, for the plugins' lines that come after.
@@ -727,6 +733,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
     ui.set_greeting(words::LISTEN_NOW.into());
     ui.set_show_all_text(words::SHOW_ALL.into());
     ui.set_mixing_label(words::MIXING.into());
+    ui.set_first_run_words(words::first_run());
     let (tx, inbox) = Tx::new(ui.as_weak());
     let art = Rc::new(RefCell::new(Art::default()));
     let app = Rc::new_cyclic(|me: &Weak<RefCell<App>>| {
@@ -805,6 +812,9 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             add: AddFlow::default(),
             sign_in: SignInFlow::default(),
             waiting: None,
+            welcome: WelcomeFlow::default(),
+            welcome_sources: Vec::new(),
+            setup: None,
             plugin_menus: Default::default(),
             details_song: None,
             sleeve: None,
@@ -1290,6 +1300,17 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.follow();
     });
     on!(ui.on_close_plugins, h, |a| a.close_plugins());
+    on!(ui.on_welcome_picked, h, |a, i| a.welcome_picked(i.max(0) as usize));
+    on!(ui.on_welcome_continue, h, |a| a.welcome_on(WelcomeEvent::Continue));
+    on!(ui.on_welcome_back, h, |a| a.welcome_on(WelcomeEvent::Back));
+    on!(ui.on_setup_answer, h, |a, i| a.setup_answer(i.max(0) as usize));
+    on!(ui.on_setup_next, h, |a| a.setup_next());
+    on!(ui.on_setup_back, h, |a| {
+        if let Some(s) = &mut a.setup {
+            s.back();
+        }
+        a.setup_shown();
+    });
     on!(ui.on_settings_tab_chosen, h, |a, t| {
         a.ui().set_settings_tab(t);
         a.plugins_read();
@@ -3236,6 +3257,7 @@ impl App {
         ui.set_plugin_rows(crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, crate::look::Today::now()));
         ui.set_plugin_top(crate::settings::plugin_top(&self.plugged, prefs.plugins_off));
         if self.plugged.choosing {
+            self.welcome_shown();
             ui.set_provider_rows(crate::settings::provider_rows(&self.plugged, self.kinds(), &prefs, &self.facts, crate::look::Today::now()));
             if let Some(line) = self.waiting_line() {
                 ui.set_login_error(line.into());
@@ -3374,6 +3396,7 @@ impl App {
                 self.root.make_backup(path.into(), text, move |r| tx.send(Msg::BackedUp(r)));
             }
             Act::BackupPassword { restore: true, path } => {
+                self.welcome_restore(words::BACKUP_WORKING, false, true);
                 let tx = self.tx.clone();
                 self.root.restore_backup(path.into(), text, move |r| tx.send(Msg::Restored(r.map(Box::new))));
             }
@@ -3513,7 +3536,7 @@ impl App {
                 self.plugins_look();
                 self.ui().set_plugins_open(true);
             }
-            PluginAct::ChooseAgain => return self.choose_provider(),
+            PluginAct::ChooseAgain => return self.form_back(),
             PluginAct::AddSigningIn => return self.login(AfterAdding::SignIn),
             PluginAct::AddAsGuest => return self.login(AfterAdding::Guest),
             PluginAct::Look => {
@@ -4047,6 +4070,16 @@ impl App {
                 self.ui().set_inspector(Panel::Queue);
                 self.jam_shown();
             }
+            Msg::SetupCovers(covers) => {
+                if let Some(setup) = self.setup.as_mut() {
+                    setup.covers_decoded(covers);
+                }
+                self.setup_shown();
+            }
+            Msg::WelcomeInstalled { plugin, on } => {
+                self.plugins_read();
+                self.welcome_on(if on { WelcomeEvent::Installed { plugin } } else { WelcomeEvent::InstallRefused { plugin } });
+            }
             Msg::Jam(Err(e)) => self.say(&format!("{} ({e})", words::JAM_FAILED), true),
             Msg::Joined(Ok(pass)) => self.joined(pass),
             Msg::Joined(Err(e)) => {
@@ -4241,9 +4274,15 @@ impl App {
                 self.settings_shown();
                 self.jam_shown();
                 self.plugins_read();
-                self.say(&words::restored(&r), false);
+                self.welcome_restore(&words::restored(&r), false, false);
+                // On the welcome, the profiles it brought back open the app.
+                if self.session.is_none() {
+                    if let Some(p) = r.settings.prefs.active_server().cloned() {
+                        self.open(p, None);
+                    }
+                }
             }
-            Msg::Restored(Err(f)) => self.say(&words::backup_failed(&f), true),
+            Msg::Restored(Err(f)) => self.welcome_restore(&words::backup_failed(&f), true, false),
             Msg::PluginsUpdated(updated) => {
                 let named: Vec<(String, String)> = updated.into_iter().map(|(id, to)| (self.plugged.cards.iter().find(|c| c.id == id).map_or(id, |c| c.name.clone()), to)).collect();
                 self.say(&words::plugins_updated(&named), false);
@@ -4324,7 +4363,11 @@ impl App {
                     };
                     self.editing = None;
                     self.ui().set_login_password("".into());
+                    let kind = p.kind.clone();
                     self.open(p, added);
+                    if self.welcome.page == WelcomePage::SigningIn {
+                        self.welcome_on(WelcomeEvent::Added { kind });
+                    }
                 }
                 Err(said) => {
                     self.add_on(AddEvent::Refused { said });
@@ -4416,10 +4459,10 @@ impl App {
         }
     }
 
-    /// Positions the pills; hidden over Now Playing and the login page.
+    /// Positions the pills; hidden over Now Playing, the login page and the first run's pages.
     fn place_player(&self) {
         let ui = self.ui();
-        let shown = !ui.get_full_player() && ui.get_view() != View::Login;
+        let shown = !ui.get_full_player() && ui.get_view() != View::Login && self.setup.is_none() && !ui.get_welcome_signing();
         self.compositor.show_pills(shown && self.top.is_some(), shown && self.player.is_some());
         let chrome = ui.global::<crate::Chrome>();
         let (top, player) = self.compositor.pills();
@@ -4782,6 +4825,7 @@ impl App {
             crate::eq::fill(&ui, &prefs);
             self.eq_extras();
         }
+        self.setup_look_shown(&prefs, today);
     }
 
     fn setting(&mut self, name: &str, value: &str) {
@@ -4795,6 +4839,169 @@ impl App {
         }
         self.settings_shown();
         self.jam_shown();
+    }
+
+    /// How restoring a backup goes: under the welcome's Restore while it shows, else in a note.
+    fn welcome_restore(&self, line: &str, failed: bool, busy: bool) {
+        let ui = self.ui();
+        ui.set_welcome_restore_busy(busy);
+        if ui.get_view() == View::Login && ui.get_welcome() {
+            ui.set_welcome_restore_line(line.into());
+            ui.set_welcome_restore_failed(failed);
+        } else if !busy {
+            self.say(line, failed);
+        }
+    }
+
+    /// The first run's question shown, over the app; gone once the run is over.
+    fn setup_shown(&mut self) {
+        let ui = self.ui();
+        ui.set_setup_open(self.setup.is_some());
+        if let Some(s) = &self.setup {
+            s.show(&ui);
+        }
+        let prefs = self.root.app.settings.current().unwrap_or_default();
+        self.setup_look_shown(&prefs, crate::look::Today::now());
+        self.place_player();
+    }
+
+    /// The first run's last page's season and appearance, as Settings has them, while it shows.
+    fn setup_look_shown(&self, prefs: &nori_core::settings::StoredPrefs, today: crate::look::Today) {
+        let look = self.setup.as_ref().is_some_and(|s| s.step() == nori_core::setup::SetupStep::Look);
+        let rows = if look { crate::settings::setup_look_rows(&self.root.app.settings.model, prefs, &self.facts, self.kinds(), &self.plugged, today) } else { ModelRc::default() };
+        self.ui().set_setup_look_rows(rows);
+    }
+
+    /// Takes `event` on the first run's welcome and does what it asks: installs the plugins picked, or, once a
+    /// profile is in, starts the questions. One source picked shows its own form.
+    fn welcome_on(&mut self, event: WelcomeEvent) {
+        let moves = matches!(event, WelcomeEvent::Continue | WelcomeEvent::Installed { .. } | WelcomeEvent::InstallRefused { .. });
+        match self.welcome.on(event) {
+            WelcomeDo::Nothing => {}
+            WelcomeDo::Install { plugins } => self.install_picked(plugins),
+            WelcomeDo::Questions => {
+                self.welcome = WelcomeFlow::default();
+                self.setup = Some(crate::setup::Setup::new(nori_core::setup::setup_steps(false)));
+                let tx = self.tx.clone();
+                nori_host::spawn("nori-setup-covers", move || tx.send(Msg::SetupCovers(crate::setup::decode_covers())));
+                self.setup_shown();
+            }
+        }
+        if let Some(kind) = self.welcome.one().filter(|_| moves) {
+            self.choose_provider();
+            self.provider_chosen(kind);
+        }
+        self.welcome_shown();
+    }
+
+    /// Installs and turns on the plugins picked on the welcome, without their sheets: picking them was the ask.
+    fn install_picked(&self, plugins: Vec<String>) {
+        let (host, tx) = (self.plugin_host().clone(), self.tx.clone());
+        let offers = self.plugged.offers().to_vec();
+        let installed: Vec<String> = self.plugged.cards.iter().map(|c| c.id.clone()).collect();
+        nori_host::spawn("nori-welcome-install", move || {
+            for plugin in plugins {
+                let version = offers.iter().find(|o| o.id == plugin).and_then(|o| o.versions.first().cloned());
+                let on = installed.contains(&plugin)
+                    || version.and_then(|v| nori_core::transport::block_on(host.preview_version(v, "en".into())).ok()).is_some_and(|p| host.install_preview(p).is_ok());
+                if on {
+                    host.turn(plugin.clone(), true);
+                }
+                tx.send(Msg::WelcomeInstalled { plugin, on });
+            }
+        });
+    }
+
+    /// Row `i` of the welcome's page shown: a source picked or dropped, or a picked one's sign-in opened.
+    fn welcome_picked(&mut self, i: usize) {
+        match self.welcome.page {
+            WelcomePage::Picking => {
+                let Some(source) = self.welcome_sources.get(i).cloned() else { return };
+                self.welcome_on(WelcomeEvent::Toggled { source });
+            }
+            WelcomePage::SigningIn => {
+                let Some(WelcomeSource::Kind { kind }) = self.welcome.picked.get(i).cloned() else { return };
+                if !self.welcome.added.contains(&kind) {
+                    self.choose_provider();
+                    self.provider_chosen(kind);
+                }
+            }
+            WelcomePage::Installing { .. } | WelcomePage::Done => {}
+        }
+    }
+
+    /// Back from a kind's form: to the welcome's sign-ins it was opened from (the sources, for the one picked),
+    /// else to the kinds to choose from.
+    fn form_back(&mut self) {
+        if self.welcome.page != WelcomePage::SigningIn {
+            return self.choose_provider();
+        }
+        if self.welcome.one().is_some() {
+            self.welcome_on(WelcomeEvent::Back);
+            return self.choose_provider();
+        }
+        match self.session {
+            Some(_) => self.go(View::Home),
+            None => self.choose_provider(),
+        }
+        self.welcome_shown();
+    }
+
+    /// The welcome's pages as its flow stands: the sources and which are picked or installing, then the sign-ins.
+    fn welcome_shown(&mut self) {
+        let ui = self.ui();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let w = &self.welcome;
+        let installing = match &w.page {
+            WelcomePage::Installing { left } => left.clone(),
+            _ => Vec::new(),
+        };
+        self.welcome_sources = crate::settings::welcome_sources(&self.plugged, self.kinds());
+        let row = |s: &WelcomeSource, mark| crate::settings::source_row(&self.plugged, self.kinds(), s, mark);
+        let sources: Vec<crate::SourceRow> = self
+            .welcome_sources
+            .iter()
+            .map(|s| match s {
+                WelcomeSource::Offered { plugin } if installing.contains(plugin) => row(s, SourceMark::Installing),
+                _ => row(s, SourceMark::Pick(w.picked.contains(s))),
+            })
+            .collect();
+        let sign_ins: Vec<crate::SourceRow> = w
+            .picked
+            .iter()
+            .map(|s| match s {
+                WelcomeSource::Kind { kind } if w.added.contains(kind) => row(s, SourceMark::Added),
+                _ => row(s, SourceMark::Connect),
+            })
+            .collect();
+        let refused: Vec<String> = w.refused.iter().map(|id| nori_plugins::plugin_display_name(id.clone(), self.plugged.cards.clone(), self.plugged.offers().to_vec())).collect();
+        ui.set_welcome(crate::settings::first_run(&prefs));
+        ui.set_welcome_sources(ModelRc::new(VecModel::from(sources)));
+        ui.set_welcome_installing(!installing.is_empty());
+        ui.set_welcome_can_continue(w.page == WelcomePage::Picking && !w.picked.is_empty());
+        ui.set_welcome_refused(if refused.is_empty() { SharedString::default() } else { words::welcome_refused(&refused).into() });
+        ui.set_welcome_signing(w.page == WelcomePage::SigningIn && w.one().is_none());
+        ui.set_welcome_sign_ins(ModelRc::new(VecModel::from(sign_ins)));
+        ui.set_welcome_signed(!w.added.is_empty());
+        ui.set_welcome_can_back(w.added.is_empty());
+        self.place_player();
+    }
+
+    /// Answer `i` picked for the question shown: its settings changed at once, as any setting is.
+    fn setup_answer(&mut self, i: usize) {
+        let Some(answer) = self.setup.as_mut().and_then(|s| s.answer(i)) else { return };
+        for pick in nori_core::setup::setup_settings(answer) {
+            self.setting(&pick.name, &pick.value);
+        }
+        self.setup_shown();
+    }
+
+    /// The next page; past the last, the run is over.
+    fn setup_next(&mut self) {
+        if !self.setup.as_mut().is_some_and(|s| s.next()) {
+            self.setup = None;
+        }
+        self.setup_shown();
     }
 
     /// The `Jam` global from the jam this computer hosts; nothing is asked of a remote while jams are off.

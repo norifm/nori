@@ -13,8 +13,6 @@ const clock = (ms: number) => {
 
 export const W = {
   appName: "nori",
-  signInLead: "Your server's address, user and password.",
-  signInOwnLead: "Your user and password.",
   server: "Server",
   user: "User",
   password: "Password",
@@ -22,6 +20,22 @@ export const W = {
   signingIn: "Signing In",
   signInFailed: (why: string) => `Could not sign in: ${why}`,
   signOut: "Sign out",
+  // The first run: the welcome, where the music is, then the questions once it signs in (the core's `setup`).
+  welcomeTitle: "Welcome to nori",
+  welcomeWhere: "Where's your music?",
+  subsonic: "OpenSubsonic",
+  subsonicAbout: "Navidrome and other servers",
+  continueOn: "Continue",
+  setupSkip: "Skip",
+  setupStart: "Start listening",
+  /** A question's title, by the core's `SetupStep`. */
+  setupSteps: { Listening: "Between songs", Look: "Make it yours" } as Record<string, string>,
+  /** An answer's name and line, by the core's `SetupAnswer`. */
+  setupAnswers: {
+    NoMixing: ["No mixing", "Songs play whole, one after another"],
+    AutoMix: ["AutoMix", "Blends each song into the next, on the beat"],
+    AutoMixDj: ["DJ", "Loops, tempo bends and drops, like a DJ"],
+  } as Record<string, [string, string]>,
   home: "Home",
   library: "Library",
   search: "Search",
@@ -508,6 +522,5 @@ export const W = {
   offline: "The server cannot be reached.",
   restarted: "The player stopped and started again where it was.",
   elsewhere: "nori is open in another tab",
-  elsewhereLead: "Only one tab can play at a time.",
   useHere: "Use here",
 };

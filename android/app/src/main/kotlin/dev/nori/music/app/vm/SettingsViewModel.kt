@@ -50,6 +50,10 @@ import dev.nori.music.update.Updates
 /** settings_store.rs `CACHE_LIMIT`: the stream cache size changed. */
 private const val CACHE_LIMIT = 32u
 
+/** The welcome as it opens. */
+private val WELCOME = dev.nori.music.ffi.WelcomeFlow(dev.nori.music.ffi.WelcomePage.Picking, emptyList(), emptyList(), emptyList())
+
+
 /**
  * The account of the profile in use, for a provider that signs it in apart from its form
  * (`ProviderInfo.sign_in`): where it stands (null until asked), and what is shown for signing in with the
@@ -64,6 +68,16 @@ data class AccountUi(
     val busy: Boolean get() = flow.attempt == dev.nori.music.ffi.SignInAttempt.Busy
     val failed: dev.nori.music.ffi.SignInResult? get() = (flow.attempt as? dev.nori.music.ffi.SignInAttempt.Failed)?.result
 }
+
+/**
+ * The first run's questions (the core's `setup_steps`): the one shown, as [steps] index, and the answers
+ * given so far, so going back shows them.
+ */
+data class SetupUi(
+    val steps: List<dev.nori.music.ffi.settings.SetupStep>,
+    val at: Int = 0,
+    val answers: Map<dev.nori.music.ffi.settings.SetupStep, dev.nori.music.ffi.settings.SetupAnswer> = emptyMap(),
+)
 
 /**
  * The AutoEQ list: how many headphones it holds ([countWords] and [searchWords] say so), the query and
@@ -166,6 +180,50 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     private val _sync = MutableStateFlow(SyncUi())
     val sync: StateFlow<SyncUi> = _sync
 
+    /** The first run's welcome: the sources picked, their plugins installing, their sign-ins (the core's `WelcomeFlow`). */
+    private val _welcome = MutableStateFlow(WELCOME)
+    val welcome: StateFlow<dev.nori.music.ffi.WelcomeFlow> = _welcome
+
+    /** Takes [event] on the welcome; says what to do next. Once a profile is in, the questions start and the welcome is over. */
+    fun welcomeOn(event: dev.nori.music.ffi.WelcomeEvent): dev.nori.music.ffi.WelcomeDo {
+        val step = dev.nori.music.ffi.welcomeOn(_welcome.value, event)
+        _welcome.value = step.flow
+        if (step.then == dev.nori.music.ffi.WelcomeDo.Questions) {
+            _setup.value = SetupUi(dev.nori.music.ffi.settings.setupSteps(mobileData))
+            loadSetupCovers()
+            _welcome.value = WELCOME
+        }
+        return step.then
+    }
+
+    /** The first run's questions, asked once its first profile is in; null outside a first run. */
+    private val _setup = MutableStateFlow<SetupUi?>(null)
+    val setup: StateFlow<SetupUi?> = _setup
+
+    /** Whether this device streams over a mobile network. */
+    private val mobileData = app.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TELEPHONY)
+
+    /** [answer] given to the question shown: its settings changed (the core's `setup_settings`). */
+    fun setupAnswer(answer: dev.nori.music.ffi.settings.SetupAnswer) {
+        dev.nori.music.ffi.settings.setupSettings(answer).forEach { set(it.name, it.value) }
+        _setup.update { s -> s?.copy(answers = s.answers + (s.steps[s.at] to answer)) }
+    }
+
+    /** The covers the AutoMix question plays (the core's `setup_covers`), decoded. */
+    private val _setupCovers = MutableStateFlow<List<android.graphics.Bitmap>>(emptyList())
+    val setupCovers: StateFlow<List<android.graphics.Bitmap>> = _setupCovers
+
+    private fun loadSetupCovers() = viewModelScope.launch {
+        _setupCovers.value = withContext(Dispatchers.Default) {
+            dev.nori.music.ffi.settings.setupCovers().mapNotNull { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+        }
+    }
+
+    /** The next question; past the last, the first run is over. */
+    fun setupNext() = _setup.update { s -> s?.takeIf { it.at < it.steps.lastIndex }?.copy(at = s.at + 1) }
+
+    fun setupBack() = _setup.update { s -> s?.copy(at = (s.at - 1).coerceAtLeast(0)) }
+
     init { viewModelScope.launch { runCatching { nori.library.indexSize() }.onSuccess { n -> _sync.update { it.copy(indexed = n) } } } }
 
     fun update(change: (StoredPrefs) -> StoredPrefs) = nori.settings.update(change)
@@ -241,6 +299,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     private val _backup = kotlinx.coroutines.flow.MutableStateFlow<BackupUi>(BackupUi.Idle)
+    val backup: StateFlow<BackupUi> = _backup
 
     /** Saves a backup sealed with [password] into the file the user picked at [uri]. */
     fun makeBackup(uri: android.net.Uri, password: String) = backupStep(false) {
@@ -631,6 +690,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
                 // A new profile, in use now: the account shown so far was the last one's.
                 if (added != null) _account.value = AccountUi()
                 nori.signInDue(added)?.let(::signInOn)
+                if (_welcome.value.page == dev.nori.music.ffi.WelcomePage.SigningIn) welcomeOn(dev.nori.music.ffi.WelcomeEvent.Added(profile.kind))
                 _added.tryEmit(Unit)
             } catch (e: Exception) {
                 addOn(dev.nori.music.ffi.AddEvent.Refused(describeConnectionError(e)))

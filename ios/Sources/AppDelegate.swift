@@ -32,7 +32,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         nori_ios_keep_log(dir, Int32(TimeZone.current.secondsFromGMT() / 60))
         DispatchQueue.global(qos: .userInitiated).async {
             let failed = dir.withCString { d in taken(nori_ios_open(d, nil)) }
-            guard failed == nil else { return }
+            guard failed == nil else {
+                // No profile yet: the first run's welcome.
+                guard (dir.withCString { takenJSON(nori_ios_active($0)) } as? [String: Any])?.isEmpty == true else { return }
+                DispatchQueue.main.async { self.window?.rootViewController?.present(FirstRun(), animated: false) }
+                return
+            }
             let mode = SettingsPage.value("theme") ?? Theme.mode
             let season = SettingsPage.value("season") ?? Theme.season
             DispatchQueue.main.async {
@@ -49,10 +54,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     /// Builds the interface again in the colours `Theme` now has, on the tab it was on, with `page` over
-    /// that tab's first page.
+    /// that tab's first page, and the first run over it where it was.
     func restyle(showing page: UIViewController? = nil) {
         guard let window else { return }
-        let tab = (window.rootViewController as? ShellController)?.selectedIndex ?? 0
+        let old = window.rootViewController
+        let firstRun = old?.presentedViewController as? FirstRun
+        let tab = (old as? ShellController)?.selectedIndex ?? 0
         let shell = ShellController()
         shell.loadViewIfNeeded()
         shell.select(tab)
@@ -60,7 +67,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         window.backgroundColor = Theme.background
         window.tintColor = Theme.accent
         UIView.transition(with: window, duration: Motion.plain ? 0 : 0.25, options: .transitionCrossDissolve, animations: {
+            // The old one goes with its shell, or UIKit leaves its view over the new one.
+            firstRun?.dismiss(animated: false)
             window.rootViewController = shell
+            if let firstRun { shell.present(firstRun.rebuilt(), animated: false) }
         })
     }
 
