@@ -365,10 +365,22 @@ impl Nori {
     pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> Result<String, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
         let found = client.queue_offer(playing, shown.clone()).await.map_err(error)?;
+        Ok(self.offered(&client, found, shown, playing))
+    }
+
+    /// [`Nori::queue_offer`] as the server last answered, without asking it: at once.
+    pub fn queue_offer_kept(&self, playing: bool, shown: Option<String>) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let found = client.queue_offer_kept(playing, shown.clone()).map_err(error)?;
+        Ok(self.offered(&client, found, shown, playing))
+    }
+
+    /// `found` kept as the offer while it stands, as [`Nori::queue_offer`] gives it.
+    fn offered(&self, client: &nori_core::client::Client, found: Option<nori_core::library::QueueOffer>, shown: Option<String>, playing: bool) -> String {
         let mut offered = self.offered.borrow_mut();
-        let Some(o) = offered.found(found, shown, playing) else { return Ok("null".into()) };
+        let Some(o) = offered.found(found, shown, playing) else { return "null".into() };
         let songs: Vec<Value> = o.songs.iter().map(|s| pages::song(client.core(), s)).collect();
-        Ok(json!({ "songs": songs, "index": o.index, "positionMs": o.position_ms }).to_string())
+        json!({ "songs": songs, "index": o.index, "positionMs": o.position_ms }).to_string()
     }
 
     /// The player shows `here` and is `playing` or not: whether the offer still stands; one that does

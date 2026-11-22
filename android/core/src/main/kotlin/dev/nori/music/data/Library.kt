@@ -285,6 +285,13 @@ class Library(
     suspend fun queueOffer(playing: Boolean, shown: String?): dev.nori.music.ffi.library.QueueOffer? =
         withContext(Dispatchers.IO) { lifted { client.queueOffer(playing, shown) } }
 
+    /**
+     * Home's [rows], with "For you" when [mixes], from what this device keeps (the core's `home_kept`): no
+     * request, so the page is whole at once; the shelves' own reads bring the server's after.
+     */
+    suspend fun homeKept(rows: List<dev.nori.music.ffi.settings.HomeRow>, mixes: Boolean): dev.nori.music.ffi.HomeKept =
+        withContext(Dispatchers.IO) { lifted { client.homeKept(rows, mixes) } }
+
     /** [offer] was taken or turned down: the same queue is not offered again. */
     fun queueOfferDone(offer: dev.nori.music.ffi.library.QueueOffer) = client.queueOfferDone(offer)
 

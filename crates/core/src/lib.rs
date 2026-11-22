@@ -23,6 +23,7 @@ pub mod autofill;
 pub mod car;
 pub mod playlist;
 pub mod library;
+pub mod home;
 pub mod stage;
 pub mod update;
 pub mod support;
@@ -265,12 +266,13 @@ impl Core {
     pub fn new(db_path: String, server: String, session: Arc<nori_queue::Session>) -> Result<Arc<Self>> {
         let db = db::open(&db_path, &server)?;
         session.settings.model.set_home(&db_path);
+        let board = db::kv_get(&db, mixes::board::STORED)?.map_or_else(Default::default, |s| mixes::board::Board::from_stored(&s));
         let db = Arc::new(Mutex::new(db));
         let core = Arc::new(Core {
             downloads: Arc::new(transfers::Downloads::load(&db)?),
             db,
             server: RwLock::new(api::Server::default()),
-            board: Mutex::new(mixes::board::Board::default()),
+            board: Mutex::new(board),
             stars: Mutex::new(stars::StarMarks::default()),
             listed: Mutex::default(),
             here: Mutex::default(),

@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -143,36 +144,72 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
         if (code == 50 && !nori.rules.account) _closedToGuests.value = true
     }
 
-    /** What each shelf is and where it comes from is the core's (browse.rs); this only makes the requests. */
-    private fun source(r: HomeRow, shelf: HomeShelf): kotlinx.coroutines.flow.Flow<Shelf> = when (shelf) {
+    /**
+     * What each shelf is and where it comes from is the core's (browse.rs); this only makes the requests.
+     * Each starts from [kept], the shelf as the page opened with it, and moves only when an answer differs.
+     */
+    private fun source(r: HomeRow, shelf: HomeShelf, kept: Shelf): kotlinx.coroutines.flow.Flow<Shelf> = when (shelf) {
         is HomeShelf.Albums -> {
             // Re-read on every star change, and the core lays this session's marks over what it reads.
             if (shelf.followsStars) combine(refreshes, nori.library.starsVersion) { _, v -> v }.flatMapLatest { nori.library.shelfAlbums(shelf) }
-                .map { Shelf.Albums(r, it) }
-                .catch { emit(Shelf.Albums(r, emptyList())) }.onStart { emit(Shelf.Albums(r, emptyList())) }
-            else refreshes.flatMapLatest { nori.library.shelfAlbums(shelf) }
-                .catch { failed(it); emit(emptyList()) }.onStart { emit(emptyList()) }.map { Shelf.Albums(r, it) }
+                .map<List<Album>, Shelf> { Shelf.Albums(r, it) }
+                .catch { emit(Shelf.Albums(r, emptyList())) }.onStart { emit(kept) }
+            else refreshes.flatMapLatest { nori.library.shelfAlbums(shelf) }.map<List<Album>, Shelf> { Shelf.Albums(r, it) }
+                .catch { failed(it); emit(Shelf.Albums(r, emptyList())) }.onStart { emit(kept) }
         }
-        is HomeShelf.Playlists -> combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }.map { Shelf.Playlists(r, it.take(shelf.take.toInt())) }
-            .catch { emit(Shelf.Playlists(r, emptyList())) }.onStart { emit(Shelf.Playlists(r, emptyList())) }
+        is HomeShelf.Playlists -> combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }
+            .map<List<Playlist>, Shelf> { Shelf.Playlists(r, it.take(shelf.take.toInt())) }
+            .catch { emit(Shelf.Playlists(r, emptyList())) }.onStart { emit(kept) }
         // Worth reading again after a refresh, which is the one thing that changes what the index holds.
         is HomeShelf.Songs -> refreshes.flatMapLatest {
-            flow { emit(Shelf.Songs(r, runCatching { nori.library.browseSongs(shelf.sort, shelf.descending, false, null, 0, shelf.limit.toInt()) }.onFailure(::failed).getOrDefault(emptyList()))) }
-        }.onStart { emit(Shelf.Songs(r, emptyList())) }
+            flow<Shelf> { emit(Shelf.Songs(r, runCatching { nori.library.browseSongs(shelf.sort, shelf.descending, false, null, 0, shelf.limit.toInt()) }.onFailure(::failed).getOrDefault(emptyList()))) }
+        }.onStart { emit(kept) }
         HomeShelf.Pinned -> flowOf(Shelf.Playlists(r, emptyList()))
     }
 
-    /** Only the rows the user kept are requested at all; a hidden shelf costs no request. */
+    /** Row [r]'s shelf ([shelf]) holding [items], what the core keeps for it; empty for none kept yet. */
+    private fun shelfOf(r: HomeRow, shelf: HomeShelf, items: dev.nori.music.ffi.ShelfItems?): Shelf = when (items) {
+        is dev.nori.music.ffi.ShelfItems.Albums -> Shelf.Albums(r, items.v)
+        is dev.nori.music.ffi.ShelfItems.Playlists -> Shelf.Playlists(r, if (shelf == HomeShelf.Pinned) emptyList() else items.v)
+        is dev.nori.music.ffi.ShelfItems.Songs -> Shelf.Songs(r, items.v)
+        null -> when (shelf) {
+            is HomeShelf.Albums -> Shelf.Albums(r, emptyList())
+            is HomeShelf.Songs -> Shelf.Songs(r, emptyList())
+            is HomeShelf.Playlists, HomeShelf.Pinned -> Shelf.Playlists(r, emptyList())
+        }
+    }
+
+    /**
+     * The page opens whole, from what the device keeps (the core's `home_kept`: no request): the shelves, the
+     * mixes' covers and the queue offered. Only then are the server's answers asked for, each moving only
+     * what it changes. Only the rows the user kept are requested at all; a hidden shelf costs no request.
+     */
     val ui: StateFlow<Load<HomeUi>> = nori.settings.prefs.map { Triple(it.homeRows, it.pinnedPlaylists, nori.rules) }.distinctUntilChanged().flatMapLatest { (rows, pins, rules) ->
-        // A source's own Home is its feed, asked again on a refresh.
-        if (rules.feed) return@flatMapLatest refreshes.flatMapLatest { nori.library.homeFeed() }
-            .catch { failed(it); emit(emptyList()) }.map { HomeUi(feed = it) }
         val shown = homeRowsShown(rows, rules.account)
         val shelves = homeShelves(shown)
-        val pinned = if (HomeShelf.Pinned in shelves && pins.isNotEmpty()) combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }
-            .map { all -> withContext(Dispatchers.Default) { homePinned(all, pins) } }.catch { emit(emptyList()) }.onStart { emit(emptyList()) } else flowOf(emptyList())
-        combine(combine(shown.zip(shelves, ::source)) { it.toList() }.onStart { emit(emptyList()) }, pinned) { s, p -> HomeUi(s, p) }
-    }.asLoad()
+        flow {
+            val kept = runCatching { nori.library.homeKept(shown, rules.mixes) }.onFailure { dev.nori.music.NoriLog.w("home: nothing kept read: ${it.message}") }.getOrNull()
+            kept?.let(::opened)
+            // A source's own Home is its feed, asked again on a refresh.
+            if (rules.feed) {
+                kept?.feed?.let { emit(HomeUi(feed = it)) }
+                return@flow emitAll(refreshes.flatMapLatest { nori.library.homeFeed() }.catch { failed(it); emit(emptyList()) }.map { HomeUi(feed = it) })
+            }
+            val keptShelves = shown.zip(shelves).mapIndexed { i, (r, shelf) -> shelfOf(r, shelf, kept?.shelves?.getOrNull(i)) }
+            val keptPinned = kept?.shelves?.getOrNull(shelves.indexOf(HomeShelf.Pinned))?.let { (it as? dev.nori.music.ffi.ShelfItems.Playlists)?.v }.orEmpty()
+            val pinned = if (HomeShelf.Pinned in shelves && pins.isNotEmpty()) combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }
+                .map { all -> withContext(Dispatchers.Default) { homePinned(all, pins) } }.catch { emit(emptyList()) }.onStart { emit(keptPinned) } else flowOf(emptyList())
+            val live = combine(shown.zip(shelves).mapIndexed { i, (r, shelf) -> source(r, shelf, keptShelves[i]) }) { it.toList() }.onStart { emit(keptShelves) }
+            emitAll(combine(live, pinned) { s, p -> HomeUi(s, p) })
+        }
+    }.distinctUntilChanged().asLoad()
+
+    /** What the page opened with besides its shelves: the mixes' tiles and the queue offered, as kept. */
+    private fun opened(kept: dev.nori.music.ffi.HomeKept) {
+        if (kept.mixes.isNotEmpty()) keepCards(nori.settings.value.activeServerId, nori.settings.effective.value.tasteModel, kept.mixes)
+        val now = nori.player.state.value
+        _offer.value = kept.offer.takeIf { offered.found(it, now.current?.id, now.playing) }
+    }
 
     /**
      * The pull at the top of the page. The stored answers behind the shelves go first, so asking again

@@ -20,15 +20,25 @@ final class HomePage: PageController {
         lookForOffer()
     }
 
+    /// As the server last answered first, so the card is there with the page; then as it answers now.
     @objc private func lookForOffer() {
         guard Core.shared.isOpen, view.window != nil, card == nil else { return }
-        DispatchQueue.global(qos: .utility).async {
-            let offer = takenJSON(nori_ios_queue_offer()) as? [String: Any]
-            DispatchQueue.main.async { [weak self] in
-                guard let self, let offer, self.card == nil else { return }
-                self.show(ContinueCard(offer))
-            }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let kept = takenJSON(nori_ios_queue_offer_kept()) as? [String: Any]
+            DispatchQueue.main.async { [weak self] in self?.offered(kept) }
+            let found = takenJSON(nori_ios_queue_offer()) as? [String: Any]
+            DispatchQueue.main.async { [weak self] in self?.offered(found) }
         }
+    }
+
+    /// The card for `offer`: shown, replaced when another queue is offered, gone when none is.
+    private func offered(_ offer: [String: Any]?) {
+        guard let offer else {
+            if card != nil { card = nil; underName = nil }
+            return
+        }
+        if let c = card, NSDictionary(dictionary: c.offer).isEqual(to: offer) { return }
+        show(ContinueCard(offer))
     }
 
     private func show(_ c: ContinueCard) {
@@ -67,6 +77,8 @@ final class ContinueCard: UIView {
     static let height: CGFloat = 132
     /// Taken (true) or turned down.
     var done: ((Bool) -> Void)?
+    /// The offer it shows, as the core gave it.
+    let offer: [String: Any]
     private let plate = UIView()
     private let fade = CAGradientLayer()
     private let words: [UILabel]
@@ -82,6 +94,7 @@ final class ContinueCard: UIView {
         let place = label(Fonts.font(13, .regular, .footnote), Theme.secondary)
         place.text = Say.offerPlace(song.subtitle, (offer["index"] as? Int ?? 0) + 1, offer["count"] as? Int ?? 0)
         words = [kicker, title, place]
+        self.offer = offer
         super.init(frame: .zero)
         plate.backgroundColor = Theme.row
         plate.layer.cornerRadius = Radius.tile

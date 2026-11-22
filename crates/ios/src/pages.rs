@@ -637,9 +637,9 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                     Ok(HomePart::Shelf { at, items }) => {
                         let key = v[at + 1]["key"].as_str().unwrap_or_default().to_string();
                         v[at + 1] = match items {
-                            ShelfItems::Albums(a) => section(&key, true, a.iter().map(album_json).collect()),
-                            ShelfItems::Playlists(p) => section(&key, true, p.iter().map(playlist_json).collect()),
-                            ShelfItems::Songs(songs) => {
+                            ShelfItems::Albums { v: a } => section(&key, true, a.iter().map(album_json).collect()),
+                            ShelfItems::Playlists { v: p } => section(&key, true, p.iter().map(playlist_json).collect()),
+                            ShelfItems::Songs { v: songs } => {
                                 let shelf = songs_section(&key, &songs, 0);
                                 keep_list(token, songs, None);
                                 shelf

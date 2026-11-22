@@ -225,6 +225,21 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
      * read while the app is hidden; this is one look as it returns, and the controller's own state takes
      * over when it connects.
      */
+    /**
+     * The queue saved for the next start, shown while the playback service is not up yet, so the mini player
+     * is there in the app's first frame; the player's own state takes over when the controller connects.
+     * Off the main thread: it reads the database.
+     */
+    fun showSaved() {
+        val q = runCatching { nori.core.loadQueue() }.getOrNull() ?: return
+        val song = q.songs.getOrNull(q.index.toInt()) ?: return
+        main.post {
+            if (controller == null && mirror == null && _state.value.current == null) {
+                _state.value = PlayerState(queue = q.songs, index = q.index.toInt(), durationMs = song.duration.toLong() * 1000)
+            }
+        }
+    }
+
     fun catchUp() {
         // The engine may have slept for minutes (the songs offloaded): it reads its output now, so that the
         // first frame's seek bar starts from a fresh reading, not one run on from its last wake.

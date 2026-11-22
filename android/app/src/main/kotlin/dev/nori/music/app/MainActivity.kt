@@ -39,6 +39,8 @@ sealed interface LaunchRoute {
 }
 
 class MainActivity : ComponentActivity() {
+    /** What holds the first frame until the page it opens on is whole. */
+    private val first = dev.nori.music.app.ui.FirstFrame()
     companion object {
         /** A home-screen widget's tap: [EXTRA_ROUTE] is where it goes (App's launch routes), none for the app as it was. */
         const val ACTION_WIDGET = "dev.nori.music.WIDGET"
@@ -68,7 +70,21 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) launchRoute.value = routeOf(intent)
         if (savedInstanceState == null) joinJam(intent)
         val islands = dev.nori.music.app.ui.Islands(this)
-        setContent(recomposer) { androidx.compose.runtime.CompositionLocalProvider(dev.nori.music.app.ui.LocalIslands provides islands) { App(launchRoute) } }
+        setContent(recomposer) {
+            androidx.compose.runtime.CompositionLocalProvider(dev.nori.music.app.ui.LocalIslands provides islands, dev.nori.music.app.ui.LocalFirstFrame provides first) {
+                App(launchRoute)
+                androidx.compose.runtime.SideEffect { first.composed() }
+            }
+        }
+        // The first frame waits for the page it opens on to have what the device keeps for it (FirstFrame): read
+        // from the device alone, never the network, so the page comes whole rather than filling in.
+        window.decorView.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (!first.open) return false
+                window.decorView.viewTreeObserver.removeOnPreDrawListener(this)
+                return true
+            }
+        })
         addContentView(islands, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT))
     }
 
@@ -123,9 +139,24 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         Nori.get(this).remotes.appShown(true)
         // Binding starts the playback service, which builds a player on this thread: right after the next frame is
-        // out, not once the main thread goes idle, which a page's items arriving keep it from for most of a second.
-        android.view.Choreographer.getInstance().postFrameCallback { android.os.Handler(mainLooper).post { startedPlugins(); if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress(); updatePlugins(); actions.shown() } } }
+        // drawn, not once the main thread goes idle, which a page's items arriving keep it from for most of a second.
+        afterNextDraw { startedPlugins(); if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress(); updatePlugins(); actions.shown() } }
         started = true
+    }
+
+    /** Runs [then] on this thread once the next frame is drawn; a first frame held for its page ([first]) once it goes out. */
+    private fun afterNextDraw(then: () -> Unit) {
+        val view = window.decorView
+        view.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (first.open) {
+                    view.viewTreeObserver.removeOnPreDrawListener(this)
+                    view.post(then)
+                }
+                return true
+            }
+        })
+        view.invalidate()
     }
 
     /** Coming to the foreground is when the network may have changed (home Wi-Fi vs. outside). */
