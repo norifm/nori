@@ -104,12 +104,14 @@ The other languages:
 
 ## Docs
 
-The developer docs live here, in `docs/developers/`, and change with the code in the same commit:
-`testing.md` test tiers and the local server, `writing-a-client.md` what is core vs client, `building.md`
-builds and the perf build, `perf.md` measuring and the benches, `ipod-internals.md` the iPod client. The user docs live in the website's
-repository, `norifm/norifm.com` (private), under `src/content/docs/docs/`,
+The developer docs live here, in `docs/developers/` (`README.md` is their index), and change with the
+code in the same commit: `architecture.md` the whole system, `testing.md` test tiers and the local server,
+`writing-a-client.md` what is core vs client, `building.md` builds and the perf build, `perf.md` measuring
+and the benches, `plugins.md` and `plugin-*.md` plugins, `ipod-internals.md` the iPod client. The user
+docs live in the website's repository, `norifm/norifm.com` (private), under `src/content/docs/docs/`,
 published at norifm.com/docs: when a change alters what users see, update the page there if it's
-wanted, as a commit in that repository.
+wanted, as a commit in that repository. Write and review every doc with the `writing-docs` skill
+(`.claude/skills/writing-docs/`).
 
 Besides the developer docs, this repository keeps what development needs, never published: decisions
 the owner asked to save, research and plans. `TODO.md` lists ideas for later, built only when the owner

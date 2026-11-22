@@ -1,12 +1,12 @@
 # Contributing to nori
 
-Thank you for helping. Start here:
+Thank you for helping. Changes come as pull requests on GitHub.
 
-- [AGENTS.md](AGENTS.md): the working agreement for people and agents alike. The commands, what
-  belongs in the core and what in a client, the code rules and the commit format.
-- [Contributing](docs/developers/contributing.md): the checks before a commit, and where the docs live.
-- [Architecture](docs/developers/architecture.md) and [Writing a client](docs/developers/writing-a-client.md):
-  what the core does and what each app does.
-- [Building](docs/developers/building.md) and [Testing](docs/developers/testing.md).
+- [Contributing](docs/developers/contributing.md) says what to run before you commit, how to write the
+  commit, and where the docs for your change go.
+- [AGENTS.md](AGENTS.md) is the working agreement for people and agents alike. It has the commands, what
+  belongs in the core and what in a client, and the rules for code and tests.
+- [Architecture](docs/developers/architecture.md) explains how nori is built.
+- The [developer docs](docs/developers/README.md) list every other page.
 
-Report security problems privately: see [SECURITY.md](SECURITY.md).
+Report a security problem privately, as [SECURITY.md](SECURITY.md) says.

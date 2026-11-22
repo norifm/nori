@@ -1,43 +1,80 @@
 # Contributing
 
-Applies to nori 0.7, every client.
-
-nori is licensed AGPL-3.0-or-later ([LICENSE](../../LICENSE)). Changes come as pull requests on
-[GitHub](https://github.com/norifm/nori).
+You contribute to nori with a pull request on [GitHub](https://github.com/norifm/nori). This page says
+what to read and run before you commit. It also says how to write the commit, and where the docs for
+your change go. nori is licensed AGPL-3.0-or-later ([LICENSE](../../LICENSE)).
 
 ## Before you start
 
 - Read [AGENTS.md](../../AGENTS.md). It is the working agreement for people and agents alike: the
-  commands, what belongs in the core and what in a client, the code rules and the commit format.
-- Build with [Building](building.md) and test with [Testing](testing.md). Run Cargo with at most four
-  jobs (`-j4`).
-- A bug fix starts with a test that fails on the bug.
-- A feature is built in Rust first, then wired into every client that has the screen for it.
+  commands, what belongs in the core and what in a client, and the rules for code and tests.
+- Read [Architecture](architecture.md) for the layers and the rules that hold.
+- Set up your machine with [Building](building.md), and learn the test tiers in [Testing](testing.md).
+- Run Cargo with at most four jobs (`-j4`). More jobs can run the machine out of memory.
 
-## Before committing
+Two rules shape most changes:
 
-| change | run |
+- **A bug fix starts with a test that fails on the bug.** Find the cause first, then fix it there.
+- **A feature is built in Rust first.** Then it is wired into every client that has the screen for it:
+  Android, the desktop app, the terminal app, the iPod app and the web client. If you leave a client
+  out, say which one and why in the pull request.
+
+## Before you commit
+
+Run the checks that your change reaches:
+
+| Your change | Run |
 |---|---|
-| any | `cargo test -j4 --workspace` and a build |
-| reaches Android | also `tools/smoke.sh` and the `tools/audio-e2e.sh` / `tools/feature-e2e.sh` sections it touches (`--only`) |
-| Rust | `cargo clippy -j4 --workspace --all-targets`, no new warnings |
+| Any change | `cargo test -j4 --workspace` and a build |
+| Rust code | `cargo clippy -j4 --workspace --all-targets -- -D warnings` |
+| A crate the web or iPod clients use (core, host, engine, remote) | `tools/check.sh web` and `tools/check.sh ipod` |
+| Code that reaches Android | `tools/smoke.sh`, and the `--only` sections of `tools/audio-e2e.sh` and `tools/feature-e2e.sh` that it touches |
+
+CI fails on any clippy warning. `tools/audio-e2e.sh --list` and `tools/feature-e2e.sh --list` name the
+sections. [Testing](testing.md) explains the device checks and the emulator they need.
 
 ## Commits
 
-One line, conventional, as [AGENTS.md](../../AGENTS.md#commits) describes:
-`<type>: <what is different now>`, no body and no trailers. The changelog is made from `feat`, `fix`
-and `perf` subjects, so write those for the people who use nori.
+A commit message is one line, in the conventional form, lowercase, with no full stop and under 72
+characters:
+
+```text
+<type>: <what is different now>
+```
+
+The type is one of `feat`, `fix`, `perf`, `refactor`, `docs`, `build`, `test` or `chore`. A commit has no
+body and no trailers. The changelog is made from the `feat`, `fix` and `perf` subjects, so write those
+for the people who use nori: `fix: bluetooth device retries no longer overlap`.
+
+One piece of work is one commit. If you fix your own work before it is merged, amend the commit it
+fixes instead of adding a new one.
+
+## Pull requests
+
+A pull request lands on `master` as one squashed commit, after the owner approves the merge. The
+commit's subject is the pull request's title and number, `feat: <what> (#81)`, so write the title in
+the commit form above.
+
+The description names every issue the pull request settles, one per line: `Closes #12` or `Fixes #34`,
+and `Refs #56` for an issue it only helps. GitHub then links and closes them.
 
 ## Docs
 
-| docs | where | changes |
-|---|---|---|
-| user docs | `norifm/norifm.com` (private), `src/content/docs/docs/` | when a change alters what users see |
-| developer docs | `docs/developers/` here | with the code, in the same commit |
-| internal notes | `TODO.md`, `docs/research/` | never published |
+The docs for a change go in one of three places:
 
-Every page says which versions and clients it applies to, and states only what the code does.
+| Docs | Where | When they change |
+|---|---|---|
+| Developer docs | `docs/developers/` in this repository | With the code, in the same commit |
+| User docs | `src/content/docs/docs/` in `norifm/norifm.com` (private) | When a change alters what users see |
+| Internal notes | `TODO.md` and `docs/research/` | Never published |
+
+The writing rules for every page are in `.claude/skills/writing-docs/SKILL.md`. Its lint checks a page:
+
+```sh
+python3 .claude/skills/writing-docs/scripts/docs-lint.py docs/developers/<page>.md
+```
 
 ## Security
 
-Report a vulnerability privately, as [SECURITY.md](../../SECURITY.md) says, not in a public issue.
+Report a vulnerability privately, as [SECURITY.md](../../SECURITY.md) says. Do not open a public issue
+for it.

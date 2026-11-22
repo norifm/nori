@@ -1,70 +1,187 @@
 # Supporting nori
 
-The Support page takes a payment to nori through Stripe and keeps a stamp book: one seal per payment that
-went through, each in the accent of the season it was paid in (`nori_core::support::support_stamps`).
+The Support page takes a payment to nori through Stripe, once or every month. It also shows a stamp book:
+one seal for each payment that went through, in the accent of the season it was paid in. The page talks
+to the support service, a Cloudflare Worker over Stripe in `support/worker`. The Worker stores nothing.
+Stripe keeps every record.
 
-## Pieces
+```mermaid
+---
+title: A payment through the support service
+---
+sequenceDiagram
+  participant App as A client (nori-core)
+  participant Worker as Support service (support/worker)
+  participant Stripe
+  App->>Worker: POST /start (currency, amount, monthly, login)
+  Worker->>Stripe: find or make the customer, start the payment
+  Stripe-->>Worker: client secret, or Checkout address
+  Worker-->>App: login, and secret or url
+  App->>Stripe: pay in Stripe's sheet, or on Checkout in the browser
+  App->>Worker: POST /stamps (login)
+  Worker->>Stripe: list the customer's payments and subscriptions
+  Worker-->>App: paid, monthly, ends
+```
 
-- `crates/core/src/support.rs`: the currencies and amounts offered (five per cadence, then Other), what a
-  choice comes to (`support_choice`), typed amounts, the seals, and the calls to the support service. What the app knows (its login, when it paid, whether a monthly payment runs) is
-  the hidden `support` setting, so a settings backup carries it.
-- `support/worker`: the support service, a Cloudflare Worker over Stripe. It keeps nothing itself: an app
-  is a Stripe customer, its login `<customer id>.<secret>`, the secret's SHA-256 in the customer's
-  metadata.
-  - `POST /start` `{currency, amount, monthly, login?, in: "app" | "browser", season}`: a PaymentIntent (once)
-    or an incomplete subscription (monthly) for the app's payment sheet, or a Checkout page for the browser.
-    `season` is the one the payment is stamped in, as the app counts it on its side of the equator.
-  - `POST /stamps` `{login}`: every payment that went through, whether a monthly one runs, and when one
-    set to stop ends (`ends`, Unix seconds, else null).
-  - `POST /manage` `{login}`: Stripe's customer portal for a monthly payment's card and receipts.
-  - `POST /stop` `{login, in: "app"}`: stops the monthly payment at the end of the month paid for, and
-    answers when it ends and how many months it paid for, counted from the paid invoices. Without `in`
-    (builds from before the app stopped it itself): Stripe's page doing it, whose confirmation thanks for
-    the months given. The two portal pages are two configurations the Worker makes the first time, known
-    by their `nori` metadata: cancelling only in `stop`. A monthly payment set to stop no longer counts as
-    running.
-  - `POST /keep` `{login}`: keeps a monthly payment set to stop going.
-  - `GET /done`: where Checkout and the portal send the browser back: paid (`?paid=1&season=…`), the seal of
-    that season stamped and thanks; left (`?left=1`), the seal's empty place; back from the portal, the way
-    back alone.
-- `crates/host/src/support.rs`: what the clients that pay in the browser share: money and currency names
-  as English writes them, the country a choice starts in, and starting a Checkout page.
-- While a monthly payment runs or is set to stop, a "Monthly support" row over what to give opens its sheet
-  (a page of its own on the iPod, a picker in the terminal): what it is doing, its card and receipts on
-  Stripe's page, and Stop, in Spring's rose, or Keep going. Stopping and keeping are the core's
-  `support_stop` and `support_keep`; the settings keep when it ends (`Supporter::ends`).
-- Clients, each with the page from About (Settings on the web): Android shows Stripe's PaymentSheet (the
-  `paymentsheet` library, Google Pay included); the web mounts Stripe's Payment Element in a sheet
-  (`web/src/pages/Support.svelte` over `crates/web/src/support.rs`; a bank's page returns to
-  `#/support/paid`). The desktop, the terminal and the iPod open Checkout in the browser and ask the service
-  again when they come back into focus; the terminal also shows the page's link and a QR code, the iPod a QR
-  code to pay from a phone, as iOS 12's Safari may be too old for Checkout.
-- A seal more than the page opened with (a payment just made, a month's) is thanked for, the newest when
-  several come at once: over the whole app the page is veiled, the seal is pressed down in the middle with
-  "Thank you" under it, then carried to its empty place in the book, which the next empty place then grows
-  in beside. A touch ends it; under the Motion setting it is the thanks alone, still. The terminal shows it
-  as a box until a key. A client asks the service only while the page is open, so the thanks never plays
-  anywhere else.
+## The parts
 
-## Builds
+- `crates/core/src/support.rs` decides what the page offers and talks to the service. It holds the
+  currencies and their amounts, and what a choice comes to (`support_choice`). It also checks typed
+  amounts (`support_typed`) and makes the seals (`support_stamps`). `Client` makes the calls: `support_start`,
+  `support_refresh`, `support_manage`, `support_stop` and `support_keep`.
+- The `support` setting (`Supporter`) keeps what the app knows. That is its login, when it paid, whether a
+  monthly payment runs, and when one set to stop ends. No settings page shows it, but a settings backup carries
+  it.
+- `crates/host/src/support.rs` serves the clients that pay in the browser. It writes money and currency
+  names in English, picks the country a choice starts in, and starts a Checkout page (`checkout`).
+- `support/worker/src/index.ts` is the whole service. `support/worker/wrangler.jsonc` configures its two
+  deployments.
+- Each client draws the page: Android's `SupportScreen.kt`, `web/src/pages/Support.svelte` over
+  `crates/web/src/support.rs`, the iPod's `Support.swift` over `crates/ios/src/support.rs`,
+  `crates/cli/src/support.rs`, and the desktop app.
 
-A build has a Support page only when it is given the service: `NORI_SUPPORT_URL` (the Worker) and
-`NORI_STRIPE_KEY` (Stripe's publishable key) in the environment of the Rust build. Without them
-`support_service()` is None and no client shows the page. A `pk_test_` key is Stripe's test mode and
-Google Pay's test environment.
+Each currency offers five amounts for each cadence, then **Other** for a typed amount. A typed amount
+must lie between the currency's least and most amounts. In a country with its own offered currency, the
+page starts in that currency. In the euro area, it starts in euros, and anywhere else in US dollars.
 
-CI takes both from the repository variables of the same names: the nightly, the full release, the
-host packages and the web image put them in every build (into Docker too, through `tools/ipod.sh` and
-`tools/host-release/build.py`) and fail at their first step when either is empty, so no published
-build goes out without the page. Gradle rebuilds the core when they change.
+A seal takes the season of its payment date, on the user's side of the equator. Each seal is turned by up
+to 7 degrees. The turn comes from the payment time, so a payment looks the same on every client.
 
-The Worker runs twice, the same code: `nori-support` over Stripe's test mode, for development, and
-`nori-support-live` over live mode, which answers at `https://support.norifm.com` (the repository
-variable's address) and at `https://nori-support-live.norifm-org.workers.dev`, which builds made before the
-domain still use. Deploying: `cd support/worker && npx wrangler@4 deploy` (add `--env live` for the live
-one), its Stripe key set once with `npx wrangler@4 secret put STRIPE_SECRET` (the same `--env`). The live key is a restricted one: write on
-Customers, PaymentIntents, Products, Checkout Sessions, Customer portal, Prices and Subscriptions, read on
-Charges and Invoices, nothing else.
+## What the service keeps
 
-Trying it: Stripe's test cards (4242 4242 4242 4242, any future date and CVC) in a test-mode build. The
-test bridge sets the stamp book directly: `tools/app.sh set support '{"login":"","paid":[1775822400],"monthly":false}'`.
+The Worker has no storage. It finds everything in Stripe:
+
+- Each app is a Stripe customer. Its login is `<customer id>.<secret>`. The customer's `nori_key`
+  metadata holds the SHA-256 of the secret, and the Worker checks the login against it.
+- The first payment makes the customer and the login. The core saves the login in the `support` setting.
+- When a payment carries an email address and the customer has none, the Worker copies it onto the
+  customer. Stripe's receipts then reach it.
+- Monthly payments are prices of one product, `nori-support`. The Worker makes it the first time it needs
+  it.
+- The customer portal has two configurations, `manage` and `stop`, known by their `nori` metadata. The
+  Worker makes each the first time it needs it. Only `stop` can cancel a payment.
+
+## The service's requests
+
+Every request but `GET /done` is a `POST` with a JSON body. The answers are JSON.
+
+| Request | Body | Answer |
+|---|---|---|
+| `POST /start` | `currency`, `amount`, `monthly`, `login`, `in`, `season` | `login`, and `secret` or `url` |
+| `POST /stamps` | `login` | `paid`, `monthly`, `ends` |
+| `POST /manage` | `login` | `url` of Stripe's customer portal |
+| `POST /stop` | `login`, `in: "app"` | `ends`, `months` |
+| `POST /keep` | `login` | An empty object |
+| `GET /done` | `paid=1&season=…` or `left=1` in the query | An HTML page |
+
+`/start` takes the amount in minor units. Without a `login`, it makes a customer first. With
+`in: "app"`, it starts a PaymentIntent for one payment, or an incomplete subscription for a monthly one.
+The answer's `secret` is what Stripe's sheet or form in the app needs. With `in: "browser"`, it makes a
+Checkout session and answers its `url`. `season` is the season the payment is stamped in, as the app
+counts it.
+
+`/stamps` lists every payment that went through and was not refunded. The list is in Unix seconds,
+oldest first. The `monthly` field is true while a monthly payment runs and is not set to stop. The
+`ends` field is when one set to stop ends, or null.
+
+`/stop` sets the monthly payment to stop at the end of the month paid for. It answers when it ends and
+how many months it paid for, counted from the paid invoices. A request without `in` comes from an older
+build. The Worker then answers with Stripe's portal page, which stops the payment and thanks you for the
+months given.
+
+`/keep` keeps a monthly payment that is set to stop.
+
+`/done` is where Checkout and the portal send the browser back. After a payment, it stamps the seal of
+that season and thanks you. If you left Checkout, it shows the seal's empty place. From the portal, it
+shows only the way back to nori.
+
+### When a request fails
+
+| Status | `error` | Cause |
+|---:|---|---|
+| 401 | `login` | No login, an unknown one, or a wrong secret |
+| 409 | `currency` | A monthly payment runs in another currency |
+| 400 | `failed` | The body is not JSON, or a field is invalid |
+| 404 | `failed` | No monthly payment to stop or keep |
+| 502 | `failed` | Stripe refused the request |
+
+A 409 comes from `/start`. Stripe holds a customer to one currency while a subscription is open. Before a
+monthly payment starts, the Worker cancels the customer's unpaid subscriptions, for example from a sheet
+closed before paying. A running one in another currency stops the start.
+
+## How each client pays
+
+Each client pays in one of two ways. The core's `PayIn` says which one.
+
+| Client | Pays in | After paying |
+|---|---|---|
+| Android | Stripe's PaymentSheet (`paymentsheet`), with Google Pay | Asks when the sheet completes |
+| The web | Stripe's Payment Element, in a sheet | A bank's page returns to `#/support/paid` |
+| The desktop app | Checkout in the browser | Asks again when the app is in focus |
+| The terminal app | Checkout in the browser, with the link and a QR code | Asks again when the app is in focus |
+| The iPod app | Checkout in Safari, with a QR code to pay from a phone | Asks again when the app is in focus |
+
+The iPod shows the QR code because iOS 12's Safari might be too old for Checkout.
+
+While a monthly payment runs or is set to stop, a **Monthly support** row opens its sheet. The iPod opens
+a page of its own, and the terminal a picker. The sheet says what the payment is doing and opens
+**Card and receipts** on Stripe's page. It also offers **Stop**, in Spring's rose, or **Keep going**.
+These call the core's `support_stop` and `support_keep`, and the settings keep the end date
+(`Supporter::ends`).
+
+### The thanks
+
+When the page gets a seal it did not show when it opened, it thanks you for it. If several come at once,
+it thanks you for the newest. A veil covers the page, and the seal presses down in the middle with
+**Thank you** under it. Then the seal moves to its empty place in the book, and the next empty place grows
+beside it. A touch ends it. With reduced motion, only the still thanks shows. That is nori's Motion setting, or
+the system's Reduce Motion on the iPod. The terminal shows a box until you press a key.
+
+A client asks the service only while the Support page is open. So the thanks never plays on another
+screen.
+
+## Give a build its Support page
+
+A build has a Support page only when its Rust build gets two environment variables:
+
+- `NORI_SUPPORT_URL`, the Worker's address.
+- `NORI_STRIPE_KEY`, Stripe's publishable key.
+
+Without them, `support_service()` returns `None`, and no client shows the page. A `pk_test_` key selects
+Stripe's test mode and Google Pay's test environment.
+
+CI takes both from the repository variables of the same names. The nightly, release, host release and web
+workflows put them into every build. `tools/ipod.sh` and `tools/host-release/build.py` pass them into
+Docker. Each workflow fails at its first step when either variable is empty, so no published build lacks
+the page. Gradle lists both as inputs of the Rust build, so it rebuilds the core when they change.
+
+## Deploy the service
+
+The same code runs twice:
+
+- `nori-support` uses Stripe's test mode, for development.
+- `nori-support-live` uses live mode. It answers at `https://support.norifm.com`, the address in the
+  repository variable. It also answers at `https://nori-support-live.norifm-org.workers.dev`, which builds
+  made before the domain still use.
+
+To deploy, run Wrangler from the Worker's folder:
+
+1. Go to the folder with `cd support/worker`.
+2. Run `npx wrangler@4 deploy`. Add `--env live` for the live deployment.
+3. The first time, set its Stripe key with `npx wrangler@4 secret put STRIPE_SECRET`. Use the same
+   `--env`.
+
+The live key is a restricted key. It has write access to Customers, PaymentIntents, Products, Checkout
+Sessions, Customer portal, Prices and Subscriptions. It has read access to Charges and Invoices, and no
+other access.
+
+## Try it
+
+1. Build with the test deployment's address and a `pk_test_` key.
+2. Pay with Stripe's test card `4242 4242 4242 4242`, with any future date and any CVC.
+
+To set the stamp book directly on an Android debug build, use the test bridge:
+
+```sh
+tools/app.sh set support '{"login":"","paid":[1775822400],"monthly":false}'
+```
