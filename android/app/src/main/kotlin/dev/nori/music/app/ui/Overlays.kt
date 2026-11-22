@@ -131,9 +131,9 @@ fun NoriDialog(
 ) = NoriDialog(if (visible) Unit else null, onDismissRequest, style, scrim) { content() }
 
 /**
- * A dialog showing [value] while it is not null, animating in when it becomes one and out when it goes
- * back to null - showing the last value until it has left. [content] is what sits on the scrim: an
- * [AlertCard], a picture, or (as a [DialogStyle.Page]) a whole screen.
+ * A dialog showing [value] while it is not null and its page is on top ([LocalPageOnTop]), animating in
+ * when it becomes one and out when it goes back to null - showing the last value until it has left.
+ * [content] is what sits on the scrim: an [AlertCard], a picture, or (as a [DialogStyle.Page]) a whole screen.
  */
 @Composable
 fun <T : Any> NoriDialog(
@@ -143,11 +143,12 @@ fun <T : Any> NoriDialog(
     scrim: Float = 0.4f,
     content: @Composable (T) -> Unit,
 ) {
+    val asked = value.takeIf { LocalPageOnTop.current }
     // Set when the value arrives, cleared once the exit has played: the only state kept while closed.
     var held by remember { mutableStateOf<T?>(null) }
-    SideEffect { if (value != null && held !== value) held = value }
-    val shown = value ?: held ?: return
-    val open = value != null
+    SideEffect { if (asked != null && held !== asked) held = asked }
+    val shown = asked ?: held ?: return
+    val open = asked != null
     val dismiss by rememberUpdatedState(onDismissRequest)
     val live by rememberUpdatedState(open)
     Dialog(
@@ -259,8 +260,8 @@ fun AlertCard(
 }
 
 /**
- * A bottom sheet showing [value] while it is not null. Material's sheet slides itself in, and out when
- * it is swiped or its scrim tapped; a sheet whose caller simply stops composing it (a menu item that
+ * A bottom sheet showing [value] while it is not null and its page is on top ([LocalPageOnTop]). Material's
+ * sheet slides itself in, and out when it is swiped or its scrim tapped; a sheet whose caller simply stops composing it (a menu item that
  * closes the menu) vanished instead. Here the value going null slides the sheet down first.
  *
  * Every sheet is the same paper: the surface, opaque, over a light scrim, with a
@@ -274,11 +275,12 @@ fun <T : Any> NoriSheet(
     skipPartiallyExpanded: Boolean = true,
     content: @Composable ColumnScope.(T) -> Unit,
 ) {
+    val asked = value.takeIf { LocalPageOnTop.current }
     var held by remember { mutableStateOf<T?>(null) }
-    SideEffect { if (value != null && held !== value) held = value }
-    val shown = value ?: held ?: return
+    SideEffect { if (asked != null && held !== asked) held = asked }
+    val shown = asked ?: held ?: return
     val state = rememberModalBottomSheetState(skipPartiallyExpanded)
-    val open = value != null
+    val open = asked != null
     LaunchedEffect(open) {
         withContext(AppMotion) {
             if (!open) { state.hide(); held = null }

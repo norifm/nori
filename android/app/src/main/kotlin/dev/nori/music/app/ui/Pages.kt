@@ -289,6 +289,13 @@ val LocalPages = androidx.compose.runtime.staticCompositionLocalOf<Pages?> { nul
  */
 val LocalPageFront = androidx.compose.runtime.compositionLocalOf { true }
 
+/**
+ * Whether this page is on top at rest. Only that page puts up its dialogs and sheets ([NoriDialog], [NoriSheet]):
+ * the page under it is kept composed but stopped, its state as it was, and a window of its came up over the page
+ * on top unseen, taking every touch and back.
+ */
+val LocalPageOnTop = androidx.compose.runtime.compositionLocalOf { true }
+
 @Composable
 internal fun rememberPages(controller: NavHostController, navigator: PageNavigator): Pages {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -383,7 +390,7 @@ private fun ShownPage(pages: Pages, entry: NavBackStackEntry, role: Role, change
             .drawBehind { if (change?.fade == true) drawRect(background) }
             .swipeBack(pages, enabled = swipes),
     ) {
-        CompositionLocalProvider(LocalPageFront provides front) {
+        CompositionLocalProvider(LocalPageFront provides front, LocalPageOnTop provides (role == Role.TOP)) {
             Box(
                 Modifier.fillMaxSize().padding(start = outStart, end = outEnd)
                     .then(if (front) Modifier.focusRequester(pages.focus) else Modifier).focusGroup(),
