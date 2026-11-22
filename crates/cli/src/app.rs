@@ -2530,15 +2530,17 @@ impl App {
         self.login_choosing() && (self.prefs.servers.is_empty() || self.welcome.page != WelcomePage::Picking)
     }
 
-    /// What the welcome offers: the kinds a profile can be of, then the provider plugins the repos offer.
+    /// What the welcome offers: the kinds a profile can be of and the provider plugins the repos offer, in the
+    /// core's order.
     pub fn welcome_sources(&self) -> Vec<WelcomeSource> {
-        self.provider_lines()
-            .into_iter()
-            .map(|l| match l {
-                ProviderLine::Kind(kind) => WelcomeSource::Kind { kind },
-                ProviderLine::Offered { id, .. } => WelcomeSource::Offered { plugin: id },
-            })
-            .collect()
+        let (mut kinds, mut offered) = (Vec::new(), Vec::new());
+        for line in self.provider_lines() {
+            match line {
+                ProviderLine::Kind(kind) => kinds.push(kind),
+                ProviderLine::Offered { id, .. } => offered.push(id),
+            }
+        }
+        nori_core::providers::flow::welcome_sources(kinds, offered)
     }
 
     /// Takes `event` on the welcome and does what it asks: installs the plugins picked, or once a profile

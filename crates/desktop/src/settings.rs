@@ -1094,12 +1094,12 @@ pub fn first_run(prefs: &StoredPrefs) -> bool {
     prefs.servers.is_empty()
 }
 
-/// Every source the first run's welcome offers, on an equal footing: nori's own and the plugins' kinds, then
-/// the provider plugins a repo offers that aren't on.
+/// Every source the first run's welcome offers, on an equal footing: nori's own and the plugins' kinds, and
+/// the provider plugins a repo offers that aren't on, in the core's order.
 pub fn welcome_sources(p: &Plugged, kinds: &Kinds) -> Vec<WelcomeSource> {
-    let active = kinds.providers().into_iter().map(|i| WelcomeSource::Kind { kind: i.kind });
-    let offered = nori_plugins::provider_offers(p.offers().to_vec(), p.cards.clone(), p.all_off).into_iter().map(|o| WelcomeSource::Offered { plugin: o.id });
-    active.chain(offered).collect()
+    let active = kinds.providers().into_iter().map(|i| i.kind).collect();
+    let offered = nori_plugins::provider_offers(p.offers().to_vec(), p.cards.clone(), p.all_off).into_iter().map(|o| o.id).collect();
+    nori_core::providers::flow::welcome_sources(active, offered)
 }
 
 /// How a welcome source's row ends, as app.slint's `SourceRow::mark` numbers it.
