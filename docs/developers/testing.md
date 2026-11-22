@@ -236,6 +236,7 @@ Besides its generated albums, it seeds these fixtures:
 | Nori E2E Two / Far Side | Three songs of 150-190 s, "Far Song One" transcoded | Crossfades between albums |
 | Nori Codecs / Lossless | One 20 s Apple Lossless song | M4A seeks, the web client's Rust decoders |
 | Taylor Swift / Midnights (Deluxe) | One generated song on an album with a moving cover | `web/check/plugins.mjs` |
+| Pale Ink / Paper Sleeve | One song under a near-white cover | The `status-bar` section |
 | Nori Bench 1000 | A playlist of a thousand songs | `tools/open-bench.sh` |
 
 Tracks 05 and 06 of the Long Album have timed LRC lyrics beside them.

@@ -14,6 +14,8 @@
 #                               Rust decoders)
 #   Taylor Swift / Midnights (Deluxe)  one generated song, an album Apple has a moving cover for under
 #                               a near name: what web/check/plugins.mjs plays
+#   Pale Ink / Paper Sleeve     one song under a near-white cover: the status bar's icons over a pale page
+#                               (tools/feature-e2e.sh status-bar)
 #   Nori Bench 1000 (playlist)  a thousand songs, for opening a long page (tools/open-bench.sh)
 set -euo pipefail
 common=$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
@@ -84,6 +86,13 @@ if [ ! -f "$d/.done" ]; then
   mkdir -p "$d"
   ffmpeg -loglevel error -y -f lavfi -i "color=c=0x304050:s=600x600" -frames:v 1 "$d/cover.jpg"
   YEAR=2022 song "$d/01 - Generated Song.mp3" "Generated Song" "Taylor Swift" "Midnights (Deluxe)" 1 60 41
+  touch "$d/.done"; seeded=1
+fi
+d="$music/Pale Ink/Paper Sleeve"
+if [ ! -f "$d/.done" ]; then
+  mkdir -p "$d"
+  ffmpeg -loglevel error -y -f lavfi -i "color=c=0xf4f1ea:s=600x600" -frames:v 1 "$d/cover.jpg"
+  song "$d/01 - Pale Song.mp3" "Pale Song" "Pale Ink" "Paper Sleeve" 1 30 51
   touch "$d/.done"; seeded=1
 fi
 
