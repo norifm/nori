@@ -1,0 +1,16 @@
+shape: sequence_diagram
+page: Swift page
+bridge: Bridge.swift
+lib: crates/ios pages.rs
+host: nori-host, nori-core
+
+page -> bridge: read the album
+bridge -> lib: nori_ios_read(token, ALBUM, id)
+lib -> host: read the page
+host -> lib: the stored copy {style.stroke-dash: 4}
+lib -> bridge: page callback (JSON) {style.stroke-dash: 4}
+host -> lib: the server's copy, if it differs {style.stroke-dash: 4}
+lib -> bridge: page callback (JSON) {style.stroke-dash: 4}
+bridge -> page: the answer, on the main thread {style.stroke-dash: 4}
+page -> lib: nori_ios_play_list(token, index)
+lib -> host: play the songs under the token

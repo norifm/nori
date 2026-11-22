@@ -1,0 +1,13 @@
+shape: sequence_diagram
+app: "A client (nori-core)" {class: you}
+worker: "Support service: support/worker"
+stripe: Stripe
+
+app -> worker: POST /start (currency, amount, monthly, login)
+worker -> stripe: find or make the customer, start the payment
+stripe -> worker: client secret, or Checkout address {style.stroke-dash: 4}
+worker -> app: login, and secret or url {style.stroke-dash: 4}
+app -> stripe: pay in Stripe's sheet, or on Checkout
+app -> worker: POST /stamps (login)
+worker -> stripe: list payments and subscriptions
+worker -> app: paid, monthly, ends {style.stroke-dash: 4}

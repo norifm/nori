@@ -9,16 +9,10 @@ and does nothing else: no engine, no compiling, no thread.
 For what a plugin can do, see [Plugins](plugins.md). For the manifest, the limits and the API, see the
 [plugin reference](plugin-reference.md).
 
-```mermaid
-flowchart LR
-  F[".noriplugin or folder"] -- "files" --> C["Checks: manifest, API, id, keys, imports"]
-  R["Repo index.json"] -- "package, sha256, signature" --> C
-  C -- "staged beside the old version" --> K["Cranelift: compiled.cwasm"]
-  K -- "folder swapped in" --> I["plugins/<id>/"]
-  I -- "first call" --> W["Worker thread: own instance"]
-  I -- "stage on" --> S["Engine thread: stage instance"]
-  W -- "host interfaces" --> X["Transport, settings, LAN, Bluetooth"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/plugin-install-dark.svg">
+  <img alt="How a plugin is installed and run" src="diagrams/plugin-install.svg">
+</picture>
 
 ## The parts
 

@@ -1,0 +1,18 @@
+shape: sequence_diagram
+ui: Slint UI thread
+host: nori-host Handle
+queue: nori-core queue
+engine: nori-engine thread
+load: nori-load thread
+out: cpal callback
+
+ui -> host: play(songs, index)
+host -> queue: set the new queue
+queue -> host: QueueChange {style.stroke-dash: 4}
+host -> engine: QueueChanged, PlayAt
+engine -> queue: read the queue
+engine -> load: fetch the song
+load -> engine: bytes, in bursts {style.stroke-dash: 4}
+engine -> engine: demux, decode, sound chain
+engine -> out: samples, through the ring
+engine -> ui: Song and State events {style.stroke-dash: 4}

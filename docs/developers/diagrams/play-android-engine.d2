@@ -1,0 +1,12 @@
+shape: sequence_diagram
+mirror: EnginePlayer
+engine: nori-engine thread
+cache: media3 cache, OkHttp
+track: nori-track writer
+
+mirror -> engine: JNI doors: queueChanged, goTo, play
+engine -> cache: open the song's bytes
+cache -> engine: bytes, in bursts {style.stroke-dash: 4}
+engine -> track: samples, through the ring
+track -> track: AudioTrack.write, about every 10 s
+engine -> mirror: events, then signal() {style.stroke-dash: 4}

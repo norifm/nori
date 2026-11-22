@@ -5,23 +5,10 @@ one seal for each payment that went through, in the accent of the season it was 
 to the support service, a Cloudflare Worker over Stripe in `support/worker`. The Worker stores nothing.
 Stripe keeps every record.
 
-```mermaid
----
-title: A payment through the support service
----
-sequenceDiagram
-  participant App as A client (nori-core)
-  participant Worker as Support service (support/worker)
-  participant Stripe
-  App->>Worker: POST /start (currency, amount, monthly, login)
-  Worker->>Stripe: find or make the customer, start the payment
-  Stripe-->>Worker: client secret, or Checkout address
-  Worker-->>App: login, and secret or url
-  App->>Stripe: pay in Stripe's sheet, or on Checkout in the browser
-  App->>Worker: POST /stamps (login)
-  Worker->>Stripe: list the customer's payments and subscriptions
-  Worker-->>App: paid, monthly, ends
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/support-payment-dark.svg">
+  <img alt="A payment through the support service" src="diagrams/support-payment.svg">
+</picture>
 
 ## The parts
 

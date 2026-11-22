@@ -161,29 +161,24 @@ the page it belongs to.
 Draw a diagram when the layout carries information: parts and what flows between them, layers, an order
 that matters (what plays next), a fallback (what nori tries first, then next), states, or messages over
 time. Look for one on every page that has such a structure: readers who glance see a diagram before any
-text. A list of steps is a numbered list, not a flowchart. A diagram never holds
-a fact the text does not state: the text around it must make sense without it.
+text. A list of steps is a numbered list, not a flowchart. A diagram never holds a fact the text does not
+state: the text around it must make sense without it.
 
-- **User docs (norifm.com):** write a `flow` or a `stack` block. The site renders them as themed boxes,
-  with no script (`scripts/docs-diagrams.mjs`).
+Every diagram is D2, drawn at build time into SVG in nori's colors. How to write one that reads cleanly,
+with examples, is [references/diagrams.md](references/diagrams.md). In short:
 
-  ````md
-  ```flow
-  # What happens when you press play
-  Your server: sends the song
-  -> streams it
-  nori: decodes ten seconds ahead, then sleeps
-  -> hands over the sound
-  Your phone's audio: plays it
-  ```
-  ````
-
-  A `flow` is boxes joined by arrows, at most five boxes. A line `Title: note` is a box. A line `-> label`
-  labels the arrow to the next box. A first line starting `#` is the caption. A `stack` is the same
-  boxes as layers, top to bottom, with no arrows.
-- **Developer docs (GitHub):** write Mermaid (` ```mermaid `). GitHub renders it. Give it a title, label
-  every arrow with what it carries, and keep it under about twelve nodes. Use a `sequenceDiagram` for
-  one request through several parts, `flowchart` for parts and data, `stateDiagram-v2` for states.
+- **On user pages, only what a listener wonders about**: where their data goes, what plays next, why
+  the phone sleeps. At most five boxes, in a line or with one fork. Never a diagram of nori's internals,
+  and never one that needs the text to be understood. If a listener would not miss it, leave it out.
+- **One idea per diagram**, at most about eight boxes, or five or six parties in a sequence. Split a
+  bigger one into steps, each adding one part to the same picture.
+- **No crossing lines.** If the layout crosses, remove an arrow, reorder, or split the diagram.
+- **Short words.** Box labels of one to four words, arrow labels of one to four words, naming what moves.
+- **One accent:** `class: you` marks the reader's own part (their device, what they hear), once.
+- **User docs (norifm.com):** a ` ```d2 ` block in the page; its first line `# Caption` is its title.
+  The site draws it left to right on wide screens and top to bottom on phones.
+- **Developer docs (GitHub):** a `docs/developers/diagrams/<name>.d2` file, drawn by
+  `cd tools/diagrams && npm run draw` into `<name>.svg` and `<name>-dark.svg`, shown with `<picture>`.
 
 ## Linking
 

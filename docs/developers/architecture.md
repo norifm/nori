@@ -4,30 +4,10 @@ nori is one Rust core with a thin client for each platform. Every decision lives
 tested there. A client draws, holds the words, and wires the operating system: its audio output, HTTP
 client, media controls and permissions. This page covers every client.
 
-```mermaid
----
-title: nori's layers
----
-flowchart TB
-  android["Android: Kotlin and Compose"]
-  others["Desktop (Slint), terminal (ratatui), iPod (Swift), web (Svelte)"]
-  host["nori-host: the session"]
-  core["nori-core: a Core per profile, the Client, providers, domain crates"]
-  engine["nori-engine: the player on its own thread"]
-  player["nori-player: decoding, sound chain, transitions"]
-  output["Platform output: AudioTrack, cpal, AURemoteIO, AudioWorklet"]
-  source["Server or plugin"]
-
-  android -- "uniffi calls" --> core
-  android -- "JNI doors" --> engine
-  others -- "Handle calls" --> host
-  host -- "reads, queue edits" --> core
-  host -- "commands" --> engine
-  engine -- "reads the queue, settings, stream addresses" --> core
-  engine -- "runs" --> player
-  engine -- "samples, through a ring" --> output
-  core -- "HTTP, through the client's Transport" --> source
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/layers-dark.svg">
+  <img alt="nori's layers: the clients, nori-host, nori-core, nori-engine and the platform output" src="diagrams/layers.svg">
+</picture>
 
 Android calls the core and the engine directly from Kotlin. The desktop app, the terminal app, the iPod
 app and the web client share `nori-host`, which holds the core and the engine for them. Android is
@@ -112,29 +92,10 @@ the same engine. The examples below play a song from an album page.
 
 ### On the desktop app
 
-```mermaid
----
-title: A double-click on a song row, on the desktop app
----
-sequenceDiagram
-  participant UI as Slint UI thread
-  participant H as nori-host Handle
-  participant Q as nori-core queue
-  participant E as nori-engine thread
-  participant L as nori-load thread
-  participant C as cpal callback
-
-  UI->>H: play(songs, index, shuffle, origin)
-  H->>Q: register, set: the new queue
-  Q-->>H: QueueChange (where the song is)
-  H->>E: Command::QueueChanged, Command::PlayAt
-  E->>Q: read the queue, locate the song
-  E->>L: fetch the song's bytes
-  L-->>E: bytes, in bursts, into the stream cache
-  E->>E: demux, decode, sound chain
-  E->>C: samples, through the ring (Feed)
-  E-->>UI: Event::Song, Event::State, as Said::Engine
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/play-desktop-dark.svg">
+  <img alt="A double-click on a song row on the desktop app, from the UI thread to the cpal callback" src="diagrams/play-desktop.svg">
+</picture>
 
 1. A double-click on a row in `crates/desktop-ui/ui/app.slint` reaches `App::song`
    (`crates/desktop/src/app.rs`). It calls `Handle::play` with the page's songs and its `PageOrigin`.
@@ -159,39 +120,22 @@ sequenceDiagram
 
 ### On Android
 
-```mermaid
----
-title: A tap on a song row, on Android
----
-sequenceDiagram
-  participant VM as ActionsViewModel
-  participant PC as PlayerConnection
-  participant S as PlaybackService
-  participant Q as nori-core queue
-  participant M as EnginePlayer
-  participant E as nori-engine thread
-  participant K as media3 cache, OkHttp
-  participant T as nori-track writer
-
-  VM->>Q: tapPlan: what a tap does
-  VM->>PC: play(songs, index, from)
-  PC->>S: setMediaItems, prepare, play
-  S->>Q: playlistSet: the new queue
-  Q-->>S: QueueChange
-  S->>M: setMediaItems on the mirror
-  M->>E: JNI doors: queueChanged, goTo, play
-  E->>K: RustBridge.open: the song's bytes
-  K-->>E: bytes, in bursts
-  E->>T: samples, through the ring
-  T->>T: AudioTrack.write, about every 10 s
-  E-->>M: events, then signal()
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/play-android-queue-dark.svg">
+  <img alt="A tap on a song row on Android: the tap becomes a queue" src="diagrams/play-android-queue.svg">
+</picture>
 
 1. Tapping a row calls `ActionsViewModel.tap`, which asks the core what a tap does (`tapPlan`). To
    play the list, it calls `PlayerConnection.play`, a media3 `MediaController` on `PlaybackService`.
 2. In `PlaybackService`, the `Controls` player edits the core's queue first (`playlistSet`), and the
    core answers a `QueueChange`. Then `Controls` passes the items on to `EnginePlayer` in
    `RustPlayer.kt`. That media3 player only mirrors the core's queue for the session.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/play-android-engine-dark.svg">
+  <img alt="A tap on a song row on Android: the engine plays the song" src="diagrams/play-android-engine.svg">
+</picture>
+
 3. `EnginePlayer` calls the engine through JNI doors: `queueChanged`, `goTo` and `play`. Each one sends
    a command and wakes the `nori-engine` thread.
 4. The engine locates the song through `AndroidLibrary::locate` (`crates/android/src/player.rs`). A

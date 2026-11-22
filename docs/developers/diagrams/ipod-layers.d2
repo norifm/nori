@@ -1,0 +1,17 @@
+direction: down
+ui: "nori.app: Swift, UIKit" {class: you}
+lib: "nori-ios static library"
+host: nori-host session
+core: Engine and core crates
+http: nori-http
+shim: "Audio shim: NoriAudio.m"
+unit: AURemoteIO
+
+ui -> lib: C calls in nori_ios.h
+lib -> ui: reports, pages, covers
+lib -> host: opens and drives
+host -> core: plays and reads
+core -> http: API, covers, audio
+lib -> shim: open, start, stop
+shim -> unit: runs
+unit -> lib: render callback

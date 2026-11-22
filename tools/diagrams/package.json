@@ -1,0 +1,13 @@
+{
+  "name": "nori-diagrams",
+  "private": true,
+  "type": "module",
+  "description": "Draws docs/developers/diagrams/*.d2 as the SVGs the developer docs show.",
+  "scripts": {
+    "draw": "node draw.mjs",
+    "check": "node draw.mjs --check"
+  },
+  "devDependencies": {
+    "@d2lang/d2": "0.1.34"
+  }
+}

@@ -11,22 +11,10 @@ providers. The web client and the iPod app open only Subsonic profiles.
 A provider here is not an octo-fiesta provider song (an `ext-` id that a Subsonic server fetches from a
 streaming service). Those are songs of a Subsonic profile.
 
-```mermaid
----
-title: How a read reaches a provider
----
-flowchart LR
-  screen["Client screen"] -- "Read (search, album, Home)" --> client["Client (nori-core)"]
-  client -- "kept page, at once" --> screen
-  client -- "Read, when stale" --> provider{"the profile's Provider"}
-  provider --> subsonic["Subsonic"]
-  provider --> plugin["PluginProvider"]
-  provider --> hosted["HostedProvider"]
-  subsonic -- "HTTP" --> server["Subsonic server"]
-  plugin -- "provider export" --> wasm["plugin (wasm)"]
-  hosted -- "LAN door" --> host["jam host's provider"]
-  provider -- "Answer: Page or Raw" --> client
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/provider-read-dark.svg">
+  <img alt="How a read reaches a provider" src="diagrams/provider-read.svg">
+</picture>
 
 ## The providers
 
