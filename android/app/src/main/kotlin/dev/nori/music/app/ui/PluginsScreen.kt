@@ -69,6 +69,8 @@ import dev.nori.music.ffi.plugins.OfferState
 import kotlinx.coroutines.launch
 import dev.nori.music.ffi.plugins.ReadmeBlock
 import dev.nori.music.ffi.plugins.Repo
+import dev.nori.music.ffi.plugins.RepoProblem
+import dev.nori.music.ffi.plugins.repoCalled
 import dev.nori.music.ffi.plugins.PluginCard
 import dev.nori.music.ffi.plugins.PluginRow
 import dev.nori.music.ffi.plugins.RowKind
@@ -79,13 +81,19 @@ import dev.nori.music.text.Fmt
 
 private const val DIMMED = 0.38f
 
-/** A repo as its rows name it: nori's own, else its host. */
-private fun repoName(url: String, official: Boolean): String = if (official) say.pluginRepoOfficial else repoHost(url)
-
-private fun repoHost(url: String): String = android.net.Uri.parse(url).host ?: url
+/** A repo as its rows name it: nori's own by its word, the others as the core calls them. */
+private fun Repo.called(): String = name ?: say.pluginRepoOfficial
 
 /** The repo at [url] as its rows name it, among [repos]. */
-private fun repoName(url: String, repos: List<Repo>): String = repoName(url, repos.any { it.url == url && it.official })
+@Composable
+private fun repoName(url: String, repos: List<Repo>): String = remember(url, repos) { repoCalled(url, repos) } ?: say.pluginRepoOfficial
+
+/** Why a repo couldn't be read or added. */
+private fun RepoProblem.words(): String = when (this) {
+    RepoProblem.UNREACHABLE -> say.pluginRepoUnreachable
+    RepoProblem.NOT_FOUND -> say.pluginRepoNotFound
+    RepoProblem.NOT_A_REPO -> say.pluginRepoNotARepo
+}
 
 /** What a card is, in words: its extension points and whether it changes nori's values. */
 private fun PluginCard.kinds() = say.pluginKinds(points, overrides.isNotEmpty())
@@ -233,12 +241,12 @@ fun PluginBrowser(vm: PluginsViewModel, pages: PluginPages) {
         if (repos.size > 1) {
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = Space.gutter), Arrangement.spacedBy(6.dp)) {
                 Chip(say.pluginsAll, shown == null) { vm.showRepo(null) }
-                repos.forEach { r -> Chip(repoName(r.url, r.official), shown == r.url) { vm.showRepo(r.url) } }
+                repos.forEach { r -> Chip(r.called(), shown == r.url) { vm.showRepo(r.url) } }
             }
         }
         Refused(refused)
         offers.failed.forEach { f ->
-            Quiet(say.pluginRepoUnreachable(repoHost(f.repo.url)), Modifier.padding(horizontal = Space.gutter, vertical = 4.dp))
+            Quiet("${f.repo.called()} · ${f.problem.words()}", Modifier.padding(horizontal = Space.gutter, vertical = 4.dp))
         }
         if (found.isEmpty()) {
             Quiet(if (offers.loading) say.pluginsAsking else say.pluginsNoneFound, Modifier.padding(horizontal = Space.gutter, vertical = 16.dp))
@@ -246,7 +254,7 @@ fun PluginBrowser(vm: PluginsViewModel, pages: PluginPages) {
         CategoryPages(found, Modifier.weight(1f)) { shown ->
             shown.forEach { o ->
                 val version = o.versions.firstOrNull()?.version.orEmpty()
-                PluginLine(vm, o.id, o, o.name, o.about, say.pluginOfferLine(version, repoName(o.repo.url, o.repo.official)), true, Modifier.testTag("offer-${o.id}"), { pages.open(o.id) }, Space.gutter) {
+                PluginLine(vm, o.id, o, o.name, o.about, say.pluginOfferLine(version, o.repo.called()), true, Modifier.testTag("offer-${o.id}"), { pages.open(o.id) }, Space.gutter) {
                     when (o.state) {
                         OfferState.NEW -> TextAction(if (busy == o.id) say.pluginInstalling else say.pluginInstall, { vm.previewOffer(o) }, enabled = busy == null)
                         OfferState.UPDATE -> TextAction(if (busy == o.id) say.pluginInstalling else say.pluginUpdate, { vm.previewOffer(o) }, enabled = busy == null)
@@ -260,32 +268,34 @@ fun PluginBrowser(vm: PluginsViewModel, pages: PluginPages) {
     BluetoothAsk(vm, row = false)
 }
 
-/** The repos plugins come from, what each offers, and adding one with the title's plus. */
+/** The repos plugins come from, what each offers, adding one with the title's plus, and renaming one added. */
 @Composable
 fun PluginRepos(vm: PluginsViewModel) {
     val repos by vm.repos.collectAsStateWithLifecycle()
     val offers by vm.offers.collectAsStateWithLifecycle()
     var adding by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf<Repo?>(null) }
     LaunchedEffect(Unit) { vm.loadOffers() }
     Column(Modifier.verticalScroll(rememberScrollState())) {
-        LargeTitle(say.pluginRepos, trailing = { GlyphButton(Iconoir.Plus, say.pluginAddRepo, Modifier.testTag("plugin-add-repo")) { adding = true } })
+        LargeTitle(say.pluginRepos, trailing = { GlyphButton(Iconoir.Plus, say.pluginAddRepo, Modifier.testTag("plugin-add-repo")) { vm.addRepoAsked(); adding = true } })
         Spacer(Modifier.height(8.dp))
         GroupCard {
             repos.forEachIndexed { i, r ->
-                val line = when {
-                    offers.failed.any { it.repo.url == r.url } -> say.pluginRepoUnreachable(repoHost(r.url))
+                val line = offers.failed.firstOrNull { it.repo.url == r.url }?.problem?.words() ?: when {
                     offers.loading && offers.offers.none { it.repo.url == r.url } -> say.pluginsAsking
                     else -> say.pluginRepoCount(offers.offers.count { it.repo.url == r.url })
                 }
                 GroupRow(
-                    repoName(r.url, r.official), subtitle = listOfNotNull(r.url.takeIf { !r.official }, line).joinToString("\n"), divider = i < repos.lastIndex,
+                    r.called(), onClick = if (r.official) null else ({ renaming = r }), modifier = Modifier.testTag("repo-${r.url}"),
+                    subtitle = listOfNotNull(r.url.takeIf { !r.official }, line).joinToString("\n"), divider = i < repos.lastIndex,
                     trailing = if (r.official) null else ({ TextAction(say.remove, { vm.removeRepo(r.url) }, destructive = true) }),
                 )
             }
         }
         Spacer(Modifier.height(Space.section + LocalChromeInset.current))
     }
-    AddRepoSheet(adding, { adding = false }) { url -> vm.addRepo(url); adding = false }
+    AddRepoSheet(vm, adding) { adding = false }
+    renaming?.let { r -> RenameDialog(r.called(), r.called(), { renaming = null }) { name -> vm.renameRepo(r.url, name); renaming = null } }
 }
 
 /** Why an install was refused, under what it was asked from. */
@@ -367,19 +377,34 @@ private fun SheetPage(title: String, buttons: @Composable () -> Unit, content: @
     }
 }
 
-/** A repo's address, asked under the warning that it isn't nori's: Add is the user agreeing. */
+/**
+ * A repo's address, asked under the warning that it isn't nori's: Add is the user agreeing. The sheet
+ * stays while the repo is looked for, and says why one isn't added.
+ */
 @Composable
-private fun AddRepoSheet(visible: Boolean, close: () -> Unit, add: (String) -> Unit) {
+private fun AddRepoSheet(vm: PluginsViewModel, visible: Boolean, close: () -> Unit) {
+    val adding by vm.repoAdding.collectAsStateWithLifecycle()
     NoriSheet(visible, close) {
-        var url by remember { mutableStateOf("") }
+        var typed by remember { mutableStateOf("") }
+        val add = { if (typed.isNotBlank()) vm.addRepo(typed, close) }
         SheetPage(say.pluginAddRepo, {
             TextAction(say.cancel, close)
-            TextAction(say.add, { add(url) }, Modifier.testTag("repo-add"), enabled = url.isNotBlank())
+            TextAction(say.add, add, Modifier.testTag("repo-add"), enabled = typed.isNotBlank() && !adding.looking)
         }) {
             Quiet(say.pluginRepoWarning)
             FormField(
-                url, { url = it }, Modifier.fillMaxWidth().testTag("repo-url"), label = { Text(say.pluginRepoUrl) }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), autofocus = true, onDone = { if (url.isNotBlank()) add(url) },
+                typed, { typed = it }, Modifier.fillMaxWidth().testTag("repo-url"), label = { Text(say.pluginRepoUrl) },
+                placeholder = { Text(say.pluginRepoHint) },
+                supportingText = {
+                    Crossfade(adding, label = "repo adding") { a ->
+                        when {
+                            a.looking -> Text(say.pluginRepoLooking, Modifier.testTag("repo-looking"))
+                            a.problem != null -> Text(a.problem.words(), Modifier.testTag("repo-problem"), color = MaterialTheme.colorScheme.error)
+                            else -> Text("")
+                        }
+                    }
+                },
+                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), autofocus = true, onDone = add,
             )
         }
     }

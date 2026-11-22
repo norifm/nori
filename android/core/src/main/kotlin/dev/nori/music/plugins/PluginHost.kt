@@ -30,6 +30,7 @@ import dev.nori.music.ffi.plugins.MenuEntry
 import dev.nori.music.ffi.plugins.PluginPreview
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.plugins.Repo
+import dev.nori.music.ffi.plugins.RepoAdd
 import dev.nori.music.ffi.plugins.LastExit
 import dev.nori.music.ffi.plugins.SafeStart
 import dev.nori.music.ffi.plugins.Value
@@ -336,7 +337,11 @@ class PluginHost(
         _deviceCards.update(laid)
     }
 
-    suspend fun addRepo(url: String) = withContext(Dispatchers.IO) { plugins.addRepo(url); _repos.value = plugins.repos() }
+    /** Adds the repo [typed] names (a GitHub `user/repo` or an index's address), or says why not. */
+    suspend fun addRepo(typed: String): RepoAdd = withContext(Dispatchers.IO) { plugins.addRepo(typed).also { _repos.value = plugins.repos() } }
+
+    /** Names repo [url] [name]; an empty name gives it back its own. */
+    suspend fun renameRepo(url: String, name: String) = withContext(Dispatchers.IO) { plugins.renameRepo(url, name); _repos.value = plugins.repos() }
 
     suspend fun removeRepo(url: String) = withContext(Dispatchers.IO) { plugins.removeRepo(url); _repos.value = plugins.repos() }
 
@@ -345,7 +350,11 @@ class PluginHost(
     val offersRead: StateFlow<Offers?> = _offers
 
     /** Asks each repo what it offers, and which couldn't be read, into [offersRead]. */
-    suspend fun offers() = withContext(Dispatchers.IO) { _offers.value = plugins.offers() }
+    suspend fun offers() = withContext(Dispatchers.IO) {
+        _offers.value = plugins.offers()
+        // A repo with no name yet took its index's.
+        _repos.value = plugins.repos()
+    }
 
     /** Plugin [id]'s README: its package's, else what [offer] points at. */
     suspend fun readme(id: String, offer: Offer?): List<ReadmeBlock> = withContext(Dispatchers.IO) { plugins.readme(id, offer) }

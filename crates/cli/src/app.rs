@@ -277,10 +277,13 @@ pub enum PluginCmd {
     Ask(Box<Song>),
     /// Keeps a plugin at its version, or lets it update.
     Hold(String, bool),
+    /// Adds the repo this names (a GitHub `user/repo` or an index's address).
     AddRepo(String),
     /// Asks the plugin casting to end its cast: the music comes back here.
     EndCast,
     RemoveRepo(String),
+    /// Names the repo at this address; empty, it has its own name again.
+    RenameRepo(String, String),
     /// Sets a controlled device's noise control.
     Noise(String, nori_plugins::Noise),
     /// Lets a plugin fetch its assets on mobile data.
@@ -862,14 +865,14 @@ pub struct Devices {
 }
 
 /// The sheet before installing what `p` shows: what it is, what it may reach, where it comes from.
-fn preview_sheet(p: nori_plugins::PluginPreview, turns_on: bool) -> Overlay {
+fn preview_sheet(p: nori_plugins::PluginPreview, turns_on: bool, repos: &[nori_plugins::Repo]) -> Overlay {
     let c = &p.card;
     let mut lines: Vec<String> = c.about.iter().cloned().collect();
     lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(c)].into_iter().filter(|l| !l.is_empty()));
     if c.bluetooth {
         lines.push(crate::text::REACHES_BLUETOOTH.into());
     }
-    lines.extend(p.repo.as_deref().map(crate::text::from_repo));
+    lines.extend(p.repo.as_deref().map(|url| crate::text::from_repo(url, repos)));
     lines.extend(p.key.is_none().then(|| crate::text::UNSIGNED.to_string()));
     lines.extend(turns_on.then(|| crate::text::INSTALLED_ON.to_string()));
     Overlay::Confirm { title: crate::text::install_version(&c.name, &c.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
@@ -1115,6 +1118,9 @@ pub enum Overlay {
     JamSettings,
     /// An invite link pasted to join someone's jam, and why joining failed.
     Join { text: String, error: Option<String>, busy: bool },
+    /// A plugin repo's address typed under the warning that it isn't nori's, while it is looked for
+    /// (`busy`), and why it wasn't added.
+    AddRepo { text: String, problem: Option<nori_plugins::RepoProblem>, busy: bool },
     /// This computer's pairing code, the other device's pasted under it, and why pairing failed.
     Pair { text: String, error: Option<String>, busy: bool },
     /// The profile's account with a provider: who is signed in (empty: no one), whether the provider
@@ -1151,8 +1157,8 @@ pub enum Target {
     Plugin { plugin: String, row: String, kind: nori_plugins::RowKind },
     /// The plugin file or folder to install.
     Install,
-    /// The repo to add, once the user trusts it.
-    AddRepo,
+    /// The new name of the repo at this address.
+    RepoName(String),
     /// The browser's search.
     PluginSearch,
     /// The repo the browser is narrowed to: its address, empty for all.
@@ -1245,7 +1251,7 @@ impl Target {
                 Some(Cmd::Plugin(PluginCmd::Set(plugin, row, v)))
             }
             Target::Install => Some(Cmd::Plugin(PluginCmd::Install(value.trim().to_string()))),
-            Target::AddRepo => Some(Cmd::Plugin(PluginCmd::AddRepo(value.trim().to_string()))),
+            Target::RepoName(url) => Some(Cmd::Plugin(PluginCmd::RenameRepo(url, value))),
             Target::PluginSearch => Some(Cmd::Plugin(PluginCmd::Search(value))),
             Target::PluginRepo => Some(Cmd::Plugin(PluginCmd::ShowRepo(Some(value).filter(|u| !u.is_empty())))),
             Target::PluginCategory => Some(Cmd::Plugin(PluginCmd::ShowCategory(nori_plugins::Category::named(Some(&value))))),
@@ -1973,6 +1979,18 @@ impl App {
                 }
                 _ => self.say(e.clone(), true),
             },
+            Msg::RepoAdded(added) => match (&mut self.overlay, added) {
+                (Some(Overlay::AddRepo { .. }), nori_plugins::RepoAdd::Added { .. }) => {
+                    self.overlay = None;
+                    self.cmds.push(Cmd::Plugin(PluginCmd::Look));
+                }
+                (Some(Overlay::AddRepo { problem, busy, .. }), nori_plugins::RepoAdd::Failed { problem: why }) => {
+                    *problem = Some(why);
+                    *busy = false;
+                }
+                (_, nori_plugins::RepoAdd::Added { .. }) => self.cmds.push(Cmd::Plugin(PluginCmd::Look)),
+                (_, nori_plugins::RepoAdd::Failed { problem }) => self.say(crate::text::repo_problem(problem), true),
+            },
             Msg::Joined(Err(e)) => match &mut self.overlay {
                 Some(Overlay::Join { error, busy, .. }) => {
                     *error = Some(e.clone());
@@ -2017,7 +2035,7 @@ impl App {
             Msg::Preview(Ok(p)) => {
                 self.settings.got();
                 let turns_on = self.settings.alone.offer() == Some(p.card.id.as_str()) || !self.settings.own.plugins.iter().any(|c| c.id == p.card.id);
-                self.overlay = Some(preview_sheet(p, turns_on));
+                self.overlay = Some(preview_sheet(p, turns_on, &self.settings.own.repos));
             }
             Msg::Installed(Ok(id)) => {
                 self.settings.got();
@@ -2418,7 +2436,7 @@ impl App {
 
     fn paste(&mut self, text: &str) {
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
-        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Pair { text: t, busy: false, .. } | Overlay::Account { text: t, pasting: true, .. }) = &mut self.overlay {
+        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Pair { text: t, busy: false, .. } | Overlay::AddRepo { text: t, busy: false, .. } | Overlay::Account { text: t, pasting: true, .. }) = &mut self.overlay {
             t.push_str(&text);
         } else if self.view == View::Login {
             if !self.login_choosing() {
@@ -2911,7 +2929,7 @@ impl App {
                 KeyCode::Char('q') => self.overlay = None,
                 _ => {}
             },
-            Overlay::Join { busy: true, .. } | Overlay::Pair { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
+            Overlay::Join { busy: true, .. } | Overlay::Pair { busy: true, .. } | Overlay::AddRepo { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
             Overlay::Account { flow, .. } if flow.busy() && k.code != KeyCode::Esc => self.dirty = false,
             Overlay::Account { flow, .. } if matches!(flow.shown, SignInShown::Code { .. }) => match k.code {
                 KeyCode::Enter if !flow.checks_code() => self.sign_in_with_code(),
@@ -2985,6 +3003,20 @@ impl App {
                 self.cmds.push(Cmd::Pair(text.clone()));
                 self.overlay = Some(Overlay::Pair { text, error: None, busy: true });
             }
+            Overlay::AddRepo { text, problem, busy } => match k.code {
+                KeyCode::Enter if !text.trim().is_empty() => {
+                    *busy = true;
+                    *problem = None;
+                    self.cmds.push(Cmd::Plugin(PluginCmd::AddRepo(text.trim().to_string())));
+                }
+                KeyCode::Esc => self.overlay = None,
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => text.clear(),
+                KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
+                _ => {}
+            },
             Overlay::Join { text, error, busy } => match k.code {
                 KeyCode::Enter if nori_core::remote::is_invite(text) => {
                     *busy = true;
@@ -3056,8 +3088,6 @@ impl App {
                     self.overlay = None;
                     match target {
                         // A repo that isn't nori's is added only once the user says they trust it.
-                        Target::AddRepo if !typed.trim().is_empty() => self.overlay = Some(crate::settings_view::trust_repo(typed.trim())),
-                        Target::AddRepo => {}
                         // Each field of an account being added asks the next, the last signs in.
                         Target::ScrobblerField { profile, form, step } if step + 1 < nori_core::scrobblers::scrobbler_fields(form.kind).len() => {
                             let field = nori_core::scrobblers::scrobbler_fields(form.kind)[step].field;

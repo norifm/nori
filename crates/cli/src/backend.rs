@@ -99,6 +99,8 @@ pub enum Msg {
     Readme { id: String, blocks: Vec<nori_plugins::ReadmeBlock> },
     /// What the plugin repos offer.
     Offers(nori_plugins::Offers),
+    /// A repo added from what was typed, or why not.
+    RepoAdded(nori_plugins::RepoAdd),
     /// Plugins updated on their own: each one's id and new version.
     Updated(Vec<(String, String)>),
     /// What a plugin's page shows (its rows' lines, its assets), or the devices plugins control,
@@ -174,6 +176,7 @@ impl Msg {
             Msg::Restored(r) => format!("restored: {:?}", r.as_ref().map(|r| &r.plugins)),
             Msg::Readme { id, blocks } => format!("{id}'s readme, {} blocks", blocks.len()),
             Msg::Offers(o) => format!("{} plugins offered, {} repos unread", o.offers.len(), o.failed.len()),
+            Msg::RepoAdded(r) => format!("repo added: {r:?}"),
             Msg::From(id, m) => format!("session {id}: {}", m.brief()),
         }
     }

@@ -803,6 +803,8 @@ pub struct Plugged {
     /// The device whose settings the devices panel shows.
     pub device_page: Option<String>,
     pub repos: Vec<Repo>,
+    /// A repo typed is being looked for.
+    pub adding_repo: bool,
     pub shelf: Shelf,
     /// The pages open over the list.
     pub stack: Vec<PluginPage>,
@@ -946,11 +948,11 @@ pub enum PluginAct {
     Chip,
     /// The category the browser shows: its chip.
     Category,
-    /// Asks for a repo's address.
+    /// Asks for a repo's address, under the warning that it isn't nori's.
     AddRepo,
-    /// The repo at this address, once trusted.
-    TrustRepo(String),
     RemoveRepo(String),
+    /// Asks for a new name for the repo at this address.
+    RenameRepo(String),
     /// A controlled device's noise control, by the device's id.
     Noise(String),
     /// A plugin's flags row: its id, the row and the bits switching this option stores.
@@ -1009,8 +1011,8 @@ impl PluginAct {
             "plugin-chip" => PluginAct::Chip,
             "plugin-category" => PluginAct::Category,
             "repo-add" => PluginAct::AddRepo,
-            "repo-trust" => PluginAct::TrustRepo(id()),
             "repo-remove" => PluginAct::RemoveRepo(id()),
+            "repo-rename" => PluginAct::RenameRepo(id()),
             "device-noise" => PluginAct::Noise(id()),
             "plugin-flags" => {
                 let (row, bits) = rest.rsplit_once(':')?;
@@ -1054,8 +1056,8 @@ impl PluginAct {
             PluginAct::Chip => "plugin-chip".into(),
             PluginAct::Category => "plugin-category".into(),
             PluginAct::AddRepo => "repo-add".into(),
-            PluginAct::TrustRepo(url) => format!("repo-trust:{url}"),
             PluginAct::RemoveRepo(url) => format!("repo-remove:{url}"),
+            PluginAct::RenameRepo(url) => format!("repo-rename:{url}"),
             PluginAct::Noise(device) => format!("device-noise:{device}"),
             PluginAct::Flags(plugin, row, bits) => format!("plugin-flags:{plugin}:{row}:{bits}"),
             PluginAct::DeviceOpen(device) => format!("device-open:{device}"),
@@ -1292,7 +1294,7 @@ fn browser(p: &Plugged) -> Vec<(String, Vec<Row>)> {
     match &p.shelf {
         Shelf::Unasked | Shelf::Asking => rows.push(note(words::LOOKING)),
         Shelf::Read(Offers { offers, failed }) => {
-            rows.extend(failed.iter().map(|f| note(&words::repo_failed(&f.repo))));
+            rows.extend(failed.iter().map(|f| note(&words::repo_failed(f))));
             let found = found(p);
             if found.is_empty() {
                 rows.push(note(words::NONE_FOUND));
@@ -1314,17 +1316,28 @@ fn browser(p: &Plugged) -> Vec<(String, Vec<Row>)> {
     vec![(String::new(), rows)]
 }
 
-/// The repos and what each offers; those added can be removed.
+/// The repos and what each offers; those added can be renamed (the row) and removed (its button).
 fn repos_page(p: &Plugged) -> Vec<(String, Vec<Row>)> {
     let rows = p.repos.iter().map(|r| {
         let line = match &p.shelf {
-            Shelf::Read(o) if o.failed.iter().any(|f| f.repo.url == r.url) => words::repo_failed(r),
-            Shelf::Read(o) => words::plugin_count(o.offers.iter().filter(|x| x.repo.url == r.url).count()),
+            Shelf::Read(o) => match o.failed.iter().find(|f| f.repo.url == r.url) {
+                Some(f) => words::repo_problem(f.problem).into(),
+                None => words::plugin_count(o.offers.iter().filter(|x| x.repo.url == r.url).count()),
+            },
             _ => words::LOOKING.into(),
         };
         match r.official {
             true => info(&words::repo_name(r), line),
-            false => Row { kind: ACTION, name: PluginAct::RemoveRepo(r.url.clone()).name(), title: words::repo_name(r), detail: format!("{} · {line}", r.url), button: words::REMOVE.into(), enabled: true, ..Default::default() },
+            false => Row {
+                kind: ACTION,
+                name: PluginAct::RemoveRepo(r.url.clone()).name(),
+                control: PluginAct::RenameRepo(r.url.clone()).name(),
+                title: words::repo_name(r),
+                detail: format!("{} · {line}", r.url),
+                button: words::REMOVE.into(),
+                enabled: true,
+                ..Default::default()
+            },
         }
     });
     vec![(String::new(), rows.collect())]
@@ -1777,7 +1790,7 @@ mod tests {
     }
 
     fn official() -> Repo {
-        Repo { url: nori_plugins::OFFICIAL.into(), official: true }
+        Repo { url: nori_plugins::OFFICIAL.into(), official: true, name: None }
     }
 
     fn offer(id: &str, repo: &Repo, state: OfferState) -> Offer {
@@ -1865,7 +1878,7 @@ mod tests {
     /// offer by its place among those read.
     #[test]
     fn the_browser_shows_what_is_found_and_installs_the_offer_shown() {
-        let friend = Repo { url: "https://friend.example/index.json".into(), official: false };
+        let friend = Repo { url: "https://friend.example/index.json".into(), official: false, name: Some("friend.example".into()) };
         let official = official();
         let mut p = Plugged {
             repos: vec![official.clone(), friend.clone()],
@@ -1906,24 +1919,26 @@ mod tests {
         assert_eq!((listed(&p), plugin_top(&p, false).category), (vec!["orbit".to_string(), "speed".to_string()], 1));
     }
 
-    /// Repos say what each offers; only those added can go.
+    /// Repos say what each offers, or why they couldn't be read; only those added can be renamed or go.
     #[test]
     fn the_repos_say_what_they_offer() {
-        let friend = Repo { url: "https://friend.example/index.json".into(), official: false };
+        let friend = Repo { url: "https://friend.example/index.json".into(), official: false, name: Some("Friend".into()) };
         let official = official();
-        let gone = Repo { url: "https://gone.example/index.json".into(), official: false };
+        let gone = Repo { url: "https://gone.example/index.json".into(), official: false, name: Some("gone.example".into()) };
         let p = Plugged {
             repos: vec![official.clone(), friend.clone(), gone.clone()],
             stack: vec![PluginPage::Repos],
-            shelf: Shelf::Read(Offers { offers: vec![offer("a", &official, OfferState::New), offer("b", &official, OfferState::New), offer("c", &friend, OfferState::New)], failed: vec![nori_plugins::RepoFailure { repo: gone, reason: "HTTP 404".into() }] }),
+            shelf: Shelf::Read(Offers { offers: vec![offer("a", &official, OfferState::New), offer("b", &official, OfferState::New), offer("c", &friend, OfferState::New)], failed: vec![nori_plugins::RepoFailure { repo: gone, problem: nori_plugins::RepoProblem::NotFound }] }),
             ..Default::default()
         };
         let groups = plugin_groups(&p, false);
         let rows = &groups[0].1;
         assert_eq!((rows[0].kind, rows[0].detail.as_str()), (INFO, "2 plugins"));
-        assert_eq!((rows[1].button.as_str(), PluginAct::of(&rows[1].name)), ("Remove", Some(PluginAct::RemoveRepo(friend.url.clone()))));
+        assert_eq!((rows[1].title.as_str(), rows[1].button.as_str(), PluginAct::of(&rows[1].name)), ("Friend", "Remove", Some(PluginAct::RemoveRepo(friend.url.clone()))));
+        assert_eq!(PluginAct::of(&rows[1].control), Some(PluginAct::RenameRepo(friend.url.clone())), "the row renames it");
         assert!(rows[1].detail.ends_with("1 plugin"), "{}", rows[1].detail);
-        assert!(rows[2].detail.contains("Couldn’t reach gone.example"), "{}", rows[2].detail);
+        assert!(rows[2].detail.ends_with("Not found"), "{}", rows[2].detail);
+        assert_eq!(rows[0].control, "", "nori's own keeps its name");
         assert_eq!(PluginAct::of(&slint::Model::row_data(&plugin_top(&p, false).tools, 0).unwrap().name), Some(PluginAct::AddRepo));
     }
 
@@ -2074,7 +2089,7 @@ mod tests {
     /// Repos that can't be read, or not read yet, leave the providers there are.
     #[test]
     fn providers_show_without_the_repos() {
-        let failed = Plugged { shelf: Shelf::Read(Offers { offers: Vec::new(), failed: vec![nori_plugins::RepoFailure { repo: official(), reason: "offline".into() }] }), ..Default::default() };
+        let failed = Plugged { shelf: Shelf::Read(Offers { offers: Vec::new(), failed: vec![nori_plugins::RepoFailure { repo: official(), problem: nori_plugins::RepoProblem::Unreachable }] }), ..Default::default() };
         for p in [failed, Plugged { shelf: Shelf::Asking, ..Default::default() }] {
             assert_eq!(provider_choices(&p, &Kinds::builtin()).iter().map(|r| r.title.as_str()).collect::<Vec<_>>(), ["OpenSubsonic"]);
         }

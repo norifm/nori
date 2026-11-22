@@ -149,6 +149,8 @@ pub enum Msg {
     PluginIcon { id: String, pixels: Option<Vec<u8>> },
     /// What the plugin repos offer.
     PluginOffers(nori_plugins::Offers),
+    /// A repo added from what was typed, or why not.
+    RepoAdded(nori_plugins::RepoAdd),
     /// Plugins updated on their own: each one's id and new version.
     PluginsUpdated(Vec<(String, String)>),
     /// What a plugin's page shows (its rows' lines, its assets), or the devices plugins control, changed.

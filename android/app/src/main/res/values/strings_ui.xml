@@ -917,9 +917,13 @@
     <string name="plugins_up_to_date">Installed</string>
     <string name="plugins_repos">Repos</string>
     <string name="plugins_repo_official">nori</string>
-    <string name="plugins_repo_unreachable">Couldn’t reach %1$s</string>
+    <string name="plugins_repo_unreachable">No connection</string>
+    <string name="plugins_repo_not_found">Not found</string>
+    <string name="plugins_repo_not_a_repo">Not a nori repo</string>
     <string name="plugins_add_repo">Add repo</string>
     <string name="plugins_repo_url">Repo address</string>
+    <string name="plugins_repo_hint">user/repo or https://…/index.json</string>
+    <string name="plugins_repo_looking">Looking…</string>
     <string name="plugins_repo_warning">This repo isn’t nori’s. Its plugins can do what their pages say. Add it only if you trust it.</string>
     <string name="plugins_may">What it may do</string>
     <string name="plugins_not_set">Not set</string>

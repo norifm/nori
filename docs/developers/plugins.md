@@ -112,7 +112,9 @@ the web client to carry it.
 
 Listeners install plugins from a plugin repo: a static `index.json` and its packages, on any web host.
 nori lists its own repo, [nori-plugins](https://github.com/norifm/nori-plugins), by default. Users can
-add other repos by address, after a warning. A listener can also install a package from a file.
+add other repos after a warning, by the index's URL or by a GitHub `user/repo`. A repo laid out as
+nori-plugins is, with `index.json` at the top of its default branch, needs only its `user/repo`. Users
+can rename each repo they added. A listener can also install a package from a file.
 
 Get plugins lists what the repos offer on a page per category, which a plugin's manifest names
 (`category`: a service, a device, playback, or other).

@@ -9,7 +9,9 @@ import dev.nori.music.app.R
 import dev.nori.music.ffi.plugins.Offer
 import dev.nori.music.ffi.plugins.PluginCard
 import dev.nori.music.ffi.plugins.Refusal
+import dev.nori.music.ffi.plugins.RepoAdd
 import dev.nori.music.ffi.plugins.RepoFailure
+import dev.nori.music.ffi.plugins.RepoProblem
 import dev.nori.music.ffi.plugins.Value
 import dev.nori.music.ffi.plugins.Noise
 import dev.nori.music.ffi.plugins.PluginPreview
@@ -27,6 +29,9 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** A repo being added: [looking] for it, then why it wasn't added. */
+data class RepoAdding(val looking: Boolean = false, val problem: RepoProblem? = null)
 
 /** What the repos offer: [loading] while they are asked, then the offers and the repos that couldn't be read. */
 data class OffersUi(val loading: Boolean = false, val offers: List<Offer> = emptyList(), val failed: List<RepoFailure> = emptyList())
@@ -253,7 +258,24 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun allowMobileAssets(id: String) = viewModelScope.launch { host.allowMobileAssets(id) }
 
-    fun addRepo(url: String) = viewModelScope.launch { host.addRepo(url.trim()); loadOffers() }
+    private val _repoAdding = MutableStateFlow(RepoAdding())
+    /** The repo being added: looked for, or why it wasn't. */
+    val repoAdding: StateFlow<RepoAdding> = _repoAdding
+
+    /** The add sheet opened afresh. */
+    fun addRepoAsked() { _repoAdding.value = RepoAdding() }
+
+    /** Adds the repo [typed] names, then [added]. */
+    fun addRepo(typed: String, added: () -> Unit) = viewModelScope.launch {
+        if (_repoAdding.value.looking) return@launch
+        _repoAdding.value = RepoAdding(looking = true)
+        when (val r = host.addRepo(typed)) {
+            is RepoAdd.Added -> { _repoAdding.value = RepoAdding(); added(); loadOffers() }
+            is RepoAdd.Failed -> _repoAdding.value = RepoAdding(problem = r.problem)
+        }
+    }
+
+    fun renameRepo(url: String, name: String) = viewModelScope.launch { host.renameRepo(url, name) }
 
     fun removeRepo(url: String) = viewModelScope.launch { host.removeRepo(url); loadOffers() }
 }

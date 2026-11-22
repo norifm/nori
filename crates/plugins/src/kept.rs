@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{store, Plugins};
 
-/// The installed plugins, in their order, and the repos the user added.
+/// The installed plugins, in their order, and the repos the user added with their names.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct KeptPlugins {
     #[serde(default)]
     pub plugins: Vec<KeptPlugin>,
-    #[serde(default)]
-    pub repos: Vec<String>,
+    #[serde(flatten)]
+    pub repos: crate::AddedRepos,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,9 +92,7 @@ impl Plugins {
     /// one kept, then the order (theirs first, the others after), being on and being held as kept.
     /// Plugins installed here and not in the backup stay.
     pub async fn restore(&self, kept: KeptPlugins) -> Vec<PluginRestored> {
-        for repo in kept.repos {
-            self.add_repo(repo);
-        }
+        self.change_repos(|here| here.take_in(kept.repos));
         let offers = if kept.plugins.is_empty() { Vec::new() } else { self.offers().await.offers };
         let mut out = Vec::new();
         for k in &kept.plugins {

@@ -160,7 +160,7 @@ plugin_from_file() {
   "$app" plugin turn "$id on" >/dev/null && echo "$id"
 }
 
-if want plugins; then section "plugins: a repo added, orbit installed from it, turned on and off, removed; the showcase's slots and rows; music sounding"
+if want plugins; then section "plugins: a repo added and renamed, orbit installed from it, turned on and off, removed; the showcase's slots and rows; music sounding"
   # The plugin host's runtime on the device's ABI, the Plugins page and its sheets, a repo fetched through
   # OkHttp, and a plugin's sound stage reaching the AudioTrack player at once; what plugins may do is Rust's.
   check "orbit is packed" test -n "$(plugin_package orbit)"
@@ -176,10 +176,19 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   tapnode content-desc Repos
   tapnode content-desc "Add repo"
   check "adding a repo warns first" wait_until 10 on_screen 'Add it only if you trust it'
+  check "its field says what to type" wait_until 10 on_screen 'user/repo or https://'
   tapnode text "Repo address"
   adb shell input text "http://10.0.2.2:$plugins_port/index.json"
   tapnode text Add
-  check "the repo is listed" wait_until 30 on_screen '10.0.2.2'
+  check "the repo is listed by its host" wait_until 30 on_screen 'text="10.0.2.2"'
+  tapnode text 10.0.2.2
+  check "its row renames it" wait_until 10 on_screen 'text="Rename"'
+  # The end of the name, then each of its 8 letters gone.
+  adb shell input keyevent 123 67 67 67 67 67 67 67 67
+  adb shell input text Local
+  tapnode text Save
+  check "the repo has its new name" wait_until 10 on_screen 'text="Local"'
+  adb exec-out screencap -p > "$shots/repos.png"
   adb shell input keyevent 4
   # A page per category: orbit is on Playback's, beside the official repo's AutoMix tuning.
   check "the browser has a page per category" wait_until 30 on_screen 'text="Playback"'
@@ -187,7 +196,7 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   check "the browser offers orbit" wait_until 30 on_screen 'text="Orbit"'
   adb exec-out screencap -p > "$shots/browser.png"
   # Only this repo's plugins, not the official repo's beside it.
-  tapnode text 10.0.2.2
+  tapnode text Local
   check "the repo's filter shows its orbit only" wait_until 10 off_screen 'text="Moving covers"'
   tapnode text Orbit
   # Its page, the browser gone: the browser's rows have Install buttons too.

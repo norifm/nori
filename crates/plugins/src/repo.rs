@@ -1,12 +1,16 @@
 //! Plugin repos: static `index.json` files anyone can host. nori's own is always there; the user adds
-//! others by URL (a client warns first: nori vouches only for its own). An index lists each plugin's
+//! others by a GitHub `user/repo` or a URL (a client warns first: nori vouches only for its own), and
+//! may name them. An index may name its repo, and lists each plugin's
 //! id, name, about and source, and every version it published: its plugin API version, the day it was
 //! released, its package's URL and the package's sha256, which an install checks before anything else,
 //! and its author's key with the key's ed25519 signature over that sha256 (its 32 bytes). Old versions
 //! stay listed, so a plugin can be taken back to one.
 
+use std::collections::BTreeMap;
+
 use nori_plugin_index::package::{checked, Listed, PackageRefusal};
-use nori_plugin_index::{older, resolved};
+use nori_plugin_index::{address, older, resolved, Index};
+use serde::{Deserialize, Serialize};
 
 use crate::{PluginCard, Plugins, Refusal, WhenNew, API};
 
@@ -22,6 +26,84 @@ pub struct Repo {
     pub url: String,
     /// nori's own.
     pub official: bool,
+    /// What it is called: the name it was given (the user's, else its index's), else its address's
+    /// short form. None for nori's own, which each client names.
+    pub name: Option<String>,
+}
+
+/// The repos the user added, as kept: their addresses in order, and the names given them by address
+/// (apart, so an older nori still reads the addresses).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddedRepos {
+    #[serde(default)]
+    pub repos: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub repo_names: BTreeMap<String, String>,
+}
+
+impl AddedRepos {
+    fn add(&mut self, url: &str) {
+        if url != OFFICIAL && !self.repos.iter().any(|u| u == url) {
+            self.repos.push(url.to_string());
+        }
+    }
+
+    fn remove(&mut self, url: &str) {
+        self.repos.retain(|u| u != url);
+        self.repo_names.remove(url);
+    }
+
+    /// Names repo `url` `name`; an empty name takes its name away.
+    fn rename(&mut self, url: &str, name: &str) {
+        match name.trim() {
+            _ if !self.repos.iter().any(|u| u == url) => {}
+            "" => _ = self.repo_names.remove(url),
+            name => _ = self.repo_names.insert(url.to_string(), name.to_string()),
+        }
+    }
+
+    /// Names repo `url` `name` (its index's) if it has no name yet.
+    fn name_once(&mut self, url: &str, name: &str) {
+        if !self.repo_names.contains_key(url) {
+            self.rename(url, name);
+        }
+    }
+
+    /// Those of `kept` not here yet, with the names `kept` gives them.
+    pub(crate) fn take_in(&mut self, kept: AddedRepos) {
+        for url in &kept.repos {
+            self.add(url);
+        }
+        for (url, name) in kept.repo_names {
+            self.rename(&url, &name);
+        }
+    }
+
+    fn listed(&self) -> Vec<Repo> {
+        let added = self.repos.iter().map(|url| Repo { url: url.clone(), official: false, name: Some(self.repo_names.get(url).cloned().unwrap_or_else(|| address::short_name(url))) });
+        std::iter::once(Repo { url: OFFICIAL.into(), official: true, name: None }).chain(added).collect()
+    }
+}
+
+/// Why a repo couldn't be read or added, from the least telling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum RepoProblem {
+    /// No answer: no connection, or no such host.
+    Unreachable,
+    /// The server has no index there, or no such address could be one.
+    NotFound,
+    /// What is there isn't a repo's index.
+    NotARepo,
+}
+
+/// A repo added, or why not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum RepoAdd {
+    /// Added now, or there already.
+    Added { repo: Repo },
+    Failed { problem: RepoProblem },
 }
 
 /// A plugin a repo offers.
@@ -90,7 +172,7 @@ pub struct Updated {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct RepoFailure {
     pub repo: Repo,
-    pub reason: String,
+    pub problem: RepoProblem,
 }
 
 /// What the repos offer, and those that couldn't be read.
@@ -101,10 +183,9 @@ pub struct Offers {
     pub failed: Vec<RepoFailure>,
 }
 
-/// The plugins in `index`'s text, from `repo`, with the versions this host runs; one with none is left out.
-fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
-    let index = nori_plugin_index::parse(text)?;
-    Ok(index
+/// The plugins in `index`, from `repo`, with the versions this host runs; one with none is left out.
+fn offers(repo: &Repo, index: Index) -> Vec<Offer> {
+    index
         .plugins
         .into_iter()
         .filter_map(|l| {
@@ -126,7 +207,7 @@ fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
             let (readme, icon) = (l.readme.map(|r| resolved(&repo.url, &r)), l.icon.map(|i| resolved(&repo.url, &i)));
             (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, readme, icon, points: l.points, category: crate::Category::named(l.category.as_deref()), versions, installed: None, state: OfferState::New })
         })
-        .collect())
+        .collect()
 }
 
 impl Plugins {
@@ -146,6 +227,21 @@ impl Plugins {
         let file = self.dir.join(format!(".{hash}.noriplugin"));
         std::fs::create_dir_all(&self.dir).and_then(|_| std::fs::write(&file, &r.body)).map_err(|e| unreadable(e.to_string()))?;
         Ok(file)
+    }
+
+    /// The index at `url`.
+    async fn index_at(&self, url: &str) -> Result<Index, RepoProblem> {
+        let failed = |problem, why: &dyn std::fmt::Display| {
+            nori_model::alog::info(&format!("plugin repo {url}: {why}"));
+            problem
+        };
+        let t = self.transport_now().map_err(|e| failed(RepoProblem::Unreachable, &e))?;
+        let r = t.get(url.to_string(), 0).await.map_err(|e| failed(RepoProblem::Unreachable, &e))?;
+        match r.status {
+            200..=299 => nori_plugin_index::parse(&r.body).map_err(|e| failed(RepoProblem::NotARepo, &e)),
+            s @ 500.. => Err(failed(RepoProblem::Unreachable, &format!("HTTP {s}"))),
+            s => Err(failed(RepoProblem::NotFound, &format!("HTTP {s}"))),
+        }
     }
 
     pub(crate) fn transport_now(&self) -> Result<std::sync::Arc<dyn nori_net::transport::Transport>, String> {
@@ -193,6 +289,15 @@ pub fn plugin_display_name(id: String, cards: Vec<PluginCard>, offers: Vec<Offer
     cards.into_iter().find(|c| c.id == id).map(|c| c.name).or_else(|| offers.into_iter().find(|o| o.id == id).map(|o| o.name)).unwrap_or(id)
 }
 
+/// What the repo at `url` is called among `repos`, else by its address's short form; none for nori's own.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn repo_called(url: String, repos: Vec<Repo>) -> Option<String> {
+    match repos.into_iter().find(|r| r.url == url) {
+        Some(r) => r.name,
+        None => (url != OFFICIAL).then(|| address::short_name(&url)),
+    }
+}
+
 /// [`updates_waiting`], owned.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn offers_to_update(offers: Vec<Offer>, cards: Vec<PluginCard>) -> Vec<Offer> {
@@ -229,42 +334,62 @@ impl Plugins {
 impl Plugins {
     /// nori's repo, then those the user added.
     pub fn repos(&self) -> Vec<Repo> {
-        std::iter::once(Repo { url: OFFICIAL.into(), official: true }).chain(self.added_repos().into_iter().map(|url| Repo { url, official: false })).collect()
+        self.added_repos().listed()
     }
 
-    /// Adds the repo at `url` (an index.json); a client warns before.
-    pub fn add_repo(&self, url: String) {
-        let url = url.trim().to_string();
-        if url.is_empty() || url == OFFICIAL {
-            return;
+    /// Adds the repo `typed` names (a GitHub `user/repo`, or an index's URL): the first place it may be
+    /// whose index reads; a client warns before. One added before is found as it is.
+    pub async fn add_repo(&self, typed: String) -> RepoAdd {
+        let mut problem = None;
+        for url in address::candidates(&typed) {
+            if let Some(repo) = self.repos().into_iter().find(|r| r.url == url) {
+                return RepoAdd::Added { repo };
+            }
+            match self.index_at(&url).await {
+                Ok(index) => {
+                    self.change_repos(|r| {
+                        r.add(&url);
+                        index.name.iter().for_each(|n| r.name_once(&url, n));
+                    });
+                    let repo = self.repos().into_iter().find(|r| r.url == url).expect("just added");
+                    return RepoAdd::Added { repo };
+                }
+                Err(p) => problem = problem.max(Some(p)),
+            }
         }
-        let mut added = self.added_repos();
-        if !added.contains(&url) {
-            added.push(url);
-            self.keep_repos(added);
-        }
+        RepoAdd::Failed { problem: problem.unwrap_or(RepoProblem::NotFound) }
     }
 
     pub fn remove_repo(&self, url: String) {
-        let mut added = self.added_repos();
-        added.retain(|u| *u != url);
-        self.keep_repos(added);
+        self.change_repos(|r| r.remove(&url));
     }
 
-    /// What every repo offers that this host can run, each with the version installed here.
+    /// Names repo `url` `name`, which an empty name takes away; nori's own keeps its name.
+    pub fn rename_repo(&self, url: String, name: String) {
+        self.change_repos(|r| r.rename(&url, &name));
+    }
+
+    /// What every repo offers that this host can run, each with the version installed here. A repo
+    /// with no name yet takes its index's.
     pub async fn offers(&self) -> Offers {
-        let mut out = Offers { offers: Vec::new(), failed: Vec::new() };
+        let mut read = Vec::new();
         for repo in self.repos() {
-            let read = match self.transport_now() {
-                Ok(t) => t.get(repo.url.clone(), 0).await.map_err(|e| e.to_string()).and_then(|r| match r.status {
-                    200..=299 => offers(&repo, &r.body),
-                    s => Err(format!("HTTP {s}")),
-                }),
-                Err(e) => Err(e),
-            };
-            match read {
-                Ok(o) => out.offers.extend(o),
-                Err(reason) => out.failed.push(RepoFailure { repo, reason }),
+            read.push((repo.url.clone(), self.index_at(&repo.url).await));
+        }
+        self.change_repos(|r| {
+            for (url, index) in &read {
+                if let Ok(Index { name: Some(name), .. }) = index {
+                    r.name_once(url, name);
+                }
+            }
+        });
+        let repos = self.repos();
+        let mut out = Offers { offers: Vec::new(), failed: Vec::new() };
+        for (url, index) in read {
+            let Some(repo) = repos.iter().find(|r| r.url == url) else { continue };
+            match index {
+                Ok(index) => out.offers.extend(offers(repo, index)),
+                Err(problem) => out.failed.push(RepoFailure { repo: repo.clone(), problem }),
             }
         }
         self.offers_stand(&mut out.offers);
@@ -308,7 +433,7 @@ mod tests {
 
     #[test]
     fn an_index_offers_the_versions_this_host_runs_newest_first() {
-        let repo = Repo { url: "https://example.com/nori/index.json".into(), official: false };
+        let repo = Repo { url: "https://example.com/nori/index.json".into(), official: false, name: None };
         let text = br#"{"plugins": [
             {"id": "a.b", "name": "A", "source": "https://git.example/a", "versions": [
                 {"version": "0.9.0", "api": 7, "url": "a-0.9.0.noriplugin", "sha256": "AB"},
@@ -317,11 +442,10 @@ mod tests {
             ]},
             {"id": "c.d", "name": "C", "versions": [{"version": "1.0.0", "api": 9, "url": "c.noriplugin", "sha256": "00"}]}
         ]}"#;
-        let o = offers(&repo, text).unwrap();
+        let o = offers(&repo, nori_plugin_index::parse(text).unwrap());
         assert_eq!(o.len(), 1, "a plugin with no version this host runs isn't offered");
         let v: Vec<(&str, &str, &str)> = o[0].versions.iter().map(|v| (v.version.as_str(), v.url.as_str(), v.sha256.as_str())).collect();
         assert_eq!(v, vec![("0.10.0", "https://cdn.example/a-0.10.0.noriplugin", "cd"), ("0.9.0", "https://example.com/nori/a-0.9.0.noriplugin", "ab")], "newest first, as numbers; another API's left out");
         assert_eq!(o[0].source.as_deref(), Some("https://git.example/a"));
-        assert!(offers(&repo, b"<html>").is_err());
     }
 }

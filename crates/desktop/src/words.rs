@@ -233,7 +233,9 @@ pub const LOOKING: &str = "Looking…";
 pub const REPOS: &str = "Repos";
 pub const ADD_REPO: &str = "Add repo";
 pub const ADD: &str = "Add";
-pub const REPO_ADDRESS: &str = "Repo address (its index.json)";
+pub const REPO_HINT: &str = "user/repo or https://…/index.json";
+pub const RENAME_REPO: &str = "Rename repo";
+pub const RENAME: &str = "Rename";
 pub const TRUST_REPO: &str = "This repo isn’t nori’s. Its plugins can do what their pages say; add it only if you trust it.";
 
 pub const REMOVE_PLUGIN_NOTE: &str = "Its settings go with it.";
@@ -264,9 +266,9 @@ pub fn install_version(name: &str, version: &str) -> String {
 
 /// The install sheet's lines for `p`: what it says of itself, what it is and may reach, where it comes
 /// from, and that it turns on (a new one, or one the first screen chose).
-pub fn preview_note(p: &nori_plugins::PluginPreview, turns_on: bool) -> Vec<String> {
+pub fn preview_note(p: &nori_plugins::PluginPreview, turns_on: bool, repos: &[nori_plugins::Repo]) -> Vec<String> {
     let c = &p.card;
-    let from = p.repo.as_ref().map(|url| format!("From {}", repo_name(&nori_plugins::Repo { url: url.clone(), official: url == nori_plugins::OFFICIAL })));
+    let from = p.repo.as_ref().map(|url| format!("From {}", nori_plugins::repo_called(url.clone(), repos.to_vec()).unwrap_or_else(|| OFFICIAL_REPO.into())));
     let unsigned = p.key.is_none().then(|| UNSIGNED.to_string());
     let bluetooth = c.bluetooth.then(|| REACHES_BLUETOOTH.to_string());
     c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(c)]).chain(bluetooth).chain(from).chain(unsigned).chain(turns_on.then(|| INSTALLED_ON.to_string())).filter(|l| !l.is_empty()).collect()
@@ -466,12 +468,11 @@ pub fn plugin_value(v: &nori_plugins::Value, options: &[String]) -> String {
     }
 }
 
-/// A repo by its host; nori's own by name.
+pub const OFFICIAL_REPO: &str = "nori’s own";
+
+/// A repo as the core calls it; nori's own by name.
 pub fn repo_name(r: &nori_plugins::Repo) -> String {
-    if r.official {
-        return "nori’s own".into();
-    }
-    host(&r.url).to_string()
+    r.name.clone().unwrap_or_else(|| OFFICIAL_REPO.into())
 }
 
 pub fn host(url: &str) -> &str {
@@ -479,9 +480,18 @@ pub fn host(url: &str) -> &str {
     rest.split('/').next().unwrap_or(rest)
 }
 
-/// A repo that couldn't be read.
-pub fn repo_failed(r: &nori_plugins::Repo) -> String {
-    format!("Couldn’t reach {}", host(&r.url))
+/// Why a repo couldn't be read or added.
+pub fn repo_problem(p: nori_plugins::RepoProblem) -> &'static str {
+    match p {
+        nori_plugins::RepoProblem::Unreachable => "No connection",
+        nori_plugins::RepoProblem::NotFound => "Not found",
+        nori_plugins::RepoProblem::NotARepo => "Not a nori repo",
+    }
+}
+
+/// A repo that couldn't be read, in the browser.
+pub fn repo_failed(f: &nori_plugins::RepoFailure) -> String {
+    format!("{} · {}", repo_name(&f.repo), repo_problem(f.problem))
 }
 
 /// A group's head in the search field's preview.
@@ -1320,10 +1330,10 @@ mod tests {
             rows: Vec::new(),
         };
         let mut p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()), key: Some("ab".into()) };
-        assert_eq!(preview_note(&p, false), ["Counts letters", "It’s a playback helper.", "Connects to a.example and devices on your network. Wakes at each lyric line while music plays. Downloads 3 MB of files.", "From nori’s own"]);
+        assert_eq!(preview_note(&p, false, &[]), ["Counts letters", "It’s a playback helper.", "Connects to a.example and devices on your network. Wakes at each lyric line while music plays. Downloads 3 MB of files.", "From nori’s own"]);
         p.key = None;
-        assert!(preview_note(&p, false).contains(&"Unsigned".to_string()));
-        let last = |turns_on| preview_note(&p, turns_on).last().cloned();
+        assert!(preview_note(&p, false, &[]).contains(&"Unsigned".to_string()));
+        let last = |turns_on| preview_note(&p, turns_on, &[]).last().cloned();
         assert_eq!((last(false).as_deref(), last(true).as_deref()), (Some("Unsigned"), Some(INSTALLED_ON)), "only what turns on says so");
     }
 

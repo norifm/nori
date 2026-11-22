@@ -3374,17 +3374,27 @@ impl App {
         ));
     }
 
-    /// Asks for a line of text: the sheet sends it back by `name` (`setting_typed`).
-    fn ask_field(&self, title: &str, name: &str, secret: bool) {
+    /// Opens the ask sheet: `title` and `note`, a field holding `field` (none: no field), shown in it too
+    /// while it is cleared, and `button`, which sends what is typed back by `name` (`setting_typed`).
+    fn ask_sheet(&self, title: &str, note: &str, name: &str, button: &str, field: Option<&str>, secret: bool) {
         let ui = self.ui();
         ui.set_ask_title(title.into());
-        ui.set_ask_note("".into());
+        ui.set_ask_note(note.into());
         ui.set_ask_name(name.into());
-        ui.set_ask_button(words::SAVE.into());
-        ui.set_ask_field(true);
+        ui.set_ask_button(button.into());
+        ui.set_ask_field(field.is_some());
         ui.set_ask_secret(secret);
-        ui.set_ask_text("".into());
+        ui.set_ask_text(field.unwrap_or_default().into());
+        ui.set_ask_placeholder(field.unwrap_or_default().into());
+        ui.set_ask_stays(false);
+        ui.set_ask_status("".into());
+        ui.set_ask_failed(false);
         ui.set_ask_open(true);
+    }
+
+    /// Asks for a line of text: the sheet sends it back by `name` (`setting_typed`).
+    fn ask_field(&self, title: &str, name: &str, secret: bool) {
+        self.ask_sheet(title, "", name, words::SAVE, Some(""), secret);
     }
 
     /// What the ask sheet took for a backup: its file, then its password, which makes or restores it.
@@ -3406,15 +3416,8 @@ impl App {
 
     /// Asks before downloads `ids` are removed: the sheet's button sends it back to [`App::remove_asked`].
     fn ask_remove(&mut self, ids: Vec<String>) {
-        let ui = self.ui();
         let (title, note) = words::remove_downloads(ids.len());
-        ui.set_ask_title(title.into());
-        ui.set_ask_note(note.into());
-        ui.set_ask_name(words::REMOVE_DOWNLOADS.into());
-        ui.set_ask_button(words::REMOVE.into());
-        ui.set_ask_field(false);
-        ui.set_ask_text("".into());
-        ui.set_ask_open(true);
+        self.ask_sheet(&title, note, words::REMOVE_DOWNLOADS, words::REMOVE, None, false);
         self.removing = ids;
     }
 
@@ -3430,14 +3433,7 @@ impl App {
 
     /// Asks before `act` is done: the sheet's button sends it back to [`App::plugin_typed`].
     fn confirm(&self, title: &str, note: &str, button: &str, act: crate::settings::PluginAct) {
-        let ui = self.ui();
-        ui.set_ask_title(title.into());
-        ui.set_ask_note(note.into());
-        ui.set_ask_name(act.name().into());
-        ui.set_ask_button(button.into());
-        ui.set_ask_field(false);
-        ui.set_ask_text("".into());
-        ui.set_ask_open(true);
+        self.ask_sheet(title, note, &act.name(), button, None, false);
     }
 
     fn plugin_name(&self, id: &str) -> String {
@@ -3510,8 +3506,21 @@ impl App {
             }
             PluginAct::Remove(id) => return self.confirm(&words::remove_plugin(&self.plugin_name(&id)), words::REMOVE_PLUGIN_NOTE, words::REMOVE, PluginAct::Remove(id)),
             PluginAct::Install => return ask(words::PLUGIN_PATH, PluginAct::Install.name(), false),
-            PluginAct::AddRepo => return ask(words::REPO_ADDRESS, PluginAct::AddRepo.name(), false),
-            PluginAct::RemoveRepo(url) => return self.confirm(&words::remove_plugin(&url), "", words::REMOVE, PluginAct::RemoveRepo(url)),
+            PluginAct::AddRepo => {
+                self.ask_sheet(words::ADD_REPO, words::TRUST_REPO, &PluginAct::AddRepo.name(), words::ADD, Some(""), false);
+                let ui = self.ui();
+                ui.set_ask_placeholder(words::REPO_HINT.into());
+                ui.set_ask_stays(true);
+                return;
+            }
+            PluginAct::RemoveRepo(url) => {
+                let name = self.plugged.repos.iter().find(|r| r.url == url).map_or_else(|| url.clone(), words::repo_name);
+                return self.confirm(&words::remove_plugin(&name), "", words::REMOVE, PluginAct::RemoveRepo(url));
+            }
+            PluginAct::RenameRepo(url) => {
+                let Some(name) = self.plugged.repos.iter().find(|r| r.url == url).and_then(|r| r.name.clone()) else { return };
+                return self.ask_sheet(words::RENAME_REPO, "", &PluginAct::RenameRepo(url).name(), words::RENAME, Some(name.as_str()), false);
+            }
             PluginAct::Open(url) => return nori_host::desktop::open_in_browser(&url),
             PluginAct::Browser => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Browser)),
             PluginAct::Repos => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Repos)),
@@ -3556,13 +3565,13 @@ impl App {
                 return self.plugins_shown();
             }
             PluginAct::AllowMobile(id) => host.allow_mobile_assets(id),
-            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Flags(..) | PluginAct::DeviceOpen(_) | PluginAct::DeviceBack | PluginAct::Search | PluginAct::Chip | PluginAct::Category => return,
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Flags(..) | PluginAct::DeviceOpen(_) | PluginAct::DeviceBack | PluginAct::Search | PluginAct::Chip | PluginAct::Category => return,
         }
         self.plugins_read();
     }
 
-    /// What the ask sheet took for `act`: a plugin's text, a path to install, or a repo's address,
-    /// which is added only once the warning is answered.
+    /// What the ask sheet took for `act`: a plugin's text, a path to install, a repo's address (the
+    /// sheet stays while it is looked for) or name.
     fn plugin_typed(&mut self, act: crate::settings::PluginAct, text: String) {
         use crate::settings::PluginAct;
         let host = self.plugin_host().clone();
@@ -3580,19 +3589,17 @@ impl App {
                 nori_host::spawn("nori-plugin-install", move || tx.send(Msg::PluginInstalled(host.install_preview(p))));
                 return self.plugins_shown();
             }
-            PluginAct::AddRepo if !text.trim().is_empty() => {
+            PluginAct::AddRepo if !text.trim().is_empty() && !self.plugged.adding_repo => {
+                self.plugged.adding_repo = true;
                 let ui = self.ui();
-                let url = text.trim().to_string();
-                ui.set_ask_title(words::ADD_REPO.into());
-                ui.set_ask_note(format!("{}\n\n{url}", words::TRUST_REPO).into());
-                ui.set_ask_name(PluginAct::TrustRepo(url).name().into());
-                ui.set_ask_button(words::ADD.into());
-                ui.set_ask_field(false);
-                ui.set_ask_open(true);
+                ui.set_ask_status(words::LOOKING.into());
+                ui.set_ask_failed(false);
+                let tx = self.tx.clone();
+                nori_host::spawn("nori-plugin-repo", move || tx.send(Msg::RepoAdded(nori_core::transport::block_on(host.add_repo(text)))));
                 return;
             }
-            PluginAct::TrustRepo(url) => {
-                host.add_repo(url);
+            PluginAct::RenameRepo(url) => {
+                host.rename_repo(url, text);
                 self.plugins_read();
                 return self.plugin_act(PluginAct::Look);
             }
@@ -4193,7 +4200,7 @@ impl App {
             Msg::PluginPreview(Ok(p)) => {
                 self.plugged.getting = None;
                 self.plugins_shown();
-                self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::preview_note(&p, self.add.page == (AddPage::Offered { plugin: p.card.id.clone() }) || !self.plugged.cards.iter().any(|c| c.id == p.card.id)).join("\n\n"), words::INSTALL, crate::settings::PluginAct::InstallPreview);
+                self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::preview_note(&p, self.add.page == (AddPage::Offered { plugin: p.card.id.clone() }) || !self.plugged.cards.iter().any(|c| c.id == p.card.id), &self.plugged.repos).join("\n\n"), words::INSTALL, crate::settings::PluginAct::InstallPreview);
                 self.preview = Some(p);
             }
             Msg::PluginPreview(Err(e)) => {
@@ -4271,6 +4278,21 @@ impl App {
             Msg::PluginOffers(o) => {
                 self.plugged.shelf = crate::settings::Shelf::Read(o);
                 self.plugins_read();
+            }
+            Msg::RepoAdded(added) => {
+                self.plugged.adding_repo = false;
+                let ui = self.ui();
+                match added {
+                    nori_plugins::RepoAdd::Added { .. } => {
+                        ui.set_ask_open(false);
+                        self.plugins_read();
+                        self.plugin_act(crate::settings::PluginAct::Look);
+                    }
+                    nori_plugins::RepoAdd::Failed { problem } => {
+                        ui.set_ask_status(words::repo_problem(problem).into());
+                        ui.set_ask_failed(true);
+                    }
+                }
             }
             Msg::PluginsChanged => {
                 self.plugins_read();
@@ -5410,14 +5432,7 @@ impl App {
                 let prefs = self.root.app.settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };
                 let (title, note) = words::remove_profile(&words::profile_label(p, self.kinds()));
-                let ui = self.ui();
-                ui.set_ask_title(title.into());
-                ui.set_ask_note(note.into());
-                ui.set_ask_name(format!("{}{id}", crate::settings::REMOVE_PROFILE).into());
-                ui.set_ask_button(words::REMOVE.into());
-                ui.set_ask_field(false);
-                ui.set_ask_text("".into());
-                ui.set_ask_open(true);
+                self.ask_sheet(&title, note, &format!("{}{id}", crate::settings::REMOVE_PROFILE), words::REMOVE, None, false);
             }
             Some(Act::Rename(id)) => {
                 let prefs = self.root.app.settings.current().unwrap_or_default();
@@ -7416,7 +7431,7 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-        let repo = nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true };
+        let repo = nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true, name: None };
         let version = nori_plugins::Version { repo: repo.url.clone(), version: "1.0.0".into(), released: None, url: String::new(), sha256: String::new(), key: None, signature: None };
         let offer = nori_plugins::Offer { repo, id: "a.new".into(), name: "New".into(), about: None, source: None, readme: None, icon: None, points: vec!["provider".into()], category: nori_plugins::Category::Service, versions: vec![version], installed: None, state: nori_plugins::OfferState::New };
         let plugged = Plugged { shelf: Shelf::Read(nori_plugins::Offers { offers: vec![offer], failed: Vec::new() }), ..Default::default() };

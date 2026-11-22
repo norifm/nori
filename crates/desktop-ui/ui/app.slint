@@ -5188,6 +5188,10 @@ component SettingLine inherits VerticalLayout {
         if root.item.kind == 11 || root.item.kind == 12 || root.item.kind == 17: TouchArea {
             clicked => { root.action(root.item.name); }
         }
+        // An action row that opens something of its own besides its button (a repo's name).
+        if root.item.kind == 3 && root.item.control != "": TouchArea {
+            clicked => { root.action(root.item.control); }
+        }
         VerticalLayout {
             padding-left: 16px;
             padding-right: 14px;
@@ -7440,7 +7444,8 @@ export component AppWindow inherits Window {
     callback row-placed(int, string, int);
     in-out property <bool> key-open;
     // A line asked for (a plugin's text, a file or a repo's address), or a warning to confirm: what is
-    // typed goes to `setting-typed(ask-name, …)`.
+    // typed goes to `setting-typed(ask-name, …)`. While `ask-stays`, the sheet stays once sent, for
+    // `ask-status` to say what came of it (`ask-failed`: in the danger ink) until Rust closes it.
     in-out property <bool> ask-open;
     in property <string> ask-title;
     in property <string> ask-note;
@@ -7448,6 +7453,10 @@ export component AppWindow inherits Window {
     in property <string> ask-button;
     in property <bool> ask-field;
     in property <bool> ask-secret;
+    in property <string> ask-placeholder;
+    in property <bool> ask-stays;
+    in property <string> ask-status;
+    in property <bool> ask-failed;
     in-out property <string> ask-text;
     // Downloaded songs offered an analysis: the question, why, and how long it takes; a yes is
     // `analyse-downloads`.
@@ -10663,12 +10672,18 @@ export component AppWindow inherits Window {
                 border-radius: 8px;
                 clip: true;
                 secret: root.ask-secret;
+                placeholder: root.ask-placeholder;
                 text <=> root.ask-text;
                 init => { self.take-focus(); }
                 accepted => {
-                    root.ask-open = false;
+                    root.ask-open = root.ask-stays;
                     root.setting-typed(root.ask-name, root.ask-text);
                 }
+            }
+            if root.ask-stays: Text {
+                text: root.ask-status;
+                color: root.ask-failed ? Theme.danger : Theme.dim;
+                font-size: 12px;
             }
             HorizontalLayout {
                 alignment: end;
@@ -10681,7 +10696,7 @@ export component AppWindow inherits Window {
                 Capsule {
                     text: root.ask-button;
                     clicked => {
-                        root.ask-open = false;
+                        root.ask-open = root.ask-stays;
                         root.setting-typed(root.ask-name, root.ask-text);
                     }
                 }

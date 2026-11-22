@@ -118,7 +118,8 @@ impl Device {
 fn set_up() -> Device {
     let a = Device::new("backup-made");
     a.serve(&[(FIXTURE, "", &["0.1.0"]), (SECOND, "second", &["0.1.0"])]);
-    a.plugins.add_repo(REPO.into());
+    nori_tasks::block_on(a.plugins.add_repo(REPO.into()));
+    a.plugins.rename_repo(REPO.into(), "Friend's".into());
     a.install(FIXTURE);
     a.install(SECOND);
     a.started(SECOND);
@@ -150,7 +151,7 @@ fn settings_profiles_and_plugins_come_back() {
     assert_eq!(b.settings.current(), a.settings.current());
     assert_eq!((restored.settings.prefs, restored.settings.server), (a.settings.current().unwrap(), true), "with no profile here, the backup's is in use");
     assert_eq!(b.settings.sound_profiles().unwrap(), a.settings.sound_profiles().unwrap());
-    assert_eq!(b.plugins.kept(), kept, "the same order, being on and held, repos and stores");
+    assert_eq!(b.plugins.kept(), kept, "the same order, being on and held, repos with their names, and stores");
     assert_eq!(b.settings.layer().overrides, a.settings.layer().overrides, "the enabled plugin's overrides are laid over the settings");
     assert!(!b.settings.layer().overrides.is_empty());
 }
@@ -159,7 +160,7 @@ fn settings_profiles_and_plugins_come_back() {
 fn a_plugin_kept_off_never_starts_on_a_restore() {
     let a = Device::new("backup-kept-off");
     a.serve(&[(FIXTURE, "", &["0.1.0"])]);
-    a.plugins.add_repo(REPO.into());
+    nori_tasks::block_on(a.plugins.add_repo(REPO.into()));
     a.install(FIXTURE);
     a.plugins.turn(FIXTURE.into(), false);
     let file = make_at(&a.settings, &a.plugins, "pw", CHEAP).unwrap();
