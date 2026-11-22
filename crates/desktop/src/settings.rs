@@ -67,7 +67,7 @@ struct Seasons {
     following: bool,
     /// The switch's row name: the setting and the value flipping it sets ([`toggled`]).
     switch: String,
-    /// "Autumn now · Winter from November 7" while following.
+    /// "Winter comes in on November 7" while following.
     detail: String,
 }
 
@@ -79,9 +79,9 @@ fn seasons(p: &StoredPrefs, today: Today) -> Seasons {
     let following = p.season == ThemeSeason::Follow;
     let worn = season_of(p.season).unwrap_or(now.season) as i32;
     let detail = if following {
-        format!("{} now · {} from {} {}", SEASON_NAMES[now.season as usize], SEASON_NAMES[now.next as usize], MONTHS[now.next_month as usize - 1], now.next_day)
+        format!("{} comes in on {} {}", SEASON_NAMES[now.next as usize], MONTHS[now.next_month as usize - 1], now.next_day)
     } else {
-        "Changes with the calendar".into()
+        String::new()
     };
     let switch = format!("season={}", season_follow_value(!following, today.month, today.day, today.southern));
     Seasons { worn, following, switch, detail }
@@ -1710,12 +1710,12 @@ mod tests {
         let tiles = rows.row_data(at).unwrap();
         assert_eq!((tiles.options.row_count(), tiles.chosen), (4, 2), "the four seasons, autumn worn while following");
         let follow = rows.row_data(at + 1).unwrap();
-        assert_eq!((follow.on, follow.detail.as_str()), (true, "Autumn now · Winter from November 7"));
+        assert_eq!((follow.on, follow.detail.as_str()), (true, "Winter comes in on November 7"));
         // Turned off, it keeps the calendar's season.
         assert_eq!(toggled(&follow.name, false), ("season", "AUTUMN".to_string()));
         let fixed = StoredPrefs { season: ThemeSeason::Spring, ..StoredPrefs::default() };
         let s = seasons(&fixed, OCTOBER);
-        assert_eq!((s.worn, s.following, toggled(&s.switch, true).1.as_str()), (0, false, "FOLLOW"));
+        assert_eq!((s.worn, s.following, s.detail.as_str(), toggled(&s.switch, true).1.as_str()), (0, false, "", "FOLLOW"));
     }
 
     #[test]
