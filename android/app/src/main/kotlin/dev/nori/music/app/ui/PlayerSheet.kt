@@ -82,7 +82,7 @@ class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false)
     var rootSize by mutableStateOf(IntSize.Zero)
 
     /**
-     * Open, or on the way there. What the back button, the test bridge and the chrome go by.
+     * Open, or on the way there. What the test bridge and the chrome go by; Back goes by [restsOpen].
      *
      * It is the last thing the sheet was *asked* to do, not where it happens to be: a drag or a back
      * gesture moves [progress] (and with it the Animatable's target) without meaning anything by it,
@@ -91,6 +91,14 @@ class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false)
      * instead of settling back onto the now playing bar.
      */
     var isOpen by mutableStateOf(startOpen)
+        private set
+
+    /**
+     * Open where the sheet last came to rest: what Back goes by. Handing Back between the player and the pages
+     * is a call into the system that takes milliseconds, so it waits for the sheet to stand still instead of
+     * landing on a frame of its move; Back while it moves does what it did where the sheet set out from.
+     */
+    var restsOpen by mutableStateOf(startOpen)
         private set
 
     /** On screen at all: open, on its way, or held part way. What [LocalPlayerShown] says inside it. */
@@ -161,6 +169,7 @@ class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false)
             } else {
                 progress.animateTo(target, AppMotion.move())
             }
+            restsOpen = target == 1f
         }
     }
 

@@ -714,7 +714,7 @@ private fun CoveredByPlayer(sheet: PlayerSheet, content: @Composable () -> Unit)
 private fun SheetBack(sheet: PlayerSheet) {
     // With the back gesture the sheet sinks a little with the finger, the way a page does, and goes
     // on down if the gesture is let go, or back up if it is called off.
-    androidx.activity.compose.PredictiveBackHandler(sheet.isOpen) { events ->
+    androidx.activity.compose.PredictiveBackHandler(sheet.restsOpen) { events ->
         try {
             events.collect { sheet.backBy(it.progress) }
             sheet.close()
@@ -733,7 +733,7 @@ private fun SheetBack(sheet: PlayerSheet) {
 private fun ChromeBack(pages: Pages, sheet: PlayerSheet, chrome: androidx.compose.ui.focus.FocusRequester) {
     val stack by pages.navigator.backStack.collectAsState()
     val root = stack.lastOrNull()?.destination?.route in Pages.ROOTS
-    androidx.activity.compose.BackHandler(root && pages.focused && !sheet.isOpen) { chrome.requestFocus() }
+    androidx.activity.compose.BackHandler(root && pages.focused && !sheet.restsOpen) { chrome.requestFocus() }
 }
 
 /**
@@ -744,7 +744,7 @@ private fun ChromeBack(pages: Pages, sheet: PlayerSheet, chrome: androidx.compos
 @Composable
 private fun SelectionBack(actions: ActionsViewModel, sheet: PlayerSheet, controller: NavHostController) {
     val selecting by remember(actions) { actions.selection.map { it.isNotEmpty() }.distinctUntilChanged() }.collectAsState(actions.selection.value.isNotEmpty())
-    androidx.activity.compose.BackHandler(selecting && !sheet.isOpen) { actions.backFromSelection() }
+    androidx.activity.compose.BackHandler(selecting && !sheet.restsOpen) { actions.backFromSelection() }
     LaunchedEffect(controller, actions) { controller.currentBackStackEntryFlow.collect { actions.onPage(it.id) } }
 }
 

@@ -434,7 +434,7 @@ private fun Modifier.swipeBack(pages: Pages, enabled: Boolean): Modifier = if (!
 @Composable
 fun EdgeBack(pages: Pages, sheet: PlayerSheet) {
     val stack by pages.navigator.backStack.collectAsState()
-    androidx.activity.compose.PredictiveBackHandler(!sheet.isOpen && pages.canGoBack(stack, edge = true)) { events ->
+    androidx.activity.compose.PredictiveBackHandler(!sheet.restsOpen && pages.canGoBack(stack, edge = true)) { events ->
         // The gesture's events have to be taken whatever happens (the handler throws otherwise): a second quick
         // swipe, while the first page is still leaving, is a back of its own, run after it.
         var side = 0f
