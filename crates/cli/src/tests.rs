@@ -2222,7 +2222,7 @@ fn official() -> nori_plugins::Repo {
 }
 
 fn card(id: &str, name: &str, rows: Vec<nori_plugins::PluginRow>) -> nori_plugins::PluginCard {
-    nori_plugins::PluginCard { id: id.into(), version: "1.2.0".into(), name: name.into(), about: Some(format!("{name} does things")), enabled: false, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: vec!["api.example.com".into()], lan: false, bluetooth: false, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows }
+    nori_plugins::PluginCard { id: id.into(), version: "1.2.0".into(), name: name.into(), about: Some(format!("{name} does things")), enabled: false, repo: None, held: false, stopped: None, points: Vec::new(), overrides: Vec::new(), net: vec!["api.example.com".into()], lan: false, bluetooth: false, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows }
 }
 
 fn plugin_row(id: &str, kind: nori_plugins::RowKind, value: Option<nori_plugins::Value>) -> nori_plugins::PluginRow {
@@ -3341,4 +3341,26 @@ fn support_types_other_picks_a_currency_and_gives_in_the_browser() {
     assert!(a.overlay.is_none(), "a seal is thanked for once");
     key(&mut a, KeyCode::Esc);
     assert_eq!(a.view, View::Settings);
+}
+
+/// A plugin safe mode stopped is off on the list, saying why, and turning it on or its page's Restart
+/// starts it again.
+#[test]
+fn a_plugin_safe_mode_stopped_restarts() {
+    use crate::app::PluginCmd;
+    use crate::settings_view::Shelf;
+    let paused = nori_plugins::PluginCard { enabled: true, stopped: Some(nori_plugins::Stopped::ThisStart), ..card("dev.example.gain", "Gain", Vec::new()) };
+    let mut a = plugins_app(vec![paused], vec![official()], Shelf::Unasked);
+    let s = draw(&mut a, 140, 300);
+    let line = s.lines().find(|l| l.contains("Gain")).unwrap_or_else(|| panic!("Gain missing:\n{s}")).to_string();
+    assert!(line.contains("Off until nori starts again") && line.contains("Off ›"), "{s}");
+    select_row(&mut a, |r| matches!(r, Row::Plugin { .. }));
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Turn("dev.example.gain".into(), true))));
+
+    open_plugin(&mut a, "dev.example.gain");
+    a.cmds.clear();
+    select_row(&mut a, |r| matches!(r, Row::Action { button, .. } if button == "Restart"));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Turn("dev.example.gain".into(), true))));
 }

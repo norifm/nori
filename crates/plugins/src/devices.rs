@@ -655,6 +655,7 @@ mod tests {
                 enabled: true,
                 repo: None,
                 held: false,
+                stopped: None,
                 points: vec![],
                 overrides: vec![],
                 net: vec![],

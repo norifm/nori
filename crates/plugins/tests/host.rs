@@ -6,8 +6,8 @@ use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
 use nori_net::transport::{Exchange, HttpHeader, HttpMethod, Network, Transport, TransportError, TransportResponse};
-use nori_plugins::testing::{fixture, FIXTURE};
-use nori_plugins::{LastExit, Plugins, Refusal, SafeStart, Side, Value};
+use nori_plugins::testing::{fixture, FIXTURE, SECOND};
+use nori_plugins::{LastExit, Plugins, Refusal, SafeStart, Side, Stopped, Value};
 
 /// Counts this thread's allocations while `COUNTING` is on.
 struct Counting;
@@ -652,6 +652,13 @@ fn a_plugin_nori_stopped_in_is_off_at_the_next_start() {
     drop(next);
     let after = open();
     assert_eq!((after.take_safe_start(), after.installed()[0].enabled), (None, false), "kept off");
+    assert_eq!(after.cards("en".into())[0].stopped, Some(Stopped::Crashed), "its card says why, past the next start");
+    assert!(after.report().contains("nori stopped while calling it"), "{}", after.report());
+
+    after.turn(ID.into(), true);
+    assert_eq!((after.cards("en".into())[0].stopped, after.running().len()), (None, 1), "started again");
+    drop(after);
+    assert_eq!(open().cards("en".into())[0].stopped, None);
 }
 
 #[test]
@@ -672,12 +679,14 @@ fn a_start_that_never_finished_starts_once_with_every_plugin_off() {
     assert_eq!(safe.take_safe_start(), Some(SafeStart::AllOff));
     assert!(safe.running().is_empty() && safe.stages().is_empty() && safe.worker(ID).is_none(), "nothing runs");
     assert!(safe.installed()[0].enabled, "its own switch kept");
+    assert_eq!(safe.cards("en".into())[0].stopped, Some(Stopped::ThisStart));
     assert!(safe.report().contains("safe mode"), "{}", safe.report());
     drop(safe);
 
     let again = open();
     assert_eq!(again.take_safe_start(), None, "once");
     assert_eq!(again.running().len(), 1);
+    assert_eq!(again.cards("en".into())[0].stopped, None);
     again.started();
     drop(again);
     assert_eq!(open().take_safe_start(), None, "a start that finished");
@@ -707,7 +716,7 @@ fn a_run_the_system_ended_crashed_in_nothing_it_left_unfinished() {
 }
 
 #[test]
-fn a_plugin_turned_on_ends_a_safe_start() {
+fn a_plugin_turned_on_in_a_safe_start_runs_and_the_others_wait() {
     let dir = nori_testdir::TempDir::new("plugins-start-turned-on");
     let open = || {
         nori_plugins::testing::marks_released(dir.path());
@@ -715,14 +724,22 @@ fn a_plugin_turned_on_ends_a_safe_start() {
     };
     let first = open();
     first.install(&fixture("")).unwrap();
+    first.install(&fixture("second")).unwrap();
     first.turn(ID.into(), false);
+    first.turn(SECOND.into(), false);
     drop(first);
     left_on(dir.path(), ID);
+    left_on(dir.path(), SECOND);
     drop(open());
 
     let safe = open();
     safe.turn(ID.into(), true);
-    assert_eq!(safe.running().len(), 1);
+    let running: Vec<String> = safe.running().into_iter().map(|i| i.manifest.id.clone()).collect();
+    assert_eq!(running, vec![ID.to_string()]);
+    let stopped: Vec<_> = safe.cards("en".into()).into_iter().map(|c| (c.id, c.stopped)).collect();
+    assert_eq!(stopped, vec![(ID.to_string(), None), (SECOND.to_string(), Some(Stopped::ThisStart))]);
+    safe.turn(SECOND.into(), true);
+    assert_eq!(safe.running().len(), 2);
     assert_eq!(safe.take_safe_start(), None, "nothing is off to say");
     assert!(!safe.report().contains("safe mode"), "{}", safe.report());
 }

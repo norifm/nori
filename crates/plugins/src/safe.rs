@@ -32,6 +32,16 @@ pub enum SafeStart {
     AllOff,
 }
 
+/// Why safe mode keeps a plugin from running, as its card says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Stopped {
+    /// nori stopped while calling it, so it was turned off.
+    Crashed,
+    /// It is on, but off for this start: the last one never finished.
+    ThisStart,
+}
+
 /// How the run before ended, as the platform tells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]

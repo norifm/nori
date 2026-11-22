@@ -105,6 +105,8 @@ pub enum Act {
     AddRepo,
     /// Lets a plugin fetch its assets on mobile data.
     AllowMobileAssets(String),
+    /// Turns on a plugin safe mode stopped.
+    Restart(String),
     /// Asks where to save a backup, or which one to restore.
     Backup { restore: bool },
     CheckUpdate,
@@ -689,7 +691,9 @@ fn plugins_page(own: &Own, all_off: bool) -> Vec<Section> {
     let installed = cards.iter().map(|c| {
         let mut detail: Vec<String> = c.about.iter().cloned().collect();
         detail.push(c.version.clone());
-        Row::Plugin { id: c.id.clone(), title: c.name.clone(), detail: detail.join(" · "), on: c.enabled, enabled: !all_off }
+        // One safe mode stopped is off, saying why: turning it on restarts it.
+        let detail = c.stopped.map_or_else(|| detail.join(" · "), |s| text::plugin_stopped(s).into());
+        Row::Plugin { id: c.id.clone(), title: c.name.clone(), detail, on: c.enabled && c.stopped.is_none(), enabled: !all_off }
     });
     sections.push(section(text::INSTALLED_LIST, installed.collect()));
     sections
@@ -807,7 +811,10 @@ fn plugin_page(own: &Own, id: &str) -> Page {
     }
     let mut sections = vec![section("", head)];
     if let Some(c) = card {
-        let mut rows = vec![Row::Toggle { switch: Switch::Turn(c.id.clone()), title: text::PLUGIN_ON.into(), detail: String::new(), on: c.enabled, enabled: true }];
+        let mut rows = vec![match c.stopped {
+            Some(s) => Row::Action { title: text::plugin_stopped(s).into(), detail: String::new(), button: text::RESTART.into(), enabled: true, action: Act::Restart(c.id.clone()) },
+            None => Row::Toggle { switch: Switch::Turn(c.id.clone()), title: text::PLUGIN_ON.into(), detail: String::new(), on: c.enabled, enabled: true },
+        }];
         if c.repo.is_some() {
             rows.push(Row::Toggle { switch: Switch::Hold(c.id.clone()), title: text::KEEP_VERSION.into(), detail: String::new(), on: c.held, enabled: true });
         }
@@ -910,6 +917,7 @@ pub fn open_row(row: Row) -> Option<Opened> {
             Act::GetPlugin { offer, version } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Get(offer, version))]),
             Act::AddRepo => Opened::Overlay(Overlay::Input { title: text::REPO_ADDRESS.into(), text: String::new(), secret: false, target: Target::AddRepo }),
             Act::AllowMobileAssets(id) => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::AllowMobileAssets(id))]),
+            Act::Restart(id) => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(id, true))]),
             Act::Backup { restore } => Opened::Overlay(Overlay::Input { title: text::backup_path(restore).into(), text: String::new(), secret: false, target: Target::BackupFile { restore } }),
         },
         Row::Text { title, shown, target: Target::PluginSearch, .. } => Opened::Overlay(Overlay::Input { title, text: shown, secret: false, target: Target::PluginSearch }),

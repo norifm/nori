@@ -96,6 +96,15 @@ pub const INSTALLED_LIST: &str = "Installed";
 pub const ABOUT: &str = "About";
 pub const PLUGIN_MAY: &str = "What it may do";
 pub const PLUGIN_ON: &str = "On";
+pub const RESTART: &str = "Restart";
+
+/// Why safe mode keeps a plugin from running.
+pub fn plugin_stopped(stopped: nori_plugins::Stopped) -> &'static str {
+    match stopped {
+        nori_plugins::Stopped::Crashed => "Off: nori stopped while it ran",
+        nori_plugins::Stopped::ThisStart => "Off until nori starts again",
+    }
+}
 pub const FROM_A_FILE: &str = "From a file";
 pub const MOVE_UP: &str = "Move up";
 pub const MOVE_DOWN: &str = "Move down";
