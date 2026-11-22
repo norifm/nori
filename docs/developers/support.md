@@ -44,12 +44,14 @@ The Worker has no storage. It finds everything in Stripe:
   customer. Stripe's receipts then reach it.
 - Monthly payments are prices of one product, `nori-support`. The Worker makes it the first time it needs
   it.
-- The customer portal has two configurations, `manage` and `stop`, known by their `nori` metadata. The
-  Worker makes each the first time it needs it. Only `stop` can cancel a payment.
+- The customer portal has three configurations, `manage`, `stop` and `login`, known by their `nori`
+  metadata. The Worker makes each the first time it needs it. `stop` and `login` can cancel a payment,
+  at the end of the month paid for. `login` has Stripe's hosted sign-in page on: a person signs in with
+  the email on their receipt and Stripe sends them a code. It is for an app that no longer has its login.
 
 ## The service's requests
 
-Every request but `GET /done` is a `POST` with a JSON body. The answers are JSON.
+Every request but `GET /` and `GET /done` is a `POST` with a JSON body. The answers are JSON.
 
 | Request | Body | Answer |
 |---|---|---|
@@ -59,6 +61,7 @@ Every request but `GET /done` is a `POST` with a JSON body. The answers are JSON
 | `POST /stop` | `login`, `in: "app"` | `ends`, `months` |
 | `POST /keep` | `login` | An empty object |
 | `GET /done` | `paid=1&season=…` or `left=1` in the query | An HTML page |
+| `GET /` | Nothing | An HTML page |
 
 `/start` takes the amount in minor units. Without a `login`, it makes a customer first. With
 `in: "app"`, it starts a PaymentIntent for one payment, or an incomplete subscription for a monthly one.
@@ -69,6 +72,10 @@ counts it.
 `/stamps` lists every payment that went through and was not refunded. The list is in Unix seconds,
 oldest first. The `monthly` field is true while a monthly payment runs and is not set to stop. The
 `ends` field is when one set to stop ends, or null.
+
+`GET /` is the page a person sees at `https://support.norifm.com`. It says how to stop monthly support in
+the app. For an app that no longer knows its payments (its data cleared, reinstalled, a new device), it
+points to restoring a backup, and links the `login` configuration's sign-in page.
 
 `/stop` sets the monthly payment to stop at the end of the month paid for. It answers when it ends and
 how many months it paid for, counted from the paid invoices. A request without `in` gets Stripe's portal
