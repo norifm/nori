@@ -2646,6 +2646,9 @@ impl nori_plugins::Client for Heard {
     fn watch_screen(&self, _: bool) {}
     fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
     fn buttons_changed(&self) {}
+    fn last_exit(&self) -> nori_plugins::LastExit {
+        nori_plugins::LastExit::Unknown
+    }
 }
 
 /// The test plugin installed in `dir`, on, over settings of its own.

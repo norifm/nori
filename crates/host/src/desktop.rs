@@ -460,6 +460,9 @@ impl nori_plugins::Client for Watched {
     }
     /// No notification here: MPRIS has no buttons of a player's own.
     fn buttons_changed(&self) {}
+    fn last_exit(&self) -> nori_plugins::LastExit {
+        nori_plugins::LastExit::Unknown
+    }
 }
 
 /// The cpal device named `device` (else the system's default) at `volume` (0 to 1).

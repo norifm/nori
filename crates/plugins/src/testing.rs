@@ -36,6 +36,9 @@ impl crate::Client for Quiet {
     fn watch_screen(&self, _: bool) {}
     fn asset(&self, _: String, _: String, _: crate::AssetState) {}
     fn buttons_changed(&self) {}
+    fn last_exit(&self) -> crate::LastExit {
+        crate::LastExit::Unknown
+    }
 }
 
 /// Marks `plugins` as calling plugin `id` from now on, as when nori stops in one of its calls.

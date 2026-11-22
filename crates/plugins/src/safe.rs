@@ -2,7 +2,8 @@
 //! store as a call starts and one as it ends. The kernel keeps the file as it was however nori stops (a
 //! panic, an abort, a native crash, the system ending it), and the next start reads it: a plugin nori
 //! stopped in is turned off, and a start that never finished, with no plugin marked, starts once with
-//! every plugin off.
+//! every plugin off. Where the platform tells that the user or the system ended the run (Android's
+//! exit reasons), only a panic in a call counts.
 
 use std::fs::File;
 use std::io::Read;
@@ -31,6 +32,17 @@ pub enum SafeStart {
     AllOff,
 }
 
+/// How the run before ended, as the platform tells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum LastExit {
+    /// It crashed, or the platform doesn't tell: a call or a start it left unfinished is read as a crash.
+    Unknown,
+    /// The user or the system ended it (a force stop, low memory, an update): it crashed in nothing it
+    /// left unfinished.
+    Killed,
+}
+
 /// Where a plugin is called from; each has its own slot, so calls side by side don't share one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Caller {
@@ -45,10 +57,28 @@ pub(crate) enum Caller {
 /// What the run before left.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Last {
-    /// The plugins (ids, cut to a slot's room) it stopped while calling, or that panicked in a call.
-    pub stopped_in: Vec<String>,
+    /// The plugins (ids, cut to a slot's room) it stopped while calling.
+    pub calling: Vec<String>,
+    /// Those that panicked in a call.
+    pub panicked: Vec<String>,
     /// It stopped before its start finished.
     pub starting: bool,
+}
+
+impl Last {
+    /// What it left that was a crash, for a run that ended by `exit`.
+    pub(crate) fn crashed(self, exit: LastExit) -> Last {
+        match exit {
+            LastExit::Unknown => self,
+            LastExit::Killed => Last { calling: Vec::new(), starting: false, ..self },
+        }
+    }
+
+    /// Whether plugin `id` crashed nori: it stopped in its call or panicked in one.
+    pub(crate) fn blames(&self, id: &str) -> bool {
+        let id = cut(id);
+        self.calling.iter().chain(&self.panicked).any(|s| s == id)
+    }
 }
 
 /// `id` as a slot keeps it. Ids are ASCII (the manifest's rule).
@@ -95,15 +125,16 @@ fn map(path: &Path) -> Option<(Mapped, Vec<u8>)> {
 }
 
 fn last(old: &[u8]) -> Last {
-    let stopped_in = old
-        .as_chunks::<SLOT>()
-        .0
-        .iter()
-        .skip(1)
-        .filter(|s| s[CALLING] != 0 || s[PANICKED] != 0)
-        .filter_map(|s| s.get(ID..ID + s[LEN] as usize).and_then(|b| std::str::from_utf8(b).ok()).map(String::from))
-        .collect();
-    Last { stopped_in, starting: old.first() == Some(&1) }
+    let marked = |byte: usize| -> Vec<String> {
+        old.as_chunks::<SLOT>()
+            .0
+            .iter()
+            .skip(1)
+            .filter(|s| s[byte] != 0)
+            .filter_map(|s| s.get(ID..ID + s[LEN] as usize).and_then(|b| std::str::from_utf8(b).ok()).map(String::from))
+            .collect()
+    };
+    Last { calling: marked(CALLING), panicked: marked(PANICKED), starting: old.first() == Some(&1) }
 }
 
 impl Marks {
@@ -205,12 +236,12 @@ mod tests {
         let dir = nori_testdir::TempDir::new("plugin-marks");
         let path = dir.path().join("safe");
         let (marks, left) = Marks::open(path.clone(), true);
-        assert_eq!(left, Some(Last { stopped_in: Vec::new(), starting: false }), "a new file");
+        assert_eq!(left, Some(Last { calling: Vec::new(), panicked: Vec::new(), starting: false }), "a new file");
         let (a, b, c) = (marks.mark("a.calls", Caller::Worker), marks.mark("b.panics", Caller::Stage), marks.mark("c.waits", Caller::Worker));
         a.calling(|| ());
         assert!(std::panic::catch_unwind(|| b.calling(|| panic!("in host code"))).is_err());
         b.calling(|| ());
-        let stopped_in = || last(&std::fs::read(&path).unwrap()).stopped_in;
+        let stopped_in = || last(&std::fs::read(&path).unwrap()).calling;
         c.calling(|| {
             assert!(stopped_in().contains(&"c.waits".to_string()));
             c.waiting(|| assert!(!stopped_in().contains(&"c.waits".to_string()), "a wait for an answer is no call"));
@@ -222,8 +253,12 @@ mod tests {
         a.set(CALLING, 1);
         drop((marks, a, b, c));
         let (_, left) = Marks::open(path.clone(), true);
-        assert_eq!(left, Some(Last { stopped_in: vec!["a.calls".into(), "b.panics".into()], starting: true }));
+        let left = left.unwrap();
+        assert_eq!(left, Last { calling: vec!["a.calls".into()], panicked: vec!["b.panics".into()], starting: true });
+        assert!(left.blames("a.calls") && left.blames("b.panics") && !left.blames("c.waits"));
+        let killed = left.crashed(LastExit::Killed);
+        assert_eq!(killed, Last { calling: Vec::new(), panicked: vec!["b.panics".into()], starting: false }, "ended by the system, only a panic is a crash");
         let (_, again) = Marks::open(path, true);
-        assert_eq!(again, Some(Last { stopped_in: Vec::new(), starting: false }), "read once");
+        assert_eq!(again, Some(Last { calling: Vec::new(), panicked: Vec::new(), starting: false }), "read once");
     }
 }

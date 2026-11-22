@@ -592,6 +592,10 @@ Android ending nori while a plugin waits blames no plugin.
   service up; desktop and terminal: the session or the sign-in up). A start that didn't get there, with
   no plugin marked, starts the next one with every plugin off (`SafeStart::AllOff`), their own switches
   kept; the one after runs them again. Turning a plugin on ends it.
+- Where the platform tells how the run before ended (`Client::last_exit`; Android reads
+  `ApplicationExitInfo` on API 30+), a run the user or the system ended (a force stop, low memory, an
+  update) is `LastExit::Killed`: an unfinished call or start is no crash then, and only a panic in a call
+  turns its plugin off. A crash, an ANR, or no answer (older Android, the desktop) is `Unknown`, read as above.
 - A second nori over the same folder (the file is locked) reads nothing and marks nothing.
 
 ## Every plugin off

@@ -51,6 +51,8 @@ pub trait Client: Send + Sync {
     /// A plugin's notification buttons would answer otherwise now: the client asks for them again
     /// ([`Plugins::notification_buttons`]); nothing where it has no notification.
     fn buttons_changed(&self);
+    /// How nori's run before ended, where the platform tells (Android's exit reasons).
+    fn last_exit(&self) -> crate::LastExit;
 }
 
 struct App {
@@ -183,6 +185,10 @@ impl Side for App {
 
     fn all_off(&self) -> bool {
         self.settings.with_prefs(|p| p.plugins_off).unwrap_or(false)
+    }
+
+    fn last_exit(&self) -> crate::LastExit {
+        self.client.last_exit()
     }
 }
 
