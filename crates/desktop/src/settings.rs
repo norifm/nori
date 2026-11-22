@@ -819,6 +819,9 @@ pub struct Plugged {
     pub choosing: bool,
     /// The switch over every plugin (the `pluginsOff` setting) is on.
     pub all_off: bool,
+    /// The plugin whose package is on its way for its install sheet, or whose install is: no other
+    /// version is got meanwhile.
+    pub getting: Option<String>,
     /// The account pictures decoded (the profiles', their channels'), by their address.
     pub pictures: HashMap<String, slint::Image>,
 }
@@ -1169,6 +1172,16 @@ fn provider_choices(p: &Plugged, kinds: &Kinds) -> Vec<Row> {
 }
 
 /// A plugin in a list: its tile, name, what it is, a quiet `line`; opening it opens its page.
+/// What a row that gets plugin `id` with `act` shows on its button, and what the button sends: nothing
+/// while a package is on its way ([`Plugged::getting`]), the one coming saying so.
+fn get_button(p: &Plugged, id: &str, button: &str, act: PluginAct) -> (String, String) {
+    match &p.getting {
+        Some(getting) if getting == id => (words::INSTALLING.into(), String::new()),
+        Some(_) => (button.into(), String::new()),
+        None => (button.into(), act.name()),
+    }
+}
+
 fn plugin_line(p: &Plugged, id: &str, name: &str, about: Option<&str>, line: String) -> Row {
     let (icon, letter) = p.tile(id, name);
     Row { kind: PLUGIN, name: PluginAct::Page(id.into()).name(), title: name.into(), detail: about.unwrap_or_default().into(), line, icon, letter, enabled: true, ..Default::default() }
@@ -1233,7 +1246,8 @@ fn plugin_list(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
         .filter_map(|o| {
             let at = at_of(p.offers(), o);
             let line = words::update_line(o.installed.as_deref()?, &o.versions.first()?.version);
-            Some(Row { control: PluginAct::Get(at as u32, 0).name(), button: words::UPDATE.into(), ..plugin_line(p, &o.id, &o.name, None, line) })
+            let (button, control) = get_button(p, &o.id, words::UPDATE, PluginAct::Get(at as u32, 0));
+            Some(Row { control, button, ..plugin_line(p, &o.id, &o.name, None, line) })
         })
         .collect();
     if !updates.is_empty() {
@@ -1286,12 +1300,13 @@ fn browser(p: &Plugged) -> Vec<(String, Vec<Row>)> {
             let shown = categories(&found, p.category_shown).1;
             rows.extend(found.iter().filter(|o| shown.is_none_or(|s| o.category == s)).filter_map(|o| {
                 let line = format!("{} · {}", o.versions.first()?.version, words::repo_name(&o.repo));
+                let get = |button| get_button(p, &o.id, button, PluginAct::Get(at_of(offers, o) as u32, 0));
                 let (button, control) = match o.state {
-                    OfferState::New => (words::INSTALL, PluginAct::Get(at_of(offers, o) as u32, 0).name()),
-                    OfferState::Update => (words::UPDATE, PluginAct::Get(at_of(offers, o) as u32, 0).name()),
-                    OfferState::Installed => (words::INSTALLED, String::new()),
+                    OfferState::New => get(words::INSTALL),
+                    OfferState::Update => get(words::UPDATE),
+                    OfferState::Installed => (words::INSTALLED.into(), String::new()),
                 };
-                Some(Row { button: button.into(), control, ..plugin_line(p, &o.id, &o.name, o.about.as_deref(), line) })
+                Some(Row { button, control, ..plugin_line(p, &o.id, &o.name, o.about.as_deref(), line) })
             }));
             rows.push(Row { kind: BUTTON, name: PluginAct::Look.name(), title: words::LOOK_AGAIN.into(), enabled: true, ..Default::default() });
         }
@@ -1348,7 +1363,7 @@ fn plugin_page(p: &Plugged, id: &str) -> Vec<(String, Vec<Row>)> {
         }
     }
     if let Some((at, o)) = found {
-        groups.push((words::VERSIONS.to_string(), versions(card, at, o)));
+        groups.push((words::VERSIONS.to_string(), versions(card, at, o, p.getting.is_none())));
     }
     groups.retain(|(_, rows)| !rows.is_empty());
     groups
@@ -1364,8 +1379,9 @@ fn readme_row(b: &ReadmeBlock) -> Row {
     Row { kind, title: text.clone(), ..Default::default() }
 }
 
-/// Offer `o`, at place `at` among those read: its versions to install one of, and where its code is.
-fn versions(card: Option<&PluginCard>, at: usize, o: &Offer) -> Vec<Row> {
+/// Offer `o`, at place `at` among those read: its versions to install one of (when `free`: nothing
+/// is on its way), and where its code is.
+fn versions(card: Option<&PluginCard>, at: usize, o: &Offer, free: bool) -> Vec<Row> {
     let mut rows: Vec<Row> = o
         .versions
         .iter()
@@ -1378,7 +1394,7 @@ fn versions(card: Option<&PluginCard>, at: usize, o: &Offer) -> Vec<Row> {
                 title: v.version.clone(),
                 detail: v.released.clone().unwrap_or_default(),
                 button: (if here { words::INSTALLED } else { words::INSTALL }).into(),
-                enabled: !here,
+                enabled: !here && free,
                 ..Default::default()
             }
         })
@@ -1447,8 +1463,8 @@ pub fn plugin_top(p: &Plugged, all_off: bool) -> PluginTop {
             let line = card.map(|c| c.version.clone()).or(newest.map(|v| v.version.clone())).into_iter().chain(from).chain(kinds).collect::<Vec<_>>().join(" · ");
             let about = card.and_then(|c| c.about.as_ref()).or(offer.and_then(|o| o.about.as_ref())).cloned().unwrap_or_default();
             let get = found.zip(newest).and_then(|((offer_at, o), v)| match (card, o.state) {
-                (None, _) => Some((words::INSTALL.to_string(), offer_at)),
-                (_, OfferState::Update) => Some((words::update_to(&v.version), offer_at)),
+                (None, _) => Some(get_button(p, id, words::INSTALL, PluginAct::Get(offer_at as u32, 0))),
+                (_, OfferState::Update) => Some(get_button(p, id, &words::update_to(&v.version), PluginAct::Get(offer_at as u32, 0))),
                 _ => None,
             });
             let mut menu: Vec<(String, PluginAct)> = Vec::new();
@@ -1471,7 +1487,7 @@ pub fn plugin_top(p: &Plugged, all_off: bool) -> PluginTop {
                 line: line.into(),
                 about: about.into(),
                 action: get.as_ref().map(|g| g.0.as_str()).unwrap_or_default().into(),
-                action_name: get.map(|g| PluginAct::Get(g.1 as u32, 0).name()).unwrap_or_default().into(),
+                action_name: get.map(|g| g.1).unwrap_or_default().into(),
                 menu: strings(labels),
                 menu_names: strings(names),
                 ..Default::default()
@@ -1776,6 +1792,34 @@ mod tests {
 
     fn read(offers: Vec<Offer>) -> Shelf {
         Shelf::Read(Offers { offers, failed: Vec::new() })
+    }
+
+    /// While a package is on its way its plugin says so and no other version is got: on a slow connection
+    /// each click fetched the plugin again, and each fetch asked to install it once more.
+    #[test]
+    fn nothing_is_got_while_a_package_is_on_its_way() {
+        let official = official();
+        let mut p = Plugged {
+            shelf: read(vec![offer("a.one", &official, OfferState::New), offer("b.two", &official, OfferState::Update)]),
+            stack: vec![PluginPage::Browser],
+            getting: Some("a.one".into()),
+            ..Default::default()
+        };
+        let offered = |p: &Plugged| -> Vec<(String, String, String)> {
+            plugin_groups(p, false).into_iter().flat_map(|(_, rows)| rows).filter(|r| r.kind == PLUGIN).map(|r| (r.title, r.button, r.control)).collect()
+        };
+        let row = |id: &str, button: &str, control: &str| (id.to_string(), button.to_string(), control.to_string());
+        assert_eq!(offered(&p), [row("a.one", words::INSTALLING, ""), row("b.two", words::UPDATE, "")]);
+        p.stack = vec![PluginPage::Plugin("a.one".into())];
+        let top = plugin_top(&p, false);
+        assert_eq!((top.action.as_str(), top.action_name.as_str()), (words::INSTALLING, ""));
+        let versions: Vec<bool> = plugin_groups(&p, false).into_iter().flat_map(|(_, rows)| rows).filter(|r| r.kind == ACTION).map(|r| r.enabled).collect();
+        assert_eq!(versions, [false, false]);
+
+        p.getting = None;
+        assert_eq!(PluginAct::of(&plugin_top(&p, false).action_name), Some(PluginAct::Get(0, 0)));
+        p.stack = vec![PluginPage::Browser];
+        assert_eq!(offered(&p), [row("a.one", words::INSTALL, "plugin-get:0:0"), row("b.two", words::UPDATE, "plugin-get:1:0")]);
     }
 
     /// The list is a line per plugin, whose control is apart from what opening it does, and updates

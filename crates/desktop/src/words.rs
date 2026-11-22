@@ -163,6 +163,7 @@ pub fn restored(r: &nori_core::backup::Restored) -> String {
 pub const INSTALL: &str = "Install";
 pub const UPDATE: &str = "Update";
 pub const INSTALLED: &str = "Installed";
+pub const INSTALLING: &str = "Installing…";
 pub const PLUGIN_INSTALLED: &str = "Plugin installed";
 pub const GET_PLUGINS: &str = "Get plugins";
 pub const PROVIDER_CHOOSE: &str = "Choose a provider";
@@ -175,7 +176,7 @@ pub fn first_run() -> crate::FirstRunWords {
         restore: RESTORE.into(),
         sign_in: "Sign in".into(),
         connect: "Connect".into(),
-        installing: "Installing…".into(),
+        installing: INSTALLING.into(),
         skip: "Skip".into(),
         next: "Continue".into(),
         start: "Start listening".into(),

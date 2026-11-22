@@ -565,6 +565,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
                       // What the chrome blurs behind itself (Pill).
                       .drawsBackdrop(backdrop),
               ) {
+                // One for every plugin page: an install asked for on one is the same install on the others.
+                val plugins: dev.nori.music.app.vm.PluginsViewModel = viewModel()
                 PageStack(controller, pages, home) {
                     page("home") { HomeScreen(actions, settings) }
                     page("home/{row}") { HomeRowScreen(it.arguments!!.getString("row")!!, actions) }
@@ -575,10 +577,10 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
                         SettingsGroupScreen(settings, e.arguments!!.getString("id")!!, e.arguments?.getString("key").orEmpty(), actions)
                     }
                     page("equalizer") { EqualizerScreen(settings) }
-                    page("plugins") { PluginsScreen(viewModel(), settings, LocalNav.current.pluginPages()) }
-                    page("plugin-browser") { PluginBrowser(viewModel(), LocalNav.current.pluginPages()) }
-                    page("plugin-repos") { PluginRepos(viewModel()) }
-                    page("plugins/{id}") { PluginPage(viewModel(), settings, it.arguments!!.getString("id")!!, LocalNav.current::back) }
+                    page("plugins") { PluginsScreen(plugins, settings, LocalNav.current.pluginPages()) }
+                    page("plugin-browser") { PluginBrowser(plugins, LocalNav.current.pluginPages()) }
+                    page("plugin-repos") { PluginRepos(plugins) }
+                    page("plugins/{id}") { PluginPage(plugins, settings, it.arguments!!.getString("id")!!, LocalNav.current::back) }
                     page("home-rows") { HomeRows(settings) }
                     // The places and smart playlists; a section with a chip is shown on the Library page.
                     page("library/{section}") { LibrarySectionScreen(dev.nori.music.ffi.settings.LibrarySection.valueOf(it.arguments!!.getString("section")!!), actions) }

@@ -3546,10 +3546,14 @@ impl App {
             }
             PluginAct::Get(offer, version) => {
                 let crate::settings::Shelf::Read(offers) = &self.plugged.shelf else { return };
-                let Some(v) = offers.offers.get(offer as usize).and_then(|o| o.versions.get(version as usize)).cloned() else { return };
+                let Some((id, v)) = offers.offers.get(offer as usize).and_then(|o| Some((o.id.clone(), o.versions.get(version as usize)?.clone()))) else { return };
+                if self.plugged.getting.is_some() {
+                    return;
+                }
+                self.plugged.getting = Some(id);
                 let tx = self.tx.clone();
                 nori_host::spawn("nori-plugin-get", move || tx.send(Msg::PluginPreview(nori_core::transport::block_on(host.preview_version(v, "en".into())))));
-                return;
+                return self.plugins_shown();
             }
             PluginAct::AllowMobile(id) => host.allow_mobile_assets(id),
             PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Flags(..) | PluginAct::DeviceOpen(_) | PluginAct::DeviceBack | PluginAct::Search | PluginAct::Chip | PluginAct::Category => return,
@@ -3571,9 +3575,10 @@ impl App {
             }
             PluginAct::InstallPreview => {
                 let Some(p) = self.preview.take() else { return };
+                self.plugged.getting = Some(p.card.id.clone());
                 let tx = self.tx.clone();
                 nori_host::spawn("nori-plugin-install", move || tx.send(Msg::PluginInstalled(host.install_preview(p))));
-                return;
+                return self.plugins_shown();
             }
             PluginAct::AddRepo if !text.trim().is_empty() => {
                 let ui = self.ui();
@@ -4171,6 +4176,7 @@ impl App {
                 self.settings_shown();
             }
             Msg::PluginInstalled(r) => {
+                self.plugged.getting = None;
                 self.plugins_read();
                 match r {
                     Ok(id) => {
@@ -4185,10 +4191,16 @@ impl App {
             }
             // What it is and may reach, before it is installed.
             Msg::PluginPreview(Ok(p)) => {
+                self.plugged.getting = None;
+                self.plugins_shown();
                 self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::preview_note(&p, self.add.page == (AddPage::Offered { plugin: p.card.id.clone() }) || !self.plugged.cards.iter().any(|c| c.id == p.card.id)).join("\n\n"), words::INSTALL, crate::settings::PluginAct::InstallPreview);
                 self.preview = Some(p);
             }
-            Msg::PluginPreview(Err(e)) => self.say(&words::plugin_refused(&e), true),
+            Msg::PluginPreview(Err(e)) => {
+                self.plugged.getting = None;
+                self.plugins_shown();
+                self.say(&words::plugin_refused(&e), true);
+            }
             Msg::SongInfo { song, groups } => {
                 let ui = self.ui();
                 if !ui.get_details_open() || self.details_song.as_ref() != Some(&song) {
