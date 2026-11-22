@@ -136,8 +136,7 @@ The same code runs twice:
 
 - `nori-support` uses Stripe's test mode, for development.
 - `nori-support-live` uses live mode. It answers at `https://support.norifm.com`, the address in the
-  repository variable. It also answers at `https://nori-support-live.norifm-org.workers.dev`, which builds
-  made before the domain still use.
+  repository variable.
 
 To deploy, run Wrangler from the Worker's folder:
 
