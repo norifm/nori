@@ -43,7 +43,6 @@ class PluginBluetooth(private val context: Context, private val plugins: () -> P
     private val links = ConcurrentHashMap<ULong, Link>()
     private var receiver: BroadcastReceiver? = null
     private val proxies = ConcurrentHashMap<Int, BluetoothProfile>()
-    private var proxied = CountDownLatch(0)
     // Made at the first device event: a receiver's work leaves the main thread here.
     private val events: ExecutorService by lazy { Executors.newSingleThreadExecutor { r -> Thread(r, "nori-bluetooth") } }
 
@@ -94,27 +93,21 @@ class PluginBluetooth(private val context: Context, private val plugins: () -> P
         // Exported: these come from the Bluetooth stack's own process, and only it can send them.
         ContextCompat.registerReceiver(context, r, filter, ContextCompat.RECEIVER_EXPORTED)
         receiver = r
-        // Classic headphones are listed by the audio profiles' proxies, which come asynchronously.
-        val wanted = listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET)
-        val latch = CountDownLatch(wanted.size)
-        proxied = latch
-        wanted.forEach { profile ->
-            val asked = adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
+        // Classic headphones are listed by the audio profiles' proxies, which come on the main thread, later:
+        // each tells its devices then. Never waited for: the main thread may itself be waiting for the plugins.
+        listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET).forEach { profile ->
+            adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
                 override fun onServiceConnected(p: Int, proxy: BluetoothProfile) {
                     proxies[p] = proxy
-                    latch.countDown()
-                    // A `connected()` that stopped waiting for this proxy missed these.
                     events.execute { runCatching { proxy.connectedDevices }.getOrDefault(emptyList()).forEach { plugins().bluetoothConnected(device(it)) } }
                 }
                 override fun onServiceDisconnected(p: Int) { proxies.remove(p) }
             }, profile)
-            if (!asked) latch.countDown()
         }
     }
 
     override fun connected(): List<BtDevice> {
         if (!granted()) return emptyList()
-        proxied.await(2, TimeUnit.SECONDS)
         val seen = LinkedHashMap<String, BluetoothDevice>()
         runCatching { manager?.getConnectedDevices(BluetoothProfile.GATT).orEmpty() }.getOrDefault(emptyList()).forEach { seen[it.address] = it }
         proxies.values.forEach { p -> runCatching { p.connectedDevices }.getOrDefault(emptyList()).forEach { seen[it.address] = it } }
