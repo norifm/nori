@@ -2,9 +2,9 @@
   // Supporting nori, as Android's page: the stamp book, a seal per payment in the accent of the season it was
   // paid in, five to a row; then what to give, which stays at the foot of the window whole while the book
   // scrolls under it: the amount (the offered ones as chips, then Other, typed), every month, the currency,
-  // and Give, which opens Stripe's Payment Element in a sheet. While a monthly payment runs (or is set to stop),
-  // a row over them opens its sheet: its card and receipts on Stripe's page, and stopping it, in Spring's
-  // rose, or keeping it going. What is chosen and what it comes to are the
+  // and Give, which opens Stripe's Payment Element in a sheet, under the email its receipt goes to. While a
+  // monthly payment runs (or is set to stop), a row over them opens its sheet: its card and receipts on
+  // Stripe's page, and stopping it, in Spring's rose, or keeping it going. What is chosen and what it comes to are the
   // core's (crates/web/src/support.rs); the words and the money as the browser writes it are here.
   // A method that pays on its own page (a bank's) comes back to `#/support/paid`. A seal that comes while the
   // page is open is thanked for: the page veiled, the seal stamped in the middle with the thanks under it, then
@@ -20,7 +20,7 @@
   type Choice = { currency: string; digits: number; monthly: boolean; offered: number[]; pick: number; other: string; typed: { least?: number; most?: number } | null; amount: number | null };
   type Book = { key: string; test: boolean; seals: { season: number; tilt: number }[]; next: number; running: boolean; ends: number | null; currencies: string[]; first: Choice };
   type Stripe = {
-    elements: (o: object) => { create: (kind: string, o?: object) => { mount: (el: HTMLElement) => void } };
+    elements: (o: object) => { create: (kind: string, o?: object) => { mount: (el: HTMLElement) => void; on: (event: "change", then: (e: { complete: boolean; value: { email?: string } }) => void) => void } };
     confirmPayment: (o: object) => Promise<{ error?: { message?: string } }>;
   };
 
@@ -86,6 +86,9 @@
   let starting = $state(false);
   let sheet = $state<HTMLDialogElement>();
   let mount = $state<HTMLDivElement>();
+  let contact = $state<HTMLDivElement>();
+  /** The email the payment gives, once typed whole: Stripe's receipts go to it, and it signs in on Stripe's page. */
+  let email = $state("");
   let elements: ReturnType<Stripe["elements"]> | null = null;
   let said = $state("");
 
@@ -127,16 +130,21 @@
       starting = false;
     }
   }
-  // The sheet opens once it is drawn, the form in it.
+  // The sheet opens once it is drawn, the form in it. The Payment Element asks for an email only for some
+  // methods, so the email is asked first, for every one, and the payment carries it.
   $effect(() => {
-    if (!paying || !sheet || !mount || !elements) return;
-    elements.create("payment", { layout: "tabs" }).mount(mount);
+    if (!paying || !sheet || !mount || !contact || !elements) return;
+    email = "";
+    const asked = elements.create("linkAuthentication");
+    asked.on("change", (e) => (email = e.complete ? (e.value.email ?? "") : ""));
+    asked.mount(contact);
+    elements.create("payment", { layout: "tabs", fields: { billingDetails: { email: "never" } } }).mount(mount);
     sheet.showModal();
   });
   async function pay() {
-    if (!stripe || !elements) return;
+    if (!stripe || !elements || !email) return;
     const back = `${location.href.split("#")[0]}#/support/paid`;
-    const { error } = await stripe.confirmPayment({ elements, confirmParams: { return_url: back }, redirect: "if_required" });
+    const { error } = await stripe.confirmPayment({ elements, confirmParams: { return_url: back, payment_method_data: { billing_details: { email } } }, redirect: "if_required" });
     if (error) return void (said = error.message ?? W.supportFailed);
     sheet?.close();
     await refresh();
@@ -373,9 +381,10 @@
 {#if paying && choice?.amount}
   <dialog class="sheet pay" bind:this={sheet} onclose={() => (paying = false)} onclick={(e) => e.target === sheet && sheet?.close()} aria-label={W.supportTitle}>
     <span class="handle"></span>
+    <div class="form" bind:this={contact}></div>
     <div class="form" bind:this={mount}></div>
     {#if said}<p class="said">{said}</p>{/if}
-    <button class="pill give" onclick={() => void pay()}>{W.supportPay(money(choice.amount, choice))}</button>
+    <button class="pill give" disabled={!email} onclick={() => void pay()}>{W.supportPay(money(choice.amount, choice))}</button>
   </dialog>
 {/if}
 

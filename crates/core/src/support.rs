@@ -478,6 +478,60 @@ mod tests {
         assert_eq!(told(&was, older).ends, None, "a service from before stopping in the app");
     }
 
+    /// What the support service's own page looks up (support/worker/src/offered.json): the currencies, the
+    /// one each country starts in and the one elsewhere, the amount first picked, the day each season starts
+    /// on either side of the equator, and each season's colors, light and dark.
+    fn offered_to_the_worker() -> String {
+        use nori_look::theme::{roles, season_now, utc_date, SEASONS};
+        use serde_json::{json, Map, Value};
+        let currencies: Vec<Value> = support_currencies()
+            .into_iter()
+            .map(|c| json!({ "code": c.code, "digits": c.digits, "once": c.once, "monthly": c.monthly, "least": c.least, "most": c.most }))
+            .collect();
+        let countries: Map<String, Value> = OWN_CURRENCY.iter().map(|(r, _)| *r).chain(EURO.iter().copied()).map(|r| (r.to_string(), json!(support_currency_for(r.into())))).collect();
+        let SupportPick::Offered { index: first } = support_first_choice(String::new()).pick else { panic!("the first choice is an offered amount") };
+        // 2025, a year of 365 days, a day at a time.
+        let starts = |southern: bool| -> Vec<Value> {
+            let mut was = None;
+            (0..365)
+                .filter_map(|i| {
+                    let (month, day) = utc_date(1_735_689_600 + i * 86_400);
+                    let season = season_now(month, day, southern).season;
+                    (was.replace(season) != Some(season)).then(|| json!({ "month": month, "day": day, "season": season_word(season) }))
+                })
+                .collect()
+        };
+        let hex = |c: u32| format!("#{:06x}", c & 0xFF_FFFF);
+        let colors: Map<String, Value> = SEASONS
+            .iter()
+            .map(|&s| {
+                let look = |dark: bool| {
+                    let p = s.palette(dark);
+                    let r = roles(p);
+                    json!({ "page": hex(p.page), "surface": hex(p.surface), "ink": hex(p.ink), "ink2": hex(r.on_surface_variant), "hair": hex(r.outline_variant), "accent": hex(p.accent), "on": hex(p.on) })
+                };
+                (season_word(s).to_string(), json!({ "light": look(false), "dark": look(true) }))
+            })
+            .collect();
+        let all = json!({
+            "currencies": currencies, "first": first, "countries": countries, "elsewhere": support_currency_for(String::new()),
+            "seasons": { "north": starts(false), "south": starts(true) }, "colors": colors,
+        });
+        serde_json::to_string_pretty(&all).unwrap() + "\n"
+    }
+
+    /// `NORI_BLESS=1 cargo test -p nori-core worker_offers` rewrites it.
+    #[test]
+    fn the_worker_offers_what_the_core_does() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../support/worker/src/offered.json");
+        let now = offered_to_the_worker();
+        if std::env::var_os("NORI_BLESS").is_some() {
+            std::fs::write(path, &now).unwrap();
+        }
+        let kept = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(kept == now, "support/worker/src/offered.json is stale: NORI_BLESS=1 cargo test -p nori-core worker_offers");
+    }
+
     #[test]
     fn stamps_take_their_season_and_a_steady_tilt() {
         // 2026-04-10, 2026-07-20, 2026-10-15, 2027-01-05 (UTC noon).
