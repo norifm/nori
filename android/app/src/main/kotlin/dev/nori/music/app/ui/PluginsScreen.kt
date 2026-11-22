@@ -157,9 +157,10 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, pages: PluginP
             GroupLabel(say.pluginsInstalled)
             GroupCard(Modifier.alpha(strength)) {
                 cards.forEachIndexed { i, c ->
-                    val line = listOfNotNull(c.kinds().takeIf { it.isNotEmpty() }, c.version).joinToString(" · ")
+                    val line = c.stopped?.let(say::pluginStopped) ?: listOfNotNull(c.kinds().takeIf { it.isNotEmpty() }, c.version).joinToString(" · ")
                     PluginLine(vm, c.id, remember(offers, c) { vm.offerOf(c.id, c) }, c.name, null, line, i < cards.lastIndex, Modifier.testTag("plugin-${c.id}"), { pages.open(c.id) }) {
-                        NoriSwitch(c.enabled, { on -> vm.turn(c.id, on) }, Modifier.testTag("plugin-on-${c.id}"), enabled = !off)
+                        if (c.stopped != null) TextAction(say.pluginRestart, { vm.turn(c.id, true) }, Modifier.testTag("plugin-restart-${c.id}"), enabled = !off)
+                        else NoriSwitch(c.enabled, { on -> vm.turn(c.id, on) }, Modifier.testTag("plugin-on-${c.id}"), enabled = !off)
                     }
                 }
             }
@@ -420,9 +421,10 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
                 Text(name, style = titled(MaterialTheme.typography.headlineSmall), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val repos by vm.repos.collectAsStateWithLifecycle()
                 val repo = (card?.repo ?: offer?.repo?.url.takeIf { card == null })?.let { repoName(it, repos) }
-                Quiet(listOfNotNull(card?.version ?: newest?.version, card?.kinds()?.takeIf { it.isNotEmpty() }, repo, say.pluginFromFile.takeIf { card != null && card.repo == null }).joinToString(" · "))
+                Quiet(listOfNotNull(card?.stopped?.let(say::pluginStopped), card?.version ?: newest?.version, card?.kinds()?.takeIf { it.isNotEmpty() }, repo, say.pluginFromFile.takeIf { card != null && card.repo == null }).joinToString(" · "))
             }
-            if (card != null) NoriSwitch(card.enabled, { on -> vm.turn(id, on) }, Modifier.testTag("plugin-on").semantics { contentDescription = say.pluginOn })
+            if (card?.stopped != null) TextAction(say.pluginRestart, { vm.turn(id, true) }, Modifier.testTag("plugin-restart"))
+            else if (card != null) NoriSwitch(card.enabled, { on -> vm.turn(id, on) }, Modifier.testTag("plugin-on").semantics { contentDescription = say.pluginOn })
             if (card != null) MoreButton(listOfNotNull(
                 (say.pluginMoveUp to { vm.move(id, -1) }).takeIf { at > 0 },
                 (say.pluginMoveDown to { vm.move(id, 1) }).takeIf { at < cards.lastIndex },

@@ -99,6 +99,7 @@ pub const NONE_FOUND: &str = "No plugins found";
 pub const ABOUT: &str = "About";
 pub const PLUGIN_MAY: &str = "What it may do";
 pub const PLUGIN_ON: &str = "On";
+pub const RESTART: &str = "Restart";
 pub const MOVE_UP: &str = "Move up";
 pub const MOVE_DOWN: &str = "Move down";
 pub const REMOVE: &str = "Remove";
@@ -358,6 +359,14 @@ pub fn plugin_refused(r: &nori_plugins::Refusal) -> String {
         Refusal::OtherKey => "it isn’t signed by the author it was installed from (remove the plugin to install it)".into(),
     };
     format!("Not installed: {why}")
+}
+
+/// Why safe mode keeps a plugin from running.
+pub fn plugin_stopped(stopped: nori_plugins::Stopped) -> &'static str {
+    match stopped {
+        nori_plugins::Stopped::Crashed => "Off: nori stopped while it ran",
+        nori_plugins::Stopped::ThisStart => "Off until nori starts again",
+    }
 }
 
 /// Why plugins are off at this start: the `names` of those nori stopped in, or none for a start that
@@ -1241,6 +1250,7 @@ mod tests {
             enabled: false,
             repo: None,
             held: false,
+            stopped: None,
             points: vec!["slots".into()],
             overrides: Vec::new(),
             net: vec!["a.example".into()],

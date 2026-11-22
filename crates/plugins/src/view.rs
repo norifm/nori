@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{Hook, Manifest, Permission, Plugins, Refusal, RowKind, Value, WakeEvent};
+use crate::{Hook, Manifest, Permission, Plugins, Refusal, RowKind, Stopped, Value, WakeEvent};
 
 /// A plugin as Settings › Plugins lists it, in the user's plugin order.
 #[derive(Debug, Clone, PartialEq)]
@@ -21,6 +21,9 @@ pub struct PluginCard {
     pub repo: Option<String>,
     /// Kept at its version.
     pub held: bool,
+    /// Safe mode keeps it from running: in place of its switch, the client offers to start it again
+    /// (`turn` it on).
+    pub stopped: Option<Stopped>,
     /// The extension points it fills (`wit/`'s names).
     pub points: Vec<String>,
     /// The nori values it overrides.
@@ -149,7 +152,7 @@ pub(crate) fn words(dir: &std::path::Path, lang: &str) -> BTreeMap<String, Strin
 }
 
 /// What a client shows of a plugin of manifest `m`, in its words `w`, with its rows' `stored` values.
-fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Value>, enabled: bool, repo: Option<String>, held: bool) -> PluginCard {
+fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Value>, enabled: bool, repo: Option<String>, held: bool, stopped: Option<Stopped>) -> PluginCard {
     let said = |k: &str| w.get(k).cloned();
     PluginCard {
         id: m.id.clone(),
@@ -159,6 +162,7 @@ fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Va
         enabled,
         repo,
         held,
+        stopped,
         points: m.points.iter().map(|p| p.to_string()).collect(),
         overrides: m.overrides.clone(),
         net: m.net.iter().filter(|h| *h != crate::lan::LAN).cloned().collect(),
@@ -202,7 +206,7 @@ impl Plugins {
         let m = Manifest::of_wasm(get("plugin.wasm").ok_or_else(|| Refusal::Unreadable("no plugin.wasm".into()))?)?;
         self.admits(&m.id, key.as_deref())?;
         let w = words_by(|l| get(&format!("strings/{l}.toml")).map(|b| String::from_utf8_lossy(b).into_owned()), lang);
-        Ok(PluginPreview { card: card(&m, &w, &BTreeMap::new(), false, None, false), file: path, repo, key })
+        Ok(PluginPreview { card: card(&m, &w, &BTreeMap::new(), false, None, false, None), file: path, repo, key })
     }
 }
 
@@ -210,7 +214,18 @@ impl Plugins {
 impl Plugins {
     /// The installed plugins in `lang`, in their order.
     pub fn cards(&self, lang: String) -> Vec<PluginCard> {
-        self.installed().into_iter().map(|i| card(&i.manifest, &words(&self.folder(&i.manifest.id), &lang), &self.rows(&i.manifest.id), i.enabled, i.repo.clone(), i.held)).collect()
+        let paused = self.paused();
+        self.installed()
+            .into_iter()
+            .map(|i| {
+                let stopped = if i.crashed {
+                    Some(Stopped::Crashed)
+                } else {
+                    paused.contains(&i.manifest.id).then_some(Stopped::ThisStart)
+                };
+                card(&i.manifest, &words(&self.folder(&i.manifest.id), &lang), &self.rows(&i.manifest.id), i.enabled, i.repo.clone(), i.held, stopped)
+            })
+            .collect()
     }
 
     /// The `.noriplugin` or plugin folder at `path` as its install sheet shows it, in `lang`; nothing is

@@ -950,4 +950,7 @@
     <string name="plugins_unsigned">Unsigned</string>
     <string name="plugins_safe_crashed">nori stopped while %1$s was running. It’s off now.</string>
     <string name="plugins_safe_all_off">nori didn’t finish starting last time. Plugins are off until it starts again.</string>
+    <string name="plugins_stopped_crashed">Off: nori stopped while it ran</string>
+    <string name="plugins_stopped_this_start">Off until nori starts again</string>
+    <string name="plugins_restart">Restart</string>
 </resources>

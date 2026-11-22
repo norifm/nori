@@ -51,7 +51,7 @@ use std::sync::{Arc, Mutex};
 pub use app::{open, open_plugins, Client};
 pub use bluetooth::{Bluetooth, BtDevice, BtFailure};
 pub use devices::{controlled_on_output, next_noise, output_device, Battery, ControlledDevice, Noise};
-pub use safe::{LastExit, SafeStart};
+pub use safe::{LastExit, SafeStart, Stopped};
 pub use readme::ReadmeBlock;
 pub use repo::{offer_for, offer_of, offers_found, offers_to_update, plugin_display_name, provider_offers, updates_waiting, Offer, OfferState, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
@@ -98,6 +98,8 @@ pub struct Installed {
     /// Its author's key (hex), pinned by the first signed version installed: every later version must
     /// be signed by it. None while it has had no signed version.
     pub key: Option<String>,
+    /// Turned off by safe mode, nori having stopped while calling it, and not turned on since.
+    pub crashed: bool,
 }
 
 impl Installed {
@@ -136,6 +138,8 @@ struct IndexEntry {
     held: bool,
     #[serde(default)]
     key: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    crashed: bool,
 }
 
 /// Whether a plugin not installed before turns on: a restore sets its being on itself, after its store.
@@ -195,22 +199,13 @@ pub struct Plugins {
     songs: Arc<Mutex<Option<prepare::Songs>>>,
     /// Which plugin is being called, for the next start (safe.rs).
     marks: Arc<safe::Marks>,
-    /// How this start runs the plugins.
-    start: Mutex<Start>,
+    /// Why plugins are off at this start, until the client is told ([`Plugins::take_safe_start`]).
+    safe_start: Mutex<Option<SafeStart>>,
+    /// The plugins on that don't run at this start, the last one never having finished; each runs
+    /// again once turned on.
+    paused: Mutex<Vec<String>>,
     /// The notification's buttons last decided.
     buttons: notification::Decided,
-}
-
-/// How a start runs the plugins.
-enum Start {
-    /// As they are switched.
-    Normal,
-    /// nori stopped while calling these plugins the run before; they are off now, which the client
-    /// is told once ([`Plugins::take_safe_start`]).
-    Crashed { plugins: Vec<String> },
-    /// The last start stopped before it finished: every plugin is off for this one until one is turned
-    /// on. `told`: the client was.
-    AllOff { told: bool },
 }
 
 impl Plugins {
@@ -225,31 +220,31 @@ impl Plugins {
             .filter_map(|e| {
                 let section = std::fs::read(dir.join(&e.id).join(package::MANIFEST)).ok()?;
                 let manifest = Manifest::of_installed(&section).filter(|m| m.id == e.id)?;
-                Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled, repo: e.repo.clone(), held: e.held, key: e.key.clone() })
+                Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled, repo: e.repo.clone(), held: e.held, key: e.key.clone(), crashed: e.crashed })
             })
             .collect();
         let (marks, last) = safe::Marks::open(dir.join("safe"), !installed.is_empty());
-        let mut start = Start::Normal;
+        let (mut safe_start, mut paused) = (None, Vec::new());
         if let Some(last) = last.map(|l| l.crashed(side.last_exit())) {
             let crashed: Vec<String> = installed
                 .iter_mut()
                 .filter(|i| i.enabled && last.blames(&i.manifest.id))
                 .map(|i| {
-                    i.enabled = false;
+                    (i.enabled, i.crashed) = (false, true);
                     i.manifest.id.clone()
                 })
                 .collect();
             if !crashed.is_empty() {
                 nori_model::alog::info(&format!("safe mode: nori stopped while calling {}, off now", crashed.join(", ")));
-                start = Start::Crashed { plugins: crashed };
+                safe_start = Some(SafeStart::Crashed { plugins: crashed });
             } else if last.starting && installed.iter().any(|i| i.enabled) {
                 nori_model::alog::info("safe mode: the last start didn't finish, with no plugin being called; every plugin is off for this one");
-                start = Start::AllOff { told: false };
+                paused = installed.iter().filter(|i| i.enabled).map(|i| i.manifest.id.clone()).collect();
+                safe_start = Some(SafeStart::AllOff);
             }
         }
-        let paused = matches!(start, Start::AllOff { .. });
-        let crashed = matches!(start, Start::Crashed { .. });
-        let starts = !paused && installed.iter().any(|i| i.enabled);
+        let crashed = matches!(safe_start, Some(SafeStart::Crashed { .. }));
+        let starts = paused.is_empty() && installed.iter().any(|i| i.enabled);
         let workers: Arc<lan::Workers> = Arc::default();
         let gate: Arc<timers::Gate> = Arc::default();
         let lan = lan::Lan::new(side.clone(), Arc::downgrade(&workers), gate.clone());
@@ -281,7 +276,8 @@ impl Plugins {
             preparation: Mutex::new(None),
             songs: Arc::default(),
             marks,
-            start: Mutex::new(start),
+            safe_start: Mutex::new(safe_start),
+            paused: Mutex::new(paused),
             buttons: Default::default(),
         });
         plugins.lan.set_plugins(Arc::downgrade(&plugins));
@@ -306,19 +302,17 @@ impl Plugins {
         self.laying()
     }
 
-    /// The plugins whose overrides and stages are laid over the settings: those on and built for this
-    /// API, unless this is a safe start. The settings leave the layer out themselves while the switch
+    /// The plugins whose overrides and stages are laid over the settings: those on, built for this
+    /// API and not paused for this start. The settings leave the layer out themselves while the switch
     /// turns every plugin off, so it is whole again when the switch goes back.
     fn laying(&self) -> Vec<Installed> {
-        if self.safe_off() {
-            return Vec::new();
-        }
-        self.installed().into_iter().filter(|i| i.enabled && i.runs_here()).collect()
+        let paused = self.paused();
+        self.installed().into_iter().filter(|i| i.enabled && i.runs_here() && !paused.contains(&i.manifest.id)).collect()
     }
 
-    /// Every plugin is off for this start (a safe start).
-    fn safe_off(&self) -> bool {
-        matches!(*self.start.lock().expect("not poisoned"), Start::AllOff { .. })
+    /// The plugins on that don't run at this start (safe mode).
+    fn paused(&self) -> Vec<String> {
+        self.paused.lock().expect("not poisoned").clone()
     }
 
     /// What an instance's imports reach beyond its folder.
@@ -430,7 +424,7 @@ impl Plugins {
                 i.key = i.key.take().or(key);
             }
             // Turned on below, which starts it.
-            None => list.push(Installed { manifest: manifest.clone(), enabled: false, repo, held: standing.held, key }),
+            None => list.push(Installed { manifest: manifest.clone(), enabled: false, repo, held: standing.held, key, crashed: false }),
         }
         self.keep(&list);
         let on = list.iter().any(|i| i.manifest.id == manifest.id && i.enabled);
@@ -469,7 +463,7 @@ impl Plugins {
     }
 
     fn keep(&self, list: &[Installed]) {
-        let plugin = list.iter().map(|i| IndexEntry { id: i.manifest.id.clone(), enabled: i.enabled, repo: i.repo.clone(), held: i.held, key: i.key.clone() }).collect();
+        let plugin = list.iter().map(|i| IndexEntry { id: i.manifest.id.clone(), enabled: i.enabled, repo: i.repo.clone(), held: i.held, key: i.key.clone(), crashed: i.crashed }).collect();
         let index = Index { plugin, repos: self.added_repos(), checked_ms: self.checked_ms() };
         let _ = std::fs::create_dir_all(&self.dir);
         let _ = std::fs::write(self.dir.join("index.json"), serde_json::to_vec(&index).unwrap_or_default());
@@ -588,16 +582,14 @@ impl Plugins {
         let mut list = self.installed.lock().expect("not poisoned");
         let Some(i) = list.iter_mut().find(|i| i.manifest.id == id) else { return };
         i.enabled = on;
+        // Turned on, it is no longer held by safe mode.
+        if on {
+            i.crashed = false;
+            self.paused.lock().expect("not poisoned").retain(|p| p != id);
+        }
         let starts = on && i.manifest.extends("lifecycle");
         self.keep(&list);
         drop(list);
-        // A plugin turned on in a safe start ends it: the user has taken the plugins in hand.
-        if on {
-            let mut start = self.start.lock().expect("not poisoned");
-            if let Start::AllOff { .. } = *start {
-                *start = Start::Normal;
-            }
-        }
         if !on {
             self.workers.lock().expect("not poisoned").remove(id);
             self.lan.forget(id);
@@ -677,19 +669,12 @@ impl Plugins {
 
     /// Why plugins are off at this start, once: the client says so when it shows.
     pub fn take_safe_start(&self) -> Option<SafeStart> {
-        let mut start = self.start.lock().expect("not poisoned");
-        match &mut *start {
-            Start::Normal | Start::AllOff { told: true } => None,
-            Start::AllOff { told } => {
-                *told = true;
-                Some(SafeStart::AllOff)
-            }
-            Start::Crashed { plugins } => {
-                let plugins = std::mem::take(plugins);
-                *start = Start::Normal;
-                Some(SafeStart::Crashed { plugins })
-            }
+        let mut safe_start = self.safe_start.lock().expect("not poisoned").take();
+        // Every plugin paused this start has been turned on: nothing is off to say.
+        if safe_start == Some(SafeStart::AllOff) && self.paused().is_empty() {
+            safe_start = None;
         }
+        safe_start
     }
 
     /// The client has started (its first screen is up, or its player is): a crash from here on is no
@@ -710,10 +695,15 @@ impl Plugins {
         let mut out = String::new();
         if self.side.all_off() {
             out.push_str("every plugin off (the switch)\n");
-        } else if self.safe_off() {
-            out.push_str("every plugin off for this start (safe mode)\n");
+        }
+        let paused = self.paused();
+        if !paused.is_empty() {
+            out.push_str(&format!("off for this start (safe mode): {}\n", paused.join(", ")));
         }
         let installed = self.installed();
+        for i in installed.iter().filter(|i| i.crashed) {
+            out.push_str(&format!("{} off: nori stopped while calling it (safe mode)\n", i.manifest.id));
+        }
         let on: Vec<&Installed> = installed.iter().filter(|i| i.enabled).collect();
         for i in &on {
             let from = i.repo.as_deref().unwrap_or("a file");

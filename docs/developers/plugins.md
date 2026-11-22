@@ -587,11 +587,15 @@ is caught. A wait inside a call (an HTTP answer, a socket's or a Bluetooth chann
 Android ending nori while a plugin waits blames no plugin.
 
 - At the next start, a plugin nori stopped in is turned off and logged (the bug report's log carries it);
-  `take_safe_start()` answers `SafeStart::Crashed` once, for the client to say.
+  `take_safe_start()` answers `SafeStart::Crashed` once, for the client to say. The index keeps it
+  `crashed` until it is turned on, and its card says so (`Stopped::Crashed`).
 - The header marks a start until the client calls `started()` (Android: the first frame, or the player
   service up; desktop and terminal: the session or the sign-in up). A start that didn't get there, with
-  no plugin marked, starts the next one with every plugin off (`SafeStart::AllOff`), their own switches
-  kept; the one after runs them again. Turning a plugin on ends it.
+  no plugin marked, starts the next one with every plugin paused (`SafeStart::AllOff`, each card
+  `Stopped::ThisStart`), their own switches kept; the one after runs them again. Turning one on runs it
+  alone; the others stay paused.
+- A card with `stopped` shows a Restart in place of its switch, in the list and on its page (the
+  terminal: off, with the reason; turning it on restarts it). Restart is `turn(id, true)`.
 - Where the platform tells how the run before ended (`Client::last_exit`; Android reads
   `ApplicationExitInfo` on API 30+), a run the user or the system ended (a force stop, low memory, an
   update) is `LastExit::Killed`: an unfinished call or start is no crash then, and only a panic in a call

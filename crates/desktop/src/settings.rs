@@ -941,7 +941,8 @@ pub enum PluginAct {
     AllowMobile(String),
     /// The first screen's choice: this kind's form.
     Choose(ServerKind),
-    /// The first screen's choice of a plugin installed but off.
+    /// Turns an installed plugin on: the first screen's choice of one that is off, or a restart of one
+    /// safe mode stopped.
     TurnOn(String),
     /// The first screen's choice of a plugin not installed: its page.
     OfferPage(String),
@@ -1163,6 +1164,9 @@ fn plugin_list(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
     }
     let installed = p.cards.iter().map(|c| {
         let kinds = words::plugin_is(&c.points, !c.overrides.is_empty());
+        if let Some(stopped) = c.stopped {
+            return Row { control: PluginAct::TurnOn(c.id.clone()).name(), button: words::RESTART.into(), enabled: !all_off, ..plugin_line(p, &c.id, &c.name, None, words::plugin_stopped(stopped).into()) };
+        }
         let line = [kinds, c.version.clone()].into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" · ");
         Row { control: PluginAct::Turn(c.id.clone()).name(), on: c.enabled, enabled: !all_off, ..plugin_line(p, &c.id, &c.name, None, line) }
     });
@@ -1224,7 +1228,10 @@ fn plugin_page(p: &Plugged, id: &str) -> Vec<(String, Vec<Row>)> {
     let found = nori_plugins::offer_of(p.offers(), id, card);
     let mut groups = Vec::new();
     if let Some(c) = card {
-        let mut head = vec![Row { kind: TOGGLE, name: PluginAct::Turn(c.id.clone()).name(), title: words::PLUGIN_ON.into(), on: c.enabled, enabled: true, ..Default::default() }];
+        let mut head = vec![match c.stopped {
+            Some(stopped) => Row { kind: ACTION, name: PluginAct::TurnOn(c.id.clone()).name(), title: words::plugin_stopped(stopped).into(), button: words::RESTART.into(), enabled: true, ..Default::default() },
+            None => Row { kind: TOGGLE, name: PluginAct::Turn(c.id.clone()).name(), title: words::PLUGIN_ON.into(), on: c.enabled, enabled: true, ..Default::default() },
+        }];
         if c.repo.is_some() {
             head.push(Row { kind: TOGGLE, name: PluginAct::Hold(c.id.clone()).name(), title: words::KEEP_VERSION.into(), on: c.held, enabled: true, ..Default::default() });
         }
@@ -1646,7 +1653,7 @@ mod tests {
     use nori_plugins::{Offer, Version};
 
     fn plugin_card(id: &str, rows: Vec<PluginRow>) -> PluginCard {
-        PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: Some("Does it".into()), enabled: true, repo: Some(nori_plugins::OFFICIAL.into()), held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: false, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows }
+        PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: Some("Does it".into()), enabled: true, repo: Some(nori_plugins::OFFICIAL.into()), held: false, stopped: None, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: false, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows }
     }
 
     fn official() -> Repo {
@@ -1692,6 +1699,18 @@ mod tests {
         assert!(top.every && !top.all_on, "the switch over every plugin in the head");
         assert!(!top.back);
         assert_eq!(PluginAct::of(&slint::Model::row_data(&top.tools, 0).unwrap().name), Some(PluginAct::Browser), "the plus opens the browser");
+    }
+
+    /// A plugin safe mode stopped says why and offers a restart in place of its switch, in the list and
+    /// on its page.
+    #[test]
+    fn a_plugin_safe_mode_stopped_offers_a_restart() {
+        let crashed = PluginCard { enabled: false, stopped: Some(nori_plugins::Stopped::Crashed), ..plugin_card("a.crashed", Vec::new()) };
+        let p = Plugged { cards: vec![crashed], ..Default::default() };
+        let row = &plugin_groups(&p, false)[0].1[0];
+        assert_eq!((row.line.as_str(), row.button.as_str(), PluginAct::of(&row.control)), (words::plugin_stopped(nori_plugins::Stopped::Crashed), words::RESTART, Some(PluginAct::TurnOn("a.crashed".into()))));
+        let head = &plugin_page(&p, "a.crashed")[0].1[0];
+        assert_eq!((head.kind, head.button.as_str(), PluginAct::of(&head.name)), (ACTION, words::RESTART, Some(PluginAct::TurnOn("a.crashed".into()))));
     }
 
     /// The browser searches through the core and shows by name, while a row's Install still names the
@@ -2016,7 +2035,7 @@ mod tests {
     #[test]
     fn a_controlled_device_leads_the_devices_panel() {
         use nori_plugins::{Battery, Noise};
-        let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None, page: None, glyph: None }] };
+        let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, stopped: None, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None, page: None, glyph: None }] };
         let d = ControlledDevice { id: "AA".into(), name: "WH-1000XM5".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Canceling), noise_modes: vec![Noise::Off, Noise::Canceling], noise_cycle: vec![Noise::Off, Noise::Canceling], card: card("dev.sony") };
         let on = PluginRow { id: "on".into(), label: "Touch".into(), kind: RowKind::Switch, ..row_blank() };
         let d = ControlledDevice { card: PluginCard { rows: vec![on], ..d.card.clone() }, ..d };

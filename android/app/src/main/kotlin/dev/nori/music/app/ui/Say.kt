@@ -430,6 +430,12 @@ class Say(private val r: Resources) {
     val pluginMoveUp: String get() = r.getString(R.string.plugins_move_up)
     val pluginMoveDown: String get() = r.getString(R.string.plugins_move_down)
     val pluginOn: String get() = r.getString(R.string.plugins_on)
+    val pluginRestart: String get() = r.getString(R.string.plugins_restart)
+    /** Why safe mode keeps a plugin from running, in place of its card's line. */
+    fun pluginStopped(stopped: dev.nori.music.ffi.plugins.Stopped): String = r.getString(when (stopped) {
+        dev.nori.music.ffi.plugins.Stopped.CRASHED -> R.string.plugins_stopped_crashed
+        dev.nori.music.ffi.plugins.Stopped.THIS_START -> R.string.plugins_stopped_this_start
+    })
     /** What a plugin is, from the extension points it fills and whether it overrides nori's values. */
     fun pluginKinds(points: List<String>, overrides: Boolean): String = (points.mapNotNull { p ->
         when (p) {
