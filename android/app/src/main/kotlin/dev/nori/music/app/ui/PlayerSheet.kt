@@ -10,6 +10,8 @@ import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -90,6 +92,12 @@ class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false)
      */
     var isOpen by mutableStateOf(startOpen)
         private set
+
+    /** On screen at all: open, on its way, or held part way. What [LocalPlayerShown] says inside it. */
+    val shown: Boolean get() = progress.value > 0f || progress.targetValue > 0f
+
+    /** Open all the way: the pages under it are covered completely. What [LocalPageCovered] says under it. */
+    val covers: Boolean get() = progress.value >= 1f
 
     /** How far the sheet's leading edge travels, in pixels. */
     val travel: Float get() = when (edge) {
@@ -172,6 +180,13 @@ val LocalPlayerShown = androidx.compose.runtime.compositionLocalOf { true }
 
 /** Whether the open player covers the pages under it completely. They stay composed and resumed. */
 val LocalPageCovered = androidx.compose.runtime.compositionLocalOf { false }
+
+/**
+ * Its value now, read without the composition following it: for a choice made as something else changes (a
+ * song steps on), which this changing alone must not make again. Read so, the player coming into view or
+ * the page being uncovered recomposes only what draws differently, on the first frame of the move.
+ */
+internal fun <T> State<T>.unwatched(): T = Snapshot.withoutReadObservation { value }
 
 /**
  * Whether what this composable draws can be seen: its screen resumed, the player not over the page and,

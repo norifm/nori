@@ -9,6 +9,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.foundation.layout.widthIn
 import dev.nori.music.ffi.model.Song
@@ -226,17 +227,22 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     val coverUrl = artwork?.takeIf { !it.looping }?.url ?: vm.cover(state.current?.coverArt, CoverSize.FULL)
     // A provider's song wears its cover too (it is on screen); only its neighbours' are never measured ahead.
     val rowUrl = vm.cover(state.current?.coverArt, CoverSize.ROW)
-    val inView = LocalPlayerShown.current
     var started by remember { mutableStateOf(false) }
     var returning by remember { mutableStateOf(false) }
     androidx.lifecycle.compose.LifecycleStartEffect(Unit) {
         started = true
         onStopOrDispose { started = false; returning = true }
     }
-    androidx.compose.runtime.SideEffect {
-        if (started && returning) returning = false
+    // Back in front, a song that came on meanwhile is taken at once by the composition it arrives in (below), and
+    // the player is live again from the frame after: not from whatever recomposes it next, which can be much later.
+    LaunchedEffect(started) {
+        if (!started || !returning) return@LaunchedEffect
+        androidx.compose.runtime.withFrameNanos { }
+        returning = false
     }
-    val visible = inView && !returning
+    // On screen and the app in front. Never read here as the player is composed: that recomposed all of it
+    // on the first frame of every move up and the last of every move down (see unwatched).
+    val visible = remember(sheet) { derivedStateOf { sheet.shown && !returning } }
     // One picture for the sleeve and for the cover in flight (see SleeveArt).
     val answered by vm.answered.collectAsStateWithLifecycle()
     val sleeveArt = rememberSleeveArt(coverUrl, rowUrl, answered, visible)
@@ -253,15 +259,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     }
     // The next song's sleeve is asked for and warmed while the player is in view and the app in front,
     // so its poster and loop are there when it comes; never further ahead, and nothing while hidden.
-    val ahead = state.queue.getOrNull(state.nextIndex)
-    androidx.lifecycle.compose.LifecycleResumeEffect(inView, ahead?.id) {
-        val job = if (inView && ahead != null) vm.warmArtwork(ahead, CoverSize.FULL) else null
-        onPauseOrDispose { job?.cancel() }
-    }
-    androidx.lifecycle.compose.LifecycleResumeEffect(inView) {
-        vm.playerShown(inView)
-        onPauseOrDispose { vm.playerShown(false) }
-    }
+    WhileInView(vm, state.queue.getOrNull(state.nextIndex))
     if (motion != null) MotionDirector(vm, motion, loop, state.current?.id, sheet, onArtwork = panel == Panel.ART && showing == Panel.ART && !flying)
     // The player wears the cover's colours except in Midnight (the core's rule).
     val tinted = LocalPapers.current.coversTint
@@ -305,10 +303,9 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // See below, where it is latched.
     var held by remember { mutableStateOf<PagePalette?>(null) }
     val arrivingNow by androidx.compose.runtime.rememberUpdatedState(arriving)
-    val visibleNow by androidx.compose.runtime.rememberUpdatedState(visible)
     // Returning from the background (first composition after ON_START) or hidden behind the app: take the new
     // song's colors on this frame instead of flashing the old ones and fading after opening.
-    if (!visible && tint.url == rowUrl && found != null && found != palette) {
+    if (!visible.unwatched() && tint.url == rowUrl && found != null && found != palette) {
         palette = found
         fadingFrom = null
         shift.adopted = rowUrl
@@ -323,7 +320,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         // one from its end would put the page there in one frame.
         if (fadingFrom != null) {
             if (washFade.value < 1f) {
-                if (!AppMotion.reduce && visibleNow) washFade.fadeByFrames(1f, stage.colourFadeMs * (1f - washFade.value)) else washFade.snapTo(1f)
+                if (!AppMotion.reduce && visible.value) washFade.fadeByFrames(1f, stage.colourFadeMs * (1f - washFade.value)) else washFade.snapTo(1f)
             }
             fadingFrom = null
         }
@@ -342,7 +339,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
             shift.amount > 0.9f && shift.towards == rowUrl && arrivingNow == found)
         val from = if (carried) null else (palette ?: neutral)
         // Behind the app or returning from background, the page takes the new colours at once.
-        val fades = from != null && !AppMotion.reduce && visibleNow
+        val fades = from != null && !AppMotion.reduce && visible.value
         // Back to its start before the colours change under it, not after. Taking the fade over from one
         // still running can wait a frame for it to let go, and on that frame the new colours were drawn
         // at the old fade's strength over the old ones: the page changed, went back, and changed again.
@@ -432,7 +429,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
       androidx.compose.runtime.CompositionLocalProvider(LocalLook provides live) {
         val scheme = MaterialTheme.colorScheme
         val sleeveOnTop = !LocalWide.current
-        if (LocalPlayerShown.current) SystemBarIcons(live) { sleeveOnTop }
+        PlayerBarIcons(live) { sleeveOnTop }
         Box(
             // Pull down from anywhere on the artwork page and the whole player follows the finger down;
             // the lyrics and queue need a vertical drag to scroll, so there only the handle does. On its side
@@ -964,7 +961,8 @@ private fun Artwork(
     slide: SleeveSlide, shift: PageShift,
     /** A plugin's looping sleeve, or null when the song has none. */
     motion: SleeveMotion?,
-    live: Boolean,
+    /** On screen and the app in front. */
+    live: State<Boolean>,
 ) {
     Box(Modifier.fillMaxWidth(), Alignment.TopCenter) {
         Box(
@@ -1584,7 +1582,7 @@ private fun SleeveCarousel(
     answered: Long,
     slide: SleeveSlide, shift: PageShift,
     motion: SleeveMotion?,
-    live: Boolean,
+    live: State<Boolean>,
 ) {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
@@ -1680,7 +1678,7 @@ private fun SleeveCarousel(
     val incoming = art.cover?.takeIf { it.url == currentUrl }?.painter
     val go = when {
         songs.current == null || passing.id == null || songs.current == passing.id -> 0
-        AppMotion.reduce || !live || holding || moving?.isActive == true || landing != null || songs.current == askedId -> 0
+        AppMotion.reduce || !live.unwatched() || holding || moving?.isActive == true || landing != null || songs.current == askedId -> 0
         incoming == null -> 0
         songs.previous == passing.id && before.image != null -> 1
         songs.next == passing.id && after.image != null -> -1
@@ -1702,7 +1700,6 @@ private fun SleeveCarousel(
         androidx.compose.runtime.derivedStateOf { naturalUrl != null && (natural.value != 0f || art.shownUrl != naturalUrl) }
     }
     val naturalNow by androidx.compose.runtime.rememberUpdatedState(natural)
-    val liveNow by androidx.compose.runtime.rememberUpdatedState(live)
     val nextIdNow by androidx.compose.runtime.rememberUpdatedState(songs.next)
     val previousIdNow by androidx.compose.runtime.rememberUpdatedState(songs.previous)
     var naturalJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -1931,7 +1928,7 @@ private fun SleeveCarousel(
         moving?.join()
         if (!holding && (offset != 0f || lift.value != 0f)) {
             moving = scope.launch {
-                if (!liveNow || AppMotion.reduce) {
+                if (!live.value || AppMotion.reduce) {
                     offset = 0f
                     if (lift.value != 0f) lift.snapTo(0f)
                 } else {
@@ -1944,7 +1941,8 @@ private fun SleeveCarousel(
         }
     }
     LaunchedEffect(live) {
-        if (!live) {
+        androidx.compose.runtime.snapshotFlow { live.value }.collect { shown ->
+            if (shown) return@collect
             naturalJob?.cancelAndJoin()
             if (naturalNow.value != 0f) naturalNow.snapTo(0f)
             if (!holding && moving?.isActive != true) {
@@ -2304,18 +2302,17 @@ private fun liftedScale(l: Float, width: Float, side: Float): Float {
 
 
 @Composable
-private fun rememberSleeveArt(url: String?, standInUrl: String?, answered: Long, live: Boolean): SleeveArt {
+private fun rememberSleeveArt(url: String?, standInUrl: String?, answered: Long, live: State<Boolean>): SleeveArt {
     val art = remember { SleeveArt() }
     // Taken from the composition, as [url] is: an answer is never read ahead of the song it answers with.
     val answeredNow by androidx.compose.runtime.rememberUpdatedState(answered)
-    val liveNow by androidx.compose.runtime.rememberUpdatedState(live)
     val cover = rememberCover(url, CoverSize.FULL, standIns = listOf(standInUrl))
     art.cover = cover
     val picture = cover.painter
     // While hidden or on the first composition after returning from background, switch during composition
     // so the first rendered frame already has the current song's cover (or its stand-in) and never
     // flashes the old song's cover and animates it away.
-    if (!live && art.clearedFor == null) {
+    if (!live.unwatched() && art.clearedFor == null) {
         if (picture != null && (picture !== art.current || art.shownUrl != url)) {
             art.current = picture
             art.previous = null
@@ -2363,7 +2360,7 @@ private fun rememberSleeveArt(url: String?, standInUrl: String?, answered: Long,
                 val swiped = art.snapNext.also { art.snapNext = false }
                 val from = art.fadeFrom.also { art.fadeFrom = -1f }
                 val upgraded = art.shownUrl == url
-                val instant = !liveNow || swiped || upgraded || from < 0f && art.current == null && art.previous == null && cover.fromMemory
+                val instant = !live.value || swiped || upgraded || from < 0f && art.current == null && art.previous == null && cover.fromMemory
                 // The picture on screen stays underneath at full strength while the new one covers it; one
                 // already fading out to the plate carries on from where it is.
                 art.current?.let { art.previous = it; art.previousAlpha.snapTo(1f) }
@@ -2391,7 +2388,7 @@ private fun rememberSleeveArt(url: String?, standInUrl: String?, answered: Long,
                 // in for another one and was not taken up, the cover's state moved): it finishes from where
                 // it got to. Left there, the picture stayed faint over the plate for the rest of the song.
                 art.loading = false
-                if (!liveNow || AppMotion.reduce) {
+                if (!live.value || AppMotion.reduce) {
                     art.snapped = true
                     art.fade.snapTo(1f)
                 } else {
@@ -2504,6 +2501,30 @@ private fun OutputRow(vm: PlayerViewModel) {
 private val STATUS_TUCK = 10.dp
 
 /**
+ * What the player asks for only while it is in view and the app in front: the next song's sleeve, warmed so
+ * its poster and loop are there when it comes (never further ahead, nothing while hidden), and the plugins
+ * told it is shown. A scope of its own, so coming into view recomposes this and not the player.
+ */
+@Composable
+private fun WhileInView(vm: PlayerViewModel, ahead: Song?) {
+    val inView = LocalPlayerShown.current
+    androidx.lifecycle.compose.LifecycleResumeEffect(inView, ahead?.id) {
+        val job = if (inView && ahead != null) vm.warmArtwork(ahead, CoverSize.FULL) else null
+        onPauseOrDispose { job?.cancel() }
+    }
+    androidx.lifecycle.compose.LifecycleResumeEffect(inView) {
+        vm.playerShown(inView)
+        onPauseOrDispose { vm.playerShown(false) }
+    }
+}
+
+/** The status bar's icons in the player's colors while it is in view, from a scope of its own as above. */
+@Composable
+private fun PlayerBarIcons(look: Look, overCover: () -> Boolean) {
+    if (LocalPlayerShown.current) SystemBarIcons(look, overCover)
+}
+
+/**
  * The lines plugins say under the output row, asked when the player comes into view and when the song
  * changes. They hang below the row in the room under it and take none of the column's height: the
  * portrait player has no height to spare, and taking some pushed them off the screen's foot. They fade
@@ -2548,13 +2569,16 @@ private fun PluginStatus(vm: PlayerViewModel, songId: String?) {
  */
 @Composable
 internal fun Modifier.readable(iterations: Int = READ_OUT, key: String? = null): Modifier {
-    // Put away, the player forgets: it reads the title out again the next time it comes into view.
-    if (!LocalPlayerShown.current) { if (key != null) ReadOut.forget(); return this }
+    // Put away, the line holds still and reads itself out again the next time the player comes into view. Laid
+    // out the same either way: a chain without the marquee laid the title out afresh, unbounded, on the first
+    // frame of every opening, and once more for its soft edge on the next.
+    val shown = LocalPlayerShown.current
     // [key]: the line is the same one wherever it is drawn (the player's title, in each panel). It remembers
     // what it measured and that it has begun reading itself out, so a panel change - which draws the title
     // anew - does not lay it out once without its soft edge and then again with it, and does not walk it from
     // the start again, which would flash the title and jump it back each time the lyrics or queue open.
     val seen = key?.let(ReadOut::of)
+    if (!shown) seen?.started = false
     // What the line needs and what it has. The first size is this element's own - the width the row
     // gives the title - and the second is the text's, measured inside the marquee, which lays it out
     // with no width limit at all. A line that fits is left alone entirely: no walk, and no soft edge
@@ -2565,7 +2589,7 @@ internal fun Modifier.readable(iterations: Int = READ_OUT, key: String? = null):
     // Only the first copy of the line reads it out; one drawn after it (another panel) holds still at the start,
     // as the line settles, rather than walking it from the beginning again.
     val still = AppMotion.reduce
-    val walks = remember(seen, still, iterations) { if (seen?.started == true || still) 0 else iterations }
+    val walks = remember(seen, still, iterations, shown) { if (!shown || seen?.started == true || still) 0 else iterations }
     if (seen != null && over && walks > 0) LaunchedEffect(seen) { seen.started = true }
     return onSizeChanged { room = it.width; seen?.room = it.width }
         .then(
@@ -2607,7 +2631,6 @@ private class ReadOut(val key: String) {
         // One line at a time: the song's title. A new song is a new key and starts over.
         private var last: ReadOut? = null
         fun of(key: String): ReadOut = last?.takeIf { it.key == key } ?: ReadOut(key).also { last = it }
-        fun forget() { last = null }
     }
 }
 
@@ -2758,7 +2781,9 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     // seen. Animated both ways: nothing here changes size in one frame.
     val thickness = animateFloatAsState(if (dragging.value) 11f else SEEK_THICKNESS, AppMotion.settle(), label = "seek")
     val knob = animateFloatAsState(if (dragging.value) 1.5f else 0f, AppMotion.settle(), label = "knob")
-    Column(Modifier.island(slot).onGloballyPositioned { drawing.origin = it.placeInWindow() }.padding(horizontal = PLAYER_GUTTER, vertical = 4.dp)) {
+    // A layer of its own: the bar changing, or its island handing it back as anything round it starts to move,
+    // redraws the bar and its times, not the panel round them with its title and buttons.
+    Column(Modifier.island(slot).onGloballyPositioned { drawing.origin = it.placeInWindow() }.graphicsLayer().padding(horizontal = PLAYER_GUTTER, vertical = 4.dp)) {
         Box(
             // The strip is wider than the hairline it draws: a thumb is not a mouse.
             Modifier.fillMaxWidth().height(34.dp)

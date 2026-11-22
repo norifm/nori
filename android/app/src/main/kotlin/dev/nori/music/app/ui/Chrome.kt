@@ -34,6 +34,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -423,8 +425,9 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
     }
     val scheme = MaterialTheme.colorScheme
     // Under the open player the bar is still composed, only covered: a title walking there redrew the
-    // whole screen every frame for nobody.
-    val covered = LocalPageCovered.current
+    // whole screen every frame for nobody. Read where it is used, not here: read here, the player moving off
+    // the bar recomposed all of the bar on the first frame of every move down (see unwatched).
+    val covered = remember(sheet) { derivedStateOf { sheet.covers } }
     // A title reads itself out once its song has played: one restored paused at launch holds still, as
     // nothing on screen moves until the user touches it.
     var played by remember(state.index) { mutableStateOf(state.playing) }
@@ -468,7 +471,7 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
                         // showing: the neighbours wait off either edge at alpha zero, and a long title
                         // there walked after every change of song, a frame each time, on every page.
                         Text(
-                            s?.title?.let(say::title) ?: title, Modifier.readable(iterations = if (real && !covered && played) READ_OUT else 0),
+                            s?.title?.let(say::title) ?: title, Modifier.readable(iterations = if (real && played && !covered.value) READ_OUT else 0),
                             maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.bodyLarge,
                         )
@@ -576,7 +579,8 @@ internal fun <T> SwipeCarousel(
     /** The last skip's ticket the player's state answers, taken from the composition as [current] is. */
     answered: Long,
     modifier: Modifier = Modifier,
-    still: Boolean = false,
+    /** Out of sight; read as a song steps, not followed. */
+    still: State<Boolean>,
     item: @Composable (T?, Boolean) -> Unit,
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -606,7 +610,7 @@ internal fun <T> SwipeCarousel(
     val last = remember { Last<T>() }
     val go = when {
         !last.set || same(current, last.item) || current == null -> 0
-        AppMotion.reduce || still || landed != null || moving?.isActive == true -> 0
+        AppMotion.reduce || still.unwatched() || landed != null || moving?.isActive == true -> 0
         same(previous, last.item) -> 1
         same(next, last.item) -> -1
         else -> 0
