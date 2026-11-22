@@ -135,6 +135,10 @@ pub trait Side: Send + Sync {
     fn asset(&self, _id: &str, _name: &str, _state: crate::AssetState) {}
     /// Say each change of the settings to [`crate::Plugins`] from now on, or stop.
     fn watch_settings(&self, _on: bool) {}
+    /// How the run before ended, read once as the plugins open (safe.rs).
+    fn last_exit(&self) -> crate::LastExit {
+        crate::LastExit::Unknown
+    }
     /// A plugin's notification buttons would answer otherwise now: the client asks for them again
     /// ([`crate::Plugins::notification_buttons`]).
     fn buttons_changed(&self) {}

@@ -30,6 +30,7 @@ import dev.nori.music.ffi.plugins.MenuEntry
 import dev.nori.music.ffi.plugins.PluginPreview
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.plugins.Repo
+import dev.nori.music.ffi.plugins.LastExit
 import dev.nori.music.ffi.plugins.SafeStart
 import dev.nori.music.ffi.plugins.Value
 import dev.nori.music.ffi.plugins.ControlledDevice
@@ -201,6 +202,7 @@ class PluginHost(
             }
         }
         override fun buttonsChanged() { _buttonsChanged.tryEmit(Unit) }
+        override fun lastExit(): LastExit = previousExit(context)
         override fun asset(id: String, name: String, state: AssetState) {
             _assets.update { all -> all + (id to all[id].orEmpty().map { a -> if (a.name == name) a.copy(state = state) else a }) }
         }
@@ -427,4 +429,24 @@ class PluginHost(
 
     /** The lines plugins say under the player's output row. */
     suspend fun playerStatus(): List<String> = withContext(Dispatchers.IO) { plugins.playerStatus() }
+}
+
+/**
+ * How the app's process before this one ended, from Android's exit reasons (API 30+): a force stop, low
+ * memory or an update is no crash, so safe mode leaves the plugins it was calling on.
+ */
+private fun previousExit(context: android.content.Context): LastExit {
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return LastExit.UNKNOWN
+    val am = context.getSystemService(android.app.ActivityManager::class.java)
+    // The list also holds the package's other processes, such as WebView's sandbox.
+    val last = runCatching { am.getHistoricalProcessExitReasons(context.packageName, 0, 8).firstOrNull { it.processName == context.packageName } }.getOrNull() ?: return LastExit.UNKNOWN
+    return when (last.reason) {
+        android.app.ApplicationExitInfo.REASON_CRASH,
+        android.app.ApplicationExitInfo.REASON_CRASH_NATIVE,
+        android.app.ApplicationExitInfo.REASON_ANR,
+        android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE,
+        android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE,
+        android.app.ApplicationExitInfo.REASON_UNKNOWN -> LastExit.UNKNOWN
+        else -> LastExit.KILLED
+    }
 }

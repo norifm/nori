@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use nori_net::transport::{Exchange, HttpHeader, HttpMethod, Network, Transport, TransportError, TransportResponse};
 use nori_plugins::testing::{fixture, FIXTURE};
-use nori_plugins::{Plugins, Refusal, SafeStart, Side, Value};
+use nori_plugins::{LastExit, Plugins, Refusal, SafeStart, Side, Value};
 
 /// Counts this thread's allocations while `COUNTING` is on.
 struct Counting;
@@ -92,6 +92,7 @@ struct Session {
     notices: Mutex<Vec<(String, Vec<String>)>>,
     laid: Mutex<Vec<String>>,
     all_off: Mutex<bool>,
+    last_exit: Option<nori_plugins::LastExit>,
 }
 
 impl Side for Session {
@@ -111,6 +112,9 @@ impl Side for Session {
     }
     fn all_off(&self) -> bool {
         *self.all_off.lock().unwrap()
+    }
+    fn last_exit(&self) -> nori_plugins::LastExit {
+        self.last_exit.unwrap_or(nori_plugins::LastExit::Unknown)
     }
 }
 
@@ -677,6 +681,29 @@ fn a_start_that_never_finished_starts_once_with_every_plugin_off() {
     again.started();
     drop(again);
     assert_eq!(open().take_safe_start(), None, "a start that finished");
+}
+
+#[test]
+fn a_run_the_system_ended_crashed_in_nothing_it_left_unfinished() {
+    let dir = nori_testdir::TempDir::new("plugins-killed");
+    let open = |exit| {
+        nori_plugins::testing::marks_released(dir.path());
+        Plugins::open(dir.path().to_path_buf(), Arc::new(Session { last_exit: Some(exit), ..Session::default() }))
+    };
+    let first = open(LastExit::Unknown);
+    first.install(&fixture("")).unwrap();
+    first.turn(ID.into(), false);
+    drop(first);
+    left_on(dir.path(), ID);
+    // Force stopped in its start, and in a call of the plugin's.
+    let plugins = open(LastExit::Unknown);
+    nori_plugins::testing::stop_in_a_call(&plugins, ID);
+    drop(plugins);
+
+    let next = open(LastExit::Killed);
+    assert_eq!(next.take_safe_start(), None);
+    assert!(next.installed()[0].enabled);
+    assert_eq!(next.running().len(), 1);
 }
 
 #[test]

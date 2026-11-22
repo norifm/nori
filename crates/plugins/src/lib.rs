@@ -51,7 +51,7 @@ use std::sync::{Arc, Mutex};
 pub use app::{open, open_plugins, Client};
 pub use bluetooth::{Bluetooth, BtDevice, BtFailure};
 pub use devices::{controlled_on_output, next_noise, output_device, Battery, ControlledDevice, Noise};
-pub use safe::SafeStart;
+pub use safe::{LastExit, SafeStart};
 pub use readme::ReadmeBlock;
 pub use repo::{offer_for, offer_of, offers_found, offers_to_update, plugin_display_name, provider_offers, updates_waiting, Offer, OfferState, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
@@ -230,10 +230,10 @@ impl Plugins {
             .collect();
         let (marks, last) = safe::Marks::open(dir.join("safe"), !installed.is_empty());
         let mut start = Start::Normal;
-        if let Some(last) = last {
+        if let Some(last) = last.map(|l| l.crashed(side.last_exit())) {
             let crashed: Vec<String> = installed
                 .iter_mut()
-                .filter(|i| i.enabled && last.stopped_in.iter().any(|s| s == safe::cut(&i.manifest.id)))
+                .filter(|i| i.enabled && last.blames(&i.manifest.id))
                 .map(|i| {
                     i.enabled = false;
                     i.manifest.id.clone()
