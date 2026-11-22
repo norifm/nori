@@ -529,7 +529,9 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier, within: android.grap
         }
     }
     val placed = if (head == null) Modifier else Modifier.onGloballyPositioned { hidden = it.boundsInWindow().bottom <= head.bottom() }
-    androidx.compose.foundation.Canvas(modifier.island(slot).then(placed)) {
+    // A layer of its own: a step, or the island handing the bars back as anything round them moves, redraws
+    // the bars and not the row round them.
+    androidx.compose.foundation.Canvas(modifier.island(slot).then(placed).graphicsLayer()) {
         if (slot.handOff()) return@Canvas
         val t = phase.floatValue
         val w = size.width / (BARS * 2 - 1)

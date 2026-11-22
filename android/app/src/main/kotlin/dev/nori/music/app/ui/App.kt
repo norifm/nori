@@ -702,7 +702,7 @@ private fun HoldIslandsWhileMoving(sheet: PlayerSheet) {
 /** [content] told whether the open player covers it ([LocalPageCovered]), from a scope of its own, as above. */
 @Composable
 private fun CoveredByPlayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
-    val covered by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value >= 1f } }
+    val covered by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.covers } }
     CompositionLocalProvider(LocalPageCovered provides covered, content = content)
 }
 
@@ -772,7 +772,7 @@ private fun Modifier.fenced(open: () -> Boolean): Modifier =
  */
 @Composable
 private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
-    val shown by remember { androidx.compose.runtime.derivedStateOf { sheet.progress.value > 0f || sheet.progress.targetValue > 0f } }
+    val shown by remember { androidx.compose.runtime.derivedStateOf { sheet.shown } }
     // Built once the app's first frame is drawn and the main thread has nothing else to do, and kept:
     // opening the player then only moves it. An open before that builds it.
     val warm = rememberIdle(Unit)

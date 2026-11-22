@@ -359,6 +359,8 @@ class IslandSlot internal constructor(private val islands: Islands?, private val
     private var clear by mutableStateOf(false)
     private var island: IslandView? = null
     private var placedOnce = false
+    /** The element moved while the island was not drawing it: the island is moved there as it takes it again. */
+    private var moved = false
 
     /** Drawn by the island, so the element draws nothing itself. Read in composition or while drawing. */
     val apart: Boolean get() = wanted && clear && islands?.holds?.isEmpty() == true
@@ -372,7 +374,11 @@ class IslandSlot internal constructor(private val islands: Islands?, private val
      */
     fun handOff(): Boolean {
         val a = apart
-        if (a != told) { told = a; island?.handed() }
+        if (a != told) {
+            told = a
+            if (a && moved) { moved = false; island?.place(spot) }
+            island?.handed()
+        }
         return a
     }
 
@@ -382,10 +388,15 @@ class IslandSlot internal constructor(private val islands: Islands?, private val
     }
 
     internal fun placed(c: LayoutCoordinates) {
+        val width = spot.width
+        val height = spot.height
         spot.update(c, margin)
         placedOnce = true
         recheck()
-        island?.place(spot)
+        // Moved only while it draws: an island held, or handed back, draws nothing there, and moving its view on
+        // every frame of a move round it (the player opening) was a tenth of the main thread's time for nothing.
+        // Sized always: a content island's content is laid out at its size, wherever it is drawn.
+        if (told || spot.width != width || spot.height != height) { moved = false; island?.place(spot) } else moved = true
     }
 
     internal fun recheck() {
@@ -399,7 +410,7 @@ class IslandSlot internal constructor(private val islands: Islands?, private val
         val i = islands ?: return
         if (wanted) {
             val view = island ?: make(i, this).also { island = it }
-            if (placedOnce) view.place(spot)
+            if (placedOnce) { view.place(spot); moved = false }
             (view as View).invalidate()
         } else { told = false; island?.hide() }
     }
