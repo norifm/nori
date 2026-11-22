@@ -141,16 +141,15 @@ class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false)
     /** The finger let go at [velocity] pixels a second, towards putting it away: it settles where [sheetTarget] says. */
     fun release(velocity: Float) {
         val target = sheetTarget(from, progress.value, velocity)
-        settle(target, (if (target == 0f) velocity else -velocity) / travel)
+        settle(target, sheetSpeed(target, velocity, travel))
     }
 
-    /** Goes to [target] (1 open, 0 put away), carrying on at [speed], in sheets a second towards it; 0 from rest. */
+    /** Goes to [target] (1 open, 0 put away), carrying on at [speed], in sheets a second towards opening; 0 from rest. */
     private fun settle(target: Float, speed: Float) {
         isOpen = target == 1f
         scope.launch {
-            if (speed > 0f) {
-                val towards = if (target > progress.value) speed else -speed
-                progress.animateTo(target, AppMotion.settle(SHEET_REST), initialVelocity = towards)
+            if (speed != 0f) {
+                progress.animateTo(target, AppMotion.settle(SHEET_REST), initialVelocity = speed)
             } else {
                 progress.animateTo(target, AppMotion.move())
             }
@@ -256,4 +255,15 @@ private fun sheetTarget(from: Float, progress: Float, velocity: Float): Float {
         moved < -SHEET_COMMIT -> 0f
         else -> from
     }
+}
+
+/**
+ * How fast the player sheet carries on when the finger lifts at [velocity] (pixels a second, positive towards
+ * putting it away) on its way to [target]: in sheets a second, positive towards opening, and 0 (from rest)
+ * when the finger was going the other way. The way is the target's, not where the sheet stands against it:
+ * a drag pushed past the end has the sheet there already, still moving that way.
+ */
+internal fun sheetSpeed(target: Float, velocity: Float, travel: Float): Float {
+    val speed = -velocity / travel
+    return if (target == 1f) speed.coerceAtLeast(0f) else speed.coerceAtMost(0f)
 }
