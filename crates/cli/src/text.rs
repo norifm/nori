@@ -93,6 +93,17 @@ pub const OFFERED: &str = "Offered";
 pub const NONE_FOUND: &str = "No plugins found";
 pub const UPDATES: &str = "Updates";
 pub const INSTALLED_LIST: &str = "Installed";
+pub const SHOW: &str = "Show";
+
+/// A category of plugins, as its page is called.
+pub fn category(c: nori_plugins::Category) -> &'static str {
+    match c {
+        nori_plugins::Category::Service => "Services",
+        nori_plugins::Category::Device => "Devices",
+        nori_plugins::Category::Playback => "Playback",
+        nori_plugins::Category::Other => "More",
+    }
+}
 pub const ABOUT: &str = "About";
 pub const PLUGIN_MAY: &str = "What it may do";
 pub const PLUGIN_ON: &str = "On";

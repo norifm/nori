@@ -593,7 +593,7 @@ impl Nori {
     /// The plugins nori's own repo lists, each with what stops it in a browser (`web_fit`; `proxied`: this
     /// page's server carries a plugin's requests), how it stands against `installed` (`[{ id, version,
     /// held, fromFile }]`) and its versions of this API, newest first: `[{ id, name, about, icon, readme,
-    /// source, versions: [{ version, released, url, sha256, key, signature }], state, waiting, fit }]`.
+    /// source, category, versions: [{ version, released, url, sha256, key, signature }], state, waiting, fit }]`.
     pub async fn plugin_offers(&self, proxied: bool, installed: String) -> Result<String, JsValue> {
         let installed: Vec<PluginHere> = serde_json::from_str(&installed).map_err(error)?;
         let from = nori_plugin_index::OFFICIAL;
@@ -620,10 +620,16 @@ impl Nori {
                     .iter()
                     .map(|v| json!({ "version": v.version, "released": v.released, "url": at(&v.url), "sha256": v.sha256.to_ascii_lowercase(), "key": v.key, "signature": v.signature }))
                     .collect();
-                json!({ "id": l.id, "name": l.name, "about": l.about, "icon": l.icon.as_deref().map(at), "readme": l.readme.as_deref().map(at), "source": l.source, "versions": listed, "state": state, "waiting": update && here.is_some_and(|h| !h.held), "fit": nori_plugin_index::web_fit(l, proxied) })
+                let category = nori_plugin_index::section::CATEGORIES[nori_plugin_index::section::category_named(l.category.as_deref()) as usize];
+                json!({ "id": l.id, "name": l.name, "about": l.about, "icon": l.icon.as_deref().map(at), "readme": l.readme.as_deref().map(at), "source": l.source, "category": category, "versions": listed, "state": state, "waiting": update && here.is_some_and(|h| !h.held), "fit": nori_plugin_index::web_fit(l, proxied) })
             })
             .collect();
         Ok(Value::from(offers).to_string())
+    }
+
+    /// The plugins' categories in the order a client shows their pages (`section::CATEGORIES`), as JSON.
+    pub fn plugin_categories(&self) -> String {
+        Value::from(nori_plugin_index::section::CATEGORIES.to_vec()).to_string()
     }
 
     /// The ids of `offers` (`[{ id, name, about }]`) whose name or about holds `query`, by name.

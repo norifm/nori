@@ -39,6 +39,12 @@ nori_plugin_sdk::plugin!(MyPlugin, MANIFEST, lifecycle, hooks);
 | `commands` | `&[&str]` | Empty | Commands other apps may run, each reaching `lifecycle.action` |
 | `cache_mb` | `u32` | 0 | Its cache's quota, in MB |
 | `assets` | `&[Asset]` | Empty | Large files nori downloads for it |
+| `category` | `Category` | `Other` | The page of Get plugins it is listed on |
+
+`category` is `Category::Service` for a music service to play from, `Device` for headphones, speakers and
+other devices, `Playback` for how music plays and sounds, and `Other` for the rest. Get plugins shows a
+page per category, from the `category` its repo's index repeats. A plugin built before categories is
+`Other`.
 
 In `net`, a leading `*.` takes in a host's subdomains, and `lan` opens private addresses.
 
@@ -384,7 +390,7 @@ A repo is a static `index.json` with its packages, on any host. nori's own repo 
 ```json
 {"plugins": [{"id": "com.example.balance", "name": "Balance", "about": "…",
   "source": "https://…", "readme": "balance/README.md", "icon": "balance/icon.png",
-  "points": ["sound-stage"], "imports": ["types"], "net": [],
+  "points": ["sound-stage"], "imports": ["types"], "net": [], "category": "playback",
   "versions": [{"version": "0.2.0", "api": 7, "released": "2026-11-02", "url": "balance-0.2.0.noriplugin",
     "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
 ```
@@ -396,6 +402,7 @@ A repo is a static `index.json` with its packages, on any host. nori's own repo 
 | `readme`, `icon` | No | URLs of its README and icon, absolute or relative to the index |
 | `points` | No | Its extension points. nori offers a `provider` on the first screen |
 | `imports`, `net` | No | Its host interfaces and hosts, which tell the web client whether it runs there |
+| `category` | No | `service`, `device`, `playback` or `other`, its manifest's `category`. Another or none is `other` |
 | `versions` | Yes | Every version it published, in any order |
 | `version`, `api`, `url`, `sha256` | Yes | The version, its API, its package and the package's sha256 |
 | `released` | No | The release day, `YYYY-MM-DD` |

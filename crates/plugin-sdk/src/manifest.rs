@@ -6,6 +6,18 @@
 /// A glyph of nori's own set, as the WIT has it.
 pub use crate::types::Glyph;
 
+/// The page of Settings › Plugins a plugin is listed on.
+#[derive(Clone, Copy)]
+pub enum Category {
+    /// A music service to play from.
+    Service,
+    /// Headphones, speakers and other devices.
+    Device,
+    /// How music plays and sounds.
+    Playback,
+    Other,
+}
+
 /// Where a sound stage sits in nori's chain.
 #[derive(Clone, Copy)]
 pub enum Slot {
@@ -217,11 +229,12 @@ pub struct Manifest {
     /// Its `cache`'s quota, MB; 0 for none.
     pub cache_mb: u32,
     pub assets: &'static [Asset],
+    pub category: Category,
 }
 
 impl Manifest {
     pub const fn new(id: &'static str) -> Manifest {
-        Manifest { id, stage: None, net: &[], signin: &[], overrides: &[], rows: &[], menu: &[], places: &[], devices: &[], permissions: &[], hooks: &[], wake: &[], commands: &[], cache_mb: 0, assets: &[] }
+        Manifest { id, stage: None, net: &[], signin: &[], overrides: &[], rows: &[], menu: &[], places: &[], devices: &[], permissions: &[], hooks: &[], wake: &[], commands: &[], cache_mb: 0, assets: &[], category: Category::Other }
     }
 }
 
@@ -436,7 +449,7 @@ const fn write<const N: usize>(m: &Manifest, version: &str, points: u32) -> Out<
         });
         k += 1;
     }
-    o
+    o.byte(m.category as u8)
 }
 
 /// The section's bytes (`N` from [`encoded_len`]).
