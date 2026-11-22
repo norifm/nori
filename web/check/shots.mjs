@@ -6,6 +6,7 @@
 //   node web/check/shots.mjs http://localhost:8081/ <directory>
 import fs from "node:fs";
 import puppeteer from "puppeteer-core";
+import { signIn } from "./signin.mjs";
 
 const url = process.argv[2] ?? "http://localhost:8081/";
 const out = process.argv[3] ?? "shots";
@@ -37,7 +38,7 @@ async function go(h, top) {
 
 await page.goto(url, { waitUntil: "load" });
 await page.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 30000 });
-if (await page.$("#login")) await page.click("#login button");
+await signIn(page, 60000);
 await page.waitForFunction(() => window.nori.page === "home" && window.nori.playerReadyAt !== undefined, { timeout: 60000 });
 const albums = (await read({ kind: "albums", sort: "alphabeticalByName", size: 500, offset: 0 })).albums;
 const sung = albums.find((a) => a.name === "Sung Album") ?? albums[0];

@@ -62,7 +62,57 @@ pub fn provider_sign_in(name: &str) -> String {
     format!("Sign in to {name}")
 }
 pub const PROVIDER_SUBSONIC_ABOUT: &str = "Navidrome and other servers";
-pub const PROVIDER_KEYS: &str = "↑ ↓ choose · enter open · p plugins · q quit";
+pub const WELCOME_TITLE: &str = "Welcome to nori";
+pub const WELCOME_WHERE: &str = "Where's your music?";
+pub const WELCOME_KEYS: &str = "↑ ↓ choose · enter pick · c continue · r restore · q quit";
+pub const WELCOME_SIGN_IN: &str = "Sign in";
+pub const WELCOME_CONNECT: &str = "Connect";
+pub const WELCOME_SIGN_IN_KEYS: &str = "↑ ↓ choose · enter connect · c continue · esc back";
+pub const INSTALLING: &str = "Installing…";
+
+/// The plugins picked on the welcome that would not install, by name.
+pub fn welcome_refused(names: &[String]) -> String {
+    format!("Couldn't install {}", names.join(", "))
+}
+pub const SETUP_BACK: &str = "Back";
+pub const SETUP_SKIP: &str = "Skip";
+pub const SETUP_CONTINUE: &str = "Continue";
+/// The albums the AutoMix preview plays (the core's `setup_covers` are their sleeves).
+pub const SETUP_ALBUMS: [&str; 4] = ["The Miseducation of Lauryn Hill", "1992 Deluxe", "channel ORANGE", "CASIOPEA"];
+pub const SETUP_START: &str = "Start listening";
+
+/// A first-run page's title.
+pub fn setup_step(step: nori_core::setup::SetupStep) -> &'static str {
+    use nori_core::setup::SetupStep as S;
+    match step {
+        S::Listening => "Between songs",
+        S::Data => "On mobile data",
+        S::Look => "Make it yours",
+    }
+}
+
+/// An answer's name and what it does.
+pub fn setup_answer(answer: nori_core::setup::SetupAnswer) -> (&'static str, &'static str) {
+    use nori_core::setup::SetupAnswer as A;
+    match answer {
+        A::NoMixing => ("No mixing", "Songs play whole, one after another"),
+        A::AutoMix => ("AutoMix", "Blends each song into the next, on the beat"),
+        A::AutoMixDj => ("DJ", "Loops, tempo bends and drops, like a DJ"),
+        A::Original => ("Original quality", "Files as they are on your server"),
+        A::High => ("High quality", "192 kbps, about 1.4 MB a minute"),
+        A::SaveData => ("Save data", "128 kbps, about 1 MB a minute"),
+    }
+}
+
+/// A first-run page's keys: the look's move and pick, a question's pick, continue and skip; back where
+/// there is a page before.
+pub fn setup_keys(look: bool, back: bool) -> String {
+    let mut keys = vec![if look { "↑ ↓ ← → move · enter pick" } else { "↑ ↓ choose · enter pick · c continue · s skip" }];
+    if back {
+        keys.push("esc back");
+    }
+    keys.join(" · ")
+}
 pub const PROVIDER_SAVED_KEYS: &str = "↑ ↓ choose · enter open · tab saved profiles · p plugins · esc back · q quit";
 pub const PLUGINS: &str = "Plugins";
 pub const FROM_A_PLUGIN: &str = "From a plugin";

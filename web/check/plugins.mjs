@@ -12,6 +12,7 @@
 // plugins added, where orbit and playback live.
 import fs from "node:fs";
 import puppeteer from "puppeteer-core";
+import { signIn } from "./signin.mjs";
 
 const url = process.argv[2] ?? "http://localhost:8099/";
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME ?? "/usr/bin/chromium", headless: "new", args: ["--no-sandbox", "--autoplay-policy=no-user-gesture-required", "--mute-audio"] });
@@ -52,10 +53,7 @@ const isOn = (id) => page.evaluate((x) => window.plugins.find(x)?.on, id);
 
 async function start() {
   await page.goto(url, { waitUntil: "load" });
-  await page.waitForFunction(() => document.querySelector("#login") || window.nori?.page === "home", { timeout: 30000 });
-  await page.waitForFunction(() => window.nori.page === "home" || document.querySelector("#login"), { timeout: 30000 });
-  if (await page.$("#login")) await page.click("#login button");
-  await page.waitForFunction(() => window.nori.page === "home", { timeout: 30000 });
+  await signIn(page);
 }
 
 async function play(album = "Long Album") {

@@ -44,7 +44,8 @@ These are the modules of `crates/ios/src/`:
 - `session.rs` holds the one open `nori_host::Session` and the controls. It sends reports, and it handles
   background, foreground and memory warnings.
 - `output.rs` is the sound card: `IosOutput` over a `Sink`, and the render callback.
-- `pages.rs` answers every page read with `nori_ios_read`, and serves covers, lyrics, settings and the
+- `pages.rs` answers every page read with `nori_ios_read`, and serves covers, lyrics, settings, the
+  first run's questions (`nori_core::setup`, never the mobile data one) and the covers they play, and the
   equalizer.
 - `paging.rs` decides when a list's next page goes out (`nori_ios_read_more`), with the core's
   `paged::Paged`.
@@ -53,8 +54,8 @@ These are the modules of `crates/ios/src/`:
 - `lyrics.rs` puts the core's `LyricClock` behind a handle that the lyrics page holds.
 - `theme.rs` turns the `theme` and `season` settings into colors for the device's date and time zone. It
   also dyes a page with a cover's or a mix's color.
-- `account.rs` is the login form (`providers`, `log_in`), the saved servers and their icons
-  (`ProfileIcon`), and their scrobbling accounts.
+- `account.rs` is the login form (`providers`, `log_in`), the first run's welcome (`WelcomeFlow`), the
+  saved servers and their icons (`ProfileIcon`), and their scrobbling accounts.
 - `offer.rs` offers, on Home, the queue that another device left on the server (`offer::Offered`).
 - `remote.rs` is remote control: Bonjour through the app, and the devices the music can move to.
 - `jam.rs` is a jam that this iPod joined as a guest.
@@ -71,6 +72,8 @@ These are the files of `ios/Sources/`:
   sends page and cover requests.
 - `Shell.swift` holds the tabs, the bottom chrome and the mini player. The pages each have their own
   file, such as `Home.swift`, `Pages.swift`, `Player.swift`, `Queue.swift` and `Settings.swift`.
+- `Welcome.swift` holds the first run: the welcome while no profile is saved, then the questions over the
+  app once the first one opens.
 - `Devices.swift` holds the output picker, the devices sheet, joining a jam, Bonjour and the system
   volume.
 - `Covers.swift` holds `CoverCache` and `CoverView`.
@@ -194,6 +197,13 @@ guide shows the screens. These are the rules a contributor needs:
 - Animations run as Core Animation layer properties on the render server. The system's Reduce Motion
   turns fades and slides into direct changes.
 - VoiceOver labels cover the glyph buttons, the rows and the drawn lyric lines.
+- While no profile is saved, the welcome covers the app. Its sources are the core's kinds of profile
+  (no plugins or backup restore here), and Continue opens the form, as the core's `WelcomeFlow` says
+  (`nori_ios_welcome_*`, a handle Swift holds). Once that profile opens, the questions take its place
+  (`nori_ios_setup`): between songs, previewed on the core's fixed covers (`nori_ios_setup_cover`, WebP
+  decoded in Rust) that slide together and cross-fade through a gradient mask, then Settings' own
+  appearance and season controls. Each pick is applied as Settings applies it. A theme change rebuilds
+  the interface with the first run over it where it was.
 
 ### Covers
 

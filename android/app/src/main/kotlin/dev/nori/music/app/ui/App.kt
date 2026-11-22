@@ -281,7 +281,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             label = "session",
         ) { (loggedIn, _, guest, kind) ->
         if (!loggedIn) {
-            LoginScreen(settings)
+            WelcomePages(settings)
             return@Crossfade
         }
         val wait by settings.profileWait.collectAsStateWithLifecycle()
@@ -677,6 +677,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             if (tv) ChromeBack(pages, sheet, chromeFocus)
             SheetBack(sheet)
             SelectionBack(actions, sheet, controller)
+            // The rest of the welcome once a profile is in, then the first run's questions, over the app opening under them.
+            if (settings.welcome.collectAsStateWithLifecycle().value.page != dev.nori.music.ffi.WelcomePage.Picking) WelcomePages(settings)
+            settings.setup.collectAsStateWithLifecycle().value?.let { SetupPages(settings, it) }
             }
             SongMenu(menuSong, actions, onDismiss = { menuSong = null }, player = player.takeIf { menuFromPlayer }, page = menuPage.takeUnless { menuFromPlayer }, edits = menuEdits.takeUnless { menuFromPlayer })
             CardMenu(menuCard, actions, onDismiss = { menuCard = null })

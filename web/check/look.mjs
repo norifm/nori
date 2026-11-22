@@ -1,6 +1,7 @@
 // Quick screenshots of the wide layout while working on it: node web/check/look.mjs <url> <dir> [steps...]
 import fs from "node:fs";
 import puppeteer from "puppeteer-core";
+import { signIn } from "./signin.mjs";
 const [url, out, ...steps] = process.argv.slice(2);
 fs.mkdirSync(out, { recursive: true });
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME ?? "/usr/bin/chromium", headless: "new", args: ["--autoplay-policy=no-user-gesture-required", "--mute-audio"] });
@@ -12,7 +13,7 @@ const ask = (call, ...args) => page.evaluate((c, a) => window.ask(c, ...a), call
 const shot = (n) => page.screenshot({ path: `${out}/${n}.png` });
 await page.goto(url, { waitUntil: "load" });
 await page.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 30000 });
-if (await page.$("#login")) await page.click("#login button");
+await signIn(page, 60000);
 await page.waitForFunction(() => window.nori.page === "home" && window.nori.playerReadyAt !== undefined, { timeout: 60000 });
 await wait(1500);
 for (const step of steps.length ? steps : ["home", "play", "bar", "full", "queue", "settings"]) {

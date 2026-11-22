@@ -134,7 +134,7 @@ extension Notification.Name {
 }
 
 /// A tab's stack: the status bar is the theme's, but over a page's artwork that page's own.
-final class NavController: UINavigationController, UIGestureRecognizerDelegate, UINavigationControllerDelegate {
+class NavController: UINavigationController, UIGestureRecognizerDelegate, UINavigationControllerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         // Every page carries its own name (`PageTitle` or a hero) and is left with the edge swipe, as on
@@ -817,12 +817,14 @@ class CardsPage: UIViewController {
         edge.follow(scroll)
     }
 
-    /// The column's contents under the page's name, again.
+    /// The column's contents under the page's name (a page without a title draws its own head), again.
     func set(_ views: [UIView]) {
         column.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let name = PageTitle(title ?? "")
-        column.addArrangedSubview(name)
-        column.setCustomSpacing(8, after: name)
+        if let title {
+            let name = PageTitle(title)
+            column.addArrangedSubview(name)
+            column.setCustomSpacing(8, after: name)
+        }
         views.forEach(column.addArrangedSubview)
     }
 }

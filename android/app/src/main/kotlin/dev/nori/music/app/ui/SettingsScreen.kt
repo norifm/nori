@@ -398,7 +398,7 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
 
 /** The password a new backup is locked with ([restore] false), or the one a backup to restore was. */
 @Composable
-private fun BackupPasswordDialog(restore: Boolean, onDismiss: () -> Unit, onDone: (String) -> Unit) {
+internal fun BackupPasswordDialog(restore: Boolean, onDismiss: () -> Unit, onDone: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
     AlertCard(
         title = { Text(if (restore) say.backupPassword else say.backupPasswordNew) },
@@ -445,7 +445,7 @@ private fun KeyDialog(row: SettingRow.Ranked, onDismiss: () -> Unit, onSave: (St
 
 /** One section of a page as SettingsPages.kt laid it out; this only draws the rows and hands back what was picked. */
 @Composable
-private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection, actions: dev.nori.music.app.vm.ActionsViewModel?) {
+internal fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection, actions: dev.nori.music.app.vm.ActionsViewModel?) {
     val nav = LocalNav.current
     val context = LocalContext.current
     val p by vm.prefs.collectAsStateWithLifecycle()

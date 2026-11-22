@@ -308,9 +308,9 @@ impl Runner {
                 self.heard = None;
                 // Fresh screens for the new server, keeping client-wide state.
                 let prefs = app.prefs.clone();
-                let keep = (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server.clone(), app.settings.own.clone(), app.colors, app.paint, app.reduced_motion);
+                let keep = (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server.clone(), app.settings.own.clone(), app.colors, app.paint, app.reduced_motion, std::mem::take(&mut app.welcome));
                 *app = App::new(prefs);
-                (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server, app.settings.own, app.colors, app.paint, app.reduced_motion) = keep;
+                (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server, app.settings.own, app.colors, app.paint, app.reduced_motion, app.welcome) = keep;
                 prefs_changed(app);
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
                 app.output = self.o.device.clone().or_else(|| own::text(&self.root.app.settings, own::DEVICE)).unwrap_or_default();
@@ -457,6 +457,22 @@ impl Runner {
                     app.provider_chosen(kind);
                 }
             }
+            PluginCmd::InstallPicked(ids) => {
+                let offers: Vec<nori_plugins::Offer> = app.settings.own.offers().iter().filter(|o| ids.contains(&o.id)).cloned().collect();
+                let installed: Vec<String> = app.settings.own.plugins.iter().map(|c| c.id.clone()).collect();
+                nori_host::spawn("nori-plugin-picked", move || {
+                    for id in ids {
+                        // One installed but off is only turned on.
+                        let got = installed.contains(&id) || offers.iter().find(|o| o.id == id).and_then(|o| o.versions.first().cloned()).is_some_and(|v| {
+                            block_on(host.preview_version(v, "en".into())).and_then(|p| host.install_preview(p)).is_ok()
+                        });
+                        if got {
+                            host.turn(id.clone(), true);
+                        }
+                        let _ = tx.send(Msg::PickedInstalled { plugin: id, on: got });
+                    }
+                });
+            }
             PluginCmd::Place(id, at) => host.place(id, at),
             PluginCmd::Uninstall(id) => {
                 app.settings.plugin_gone(&id);
@@ -599,11 +615,17 @@ impl Runner {
             Msg::Installed(_) => self.plugin(app, crate::app::PluginCmd::Read),
             Msg::BackedUp(r) => return app.say(r.as_ref().map_or_else(crate::text::backup_failed, |_| crate::text::BACKUP_SAVED.into()), r.is_err()),
             Msg::Restored(Ok(r)) => {
-                if let Some(s) = &self.session {
-                    s.backup_restored(&r.settings);
+                let said = crate::text::restored(r);
+                match (&self.session, r.settings.prefs.active_server()) {
+                    (Some(s), _) => s.backup_restored(&r.settings),
+                    // Restored on the welcome: its profiles open the app.
+                    (None, Some(profile)) => {
+                        self.open(app, profile.clone(), None);
+                        app.go(View::Home);
+                    }
+                    (None, None) => {}
                 }
                 prefs_changed(app);
-                let said = crate::text::restored(r);
                 self.plugin(app, crate::app::PluginCmd::Read);
                 return app.say(said, false);
             }
@@ -683,6 +705,9 @@ impl Runner {
                 prefs_changed(app);
                 self.open(app, p.clone(), added);
                 app.go(View::Home);
+                if self.session.is_some() {
+                    app.welcome_added(p.kind.clone());
+                }
                 return;
             }
             _ => {}

@@ -11,6 +11,7 @@
 // the guest's pick arrives as a request, the host accepts it, and it lands in the host's queue; the
 // guest listens along and hears music; the host ends the jam and the guest is back on its own profile.
 import puppeteer from "puppeteer-core";
+import { signIn } from "./signin.mjs";
 
 const url = process.argv[2] ?? "http://localhost:8081/";
 const only = process.argv[3]?.split(",");
@@ -33,7 +34,7 @@ async function open(name) {
   page.on("console", (m) => m.type() === "error" && !m.text().includes("404") && logs.push(`${name} console: ${m.text()}`));
   await page.goto(url, { waitUntil: "load" });
   await page.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 60000 });
-  if (await page.$("#login")) await page.click("#login button");
+  await signIn(page, 60000);
   await page.waitForFunction(() => window.nori.page === "home" && window.nori.playerReadyAt !== undefined, { timeout: 60000 });
   return page;
 }

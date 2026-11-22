@@ -221,6 +221,166 @@ pub fn add_flow_on(flow: AddFlow, event: AddEvent) -> AddStep {
     AddStep { flow, then }
 }
 
+/// Where the first run's welcome is: the sources picked, their plugins installed, then each signed in.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct WelcomeFlow {
+    pub page: WelcomePage,
+    /// The sources picked, in the order they were offered.
+    pub picked: Vec<WelcomeSource>,
+    /// Plugins picked that would not install: their sources are dropped.
+    pub refused: Vec<String>,
+    /// The kinds a profile was added for.
+    pub added: Vec<ServerKind>,
+}
+
+/// Where music is played from, as the welcome offers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum WelcomeSource {
+    /// A kind the app has now.
+    Kind { kind: ServerKind },
+    /// A provider plugin a repo offers, not installed.
+    Offered { plugin: String },
+}
+
+/// The welcome's page.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum WelcomePage {
+    /// Where the music is: any number of sources picked, nothing signed in yet.
+    #[default]
+    Picking,
+    /// The picked plugins installing; `left` are still on their way.
+    Installing { left: Vec<String> },
+    /// Each picked source signed in: the one picked has its own page (`WelcomeFlow::one`), several are
+    /// listed, each added from there.
+    SigningIn,
+    /// A profile is in: the first run's questions follow.
+    Done,
+}
+
+/// What happened on the welcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum WelcomeEvent {
+    /// A source picked, or picked again to drop it.
+    Toggled { source: WelcomeSource },
+    /// Continue: from the sources to their installs or sign-ins, or from the sign-ins to the questions.
+    Continue,
+    /// A picked plugin installed and on: its source is its kind now.
+    Installed { plugin: String },
+    /// A picked plugin would not install: its source is dropped.
+    InstallRefused { plugin: String },
+    /// A profile of `kind` added.
+    Added { kind: ServerKind },
+    /// Back from the sign-ins to the sources, while nothing is added.
+    Back,
+}
+
+/// What a step of the welcome asks of the client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum WelcomeDo {
+    Nothing,
+    /// Install these offered plugins and turn them on, answering each with `Installed` or `InstallRefused`.
+    Install { plugins: Vec<String> },
+    /// A profile is in: ask the first run's questions.
+    Questions,
+}
+
+impl WelcomeFlow {
+    /// The kind whose own sign-in shows, when only one source was picked.
+    pub fn one(&self) -> Option<ServerKind> {
+        match (&self.page, self.picked.as_slice()) {
+            (WelcomePage::SigningIn, [WelcomeSource::Kind { kind }]) => Some(kind.clone()),
+            _ => None,
+        }
+    }
+
+    /// Takes `event`.
+    pub fn on(&mut self, event: WelcomeEvent) -> WelcomeDo {
+        match (&mut self.page, event) {
+            (WelcomePage::Picking, WelcomeEvent::Toggled { source }) => match self.picked.iter().position(|s| *s == source) {
+                Some(i) => {
+                    self.picked.remove(i);
+                }
+                None => self.picked.push(source),
+            },
+            (WelcomePage::Picking, WelcomeEvent::Continue) if !self.picked.is_empty() => {
+                self.refused.clear();
+                let plugins: Vec<String> = self.picked.iter().filter_map(|s| if let WelcomeSource::Offered { plugin } = s { Some(plugin.clone()) } else { None }).collect();
+                if plugins.is_empty() {
+                    self.page = WelcomePage::SigningIn;
+                } else {
+                    self.page = WelcomePage::Installing { left: plugins.clone() };
+                    return WelcomeDo::Install { plugins };
+                }
+            }
+            (WelcomePage::Installing { left }, WelcomeEvent::Installed { plugin }) => {
+                left.retain(|p| *p != plugin);
+                for s in &mut self.picked {
+                    if *s == (WelcomeSource::Offered { plugin: plugin.clone() }) {
+                        *s = WelcomeSource::Kind { kind: ServerKind::Plugin { id: plugin.clone() } };
+                    }
+                }
+                self.installs_done();
+            }
+            (WelcomePage::Installing { left }, WelcomeEvent::InstallRefused { plugin }) => {
+                left.retain(|p| *p != plugin);
+                self.picked.retain(|s| *s != (WelcomeSource::Offered { plugin: plugin.clone() }));
+                self.refused.push(plugin);
+                self.installs_done();
+            }
+            (WelcomePage::SigningIn, WelcomeEvent::Added { kind }) => {
+                if !self.added.contains(&kind) {
+                    self.added.push(kind);
+                }
+                // One source has nothing more to sign in.
+                if self.picked.len() == 1 {
+                    self.page = WelcomePage::Done;
+                    return WelcomeDo::Questions;
+                }
+            }
+            (WelcomePage::SigningIn, WelcomeEvent::Continue) if !self.added.is_empty() => {
+                self.page = WelcomePage::Done;
+                return WelcomeDo::Questions;
+            }
+            (WelcomePage::SigningIn, WelcomeEvent::Back) if self.added.is_empty() => self.page = WelcomePage::Picking,
+            _ => {}
+        }
+        WelcomeDo::Nothing
+    }
+
+    /// Every install answered: on to the sign-ins, or back to the sources when none is left.
+    fn installs_done(&mut self) {
+        if matches!(&self.page, WelcomePage::Installing { left } if left.is_empty()) {
+            self.page = if self.picked.is_empty() { WelcomePage::Picking } else { WelcomePage::SigningIn };
+        }
+    }
+}
+
+/// [`WelcomeFlow::on`], owned: the flow after `event`, and what to do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct WelcomeStep {
+    pub flow: WelcomeFlow,
+    pub then: WelcomeDo,
+}
+
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn welcome_on(flow: WelcomeFlow, event: WelcomeEvent) -> WelcomeStep {
+    let mut flow = flow;
+    let then = flow.on(event);
+    WelcomeStep { flow, then }
+}
+
+/// [`WelcomeFlow::one`].
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn welcome_one(flow: WelcomeFlow) -> Option<ServerKind> {
+    flow.one()
+}
+
 /// What is shown for signing the profile's account in, one at a time, and the last sign-in.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -429,6 +589,58 @@ mod tests {
 
     fn kind(id: &str) -> ServerKind {
         ServerKind::Plugin { id: id.into() }
+    }
+
+    fn offered(id: &str) -> WelcomeSource {
+        WelcomeSource::Offered { plugin: id.into() }
+    }
+
+    fn welcome(events: impl IntoIterator<Item = WelcomeEvent>) -> (WelcomeFlow, WelcomeDo) {
+        events.into_iter().fold((WelcomeFlow::default(), WelcomeDo::Nothing), |(mut f, _), e| {
+            let then = f.on(e);
+            (f, then)
+        })
+    }
+
+    #[test]
+    fn picked_plugins_install_then_each_source_signs_in() {
+        let server = WelcomeSource::Kind { kind: ServerKind::Subsonic };
+        let (f, then) = welcome([
+            WelcomeEvent::Toggled { source: server.clone() },
+            WelcomeEvent::Toggled { source: offered("yt") },
+            WelcomeEvent::Toggled { source: offered("sc") },
+            WelcomeEvent::Continue,
+        ]);
+        assert_eq!(then, WelcomeDo::Install { plugins: vec!["yt".into(), "sc".into()] });
+        let mut f = f;
+        f.on(WelcomeEvent::Installed { plugin: "yt".into() });
+        f.on(WelcomeEvent::InstallRefused { plugin: "sc".into() });
+        assert_eq!(f.page, WelcomePage::SigningIn);
+        assert_eq!(f.picked, [server, WelcomeSource::Kind { kind: kind("yt") }]);
+        assert_eq!(f.refused, ["sc"]);
+        assert_eq!(f.one(), None, "two sources are listed");
+        assert_eq!(f.on(WelcomeEvent::Continue), WelcomeDo::Nothing, "nothing signed in yet");
+        assert_eq!(f.on(WelcomeEvent::Added { kind: kind("yt") }), WelcomeDo::Nothing);
+        assert_eq!(f.on(WelcomeEvent::Back), WelcomeDo::Nothing);
+        assert_eq!(f.page, WelcomePage::SigningIn, "a profile added keeps the sign-ins");
+        assert_eq!(f.on(WelcomeEvent::Continue), WelcomeDo::Questions);
+    }
+
+    #[test]
+    fn one_source_signs_in_on_its_own_page_and_goes_on() {
+        let (mut f, then) = welcome([WelcomeEvent::Continue, WelcomeEvent::Toggled { source: WelcomeSource::Kind { kind: ServerKind::Subsonic } }, WelcomeEvent::Continue]);
+        assert_eq!(then, WelcomeDo::Nothing);
+        assert_eq!(f.one(), Some(ServerKind::Subsonic));
+        f.on(WelcomeEvent::Back);
+        assert_eq!(f.page, WelcomePage::Picking, "back while nothing is added");
+        f.on(WelcomeEvent::Continue);
+        assert_eq!(f.on(WelcomeEvent::Added { kind: ServerKind::Subsonic }), WelcomeDo::Questions);
+    }
+
+    #[test]
+    fn every_install_refused_goes_back_to_the_sources() {
+        let (f, _) = welcome([WelcomeEvent::Toggled { source: offered("yt") }, WelcomeEvent::Continue, WelcomeEvent::InstallRefused { plugin: "yt".into() }]);
+        assert_eq!((f.page, f.picked.len(), f.refused), (WelcomePage::Picking, 0, vec!["yt".to_string()]));
     }
 
     #[test]

@@ -328,6 +328,10 @@ void nori_ios_cover_release(void *owner);
 void nori_ios_on_cover(NoriCoverFn cb);
 void nori_ios_cover(uint64_t token, const char *id, uint32_t px);
 void nori_ios_cover_cancel(uint64_t token);
+/// The covers the first run's AutoMix question plays: how many, and cover `index` decoded `px` square to the
+/// cover callback with `token` (none for an index past them).
+uint32_t nori_ios_setup_covers(void);
+void nori_ios_setup_cover(uint64_t token, uint32_t index, uint32_t px);
 
 /// The lyrics view opened on a song and closed; a lyrics report says what it shows changed, then read
 /// it as JSON (free it).
@@ -391,6 +395,26 @@ char *nori_ios_presets(void);
 int32_t nori_ios_preset(uint32_t index);
 char *nori_ios_settings(void);
 int32_t nori_ios_set(const char *name, const char *value);
+
+/// The first run's questions, JSON [{step, answers}] to free, each by its name in the core. An answer
+/// given, by those indices: its settings set as nori_ios_set does (0 for none such, or nothing open).
+char *nori_ios_setup(void);
+int32_t nori_ios_setup_answer(uint32_t step, uint32_t answer);
+
+/// The first run's welcome (`WelcomeFlow`), held as a handle: new, freed, an event taken (NORI_WELCOME_*;
+/// `kind` the kind toggled or added) answering NORI_WELCOME_NOTHING or NORI_WELCOME_QUESTIONS, and its
+/// state as JSON {picked: [kind], one} to free, `one` the kind whose form shows now or null.
+typedef struct NoriWelcome NoriWelcome;
+#define NORI_WELCOME_TOGGLED 0
+#define NORI_WELCOME_CONTINUE 1
+#define NORI_WELCOME_ADDED 2
+#define NORI_WELCOME_BACK 3
+#define NORI_WELCOME_NOTHING 0
+#define NORI_WELCOME_QUESTIONS 1
+NoriWelcome *nori_ios_welcome_new(void);
+void nori_ios_welcome_free(NoriWelcome *flow);
+int32_t nori_ios_welcome_on(NoriWelcome *flow, int32_t event, const char *kind);
+char *nori_ios_welcome(const NoriWelcome *flow);
 
 /// The equalizer, its curve and bands, as JSON (free it). A band's point moved or its editor changed;
 /// a parametric band added at `pos` across the curve, or band `index` removed (`pos` below 0). 1 when

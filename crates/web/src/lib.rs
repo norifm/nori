@@ -50,6 +50,17 @@ struct PluginHere {
     from_file: bool,
 }
 
+/// What the welcome's page asks of it (`Nori::welcome`).
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum WelcomeAsk {
+    Read,
+    Toggled { source: String },
+    Continue,
+    Added { source: String },
+    Back,
+}
+
 /// What `plugin_found` searches of an offer.
 #[derive(serde::Deserialize)]
 struct PluginNamed {
@@ -70,6 +81,8 @@ pub struct Nori {
     client: std::cell::RefCell<Option<Arc<Client>>>,
     #[cfg(feature = "engine")]
     live: play::Live,
+    /// The first run's welcome: where the music is picked and signed in.
+    welcome: std::cell::RefCell<nori_core::providers::flow::WelcomeFlow>,
     /// The queue Home offers (`offer::Offered`).
     offered: std::cell::RefCell<nori_core::offer::Offered>,
     /// Each album grid's pages, by the grid's number; the oldest fall off.
@@ -103,6 +116,7 @@ impl Nori {
             search: nori_core::search::SearchSession::new(),
             #[cfg(not(feature = "engine"))]
             client: Default::default(),
+            welcome: Default::default(),
             offered: Default::default(),
             grids: Default::default(),
         })
@@ -226,6 +240,78 @@ impl Nori {
         let form = SavedServer { id: nori_core::settings::new_server_id(), name: user.clone(), url, user, password, ..Default::default() };
         let profile = nori_core::providers::log_in(&nori_core::providers::Kinds::builtin(), Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
         self.enter(profile)
+    }
+
+    /// Whether the install has no profile yet: its first run, with the welcome (`welcome`) and then the
+    /// questions (`setup`).
+    pub fn first_run(&self) -> bool {
+        self.app.settings.current().unwrap_or_default().servers.is_empty()
+    }
+
+    /// Takes the welcome's `ask` (JSON `{ kind, source }`: `read`, `toggled`, `continue`, `added`, `back`; a
+    /// source by its kind's id, as `ServerKind::id`; a browser offers only its own kinds) as `WelcomeFlow`
+    /// does: `{ page, picked, then }`, `page` and `then` by name (`WelcomePage`, `WelcomeDo`), `picked`
+    /// the kinds' ids. Once the questions are due the welcome starts over.
+    pub fn welcome(&self, ask: String) -> Result<String, JsValue> {
+        use nori_core::providers::flow::{WelcomeDo, WelcomeEvent, WelcomePage, WelcomeSource};
+        use nori_core::settings::ServerKind;
+        let ask: WelcomeAsk = serde_json::from_str(&ask).map_err(error)?;
+        let kind = |id: &str| ServerKind::from_id(id).ok_or_else(|| error(format!("no source {id}")));
+        let event = match ask {
+            WelcomeAsk::Read => None,
+            WelcomeAsk::Toggled { source } => Some(WelcomeEvent::Toggled { source: WelcomeSource::Kind { kind: kind(&source)? } }),
+            WelcomeAsk::Continue => Some(WelcomeEvent::Continue),
+            WelcomeAsk::Added { source } => Some(WelcomeEvent::Added { kind: kind(&source)? }),
+            WelcomeAsk::Back => Some(WelcomeEvent::Back),
+        };
+        let mut flow = self.welcome.borrow_mut();
+        let then = event.map_or(WelcomeDo::Nothing, |e| flow.on(e));
+        let page = match flow.page {
+            WelcomePage::Picking => "picking",
+            WelcomePage::Installing { .. } => "installing",
+            WelcomePage::SigningIn => "signingIn",
+            WelcomePage::Done => "done",
+        };
+        let then_name = match then {
+            WelcomeDo::Nothing => "nothing",
+            WelcomeDo::Install { .. } => "install",
+            WelcomeDo::Questions => "questions",
+        };
+        let picked: Vec<&str> = flow.picked.iter().filter_map(|s| if let WelcomeSource::Kind { kind } = s { Some(kind.id()) } else { None }).collect();
+        let answer = json!({ "page": page, "picked": picked, "then": then_name }).to_string();
+        if then == WelcomeDo::Questions {
+            *flow = Default::default();
+        }
+        Ok(answer)
+    }
+
+    /// The first run's questions in order, each with its answers (`setup_steps`, `setup_answers`):
+    /// `[{ step, answers }]` by name. A browser streams over no mobile data of its own.
+    pub fn setup_steps(&self) -> String {
+        use nori_core::setup::{setup_answers, setup_steps};
+        let steps: Vec<Value> = setup_steps(false)
+            .into_iter()
+            .map(|s| json!({ "step": format!("{s:?}"), "answers": setup_answers(s).iter().map(|a| format!("{a:?}")).collect::<Vec<_>>() }))
+            .collect();
+        Value::from(steps).to_string()
+    }
+
+    /// The covers the first run's AutoMix question plays (`setup_covers`), each as WebP.
+    pub fn setup_covers(&self) -> js_sys::Array {
+        nori_core::setup::setup_covers().iter().map(|c| js_sys::Uint8Array::from(c.as_slice())).collect()
+    }
+
+    /// Sets what first-run answer `answer` (by name, as `setup_steps` lists it) stands for, each setting as
+    /// [`Nori::setting`] does.
+    pub fn setup_answer(&self, answer: String) -> Result<(), JsValue> {
+        use nori_core::setup::{setup_answers, setup_settings, setup_steps};
+        let answer = setup_steps(true).into_iter().flat_map(setup_answers).find(|a| format!("{a:?}") == answer).ok_or_else(|| error(format!("no answer {answer}")))?;
+        for pick in setup_settings(answer) {
+            if !self.setting(pick.name.clone(), pick.value) {
+                return Err(error(format!("no setting {}", pick.name)));
+            }
+        }
+        Ok(())
     }
 
     /// Opens the profile signed in last; false when there is none.

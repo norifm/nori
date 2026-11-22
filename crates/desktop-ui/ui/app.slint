@@ -342,6 +342,36 @@ export struct EqLine {
     detail: string,
 }
 
+// The first run's words (words.rs).
+export struct FirstRunWords {
+    title: string,
+    where-music: string,
+    restore: string,
+    sign-in: string,
+    connect: string,
+    installing: string,
+    skip: string,
+    next: string,
+    start: string,
+}
+
+// A source of music on the welcome: its tile, name and what it is, and how its row ends (settings.rs
+// `SourceMark`): 0 not picked, 1 picked, 2 its plugin installing, 3 to sign in, 4 signed in.
+export struct SourceRow {
+    title: string,
+    detail: string,
+    icon: image,
+    letter: string,
+    glyph: MarkGlyph,
+    mark: int,
+}
+
+// An answer to the first-run question shown.
+export struct SetupCard {
+    name: string,
+    line: string,
+}
+
 // The kind of profile the sign-in form adds (the core's providers): its words, and the fields it asks.
 // The account sheet's code step, in the client's words (words.rs).
 export struct CodeWords {
@@ -1084,10 +1114,12 @@ component Seal inherits Rectangle {
 // slides in from the right, opaque. Reduced motion shows it at once.
 component Fade inherits Rectangle {
     in property <bool> push;
+    // How far a push comes in from, as a share of the width; negative from the left.
+    in property <float> lead: 0.3;
     property <bool> shown;
     property <duration> span: Motion.reduced ? 0ms : 300ms;
     opacity: self.shown || Motion.reduced ? 1 : 0;
-    x: self.shown || !self.push ? 0 : self.width * 0.3;
+    x: self.shown || !self.push ? 0 : self.width * self.lead;
     background: self.push ? Theme.ground : transparent;
     animate opacity { duration: root.span * 0.8; enabled: root.span > 0ms; easing: ease-out; }
     animate x { duration: root.span; enabled: root.span > 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
@@ -4394,6 +4426,98 @@ component SeasonTiles inherits VerticalLayout {
     }
 }
 
+// One of the listening preview's covers, from `from` to `from + width` of it.
+component CoverSlice inherits Rectangle {
+    in property <image> source;
+    in property <length> from;
+    in property <length> side;
+    clip: true;
+    Rectangle {
+        x: -root.from;
+        width: root.side;
+        height: root.side;
+        background: Theme.fill;
+        Image {
+            width: 100%;
+            height: 100%;
+            preferred-width: 0px;
+            preferred-height: 0px;
+            source: root.source;
+            image-fit: cover;
+        }
+    }
+}
+
+// The profile's own covers in a row, played as the answer picked plays songs: each starts `spacing` of a
+// cover's side after the one before, and fades in over it for `fade` of its width, gliding to them when another
+// is picked; under them, for nonstop, the beat. `head`, 0 to 1, is a playhead in the accent across them while a
+// pick plays; 0 is none. A cover not in yet is its plate.
+component ListeningPreview inherits Rectangle {
+    in property <[image]> covers;
+    in property <float> spacing;
+    in property <float> fade;
+    in property <bool> beat;
+    in property <float> head;
+    property <float> spacing-now: root.spacing;
+    property <float> fade-now: root.fade;
+    property <float> beat-now: root.beat ? 1 : 0;
+    animate spacing-now, fade-now, beat-now {
+        duration: Motion.reduced ? 0ms : 300ms;
+        easing: cubic-bezier(0.2, 0.9, 0.3, 1);
+    }
+    // Sized so the widest arrangement, albums apart, fits.
+    property <length> side: self.width / (1 + 1.12 * 3);
+    property <length> span: self.side * (1 + self.spacing-now * max(0, self.covers.length - 1));
+    property <length> left: (self.width - self.span) / 2;
+    // A fade drawn as layers of the cover, each starting further right and reaching its right edge: an image
+    // can't take a gradient's mask here. Layer j at 1 / (slices - j) brings the alpha to (j + 1) / slices.
+    property <int> slices: 16;
+    height: self.side + 24px;
+    for cover[i] in root.covers: art := Rectangle {
+        property <length> faded: i == 0 ? 0 : root.fade-now * root.side;
+        x: root.left + i * root.spacing-now * root.side;
+        y: 0;
+        width: root.side;
+        height: root.side;
+        border-radius: 12px;
+        clip: true;
+        if art.faded == 0: CoverSlice {
+            x: 0;
+            y: 0;
+            width: root.side;
+            height: root.side;
+            from: 0;
+            side: root.side;
+            source: cover;
+        }
+        for j in (art.faded > 0 ? root.slices : 0): CoverSlice {
+            x: art.faded * j / root.slices;
+            y: 0;
+            width: root.side - self.x;
+            height: root.side;
+            from: self.x;
+            side: root.side;
+            source: cover;
+            opacity: 1 / (root.slices - j);
+        }
+    }
+    // The beat under the mix, coming and going with it.
+    for t in (root.beat-now > 0 ? 17 : 0): Rectangle {
+        x: root.left + root.span * t / 16 - 0.75px;
+        y: root.side + 12px;
+        width: 1.5px;
+        height: 8px;
+        background: Theme.text.with-alpha(0.32 * root.beat-now);
+    }
+    if root.head > 0: Rectangle {
+        x: root.left + root.span * root.head - 1px;
+        y: -6px;
+        width: 2px;
+        height: root.side + 12px;
+        background: Theme.accent;
+    }
+}
+
 // A row's part of its group's card, as Android's: the surface with a hairline edge round the whole group,
 // the card's corners where the group starts and ends.
 component Plate inherits Rectangle {
@@ -4577,6 +4701,127 @@ component PluginTile inherits Rectangle {
         colour: Theme.text;
         width: root.side * 0.6;
         height: root.side * 0.6;
+    }
+}
+
+// A pick on the welcome: an empty ring, or the accent filled with a check.
+component PickMark inherits Rectangle {
+    in property <bool> picked;
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    background: root.picked ? Theme.accent : transparent;
+    border-width: root.picked ? 0 : 1.5px;
+    border-color: Theme.text.with-alpha(0.3);
+    if root.picked: Icon {
+        glyph: Icons.check;
+        colour: Theme.on-accent;
+        width: 16px;
+        height: 16px;
+    }
+}
+
+// Sources of music as one grouped card, each row its tile, name and what it is, ending as its `mark` says
+// (`SourceRow`); `picked` reports a row's index.
+component SourceCard inherits Rectangle {
+    in property <[SourceRow]> rows;
+    in property <string> connect;
+    callback picked(int);
+    border-radius: 18px;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.hairline;
+    clip: true;
+    VerticalLayout {
+        for r[i] in root.rows: Rectangle {
+            min-height: 64px;
+            background: line.has-hover && line.enabled ? Theme.hover : transparent;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 10px;
+                padding-bottom: 10px;
+                spacing: 12px;
+                PluginTile {
+                    y: (parent.height - self.height) / 2;
+                    side: 40px;
+                    icon: r.icon;
+                    letter: r.letter;
+                    glyph: r.glyph;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    spacing: 2px;
+                    Text {
+                        text: r.title;
+                        color: Theme.text;
+                        font-size: 14px;
+                    }
+                    if r.detail != "": Text {
+                        text: r.detail;
+                        color: Theme.dim;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    if r.mark <= 1: PickMark {
+                        picked: r.mark == 1;
+                    }
+                    if r.mark == 2: Text {
+                        text: "•••";
+                        color: Theme.dim;
+                        font-size: 13px;
+                    }
+                    if r.mark == 3: Text {
+                        text: root.connect;
+                        color: Theme.text;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    if r.mark == 4: Icon {
+                        glyph: Icons.check;
+                        colour: Theme.accent;
+                        width: 20px;
+                        height: 20px;
+                    }
+                }
+            }
+            if i > 0: Rectangle {
+                x: 16px;
+                y: 0;
+                width: parent.width - 32px;
+                height: 1px;
+                background: Theme.hairline;
+            }
+            line := TouchArea {
+                enabled: r.mark != 2 && r.mark != 4;
+                mouse-cursor: self.enabled ? pointer : default;
+                clicked => { root.picked(i); }
+            }
+        }
+    }
+}
+
+// The page's main action as a full pill across `width`: quiet and deaf until `on`.
+component WidePill inherits HorizontalLayout {
+    in property <string> text;
+    in property <bool> on: true;
+    in property <length> across;
+    callback clicked;
+    padding-top: 14px;
+    Capsule {
+        width: root.across;
+        size: 44px;
+        text: root.text;
+        opacity: root.on ? 1 : 0.4;
+        clicked => {
+            if root.on {
+                root.clicked();
+            }
+        }
     }
 }
 
@@ -7438,6 +7683,46 @@ export component AppWindow inherits Window {
     in property <LoginKind> login-form;
     // The form adds a profile, so back chooses again; it isn't editing one.
     in property <bool> login-adding;
+    in property <FirstRunWords> first-run-words;
+    // The first run's welcome (the core's `WelcomeFlow`): the sources to pick from, whether Continue goes on
+    // and whether picked plugins are installing, the plugins that would not install, and how restoring a backup
+    // there went. Once picked, the sources to sign in, over the app once a profile is in, and whether Continue
+    // goes on from there, and whether back goes to the sources.
+    in property <bool> welcome;
+    in property <[SourceRow]> welcome-sources;
+    in property <bool> welcome-can-continue;
+    in property <bool> welcome-installing;
+    in property <string> welcome-refused;
+    in property <string> welcome-restore-line;
+    in property <bool> welcome-restore-failed;
+    in property <bool> welcome-restore-busy;
+    in property <bool> welcome-signing;
+    in property <[SourceRow]> welcome-sign-ins;
+    in property <bool> welcome-signed;
+    in property <bool> welcome-can-back;
+    callback welcome-picked(int);
+    callback welcome-continue();
+    callback welcome-back();
+    // The first run's questions (setup.rs): the page shown of `setup-count`, the way it came (1 on, -1 back),
+    // its title and answers; the last page's season and appearance, as Settings has them, instead.
+    in property <bool> setup-open;
+    in property <int> setup-at;
+    in property <int> setup-count;
+    in property <int> setup-way: 1;
+    in property <bool> setup-look;
+    in property <string> setup-title;
+    in property <[SetupCard]> setup-answers;
+    // The answer picked (-1 none), and how the listening preview plays it with the profile's covers.
+    in property <int> setup-chosen: -1;
+    in property <float> setup-spacing: 1.12;
+    in property <float> setup-fade;
+    in property <bool> setup-beat;
+    in property <[image]> setup-covers;
+    in property <[SettingRow]> setup-look-rows;
+    callback setup-answer(int);
+    callback setup-back();
+    // Skip, Continue, and Start listening on the last page.
+    callback setup-next();
 
     callback go(View);
     callback back();
@@ -7554,7 +7839,95 @@ export component AppWindow inherits Window {
             background: Theme.ground;
         }
 
-        if root.view == View.login && root.login-choosing: Rectangle {
+        // The first run's welcome: where the music is, any number of sources picked.
+        if root.view == View.login && root.login-choosing && root.welcome: Rectangle {
+            TitleStrip {
+                y: 0;
+                drag => { root.drag-window(); }
+                zoom => { root.zoom-window(); }
+            }
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    VerticalLayout {
+                        width: 440px;
+                        Text {
+                            x: 16px;
+                            text: root.first-run-words.title;
+                            color: Theme.text;
+                            font-family: Type.title;
+                            font-size: 38px;
+                            font-weight: 700;
+                            letter-spacing: -0.3px;
+                            wrap: word-wrap;
+                        }
+                        Rectangle {
+                            height: 10px;
+                        }
+                        SettingLine {
+                            item: { kind: 0, title: root.first-run-words.where-music };
+                        }
+                        Flickable {
+                            content-width: self.width;
+                            height: min(sources.preferred-height, root.height - 360px);
+                            content-height: sources.preferred-height;
+                            sources := SourceCard {
+                                rows: root.welcome-sources;
+                                picked(i) => { root.welcome-picked(i); }
+                            }
+                        }
+                        if root.welcome-refused != "": Text {
+                            x: 16px;
+                            text: root.welcome-refused;
+                            color: Theme.danger;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        // Restoring a backup brings back its profiles, which open the app.
+                        VerticalLayout {
+                            padding-top: 10px;
+                            padding-left: 6px;
+                            padding-right: 16px;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                alignment: start;
+                                TextButton {
+                                    text: root.first-run-words.restore;
+                                    opacity: root.welcome-restore-busy ? 0.45 : 1;
+                                    clicked => {
+                                        if !root.welcome-restore-busy {
+                                            root.setting-action("restore");
+                                        }
+                                    }
+                                }
+                            }
+                            if root.welcome-restore-line != "": Text {
+                                x: 10px;
+                                text: root.welcome-restore-line;
+                                color: root.welcome-restore-failed ? Theme.danger : Theme.dim;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+                        if root.login-error != "": Text {
+                            text: root.login-error;
+                            color: Theme.danger;
+                            wrap: word-wrap;
+                            horizontal-alignment: center;
+                        }
+                        WidePill {
+                            across: 440px;
+                            text: root.welcome-installing ? root.first-run-words.installing : root.first-run-words.next;
+                            on: root.welcome-can-continue;
+                            clicked => { root.welcome-continue(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.view == View.login && root.login-choosing && !root.welcome: Rectangle {
             TitleStrip {
                 y: 0;
                 drag => { root.drag-window(); }
@@ -9926,6 +10299,250 @@ export component AppWindow inherits Window {
         // Join a Jam: a sheet over the window, as the Mac's sheets come down from its top.
         // A lyrics service's key: typed, it is kept and the service switched on; removed, every service that
         // needs it is switched off.
+        // The welcome's sources picked, each signed in from here; over the app once a profile is in. A source's own
+        // form takes its place while it shows.
+        if root.welcome-signing && !(root.view == View.login && !root.login-choosing): Rectangle {
+            background: Theme.ground;
+            // The page under it takes no pointer.
+            TouchArea { }
+            TitleStrip {
+                y: 0;
+                drag => { root.drag-window(); }
+                zoom => { root.zoom-window(); }
+            }
+            if root.welcome-can-back: IconButton {
+                x: 16px;
+                y: 44px;
+                glyph: Icons.nav-arrow-left;
+                clicked => { root.welcome-back(); }
+            }
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    VerticalLayout {
+                        width: 440px;
+                        Text {
+                            x: 16px;
+                            text: root.first-run-words.sign-in;
+                            color: Theme.text;
+                            font-family: Type.title;
+                            font-size: 38px;
+                            font-weight: 700;
+                            letter-spacing: -0.3px;
+                        }
+                        Rectangle {
+                            height: 22px;
+                        }
+                        SourceCard {
+                            rows: root.welcome-sign-ins;
+                            connect: root.first-run-words.connect;
+                            picked(i) => { root.welcome-picked(i); }
+                        }
+                        if root.welcome-refused != "": Text {
+                            x: 16px;
+                            text: root.welcome-refused;
+                            color: Theme.danger;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        WidePill {
+                            across: 440px;
+                            text: root.first-run-words.next;
+                            on: root.welcome-signed;
+                            clicked => { root.welcome-continue(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The first run's questions once its first profile is in, over the app opening under them, one to a page.
+        if root.setup-open && root.view != View.login: setup := Rectangle {
+            property <length> column: min(520px, self.width - 32px);
+            // A pick plays once across the preview.
+            property <bool> playing;
+            property <float> head: self.playing ? 1 : 0;
+            animate head { duration: setup.playing ? 900ms : 0ms; easing: linear; }
+            Timer {
+                interval: 900ms;
+                running: setup.playing;
+                triggered => { setup.playing = false; }
+            }
+            background: Theme.ground;
+            // The app under it takes no pointer.
+            TouchArea { }
+            TitleStrip {
+                y: 0;
+                drag => { root.drag-window(); }
+                zoom => { root.zoom-window(); }
+            }
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    VerticalLayout {
+                        width: setup.column;
+                        // Back while there is a question before, the run as dots (the one shown in the accent), Skip.
+                        HorizontalLayout {
+                            height: 52px;
+                            Rectangle {
+                                width: 96px;
+                                if root.setup-at > 0: IconButton {
+                                    x: 0;
+                                    glyph: Icons.nav-arrow-left;
+                                    clicked => { root.setup-back(); }
+                                }
+                            }
+                            HorizontalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 6px;
+                                for i in root.setup-count: Rectangle {
+                                    y: (parent.height - self.height) / 2;
+                                    width: i == root.setup-at ? 18px : 6px;
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: i == root.setup-at ? Theme.accent : Theme.text.with-alpha(0.22);
+                                }
+                            }
+                            Rectangle {
+                                width: 96px;
+                                if !root.setup-look: TextButton {
+                                    x: parent.width - self.width;
+                                    text: root.first-run-words.skip;
+                                    clicked => { root.setup-next(); }
+                                }
+                            }
+                        }
+                        // A new page each time the one shown changes, sliding in a little from the way it came.
+                        for shown in [root.setup-at]: Rectangle {
+                            height: page.preferred-height;
+                            Fade {
+                                push: true;
+                                lead: 0.08 * root.setup-way;
+                                page := VerticalLayout {
+                                    spacing: 12px;
+                                    VerticalLayout {
+                                        padding-left: 16px;
+                                        padding-right: 16px;
+                                        padding-top: 20px;
+                                        padding-bottom: 12px;
+                                        spacing: 6px;
+                                        Text {
+                                            text: root.setup-title;
+                                            color: Theme.text;
+                                            font-family: Type.title;
+                                            font-size: 31px;
+                                            font-weight: 700;
+                                            letter-spacing: -0.3px;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                    // What the answer picked does, then the answers.
+                                    if root.setup-covers.length > 0: Rectangle {
+                                        border-radius: 18px;
+                                        background: Theme.panel;
+                                        border-width: 1px;
+                                        border-color: Theme.hairline;
+                                        VerticalLayout {
+                                            padding-top: 22px;
+                                            padding-bottom: 14px;
+                                            padding-left: 18px;
+                                            padding-right: 18px;
+                                            ListeningPreview {
+                                                covers: root.setup-covers;
+                                                spacing: root.setup-spacing;
+                                                fade: root.setup-fade;
+                                                beat: root.setup-beat;
+                                                head: setup.head;
+                                            }
+                                        }
+                                    }
+                                    if root.setup-answers.length > 0: VerticalLayout {
+                                        padding-top: 2px;
+                                        Rectangle {
+                                            border-radius: 18px;
+                                            background: Theme.panel;
+                                            border-width: 1px;
+                                            border-color: Theme.hairline;
+                                            clip: true;
+                                            VerticalLayout {
+                                                for a[i] in root.setup-answers: Rectangle {
+                                                    min-height: 64px;
+                                                    background: row.has-hover ? Theme.hover : transparent;
+                                                    HorizontalLayout {
+                                                        padding-left: 16px;
+                                                        padding-right: 16px;
+                                                        padding-top: 10px;
+                                                        padding-bottom: 10px;
+                                                        spacing: 8px;
+                                                        VerticalLayout {
+                                                            alignment: center;
+                                                            horizontal-stretch: 1;
+                                                            spacing: 2px;
+                                                            Text {
+                                                                text: a.name;
+                                                                color: Theme.text;
+                                                                font-size: 15px;
+                                                            }
+                                                            Text {
+                                                                text: a.line;
+                                                                color: Theme.dim;
+                                                                font-size: 13px;
+                                                                wrap: word-wrap;
+                                                            }
+                                                        }
+                                                        if i == root.setup-chosen: VerticalLayout {
+                                                            alignment: center;
+                                                            Icon {
+                                                                glyph: Icons.check;
+                                                                colour: Theme.accent;
+                                                                width: 20px;
+                                                                height: 20px;
+                                                            }
+                                                        }
+                                                    }
+                                                    if i > 0: Rectangle {
+                                                        x: 16px;
+                                                        y: 0;
+                                                        width: parent.width - 32px;
+                                                        height: 1px;
+                                                        background: Theme.hairline;
+                                                    }
+                                                    row := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => {
+                                                            if i != root.setup-chosen {
+                                                                root.setup-answer(i);
+                                                                setup.playing = !Motion.reduced;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    for r in root.setup-look-rows: SettingLine {
+                                        item: r;
+                                        toggled(name, on) => { root.setting-toggled(name, on); }
+                                        chosen(name, i) => { root.setting-chosen(name, i); }
+                                    }
+                                    // On once an answer is picked; the last page's starts listening.
+                                    WidePill {
+                                        across: setup.column;
+                                        text: root.setup-look ? root.first-run-words.start : root.first-run-words.next;
+                                        on: root.setup-look || root.setup-chosen >= 0;
+                                        clicked => { root.setup-next(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if root.plugins-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {

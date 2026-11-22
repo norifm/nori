@@ -2877,14 +2877,20 @@ fn the_devices_panel_lists_a_plugins_cast() {
     assert!(!a.devices.shown(), "gone with the cast");
 }
 
-/// The first screen reaches Settings › Plugins with no profile, by key and by mouse, and back.
+/// The first screen reaches Settings › Plugins with no profile (p on the welcome), and adding another
+/// profile has its link; and back.
 #[test]
 fn the_first_screen_opens_the_plugins() {
     let mut a = app();
     a.choose_provider();
     assert_eq!(a.cmds.split_off(0), vec![Cmd::Plugin(crate::app::PluginCmd::Read), Cmd::Plugin(crate::app::PluginCmd::Look)], "the repos are asked once");
+    key(&mut a, KeyCode::Char('p'));
+    assert_eq!((a.view, a.settings.alone.clone()), (View::Settings, crate::settings_view::Alone::Plugins));
+    key(&mut a, KeyCode::Esc);
+    assert_eq!(a.view, View::Login);
+    with_profile(&mut a);
     let s = draw(&mut a, 100, 40);
-    assert!(s.contains("Plugins ›") && s.contains("p plugins"), "its way there is at its foot:\n{s}");
+    assert!(s.contains("Plugins ›") && s.contains("p plugins") && !s.contains(crate::text::WELCOME_TITLE), "adding another profile chooses plainly:\n{s}");
     let r = hit_rect(&a, Hit::Button(Button::LoginPlugins));
     a.handle(Msg::Mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: r.x, row: r.y, modifiers: KeyModifiers::NONE }));
     assert_eq!(a.view, View::Settings);
@@ -2897,6 +2903,11 @@ fn the_first_screen_opens_the_plugins() {
     assert_eq!(a.view, View::Settings);
 }
 
+
+/// A profile saved, so the first screen is the plain choice of what another plays from.
+fn with_profile(a: &mut App) {
+    a.prefs.servers = vec![nori_core::settings::SavedServer { id: "s1".into(), url: "https://music.example".into(), ..Default::default() }];
+}
 
 /// An app on the first screen with the fixture plugin on, so its provider is a kind of profile.
 fn app_with_provider(dir: &nori_testdir::TempDir) -> App {
@@ -2915,6 +2926,7 @@ fn the_kind_chosen_reaches_its_form() {
     use nori_core::settings::ServerKind;
     let dir = nori_testdir::TempDir::new("cli-login-kinds");
     let mut a = app_with_provider(&dir);
+    with_profile(&mut a);
     let s = draw(&mut a, 100, 40);
     dump("login-providers", &s);
     assert!(s.contains("Choose a provider") && s.contains("OpenSubsonic") && s.contains("Navidrome and other servers") && s.contains("Test") && !s.contains("Server address"), "{s}");
@@ -2955,7 +2967,7 @@ fn nothing_to_ask_adds_at_once() {
     use nori_core::providers::flow::{AddFlow, AddPage, AddSend};
     a.login.flow = AddFlow { page: AddPage::Adding { kind: kind.clone() }, send: AddSend::Sending { added: Some(nori_core::providers::AfterAdding::Remind) } };
     let s = draw(&mut a, 100, 40);
-    assert!(s.contains("Choose a provider") && !s.contains("Connect"), "no lone button:\n{s}");
+    assert!(s.contains(crate::text::WELCOME_TITLE) && !s.contains("Connect"), "no lone button:\n{s}");
     a.handle(Msg::LoggedIn(Err("no way".into())));
     let s = draw(&mut a, 100, 40);
     assert!(s.contains("no way") && !a.login_choosing(), "its page, with why:\n{s}");
@@ -3002,6 +3014,7 @@ fn every_plugin_off_leads_a_provider_to_the_switch() {
     a.prefs.plugins_off = true;
     assert_eq!(a.provider_lines().len(), 2);
     a.view = View::Login;
+    with_profile(&mut a);
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.settings.alone, crate::settings_view::Alone::Plugins, "the plugins' page, not the offer's");
@@ -3024,6 +3037,7 @@ fn the_first_screen_lists_offers_quietly() {
     use crate::settings_view::Shelf;
     let dir = nori_testdir::TempDir::new("cli-login-offers");
     let mut a = app_with_provider(&dir);
+    with_profile(&mut a);
     let sound = offer("Sound", &official(), None);
     let source = nori_plugins::Offer { points: vec!["provider".into()], ..offer("Radio", &official(), None) };
     a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![sound, source], failed: Vec::new() });
@@ -3060,6 +3074,7 @@ fn choosing_an_offer_installs_or_turns_it_on() {
     use crate::settings_view::Shelf;
     let dir = nori_testdir::TempDir::new("cli-login-offer-chosen");
     let mut a = app_with_provider(&dir);
+    with_profile(&mut a);
     let radio = nori_plugins::Offer { points: vec!["provider".into()], ..offer("Radio", &official(), None) };
     a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![radio], failed: Vec::new() });
     let id = "dev.example.radio".to_string();
@@ -3387,4 +3402,209 @@ fn a_plugin_safe_mode_stopped_restarts() {
     select_row(&mut a, |r| matches!(r, Row::Action { button, .. } if button == "Restart"));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Turn("dev.example.gain".into(), true))));
+}
+
+
+/// The welcome, in Day and in Night: where the music is, every source on an equal footing with a mark
+/// for whether it is picked; Continue once one is; restoring a backup by key and by mouse, its failure
+/// said under it.
+#[test]
+fn the_welcome_picks_where_the_music_is() {
+    use nori_core::providers::flow::{WelcomePage, WelcomeSource};
+    use nori_core::settings::ThemeMode;
+    let dir = nori_testdir::TempDir::new("cli-welcome");
+    for (mode, name) in [(ThemeMode::Light, "day"), (ThemeMode::Dark, "night")] {
+        let mut a = app_with_provider(&dir);
+        let p = StoredPrefs { theme: mode, ..a.prefs.clone() };
+        a.prefs_changed(p.clone(), p);
+        let s = draw(&mut a, 90, 30);
+        assert!(s.contains(crate::text::WELCOME_TITLE) && s.contains("WHERE'S YOUR MUSIC?") && s.contains(crate::text::RESTORE) && !s.contains("秋"), "{s}");
+        let marks = |s: &str| s.lines().filter(|l| l.contains("OpenSubsonic") || l.contains("Test")).map(|l| (l.contains('○'), l.contains('●'))).collect::<Vec<_>>();
+        assert_eq!(marks(&s), [(true, false), (true, false)], "nothing picked:\n{s}");
+        key(&mut a, KeyCode::Char('c'));
+        assert_eq!(a.welcome.page, WelcomePage::Picking, "no Continue before a pick");
+        key(&mut a, KeyCode::Down);
+        key(&mut a, KeyCode::Enter);
+        let s = draw(&mut a, 90, 30);
+        dump(&format!("welcome-{name}"), &s);
+        assert_eq!(marks(&s), [(true, false), (false, true)], "Test picked:\n{s}");
+        let buf = LAST.with(|l| l.borrow().clone()).unwrap();
+        let at = s.lines().position(|l| l.contains('●')).unwrap() as u16;
+        let x = (0..buf.area.width).find(|&x| buf[(x, at)].symbol() == "●").unwrap();
+        assert_eq!(buf[(x, at)].fg, a.look.accent, "picked in the accent");
+        assert_eq!(a.welcome.picked, [WelcomeSource::Kind { kind: nori_core::settings::ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() } }]);
+    }
+    let mut a = app_with_provider(&dir);
+    key(&mut a, KeyCode::Char('r'));
+    assert!(matches!(&a.overlay, Some(Overlay::Input { target: Target::BackupFile { restore: true }, .. })), "r restores a backup");
+    a.overlay = None;
+    draw(&mut a, 90, 30);
+    let r = hit_rect(&a, Hit::Button(Button::WelcomeRestore));
+    click(&mut a, r.x, r.y);
+    assert!(matches!(&a.overlay, Some(Overlay::Input { target: Target::BackupFile { restore: true }, .. })), "and so does a click");
+    a.overlay = None;
+    a.say("Wrong password", true);
+    let s = draw(&mut a, 90, 30);
+    let restore = s.lines().position(|l| l.contains(crate::text::RESTORE)).unwrap();
+    assert!(s.lines().nth(restore + 1).is_some_and(|l| l.contains("Wrong password")), "under it:\n{s}");
+}
+
+/// One source picked signs in on its own form, and back from it is the sources; a profile added from it
+/// starts the questions over the app.
+#[test]
+fn one_source_picked_signs_in_on_its_form() {
+    use nori_core::providers::flow::WelcomePage;
+    use nori_core::settings::ServerKind;
+    let dir = nori_testdir::TempDir::new("cli-welcome-one");
+    let mut a = app_with_provider(&dir);
+    key(&mut a, KeyCode::Enter);
+    key(&mut a, KeyCode::Char('c'));
+    assert_eq!((a.login.flow.kind(), a.welcome.page.clone()), (Some(&ServerKind::Subsonic), WelcomePage::SigningIn), "its form at once");
+    let s = draw(&mut a, 90, 30);
+    assert!(s.contains("Server address"), "{s}");
+    key(&mut a, KeyCode::Esc);
+    assert_eq!((a.welcome.page.clone(), a.login_choosing()), (WelcomePage::Picking, true), "back to the sources");
+    key(&mut a, KeyCode::Char('c'));
+    a.welcome_added(ServerKind::Subsonic);
+    assert!(a.setup.is_some() && a.view == View::Home && a.welcome == Default::default(), "the questions, over the app");
+}
+
+/// Several sources picked: plugins offered install with no sheet (one refused is said and dropped), then
+/// each signs in from a list, Connect or a check at its end; Continue once one is in starts the questions.
+#[test]
+fn several_sources_sign_in_from_a_list() {
+    use crate::settings_view::Shelf;
+    use nori_core::providers::flow::WelcomePage;
+    use nori_core::settings::ServerKind;
+    let dir = nori_testdir::TempDir::new("cli-welcome-several");
+    let mut a = app_with_provider(&dir);
+    let radio = nori_plugins::Offer { points: vec!["provider".into()], ..offer("Radio", &official(), None) };
+    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![radio.clone()], failed: Vec::new() });
+    for _ in 0..3 {
+        key(&mut a, KeyCode::Enter);
+        key(&mut a, KeyCode::Down);
+    }
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.split_off(0), vec![Cmd::Plugin(crate::app::PluginCmd::InstallPicked(vec![radio.id.clone()]))], "the offer installs, with no sheet");
+    let s = draw(&mut a, 90, 30);
+    dump("welcome-installing", &s);
+    assert!(s.contains(crate::text::INSTALLING) && s.lines().any(|l| l.contains("Radio") && l.contains("···")), "{s}");
+    a.handle(Msg::PickedInstalled { plugin: radio.id.clone(), on: false });
+    assert_eq!(a.welcome.page, WelcomePage::SigningIn);
+    let s = draw(&mut a, 90, 30);
+    dump("welcome-sign-in", &s);
+    assert!(s.contains(crate::text::WELCOME_SIGN_IN) && s.contains("Couldn't install Radio") && s.matches(crate::text::WELCOME_CONNECT).count() == 2, "{s}");
+    key(&mut a, KeyCode::Char('c'));
+    assert_eq!(a.welcome.page, WelcomePage::SigningIn, "no Continue before a profile is in");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.login.flow.kind(), Some(&ServerKind::Subsonic), "a source's form");
+    key(&mut a, KeyCode::Esc);
+    assert!(a.login_choosing() && a.welcome.page == WelcomePage::SigningIn, "back to the list");
+    a.view = View::Home;
+    a.welcome_added(ServerKind::Subsonic);
+    assert_eq!(a.view, View::Login, "the other sign-ins stay over the app");
+    let s = draw(&mut a, 90, 30);
+    dump("welcome-signed-in", &s);
+    assert!(s.lines().any(|l| l.contains("OpenSubsonic") && l.contains('✓')) && s.matches(crate::text::WELCOME_CONNECT).count() == 1, "{s}");
+    key(&mut a, KeyCode::Char('c'));
+    assert!(a.setup.is_some() && a.view == View::Home, "the questions");
+}
+
+/// The first run's question: a preview of four albums laid out as the answer chosen plays them, the
+/// answers with the chosen one checked, and Continue once one is; a pick sets its settings by name at once
+/// and stays, Continue goes on to the look, Back shows the pick again.
+#[test]
+fn the_first_question_previews_how_songs_follow() {
+    use nori_core::settings::ThemeMode;
+    use nori_core::setup::{setup_settings, SetupAnswer, SetupStep};
+    let picks = |a: SetupAnswer| setup_settings(a).into_iter().map(|p| Cmd::Setting(p.name, p.value)).collect::<Vec<_>>();
+    for (mode, name) in [(ThemeMode::Light, "day"), (ThemeMode::Dark, "night")] {
+        let mut a = app();
+        let p = StoredPrefs { theme: mode, ..a.prefs.clone() };
+        a.prefs_changed(p.clone(), p);
+        a.setup_start();
+        let s = draw(&mut a, 90, 30);
+        dump(&format!("setup-listening-{name}"), &s);
+        for words in ["Between songs", "No mixing", "Songs play whole, one after another", "AutoMix", "DJ", "Loops, tempo bends and drops, like a DJ", "Skip", "━━ •", "Continue"] {
+            assert!(s.contains(words), "{words}:\n{s}");
+        }
+        assert!(!s.contains("‹ Back") && !s.contains('✓'), "nothing before it, nothing answered:\n{s}");
+        assert!(s.contains("The Miseducation … │ 1992 Deluxe │ channel ORANGE │ CASIOPEA"), "apart before an answer:\n{s}");
+        for (down, answer, shown, file) in [
+            (0, SetupAnswer::NoMixing, "The Miseducation … │ 1992 Deluxe", "no-mixing"),
+            (1, SetupAnswer::AutoMix, "The Miseducation …░▒▓1992 Deluxe░▒▓", "automix"),
+            (1, SetupAnswer::AutoMixDj, "The Miseducation …▒▓1992 Deluxe▒▓", "automix-dj"),
+        ] {
+            for _ in 0..down {
+                key(&mut a, KeyCode::Down);
+            }
+            key(&mut a, KeyCode::Enter);
+            assert_eq!(a.cmds.split_off(0), picks(answer), "set at once, by name");
+            assert_eq!(a.setup.as_ref().map(|s| s.step()), Some(SetupStep::Listening), "a pick stays");
+            let s = draw(&mut a, 90, 30);
+            dump(&format!("setup-listening-{file}-{name}"), &s);
+            assert!(s.contains(shown), "{answer:?}:\n{s}");
+            assert_eq!(s.contains("╵ ╵ ╵"), answer == SetupAnswer::AutoMixDj, "the beat under the DJ alone:\n{s}");
+            let (answer_name, _) = crate::text::setup_answer(answer);
+            assert!(s.lines().find(|l| l.contains('✓')).is_some_and(|l| l.contains(&format!("│ {answer_name} "))), "checked:\n{s}");
+        }
+    }
+    let mut a = app();
+    a.setup_start();
+    key(&mut a, KeyCode::Char('c'));
+    for _ in 0..3 {
+        key(&mut a, KeyCode::Down);
+    }
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.setup.as_ref().map(|s| s.step()), Some(SetupStep::Listening), "no Continue before an answer");
+    draw(&mut a, 90, 30);
+    let r = hit_rect(&a, Hit::Row(crate::app::ListRef::Setup, 1));
+    click(&mut a, r.x + 4, r.y);
+    assert!(a.cmds.ends_with(&picks(SetupAnswer::AutoMix)), "a click picks: {:?}", a.cmds);
+    a.cmds.clear();
+    key(&mut a, KeyCode::Char('c'));
+    assert_eq!(a.setup.as_ref().map(|s| s.step()), Some(SetupStep::Look), "Continue goes on");
+    key(&mut a, KeyCode::Esc);
+    assert_eq!(a.setup.as_ref().map(|s| s.line), Some(1), "back on the pick");
+    key(&mut a, KeyCode::Char('s'));
+    assert!(a.cmds.is_empty() && a.setup.as_ref().map(|s| s.step()) == Some(SetupStep::Look), "skip keeps the settings");
+    key(&mut a, KeyCode::Esc);
+    draw(&mut a, 90, 30);
+    let r = hit_rect(&a, Hit::Button(Button::SetupContinue));
+    click(&mut a, r.x + 1, r.y);
+    assert_eq!(a.setup.as_ref().map(|s| s.step()), Some(SetupStep::Look), "and so does a click on it");
+}
+
+/// The look: Settings' own season and appearance rows, each change sent as it is made; Start listening
+/// ends the run.
+#[test]
+fn the_look_is_taken_as_it_is_picked() {
+    use nori_core::settings::ThemeMode;
+    for (mode, name) in [(ThemeMode::Light, "day"), (ThemeMode::Dark, "night")] {
+        let mut a = app();
+        let p = StoredPrefs { theme: mode, ..a.prefs.clone() };
+        a.prefs_changed(p.clone(), p);
+        a.setup_start();
+        key(&mut a, KeyCode::Char('s'));
+        let s = draw(&mut a, 90, 30);
+        dump(&format!("setup-look-{name}"), &s);
+        for words in ["Make it yours", "SEASON", "Spring", "Winter", "Follow the calendar", "THEME", "Appearance", "System", "Day", "Night", "Midnight", crate::text::SETUP_START, "‹ Back"] {
+            assert!(s.contains(words), "{words}:\n{s}");
+        }
+        assert!(!s.contains("Skip"), "none on the last:\n{s}");
+    }
+    let mut a = app();
+    a.setup_start();
+    key(&mut a, KeyCode::Char('s'));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.split_off(0), vec![Cmd::Setting("season".into(), "SPRING".into())], "a season, as Settings picks it");
+    let rows = a.setup_look().iter().map(|s| s.rows.len()).sum::<usize>();
+    for _ in 1..rows {
+        key(&mut a, KeyCode::Down);
+    }
+    key(&mut a, KeyCode::Right);
+    assert!(matches!(&a.cmds[..], [Cmd::Setting(n, _)] if n == "theme"), "the appearance, as Settings steps it: {:?}", a.cmds);
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert!(a.setup.is_none(), "Start listening ends the run");
 }

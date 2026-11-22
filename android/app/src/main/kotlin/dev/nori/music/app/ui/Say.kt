@@ -530,6 +530,35 @@ class Say(private val r: Resources) {
     val pluginFromFile: String get() = r.getString(R.string.plugins_from_file)
     val pluginUnsigned: String get() = r.getString(R.string.plugins_unsigned)
     val providerChoose: String get() = r.getString(R.string.provider_choose)
+    val welcomeTitle: String get() = r.getString(R.string.welcome_title)
+    val welcomeWhere: String get() = r.getString(R.string.welcome_where)
+    val restoreBackup: String get() = r.getString(R.string.settings_restore)
+    val setupSkip: String get() = r.getString(R.string.setup_skip)
+    val setupBack: String get() = r.getString(R.string.setup_back)
+    val welcomeSignIn: String get() = r.getString(R.string.welcome_sign_in)
+    val welcomeConnect: String get() = r.getString(R.string.welcome_connect)
+    /** The plugins picked on the welcome that would not install, by name. */
+    fun welcomeRefused(names: List<String>): String = r.getString(R.string.welcome_refused, names.joinToString(", "))
+    val setupStart: String get() = r.getString(R.string.setup_start)
+    val setupContinue: String get() = r.getString(R.string.setup_continue)
+    val appearance: String get() = r.getString(R.string.settings_mode)
+    /** A first-run question's title. */
+    fun setupStep(step: dev.nori.music.ffi.settings.SetupStep): String = r.getString(
+        when (step) {
+            dev.nori.music.ffi.settings.SetupStep.LISTENING -> R.string.setup_listening
+            dev.nori.music.ffi.settings.SetupStep.DATA -> R.string.setup_data
+            dev.nori.music.ffi.settings.SetupStep.LOOK -> R.string.setup_look
+        },
+    )
+    /** A first-run answer's name and the line under it. */
+    fun setupAnswer(answer: dev.nori.music.ffi.settings.SetupAnswer): Pair<String, String> = when (answer) {
+        dev.nori.music.ffi.settings.SetupAnswer.NO_MIXING -> r.getString(R.string.setup_no_mixing) to r.getString(R.string.setup_no_mixing_detail)
+        dev.nori.music.ffi.settings.SetupAnswer.AUTO_MIX -> r.getString(R.string.setup_automix) to r.getString(R.string.setup_automix_detail)
+        dev.nori.music.ffi.settings.SetupAnswer.AUTO_MIX_DJ -> r.getString(R.string.setup_automix_dj) to r.getString(R.string.setup_automix_dj_detail)
+        dev.nori.music.ffi.settings.SetupAnswer.ORIGINAL -> r.getString(R.string.setup_original) to r.getString(R.string.setup_original_detail)
+        dev.nori.music.ffi.settings.SetupAnswer.HIGH -> r.getString(R.string.setup_high) to r.getString(R.string.setup_high_detail)
+        dev.nori.music.ffi.settings.SetupAnswer.SAVE_DATA -> r.getString(R.string.setup_save) to r.getString(R.string.setup_save_detail)
+    }
     /** Why a profile of plugin [name]'s kind doesn't open ([wait]). */
     fun profileWaits(name: String, wait: dev.nori.music.ffi.ProfileWait): String = r.getString(
         when (wait) {

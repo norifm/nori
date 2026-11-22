@@ -4,17 +4,22 @@ import UIKit
 /// asks: the core checks it, saves it as the active one, and the page opens it.
 final class LoginPage: UIViewController, UITextFieldDelegate {
     /// A kind offered, and its form's fields by the login JSON's keys, plain or advanced.
-    private struct Kind {
+    struct Kind {
         let id: String
         let plain: Set<String>
         let advanced: Set<String>
     }
 
-    private let kinds: [Kind] = (takenJSON(nori_ios_providers()) as? [[String: Any]] ?? []).map { p in
+    static let kinds: [Kind] = (takenJSON(nori_ios_providers()) as? [[String: Any]] ?? []).map { p in
         let fields = p["fields"] as? [[String: Any]] ?? []
         let named = { (advanced: Bool) in Set(fields.filter { $0["advanced"] as? Bool == advanced }.compactMap { $0["what"] as? String }) }
         return Kind(id: p["kind"] as? String ?? "", plain: named(false), advanced: named(true))
     }
+    private let kinds = LoginPage.kinds
+    /// The kind chosen before the form (the welcome's), whose choice the form no longer offers.
+    private let given: String?
+    /// What follows the profile opening; otherwise the form closes.
+    var added: (() -> Void)?
     private lazy var kind = UISegmentedControl(items: kinds.map { Say.provider($0.id).name })
     private let hint = UILabel()
     private let address = UITextField()
@@ -29,6 +34,13 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
     private let status = UILabel()
     private let spinner = UIActivityIndicatorView()
     private let edge = UnderEdge(Theme.background)
+
+    init(kind: String? = nil) {
+        given = kind
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -59,8 +71,8 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         spinner.hidesWhenStopped = true
         spinner.color = Theme.label
 
-        kind.selectedSegmentIndex = 0
-        kind.isHidden = kinds.count < 2
+        kind.selectedSegmentIndex = kinds.firstIndex { $0.id == given } ?? 0
+        kind.isHidden = kinds.count < 2 || given != nil
         kind.addTarget(self, action: #selector(kindChanged), for: .valueChanged)
         hint.textColor = Theme.secondary
         hint.font = Fonts.font(13, .regular, .footnote)
@@ -196,7 +208,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
                 if code == NORI_LOGIN_OK {
                     Core.shared.opened()
                     if opened == nil {
-                        self.navigationController?.popViewController(animated: true)
+                        if let added = self.added { added() } else { self.navigationController?.popViewController(animated: true) }
                         return
                     }
                 }

@@ -166,6 +166,50 @@ pub const INSTALLED: &str = "Installed";
 pub const PLUGIN_INSTALLED: &str = "Plugin installed";
 pub const GET_PLUGINS: &str = "Get plugins";
 pub const PROVIDER_CHOOSE: &str = "Choose a provider";
+
+/// The first run's words: the welcome, its sign-ins, and the questions once a profile is in.
+pub fn first_run() -> crate::FirstRunWords {
+    crate::FirstRunWords {
+        title: "Welcome to nori".into(),
+        where_music: "WHERE'S YOUR MUSIC?".into(),
+        restore: RESTORE.into(),
+        sign_in: "Sign in".into(),
+        connect: "Connect".into(),
+        installing: "Installing…".into(),
+        skip: "Skip".into(),
+        next: "Continue".into(),
+        start: "Start listening".into(),
+    }
+}
+
+/// The plugins picked on the welcome that would not install, by name.
+pub fn welcome_refused(names: &[String]) -> String {
+    format!("Couldn't install {}", names.join(", "))
+}
+pub const BACKUP_WORKING: &str = "Working…";
+
+/// A first-run question's title.
+pub fn setup_step(step: nori_core::setup::SetupStep) -> &'static str {
+    use nori_core::setup::SetupStep as S;
+    match step {
+        S::Listening => "Between songs",
+        S::Data => "On mobile data",
+        S::Look => "Make it yours",
+    }
+}
+
+/// A first-run answer's name and what it does.
+pub fn setup_answer(answer: nori_core::setup::SetupAnswer) -> (&'static str, &'static str) {
+    use nori_core::setup::SetupAnswer as A;
+    match answer {
+        A::NoMixing => ("No mixing", "Songs play whole, one after another"),
+        A::AutoMix => ("AutoMix", "Blends each song into the next, on the beat"),
+        A::AutoMixDj => ("DJ", "Loops, tempo bends and drops, like a DJ"),
+        A::Original => ("Original quality", "Files as they are on your server"),
+        A::High => ("High quality", "192 kbps, about 1.4 MB a minute"),
+        A::SaveData => ("Save data", "128 kbps, about 1 MB a minute"),
+    }
+}
 /// Why a profile of plugin `name`'s kind doesn't open here.
 pub fn profile_waits(name: &str, wait: nori_core::providers::ProfileWait) -> String {
     use nori_core::providers::ProfileWait as W;

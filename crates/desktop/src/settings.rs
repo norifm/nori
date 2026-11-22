@@ -10,6 +10,7 @@ use slint::{ModelRc, SharedString, VecModel};
 
 use nori_look::theme;
 
+use nori_core::providers::flow::WelcomeSource;
 use nori_core::providers::Kinds;
 use nori_core::settings::{ProfileIcon, SavedServer, ServerKind};
 use nori_plugins::{AssetLine, AssetState, Category, ControlledDevice, Offer, OfferState, Offers, PluginCard, PluginRow, ReadmeBlock, Repo, RowKind, Value};
@@ -55,6 +56,9 @@ pub fn appearance_theme(pick: usize) -> &'static str {
         _ => "SYSTEM",
     }
 }
+
+/// The heading over the season tiles.
+const SEASON_GROUP: &str = "Season";
 
 /// The season tiles and the "follow the seasons" switch under them.
 struct Seasons {
@@ -627,9 +631,9 @@ fn service(id: &str) -> Option<(&'static str, &'static str)> {
     })
 }
 
-/// The groups of settings tab `tab`: each section's title and rows. Tab 0 adds the desktop's own:
+/// The groups of settings page `page`: each section's title and rows. The first adds the desktop's own:
 /// the output device and the version.
-fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, plugged: &Plugged, tab: i32, today: Today) -> Vec<(String, Vec<Row>)> {
+fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, plugged: &Plugged, page: SettingsPage, today: Today) -> Vec<(String, Vec<Row>)> {
     let s = settings_model::state(p, settings_model::Output::default(), model);
     let facts = PageFacts {
         parts: f.rules.settings.clone(),
@@ -644,7 +648,6 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
         ..PageFacts::default()
     };
     let mut groups: Vec<(String, Vec<Row>)> = Vec::new();
-    let page = tab_page(f, tab);
     for sec in settings_pages::page(page, SettingsClient::Desktop, p, &s, &facts) {
         let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f, kinds, plugged).into_iter().collect())).flat_map(|r| {
             if r.kind != SEASONS {
@@ -668,7 +671,7 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
             None => (Vec::new(), rows),
         };
         if !season.is_empty() {
-            groups.push(("Season".into(), season));
+            groups.push((SEASON_GROUP.into(), season));
         }
         let title = section_title(sec.id);
         // Sections that share a title are one group here.
@@ -698,7 +701,19 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
 
 /// Rows of settings tab `tab`: each group's heading, then its rows with first and last marked.
 pub fn rows(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, plugged: &Plugged, tab: i32, today: Today) -> ModelRc<SettingRow> {
-    self::model(groups(model, p, f, kinds, plugged, tab, today), p, f, today)
+    self::model(groups(model, p, f, kinds, plugged, tab_page(f, tab), today), p, f, today)
+}
+
+/// The first run's last page: Settings' own season group and its appearance row, as Settings draws them.
+pub fn setup_look_rows(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, plugged: &Plugged, today: Today) -> ModelRc<SettingRow> {
+    let look = groups(model, p, f, kinds, plugged, SettingsPage::Look, today)
+        .into_iter()
+        .filter_map(|(title, rows)| {
+            let rows: Vec<Row> = if title == SEASON_GROUP { rows } else { rows.into_iter().filter(|r| r.kind == APPEARANCE_ROW).collect() };
+            (!rows.is_empty()).then_some((title, rows))
+        })
+        .collect();
+    self::model(look, p, f, today)
 }
 
 /// `groups` as the page draws them: each heading, then its rows with first and last marked.
@@ -1072,6 +1087,62 @@ fn plugin_groups(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
 /// The first screen as it draws: what a new profile can play from.
 pub fn provider_rows(p: &Plugged, kinds: &Kinds, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
     model(vec![(String::new(), provider_choices(p, kinds))], prefs, f, today)
+}
+
+/// The install has no profile yet: the first screen is the welcome.
+pub fn first_run(prefs: &StoredPrefs) -> bool {
+    prefs.servers.is_empty()
+}
+
+/// Every source the first run's welcome offers, on an equal footing: nori's own and the plugins' kinds, then
+/// the provider plugins a repo offers that aren't on.
+pub fn welcome_sources(p: &Plugged, kinds: &Kinds) -> Vec<WelcomeSource> {
+    let active = kinds.providers().into_iter().map(|i| WelcomeSource::Kind { kind: i.kind });
+    let offered = nori_plugins::provider_offers(p.offers().to_vec(), p.cards.clone(), p.all_off).into_iter().map(|o| WelcomeSource::Offered { plugin: o.id });
+    active.chain(offered).collect()
+}
+
+/// How a welcome source's row ends, as app.slint's `SourceRow::mark` numbers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceMark {
+    /// Picked or not.
+    Pick(bool),
+    /// Its plugin installing.
+    Installing,
+    /// Its sign-in, not done yet.
+    Connect,
+    /// Its profile in.
+    Added,
+}
+
+impl SourceMark {
+    fn number(self) -> i32 {
+        match self {
+            SourceMark::Pick(false) => 0,
+            SourceMark::Pick(true) => 1,
+            SourceMark::Installing => 2,
+            SourceMark::Connect => 3,
+            SourceMark::Added => 4,
+        }
+    }
+}
+
+/// A welcome source as a row: its tile, its name and what it is, ending in `mark`.
+pub fn source_row(p: &Plugged, kinds: &Kinds, source: &WelcomeSource, mark: SourceMark) -> crate::SourceRow {
+    let mark = mark.number();
+    match source {
+        WelcomeSource::Kind { kind: kind @ ServerKind::Subsonic } => {
+            let title = words::provider_of(kinds, kind).name.into();
+            crate::SourceRow { title, detail: words::PROVIDER_SUBSONIC_ABOUT.into(), glyph: MarkGlyph::Server, mark, ..Default::default() }
+        }
+        WelcomeSource::Kind { kind: kind @ ServerKind::Plugin { id } } => plugin_source(p, id, &words::provider_of(kinds, kind).name, mark),
+        WelcomeSource::Offered { plugin } => plugin_source(p, plugin, &nori_plugins::plugin_display_name(plugin.clone(), p.cards.clone(), p.offers().to_vec()), mark),
+    }
+}
+
+fn plugin_source(p: &Plugged, id: &str, name: &str, mark: i32) -> crate::SourceRow {
+    let (icon, letter) = p.tile(id, name);
+    crate::SourceRow { title: name.into(), icon, letter: letter.into(), mark, ..Default::default() }
 }
 
 /// The first screen's head: what it asks, and the plus to every plugin and the repos.
@@ -1603,7 +1674,7 @@ mod tests {
         };
         let p = StoredPrefs { servers: vec![SavedServer { id: "a".into(), name: "Home".into(), ..Default::default() }], active_server_id: "a".into(), ..Default::default() };
         let today = Today { month: 10, day: 19, southern: false };
-        let usage = |f: &Facts| (0..8).flat_map(|tab| groups(&Default::default(), &p, f, &Kinds::builtin(), &Plugged::default(), tab, today)).flat_map(|(_, rows)| rows).find(|r| r.kind == USAGE).unwrap();
+        let usage = |f: &Facts| (0..8).flat_map(|tab| groups(&Default::default(), &p, f, &Kinds::builtin(), &Plugged::default(), tab_page(f, tab), today)).flat_map(|(_, rows)| rows).find(|r| r.kind == USAGE).unwrap();
         let both = usage(&facts(vec![("a".into(), 2 << 20), ("gone".into(), 1 << 20)]));
         assert_eq!(both.options[1].0, "5 downloads · 3.0 MB");
         assert_eq!(both.breakdown, ["Home · 2.0 MB", "A removed profile · 1.0 MB"]);
@@ -1660,7 +1731,7 @@ mod tests {
         let f = Facts::default();
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {
-            for (_, rows) in groups(&Default::default(), &p, &f, &Kinds::builtin(), &Plugged::default(), tab, OCTOBER) {
+            for (_, rows) in groups(&Default::default(), &p, &f, &Kinds::builtin(), &Plugged::default(), tab_page(&f, tab), OCTOBER) {
                 for r in rows.iter().filter(|r| matches!(r.kind, TOGGLE | CHOICE) && r.name != DEVICE) {
                     let name = toggled(&r.name, r.on).0;
                     assert!(specs.iter().any(|s| s == name), "{name} is not a core setting");
@@ -1930,6 +2001,18 @@ mod tests {
         assert_eq!(got, [("OpenSubsonic", true, MarkGlyph::Server), ("a.new", false, MarkGlyph::None), ("b.off", false, MarkGlyph::None)], "only providers not on");
         let acts: Vec<_> = rows.iter().map(|r| PluginAct::of(&r.name)).collect();
         assert_eq!(acts, [Some(PluginAct::Choose(ServerKind::Subsonic)), Some(PluginAct::OfferPage("a.new".into())), Some(PluginAct::TurnOn("b.off".into()))]);
+    }
+
+    /// The welcome offers nori's own kind and every provider a repo offers that isn't on, each named as it is.
+    #[test]
+    fn the_welcome_offers_every_source() {
+        let installed = PluginCard { enabled: false, ..plugin_card("b.off", Vec::new()) };
+        let plugged = offering(vec![provider_offer("a.new"), provider_offer("b.off"), offer("d.sound", &official(), OfferState::New)], vec![installed]);
+        let sources = welcome_sources(&plugged, &Kinds::builtin());
+        let offered = |id: &str| WelcomeSource::Offered { plugin: id.into() };
+        assert_eq!(sources, [WelcomeSource::Kind { kind: ServerKind::Subsonic }, offered("a.new"), offered("b.off")], "no sound plugin");
+        let rows: Vec<(String, MarkGlyph, i32)> = sources.iter().zip([SourceMark::Pick(true), SourceMark::Installing, SourceMark::Pick(false)]).map(|(s, m)| source_row(&plugged, &Kinds::builtin(), s, m)).map(|r| (r.title.to_string(), r.glyph, r.mark)).collect();
+        assert_eq!(rows, [("OpenSubsonic".into(), MarkGlyph::Server, 1), ("a.new".into(), MarkGlyph::None, 2), ("b.off".into(), MarkGlyph::None, 0)]);
     }
 
     /// An active plugin's provider is chosen as its kind, in ink.

@@ -62,7 +62,8 @@ class MainActivity : ComponentActivity() {
         // whole screen round, bar and all. Seamless, as this
         // was, is not honoured with the status bar shown, and the system cut to black instead.
         window.attributes = window.attributes.apply { rotationAnimation = android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_CROSSFADE }
-        if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        // Asked once there is music to tell of; the first run asks as it ends (SetupPages).
+        if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null && Nori.get(this).settings.value.loggedIn) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         // The composition runs under the app's own animation speed, not Android's: see AppMotion.
         @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
         val recomposer = window.decorView.createLifecycleAwareWindowRecomposer(dev.nori.music.app.ui.AppMotion, lifecycle)
