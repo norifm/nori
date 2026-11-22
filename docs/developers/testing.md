@@ -324,8 +324,9 @@ with that reason.
 
 Some sections need more than the emulator:
 
-- `plugins` serves a plugin repo from this computer: `nori-plugins/dist` beside this checkout, or
-  `NORI_PLUGINS_DIST`.
+- `plugins` serves a plugin repo from this computer. It takes orbit and the showcase from
+  `nori-dev-plugins/dist` beside this checkout (or `NORI_DEV_PLUGINS_DIST`), and the official plugins
+  from `nori-plugins/dist` (or `NORI_PLUGINS_DIST`).
 - `remote` resolves the terminal app's live mDNS announcement. It uses `dns-sd` on macOS and Python's
   zeroconf on Linux. `python3 tools/test-mdns.py` checks that a stale announcement is rejected.
 - `jam` needs the relay from `tools/jam-server.sh`. Its guests are `tools/jam-guest.py`, and its host is

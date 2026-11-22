@@ -203,6 +203,6 @@ Add a switch that swaps the two sides.
 - [Plugin reference](plugin-reference.md): every manifest field, row kind and limit. It also says how to
   install a plugin by hand on Android, in the terminal app and in a browser.
 - [Plugins](plugins.md): the other extension points, and what a plugin can reach.
-- `orbit` in [nori-plugins](https://github.com/norifm/nori-plugins) is a sound stage that keeps state
+- `orbit` in [nori-dev-plugins](https://github.com/norifm/nori-dev-plugins) is a sound stage that keeps state
   between blocks with `save` and `restore`. The repo's `tools/pack.py` packs a plugin into a
   `.noriplugin` file for a release.

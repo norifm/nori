@@ -7,6 +7,9 @@
 //
 //   node web/check/plugins.mjs [http://localhost:8099/]
 //   NORI_INDEX=index.json node web/check/plugins.mjs ...   (the repo's index read from this file)
+//
+// The web reads only the official repo; without NORI_INDEX the check serves it with nori-dev-plugins'
+// plugins added, where orbit and playback live.
 import fs from "node:fs";
 import puppeteer from "puppeteer-core";
 
@@ -16,12 +19,14 @@ const page = await browser.newPage();
 await page.setViewport({ width: 1280, height: 800 });
 const fetched = [];
 const index = process.env.NORI_INDEX && fs.readFileSync(process.env.NORI_INDEX, "utf8");
+const repos = ["nori-plugins", "nori-dev-plugins"].map((r) => `https://raw.githubusercontent.com/norifm/${r}/main/index.json`);
+const served = index || JSON.stringify({ plugins: (await Promise.all(repos.map(async (u) => (await (await fetch(u)).json()).plugins))).flat() });
 /** The page's server has no plugin route: a static host. */
 let noProxy = false;
 await page.setRequestInterception(true);
 page.on("request", (r) => {
   fetched.push(r.url());
-  if (index && r.url().endsWith("nori-plugins/main/index.json")) return r.respond({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: index });
+  if (r.url() === repos[0]) return r.respond({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: served });
   if (noProxy && r.url().includes("/plugin-http")) return r.respond({ status: 404, body: "" });
   r.continue();
 });
