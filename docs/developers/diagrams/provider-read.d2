@@ -1,0 +1,20 @@
+direction: down
+screen: Client screen {class: you}
+client: "Client (nori-core)"
+provider: The profile's Provider
+subsonic: Subsonic
+plugin: PluginProvider
+hosted: HostedProvider
+server: Subsonic server
+wasm: Plugin (wasm)
+jam: Jam host's provider
+
+screen -> client: Read
+client -> screen: kept page, at once
+client -> provider: Read, when stale
+provider -> subsonic
+provider -> plugin
+provider -> hosted
+subsonic -> server: HTTP
+plugin -> wasm: provider export
+hosted -> jam: LAN door

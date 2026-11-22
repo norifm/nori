@@ -1,0 +1,19 @@
+direction: down
+android: Android {class: you}
+others: Desktop, terminal, iPod, web
+host: "nori-host: the session"
+core: "nori-core: profiles, library, queue"
+engine: "nori-engine: the player thread"
+player: "nori-player: decode, sound chain"
+output: Platform audio output
+source: Server or plugin
+
+android -> core: uniffi calls
+android -> engine: JNI doors
+others -> host: Handle calls
+host -> core: reads, queue edits
+host -> engine: commands
+engine -> core: queue, settings, stream addresses
+engine -> player: runs
+engine -> output: samples, through a ring
+core -> source: HTTP

@@ -1,0 +1,15 @@
+plugin: "Your plugin: plugin.wasm" {class: you}
+host: nori's plugin host
+ui: Each client's screens
+engine: Settings and the engine
+web: Hosts in its manifest
+lan: Devices on your network
+bt: Bluetooth devices
+
+host -> plugin: extension points
+plugin -> host: host interfaces
+host -> ui: rows and slots
+host -> engine: overrides, sound stage
+host -> web: HTTP, through nori's transport
+host -> lan: sockets, mDNS, casts
+host -> bt: RFCOMM, GATT

@@ -1,0 +1,17 @@
+direction: down
+file: .noriplugin or folder
+repo: Repo index.json
+checks: "Checks: manifest, API, id, keys, imports"
+compile: "Cranelift: compiled.cwasm"
+installed: plugins/<id>/
+worker: "Worker thread: own instance" {class: you}
+stage: "Engine thread: stage instance"
+host: Transport, settings, LAN, Bluetooth
+
+file -> checks: files
+repo -> checks: package, sha256, signature
+checks -> compile: staged beside the old version
+compile -> installed: folder swapped in
+installed -> worker: first call
+installed -> stage: stage on
+worker -> host: host interfaces

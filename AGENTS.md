@@ -29,6 +29,7 @@ tools/feature-e2e.sh --only <sections>
 tools/perf-host.sh [rev]                            # engine wakes/CPU/allocs per minute vs another revision, on the host
 cargo run --release -p nori-cli                     # terminal client
 cargo run --release -p nori-desktop                 # desktop client
+(cd tools/diagrams && npm ci && npm run draw)       # docs/developers/diagrams/*.d2 to SVG; npm run check after
 tools/ipod.sh [build install run]                   # the iPod app's .ipa, built in Docker; installs and runs it if an iPod is on USB (docs/developers/ipod-internals.md)
 tools/ipod-bench.sh nori|music                      # iPod battery/CPU for 30 min, unplugged, SSH over Wi-Fi (NORI_IPOD_HOST)
 ```

@@ -16,23 +16,10 @@ plugin API is the `nori:plugin` WIT package in `wit/`. The plugin exports extens
 calls. It imports host interfaces, which it calls in nori. The SDK turns both into Rust: a trait for each
 extension point, and a module for each host interface.
 
-```mermaid
-flowchart LR
-  P["Your plugin (plugin.wasm)"]
-  H["nori's plugin host"]
-  UI["Each client's screens"]
-  E["Settings and the engine"]
-  W["The hosts in its manifest"]
-  L["Devices on your network"]
-  B["Bluetooth devices"]
-  H -- "calls its extension points" --> P
-  P -- "calls host interfaces" --> H
-  H -- "draws its rows and slots" --> UI
-  H -- "lays its overrides and sound stage" --> E
-  H -- "HTTP through nori's transport" --> W
-  H -- "sockets, mDNS, casts (lan)" --> L
-  H -- "RFCOMM and GATT (devices)" --> B
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/plugin-reach-dark.svg">
+  <img alt="What a plugin can reach through the plugin host" src="diagrams/plugin-reach.svg">
+</picture>
 
 The manifest is a Rust constant in the plugin's code. The SDK's `plugin!` macro writes it into the wasm,
 and nori reads it before it runs any of the plugin. It names the plugin's id, the hosts it may reach, the

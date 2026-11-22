@@ -8,28 +8,10 @@ sound comes first, then how the interface feels, then the battery.
 The client runs on the iPod touch 6th generation with iOS 12.2 or later, jailbroken. For what users see,
 read the user guide, [iPod touch](https://norifm.com/docs/clients/ipod/).
 
-```mermaid
----
-title: The iPod client's layers
----
-flowchart TB
-  ui["nori.app: Swift and UIKit<br/>ios/Sources"]
-  lib["nori-ios static library<br/>crates/ios"]
-  host["nori-host session"]
-  core["nori-engine, nori-core<br/>and the domain crates"]
-  http["nori-http"]
-  shim["Audio shim<br/>ios/Sound/NoriAudio.m"]
-  unit["AURemoteIO"]
-  ui -->|"C calls declared in nori_ios.h"| lib
-  lib -->|"callbacks: reports, pages as JSON, covers as RGBA"| ui
-  lib -->|"opens and drives"| host
-  host -->|"plays and reads through"| core
-  core -->|"API, covers and audio requests"| http
-  lib -->|"open, start, stop, buffer size"| shim
-  shim -->|"builds and runs"| unit
-  unit -->|"render callback: nori_ios_render"| lib
-  shim -->|"route, interruption and reset notifications"| lib
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/ipod-layers-dark.svg">
+  <img alt="The iPod client's layers" src="diagrams/ipod-layers.svg">
+</picture>
 
 ## The device
 
@@ -104,24 +86,10 @@ unit's render callback cannot cross a generated binding. A C entry point carries
 
 The library answers a page asynchronously. This is what happens when you open an album and tap a song:
 
-```mermaid
-sequenceDiagram
-  title Opening an album page and playing a song
-  participant Page as Swift page
-  participant Bridge as Bridge.swift (Core)
-  participant Lib as crates/ios pages.rs
-  participant Host as nori-host and nori-core
-  Page->>Bridge: read the album
-  Bridge->>Lib: nori_ios_read(token, NORI_PAGE_ALBUM, id)
-  Lib->>Host: read the page
-  Host-->>Lib: the stored copy
-  Lib-->>Bridge: page callback (token, JSON)
-  Host-->>Lib: the server's copy, if it differs
-  Lib-->>Bridge: page callback (token, JSON)
-  Bridge-->>Page: the answer, on the main thread
-  Page->>Lib: nori_ios_play_list(token, index, 0)
-  Lib->>Host: play the songs kept under the token
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/ipod-album-dark.svg">
+  <img alt="Opening an album page and playing a song on the iPod" src="diagrams/ipod-album.svg">
+</picture>
 
 The page callback arrives on a library thread, and `Bridge.swift` moves it to the main thread. The
 library keeps a page's songs under the token it was read with. Play, enqueue and download then name a

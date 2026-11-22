@@ -1,0 +1,13 @@
+shape: sequence_diagram
+vm: ActionsViewModel
+connection: PlayerConnection
+service: PlaybackService
+queue: nori-core queue
+mirror: EnginePlayer
+
+vm -> queue: tapPlan: what a tap does
+vm -> connection: play(songs, index)
+connection -> service: setMediaItems, prepare, play
+service -> queue: playlistSet: the new queue
+queue -> service: QueueChange {style.stroke-dash: 4}
+service -> mirror: setMediaItems
