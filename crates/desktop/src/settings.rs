@@ -12,7 +12,7 @@ use nori_look::theme;
 
 use nori_core::providers::Kinds;
 use nori_core::settings::{ProfileIcon, SavedServer, ServerKind};
-use nori_plugins::{AssetLine, AssetState, ControlledDevice, Offer, OfferState, Offers, PluginCard, PluginRow, ReadmeBlock, Repo, RowKind, Value};
+use nori_plugins::{AssetLine, AssetState, Category, ControlledDevice, Offer, OfferState, Offers, PluginCard, PluginRow, ReadmeBlock, Repo, RowKind, Value};
 
 use crate::look::Today;
 use crate::{words, IconChoice, IconPicker, Mark, MarkGlyph, PluginTool, PluginTop, SettingRow};
@@ -794,6 +794,8 @@ pub struct Plugged {
     /// The browser's search, and the repo it is narrowed to.
     pub query: String,
     pub repo_shown: Option<String>,
+    /// The category the browser shows; none for its first.
+    pub category_shown: Option<Category>,
     /// What the README was last asked for ([`Plugged::readme_wanted`]), and what came.
     pub readme_asked: Option<(String, Option<String>, Option<String>)>,
     pub readme: Vec<ReadmeBlock>,
@@ -924,6 +926,8 @@ pub enum PluginAct {
     Search,
     /// The browser narrowed to a repo: its chip.
     Chip,
+    /// The category the browser shows: its chip.
+    Category,
     /// Asks for a repo's address.
     AddRepo,
     /// The repo at this address, once trusted.
@@ -985,6 +989,7 @@ impl PluginAct {
             "plugin-back" => PluginAct::Back,
             "plugin-search" => PluginAct::Search,
             "plugin-chip" => PluginAct::Chip,
+            "plugin-category" => PluginAct::Category,
             "repo-add" => PluginAct::AddRepo,
             "repo-trust" => PluginAct::TrustRepo(id()),
             "repo-remove" => PluginAct::RemoveRepo(id()),
@@ -1029,6 +1034,7 @@ impl PluginAct {
             PluginAct::Back => "plugin-back".into(),
             PluginAct::Search => "plugin-search".into(),
             PluginAct::Chip => "plugin-chip".into(),
+            PluginAct::Category => "plugin-category".into(),
             PluginAct::AddRepo => "repo-add".into(),
             PluginAct::TrustRepo(url) => format!("repo-trust:{url}"),
             PluginAct::RemoveRepo(url) => format!("repo-remove:{url}"),
@@ -1179,6 +1185,22 @@ fn at_of(offers: &[Offer], o: &Offer) -> usize {
     offers.iter().position(|x| x.id == o.id && x.repo.url == o.repo.url).unwrap_or(0)
 }
 
+/// The categories `offers` show a page each for (none for one alone), and the one shown: `chosen` when it
+/// is among them, else the first.
+pub fn categories(offers: &[Offer], chosen: Option<Category>) -> (Vec<Category>, Option<Category>) {
+    let all = nori_plugins::categories_shown(offers.iter().map(|o| o.category).collect());
+    if all.len() < 2 {
+        return (Vec::new(), None);
+    }
+    let shown = chosen.filter(|c| all.contains(c)).unwrap_or(all[0]);
+    (all, Some(shown))
+}
+
+/// What the repos offer, as searched and narrowed to a repo.
+pub fn found(p: &Plugged) -> Vec<Offer> {
+    nori_plugins::offers_found(p.offers().to_vec(), p.query.clone(), p.repo_shown.clone())
+}
+
 /// What the repos offer, as searched and narrowed.
 fn browser(p: &Plugged) -> Vec<(String, Vec<Row>)> {
     let mut rows = Vec::new();
@@ -1186,11 +1208,12 @@ fn browser(p: &Plugged) -> Vec<(String, Vec<Row>)> {
         Shelf::Unasked | Shelf::Asking => rows.push(note(words::LOOKING)),
         Shelf::Read(Offers { offers, failed }) => {
             rows.extend(failed.iter().map(|f| note(&words::repo_failed(&f.repo))));
-            let found = nori_plugins::offers_found(offers.clone(), p.query.clone(), p.repo_shown.clone());
+            let found = found(p);
             if found.is_empty() {
                 rows.push(note(words::NONE_FOUND));
             }
-            rows.extend(found.iter().filter_map(|o| {
+            let shown = categories(&found, p.category_shown).1;
+            rows.extend(found.iter().filter(|o| shown.is_none_or(|s| o.category == s)).filter_map(|o| {
                 let line = format!("{} · {}", o.versions.first()?.version, words::repo_name(&o.repo));
                 let (button, control) = match o.state {
                     OfferState::New => (words::INSTALL, PluginAct::Get(at_of(offers, o) as u32, 0).name()),
@@ -1306,6 +1329,13 @@ fn tools(list: &[(i32, &str, PluginAct)]) -> ModelRc<PluginTool> {
     ModelRc::new(VecModel::from(list.iter().map(|(glyph, label, act)| PluginTool { glyph: *glyph, label: (*label).into(), name: act.name().into() }).collect::<Vec<_>>()))
 }
 
+/// The chips of the browser's categories, and the one lit.
+fn category_chips(p: &Plugged) -> (ModelRc<SharedString>, i32) {
+    let (all, shown) = categories(&found(p), p.category_shown);
+    let lit = all.iter().position(|c| Some(*c) == shown).unwrap_or(0) as i32;
+    (strings(all.into_iter().map(|c| words::category(c).to_string()).collect()), lit)
+}
+
 /// The head of what shows: its title and tools, and on a plugin's page what it is and the way to get it.
 pub fn plugin_top(p: &Plugged, all_off: bool) -> PluginTop {
     let back = !p.stack.is_empty();
@@ -1315,6 +1345,7 @@ pub fn plugin_top(p: &Plugged, all_off: bool) -> PluginTop {
         Some(PluginPage::Browser) => {
             let shown = p.repos.iter().position(|r| p.repo_shown.as_ref() == Some(&r.url)).map_or(0, |i| i as i32 + 1);
             let chips = if p.repos.len() > 1 { std::iter::once(words::ALL.to_string()).chain(p.repos.iter().map(words::repo_name)).collect() } else { Vec::new() };
+            let (categories, category) = category_chips(p);
             PluginTop {
                 title: words::GET_PLUGINS.into(),
                 back,
@@ -1323,6 +1354,8 @@ pub fn plugin_top(p: &Plugged, all_off: bool) -> PluginTop {
                 query: p.query.as_str().into(),
                 chips: strings(chips),
                 chip: shown,
+                categories,
+                category,
                 ..Default::default()
             }
         }
@@ -1663,7 +1696,7 @@ mod tests {
     fn offer(id: &str, repo: &Repo, state: OfferState) -> Offer {
         let version = |v: &str| Version { repo: repo.url.clone(), version: v.into(), released: None, url: String::new(), sha256: String::new(), key: None, signature: None };
         let installed = (state != OfferState::New).then(|| "1.0.0".to_string());
-        Offer { repo: repo.clone(), id: id.into(), name: id.into(), about: None, source: Some("https://code.example/x".into()), readme: None, icon: Some(format!("https://i.example/{id}.png")), points: Vec::new(), versions: vec![version("2.0.0"), version("1.0.0")], installed, state }
+        Offer { repo: repo.clone(), id: id.into(), name: id.into(), about: None, source: Some("https://code.example/x".into()), readme: None, icon: Some(format!("https://i.example/{id}.png")), points: Vec::new(), category: Category::Other, versions: vec![version("2.0.0"), version("1.0.0")], installed, state }
     }
 
     fn row(id: &str, kind: RowKind, value: Option<Value>) -> PluginRow {
@@ -1742,6 +1775,20 @@ mod tests {
         assert_eq!(plugin_groups(&p, false)[0].1[0].title, words::NONE_FOUND);
         p.repos.truncate(1);
         assert_eq!(slint::Model::row_count(&plugin_top(&p, false).chips), 0, "one repo needs no chips");
+    }
+
+    /// What the repos offer in several categories shows one category at a time, by its chip.
+    #[test]
+    fn the_browser_shows_one_category_at_a_time() {
+        let official = official();
+        let of = |id: &str, category| Offer { category, ..offer(id, &official, OfferState::New) };
+        let mut p = Plugged { repos: vec![official.clone()], shelf: read(vec![of("tube", Category::Service), of("orbit", Category::Playback), of("speed", Category::Playback)]), stack: vec![PluginPage::Browser], ..Default::default() };
+        let listed = |p: &Plugged| plugin_groups(p, false).into_iter().flat_map(|g| g.1).filter(|r| r.kind == PLUGIN).map(|r| r.title.to_string()).collect::<Vec<_>>();
+        let top = plugin_top(&p, false);
+        assert_eq!((slint::Model::row_count(&top.categories), top.category), (2, 0), "Services and Playback");
+        assert_eq!(listed(&p), ["tube"]);
+        p.category_shown = Some(Category::Playback);
+        assert_eq!((listed(&p), plugin_top(&p, false).category), (vec!["orbit".to_string(), "speed".to_string()], 1));
     }
 
     /// Repos say what each offers; only those added can go.

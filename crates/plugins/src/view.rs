@@ -116,6 +116,14 @@ pub fn one_page(rows: &[PluginRow]) -> Vec<PluginRow> {
     out
 }
 
+/// The categories Get plugins has pages for, of plugins in `categories`: each once, in their order.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn categories_shown(mut categories: Vec<crate::Category>) -> Vec<crate::Category> {
+    categories.sort();
+    categories.dedup();
+    categories
+}
+
 /// Whether a device-controlling plugin's row of `kind` is a setting of the device, rather than about the
 /// plugin.
 #[cfg_attr(feature = "ffi", uniffi::export)]

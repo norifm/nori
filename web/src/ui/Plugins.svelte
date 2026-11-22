@@ -9,6 +9,7 @@
   import { W } from "../words";
   import type { Installed, Offer, Read, Readme, Row, Value, Version } from "../plugins/types";
   import { Refused, valueOf } from "../plugins/types";
+  import CategoryPages from "./CategoryPages.svelte";
   import Icon from "./Icon.svelte";
   import Page from "./Page.svelte";
 
@@ -21,6 +22,9 @@
   let found = $state.raw<string[] | null>(null);
   let readme = $state.raw<Readme[]>([]);
   let host = $state.raw<typeof import("../plugins/host.svelte").plugins | null>(null);
+  /** The categories in the order their pages go. */
+  let order = $state.raw<string[]>([]);
+  void ask<string>("plugin_categories").then((j) => (order = JSON.parse(j)));
 
   async function offered() {
     const stands = host!.installed.map((i) => ({ id: i.plugin.id, version: i.plugin.version, held: !!i.held, fromFile: !!i.fromFile }));
@@ -205,20 +209,24 @@
   {:else if listed.length === 0}
     <p class="quiet">{W.pluginsNoneFound}</p>
   {:else}
-    <div class="group">
-      {#each listed as o (o.id)}
-        {@const v = o.versions[0]}
-        <div class="group-row plugin" class:off={blocked(o)} data-plugin={o.id} data-fit={o.fit.state}>
-          {@render line(o.id, o.name, o.icon, o.about, dotted(v?.version, W.pluginRepoOfficial), {})}
-          {#each lines(o) as why}<span class="sub why">{why}</span>{/each}
-          {#if o.state === "Installed"}
-            <span class="value" data-up-to-date>{W.pluginUpToDate}</span>
-          {:else if !blocked(o) && v && host?.proxied}
-            <button class="text-action" data-install disabled={busy !== ""} onclick={() => getVersion(o, v)}>{busy === o.id ? W.pluginInstalling : o.state === "Update" ? W.pluginUpdate : W.pluginInstall}</button>
-          {/if}
+    <CategoryPages offers={listed} {order}>
+      {#snippet page(shown: Offer[])}
+        <div class="group">
+          {#each shown as o (o.id)}
+            {@const v = o.versions[0]}
+            <div class="group-row plugin" class:off={blocked(o)} data-plugin={o.id} data-fit={o.fit.state}>
+              {@render line(o.id, o.name, o.icon, o.about, dotted(v?.version, W.pluginRepoOfficial), {})}
+              {#each lines(o) as why}<span class="sub why">{why}</span>{/each}
+              {#if o.state === "Installed"}
+                <span class="value" data-up-to-date>{W.pluginUpToDate}</span>
+              {:else if !blocked(o) && v && host?.proxied}
+                <button class="text-action" data-install disabled={busy !== ""} onclick={() => getVersion(o, v)}>{busy === o.id ? W.pluginInstalling : o.state === "Update" ? W.pluginUpdate : W.pluginInstall}</button>
+              {/if}
+            </div>
+          {/each}
         </div>
-      {/each}
-    </div>
+      {/snippet}
+    </CategoryPages>
   {/if}
 {/snippet}
 

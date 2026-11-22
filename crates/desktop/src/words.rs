@@ -101,6 +101,16 @@ pub const PLUGIN_MAY: &str = "What it may do";
 pub const PLUGIN_ON: &str = "On";
 pub const RESTART: &str = "Restart";
 pub const MOVE_UP: &str = "Move up";
+
+/// A category of plugins, as its page is called.
+pub fn category(c: nori_plugins::Category) -> &'static str {
+    match c {
+        nori_plugins::Category::Service => "Services",
+        nori_plugins::Category::Device => "Devices",
+        nori_plugins::Category::Playback => "Playback",
+        nori_plugins::Category::Other => "More",
+    }
+}
 pub const MOVE_DOWN: &str = "Move down";
 pub const REMOVE: &str = "Remove";
 pub const KEEP_VERSION: &str = "Keep this version";

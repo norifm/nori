@@ -331,6 +331,9 @@ export struct PluginTop {
     query: string,
     chips: [string],
     chip: int,
+    // The list's and the browser's categories, one page each.
+    categories: [string],
+    category: int,
 }
 
 // A line with a quieter one under it: an AutoEQ curve, a saved sound profile.
@@ -5235,6 +5238,15 @@ component PluginHead inherits VerticalLayout {
             text: c;
             lit: i == root.top.chip;
             clicked => { root.chosen("plugin-chip", i); }
+        }
+    }
+    if root.top.categories.length > 0: HorizontalLayout {
+        alignment: start;
+        spacing: 4px;
+        for c[i] in root.top.categories: Chip {
+            text: c;
+            lit: i == root.top.category;
+            clicked => { root.chosen("plugin-category", i); }
         }
     }
 }

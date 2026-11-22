@@ -262,6 +262,8 @@ pub enum PluginCmd {
     Search(String),
     /// The browser narrowed to this repo, or showing all.
     ShowRepo(Option<String>),
+    /// The category the browser shows.
+    ShowCategory(nori_plugins::Category),
     /// Shows a version (newest first) of the offer at this place in those last read, before it is
     /// installed.
     Get(u32, u32),
@@ -1126,6 +1128,8 @@ pub enum Target {
     PluginSearch,
     /// The repo the browser is narrowed to: its address, empty for all.
     PluginRepo,
+    /// The category the browser shows, by its name in an index.
+    PluginCategory,
     /// A line of a plugin's menu.
     PluginMenu,
     /// A controlled device's noise control: an index into its `modes`.
@@ -1215,6 +1219,7 @@ impl Target {
             Target::AddRepo => Some(Cmd::Plugin(PluginCmd::AddRepo(value.trim().to_string()))),
             Target::PluginSearch => Some(Cmd::Plugin(PluginCmd::Search(value))),
             Target::PluginRepo => Some(Cmd::Plugin(PluginCmd::ShowRepo(Some(value).filter(|u| !u.is_empty())))),
+            Target::PluginCategory => Some(Cmd::Plugin(PluginCmd::ShowCategory(nori_plugins::Category::named(Some(&value))))),
             Target::PluginMenu => None,
             Target::Noise { device, modes } => value.parse::<usize>().ok().and_then(|i| modes.get(i).copied()).map(|n| Cmd::Plugin(PluginCmd::Noise(device, n))),
             Target::BackupFile { .. } => None,

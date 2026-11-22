@@ -12,10 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -62,8 +59,14 @@ import dev.nori.music.app.vm.PluginsViewModel
 import dev.nori.music.app.vm.SettingsViewModel
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.rememberCoroutineScope
+import dev.nori.music.ffi.plugins.Category
+import dev.nori.music.ffi.plugins.categoriesShown
 import dev.nori.music.ffi.plugins.Offer
 import dev.nori.music.ffi.plugins.OfferState
+import kotlinx.coroutines.launch
 import dev.nori.music.ffi.plugins.ReadmeBlock
 import dev.nori.music.ffi.plugins.Repo
 import dev.nori.music.ffi.plugins.PluginCard
@@ -86,6 +89,40 @@ private fun repoName(url: String, repos: List<Repo>): String = repoName(url, rep
 
 /** What a card is, in words: its extension points and whether it changes nori's values. */
 private fun PluginCard.kinds() = say.pluginKinds(points, overrides.isNotEmpty())
+
+/**
+ * [offers] on a page per category, filling [modifier]'s room, swiped between anywhere on it or picked
+ * from the chips above; each page scrolls on its own and [page] draws one category's. Offers of one
+ * category alone are one page with no chips.
+ */
+@Composable
+private fun CategoryPages(offers: List<Offer>, modifier: Modifier, page: @Composable (List<Offer>) -> Unit) {
+    val categories = remember(offers) { categoriesShown(offers.map { it.category }) }
+    if (categories.size < 2) {
+        Column(modifier.verticalScroll(rememberScrollState())) {
+            page(offers)
+            Spacer(Modifier.height(Space.section + LocalChromeInset.current))
+        }
+        return
+    }
+    val pager = rememberPagerState { categories.size }
+    val scope = rememberCoroutineScope()
+    Column(modifier) {
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = Space.gutter, vertical = 8.dp), Arrangement.spacedBy(6.dp)) {
+            categories.forEachIndexed { i, c ->
+                Chip(say.pluginCategory(c), pager.currentPage == i, Modifier.testTag("plugins-category-${c.name.lowercase()}")) {
+                    scope.launch { pager.animateScrollToPage(i, animationSpec = AppMotion.page()) }
+                }
+            }
+        }
+        HorizontalPager(pager, Modifier.fillMaxWidth().weight(1f), verticalAlignment = Alignment.Top) { i ->
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                page(offers.filter { it.category == categories[i] })
+                Spacer(Modifier.height(Space.section + LocalChromeInset.current))
+            }
+        }
+    }
+}
 
 /** How the plugin pages reach each other. */
 class PluginPages(val open: (String) -> Unit, val browser: () -> Unit, val repos: () -> Unit)
@@ -185,34 +222,34 @@ fun PluginBrowser(vm: PluginsViewModel, pages: PluginPages) {
     val refused by vm.refused.collectAsStateWithLifecycle()
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.previewFile(uri) }
     LaunchedEffect(Unit) { vm.loadOffers() }
-    LazyColumn(contentPadding = PaddingValues(bottom = Space.section + LocalChromeInset.current)) {
-        item {
-            LargeTitle(say.pluginsGet, trailing = {
-                GlyphButton(Iconoir.FolderPlus, say.pluginsInstallFile, Modifier.testTag("plugin-install-file")) { pick.launch(arrayOf("*/*")) }
-                GlyphButton(Iconoir.Server, say.pluginRepos, Modifier.testTag("plugin-repos"), onClick = pages.repos)
-            })
-        }
-        item { SearchField(query, vm::search, say.pluginsSearch, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), testTag = "plugin-search") }
-        if (repos.size > 1) item {
+    Column(Modifier.fillMaxSize()) {
+        LargeTitle(say.pluginsGet, trailing = {
+            GlyphButton(Iconoir.FolderPlus, say.pluginsInstallFile, Modifier.testTag("plugin-install-file")) { pick.launch(arrayOf("*/*")) }
+            GlyphButton(Iconoir.Server, say.pluginRepos, Modifier.testTag("plugin-repos"), onClick = pages.repos)
+        })
+        SearchField(query, vm::search, say.pluginsSearch, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), testTag = "plugin-search")
+        if (repos.size > 1) {
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = Space.gutter), Arrangement.spacedBy(6.dp)) {
                 Chip(say.pluginsAll, shown == null) { vm.showRepo(null) }
                 repos.forEach { r -> Chip(repoName(r.url, r.official), shown == r.url) { vm.showRepo(r.url) } }
             }
         }
-        item { Refused(refused) }
-        items(offers.failed, key = { it.repo.url }) { f ->
+        Refused(refused)
+        offers.failed.forEach { f ->
             Quiet(say.pluginRepoUnreachable(repoHost(f.repo.url)), Modifier.padding(horizontal = Space.gutter, vertical = 4.dp))
         }
-        if (found.isEmpty()) item {
+        if (found.isEmpty()) {
             Quiet(if (offers.loading) say.pluginsAsking else say.pluginsNoneFound, Modifier.padding(horizontal = Space.gutter, vertical = 16.dp))
         }
-        items(found, key = { it.repo.url + it.id }) { o ->
-            val version = o.versions.firstOrNull()?.version.orEmpty()
-            PluginLine(vm, o.id, o, o.name, o.about, say.pluginOfferLine(version, repoName(o.repo.url, o.repo.official)), true, Modifier.testTag("offer-${o.id}"), { pages.open(o.id) }, Space.gutter) {
-                when (o.state) {
-                    OfferState.NEW -> TextAction(say.pluginInstall, { vm.previewOffer(o) })
-                    OfferState.UPDATE -> TextAction(say.pluginUpdate, { vm.previewOffer(o) })
-                    OfferState.INSTALLED -> Quiet(say.pluginUpToDate)
+        CategoryPages(found, Modifier.weight(1f)) { shown ->
+            shown.forEach { o ->
+                val version = o.versions.firstOrNull()?.version.orEmpty()
+                PluginLine(vm, o.id, o, o.name, o.about, say.pluginOfferLine(version, repoName(o.repo.url, o.repo.official)), true, Modifier.testTag("offer-${o.id}"), { pages.open(o.id) }, Space.gutter) {
+                    when (o.state) {
+                        OfferState.NEW -> TextAction(say.pluginInstall, { vm.previewOffer(o) })
+                        OfferState.UPDATE -> TextAction(say.pluginUpdate, { vm.previewOffer(o) })
+                        OfferState.INSTALLED -> Quiet(say.pluginUpToDate)
+                    }
                 }
             }
         }

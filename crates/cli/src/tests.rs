@@ -2406,6 +2406,29 @@ fn a_plugins_page_draws_a_row_of_each_kind() {
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Act("dev.example.gain".into(), "sync".into()))));
 }
 
+/// What the repos offer in several categories shows one at a time, chosen by chips.
+#[test]
+fn the_browser_shows_one_category_at_a_time() {
+    use crate::app::PluginCmd;
+    use crate::settings_view::Shelf;
+    use nori_plugins::Category;
+    let of = |name: &str, category| nori_plugins::Offer { category, ..offer(name, &official(), None) };
+    let shelf = Shelf::Read(nori_plugins::Offers { offers: vec![of("Tube", Category::Service), of("Orbit", Category::Playback), of("Speed", Category::Playback)], failed: Vec::new() });
+    let mut a = plugins_app(Vec::new(), vec![official()], shelf);
+    follow(&mut a, "Get plugins");
+    let s = draw(&mut a, 140, 60);
+    dump("plugins-categories", &s);
+    assert!(s.contains("Services") && s.contains("Playback") && !s.contains("More"), "a chip per category there is:\n{s}");
+    assert!(s.contains("Tube about") && !s.contains("Orbit about"), "the first category's alone:\n{s}");
+    select_row(&mut a, |r| matches!(r, Row::Choice { title, .. } if title == "Show"));
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::ShowCategory(Category::Playback))));
+    a.settings.own.category_shown = Some(Category::Playback);
+    a.settings.invalidate();
+    let s = draw(&mut a, 140, 60);
+    assert!(s.contains("Orbit about") && s.contains("Speed about") && !s.contains("Tube about"), "{s}");
+}
+
 /// m on a plugin's page moves or removes it; removing closes the page.
 #[test]
 fn a_plugins_menu_moves_and_removes_it() {
@@ -2585,6 +2608,7 @@ fn offer(name: &str, repo: &nori_plugins::Repo, installed: Option<&str>) -> nori
         readme: None,
         icon: None,
         points: Vec::new(),
+        category: nori_plugins::Category::Other,
         versions: vec![version("2.0.0", "2026-10-01"), version("1.0.0", "2026-06-01")],
         installed: installed.map(str::to_string),
         state: match installed {
@@ -2972,7 +2996,7 @@ fn every_plugin_off_leads_a_provider_to_the_switch() {
     use crate::settings_view::Shelf;
     let mut a = app();
     let repo = nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true };
-    let offer = nori_plugins::Offer { repo, id: "a.new".into(), name: "New".into(), about: None, source: None, readme: None, icon: None, points: vec!["provider".into()], versions: Vec::new(), installed: None, state: nori_plugins::OfferState::New };
+    let offer = nori_plugins::Offer { repo, id: "a.new".into(), name: "New".into(), about: None, source: None, readme: None, icon: None, points: vec!["provider".into()], category: nori_plugins::Category::Service, versions: Vec::new(), installed: None, state: nori_plugins::OfferState::New };
     a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![offer], failed: Vec::new() });
     assert_eq!(a.provider_lines().len(), 2);
     a.prefs.plugins_off = true;

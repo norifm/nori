@@ -71,6 +71,9 @@ pub struct Listed {
     /// The hosts it reaches, `lan` among them when it does (the manifest's `net`).
     #[serde(default)]
     pub net: Vec<String>,
+    /// One of [`section::CATEGORIES`]; none: the index doesn't say.
+    #[serde(default)]
+    pub category: Option<String>,
     pub versions: Vec<Release>,
 }
 
@@ -338,7 +341,7 @@ mod tests {
 
     #[test]
     fn a_listing_is_called_supported_only_when_it_says_what_it_imports() {
-        let listed = |points: &[&str], imports: Option<&[&str]>| Listed { id: "a".into(), name: "A".into(), about: None, source: None, readme: None, icon: None, points: all(points), imports: imports.map(all), net: Vec::new(), versions: Vec::new() };
+        let listed = |points: &[&str], imports: Option<&[&str]>| Listed { id: "a".into(), name: "A".into(), about: None, source: None, readme: None, icon: None, points: all(points), imports: imports.map(all), net: Vec::new(), category: None, versions: Vec::new() };
         assert_eq!(web_fit(&listed(&["lifecycle"], None), false), WebFit::Unknown);
         assert_eq!(web_fit(&listed(&["lifecycle"], Some(&["log"])), false), WebFit::Supported);
         assert_eq!(web_fit(&listed(&["device-control"], None), false), WebFit::Blocked(vec![DeviceControl]), "what is known stops it already");

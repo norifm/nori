@@ -114,6 +114,9 @@ Listeners install plugins from a plugin repo: a static `index.json` and its pack
 nori lists its own repo, [nori-plugins](https://github.com/norifm/nori-plugins), by default. Users can
 add other repos by address, after a warning. A listener can also install a package from a file.
 
+Get plugins lists what the repos offer on a page per category, which a plugin's manifest names
+(`category`: a service, a device, playback, or other).
+
 A repo can sign each version with its author's ed25519 key. The first signed version a user installs
 pins that key, and every later version must be signed with it. nori updates each plugin from the repo it
 came from, at most once a day, unless the user keeps its version.
