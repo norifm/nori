@@ -78,6 +78,8 @@ pub enum Error {
     Closed,
     /// Processing this cover panicked; the loader continues with the next.
     Panicked(String),
+    /// Asked from what is kept only ([`Loader::request_kept`]), and the file is not.
+    NotKept,
 }
 
 impl fmt::Display for Error {
@@ -88,6 +90,7 @@ impl fmt::Display for Error {
             Error::Decode(e) => e.fmt(f),
             Error::Closed => f.write_str("closed"),
             Error::Panicked(why) => write!(f, "panicked: {why}"),
+            Error::NotKept => f.write_str("not kept"),
         }
     }
 }
@@ -140,18 +143,19 @@ impl Paint for Rgba {
 
 type Done<P> = Box<dyn FnOnce(Result<P, Error>) + Send>;
 
-/// What a flight makes: a view's picture at a size, or only the file on disk (`Loader::warm`), which
-/// never shares a flight with a view's request.
+/// What a flight makes: a view's picture at a size, the same from what is kept only (never fetched), or
+/// only the file on disk (`Loader::warm`); none shares a flight with another kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Job {
     Picture(Sized),
+    Kept(Sized),
     Disk(Key),
 }
 
 impl Job {
     fn key(&self) -> Key {
         match self {
-            Job::Picture(s) => s.key,
+            Job::Picture(s) | Job::Kept(s) => s.key,
             Job::Disk(k) => *k,
         }
     }
@@ -252,17 +256,16 @@ pub struct Loader<P: Paint = Rgba> {
 
 /// Type-erased loader handle so [`Ticket`] is not generic over [`Paint`].
 trait Leave: Send + Sync {
-    fn leave(&self, key: &Sized, id: u64);
+    fn leave(&self, job: &Job, id: u64);
 }
 
 impl<P: Paint> Leave for Inner<P> {
-    fn leave(&self, key: &Sized, id: u64) {
+    fn leave(&self, job: &Job, id: u64) {
         let mut jobs = self.jobs.lock();
-        let job = Job::Picture(*key);
-        let Some(f) = jobs.flights.get_mut(&job) else { return };
+        let Some(f) = jobs.flights.get_mut(job) else { return };
         f.waiters.retain(|(i, _)| *i != id);
         if f.waiters.is_empty() && matches!(f.state, FlightState::Queued { .. }) {
-            jobs.flights.remove(&job);
+            jobs.flights.remove(job);
         }
     }
 }
@@ -274,7 +277,7 @@ impl<P: Paint> Leave for Inner<P> {
 #[must_use = "dropping a ticket cancels its request"]
 pub struct Ticket {
     inner: Option<Arc<dyn Leave>>,
-    key: Sized,
+    job: Job,
     id: u64,
 }
 
@@ -289,7 +292,7 @@ impl Ticket {
 impl Drop for Ticket {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.take() {
-            inner.leave(&self.key, self.id);
+            inner.leave(&self.job, self.id);
         }
     }
 }
@@ -327,32 +330,44 @@ impl<P: Paint> Loader<P> {
     /// (see [`Ticket`]).
     pub fn request(&self, url: &str, width: u32, height: u32, done: impl FnOnce(Result<P::Picture, Error>) + Send + 'static) -> Ticket {
         let key = Sized { key: Key::of(&self.inner.net, url), width, height };
+        self.ask(Job::Picture(key), url, Box::new(done))
+    }
+
+    /// [`Loader::request`] from what this device keeps (memory, disk): a file that is not kept answers
+    /// [`Error::NotKept`] instead of being fetched, so the answer never waits on the network.
+    pub fn request_kept(&self, url: &str, width: u32, height: u32, done: impl FnOnce(Result<P::Picture, Error>) + Send + 'static) -> Ticket {
+        let key = Sized { key: Key::of(&self.inner.net, url), width, height };
+        self.ask(Job::Kept(key), url, Box::new(done))
+    }
+
+    fn ask(&self, job: Job, url: &str, done: Done<P::Picture>) -> Ticket {
+        let (Job::Picture(key) | Job::Kept(key)) = job else { unreachable!("a view asks for a picture") };
         let inner = &self.inner;
         if let Some(picture) = inner.memory.get(&key) {
             done(Ok(picture));
-            return Ticket { inner: None, key, id: 0 };
+            return Ticket { inner: None, job, id: 0 };
         }
         if let Some(e) = inner.failed(key.key) {
             done(Err(e));
-            return Ticket { inner: None, key, id: 0 };
+            return Ticket { inner: None, job, id: 0 };
         }
         let mut jobs = inner.jobs.lock();
         jobs.next_id += 1;
         let id = jobs.next_id;
-        match jobs.flights.entry(Job::Picture(key)) {
-            Entry::Occupied(mut f) => f.get_mut().waiters.push((id, Box::new(done))),
+        match jobs.flights.entry(job) {
+            Entry::Occupied(mut f) => f.get_mut().waiters.push((id, done)),
             Entry::Vacant(v) => {
                 // A flight may have completed between the first lookup and taking the lock.
                 if let Some(picture) = inner.memory.get(&key) {
                     drop(jobs);
                     done(Ok(picture));
-                    return Ticket { inner: None, key, id: 0 };
+                    return Ticket { inner: None, job, id: 0 };
                 }
-                v.insert(Flight::queued(url, vec![(id, Box::new(done))]));
-                inner.enqueue(&mut jobs, Job::Picture(key), true);
+                v.insert(Flight::queued(url, vec![(id, done)]));
+                inner.enqueue(&mut jobs, job, true);
             }
         }
-        Ticket { inner: Some(inner.clone()), key, id }
+        Ticket { inner: Some(inner.clone()), job, id }
     }
 
     /// What the cover at `url` is kept under: the same through either of its server's addresses and under
@@ -388,7 +403,7 @@ impl<P: Paint> Loader<P> {
     /// Reads the raw cover file into `out` on this thread (from disk, or fetched and kept).
     pub fn read(&self, url: &str, out: &mut Vec<u8>) -> Result<(), Error> {
         let waker = Waker::from(Arc::new(Unpark(thread::current())));
-        self.inner.bytes(Key::of(&self.inner.net, url), url, out, &waker)
+        self.inner.bytes(Key::of(&self.inner.net, url), url, out, &waker, true)
     }
 
     /// Reads the raw cover file into `out` from disk only, for a thread that must not wait on the
@@ -602,7 +617,7 @@ impl<P: Paint> Inner<P> {
                     self.warm(key, &url, &mut w);
                     None
                 }
-                Job::Picture(sized) => self.fetch(&sized, &url, &mut w),
+                Job::Picture(sized) | Job::Kept(sized) => self.fetch(job, &sized, &url, &mut w),
             }));
             let result = match made {
                 Ok(Some(result)) => result,
@@ -637,19 +652,19 @@ impl<P: Paint> Inner<P> {
     /// Fetches the file to disk if missing, then ends the (waiter-less) flight.
     fn warm(&self, key: Key, url: &str, w: &mut Worker) {
         if self.disk().is_some_and(|d| !d.contains(key)) {
-            let _ = self.bytes(key, url, &mut w.bytes, &w.waker);
+            let _ = self.bytes(key, url, &mut w.bytes, &w.waker, true);
         }
         self.jobs.lock().flights.remove(&Job::Disk(key));
     }
 
-    /// Fetches and decodes; None when every waiter left, in which case the flight is already ended.
-    fn fetch(&self, key: &Sized, url: &str, w: &mut Worker) -> Option<Result<P::Picture, Error>> {
-        if let Err(e) = self.bytes(key.key, url, &mut w.bytes, &w.waker) {
+    /// Fetches (a [`Job::Kept`] only reads what is kept) and decodes; None when every waiter left, in which
+    /// case the flight is already ended.
+    fn fetch(&self, job: Job, key: &Sized, url: &str, w: &mut Worker) -> Option<Result<P::Picture, Error>> {
+        if let Err(e) = self.bytes(key.key, url, &mut w.bytes, &w.waker, matches!(job, Job::Picture(_))) {
             return Some(Err(e));
         }
         {
             let mut jobs = self.jobs.lock();
-            let job = Job::Picture(*key);
             if jobs.flights.get(&job).is_none_or(|f| f.waiters.is_empty()) {
                 // End the flight under the same lock as the check, so a request arriving later starts
                 // its own flight instead of joining one that will never answer.
@@ -673,8 +688,9 @@ impl<P: Paint> Inner<P> {
         })
     }
 
-    /// Reads the cover file into `out` from disk (provider covers: memory), or fetches it and keeps it.
-    fn bytes(&self, key: Key, url: &str, out: &mut Vec<u8>, waker: &Waker) -> Result<(), Error> {
+    /// Reads the cover file into `out` from disk (provider covers: memory), or, with `fetch`, fetches it and
+    /// keeps it; without, a file not kept is [`Error::NotKept`].
+    fn bytes(&self, key: Key, url: &str, out: &mut Vec<u8>, waker: &Waker, fetch: bool) -> Result<(), Error> {
         let provider = is_provider_cover(url);
         if provider {
             if let Some(file) = self.provider_files.lock().touch(key) {
@@ -693,6 +709,9 @@ impl<P: Paint> Inner<P> {
                 d.remove(whole);
                 return Ok(());
             }
+        }
+        if !fetch {
+            return Err(Error::NotKept);
         }
         let r = block_on(self.net.get(url.to_owned(), self.timeout_ms), waker)?;
         if !(200..300).contains(&r.status) || r.body.is_empty() {

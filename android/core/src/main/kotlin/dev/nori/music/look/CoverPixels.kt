@@ -27,6 +27,8 @@ object CoverPixels {
     const val BROKEN = 4
     /** Nobody waited for the cover when its file came, or the loader closed: asked again, it comes. */
     const val CLOSED = 5
+    /** Asked from what the device keeps only ([request]'s `kept`), and the cover is not kept. */
+    const val NOT_KEPT = 6
     /** The request did not come back: this plus the transport's `FailureKind` ordinal. */
     const val NETWORK = 100
     /** The server answered with an error: this plus the HTTP status. */
@@ -58,9 +60,10 @@ object CoverPixels {
 
     /**
      * The cover at [url] to fill [width] x [height] (0 x 0: at its own size, at most 2048 a side), for
-     * [waiter]. 0 when there is no loader.
+     * [waiter]; with [kept], from what the device keeps only ([NOT_KEPT] rather than a fetch). 0 when there
+     * is no loader.
      */
-    @JvmStatic external fun request(loader: Long, url: String, width: Int, height: Int, waiter: Waiter): Long
+    @JvmStatic external fun request(loader: Long, url: String, width: Int, height: Int, kept: Boolean, waiter: Waiter): Long
 
     /** Lets the request [ticket] go. A lock and a free: `@FastNative`. */
     @JvmStatic @FastNative external fun cancel(ticket: Long)
@@ -100,10 +103,10 @@ object CoverPixels {
      * The pages for the cover at [url], worked out from one decode of it to fit [side] with no Bitmap in
      * between: its own page, whatever the theme ([CoverLook.Colours]'s look into [out], its wash into [wash]) and on
      * AMOLED black (the look into [black]), each where its array is not null. Answers [PLAIN], [WASH]
-     * and [BLACK] for what it wrote, 0 for no cover. Reads the disk and may wait for the network: off
-     * the main thread.
+     * and [BLACK] for what it wrote, 0 for no cover. Reads the disk and, without [kept] (the file kept on
+     * disk only), may wait for the network: off the main thread.
      */
-    @JvmStatic external fun colours(loader: Long, url: String, side: Int, out: IntArray?, wash: Bitmap?, black: IntArray?): Int
+    @JvmStatic external fun colours(loader: Long, url: String, side: Int, kept: Boolean, out: IntArray?, wash: Bitmap?, black: IntArray?): Int
 
     const val PLAIN = 1
     const val WASH = 2

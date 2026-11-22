@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,8 +55,19 @@ import dev.nori.music.ffi.model.Album
 @Composable
 fun HomeScreen(actions: ActionsViewModel, settings: dev.nori.music.app.vm.SettingsViewModel, vm: HomeViewModel = viewModel()) {
     val load by vm.ui.collectAsStateWithLifecycle()
+    // The first frame waits for the page, and for the colours its first screen wears (FirstFrame).
     val first = LocalFirstFrame.current
-    androidx.compose.runtime.SideEffect { first.claim(load !is dev.nori.music.app.vm.Load.Loading) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val papers = LocalPapers.current
+    val tints by vm.firstTints.collectAsStateWithLifecycle()
+    var dressed by remember { mutableStateOf(false) }
+    LaunchedEffect(tints) {
+        val urls = tints ?: return@LaunchedEffect
+        kotlinx.coroutines.coroutineScope { urls.forEach { launch { warmCoverPage(context, it, papers) } } }
+        dressed = true
+    }
+    val whole = load !is dev.nori.music.app.vm.Load.Loading && (load !is dev.nori.music.app.vm.Load.Ready || dressed)
+    androidx.compose.runtime.SideEffect { first.claim(whole) }
     val nav = LocalNav.current
     // "For you" is the profile's where it has one (`ProfileRules.mixes`): a jam guest's Home is the host's shelves.
     val mixes = LocalRules.current.mixes

@@ -83,6 +83,11 @@ sealed interface Shelf {
 /** The home page: the library's shelves, or ([feed]) the source's own shelves (`ProfileRules.feed`). */
 data class HomeUi(val rows: List<Shelf> = emptyList(), val pinned: List<Playlist> = emptyList(), val feed: List<dev.nori.music.ffi.model.FeedShelf> = emptyList())
 
+/** How much of Home its first screen shows: mix tiles, shelves under them, and prints of each shelf. */
+private const val FIRST_TILES = 3
+private const val FIRST_SHELVES = 3
+private const val FIRST_PRINTS = 3
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(app: Application) : NoriViewModel(app) {
     // The app was opened: a good moment to replay whatever was starred, rated or played while offline.
@@ -189,7 +194,8 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
         val shelves = homeShelves(shown)
         flow {
             val kept = runCatching { nori.library.homeKept(shown, rules.mixes) }.onFailure { dev.nori.music.NoriLog.w("home: nothing kept read: ${it.message}") }.getOrNull()
-            kept?.let(::opened)
+            val tiles = kept?.let(::opened).orEmpty()
+            _firstTints.value = (tiles.take(FIRST_TILES).map { it.covers.firstOrNull() } + offerCover(kept?.offer)).filterNotNull()
             // A source's own Home is its feed, asked again on a refresh.
             if (rules.feed) {
                 kept?.feed?.let { emit(HomeUi(feed = it)) }
@@ -197,6 +203,9 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
             }
             val keptShelves = shown.zip(shelves).mapIndexed { i, (r, shelf) -> shelfOf(r, shelf, kept?.shelves?.getOrNull(i)) }
             val keptPinned = kept?.shelves?.getOrNull(shelves.indexOf(HomeShelf.Pinned))?.let { (it as? dev.nori.music.ffi.ShelfItems.Playlists)?.v }.orEmpty()
+            // The first screen's covers decoded from the device before the page is handed out, so it draws
+            // them in its first frame rather than fading them in after.
+            if (kept != null) dev.nori.music.data.CoverLoader.get(getApplication()).keepFromDevice(firstCovers(tiles, keptShelves, keptPinned, kept.offer), dev.nori.music.data.Covers.rules.card.toInt())
             val pinned = if (HomeShelf.Pinned in shelves && pins.isNotEmpty()) combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }
                 .map { all -> withContext(Dispatchers.Default) { homePinned(all, pins) } }.catch { emit(emptyList()) }.onStart { emit(keptPinned) } else flowOf(emptyList())
             val live = combine(shown.zip(shelves).mapIndexed { i, (r, shelf) -> source(r, shelf, keptShelves[i]) }) { it.toList() }.onStart { emit(keptShelves) }
@@ -204,12 +213,41 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
         }
     }.distinctUntilChanged().asLoad()
 
-    /** What the page opened with besides its shelves: the mixes' tiles and the queue offered, as kept. */
-    private fun opened(kept: dev.nori.music.ffi.HomeKept) {
-        if (kept.mixes.isNotEmpty()) keepCards(nori.settings.value.activeServerId, nori.settings.effective.value.tasteModel, kept.mixes)
+    /** What the page opened with besides its shelves, as kept: the queue offered, and the mixes' tiles, returned. */
+    private fun opened(kept: dev.nori.music.ffi.HomeKept): List<MixCard> {
         val now = nori.player.state.value
         _offer.value = kept.offer.takeIf { offered.found(it, now.current?.id, now.playing) }
+        return if (kept.mixes.isEmpty()) emptyList() else keepCards(nori.settings.value.activeServerId, nori.settings.effective.value.tasteModel, kept.mixes)
     }
+
+    /**
+     * The covers the page's first screen draws, at the addresses its views ask for: the first mixes' tiles,
+     * the first shelves' first prints and the queue offered.
+     */
+    private fun firstCovers(tiles: List<MixCard>, shelves: List<Shelf>, pinned: List<Playlist>, offer: dev.nori.music.ffi.library.QueueOffer?): List<String> {
+        val prints = shelves.filterNot { it.isEmpty && it.row != HomeRow.PINNED }.take(FIRST_SHELVES).flatMap { s ->
+            when (s) {
+                is Shelf.Albums -> s.albums.take(FIRST_PRINTS).map { it.coverArt }
+                is Shelf.Playlists -> (if (s.row == HomeRow.PINNED) pinned else s.playlists).take(FIRST_PRINTS).map { it.coverArt }
+                is Shelf.Songs -> s.songs.take(FIRST_PRINTS).map { it.coverArt }
+            }
+        }
+        val card = dev.nori.music.data.Covers.rules.card.toInt()
+        return tiles.take(FIRST_TILES).flatMap { it.covers } + prints.mapNotNull { cover(it, card) } + listOfNotNull(offerCover(offer))
+    }
+
+    /** The queue offered's song's cover, at the address its card asks for. */
+    private fun offerCover(offer: dev.nori.music.ffi.library.QueueOffer?): String? =
+        offer?.songs?.getOrNull(offer.index.toInt())?.coverArt?.let { cover(it, dev.nori.music.data.Covers.rules.card.toInt()) }
+
+    private val _firstTints = MutableStateFlow<List<String>?>(null)
+
+    /**
+     * The covers whose colours the page's first screen wears (the first mixes' tiles, the queue offered's
+     * card), known as soon as what is kept is read: the page works them out before its first frame, from the
+     * device, while the covers decode. Null until then.
+     */
+    val firstTints: StateFlow<List<String>?> = _firstTints
 
     /**
      * The pull at the top of the page. The stored answers behind the shelves go first, so asking again

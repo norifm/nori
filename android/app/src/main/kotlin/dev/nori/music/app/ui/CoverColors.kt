@@ -65,8 +65,8 @@ private suspend fun paletteOf(context: android.content.Context, url: String): Pa
     return CoverPalette.cache.get(key)
 }
 
-/** Works out the cover's page, unless that is known already. */
-private suspend fun measure(context: android.content.Context, url: String) {
+/** Works out the cover's page, unless that is known already; with [kept], from the file on disk only. */
+private suspend fun measure(context: android.content.Context, url: String, kept: Boolean = false) {
     val key = paletteKey(context, url)
     if (CoverPalette.cache.get(key) != null) return
     // One cover is only ever worked out once, even when the bar, the player and the warm-up below all
@@ -77,7 +77,7 @@ private suspend fun measure(context: android.content.Context, url: String) {
         // drawn on screen (which is 5-6-5 to save memory): the colours are worked out from the same
         // pixels any other app on nori-look would hand in, so the same record gets the same page
         // everywhere.
-        val pages = withContext(Dispatchers.IO) { CoverLoader.get(context).colours(url, CoverSize.ROW, plain = true, black = false) } ?: return@once
+        val pages = withContext(Dispatchers.IO) { CoverLoader.get(context).colours(url, CoverSize.ROW, plain = true, black = false, kept = kept) } ?: return@once
         pages.plain?.let { CoverPalette.cache.put(key, PagePalette(it.look, wash = it.wash?.asImageBitmap())) }
     }
 }
@@ -91,6 +91,19 @@ private suspend fun measure(context: android.content.Context, url: String) {
 suspend fun warmCoverPalette(context: android.content.Context, url: String?) {
     if (url == null) return
     runCatching { measure(context, url) }
+}
+
+/**
+ * Works a cover's page out from the file the device keeps (never the network) and dyes it on [papers], so a
+ * view composed next wears it from its first frame. Nothing for a cover not kept, or with cover colours off.
+ */
+suspend fun warmCoverPage(context: android.content.Context, url: String, papers: Papers) {
+    if (!papers.coversTint) return
+    val key = paletteKey(context, url)
+    runCatching { measure(context, url, kept = true) }
+    val base = CoverPalette.cache.get(key) ?: return
+    val dyed = DyedKey(key, papers)
+    if (dyedPages.get(dyed) == null) dyedPages.put(dyed, withContext(Dispatchers.Default) { base.dyed(papers) })
 }
 
 /**
