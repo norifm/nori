@@ -2050,7 +2050,7 @@ component SectionTitle inherits Rectangle {
     in property <string> text;
     in property <bool> more;
     callback clicked;
-    height: 30px;
+    height: 32px;
     min-width: label.min-width;
     preferred-width: label.preferred-width + (root.more ? 28px : 0);
     HorizontalLayout {
@@ -2059,7 +2059,7 @@ component SectionTitle inherits Rectangle {
             horizontal-stretch: 1;
             text: root.text;
             color: Theme.text;
-            font-size: 19px;
+            font-size: 21px;
             font-weight: 600;
             letter-spacing: -0.2px;
             vertical-alignment: center;
@@ -2128,7 +2128,8 @@ component ShelfView inherits VerticalLayout {
     in property <length> least: 176px;
     in property <length> below: 46px;
     out property <length> gap: 22px;
-    property <length> pad: 32px;
+    // The room it keeps at each side of the page.
+    in property <length> pad: 32px;
     property <int> columns: max(2, floor((self.width - root.pad * 2 + root.gap) / (root.least + root.gap)));
     out property <length> side: (self.width - root.pad * 2 - (root.columns - 1) * root.gap) / root.columns;
     out property <length> step: root.side + root.gap;
@@ -2155,8 +2156,8 @@ component ShelfView inherits VerticalLayout {
         flick.content-x = max(root.end, min(0, flick.content-x - by * root.columns * root.step));
         settle.running = true;
     }
-    spacing: 10px;
-    padding-bottom: 44px;
+    spacing: 14px;
+    padding-bottom: 52px;
     HorizontalLayout {
         padding-left: root.pad;
         padding-right: root.pad;
@@ -8237,21 +8238,28 @@ export component AppWindow inherits Window {
                     home-scroll := Remembered {
                         content-height: home.preferred-height;
                         home := VerticalLayout {
+                            // Home's margins grow a little with the window (32 to 40 px, as Music's 25 to 40), and past
+                            // 1440 px of shelves it stays in the middle: about the room Music and Spotify leave their
+                            // pages beside a sidebar. With cards from 200 px that is five in a row at 1280, six at 1728.
+                            property <length> gutter: max(clamp(self.width * 0.032, 32px, 40px), (self.width - 1440px) / 2);
                             y: floor(home-scroll.content-y / 1phx + 0.5) * 1phx - home-scroll.content-y;
                             width: parent.width;
                             padding-bottom: 100px;
                             Heading {
                                 title: root.greeting;
+                                padding-left: home.gutter;
+                                padding-right: home.gutter;
+                                padding-bottom: 22px;
                             }
                             // The queue another device left, offered as Spotify offers to carry on here: a card on
                             // raised paper, the song, where it stands, Resume and a close.
                             if root.offer-shown: HorizontalLayout {
-                                padding-left: 32px;
-                                padding-right: 32px;
-                                padding-bottom: 26px;
+                                padding-left: home.gutter;
+                                padding-right: home.gutter;
+                                padding-bottom: 36px;
                                 alignment: start;
                                 Rectangle {
-                                    width: min(560px, parent.width - 64px);
+                                    width: min(560px, parent.width - 2 * home.gutter);
                                     height: 178px;
                                     border-radius: 18px;
                                     clip: true;
@@ -8343,6 +8351,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                             if !root.picks-loaded || root.picks.length > 0: picks-shelf := ShelfView {
+                                pad: home.gutter;
                                 title: "For you";
                                 more: true;
                                 show-all => { root.go(View.for-you); }
@@ -8366,6 +8375,8 @@ export component AppWindow inherits Window {
                                 property <length> top: self.y + home.y + home-scroll.content-y;
                                 property <bool> on-screen: self.top + self.height > 0px && self.top < home-scroll.height;
                                 if !shelf.loaded || shelf.cards.length > 0: albums-shelf := ShelfView {
+                                    pad: home.gutter;
+                                    least: 200px;
                                     title: shelf.title;
                                     more: true;
                                     show-all => { root.shown-shelf = index; root.go(View.shelf); }

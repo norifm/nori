@@ -5996,7 +5996,7 @@ mod tests {
             ui.window().take_snapshot().unwrap();
             slint::platform::update_timers_and_animations();
             let shot = ui.window().take_snapshot().unwrap();
-            shot.as_bytes()[245 * 1280 * 4..].to_vec()
+            shot.as_bytes()[251 * 1280 * 4..].to_vec()
         };
         let two_lines = under_title("Reflections Laughing (feat. Florence + The Machine)");
         let too_long = under_title("Reflections Laughing (feat. Florence + The Machine, Travis Scott) and a good deal more words than fit");
@@ -7797,6 +7797,29 @@ mod tests {
         }
     }
 
+    /// Home's shelves are at most 1440 px wide, in the middle of the window, with cards from 200 px: a wide
+    /// window gets room at its sides and a larger card before it gets another card in the row.
+    #[test]
+    fn home_keeps_to_the_middle_of_a_wide_window() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.set_view(View::Home);
+        ui.set_picks_loaded(true);
+        ui.set_shelves(ModelRc::new(VecModel::from(vec![Shelf { loaded: true, cards: cards((0..12).map(|i| Card { id: i.to_string().into(), ..Default::default() })), ..Default::default() }])));
+        ui.show().unwrap();
+        // Where the row's first card starts, and how wide a card is.
+        let first = |width: u32| {
+            ui.window().set_size(slint::PhysicalSize::new(width, 820));
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            let card = i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "CardView").next().expect("a card");
+            (card.absolute_position().x.round(), card.size().width.round())
+        };
+        assert_eq!(first(1728), (144.0, 222.0), "six cards across 1440, in the middle");
+        assert_eq!(first(1280), (40.0, 222.0), "five cards across");
+        assert_eq!(first(760), (32.0, 217.0), "three cards across");
+    }
+
     #[test]
     fn a_card_opens_when_its_shelf_is_read_again_under_the_press() {
         i_slint_backend_testing::init_no_event_loop();
@@ -7814,7 +7837,7 @@ mod tests {
         i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
         slint::platform::update_timers_and_animations();
         // The first card's cover, under Home's title and the shelf's.
-        let at = slint::LogicalPosition::new(100.0, 250.0);
+        let at = slint::LogicalPosition::new(200.0, 250.0);
         let button = slint::platform::PointerEventButton::Left;
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
@@ -7853,7 +7876,7 @@ mod tests {
         };
         wait(1000);
         let click = || {
-            let at = slint::LogicalPosition::new(100.0, 250.0);
+            let at = slint::LogicalPosition::new(200.0, 250.0);
             let button = slint::platform::PointerEventButton::Left;
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
@@ -8118,7 +8141,7 @@ mod tests {
             let frame = ui.window().take_snapshot().unwrap();
             let pixels = frame.as_slice();
             let white = |p: &Rgba8Pixel| p.r == 255 && p.g == 255 && p.b == 255;
-            let top = (0..frame.height() as usize).find(|&y| white(&pixels[y * width as usize + (150.0 * scale) as usize])).expect("the pick is visible");
+            let top = (0..frame.height() as usize).find(|&y| pixels[y * width as usize..(y + 1) * width as usize].iter().any(white)).expect("the pick is visible");
             let line = &pixels[(top + 20) * width as usize..(top + 21) * width as usize];
             let left = line.iter().position(white).unwrap();
             let right = line.iter().rposition(white).unwrap();
