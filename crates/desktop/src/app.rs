@@ -3243,7 +3243,10 @@ impl App {
         }
         let mut shown_here = host.device_cards("en".into());
         self.plugged.off.extend(watched.as_said(&mut shown_here));
-        ui.set_device_plugin_rows(crate::settings::device_rows(&shown_here, &self.plugged.controlled, &self.plugged.off, self.plugged.device_page.as_deref(), &prefs, &self.facts, today));
+        let paged = crate::settings::paged_device(&self.plugged.controlled, self.plugged.device_page.as_deref());
+        ui.set_device_paged(paged.is_some());
+        ui.set_device_controls(crate::settings::controlled_rows(if paged.is_some() { &[] } else { &self.plugged.controlled }, &prefs, &self.facts, today));
+        ui.set_device_plugin_rows(crate::settings::device_rows(&shown_here, &self.plugged.controlled, &self.plugged.off, paged, &prefs, &self.facts, today));
         let menus = ui.global::<crate::PluginMenus>();
         let labels = |k: usize| ModelRc::new(VecModel::from(self.plugin_menus[k].iter().map(|e| SharedString::from(e.label.as_str())).collect::<Vec<_>>()));
         menus.set_album(labels(0));
@@ -4682,7 +4685,7 @@ impl App {
         // A jam guest's music is the jam's; it moves to no other device.
         let host = &self.root.plugins().host;
         let targets = host.cast_targets();
-        ui.set_devices_on((remote.is_some() || cast.is_some() || host.finds_outputs() || ui.get_device_plugin_rows().row_count() > 0) && !self.guest());
+        ui.set_devices_on((remote.is_some() || cast.is_some() || host.finds_outputs() || ui.get_device_controls().row_count() + ui.get_device_plugin_rows().row_count() > 0) && !self.guest());
         if !devices_open(&ui) || (remote.is_none() && cast.is_none() && targets.is_empty()) {
             return;
         }
@@ -6582,6 +6585,52 @@ mod tests {
             }
             assert_eq!(*did.borrow(), want, "with {options:?}");
         }
+    }
+
+    /// The headphones a plugin controls head the devices panel as one card, as Android's: their noise modes
+    /// are chips that share its width, a press on one chooses it, and the last row opens their settings.
+    #[test]
+    fn a_controlled_devices_noise_modes_are_chips_across_its_card() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_devices_on(true);
+        let words = |w: &[&str]| ModelRc::new(VecModel::from(w.iter().map(|o| slint::SharedString::from(*o)).collect::<Vec<_>>()));
+        ui.set_device_controls(ModelRc::new(VecModel::from(vec![
+            crate::SettingRow { kind: 22, title: "WH-1000XM5".into(), detail: "80%".into(), first: true, ..Default::default() },
+            crate::SettingRow { kind: 23, name: "device-noise:AA".into(), options: words(&["Normal", "ANC", "Transparent"]), chosen: 1, enabled: true, ..Default::default() },
+            crate::SettingRow { kind: 11, name: "device-open:AA".into(), title: "Device settings".into(), enabled: true, last: true, ..Default::default() },
+        ])));
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let seen = did.clone();
+        ui.on_setting_chosen(move |name, at| seen.borrow_mut().push(format!("{name} {at}")));
+        let seen = did.clone();
+        ui.on_setting_action(move |name| seen.borrow_mut().push(name.to_string()));
+        ui.set_inspector(Panel::Devices);
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        settle();
+        let view = i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "DevicesView").next().expect("the devices panel");
+        let chips: Vec<(f32, f32)> = view.query_descendants().match_inherits("Chip").find_all().iter().map(|c| (c.absolute_position().x, c.size().width)).collect();
+        let (left, right) = (view.absolute_position().x + 10.0 + 12.0, view.absolute_position().x + view.size().width - 10.0 - 12.0);
+        assert_eq!(chips.len(), 3);
+        assert!((chips[0].0 - left).abs() < 1.0 && (chips[2].0 + chips[2].1 - right).abs() < 1.0, "the chips run from {left} to {right}: {chips:?}");
+        assert!(chips.windows(2).all(|c| (c[1].0 - (c[0].0 + c[0].1) - 6.0).abs() < 1.0), "6 px between them: {chips:?}");
+        assert!(chips[2].1 > chips[1].1, "a longer word has the wider chip: {chips:?}");
+        let click = |x: f32, y: f32| {
+            press(ui.window(), x, y, slint::platform::PointerEventButton::Left);
+            settle();
+        };
+        let chip = view.query_descendants().match_inherits("Chip").find_all().remove(2);
+        click(chip.absolute_position().x + chip.size().width / 2.0, chip.absolute_position().y + chip.size().height / 2.0);
+        click(left + 20.0, chip.absolute_position().y + chip.size().height + 10.0 + 27.0);
+        assert_eq!(*did.borrow(), ["device-noise:AA 2", "device-open:AA"]);
     }
 
     /// The main window and its player pill as the app joins them, the pill at x 140 and 1000 wide.

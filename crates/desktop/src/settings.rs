@@ -43,6 +43,10 @@ const README_HEADING: i32 = 18;
 const README_TEXT: i32 = 19;
 const README_ITEM: i32 = 20;
 const README_CODE: i32 = 21;
+/// A device a plugin controls: the headset, its name and its batteries.
+const CONTROLLED: i32 = 22;
+/// One of a few, as chips sharing the row.
+const SEGMENTS: i32 = 23;
 
 /// The appearance row's name: the theme setting, offered as segments.
 pub const APPEARANCE: &str = "appearance";
@@ -718,6 +722,11 @@ pub fn setup_look_rows(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs
 
 /// `groups` as the page draws them: each heading, then its rows with first and last marked.
 fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    ModelRc::new(VecModel::from(lines(groups, p, f, today)))
+}
+
+/// `groups` as the page's rows: each group's heading, then its rows on their plate.
+fn lines(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Today) -> Vec<SettingRow> {
     let mut out = Vec::new();
     for (title, rows) in groups {
         out.push(SettingRow { kind: HEADING, title: title.to_uppercase().into(), ..Default::default() });
@@ -768,7 +777,7 @@ fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Tod
             });
         }
     }
-    ModelRc::new(VecModel::from(out))
+    out
 }
 
 /// A page over Settings › Plugins.
@@ -1524,7 +1533,8 @@ fn plugin_row(plugin: &str, r: &PluginRow, off: bool) -> Row {
                 Some(Value::Choice(i)) => i as i32,
                 _ => 0,
             };
-            Row { kind: CHOICE, options: r.options.iter().map(|o| (o.clone(), o.clone())).collect(), chosen: Some(chosen), ..base }
+            let kind = if r.kind == RowKind::Segments { SEGMENTS } else { CHOICE };
+            Row { kind, options: r.options.iter().map(|o| (o.clone(), o.clone())).collect(), chosen: Some(chosen), ..base }
         }
         RowKind::Level => {
             let (min, max) = (r.min.unwrap_or(0.0), r.max.unwrap_or(1.0));
@@ -1597,48 +1607,62 @@ fn card_groups(title: String, c: &PluginCard, head: Vec<Row>, off: &HashSet<(Str
     groups
 }
 
-/// The devices panel's plugin rows: each controlled device (its batteries and noise control, and a way on
-/// to its settings), then the rows of the plugins `cards` show there; with `page`, that device's settings.
-pub fn device_rows(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>, page: Option<&str>, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
-    model(device_groups(cards, controlled, off, page), prefs, f, today)
+/// The device whose settings the devices panel shows: `page`'s, while a plugin controls it.
+pub fn paged_device<'a>(controlled: &'a [ControlledDevice], page: Option<&str>) -> Option<&'a ControlledDevice> {
+    page.and_then(|id| controlled.iter().find(|d| d.id == id))
 }
 
-/// A controlled device's batteries and noise control.
-fn device_controls(d: &ControlledDevice) -> Vec<Row> {
+/// The devices plugins control, which head the devices panel as Android's card does: each one's name over
+/// its batteries, its noise modes and a way on to its settings.
+pub fn controlled_rows(controlled: &[ControlledDevice], prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    let rows = lines(controlled.iter().map(|d| (String::new(), device_card(d))).collect(), prefs, f, today);
+    ModelRc::new(VecModel::from(rows.into_iter().filter(|r| r.kind != HEADING).collect::<Vec<_>>()))
+}
+
+/// The devices panel's plugin rows: device `paged`'s settings, which then fill the panel, else the rows of
+/// the plugins `cards` show there.
+pub fn device_rows(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>, paged: Option<&ControlledDevice>, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(device_groups(cards, controlled, off, paged), prefs, f, today)
+}
+
+/// A controlled device's batteries and noise modes; `named`, its name leads them, the batteries under it.
+fn device_controls(d: &ControlledDevice, named: bool) -> Vec<Row> {
     let mut rows = Vec::new();
     let battery = words::battery(&d.battery);
-    if !battery.is_empty() {
+    if named {
+        rows.push(Row { kind: CONTROLLED, title: d.name.clone(), detail: battery, ..Default::default() });
+    } else if !battery.is_empty() {
         rows.push(info(words::BATTERY, battery));
     }
     if !d.noise_modes.is_empty() {
         let options = d.noise_modes.iter().map(|m| (words::noise(*m).to_string(), String::new())).collect();
         let chosen = d.noise.and_then(|n| d.noise_modes.iter().position(|m| *m == n)).map_or(-1, |i| i as i32);
-        rows.push(Row { kind: CHOICE, name: PluginAct::Noise(d.id.clone()).name(), title: words::NOISE_CONTROL.into(), options, chosen: Some(chosen), enabled: true, ..Default::default() });
+        rows.push(Row { kind: SEGMENTS, name: PluginAct::Noise(d.id.clone()).name(), options, chosen: Some(chosen), enabled: true, ..Default::default() });
     }
     rows
 }
 
-fn device_groups(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>, page: Option<&str>) -> Vec<(String, Vec<Row>)> {
-    let on_page = |r: &PluginRow| nori_plugins::row_on_device_page(r.kind);
-    let button = |title: &str, act: PluginAct| Row { kind: BUTTON, name: act.name(), title: title.into(), enabled: true, ..Default::default() };
+/// A controlled device's card in the devices panel: what it is and its noise modes, then a way on to the
+/// settings its plugin has for it.
+fn device_card(d: &ControlledDevice) -> Vec<Row> {
+    let mut rows = device_controls(d, true);
+    if d.card.rows.iter().any(|r| nori_plugins::row_on_device_page(r.kind) && r.kind != RowKind::Section) {
+        rows.push(Row { kind: LINK, name: PluginAct::DeviceOpen(d.id.clone()).name(), title: words::DEVICE_SETTINGS.into(), enabled: true, ..Default::default() });
+    }
+    rows
+}
+
+fn device_groups(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>, paged: Option<&ControlledDevice>) -> Vec<(String, Vec<Row>)> {
     let mut groups = Vec::new();
-    if let Some(d) = page.and_then(|id| controlled.iter().find(|d| d.id == id)) {
-        let mut rows = vec![button(words::BACK, PluginAct::DeviceBack)];
-        rows.extend(device_controls(d));
+    if let Some(d) = paged {
+        let mut rows = vec![Row { kind: BUTTON, name: PluginAct::DeviceBack.name(), title: words::BACK.into(), enabled: true, ..Default::default() }];
+        rows.extend(device_controls(d, false));
         groups.push((d.name.clone(), rows));
-        groups.extend(card_groups(String::new(), &d.card, Vec::new(), off, on_page));
-        groups.retain(|(_, rows)| !rows.is_empty());
-        return groups;
+        groups.extend(card_groups(String::new(), &d.card, Vec::new(), off, |r| nori_plugins::row_on_device_page(r.kind)));
+    } else {
+        let apart = cards.iter().filter(|c| !controlled.iter().any(|d| d.card.id == c.id));
+        groups.extend(apart.flat_map(|c| card_groups(c.name.clone(), c, Vec::new(), off, |_| true)));
     }
-    for d in controlled {
-        let mut rows = device_controls(d);
-        if d.card.rows.iter().any(|r| on_page(r) && r.kind != RowKind::Section) {
-            rows.push(button(words::DEVICE_SETTINGS, PluginAct::DeviceOpen(d.id.clone())));
-        }
-        groups.push((d.name.clone(), rows));
-    }
-    let apart = cards.iter().filter(|c| !controlled.iter().any(|d| d.card.id == c.id));
-    groups.extend(apart.flat_map(|c| card_groups(c.name.clone(), c, Vec::new(), off, |_| true)));
     groups.retain(|(_, rows)| !rows.is_empty());
     groups
 }
@@ -2219,28 +2243,41 @@ mod tests {
         assert_eq!((link.kind, PluginAct::of(&link.name)), (LINK, Some(PluginAct::Open("https://x.example/help".into()))));
     }
 
-    /// A controlled device leads the devices panel: its batteries, its noise control (named so it parses
-    /// back to the device) and a way on to its settings, which have a way back.
+    /// A controlled device's card heads the devices panel, as Android's: its name over its batteries, its
+    /// noise modes as chips (named so they parse back to the device) and a way on to its settings, which
+    /// fill the panel and have a way back.
     #[test]
-    fn a_controlled_device_leads_the_devices_panel() {
+    fn a_controlled_device_is_a_card_of_its_name_its_noise_chips_and_its_settings() {
         use nori_plugins::{Battery, Noise};
+        use slint::Model;
         let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, stopped: None, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None, page: None, glyph: None }] };
         let d = ControlledDevice { id: "AA".into(), name: "WH-1000XM5".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Canceling), noise_modes: vec![Noise::Off, Noise::Canceling], noise_cycle: vec![Noise::Off, Noise::Canceling], card: card("dev.sony") };
         let on = PluginRow { id: "on".into(), label: "Touch".into(), kind: RowKind::Switch, ..row_blank() };
         let d = ControlledDevice { card: PluginCard { rows: vec![on], ..d.card.clone() }, ..d };
-        let shown = |page| device_groups(&[card(&d.card.id)], std::slice::from_ref(&d), &HashSet::new(), page);
+        let controlled = std::slice::from_ref(&d);
 
-        let list = shown(None);
-        assert_eq!(list.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["WH-1000XM5"], "its plugin's rows wait on its page");
-        let rows = &list[0].1;
-        assert_eq!((rows[0].kind, rows[0].detail.as_str()), (INFO, "80%"));
-        assert_eq!((rows[1].kind, rows[1].chosen, PluginAct::of(&rows[1].name)), (CHOICE, Some(1), Some(PluginAct::Noise("AA".into()))));
-        assert_eq!(PluginAct::of(&rows[2].name), Some(PluginAct::DeviceOpen("AA".into())));
+        let rows = device_card(&d);
+        assert_eq!((rows[0].kind, rows[0].title.as_str(), rows[0].detail.as_str()), (CONTROLLED, "WH-1000XM5", "80%"));
+        assert_eq!((rows[1].kind, rows[1].chosen, PluginAct::of(&rows[1].name)), (SEGMENTS, Some(1), Some(PluginAct::Noise("AA".into()))));
+        assert_eq!(rows[1].options.iter().map(|o| o.0.as_str()).collect::<Vec<_>>(), ["Normal", "ANC"]);
+        assert_eq!((rows[2].kind, PluginAct::of(&rows[2].name)), (LINK, Some(PluginAct::DeviceOpen("AA".into()))));
+        let shown = controlled_rows(controlled, &Default::default(), &Default::default(), Today { month: 10, day: 19, southern: false });
+        assert_eq!(shown.iter().map(|r| (r.kind, r.first, r.last)).collect::<Vec<_>>(), [(CONTROLLED, true, false), (SEGMENTS, false, false), (LINK, false, true)], "one plate, no heading over it");
+        assert!(device_groups(&[card(&d.card.id)], controlled, &HashSet::new(), None).is_empty(), "its plugin's rows wait on its page");
 
-        let page = shown(Some("AA"));
-        assert_eq!(PluginAct::of(&page[0].1[0].name), Some(PluginAct::DeviceBack));
+        assert_eq!(paged_device(controlled, Some("gone")), None, "the device gone, the list again");
+        let page = device_groups(&[card(&d.card.id)], controlled, &HashSet::new(), paged_device(controlled, Some("AA")));
+        assert_eq!((page[0].0.as_str(), PluginAct::of(&page[0].1[0].name)), ("WH-1000XM5", Some(PluginAct::DeviceBack)));
+        assert_eq!((page[0].1[1].kind, page[0].1[1].detail.as_str(), page[0].1[2].kind), (INFO, "80%", SEGMENTS), "the page names it: its batteries alone, then the chips");
         assert_eq!(page[1].1[0].name, "plugin-row:dev.sony:on");
-        assert_eq!(shown(Some("gone")).len(), 1, "the device gone, the list again");
+    }
+
+    /// A plugin's segments are chips, as Android's; its choice is the popover's.
+    #[test]
+    fn a_plugins_segments_are_chips_and_its_choice_a_popover() {
+        let r = |kind| PluginRow { id: "mode".into(), label: "Mode".into(), kind, options: vec!["A".into(), "B".into()], value: Some(Value::Choice(1)), ..row_blank() };
+        let kinds: Vec<(i32, Option<i32>)> = [RowKind::Segments, RowKind::Choice].into_iter().map(|k| plugin_row("p", &r(k), false)).map(|row| (row.kind, row.chosen)).collect();
+        assert_eq!(kinds, [(SEGMENTS, Some(1)), (CHOICE, Some(1))]);
     }
 
     /// A flags row is its title and a switch for each option, which stores the bits with that one switched.
