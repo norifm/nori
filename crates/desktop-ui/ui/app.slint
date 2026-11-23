@@ -33,14 +33,6 @@ export struct LibraryTabs {
     favorites: bool,
 }
 
-// A profile's scrobbling account as its dialog lists it.
-export struct ScrobblerLine {
-    id: string,
-    title: string,
-    detail: string,
-    on: bool,
-}
-
 // A kind of scrobbling account to add: its service, and what it costs where it does.
 export struct ScrobblerKindLine {
     name: string,
@@ -263,7 +255,7 @@ export struct SettingRow {
     icon: image,
     letter: string,
     glyph: MarkGlyph,
-    // What each of `options` sends (a profile row's menu), and a profile row's account picture.
+    // What each of `options` sends (a profile row's menu, a switch's menu), and a profile row's account picture.
     values: [string],
     picture: image,
 }
@@ -798,6 +790,13 @@ component Icon inherits Rectangle {
         stroke-width: root.line;
         stroke-line-join: round;
     }
+}
+
+// Words that wrap, as tall as their lines at the width they are given. Its height is its own: asked by
+// the layouts around it (from a row in a column, or under an `opacity`), a wrapped text counts as one line.
+component Wrapped inherits Text {
+    wrap: word-wrap;
+    height: self.preferred-height;
 }
 
 // Every menu's pane, as Android's popover: the surface with one hairline edge, no shadow.
@@ -4393,6 +4392,35 @@ component ListeningPreview inherits Rectangle {
     }
 }
 
+// A row's "…": a popover at its end of `options`, each sending its `values` entry. An entry acts before the
+// popover closes: closed, an entry of a repeated list can no longer reach the row.
+component RowMenu inherits IconButton {
+    in property <[string]> options;
+    in property <[string]> values;
+    callback chosen(string);
+    glyph: Icons.more-horiz;
+    clicked => { menu.show(); }
+    menu := PopupWindow {
+        x: root.width - self.width;
+        y: root.height + 4px;
+        width: 180px;
+        close-policy: close-on-click-outside;
+        Popover {
+            VerticalLayout {
+                padding: MenuShape.inset;
+                for o[i] in root.options: MenuRow {
+                    icon: o == "Remove" ? Icons.trash : o == "Edit" ? Icons.settings : Icons.edit-pencil;
+                    text: o;
+                    clicked => {
+                        root.chosen(root.values[i]);
+                        menu.close();
+                    }
+                }
+            }
+        }
+    }
+}
+
 // A row's part of its group's card, as Android's: the surface with a hairline edge round the whole group,
 // the card's corners where the group starts and ends.
 component Plate inherits Rectangle {
@@ -4457,11 +4485,19 @@ component RankPlate inherits Rectangle {
         y: root.held ? RankDrag.dy : root.passed-down ? -RankDrag.tall : root.passed-up ? RankDrag.tall : 0;
         animate y { duration: root.held || RankDrag.landing || Motion.reduced ? 0ms : 160ms; enabled: !(root.held || RankDrag.landing || Motion.reduced); easing: ease-out; }
         height: root.height;
-        background: root.held ? Theme.chosen : Theme.panel;
-        border-top-left-radius: root.item.first || root.held ? 18px : 0;
-        border-top-right-radius: root.item.first || root.held ? 18px : 0;
-        border-bottom-left-radius: root.item.last || root.held ? 18px : 0;
-        border-bottom-right-radius: root.item.last || root.held ? 18px : 0;
+        clip: true;
+        // Its part of the group's card, outlined as a [Plate] is: the ends round where the group ends, or
+        // all round while it is held.
+        property <bool> top: root.item.first || root.held;
+        property <bool> foot: root.item.last || root.held;
+        Rectangle {
+            y: parent.top ? 0 : -20px;
+            height: parent.height + (parent.top ? 0 : 20px) + (parent.foot ? 0 : 20px);
+            border-radius: 18px;
+            background: root.held ? Theme.chosen : Theme.panel;
+            border-width: 1px;
+            border-color: Theme.hairline;
+        }
         // A press clicks; moved a few points (when it may move), the row is dragged to another place.
         TouchArea {
             enabled: root.clickable || root.movable;
@@ -4633,11 +4669,10 @@ component SourceCard inherits Rectangle {
                         color: Theme.text;
                         font-size: 14px;
                     }
-                    if r.detail != "": Text {
+                    if r.detail != "": Wrapped {
                         text: r.detail;
                         color: Theme.dim;
                         font-size: 12px;
-                        wrap: word-wrap;
                     }
                 }
                 VerticalLayout {
@@ -4883,18 +4918,16 @@ component SettingLine inherits VerticalLayout {
         VerticalLayout {
             alignment: center;
             horizontal-stretch: 1;
-            Text {
+            // Dimmed by its color, not under an `opacity` layer.
+            Wrapped {
                 text: root.item.title;
-                color: Theme.text;
-                opacity: root.item.enabled ? 1 : 0.45;
+                color: Theme.text.transparentize(root.item.enabled ? 0 : 0.55);
                 font-size: 14px;
-                wrap: word-wrap;
             }
-            Text {
+            Wrapped {
                 text: root.item.detail;
                 color: Theme.dim;
                 font-size: 12px;
-                wrap: word-wrap;
             }
         }
         if root.item.button != "": SmallButton {
@@ -4917,7 +4950,7 @@ component SettingLine inherits VerticalLayout {
         }
     }
     // A saved profile: a click switches to it, the one in use checked in the accent where it stands. Where
-    // it has a menu (Rename, Edit), its icon is its to change and it is dragged to another place in the list.
+    // it has a menu (Rename, Edit, Remove), its icon is its to change and it is dragged to another place in the list.
     if root.item.kind == 8: RankPlate {
         item: root.item;
         movable: root.item.options.length > 0;
@@ -4933,17 +4966,15 @@ component SettingLine inherits VerticalLayout {
         VerticalLayout {
             alignment: center;
             horizontal-stretch: 1;
-            Text {
+            Wrapped {
                 text: root.item.title;
                 color: Theme.text;
                 font-size: 14px;
-                wrap: word-wrap;
             }
-            if root.item.detail != "": Text {
+            if root.item.detail != "": Wrapped {
                 text: root.item.detail;
                 color: Theme.dim;
                 font-size: 12px;
-                wrap: word-wrap;
             }
         }
         if root.item.on: VerticalLayout {
@@ -4955,29 +4986,11 @@ component SettingLine inherits VerticalLayout {
                 height: 18px;
             }
         }
-        if root.item.options.length > 0: IconButton {
+        if root.item.options.length > 0: RowMenu {
             y: (parent.height - self.height) / 2;
-            glyph: Icons.more-horiz;
-            clicked => { profile-menu.show(); }
-            profile-menu := PopupWindow {
-                x: parent.width - self.width;
-                y: parent.height + 4px;
-                width: 180px;
-                close-policy: close-on-click-outside;
-                Popover {
-                    VerticalLayout {
-                        padding: MenuShape.inset;
-                        for o[i] in root.item.options: MenuRow {
-                            icon: o == "Remove" ? Icons.trash : o == "Edit" ? Icons.settings : Icons.edit-pencil;
-                            text: o;
-                            clicked => {
-                                profile-menu.close();
-                                root.action(root.item.values[i]);
-                            }
-                        }
-                    }
-                }
-            }
+            options: root.item.options;
+            values: root.item.values;
+            chosen(v) => { root.action(v); }
         }
     }
     // A group's heading: small capitals over its card (settings.rs gives the words in capitals).
@@ -5000,11 +5013,10 @@ component SettingLine inherits VerticalLayout {
         padding-right: 14px;
         padding-top: 6px;
         padding-bottom: 6px;
-        Text {
+        Wrapped {
             text: root.item.title;
             color: Theme.dim;
             font-size: 11px;
-            wrap: word-wrap;
         }
     }
     if root.item.kind == 13: VerticalLayout {
@@ -5027,13 +5039,12 @@ component SettingLine inherits VerticalLayout {
             color: Theme.text;
             font-size: 14px;
         }
-        Text {
+        Wrapped {
             horizontal-stretch: 1;
             text: root.item.title;
             color: Theme.text;
             font-size: root.item.kind == 18 ? 15px : 14px;
             font-weight: root.item.kind == 18 ? 600 : 400;
-            wrap: word-wrap;
         }
     }
     if root.item.kind == 21: VerticalLayout {
@@ -5086,24 +5097,20 @@ component SettingLine inherits VerticalLayout {
                 VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 1;
-                    Text {
+                    // Dimmed by their colors, not under an `opacity` layer.
+                    Wrapped {
                         text: root.item.title;
-                        color: root.item.kind == 12 ? Theme.accent : Theme.text;
-                        opacity: root.item.enabled || root.item.kind == 4 ? 1 : 0.45;
+                        color: (root.item.kind == 12 ? Theme.accent : Theme.text).transparentize(root.item.enabled || root.item.kind == 4 ? 0 : 0.55);
                         font-size: 14px;
-                        wrap: word-wrap;
                     }
-                    if root.item.detail != "" && root.item.kind != 11: Text {
+                    if root.item.detail != "" && root.item.kind != 11: Wrapped {
                         text: root.item.detail;
-                        color: Theme.dim;
-                        opacity: root.item.kind != 17 || root.item.enabled ? 1 : 0.45;
+                        color: Theme.dim.transparentize(root.item.kind != 17 || root.item.enabled ? 0 : 0.55);
                         font-size: 12px;
-                        wrap: word-wrap;
                     }
                     if root.item.line != "": Text {
                         text: root.item.line;
-                        color: Theme.dim;
-                        opacity: root.item.kind != 17 || root.item.enabled ? 1 : 0.45;
+                        color: Theme.dim.transparentize(root.item.kind != 17 || root.item.enabled ? 0 : 0.55);
                         font-size: 11px;
                         overflow: elide;
                     }
@@ -5113,6 +5120,13 @@ component SettingLine inherits VerticalLayout {
                     on: root.item.on;
                     enabled: root.item.enabled;
                     toggled(v) => { root.toggled(root.item.name, v); }
+                }
+                // A switch's menu (a scrobbling account's Remove).
+                if root.item.kind == 1 && root.item.options.length > 0: RowMenu {
+                    y: (parent.height - self.height) / 2;
+                    options: root.item.options;
+                    values: root.item.values;
+                    chosen(v) => { root.action(v); }
                 }
                 if root.item.kind == 2: Chooser {
                     y: (parent.height - self.height) / 2;
@@ -5284,18 +5298,15 @@ component SettingLine inherits VerticalLayout {
             if root.item.title != "": VerticalLayout {
                 padding-left: 4px;
                 padding-right: 2px;
-                Text {
+                Wrapped {
                     text: root.item.title;
-                    color: Theme.text;
-                    opacity: root.item.enabled ? 1 : 0.45;
+                    color: Theme.text.transparentize(root.item.enabled ? 0 : 0.55);
                     font-size: 14px;
-                    wrap: word-wrap;
                 }
-                if root.item.detail != "": Text {
+                if root.item.detail != "": Wrapped {
                     text: root.item.detail;
                     color: Theme.dim;
                     font-size: 12px;
-                    wrap: word-wrap;
                 }
             }
             HorizontalLayout {
@@ -5514,11 +5525,10 @@ component PluginHead inherits VerticalLayout {
                 font-weight: 700;
                 overflow: elide;
             }
-            if root.top.line != "": Text {
+            if root.top.line != "": Wrapped {
                 text: root.top.line;
                 color: Theme.dim;
                 font-size: 12px;
-                wrap: word-wrap;
             }
         }
         if root.top.every: Toggle {
@@ -5567,11 +5577,10 @@ component PluginHead inherits VerticalLayout {
     }
     if root.top.about != "": HorizontalLayout {
         padding-right: 8px;
-        Text {
+        Wrapped {
             text: root.top.about;
             color: Theme.text;
             font-size: 14px;
-            wrap: word-wrap;
         }
     }
     if root.top.action != "": HorizontalLayout {
@@ -7683,7 +7692,7 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbling-profile != "" || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open;
+    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open;
     // What plugins say under the player's output, and a plugin's still drawn as Now Playing's cover.
     in property <[string]> plugin-status;
     in property <image> sleeve;
@@ -7712,17 +7721,11 @@ export component AppWindow inherits Window {
     in-out property <string> profile-rename-name;
     in property <string> profile-rename-blank;
     callback rename-profile(string, string);
-    // The profile whose scrobbling accounts show (its id; empty while none does) and its accounts; the
-    // dialog's step (0 the accounts, 1 the kinds to add, 2 the kind `scrobbler-adding`'s form); the form:
-    // the fields that kind asks (the key's label, empty when not asked; the address folded under
-    // Advanced), the help link's words (empty for none), whether it signs in on the service's page and
-    // the page was opened, what is typed, signing in, and why it failed.
-    in-out property <string> scrobbling-profile;
-    in property <[ScrobblerLine]> scrobblers;
-    // The profile's own server or provider, first in the list, where it takes plays: its name (empty
-    // for none) and being told them.
-    in property <string> scrobbler-server;
-    in property <bool> scrobbler-server-on;
+    // Adding a scrobbling account to the profile the Edit page shows: the dialog's step (0 closed, 1 the
+    // kinds to add, 2 the kind `scrobbler-adding`'s form); the form: the fields that kind asks (the key's
+    // label, empty when not asked; the address folded under Advanced), the help link's words (empty for
+    // none), whether it signs in on the service's page and the page was opened, what is typed, signing
+    // in, and why it failed.
     in property <[ScrobblerKindLine]> scrobbler-kinds;
     in-out property <int> scrobbler-step;
     in property <int> scrobbler-adding;
@@ -7743,9 +7746,6 @@ export component AppWindow inherits Window {
     in-out property <string> scrobbler-url;
     in property <bool> scrobbler-busy;
     in property <string> scrobbler-failed;
-    callback scrobbler-toggled(string, bool);
-    callback scrobbler-removed(string);
-    callback scrobbler-server-toggled(bool);
     callback scrobbler-add(int);
     callback scrobbler-help-opened();
     callback scrobbler-sign-in();
@@ -7821,6 +7821,9 @@ export component AppWindow inherits Window {
     in property <LoginKind> login-form;
     // The form adds a profile, so back chooses again; it isn't editing one.
     in property <bool> login-adding;
+    // The form is a saved profile's Edit page, and the rows under it: its account and where its plays go.
+    in property <bool> login-editing;
+    in property <[SettingRow]> profile-rows;
     in property <FirstRunWords> first-run-words;
     // The first run's welcome (the core's `WelcomeFlow`): the sources to pick from, whether Continue goes on
     // and whether picked plugins are installing, the plugins that would not install, and how restoring a backup
@@ -8113,113 +8116,131 @@ export component AppWindow inherits Window {
             }
         }
 
+        // The form adding a profile, or a saved profile's Edit page: its form, then its account and where its
+        // plays go (`profile-rows`), the column scrolling once it is taller than the window.
         if root.view == View.login && !root.login-choosing: Rectangle {
-            TitleStrip {
-                y: 0;
-                drag => { root.drag-window(); }
-                zoom => { root.zoom-window(); }
-            }
-            if root.login-adding && !root.login-busy: IconButton {
-                x: 16px;
-                y: 44px;
-                glyph: Icons.nav-arrow-left;
-                clicked => { root.setting-action("provider-again"); }
-            }
-            VerticalLayout {
-                alignment: center;
-                HorizontalLayout {
+            form-scroll := Flickable {
+                content-height: max(self.height, form-column.preferred-height + 120px);
+                VerticalLayout {
+                    height: form-scroll.content-height;
                     alignment: center;
-                    VerticalLayout {
-                        width: 360px;
-                        spacing: 12px;
-                        Text {
-                            text: root.login-form.name;
-                            color: Theme.text;
-                            font-family: Type.title;
-                            font-size: 26px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: root.login-form.note;
-                            color: Theme.dim;
-                            horizontal-alignment: center;
-                            wrap: word-wrap;
-                        }
-                        Rectangle {
-                            height: 10px;
-                        }
-                        if root.login-form.asks-name: Field {
-                            icon: Icons.user;
-                            placeholder: "Name (optional)";
-                            text <=> root.login-name;
-                        }
-                        if root.login-form.asks-address: Field {
-                            icon: Icons.server;
-                            placeholder: "Server address";
-                            text <=> root.login-url;
-                        }
-                        if root.login-form.asks-user: Field {
-                            icon: Icons.user;
-                            placeholder: "User name";
-                            text <=> root.login-user;
-                        }
-                        if root.login-form.asks-password: Field {
-                            icon: Icons.key;
-                            placeholder: "Password";
-                            secret: true;
-                            text <=> root.login-password;
-                            accepted => {
-                                if !root.login-busy {
-                                    root.login();
-                                }
+                    HorizontalLayout {
+                        alignment: center;
+                        form-column := VerticalLayout {
+                            width: 360px;
+                            spacing: 12px;
+                            Text {
+                                text: root.login-form.name;
+                                color: Theme.text;
+                                font-family: Type.title;
+                                font-size: 26px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
                             }
-                        }
-                        if root.login-error != "": Text {
-                            text: root.login-error;
-                            color: Theme.danger;
-                            wrap: word-wrap;
-                            horizontal-alignment: center;
-                        }
-                        Rectangle {
-                            height: 8px;
-                        }
-                        HorizontalLayout {
-                            spacing: 10px;
-                            alignment: center;
-                            if root.can-cancel-login: Capsule {
-                                text: "Cancel";
-                                ink: Theme.fill;
-                                label: Theme.text;
-                                clicked => { root.cancel-login(); }
+                            if root.login-form.note != "": Wrapped {
+                                text: root.login-form.note;
+                                color: Theme.dim;
+                                horizontal-alignment: center;
                             }
-                            if root.login-form.guest != "": Capsule {
-                                text: root.login-form.guest;
-                                ink: Theme.fill;
-                                label: Theme.text;
-                                clicked => {
-                                    if !root.login-busy {
-                                        root.setting-action("provider-guest");
-                                    }
-                                }
+                            Rectangle {
+                                height: 10px;
                             }
-                            if root.login-form.guest != "": Capsule {
-                                text: root.login-busy ? "Signing in…" : root.login-form.sign-in;
-                                clicked => {
-                                    if !root.login-busy {
-                                        root.setting-action("provider-sign-in");
-                                    }
-                                }
+                            if root.login-form.asks-name: Field {
+                                icon: Icons.user;
+                                placeholder: "Name (optional)";
+                                text <=> root.login-name;
                             }
-                            if root.login-form.guest == "": Capsule {
-                                text: root.login-busy ? "Signing in…" : root.login-form.add;
-                                clicked => {
+                            if root.login-form.asks-address: Field {
+                                icon: Icons.server;
+                                placeholder: "Server address";
+                                text <=> root.login-url;
+                            }
+                            if root.login-form.asks-user: Field {
+                                icon: Icons.user;
+                                placeholder: "User name";
+                                text <=> root.login-user;
+                            }
+                            if root.login-form.asks-password: Field {
+                                icon: Icons.key;
+                                placeholder: "Password";
+                                secret: true;
+                                text <=> root.login-password;
+                                accepted => {
                                     if !root.login-busy {
                                         root.login();
                                     }
                                 }
                             }
+                            if root.login-error != "": Wrapped {
+                                text: root.login-error;
+                                color: Theme.danger;
+                                horizontal-alignment: center;
+                            }
+                            Rectangle {
+                                height: 8px;
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                alignment: center;
+                                if root.can-cancel-login && !root.login-editing: Capsule {
+                                    text: "Cancel";
+                                    ink: Theme.fill;
+                                    label: Theme.text;
+                                    clicked => { root.cancel-login(); }
+                                }
+                                if root.login-form.guest != "": Capsule {
+                                    text: root.login-form.guest;
+                                    ink: Theme.fill;
+                                    label: Theme.text;
+                                    clicked => {
+                                        if !root.login-busy {
+                                            root.setting-action("provider-guest");
+                                        }
+                                    }
+                                }
+                                if root.login-form.guest != "": Capsule {
+                                    text: root.login-busy ? "Signing in…" : root.login-form.sign-in;
+                                    clicked => {
+                                        if !root.login-busy {
+                                            root.setting-action("provider-sign-in");
+                                        }
+                                    }
+                                }
+                                if root.login-form.guest == "" && root.login-form.add != "": Capsule {
+                                    text: root.login-busy ? "Signing in…" : root.login-form.add;
+                                    clicked => {
+                                        if !root.login-busy {
+                                            root.login();
+                                        }
+                                    }
+                                }
+                            }
+                            if root.login-editing: VerticalLayout {
+                                for r in root.profile-rows: SettingLine {
+                                    item: r;
+                                    toggled(name, on) => { root.setting-toggled(name, on); }
+                                    action(name) => { root.setting-action(name); }
+                                }
+                            }
                         }
+                    }
+                }
+            }
+            TitleStrip {
+                y: 0;
+                drag => { root.drag-window(); }
+                zoom => { root.zoom-window(); }
+            }
+            // Back: to the kinds of profile while adding one, to Settings from a profile's Edit page.
+            if (root.login-adding || root.login-editing) && !root.login-busy: IconButton {
+                x: 16px;
+                y: 44px;
+                glyph: Icons.nav-arrow-left;
+                clicked => {
+                    if root.login-editing {
+                        root.cancel-login();
+                    } else {
+                        root.setting-action("provider-again");
                     }
                 }
             }
@@ -9917,16 +9938,16 @@ export component AppWindow inherits Window {
                         icon: Icons.plus;
                         text: "Add profile";
                         clicked => {
-                            profiles-pop.close();
                             root.setting-action("add-server");
+                            profiles-pop.close();
                         }
                     }
                     MenuRow {
                         icon: Icons.settings;
                         text: "Manage profiles";
                         clicked => {
-                            profiles-pop.close();
                             root.open-accounts();
+                            profiles-pop.close();
                         }
                     }
                 }
@@ -11165,63 +11186,10 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.scrobbling-profile != "": Dialog {
-            title: root.scrobbler-step == 0 ? "Scrobbling" : root.scrobbler-step == 1 ? "Add a scrobbler" : "Add " + root.scrobbler-kinds[root.scrobbler-adding].name;
-            // Wide enough for the note to stay one line: a wrapped line isn't counted in the sheet's height.
+        if root.scrobbler-step > 0: Dialog {
+            title: root.scrobbler-step == 1 ? "Add a scrobbler" : "Add " + root.scrobbler-kinds[root.scrobbler-adding].name;
             sheet-width: 460px;
-            dismissed => { root.scrobbling-profile = ""; }
-            if root.scrobbler-step == 0: VerticalLayout {
-                spacing: 12px;
-                Text {
-                    text: "Plays go to each one that's on, whatever this profile plays from.";
-                    color: Theme.dim;
-                    font-size: 12px;
-                    wrap: word-wrap;
-                }
-                DialogGroup {
-                    if root.scrobbler-server != "": HorizontalLayout {
-                        padding: 8px;
-                        padding-right: 38px;
-                        ToggleLine {
-                            title: root.scrobbler-server;
-                            detail: "Built in";
-                            on: root.scrobbler-server-on;
-                            toggled(on) => { root.scrobbler-server-toggled(on); }
-                        }
-                    }
-                    for line in root.scrobblers: HorizontalLayout {
-                        padding: 8px;
-                        spacing: 4px;
-                        ToggleLine {
-                            title: line.title;
-                            detail: line.detail;
-                            on: line.on;
-                            toggled(on) => { root.scrobbler-toggled(line.id, on); }
-                        }
-                        IconButton {
-                            y: (parent.height - self.height) / 2;
-                            glyph: Icons.xmark;
-                            size: 26px;
-                            icon: 13px;
-                            ink: Theme.dim;
-                            clicked => { root.scrobbler-removed(line.id); }
-                        }
-                    }
-                    GoLine {
-                        title: "Add scrobbler";
-                        glyph: Icons.plus-circle;
-                        divider: false;
-                        clicked => { root.scrobbler-step = 1; }
-                    }
-                }
-                HorizontalLayout {
-                    alignment: end;
-                    Capsule {
-                        text: "Done";
-                        clicked => { root.scrobbling-profile = ""; }
-                    }
-                }
-            }
+            dismissed => { root.scrobbler-step = 0; }
             if root.scrobbler-step == 1: VerticalLayout {
                 spacing: 12px;
                 DialogGroup {
@@ -11236,7 +11204,7 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     alignment: end;
                     SmallButton {
-                        text: "Back";
+                        text: "Cancel";
                         clicked => { root.scrobbler-step = 0; }
                     }
                 }
@@ -11265,11 +11233,10 @@ export component AppWindow inherits Window {
                     text <=> root.scrobbler-password;
                     accepted => { root.scrobbler-sign-in(); }
                 }
-                if root.scrobbler-asks-user: Text {
+                if root.scrobbler-asks-user: Wrapped {
                     text: "The password signs in once; only the session is kept.";
                     color: Theme.dim;
                     font-size: 12px;
-                    wrap: word-wrap;
                 }
                 if root.scrobbler-help != "" || root.scrobbler-asks-address: DialogGroup {
                     if root.scrobbler-help != "": GoLine {
@@ -11292,25 +11259,22 @@ export component AppWindow inherits Window {
                             text <=> root.scrobbler-url;
                             accepted => { root.scrobbler-sign-in(); }
                         }
-                        Text {
+                        Wrapped {
                             text: root.scrobbler-address-hint;
                             color: Theme.dim;
                             font-size: 12px;
-                            wrap: word-wrap;
                         }
                     }
                 }
-                if root.scrobbler-page-opened: Text {
+                if root.scrobbler-page-opened: Wrapped {
                     text: "Allow nori on " + root.scrobbler-kinds[root.scrobbler-adding].name + " in your browser, then press Done.";
                     color: Theme.dim;
                     font-size: 12px;
-                    wrap: word-wrap;
                 }
-                if root.scrobbler-failed != "": Text {
+                if root.scrobbler-failed != "": Wrapped {
                     text: root.scrobbler-failed;
                     color: Theme.danger;
                     font-size: 12px;
-                    wrap: word-wrap;
                 }
                 HorizontalLayout {
                     alignment: end;

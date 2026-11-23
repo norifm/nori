@@ -35,7 +35,7 @@ use crate::words;
 use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
 use nori_core::providers::AfterAdding;
 
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, ScrobblerLine, Shelf, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -486,8 +486,9 @@ pub struct App {
     shelves: Rc<VecModel<Shelf>>,
     /// The rows of the shelves shown.
     home_rows: Vec<nori_core::settings::HomeRow>,
-    /// The saved profile the sign-in form edits; None while it adds one.
-    editing: Option<SavedServer>,
+    /// The id of the saved profile the Edit page shows (its form, account and scrobbling); None while the
+    /// form adds one.
+    editing: Option<String>,
     /// The album list's pages, its order, and whether only the favorites.
     album_pages: Paged<u32>,
     album_sort: AlbumSort,
@@ -1191,21 +1192,6 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_sign_out, h, |a| a.sign_out());
     on!(ui.on_choose_identity, h, |a, i| a.choose_identity(i));
     on!(ui.on_rename_profile, h, |a, id, name| a.rename_profile(&id, &name));
-    on!(ui.on_scrobbler_toggled, h, |a, id, on| {
-        let profile = a.ui().get_scrobbling_profile().to_string();
-        nori_host::scrobbler_switched(&a.root.app.settings, &profile, &id, on);
-        a.scrobblers_shown();
-    });
-    on!(ui.on_scrobbler_server_toggled, h, |a, on| {
-        let profile = a.ui().get_scrobbling_profile().to_string();
-        nori_host::server_scrobble_switched(&a.root.app.settings, &profile, on);
-        a.scrobblers_shown();
-    });
-    on!(ui.on_scrobbler_removed, h, |a, id| {
-        let profile = a.ui().get_scrobbling_profile().to_string();
-        nori_host::scrobbler_removed(&a.root.app.settings, &profile, &id);
-        a.scrobblers_shown();
-    });
     on!(ui.on_scrobbler_add, h, |a, i| a.scrobbler_add(i as usize));
     on!(ui.on_scrobbler_help_opened, h, |a| {
         let kind = nori_core::scrobblers::scrobbler_kinds().get(a.ui().get_scrobbler_adding() as usize).copied();
@@ -1270,9 +1256,11 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(jam.on_promote, h, |a, member, admin| a.jam_act(Op::Promote { member: member.into(), admin }));
     on!(jam.on_send_out, h, |a, member| a.jam_act(Op::Kick { member: member.into() }));
     on!(ui.on_login, h, |a| a.login(AfterAdding::Remind));
+    // Back from a profile's Edit page goes to Settings, where it was opened.
     on!(ui.on_cancel_login, h, |a| {
-        a.editing = None;
-        a.go(View::Home);
+        let back = if a.editing.is_some() { View::Settings } else { View::Home };
+        a.edited();
+        a.go(back);
     });
     on!(ui.on_find_edited, h, |a, t| {
         a.find = t.to_string();
@@ -1325,9 +1313,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.follow_sound_page(View::Settings);
         a.settings_shown();
     });
-    on!(ui.on_setting_toggled, h, |a, name, on| match crate::settings::PluginAct::of(&name) {
-        Some(act) => a.plugin_set(act, nori_plugins::Value::Switch(on)),
-        None => {
+    on!(ui.on_setting_toggled, h, |a, name, on| match (crate::settings::PluginAct::of(&name), crate::settings::ProfilePart::of(&name)) {
+        (Some(act), _) => a.plugin_set(act, nori_plugins::Value::Switch(on)),
+        (None, Some(part)) => a.profile_part(part, on),
+        (None, None) => {
             let (name, value) = crate::settings::toggled(&name, on);
             a.setting(name, &value);
         }
@@ -1336,9 +1325,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         Some(act) => a.plugin_set(act, nori_plugins::Value::Choice(i.max(0) as u32)),
         None => a.setting_chosen(&name, i.max(0) as usize),
     });
-    on!(ui.on_setting_action, h, |a, name| match crate::settings::PluginAct::of(&name) {
-        Some(act) => a.plugin_act(act),
-        None => a.setting_action(&name),
+    on!(ui.on_setting_action, h, |a, name| match (crate::settings::PluginAct::of(&name), crate::settings::ProfilePart::of(&name)) {
+        (Some(act), _) => a.plugin_act(act),
+        (None, Some(part)) => a.profile_part(part, true),
+        (None, None) => a.setting_action(&name),
     });
     // A plugin's level is kept once let go.
     on!(ui.on_setting_slid, h, |a, name, v, last| match crate::settings::PluginAct::of(&name) {
@@ -1540,9 +1530,11 @@ impl App {
         let ui = self.ui();
         let Some(info) = self.add.kind().and_then(|k| self.kinds().providers().into_iter().find(|i| i.kind == *k)) else { return };
         let form = [ui.get_login_name(), ui.get_login_url(), ui.get_login_user(), ui.get_login_password()].map(|t| t.to_string());
-        let draft = login_draft(&info, self.editing.clone(), form);
-        let ready = self.kinds().server_ready(draft.clone());
         let prefs = self.root.app.settings.current().unwrap_or_default();
+        // The profile as saved now: its scrobbling and account may have changed on the page since it opened.
+        let saved = self.editing.as_ref().and_then(|id| prefs.servers.iter().find(|s| &s.id == id)).cloned();
+        let draft = login_draft(&info, saved, form);
+        let ready = self.kinds().server_ready(draft.clone());
         let list = nori_core::settings::ServerList { servers: prefs.servers, active_server_id: prefs.active_server_id };
         let added = self.kinds().adds_profile(list, draft.clone()).then_some(after);
         if let AddDo::Send { .. } = self.add_on(AddEvent::Send { ready, added }) {
@@ -3072,20 +3064,24 @@ impl App {
         nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(account.sign_in(answer))));
     }
 
-    /// A server row's Edit: the profile's account sheet where its provider signs in to one, else the
-    /// profile in the sign-in form, saved over itself.
+    /// A server row's Edit: the profile's page, as Android's: the fields its provider asks, saved over it,
+    /// then its account where the provider signs in to one, then where its plays go.
     fn edit_profile(&mut self, id: String) {
         let prefs = self.root.app.settings.current().unwrap_or_default();
         let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
         let providers = self.kinds().providers();
-        if providers.iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
-            return if id == prefs.active_server_id { self.ask_sign_in() } else { self.account_apart(profile) };
-        }
         let ui = self.ui();
         if let Some(info) = providers.iter().find(|i| i.kind == profile.kind).or(providers.first()) {
-            // A saved profile is renamed from its menu.
-            let form = LoginKind { asks_name: false, ..login_form(self.kinds(), info, self.plugged.about_of(&info.kind), nori_core::providers::FirstStep::Form) };
-            ui.set_login_form(form);
+            // A saved profile is renamed from its menu; with nothing else to ask, nothing is saved here.
+            let form = login_form(self.kinds(), info, None, nori_core::providers::FirstStep::Form);
+            let saves = form.asks_address || form.asks_user || form.asks_password;
+            ui.set_login_form(LoginKind {
+                name: words::profile_label(&profile, self.kinds()).into(),
+                note: SharedString::default(),
+                add: if saves { words::SAVE.into() } else { SharedString::default() },
+                asks_name: false,
+                ..form
+            });
             self.add_on(AddEvent::Edit { kind: info.kind.clone() });
         }
         ui.set_login_adding(false);
@@ -3093,8 +3089,41 @@ impl App {
         ui.set_login_url(profile.url.as_str().into());
         ui.set_login_user(profile.user.as_str().into());
         ui.set_login_password("".into());
-        self.editing = Some(profile);
+        ui.set_login_editing(true);
+        let kinds: Vec<crate::ScrobblerKindLine> = nori_core::scrobblers::scrobbler_kinds()
+            .into_iter()
+            .map(|k| crate::ScrobblerKindLine { name: words::scrobbler(k).into(), cost: words::scrobbler_cost(k).into() })
+            .collect();
+        ui.set_scrobbler_kinds(ModelRc::new(VecModel::from(kinds)));
+        ui.set_scrobbler_step(0);
+        self.editing = Some(id);
+        self.profile_parts_shown();
         self.go(View::Login);
+    }
+
+    /// The Edit page is left: the form adds again.
+    fn edited(&mut self) {
+        self.editing = None;
+        self.ui().set_login_editing(false);
+    }
+
+    /// What a row of the Edit page under its form does: `on` is a switch's new state.
+    fn profile_part(&mut self, part: crate::settings::ProfilePart, on: bool) {
+        use crate::settings::ProfilePart;
+        let Some(id) = self.editing.clone() else { return };
+        let settings = &self.root.app.settings;
+        match part {
+            ProfilePart::Account => {
+                let prefs = settings.current().unwrap_or_default();
+                let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
+                return if id == prefs.active_server_id { self.ask_sign_in() } else { self.account_apart(profile) };
+            }
+            ProfilePart::ServerScrobbles => nori_host::server_scrobble_switched(settings, &id, on),
+            ProfilePart::Scrobbler(account) => nori_host::scrobbler_switched(settings, &id, &account, on),
+            ProfilePart::RemoveScrobbler(account) => nori_host::scrobbler_removed(settings, &id, &account),
+            ProfilePart::AddScrobbler => return self.ui().set_scrobbler_step(1),
+        }
+        self.profile_parts_shown();
     }
 
     /// Removes profile `id`, as its ask sheet confirmed; the one in use gives way to the next, or the first
@@ -3799,29 +3828,17 @@ impl App {
     }
 
     /// Saved profile `id` renamed; blank, it is called after its provider again.
-    /// The scrobbling dialog's accounts, as the settings keep them now, and its form emptied.
-    fn scrobblers_shown(&mut self) {
-        let ui = self.ui();
-        let id = ui.get_scrobbling_profile().to_string();
+    /// The Edit page's account and scrobbling rows, as the settings keep the profile now.
+    fn profile_parts_shown(&mut self) {
         let prefs = self.root.app.settings.current().unwrap_or_default();
-        let Some(profile) = prefs.servers.iter().find(|s| s.id == id) else { return };
+        let Some(profile) = self.editing.as_ref().and_then(|id| prefs.servers.iter().find(|s| &s.id == id)).cloned() else { return };
         // The open profile's rules as its session has them; another's as the core reads the saved profile.
         let itself = match &self.session {
-            Some(s) if prefs.active_server_id == id => s.rules().scrobbles,
+            Some(s) if prefs.active_server_id == profile.id => s.rules().scrobbles,
             _ => self.kinds().rules_of(profile.clone(), false).scrobbles,
         };
-        ui.set_scrobbler_server(if itself { words::provider_of(self.kinds(), &profile.kind).name.into() } else { "".into() });
-        ui.set_scrobbler_server_on(!profile.scrobble_off);
-        let lines: Vec<ScrobblerLine> = profile
-            .scrobblers
-            .iter()
-            .map(|a| ScrobblerLine { id: a.id.as_str().into(), title: words::scrobbler(a.kind).into(), detail: words::scrobbler_detail(a).into(), on: a.on })
-            .collect();
-        ui.set_scrobblers(std::rc::Rc::new(slint::VecModel::from(lines)).into());
-        for set in [AppWindow::set_scrobbler_key, AppWindow::set_scrobbler_secret, AppWindow::set_scrobbler_user, AppWindow::set_scrobbler_password, AppWindow::set_scrobbler_url, AppWindow::set_scrobbler_failed] {
-            set(&ui, "".into());
-        }
-        ui.set_scrobbler_busy(false);
+        let rows = crate::settings::profile_rows(self.kinds(), &profile, itself, &prefs, &self.facts, crate::look::Today::now());
+        self.ui().set_profile_rows(rows);
     }
 
     /// The scrobbling dialog's form for adding kind `i` of [`nori_core::scrobblers::scrobbler_kinds`],
@@ -3885,7 +3902,7 @@ impl App {
             });
             return;
         }
-        let profile = ui.get_scrobbling_profile().to_string();
+        let Some(profile) = self.editing.clone() else { return };
         nori_host::spawn("nori-scrobbler", move || {
             let account = nori_core::transport::block_on(client.sign_in_scrobbler(form)).map_err(|e| words::scrobbler_failure(&e));
             tx.send(Msg::ScrobblerSignedIn { profile, account });
@@ -3947,6 +3964,7 @@ impl App {
         } else {
             self.reopen();
         }
+        self.profile_parts_shown();
     }
 
     /// Opens the profile in use again, as the settings now keep it (its account signed in or out), on the
@@ -4398,9 +4416,9 @@ impl App {
                 match account {
                     Ok(account) => {
                         nori_host::scrobbler_kept(&self.root.app.settings, &profile, account);
-                        if ui.get_scrobbling_profile().as_str() == profile {
+                        if self.editing.as_deref() == Some(profile.as_str()) {
                             ui.set_scrobbler_step(0);
-                            self.scrobblers_shown();
+                            self.profile_parts_shown();
                         }
                     }
                     Err(why) => ui.set_scrobbler_failed(why.into()),
@@ -4424,7 +4442,7 @@ impl App {
                         AddDo::Open { added } => added,
                         _ => None,
                     };
-                    self.editing = None;
+                    self.edited();
                     self.ui().set_login_password("".into());
                     let kind = p.kind.clone();
                     self.open(p, added);
@@ -5433,7 +5451,7 @@ impl App {
             Some(Act::Equalizer) => self.go(View::Equalizer),
             Some(Act::Support) => self.go(View::Support),
             Some(Act::AddServer) => {
-                self.editing = None;
+                self.edited();
                 let ui = self.ui();
                 for set in [AppWindow::set_login_name, AppWindow::set_login_user, AppWindow::set_login_password] {
                     set(&ui, "".into());
@@ -5446,17 +5464,6 @@ impl App {
                 self.open(p, None);
             }
             Some(Act::Edit(id)) => self.edit_profile(id),
-            Some(Act::Scrobbling(id)) => {
-                let ui = self.ui();
-                ui.set_scrobbling_profile(id.as_str().into());
-                let kinds: Vec<crate::ScrobblerKindLine> = nori_core::scrobblers::scrobbler_kinds()
-                    .into_iter()
-                    .map(|k| crate::ScrobblerKindLine { name: words::scrobbler(k).into(), cost: words::scrobbler_cost(k).into() })
-                    .collect();
-                ui.set_scrobbler_kinds(std::rc::Rc::new(slint::VecModel::from(kinds)).into());
-                ui.set_scrobbler_step(0);
-                self.scrobblers_shown();
-            }
             Some(Act::Remove(id)) => {
                 let prefs = self.root.app.settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };
@@ -6035,6 +6042,92 @@ mod tests {
         bar
     }
 
+    /// Each entry of a row's menu sends what it stands for: a profile's, and a switch's (a scrobbling account's).
+    #[test]
+    fn a_rows_menu_sends_each_entry() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        let chrome = ui.global::<crate::Chrome>();
+        chrome.set_top_x(190.0);
+        chrome.set_top_w(900.0);
+        ui.set_settings_tabs(ModelRc::new(VecModel::from(vec![SharedString::from("Profiles")])));
+        ui.set_view(View::Settings);
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let seen = did.clone();
+        ui.on_setting_action(move |name| seen.borrow_mut().push(name.to_string()));
+        ui.show().unwrap();
+        let click = |x: f32, y: f32| {
+            let position = slint::LogicalPosition::new(x, y);
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button: slint::platform::PointerEventButton::Left });
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(500));
+            slint::platform::update_timers_and_animations();
+        };
+        let strings = |list: &[&str]| ModelRc::new(VecModel::from(list.iter().map(|s| SharedString::from(*s)).collect::<Vec<_>>()));
+        for (kind, labels, values) in [
+            (crate::settings::SERVER, ["Rename", "Edit", "Remove"].as_slice(), ["rename:7", "edit:7", "remove:7"].as_slice()),
+            (1, ["Remove"].as_slice(), ["scrobbler-remove:a"].as_slice()),
+        ] {
+            let row = crate::SettingRow { kind, name: "7".into(), title: "Home".into(), enabled: true, first: true, last: true, options: strings(labels), values: strings(values), ..Default::default() };
+            ui.set_settings(ModelRc::new(VecModel::from(vec![crate::SettingRow { kind: 0, title: "ACCOUNTS".into(), ..Default::default() }, row])));
+            did.borrow_mut().clear();
+            // The row's "…" at the column's end, then each entry of the menu under it, opened again before each.
+            for at in 0..labels.len() {
+                click(970.0, 262.0);
+                click(880.0, 304.0 + 32.0 * at as f32);
+            }
+            assert_eq!(*did.borrow(), values, "kind {kind}");
+        }
+    }
+
+    /// A long description wraps inside its row, whatever the row's kind: the row grows, and the next row
+    /// starts under it.
+    #[test]
+    fn a_long_description_grows_its_row() {
+        use i_slint_backend_testing::ElementHandle;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(520.0, 820.0));
+        let chrome = ui.global::<crate::Chrome>();
+        chrome.set_top_x(16.0);
+        chrome.set_top_w(488.0);
+        ui.set_view(View::Settings);
+        ui.show().unwrap();
+        let long = "Search and play YouTube Music. Best effort: YouTube can stop it working at any time. Sign in with Google to see your own Home, your library and your likes.";
+        let quiet = "0.81 · nori’s own";
+        let one = |label: &str| {
+            let found: Vec<ElementHandle> = ElementHandle::find_by_accessible_label(&ui, label).collect();
+            assert_eq!(found.len(), 1, "{label}");
+            let (at, size) = (found[0].absolute_position(), found[0].size());
+            (at.y, size.height)
+        };
+        use crate::settings::{RANKED, SERVER};
+        let mut cut = Vec::new();
+        for (kind, name) in [(1, "switch"), (3, "action"), (4, "info"), (12, "button"), (17, "plugin"), (RANKED, "ranked"), (SERVER, "profile")] {
+            let row = crate::SettingRow { kind, name: "row".into(), title: "Row".into(), detail: long.into(), line: quiet.into(), button: "Get".into(), enabled: true, first: true, ..Default::default() };
+            let next = crate::SettingRow { kind: 4, title: "Next".into(), enabled: true, last: true, ..Default::default() };
+            ui.set_settings(ModelRc::new(VecModel::from(vec![crate::SettingRow { kind: 0, title: "GROUP".into(), ..Default::default() }, row, next])));
+            ui.window().take_snapshot().unwrap();
+            let (_, detail_h) = one(long);
+            let (_, line) = one("Row");
+            // The row's last words: its quiet line where it shows one, else the description.
+            let (last_y, last_h) = if ElementHandle::find_by_accessible_label(&ui, quiet).next().is_some() { one(quiet) } else { one(long) };
+            let (next_y, _) = one("Next");
+            assert!(detail_h > 1.5 * line, "{name}: the description is {detail_h} px tall, a line {line}");
+            // Both rows' padding stands between them.
+            if next_y - (last_y + last_h) < 20.0 {
+                cut.push(format!("{name}: the next row's words at {next_y}, this row's end at {}", last_y + last_h));
+            }
+        }
+        assert!(cut.is_empty(), "{cut:#?}");
+    }
+
     #[test]
     fn an_edited_profile_keeps_its_id_and_password() {
         let info = nori_core::providers::Kinds::builtin().providers().into_iter().find(|i| i.kind == nori_core::settings::ServerKind::Subsonic).unwrap();
@@ -6539,6 +6632,10 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        // The settings' column is as wide as the top pill, to 720.
+        let chrome = ui.global::<crate::Chrome>();
+        chrome.set_top_x(120.0);
+        chrome.set_top_w(1040.0);
         ui.set_view(View::Settings);
         let profile = |options: &[&str]| {
             let options: Vec<slint::SharedString> = options.iter().map(|o| (*o).into()).collect();
@@ -7467,7 +7564,7 @@ mod tests {
     }
 
     /// The top bar's profiles menu draws them in the order given, the one in use where it stands and not
-    /// picked again; a profile picked is the one switched to.
+    /// picked again; a profile picked is the one switched to, and the rows under them do what they say.
     #[test]
     fn the_profiles_menu_switches_to_the_profile_picked() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -7480,21 +7577,24 @@ mod tests {
         chrome.set_top_w(1280.0);
         let item = |name: &str, on: bool| crate::ProfileItem { name: name.into(), title: name.into(), detail: "elsewhere".into(), on, ..Default::default() };
         ui.set_profiles(ModelRc::new(VecModel::from(vec![item("1", false), item("2", true), item("3", false)])));
+        ui.set_profiles_editable(true);
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
         ui.on_setting_action(move |name| seen.borrow_mut().push(name.to_string()));
+        let seen = did.clone();
+        ui.on_open_accounts(move || seen.borrow_mut().push("accounts".into()));
         ui.show().unwrap();
         // Down the menu's column, opened again before each click.
-        for y in (60..260).step_by(4) {
+        for y in (60..340).step_by(4) {
             ui.invoke_show_profiles();
             let position = slint::LogicalPosition::new(1100.0, y as f32);
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left });
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button: slint::platform::PointerEventButton::Left });
         }
-        let mut switched: Vec<String> = did.borrow().iter().filter(|n| n.starts_with("server:")).cloned().collect();
+        let mut switched: Vec<String> = did.borrow().clone();
         switched.dedup();
-        assert_eq!(switched, ["server:1", "server:3"]);
+        assert_eq!(switched, ["server:1", "server:3", "add-server", "accounts"], "the profiles, then the rows under them");
     }
 
     /// The first screen sends what its rows and plus do, a quiet row too; the form goes back from there.

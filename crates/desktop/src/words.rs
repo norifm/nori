@@ -113,6 +113,16 @@ pub fn category(c: nori_plugins::Category) -> &'static str {
 }
 pub const MOVE_DOWN: &str = "Move down";
 pub const REMOVE: &str = "Remove";
+// A profile's Edit page, under its form: its account, and where its plays go.
+pub const ACCOUNT: &str = "Account";
+pub const SIGNED_IN: &str = "Signed in";
+pub const NOT_SIGNED_IN: &str = "Not signed in";
+pub const SIGN_IN: &str = "Sign in";
+pub const MANAGE: &str = "Manage";
+pub const SCROBBLING: &str = "Scrobbling";
+pub const BUILT_IN: &str = "Built in";
+pub const ADD_SCROBBLER: &str = "Add scrobbler";
+pub const SCROBBLING_HINT: &str = "Plays go to each one that’s on, whatever this profile plays from";
 pub const KEEP_VERSION: &str = "Keep this version";
 pub const UNSIGNED: &str = "Unsigned";
 pub const VERSIONS: &str = "Versions";

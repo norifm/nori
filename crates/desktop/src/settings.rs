@@ -27,7 +27,6 @@ const INFO: i32 = 4;
 const SLIDER: i32 = 5;
 pub(crate) const RANKED: i32 = 6;
 pub(crate) const SERVER: i32 = 8;
-/// A server row's Edit: the account sheet of the profile in use.
 const NOTE: i32 = 9;
 const LINK: i32 = 11;
 const BUTTON: i32 = 12;
@@ -168,13 +167,10 @@ pub enum Act {
     /// The Support page.
     Support,
     AddServer,
-    /// A server row's Edit: the profile's account sheet where its provider has one to sign in to, else
-    /// the profile in the sign-in form.
+    /// A server row's Edit: the profile's page, its form, account and scrobbling.
     Edit(String),
     /// A server row's Rename: its name asked for.
     Rename(String),
-    /// A server row's Scrobbling: its scrobbling accounts' dialog.
-    Scrobbling(String),
     /// A server row's Remove: asked first ([`REMOVE_PROFILE`]).
     Remove(String),
     /// Switch to the server with this id.
@@ -198,9 +194,6 @@ impl Act {
         }
         if let Some(id) = name.strip_prefix("rename:") {
             return Some(Act::Rename(id.to_string()));
-        }
-        if let Some(id) = name.strip_prefix("scrobbling:") {
-            return Some(Act::Scrobbling(id.to_string()));
         }
         if let Some(id) = name.strip_prefix("remove:") {
             return Some(Act::Remove(id.to_string()));
@@ -576,15 +569,11 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             let mark = profile_mark(plugged, sv, &title);
             // A jam guest switches between the profiles; changing them is not its to do.
             let edits = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
-            let mut menu = Vec::new();
-            if edits {
-                menu.push(("Rename".to_string(), format!("rename:{}", sv.id)));
-                if editable(kinds, sv) {
-                    menu.push(("Edit".to_string(), format!("edit:{}", sv.id)));
-                }
-                menu.push(("Scrobbling".to_string(), format!("scrobbling:{}", sv.id)));
-                menu.push(("Remove".to_string(), format!("remove:{}", sv.id)));
-            }
+            let menu = if edits {
+                vec![("Rename".to_string(), format!("rename:{}", sv.id)), ("Edit".to_string(), format!("edit:{}", sv.id)), ("Remove".to_string(), format!("remove:{}", sv.id))]
+            } else {
+                Vec::new()
+            };
             Row {
                 kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, options: menu, rank: index as i32,
                 icon: mark.icon, letter: mark.letter.into(), glyph: mark.glyph, picture: mark.picture, ..Default::default()
@@ -607,11 +596,83 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
     })
 }
 
-/// Whether profile `sv` has an Edit page: a field besides its name (renamed from its menu), or, in use, an
-/// account to sign in to.
-fn editable(kinds: &Kinds, sv: &SavedServer) -> bool {
-    use nori_core::providers::FormField;
-    kinds.providers().into_iter().find(|i| i.kind == sv.kind).is_some_and(|i| i.fields.iter().any(|f| !f.advanced && f.what != FormField::Name) || !i.sign_in.is_empty())
+/// A row of a profile's Edit page under its form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfilePart {
+    /// Its account: the account sheet.
+    Account,
+    /// Its own server or provider taking its plays, switched.
+    ServerScrobbles,
+    /// A scrobbling account, by id, switched.
+    Scrobbler(String),
+    RemoveScrobbler(String),
+    AddScrobbler,
+}
+
+impl ProfilePart {
+    pub fn of(name: &str) -> Option<ProfilePart> {
+        if let Some(id) = name.strip_prefix("scrobbler-remove:") {
+            return Some(ProfilePart::RemoveScrobbler(id.to_string()));
+        }
+        if let Some(id) = name.strip_prefix("scrobbler:") {
+            return Some(ProfilePart::Scrobbler(id.to_string()));
+        }
+        match name {
+            "profile-account" => Some(ProfilePart::Account),
+            "scrobble-server" => Some(ProfilePart::ServerScrobbles),
+            "scrobbler-add" => Some(ProfilePart::AddScrobbler),
+            _ => None,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        match self {
+            ProfilePart::Account => "profile-account".into(),
+            ProfilePart::ServerScrobbles => "scrobble-server".into(),
+            ProfilePart::Scrobbler(id) => format!("scrobbler:{id}"),
+            ProfilePart::RemoveScrobbler(id) => format!("scrobbler-remove:{id}"),
+            ProfilePart::AddScrobbler => "scrobbler-add".into(),
+        }
+    }
+}
+
+/// The rows of profile `sv`'s Edit page under its form, as Android's: its account where its provider signs
+/// in to one, then where its plays go: its own server first where it takes them (`itself`, the core's
+/// rules), each scrobbling account with its switch and a menu removing it, then adding one.
+pub fn profile_rows(kinds: &Kinds, sv: &SavedServer, itself: bool, p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    let mut groups = Vec::new();
+    if kinds.providers().into_iter().any(|i| i.kind == sv.kind && !i.sign_in.is_empty()) {
+        let signed = !sv.user.is_empty();
+        let account = Row {
+            kind: ACTION,
+            name: ProfilePart::Account.name(),
+            title: if signed { sv.user.clone() } else { words::NOT_SIGNED_IN.into() },
+            detail: if signed { words::SIGNED_IN.into() } else { String::new() },
+            button: if signed { words::MANAGE } else { words::SIGN_IN }.into(),
+            enabled: true,
+            ..Default::default()
+        };
+        groups.push((words::ACCOUNT.to_string(), vec![account]));
+    }
+    let mut rows = Vec::new();
+    if itself {
+        let name = words::provider_of(kinds, &sv.kind).name;
+        rows.push(Row { kind: TOGGLE, name: ProfilePart::ServerScrobbles.name(), title: name, detail: words::BUILT_IN.into(), on: !sv.scrobble_off, enabled: true, ..Default::default() });
+    }
+    rows.extend(sv.scrobblers.iter().map(|a| Row {
+        kind: TOGGLE,
+        name: ProfilePart::Scrobbler(a.id.clone()).name(),
+        title: words::scrobbler(a.kind).into(),
+        detail: words::scrobbler_detail(a),
+        on: a.on,
+        enabled: true,
+        options: vec![(words::REMOVE.to_string(), ProfilePart::RemoveScrobbler(a.id.clone()).name())],
+        ..Default::default()
+    }));
+    let hint = if sv.scrobblers.is_empty() && !itself { words::SCROBBLING_HINT } else { "" };
+    rows.push(Row { kind: BUTTON, name: ProfilePart::AddScrobbler.name(), title: words::ADD_SCROBBLER.into(), detail: hint.into(), enabled: true, ..Default::default() });
+    groups.push((words::SCROBBLING.to_string(), rows));
+    model(groups, p, f, today)
 }
 
 /// The ask sheet's name for removing profile `id`, once confirmed.
@@ -1695,6 +1756,7 @@ pub fn level_of(name: &str) -> Option<EqLevel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slint::Model;
 
     /// A key that is optional has its button; one needed is asked for when switching on; one kept changes.
     #[test]
@@ -1732,6 +1794,34 @@ mod tests {
         assert_eq!(both.options[1].0, "5 downloads · 3.0 MB");
         assert_eq!(both.breakdown, ["Home · 2.0 MB", "A removed profile · 1.0 MB"]);
         assert!(usage(&facts(vec![("a".into(), 3 << 20)])).breakdown.is_empty(), "one profile needs no split");
+    }
+
+    /// A profile's Edit page under its form: its own server first where it takes plays, each account with its
+    /// switch and Remove, then adding one; the hint only where nothing takes them.
+    #[test]
+    fn a_profiles_edit_rows_say_where_its_plays_go() {
+        use nori_core::settings::{SavedScrobbler, ScrobblerKind};
+        let kinds = Kinds::builtin();
+        let account = SavedScrobbler { id: "a".into(), kind: ScrobblerKind::ListenBrainz, on: true, user: "me".into(), ..Default::default() };
+        let sv = SavedServer { id: "p".into(), scrobblers: vec![account], scrobble_off: true, ..Default::default() };
+        let shown = |sv: &SavedServer, itself: bool| -> Vec<(i32, String, bool, Vec<String>, String)> {
+            profile_rows(&kinds, sv, itself, &StoredPrefs::default(), &Facts::default(), OCTOBER)
+                .iter()
+                .map(|r| (r.kind, r.name.to_string(), r.on, r.values.iter().map(|v| v.to_string()).collect(), r.detail.to_string()))
+                .collect()
+        };
+        let rows = shown(&sv, true);
+        let names: Vec<&str> = rows.iter().map(|r| r.1.as_str()).collect();
+        assert_eq!(names, ["", "scrobble-server", "scrobbler:a", "scrobbler-add"], "a server signs in with the form, so no account row");
+        assert!(!rows[1].2, "the server's switch is off where its plays are off");
+        assert_eq!(rows[2].3, ["scrobbler-remove:a"]);
+        assert_eq!(rows[3].4, "", "accounts take the plays");
+        let alone = shown(&SavedServer { scrobblers: Vec::new(), ..sv }, false);
+        assert_eq!(alone.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), ["", "scrobbler-add"]);
+        assert_eq!(alone[1].4, crate::words::SCROBBLING_HINT, "nothing takes the plays yet");
+        for part in [ProfilePart::Account, ProfilePart::ServerScrobbles, ProfilePart::Scrobbler("a".into()), ProfilePart::RemoveScrobbler("a".into()), ProfilePart::AddScrobbler] {
+            assert_eq!(ProfilePart::of(&part.name()), Some(part.clone()));
+        }
     }
 
     #[test]
@@ -1802,7 +1892,6 @@ mod tests {
         assert_eq!(Act::of(ADD_SERVER), Some(Act::AddServer));
         assert_eq!(Act::of("server:7"), Some(Act::Server("7".into())));
         assert_eq!(Act::of("edit:7"), Some(Act::Edit("7".into())));
-        assert_eq!(Act::of("scrobbling:7"), Some(Act::Scrobbling("7".into())));
         assert_eq!(Act::of(&backup_password(true, "C:/b:k.noribackup")), Some(Act::BackupPassword { restore: true, path: "C:/b:k.noribackup".into() }), "a path with colons");
         assert_eq!(Act::of(&backup_password(false, "/a")), Some(Act::BackupPassword { restore: false, path: "/a".into() }));
     }
