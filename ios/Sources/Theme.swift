@@ -84,7 +84,7 @@ enum Theme {
     static var statusBar: UIStatusBarStyle { dark ? .lightContent : .default }
 
     /// The player's page: the season's paper dyed with the song's cover (not in Midnight), which the
-    /// player sets as the song changes; its queue, lyrics and devices open in it.
+    /// player card sets as it opens and as the song changes; its queue and lyrics open in it.
     static var player = page
 
     /// The player card, its queue, its lyrics and its devices: the player's colors.

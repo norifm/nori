@@ -54,11 +54,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     /// Builds the interface again in the colours `Theme` now has, on the tab it was on, with `page` over
-    /// that tab's first page, and the first run over it where it was.
+    /// that tab's first page, and the first run or the player over it where it was.
     func restyle(showing page: UIViewController? = nil) {
         guard let window else { return }
         let old = window.rootViewController
-        let firstRun = old?.presentedViewController as? FirstRun
+        let shown = old?.presentedViewController
         let tab = (old as? ShellController)?.selectedIndex ?? 0
         let shell = ShellController()
         shell.loadViewIfNeeded()
@@ -67,10 +67,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         window.backgroundColor = Theme.background
         window.tintColor = Theme.accent
         UIView.transition(with: window, duration: Motion.plain ? 0 : 0.25, options: .transitionCrossDissolve, animations: {
-            // The old one goes with its shell, or UIKit leaves its view over the new one.
-            firstRun?.dismiss(animated: false)
+            // What is over the old shell goes with it, or UIKit leaves its view over the new one.
+            shown?.dismiss(animated: false)
             window.rootViewController = shell
-            if let firstRun { shell.present(firstRun.rebuilt(), animated: false) }
+            if let firstRun = shown as? FirstRun {
+                shell.present(firstRun.rebuilt(), animated: false)
+            } else if shown is PlayerCard {
+                shell.present(PlayerCard(), animated: false)
+            }
         })
     }
 

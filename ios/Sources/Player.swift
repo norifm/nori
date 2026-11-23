@@ -183,7 +183,7 @@ final class PlayerCard: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(paintOutput), name: AVAudioSession.routeChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(stopTicking), name: UIApplication.didEnterBackgroundNotification, object: nil)
-        wear(Theme.player)
+        wear(Theme.page)
         changed()
         if opensQueue { show(.queue) }
     }
@@ -227,6 +227,15 @@ final class PlayerCard: UIViewController {
         paintOutput()
     }
 
+    /// The card changing to `look`, through a cross-fade while it is on screen.
+    private func turn(to look: PageLook) {
+        if view.window != nil && !Motion.plain {
+            UIView.transition(with: view, duration: 0.3, options: [.transitionCrossDissolve, .allowUserInteraction], animations: { self.wear(look) })
+        } else {
+            wear(look)
+        }
+    }
+
     /// A full-screen sheet is up: the card is out of sight, though UIKit keeps it "appeared".
     private var covered: Bool {
         guard let sheet = presentedViewController else { return false }
@@ -264,13 +273,10 @@ final class PlayerCard: UIViewController {
                 let id = song.cover
                 Core.shared.coverLook(id) { [weak self] look in
                     guard let self, let look, self.paintedCover == id else { return }
-                    let swap = { self.wear(look) }
-                    if self.view.window != nil && !Motion.plain {
-                        UIView.transition(with: self.view, duration: 0.3, options: [.transitionCrossDissolve, .allowUserInteraction], animations: swap)
-                    } else {
-                        swap()
-                    }
+                    self.turn(to: look)
                 }
+            } else {
+                turn(to: Theme.page)
             }
         }
         // A jam guest's says what its controls say: paused here while the jam plays on.
