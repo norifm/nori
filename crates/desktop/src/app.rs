@@ -2061,6 +2061,8 @@ impl App {
                 self.narrowed();
             }
             Data::Page(PageGot::Favorites(v)) => {
+                ui.set_favorite_albums(cards(v.albums.iter().map(album_card)));
+                ui.set_favorite_artists(cards(v.artists.iter().map(artist_card)));
                 self.songs = v.songs;
                 ui.set_more_songs(false);
                 self.show_songs();
@@ -6528,8 +6530,8 @@ mod tests {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             let shot = ui.window().take_snapshot().unwrap();
-            // The first row, under the page's head.
-            let (w, rows) = (shot.width() as usize, 455..495);
+            // The first row, under the back disc and the page's head.
+            let (w, rows) = (shot.width() as usize, 511..551);
             rows.flat_map(|y| shot.as_slice()[y * w..(y + 1) * w].to_vec()).collect::<Vec<_>>()
         };
         let song = SongRow { title: "Glass Harbour".into(), time: "3:21".into(), index: 0, ..Default::default() };
@@ -6592,7 +6594,7 @@ mod tests {
         use slint::platform::PointerEventButton::{Left, Right};
         // The menu opens where the row is pressed: the song at its head with its two glyphs at the end, then
         // Play, and the album's line a group below.
-        let row = (400.0, 470.0);
+        let row = (400.0, 526.0);
         // Its 6 px inset, the song's head (46 px, the glyphs 32 px at its end), its hairline, 32 px rows, and
         // 7 px between groups.
         let glyph = |n: f32| (row.0 + 260.0 - 6.0 - (2.0 - n) * 32.0 + 16.0, row.1 + 6.0 + 23.0);
@@ -6651,8 +6653,8 @@ mod tests {
             settle();
             let point = |x: f32, y: f32| slint::LogicalPosition::new(x, y);
             let button = slint::platform::PointerEventButton::Right;
-            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: point(x, 470.0), button });
-            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: point(x, 470.0), button });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: point(x, 526.0), button });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: point(x, 526.0), button });
             settle();
             let (left, top) = {
                 let inner = i_slint_core::window::WindowInner::from_pub(ui.window());
@@ -7235,7 +7237,7 @@ mod tests {
         let click = || {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
-            // The last column's card in the second row.
+            // The last column's cover in the second row.
             let at = slint::LogicalPosition::new(1180.0, 450.0);
             let button = slint::platform::PointerEventButton::Left;
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
@@ -7243,10 +7245,10 @@ mod tests {
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
         };
         click();
-        assert_eq!(*opened.borrow(), ["11"], "the card is there");
+        assert_eq!(*opened.borrow(), ["13"], "the card is there");
         ui.set_inspector(Panel::Queue);
         click();
-        assert_eq!(*opened.borrow(), ["11"], "the queue sheet over it takes the press");
+        assert_eq!(*opened.borrow(), ["13"], "the queue sheet over it takes the press");
     }
 
     #[test]
@@ -7956,7 +7958,8 @@ mod tests {
             let seen = requests.clone();
             ui.on_art(move |id, _, _| { seen.borrow_mut().push(id.to_string()); Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::new(16, 16)) });
             let seen = requests.clone();
-            ui.on_pick_art(move |ids, _| { seen.borrow_mut().push(ids.row_data(0).unwrap().to_string()); Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::new(16, 16)) });
+            // A slot past the last pick asks with no covers until the grid has counted its slots again.
+            ui.on_pick_art(move |ids, _| { seen.borrow_mut().extend(ids.row_data(0).map(|id| id.to_string())); Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::new(16, 16)) });
             ui.show().unwrap();
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
@@ -7979,7 +7982,8 @@ mod tests {
             });
             ui.window().take_snapshot().unwrap();
             assert!(requests.borrow().iter().any(|id| id.parse::<usize>().is_ok_and(|i| i > 20)), "the collection reveals later items by scrolling vertically");
-            let position = slint::LogicalPosition::new(40.0, 100.0);
+            // The back disc, at the page's margin level with its title.
+            let position = slint::LogicalPosition::new(60.0, 107.0);
             for event in [
                 slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left },
                 slint::platform::WindowEvent::PointerReleased { position, button: slint::platform::PointerEventButton::Left },
@@ -7991,7 +7995,7 @@ mod tests {
         }
     }
 
-    /// Home's shelves are at most 1440 px wide, in the middle of the window, with cards from 200 px: a wide
+    /// Home's shelves are at most 1440 px wide, in the middle of the window, with cards from 150 px: a wide
     /// window gets room at its sides and a larger card before it gets another card in the row.
     #[test]
     fn home_keeps_to_the_middle_of_a_wide_window() {
@@ -8009,9 +8013,143 @@ mod tests {
             let card = i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "CardView").next().expect("a card");
             (card.absolute_position().x.round(), card.size().width.round())
         };
-        assert_eq!(first(1728), (144.0, 222.0), "six cards across 1440, in the middle");
-        assert_eq!(first(1280), (40.0, 222.0), "five cards across");
-        assert_eq!(first(760), (32.0, 217.0), "three cards across");
+        assert_eq!(first(1728), (144.0, 161.0), "eight cards across 1440, in the middle");
+        assert_eq!(first(1280), (40.0, 153.0), "seven cards across");
+        assert_eq!(first(760), (32.0, 158.0), "four cards across");
+    }
+
+    /// A library grid keeps Home's frame: its margins grow with the window, 1440 px of it at most in the middle,
+    /// and cards from 150 px; the cards start under the title, and under the bar where the list has one.
+    #[test]
+    fn library_grids_keep_homes_frame() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.set_album_sorts(ModelRc::new(VecModel::from(vec![SharedString::from("Title")])));
+        ui.set_album_sort_ways(ModelRc::new(VecModel::from(vec![1])));
+        let some = || cards((0..12).map(|i| Card { id: i.to_string().into(), ..Default::default() }));
+        ui.set_albums(some());
+        ui.set_playlists(some());
+        ui.show().unwrap();
+        let first = |view: View, width: u32| {
+            ui.set_view(view);
+            ui.window().set_size(slint::PhysicalSize::new(width, 820));
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            let card = i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "CardView").next().expect("a card");
+            let (at, size) = (card.absolute_position(), card.size());
+            (at.x.round(), at.y.round(), size.width.round())
+        };
+        for (view, width, want, why) in [
+            (View::Albums, 1728, (144.0, 196.0, 161.0), "eight across 1440 in the middle, under the title and the bar"),
+            (View::Albums, 1280, (40.0, 196.0, 153.0), "seven across"),
+            (View::Albums, 760, (32.0, 196.0, 158.0), "four across"),
+            (View::Playlists, 1728, (144.0, 152.0, 161.0), "under the title alone"),
+            (View::Playlists, 760, (32.0, 152.0, 158.0), "under the title alone, narrow"),
+        ] {
+            assert_eq!(first(view, width), want, "{view:?} at {width}: {why}");
+        }
+    }
+
+    /// A page opened from another starts under its back disc, at the frame's margin, so the disc never lies
+    /// over its cover; a shelf's title stands after the disc.
+    #[test]
+    fn a_pages_head_stands_clear_of_the_back_disc() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.set_page_kind(PageLayout::Album);
+        ui.set_page_title("Glass Harbour".into());
+        ui.set_shelves(ModelRc::new(VecModel::from(vec![Shelf { title: "Recently played".into(), loaded: true, ..Default::default() }])));
+        ui.show().unwrap();
+        let settle = |view: View, width: u32| {
+            ui.set_view(view);
+            ui.window().set_size(slint::PhysicalSize::new(width, 820));
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+        };
+        let at = |label: &str| {
+            let found = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, label).next().unwrap_or_else(|| panic!("{label} shown"));
+            let p = found.absolute_position();
+            (p.x.round(), p.y.round())
+        };
+        for (width, gutter) in [(1728, 144.0), (760, 32.0)] {
+            settle(View::Page, width);
+            let cover = i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "Art").find(|a| a.size().width.round() == 270.0).expect("the page's cover");
+            let p = cover.absolute_position();
+            // The disc is 40 px tall from 87 px (Frame.back-y).
+            assert_eq!((p.x.round(), p.y.round()), (gutter, 140.0), "the cover at the margin under the disc at {width}");
+            settle(View::Shelf, width);
+            assert_eq!(at("Recently played").0, gutter + 52.0, "the shelf's title after the disc at {width}");
+        }
+    }
+
+    /// The favorites page lists the albums and the artists marked with the seal, a shelf each, over the songs;
+    /// each card opens what it is, and a right press opens its menu.
+    #[test]
+    fn favorites_show_their_albums_artists_and_songs() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 1400));
+        ui.set_view(View::Favorites);
+        ui.set_favorite_albums(cards((0..3).map(|i| Card { id: format!("al{i}").into(), title: format!("Album {i}").into(), ..Default::default() })));
+        ui.set_favorite_artists(cards((0..2).map(|i| Card { id: format!("ar{i}").into(), title: format!("Artist {i}").into(), kind: 1, ..Default::default() })));
+        ui.set_songs(ModelRc::new(VecModel::from(vec![SongRow { title: "Glass Harbour".into(), ..Default::default() }])));
+        let heard = Rc::new(RefCell::new(Vec::new()));
+        let seen = heard.clone();
+        ui.on_open_album(move |id| seen.borrow_mut().push(format!("open {id}")));
+        let seen = heard.clone();
+        ui.on_open_artist(move |id| seen.borrow_mut().push(format!("open {id}")));
+        let seen = heard.clone();
+        ui.on_play_album(move |id| seen.borrow_mut().push(format!("play {id}")));
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        settle();
+        let center = |label: &str| {
+            let found = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, label).next().unwrap_or_else(|| panic!("{label} shown"));
+            let (p, s) = (found.absolute_position(), found.size());
+            (p.x + s.width / 2.0, p.y + s.height / 2.0)
+        };
+        let (album, artist, song) = (center("Album 1"), center("Artist 0"), center("Glass Harbour"));
+        assert!(album.1 < artist.1 && artist.1 < song.1, "albums, then artists, then songs: {album:?} {artist:?} {song:?}");
+        use slint::platform::PointerEventButton::{Left, Right};
+        // A card's cover, over its title.
+        press(ui.window(), album.0, album.1 - 60.0, Left);
+        press(ui.window(), artist.0, artist.1 - 60.0, Left);
+        settle();
+        assert_eq!(*heard.borrow(), ["open al1", "open ar0"]);
+        press(ui.window(), album.0, album.1 - 60.0, Right);
+        settle();
+        // Play, the menu's first line: its 6 px inset, the head and its hairline, then 32 px lines.
+        let (left, top) = {
+            let inner = i_slint_core::window::WindowInner::from_pub(ui.window());
+            let popups = inner.active_popups();
+            let i_slint_core::window::PopupWindowLocation::ChildWindow(at) = popups[0].location else { panic!("the menu is in the window") };
+            (at.x, at.y)
+        };
+        press(ui.window(), left + 40.0, top + 6.0 + 53.0 + 16.0, Left);
+        settle();
+        assert_eq!(heard.borrow().last().map(String::as_str), Some("play al1"), "the album's menu plays it");
+    }
+
+    /// An artist's row in the Artists list says how many albums the artist has, under the name.
+    #[test]
+    fn an_artists_row_counts_its_albums() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_view(View::Artists);
+        ui.set_artists(cards([("Beta Band", "2 albums"), ("Gamma Ray Trio", "")].into_iter().map(|(t, s)| Card { title: t.into(), sub: s.into(), kind: 1, ..Default::default() })));
+        ui.show().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        let at = |label: &str| i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, label).next().map(|e| e.absolute_position().y);
+        let (name, count) = (at("Beta Band").expect("the name"), at("2 albums").expect("the count"));
+        assert!(count > name && count < name + 30.0, "the count right under the name: {name} {count}");
     }
 
     #[test]
@@ -8031,7 +8169,7 @@ mod tests {
         i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
         slint::platform::update_timers_and_animations();
         // The first card's cover, under Home's title and the shelf's.
-        let at = slint::LogicalPosition::new(200.0, 250.0);
+        let at = slint::LogicalPosition::new(100.0, 250.0);
         let button = slint::platform::PointerEventButton::Left;
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
@@ -8070,7 +8208,7 @@ mod tests {
         };
         wait(1000);
         let click = || {
-            let at = slint::LogicalPosition::new(200.0, 250.0);
+            let at = slint::LogicalPosition::new(100.0, 250.0);
             let button = slint::platform::PointerEventButton::Left;
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
@@ -8631,7 +8769,7 @@ mod tests {
         };
         tap(0.0, 0.0);
         // The list head's pencil and trash, at its right end; the sheets' buttons at their foot.
-        let (rename, delete) = ((1180.0, 405.0), (1225.0, 405.0));
+        let (rename, delete) = ((1180.0, 461.0), (1225.0, 461.0));
         let (cancel, confirm) = ((675.0, 170.0), (765.0, 170.0));
         tap(rename.0, rename.1);
         assert_eq!(ui.get_rename_name(), "Road trip", "the field starts with the playlist's name");

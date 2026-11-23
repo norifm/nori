@@ -465,6 +465,31 @@ export global Chrome {
     }
 }
 
+// A library page's frame, as Home's: margins that grow with the window from 32 to 40 px (as Music's 25 to 40)
+// and, past 1440 px of content, the rest of the width, so the page stays in the middle. A grid fills it with
+// cards from 150 px, larger before another fits. Its head: the title, the list's bar under it where it has
+// one, then the page; on a page opened from another, the back disc where the head starts.
+export global Frame {
+    out property <length> widest: 1440px;
+    out property <length> gap: 22px;
+    out property <length> least: 150px;
+    out property <length> title-y: Chrome.top-room + 8px;
+    out property <length> bar-y: Chrome.top-room + 64px;
+    // Where the page starts under a title alone, and under a title and its bar.
+    out property <length> under-title: Chrome.top-room + 76px;
+    out property <length> under-bar: Chrome.top-room + 120px;
+    // The back disc, level with a title's middle, and what a title beside it moves over by.
+    out property <length> back-y: Chrome.top-room + 11px;
+    out property <length> back-room: 52px;
+    public pure function gutter(width: length) -> length {
+        return max(clamp(width * 0.032, 32px, 40px), (width - root.widest) / 2);
+    }
+    // How many cards at least `least` wide fit across `room`: two at the fewest.
+    public pure function columns(room: length, least: length) -> int {
+        return max(2, floor((room + root.gap) / (least + root.gap)));
+    }
+}
+
 // The search field's preview hangs from the field, as wide as it: the field widens to this while it shows,
 // on a pill wide enough to name its tabs or not.
 global SearchShape {
@@ -2026,11 +2051,12 @@ component Grid inherits Remembered {
     in property <[Card]> cards;
     in property <int> rev;
     in property <bool> round;
-    in property <length> pad: 32px;
+    in property <length> pad: Frame.gutter(self.width);
     in property <length> bottom: 100px;
     // A page title above the cards, scrolling with them, and the orders it can be in as a [ListBar] under it,
-    // with a filter where it has one (none: "").
+    // with a filter where it has one (none: ""). `beside-back`: the title stands after the back disc.
     in property <string> title;
+    in property <bool> beside-back;
     in property <[string]> orders;
     in property <[int]> ways;
     in property <int> order;
@@ -2038,14 +2064,14 @@ component Grid inherits Remembered {
     in property <string> filter;
     in property <bool> filtered;
     callback filter-toggled();
-    property <length> head: root.title == "" ? 0 : Chrome.top-room + 56px + (root.orders.length > 0 ? 48px : 0);
+    property <length> head: root.title == "" ? 0 : root.orders.length > 0 ? Frame.under-bar : Frame.under-title;
     pure callback art(string, int, int) -> image;
     callback open(Card);
     callback play(Card);
     callback queue(Card, bool);
     callback jam(Card);
-    property <length> gap: 22px;
-    property <int> columns: max(2, floor((self.width - root.pad * 2 + root.gap) / (176px + root.gap)));
+    property <length> gap: Frame.gap;
+    property <int> columns: Frame.columns(self.width - root.pad * 2, Frame.least);
     // The cards grow a little so the rows reach both edges.
     property <length> side: (self.width - root.pad * 2 - (root.columns - 1) * root.gap) / root.columns;
     property <length> row-step: root.side + 46px + 24px;
@@ -2053,8 +2079,10 @@ component Grid inherits Remembered {
     property <int> visible-count: max(0, min(root.cards.length - root.first, (ceil(self.height / root.row-step) + 2) * root.columns));
     content-height: root.head + ceil(root.cards.length / root.columns) * root.row-step + root.bottom;
     if root.title != "": Text {
-        x: root.pad;
-        y: Chrome.top-room + 8px;
+        x: root.pad + (root.beside-back ? Frame.back-room : 0);
+        width: root.width - self.x - root.pad;
+        y: Frame.title-y;
+        overflow: elide;
         text: root.title;
         color: Theme.text;
         font-family: Type.title;
@@ -2064,7 +2092,7 @@ component Grid inherits Remembered {
     }
     if root.orders.length > 0: ListBar {
         x: root.pad;
-        y: Chrome.top-room + 58px;
+        y: Frame.bar-y;
         orders: root.orders;
         ways: root.ways;
         order: root.order;
@@ -7510,6 +7538,9 @@ export component AppWindow inherits Window {
     in property <[Card]> playlists;
     in property <[SongRow]> songs;
     in property <bool> more-songs;
+    // The albums and artists marked with the seal, over the favorite songs, as Android's page.
+    in property <[Card]> favorite-albums;
+    in property <[Card]> favorite-artists;
 
     in property <[Card]> search-artists;
     in property <[Card]> search-albums;
@@ -7701,8 +7732,10 @@ export component AppWindow inherits Window {
     callback open-accounts();
     // The text the page's list is narrowed by.
     in-out property <string> find-text;
+    // The library pages' margins (the page is the window's width).
+    property <length> page-gutter: Frame.gutter(self.width);
     // The library list shown has nothing in it.
-    property <bool> list-empty: (root.view == View.albums && root.albums.length == 0) || (root.view == View.artists && root.artists.length == 0) || (root.view == View.playlists && root.playlists.length == 0) || ((root.view == View.songs || root.view == View.favorites) && root.songs.length == 0);
+    property <bool> list-empty: (root.view == View.albums && root.albums.length == 0) || (root.view == View.artists && root.artists.length == 0) || (root.view == View.playlists && root.playlists.length == 0) || (root.view == View.songs && root.songs.length == 0) || (root.view == View.favorites && root.songs.length == 0 && root.favorite-albums.length == 0 && root.favorite-artists.length == 0);
     property <string> list-name: root.view == View.shelf ? root.shelves[root.shown-shelf].title : root.view == View.for-you ? "For you" : root.view == View.albums ? "Albums" : root.view == View.artists ? "Artists" : root.view == View.playlists ? "Playlists" : root.view == View.songs ? "Songs" : root.view == View.favorites ? "Favorites" : root.view == View.page && root.page-kind == PageLayout.album ? "Album" : root.view == View.page && root.page-kind == PageLayout.list ? (root.page-mix ? "Mix" : "Playlist") : "";
     callback find-edited(string);
     // The artist chosen on the Artists page.
@@ -8468,10 +8501,7 @@ export component AppWindow inherits Window {
                     home-scroll := Remembered {
                         content-height: home.preferred-height;
                         home := VerticalLayout {
-                            // Home's margins grow a little with the window (32 to 40 px, as Music's 25 to 40), and past
-                            // 1440 px of shelves it stays in the middle: about the room Music and Spotify leave their
-                            // pages beside a sidebar. With cards from 200 px that is five in a row at 1280, six at 1728.
-                            property <length> gutter: max(clamp(self.width * 0.032, 32px, 40px), (self.width - 1440px) / 2);
+                            property <length> gutter: Frame.gutter(self.width);
                             y: floor(home-scroll.content-y / 1phx + 0.5) * 1phx - home-scroll.content-y;
                             width: parent.width;
                             padding-bottom: 100px;
@@ -8587,7 +8617,7 @@ export component AppWindow inherits Window {
                                 show-all => { root.go(View.for-you); }
                                 count: root.picks.length;
                                 loading: !root.picks-loaded;
-                                least: 200px;
+                                least: 175px;
                                 below: self.side * 56 / 150;
                                 for slot in picks-shelf.slots: PickCard {
                                     property <int> i: picks-shelf.first + slot;
@@ -8606,7 +8636,7 @@ export component AppWindow inherits Window {
                                 property <bool> on-screen: self.top + self.height > 0px && self.top < home-scroll.height;
                                 if !shelf.loaded || shelf.cards.length > 0: section := ShelfView {
                                     pad: home.gutter;
-                                    least: 200px;
+                                    least: Frame.least;
                                     shape: shelf.shape;
                                     title: shelf.title;
                                     more: true;
@@ -8704,8 +8734,8 @@ export component AppWindow inherits Window {
                     // The server is still being asked: a sliver sweeping under the top pill, over the page.
                     if root.search-busy: Rectangle {
                         y: Chrome.top-room - 6px;
-                        x: 32px;
-                        width: parent.width - 64px;
+                        x: root.page-gutter;
+                        width: parent.width - 2 * root.page-gutter;
                         height: 3px;
                         border-radius: 1.5px;
                         clip: true;
@@ -8801,7 +8831,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.search-note != "": HorizontalLayout {
-                                    padding-left: 34px;
+                                    padding-left: root.page-gutter;
                                     padding-bottom: 8px;
                                     Text {
                                         text: root.search-note;
@@ -8811,6 +8841,8 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.search-artists.length > 0: artists-found := ShelfView {
+                                    pad: root.page-gutter;
+                                    least: Frame.least;
                                     title: "Artists";
                                     count: root.search-artists.length;
                                     round: true;
@@ -8827,6 +8859,8 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.search-albums.length > 0: albums-found := ShelfView {
+                                    pad: root.page-gutter;
+                                    least: Frame.least;
                                     title: "Albums";
                                     count: root.search-albums.length;
                                     for c[i] in root.search-albums: CardView {
@@ -8841,6 +8875,8 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.search-playlists.length > 0: playlists-found := ShelfView {
+                                    pad: root.page-gutter;
+                                    least: Frame.least;
                                     title: "Playlists";
                                     count: root.search-playlists.length;
                                     for c[i] in root.search-playlists: CardView {
@@ -8855,15 +8891,15 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.search-songs.length > 0: HorizontalLayout {
-                                    padding-left: 32px;
+                                    padding-left: root.page-gutter;
                                     padding-bottom: 6px;
                                     SectionTitle {
                                         text: "Songs";
                                     }
                                 }
                                 VerticalLayout {
-                                    padding-left: 24px;
-                                    padding-right: 24px;
+                                    padding-left: root.page-gutter - 8px;
+                                    padding-right: root.page-gutter - 8px;
                                     for s[i] in root.search-songs: SongLine {
                                         song: s;
                                         number: i + 1;
@@ -8876,7 +8912,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 if root.search-songs-more: HorizontalLayout {
-                                    padding-left: 32px;
+                                    padding-left: root.page-gutter;
                                     padding-top: 6px;
                                     alignment: start;
                                     ShowAllButton {
@@ -8891,11 +8927,11 @@ export component AppWindow inherits Window {
 
                 if root.view == View.albums && root.albums-in-rows: Fade {
                     rows-scroll := Remembered {
-                        property <int> columns: max(2, floor((self.width - 64px + 22px) / 198px));
-                        property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
+                        property <int> columns: Frame.columns(self.width - 2 * root.page-gutter, Frame.least);
+                        property <length> side: (self.width - 2 * root.page-gutter - (self.columns - 1) * Frame.gap) / self.columns;
                         // A shelf's title, its gap, its cards with their words, and the space under it (ShelfView).
                         property <length> row-step: 30px + 10px + self.side + 46px + 44px;
-                        property <length> head: Chrome.top-room + 116px;
+                        property <length> head: Frame.under-bar;
                         property <int> first: max(0, floor((-self.content-y - self.head) / self.row-step) - 1);
                         property <int> visible-count: max(0, min(root.album-rows.length - self.first, ceil(self.height / self.row-step) + 2));
                         property <int> slots;
@@ -8903,8 +8939,8 @@ export component AppWindow inherits Window {
                         changed visible-count => { self.slots = self.visible-count; }
                         content-height: self.head + root.album-rows.length * self.row-step + 100px;
                         Text {
-                            x: 32px;
-                            y: Chrome.top-room + 8px;
+                            x: root.page-gutter;
+                            y: Frame.title-y;
                             text: root.list-name;
                             color: Theme.text;
                             font-family: Type.title;
@@ -8913,8 +8949,8 @@ export component AppWindow inherits Window {
                             letter-spacing: -0.5px;
                         }
                         ListBar {
-                            x: 32px;
-                            y: Chrome.top-room + 58px;
+                            x: root.page-gutter;
+                            y: Frame.bar-y;
                             orders: root.album-sorts;
                             ways: root.album-sort-ways;
                             order: root.album-sort;
@@ -8928,6 +8964,8 @@ export component AppWindow inherits Window {
                             property <Shelf> shelf: root.album-rows[self.index];
                             y: rows-scroll.head + self.index * rows-scroll.row-step;
                             width: rows-scroll.width;
+                            pad: root.page-gutter;
+                            least: Frame.least;
                             title: self.shelf.title;
                             count: self.shelf.cards.length;
                             for card-slot in artist-row.slots: CardView {
@@ -8950,6 +8988,8 @@ export component AppWindow inherits Window {
                     push: root.view == View.shelf;
                     Grid {
                         title: root.list-name;
+                        beside-back: root.view == View.shelf;
+                        pad: root.page-gutter;
                         orders: root.view == View.albums ? root.album-sorts : [];
                         ways: root.album-sort-ways;
                         order: root.album-sort;
@@ -8991,17 +9031,18 @@ export component AppWindow inherits Window {
                 if root.view == View.for-you: Fade {
                     push: true;
                     picks-grid := Remembered {
-                        property <int> columns: max(2, floor((self.width - 64px + 22px) / 222px));
-                        property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
-                        content-height: Chrome.top-room + 64px + ceil(root.picks.length / self.columns) * (self.side * 186 / 150 + 22px) + 100px;
-                        property <int> first: max(0, floor((-self.content-y - Chrome.top-room - 64px) / (self.side * 186 / 150 + 22px)) - 1) * self.columns;
-                        property <int> visible-count: max(0, min(root.picks.length - self.first, (ceil(self.height / (self.side * 186 / 150 + 22px)) + 2) * self.columns));
+                        property <int> columns: Frame.columns(self.width - 2 * root.page-gutter, Frame.least);
+                        property <length> side: (self.width - 2 * root.page-gutter - (self.columns - 1) * Frame.gap) / self.columns;
+                        property <length> row-step: self.side * 186 / 150 + Frame.gap;
+                        content-height: Frame.under-title + ceil(root.picks.length / self.columns) * self.row-step + 100px;
+                        property <int> first: max(0, floor((-self.content-y - Frame.under-title) / self.row-step) - 1) * self.columns;
+                        property <int> visible-count: max(0, min(root.picks.length - self.first, (ceil(self.height / self.row-step) + 2) * self.columns));
                         property <int> slots;
                         init => { self.slots = self.visible-count; }
                         changed visible-count => { self.slots = self.visible-count; }
                         Text {
-                            x: 32px;
-                            y: Chrome.top-room + 8px;
+                            x: root.page-gutter + Frame.back-room;
+                            y: Frame.title-y;
                             text: root.list-name;
                             color: Theme.text;
                             font-family: Type.title;
@@ -9012,8 +9053,8 @@ export component AppWindow inherits Window {
                         for slot in self.slots: PickCard {
                             property <int> i: picks-grid.first + slot;
                             property <Pick> item: root.picks[self.i];
-                            x: 32px + mod(self.i, parent.columns) * (parent.side + 22px);
-                            y: Chrome.top-room + 64px + floor(self.i / parent.columns) * (parent.side * 186 / 150 + 22px);
+                            x: root.page-gutter + mod(self.i, parent.columns) * (parent.side + Frame.gap);
+                            y: Frame.under-title + floor(self.i / parent.columns) * parent.row-step;
                             side: parent.side;
                             pick: self.item;
                             picture: root.pick-art(self.item.covers, root.covers-rev);
@@ -9042,7 +9083,7 @@ export component AppWindow inherits Window {
                         width: 300px;
                         height: parent.height - self.y;
                         for a in root.artists: Rectangle {
-                            height: 52px;
+                            height: 56px;
                             HorizontalLayout {
                                 padding-left: 12px;
                                 padding-right: 12px;
@@ -9055,17 +9096,27 @@ export component AppWindow inherits Window {
                                         spacing: 12px;
                                         Art {
                                             y: (parent.height - self.height) / 2;
-                                            width: 38px;
-                                            height: 38px;
-                                            border-radius: 19px;
+                                            width: 40px;
+                                            height: 40px;
+                                            border-radius: 20px;
                                             source: root.art(a.art, 0, root.covers-rev);
                                         }
-                                        Text {
-                                            text: a.title;
-                                            color: Theme.text;
-                                            font-size: 13px;
-                                            vertical-alignment: center;
-                                            overflow: elide;
+                                        // The name, and how many albums under it, as Android's rows.
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 1px;
+                                            Text {
+                                                text: a.title;
+                                                color: Theme.text;
+                                                font-size: 13px;
+                                                overflow: elide;
+                                            }
+                                            if a.sub != "": Text {
+                                                text: a.sub;
+                                                color: Theme.dim;
+                                                font-size: 12px;
+                                                overflow: elide;
+                                            }
                                         }
                                     }
                                     ar := TouchArea {
@@ -9155,14 +9206,17 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.view == View.songs || root.view == View.favorites: Fade {
+                if root.view == View.songs: Fade {
                     VerticalLayout {
                         Heading {
-                            title: root.view == View.favorites ? "Favorites" : "Songs";
+                            title: "Songs";
+                            padding-left: root.page-gutter;
+                            padding-right: root.page-gutter;
                         }
+                        // The rows' words start at the margin; their hover reaches 8 px past it.
                         HorizontalLayout {
-                            padding-left: 24px;
-                            padding-right: 16px;
+                            padding-left: root.page-gutter - 8px;
+                            padding-right: root.page-gutter - 8px;
                             SongHeads {
                                 height: 28px;
                                 opacity: root.songs.length > 0 ? 1 : 0;
@@ -9170,8 +9224,6 @@ export component AppWindow inherits Window {
                         }
                         HorizontalLayout {
                             vertical-stretch: 1;
-                            padding-left: 24px;
-                            padding-right: 16px;
                             ListView {
                                 // The next page is asked for as the end comes within a screen, or when the rows
                                 // do not fill the list.
@@ -9182,15 +9234,114 @@ export component AppWindow inherits Window {
                                 }
                                 changed content-y => { self.near-end(); }
                                 changed content-height => { self.near-end(); }
-                                for s[i] in root.songs: SongLine {
-                                    song: s;
-                                    number: i + 1;
-                                    table: true;
-                                    thumb: true;
-                                    picture: root.art(s.art, 0, root.covers-rev);
-                                    play => { root.song(1, i, -1); }
-                                    menu => { return root.song-menu(1, i); }
-                                    act(kind, id) => { root.song(1, i, kind); }
+                                // Each row inside the margins, the list's scroll bar at the window's edge.
+                                for s[i] in root.songs: Rectangle {
+                                    height: 56px;
+                                    SongLine {
+                                        x: root.page-gutter - 8px;
+                                        width: parent.width - 2 * self.x;
+                                        song: s;
+                                        number: i + 1;
+                                        table: true;
+                                        thumb: true;
+                                        picture: root.art(s.art, 0, root.covers-rev);
+                                        play => { root.song(1, i, -1); }
+                                        menu => { return root.song-menu(1, i); }
+                                        act(kind, id) => { root.song(1, i, kind); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // The favorites, as Android's page: the albums and the artists, a shelf each, then the songs.
+                if root.view == View.favorites: Fade {
+                    favorites-flick := Remembered {
+                        content-height: favorites.preferred-height;
+                        favorites := VerticalLayout {
+                            width: parent.width;
+                            padding-bottom: 100px;
+                            Heading {
+                                title: "Favorites";
+                                padding-left: root.page-gutter;
+                                padding-right: root.page-gutter;
+                                padding-bottom: 22px;
+                            }
+                            if root.favorite-albums.length > 0: liked-albums := ShelfView {
+                                pad: root.page-gutter;
+                                least: Frame.least;
+                                title: "Albums";
+                                count: root.favorite-albums.length;
+                                for slot in liked-albums.slots: CardView {
+                                    property <int> i: liked-albums.first + slot;
+                                    property <Card> c: root.favorite-albums[self.i];
+                                    x: liked-albums.gap + self.i * liked-albums.step;
+                                    side: liked-albums.side;
+                                    card: self.c;
+                                    picture: root.art(self.c.art, 0, root.covers-rev);
+                                    open => { root.open-album(self.c.id); }
+                                    play => { root.play-album(self.c.id); }
+                                    queue(next) => { root.queue-card(0, self.c.id, next); }
+                                    jam => { root.jam-play(0, self.c.id); }
+                                }
+                            }
+                            if root.favorite-artists.length > 0: liked-artists := ShelfView {
+                                pad: root.page-gutter;
+                                least: Frame.least;
+                                title: "Artists";
+                                round: true;
+                                count: root.favorite-artists.length;
+                                for slot in liked-artists.slots: CardView {
+                                    property <int> i: liked-artists.first + slot;
+                                    property <Card> c: root.favorite-artists[self.i];
+                                    x: liked-artists.gap + self.i * liked-artists.step;
+                                    side: liked-artists.side;
+                                    card: self.c;
+                                    round: true;
+                                    picture: root.art(self.c.art, 0, root.covers-rev);
+                                    open => { root.open-artist(self.c.id); }
+                                    play => { root.play-artist(self.c.id); }
+                                    queue(next) => { root.queue-card(1, self.c.id, next); }
+                                    jam => { root.jam-play(1, self.c.id); }
+                                }
+                            }
+                            // Headed only under the shelves; alone, the page's title heads them.
+                            if root.songs.length > 0 && (root.favorite-albums.length > 0 || root.favorite-artists.length > 0): HorizontalLayout {
+                                padding-left: root.page-gutter;
+                                padding-right: root.page-gutter;
+                                padding-bottom: 6px;
+                                SectionTitle {
+                                    text: "Songs";
+                                }
+                            }
+                            // Only the rows on screen (and a few either side) are made, as a page's.
+                            liked-songs := Rectangle {
+                                property <length> head: root.songs.length > 0 ? 28px : 0;
+                                property <length> seen-from: -favorites-flick.content-y - self.y - self.head - 400px;
+                                property <length> seen-to: -favorites-flick.content-y - self.y - self.head + favorites-flick.height + 400px;
+                                height: self.head + root.songs.length * 56px;
+                                if liked-songs.head > 0: SongHeads {
+                                    x: root.page-gutter - 8px;
+                                    width: parent.width - 2 * self.x;
+                                    y: 0;
+                                    height: liked-songs.head;
+                                }
+                                for s[i] in root.songs: Rectangle {
+                                    y: liked-songs.head + i * 56px;
+                                    height: 56px;
+                                    if (i + 1) * 56px > liked-songs.seen-from && i * 56px < liked-songs.seen-to: SongLine {
+                                        x: root.page-gutter - 8px;
+                                        width: parent.width - 2 * self.x;
+                                        song: s;
+                                        number: i + 1;
+                                        table: true;
+                                        thumb: true;
+                                        picture: root.art(s.art, 0, root.covers-rev);
+                                        play => { root.song(1, i, -1); }
+                                        menu => { return root.song-menu(1, i); }
+                                        act(kind, id) => { root.song(1, i, kind); }
+                                    }
                                 }
                             }
                         }
@@ -9243,9 +9394,10 @@ export component AppWindow inherits Window {
                             content-height: detail.preferred-height;
                             detail := VerticalLayout {
                                 width: parent.width;
-                                padding-left: 32px;
-                                padding-right: 32px;
-                                padding-top: Chrome.top-room + 8px;
+                                padding-left: root.page-gutter;
+                                padding-right: root.page-gutter;
+                                // Under the back disc, but for an artist's name, low over the picture.
+                                padding-top: root.page-kind == PageLayout.artist ? Chrome.top-room + 8px : Frame.bar-y;
                                 padding-bottom: 100px;
                                 spacing: 26px;
                                 // An artist: the name and the play button over the bottom of the picture.
@@ -9624,8 +9776,8 @@ export component AppWindow inherits Window {
                 // Back, on a page that was opened from another: a disc under the top pill's left, where Android
                 // has its arrow.
                 if root.view == View.page || root.view == View.shelf || root.view == View.for-you: Rectangle {
-                    x: 20px;
-                    y: Chrome.top-room + 6px;
+                    x: root.page-gutter;
+                    y: Frame.back-y;
                     width: 40px;
                     height: 40px;
                     border-radius: 20px;
@@ -9640,8 +9792,9 @@ export component AppWindow inherits Window {
                 }
                 // A field that narrows what the page lists.
                 if root.list-name != "" && (root.view == View.albums || root.view == View.artists || root.view == View.playlists || root.view == View.songs): Field {
-                    x: parent.width - self.width - 32px;
-                    y: Chrome.top-room + 14px;
+                    // At the frame's edge; beside the artists list, the window's.
+                    x: parent.width - self.width - (root.view == View.artists ? 32px : root.page-gutter);
+                    y: Chrome.top-room + 13px;
                     width: 226px;
                     height: 36px;
                     border-radius: 18px;
