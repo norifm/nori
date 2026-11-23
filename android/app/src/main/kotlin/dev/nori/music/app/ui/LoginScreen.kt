@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -166,6 +167,9 @@ private fun Check(title: String, detail: String, value: Boolean, divider: Boolea
 /** The form's switches: drawn together on a card rather than one by one among the fields. */
 private val SWITCHES = setOf(Field.LEGACY_AUTH, Field.SELF_SIGNED, Field.WIFI_ONLY)
 
+/** The form's entries: a row each, saying what is set and opening a sheet that sets it. */
+private val ENTRIES = setOf(Field.PROXY)
+
 /**
  * "Add / edit server" from settings ([initial] and [onClose] set), and a profile of [kind] the welcome chose. A
  * profile being added picks its kind first (the core's `providers`) unless [kind] is given; the form then has
@@ -179,7 +183,11 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
     val providers by vm.providers.collectAsStateWithLifecycle()
     val info = providers.firstOrNull { it.kind == p.kind }
     val words = providerWords(vm, p.kind)
-    var advanced by remember { mutableStateOf(false) }
+    // A saved profile with a value under Advanced opens with it shown (its name is renamed from its menu).
+    var advanced by remember(info != null) {
+        mutableStateOf(!adding && info?.fields.orEmpty().any { it.advanced && it.what != Field.NAME && dev.nori.music.ffi.fieldSet(it.what, p) })
+    }
+    var proxySheet by remember { mutableStateOf(false) }
     var headers by remember { mutableStateOf(dev.nori.music.ffi.settings.serverHeadersText(p.headers)) }
     var certPassword by remember { mutableStateOf("") }
     val pickCert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) p = vm.importClientCert(p, uri, certPassword) }
@@ -212,10 +220,27 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
         if (switches.isNotEmpty()) GroupCard(Modifier.padding(top = 12.dp)) { switches.forEachIndexed { i, f -> Switch(f, i < switches.lastIndex) } }
     }
 
+    /** The entries among [fields], each a row opening its sheet, on a card of their own. */
+    @Composable
+    fun Entries(fields: List<Field>) {
+        val entries = fields.filter { it in ENTRIES }
+        if (entries.isNotEmpty()) GroupCard(Modifier.padding(top = 12.dp)) {
+            entries.forEachIndexed { i, f ->
+                when (f) {
+                    Field.PROXY -> GroupRow(
+                        say.proxy, { proxySheet = true }, Modifier.testTag("proxy"),
+                        value = p.proxy?.let { dev.nori.music.ffi.settings.proxyAddress(it) } ?: say.proxyNone, chevron = true, divider = i < entries.lastIndex,
+                    )
+                    else -> {}
+                }
+            }
+        }
+    }
+
     /** The text fields among [fields] the form asks now: user and password step aside for an API key, and a
      *  saved profile is renamed from its menu. */
     fun asked(fields: List<Field>) = fields.filter {
-        it !in SWITCHES && !(p.apiKey.isNotEmpty() && (it == Field.USER || it == Field.PASSWORD)) && !(it == Field.NAME && !adding)
+        it !in SWITCHES && it !in ENTRIES && !(p.apiKey.isNotEmpty() && (it == Field.USER || it == Field.PASSWORD)) && !(it == Field.NAME && !adding)
     }
 
     /** One field of the form, a row of its card. */
@@ -243,7 +268,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
             Field.SECOND_ADDRESS -> GroupField(p.altUrl, { p = p.copy(altUrl = it) }, label = say.secondAddress, stacked = true, supporting = say.secondAddressHint, divider = divider)
             Field.API_KEY -> GroupField(p.apiKey, { p = p.copy(apiKey = it) }, label = say.apiKey, stacked = true, divider = divider)
             Field.HEADERS -> GroupField(headers, { headers = it }, label = say.extraHeaders, stacked = true, supporting = say.extraHeadersHint, minLines = 2, divider = divider)
-            Field.LEGACY_AUTH, Field.SELF_SIGNED, Field.WIFI_ONLY -> {}
+            Field.LEGACY_AUTH, Field.SELF_SIGNED, Field.WIFI_ONLY, Field.PROXY -> {}
             Field.CLIENT_CERT -> {
                 GroupField(
                     certPassword, { certPassword = it }, label = say.clientCertPassword, stacked = true, divider = false,
@@ -303,6 +328,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
                 if (advanced) {
                     Fields(folded)
                     Switches(folded)
+                    Entries(folded)
                 }
             }
             // A saved profile with nothing to edit here has no button: it is renamed from its menu.
@@ -331,6 +357,51 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
             val saved = vm.prefs.collectAsStateWithLifecycle().value.servers.firstOrNull { it.id == p.id }?.takeIf { !adding }
             if (saved != null) ScrobblingPart(vm, saved)
             Spacer(Modifier.height(24.dp))
+        }
+    }
+    NoriSheet(proxySheet, { proxySheet = false }) {
+        ProxySheet(p.proxy, close = { proxySheet = false }) { p = p.copy(proxy = it) }
+    }
+}
+
+/**
+ * A profile's proxy, [proxy] as saved: its address, user and password, read by the core on Save
+ * (`proxy_from_form`), which says here what is wrong with them; an empty address is no proxy. Cancel keeps
+ * [proxy]; Remove, offered while one is set, saves none.
+ */
+@Composable
+private fun ProxySheet(proxy: dev.nori.music.ffi.settings.SavedProxy?, close: () -> Unit, saved: (dev.nori.music.ffi.settings.SavedProxy?) -> Unit) {
+    var address by remember { mutableStateOf(proxy?.let { dev.nori.music.ffi.settings.proxyAddress(it) }.orEmpty()) }
+    var user by remember { mutableStateOf(proxy?.login?.user.orEmpty()) }
+    var password by remember { mutableStateOf(proxy?.login?.password.orEmpty()) }
+    var failed by remember { mutableStateOf<dev.nori.music.ffi.settings.ProxyException?>(null) }
+    val save = {
+        try {
+            saved(dev.nori.music.ffi.settings.proxyFromForm(address, user, password))
+            close()
+        } catch (e: dev.nori.music.ffi.settings.ProxyException) {
+            failed = e
+        }
+    }
+    Column(Modifier.windowInsetsPadding(gestureBarRoom)) {
+        SheetTitle(say.proxy)
+        GroupCard {
+            GroupField(
+                address, { address = it; failed = null }, Modifier.testTag("proxy-address"), label = say.proxyAddress, stacked = true,
+                placeholder = say.proxyHint, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), autofocus = true,
+            )
+            GroupField(user, { user = it; failed = null }, Modifier.testTag("proxy-user"), label = say.user, stacked = true)
+            GroupField(
+                password, { password = it; failed = null }, Modifier.testTag("proxy-password"), label = say.password, stacked = true, divider = false,
+                visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), onDone = save,
+            )
+        }
+        failed?.let { Text(say.proxyError(it), Modifier.padding(horizontal = Space.gutter).padding(top = 10.dp).testTag("proxy-failed"), color = MaterialTheme.colorScheme.error) }
+        Row(Modifier.fillMaxWidth().padding(start = Space.gutter - 12.dp, end = Space.gutter - 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (proxy != null) TextAction(say.proxyRemove, { saved(null); close() }, Modifier.testTag("proxy-remove"), destructive = true)
+            Spacer(Modifier.weight(1f))
+            TextAction(say.cancel, close, Modifier.testTag("proxy-cancel"))
+            TextAction(say.save, save, Modifier.testTag("proxy-save"))
         }
     }
 }

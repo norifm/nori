@@ -42,6 +42,7 @@ impl Provider for Subsonic {
             field(WifiOnly, true),
             field(ClientCert, true),
         ];
+        let fields = fields.into_iter().chain([super::PROXY_FIELD]).collect();
         ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in: Vec::new(), identities: None }
     }
 

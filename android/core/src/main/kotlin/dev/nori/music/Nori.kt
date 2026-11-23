@@ -155,7 +155,7 @@ class Nori private constructor(private val context: Context) {
     suspend fun joinJam(link: String): dev.nori.music.ffi.JamJoin = withContext(Dispatchers.IO) {
         val joined = lifted { dev.nori.music.ffi.jamJoin(transport, settings.core, remotes.peek(), link, dev.nori.music.remote.Remotes.deviceName(context)) }
         if (joined is dev.nori.music.ffi.JamJoin.Joined) {
-            val guest = dev.nori.music.ffi.jamProfile(joined.pass, dev.nori.music.ffi.settings.newServerId(), context.getString(dev.nori.music.core.R.string.jam_profile))
+            val guest = dev.nori.music.ffi.jamProfile(joined.pass, settings.value.server, dev.nori.music.ffi.settings.newServerId(), context.getString(dev.nori.music.core.R.string.jam_profile))
             dev.nori.music.ffi.jamJoining(settings.core)
             withContext(Dispatchers.Main) { activate(guest) }
         }
@@ -313,21 +313,27 @@ class Nori private constructor(private val context: Context) {
     @Volatile private var apart: Pair<String, Client>? = null
 
     /**
-     * The account calls below act on [profile]'s account from now on, through a client of its own when it is
-     * not the profile in use, so editing it opens nothing else; null goes back to the one in use. A plugin
-     * serves one profile at a time: it is handed back to the profile in use when it is the same plugin's.
+     * The account calls below act on [profile]'s account from now on, through a client of its own over its own
+     * connections (its proxy) when it is not the profile in use, so editing it opens nothing else; null goes
+     * back to the one in use. Plugins serve one profile at a time: they are handed back to the profile in use.
      */
     fun lookAtAccountOf(profile: SavedServer?) {
         val active = settings.value.server
         val was = apart
-        apart = if (profile == null || profile.id == active?.id) null else Client(open(dev.nori.music.ffi.settings.serverDb(profile.id), profile), transport, coverNet).also { it.setProfile(profile.net()) }.let { profile.id to it }
+        apart = if (profile == null || profile.id == active?.id) null else {
+            val own = http.transportOf(profile)
+            Client(open(dev.nori.music.ffi.settings.serverDb(profile.id), profile), own, CoverNet().also { it.setTransport(own) }).also { it.setProfile(profile.net()) }.let { profile.id to it }
+        }
         val gone = was?.let { (id, _) -> settings.value.servers.firstOrNull { it.id == id } }
-        if (gone != null && active != null && gone.kind == active.kind) runCatching { core.configureProfile(active) }
+        if (gone != null && active != null) runCatching { client.takePluginsBack(active, gone.kind) }
     }
 
     /** The client the account calls go through, and the profile whose account it is. */
     private val accountClient: Client get() = apart?.second ?: client
     private fun accountProfile(): SavedServer? = apart?.first?.let { id -> settings.value.servers.firstOrNull { it.id == id } } ?: settings.value.server
+
+    /** The proxy of the profile whose account is looked at, which its sign-in page goes through. */
+    fun accountProxy(): dev.nori.music.ffi.settings.SavedProxy? = accountProfile()?.proxy
 
     /**
      * Signs the account looked at in with [answer] (the core's `Client::sign_in`, its provider's): signed

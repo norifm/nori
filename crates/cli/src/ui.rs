@@ -22,7 +22,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use nori_core::browse::AlbumSort;
 
-use crate::app::{App, Button, DeviceRow, Focus, HomeLine, Hit, Item, LibLine, ListRef, Load, Overlay, Page, Panel, Place, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
+use crate::app::{App, Button, DeviceRow, Focus, HomeLine, Hit, Item, LibLine, ListRef, Load, LoginLine, Overlay, Page, Panel, Place, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS, PROXY_FIELDS};
 use crate::art::{Art, Theme};
 use crate::lyrics::Words;
 use crate::keys::{Scope, BINDINGS};
@@ -2474,11 +2474,11 @@ fn look_page(f: &mut Frame, area: Rect, app: &mut App, s: &crate::app::Setup, t:
 
 /// The chosen kind's page: its form, or with an account and nothing to fill, two ways on.
 fn sign_in_form(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
-    let fields = app.login_fields();
+    let lines = app.login_lines();
     let info = app.login_info();
     let account = app.login_account();
     let name = info.as_ref().map_or(String::new(), |i| app.provider_words(&i.kind).name);
-    let h = 11 + 2 * fields.len() as u16;
+    let h = 11 + 2 * lines.len() as u16;
     let r = centred(area, 64, h);
     let inner = popup(f, r, Span::styled(format!(" {name} "), bold().fg(t.ink)), t);
     let l = &app.login;
@@ -2490,21 +2490,28 @@ fn sign_in_form(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     };
     text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: 1 }, about, t.dim());
     y += 2;
-    for &i in &fields {
+    for &at in &lines {
         if y >= bottom {
             break;
         }
-        let label = LOGIN_FIELDS[i];
-        let focused = l.focus == i;
-        let value = if i == 3 { "•".repeat(l.fields[i].chars().count()) } else { l.fields[i].clone() };
-        let cursor = if focused { "▏" } else { "" };
-        let line = Line::from(vec![
-            Span::styled(format!("  {label:<16}"), if focused { t.current() } else { t.dim() }),
-            Span::styled(format!("{value}{cursor}"), Style::default().fg(t.ink)),
-        ]);
+        let focused = l.focus == at;
+        let label = if focused { t.current() } else { t.dim() };
+        let line = match at {
+            LoginLine::Field(i) => {
+                let value = if crate::app::login_hidden(i) { "•".repeat(l.fields[i].chars().count()) } else { l.fields[i].clone() };
+                let cursor = if focused { "▏" } else { "" };
+                Line::from(vec![Span::styled(format!("  {:<16}", LOGIN_FIELDS[i]), label), Span::styled(format!("{value}{cursor}"), Style::default().fg(t.ink))])
+            }
+            LoginLine::Advanced => Line::from(Span::styled(format!("  {} {}", crate::text::ADVANCED, if l.advanced { "▾" } else { "▸" }), label)),
+            LoginLine::Proxy => {
+                let set = nori_core::proxy::proxy_address(l.proxy.clone());
+                let value = if set.is_empty() { Span::styled(crate::text::PROXY_NONE, t.dim()) } else { Span::styled(set, Style::default().fg(t.ink)) };
+                Line::from(vec![Span::styled(format!("    {:<14}", crate::text::PROXY), label), value, Span::styled(" ›", t.dim())])
+            }
+        };
         let row = Rect { x: inner.x, y, width: inner.width, height: 1 };
         put(f, Paragraph::new(line), row);
-        app.hits.push((row, Hit::LoginField(i)));
+        app.hits.push((row, Hit::LoginLine(at)));
         y += 2;
     }
     let sign_in = format!(" {} ", crate::text::provider_sign_in(&name));
@@ -2521,7 +2528,15 @@ fn sign_in_form(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     y += 2;
     let msg = match l.flow.failure().map(crate::text::add_failure) {
         Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
-        None => Span::styled(format!("  {}", if account { crate::text::ACCOUNT_KEYS } else { crate::text::LOGIN_KEYS }), t.dim()),
+        None => {
+            let keys = match l.focus {
+                _ if account => crate::text::ACCOUNT_KEYS,
+                LoginLine::Field(_) => crate::text::LOGIN_KEYS,
+                LoginLine::Advanced => crate::text::ADVANCED_KEYS,
+                LoginLine::Proxy => crate::text::PROXY_LINE_KEYS,
+            };
+            Span::styled(format!("  {keys}"), t.dim())
+        }
     };
     put(f, Paragraph::new(msg).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x, y, width: inner.width, height: 2.min(bottom.saturating_sub(y)) });
 }
@@ -2544,7 +2559,7 @@ fn qr_lines(code: &nori_core::remote::QrCode) -> Vec<Line<'static>> {
 
 fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let missing = app.page_missing();
-    let App { overlay, hits, devices, settings, .. } = app;
+    let App { overlay, hits, devices, settings, login, .. } = app;
     let kinds = &*settings.own.kinds;
     let Some(o) = overlay else { return };
     match o {
@@ -2646,6 +2661,29 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             let r = centred(area, w, lines.len() as u16 + 3);
             let inner = popup(f, r, Span::styled(crate::text::PAIR_TITLE, bold().fg(t.ink)), t);
             put(f, Paragraph::new(lines), Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(1) });
+        }
+        Overlay::Proxy(d) => {
+            let w = 64.min(area.width);
+            let mut lines: Vec<Line> = Vec::new();
+            for (i, label) in PROXY_FIELDS.iter().enumerate() {
+                let focused = d.focus == i;
+                let value = if i == 2 { "•".repeat(d.fields[i].chars().count()) } else { d.fields[i].clone() };
+                let cursor = if focused { "▏" } else { "" };
+                let hint = if i == 0 && d.fields[0].is_empty() { crate::text::PROXY_HINT } else { "" };
+                lines.push(Line::from(vec![
+                    Span::styled(format!(" {label:<16}"), if focused { t.current() } else { t.dim() }),
+                    Span::styled(format!("{value}{cursor}"), Style::default().fg(t.ink)),
+                    Span::styled(hint, t.dim()),
+                ]));
+                lines.push(Line::from(""));
+            }
+            lines.push(match d.error {
+                Some(e) => Line::from(Span::styled(format!(" {}", crate::text::proxy_error(e)), Style::default().fg(Color::LightRed))),
+                None => Line::from(Span::styled(format!(" {}", if login.proxy.is_some() { crate::text::PROXY_KEYS_SET } else { crate::text::PROXY_KEYS }), t.dim())),
+            });
+            let r = centred(area, w, lines.len() as u16 + 3);
+            let inner = popup(f, r, Span::styled(format!(" {} ", crate::text::PROXY), bold().fg(t.ink)), t);
+            put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(1) });
         }
         Overlay::AddRepo { text: typed, problem, busy } => {
             let w = 72.min(area.width);

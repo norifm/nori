@@ -522,7 +522,7 @@ fn start_queue(
     let session = Session::open(Open {
         queue,
         data: dir,
-        http: Http::new(),
+        http: Http::for_profile(&profile),
         profile,
         kinds: nori_core::providers::Kinds::builtin(),
         output,

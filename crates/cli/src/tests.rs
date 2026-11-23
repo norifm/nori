@@ -11,7 +11,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, Mo
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use crate::app::{App, Button, Cmd, Focus, Hit, Item, ListRef, Overlay, Panel, Target, View};
+use crate::app::{App, Button, Cmd, Focus, Hit, Item, ListRef, LoginLine, Overlay, Panel, Target, View};
 use crate::backend::{block_on, Data, Msg, Req};
 use crate::settings_view::{Facts, Line, Row, SettingsView, Switch, GROUPS};
 
@@ -3256,18 +3256,93 @@ fn the_kind_chosen_reaches_its_form() {
     key(&mut a, KeyCode::Esc);
     assert_eq!((a.login.flow.clone(), a.quit), (Default::default(), false), "back chooses again");
     key(&mut a, KeyCode::Up);
-    a.login.focus = 3;
+    a.login.focus = LoginLine::Field(3);
     key(&mut a, KeyCode::Enter);
     let s = draw(&mut a, 100, 40);
     assert!(s.contains("Server address") && s.contains("esc choose again"), "{s}");
-    assert_eq!(a.login.focus, 0, "on the first field it asks");
+    assert_eq!(a.login.focus, LoginLine::Field(0), "on the first field it asks");
     key(&mut a, KeyCode::Tab);
     chars(&mut a, "music.example");
     key(&mut a, KeyCode::Tab);
     chars(&mut a, "ann");
     key(&mut a, KeyCode::Tab);
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.kind == ServerKind::Subsonic && p.url == "https://music.example" && p.user == "ann"), "{:?}", a.cmds);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.kind == ServerKind::Subsonic && p.url == "https://music.example" && p.user == "ann" && p.proxy.is_none()), "{:?}", a.cmds);
+}
+
+/// The form's proxy waits under Advanced settings, which folds and unfolds; its line says what is set and
+/// opens its popup, where Enter saves what the core reads (or says what is wrong), Esc keeps the form's,
+/// and ctrl+d removes it.
+#[test]
+fn the_forms_proxy_waits_under_advanced_settings() {
+    use nori_core::settings::ServerKind;
+    let mut a = app();
+    a.view = View::Login;
+    a.provider_chosen(ServerKind::Subsonic);
+    let ctrl = |a: &mut App, c: char| a.handle(Msg::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)));
+    for _ in 0..4 {
+        key(&mut a, KeyCode::Tab);
+    }
+    let s = draw(&mut a, 100, 40);
+    dump("login-advanced-folded", &s);
+    assert!(a.login.focus == LoginLine::Advanced && s.contains("Advanced settings ▸") && !s.contains("Proxy"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    let s = draw(&mut a, 100, 40);
+    dump("login-advanced-open", &s);
+    assert!(s.contains("Advanced settings ▾") && s.contains("Proxy") && s.contains("none"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    assert!(!draw(&mut a, 100, 40).contains("Proxy"), "folded again");
+    key(&mut a, KeyCode::Enter);
+    key(&mut a, KeyCode::Tab);
+    key(&mut a, KeyCode::Enter);
+    chars(&mut a, "http://proxy.lan");
+    for _ in 0..3 {
+        key(&mut a, KeyCode::Enter);
+    }
+    let s = draw(&mut a, 100, 40);
+    assert!(matches!(a.overlay, Some(Overlay::Proxy(_))) && s.contains(crate::text::proxy_error(nori_core::proxy::ProxyError::NotSocks5)), "the popup stays and says why: {s}");
+    key(&mut a, KeyCode::Tab);
+    ctrl(&mut a, 'u');
+    chars(&mut a, "proxy.lan:1081");
+    key(&mut a, KeyCode::Tab);
+    chars(&mut a, "me");
+    key(&mut a, KeyCode::Tab);
+    chars(&mut a, "s3cret");
+    let s = draw(&mut a, 100, 40);
+    dump("login-proxy-popup", &s);
+    assert!(s.contains("SOCKS5 address") && s.contains("••••••") && !s.contains("s3cret") && !s.contains("ctrl+d"), "the password hidden, nothing to remove: {s}");
+    key(&mut a, KeyCode::Enter);
+    let login = nori_core::proxy::ProxyLogin { user: "me".into(), password: "s3cret".into() };
+    let proxy = Some(nori_core::proxy::SavedProxy { host: "proxy.lan".into(), port: 1081, login: Some(login) });
+    let s = draw(&mut a, 100, 40);
+    dump("login-advanced-proxy", &s);
+    assert!(a.overlay.is_none() && a.login.proxy == proxy && s.contains("proxy.lan:1081"), "{s}");
+    key(&mut a, KeyCode::Up);
+    key(&mut a, KeyCode::Enter);
+    key(&mut a, KeyCode::Enter);
+    assert!(draw(&mut a, 100, 40).contains("proxy.lan:1081"), "folding loses nothing");
+    key(&mut a, KeyCode::Tab);
+    key(&mut a, KeyCode::Enter);
+    chars(&mut a, "9");
+    key(&mut a, KeyCode::Esc);
+    assert!(a.overlay.is_none() && a.login.proxy == proxy, "Esc keeps the form's");
+    key(&mut a, KeyCode::Enter);
+    assert!(draw(&mut a, 100, 40).contains("ctrl+d remove"));
+    ctrl(&mut a, 'd');
+    assert!(a.overlay.is_none() && a.login.proxy.is_none() && draw(&mut a, 100, 40).contains("none"), "removed");
+    key(&mut a, KeyCode::Enter);
+    chars(&mut a, "proxy.lan:1081");
+    for _ in 0..3 {
+        key(&mut a, KeyCode::Enter);
+    }
+    a.login.focus = LoginLine::Field(1);
+    chars(&mut a, "music.example");
+    key(&mut a, KeyCode::Tab);
+    chars(&mut a, "ann");
+    key(&mut a, KeyCode::Tab);
+    key(&mut a, KeyCode::Enter);
+    let proxy = nori_core::proxy::proxy_from_form("proxy.lan:1081".into(), String::new(), String::new()).unwrap();
+    assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.proxy == proxy), "the form sends its proxy: {:?}", a.cmds);
 }
 
 /// A provider with nothing to ask is added from the first screen, which stays until that's answered.

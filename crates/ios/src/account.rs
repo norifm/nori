@@ -5,6 +5,7 @@ use std::path::Path;
 
 use nori_core::providers::flow::{WelcomeDo, WelcomeEvent, WelcomeFlow, WelcomeSource};
 use nori_core::providers::{log_in, FormField, Kinds};
+use nori_core::proxy::{proxy_address, proxy_from_form, ProxyError};
 use nori_core::settings::{profile_icons, profile_letter, servers_removed, ProfileIcon, SavedServer, ServerKind, ServerList, StoredPrefs};
 use nori_core::settings_store::Settings;
 use nori_core::transport::{block_on, FailureKind, NetError};
@@ -24,6 +25,11 @@ pub const LOGIN_DATABASE: i32 = 10;
 pub const LOGIN_OTHER: i32 = 11;
 pub const LOGIN_CLEARTEXT: i32 = 12;
 pub const LOGIN_METERED: i32 = 13;
+/// The proxy's fields are not a proxy (the page checks them first with [`nori_ios_proxy`]).
+pub const LOGIN_PROXY: i32 = 14;
+pub const LOGIN_PROXY_UNREACHABLE: i32 = 15;
+pub const LOGIN_PROXY_LOGIN: i32 = 16;
+pub const LOGIN_PROXY_NO_ROUTE: i32 = 17;
 
 fn owned(s: &str) -> CString {
     CString::new(s.replace('\0', " ")).unwrap_or_else(|_| CString::new("").unwrap())
@@ -162,6 +168,9 @@ pub(crate) fn fail(e: NetError) -> (i32, Option<String>) {
             FailureKind::Tls => (LOGIN_CERTIFICATE, None),
             FailureKind::Cleartext => (LOGIN_CLEARTEXT, None),
             FailureKind::Metered => (LOGIN_METERED, None),
+            FailureKind::ProxyUnreachable => (LOGIN_PROXY_UNREACHABLE, None),
+            FailureKind::ProxyLogin => (LOGIN_PROXY_LOGIN, None),
+            FailureKind::ProxyNoRoute => (LOGIN_PROXY_NO_ROUTE, None),
             FailureKind::Io | FailureKind::Other => (LOGIN_OTHER, detail),
         },
         NetError::Http { status } => (LOGIN_HTTP, Some(status.to_string())),
@@ -174,8 +183,9 @@ pub(crate) fn fail(e: NetError) -> (i32, Option<String>) {
 }
 
 /// The login form as the app sends it: the fields its kind asks (`nori_ios_providers`); any may be
-/// empty. `alt` is the second address, `key` an API key.
-#[derive(Debug, Default)]
+/// empty. `alt` is the second address, `key` an API key; `proxy`, `proxy_user` and `proxy_password` the
+/// proxy's sheet's, as [`proxy_from_form`] reads them.
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Form {
     pub kind: ServerKind,
     pub url: String,
@@ -184,11 +194,14 @@ pub(crate) struct Form {
     pub name: String,
     pub alt: String,
     pub key: String,
+    pub proxy: String,
+    pub proxy_user: String,
+    pub proxy_password: String,
 }
 
 impl Form {
-    /// The app's JSON `{kind, url, user, password, name, alt, key}`; a missing field is empty, and an
-    /// unknown `kind` a server's.
+    /// The app's JSON `{kind, url, user, password, name, alt, key, proxy, proxyUser, proxyPassword}`; a
+    /// missing field is empty, and an unknown `kind` a server's.
     fn parse(json: &str) -> Form {
         let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
         let field = |k: &str| v[k].as_str().unwrap_or_default().to_string();
@@ -200,17 +213,21 @@ impl Form {
             name: field("name"),
             alt: field("alt"),
             key: field("key"),
+            proxy: field("proxy"),
+            proxy_user: field("proxyUser"),
+            proxy_password: field("proxyPassword"),
         }
     }
 }
 
-/// The profile `form` asks for, of the fields its kind asks; None when the form cannot be sent yet
-/// (a server's lacks an address, or both a user and an API key).
-fn draft(form: &Form) -> Option<SavedServer> {
+/// The profile `form` asks for, of the fields its kind asks; else the `LOGIN_*` code for why the form
+/// cannot be sent yet (a server's lacks an address, or both a user and an API key; its proxy is not one).
+fn draft(form: &Form) -> Result<SavedServer, i32> {
     let kinds = Kinds::builtin();
-    let info = kinds.providers().into_iter().find(|p| p.kind == form.kind)?;
+    let info = kinds.providers().into_iter().find(|p| p.kind == form.kind).ok_or(LOGIN_INCOMPLETE)?;
     let asks = |what| info.fields.iter().any(|f| f.what == what);
     let typed = |what, text: &str| if asks(what) { text.trim().to_string() } else { String::new() };
+    let secret = |what, text: &str| if asks(what) { text.to_string() } else { String::new() };
     let profile = SavedServer {
         id: nori_core::settings::new_server_id(),
         kind: form.kind.clone(),
@@ -218,16 +235,19 @@ fn draft(form: &Form) -> Option<SavedServer> {
         url: address(&typed(FormField::Address, &form.url)),
         alt_url: address(&typed(FormField::SecondAddress, &form.alt)),
         user: typed(FormField::User, &form.user),
-        password: if asks(FormField::Password) { form.password.clone() } else { String::new() },
+        password: secret(FormField::Password, &form.password),
         api_key: typed(FormField::ApiKey, &form.key),
+        proxy: proxy_from_form(typed(FormField::Proxy, &form.proxy), typed(FormField::Proxy, &form.proxy_user), secret(FormField::Proxy, &form.proxy_password))
+            .map_err(|_| LOGIN_PROXY)?,
         ..SavedServer::default()
     };
-    kinds.server_ready(profile.clone()).then_some(profile)
+    kinds.server_ready(profile.clone()).then_some(profile).ok_or(LOGIN_INCOMPLETE)
 }
 
 /// The kinds of profile the login page offers, as JSON to free: `[{kind, fields: [{what, advanced}]}]`,
 /// `kind` as the settings store it, `what` one of the form's JSON keys (`name`, `url`, `user`,
-/// `password`, `alt`, `key`); fields the page has no box for are left out.
+/// `password`, `alt`, `key`, `proxy`: the proxy's entry, whose sheet fills `proxy`, `proxyUser` and
+/// `proxyPassword`); fields the page has no box for are left out.
 #[no_mangle]
 pub extern "C" fn nori_ios_providers() -> *mut c_char {
     let rows: Vec<serde_json::Value> = Kinds::builtin()
@@ -245,6 +265,7 @@ pub extern "C" fn nori_ios_providers() -> *mut c_char {
                         FormField::Password => "password",
                         FormField::SecondAddress => "alt",
                         FormField::ApiKey => "key",
+                        FormField::Proxy => "proxy",
                         _ => return None,
                     };
                     Some(serde_json::json!({ "what": what, "advanced": f.advanced }))
@@ -316,17 +337,52 @@ pub unsafe extern "C" fn nori_ios_welcome(flow: *const WelcomeFlow) -> *mut c_ch
     owned(&serde_json::json!({ "picked": picked, "one": flow.one().map(|k| k.id().to_string()) }).to_string()).into_raw()
 }
 
+/// Why the proxy's sheet's fields are not a proxy, for `nori_ios_proxy`.
+pub const PROXY_NOT_SOCKS5: i32 = 1;
+pub const PROXY_HOST: i32 = 2;
+pub const PROXY_PORT: i32 = 3;
+pub const PROXY_LOGIN: i32 = 4;
+
+/// The proxy the sheet's `address`, `user` and `password` give, as the page shows it: `host:port`, or
+/// empty for none (an empty address). NULL when they are not a proxy, with a `PROXY_*` code in `error`.
+/// Free with `nori_ios_free`.
+///
+/// # Safety
+/// The strings are NUL-terminated UTF-8, or NULL. `error` is NULL or a pointer this function writes.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_proxy(address: *const c_char, user: *const c_char, password: *const c_char, error: *mut i32) -> *mut c_char {
+    match proxy_from_form(text(address), text(user), text(password)) {
+        Ok(proxy) => owned(&proxy_address(proxy)).into_raw(),
+        Err(e) => {
+            if !error.is_null() {
+                unsafe { *error = proxy_error(e) };
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+fn proxy_error(e: ProxyError) -> i32 {
+    match e {
+        ProxyError::NotSocks5 => PROXY_NOT_SOCKS5,
+        ProxyError::Host => PROXY_HOST,
+        ProxyError::Port => PROXY_PORT,
+        ProxyError::Login => PROXY_LOGIN,
+    }
+}
+
 /// Checks the profile with its provider (a server is pinged) and, when it passes, saves it as the
 /// active one.
 pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
-    let Some(draft) = draft(form) else {
-        return (LOGIN_INCOMPLETE, None);
+    let draft = match draft(form) {
+        Ok(draft) => draft,
+        Err(code) => return (code, None),
     };
     let (settings, _) = match opened(dir) {
         Ok(v) => v,
         Err(e) => return (LOGIN_DATABASE, Some(e)),
     };
-    match block_on(log_in(&Kinds::builtin(), Http::new(), &settings, draft)) {
+    match block_on(log_in(&Kinds::builtin(), Http::for_profile(&draft), &settings, draft)) {
         Ok(_) => {
             settings.writer.flush();
             (LOGIN_OK, None)
@@ -719,9 +775,24 @@ mod tests {
         assert_eq!((p.name.as_str(), p.api_key.as_str(), p.user.as_str()), ("Home", "k1", ""));
         assert_eq!(p.alt_url, address("192.168.1.5:4533"));
         assert!(p.url.starts_with("http"), "{}", p.url);
-        assert!(draft(&Form { key: String::new(), ..form }).is_none(), "neither a user nor a key");
-        let parsed = Form::parse(r#"{"url":"u","user":"ada","alt":"a"}"#);
-        assert_eq!((parsed.user.as_str(), parsed.alt.as_str(), parsed.key.as_str()), ("ada", "a", ""));
+        assert_eq!(draft(&Form { key: String::new(), ..form.clone() }).err(), Some(LOGIN_INCOMPLETE), "neither a user nor a key");
+        let proxied = Form { proxy: "proxy.lan:1081".into(), proxy_user: " me ".into(), proxy_password: " pw".into(), ..form.clone() };
+        let login = nori_core::proxy::ProxyLogin { user: "me".into(), password: " pw".into() };
+        assert_eq!(draft(&proxied).unwrap().proxy, Some(nori_core::proxy::SavedProxy { host: "proxy.lan".into(), port: 1081, login: Some(login) }));
+        assert_eq!(draft(&Form { proxy: "http://proxy.lan".into(), ..form }).err(), Some(LOGIN_PROXY));
+        let shown = |address: &str, user: &str| {
+            let (address, user, password) = (owned(address), owned(user), owned(""));
+            let mut error = 0;
+            let got = unsafe { nori_ios_proxy(address.as_ptr(), user.as_ptr(), password.as_ptr(), &mut error) };
+            let got = (!got.is_null()).then(|| unsafe { CString::from_raw(got) }.into_string().unwrap());
+            (got, error)
+        };
+        assert_eq!(shown(" socks5://proxy.lan ", "me"), (Some("proxy.lan:1080".into()), 0), "as the page shows it");
+        assert_eq!(shown("", "me"), (Some(String::new()), 0), "no address, no proxy");
+        assert_eq!(shown("proxy.lan:0", ""), (None, PROXY_PORT));
+        let parsed = Form::parse(r#"{"url":"u","user":"ada","alt":"a","proxy":"p","proxyUser":"pu","proxyPassword":"pp"}"#);
+        let read = [&parsed.user, &parsed.alt, &parsed.key, &parsed.proxy, &parsed.proxy_user, &parsed.proxy_password].map(String::as_str);
+        assert_eq!(read, ["ada", "a", "", "p", "pu", "pp"]);
     }
 
     #[test]

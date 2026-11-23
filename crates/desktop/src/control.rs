@@ -28,8 +28,19 @@ enum Command {
     Shot(PathBuf),
     /// Opens the profiles menu under the top pill.
     Profiles,
-    /// Fills the sign-in form shown with a server's address, user and password, and sends it.
-    Login { url: String, user: String, password: String },
+    /// Fills the sign-in form shown with a server's address, user and password, and the proxy's address,
+    /// user and password (empty when not given), and sends it.
+    Login {
+        url: String,
+        user: String,
+        password: String,
+        #[serde(default)]
+        proxy: String,
+        #[serde(default)]
+        proxy_user: String,
+        #[serde(default)]
+        proxy_password: String,
+    },
     /// Picks the welcome's row at this index, or opens that sign-in.
     WelcomePick(i32),
     WelcomeContinue,
@@ -106,10 +117,12 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
             ui.invoke_settings_tab_chosen(t);
         }
         Command::Profiles => ui.invoke_show_profiles(),
-        Command::Login { url, user, password } => {
+        Command::Login { url, user, password, proxy, proxy_user, proxy_password } => {
             ui.set_login_url(url.into());
             ui.set_login_user(user.into());
             ui.set_login_password(password.into());
+            ui.set_login_advanced_open(!proxy.is_empty());
+            ui.invoke_proxy_saved(proxy.into(), proxy_user.into(), proxy_password.into());
             ui.invoke_login();
         }
         Command::WelcomePick(i) => ui.invoke_welcome_picked(i),

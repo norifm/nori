@@ -12,6 +12,8 @@ name = "nori_http"
 nori-core = { path = "../core", default-features = false }
 nori-engine = { path = "../engine" }
 async-trait = "0.1"
+# A proxy's login in its address.
+percent-encoding = "2"
 # rustls, no OpenSSL: one small TLS stack that builds the same everywhere.
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 

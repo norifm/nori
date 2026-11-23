@@ -10,6 +10,9 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.webkit.ProxyConfig
+import androidx.webkit.ProxyController
+import androidx.webkit.WebViewFeature
 import dev.nori.music.app.R
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -160,7 +163,7 @@ private fun SignInSheet(vm: SettingsViewModel, kind: ServerKind, start: String, 
                     Text(say.signInPage(words, failed), textAlign = TextAlign.Center, modifier = Modifier.testTag("page-failed"))
                     PillButton(say.tryAgain, null, vm::retrySignIn, prominent = true)
                 }
-                else -> WebSignIn({ url, cookies -> vm.signInDone(kind, url, cookies) }, start, { loading = it }, vm::signIn, Modifier.weight(1f).fillMaxWidth())
+                else -> WebSignIn({ url, cookies -> vm.signInDone(kind, url, cookies) }, start, remember { vm.signInProxy() }, { loading = it }, vm::signIn, Modifier.weight(1f).fillMaxWidth())
             }
         }
     }
@@ -175,20 +178,25 @@ private fun ColumnScope.Centered(content: @Composable ColumnScope.() -> Unit) {
 }
 
 /**
- * A provider's sign-in page, opened at [start], in a WebView of its own: no JavaScript bridge, nothing
- * but https, no other WebView in the app to share its cookies with. Once the core says the page is done
+ * A provider's sign-in page, opened at [start] through [proxy] (see [proxied]), in a WebView of its own: no
+ * JavaScript bridge, nothing but https, no other WebView in the app to share its cookies with. Once the core says the page is done
  * (`sign_in_done`, from the address shown or refused and its cookies), its Cookie header goes to [signedIn]. Every
  * cookie and all storage are cleared before it opens, as soon as the cookies are taken, and when it
  * leaves (Cancel included): a WebView keeping the session could rotate it behind nori's back and end
  * nori's copy.
  */
 @Composable
-private fun WebSignIn(done: suspend (String, String) -> Boolean, start: String, loading: (Boolean) -> Unit, signedIn: (String) -> Unit, modifier: Modifier) {
+private fun WebSignIn(done: suspend (String, String) -> Boolean, start: String, proxy: dev.nori.music.ffi.settings.SavedProxy?, loading: (Boolean) -> Unit, signedIn: (String) -> Unit, modifier: Modifier) {
     val onLoading by rememberUpdatedState(loading)
     val onSignedIn by rememberUpdatedState(signedIn)
     val isDone by rememberUpdatedState(done)
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    DisposableEffect(Unit) { onDispose { forgetWebSession() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            forgetWebSession()
+            if (proxy != null) unproxied()
+        }
+    }
     // Windows the page opened, the newest last: Back goes back in the newest, then closes it.
     val popups = remember { androidx.compose.runtime.mutableStateListOf<WebView>() }
     fun close(window: WebView) {
@@ -254,7 +262,7 @@ private fun WebSignIn(done: suspend (String, String) -> Boolean, start: String, 
                 }
                 signInSettings(page, client, windows)
                 addView(page, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-                forgetWebSession { page.loadUrl(start) }
+                forgetWebSession { proxied(proxy) { page.loadUrl(start) } }
             }
         },
         modifier = modifier,
@@ -284,6 +292,23 @@ private fun signInSettings(view: WebView, client: WebViewClient, windows: WebChr
     view.settings.javaScriptCanOpenWindowsAutomatically = true
     view.webViewClient = client
     view.webChromeClient = windows
+}
+
+/**
+ * Every WebView's connections through [proxy], without its login (a WebView takes none), but those to a
+ * local destination (the core's `proxy_bypass_rules`), then [then]: the override is the process's, and
+ * the sign-in page is the app's only WebView. A WebView older than 72, without the override, goes direct.
+ */
+private fun proxied(proxy: dev.nori.music.ffi.settings.SavedProxy?, then: () -> Unit) {
+    if (proxy == null || !WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) return then()
+    val config = ProxyConfig.Builder().addProxyRule("socks5://" + dev.nori.music.ffi.settings.proxyAddress(proxy))
+    dev.nori.music.ffi.settings.proxyBypassRules().forEach(config::addBypassRule)
+    ProxyController.getInstance().setProxyOverride(config.build(), Runnable::run) { then() }
+}
+
+/** WebViews connect directly again. */
+private fun unproxied() {
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) ProxyController.getInstance().clearProxyOverride(Runnable::run) {}
 }
 
 /** Clears the sign-in WebView's cookies and storage, then [then]. */

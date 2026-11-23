@@ -5024,7 +5024,6 @@ dependencies = [
  "serde_json",
  "skia-safe",
  "slint",
- "ureq",
  "wgpu",
  "winit",
  "x11rb",
@@ -5113,6 +5112,7 @@ dependencies = [
  "async-trait",
  "nori-core",
  "nori-engine",
+ "percent-encoding",
  "rustls",
  "ureq",
 ]

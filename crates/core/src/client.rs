@@ -90,6 +90,11 @@ impl Client {
         &self.core
     }
 
+    /// What its requests go through: its profile's connections.
+    pub fn transport(&self) -> Arc<dyn Transport> {
+        self.transport.clone()
+    }
+
     /// The queue of this client's core.
     pub fn session(&self) -> &Arc<nori_queue::Session> {
         &self.core.session

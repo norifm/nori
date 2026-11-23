@@ -919,7 +919,11 @@ impl Search {
 pub struct Login {
     /// Name, address, user, password.
     pub fields: [String; 4],
-    pub focus: usize,
+    pub focus: LoginLine,
+    /// Its Advanced lines show.
+    pub advanced: bool,
+    /// The proxy as its popup last saved it.
+    pub proxy: Option<nori_core::proxy::SavedProxy>,
     /// Selection in the saved servers list.
     pub sel: Sel,
     /// Whether the saved servers list has the keys.
@@ -970,6 +974,39 @@ const LOGIN_ASKS: [nori_core::providers::FormField; 4] = {
     use nori_core::providers::FormField::*;
     [Name, Address, User, Password]
 };
+
+/// Whether the login field `i` (of `LOGIN_FIELDS`) is a password, drawn hidden.
+pub fn login_hidden(i: usize) -> bool {
+    LOGIN_ASKS[i] == nori_core::providers::FormField::Password
+}
+
+/// A line of the login form the keys are on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginLine {
+    /// One of `LOGIN_FIELDS`, by index.
+    Field(usize),
+    /// The Advanced head, which folds its lines away and back.
+    Advanced,
+    /// The proxy's line, which opens its popup.
+    Proxy,
+}
+
+impl Default for LoginLine {
+    fn default() -> Self {
+        LoginLine::Field(0)
+    }
+}
+
+/// The proxy's popup over the login form: its address, user and password as typed, the one the keys
+/// are on, and what the core found wrong with them on Enter.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProxyDraft {
+    pub fields: [String; 3],
+    pub focus: usize,
+    pub error: Option<nori_core::proxy::ProxyError>,
+}
+
+pub const PROXY_FIELDS: [&str; 3] = ["SOCKS5 address", "User", "Password"];
 
 /// Playback state for drawing; position extrapolated from `at`.
 #[derive(Debug, Clone, Copy)]
@@ -1297,6 +1334,8 @@ pub enum Overlay {
     AddRepo { text: String, problem: Option<nori_plugins::RepoProblem>, busy: bool },
     /// This computer's pairing code, the other device's pasted under it, and why pairing failed.
     Pair { text: String, error: Option<String>, busy: bool },
+    /// The login form's proxy, as its popup has it.
+    Proxy(ProxyDraft),
     /// The profile's account with a provider: who is signed in (empty: no one), whether the provider
     /// ended the session, cookies being pasted, why signing in failed, and a sign-in under way.
     /// `ways` are its provider's, in order; `flow` is the core's; `window_failed`, that the sign-in
@@ -1450,7 +1489,7 @@ pub enum Hit {
     Volume,
     Button(Button),
     SearchField,
-    LoginField(usize),
+    LoginLine(LoginLine),
     /// Index into `settings_view::GROUPS`.
     Group(usize),
     /// The equalizer's curve, off its points.
@@ -2700,9 +2739,11 @@ impl App {
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
         if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Pair { text: t, busy: false, .. } | Overlay::AddRepo { text: t, busy: false, .. } | Overlay::Account { text: t, pasting: true, .. }) = &mut self.overlay {
             t.push_str(&text);
+        } else if let Some(Overlay::Proxy(d)) = &mut self.overlay {
+            d.fields[d.focus].push_str(&text);
         } else if self.view == View::Login {
-            if !self.login_choosing() {
-                self.login.fields[self.login.focus].push_str(&text);
+            if let (false, LoginLine::Field(i)) = (self.login_choosing(), self.login.focus) {
+                self.login.fields[i].push_str(&text);
             }
         } else if nori_core::remote::is_invite(&text) {
             // An invite pasted anywhere offers to join its jam, a pairing code to pair.
@@ -2842,7 +2883,77 @@ impl App {
     /// Which of `LOGIN_FIELDS` the kind chosen asks.
     pub fn login_fields(&self) -> Vec<usize> {
         let Some(info) = self.login_info().filter(|_| self.login.flow.step() == Some(FirstStep::Form)) else { return Vec::new() };
-        (0..4).filter(|&i| info.fields.iter().any(|f| f.what == LOGIN_ASKS[i])).collect()
+        (0..LOGIN_ASKS.len()).filter(|&i| info.fields.iter().any(|f| f.what == LOGIN_ASKS[i])).collect()
+    }
+
+    /// The form's lines in order: its fields, then, where the kind asks for a proxy, the Advanced head and,
+    /// unfolded, the proxy's line.
+    pub fn login_lines(&self) -> Vec<LoginLine> {
+        let mut lines: Vec<LoginLine> = self.login_fields().into_iter().map(LoginLine::Field).collect();
+        let proxied = self.login_info().is_some_and(|i| i.fields.iter().any(|f| f.what == nori_core::providers::FormField::Proxy));
+        if !lines.is_empty() && proxied {
+            lines.push(LoginLine::Advanced);
+            if self.login.advanced {
+                lines.push(LoginLine::Proxy);
+            }
+        }
+        lines
+    }
+
+    /// The form's line `line` pressed: its field takes the keys, Advanced folds or unfolds, the proxy's
+    /// popup opens on what the form has.
+    fn login_line_pressed(&mut self, line: LoginLine) {
+        self.login.focus = line;
+        match line {
+            LoginLine::Field(_) => {}
+            LoginLine::Advanced => self.login.advanced = !self.login.advanced,
+            LoginLine::Proxy => {
+                let p = self.login.proxy.clone();
+                let login = p.as_ref().and_then(|p| p.login.clone()).unwrap_or_default();
+                let fields = [nori_core::proxy::proxy_address(p), login.user, login.password];
+                self.overlay = Some(Overlay::Proxy(ProxyDraft { fields, ..Default::default() }));
+            }
+        }
+    }
+
+    /// A key on the proxy's popup: Enter on its last field saves what the core reads there and closes it,
+    /// or says what is wrong; Esc leaves the form's; ctrl+d removes a proxy set.
+    fn proxy_key(&mut self, k: KeyEvent) {
+        let Some(Overlay::Proxy(d)) = &mut self.overlay else { return };
+        let control = k.modifiers.contains(KeyModifiers::CONTROL);
+        match k.code {
+            KeyCode::Tab | KeyCode::Down => d.focus = (d.focus + 1) % d.fields.len(),
+            KeyCode::BackTab | KeyCode::Up => d.focus = (d.focus + d.fields.len() - 1) % d.fields.len(),
+            KeyCode::Enter if d.focus + 1 < d.fields.len() => d.focus += 1,
+            KeyCode::Enter => {
+                let [address, user, password] = d.fields.clone();
+                match nori_core::proxy::proxy_from_form(address, user, password) {
+                    Ok(proxy) => {
+                        self.login.proxy = proxy;
+                        self.overlay = None;
+                    }
+                    Err(e) => d.error = Some(e),
+                }
+            }
+            KeyCode::Esc => self.overlay = None,
+            KeyCode::Char('d') if control && self.login.proxy.is_some() => {
+                self.login.proxy = None;
+                self.overlay = None;
+            }
+            KeyCode::Backspace => {
+                d.fields[d.focus].pop();
+                d.error = None;
+            }
+            KeyCode::Char('u') if control => {
+                d.fields[d.focus].clear();
+                d.error = None;
+            }
+            KeyCode::Char(c) if !control => {
+                d.fields[d.focus].push(c);
+                d.error = None;
+            }
+            _ => self.dirty = false,
+        }
     }
 
     /// The first screen: what a new profile plays from, the repos asked what they offer.
@@ -2865,7 +2976,7 @@ impl App {
     /// See [`App::provider_chosen`].
     pub(crate) fn provider_opened(&mut self, info: &nori_core::providers::ProviderInfo) {
         let then = self.login.flow.on(AddEvent::Chose { info: info.clone() });
-        self.login.focus = self.login_fields().first().copied().unwrap_or(0);
+        self.login.focus = LoginLine::Field(self.login_fields().first().copied().unwrap_or(0));
         if then == AddDo::Connect {
             self.connect(AfterAdding::Remind);
         }
@@ -3045,23 +3156,34 @@ impl App {
                 _ => {}
             }
         }
-        let fields = self.login_fields();
+        let lines = self.login_lines();
         let l = &mut self.login;
-        let at = fields.iter().position(|&f| f == l.focus);
-        let last = at.is_none_or(|i| i + 1 == fields.len());
+        let at = lines.iter().position(|&f| f == l.focus);
+        let field = match l.focus {
+            LoginLine::Field(i) => Some(i),
+            LoginLine::Advanced | LoginLine::Proxy => None,
+        };
+        // Enter on a field goes on to the next field, and on the last one connects.
+        let next_field = at.and_then(|i| lines.get(i + 1)).filter(|l| matches!(l, LoginLine::Field(_))).copied();
         match k.code {
             KeyCode::Tab | KeyCode::Down => {
                 if let Some(i) = at {
-                    l.focus = fields[(i + 1) % fields.len()];
+                    l.focus = lines[(i + 1) % lines.len()];
                 }
             }
             KeyCode::BackTab | KeyCode::Up => {
                 if let Some(i) = at {
-                    l.focus = fields[(i + fields.len() - 1) % fields.len()];
+                    l.focus = lines[(i + lines.len() - 1) % lines.len()];
                 }
             }
-            KeyCode::Enter if !last => l.focus = fields[at.map_or(0, |i| i + 1)],
-            KeyCode::Enter => self.connect(AfterAdding::Remind),
+            KeyCode::Enter => match (field, next_field) {
+                (None, _) => {
+                    let line = l.focus;
+                    self.login_line_pressed(line);
+                }
+                (Some(_), Some(next)) => l.focus = next,
+                (Some(_), None) => self.connect(AfterAdding::Remind),
+            },
             KeyCode::Esc => {
                 l.flow.on(AddEvent::Back);
                 // The one source picked signs in on its own page: back is the welcome's sources.
@@ -3070,9 +3192,15 @@ impl App {
                 }
             }
             KeyCode::Backspace if at.is_some() => {
-                l.fields[l.focus].pop();
+                if let Some(i) = field {
+                    l.fields[i].pop();
+                }
             }
-            KeyCode::Char(c) if at.is_some() && !k.modifiers.contains(KeyModifiers::CONTROL) => l.fields[l.focus].push(c),
+            KeyCode::Char(c) if at.is_some() && !k.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(i) = field {
+                    l.fields[i].push(c);
+                }
+            }
             _ => {}
         }
     }
@@ -3084,7 +3212,7 @@ impl App {
         let typed = |i: usize| if asked.contains(&i) { l.fields[i].clone() } else { String::new() };
         let url = typed(1).trim().trim_end_matches('/').to_string();
         let url = if url.is_empty() || url.contains("://") { url } else { format!("https://{url}") };
-        let draft = SavedServer { id: nori_core::settings::new_server_id(), kind: info.kind.clone(), name: typed(0).trim().to_string(), url, user: typed(2).trim().to_string(), password: typed(3), ..Default::default() };
+        let draft = SavedServer { id: nori_core::settings::new_server_id(), kind: info.kind.clone(), name: typed(0).trim().to_string(), url, user: typed(2).trim().to_string(), password: typed(3), proxy: l.proxy.clone(), ..Default::default() };
         let list = nori_core::settings::ServerList { servers: self.prefs.servers.clone(), active_server_id: self.prefs.active_server_id.clone() };
         let added = self.settings.own.kinds.adds_profile(list, draft.clone()).then_some(after);
         let ready = self.settings.own.kinds.server_ready(draft.clone());
@@ -3199,6 +3327,7 @@ impl App {
     fn overlay_key(&mut self, k: KeyEvent) {
         let Some(o) = &mut self.overlay else { return };
         match o {
+            Overlay::Proxy(_) => self.proxy_key(k),
             Overlay::Help { scroll } => match k.code {
                 KeyCode::Down | KeyCode::Char('j') => *scroll += 1,
                 KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
@@ -4946,9 +5075,9 @@ impl App {
                 self.focus = Focus::Main;
                 self.search.editing = true;
             }
-            Hit::LoginField(i) => {
+            Hit::LoginLine(line) => {
                 self.login.on_list = false;
-                self.login.focus = i;
+                self.login_line_pressed(line);
             }
             Hit::Group(g) => {
                 self.focus = Focus::Main;

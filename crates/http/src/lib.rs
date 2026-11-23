@@ -1,5 +1,8 @@
 //! Desktop HTTP: the core's [`Transport`] and the engine's [`ByteSource`] over one ureq agent (rustls),
-//! so API calls, covers and audio share one connection pool.
+//! so API calls, covers and audio share one connection pool; a profile's agent goes through its SOCKS5
+//! proxy (socks.rs).
+
+mod socks;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -11,11 +14,13 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
+use nori_core::proxy::{proxy_host, skips_proxy, SavedProxy};
+use nori_core::settings::SavedServer;
 use nori_core::transport::{Exchange, FailureKind, HttpHeader, HttpMethod, Transport, TransportError, TransportResponse, USER_AGENT};
 use nori_engine::{Body, ByteSource, Cancel, OpenError};
 use ureq::unversioned::resolver::DefaultResolver;
 use ureq::unversioned::transport::{Buffers, ConnectProxyConnector, ConnectionDetails, Connector, Either, LazyBuffers, NextTimeout, RustlsConnector};
-use ureq::{Agent, RequestBuilder};
+use ureq::{Agent, ProxyProtocol, RequestBuilder};
 
 /// Largest API response body read.
 const MAX_ANSWER: u64 = 256 * 1024 * 1024;
@@ -29,6 +34,14 @@ impl Http {
     /// `http://` or `https://` one (TLS to the proxy, then CONNECT).
     pub fn new() -> Arc<Http> {
         Http::with_config(Agent::config_builder())
+    }
+
+    /// [`Http::new`] for `profile`: through its proxy where it has one, in place of the environment's.
+    pub fn for_profile(profile: &SavedServer) -> Arc<Http> {
+        match &profile.proxy {
+            Some(proxy) => Http::with_config(Agent::config_builder().proxy(Some(socks5(proxy)))),
+            None => Http::new(),
+        }
     }
 
     fn with_config(config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>) -> Arc<Http> {
@@ -83,6 +96,13 @@ impl Http {
     }
 }
 
+/// `proxy` as the agent keeps it: its login percent-encoded in its address, which [`Sockets`] decodes.
+fn socks5(proxy: &SavedProxy) -> ureq::Proxy {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    let login = proxy.login.as_ref().map_or_else(String::new, |l| format!("{}:{}@", utf8_percent_encode(&l.user, NON_ALPHANUMERIC), utf8_percent_encode(&l.password, NON_ALPHANUMERIC)));
+    ureq::Proxy::new(&format!("socks5h://{login}{}:{}", proxy_host(proxy), proxy.port)).expect("a saved proxy's host is a name or an IP address (nori_core::proxy)")
+}
+
 fn failure(e: ureq::Error) -> TransportError {
     use std::io::ErrorKind;
     let kind = match &e {
@@ -91,13 +111,16 @@ fn failure(e: ureq::Error) -> TransportError {
         ureq::Error::Timeout(_) => FailureKind::Timeout,
         ureq::Error::Tls(_) | ureq::Error::Rustls(_) => FailureKind::Tls,
         ureq::Error::BadUri(_) | ureq::Error::Http(_) => FailureKind::Other,
-        ureq::Error::Io(io) => match io.kind() {
-            ErrorKind::ConnectionRefused => FailureKind::Connect,
-            ErrorKind::TimedOut => FailureKind::Timeout,
-            ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => FailureKind::Interrupted,
-            // std's lookup failure has no kind of its own: a name that cannot be resolved (no network).
-            _ if io.to_string().starts_with("failed to lookup address") => FailureKind::UnknownHost,
-            _ => FailureKind::Io,
+        ureq::Error::Io(io) => match io.get_ref().and_then(|e| e.downcast_ref::<socks::Failed>()) {
+            Some(proxy) => proxy.kind,
+            None => match io.kind() {
+                ErrorKind::ConnectionRefused => FailureKind::Connect,
+                ErrorKind::TimedOut => FailureKind::Timeout,
+                ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => FailureKind::Interrupted,
+                // std's lookup failure has no kind of its own: a name that cannot be resolved (no network).
+                _ if io.to_string().starts_with("failed to lookup address") => FailureKind::UnknownHost,
+                _ => FailureKind::Io,
+            },
         },
         _ => FailureKind::Io,
     };
@@ -290,7 +313,8 @@ impl Request {
     }
 }
 
-/// Opens TCP connections as [`Socket`]s (ureq's own TCP connector keeps its socket to itself); a CONNECT
+/// Opens TCP connections as [`Socket`]s (ureq's own TCP connector keeps its socket to itself), through
+/// the agent's SOCKS5 proxy when it has one, except to a local destination ([`skips_proxy`]); a CONNECT
 /// proxy's connection, made before, goes on as it is.
 #[derive(Debug)]
 struct Sockets;
@@ -303,24 +327,46 @@ impl<In: ureq::unversioned::transport::Transport> Connector<In> for Sockets {
             return Ok(Some(Either::A(c)));
         }
         let timeout = details.timeout.not_zero().map(|t| *t);
-        let mut failed = None;
-        for addr in &details.addrs {
-            let connected = match timeout {
-                Some(t) => TcpStream::connect_timeout(addr, t),
-                None => TcpStream::connect(addr),
-            };
-            match connected {
-                Ok(stream) => {
-                    stream.set_nodelay(details.config.no_delay())?;
-                    let buffers = LazyBuffers::new(details.config.input_buffer_size(), details.config.output_buffer_size());
-                    return Ok(Some(Either::B(Socket { stream, buffers, call: Weak::new(), request: Arc::default(), read_timeout: None, write_timeout: None })));
-                }
-                Err(e) if e.kind() == io::ErrorKind::TimedOut => failed = Some(ureq::Error::Timeout(ureq::Timeout::Connect)),
-                Err(e) => failed = Some(e.into()),
+        let socks = details.config.proxy().filter(|p| matches!(p.protocol(), ProxyProtocol::Socks5 | ProxyProtocol::Socks5h) && !p.is_no_proxy(details.uri));
+        // The handshake's reads and writes wait no longer than connecting does.
+        let host = details.uri.host().unwrap_or_default();
+        let (stream, waits) = match socks {
+            Some(proxy) if !skips_proxy(host.to_string()) => {
+                let reached = details.resolver.resolve(proxy.uri(), details.config, details.timeout).and_then(|addrs| tcp(&addrs, timeout));
+                let mut stream = reached.map_err(|e| socks::failed(FailureKind::ProxyUnreachable, e))?;
+                stream.set_read_timeout(timeout)?;
+                stream.set_write_timeout(timeout)?;
+                let decoded = |part: &str| percent_encoding::percent_decode_str(part).collect::<Vec<u8>>();
+                let login = proxy.username().map(|user| (decoded(user), decoded(proxy.password().unwrap_or_default())));
+                let port = details.uri.port_u16().unwrap_or(if details.needs_tls() { 443 } else { 80 });
+                socks::connect(&mut stream, host, port, login.as_ref().map(|(u, p)| (u.as_slice(), p.as_slice()))).map_err(|e| timed_out(e, details.timeout))?;
+                (stream, timeout)
             }
-        }
-        Err(failed.unwrap_or(ureq::Error::ConnectionFailed))
+            // A local destination, whose lookup ureq left to the proxy.
+            Some(_) => (tcp(&details.resolver.resolve(details.uri, details.config, details.timeout)?, timeout)?, None),
+            None => (tcp(&details.addrs, timeout)?, None),
+        };
+        stream.set_nodelay(details.config.no_delay())?;
+        let buffers = LazyBuffers::new(details.config.input_buffer_size(), details.config.output_buffer_size());
+        Ok(Some(Either::B(Socket { stream, buffers, call: Weak::new(), request: Arc::default(), read_timeout: waits, write_timeout: waits })))
     }
+}
+
+/// A TCP connection to the first of `addrs` that takes one within `timeout`.
+fn tcp(addrs: &[std::net::SocketAddr], timeout: Option<Duration>) -> Result<TcpStream, ureq::Error> {
+    let mut failed = None;
+    for addr in addrs {
+        let connected = match timeout {
+            Some(t) => TcpStream::connect_timeout(addr, t),
+            None => TcpStream::connect(addr),
+        };
+        match connected {
+            Ok(stream) => return Ok(stream),
+            Err(e) if e.kind() == io::ErrorKind::TimedOut => failed = Some(ureq::Error::Timeout(ureq::Timeout::Connect)),
+            Err(e) => failed = Some(e.into()),
+        }
+    }
+    Err(failed.unwrap_or(ureq::Error::ConnectionFailed))
 }
 
 /// A TCP connection that gives the [`Call`] using it a handle to shut it down.
@@ -496,6 +542,7 @@ mod tests {
             (Error::other(lookup), FailureKind::UnknownHost),
             (Error::new(ErrorKind::ConnectionRefused, "refused"), FailureKind::Connect),
             (Error::new(ErrorKind::PermissionDenied, "denied"), FailureKind::Io),
+            (socks::failed(FailureKind::ProxyLogin, "the proxy refused the login"), FailureKind::ProxyLogin),
         ];
         for (io, want) in cases {
             let TransportError::Failed { kind, .. } = failure(ureq::Error::Io(io));

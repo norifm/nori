@@ -273,10 +273,14 @@ impl Provider for PluginProvider {
         self.now(move |s, x| x.nori_plugin_provider().call_ready(s, &p)).unwrap_or(true)
     }
 
+    /// Over `transport` (the profile's own connections) for the check alone: the profile open now gets its
+    /// plugins' requests back after it, whether or not the profile checked is opened next.
     async fn check(&self, transport: Arc<dyn Transport>, profile: SavedServer) -> NetResult<SavedServer> {
-        self.plugins.set_transport(Some(transport));
+        let open = self.plugins.set_transport(Some(transport));
         let p = profile_of(&profile);
-        let checked = self.worker.call(move |s, x| x.nori_plugin_provider().call_check(s, &p)).await.ok_or_else(stopped)?.map_err(net_error)?;
+        let checked = self.worker.call(move |s, x| x.nori_plugin_provider().call_check(s, &p)).await;
+        self.plugins.set_transport(open);
+        let checked = checked.ok_or_else(stopped)?.map_err(net_error)?;
         Ok(SavedServer { name: checked.name, url: checked.address, user: checked.user, password: checked.password, api_key: checked.api_key, ..profile })
     }
 
@@ -448,7 +452,8 @@ impl PluginProvider {
         result
     }
 
-    /// Its form and sign-in as it says; None when it didn't answer. A provider saying nothing asks nothing.
+    /// Its form and sign-in as it says, and nori's proxy fields; None when it didn't answer. A provider
+    /// saying nothing asks nothing but the proxy.
     fn ask_info(&self) -> Option<ProviderInfo> {
         let said = self.now(|s, x| x.nori_plugin_provider().call_info(s))?;
         let said = said.unwrap_or(w::ProviderInfo { fields: Vec::new(), sign_in: Vec::new(), identities: None });
@@ -463,7 +468,7 @@ impl PluginProvider {
         };
         Some(ProviderInfo {
             kind: self.kind(),
-            fields: said.fields.into_iter().map(|f| FieldSpec { what: field(f.field), advanced: f.advanced }).collect(),
+            fields: said.fields.into_iter().map(|f| FieldSpec { what: field(f.field), advanced: f.advanced }).chain([super::PROXY_FIELD]).collect(),
             sign_in: said.sign_in.into_iter().map(|s| match s {
                 w::SignInWay::WebPage(start_url) => SignIn::WebPage { start_url },
                 w::SignInWay::Paste => SignIn::Paste,

@@ -545,8 +545,17 @@ char *nori_ios_facts(void);
 /// unreadable path. Free with `nori_ios_free`.
 char *nori_ios_active(const char *data_dir);
 /// The kinds of profile the login page offers, as JSON to free: [{kind, fields: [{what, advanced}]}],
-/// `what` the login form's key it fills (name, url, user, password, alt, key).
+/// `what` the login form's key it fills (name, url, user, password, alt, key; proxy, the proxy's entry,
+/// whose sheet fills proxy, proxyUser and proxyPassword).
 char *nori_ios_providers(void);
+/// The proxy the sheet's address, user and password give, as the page shows it: host:port, or "" for
+/// none (an empty address). NULL when they are not a proxy, with a NORI_PROXY_ code in `error`. Free
+/// with `nori_ios_free`.
+char *nori_ios_proxy(const char *address, const char *user, const char *password, int32_t *error);
+#define NORI_PROXY_NOT_SOCKS5 1
+#define NORI_PROXY_HOST 2
+#define NORI_PROXY_PORT 3
+#define NORI_PROXY_LOGIN 4
 
 /// Login result. `NORI_LOGIN_HTTP` and `NORI_LOGIN_OTHER` and `NORI_LOGIN_DATABASE` may set `detail`.
 #define NORI_LOGIN_OK 0
@@ -563,6 +572,10 @@ char *nori_ios_providers(void);
 #define NORI_LOGIN_OTHER 11
 #define NORI_LOGIN_CLEARTEXT 12
 #define NORI_LOGIN_METERED 13
+#define NORI_LOGIN_PROXY 14
+#define NORI_LOGIN_PROXY_UNREACHABLE 15
+#define NORI_LOGIN_PROXY_LOGIN 16
+#define NORI_LOGIN_PROXY_NO_ROUTE 17
 
 /// What the open profile offers, as JSON to free, NULL with none: {asks, account, sections: [the library's
 /// sections, as the core's LibrarySection numbers, in order]}. A jam guest's asks the host for what it

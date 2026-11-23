@@ -54,6 +54,9 @@ object Failures {
                 FailureKind.TIMEOUT -> R.string.error_timeout
                 FailureKind.TLS -> R.string.error_tls
                 FailureKind.CLEARTEXT -> R.string.error_cleartext
+                FailureKind.PROXY_UNREACHABLE -> R.string.error_proxy_unreachable
+                FailureKind.PROXY_LOGIN -> R.string.error_proxy_login
+                FailureKind.PROXY_NO_ROUTE -> R.string.error_proxy_no_route
                 else -> 0
             }
         }

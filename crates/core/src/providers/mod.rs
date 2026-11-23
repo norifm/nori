@@ -362,6 +362,32 @@ pub enum FormField {
     SelfSigned,
     WifiOnly,
     ClientCert,
+    /// `proxy`: its address, user and password, asked together in a sheet of their own that the form's
+    /// entry opens (`nori_settings::proxy::proxy_from_form`). Every kind's ([`PROXY_FIELD`]), as all of
+    /// a profile's connections are nori's.
+    Proxy,
+}
+
+/// The proxy's entry, under every kind's advanced part.
+pub(crate) const PROXY_FIELD: FieldSpec = FieldSpec { what: FormField::Proxy, advanced: true };
+
+/// Whether `profile` has a value in form field `what`: the form opens its advanced part on a saved profile
+/// with one there.
+fn field_set(what: FormField, profile: &SavedServer) -> bool {
+    match what {
+        FormField::Name => !profile.name.trim().is_empty(),
+        FormField::Address => !profile.url.trim().is_empty(),
+        FormField::User => !profile.user.trim().is_empty(),
+        FormField::Password => !profile.password.is_empty(),
+        FormField::SecondAddress => !profile.alt_url.trim().is_empty(),
+        FormField::ApiKey => !profile.api_key.trim().is_empty(),
+        FormField::Headers => !profile.headers.is_empty(),
+        FormField::LegacyAuth => profile.legacy_auth,
+        FormField::SelfSigned => profile.allow_self_signed,
+        FormField::WifiOnly => profile.wifi_only,
+        FormField::ClientCert => !profile.client_cert.is_empty(),
+        FormField::Proxy => profile.proxy.is_some(),
+    }
 }
 
 /// A way to sign a profile's account in.
@@ -796,6 +822,17 @@ impl Client {
         self.core.provider().sign_in(self, answer).await
     }
 
+    /// Takes the plugins back from an account opened apart from this profile, on a profile of kind `apart`:
+    /// their requests go through this client's transport again, and a plugin `profile` (this client's)
+    /// plays from too serves it again.
+    pub fn take_plugins_back(&self, profile: SavedServer, apart: ServerKind) -> nori_model::Result<()> {
+        self.core.kinds.read().set_transport(self.transport.clone());
+        match apart == profile.kind {
+            true => self.core.configure_profile(profile),
+            false => Ok(()),
+        }
+    }
+
     /// Signs the profile's account out here (a browser's session is not ended).
     pub fn sign_out(&self) {
         self.core.provider().sign_out(self)
@@ -865,6 +902,34 @@ mod tests {
         ] {
             assert_eq!(info(fields, sign_in).first_step(), step, "{why}");
         }
+    }
+
+    /// Each field reads its own part of the profile: set there, it is set, and no other field is.
+    #[test]
+    fn a_field_is_set_by_its_own_value() {
+        use FormField::*;
+        let proxy = crate::proxy::proxy_from_form("proxy.lan".into(), String::new(), String::new()).unwrap();
+        let headers = std::collections::HashMap::from([("X-A".to_string(), "b".to_string())]);
+        let cases = [
+            (Name, SavedServer { name: "Home".into(), ..Default::default() }),
+            (Address, SavedServer { url: "https://music.example".into(), ..Default::default() }),
+            (User, SavedServer { user: "ann".into(), ..Default::default() }),
+            (Password, SavedServer { password: " ".into(), ..Default::default() }),
+            (SecondAddress, SavedServer { alt_url: "http://10.0.0.2".into(), ..Default::default() }),
+            (ApiKey, SavedServer { api_key: "k".into(), ..Default::default() }),
+            (Headers, SavedServer { headers, ..Default::default() }),
+            (LegacyAuth, SavedServer { legacy_auth: true, ..Default::default() }),
+            (SelfSigned, SavedServer { allow_self_signed: true, ..Default::default() }),
+            (WifiOnly, SavedServer { wifi_only: true, ..Default::default() }),
+            (ClientCert, SavedServer { client_cert: "c.p12".into(), ..Default::default() }),
+            (Proxy, SavedServer { proxy, ..Default::default() }),
+        ];
+        for (what, profile) in &cases {
+            for (other, _) in &cases {
+                assert_eq!(field_set(*other, profile), other == what, "{other:?} of a profile with {what:?}");
+            }
+        }
+        assert!(!field_set(Name, &SavedServer { name: "  ".into(), ..Default::default() }), "blank is not set");
     }
 
     #[test]

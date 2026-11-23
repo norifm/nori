@@ -28,6 +28,10 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
     private let name = UITextField()
     private let second = UITextField()
     private let key = UITextField()
+    /// The proxy as its sheet last saved it: the address as the core shows it (empty for none), and its login.
+    private var proxy = (address: "", user: "", password: "")
+    private lazy var proxyRow = GroupRow(Say.proxy, value: Say.proxyNone, chevron: true) { [weak self] in self?.askProxy() }
+    private lazy var proxyCard = GroupCard([proxyRow], margin: 0)
     private let more = UIButton(type: .system)
     private let scroll = UIScrollView()
     private let connect = UIButton(type: .system)
@@ -92,7 +96,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
             f.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
         kindChanged()
-        let stack = UIStackView(arrangedSubviews: [kind, address, user, password, more, name, second, key, connect, spinner, status, hint])
+        let stack = UIStackView(arrangedSubviews: [kind, address, user, password, more, name, second, key, proxyCard, connect, spinner, status, hint])
         stack.axis = .vertical
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -152,9 +156,49 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         scroll.scrollIndicatorInsets.bottom = covered
     }
 
-    /// The boxes by the login JSON's keys.
-    private var boxes: [String: UITextField] {
-        ["name": name, "url": address, "user": user, "password": password, "alt": second, "key": key]
+    /// The boxes by the login JSON's keys, and the proxy's entry.
+    private var boxes: [String: UIView] {
+        ["name": name, "url": address, "user": user, "password": password, "alt": second, "key": key, "proxy": proxyCard]
+    }
+
+    /// The proxy's sheet, on what the page has or on what was typed when the core said `failed`: Save keeps
+    /// what the core reads there, Cancel keeps the page's, Remove (while one is set) keeps none.
+    private func askProxy(_ typed: [String]? = nil, failed: String? = nil) {
+        let ask = UIAlertController(title: Say.proxy, message: failed, preferredStyle: .alert)
+        ask.view.tintColor = .black
+        let shown = typed ?? [proxy.address, proxy.user, proxy.password]
+        for (i, hint) in [Say.proxyAddress, Say.proxyUser, Say.password].enumerated() {
+            ask.addTextField { field in
+                field.placeholder = hint
+                field.text = shown[i]
+                field.keyboardType = i == 0 ? .URL : .default
+                field.isSecureTextEntry = i == 2
+                field.autocapitalizationType = .none
+                field.autocorrectionType = .no
+            }
+        }
+        let save = UIAlertAction(title: Say.save, style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            let typed = ask.textFields?.map { $0.text ?? "" } ?? ["", "", ""]
+            var error: Int32 = 0
+            let read = typed[0].withCString { a in typed[1].withCString { u in typed[2].withCString { p in nori_ios_proxy(a, u, p, &error) } } }
+            guard let address = taken(read) else { return self.askProxy(typed, failed: Say.proxyError(error)) }
+            self.proxySaved(address, typed[1], typed[2])
+        }
+        ask.addAction(save)
+        if !proxy.address.isEmpty {
+            ask.addAction(UIAlertAction(title: Say.proxyRemove, style: .destructive) { [weak self] _ in self?.proxySaved("", "", "") })
+        }
+        ask.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
+        ask.preferredAction = save
+        present(ask, animated: true)
+    }
+
+    /// The proxy the sheet saved, `address` empty for none, on its row.
+    private func proxySaved(_ address: String, _ user: String, _ password: String) {
+        proxy = address.isEmpty ? ("", "", "") : (address, user, password)
+        proxyRow.value.text = address.isEmpty ? Say.proxyNone : address
+        proxyRow.accessibilityLabel = "\(Say.proxy), \(proxyRow.value.text ?? "")"
     }
 
     private var chosen: Kind? { kinds.indices.contains(kind.selectedSegmentIndex) ? kinds[kind.selectedSegmentIndex] : nil }
@@ -187,6 +231,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
             "kind": chosen?.id ?? "",
             "url": address.text ?? "", "user": user.text ?? "", "password": password.text ?? "",
             "name": name.text ?? "", "alt": second.text ?? "", "key": key.text ?? "",
+            "proxy": proxy.address, "proxyUser": proxy.user, "proxyPassword": proxy.password,
         ]
         let form = (try? JSONSerialization.data(withJSONObject: fields)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         connect.isEnabled = false

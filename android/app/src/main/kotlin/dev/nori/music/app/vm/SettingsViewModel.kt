@@ -645,6 +645,9 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         _account.value = AccountUi(account = dev.nori.music.ffi.AccountState.SIGNED_OUT)
     }
 
+    /** The proxy the sign-in page goes through: the account's profile's. */
+    fun signInProxy() = nori.accountProxy()
+
     /** Opens the provider's sign-in page, from the account's row. */
     fun openSignInPage() { signInOn(dev.nori.music.ffi.SignInEvent.Open(null)) }
 

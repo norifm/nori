@@ -361,10 +361,12 @@ impl Plugins {
         made.clone()
     }
 
-    /// The open profile's transport, for plugins' HTTP; assets waiting for Wi-Fi try again.
-    pub fn set_transport(&self, t: Option<Arc<dyn nori_net::transport::Transport>>) {
-        *self.transport.lock().expect("not poisoned") = t;
+    /// The open profile's transport, for plugins' HTTP; assets waiting for Wi-Fi try again. The one it
+    /// replaces.
+    pub fn set_transport(&self, t: Option<Arc<dyn nori_net::transport::Transport>>) -> Option<Arc<dyn nori_net::transport::Transport>> {
+        let was = std::mem::replace(&mut *self.transport.lock().expect("not poisoned"), t);
         self.fetch_waiting();
+        was
     }
 
     /// The open profile's queue and library, for plugins' `session` and `subsonic`.

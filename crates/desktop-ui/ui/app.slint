@@ -433,6 +433,8 @@ export struct LoginKind {
     asks-address: bool,
     asks-user: bool,
     asks-password: bool,
+    // The proxy's address, user and password.
+    asks-proxy: bool,
 }
 
 // A band of the equalizer page: its label, its gain, and what its value reads.
@@ -988,9 +990,11 @@ component Caption inherits Text {
     letter-spacing: 0.5px;
 }
 
-// A word that does something (Clear, Undo): the ink, and a faint plate under the pointer.
+// A word that does something (Clear, Undo): the ink, or `ink` (rose for removing), and a faint plate under
+// the pointer.
 component TextButton inherits Rectangle {
     in property <string> text;
+    in property <color> ink: Theme.text;
     callback clicked;
     height: 28px;
     width: label.preferred-width + 20px;
@@ -998,7 +1002,7 @@ component TextButton inherits Rectangle {
     background: touch.has-hover ? Theme.hover : transparent;
     label := Text {
         text: root.text;
-        color: Theme.text;
+        color: root.ink;
         font-size: 13px;
         font-weight: 600;
     }
@@ -1592,10 +1596,12 @@ component ChoiceLine inherits Rectangle {
     }
 }
 
-// A line on a dialog's group that goes somewhere: its glyph, title and a quiet line under it.
+// A line on a dialog's group that goes somewhere: its glyph, title and a quiet line under it, or what it
+// has set (`value`) quiet before the glyph.
 component GoLine inherits Rectangle {
     in property <string> title;
     in property <string> line;
+    in property <string> value;
     in property <Glyph> glyph;
     in property <bool> divider: true;
     callback clicked;
@@ -1621,6 +1627,14 @@ component GoLine inherits Rectangle {
                 font-size: 12px;
                 overflow: elide;
             }
+        }
+        if root.value != "": Text {
+            max-width: root.width * 0.6;
+            text: root.value;
+            color: Theme.dim;
+            font-size: 13px;
+            overflow: elide;
+            vertical-alignment: center;
         }
         VerticalLayout {
             alignment: center;
@@ -8684,7 +8698,7 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open;
+    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open || root.login-proxy-open;
     // Closes every dialog but the two app.rs keeps state for (a device's, the sign-in), which it closes itself.
     public function close-dialogs() {
         root.ask-open = false;
@@ -8700,6 +8714,7 @@ export component AppWindow inherits Window {
         root.join-open = false;
         root.pairing-open = false;
         root.forget-open = false;
+        root.login-proxy-open = false;
     }
     // A dialog closed: the page's keys come back.
     changed dialog-open => {
@@ -8834,6 +8849,17 @@ export component AppWindow inherits Window {
     in-out property <string> login-url: "https://";
     in-out property <string> login-user;
     in-out property <string> login-password;
+    // The form's proxy (app.rs keeps it): its address, empty for none, and its login, which its sheet opens on.
+    in property <string> login-proxy;
+    in property <string> login-proxy-user;
+    in property <string> login-proxy-password;
+    // The form's Advanced settings are unfolded: pressed open, or a saved profile has one set.
+    in-out property <bool> login-advanced-open;
+    // The proxy's sheet is over the form, and what its words are wrong with, after a Save.
+    in-out property <bool> login-proxy-open;
+    in-out property <string> login-proxy-error;
+    // The proxy's sheet saved: its address, user and password, for app.rs to read; an empty address is none.
+    callback proxy-saved(string, string, string);
     in property <string> login-error;
     in property <bool> login-busy;
     in property <bool> can-cancel-login;
@@ -9240,6 +9266,57 @@ export component AppWindow inherits Window {
                                 accepted => {
                                     if !root.login-busy {
                                         root.login();
+                                    }
+                                }
+                            }
+                            // What few profiles set, folded under Advanced settings as Android's Advanced is: its
+                            // head opens and closes it, and each option is a line of its group opening its sheet.
+                            // The head's words and chevron stand where the lines' words and glyphs do.
+                            if root.login-form.asks-proxy: Rectangle {
+                                height: 30px;
+                                border-radius: MenuShape.radius;
+                                background: fold.has-hover ? Theme.hover : transparent;
+                                accessible-role: button;
+                                accessible-label: "Advanced settings";
+                                accessible-expandable: true;
+                                accessible-expanded: root.login-advanced-open;
+                                accessible-action-default => { root.login-advanced-open = !root.login-advanced-open; }
+                                HorizontalLayout {
+                                    padding-left: MenuShape.inset + 8px;
+                                    padding-right: MenuShape.inset + 8px;
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "Advanced settings";
+                                        color: Theme.dim;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                    Icon {
+                                        y: (parent.height - self.height) / 2;
+                                        glyph: root.login-advanced-open ? Icons.nav-arrow-up : Icons.nav-arrow-down;
+                                        colour: Theme.dim;
+                                        width: 16px;
+                                        height: 16px;
+                                    }
+                                }
+                                fold := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.login-advanced-open = !root.login-advanced-open; }
+                                }
+                            }
+                            if root.login-form.asks-proxy && root.login-advanced-open: DialogGroup {
+                                GoLine {
+                                    title: "Proxy";
+                                    value: root.login-proxy != "" ? root.login-proxy : "None";
+                                    glyph: Icons.nav-arrow-right;
+                                    divider: false;
+                                    accessible-role: button;
+                                    accessible-label: "Proxy";
+                                    accessible-value: self.value;
+                                    accessible-action-default => { self.clicked(); }
+                                    clicked => {
+                                        root.login-proxy-error = "";
+                                        root.login-proxy-open = true;
                                     }
                                 }
                             }
@@ -12982,6 +13059,69 @@ export component AppWindow inherits Window {
                 Capsule {
                     text: "Rename";
                     clicked => { root.rename-playlist(root.asked-playlist-id, root.rename-name); }
+                }
+            }
+        }
+
+        // The form's proxy in a sheet of its own, opened on what the form has: Save hands what is typed to
+        // app.rs, which closes it or says here what is wrong; Cancel keeps the form's; Remove, while one is
+        // set, saves none.
+        if root.login-proxy-open: proxy-sheet := Dialog {
+            property <string> address: root.login-proxy;
+            property <string> user: root.login-proxy-user;
+            property <string> password: root.login-proxy-password;
+            function save() {
+                root.proxy-saved(self.address, self.user, self.password);
+            }
+            title: "Proxy";
+            dismissed => { root.login-proxy-open = false; }
+            Field {
+                icon: Icons.antenna-signal;
+                placeholder: "SOCKS5 address (host:port)";
+                text <=> proxy-sheet.address;
+                init => { self.take-focus(); }
+                edited => { root.login-proxy-error = ""; }
+                accepted => { proxy-sheet.save(); }
+            }
+            Field {
+                icon: Icons.user;
+                placeholder: "User (optional)";
+                text <=> proxy-sheet.user;
+                edited => { root.login-proxy-error = ""; }
+                accepted => { proxy-sheet.save(); }
+            }
+            Field {
+                icon: Icons.key;
+                placeholder: "Password";
+                secret: true;
+                text <=> proxy-sheet.password;
+                edited => { root.login-proxy-error = ""; }
+                accepted => { proxy-sheet.save(); }
+            }
+            if root.login-proxy-error != "": Wrapped {
+                text: root.login-proxy-error;
+                color: Theme.danger;
+                font-size: 12px;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                if root.login-proxy != "": TextButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Remove proxy";
+                    ink: Theme.danger;
+                    clicked => { root.proxy-saved("", "", ""); }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Cancel";
+                    clicked => { root.login-proxy-open = false; }
+                }
+                Capsule {
+                    text: "Save";
+                    clicked => { proxy-sheet.save(); }
                 }
             }
         }

@@ -1,13 +1,15 @@
 //! A provider's sign-in page for a desktop client, in a window of its own: the client's own program run
 //! again with `--sign-in`, so a client ships as one binary. The window ([`window`]) writes each page's
 //! address and cookies to stdout; [`SignInWindow`] reads them in the client and hands over the cookies
-//! once the provider says the account is signed in.
+//! once the provider says the account is signed in. The page goes through the profile's proxy, without
+//! its login: no web view here takes one.
 
 use std::io::BufRead;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 
 use nori_core::providers::Kinds;
+use nori_core::proxy::{proxy_address, proxy_from_form, SavedProxy};
 use nori_core::settings::ServerKind;
 
 mod window;
@@ -23,26 +25,31 @@ pub fn serve_if_asked() {
         return;
     }
     let (Some(title), Some(start)) = (args.next(), args.next()) else {
-        eprintln!("usage: --sign-in TITLE ADDRESS");
+        eprintln!("usage: --sign-in TITLE ADDRESS [PROXY]");
         std::process::exit(2);
     };
-    window::run(title, start);
+    window::run(title, start, args.next().and_then(|p| proxy_from_form(p, String::new(), String::new()).ok().flatten()));
 }
 
 /// A sign-in window open; closed when dropped.
 pub struct SignInWindow(Child);
 
 impl SignInWindow {
-    /// Opens `kind`'s sign-in page (one of `kinds`) titled `title`; `done` gets the window's
-    /// [`SignInWindow::id`] and the signed-in session's cookies (a `Cookie` header's value), on a thread
-    /// of its own. None where the provider has no page or no window can start.
-    pub fn open(kinds: Arc<Kinds>, kind: ServerKind, title: String, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
+    /// Opens `kind`'s sign-in page (one of `kinds`) titled `title`, through `proxy` (the profile's);
+    /// `done` gets the window's [`SignInWindow::id`] and the signed-in session's cookies (a `Cookie`
+    /// header's value), on a thread of its own. None where the provider has no page or no window can start.
+    pub fn open(kinds: Arc<Kinds>, kind: ServerKind, title: String, proxy: Option<SavedProxy>, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
         let start = kinds.providers().into_iter().find(|i| i.kind == kind)?.page()?.to_string();
-        SignInWindow::open_at(kinds, kind, title, start, done)
+        SignInWindow::open_at(kinds, kind, title, start, proxy, done)
     }
 
     /// [`SignInWindow::open`] at `start`: a page the provider's plugin asked for (`sign-in.open`).
-    pub fn open_at(kinds: Arc<Kinds>, kind: ServerKind, title: String, start: String, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
+    pub fn open_at(kinds: Arc<Kinds>, kind: ServerKind, title: String, start: String, proxy: Option<SavedProxy>, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
+        // WKWebView takes a proxy from macOS 14 (wry's `mac-proxy`), and nori runs from macOS 11: a profile
+        // with a proxy is signed in by pasting there, rather than past its proxy.
+        if cfg!(target_os = "macos") && proxy.is_some() {
+            return None;
+        }
         let me = std::env::current_exe().ok()?;
         let mut window = Command::new(me);
         // WebKitGTK hands the page's frames to the window as GPU buffers, which fail silently where its
@@ -52,7 +59,11 @@ impl SignInWindow {
         if std::env::var_os(WEBKIT_DMABUF).is_none() {
             window.env(WEBKIT_DMABUF, "1");
         }
-        let mut child = window.arg("--sign-in").arg(title).arg(start).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+        window.arg("--sign-in").arg(title).arg(start);
+        if let Some(proxy) = proxy {
+            window.arg(proxy_address(Some(proxy)));
+        }
+        let mut child = window.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
         let (out, id) = (child.stdout.take()?, child.id());
         let watch = std::thread::Builder::new().name("nori-sign-in-window".into()).spawn(move || {
             for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {

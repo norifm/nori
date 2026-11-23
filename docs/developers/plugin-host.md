@@ -127,9 +127,10 @@ It sends the request through the open profile's `Transport`, nori's one connecti
 puts up to 16 requests on their way at once, each on a thread of its own. `wait` and `take` collect
 their answers.
 
-Plugin HTTP takes the client's proxy, as nori's own requests do. On Android that is the system's proxy.
-On the desktop and terminal apps, `nori-http` takes it from `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY`,
-except for `NO_PROXY`. It has no SOCKS support.
+Plugin HTTP takes the open profile's proxy, as nori's own requests do, except to a local address (see
+the profile's proxy in `writing-a-client.md`). Without one, it takes the client's. On Android that is the system's proxy. On the desktop and terminal apps it is the one
+`ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY` names, except for `NO_PROXY`. `nori-http` takes HTTP CONNECT and SOCKS5
+proxies there.
 
 Sockets never go through a proxy: a socket is mostly for the LAN, and an HTTP proxy carries no UDP. TLS
 on a socket is rustls with ring. It checks against webpki's roots or one pinned certificate, and only a

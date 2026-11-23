@@ -285,7 +285,6 @@ impl Runner {
         let name = nori_core::settings::label(&profile.name, &profile.url);
         let o = Open {
             root: &self.root,
-            http: self.http.clone(),
             profile,
             device: self.o.device.clone(),
             images: app.images,
@@ -659,7 +658,8 @@ impl Runner {
                     let kind = nori_core::settings::ServerKind::Plugin { id: plugin.clone() };
                     let (h, tx) = ((**s).clone(), self.tx.clone());
                     let title = format!("Sign in to {}", crate::text::provider_of(&app.settings.own.kinds, &kind).name);
-                    self.sign_in_window = nori_sign_in_window::SignInWindow::open_at(app.settings.own.kinds.clone(), kind, title, url.clone(), move |_, cookies| {
+                    let proxy = app.prefs.active_server().and_then(|p| p.proxy.clone());
+                    self.sign_in_window = nori_sign_in_window::SignInWindow::open_at(app.settings.own.kinds.clone(), kind, title, url.clone(), proxy, move |_, cookies| {
                         let _ = tx.send(Msg::SignedIn(h.account().sign_in(cookies)));
                     });
                 }
@@ -929,7 +929,8 @@ impl Runner {
                     }
                     let (h, tx) = ((**s).clone(), self.tx.clone());
                     let title = format!("Sign in to {}", crate::text::provider_of(&app.settings.own.kinds, kind).name);
-                    self.sign_in_window = nori_sign_in_window::SignInWindow::open(app.settings.own.kinds.clone(), kind.clone(), title, move |_, cookies| {
+                    let proxy = app.prefs.active_server().and_then(|p| p.proxy.clone());
+                    self.sign_in_window = nori_sign_in_window::SignInWindow::open(app.settings.own.kinds.clone(), kind.clone(), title, proxy, move |_, cookies| {
                         let _ = tx.send(Msg::SignedIn(h.account().sign_in(cookies)));
                     });
                     if self.sign_in_window.is_some() {
@@ -980,9 +981,9 @@ impl Runner {
                 return;
             }
             Cmd::Login(draft) => {
-                let (root, http, tx) = (self.root.clone(), self.http.clone(), self.tx.clone());
+                let (root, tx) = (self.root.clone(), self.tx.clone());
                 std::thread::spawn(move || {
-                    let _ = tx.send(Msg::LoggedIn(crate::backend::check_login(&root, http, *draft)));
+                    let _ = tx.send(Msg::LoggedIn(crate::backend::check_login(&root, *draft)));
                 });
                 return;
             }

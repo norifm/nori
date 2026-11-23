@@ -389,6 +389,15 @@
     <string name="self_signed_hint">Only for your own server. Certificates you installed in Android are accepted without this.</string>
     <string name="wifi_only">Wi-Fi only</string>
     <string name="wifi_only_hint">Never contact this server over mobile data</string>
+    <string name="proxy">Proxy</string>
+    <string name="proxy_none">None</string>
+    <string name="proxy_address">SOCKS5 address</string>
+    <string name="proxy_hint">host:port</string>
+    <string name="proxy_remove">Remove proxy</string>
+    <string name="proxy_not_socks5">Only SOCKS5 proxies work here.</string>
+    <string name="proxy_host">The proxy needs a host: a name or an IP address.</string>
+    <string name="proxy_port">The proxy’s port is a number from 1 to 65535.</string>
+    <string name="proxy_login">The proxy’s login goes in its user and password fields, and a password needs a user.</string>
     <string name="client_cert_password">Client certificate password</string>
     <string name="import_client_cert">Import client certificate (.p12)</string>
     <string name="replace_client_cert">Replace client certificate</string>

@@ -95,8 +95,72 @@ The core also owns the parts a client is most tempted to write itself:
   a request carries the profile's headers, and it may be limited to an unmetered network. Only
   Android's OkHttp applies profile headers, self-signed certificates and client certificates.
   `nori-http` applies none of them.
-- **One connection pool** serves the API, covers and audio, so the radio wakes once.
+- **The profile's proxy.** `SavedServer::proxy` is a SOCKS5 proxy (`nori_core::proxy`). See
+  [The profile's proxy](#the-profiles-proxy).
+- **One connection pool** serves the API, covers and audio, so the radio wakes once. With `nori-http`,
+  each profile has its own pool.
 - **Network state.** `Transport::network` answers whether the network is metered.
+
+### The profile's proxy
+
+`SavedServer::proxy` is a SOCKS5 proxy, with an optional login (RFC 1929). The proxy looks up the
+names, so nori never looks up a name to decide where a connection goes.
+
+Every kind's form has the proxy as one advanced field, `FormField::Proxy` (`PROXY_FIELD`). A client
+draws it as an entry under the form's advanced part. The entry shows `proxy_address`, or a word for
+none. It opens a sheet with the proxy's address, user and password. The sheet hides the password as
+the form hides the profile's own. On Save, the client calls `proxy_from_form`. The sheet stays open
+and shows a `ProxyError` in the client's words, or closes and keeps the proxy for the form to send. An
+empty address gives no proxy, so the sheet's Remove and an emptied address do the same.
+
+A saved profile's form opens its advanced part when one of the advanced fields that the client draws
+has a value (`advanced_shown`).
+
+`skips_proxy(host)` decides which connections go around the proxy. A proxy elsewhere cannot reach the
+user's own network, so local remote control and jams would break through it.
+
+| Destination | Goes |
+| --- | --- |
+| `localhost` | Directly |
+| A loopback, private (RFC 1918), link-local or unique-local address, IPv4 or IPv6 | Directly |
+| Any other address | Through the proxy |
+| Any other name, `.local` names too | Through the proxy, which looks it up |
+
+The clients apply the rule as follows:
+
+- `Http::for_profile` makes `nori-http`'s agent for a profile. Its connector asks `skips_proxy`, and
+  does the SOCKS5 handshake itself (`crates/http/src/socks.rs`). It applies the rule to a SOCKS5 proxy
+  from the environment too.
+- Android gives OkHttp a `ProxySelector` that asks `skips_proxy`. Java signs in to a SOCKS proxy only
+  through the process's one `Authenticator`. So `Http` sets one when it first builds a client with a
+  proxy that has a login, and it answers those proxies alone. The account of another profile, looked at
+  apart, has a client of its own (`Http.transportOf`).
+- Android's sign-in page goes through the proxy with androidx.webkit's `ProxyController`, without the
+  login, and bypasses `proxy_bypass_rules()`. The desktop and terminal apps pass the proxy to the
+  sign-in window, where wry gives it to WebKitGTK and WebView2 without a bypass list. Sign-in pages are
+  public pages, so the bypass does not matter there.
+- WKWebView takes a proxy only from macOS 14, and the desktop app runs from macOS 11. So on macOS, a
+  profile with a proxy opens no sign-in window, and the account is signed in by pasting.
+- A browser's `fetch` takes no proxy, so the web client has no proxy fields.
+
+Plugins' sockets, the cast sinks, the LAN door and mDNS never use the proxy: they open their own
+sockets. Plugins' HTTP requests, remote-control polls, a provider's streams and a moving cover use the
+profile's transport, so the rule above applies to them. Plugins serve one profile at a time. A check
+of another profile (`check_profile`) borrows them only for the check, and an account looked at apart
+gives them back with `Client::take_plugins_back`.
+
+A proxy's failure has a `FailureKind` of its own, which each client words:
+
+| Kind | When |
+| --- | --- |
+| `ProxyUnreachable` | The proxy does not take the connection, or does not answer as SOCKS5 |
+| `ProxyLogin` | The proxy refuses the login, or asks for one it was not given |
+| `ProxyNoRoute` | The proxy cannot connect to the server |
+
+`nori-http` returns these kinds from its connector. On Android, OkHttp reports each failure of a
+connection through the proxy to `EventListener.connectFailed`, and only those become a
+`ProxyFailureException`. Java's SOCKS client throws all of them as a plain `SocketException`, so
+`Http.kt`'s `proxyFailure` tells the login and the proxy's reply apart by their texts.
 
 ### Sound
 

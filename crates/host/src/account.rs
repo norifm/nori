@@ -9,7 +9,6 @@ use nori_core::providers::{Identity, SignInResult};
 use nori_core::settings::SavedServer;
 use nori_core::settings_store::Settings;
 use nori_core::transport::{block_on, NetError};
-use nori_core::Core;
 
 /// One profile's account, cheap to clone.
 #[derive(Clone)]
@@ -21,24 +20,24 @@ struct Parts {
     profile: String,
     /// Told when the profile's picture changed.
     pictured: Box<dyn Fn() + Send + Sync>,
-    /// A plugin serves one profile at a time: the open session's core and profile, handed the plugin
-    /// back once this account, made apart from it on the same plugin, is done with it.
-    give_back: Option<(Arc<Core>, SavedServer)>,
+    /// Plugins serve one profile at a time: the open session's client and profile, handed them back once
+    /// this account, made apart from it, is done with them.
+    give_back: Option<(Arc<Client>, SavedServer)>,
 }
 
 impl Drop for Parts {
     fn drop(&mut self) {
-        if let Some((core, profile)) = self.give_back.take() {
-            let _ = core.configure_profile(profile);
+        if let Some((open, profile)) = self.give_back.take() {
+            let _ = open.take_plugins_back(profile, self.client.core().kind());
         }
     }
 }
 
 impl Account {
     /// `profile`'s account through `client`; `pictured` hears its picture change. Made apart from the open
-    /// session on the same plugin, `give_back` is that session's core and profile, handed the plugin back
-    /// once this account is dropped.
-    pub(crate) fn new(client: Arc<Client>, settings: Arc<Settings>, profile: String, pictured: Box<dyn Fn() + Send + Sync>, give_back: Option<(Arc<Core>, SavedServer)>) -> Account {
+    /// session, `give_back` is that session's client and profile, handed the plugins back once this account
+    /// is dropped.
+    pub(crate) fn new(client: Arc<Client>, settings: Arc<Settings>, profile: String, pictured: Box<dyn Fn() + Send + Sync>, give_back: Option<(Arc<Client>, SavedServer)>) -> Account {
         Account(Arc::new(Parts { client, settings, profile, pictured, give_back }))
     }
 

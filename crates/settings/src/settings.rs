@@ -9,6 +9,7 @@ use serde_json::{Map, Value};
 
 use crate::codec::{clamped, on, within, Choice, Custom, Flags, Picks, Preamp, Quality, Raw, Row, FLAG, FLOAT, K, PICK, PICK_NEAREST, TEXT};
 use crate::lyrics_sources::{self, LyricsService};
+use crate::proxy::{ProxyLogin, SavedProxy};
 use crate::settings_store::{APPLY_AUDIO, APPLY_GAIN, CACHE_LIMIT, PLAYER, REPLAN, SOUND};
 
 /// One stored value.
@@ -558,6 +559,8 @@ pub struct SavedServer {
     pub allow_self_signed: bool,
     pub client_cert: String,
     pub client_cert_password: String,
+    /// The SOCKS5 proxy every connection of the profile goes through.
+    pub proxy: Option<SavedProxy>,
     pub wifi_only: bool,
     /// The music folders the library shows; empty for all of them.
     pub music_folder_ids: Vec<String>,
@@ -1359,6 +1362,7 @@ fn server_from(v: &Value) -> Option<SavedServer> {
         allow_self_signed: opt_bool(o, "allowSelfSigned"),
         client_cert: opt_string(o, "clientCert"),
         client_cert_password: opt_string(o, "clientCertPassword"),
+        proxy: o.get("proxy").and_then(proxy_from),
         wifi_only: opt_bool(o, "wifiOnly"),
         music_folder_ids: folder_ids(o),
         alt_max_bit_rate: opt_i32(o, "altMaxBitRate"),
@@ -1367,6 +1371,23 @@ fn server_from(v: &Value) -> Option<SavedServer> {
         scrobble_off: opt_bool(o, "scrobbleOff"),
         scrobblers: o.get("scrobblers").and_then(Value::as_array).map_or_else(Vec::new, |a| a.iter().filter_map(scrobbler_from).collect()),
     })
+}
+
+/// A profile's proxy, `{host, port, user, password}`, the last two only with a login; None without a host
+/// or a port.
+fn proxy_from(v: &Value) -> Option<SavedProxy> {
+    let o = v.as_object()?;
+    let login = o.get("user").map(|user| ProxyLogin { user: text(user), password: opt_string(o, "password") });
+    Some(SavedProxy { host: o.get("host")?.as_str()?.to_string(), port: u16::try_from(o.get("port")?.as_u64()?).ok()?, login })
+}
+
+fn proxy_json(p: &SavedProxy) -> Value {
+    let mut v = serde_json::json!({ "host": p.host, "port": p.port });
+    if let Some(l) = &p.login {
+        v["user"] = l.user.as_str().into();
+        v["password"] = l.password.as_str().into();
+    }
+    v
 }
 
 /// An account of a kind nori no longer has is left out.
@@ -1405,6 +1426,9 @@ fn server_json(s: &SavedServer) -> Value {
     });
     if let Some(p) = &s.picture {
         v["picture"] = p.as_str().into();
+    }
+    if let Some(p) = &s.proxy {
+        v["proxy"] = proxy_json(p);
     }
     if s.scrobble_off {
         v["scrobbleOff"] = true.into();
@@ -2787,6 +2811,16 @@ mod tests {
             assert_eq!(server_from(&server_json(&p)), Some(p));
         }
         assert_eq!(server_from(&serde_json::json!({"id": "a", "url": "https://x"})).unwrap().kind, ServerKind::Subsonic, "saved before kinds");
+    }
+
+    /// A profile's proxy is kept, with its login or without; a profile without one stores none.
+    #[test]
+    fn a_proxy_is_kept() {
+        for login in [Some(ProxyLogin { user: "me".into(), password: "p@ss".into() }), Some(ProxyLogin { user: "me".into(), password: String::new() }), None] {
+            let p = SavedServer { id: "p".into(), proxy: Some(SavedProxy { host: "::1".into(), port: 9050, login }), ..SavedServer::default() };
+            assert_eq!(server_from(&server_json(&p)), Some(p));
+        }
+        assert!(server_json(&SavedServer::default()).get("proxy").is_none());
     }
 
     /// A profile's scrobbling accounts are kept; one of a kind nori doesn't have is left out.

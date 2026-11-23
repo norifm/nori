@@ -326,6 +326,9 @@ pub struct Parts {
     pub store: Option<Arc<Store>>,
     downloader: Option<Arc<Downloader>>,
     pub covers: Option<Arc<Loader>>,
+    /// Bytes over the profile's own connections, refused offline: what the client fetches itself (a
+    /// moving cover).
+    pub bytes: Arc<dyn ByteSource>,
     level: Arc<Level>,
     search: Arc<SearchSession>,
     pub(crate) lyrics: crate::lyrics::Lyrics,
@@ -432,7 +435,8 @@ impl Session {
             true => Some(Store::open(o.data.join("music"), prefs.cache_mb.max(0) as u64 * 1024 * 1024).map_err(|e| format!("the music directory: {e}"))?),
             false => None,
         };
-        let audio = resolving(&client, Arc::new(Audio::new(o.http.clone(), o.offline)));
+        let bytes: Arc<dyn ByteSource> = Arc::new(Audio::new(o.http.clone(), o.offline));
+        let audio = resolving(&client, bytes.clone());
         let analyses = if turns { Analyses::on_turns(client.clone()) } else { Analyses::of(client.clone()) };
         let downloader = store.as_ref().map(|store| Downloader::new(client.clone(), audio.clone(), store.clone(), analyses.clone()));
         // `bridging`: a song the network cannot bring raises `Event::Bridge` (see `Handle::bridge`).
@@ -476,6 +480,7 @@ impl Session {
             store,
             downloader,
             covers,
+            bytes,
             level,
             search: SearchSession::new(),
             lyrics: Default::default(),

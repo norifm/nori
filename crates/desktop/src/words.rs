@@ -793,6 +793,9 @@ pub fn net_error(e: &NetError) -> String {
             FailureKind::Timeout => "The server did not answer in time.",
             FailureKind::Tls => "The server's certificate was not accepted.",
             FailureKind::Cleartext => "Cleartext HTTP was refused; use https://",
+            FailureKind::ProxyUnreachable => "The proxy is not answering. Check its address, and that it is running.",
+            FailureKind::ProxyLogin => "The proxy did not accept the login. Check its user and password.",
+            FailureKind::ProxyNoRoute => "The proxy could not reach the server. Check the server's address.",
             _ => "",
         },
         NetError::Http { status } => return format!("HTTP {status}"),
@@ -1216,6 +1219,17 @@ pub fn add_failure(f: &nori_core::providers::flow::AddFailure) -> &str {
     match f {
         nori_core::providers::flow::AddFailure::Missing => "The server's address and a user name, please.",
         nori_core::providers::flow::AddFailure::Refused { said } => said,
+    }
+}
+
+/// Why the proxy's fields are not a proxy.
+pub fn proxy_error(e: nori_core::proxy::ProxyError) -> &'static str {
+    use nori_core::proxy::ProxyError;
+    match e {
+        ProxyError::NotSocks5 => "Only SOCKS5 proxies work here.",
+        ProxyError::Host => "The proxy needs a host: a name or an IP address.",
+        ProxyError::Port => "The proxy’s port is a number from 1 to 65535.",
+        ProxyError::Login => "The proxy’s login goes in its user and password fields, and a password needs a user.",
     }
 }
 

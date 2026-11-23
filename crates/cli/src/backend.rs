@@ -18,7 +18,6 @@ pub use nori_host::pages::ALBUM_PAGE;
 pub use nori_host::session::{Audio, Chore};
 use nori_host::session::{Note, Said, UpdateFound};
 pub use nori_host::{db_path, Fetch};
-use nori_http::Http;
 use nori_look::cover::CoverColours;
 use nori_output_cpal::CpalOutput;
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
@@ -274,8 +273,8 @@ pub struct Downloads {
 
 /// Logs `draft` in and keeps it as the active profile (blocking): the core checks it with its provider
 /// (a server is tried through its second address, then with legacy auth, which the profile then keeps).
-pub fn check_login(root: &Root, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
-    root.log_in(http, draft).map_err(|e| match net_error(&e) {
+pub fn check_login(root: &Root, draft: SavedServer) -> Result<SavedServer, String> {
+    root.log_in(draft).map_err(|e| match net_error(&e) {
         e if e.is_empty() => "the server did not answer".to_string(),
         e => e,
     })
@@ -294,7 +293,6 @@ pub mod own {
 
 pub struct Open<'a> {
     pub root: &'a Root,
-    pub http: Arc<Http>,
     pub profile: SavedServer,
     pub device: Option<String>,
     pub images: bool,
@@ -331,7 +329,6 @@ impl Session {
         });
         let host = nori_host::desktop::open(nori_host::desktop::DesktopOpen {
             root: o.root,
-            http: o.http,
             profile: o.profile,
             device: o.device.or_else(|| own::text(&o.root.app.settings, own::DEVICE)),
             volume: own::number(&o.root.app.settings, own::VOLUME, 1.0),

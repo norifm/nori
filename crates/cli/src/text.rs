@@ -53,7 +53,25 @@ pub fn add_failure(f: &nori_core::providers::flow::AddFailure) -> &str {
         nori_core::providers::flow::AddFailure::Refused { said } => said,
     }
 }
+/// Why the proxy's fields are not a proxy.
+pub fn proxy_error(e: nori_core::proxy::ProxyError) -> &'static str {
+    use nori_core::proxy::ProxyError;
+    match e {
+        ProxyError::NotSocks5 => "Only SOCKS5 proxies work here.",
+        ProxyError::Host => "The proxy needs a host: a name or an IP address.",
+        ProxyError::Port => "The proxy's port is a number from 1 to 65535.",
+        ProxyError::Login => "The proxy's login goes in its user and password fields, and a password needs a user.",
+    }
+}
 pub const LOGIN_KEYS: &str = "tab next field · enter connect · esc choose again";
+pub const ADVANCED: &str = "Advanced settings";
+pub const ADVANCED_KEYS: &str = "tab next · enter show or hide · esc choose again";
+pub const PROXY: &str = "Proxy";
+pub const PROXY_NONE: &str = "none";
+pub const PROXY_HINT: &str = "host:port";
+pub const PROXY_LINE_KEYS: &str = "tab next · enter set the proxy · esc choose again";
+pub const PROXY_KEYS: &str = "tab next field · enter save · esc cancel";
+pub const PROXY_KEYS_SET: &str = "tab next field · enter save · esc cancel · ctrl+d remove";
 pub const PROVIDER_CHOOSE: &str = "Choose a provider";
 pub const CONTINUE_AS_GUEST: &str = "Continue as guest";
 pub const ACCOUNT_KEYS: &str = "enter sign in · g continue as guest · esc choose again";
@@ -951,6 +969,9 @@ pub fn net_error(e: &NetError) -> String {
                 "The server's certificate was not accepted. If it is self-signed, turn on \"Accept self-signed certificate\"; if it needs a client certificate, import one."
             }
             FailureKind::Cleartext => "Cleartext HTTP was refused; use https://",
+            FailureKind::ProxyUnreachable => "The proxy is not answering. Check its address, and that it is running.",
+            FailureKind::ProxyLogin => "The proxy did not accept the login. Check its user and password.",
+            FailureKind::ProxyNoRoute => "The proxy could not reach the server. Check the server's address.",
             _ => "",
         },
         NetError::Http { status } => return format!("HTTP {status}"),

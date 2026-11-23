@@ -17,7 +17,9 @@ import dev.nori.music.ffi.net.Transport
 import dev.nori.music.ffi.net.TransportException
 import dev.nori.music.ffi.net.TransportResponse
 import dev.nori.music.ffi.net.netPolicy
+import dev.nori.music.ffi.settings.SavedProxy
 import dev.nori.music.ffi.settings.SavedServer
+import dev.nori.music.ffi.settings.skipsProxy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
@@ -52,10 +54,13 @@ class MeteredNetworkException : IOException("metered network, server is Wi-Fi on
 /** The server answered with an error status and nothing a Subsonic client can read. Its message is for the log; [said] words it. */
 class HttpStatusException(val status: Int) : IOException("HTTP $status")
 
+/** The profile's proxy failed: [kind] is one of the core's proxy kinds. Its message is for the log; [said] words it. */
+class ProxyFailureException(val kind: FailureKind, message: String?, cause: Throwable? = null) : IOException(message, cause)
+
 /**
  * One connection pool for everything: API calls, cover art and audio all ride
  * the same HTTP/2 connection to the server, so the radio wakes once, not three times.
- * The clients are rebuilt when the server profile changes (headers, TLS); callers
+ * The clients are rebuilt when the server profile changes (TLS, proxy); callers
  * go through [callFactory] / [streamFactory] so they always use the current ones.
  * How the clients are tuned (pool, request caps, timeouts) is the core's [netPolicy], with the reasons.
  */
@@ -65,23 +70,40 @@ class Http(private val context: Context) {
     private val pool = ConnectionPool(policy.poolMaxIdle.toInt(), policy.poolKeepAliveMs.toLong(), TimeUnit.MILLISECONDS)
     private val dispatcher = Dispatcher().apply { maxRequestsPerHost = policy.maxRequestsPerHost.toInt(); maxRequests = policy.maxRequests.toInt() }
     private val streamDispatcher = Dispatcher().apply { maxRequestsPerHost = policy.streamMaxRequestsPerHost.toInt(); maxRequests = policy.streamMaxRequests.toInt() }
-    @Volatile private var profile: SavedServer? = null
 
     /**
-     * Which requests are this profile's server's, and its Wi-Fi-only rule: the core's (transport.rs
+     * [profile]'s requests: which are its server's, and its Wi-Fi-only rule, the core's (transport.rs
      * `ServerHosts`), with its answer per host kept, since every request (each cover, each range of a
      * stream) asks it and the answer only depends on the host and port. Replaced whole when the profile
      * changes, so an answer from the old one is never read.
      */
-    private class Hosts(val server: ServerHosts) {
+    private class Hosts(val profile: SavedServer?) {
+        val server = ServerHosts(profile?.url, profile?.altUrl, profile?.wifiOnly == true)
         val policies = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, RequestPolicy>>()
+
+        /** The policy for [url], asked of the core once per host and port. */
+        fun policyOf(url: okhttp3.HttpUrl): RequestPolicy {
+            policies[url.host]?.let { (port, rule) -> if (port == url.port) return rule }
+            return server.policy(url.toString()).also { policies[url.host] = url.port to it }
+        }
     }
-    @Volatile private var hosts = Hosts(ServerHosts(null, null, false))
+
+    /** The profile in use's. */
+    @Volatile private var hosts = Hosts(null)
+
+    /** The logins of the SOCKS proxies clients were built with, by host and port ([SocksLogins]). */
+    private val socksLogins = java.util.concurrent.ConcurrentHashMap<Pair<String, Int>, dev.nori.music.ffi.settings.ProxyLogin>()
+
+    /**
+     * What failed connecting through the profile's proxy, as OkHttp told [ProxyConnects]: [proxyFailure] words
+     * those as the proxy's, and no other failure. Weak, so one nobody asks about goes.
+     */
+    private val proxyConnectFailures: MutableSet<IOException> = java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(java.util.WeakHashMap()))
 
     /** The audio's stall timeout (see [Stalls]), shared by every stream client. Starts no thread until a song streams. */
     private val stalls = Stalls(policy.streamReadTimeoutMs.toLong())
 
-    @Volatile var api: OkHttpClient = build(null)
+    @Volatile var api: OkHttpClient = build(null) { hosts }
         private set
 
     @Volatile var stream: OkHttpClient = streamClient(api)
@@ -97,13 +119,72 @@ class Http(private val context: Context) {
     val metered: Boolean get() = connectivity.isActiveNetworkMetered
 
     fun configure(next: SavedServer?) {
-        val old = profile
-        hosts = Hosts(ServerHosts(next?.url, next?.altUrl, next?.wifiOnly == true))
-        profile = next
-        // Only TLS settings need new clients; headers and the Wi-Fi rule are read per request.
-        if (old?.allowSelfSigned != next?.allowSelfSigned || old?.clientCert != next?.clientCert || old?.clientCertPassword != next?.clientCertPassword) {
-            api = build(next)
+        val old = hosts.profile
+        hosts = Hosts(next)
+        // Only TLS settings and the proxy need new clients; headers and the Wi-Fi rule are read per request.
+        if (old?.allowSelfSigned != next?.allowSelfSigned || old?.clientCert != next?.clientCert || old?.clientCertPassword != next?.clientCertPassword || old?.proxy != next?.proxy) {
+            api = build(next) { hosts }
             stream = streamClient(api)
+        }
+    }
+
+    /**
+     * The profile's SOCKS proxy for every connection but one to a local destination, which the core names
+     * ([skipsProxy]): a proxy elsewhere cannot reach it. Unresolved, so the proxy looks the names up; its
+     * login is [SocksLogin]'s to give.
+     */
+    private class ProfileProxy(proxy: SavedProxy) : java.net.ProxySelector() {
+        private val through = listOf(java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress.createUnresolved(proxy.host, proxy.port.toInt())))
+        private val direct = listOf(java.net.Proxy.NO_PROXY)
+
+        override fun select(uri: java.net.URI): List<java.net.Proxy> = if (skipsProxy(uri.host)) direct else through
+
+        override fun connectFailed(uri: java.net.URI, address: java.net.SocketAddress, e: IOException) {}
+    }
+
+    /** Keeps each failure of a connection through a SOCKS proxy in [failed]. */
+    private class ProxyConnects(private val failed: MutableSet<IOException>) : okhttp3.EventListener() {
+        override fun connectFailed(call: Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy, protocol: okhttp3.Protocol?, ioe: IOException) {
+            if (proxy.type() == java.net.Proxy.Type.SOCKS) failed.add(ioe)
+        }
+    }
+
+    /**
+     * [e] as the profile's proxy's failure, when it failed connecting through the proxy. Java's SOCKS client
+     * (SocksSocketImpl) throws every failure of its step as a plain SocketException, told apart only by its
+     * text: the login's, the proxy's reply ("SOCKS: Host unreachable"), or else reaching the proxy at all.
+     * The server's TLS, past the proxy, stays its own.
+     */
+    private fun proxyFailure(e: IOException): ProxyFailureException? {
+        if (!proxyConnectFailures.remove(e) || e is javax.net.ssl.SSLException) return null
+        val said = e.message.orEmpty()
+        val kind = when {
+            said in SOCKS_LOGIN -> FailureKind.PROXY_LOGIN
+            said.startsWith("SOCKS") -> FailureKind.PROXY_NO_ROUTE
+            else -> FailureKind.PROXY_UNREACHABLE
+        }
+        return ProxyFailureException(kind, e.message, e)
+    }
+
+    /**
+     * The logins of the profiles' SOCKS proxies, the newest for a host and port. Java signs in to a SOCKS
+     * proxy only through the process's one Authenticator, so this is it from the first client built with
+     * such a proxy on, and it answers those proxies alone.
+     */
+    private class SocksLogins(private val logins: Map<Pair<String, Int>, dev.nori.music.ffi.settings.ProxyLogin>) : java.net.Authenticator() {
+        override fun getPasswordAuthentication(): java.net.PasswordAuthentication? {
+            if (requestingProtocol != "SOCKS5") return null
+            val login = logins[requestingHost to requestingPort] ?: return null
+            return java.net.PasswordAuthentication(login.user, login.password.toCharArray())
+        }
+    }
+
+    /** [proxy]'s login, for [SocksLogins]; the Authenticator is set with the first. */
+    private fun keepLogin(proxy: SavedProxy) {
+        val login = proxy.login ?: return
+        synchronized(socksLogins) {
+            if (socksLogins.isEmpty()) java.net.Authenticator.setDefault(SocksLogins(socksLogins))
+            socksLogins[proxy.host to proxy.port.toInt()] = login
         }
     }
 
@@ -114,36 +195,41 @@ class Http(private val context: Context) {
     private fun streamClient(api: OkHttpClient) =
         api.newBuilder().dispatcher(streamDispatcher).readTimeout(0, TimeUnit.MILLISECONDS).addInterceptor(stalls).build()
 
-    private fun build(p: SavedServer?): OkHttpClient {
+    /** A client for [p], whose requests read their rules from [hosts]. */
+    private fun build(p: SavedServer?, hosts: () -> Hosts): OkHttpClient {
+        val proxy = p?.proxy
         val b = OkHttpClient.Builder()
             .dispatcher(dispatcher)
             .connectionPool(pool)
             .connectTimeout(policy.connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .readTimeout(policy.readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .addInterceptor { chain ->
-                val now = profile
+                val route = hosts()
+                val now = route.profile
                 val request = chain.request()
                 // Third parties (LRCLIB, AutoEQ) must not receive a reverse-proxy token, and are not subject to the
                 // server's Wi-Fi-only setting: the core says which this is. The network is only looked at when
                 // the answer depends on it.
-                val rule = if (now != null) policyOf(request.url) else null
+                val rule = if (now != null) route.policyOf(request.url) else null
                 if (rule?.unmeteredOnly == true && metered) throw MeteredNetworkException()
-                chain.proceed(request.newBuilder().apply {
+                val sent = request.newBuilder().apply {
                     // Public services ask clients to identify themselves; some reject OkHttp's default outright.
                     // One the core's exchange names (a provider's) is its own.
                     if (request.header("User-Agent") == null) header("User-Agent", policy.userAgent)
                     if (rule?.server == true) now?.headers?.forEach { (k, v) -> header(k, v) }
-                }.build())
+                }.build()
+                try {
+                    chain.proceed(sent)
+                } catch (e: IOException) {
+                    throw proxyFailure(e) ?: e
+                }
             }
         if (p != null && (p.allowSelfSigned || p.clientCert.isNotEmpty())) tls(b, p)
+        if (proxy != null) {
+            keepLogin(proxy)
+            b.proxySelector(ProfileProxy(proxy)).eventListener(ProxyConnects(proxyConnectFailures))
+        }
         return b.build()
-    }
-
-    /** The profile's policy for [url], asked of the core once per host and port. */
-    private fun policyOf(url: okhttp3.HttpUrl): RequestPolicy {
-        val h = hosts
-        h.policies[url.host]?.let { (port, rule) -> if (port == url.port) return rule }
-        return h.server.policy(url.toString()).also { h.policies[url.host] = url.port to it }
     }
 
     /** Self-signed servers and client certificates. Both are per profile and opt-in. */
@@ -170,13 +256,13 @@ class Http(private val context: Context) {
     }
 
     /** The status and the whole body. Cancelling the coroutine cancels the call, which is what makes live search cheap. */
-    suspend fun exchange(url: String, timeoutMs: Long = 0): TransportResponse = exchange(Request.Builder().url(url).build(), timeoutMs)
+    suspend fun exchange(url: String, timeoutMs: Long = 0, over: OkHttpClient = api): TransportResponse = exchange(Request.Builder().url(url).build(), timeoutMs, over)
 
     /**
      * [exchange] with a third party's own method, headers and body: the core's [Exchange], which says what to
      * send; this only carries the bytes.
      */
-    suspend fun exchange(e: Exchange): TransportResponse {
+    suspend fun exchange(e: Exchange, over: OkHttpClient): TransportResponse {
         val request = Request.Builder().url(e.url)
         for ((name, value) in e.headers) request.header(name, value)
         val type = e.headers.entries.firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }?.value?.toMediaTypeOrNull()
@@ -185,12 +271,12 @@ class Http(private val context: Context) {
         // OkHttp wants a body, if empty, for the methods that carry one.
         val carries = method == HttpMethod.POST || method == HttpMethod.PUT || method == HttpMethod.PATCH
         request.method(method.name, body ?: if (carries) ByteArray(0).toRequestBody(type) else null)
-        return exchange(request.build(), e.timeoutMs.toLong())
+        return exchange(request.build(), e.timeoutMs.toLong(), over)
     }
 
-    private suspend fun exchange(request: Request, timeoutMs: Long): TransportResponse = suspendCancellableCoroutine { cont ->
+    private suspend fun exchange(request: Request, timeoutMs: Long, over: OkHttpClient): TransportResponse = suspendCancellableCoroutine { cont ->
         // A request's own timeout is the whole wait, reading too: a held poll answers only when there is news.
-        val client = if (timeoutMs > 0) api.newBuilder().callTimeout(timeoutMs, TimeUnit.MILLISECONDS).readTimeout(timeoutMs, TimeUnit.MILLISECONDS).build() else api
+        val client = if (timeoutMs > 0) over.newBuilder().callTimeout(timeoutMs, TimeUnit.MILLISECONDS).readTimeout(timeoutMs, TimeUnit.MILLISECONDS).build() else over
         val call = client.newCall(request)
         cont.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
@@ -220,10 +306,22 @@ class Http(private val context: Context) {
         return r.body
     }
 
-    /** The core's door to the network: one GET, with the platform's exceptions sorted into kinds. */
-    fun transport(onAddressChanged: () -> Unit): Transport = object : Transport {
+    /** The core's door to the network for the profile in use: one GET, with the platform's exceptions sorted into kinds. */
+    fun transport(onAddressChanged: () -> Unit): Transport = transportOver({ api }, onAddressChanged)
+
+    /**
+     * The core's door to the network for [p] alone, apart from the profile in use (an account edited): a client
+     * of its own, with its proxy, TLS and headers, over the same pool.
+     */
+    fun transportOf(p: SavedServer): Transport {
+        val route = Hosts(p)
+        val client = build(p) { route }
+        return transportOver({ client }) {}
+    }
+
+    private fun transportOver(client: () -> OkHttpClient, onAddressChanged: () -> Unit): Transport = object : Transport {
         override suspend fun get(url: String, timeoutMs: UInt): TransportResponse = try {
-            exchange(url, timeoutMs.toLong())
+            exchange(url, timeoutMs.toLong(), client())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -231,7 +329,7 @@ class Http(private val context: Context) {
         }
 
         override suspend fun send(request: Exchange): TransportResponse = try {
-            exchange(request)
+            exchange(request, client())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -247,6 +345,7 @@ class Http(private val context: Context) {
 
 /** Which kind of failure the platform's exception is; the core decides what each kind means. */
 fun failureKind(e: Throwable): FailureKind = when (e) {
+    is ProxyFailureException -> e.kind
     is MeteredNetworkException -> FailureKind.METERED
     is java.net.UnknownHostException -> FailureKind.UNKNOWN_HOST
     is java.net.ConnectException -> FailureKind.CONNECT
@@ -258,6 +357,9 @@ fun failureKind(e: Throwable): FailureKind = when (e) {
     is IOException -> FailureKind.IO
     else -> FailureKind.OTHER
 }
+
+/** What Java's SOCKS client says when the proxy refuses its login, or asks for one it cannot give. */
+private val SOCKS_LOGIN = setOf("SOCKS : authentication failed", "SOCKS : No acceptable methods")
 
 /**
  * A failure from the core's client as the exception the platform would have thrown itself, so callers keep
@@ -273,6 +375,7 @@ fun NetException.lift(): Exception = when (this) {
         FailureKind.INTERRUPTED -> java.io.InterruptedIOException(detail)
         FailureKind.TLS -> javax.net.ssl.SSLHandshakeException(detail.orEmpty())
         FailureKind.CLEARTEXT -> java.net.UnknownServiceException(detail)
+        FailureKind.PROXY_UNREACHABLE, FailureKind.PROXY_LOGIN, FailureKind.PROXY_NO_ROUTE -> ProxyFailureException(kind, detail)
         FailureKind.IO -> IOException(detail)
         FailureKind.OTHER -> IllegalStateException(detail)
     }

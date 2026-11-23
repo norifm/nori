@@ -1,12 +1,14 @@
 //! The settings: stored format, defaults and rules (settings.rs), the live copy in the app database
 //! (settings_store.rs), the client settings model (settings_model.rs) and pages (settings_pages.rs), sound queries (dsp.rs), lyrics
-//! services (lyrics_sources.rs), credits (credits.rs) and the first run's questions (setup.rs).
+//! services (lyrics_sources.rs), credits (credits.rs), the first run's questions (setup.rs) and a profile's
+//! proxy (proxy.rs).
 
 mod codec;
 pub mod credits;
 pub mod dsp;
 pub mod lyrics_sources;
 pub mod overrides;
+pub mod proxy;
 pub mod settings_model;
 pub mod settings_pages;
 pub mod settings;

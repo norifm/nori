@@ -77,6 +77,9 @@
     <string name="error_timeout">The server did not answer in time.</string>
     <string name="error_tls">The server\'s certificate was not accepted. If it is self-signed, turn on \"Accept self-signed certificate\"; if it needs a client certificate, import one.</string>
     <string name="error_cleartext">Cleartext HTTP was refused; use https://</string>
+    <string name="error_proxy_unreachable">The proxy is not answering. Check its address, and that it is running.</string>
+    <string name="error_proxy_login">The proxy did not accept the login. Check its user and password.</string>
+    <string name="error_proxy_no_route">The proxy could not reach the server. Check the server\'s address.</string>
     <string name="error_http">HTTP %1$d</string>
     <string name="error_wrong_login">Wrong user name or password.</string>
     <string name="error_token_auth">This server does not support token authentication.</string>

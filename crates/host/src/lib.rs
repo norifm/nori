@@ -126,7 +126,7 @@ pub fn jam_join(transport: Arc<dyn nori_core::transport::Transport>, settings: &
 pub fn jam_joined(settings: &Settings, pass: JamPass, name: &str) -> SavedServer {
     nori_core::remote::jam_joining(settings);
     let prefs = settings.current().unwrap_or_default();
-    let guest = nori_core::remote::jam_profile(pass, nori_core::settings::new_server_id(), name.into());
+    let guest = nori_core::remote::jam_profile(pass, prefs.active_server().cloned(), nori_core::settings::new_server_id(), name.into());
     settings.put(nori_core::providers::profile_activated(prefs, guest.clone()));
     guest
 }
