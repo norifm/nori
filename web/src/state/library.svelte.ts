@@ -21,7 +21,7 @@ class Library {
     this.rev++;
   }
 
-  /** The profile changed under the pages (a jam joined or left). */
+  /** The profile changed under the pages (a jam joined or left, another profile opened). */
   changed() {
     this.rev++;
   }

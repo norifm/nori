@@ -49,12 +49,12 @@ class Remote {
   /** Joins the jam `link` invites to: "joined" (the guest's profile is open), "own" or "ended". */
   async join(link: string, name: string): Promise<string> {
     const said = await ask<string>("jam_join", link.trim(), name.trim() || W.jamGuestName);
-    if (said === "joined") this.switched();
+    if (said === "joined") this.joined();
     return said;
   }
 
   async leave() {
-    if (await ask<boolean>("jam_leave")) this.switched();
+    if (await ask<boolean>("jam_leave")) this.joined();
     else location.reload();
   }
 
@@ -64,9 +64,14 @@ class Remote {
     await this.act(() => ask("jam_listen", on));
   }
 
-  /** The library and the player are another profile's now: the pages read themselves again. */
-  private switched() {
+  /** In a jam or out of it: Home, in the profile open now. */
+  private joined() {
     go("home");
+    this.switched();
+  }
+
+  /** The library and the player are another profile's now: the pages read themselves again. */
+  switched() {
     library.changed();
     void player.refresh().catch(rpc.unlessElsewhere);
     void this.read().catch(rpc.unlessElsewhere);

@@ -127,71 +127,138 @@ impl Nori {
         self.stored
     }
 
-    /// The profile signed in, as `{ url, user, icon, letter, icons, picks }`; null for none. `icon` is what
-    /// its circle shows (a `ProfileIcon` by name), `letter` the one `Letter` shows (`profile_letter`),
-    /// `icons` the picker's in its order (`profile_icons`), and `picks` whether its icon may be changed
-    /// (`changes_profile`).
-    pub fn profile(&self) -> String {
+    /// The saved profiles in their order, as `{ picks, icons, list: [{ id, label, user, host, icon, letter,
+    /// on }] }`: `label` its name, else its address's host (`label`); `icon` what its circle shows (a
+    /// `ProfileIcon` by name) and `letter` the one `Letter` shows (`profile_letter`); `on` the one open.
+    /// `icons` are the picker's in its order (`profile_icons`), and `picks` whether profiles may be
+    /// changed here (`changes_profile`).
+    pub fn profiles(&self) -> String {
         use nori_core::settings::{label, profile_icons, profile_letter};
-        let Some(p) = self.active() else { return "null".into() };
+        let prefs = self.app.settings.current().unwrap_or_default();
+        let list: Vec<Value> = prefs
+            .servers
+            .iter()
+            .map(|p| {
+                let named = label(&p.name, &p.url);
+                let letter = profile_letter(p.clone(), named.clone());
+                json!({ "id": p.id, "label": named, "user": p.user, "host": label("", &p.url), "icon": format!("{:?}", p.icon), "letter": letter, "on": p.id == prefs.active_server_id })
+            })
+            .collect();
         let icons: Vec<String> = profile_icons().iter().map(|i| format!("{i:?}")).collect();
-        let letter = profile_letter(p.clone(), label(&p.name, &p.url));
-        json!({ "url": p.url, "user": p.user, "icon": format!("{:?}", p.icon), "letter": letter, "icons": icons, "picks": self.changes_profile() }).to_string()
+        json!({ "picks": self.changes_profile(), "icons": icons, "list": list }).to_string()
     }
 
-    /// The profile signed in shows `icon` (a `ProfileIcon` by name, as `profile` lists them) on its circle.
-    pub fn profile_icon(&self, icon: String) -> Result<(), JsValue> {
+    /// Saved profile `id` shows `icon` (a `ProfileIcon` by name, as `profiles` lists them) on its circle.
+    pub fn profile_icon(&self, id: String, icon: String) -> Result<(), JsValue> {
         use nori_core::settings::ProfileIcon;
         let icon = ProfileIcon::ALL.into_iter().find(|i| format!("{i:?}") == icon).ok_or_else(|| error(format!("no profile icon {icon}")))?;
-        self.profile_changed(|p| SavedServer { icon, ..p })
+        self.profile_changed(&id, |p| SavedServer { icon, ..p })
     }
 
-    /// The profile signed in, changed by `change` and kept; a jam guest's is its host's.
-    fn profile_changed(&self, change: impl FnOnce(SavedServer) -> SavedServer) -> Result<(), JsValue> {
-        use nori_core::settings::{servers_updated, ServerList};
-        if !self.changes_profile() {
-            return Err(error("a jam's guest changes no profile"));
-        }
+    /// Saved profile `id` renamed; blank, it is called after its address again.
+    pub fn profile_rename(&self, id: String, name: String) -> Result<(), JsValue> {
+        self.profile_changed(&id, |p| SavedServer { name: name.trim().to_string(), ..p })
+    }
+
+    /// Opens saved profile `id`, the one in use from now on.
+    pub fn profile_open(&self, id: String) -> Result<(), JsValue> {
+        let prefs = self.app.settings.current().unwrap_or_default();
+        let profile = self.saved(&id)?;
+        self.app.settings.put(nori_core::providers::profile_activated(prefs, profile.clone()));
+        self.enter(profile)
+    }
+
+    /// What saved profile `id`'s form shows to edit: `{ url, user, password }`.
+    pub fn profile_form(&self, id: String) -> Result<String, JsValue> {
+        let p = self.saved(&id)?;
+        Ok(json!({ "url": p.url, "user": p.user, "password": p.password }).to_string())
+    }
+
+    /// Signs in to saved profile `id` with its address, user and password changed, keeps it and opens it
+    /// (`providers::log_in`).
+    pub async fn profile_edit(&self, id: String, url: String, user: String, password: String) -> Result<(), JsValue> {
+        self.may_change()?;
+        let form = SavedServer { url, user, password, ..self.saved(&id)? };
+        let profile = nori_core::providers::log_in(&nori_core::providers::Kinds::builtin(), Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
+        self.enter(profile)
+    }
+
+    /// Removes saved profile `id` and its rows in the database; removing the one open opens the next
+    /// (`settings::servers_removed`). Whether a profile is open after: false when none is left, and the
+    /// next start signs in.
+    pub fn profile_remove(&self, id: String) -> Result<bool, JsValue> {
+        use nori_core::settings::{servers_removed, ServerList};
+        self.may_change()?;
         let mut prefs = self.app.settings.current().unwrap_or_default();
-        let profile = prefs.active_server().cloned().ok_or_else(|| error("not signed in"))?;
+        let was_open = prefs.active_server_id == id;
+        let list = ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: std::mem::take(&mut prefs.active_server_id) };
+        let left = servers_removed(list, id.clone());
+        (prefs.servers, prefs.active_server_id) = (left.servers, left.active_server_id);
+        let next = prefs.active_server().cloned();
+        self.app.settings.put(prefs);
+        if was_open {
+            self.leave_for(next.as_ref());
+        }
+        nori_core::db::db_forget_server(db(), id).map_err(error)?;
+        match next {
+            Some(p) if was_open => self.enter(p).map(|_| true),
+            _ => Ok(next.is_some()),
+        }
+    }
+
+    /// Saved profile `id`, changed by `change` and kept; a jam guest's is its host's.
+    fn profile_changed(&self, id: &str, change: impl FnOnce(SavedServer) -> SavedServer) -> Result<(), JsValue> {
+        use nori_core::settings::{servers_updated, ServerList};
+        self.may_change()?;
+        let profile = self.saved(id)?;
+        let mut prefs = self.app.settings.current().unwrap_or_default();
         let list = ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() };
         prefs.servers = servers_updated(list, change(profile)).servers;
         self.app.settings.put(prefs);
         Ok(())
     }
 
-    /// The scrobbling accounts of the profile signed in, as `[{ id, kind, user, host, on }]`: `kind`
-    /// as the settings store it, `host` the address's, empty for the kind's own service.
-    pub fn scrobblers(&self) -> String {
-        let accounts = self.active().map(|p| p.scrobblers).unwrap_or_default();
-        let rows: Vec<serde_json::Value> =
-            accounts.iter().map(|a| json!({ "id": a.id, "kind": a.kind.id(), "user": a.user, "host": nori_core::settings::label("", &a.url), "on": a.on })).collect();
-        serde_json::Value::from(rows).to_string()
+    /// Fails for a jam's guest, whose profiles are its host's to change.
+    fn may_change(&self) -> Result<(), JsValue> {
+        if self.changes_profile() {
+            Ok(())
+        } else {
+            Err(error("a jam's guest changes no profile"))
+        }
     }
 
-    /// Whether the profile signed in is told what plays itself, first in its scrobbling list: `{ on }`,
-    /// or `null` where its rules have it take none.
-    pub fn scrobble_itself(&self) -> String {
-        let shown = self.active().filter(|_| self.rules().scrobbles);
-        shown.map_or(serde_json::Value::Null, |p| json!({ "on": !p.scrobble_off })).to_string()
+    fn saved(&self, id: &str) -> Result<SavedServer, JsValue> {
+        self.app.settings.prefs(|p| p.servers.iter().find(|s| s.id == id).cloned()).ok_or_else(|| error(format!("no profile {id}")))
     }
 
-    /// The profile signed in told what plays, or not.
-    pub fn scrobble_itself_switch(&self, on: bool) -> Result<(), JsValue> {
-        self.profile_changed(|p| nori_core::settings::profile_scrobble_switched(p, on))
+    /// Where saved profile `id`'s plays go, as `{ itself, list: [{ id, kind, user, host, on }] }`: `itself`
+    /// `{ on }` for its own server, first, or null where its rules have it take none; then its scrobbling
+    /// accounts, `kind` as the settings store it, `host` the address's, empty for the kind's own service.
+    pub fn scrobblers(&self, id: String) -> Result<String, JsValue> {
+        let p = self.saved(&id)?;
+        // The open profile's rules as its session has them; another's as the core reads the saved profile.
+        let takes = if self.active().is_some_and(|a| a.id == p.id) { self.rules().scrobbles } else { nori_core::providers::Kinds::builtin().rules_of(p.clone(), false).scrobbles };
+        let list: Vec<Value> =
+            p.scrobblers.iter().map(|a| json!({ "id": a.id, "kind": a.kind.id(), "user": a.user, "host": nori_core::settings::label("", &a.url), "on": a.on })).collect();
+        Ok(json!({ "itself": takes.then(|| json!({ "on": !p.scrobble_off })), "list": list }).to_string())
     }
 
-    /// The profile's scrobbling account `id` turned on or off.
-    pub fn scrobbler_switch(&self, id: String, on: bool) -> Result<(), JsValue> {
-        self.profile_changed(|mut p| {
-            p.scrobblers.iter_mut().filter(|a| a.id == id).for_each(|a| a.on = on);
+    /// Saved profile `id`'s own server told what plays, or not.
+    pub fn scrobble_itself_switch(&self, id: String, on: bool) -> Result<(), JsValue> {
+        self.profile_changed(&id, |p| nori_core::settings::profile_scrobble_switched(p, on))
+    }
+
+    /// Saved profile `id`'s scrobbling account `account` turned on or off.
+    pub fn scrobbler_switch(&self, id: String, account: String, on: bool) -> Result<(), JsValue> {
+        self.profile_changed(&id, |mut p| {
+            p.scrobblers.iter_mut().filter(|a| a.id == account).for_each(|a| a.on = on);
             p
         })
     }
 
-    /// The profile without its scrobbling account `id`.
-    pub fn scrobbler_remove(&self, id: String) -> Result<(), JsValue> {
-        self.profile_changed(|p| nori_core::settings::profile_scrobbler_removed(p, id))
+    /// Saved profile `id` without its scrobbling account `account`.
+    pub fn scrobbler_remove(&self, id: String, account: String) -> Result<(), JsValue> {
+        self.profile_changed(&id, |p| nori_core::settings::profile_scrobbler_removed(p, account))
     }
 
     /// The kinds of scrobbling account a profile can add, with the fields each asks
@@ -212,13 +279,13 @@ impl Nori {
 
     /// Signs in to a `kind` scrobbling account with `fields`, `{ id: typed }` by the field ids
     /// [`Self::scrobbler_kinds`] gives, and the token `approved` on its page where it signs in there;
-    /// keeps it in the profile (`Client::sign_in_scrobbler`).
-    pub async fn scrobbler_add(&self, kind: String, fields: String, approved: String) -> Result<(), JsValue> {
+    /// keeps it in saved profile `id` (`Client::sign_in_scrobbler`, which reaches only the service).
+    pub async fn scrobbler_add(&self, id: String, kind: String, fields: String, approved: String) -> Result<(), JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
         let fields: serde_json::Value = serde_json::from_str(&fields).map_err(error)?;
         let form = nori_core::scrobblers::ScrobblerForm::from_json(&kind, &fields, &approved).ok_or_else(|| error("no such scrobbler"))?;
         let account = client.sign_in_scrobbler(form).await.map_err(error)?;
-        self.profile_changed(|p| nori_core::settings::profile_scrobbler_put(p, account))
+        self.profile_changed(&id, |p| nori_core::settings::profile_scrobbler_put(p, account))
     }
 
     fn active(&self) -> Option<SavedServer> {

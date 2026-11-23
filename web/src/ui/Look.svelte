@@ -4,7 +4,7 @@
   // calendar), Follow the calendar, then System, Day, Night or Midnight. The core keeps the settings and hands
   // out the colors.
   import { ask } from "../rpc";
-  import { refreshTheme, worn } from "../state/theme.svelte";
+  import { looks, refreshTheme, worn } from "../state/theme.svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
 
@@ -14,7 +14,11 @@
     const v = JSON.parse(await ask<string>("settings", "season,theme")) as Look;
     look = { season: v.season.toUpperCase(), theme: v.theme.toUpperCase() };
   };
-  void read();
+  // Again whenever the colors change, whatever changed the settings.
+  $effect(() => {
+    void looks.rev;
+    void read();
+  });
 
   const kanji: Record<string, string> = { SPRING: "kanji-spring", SUMMER: "kanji-summer", AUTUMN: "kanji-autumn", WINTER: "kanji-winter" };
   const themes = ["SYSTEM", "LIGHT", "DARK", "MIDNIGHT"];

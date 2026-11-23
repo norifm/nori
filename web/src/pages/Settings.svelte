@@ -4,19 +4,23 @@
   // Android's: the root lists them, each with its glyph and what it holds, and a page (`#/settings/<page>`)
   // opens on its own. A page has its sections as small-caps labels over grouped cards, each row drawn by
   // its kind and worded here. A row says only what is not obvious from its name. Appearance is the look
-  // the top bar's menu has too.
+  // the top bar's menu has too. Servers lists the saved profiles as Android does: the one in use checked,
+  // another opened with a click, each with its icon picked from its circle and a menu to rename it, edit it
+  // (its page, `#/settings/Servers/<id>`, with its scrobbling) or remove it; then adding one.
   import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
+  import { remote } from "../state/remote.svelte";
   import { route, href } from "../state/route.svelte";
   import { refreshTheme } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
-  import type { Profile, ProfileIcon, Scrobbler, ScrobblerKindForm, SettingRow, SettingsSection } from "../state/types";
+  import type { Profile, ProfileIcon, Profiles, SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
-  import AddScrobbler from "../ui/AddScrobbler.svelte";
+  import AddProfile from "../ui/AddProfile.svelte";
   import Icon from "../ui/Icon.svelte";
   import Look from "../ui/Look.svelte";
   import Page from "../ui/Page.svelte";
   import Plugins from "../ui/Plugins.svelte";
+  import ProfileEdit from "../ui/ProfileEdit.svelte";
   import ProfileIconPicker from "../ui/ProfileIconPicker.svelte";
   import ProfileMark from "../ui/ProfileMark.svelte";
 
@@ -27,13 +31,10 @@
     const names = JSON.parse(await ask<string>("settings_pages")) as string[];
     const name = route.arg;
     const sections = names.includes(name) ? (JSON.parse(await ask<string>("settings_page", name)) as SettingsSection[]) : [];
-    const profile = JSON.parse(await ask<string>("profile")) as Profile | null;
-    const scrobblers = JSON.parse(await ask<string>("scrobblers")) as Scrobbler[];
-    const itself = JSON.parse(await ask<string>("scrobble_itself")) as { on: boolean } | null;
-    const scrobblerKinds = JSON.parse(await ask<string>("scrobbler_kinds")) as ScrobblerKindForm[];
+    const profiles = JSON.parse(await ask<string>("profiles")) as Profiles;
     // A build with a support service offers its page last.
     const supported = await ask<boolean>("support_offered");
-    return { names, sections, profile, scrobblers, scrobblerKinds, itself, supported };
+    return { names, sections, profiles, supported };
   });
   /** The page open: on a wide screen the first while none is asked for. */
   const name = $derived(route.arg || (ui.wide ? "Servers" : ""));
@@ -47,27 +48,54 @@
     rev++;
   }
 
-  const profile = $derived(page.data?.profile ?? null);
-  /** The profile's icon picker is open. */
-  let picking = $state(false);
-  async function pickIcon(icon: ProfileIcon) {
-    await ask("profile_icon", icon);
+  const profiles = $derived(page.data?.profiles);
+  const named = (p: Profile) => p.label || W.subsonic;
+  const inUse = $derived(profiles?.list.find((p) => p.on));
+  /** The profile whose icon is being picked. */
+  let picking = $state.raw<Profile | null>(null);
+  async function pickIcon(p: Profile, icon: ProfileIcon) {
+    await ask("profile_icon", p.id, icon);
     rev++;
   }
-
-  /** A scrobbling account being added. */
+  /** A profile being added. */
   let adding = $state(false);
-  async function scrobblerSwitch(id: string, on: boolean) {
-    await ask("scrobbler_switch", id, on);
+
+  /** The library and the player are another profile's now. */
+  function opened() {
+    remote.switched();
     rev++;
   }
-  async function scrobblerRemove(id: string) {
-    await ask("scrobbler_remove", id);
-    rev++;
+  async function open(p: Profile) {
+    await ask("profile_open", p.id);
+    opened();
   }
+  async function remove(p: Profile) {
+    if (!(await ui.confirm(W.removeProfileTitle(named(p)), W.removeProfileLine, W.remove))) return;
+    // None left: the next start signs in.
+    if (!(await ask<boolean>("profile_remove", p.id))) return signedOut();
+    if (p.on) opened();
+    else rev++;
+  }
+  const menu = (e: MouseEvent, p: Profile) =>
+    ui.drop(e, [
+      {
+        label: W.rename,
+        run: async () => {
+          const name = await ui.ask(W.rename, named(p));
+          if (name === null) return;
+          await ask("profile_rename", p.id, name);
+          rev++;
+        },
+      },
+      { label: W.edit, run: () => (location.hash = `${href("settings", "Servers")}/${encodeURIComponent(p.id)}`) },
+      { label: W.remove, run: () => remove(p) },
+    ]);
 
   async function signOut() {
     await ask("logout");
+    signedOut();
+  }
+  function signedOut() {
     location.hash = "";
     location.reload();
   }
@@ -78,6 +106,8 @@
 
 {#if name === "Plugins" && (route.sub || !ui.wide)}
   <Plugins />
+{:else if name === "Servers" && route.sub}
+  <ProfileEdit id={route.sub} />
 {:else if ui.wide}
   <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
     <nav class="tabs" aria-label={W.settings}>
@@ -90,7 +120,7 @@
 {:else if !name}
   <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
     <div class="group root">
-      <a class="group-row" href={href("settings", "Servers")}><Icon name="server" /><span class="words"><span>{W.servers}</span><span class="sub">{profile?.user ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
+      <a class="group-row" href={href("settings", "Servers")}><Icon name="server" /><span class="words"><span>{W.servers}</span>{#if inUse}<span class="sub">{named(inUse)}</span>{/if}</span><Icon name="nav-arrow-right" /></a>
       {#each page.data?.names ?? [] as n (n)}
         <a class="group-row" href={href("settings", n)} data-page={n}><Icon name={glyphs[n] ?? "settings"} /><span class="words"><span>{W.settingsPages[n]?.[0] ?? n}</span><span class="sub">{W.settingsPages[n]?.[1] ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
       {/each}
@@ -105,40 +135,25 @@
 {/if}
 
 {#snippet serversPage()}
-  <div class="group-label">{W.accounts}</div>
-  <div class="group">
-    <div class="group-row profile">
-      {#if profile?.picks}
-        <button class="mark" id="profile-mark" aria-label={W.profileIcon} title={W.profileIcon} onclick={() => (picking = true)}><ProfileMark icon={profile.icon} letter={profile.letter} /></button>
-      {:else if profile}
-        <ProfileMark icon={profile.icon} letter={profile.letter} />
-      {/if}
-      <span class="words"><span>{profile?.user ?? ""}</span><span class="sub">{profile?.url ?? ""}</span></span>
-    </div>
+  <div class="group-label">{W.profiles}</div>
+  <div class="group" id="profiles">
+    {#each profiles?.list ?? [] as p (p.id)}
+      <div class="group-row profile" class:on={p.on} data-profile={p.id}>
+        {#if profiles?.picks}
+          <button class="mark" aria-label={W.profileIcon} title={W.profileIcon} onclick={() => (picking = p)}><ProfileMark icon={p.icon} letter={p.letter} /></button>
+        {:else}
+          <ProfileMark icon={p.icon} letter={p.letter} />
+        {/if}
+        <button class="opens" disabled={p.on} onclick={() => void open(p)}><span class="words"><span>{named(p)}</span><span class="sub">{p.user}</span></span></button>
+        {#if p.on}<span class="in-use" title={W.inUse} aria-label={W.inUse}><Icon name="check" /></span>{/if}
+        {#if profiles?.picks}<button class="glyph" aria-label={W.more} title={W.more} onclick={(e) => menu(e, p)}><Icon name="more-horiz" /></button>{/if}
+      </div>
+    {/each}
+    {#if profiles?.picks}<button class="group-row" id="add-profile-row" onclick={() => (adding = true)}><Icon name="plus" /><span class="words">{W.addProfile}</span></button>{/if}
     <button class="group-row" onclick={() => void signOut()}><Icon name="log-out" /><span class="words">{W.signOut}</span></button>
   </div>
-  <div class="group-label">{W.scrobbling}</div>
-  <div class="group" id="scrobblers">
-    {#if page.data?.itself}
-      <label class="group-row" id="scrobble-itself">
-        <span class="words"><span>{W.scrobblerServer}</span><span class="sub">{W.scrobblerBuiltIn}</span></span>
-        <input type="checkbox" class="switch" aria-label={W.scrobblerServer} checked={page.data.itself.on} onchange={(e) => void ask("scrobble_itself_switch", e.currentTarget.checked)} />
-        <!-- In line with the accounts' switches, which have their menu after them. -->
-        <span class="glyph" aria-hidden="true"></span>
-      </label>
-    {/if}
-    {#each page.data?.scrobblers ?? [] as a (a.id)}
-      <label class="group-row" data-scrobbler={a.id}>
-        <span class="words"><span>{W.scrobbler(a.kind)}</span><span class="sub">{[a.user, a.host].filter(Boolean).join(" · ")}</span></span>
-        <input type="checkbox" class="switch" aria-label={W.scrobbler(a.kind)} checked={a.on} onchange={(e) => void scrobblerSwitch(a.id, e.currentTarget.checked)} />
-        <button class="glyph" aria-label={W.more} title={W.more} onclick={(e) => ui.drop(e, [{ label: W.scrobblerRemove, run: () => scrobblerRemove(a.id) }])}><Icon name="more-horiz" /></button>
-      </label>
-    {/each}
-    <button class="group-row" id="add-scrobbler-row" onclick={() => (adding = true)}><Icon name="plus" /><span class="words">{W.addScrobblerAccount}</span></button>
-  </div>
-  <p class="note">{W.scrobblingNote}</p>
-  {#if adding}<AddScrobbler kinds={page.data?.scrobblerKinds ?? []} close={() => (adding = false)} added={() => ((adding = false), rev++)} />{/if}
-  {#if picking && profile}<ProfileIconPicker {profile} pick={(icon) => void pickIcon(icon)} close={() => (picking = false)} />{/if}
+  {#if adding}<AddProfile close={() => (adding = false)} added={() => ((adding = false), opened())} />{/if}
+  {#if picking && profiles}{@const p = picking}<ProfileIconPicker profile={p} icons={profiles.icons} pick={(icon) => void pickIcon(p, icon)} close={() => (picking = null)} />{/if}
 {/snippet}
 
 {#snippet settingsPage()}
@@ -243,17 +258,50 @@
   .under {
     padding-left: 34px;
   }
-  /* The profile's row: its mark, and the hairline from where its words start. */
+  /* A profile's row: its mark, its words, the check on the one in use and its menu; the hairline from where
+     its words start. A click anywhere else on it opens it. */
   .profile {
     padding-top: 10px;
     padding-bottom: 10px;
+    padding-right: 4px;
   }
   .profile::after {
     left: 68px;
   }
+  .profile:has(.opens:hover:enabled) {
+    background: var(--hover);
+  }
+  .opens {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    text-align: left;
+  }
+  /* The one in use opens nothing, and stays in ink. */
+  .opens:disabled {
+    opacity: 1;
+  }
+  .opens::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  .mark,
+  .profile .glyph {
+    position: relative;
+    z-index: 1;
+  }
   .mark {
     display: grid;
     border-radius: 50%;
+  }
+  .in-use {
+    display: grid;
+    color: var(--accent);
+  }
+  .in-use :global(.icon) {
+    width: 20px;
+    height: 20px;
   }
   .off {
     opacity: 0.5;

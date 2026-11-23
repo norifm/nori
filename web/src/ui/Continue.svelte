@@ -5,7 +5,7 @@
   import { ask } from "../rpc";
   import { coverLook } from "../state/coverLook";
   import { player } from "../state/player.svelte";
-  import { looks } from "../state/theme.svelte";
+  import { looks, worn } from "../state/theme.svelte";
   import type { Song } from "../state/types";
   import { W } from "../words";
   import Cover from "./Cover.svelte";
@@ -31,7 +31,9 @@
   $effect(() => {
     void looks.rev;
     const src = song?.cover;
-    if (src) void coverLook(src).then((l) => (vars = l?.vars ?? ""));
+    let gone = false;
+    if (src) void coverLook(src).then((l) => !gone && (vars = l?.vars ?? ""));
+    return () => (gone = true);
   });
 
   function done() {
@@ -50,7 +52,7 @@
 {#if offer && song}
   {@const o = offer}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="continue tinted" style={vars} onclick={() => void take(o)} id="continue">
+  <div class="continue tinted recolors" style={vars || worn.vars} onclick={() => void take(o)} id="continue">
     <div class="art"><Cover src={song.cover} radius="0" /></div>
     <div class="words">
       <span class="label">{W.continueLabel}</span>

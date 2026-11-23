@@ -86,28 +86,103 @@ if (!only || only.includes("browse")) {
 }
 
 if (!only || only.includes("profile")) {
-  // The profile's icon picked from its mark: the picker draws every icon, the one shown checked; a pick
-  // is kept and the row's mark follows it. The icon it had is put back the same way.
-  const profile = async () => JSON.parse(await ask("profile"));
-  const pick = async (icon) => {
-    await page.click("#profile-mark");
+  // The saved profiles as Android lists them, each entry clicked: a profile's icon picked from its mark (the
+  // picker draws every icon, the one shown checked), a profile added, opened from its row, renamed, edited
+  // (its form filled from it, its scrobbling switched, Add scrobbler offering the services, Save opening
+  // it) and removed while in use (the other opens again).
+  const profiles = async () => JSON.parse(await ask("profiles"));
+  const open = async () => (await profiles()).list.find((p) => p.on);
+  const row = (id) => `#profiles [data-profile="${id}"]`;
+  await hash("#/settings/Servers", "settings");
+  const first = await open();
+  const pick = async (id, icon) => {
+    await page.click(`${row(id)} .mark`);
     await page.waitForSelector("#profile-icons button[data-icon]");
     const drawn = await page.$$eval("#profile-icons button[data-icon]", (b) => b.map((x) => ({ icon: x.dataset.icon, on: x.getAttribute("aria-checked") === "true", glyph: !!x.querySelector("use") && !!document.querySelector(x.querySelector("use").getAttribute("href")) })));
     await page.click(`#profile-icons button[data-icon=${icon}]`);
-    await page.waitForFunction((i) => !document.querySelector("#profile-icons") && document.querySelector(`#profile-mark [data-icon=${i}]`), { timeout: 10000 }, icon);
+    await page.waitForFunction((r, i) => !document.querySelector("#profile-icons") && document.querySelector(`${r} .mark [data-icon=${i}]`), { timeout: 10000 }, row(id), icon);
     return drawn;
   };
-  await hash("#/settings/Servers", "settings");
-  const had = await profile();
-  const other = had.icons.findLast((i) => i !== had.icon);
-  const drawn = await pick(other);
-  const kept = await profile();
-  await pick(had.icon);
-  report.profile = { had: had.icon, icons: drawn.length, picked: kept.icon, back: (await profile()).icon };
-  expect(drawn.length === 8 && drawn.map((d) => d.icon).join() === had.icons.join(), "the icon picker draws every icon in the core's order");
-  expect(drawn.filter((d) => d.on).map((d) => d.icon).join() === had.icon, "the icon picker checks the icon shown");
+  const { icons } = await profiles();
+  const other = icons.findLast((i) => i !== first.icon);
+  const drawn = await pick(first.id, other);
+  const kept = await open();
+  await pick(first.id, first.icon);
+  /** Picks `label` in the menu of profile `id`'s row; the menu's words. */
+  const menu = async (id, label) => {
+    await page.click(`${row(id)} .glyph`);
+    await page.waitForSelector(".popover .popover-item, dialog.menu .menu-item");
+    const items = await page.$$(".popover .popover-item, dialog.menu .menu-item");
+    const words = await Promise.all(items.map((b) => b.evaluate((x) => x.textContent.trim())));
+    await items[words.indexOf(label)].click();
+    return words;
+  };
+  /** Until `n` profiles are listed and drawn, `on` the one open. */
+  const listed = (n, on) =>
+    page.waitForFunction(
+      async (n_, on_) => {
+        const p = JSON.parse(await window.ask("profiles"));
+        return p.list.length === n_ && p.list.find((x) => x.on)?.id === on_ && document.querySelectorAll("#profiles [data-profile]").length === n_ && !!document.querySelector(`#profiles [data-profile="${on_}"] .in-use`);
+      },
+      { timeout: 30000, polling: 200 },
+      n,
+      on,
+    );
+  // Added: the same server at another address is a profile of its own, open from now on.
+  await page.click("#add-profile-row");
+  const address = `${new URL(url).origin}/.`;
+  await page.type("#add-profile [data-field=url]", address);
+  await page.type("#add-profile [data-field=user]", "admin");
+  await page.type("#add-profile [data-field=password]", "admin");
+  await page.click("#add-profile-add");
+  await page.waitForFunction(async (f) => JSON.parse(await window.ask("profiles")).list.some((x) => x.on && x.id !== f), { timeout: 30000, polling: 200 }, first.id);
+  const second = await open();
+  await listed(2, second.id);
+  // Opened from its row, the first is in use again.
+  await page.click(`${row(first.id)} .opens`);
+  await listed(2, first.id);
+  // Renamed from the menu.
+  const entries = await menu(second.id, "Rename");
+  await page.waitForSelector("dialog input.field");
+  await page.$eval("dialog input.field", (f) => (f.value = ""));
+  await page.type("dialog input.field", "Second Door");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((r) => document.querySelector(`${r} .words`)?.textContent.includes("Second Door"), { timeout: 10000 }, row(second.id));
+  // Edited: its page, its form filled from it, its scrobbling.
+  await menu(second.id, "Edit");
+  await page.waitForFunction((a) => document.querySelector("#profile-form [data-field=url]")?.value === a, { timeout: 10000 }, address);
+  const form = await page.$$eval("#profile-form [data-field]", (f) => Object.fromEntries(f.map((x) => [x.dataset.field, x.value])));
+  const itself = async (id) => JSON.parse(await ask("scrobblers", id)).itself?.on;
+  const was = await itself(second.id);
+  await page.click("#scrobble-itself input");
+  await page.waitForFunction(async (id, w) => JSON.parse(await window.ask("scrobblers", id)).itself?.on === !w, { timeout: 10000 }, second.id, was);
+  const firstKept = await itself(first.id);
+  await page.click("#scrobble-itself input");
+  await page.waitForFunction(async (id, w) => JSON.parse(await window.ask("scrobblers", id)).itself?.on === w, { timeout: 10000 }, second.id, was);
+  await page.click("#add-scrobbler-row");
+  await page.waitForSelector("#add-scrobbler [data-kind]");
+  const services = await page.$$eval("#add-scrobbler [data-kind]", (b) => b.map((x) => x.dataset.kind));
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.querySelector("#add-scrobbler"));
+  await page.click("#profile-save");
+  await page.waitForSelector("#profiles");
+  await listed(2, second.id);
+  // Removed while in use: the first opens again, and its library reads.
+  await menu(second.id, "Remove");
+  await page.waitForSelector("#confirm-yes");
+  await page.click("#confirm-yes");
+  await listed(1, first.id);
+  const albumsAfter = (await read({ kind: "albums", sort: "alphabeticalByName", size: 5, offset: 0 })).albums?.length ?? 0;
+  report.profile = { had: first.icon, icons: drawn.length, picked: kept.icon, back: (await open()).icon, entries, form, services, albumsAfter };
+  expect(drawn.length === 8 && drawn.map((d) => d.icon).join() === icons.join(), "the icon picker draws every icon in the core's order");
+  expect(drawn.filter((d) => d.on).map((d) => d.icon).join() === first.icon, "the icon picker checks the icon shown");
   expect(drawn.every((d) => d.icon === "Letter" || d.glyph), "every face and the server's mark has its glyph in the sprite");
-  expect(kept.icon === other && report.profile.back === had.icon, "a picked icon is kept, and the one before comes back");
+  expect(kept.icon === other && report.profile.back === first.icon, "a picked icon is kept, and the one before comes back");
+  expect(entries.join() === "Rename,Edit,Remove", "a profile's menu is Rename, Edit, Remove");
+  expect(form.url === address && form.user === "admin", "Edit's form is filled from the profile");
+  expect(firstKept === true, "scrobbling switched on one profile leaves another's");
+  expect(services.length === 3, "Add scrobbler offers the services");
+  expect(albumsAfter > 0, "the profile open after a removal reads its library");
 }
 
 /** Plays album `id` from song `at` with a click, as a person would. */
@@ -170,6 +245,111 @@ if (!only || only.includes("play")) {
   expect(firstSoundMs < 1000, "the first Play sounds within a second");
   report.play = { firstSoundMs, song: n.song?.title, codecs: (await facts()).codecs, heardS: Math.round(after.seconds - before.seconds), dry: after.dry - before.dry, underruns: n.underruns };
   expect(after.seconds - before.seconds > 9 && after.dry === before.dry, "ten seconds play without running dry");
+}
+
+if (!only || only.includes("recolor")) {
+  // The appearance changed under an open page (the system going dark, then Midnight set): every layer
+  // (the paper, the page's words, Home's mix cards, the full player and the cover's wash behind it)
+  // recolors together and ends as the same view loaded fresh in that appearance.
+  if (!(await now())?.song) await playAlbum(album("Sung Album") ?? albums[0].id);
+  await ask("pause");
+  const views = {
+    home: { open: () => hash("#/home", "home"), layers: { paper: "html", page: ".shell", heading: "main h1", mix: ".mix", mixWords: ".mix .title" } },
+    // The bar draws its song once the player has it again: its cover is clicked until the player opens.
+    player: { open: () => page.waitForFunction(() => document.querySelector("#full") || void document.querySelector("#bar .art")?.click(), { timeout: 30000, polling: 200 }), layers: { paper: "html", full: "#full", fullWords: "#full .title" } },
+  };
+  /** Each layer's background and color now, and the middle of the full player's wash. */
+  const colors = (layers) =>
+    page.evaluate((l) => {
+      const out = {};
+      for (const [k, sel] of Object.entries(l)) {
+        const e = document.querySelector(sel);
+        out[k] = e ? `${getComputedStyle(e).backgroundColor} ${getComputedStyle(e).color}` : null;
+      }
+      const wash = document.querySelector("#full canvas.wash");
+      if (wash) out.wash = [...wash.getContext("2d").getImageData(wash.width >> 1, wash.height >> 1, 1, 1).data].join();
+      return out;
+    }, layers);
+  /** Opens `view` in a page loaded fresh in the appearance worn now, once it has its colors. */
+  async function fresh(view) {
+    await page.reload({ waitUntil: "load" });
+    await page.waitForFunction(() => window.nori.page !== undefined, { timeout: 60000 });
+    await views[view].open();
+    await page.waitForFunction((sels) => sels.every((s) => document.querySelector(s)), { timeout: 30000 }, Object.values(views[view].layers));
+  }
+  /** Until two readings 400 ms apart agree: whatever was changing has settled. */
+  async function settled(layers) {
+    let last = await colors(layers);
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 400));
+      const now_ = await colors(layers);
+      if (JSON.stringify(now_) === JSON.stringify(last)) return now_;
+      last = now_;
+    }
+  }
+  /** Switches the appearance with `change` while `view` is open: when each layer settled after the first
+   * frame anything changed, ms, and the colors it ended on. */
+  async function switched(view, change) {
+    const { layers } = views[view];
+    await page.evaluate((l) => {
+      const frames = (window.__recolor = []);
+      const t0 = performance.now();
+      const step = () => {
+        const f = { t: performance.now() - t0 };
+        for (const [k, sel] of Object.entries(l)) {
+          const e = document.querySelector(sel);
+          f[k] = e ? `${getComputedStyle(e).backgroundColor} ${getComputedStyle(e).color}` : null;
+        }
+        frames.push(f);
+        if (performance.now() - t0 < 2500) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }, layers);
+    await change();
+    const ended = await settled(layers);
+    const frames = await page.evaluate(() => window.__recolor);
+    const moved = frames.findIndex((f) => Object.keys(layers).some((k) => f[k] !== frames[0][k]));
+    const at = {};
+    for (const k of Object.keys(layers)) {
+      // A layer the change leaves as it was (Night's ink is Midnight's).
+      if (frames[0][k] === null || frames[0][k] === frames.at(-1)[k]) continue;
+      let i = frames.length - 1;
+      while (i > 0 && frames[i - 1][k] === frames.at(-1)[k]) i--;
+      at[k] = Math.round(frames[i].t - frames[Math.max(moved, 0)].t);
+    }
+    return { at, ended };
+  }
+  const scheme = (dark) => page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: dark ? "dark" : "light" }]);
+  const appearance = async (theme) => {
+    await ask("setting", "theme", theme);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  };
+  report.recolor = {};
+  for (const view of Object.keys(views)) {
+    for (const [name, before, change] of [
+      ["system dark", () => Promise.all([ask("setting", "theme", "SYSTEM"), scheme(false)]), () => scheme(true)],
+      ["system light", () => Promise.all([ask("setting", "theme", "SYSTEM"), scheme(true)]), () => scheme(false)],
+      ["midnight", () => ask("setting", "theme", "LIGHT"), () => appearance("MIDNIGHT")],
+      ["night from midnight", () => ask("setting", "theme", "MIDNIGHT"), () => appearance("DARK")],
+    ]) {
+      await before();
+      await fresh(view);
+      await settled(views[view].layers);
+      const { at, ended } = await switched(view, change);
+      await fresh(view);
+      const loaded = await settled(views[view].layers);
+      const stale = Object.keys(loaded).filter((k) => loaded[k] !== ended[k]);
+      const times = Object.values(at);
+      const spread = Math.max(...times) - Math.min(...times);
+      report.recolor[`${view}, ${name}`] = { settledMs: at, spread, stale };
+      expect(!stale.length, `${view}, ${name}: switched live it ends as loaded fresh (${stale.map((k) => `${k}: ${ended[k]} vs ${loaded[k]}`).join("; ")})`);
+      expect(spread <= 200, `${view}, ${name}: every layer recolors together (settled at ${JSON.stringify(at)} ms)`);
+    }
+  }
+  await page.emulateMediaFeatures([]);
+  await ask("setting", "theme", "SYSTEM");
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => window.nori.page !== undefined, { timeout: 60000 });
 }
 
 /** Opens pane `name` (lyrics, queue, devices, jam) in the side sheet, from the player bar. */

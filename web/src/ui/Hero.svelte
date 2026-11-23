@@ -6,11 +6,13 @@
   // page (not in Midnight).
   import type { Snippet } from "svelte";
   import { coverLook } from "../state/coverLook";
-  import { looks } from "../state/theme.svelte";
+  import { fade } from "svelte/transition";
+  import { looks, RECOLOR_MS } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
+  import { still } from "./motion";
 
   let {
     cover,
@@ -56,7 +58,8 @@
   });
 </script>
 
-{#if own}<div class="head-wash" aria-hidden="true"><canvas bind:this={washed}></canvas></div>{/if}
+<!-- Midnight wears none: it goes as the colors do. -->
+{#if own}<div class="head-wash" aria-hidden="true" out:fade={{ duration: still() ? 0 : RECOLOR_MS }}><canvas bind:this={washed}></canvas></div>{/if}
 <div class="hero" class:circle={round}>
   <div class="art"><Cover src={cover} {round} radius="var(--r-card)" {fallback} /></div>
   <div class="text">

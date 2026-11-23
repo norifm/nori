@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Adding a scrobbling account to the profile signed in, on the shell's dialog card: the services to
+  // Adding a scrobbling account to saved profile `profile`, on the shell's dialog card: the services to
   // pick from, then the picked one's fields (`scrobbler_kinds`), its address folded under Advanced. A
   // service signing in on its page opens it for the user to allow nori, then Done signs in; the core
   // does both (`Client::scrobbler_approval`, `Client::sign_in_scrobbler`).
@@ -8,7 +8,7 @@
   import { W } from "../words";
   import Icon from "./Icon.svelte";
 
-  let { kinds, close, added }: { kinds: ScrobblerKindForm[]; close: () => void; added: () => void } = $props();
+  let { profile, kinds, close, added }: { profile: string; kinds: ScrobblerKindForm[]; close: () => void; added: () => void } = $props();
   let dialog = $state<HTMLDialogElement>();
   $effect(() => dialog?.showModal());
   let asks = $state<ScrobblerKindForm | null>(null);
@@ -46,7 +46,7 @@
         if (tab) tab.location.href = a.page;
         else window.open(a.page, "_blank");
       } else {
-        await ask("scrobbler_add", asks.kind, fields, approved);
+        await ask("scrobbler_add", profile, asks.kind, fields, approved);
         added();
       }
     } catch (err) {
@@ -107,7 +107,7 @@
       <div class="end">
         <button type="button" class="text-action" onclick={() => (asks = null)}>{W.back}</button>
         <button class="text-action" disabled={busy || !ready}>
-          {busy ? W.scrobblerAdding : !browser ? W.scrobblerAdd : approved ? W.done : W.scrobblerContinue(asks.kind)}
+          {busy ? W.connecting : !browser ? W.add : approved ? W.done : W.scrobblerContinue(asks.kind)}
         </button>
       </div>
     </form>

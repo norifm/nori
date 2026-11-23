@@ -12,7 +12,7 @@
   import { tick } from "svelte";
   import { ask } from "../rpc";
   import { route } from "../state/route.svelte";
-  import { today, worn } from "../state/theme.svelte";
+  import { looks, today, worn } from "../state/theme.svelte";
   import { W } from "../words";
   import Page from "../ui/Page.svelte";
   import Icon from "../ui/Icon.svelte";
@@ -20,7 +20,10 @@
   type Choice = { currency: string; digits: number; monthly: boolean; offered: number[]; pick: number; other: string; typed: { least?: number; most?: number } | null; amount: number | null };
   type Book = { key: string; test: boolean; seals: { season: number; tilt: number }[]; next: number; running: boolean; ends: number | null; currencies: string[]; first: Choice };
   type Stripe = {
-    elements: (o: object) => { create: (kind: string, o?: object) => { mount: (el: HTMLElement) => void; on: (event: "change", then: (e: { complete: boolean; value: { email?: string } }) => void) => void } };
+    elements: (o: object) => {
+      create: (kind: string, o?: object) => { mount: (el: HTMLElement) => void; on: (event: "change", then: (e: { complete: boolean; value: { email?: string } }) => void) => void };
+      update: (o: object) => void;
+    };
     confirmPayment: (o: object) => Promise<{ error?: { message?: string } }>;
   };
 
@@ -90,6 +93,11 @@
   /** The email the payment gives, once typed whole: Stripe's receipts go to it, and it signs in on Stripe's page. */
   let email = $state("");
   let elements: ReturnType<Stripe["elements"]> | null = null;
+  // Stripe's form changes with the page's colors.
+  $effect(() => {
+    void looks.rev;
+    elements?.update({ appearance: appearance() });
+  });
   let said = $state("");
 
   function stripeJs(key: string): Promise<Stripe> {
@@ -104,10 +112,10 @@
     });
   }
 
-  /** Stripe's form in the page's own paper, ink, accent and corners. */
+  /** Stripe's form in the page's own paper, ink, accent and corners: the colors the page is changing to
+   * (theme.ts sets them on the root), not where a change has got to. */
   function appearance() {
-    const css = getComputedStyle(document.documentElement);
-    const v = (name: string) => css.getPropertyValue(name).trim();
+    const v = (name: string) => document.documentElement.style.getPropertyValue(name).trim();
     return {
       theme: "flat",
       variables: { colorPrimary: v("--accent"), colorBackground: v("--surface"), colorText: v("--ink"), colorTextSecondary: v("--ink2"), fontFamily: "Inter, system-ui, sans-serif", borderRadius: "12px" },

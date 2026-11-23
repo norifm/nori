@@ -4,9 +4,12 @@
   // the page as the page scrolls and fades as it goes. Over its foot, centered, the name and, as Android's
   // and the desktop's pages, Shuffle as a bare glyph, Play as the ink pill, then the page's own buttons. The page and the chrome wear the picture's colors while it is open.
   import type { Snippet } from "svelte";
+  import { fade } from "svelte/transition";
   import { lendCover } from "../state/lend.svelte";
+  import { RECOLOR_MS } from "../state/theme.svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
+  import { still } from "./motion";
 
   let { name, cover, picture, onplay, actions }: { name: string; cover?: string; picture?: string; onplay: (shuffle: boolean) => void; actions?: Snippet } = $props();
 
@@ -18,9 +21,13 @@
   });
 
   function paint(canvas: HTMLCanvasElement, w: ImageData) {
-    canvas.width = w.width;
-    canvas.height = w.height;
-    canvas.getContext("2d")?.putImageData(w, 0, 0);
+    const draw = (w: ImageData) => {
+      canvas.width = w.width;
+      canvas.height = w.height;
+      canvas.getContext("2d")?.putImageData(w, 0, 0);
+    };
+    draw(w);
+    return { update: draw };
   }
 
   // How far the page has scrolled: the picture keeps 55 % of it back, and fades to a fifth over its height.
@@ -41,7 +48,8 @@
 </script>
 
 <div class="banner" bind:this={banner} aria-hidden="true">
-  {#if lent.look?.own}{#key lent.look.own}<canvas class="wash" use:paint={lent.look.own}></canvas>{/key}{/if}
+  <!-- Another picture's wash comes in afresh; the same one's goes as the colors do (Midnight wears none). -->
+  {#if lent.look?.own}{#key lent.look.cover}<canvas class="wash" use:paint={lent.look.own} out:fade={{ duration: still() ? 0 : RECOLOR_MS }}></canvas>{/key}{/if}
   {#if picture}<img src={picture} alt="" class:loaded onload={() => (loaded = true)} />{/if}
 </div>
 <header class="head">

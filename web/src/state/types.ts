@@ -138,10 +138,14 @@ export type Equalizer = {
 
 /** What a profile's circle shows (the core's `ProfileIcon`): its letter, its provider's mark, or a face. */
 export type ProfileIcon = "Letter" | "Provider" | "Sing" | "Surprise" | "Talking" | "LookUp" | "Satisfied" | "Think";
-/** The profile signed in (the worker's `profile`): `letter` the one `Letter` shows, `icons` the picker's in
- * its order, `picks` whether its icon may be changed here. */
-export type Profile = { url: string; user: string; icon: ProfileIcon; letter: string; icons: ProfileIcon[]; picks: boolean };
-/** A scrobbling account of the profile signed in (`scrobblers`): `host` is empty for the kind's own service. */
+/** A saved profile (the worker's `profiles`): `label` its name or its address's host, `letter` the one
+ * `Letter` shows, `on` the one open. */
+export type Profile = { id: string; label: string; user: string; host: string; icon: ProfileIcon; letter: string; on: boolean };
+/** The saved profiles in their order, the icons a circle can show in the picker's order, and whether they may
+ * be changed here (a jam guest's are its host's). */
+export type Profiles = { picks: boolean; icons: ProfileIcon[]; list: Profile[] };
+/** Where a profile's plays go (`scrobblers`): its own server (null where it takes none), then its accounts. */
+export type Scrobbling = { itself: { on: boolean } | null; list: Scrobbler[] };
 export type ScrobblerKind = "listenbrainz" | "librefm" | "lastfm";
 /** What adding an account asks (`scrobbler_kinds`), in order. */
 export type ScrobblerField = "token" | "apiKey" | "secret" | "user" | "password" | "address";
@@ -153,4 +157,5 @@ export type ScrobblerKindForm = {
   help: string | null;
   fields: { id: ScrobblerField; required: boolean; advanced: boolean }[];
 };
+/** A scrobbling account of a profile: `host` is empty for the kind's own service. */
 export type Scrobbler = { id: string; kind: ScrobblerKind; user: string; host: string; on: boolean };

@@ -8,6 +8,7 @@
   import { drawn } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
   import { route } from "../state/route.svelte";
+  import { worn } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
   import TopPill from "./TopPill.svelte";
   import TabBar from "./TabBar.svelte";
@@ -66,7 +67,7 @@
   });
 </script>
 
-<div class="shell tinted" style={ui.tint?.vars} style:--bar-h={ui.wide ? null : playing ? "132px" : "76px"}>
+<div class="shell tinted recolors" style={ui.tint?.vars ?? worn.vars} style:--bar-h={ui.wide ? null : playing ? "132px" : "76px"}>
   <main id="main">
     {#if pages[route.top]}
       {#await pages[route.top]() then m}<m.default {...props} />{/await}
@@ -93,20 +94,13 @@
 {#if ui.toast}<div class="toast" role="status">{ui.toast}</div>{/if}
 
 <style>
-  /* A page about one cover lends it its colors (`ui.tint`): the page and the chrome cross-fade to them. */
+  /* The season's colors, or those a page about one cover lends it (`ui.tint`): the page and the chrome
+     cross-fade to them (`recolors`). */
   .shell {
     position: fixed;
     inset: 0;
     background: var(--page);
     color: var(--ink);
-    transition:
-      --page 420ms,
-      --surface 420ms,
-      --ink 420ms,
-      --ink2 420ms,
-      --hair 420ms,
-      --outline 420ms,
-      --accent 420ms;
   }
   /* The page scrolls under the chrome, which floats over it. */
   main {

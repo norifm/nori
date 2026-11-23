@@ -6,9 +6,10 @@ import { today } from "./theme.svelte";
 
 const SIDE = 64;
 
-/** The CSS custom properties to wear (the page's roles, the artwork's dissolve), the cover blurred and dyed to
- * lie behind the player, the same undyed for a page's head, and where the player's sleeve starts to fade. */
-export type CoverLook = { vars: string; wash: ImageData | null; own: ImageData | null; melt: number };
+/** The cover's address, the CSS custom properties to wear (the page's roles, the artwork's dissolve), the
+ * cover blurred and dyed to lie behind the player, the same undyed for a page's head, and where the
+ * player's sleeve starts to fade. */
+export type CoverLook = { cover: string; vars: string; wash: ImageData | null; own: ImageData | null; melt: number };
 
 type Colors = {
   page: string;
@@ -44,7 +45,7 @@ export async function coverLook(src: string): Promise<CoverLook | null> {
     const dissolve = `linear-gradient(to bottom, transparent ${a}, ${c.heroEdge} ${b}, ${c.heroMid} ${m}, ${c.page})`;
     const vars = `--page:${c.page};--surface:${c.surface};--ink:${c.ink};--ink2:${c.ink2};--outline:${c.outline};--hair:${c.hair};--accent:${c.accent};--on-accent:${c.onAccent};--dissolve:${dissolve}`;
     const image = (px: Uint8ClampedArray | null) => (px && c.washSide ? new ImageData(new Uint8ClampedArray(px), c.washSide, c.washSide) : null);
-    return { vars, wash: image(wash), own: image(own), melt: c.melt };
+    return { cover: src, vars, wash: image(wash), own: image(own), melt: c.melt };
   } catch {
     return null;
   }

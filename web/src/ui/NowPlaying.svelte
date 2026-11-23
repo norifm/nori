@@ -8,7 +8,7 @@
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
   import { href } from "../state/route.svelte";
-  import { looks } from "../state/theme.svelte";
+  import { looks, RECOLOR_MS, worn } from "../state/theme.svelte";
   import { beside, pointer, ui, type Pane } from "../state/ui.svelte";
   import { remote } from "../state/remote.svelte";
   import { W } from "../words";
@@ -40,14 +40,21 @@
     void songMenu(s, pointer(e), { inPlayer: true });
   };
 
-  // The cover's colors and wash; the page's own until they come.
+  // The cover's colors and wash; the season's until they come.
   let look = $state<CoverLook | null>(null);
+  /** The look last changed for the paper under the same cover (the appearance), not for another song's. */
+  let recolored = $state(false);
   $effect(() => {
     void looks.rev;
     const src = cover;
     let gone = false;
-    if (src) void coverLook(src).then((l) => !gone && (look = l));
-    else look = null;
+    const wear = (l: CoverLook | null) => {
+      if (gone) return;
+      recolored = look?.cover === src;
+      look = l;
+    };
+    if (src) void coverLook(src).then(wear);
+    else wear(null);
     return () => (gone = true);
   });
   /** Draws a wash into its canvas. */
@@ -59,9 +66,10 @@
   const still = () => document.documentElement.classList.contains("still");
 </script>
 
-<div class="full tinted" class:wide={ui.wide} class:paned={!!pane} role="dialog" aria-modal="true" aria-label={s.title} id="full" style={look?.vars}>
-  <!-- The next song's wash fades in over the last one's, as the desktop's two layers cross. -->
-  {#key look?.wash}{#if look?.wash}<canvas class="wash" use:paint={look.wash} transition:fade={{ duration: still() ? 0 : 800 }} aria-hidden="true"></canvas>{/if}{/key}
+<div class="full tinted recolors" class:wide={ui.wide} class:paned={!!pane} role="dialog" aria-modal="true" aria-label={s.title} id="full" style={look?.vars ?? worn.vars}>
+  <!-- The next song's wash fades in over the last one's, as the desktop's two layers cross; the same
+       cover's dyed on new paper crosses as the colors do. -->
+  {#key look?.wash}{#if look?.wash}<canvas class="wash" use:paint={look.wash} transition:fade={{ duration: still() ? 0 : recolored ? RECOLOR_MS : 800 }} aria-hidden="true"></canvas>{/if}{/key}
   <button class="close" aria-label={W.back} title={W.back} onclick={close}><Icon name="arrow-left" /></button>
   {#if ui.wide}
     <section class="left">
@@ -132,15 +140,6 @@
     color: var(--ink);
     overflow: hidden;
     animation: shown 300ms ease-out;
-    /* The next song's colors cross-fade in, as the desktop's look does. */
-    transition:
-      --page 340ms,
-      --surface 340ms,
-      --ink 340ms,
-      --ink2 340ms,
-      --hair 340ms,
-      --outline 340ms,
-      --accent 340ms;
   }
   @keyframes shown {
     from {

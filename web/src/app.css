@@ -51,6 +51,17 @@
   inherits: true;
   initial-value: transparent;
 }
+/* A mix card's paper and ink (MixCard), so its words, its fade and its paper change together. */
+@property --card {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --card-ink {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
 
 :root {
   /* The system's until the core's palette arrives (theme.ts sets these on the element itself). */
@@ -101,18 +112,22 @@
   --chrome: color-mix(in srgb, var(--ink) 20%, transparent);
 }
 
+/* Where the colors are set (theme.ts on :root; the shell, the full player and a card wearing the season's or
+   a cover's), new ones cross-fade in, all over the same time; what inherits them follows in the same
+   frames. Never where they are inherited: a transition there starts again on every frame of its parent's
+   and trails behind it. Not before the first colors are in (`themed`). */
 :root.themed,
-:root.themed body {
+:root.themed .recolors {
   transition:
-    --page 340ms,
-    --surface 340ms,
-    --ink 340ms,
-    --ink2 340ms,
-    --hair 340ms,
-    --outline 340ms,
-    --accent 340ms,
-    --on 340ms,
-    --on-accent 340ms;
+    --page var(--recolor),
+    --surface var(--recolor),
+    --ink var(--recolor),
+    --ink2 var(--recolor),
+    --hair var(--recolor),
+    --outline var(--recolor),
+    --accent var(--recolor),
+    --on var(--recolor),
+    --on-accent var(--recolor);
 }
 
 @media (max-width: 719px) {
@@ -299,6 +314,12 @@ button.group-row:hover:enabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Its quiet line wraps, the row growing with it; the title stays on one line. */
+.group-row .words > .sub:not(.clip) {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .group-row .value {

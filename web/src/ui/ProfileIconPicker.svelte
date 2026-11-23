@@ -5,7 +5,7 @@
   import { W } from "../words";
   import ProfileMark from "./ProfileMark.svelte";
 
-  let { profile, pick, close }: { profile: Profile; pick: (icon: ProfileIcon) => void; close: () => void } = $props();
+  let { profile, icons, pick, close }: { profile: Profile; icons: ProfileIcon[]; pick: (icon: ProfileIcon) => void; close: () => void } = $props();
   let dialog = $state<HTMLDialogElement>();
   $effect(() => dialog?.showModal());
 </script>
@@ -13,7 +13,7 @@
 <dialog class="card" id="profile-icons" bind:this={dialog} onclose={close}>
   <h2>{W.profileIcon}</h2>
   <div class="icons" role="radiogroup" aria-label={W.profileIcon}>
-    {#each profile.icons as icon (icon)}
+    {#each icons as icon (icon)}
       {@const on = icon === profile.icon}
       <button
         class="pick"
@@ -24,8 +24,8 @@
         title={W.profileIcons[icon] ?? icon}
         data-icon={icon}
         onclick={() => {
-          close();
           if (!on) pick(icon);
+          close();
         }}><ProfileMark {icon} letter={profile.letter} side={46} /></button
       >
     {/each}

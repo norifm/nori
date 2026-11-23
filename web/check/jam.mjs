@@ -175,7 +175,7 @@ if (!only || only.includes("jam")) {
   // The host ends the jam; the guest leaves its guest profile.
   await ask(host, "jam_close");
   await until(guest, async () => JSON.parse(await window.ask("jam"))?.guest !== true, null, 60000);
-  report.ended = { guestProfile: await json(guest, "profile") };
+  report.ended = { guestProfile: (await json(guest, "profiles")).list.find((p) => p.on) ?? null };
   expect(!(await json(guest, "jam"))?.guest, "the guest leaves when the host ends the jam");
 }
 

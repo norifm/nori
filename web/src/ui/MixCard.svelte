@@ -39,7 +39,10 @@
     overflow: hidden;
     background: var(--card);
     color: var(--card-ink);
-    transition: background 240ms ease-out;
+    /* A new paper (the appearance changed): the card, its fade and its name change with the page. */
+    transition:
+      --card var(--recolor),
+      --card-ink var(--recolor);
   }
   .art {
     position: relative;

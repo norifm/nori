@@ -21,9 +21,13 @@ const VARS: [keyof Colors, string][] = [
   ["onAccent", "--on-accent"],
 ];
 
-/** The calendar's season now (SPRING ... WINTER) and the next one with its first day, and the seasons'
- * tiles, as the core last said. */
-export const worn = $state({ season: "AUTUMN", next: "WINTER", nextMonth: 11, nextDay: 7, tiles: [] as Tile[] });
+/** How long the page takes to change to new colors (a season, an appearance, a cover's), ms: everything
+ * dyed on the paper changes over the same time, from the same frame. */
+export const RECOLOR_MS = 340;
+
+/** The calendar's season now (SPRING ... WINTER) and the next one with its first day, the seasons' tiles,
+ * as the core last said, and its colors as CSS custom properties, for what wears them itself. */
+export const worn = $state({ season: "AUTUMN", next: "WINTER", nextMonth: 11, nextDay: 7, tiles: [] as Tile[], vars: "" });
 
 /** What the core works a theme out from: the browser's date and zone, and its color scheme. */
 export function today(): [number, number, string, boolean] {
@@ -36,6 +40,7 @@ function apply(c: Colors) {
   Object.assign(worn, c.next ? { season: c.season, next: c.next, nextMonth: c.nextMonth, nextDay: c.nextDay } : { season: c.season }, c.tiles ? { tiles: c.tiles } : {});
   const root = document.documentElement;
   for (const [k, v] of VARS) root.style.setProperty(v, c[k] as string);
+  worn.vars = VARS.map(([k, v]) => `${v}:${c[k]}`).join(";");
   root.style.colorScheme = c.dark ? "dark" : "light";
   // nori's Motion setting, as on every client: animations run unless it asks for less.
   root.classList.toggle("still", !!c.still);
@@ -77,6 +82,7 @@ export const looks = $state({ rev: 0 });
 
 /** Wears the colors from last time and keeps them current once the core is up (`refreshTheme`). */
 export function startTheme() {
+  document.documentElement.style.setProperty("--recolor", `${RECOLOR_MS}ms`);
   remembered();
   document.addEventListener("visibilitychange", () => !document.hidden && void refreshTheme().catch(() => {}));
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => void refreshTheme().catch(() => {}));
