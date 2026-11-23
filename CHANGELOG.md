@@ -6,6 +6,48 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-23
+
+nori 1.0 is the first major release of nori.
+
+nori plays from your Navidrome, Subsonic, OpenSubsonic, or octo-fiesta server, and from YouTube Music and SoundCloud through plugins. It runs on Android phones and Android TV, Windows, macOS, Linux, the terminal, and the iPod touch, all over one Rust core and the same Nori Seasons design.
+
+What 1.0 ships with:
+
+- Battery-first playback with hardware offload on Android and nothing polling while the screen is off
+- Gapless albums, beat-matched AutoMix (Smooth and DJ), an equalizer with AutoEQ curves, and per-output sound profiles
+- Synced lyrics from your server and online services, timed against the singing
+- Remote control between your devices, shared jams via link or QR code, offline downloads, and scrobbling to ListenBrainz, Libre.fm, and Last.fm
+- Plugins for music sources, headphone controls, extra sounds, and AutoMix tuning, with no account and no analytics
+
+### New since 0.9.5
+
+- First-run setup walks you through picking your music sources (or restoring a backup), AutoMix behavior, mobile data quality, and appearance and season (#171)
+- Support nori voluntarily with a one-time or monthly payment in **Settings › Support nori** or at [support.norifm.com](https://support.norifm.com), collecting a seal in your stamp book for each payment. Monthly support can be stopped or resumed in the app or on the site (#166, #168, #169, #172)
+- **Get plugins** groups plugins into category pages (**Services**, **Devices**, **Playback**, **More**) (#170)
+- Plugin repos can be added by GitHub `user/repo` and renamed (#173)
+- Safe mode explains why plugins were stopped and offers a restart, and force-stopping nori no longer trips safe mode
+
+### Performance and size
+
+- Android release APKs ship a stripped core, cutting APK size by 11 MB
+- **Home** renders whole on its first frame with cached covers and colors
+- The full player opens smoothly on the first frame, including on battery saver, and Back waits for the transition to settle
+- Startup no longer waits two seconds when a Bluetooth plugin is enabled
+
+### Fixed
+
+- Restored queues keep shuffle, repeat, and **Play next** songs (#167)
+- **Play when Bluetooth connects** starts playback reliably (#167)
+- Seeking near an AutoMix transition keeps the mix instead of skipping
+- Async calls no longer crash under hardened memory allocators (#165)
+- A sheet from a page underneath no longer freezes touches and Back
+- The full player opens without a bounce after a slow drag, snaps its cover and colors on resume, and recenters on takeover
+- Bluetooth device retries no longer overlap
+- Installing a plugin shows **Installing** while it downloads and asks once
+- Restoring a backup during first-run setup opens straight into its profiles, and source rows stay in place while their plugins install
+- The desktop app keeps its search bar wide while the preview is open and shows when the next season begins
+
 ## [0.9.5] - 2026-11-19
 
 ### Added
