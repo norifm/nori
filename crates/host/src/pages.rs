@@ -177,11 +177,6 @@ impl Handle {
         self.client.home_rows()
     }
 
-    /// [`Handle::home_rows`] that are shelves of albums, for a Home that draws only albums.
-    pub fn home_album_rows(&self) -> Vec<HomeRow> {
-        self.home_rows().into_iter().filter(|&r| matches!(home_shelves(vec![r])[..], [HomeShelf::Albums { .. }])).collect()
-    }
-
     /// Reads Home on a thread of its own: with `mixes`, "For you" first; then a source's own (its feed),
     /// else the shelves of `rows` (some of [`Handle::home_rows`]). Everything stored comes at once, then the
     /// server's answers where they differ; a shelf with nothing stored comes once the server answers, empty

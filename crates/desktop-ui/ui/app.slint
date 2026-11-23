@@ -419,11 +419,16 @@ export struct Pick {
     ink: color,
 }
 
+// How a Home section is drawn (app.rs's `home_shapes`): a row of cards, two rows of small tiles, or songs as
+// rows in columns.
+export enum ShelfShape { cards, tiles, songs }
+
 export struct Shelf {
     title: string,
     cards: [Card],
     // Read (with or without cards): until then the shelf holds its place with plates.
     loaded: bool,
+    shape: ShelfShape,
 }
 
 // The chrome's geometry (the compositor's layout, compositor.rs, which must match) and its look.
@@ -1704,36 +1709,80 @@ component CollectionMenu inherits PopupWindow {
     }
 }
 
-// An album, artist or playlist in a grid or on a shelf: the artwork, and the title and the artist under
-// it. The pointer over it brings a play button onto the artwork, as Music does.
-component CardView inherits Rectangle {
+// An item of a Home section that a newer answer moves (`Card::shift`, `Card::new`): one it kept slides from
+// its old place to `at`, its new one, in a section of `rows` to a column, columns `step` apart and rows `drop`
+// apart; a new one fades in. A scroll, which changes `at`, moves nothing. Placed elsewhere (no `at`), it stays.
+component Moving inherits Rectangle {
     in property <Card> card;
+    in property <int> at: -1;
+    in property <int> rows: 1;
+    in property <length> step;
+    in property <length> drop;
+    // How far it is from where it was.
+    out property <length> dx: (floor(root.from / root.rows) - floor(root.at / root.rows)) * root.step * (1 - root.moved);
+    out property <length> dy: (mod(root.from, root.rows) - mod(root.at, root.rows)) * root.drop * (1 - root.moved);
+    property <int> from: root.at + root.card.shift;
+    property <int> seen: -1;
+    property <float> moved: 1;
+    property <bool> jump;
+    animate moved { duration: self.jump || Motion.reduced ? 0ms : 320ms; easing: cubic-bezier(0.2, 0.8, 0.3, 1); }
+    opacity: root.card.new ? root.moved : 1;
+    changed card => {
+        if root.at >= 0 && root.at == root.seen && (root.card.shift != 0 || root.card.new) {
+            root.jump = true;
+            root.moved = 0;
+            root.jump = false;
+            root.moved = 1;
+        }
+        root.seen = root.at;
+    }
+    init => { root.seen = root.at; }
+}
+
+// An album, artist or playlist in a grid or on a shelf: the artwork, and the title and the artist under
+// it. The pointer over it brings a play button onto the artwork, as Music does. As a `tile` (Home's recent
+// items, as Spotify's) it is a small plate a step above the page: the artwork inset at its start, the words
+// beside it, and the play button at its end.
+component CardView inherits Moving {
     in property <image> picture;
     in property <bool> round;
     in property <bool> playable: !root.round;
     in property <length> side: 176px;
+    in property <bool> tile;
     callback open;
     callback play;
     // Its menu's lines: next (true) or at the end of the queue, and play it with a jam.
     callback queue(bool);
     callback jam;
+    // The artwork's side, and where the words start.
+    property <length> cover: root.tile ? root.height - 12px : root.side;
+    property <length> words-x: root.tile ? root.cover + 18px : 0;
+    property <length> words-w: root.tile ? root.width - root.words-x - (root.playable ? 54px : 12px) : root.side;
+    property <bool> on-play;
+    property <bool> hovered: touch.has-hover || root.on-play;
     width: root.side;
-    height: root.side + 46px;
+    height: root.tile ? 64px : root.side + 46px;
+    // The tile's corners are its artwork's and the inset round it.
+    border-radius: root.tile ? 10px : 0;
+    background: !root.tile ? transparent : root.hovered ? Theme.raised : Theme.panel;
+    animate background { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
     Art {
-        y: 0;
-        width: root.side;
-        height: root.side;
+        x: root.tile ? 6px : 0;
+        y: root.tile ? 6px : 0;
+        width: root.cover;
+        height: root.cover;
         source: root.picture;
-        border-radius: root.round ? self.width / 2 : 12px;
+        border-radius: root.round ? self.width / 2 : root.tile ? 4px : 12px;
         Rectangle {
             border-radius: parent.border-radius;
-            background: touch.has-hover ? Theme.ground.with-alpha(0.25) : transparent;
+            background: touch.has-hover && !root.tile ? Theme.ground.with-alpha(0.25) : transparent;
             animate background { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
         }
     }
     Text {
-        y: root.side + 8px;
-        width: root.side;
+        x: root.words-x;
+        y: root.tile ? 13px : root.side + 8px;
+        width: root.words-w;
         text: root.card.title;
         color: Theme.text;
         font-size: 14px;
@@ -1754,8 +1803,9 @@ component CardView inherits Rectangle {
         }
     }
     Link {
-        y: root.side + 26px;
-        width: root.side;
+        x: root.words-x;
+        y: root.tile ? 32px : root.side + 26px;
+        width: root.words-w;
         text: root.card.sub;
         artist: root.card.sub-artist;
         color: Theme.dim;
@@ -1781,10 +1831,10 @@ component CardView inherits Rectangle {
         jam => { root.jam(); }
     }
     if root.playable: Rectangle {
-        x: 10px;
-        y: root.side - self.height - 10px;
-        opacity: touch.has-hover || play-touch.has-hover ? 1 : 0;
-        transform-scale: touch.has-hover || play-touch.has-hover ? 1 : 0.8;
+        x: root.tile ? root.width - self.width - 15px : 10px;
+        y: root.tile ? (root.height - self.height) / 2 : root.side - self.height - 10px;
+        opacity: root.hovered ? 1 : 0;
+        transform-scale: root.hovered ? 1 : 0.8;
         animate opacity, transform-scale { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
         width: 34px;
         height: 34px;
@@ -1802,6 +1852,7 @@ component CardView inherits Rectangle {
         play-touch := TouchArea {
             enabled: parent.opacity > 0.5;
             clicked => { root.play(); }
+            changed has-hover => { root.on-play = self.has-hover; }
         }
     }
 }
@@ -2114,26 +2165,37 @@ component ReleaseShelves inherits VerticalLayout {
 // A shelf of cards that scrolls sideways, under its title, as Music's: as many whole cards as fit across
 // the page (grown a little to reach both edges), paged by the arrows over its sides while the pointer is on
 // it. Until its cards are read it holds its place with plates, so the page does not shift as rows arrive.
-// The cards are its children, placed at `gap + i * step` and `side` wide.
+// Its `shape` lays the items in columns: one card each, two tiles, or four songs as rows; the children are
+// the columns (or the cards), placed at `gap + i * step` and `side` wide, their items `drop` apart.
 component ShelfView inherits VerticalLayout {
     in property <string> title;
+    // How many items it holds.
     in property <int> count;
     // Its title opens the whole row.
     in property <bool> more;
     callback show-all;
     in property <bool> loading;
     in property <bool> round;
+    in property <ShelfShape> shape: ShelfShape.cards;
     // A card's narrowest, and the height under its square (its captions).
     in property <length> least: 176px;
     in property <length> below: 46px;
-    out property <length> gap: 22px;
+    out property <length> gap: root.shape == ShelfShape.tiles ? 12px : 22px;
+    // The items in a column, and how far one is below the one before.
+    out property <int> rows: root.shape == ShelfShape.tiles ? 2 : root.shape == ShelfShape.songs ? 4 : 1;
+    out property <length> drop: root.shape == ShelfShape.tiles ? 76px : 56px;
     // The room it keeps at each side of the page.
     in property <length> pad: 32px;
-    property <int> columns: max(2, floor((self.width - root.pad * 2 + root.gap) / (root.least + root.gap)));
+    // A column's narrowest: a tile still shows a name beside its artwork, a song its title and artist.
+    property <length> narrowest: root.shape == ShelfShape.tiles ? 240px : root.shape == ShelfShape.songs ? 320px : root.least;
+    property <int> columns: max(2, floor((self.width - root.pad * 2 + root.gap) / (root.narrowest + root.gap)));
     out property <length> side: (self.width - root.pad * 2 - (root.columns - 1) * root.gap) / root.columns;
     out property <length> step: root.side + root.gap;
+    // The columns' height: a card with its words, or its items.
+    out property <length> band: root.shape == ShelfShape.cards ? root.side + root.below : root.shape == ShelfShape.tiles ? root.drop + 64px : root.rows * root.drop;
+    property <int> lines: ceil(root.count / root.rows);
     out property <int> first: max(0, floor(-flick.content-x / root.step) - 1);
-    out property <int> visible-count: max(0, min(root.count - root.first, ceil(root.seen / root.step) + 2));
+    out property <int> visible-count: max(0, min(root.lines - root.first, ceil(root.seen / root.step) + 2));
     // Off screen, a shelf draws no cards.
     in property <bool> live: true;
     // The cards drawn, held at the count as Grid's are.
@@ -2142,7 +2204,7 @@ component ShelfView inherits VerticalLayout {
     init => { root.hold(); }
     changed visible-count => { root.hold(); }
     changed live => { root.hold(); }
-    property <int> shown: root.loading ? root.columns : root.count;
+    property <int> shown: root.loading ? root.columns : root.lines;
     // The row is seen from a gap before the left margin to a gap past the right one, so the cards beside
     // the whole ones are not glimpsed; it scrolls until its last card stands at the right margin.
     property <length> inset: root.pad - root.gap;
@@ -2167,7 +2229,7 @@ component ShelfView inherits VerticalLayout {
         }
     }
     hover := TouchArea {
-        height: root.side + root.below;
+        height: root.band;
         flick := Flickable {
             x: root.inset;
             width: root.seen;
@@ -2177,27 +2239,62 @@ component ShelfView inherits VerticalLayout {
                 for i in root.columns: Rectangle {
                     x: root.gap + i * root.step;
                     width: root.side;
-                    Rectangle {
-                        y: 0;
-                        height: root.side;
-                        border-radius: root.round ? self.width / 2 : 8px;
-                        background: Theme.fill;
+                    if root.shape == ShelfShape.cards: Rectangle {
+                        Rectangle {
+                            y: 0;
+                            height: root.side;
+                            border-radius: root.round ? self.width / 2 : 8px;
+                            background: Theme.fill;
+                        }
+                        Rectangle {
+                            y: root.side + 12px;
+                            width: root.side * 0.7;
+                            x: 0;
+                            height: 9px;
+                            border-radius: 4.5px;
+                            background: Theme.fill;
+                        }
+                        Rectangle {
+                            y: root.side + 29px;
+                            width: root.side * 0.45;
+                            x: 0;
+                            height: 9px;
+                            border-radius: 4.5px;
+                            background: Theme.hairline;
+                        }
                     }
-                    Rectangle {
-                        y: root.side + 12px;
-                        width: root.side * 0.7;
-                        x: 0;
-                        height: 9px;
-                        border-radius: 4.5px;
-                        background: Theme.fill;
-                    }
-                    Rectangle {
-                        y: root.side + 29px;
-                        width: root.side * 0.45;
-                        x: 0;
-                        height: 9px;
-                        border-radius: 4.5px;
-                        background: Theme.hairline;
+                    // A tile's plate with its artwork's, or a song's artwork and its two lines.
+                    if root.shape != ShelfShape.cards: Rectangle {
+                        for r in root.rows: Rectangle {
+                            y: r * root.drop;
+                            height: root.shape == ShelfShape.tiles ? 64px : root.drop;
+                            border-radius: 10px;
+                            background: root.shape == ShelfShape.tiles ? Theme.panel : transparent;
+                            Rectangle {
+                                x: root.shape == ShelfShape.tiles ? 6px : 0;
+                                y: (parent.height - self.height) / 2;
+                                width: self.height;
+                                height: root.shape == ShelfShape.tiles ? 52px : 44px;
+                                border-radius: 4px;
+                                background: Theme.fill;
+                            }
+                            Rectangle {
+                                x: root.shape == ShelfShape.tiles ? 70px : 56px;
+                                y: parent.height / 2 - 12px;
+                                width: (root.side - self.x) * 0.55;
+                                height: 9px;
+                                border-radius: 4.5px;
+                                background: Theme.fill;
+                            }
+                            Rectangle {
+                                x: root.shape == ShelfShape.tiles ? 70px : 56px;
+                                y: parent.height / 2 + 4px;
+                                width: (root.side - self.x) * 0.35;
+                                height: 9px;
+                                border-radius: 4.5px;
+                                background: Theme.hairline;
+                            }
+                        }
                     }
                 }
             }
@@ -2210,7 +2307,7 @@ component ShelfView inherits VerticalLayout {
         for b[i] in [{ by: -1, glyph: Icons.nav-arrow-left }, { by: 1, glyph: Icons.nav-arrow-right }]: Rectangle {
             property <bool> shown: hover.has-hover && (b.by < 0 ? flick.content-x < 0 : flick.content-x > root.end);
             x: b.by < 0 ? root.pad - self.width / 2 : root.width - root.pad - self.width / 2;
-            y: (root.side - self.height) / 2;
+            y: ((root.shape == ShelfShape.cards ? root.side : root.band) - self.height) / 2;
             width: 34px;
             height: 34px;
             border-radius: 17px;
@@ -2483,6 +2580,46 @@ component SongMenuBody inherits Popover {
     }
 }
 
+// A song row's menu: its `lines` (`menu` gives them anew) under the song, a line chosen done (`act`) and the
+// menu left open where the line only switches a state.
+component SongPopup inherits PopupWindow {
+    in property <image> picture;
+    in property <string> title;
+    in property <string> line;
+    in-out property <[SongGo]> lines;
+    callback play;
+    callback menu() -> [SongGo];
+    callback act(int, string);
+    width: MenuShape.width;
+    close-policy: close-on-click-outside;
+    SongMenuBody {
+        picture: root.picture;
+        title: root.title;
+        line: root.line;
+        lines: root.lines;
+        playable: !Jam.guest;
+        play => {
+            root.play();
+            root.close();
+        }
+        // The menu closes after: closed, it can no longer reach the row.
+        chosen(m, i) => {
+            if m.kind == 1 {
+                Go.album(m.id);
+            } else if m.kind == 2 {
+                Go.artist(m.id);
+            } else {
+                root.act(m.kind, m.id);
+            }
+            if SongLines.turns(m) {
+                root.lines[i] = root.menu()[i];
+            } else {
+                root.close();
+            }
+        }
+    }
+}
+
 component SongLine inherits Rectangle {
     in property <SongRow> song;
     in property <int> number;
@@ -2522,37 +2659,16 @@ component SongLine inherits Rectangle {
     property <length> menu-y;
     // Where in the window it was pressed: the menu opens there, moved up by its own height as far as it must.
     property <length> menu-at;
-    song-menu := PopupWindow {
+    song-menu := SongPopup {
         x: root.menu-x;
         y: root.menu-y - Chrome.menu-lift(root.menu-at, self.height);
-        width: MenuShape.width;
-        close-policy: close-on-click-outside;
-        SongMenuBody {
-            picture: root.menu-picture;
-            title: root.song.title;
-            line: root.song.album != "" ? root.song.artist + " · " + root.song.album : root.song.artist;
-            lines: root.lines;
-            playable: !Jam.guest;
-            play => {
-                root.play();
-                song-menu.close();
-            }
-            // The menu closes after: closed, it can no longer reach the row.
-            chosen(m, i) => {
-                if m.kind == 1 {
-                    Go.album(m.id);
-                } else if m.kind == 2 {
-                    Go.artist(m.id);
-                } else {
-                    root.act(m.kind, m.id);
-                }
-                if SongLines.turns(m) {
-                    root.lines[i] = root.menu()[i];
-                } else {
-                    song-menu.close();
-                }
-            }
-        }
+        picture: root.menu-picture;
+        title: root.song.title;
+        line: root.song.album != "" ? root.song.artist + " · " + root.song.album : root.song.artist;
+        lines <=> root.lines;
+        play => { root.play(); }
+        menu => { return root.menu(); }
+        act(kind, id) => { root.act(kind, id); }
     }
     HorizontalLayout {
         padding-left: 8px;
@@ -2681,6 +2797,95 @@ component SongLine inherits Rectangle {
         font-size: 13px;
         vertical-alignment: center;
         overflow: elide;
+    }
+}
+
+// A song in one of Home's columns, as YouTube Music's quick picks: its artwork, title and artist. A click plays
+// it with the section's songs after it; the pointer over it raises the row and brings a play glyph onto the
+// artwork; a right press opens the song's menu.
+component ShelfSong inherits Moving {
+    in property <image> picture;
+    callback play;
+    callback menu() -> [SongGo];
+    callback act(int, string);
+    height: 56px;
+    // Raised past the column's edges by the artwork's inset, so the artwork lines up with the title above; its
+    // corners are the artwork's and that inset.
+    Rectangle {
+        x: -6px;
+        width: root.width + 12px;
+        border-radius: 10px;
+        background: touch.has-hover ? Theme.hover : transparent;
+        animate background { duration: Motion.reduced ? 0ms : 140ms; enabled: !Motion.reduced; easing: ease-out; }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.play(); }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                root.menu-x = self.mouse-x + Chrome.menu-flip(self.absolute-position.x + self.mouse-x, MenuShape.width);
+                root.lines = root.menu();
+                root.menu-y = self.mouse-y;
+                root.menu-at = self.absolute-position.y + self.mouse-y;
+                song-menu.show();
+            }
+        }
+    }
+    Art {
+        x: 0;
+        y: 6px;
+        width: 44px;
+        height: 44px;
+        border-radius: 4px;
+        source: root.picture;
+        Rectangle {
+            border-radius: parent.border-radius;
+            background: Theme.ground.with-alpha(0.55);
+            opacity: touch.has-hover ? 1 : 0;
+            animate opacity { duration: Motion.reduced ? 0ms : 140ms; enabled: !Motion.reduced; easing: ease-out; }
+            Icon {
+                x: (parent.width - self.width) / 2 + 1px;
+                glyph: Icons.play-solid;
+                colour: Theme.text;
+                width: 16px;
+                height: 16px;
+            }
+        }
+    }
+    Text {
+        x: 56px;
+        y: 9px;
+        width: root.width - self.x;
+        text: root.card.title;
+        color: Theme.text;
+        font-size: 14px;
+        font-weight: 500;
+        overflow: elide;
+    }
+    Link {
+        x: 56px;
+        y: 29px;
+        width: min(self.preferred-width, root.width - self.x);
+        text: root.card.sub;
+        artist: root.card.sub-artist;
+        color: Theme.dim;
+        font-size: 12.5px;
+        overflow: elide;
+    }
+    property <length> menu-x;
+    property <length> menu-y;
+    property <length> menu-at;
+    property <[SongGo]> lines;
+    song-menu := SongPopup {
+        x: root.menu-x;
+        y: root.menu-y - Chrome.menu-lift(root.menu-at, self.height);
+        picture: root.picture;
+        lines <=> root.lines;
+        title: root.card.title;
+        line: root.card.sub;
+        play => { root.play(); }
+        menu => { return root.menu(); }
+        act(kind, id) => { root.act(kind, id); }
     }
 }
 
@@ -7872,6 +8077,10 @@ export component AppWindow inherits Window {
     callback open-playlist(string);
     // The song `id` of Home's shelf `shelf`: the shelf's songs play from it.
     callback shelf-song(int, string);
+    // Song `i` of Home's shelf `shelf`: `how` -1 plays the shelf's songs from it, else a line of its menu
+    // (`SongGo::kind`), whose lines `home-song-menu` gives.
+    callback home-song(int, int, int);
+    callback home-song-menu(int, int) -> [SongGo];
     callback play-album(string);
     callback play-playlist(string);
     // A song of a list: 0 the page, 1 the songs, 2 search, 3 the queue (by list index), 4 a line of the
@@ -8395,66 +8604,94 @@ export component AppWindow inherits Window {
                             for shelf[index] in root.shelves: home-row := VerticalLayout {
                                 property <length> top: self.y + home.y + home-scroll.content-y;
                                 property <bool> on-screen: self.top + self.height > 0px && self.top < home-scroll.height;
-                                if !shelf.loaded || shelf.cards.length > 0: albums-shelf := ShelfView {
+                                if !shelf.loaded || shelf.cards.length > 0: section := ShelfView {
                                     pad: home.gutter;
                                     least: 200px;
+                                    shape: shelf.shape;
                                     title: shelf.title;
                                     more: true;
                                     show-all => { root.shown-shelf = index; root.go(View.shelf); }
                                     count: shelf.cards.length;
                                     loading: !shelf.loaded;
                                     live: home-row.on-screen;
-                                    // A source's feed mixes songs, albums, playlists and artists in a shelf: each opens or plays
-                                    // as what it is, a song with the shelf's songs after it.
-                                    for slot in albums-shelf.slots: CardView {
-                                        property <int> i: albums-shelf.first + slot;
-                                        property <Card> c: shelf.cards[self.i];
-                                        // A newer answer in this slot (its place unchanged) plays the card's move; a scroll,
-                                        // which changes the place, does not.
-                                        property <int> seen-i: -1;
-                                        property <float> moved: 1;
-                                        property <bool> jump;
-                                        animate moved { duration: self.jump || Motion.reduced ? 0ms : 320ms; easing: cubic-bezier(0.2, 0.8, 0.3, 1); }
-                                        changed c => {
-                                            if self.i == self.seen-i && (self.c.shift != 0 || self.c.new) {
-                                                self.jump = true;
-                                                self.moved = 0;
-                                                self.jump = false;
-                                                self.moved = 1;
+                                    // A column of cards (one) or tiles. A source's feed mixes albums, playlists and artists in
+                                    // a shelf: each opens or plays as what it is. Its items are held at their count, as the
+                                    // section's columns are, so a newer answer keeps them (and a press on one).
+                                    if shelf.shape != ShelfShape.songs: Rectangle {
+                                        for slot in section.slots: cards-column := Rectangle {
+                                            property <int> column: section.first + slot;
+                                            property <int> count: min(section.rows, shelf.cards.length - self.column * section.rows);
+                                            property <int> held;
+                                            init => { self.held = self.count; }
+                                            changed count => { self.held = self.count; }
+                                            x: floor((section.gap + self.column * section.step) / 1phx) * 1phx;
+                                            width: section.side;
+                                            height: section.band;
+                                            for r in self.held: CardView {
+                                                at: cards-column.column * section.rows + r;
+                                                rows: section.rows;
+                                                step: section.step;
+                                                drop: section.drop;
+                                                x: self.dx;
+                                                y: r * section.drop + self.dy;
+                                                side: section.side;
+                                                tile: shelf.shape == ShelfShape.tiles;
+                                                card: shelf.cards[self.at];
+                                                round: self.card.kind == 1;
+                                                picture: root.art(self.card.art, 0, root.covers-rev);
+                                                open => {
+                                                    if self.card.kind == 1 {
+                                                        root.open-artist(self.card.id);
+                                                    } else if self.card.kind == 2 {
+                                                        root.open-playlist(self.card.id);
+                                                    } else if self.card.kind == 3 {
+                                                        root.home-song(index, self.at, -1);
+                                                    } else {
+                                                        root.open-album(self.card.id);
+                                                    }
+                                                }
+                                                play => {
+                                                    if self.card.kind == 2 {
+                                                        root.play-playlist(self.card.id);
+                                                    } else if self.card.kind == 3 {
+                                                        root.home-song(index, self.at, -1);
+                                                    } else if self.card.kind == 1 {
+                                                        root.play-artist(self.card.id);
+                                                    } else {
+                                                        root.play-album(self.card.id);
+                                                    }
+                                                }
+                                                queue(next) => { root.queue-card(self.card.kind, self.card.id, next); }
+                                                jam => { root.jam-play(self.card.kind, self.card.id); }
                                             }
-                                            self.seen-i = self.i;
                                         }
-                                        init => { self.seen-i = self.i; }
-                                        x: albums-shelf.gap + (self.i + self.c.shift * (1 - self.moved)) * albums-shelf.step;
-                                        opacity: self.c.new ? self.moved : 1;
-                                        side: albums-shelf.side;
-                                        card: self.c;
-                                        round: self.c.kind == 1;
-                                        picture: root.art(self.c.art, 0, root.covers-rev);
-                                        open => {
-                                            if self.c.kind == 1 {
-                                                root.open-artist(self.c.id);
-                                            } else if self.c.kind == 2 {
-                                                root.open-playlist(self.c.id);
-                                            } else if self.c.kind == 3 {
-                                                root.shelf-song(index, self.c.id);
-                                            } else {
-                                                root.open-album(self.c.id);
+                                    }
+                                    // Songs as rows, a column of them at a time.
+                                    if shelf.shape == ShelfShape.songs: Rectangle {
+                                        for slot in section.slots: songs-column := Rectangle {
+                                            property <int> column: section.first + slot;
+                                            property <int> count: min(section.rows, shelf.cards.length - self.column * section.rows);
+                                            property <int> held;
+                                            init => { self.held = self.count; }
+                                            changed count => { self.held = self.count; }
+                                            x: floor((section.gap + self.column * section.step) / 1phx) * 1phx;
+                                            width: section.side;
+                                            height: section.band;
+                                            for r in self.held: ShelfSong {
+                                                at: songs-column.column * section.rows + r;
+                                                rows: section.rows;
+                                                step: section.step;
+                                                drop: section.drop;
+                                                x: self.dx;
+                                                y: r * section.drop + self.dy;
+                                                width: songs-column.width;
+                                                card: shelf.cards[self.at];
+                                                picture: root.art(self.card.art, 0, root.covers-rev);
+                                                play => { root.home-song(index, self.at, -1); }
+                                                menu => { return root.home-song-menu(index, self.at); }
+                                                act(kind, id) => { root.home-song(index, self.at, kind); }
                                             }
                                         }
-                                        play => {
-                                            if self.c.kind == 2 {
-                                                root.play-playlist(self.c.id);
-                                            } else if self.c.kind == 3 {
-                                                root.shelf-song(index, self.c.id);
-                                            } else if self.c.kind == 1 {
-                                                root.play-artist(self.c.id);
-                                            } else {
-                                                root.play-album(self.c.id);
-                                            }
-                                        }
-                                        queue(next) => { root.queue-card(self.c.kind, self.c.id, next); }
-                                        jam => { root.jam-play(self.c.kind, self.c.id); }
                                     }
                                 }
                             }

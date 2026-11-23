@@ -35,7 +35,7 @@ use crate::words;
 use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
 use nori_core::providers::AfterAdding;
 
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, ShelfShape, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -469,8 +469,8 @@ pub struct App {
     output: String,
     /// The token allowed on a scrobbling service's page for the account being added, once asked for.
     scrobbler_approved: Option<String>,
-    /// Home's feed shelves' songs, by shelf (a source's own Home).
-    feed_songs: Vec<Vec<Song>>,
+    /// The songs of Home's sections, by section (none for a section of albums or playlists).
+    shelf_songs: Vec<Vec<Song>>,
     profiles: Vec<nori_core::SoundProfile>,
     /// The sign-in window's process while it is open (nori-sign-in).
     sign_in_window: Option<nori_sign_in_window::SignInWindow>,
@@ -728,7 +728,60 @@ fn login_draft(info: &nori_core::providers::ProviderInfo, editing: Option<SavedS
 
 /// The library's Home shelves of `rows`, empty until read.
 fn home_shelves(rows: &[nori_core::settings::HomeRow]) -> Vec<Shelf> {
-    rows.iter().map(|&r| Shelf { title: words::home_row(r).into(), cards: ModelRc::default(), loaded: false }).collect()
+    let shapes = home_shapes(&rows.iter().map(|&r| row_holds(r)).collect::<Vec<_>>());
+    rows.iter().zip(shapes).map(|(&r, shape)| Shelf { title: words::home_row(r).into(), cards: ModelRc::default(), loaded: false, shape }).collect()
+}
+
+/// What a Home section holds, which decides its shape ([`home_shapes`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Holds {
+    Songs,
+    /// The albums played lately.
+    Recent,
+    Other,
+}
+
+fn row_holds(row: nori_core::settings::HomeRow) -> Holds {
+    use nori_core::browse::HomeShelf;
+    match nori_core::browse::home_shelves(vec![row])[..] {
+        [HomeShelf::Songs { .. }] => Holds::Songs,
+        _ if row == nori_core::settings::HomeRow::Recent => Holds::Recent,
+        _ => Holds::Other,
+    }
+}
+
+/// How Home draws its sections, in order: songs as rows in columns, the albums played lately as two rows of
+/// small tiles to go back to, the rest as a row of cards. Two of those dense blocks never stand together: the
+/// second is a row of cards, so the page keeps a rhythm.
+fn home_shapes(holds: &[Holds]) -> Vec<ShelfShape> {
+    let mut last = ShelfShape::Cards;
+    holds
+        .iter()
+        .map(|h| {
+            last = match h {
+                _ if last != ShelfShape::Cards => ShelfShape::Cards,
+                Holds::Songs => ShelfShape::Songs,
+                Holds::Recent => ShelfShape::Tiles,
+                Holds::Other => ShelfShape::Cards,
+            };
+            last
+        })
+        .collect()
+}
+
+/// A source's feed as Home's sections, as Android splits it: each shelf's songs, then the rest of it
+/// (albums, playlists, artists) under the same title; a part with nothing in it is none. Each section's
+/// title, songs and cards (a section of songs, the songs').
+fn feed_sections(feed: Vec<nori_core::FeedShelf>) -> Vec<(String, Vec<Song>, Vec<Card>)> {
+    feed.into_iter()
+        .flat_map(|f| {
+            let song_cards = f.songs.iter().map(song_card).collect();
+            let rest: Vec<Card> = f.albums.iter().map(album_card).chain(f.playlists.iter().map(playlist_card)).chain(f.artists.iter().map(artist_card)).collect();
+            let songs = (!f.songs.is_empty()).then(|| (f.title.clone(), f.songs, song_cards));
+            let rest = (!rest.is_empty()).then(|| (f.title, Vec::new(), rest));
+            songs.into_iter().chain(rest)
+        })
+        .collect()
 }
 
 /// Builds the app state and wires the window. Keep the returned app alive while the window runs.
@@ -784,7 +837,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             autoeq_hits: Vec::new(),
             output: String::new(),
             scrobbler_approved: None,
-            feed_songs: Vec::new(),
+            shelf_songs: Vec::new(),
             profiles: Vec::new(),
             sign_in_window: None,
             apart: None,
@@ -1033,10 +1086,17 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.go(v);
     });
     on!(ui.on_shelf_song, h, |a, shelf, id| {
-        let songs = a.feed_songs.get(shelf.max(0) as usize).cloned().unwrap_or_default();
+        let songs = a.shelf_songs.get(shelf.max(0) as usize).map_or(&[][..], Vec::as_slice);
         if let Some(at) = songs.iter().position(|s| s.id == id.as_str()) {
-            a.on_session(|s| s.play(songs, at, false, None));
+            a.home_song(shelf.max(0) as usize, at, -1);
         }
+    });
+    on!(ui.on_home_song, h, |a, shelf, i, how| a.home_song(shelf.max(0) as usize, i.max(0) as usize, how));
+    let menu = h.clone();
+    ui.on_home_song_menu(move |shelf, i| {
+        let mut lines = ModelRc::default();
+        menu.with(|a| lines = a.home_song_menu(shelf.max(0) as usize, i.max(0) as usize));
+        lines
     });
     on!(ui.on_back, h, |a| a.back());
     on!(ui.on_note_act, h, |a| a.note_act());
@@ -1700,9 +1760,10 @@ impl App {
 
     /// Home's read: the shelves of the rows the profile shows, drawn anew when those changed.
     fn home_req(&mut self) -> Option<Req> {
-        let rows = self.session.as_ref()?.home_album_rows();
+        let rows = self.session.as_ref()?.home_rows();
         if rows != self.home_rows {
             self.shelves.set_vec(home_shelves(&rows));
+            self.shelf_songs.clear();
             self.home_rows = rows.clone();
         }
         Some(Req::Home(rows))
@@ -1941,22 +2002,34 @@ impl App {
                 self.show_picks();
             }
             Data::Home(HomePart::Feed(feed)) => {
-                // Each shelf as the source lists it: its songs first (a song card plays the shelf's songs
-                // from it), then its albums, playlists and artists.
-                let shelves = feed.iter().filter(|f| !(f.songs.is_empty() && f.albums.is_empty() && f.playlists.is_empty() && f.artists.is_empty())).enumerate().map(|(at, f)| {
-                    let all = f.songs.iter().map(song_card).chain(f.albums.iter().map(album_card)).chain(f.playlists.iter().map(playlist_card)).chain(f.artists.iter().map(artist_card));
-                    let old = self.shelves.row_data(at).filter(|o| o.title == f.title.as_str());
-                    Shelf { title: f.title.as_str().into(), cards: cards(moved(old.as_ref(), all.collect()).into_iter()), loaded: true }
-                });
-                put_shelves(&self.shelves, shelves.collect());
-                self.feed_songs = feed.into_iter().filter(|f| !(f.songs.is_empty() && f.albums.is_empty() && f.playlists.is_empty() && f.artists.is_empty())).map(|f| f.songs).collect();
+                let sections = feed_sections(feed);
+                let shapes = home_shapes(&sections.iter().map(|(_, songs, _)| if songs.is_empty() { Holds::Other } else { Holds::Songs }).collect::<Vec<_>>());
+                let (shelves, songs) = sections
+                    .into_iter()
+                    .zip(shapes)
+                    .enumerate()
+                    .map(|(at, ((title, songs, fresh), shape))| {
+                        let old = self.shelves.row_data(at).filter(|o| o.title == title.as_str());
+                        (Shelf { title: title.into(), cards: cards(moved(old.as_ref(), fresh).into_iter()), loaded: true, shape }, songs)
+                    })
+                    .unzip();
+                put_shelves(&self.shelves, shelves);
+                self.shelf_songs = songs;
             }
             Data::Home(HomePart::Shelf { at, items }) => {
-                let ShelfItems::Albums { v: albums } = items else { return };
+                let (fresh, songs) = match items {
+                    ShelfItems::Albums { v } => (v.iter().map(album_card).collect(), Vec::new()),
+                    ShelfItems::Playlists { v } => (v.iter().map(playlist_card).collect(), Vec::new()),
+                    ShelfItems::Songs { v } => (v.iter().map(song_card).collect(), v),
+                };
                 if let Some(mut shelf) = self.shelves.row_data(at) {
-                    shelf.cards = cards(moved(Some(&shelf), albums.iter().map(album_card).collect()).into_iter());
+                    shelf.cards = cards(moved(Some(&shelf), fresh).into_iter());
                     shelf.loaded = true;
                     self.shelves.set_row_data(at, shelf);
+                    if self.shelf_songs.len() <= at {
+                        self.shelf_songs.resize(at + 1, Vec::new());
+                    }
+                    self.shelf_songs[at] = songs;
                 }
             }
             Data::Page(PageGot::Albums(v)) => {
@@ -2029,7 +2102,7 @@ impl App {
                 ui.set_page_caption(words::artist_caption(d.albums.len(), d.albums.iter().map(|a| a.song_count as usize).sum(), d.songs.len()).into());
                 self.set_page_art(d.artist.cover_art.clone().or_else(|| d.albums.first().and_then(|a| a.cover_art.clone())));
                 let card = |a: &nori_core::Album| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) };
-                let shelves = d.groups.iter().map(|g| Shelf { title: words::release_shelf(g).into(), cards: cards(g.albums.iter().filter_map(|&i| d.albums.get(i as usize)).map(card)), loaded: true });
+                let shelves = d.groups.iter().map(|g| Shelf { title: words::release_shelf(g).into(), cards: cards(g.albums.iter().filter_map(|&i| d.albums.get(i as usize)).map(card)), loaded: true, ..Default::default() });
                 ui.set_page_shelves(ModelRc::new(VecModel::from(shelves.collect::<Vec<_>>())));
                 self.page_songs = d.songs;
                 self.page_actions(PageKind::Artist);
@@ -2300,7 +2373,7 @@ impl App {
             let ends = starts.iter().skip(1).copied().chain([albums.len() as u32]);
             let rows = starts.iter().zip(ends).map(|(&from, to)| {
                 let row = &albums[from as usize..to as usize];
-                Shelf { title: row[0].artist.as_str().into(), cards: cards(row.iter().map(album_card)), loaded: true }
+                Shelf { title: row[0].artist.as_str().into(), cards: cards(row.iter().map(album_card)), loaded: true, ..Default::default() }
             });
             ui.set_album_rows(ModelRc::new(VecModel::from(rows.collect::<Vec<_>>())));
         } else {
@@ -2528,7 +2601,7 @@ impl App {
     /// song alone.
     fn queue_card(&self, kind: i32, id: String, next: bool) {
         if kind == 3 {
-            if let Some(song) = self.feed_songs.iter().flatten().find(|s| s.id == id) {
+            if let Some(song) = self.shelf_songs.iter().flatten().find(|s| s.id == id) {
                 self.on_session(|s| s.enqueue(vec![song.clone()], next));
             }
             return;
@@ -2659,6 +2732,26 @@ impl App {
             20 => self.edit_playlist(i, PlaylistEdit::MoveUp),
             21 => self.edit_playlist(i, PlaylistEdit::MoveDown),
             _ => self.song_act(one, how),
+        }
+    }
+
+    /// Song `i` of Home's section `shelf`: played with the section's songs after it (`how` -1), or its menu's
+    /// line `how` (`SongGo::kind`).
+    fn home_song(&mut self, shelf: usize, i: usize, how: i32) {
+        let Some(songs) = self.shelf_songs.get(shelf).filter(|v| i < v.len()) else { return };
+        match how {
+            -1 => {
+                let songs = songs.clone();
+                self.on_session(|s| s.play(songs, i, false, None));
+            }
+            _ => self.song_act(songs[i].clone(), how),
+        }
+    }
+
+    fn home_song_menu(&self, shelf: usize, i: usize) -> ModelRc<SongGo> {
+        match self.shelf_songs.get(shelf).and_then(|v| v.get(i)) {
+            Some(one) => ModelRc::new(VecModel::from(self.menu_lines(one.clone(), false, None))),
+            None => ModelRc::default(),
         }
     }
 
@@ -5733,7 +5826,7 @@ fn playlist_card(p: &nori_core::Playlist) -> Card {
     Card { id: p.id.as_str().into(), title: p.name.as_str().into(), sub: sub.into(), art: p.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 2, ..Default::default() }
 }
 
-/// A song's card on a feed's shelf: played from it, with the shelf's songs after.
+/// A song's card on a Home section: played from it, with the section's songs after.
 fn song_card(s: &Song) -> Card {
     let sub_artist = s.artist_id.clone().unwrap_or_default().into();
     Card { id: s.id.as_str().into(), title: s.title.as_str().into(), sub: s.artist.as_str().into(), art: s.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 3, ..Default::default() }
@@ -6387,7 +6480,7 @@ mod tests {
                 id: i.to_string().into(), art: "cover".into(), title: format!("Album {i}").into(), ..Default::default()
             }).collect::<Vec<_>>()));
             ui.set_albums(cards.clone());
-            ui.set_shelves(ModelRc::new(VecModel::from(vec![crate::Shelf { loaded: true, cards, title: "Recently played".into() }])));
+            ui.set_shelves(ModelRc::new(VecModel::from(vec![crate::Shelf { loaded: true, cards, title: "Recently played".into(), ..Default::default() }])));
             ui.set_picks(ModelRc::new(VecModel::from(vec![crate::Pick { title: "Favorites".into(), covers: ModelRc::new(VecModel::from(vec!["cover".into(); 4])), ..Default::default() }; 8])));
             ui.set_now_art("cover".into());
             ui.set_now_title("Playing track".into());
@@ -7848,6 +7941,7 @@ mod tests {
             ui.set_shelves(ModelRc::new(VecModel::from(vec![Shelf {
                 title: "Recently played".into(), loaded: true,
                 cards: cards((0..100).map(|i| Card { id: i.to_string().into(), art: i.to_string().into(), ..Default::default() })),
+                ..Default::default()
             }])));
             if view == View::ForYou {
                 ui.set_picks(ModelRc::new(VecModel::from((0..100).map(|i| crate::Pick {
@@ -7988,6 +8082,196 @@ mod tests {
         wait(1000);
         click();
         assert_eq!(*opened.borrow(), ["a", "x"]);
+    }
+
+    /// Songs are rows and the albums played lately tiles, but two dense sections never stand together.
+    #[test]
+    fn home_sections_take_their_shapes() {
+        use nori_core::settings::HomeRow;
+        use Holds::{Other, Recent, Songs};
+        use ShelfShape as S;
+        let cases: [(&[Holds], &[ShelfShape]); 5] = [
+            (&[Other, Recent, Other, Songs], &[S::Cards, S::Tiles, S::Cards, S::Songs]),
+            (&[Recent, Songs, Other], &[S::Tiles, S::Cards, S::Cards]),
+            (&[Songs, Songs, Songs], &[S::Songs, S::Cards, S::Songs]),
+            (&[Songs, Other, Songs], &[S::Songs, S::Cards, S::Songs]),
+            (&[], &[]),
+        ];
+        for (holds, shapes) in cases {
+            assert_eq!(home_shapes(holds), shapes, "{holds:?}");
+        }
+        let rows = [HomeRow::TopSongs, HomeRow::Recent, HomeRow::Newest, HomeRow::Playlists, HomeRow::Pinned];
+        assert_eq!(rows.map(row_holds), [Songs, Recent, Other, Other, Other]);
+        let fresh: Vec<_> = home_shelves(HomeRow::FRESH).into_iter().map(|s| s.shape).collect();
+        assert_eq!(fresh, [S::Cards, S::Tiles, S::Cards, S::Cards, S::Cards, S::Cards, S::Songs], "a new install's Home");
+    }
+
+    /// A feed's shelf is its songs, then the rest under the same title; an empty part is no section.
+    #[test]
+    fn a_feeds_shelves_part_into_songs_and_the_rest() {
+        let song = |id: &str| Song { id: id.into(), ..Default::default() };
+        let album = |id: &str| nori_core::Album { id: id.into(), ..Default::default() };
+        let artist = nori_core::Artist { id: "ar".into(), ..Default::default() };
+        let feed = vec![
+            nori_core::FeedShelf { title: "Quick picks".into(), songs: vec![song("s1"), song("s2")], albums: vec![album("al")], artists: vec![artist], ..Default::default() },
+            nori_core::FeedShelf { title: "Empty".into(), ..Default::default() },
+            nori_core::FeedShelf { title: "Albums".into(), albums: vec![album("a2")], ..Default::default() },
+        ];
+        let got: Vec<_> = feed_sections(feed)
+            .into_iter()
+            .map(|(title, songs, cards)| (title, songs.iter().map(|s| s.id.clone()).collect::<Vec<_>>(), cards.iter().map(|c| (c.kind, c.id.to_string())).collect::<Vec<_>>()))
+            .collect();
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(got, [
+            ("Quick picks".to_string(), ids(&["s1", "s2"]), vec![(3, "s1".to_string()), (3, "s2".into())]),
+            ("Quick picks".into(), vec![], vec![(0, "al".into()), (1, "ar".into())]),
+            ("Albums".into(), vec![], vec![(0, "a2".into())]),
+        ]);
+    }
+
+    /// Home with one section of `shape`, read (`count` items, ids "0" up) or still being read.
+    fn home_section(width: f32, shape: ShelfShape, count: Option<usize>) -> (AppWindow, Rc<VecModel<Shelf>>) {
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(width, 820.0));
+        ui.set_view(View::Home);
+        ui.set_picks_loaded(true);
+        let kind = if shape == ShelfShape::Songs { 3 } else { 0 };
+        let shelf = Shelf {
+            title: "Section".into(),
+            loaded: count.is_some(),
+            cards: cards((0..count.unwrap_or(0)).map(|i| Card { id: i.to_string().into(), title: format!("Item {i}").into(), sub: "Artist".into(), kind, ..Default::default() })),
+            shape,
+        };
+        let shelves = Rc::new(VecModel::from(vec![shelf]));
+        ui.set_shelves(ModelRc::from(shelves.clone()));
+        ui.show().unwrap();
+        settle_home();
+        (ui, shelves)
+    }
+
+    fn settle_home() {
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+    }
+
+    /// The places of a section's items (tiles or songs), in reading order down the columns.
+    fn items(ui: &AppWindow, shape: ShelfShape) -> Vec<(f32, f32, f32, f32)> {
+        let name = if shape == ShelfShape::Songs { "ShelfSong" } else { "CardView" };
+        let mut v: Vec<_> = i_slint_backend_testing::ElementHandle::find_by_element_type_name(ui, name)
+            .map(|e| {
+                let (at, size) = (e.absolute_position(), e.size());
+                (at.x.round(), at.y.round(), size.width.round(), size.height.round())
+            })
+            .collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        v
+    }
+
+    /// Tiles stand two to a column, songs four, the columns as wide as the page allows them at each width.
+    #[test]
+    fn home_tiles_and_songs_stand_in_columns() {
+        i_slint_backend_testing::init_no_event_loop();
+        // The width, then the first column's left edge, an item's width and height, the next column's left
+        // edge and how far an item is below the one before.
+        let cases = [
+            (ShelfShape::Tiles, 1280.0, (40.0, 291.0, 64.0, 343.0, 76.0)),
+            (ShelfShape::Tiles, 760.0, (32.0, 342.0, 64.0, 386.0, 76.0)),
+            (ShelfShape::Tiles, 1728.0, (144.0, 278.0, 64.0, 434.0, 76.0)),
+            (ShelfShape::Songs, 1280.0, (40.0, 385.0, 56.0, 447.0, 56.0)),
+            (ShelfShape::Songs, 760.0, (32.0, 337.0, 56.0, 391.0, 56.0)),
+            (ShelfShape::Songs, 1728.0, (144.0, 344.0, 56.0, 509.0, 56.0)),
+        ];
+        for (shape, width, want) in cases {
+            let (ui, _) = home_section(width, shape, Some(20));
+            let v = items(&ui, shape);
+            let rows = if shape == ShelfShape::Songs { 4 } else { 2 };
+            let got = (v[0].0, v[0].2, v[0].3, v[rows].0, v[1].1 - v[0].1);
+            assert_eq!(got, want, "{shape:?} at {width} px");
+            assert!(v[..rows].iter().all(|i| i.0 == v[0].0), "{shape:?} at {width} px: a column's items line up");
+        }
+    }
+
+    /// A section still being read holds as much room as it takes once read, whatever its shape.
+    #[test]
+    fn a_sections_plates_are_as_tall_as_the_section() {
+        i_slint_backend_testing::init_no_event_loop();
+        for shape in [ShelfShape::Cards, ShelfShape::Tiles, ShelfShape::Songs] {
+            let height = |count| {
+                let (ui, _) = home_section(1280.0, shape, count);
+                let section = i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "ShelfView").next().expect("the section");
+                section.size().height.round()
+            };
+            let (plates, read) = (height(None), height(Some(20)));
+            assert_eq!(plates, read, "{shape:?}");
+            assert!(read > 150.0, "{shape:?}: {read}");
+        }
+    }
+
+    /// A click on a tile opens its album and one on a song plays the section from it; a right press opens
+    /// either's menu, a song's with its lines.
+    #[test]
+    fn home_tiles_and_songs_open_play_and_offer_their_menus() {
+        i_slint_backend_testing::init_no_event_loop();
+        for shape in [ShelfShape::Tiles, ShelfShape::Songs] {
+            let (ui, _) = home_section(1280.0, shape, Some(20));
+            let seen = Rc::new(RefCell::new(Vec::new()));
+            let s = seen.clone();
+            ui.on_open_album(move |id| s.borrow_mut().push(format!("open {id}")));
+            let s = seen.clone();
+            ui.on_home_song(move |shelf, i, how| s.borrow_mut().push(format!("song {shelf} {i} {how}")));
+            let s = seen.clone();
+            ui.on_home_song_menu(move |shelf, i| {
+                s.borrow_mut().push(format!("menu {shelf} {i}"));
+                ModelRc::new(VecModel::from(vec![SongGo { kind: 6, title: "Add to queue".into(), place: SongPlace::Main, enabled: true, ..Default::default() }]))
+            });
+            let v = items(&ui, shape);
+            // The sixth item, at its end, past its words.
+            let at = slint::LogicalPosition::new(v[5].0 + v[5].2 - 8.0, v[5].1 + v[5].3 / 2.0);
+            for button in [slint::platform::PointerEventButton::Left, slint::platform::PointerEventButton::Right] {
+                ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+                ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
+                ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
+                settle_home();
+            }
+            let want: &[&str] = if shape == ShelfShape::Songs { &["song 0 5 -1", "menu 0 5"] } else { &["open 5"] };
+            assert_eq!(*seen.borrow(), want, "{shape:?}");
+            assert_eq!(i_slint_core::window::WindowInner::from_pub(ui.window()).active_popups().len(), 1, "{shape:?}: the right press opens its menu");
+        }
+    }
+
+    /// A section's newer answer slides the tiles and songs it kept from their old places, across columns too.
+    #[test]
+    fn a_sections_newer_answer_slides_tiles_and_songs_to_their_places() {
+        i_slint_backend_testing::init_no_event_loop();
+        for shape in [ShelfShape::Tiles, ShelfShape::Songs] {
+            let (ui, shelves) = home_section(1280.0, shape, Some(3));
+            let kind = if shape == ShelfShape::Songs { 3 } else { 0 };
+            let first = shelves.row_data(0).unwrap();
+            let fresh = moved(Some(&first), ["2", "1", "0"].iter().map(|&id| Card { id: id.into(), kind, ..Default::default() }).collect());
+            let seen = Rc::new(RefCell::new(Vec::new()));
+            let s = seen.clone();
+            ui.on_open_album(move |id| s.borrow_mut().push(id.to_string()));
+            let s = seen.clone();
+            ui.on_home_song(move |_, i, _| s.borrow_mut().push(i.to_string()));
+            let v = items(&ui, shape);
+            let at = slint::LogicalPosition::new(v[0].0 + v[0].2 - 8.0, v[0].1 + v[0].3 / 2.0);
+            let click = || {
+                let button = slint::platform::PointerEventButton::Left;
+                ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+                ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
+                ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
+            };
+            shelves.set_row_data(0, Shelf { cards: cards(fresh.into_iter()), ..first });
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(16));
+            slint::platform::update_timers_and_animations();
+            click();
+            settle_home();
+            click();
+            // The first place holds the old first item as it leaves, then the new one: the album "0" and then
+            // "2", or the song now third (index 2) and then the first.
+            let want = if shape == ShelfShape::Songs { ["2", "0"] } else { ["0", "2"] };
+            assert_eq!(*seen.borrow(), want, "{shape:?}");
+        }
     }
 
     #[test]
