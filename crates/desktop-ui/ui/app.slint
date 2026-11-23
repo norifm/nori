@@ -2253,8 +2253,12 @@ component PickCard inherits Rectangle {
     height: floor(root.side * 186 / 150 / 1phx) * 1phx;
     border-radius: 18px;
     clip: true;
-    background: root.pick.page;
-    animate background { duration: Motion.reduced ? 0ms : 240ms; enabled: !Motion.reduced; easing: ease-out; }
+    // Its paper and ink change together, as long as the page's own colors take (app.rs's FADE): a new
+    // appearance, or its first cover's colors once they are known.
+    property <color> paper: root.pick.page;
+    property <color> ink: root.pick.ink;
+    animate paper, ink { duration: Motion.reduced ? 0ms : 340ms; enabled: !Motion.reduced; easing: ease-in-out; }
+    background: root.paper;
     // A new mosaic fades in over the one it replaces: `faded` runs from the last change's count to this one's.
     property <image> under;
     property <image> over;
@@ -2287,7 +2291,7 @@ component PickCard inherits Rectangle {
         }
         // The covers rubbed out into the card's paper from under halfway down.
         Rectangle {
-            background: @linear-gradient(180deg, root.pick.page.with-alpha(0) 45%, root.pick.page 100%);
+            background: @linear-gradient(180deg, root.paper.with-alpha(0) 45%, root.paper 100%);
         }
     }
     // The name low on the paper, over the end of the fade.
@@ -2298,7 +2302,7 @@ component PickCard inherits Rectangle {
         alignment: end;
         Text {
             text: root.pick.title;
-            color: root.pick.ink;
+            color: root.ink;
             font-family: Type.title;
             font-size: 20px;
             font-weight: 600;
@@ -2308,7 +2312,7 @@ component PickCard inherits Rectangle {
         }
     }
     Rectangle {
-        background: touch.has-hover ? root.pick.page.with-alpha(0.15) : transparent;
+        background: touch.has-hover ? root.paper.with-alpha(0.15) : transparent;
         animate background { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
     }
     touch := TouchArea {
@@ -7248,6 +7252,9 @@ export component AppWindow inherits Window {
     in property <image> wash-a;
     in property <image> wash-b;
     in property <bool> wash-on-b;
+    // How long one wash takes to give way to the other: a song's to the next one's, or the same song's on
+    // another paper as the page's colors change (app.rs sets it with each wash).
+    in property <duration> wash-fade: 800ms;
     // The inspector on the right: 0 shut, 1 Playing Next, 2 lyrics, 3 the other devices. It keeps showing
     // the last one while it slides away.
     in-out property <Panel> inspector;
@@ -9805,7 +9812,7 @@ export component AppWindow inherits Window {
                 image-fit: cover;
                 visible: root.covers-tint;
                 opacity: root.wash-on-b ? 0 : 1;
-                animate opacity { duration: Motion.reduced ? 0ms : 800ms; enabled: !Motion.reduced; easing: ease-in-out; }
+                animate opacity { duration: Motion.reduced ? 0ms : root.wash-fade; enabled: !Motion.reduced; easing: ease-in-out; }
             }
             Image {
                 width: 100%;
@@ -9814,7 +9821,7 @@ export component AppWindow inherits Window {
                 image-fit: cover;
                 visible: root.covers-tint;
                 opacity: root.wash-on-b ? 1 : 0;
-                animate opacity { duration: Motion.reduced ? 0ms : 800ms; enabled: !Motion.reduced; easing: ease-in-out; }
+                animate opacity { duration: Motion.reduced ? 0ms : root.wash-fade; enabled: !Motion.reduced; easing: ease-in-out; }
             }
             // Swallows the clicks meant for the page underneath.
             TouchArea { }

@@ -384,6 +384,8 @@ struct Fade {
 }
 
 const FADE: Duration = Duration::from_millis(340);
+/// How long the backdrop takes to cross-fade to another song's wash.
+const WASH_FADE: Duration = Duration::from_millis(800);
 
 impl Fade {
     fn start(&mut self, from: crate::look::Look) {
@@ -497,6 +499,8 @@ pub struct App {
     top: Option<TopBar>,
     /// Cover id whose wash is the window backdrop.
     backdrop: Option<String>,
+    /// The paper that wash and the mixes' cards were dyed on.
+    dyed_on: Option<crate::look::Papers>,
     /// The covers whose colors the open page and Now Playing wear.
     page_cover: Option<CoverColours>,
     now_cover: Option<CoverColours>,
@@ -794,6 +798,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             album_sort: AlbumSort::ByName,
             albums_favorites: false,
             backdrop: None,
+            dyed_on: None,
             page_cover: None,
             now_cover: None,
             trail: PageTrail { tab: View::Home, ..Default::default() },
@@ -1784,10 +1789,10 @@ impl App {
     }
 
     /// The page's cover, whose colors the page wears, or none. Its header is the cover's own wash, undyed, as
-    /// Android's page shows the cover itself and lets it melt into the dyed page; none where pages wear no cover.
+    /// Android's page shows the cover itself and lets it melt into the dyed page; it shows only where pages
+    /// wear a cover (app.slint's `covers-tint`).
     fn page_colours(&mut self, c: Option<&CoverColours>) {
-        let tinted = self.root.app.settings.in_effect(|p| p.theme.covers_tint_pages());
-        self.ui().set_page_wash(c.filter(|_| tinted).map(|c| wash(c, None)).unwrap_or_default());
+        self.ui().set_page_wash(c.map(|c| wash(c, None)).unwrap_or_default());
         self.page_cover = c.cloned();
         self.repaint();
     }
@@ -1804,8 +1809,15 @@ impl App {
             self.repaint();
             return;
         };
-        let ui = self.ui();
         self.backdrop = Some(art.to_string());
+        self.wash_to(c, WASH_FADE);
+        self.now_cover = Some(c.clone());
+        self.repaint();
+    }
+
+    /// Cross-fades the window backdrop to `c`'s wash on the paper worn, over `fade`.
+    fn wash_to(&self, c: &CoverColours, fade: Duration) {
+        let ui = self.ui();
         let on_b = !ui.get_wash_on_b();
         let dyed = self.dyed_wash(c).unwrap_or_default();
         if on_b {
@@ -1813,9 +1825,18 @@ impl App {
         } else {
             ui.set_wash_a(dyed);
         }
+        ui.set_wash_fade(fade.as_millis() as i64);
         ui.set_wash_on_b(on_b);
-        self.now_cover = Some(c.clone());
-        self.repaint();
+    }
+
+    /// What was dyed on the paper worn before, dyed on the one worn now, with the page's colors.
+    fn dye_again(&mut self) {
+        if let Some(c) = &self.now_cover {
+            self.wash_to(c, FADE);
+        }
+        if self.ui().get_picks_loaded() {
+            self.show_picks();
+        }
     }
 
     /// A cover's wash on the season's paper, as its page is dyed; none where pages wear no cover.
@@ -1847,6 +1868,8 @@ impl App {
         let want = self.page_look();
         let prefs = self.root.app.settings.effective().unwrap_or_default();
         self.ui().set_covers_tint(prefs.theme.covers_tint_pages());
+        let papers = crate::look::papers(&prefs, self.compositor.system_dark(), crate::look::Today::now());
+        let paper_changed = self.dyed_on.replace(papers.clone()).is_some_and(|before| before != papers);
         // nori's Motion setting, as on Android: animations run unless it asks for less.
         let motion = prefs.motion;
         let reduced = motion != nori_core::settings::Motion::Full;
@@ -1858,6 +1881,9 @@ impl App {
         }
         if let Some(t) = &self.top {
             t.global::<Motion>().set_reduced(reduced);
+        }
+        if paper_changed {
+            self.dye_again();
         }
         match self.look.clone() {
             Some(now) if now != want && !reduced => {
@@ -2117,7 +2143,7 @@ impl App {
     /// `mix_card_colours`), or once its first cover's colors are known with those, as the mix's page wears them.
     fn show_picks(&self) {
         use nori_core::mixes::board::{mix_card_colours, mix_tile_colours};
-        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.effective().unwrap_or_default();
         let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
         let papers = crate::look::papers(&prefs, dark, today);
         let art = self.art.borrow();

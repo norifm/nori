@@ -67,6 +67,7 @@ pub fn plain(shared: &nori_core::queue::Session, prefs: &StoredPrefs, system_dar
 
 /// The season's light and dark palettes as the app wears them, and whether it is dark: the paper a cover's
 /// page and a mix's card are dyed on.
+#[derive(Clone, PartialEq, Debug)]
 pub struct Papers {
     pub light: Palette,
     pub dark: Palette,
@@ -215,6 +216,22 @@ mod tests {
         assert_ne!(look.accent(), cover_colours.accent, "the cover's own accent is not worn");
         let reads = calculate_contrast(look.accent(), look.page());
         assert!(reads >= 4.5f64.min(calculate_contrast(look.ink(), look.page())), "accent reads at {reads:.2}");
+    }
+
+    #[test]
+    fn another_appearance_or_season_is_another_paper() {
+        let of = |season, theme, system_dark| papers(&prefs(season, theme), system_dark, OCTOBER);
+        let day = of(ThemeSeason::Autumn, ThemeMode::Light, false);
+        for (what, other) in [
+            ("night", of(ThemeSeason::Autumn, ThemeMode::Dark, false)),
+            ("midnight", of(ThemeSeason::Autumn, ThemeMode::Midnight, false)),
+            ("the system gone dark", of(ThemeSeason::Autumn, ThemeMode::System, true)),
+            ("winter", of(ThemeSeason::Winter, ThemeMode::Light, false)),
+        ] {
+            assert_ne!(day, other, "{what}");
+        }
+        assert_ne!(of(ThemeSeason::Autumn, ThemeMode::Dark, false), of(ThemeSeason::Autumn, ThemeMode::Midnight, false));
+        assert_eq!(day, of(ThemeSeason::Autumn, ThemeMode::System, false), "the system's day is the app's");
     }
 
     #[test]
