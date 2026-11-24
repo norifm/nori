@@ -329,7 +329,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
             }
             if (info != null && info.signIn.isNotEmpty() && !adding) AccountPart(vm, info, p.id) { name -> p = p.copy(user = name) }
             val saved = vm.prefs.collectAsStateWithLifecycle().value.servers.firstOrNull { it.id == p.id }?.takeIf { !adding }
-            if (saved != null) ScrobblingPart(vm, saved) { changed -> p = p.copy(scrobblers = changed.scrobblers) }
+            if (saved != null) ScrobblingPart(vm, saved)
             Spacer(Modifier.height(24.dp))
         }
     }

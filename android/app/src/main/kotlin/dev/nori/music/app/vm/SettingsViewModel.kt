@@ -721,14 +721,14 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /**
      * Signs in to the account [form] describes, with the token allowed on the service's page if one was
-     * asked for, and keeps it in [profile]; [added] is given the profile saved.
+     * asked for, and keeps it in [profile]; then [added].
      */
-    fun addScrobbler(profile: SavedServer, form: dev.nori.music.ffi.ScrobblerForm, added: (SavedServer) -> Unit) {
+    fun addScrobbler(profile: SavedServer, form: dev.nori.music.ffi.ScrobblerForm, added: () -> Unit) {
         val approval = _scrobblerAdd.value.approval
         _scrobblerAdd.value = ScrobblerAdd(busy = true, approval = approval)
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { nori.signInScrobbler(form.copy(approved = approval?.token.orEmpty())) } }
-                .onSuccess { a -> _scrobblerAdd.value = ScrobblerAdd(); added(putScrobbler(profile, a)) }
+                .onSuccess { a -> _scrobblerAdd.value = ScrobblerAdd(); putScrobbler(profile, a); added() }
                 .onFailure { e -> _scrobblerAdd.value = ScrobblerAdd(failed = dev.nori.music.net.Failures.describe(e), approval = approval) }
         }
     }
@@ -745,9 +745,9 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     fun scrobblerAddReset() { _scrobblerAdd.value = ScrobblerAdd() }
 
-    /** [profile] with [account] in place of its namesake, or added; saved and returned. */
-    fun putScrobbler(profile: SavedServer, account: dev.nori.music.ffi.settings.SavedScrobbler): SavedServer =
-        dev.nori.music.ffi.settings.profileScrobblerPut(profile, account).also(nori::setScrobblers)
+    /** [profile] saved with [account] in place of its namesake, or added. */
+    fun putScrobbler(profile: SavedServer, account: dev.nori.music.ffi.settings.SavedScrobbler) =
+        nori.setScrobblers(dev.nori.music.ffi.settings.profileScrobblerPut(profile, account))
 
     /**
      * Whether [profile] is told what plays itself, so its scrobbling list starts with it: the open
@@ -756,13 +756,13 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun scrobblesItself(profile: SavedServer): Boolean =
         if (profile.id == nori.settings.value.activeServerId) nori.rules.scrobbles else nori.plugins.kinds.rulesOf(profile, false).scrobbles
 
-    /** [profile] with its server told what plays, or not; saved and returned. */
-    fun switchServerScrobble(profile: SavedServer, on: Boolean): SavedServer =
-        dev.nori.music.ffi.settings.profileScrobbleSwitched(profile, on).also(nori::setScrobblers)
+    /** [profile] saved with its server told what plays, or not. */
+    fun switchServerScrobble(profile: SavedServer, on: Boolean) =
+        nori.setScrobblers(dev.nori.music.ffi.settings.profileScrobbleSwitched(profile, on))
 
-    /** [profile] without account [id]; saved and returned. */
-    fun removeScrobbler(profile: SavedServer, id: String): SavedServer =
-        dev.nori.music.ffi.settings.profileScrobblerRemoved(profile, id).also(nori::setScrobblers)
+    /** [profile] saved without account [id]. */
+    fun removeScrobbler(profile: SavedServer, id: String) =
+        nori.setScrobblers(dev.nori.music.ffi.settings.profileScrobblerRemoved(profile, id))
     fun renameProfile(profile: SavedServer, name: String) = nori.renameProfile(profile, name)
     fun removeServer(id: String) = nori.removeServer(id)
 

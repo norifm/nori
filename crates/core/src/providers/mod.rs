@@ -592,32 +592,43 @@ impl Kinds {
     }
 }
 
-/// The profile a login saves. A new profile for one already saved takes over that profile's id (and its
-/// library and downloads), music folder, bitrate cap, icon, scrobbling accounts and, if the form's is empty, name; what the form
-/// does not ask (a signed-in account's name) stays the saved one's. A profile is the saved one of its
-/// kind with the same address and user; a kind whose form asks no address has nothing to tell its
-/// profiles apart by, so each login adds one (an account each). A profile already saved is returned as
-/// it is.
+/// The profile a login saves. A login saves what its form holds over the saved profile it is
+/// ([`over_saved`]): the saved one with its id, else the saved one of its kind with the same address and
+/// user, which a new profile for that account takes over, keeping the saved one's name if the form's is
+/// empty. A kind whose form asks no address has nothing to tell its profiles apart by, so each new
+/// profile is one more (an account each).
 fn server_for_login(info: &ProviderInfo, list: ServerList, profile: SavedServer) -> SavedServer {
-    if list.servers.iter().any(|s| s.id == profile.id) {
-        return profile;
+    if let Some(saved) = list.servers.iter().find(|s| s.id == profile.id) {
+        return over_saved(info, saved, profile);
     }
     let address = |url: &str| url.trim().trim_end_matches('/').to_ascii_lowercase();
     let same = |s: &&SavedServer| {
         s.kind == profile.kind && info.asks(FormField::Address) && address(&s.url) == address(&profile.url) && s.user.trim().eq_ignore_ascii_case(profile.user.trim())
     };
     match list.servers.iter().find(same) {
-        Some(saved) => SavedServer {
-            id: saved.id.clone(),
-            name: if profile.name.trim().is_empty() { saved.name.clone() } else { profile.name },
-            user: if info.asks(FormField::User) { profile.user } else { saved.user.clone() },
-            music_folder_ids: saved.music_folder_ids.clone(),
-            alt_max_bit_rate: saved.alt_max_bit_rate,
-            icon: saved.icon,
-            scrobblers: saved.scrobblers.clone(),
-            ..profile
-        },
+        Some(saved) => {
+            let name = if profile.name.trim().is_empty() { saved.name.clone() } else { profile.name.clone() };
+            SavedServer { name, ..over_saved(info, saved, profile) }
+        }
         None => profile,
+    }
+}
+
+/// `form` saved over profile `saved`. What the profile keeps besides its form stays as saved, as other
+/// pages may have changed it while the form was open: its id (and so its library and downloads), music
+/// folders, bitrate cap, icon, account (its user, when the form does not ask it, and picture) and
+/// scrobbling.
+fn over_saved(info: &ProviderInfo, saved: &SavedServer, form: SavedServer) -> SavedServer {
+    SavedServer {
+        id: saved.id.clone(),
+        user: if info.asks(FormField::User) { form.user } else { saved.user.clone() },
+        music_folder_ids: saved.music_folder_ids.clone(),
+        alt_max_bit_rate: saved.alt_max_bit_rate,
+        icon: saved.icon,
+        picture: saved.picture.clone(),
+        scrobble_off: saved.scrobble_off,
+        scrobblers: saved.scrobblers.clone(),
+        ..form
     }
 }
 
@@ -908,6 +919,33 @@ mod tests {
         assert_eq!(k.login_profile(list.clone(), elsewhere.clone()), elsewhere);
         let edited = SavedServer { url: "https://moved.example.com".into(), ..kept };
         assert_eq!(k.login_profile(list, edited.clone()), edited);
+    }
+
+    /// A login saves what its form holds. What the profile keeps besides stays as saved now, whether its
+    /// Edit form, opened before the page changed it, is saved, or its account is signed in to again.
+    #[test]
+    fn a_login_keeps_what_its_form_does_not_hold() {
+        let scrobblers = vec![crate::settings::SavedScrobbler { id: "c".into(), on: true, ..Default::default() }];
+        let now = SavedServer {
+            music_folder_ids: vec!["3".into()],
+            alt_max_bit_rate: 96,
+            icon: crate::settings::ProfileIcon::Think,
+            picture: Some("https://pictures.example.com/ann".into()),
+            scrobble_off: true,
+            scrobblers,
+            ..saved("a1", ServerKind::Subsonic, "https://music.example.com", "ann")
+        };
+        let list = ServerList { servers: vec![now.clone()], active_server_id: "a1".into() };
+        let edited = SavedServer { password: "new".into(), ..saved("a1", ServerKind::Subsonic, "https://music.example.com", "ann") };
+        let again = SavedServer { password: "new".into(), ..saved("x", ServerKind::Subsonic, "https://music.example.com", "ann") };
+        for form in [edited, again] {
+            assert_eq!(Kinds::builtin().login_profile(list.clone(), form), SavedServer { password: "new".into(), ..now.clone() });
+        }
+        let signs_in = ProviderInfo { kind: ServerKind::Plugin { id: "x".into() }, fields: vec![FieldSpec { what: FormField::Name, advanced: false }], sign_in: vec![SignIn::Paste], identities: None };
+        let signed_in = saved("p1", signs_in.kind.clone(), "", "ann");
+        let list = ServerList { servers: vec![signed_in], active_server_id: "p1".into() };
+        let opened_signed_out = SavedServer { name: "Mine".into(), ..saved("p1", signs_in.kind.clone(), "", "") };
+        assert_eq!(server_for_login(&signs_in, list, opened_signed_out).user, "ann");
     }
 
     /// A kind that asks no address (a service's account) takes a profile per login.

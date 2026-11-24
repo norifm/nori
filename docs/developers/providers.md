@@ -161,7 +161,9 @@ A client asks the core and draws the answer, the same way on every client.
   page is a form, a sign-in (`Account`), or nothing (`AddNow`). One profile is on its way at a time.
 - **Logging in** is `providers::log_in`. It runs `Kinds::login_profile`, then `Kinds::check_profile`,
   and keeps the profile as the active one. A login to a saved server's address and user is that saved
-  profile again.
+  profile again. A login saves only what the form holds. The rest of a saved profile stays as it is saved
+  at that moment: its music folders, bitrate cap, icon, account and scrobbling. Other pages
+  change these while a profile's Edit form is open.
 - **Opening a profile** asks `Kinds::waits` first, for a plugin's profile. It then calls
   `Core::configure_profile` and wraps the engine's byte source with `nori_engine::core::resolving`.
 - **The account.** `Client::sign_in_due` says what to show once a profile opens or its account changes.

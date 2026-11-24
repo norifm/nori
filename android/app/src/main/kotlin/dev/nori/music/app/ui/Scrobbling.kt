@@ -47,10 +47,10 @@ import dev.nori.music.ffi.settings.ScrobblerKind
  * Where a saved profile's plays go: its own server or provider first, built in, where it takes them;
  * then its scrobbling accounts, whatever it plays from, each with its switch and a menu to remove it;
  * then a row adding one, which picks the service and then asks what it needs. Sending is the core's
- * (`Client::scrobble`). [changed] hands the profile saved to the form being edited.
+ * (`Client::scrobble`).
  */
 @Composable
-fun ScrobblingPart(vm: SettingsViewModel, profile: SavedServer, changed: (SavedServer) -> Unit) {
+fun ScrobblingPart(vm: SettingsViewModel, profile: SavedServer) {
     var adding by remember { mutableStateOf(false) }
     // The profile's rules, read off the UI thread: a plugin's provider is asked.
     val itself by produceState(false, profile.id, profile.kind) { value = withContext(Dispatchers.IO) { vm.scrobblesItself(profile) } }
@@ -58,22 +58,22 @@ fun ScrobblingPart(vm: SettingsViewModel, profile: SavedServer, changed: (SavedS
     GroupCard {
         if (itself) {
             GroupRow(
-                providerWords(vm, profile.kind).name, { changed(vm.switchServerScrobble(profile, profile.scrobbleOff)) }, Modifier.testTag("scrobbler-server"),
+                providerWords(vm, profile.kind).name, { vm.switchServerScrobble(profile, profile.scrobbleOff) }, Modifier.testTag("scrobbler-server"),
                 subtitle = say.scrobblerBuiltIn,
             ) {
                 Spacer(Modifier.width(12.dp))
-                NoriSwitch(!profile.scrobbleOff, { on -> changed(vm.switchServerScrobble(profile, on)) })
+                NoriSwitch(!profile.scrobbleOff, { on -> vm.switchServerScrobble(profile, on) })
             }
         }
         profile.scrobblers.forEach { a ->
             val host = a.url.takeIf { it.isNotBlank() }?.let { android.net.Uri.parse(it.trim()).host ?: it.trim() }
             GroupRow(
-                say.scrobbler(a.kind), { changed(vm.putScrobbler(profile, a.copy(on = !a.on))) }, Modifier.testTag("scrobbler-${a.id}"),
+                say.scrobbler(a.kind), { vm.putScrobbler(profile, a.copy(on = !a.on)) }, Modifier.testTag("scrobbler-${a.id}"),
                 subtitle = listOfNotNull(a.user.ifBlank { null }, host).joinToString(" · "),
             ) {
                 Spacer(Modifier.width(12.dp))
-                NoriSwitch(a.on, { on -> changed(vm.putScrobbler(profile, a.copy(on = on))) })
-                MoreButton(listOf(say.remove to { changed(vm.removeScrobbler(profile, a.id)) }))
+                NoriSwitch(a.on, { on -> vm.putScrobbler(profile, a.copy(on = on)) })
+                MoreButton(listOf(say.remove to { vm.removeScrobbler(profile, a.id) }))
             }
         }
         GroupRow(
@@ -81,12 +81,12 @@ fun ScrobblingPart(vm: SettingsViewModel, profile: SavedServer, changed: (SavedS
             subtitle = say.scrobblingHint.takeIf { profile.scrobblers.isEmpty() && !itself }, icon = Iconoir.Plus, divider = false,
         )
     }
-    NoriSheet(adding, { adding = false }) { AddScrobbler(vm, profile) { saved -> adding = false; changed(saved) } }
+    NoriSheet(adding, { adding = false }) { AddScrobbler(vm, profile) { adding = false } }
 }
 
 /** Adding an account: the services to pick from, then the picked one's form. */
 @Composable
-private fun AddScrobbler(vm: SettingsViewModel, profile: SavedServer, added: (SavedServer) -> Unit) {
+private fun AddScrobbler(vm: SettingsViewModel, profile: SavedServer, added: () -> Unit) {
     var kind by remember { mutableStateOf<ScrobblerKind?>(null) }
     val picked = kind
     if (picked != null) return ScrobblerFormPart(vm, profile, picked, added)
@@ -108,7 +108,7 @@ private fun AddScrobbler(vm: SettingsViewModel, profile: SavedServer, added: (Sa
  * page, and adds the account once the user is back.
  */
 @Composable
-private fun ScrobblerFormPart(vm: SettingsViewModel, profile: SavedServer, kind: ScrobblerKind, added: (SavedServer) -> Unit) {
+private fun ScrobblerFormPart(vm: SettingsViewModel, profile: SavedServer, kind: ScrobblerKind, added: () -> Unit) {
     val ui by vm.scrobblerAdd.collectAsStateWithLifecycle()
     val uri = LocalUriHandler.current
     var form by remember(kind) { mutableStateOf(ScrobblerForm(kind, "", "", "", "", "", "")) }
