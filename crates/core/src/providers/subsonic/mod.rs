@@ -8,7 +8,7 @@ pub(crate) mod wire;
 
 use std::sync::Arc;
 
-use super::{Answer, FieldSpec, FormField, Provider, ProviderInfo};
+use super::{Answer, FieldSpec, FormField, Provider, ProviderInfo, SignInCopy};
 use crate::browse::{profile_rules, ProfileRules};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Write};
@@ -42,7 +42,7 @@ impl Provider for Subsonic {
             field(WifiOnly, true),
             field(ClientCert, true),
         ];
-        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in: Vec::new(), identities: None }
+        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in: Vec::new(), identities: None, sign_in_copy: SignInCopy::Copied }
     }
 
     fn ready(&self, p: &SavedServer) -> bool {

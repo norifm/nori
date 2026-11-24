@@ -3007,7 +3007,7 @@ fn the_kind_chosen_reaches_its_form() {
 /// A provider with nothing to ask is added from the first screen, which stays until that's answered.
 #[test]
 fn nothing_to_ask_adds_at_once() {
-    use nori_core::providers::{ProviderInfo, SignIn};
+    use nori_core::providers::{ProviderInfo, SignIn, SignInCopy};
     use nori_core::settings::ServerKind;
     let dir = nori_testdir::TempDir::new("cli-login-add-now");
     let mut a = app_with_provider(&dir);
@@ -3022,24 +3022,24 @@ fn nothing_to_ask_adds_at_once() {
     // With an account it waits: sign in, or go on as a guest.
     a.login = Default::default();
     let web = vec![SignIn::WebPage { start_url: "https://a.example".into() }];
-    a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: web.clone(), identities: None });
+    a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: web.clone(), identities: None, sign_in_copy: SignInCopy::EachDevice });
     assert!(!a.login.flow.choosing() && a.login.flow.failure().is_none(), "not added yet");
     // A name is nothing to ask there.
     let name = vec![nori_core::providers::FieldSpec { what: nori_core::providers::FormField::Name, advanced: false }];
-    a.provider_opened(&ProviderInfo { kind, fields: name, sign_in: web, identities: None });
+    a.provider_opened(&ProviderInfo { kind, fields: name, sign_in: web, identities: None, sign_in_copy: SignInCopy::EachDevice });
     assert!(a.login_account() && a.login_fields().is_empty());
 }
 
 /// On the account page Enter signs in and g goes on as a guest.
 #[test]
 fn the_account_pages_keys_say_how_it_goes_on() {
-    use nori_core::providers::{ProviderInfo, SignIn};
+    use nori_core::providers::{ProviderInfo, SignIn, SignInCopy};
     use nori_core::settings::ServerKind;
     let dir = nori_testdir::TempDir::new("cli-login-account-keys");
     for code in [KeyCode::Enter, KeyCode::Char('g')] {
         let mut a = app_with_provider(&dir);
         let kind = ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() };
-        a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: vec![SignIn::WebPage { start_url: "https://a.example".into() }], identities: None });
+        a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: vec![SignIn::WebPage { start_url: "https://a.example".into() }], identities: None, sign_in_copy: SignInCopy::EachDevice });
         let page = draw(&mut a, 100, 40);
         dump("login-account", &page);
         assert!(page.contains("Continue as guest"), "{page}");

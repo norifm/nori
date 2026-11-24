@@ -12,7 +12,7 @@ pub struct Credit {
 }
 
 /// The core's dependencies; add a line with each new dependency. Dual MIT/Apache crates show the MIT text.
-const CORE_CREDITS: [(&str, &str, &str, &str, Option<&str>); 19] = [
+const CORE_CREDITS: [(&str, &str, &str, &str, Option<&str>); 22] = [
     ("uniffi", "Generates the Kotlin bindings to the core and the JNI calls under them", "Mozilla Foundation", "MPL-2.0", Some("MPL-2.0")),
     ("rusqlite", "The library index, full-text search and caches", "Copyright (c) 2014 The rusqlite developers", "MIT", Some("MIT")),
     ("SQLite", "The database itself, bundled into the core", "D. Richard Hipp and the SQLite developers, dedicated to the public domain", "Public domain", None),
@@ -37,6 +37,15 @@ const CORE_CREDITS: [(&str, &str, &str, &str, Option<&str>); 19] = [
     ("md-5", "Signing requests the way the Subsonic API asks", "Copyright (c) RustCrypto Developers", "MIT or Apache-2.0", Some("MIT")),
     ("parking_lot", "Locks inside the core", "Copyright (c) 2016 The Rust Project Developers (Amanieu d'Antras)", "MIT or Apache-2.0", Some("MIT")),
     ("thiserror", "Errors inside the core", "Copyright (c) David Tolnay", "MIT or Apache-2.0", Some("MIT")),
+    (
+        "RustCrypto: XChaCha20-Poly1305, HKDF, SHA-2, Argon2",
+        "Sealing what paired devices tell each other, and backups; the words two devices compare while pairing",
+        "Copyright (c) RustCrypto Developers",
+        "MIT or Apache-2.0",
+        Some("MIT"),
+    ),
+    ("hpke", "Sealing a group's key to a new device's one-time lock", "Copyright (c) Michael Rosenberg", "MIT or Apache-2.0", Some("MIT")),
+    ("x25519-dalek", "A new device's one-time lock", "Copyright (c) 2017-2021 isis agora lovecruft; Copyright (c) 2019-2021 DebugSteven", "BSD-3-Clause", Some("BSD-3-Clause")),
     (
         "Media3 Sonic and silence skipping, ported",
         "Speed, pitch and shortened silences, ported line for line into the core",
@@ -86,7 +95,7 @@ const ANDROID_CREDITS: [(&str, &str, &str, &str, Option<&str>); 5] = [
 ];
 
 /// The typeface and the third-party data services.
-const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 17] = [
+const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 18] = [
     ("Inter", "The typeface", "Copyright (c) 2016 The Inter Project Authors (Rasmus Andersson)", "OFL-1.1", Some("OFL-1.1")),
     ("Literata", "The typeface of page titles", "Copyright 2017 The Literata Project Authors (https://github.com/googlefonts/literata)", "OFL-1.1", Some("OFL-1.1")),
     ("Shippori Mincho", "The seal and the seasons' kanji, drawn from its outlines", "Copyright 2020 The Shippori Mincho Project Authors (https://github.com/fontdasu/ShipporiMincho)", "OFL-1.1", Some("OFL-1.1")),
@@ -115,6 +124,7 @@ const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 17] = [
     ("YouTube Music", "The lyrics YouTube Music shows for a song, asked only when switched on", "Google LLC; lyrics belong to their authors", "Service", None),
     ("iTunes Search API", "Finding a song's Apple Music id for PaxSenix, asked only when switched on", "Apple Inc.", "Service", None),
     ("Apple Music", "Moving album covers, asked only when switched on", "Apple Inc.; the artwork belongs to its artists and labels", "Service", None),
+    ("EFF short word list", "The three words two devices compare while pairing", "Electronic Frontier Foundation", "CC BY 3.0 US", None),
     (
         "Beat This!",
         "The neural beat tracker behind \"Better beat detection\": its network comes with the app, its weights from the authors' server when switched on",

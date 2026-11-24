@@ -33,6 +33,7 @@ nori-player = { path = "../player" }
 nori-look = { path = "../look", features = ["ffi"] }
 nori-plugins = { path = "../plugins", features = ["ffi"] }
 nori-backup = { path = "../backup", features = ["ffi"] }
+nori-sync = { path = "../sync", features = ["ffi"] }
 nori-covers = { path = "../covers" }
 async-trait = "0.1"
 nori-engine = { path = "../engine", features = ["core", "plugins"] }

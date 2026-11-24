@@ -12,7 +12,7 @@ use nori_plugins::{CallResult, Plugins, Store, Worker};
 use parking_lot::RwLock;
 
 use super::code::{CodeCheck, SignInCode, StartedCode};
-use super::{resolved_song, resolved_stream, sized, AccountState, Answer, FieldSpec, FormField, Identity, IdentityKind, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
+use super::{resolved_song, resolved_stream, sized, AccountState, Answer, FieldSpec, FormField, Identity, IdentityKind, Provider, ProviderInfo, ResolveStream, SignIn, SignInCopy, SignInResult};
 use crate::browse::{AlbumSort, LibrarySection, ProfileRules, SettingsPart};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
@@ -258,7 +258,7 @@ impl Provider for PluginProvider {
         }
         match self.ask_info() {
             Some(info) => self.info.get_or_init(|| info).clone(),
-            None => ProviderInfo { kind: self.kind(), fields: Vec::new(), sign_in: Vec::new(), identities: None },
+            None => ProviderInfo { kind: self.kind(), fields: Vec::new(), sign_in: Vec::new(), identities: None, sign_in_copy: SignInCopy::EachDevice },
         }
     }
 
@@ -464,6 +464,8 @@ impl PluginProvider {
             identities: said.identities.map(|k| match k {
                 w::IdentityKind::Channel => IdentityKind::Channel,
             }),
+            // The plugin interface does not say yet: a sign-in nobody vouched for stays on its device.
+            sign_in_copy: SignInCopy::EachDevice,
         })
     }
 }

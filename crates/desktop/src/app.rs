@@ -7816,9 +7816,9 @@ mod tests {
     /// A provider with an account and nothing to fill gets two ways on; any other gets its one button.
     #[test]
     fn a_page_offers_what_its_provider_needs() {
-        use nori_core::providers::{FieldSpec, FormField, Kinds, ProviderInfo, SignIn};
+        use nori_core::providers::{FieldSpec, FormField, Kinds, ProviderInfo, SignIn, SignInCopy};
         use nori_core::settings::ServerKind;
-        let info = |fields, sign_in| ProviderInfo { kind: ServerKind::Plugin { id: "a.b".into() }, fields, sign_in, identities: None };
+        let info = |fields, sign_in| ProviderInfo { kind: ServerKind::Plugin { id: "a.b".into() }, fields, sign_in, identities: None, sign_in_copy: SignInCopy::EachDevice };
         let web = || vec![SignIn::WebPage { start_url: "https://a.example".into() }];
         let page = login_form(&Kinds::builtin(), &info(Vec::new(), web()), Some("Music from A"), nori_core::providers::FirstStep::Account);
         assert_eq!((page.guest.as_str(), page.sign_in.as_str(), page.note.as_str()), (words::CONTINUE_AS_GUEST, "Sign in to a.b", "Music from A"));

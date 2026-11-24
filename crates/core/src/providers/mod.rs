@@ -24,6 +24,7 @@ use crate::browse::ProfileRules;
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Write};
 use crate::settings::{SavedServer, ServerKind, ServerList};
+pub use nori_sync::SignInCopy;
 use crate::stream::{StreamQuality, StreamTarget};
 use crate::transport::{NetError, Transport};
 use crate::Core;
@@ -221,6 +222,8 @@ pub struct ProviderInfo {
     /// What the signed-in account may act as besides itself ([`Client::identities`]); None when it is
     /// only itself.
     pub identities: Option<IdentityKind>,
+    /// Whether the account's sign-in may go to the group's other devices (profile sync).
+    pub sign_in_copy: SignInCopy,
 }
 
 /// What a signed-in account may act as besides itself.
@@ -526,6 +529,18 @@ impl Kinds {
     /// What the app offers over saved `profile`; `guest` when it is a jam guest's.
     pub fn rules_of(&self, profile: SavedServer, guest: bool) -> ProfileRules {
         self.or_subsonic(&profile.kind).rules(&profile, guest)
+    }
+
+    /// What this device brings to profile sync: the profiles it plays, the kinds whose sign-in its
+    /// provider lets go to another device, and the plugins installed here.
+    pub fn sync_here(&self) -> nori_sync::Here {
+        let copied = self.kinds().iter().filter_map(|k| self.provider(k)).map(|p| p.info()).filter(|i| i.sign_in_copy == SignInCopy::Copied).map(|i| i.kind.id().to_string()).collect();
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &self.plugins {
+            let plugins = p.installed().into_iter().map(|i| nori_sync::NeededPlugin { id: i.manifest.id.clone(), repo: i.repo, key: i.key }).collect();
+            return nori_sync::Here { plays: nori_sync::Plays::ServersAndPlugins, copied, plugins };
+        }
+        nori_sync::Here { plays: nori_sync::Plays::Servers, copied, plugins: Vec::new() }
     }
 
     /// What saved `profile` waits for before it opens here; None for one that opens. A LAN jam's guest
@@ -836,11 +851,17 @@ mod tests {
     use super::*;
 
     fn info(fields: Vec<FieldSpec>, sign_in: Vec<SignIn>) -> ProviderInfo {
-        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in, identities: None }
+        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in, identities: None, sign_in_copy: SignInCopy::Copied }
     }
 
     fn web() -> SignIn {
         SignIn::WebPage { start_url: "https://a.example".into() }
+    }
+
+    #[test]
+    fn a_device_without_plugins_plays_servers_and_copies_their_sign_ins() {
+        let here = Kinds::builtin().sync_here();
+        assert_eq!((here.plays, here.copied, here.plugins), (nori_sync::Plays::Servers, vec!["subsonic".to_string()], vec![]));
     }
 
     #[test]
@@ -941,7 +962,7 @@ mod tests {
         for form in [edited, again] {
             assert_eq!(Kinds::builtin().login_profile(list.clone(), form), SavedServer { password: "new".into(), ..now.clone() });
         }
-        let signs_in = ProviderInfo { kind: ServerKind::Plugin { id: "x".into() }, fields: vec![FieldSpec { what: FormField::Name, advanced: false }], sign_in: vec![SignIn::Paste], identities: None };
+        let signs_in = ProviderInfo { kind: ServerKind::Plugin { id: "x".into() }, fields: vec![FieldSpec { what: FormField::Name, advanced: false }], sign_in: vec![SignIn::Paste], identities: None, sign_in_copy: SignInCopy::EachDevice };
         let signed_in = saved("p1", signs_in.kind.clone(), "", "ann");
         let list = ServerList { servers: vec![signed_in], active_server_id: "p1".into() };
         let opened_signed_out = SavedServer { name: "Mine".into(), ..saved("p1", signs_in.kind.clone(), "", "") };
@@ -951,7 +972,7 @@ mod tests {
     /// A kind that asks no address (a service's account) takes a profile per login.
     #[test]
     fn a_login_without_an_address_adds_a_profile() {
-        let info = ProviderInfo { kind: ServerKind::Plugin { id: "x".into() }, fields: vec![FieldSpec { what: FormField::Name, advanced: false }], sign_in: Vec::new(), identities: None };
+        let info = ProviderInfo { kind: ServerKind::Plugin { id: "x".into() }, fields: vec![FieldSpec { what: FormField::Name, advanced: false }], sign_in: Vec::new(), identities: None, sign_in_copy: SignInCopy::EachDevice };
         let first = saved("a1", info.kind.clone(), "", "");
         let list = ServerList { servers: vec![first.clone()], active_server_id: "a1".into() };
         let second = saved("a2", info.kind.clone(), "", "");
