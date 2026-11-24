@@ -212,6 +212,13 @@ tools/device-check.sh audio --only tuning,restart
   app's AudioTrack to start or stop.
 - The only fixed waits are durations under test, such as 20 s paused in the background. Never add a
   fixed sleep.
+- Press media keys with `media_key` and turn the screen off with `screen_off`. With the screen off,
+  `media_key` sends the key to the media session, as a headset's key arrives. The system drops a key
+  from `input keyevent` then, because no window has the focus.
+- Fill a text field with `fill_field` (`tools/feature-e2e.sh`) after `field_focused` passes. nori's text
+  fields drop some keys when `input keyevent` sends several at once.
+- Inside a time limit, such as the 5 s of an Undo, act first and check after. One reading of the
+  accessibility tree takes about a second.
 - `tools/ui-dump.sh` reads the visible accessibility tree. It does not wait for an animating player to
   go idle.
 - The jam checks need an octo-fiesta relay on `localhost:5274`. `tools/jam-server.sh` starts one from the

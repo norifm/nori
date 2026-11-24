@@ -195,6 +195,20 @@ bursts_continue() {
   wait_for sinkBytes ">${a:-0}" 15 >/dev/null
 }
 
+# The screen, and a headset's media key. With the screen on, the system hands the key to the focused
+# window first, as `input keyevent` sends it. With the screen off it hands it straight to the media
+# session service, as `cmd media_session dispatch` does: an injected key is dropped then, since no window
+# has the focus. `screen_off` waits until the system says the screen is off; until then a key still
+# reaches the app's window.
+screen_awake() { adb shell dumpsys power | grep -q 'mWakefulness=Awake'; }
+screen_asleep() { ! screen_awake; }
+screen_off() { adb shell input keyevent KEYCODE_SLEEP; wait_until 10 screen_asleep; }
+# `media_key <play|pause|next|...>`, a name `cmd media_session dispatch` takes.
+media_key() {
+  if screen_awake; then adb shell input keyevent "KEYCODE_MEDIA_$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"
+  else adb shell cmd media_session dispatch "$1" >/dev/null; fi
+}
+
 # The app in the foreground, answering, logged in to this run's server.
 fixture_logged_in=0
 app_up() {

@@ -26,6 +26,17 @@ public final class UiDump {
         return null;
     }
 
+    private static AccessibilityNodeInfo focusedField(AccessibilityNodeInfo n) {
+        if (n.isFocused() && n.isEditable()) return n;
+        for (int i = 0; i < n.getChildCount(); i++) {
+            AccessibilityNodeInfo child = n.getChild(i);
+            if (child == null) continue;
+            AccessibilityNodeInfo found = focusedField(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
     private static void node(XmlSerializer xml, AccessibilityNodeInfo n, int index) throws Exception {
         xml.startTag(null, "node");
         xml.attribute(null, "index", Integer.toString(index));
@@ -37,6 +48,7 @@ public final class UiDump {
         xml.attribute(null, "clickable", Boolean.toString(n.isClickable()));
         xml.attribute(null, "enabled", Boolean.toString(n.isEnabled()));
         xml.attribute(null, "selected", Boolean.toString(n.isSelected()));
+        xml.attribute(null, "focused", Boolean.toString(n.isFocused()));
         Rect bounds = new Rect();
         n.getBoundsInScreen(bounds);
         xml.attribute(null, "bounds", bounds.toShortString());
@@ -88,6 +100,20 @@ public final class UiDump {
                     System.exit(1);
                 }
                 System.out.println("clicked");
+                return;
+            }
+            if (args.length == 2 && args[0].equals("set-text")) {
+                // The field's own SetText, as a test framework's replaceText: nori's Compose text fields
+                // drop some of the keys `input keyevent` sends in one burst.
+                String value = new String(Base64.getDecoder().decode(args[1]), StandardCharsets.UTF_8);
+                AccessibilityNodeInfo field = focusedField(root);
+                android.os.Bundle text = new android.os.Bundle();
+                text.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value);
+                if (field == null || !field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, text)) {
+                    System.err.println("no focused text field takes " + value);
+                    System.exit(1);
+                }
+                System.out.println("set");
                 return;
             }
             XmlSerializer xml = Xml.newSerializer();

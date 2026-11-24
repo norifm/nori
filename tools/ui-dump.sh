@@ -18,12 +18,17 @@ if [ ! -f "$out/classes.dex" ] || [ "$here/UiDump.java" -nt "$out/classes.dex" ]
 fi
 [ "${1:-}" != --build ] || exit 0
 adb push "$out/classes.dex" /data/local/tmp/nori-ui-dump.dex >/dev/null 2>&1
+# The actions go through `adb shell`, which returns the action's exit status; `adb exec-out` returns 0.
 if [ "${1:-}" = --click ] || [ "${1:-}" = --long-click ]; then
   case "${2:-}" in text|content-desc) ;; *) echo "expected text or content-desc" >&2; exit 2 ;; esac
   [[ "${4:-1}" =~ ^[1-9][0-9]*$ ]] || exit 2
   encoded=$(printf '%s' "$3" | base64 | tr -d '\n')
   action=${1#--}
-  exec adb exec-out "CLASSPATH=/data/local/tmp/nori-ui-dump.dex app_process /system/bin dev.nori.tools.UiDump $action $2 '$encoded' ${4:-1}"
+  exec adb shell -n "CLASSPATH=/data/local/tmp/nori-ui-dump.dex app_process /system/bin dev.nori.tools.UiDump $action $2 '$encoded' ${4:-1}"
+fi
+if [ "${1:-}" = --set-text ]; then
+  encoded=$(printf '%s' "${2:-}" | base64 | tr -d '\n')
+  exec adb shell -n "CLASSPATH=/data/local/tmp/nori-ui-dump.dex app_process /system/bin dev.nori.tools.UiDump set-text '$encoded'"
 fi
 tree=$(adb exec-out 'CLASSPATH=/data/local/tmp/nori-ui-dump.dex app_process /system/bin dev.nori.tools.UiDump')
 [[ "$tree" == '<?xml'* ]] || { echo "no accessibility snapshot: $tree" >&2; exit 1; }

@@ -11,7 +11,6 @@ SECTIONS="play transport coldkey processing crossfade eq tuning automix restart 
 list_sections
 song=${1:-$SONG}
 other=${2:-$OTHER}
-key() { adb shell input keyevent "$1"; }
 whole_run_log
 echo "== audio end to end against $([ "$NORI_E2E_SERVER" = local ] && echo "the local server" || echo "the real server")"
 local_server_up
@@ -46,19 +45,19 @@ fi
 
 if want transport; then section "transport from outside the app"
   playing_now
-  key KEYCODE_MEDIA_PAUSE; check "media key pause stops the track" silent 10
-  key KEYCODE_MEDIA_PLAY; check "media key resume" sounds 10
+  media_key pause; check "media key pause stops the track" silent 10
+  media_key play; check "media key resume" sounds 10
   adb shell input keyevent KEYCODE_HOME
-  key KEYCODE_MEDIA_PAUSE; silent 10
+  media_key pause; silent 10
   # A real wait, the one thing measured here: the app in the background, paused long enough for the
   # system to treat it as idle (the service drops to the background, the track is stopped and kept).
   sleep 20
-  key KEYCODE_MEDIA_PLAY
+  media_key play
   check "resume after 20 s paused in the background" sounds 10
   check "and the bursts keep coming" bursts_continue
-  adb shell input keyevent KEYCODE_SLEEP
-  key KEYCODE_MEDIA_PAUSE; check "media key pause with the screen off" silent 10
-  key KEYCODE_MEDIA_PLAY; check "and resume with the screen off" sounds 10
+  check "the screen goes off" screen_off
+  media_key pause; check "media key pause with the screen off" silent 10
+  media_key play; check "and resume with the screen off" sounds 10
   check "the bursts keep coming with the screen off" bursts_continue
   adb shell input keyevent KEYCODE_WAKEUP; adb shell wm dismiss-keyguard >/dev/null 2>&1
   app_up >/dev/null   # back in the foreground: the settings below need the app's own hooks
@@ -72,14 +71,14 @@ if want coldkey; then section "a play key with nori not running"
   playing_now
   "$app" do pause >/dev/null; wait_for playing False 10 >/dev/null
   adb shell am force-stop "$pkg" >/dev/null 2>&1; wait_until 10 let_go
-  key KEYCODE_MEDIA_PLAY
+  media_key play
   check "resumes the saved queue" sounds 20
   app_up >/dev/null
   "$app" do clearqueue >/dev/null
   check "the emptied queue is saved" wait_until 15 bash -c "'$app' queuesaved 2>/dev/null | grep -qx false"
   adb shell am force-stop "$pkg" >/dev/null 2>&1; wait_until 10 let_go
   adb logcat -c
-  key KEYCODE_MEDIA_PLAY
+  media_key play
   declined() { adb logcat -d -s MediaButtonReceiver:I | grep -q "does not start the media button event target service"; }
   check "with nothing saved it is declined" wait_until 10 declined
   # A running service is a ServiceRecord; SystemUI's binding from before the force stop stays listed, dead.

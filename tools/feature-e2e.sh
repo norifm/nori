@@ -26,6 +26,10 @@ tapnode_now() { # $1 = text|content-desc, $2 = that value, $3 = which of several
 }
 tapnode() { wait_until 10 tapnode_now "$@"; }
 on_screen() { ui | grep -q -- "$1"; }
+# A field is filled once it has the focus, with its own SetText (ui-dump.sh --set-text): nori's text
+# fields drop some of the keys `input keyevent` sends in one burst.
+field_focused() { ui | grep -qE '<node [^>]*class="android.widget.EditText"[^>]*focused="true"'; }
+fill_field() { "$here/ui-dump.sh" --set-text "$1" >/dev/null; }
 off_screen() { local tree; tree=$(ui) || return 1; ! printf '%s' "$tree" | grep -q -- "$1"; }
 car_read() {
   local parent="$1" before
@@ -178,14 +182,14 @@ if want plugins; then section "plugins: a repo added and renamed, orbit installe
   check "adding a repo warns first" wait_until 10 on_screen 'Add it only if you trust it'
   check "its field says what to type" wait_until 10 on_screen 'user/repo or https://'
   tapnode text "Repo address"
-  adb shell input text "http://10.0.2.2:$plugins_port/index.json"
+  check "its field takes the focus" wait_until 10 field_focused
+  fill_field "http://10.0.2.2:$plugins_port/index.json"
   tapnode text Add
   check "the repo is listed by its host" wait_until 30 on_screen 'text="10.0.2.2"'
   tapnode text 10.0.2.2
   check "its row renames it" wait_until 10 on_screen 'text="Rename"'
-  # The end of the name, then each of its 8 letters gone.
-  adb shell input keyevent 123 67 67 67 67 67 67 67 67
-  adb shell input text Local
+  check "the name's field takes the focus" wait_until 10 field_focused
+  fill_field Local
   tapnode text Save
   check "the repo has its new name" wait_until 10 on_screen 'text="Local"'
   adb exec-out screencap -p > "$shots/repos.png"
@@ -977,11 +981,17 @@ PY
   adb exec-out screencap -p > "$shots/clear-before.png"
   tapnode text Clear
   check "the songs after the one playing go" wait_for queue 1 5
-  check "the song playing stays" test "$(field title)" = "$playing_title"
-  check "the undo says what went" wait_until 5 on_screen 'text="Cleared 1 song"'
-  check "and Clear goes with them" wait_until 5 off_screen 'text="Clear"'
+  stayed=$(field title)
+  # The undo is offered for 5 s: Undo is pressed as soon as one reading of the screen shows it with Clear
+  # gone, and that reading is checked after.
+  cleared_tree=""
+  cleared_shown() { cleared_tree=$(ui) && [[ "$cleared_tree" == *'text="Cleared 1 song"'* && "$cleared_tree" != *'text="Clear"'* ]]; }
+  wait_until 5 cleared_shown
   adb exec-out screencap -p > "$shots/clear-after.png"
   tapnode text Undo
+  check "the song playing stays" test "$stayed" = "$playing_title"
+  check "the undo says what went" grep -q 'text="Cleared 1 song"' <<< "$cleared_tree"
+  check "and Clear goes with them" bash -c '! grep -q "text=\"Clear\"" <<< "$1"' _ "$cleared_tree"
   check "Undo puts them back" wait_for queue 2 5
   check "after the song playing" test "$(field index) $(field title)" = "0 $playing_title"
   restore_settings
@@ -1331,7 +1341,7 @@ print(json.dumps({k:s.get(k) for k in ['id','title','artist','album','albumId','
     check "the notification says whose jam it is" wait_until 10 jam_notified
     in_foreground() { adb shell dumpsys activity services dev.nori.music | grep -q 'isForeground=true'; }
     adb shell input keyevent 3
-    adb shell input keyevent 26
+    check "the screen goes off" screen_off
     check "in the background, screen off, the service stays in the foreground" in_foreground
     check "and the music goes on" bursts_continue
     check "and on" bursts_continue
