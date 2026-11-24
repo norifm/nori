@@ -4,6 +4,7 @@
 
 mod reads;
 mod server;
+mod sharing;
 pub(crate) mod wire;
 
 use std::sync::Arc;
@@ -18,6 +19,8 @@ use crate::transport::{NetError, Transport};
 use crate::Core;
 
 pub use server::login_check;
+pub use sharing::ShareError;
+pub(crate) use sharing::{Navidrome, Share};
 
 /// The Subsonic error for an item the server does not have.
 const NOT_FOUND: i32 = 70;

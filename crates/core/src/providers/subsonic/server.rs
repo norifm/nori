@@ -238,33 +238,35 @@ impl Client {
         params
     }
 
-    async fn get(&self, endpoint: &str, params: &[(String, String)]) -> NetResult<Vec<u8>> {
+    /// `timeout_ms` as in [`Transport::get`].
+    async fn get(&self, endpoint: &str, params: &[(String, String)], timeout_ms: u32) -> NetResult<Vec<u8>> {
         if !self.core.provider().subsonic_api() {
             return Err(crate::providers::nowhere(endpoint));
         }
         let url = self.core.server.read().url(endpoint, params);
         if url.len() <= LONGEST_URL {
-            return transport::get(&*self.transport, url, 0).await;
+            return transport::get(&*self.transport, url, timeout_ms).await;
         }
         let url = self.core.server.read().url(endpoint, &[]);
-        transport::post_form(&*self.transport, url, api::form(params)).await
+        transport::post_form(&*self.transport, url, api::form(params), timeout_ms).await
     }
 
     /// One request, retried once through the other address on an I/O failure (not a metered refusal:
     /// the other address is the same server under the same rule).
     pub(crate) async fn fetch(&self, endpoint: &str, params: Vec<(String, String)>) -> NetResult<Vec<u8>> {
-        self.send(endpoint, params, true).await
+        self.send(endpoint, params, true, 0).await
     }
 
-    /// [`Client::fetch`]; one not `repeatable` is retried only when nothing of it was sent.
-    async fn send(&self, endpoint: &str, params: Vec<(String, String)>, repeatable: bool) -> NetResult<Vec<u8>> {
+    /// [`Client::fetch`] limited to `timeout_ms` ([`Transport::get`]); one not `repeatable` is retried
+    /// only when nothing of it was sent.
+    pub(super) async fn send(&self, endpoint: &str, params: Vec<(String, String)>, repeatable: bool, timeout_ms: u32) -> NetResult<Vec<u8>> {
         let p = self.scoped(endpoint, params);
-        match self.get(endpoint, &p).await {
+        match self.get(endpoint, &p, timeout_ms).await {
             Err(e) if e.outcome() != Outcome::Refused && (repeatable || e.nothing_sent()) && !matches!(e, NetError::Transport { kind: FailureKind::Metered, .. }) => {
                 if !self.choose_address().await {
                     return Err(e);
                 }
-                self.get(endpoint, &p).await
+                self.get(endpoint, &p, timeout_ms).await
             }
             r => r,
         }
@@ -283,7 +285,7 @@ impl Client {
             }
             self.flush_pending().await?;
         } else {
-            match self.send(endpoint, params.clone(), repeatable).await.and_then(|body| Ok(self.core.parse_status(body)?)) {
+            match self.send(endpoint, params.clone(), repeatable, 0).await.and_then(|body| Ok(self.core.parse_status(body)?)) {
                 Ok(_) => {}
                 Err(e) if e.nothing_sent() || (repeatable && e.outcome() != Outcome::Refused) => self.core.pending_add(endpoint, &params)?,
                 Err(e) => return Err(e),
@@ -349,7 +351,7 @@ impl Client {
                 queued
             };
             for p in queued {
-                if let Err(e) = self.get(&p.endpoint, &p.params).await.and_then(|body| Ok(self.core.parse_status(body)?)) {
+                if let Err(e) = self.get(&p.endpoint, &p.params, 0).await.and_then(|body| Ok(self.core.parse_status(body)?)) {
                     match e.outcome() {
                         Outcome::Offline => return Ok(()),
                         Outcome::Later => {

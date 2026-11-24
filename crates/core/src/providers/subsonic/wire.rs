@@ -45,7 +45,7 @@ pub(super) fn page(parser: Parser, r: Response) -> NetResult<Page> {
         Parser::ArtistInfo => Page::About { v: r.artist_info2.unwrap_or_default().into() },
         Parser::Songs => Page::Songs { v: r.songs() },
         Parser::OneSong => Page::OneSong { v: r.songs().into_iter().next() },
-        Parser::Playlists => Page::Playlists { v: r.playlists.unwrap_or_default().playlist },
+        Parser::Playlists => Page::Playlists { v: r.playlists.unwrap_or_default().playlist.into_iter().filter(|p| !crate::jam_share::is_jam_playlist(&p.name)).collect() },
         Parser::Playlist => Page::PlaylistPage { v: r.playlist.unwrap_or_default().into() },
         Parser::PlaylistSongs => Page::Songs { v: r.playlist.unwrap_or_default().entry },
         Parser::Starred => Page::StarredPage { v: r.starred2.unwrap_or_default().into() },
@@ -72,6 +72,29 @@ pub(super) fn page(parser: Parser, r: Response) -> NetResult<Page> {
     })
 }
 
+/// The share a `createShare` answer made: its id and the address of its page, as the server names it.
+pub(super) fn made_share(body: &[u8]) -> Result<(String, String)> {
+    let share = parse(body)?.shares.and_then(|s| s.share.into_iter().next()).filter(|s| !s.id.is_empty());
+    share.map(|s| (s.id, s.url)).ok_or(CoreError::Parse { reason: "no share in response".into() })
+}
+
+/// The playlist an answer holds (`createPlaylist`'s, `getPlaylist`'s): its id and its songs, in order.
+pub(super) fn playlist(body: &[u8]) -> Result<(String, Vec<Song>)> {
+    let p = parse(body)?.playlist.filter(|p| !p.playlist.id.is_empty()).ok_or(CoreError::Parse { reason: "no playlist in response".into() })?;
+    Ok((p.playlist.id, p.entry))
+}
+
+/// The song a `getSong` answer holds.
+pub(super) fn song(body: &[u8]) -> Result<Song> {
+    parse(body)?.song.ok_or(CoreError::Parse { reason: "no song in response".into() })
+}
+
+/// The largest cover address a `getAlbumInfo2` answer gives; None when the album has none.
+pub(super) fn album_cover(body: &[u8]) -> Result<Option<String>> {
+    let i = parse(body)?.album_info.unwrap_or_default();
+    Ok([i.large_image_url, i.medium_image_url, i.small_image_url].into_iter().find(|u| !u.is_empty()))
+}
+
 /// A library walk's page: what it lists.
 pub(crate) fn found(body: &[u8]) -> Result<SearchResult> {
     Ok(parse(body)?.search_result3.unwrap_or_default().into())
@@ -81,6 +104,11 @@ impl Response {
     /// The server's name for itself (`navidrome`); empty when it gives none.
     pub(super) fn kind(&self) -> &str {
         &self.kind
+    }
+
+    /// The server's version as it says it (Navidrome's `0.64.2 (8a8c0c0)`); empty when it gives none.
+    pub(super) fn server_version(&self) -> &str {
+        &self.server_version
     }
 }
 
@@ -204,7 +232,18 @@ struct DirectoryWire {
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct Share {
+    #[serde(deserialize_with = "crate::model::id_string")]
+    id: String,
     url: String,
+}
+
+/// getAlbumInfo2's cover addresses, public ones on Navidrome (`/share/img/...`).
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct AlbumInfoWire {
+    large_image_url: String,
+    medium_image_url: String,
+    small_image_url: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -253,6 +292,7 @@ pub(crate) struct Response {
     lyrics_list: Option<LyricsList>,
     play_queue: Option<QueueWire>,
     shares: Option<Shares>,
+    album_info: Option<AlbumInfoWire>,
     music_folders: Option<Folders>,
     indexes: Option<Artists>,
     directory: Option<DirectoryWire>,

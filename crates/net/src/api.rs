@@ -53,7 +53,7 @@ pub enum Auth<'a> {
 }
 
 /// Trims the address, drops a trailing `/rest` and defaults the scheme to https.
-fn normalize(base: &str) -> String {
+pub fn normalize(base: &str) -> String {
     let mut base = base.trim().trim_end_matches('/').to_string();
     if let Some(b) = base.strip_suffix("/rest") {
         base = b.to_string();

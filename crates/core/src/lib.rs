@@ -29,6 +29,7 @@ pub mod update;
 pub mod support;
 pub mod remote;
 pub mod jam_pick;
+pub mod jam_share;
 pub mod destination;
 pub mod providers;
 pub mod scrobblers;
