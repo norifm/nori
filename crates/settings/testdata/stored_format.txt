@@ -59,7 +59,7 @@ queueOffer = flag false
 remoteControl = flag false
 replayGain = int 2
 season = int 4
-servers = json [{"allowSelfSigned":true,"altMaxBitRate":192,"altUrl":"http://10.0.0.2:4533","apiKey":"key","clientCert":"c.p12","clientCertPassword":"cp","headers":{"X-Auth":"t"},"icon":"satisfied","id":"a1","kind":"fm.nori.youtube-music","legacyAuth":true,"musicFolderIds":["3","5"],"name":"Home","password":"pw","picture":"https://yt3.example/a=s{size}","scrobbleOff":true,"scrobblers":[{"id":"c3","key":"token","kind":"listenbrainz","on":true,"secret":"","session":"","url":"https://maloja.example/apis/listenbrainz","user":"listener"}],"url":"https://music.example.com","user":"me","wifiOnly":true}]
+servers = json [{"allowSelfSigned":true,"altMaxBitRate":192,"altUrl":"http://10.0.0.2:4533","apiKey":"key","clientCert":"c.p12","clientCertPassword":"cp","headers":{"X-Auth":"t"},"icon":"satisfied","id":"a1","kind":"fm.nori.youtube-music","legacyAuth":true,"musicFolderIds":["3","5"],"name":"Home","password":"pw","picture":"https://yt3.example/a=s{size}","scrobbleOff":true,"scrobblers":[{"id":"c3","key":"token","kind":"listenbrainz","on":true,"secret":"","session":"","url":"https://maloja.example/apis/listenbrainz","user":"listener"}],"syncOff":true,"url":"https://music.example.com","user":"me","wifiOnly":true}]
 skipExplicit = flag true
 songsAheadMobile = int 2
 songsAheadWifi = int 5
@@ -67,6 +67,8 @@ soundBypass = flag true
 support = text "{\"ends\":1787227200,\"login\":\"cus_1.k\",\"monthly\":false,\"paid\":[1775822400,1784548800]}"
 swipeLeft = int 2
 swipeRight = int 4
+sync = flag false
+syncServer = text "https://sync.example.com"
 tapAction = int 3
 tasteModel = flag false
 theme = int 3
@@ -145,6 +147,8 @@ soundBypass = flag false
 support = text "{\"ends\":null,\"login\":\"\",\"monthly\":false,\"paid\":[]}"
 swipeLeft = int 3
 swipeRight = int 1
+sync = flag true
+syncServer = text ""
 tapAction = int 0
 tasteModel = flag true
 theme = int 0
