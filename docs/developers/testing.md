@@ -353,11 +353,11 @@ local port, with two members to a group room. It then drives headless `nori-cli 
 
 - Two devices pair, see each other online, and sync a profile both ways.
 - The server stops. Both wait quietly, then come back by themselves when it starts again.
-- A third device pairs and shows the full group room as a refusal (`Waiting { refused: Some(Limit) }`).
+- A third device pairs and shows the full group room as a refusal (`Refused { refused: Limit, .. }`).
 
 `tools/sync-check.sh --android SERIAL` then pairs the app's debug build on that device into the group, through
-`tools/app.sh sync`, and syncs a profile with it. The emulator reaches the server on this Mac at
-`10.0.2.2`. The Rust tests cover the protocol, reconnecting and the keep-alive rules. This check covers
+`tools/app.sh sync`, and syncs a profile with it. `adb reverse` gives the device the server's port, so
+both sides reach it at one address, which the pairing code carries. The Rust tests cover the protocol, reconnecting and the keep-alive rules. This check covers
 what only a real server and real sockets show.
 
 ### Checked by hand
@@ -425,6 +425,7 @@ python3 tools/desktop-app.py do pause
 | `appearance` | 0 System, 1 Day, 2 Night or 3 Midnight |
 | `click` | An x and y in the window's logical pixels, and presses and releases the left button there |
 | `state` | Nothing, and prints the UI's state |
+| `sync` | `state`, `code`, `take <link>`, `confirm [keep]`, `cancel` or `reset`, and prints sync's state, the pairing and the devices |
 
 - Each instance needs its own socket and data folder. The app never replaces an existing socket.
 - Playback requests finish after the reply, so wait for the state to change before you assert.

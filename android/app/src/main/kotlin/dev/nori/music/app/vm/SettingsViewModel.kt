@@ -324,6 +324,8 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         }
         val r = nori.plugins.restore(file, password)
         took(r.settings)
+        // The backup brings its sync and sync server settings, never the pairing.
+        nori.sync.settingsChanged()
         if (r.settings.server) r.settings.prefs.server?.let(nori::activate)
         BackupUi.Restored(r.plugins)
     }

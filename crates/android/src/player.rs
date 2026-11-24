@@ -65,6 +65,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"onCpu", c"(J)Z", on_cpu),
         native!(c"pace", c"(J)F", pace),
         native!(c"follow", c"(JJ)V", follow),
+        native!(c"syncWakes", c"(JJ)V", sync_wakes),
         native!(c"castTo", c"(JJJ)V", cast_to),
         native!(c"gainReductionDb", c"(J)F", gain_reduction_db),
         native!(c"compressionDb", c"(J)F", compression_db),
@@ -1731,6 +1732,19 @@ extern "system" fn follow(h: jlong, remote: jlong) {
     let remote: Arc<nori_core::remote::Remote> = unsafe { crate::uniffi_object(remote) };
     let Some(p) = player(h) else { return };
     remote.follow_with(Some(Arc::new(Along(Arc::downgrade(&p)))));
+}
+
+/// Sync's keep-alive rides on the engine's wakes from now on (`sync`, a `Syncing.uniffiCloneHandle()`,
+/// taken over), or no more (0): nothing of sync's wakes the phone by itself while music plays.
+extern "system" fn sync_wakes(h: jlong, sync: jlong) {
+    let woken: Option<nori_engine::Woken> = (sync != 0).then(|| {
+        // SAFETY: Kotlin passes `Syncing.uniffiCloneHandle()`, once.
+        let sync: Arc<nori_core::sync::Syncing> = unsafe { crate::uniffi_object(sync) };
+        Box::new(move || sync.woke()) as nori_engine::Woken
+    });
+    if let Some(p) = player(h) {
+        p.engine.on_wake(woken);
+    }
 }
 
 /// A plugin's cast takes the engine's audio while it runs (`plugins`, a `Plugins.uniffiCloneHandle()`,

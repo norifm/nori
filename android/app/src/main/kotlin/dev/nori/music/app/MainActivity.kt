@@ -139,6 +139,7 @@ class MainActivity : ComponentActivity() {
         Nori.get(this).updates.resumed()
         super.onStart()
         Nori.get(this).remotes.appShown(true)
+        Nori.get(this).sync.shown(true)
         // Binding starts the playback service, which builds a player on this thread: right after the next frame is
         // drawn, not once the main thread goes idle, which a page's items arriving keep it from for most of a second.
         afterNextDraw { startedPlugins(); if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress(); updatePlugins(); actions.shown() } }
@@ -177,6 +178,7 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         started = false
         Nori.get(this).remotes.appShown(false)
+        Nori.get(this).sync.shown(false)
         lifecycleScope.launch { Nori.get(this@MainActivity).plugins.appShown(false) }
         // The service keeps playing on its own; holding a controller while hidden would only keep callbacks flowing.
         Nori.get(this).player.disconnect()

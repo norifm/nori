@@ -334,6 +334,12 @@ impl Settings {
         !self.layer.lock().overrides.is_empty()
     }
 
+    /// A copy of the settings as the user set them, which the settings screens show and edits start
+    /// from; None before they are open. What nori does reads [`Settings::effective`].
+    pub fn current(&self) -> Option<StoredPrefs> {
+        self.with_prefs(StoredPrefs::clone)
+    }
+
     /// Replaces the settings. Returns the effect bits; 0 when nothing changed or the settings are not open.
     pub fn put(&self, prefs: StoredPrefs) -> u32 {
         self.with_store(|s| s.edit(|_| prefs)).unwrap_or(0)
@@ -503,12 +509,6 @@ impl Settings {
         }
         tx.commit()?;
         Ok(())
-    }
-
-    /// A copy of the settings as the user set them, which the settings screens show and edits start
-    /// from; None before they are open. What nori does reads [`Settings::effective`].
-    pub fn current(&self) -> Option<StoredPrefs> {
-        self.with_prefs(StoredPrefs::clone)
     }
 
     /// `f` applied to the settings as the user set them, without copying them; None before they are open.

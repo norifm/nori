@@ -225,6 +225,11 @@ class Settings(private val context: Context) {
         return c.sound.eqBands.size
     }
 
+    /** The settings the core changed itself (the profiles sync brought): taken in here, nothing sent back. */
+    fun reload() {
+        core.current()?.let { kept -> set { kept } }
+    }
+
     /** Settings changed here or worked out by the core (a device's sound, a server's list), kept as they are. */
     fun put(next: StoredPrefs) {
         if (next == state.value) return

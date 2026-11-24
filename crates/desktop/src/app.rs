@@ -437,6 +437,8 @@ pub struct App {
     /// The queue session over the settings, and the plugins.
     root: Arc<Root>,
     http: Arc<Http>,
+    /// Pairing and profile sync; runs nothing unless the computer is paired with sync on.
+    pub sync: Arc<nori_core::sync::Syncing>,
     session: Option<Session>,
     art: Rc<RefCell<Art>>,
     lyric_faces: Option<crate::sung::Faces>,
@@ -793,6 +795,10 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
     ui.set_mixing_label(words::MIXING.into());
     ui.set_first_run_words(words::first_run());
     let (tx, inbox) = Tx::new(ui.as_weak());
+    let sockets = nori_http::WebSockets::new();
+    let told = tx.clone();
+    let sync = nori_core::sync::Syncing::native(root.app.settings.clone(), sockets.clone(), root.sync_client(move |synced| told.send(Msg::Synced(synced))), nori_core::sync::Reach::Computer);
+    sockets.tell(&sync);
     let art = Rc::new(RefCell::new(Art::default()));
     let app = Rc::new_cyclic(|me: &Weak<RefCell<App>>| {
         let me = AppHandle(me.clone());
@@ -816,6 +822,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             mpris: nori_mpris::Mpris::for_app(crate::APP_ID).ok().map(Arc::new),
             root,
             http: Http::new(),
+            sync,
             session: None,
             art,
             lyric_faces: crate::sung::Faces::inter(),
@@ -3239,6 +3246,22 @@ impl App {
         self.settings_shown();
     }
 
+    /// Sync changed the saved profiles: a removed one's rows go, and the profile in use opens again when
+    /// it changed or another took its place, or the first screen shows when none is left.
+    fn synced(&mut self, synced: nori_core::sync::ProfilesSynced) {
+        if synced.active != nori_core::sync::ActiveProfile::Same {
+            if let Some(s) = self.session.take() {
+                s.close_for(None);
+            }
+            match self.root.app.settings.current().and_then(|p| p.active_server().cloned()) {
+                Some(profile) => self.open(profile, None),
+                None => self.choose_provider(),
+            }
+        }
+        self.profiles_shown();
+        self.settings_shown();
+    }
+
     /// The account changed under the open profile: its seals and downloads follow, and a session the
     /// source ended asks to sign in again.
     fn account_changed(&mut self) {
@@ -4436,6 +4459,7 @@ impl App {
                     }
                 }
             }
+            Msg::Synced(synced) => self.synced(synced),
             Msg::PluginsChanged => {
                 self.plugins_read();
                 self.output_shown();
@@ -4447,6 +4471,8 @@ impl App {
             },
             Msg::Restored(Ok(r)) => {
                 self.on_session(|s| s.backup_restored(&r.settings));
+                // The backup brings its sync and sync server settings, never the pairing.
+                self.sync.settings_changed();
                 self.settings_shown();
                 self.jam_shown();
                 self.plugins_read();

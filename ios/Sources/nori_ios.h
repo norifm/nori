@@ -70,6 +70,11 @@ typedef struct NoriReport {
 /// The support service answered: flag NORI_SUPPORT_*, text the page to open or why not, index 1 when a
 /// monthly payment runs in another currency.
 #define NORI_REPORT_SUPPORT 27
+/// Sync told the app something: flag NORI_SYNC_CHANGED (text is nori_ios_sync_state's JSON) or
+/// NORI_SYNC_PROFILES (the saved profiles changed; count 1 when the one in use did: nori_ios_reopen).
+#define NORI_REPORT_SYNC 28
+#define NORI_SYNC_CHANGED 0
+#define NORI_SYNC_PROFILES 1
 #define NORI_SUPPORT_FAILED 0
 #define NORI_SUPPORT_GIVEN 1
 #define NORI_SUPPORT_REFRESHED 2
@@ -130,6 +135,23 @@ void nori_ios_memory_warning(void);
 
 /// Closes the open session and opens the active saved server: NULL, or an error to free.
 char *nori_ios_reopen(const char *data_dir);
+
+/// Starts pairing and profile sync over the database under data_dir: nothing runs unless this iPod is paired
+/// with sync on. NULL on success; otherwise an error to free with nori_ios_free.
+char *nori_ios_sync_open(const char *data_dir);
+/// Where sync stands, as JSON to free: {state, refused, retryMs, devices: [{name, online, lastMs}], pairing}.
+char *nori_ios_sync_state(void);
+/// Shows a code to pair this iPod into a group; NORI_REPORT_SYNC follows with it.
+void nori_ios_sync_code(void);
+/// Takes another device's pasted code: NULL when it reads, otherwise why not, to free.
+char *nori_ios_sync_take(const char *link);
+/// Confirms the pairing asked; keep non-zero keeps a copy on the server at a group's first pairing.
+void nori_ios_sync_confirm(int32_t keep);
+void nori_ios_sync_cancel(void);
+/// Reset pairing: this iPod leaves its group for one of its own.
+void nori_ios_sync_reset(void);
+/// The sync or sync server setting changed.
+void nori_ios_sync_settings_changed(void);
 
 /// The saved servers as JSON to free: [{id, label, url, active, kind, waits, icon, letter}]; an empty
 /// label: call it by its kind. `icon` one of nori_ios_profile_icons' ids, `letter` the letter its circle

@@ -84,7 +84,7 @@ fn run(data: &Path, name: String, reach: Reach) -> Result<(), String> {
     settings.open(&nori_host::db_path(data)).map_err(|e| format!("the settings: {e}"))?;
     let sockets = nori_http::WebSockets::new();
     let told = Arc::new(Told { root: root.clone(), data: data.into() });
-    let syncing = nori_host::sync::syncing(settings.clone(), sockets.clone(), told, reach);
+    let syncing = nori_core::sync::Syncing::native(settings.clone(), sockets.clone(), told, reach);
     sockets.tell(&syncing);
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };

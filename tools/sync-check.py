@@ -174,7 +174,7 @@ def main():
         pixel.ask("add Work http://work.example me pw")
         check("and one on the first reaches the new one", mac.until("the new profile", 20, "profiles", r"^profiles Music,Work$"))
         server.stop()
-        check("a dropped connection waits quietly", pixel.until("waiting", 20, "state", r"Waiting \{ refused: None") and mac.until("waiting", 20, "state", r"Waiting \{ refused: None"))
+        check("a dropped connection waits quietly", pixel.until("waiting", 20, "state", r"Offline") and mac.until("waiting", 20, "state", r"Offline"))
         server.start()
         check("and comes back by itself", pixel.until("back", 60, "state", "Connected") and mac.until("back", 60, "state", "Connected"))
         check("no drop was told as an event", not any("Refused" in t for t in pixel.told + mac.told))
@@ -184,8 +184,11 @@ def main():
         devices.append(ipad)
         ipad.ask(f"server {address}")
         check("a third device pairs", pair(pixel, ipad))
-        check("and shows the full group room as a refusal", ipad.until("refused", 20, "state", r"Waiting \{ refused: Some\(Limit\)"))
+        check("and shows the full group room as a refusal", ipad.until("refused", 20, "state", r"Refused \{ refused: Limit"))
         if android:
+            # The group room holds two: the app takes the place of the Mac and the iPad.
+            for d in (mac, ipad):
+                d.quit()
             check_android(android, pixel, address)
     finally:
         for d in devices:
@@ -203,8 +206,18 @@ def app(serial, *words):
 
 def check_android(serial, pixel, address):
     """The app on `serial` pairs into pixel's group through the server on this Mac, and syncs."""
-    # The emulator reaches this Mac's 127.0.0.1 as 10.0.2.2; the Mac keeps its own address.
-    app(serial, "sync", "server", address.replace("127.0.0.1", "10.0.2.2"))
+    # A code carries its server, which both sides must reach at one address: the device's own port is
+    # this Mac's.
+    port = address.rsplit(":", 1)[1]
+    subprocess.run(["adb", "-s", serial, "reverse", f"tcp:{port}", f"tcp:{port}"], check=True, capture_output=True)
+    try:
+        check_app(serial, pixel, address)
+    finally:
+        subprocess.run(["adb", "-s", serial, "reverse", "--remove", f"tcp:{port}"], capture_output=True)
+
+
+def check_app(serial, pixel, address):
+    app(serial, "sync", "server", address)
     app(serial, "sync", "code")
     code = wait_until("the app's code", 30, lambda: re.search(r"(nori://pair#\S+)", app(serial, "sync", "pairing")))
     check("the app shows a code", code)

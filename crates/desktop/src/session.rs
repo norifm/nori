@@ -159,6 +159,8 @@ pub enum Msg {
     BackedUp(Result<(), nori_host::desktop::BackupFailure>),
     /// What a backup restored, or why it couldn't.
     Restored(Result<Box<nori_core::backup::Restored>, nori_host::desktop::BackupFailure>),
+    /// Sync changed the saved profiles, which the settings now keep.
+    Synced(nori_core::sync::ProfilesSynced),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }

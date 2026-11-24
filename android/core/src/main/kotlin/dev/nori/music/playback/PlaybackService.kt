@@ -206,7 +206,7 @@ class PlaybackService : MediaLibraryService() {
         scrobbler = Scrobbler(nori, scope)
         meteredNow(nori.http.metered)
         runCatching { connectivity.registerDefaultNetworkCallback(network, main) }
-        player = EnginePlayer(this, nori).also { rustPlayer = it; it.onRemoteStateChanged = ::remoteState }
+        player = EnginePlayer(this, nori).also { rustPlayer = it; it.onRemoteStateChanged = ::remoteState; nori.sync.engine(it) }
         observer?.service(true)
         // A song that has become whole on the device is measured then, whoever fetched it (see AutoMixPrefetch).
         analyser = AutoMixPrefetch(nori.sources, nori.analyses) { player.replan() }
@@ -366,6 +366,8 @@ class PlaybackService : MediaLibraryService() {
         nori.remotes.service = null
         dev.nori.music.remote.RemoteRoute.show(this, null)
         nori.remotes.engine = null
+        nori.sync.engine(null)
+        nori.sync.playing(false)
         nori.remotes.onGuestQueue = null
         nori.widgets.onPlaced = null
         sessionPlayer = null
@@ -440,6 +442,7 @@ class PlaybackService : MediaLibraryService() {
             // Sound is coming out: whatever failed before it is no longer a run (rules.rs queue_playing).
             if (isPlaying) nori.session.queuePlaying()
             observer?.playing(isPlaying)
+            nori.sync.playing(isPlaying)
             announce()
             scrobbler.onPlaying(isPlaying)
         }

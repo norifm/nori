@@ -87,6 +87,8 @@ internal object RustPlayerJni {
     @JvmStatic @CriticalNative external fun pace(h: Long): Float
     /** Plays along with the jam whose guest [remote] is (`Remote.uniffiCloneHandle()`, taken over) while it listens along. */
     @JvmStatic @CriticalNative external fun follow(h: Long, remote: Long)
+    /** Sync's keep-alive rides on the engine's wakes ([sync] `Syncing.uniffiCloneHandle()`, taken over), or no more (0). */
+    @JvmStatic @CriticalNative external fun syncWakes(h: Long, sync: Long)
     /** A plugin's cast takes the engine's audio while it runs ([plugins] `Plugins.uniffiCloneHandle()`, taken over), with [covers]' covers (`CoverLoader.handle`). */
     @JvmStatic @CriticalNative external fun castTo(h: Long, plugins: Long, covers: Long)
     @JvmStatic @CriticalNative external fun gainReductionDb(h: Long): Float
@@ -393,6 +395,8 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     val pace: Float get() = RustPlayerJni.pace(h)
     /** Plays along with the jam whose guest [remote] is, while it listens along (the core says when). */
     fun follow(remote: dev.nori.music.ffi.Remote) = RustPlayerJni.follow(h, remote.uniffiCloneHandle())
+    /** Sync's keep-alive rides on the engine's wakes, or no more (null). */
+    fun syncWakes(sync: dev.nori.music.ffi.sync.Syncing?) = RustPlayerJni.syncWakes(h, sync?.uniffiCloneHandle() ?: 0L)
     /** Shows the queue and place the engine set while following a jam. */
     fun showFollowingQueue(mediaItems: List<MediaItem>, index: Int) {
         replaceItems(mediaItems)

@@ -87,6 +87,12 @@ class Http(private val context: Context) {
     @Volatile var stream: OkHttpClient = streamClient(api)
         private set
 
+    /**
+     * The sync server's WebSockets: the one pool, none of a profile's TLS options (the sync server is no
+     * profile's server), and no read timeout, as a socket waits for news.
+     */
+    val sockets: OkHttpClient by lazy { build(null).newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).build() }
+
     val callFactory = Call.Factory { api.newCall(it) }
     val streamFactory = Call.Factory { stream.newCall(it) }
 

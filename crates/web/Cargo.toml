@@ -41,4 +41,4 @@ js-sys = "0.3"
 # getrandom that HPKE's AEAD crates turn on.
 getrandom = { version = "0.4", features = ["wasm_js"] }
 getrandom-02 = { package = "getrandom", version = "0.2", features = ["js"] }
-web-sys = { version = "0.3", features = ["AbortController", "AbortSignal", "Headers", "ReadableStream", "ReadableStreamDefaultReader", "ReadableStreamReadResult", "Request", "RequestInit", "Response", "WorkerGlobalScope", "console"] }
+web-sys = { version = "0.3", features = ["AbortController", "AbortSignal", "Headers", "ReadableStream", "ReadableStreamDefaultReader", "ReadableStreamReadResult", "Request", "RequestInit", "Response", "WorkerGlobalScope", "console", "WebSocket", "MessageEvent", "CloseEvent", "BinaryType"] }

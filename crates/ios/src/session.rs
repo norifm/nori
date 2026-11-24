@@ -84,6 +84,8 @@ pub const REPORT_ANALYSIS_OFFER: i32 = 26;
 /// (crates/ios/src/support.rs), `text` the page to open or why not, `index` 1 when a monthly payment runs in
 /// another currency.
 pub const REPORT_SUPPORT: i32 = 27;
+/// Sync told the app something: `flag` is a `SYNC_*` (crates/ios/src/sync.rs).
+pub const REPORT_SYNC: i32 = 28;
 
 pub const STATE_IDLE: i32 = 0;
 pub const STATE_PLAYING: i32 = 1;
@@ -204,7 +206,7 @@ struct Packed {
     text: CString,
 }
 
-fn c(s: &str) -> CString {
+pub(crate) fn c(s: &str) -> CString {
     CString::new(s.replace('\0', " ")).unwrap_or_else(|_| CString::new("").unwrap())
 }
 
@@ -292,6 +294,7 @@ fn pack_event(p: &mut Packed, e: &Event) {
         Event::State(s) => {
             p.kind = REPORT_STATE;
             p.state = state_code(*s);
+            crate::sync::playing(p.state == STATE_PLAYING);
         }
         Event::Song {
             index, id, jumps, ..
@@ -542,6 +545,7 @@ fn start_queue(
         session.check();
     }
     session.analysis_offer();
+    crate::sync::ride(&session.engine);
     {
         let mut slot = SESSION.lock().unwrap_or_else(|e| e.into_inner());
         if slot.is_some() {
@@ -787,6 +791,7 @@ pub extern "C" fn nori_ios_move(from: i32, to: i32) {
 #[no_mangle]
 pub extern "C" fn nori_ios_background() {
     BACKGROUND.store(true, Ordering::Relaxed);
+    crate::sync::shown(false);
     with_session(|s| {
         s.keep(QueueMoment::Closing);
         s.in_sight(false);
@@ -797,6 +802,7 @@ pub extern "C" fn nori_ios_background() {
 #[no_mangle]
 pub extern "C" fn nori_ios_foreground() {
     BACKGROUND.store(false, Ordering::Relaxed);
+    crate::sync::shown(true);
     with_session(|s| s.in_sight(true));
 }
 

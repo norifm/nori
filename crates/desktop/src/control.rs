@@ -42,6 +42,46 @@ enum Command {
     Click(f32, f32),
 }
 
+/// A line on the socket: a command for the window, or one for sync, which has no screen yet and is
+/// answered off the UI thread (`{"sync": {"do": "take", "arg": "nori://pair#…"}}`).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Request {
+    Sync { sync: SyncAsk },
+    Window(Command),
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "do", content = "arg", rename_all = "snake_case")]
+enum SyncAsk {
+    State,
+    /// Shows a code to pair this computer into a group.
+    Code,
+    /// Takes another device's code.
+    Take(String),
+    /// Confirms the pairing asked; true keeps a copy on the server at a group's first pairing.
+    Confirm(bool),
+    Cancel,
+    Reset,
+}
+
+/// Where sync stands: its state, the pairing and the group's other devices.
+fn sync_answer(sync: &nori_core::sync::Syncing, ask: SyncAsk) -> serde_json::Value {
+    let name = nori_host::device_name();
+    match ask {
+        SyncAsk::State => {}
+        SyncAsk::Code => sync.pair_show(name),
+        SyncAsk::Take(link) => {
+            sync.pair_take(link, nori_core::sync::Came::Link);
+        }
+        SyncAsk::Confirm(keep) => sync.pair_confirm(name, keep),
+        SyncAsk::Cancel => sync.pair_cancel(),
+        SyncAsk::Reset => sync.reset(),
+    }
+    let devices: Vec<serde_json::Value> = sync.devices().iter().map(|d| serde_json::json!({"name": d.name, "online": d.online})).collect();
+    serde_json::json!({"state": format!("{:?}", sync.state()), "pairing": format!("{:?}", sync.pairing()), "devices": devices})
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum View { Home, Search, Albums, Artists, Playlists, Songs, Settings, Equalizer, Fullscreen }
@@ -167,7 +207,7 @@ pub struct Control {
     thread: Option<JoinHandle<()>>,
 }
 
-pub fn start(path: PathBuf, ui: slint::Weak<AppWindow>) -> Result<Control, String> {
+pub fn start(path: PathBuf, ui: slint::Weak<AppWindow>, sync: Arc<nori_core::sync::Syncing>) -> Result<Control, String> {
     let listener = UnixListener::bind(&path).map_err(|e| format!("control socket: {e}"))?;
     if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
         let _ = std::fs::remove_file(&path);
@@ -182,18 +222,21 @@ pub fn start(path: PathBuf, ui: slint::Weak<AppWindow>) -> Result<Control, Strin
             let timeout = Some(Duration::from_secs(2));
             let _ = stream.set_read_timeout(timeout);
             let _ = stream.set_write_timeout(timeout);
-            let reply = request(&mut stream, &ui).unwrap_or_else(|e| serde_json::json!({"error": e}));
+            let reply = request(&mut stream, &ui, &sync).unwrap_or_else(|e| serde_json::json!({"error": e}));
             let _ = writeln!(stream, "{reply}");
         }
     });
     Ok(Control { path, stop, thread: Some(thread) })
 }
 
-fn request(stream: &mut UnixStream, ui: &slint::Weak<AppWindow>) -> Result<serde_json::Value, String> {
+fn request(stream: &mut UnixStream, ui: &slint::Weak<AppWindow>, sync: &nori_core::sync::Syncing) -> Result<serde_json::Value, String> {
     let mut line = String::new();
     BufReader::new(stream.take(4097)).read_line(&mut line).map_err(|e| e.to_string())?;
     if line.len() > 4096 { return Err("command is too long".into()); }
-    let command = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+    let command = match serde_json::from_str(&line).map_err(|e| e.to_string())? {
+        Request::Sync { sync: ask } => return Ok(sync_answer(sync, ask)),
+        Request::Window(command) => command,
+    };
     let (tx, rx) = mpsc::sync_channel(1);
     ui.upgrade_in_event_loop(move |ui| { let _ = tx.send(dispatch(&ui, command)); }).map_err(|e| e.to_string())?;
     let state = rx.recv_timeout(Duration::from_secs(2)).map_err(|e| e.to_string())?;

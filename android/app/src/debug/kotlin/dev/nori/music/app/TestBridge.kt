@@ -74,6 +74,14 @@ class TestBridge : BroadcastReceiver() {
             Thread({ answer(runCatching { remoteCheck(nori, arg, value, context) }.getOrElse { "remote failed: ${it.javaClass.simpleName}" }) }, "remotecheck").start()
             return
         }
+        // Pairing and profile sync, which have no screen yet (tools/sync-check.sh): "server <url>", "code",
+        // "pairing", "take <link>", "confirm [keep]", "state", "devices", "profiles", "reset". Off the main
+        // thread, as the app calls the core.
+        if (cmd == "sync") {
+            val nori = dev.nori.music.Nori.get(context)
+            Thread({ answer(runCatching { syncCheck(nori, arg, value, context) }.getOrElse { "sync failed: ${it.javaClass.simpleName}" }) }, "synccheck").start()
+            return
+        }
         // The plugin host, as the plugin checks drive it: "install <path>" (answers the id), "turn <id> on|off",
         // "cards" (each installed plugin's id and whether it is on), "reset". Off the main thread, as the app calls it.
         if (cmd == "plugin") {
@@ -134,6 +142,32 @@ class TestBridge : BroadcastReceiver() {
             }
             answer(reply)
         }
+    }
+}
+
+/** One line about pairing and profile sync; see the "sync" command. */
+private fun syncCheck(nori: dev.nori.music.Nori, arg: String, value: String, context: Context): String {
+    val sync = nori.sync.syncing
+    val name = dev.nori.music.remote.Remotes.deviceName(context)
+    fun pairing() = when (val p = sync.pairing()) {
+        is dev.nori.music.ffi.sync.PairingView.Code -> "pairing Code ${p.link} ${p.words.joinToString(" ")}"
+        else -> "pairing $p"
+    }
+    return when (arg) {
+        "server" -> {
+            nori.settings.update { it.copy(syncServer = value.ifEmpty { null }) }
+            sync.settingsChanged()
+            "server $value"
+        }
+        "code" -> { sync.pairShow(name); pairing() }
+        "pairing" -> pairing()
+        "take" -> "take ${sync.pairTake(value, dev.nori.music.ffi.sync.Came.LINK)}"
+        "confirm" -> { sync.pairConfirm(name, value == "keep"); pairing() }
+        "state" -> "state ${sync.state()}"
+        "devices" -> "devices " + sync.devices().joinToString(",") { "${it.name}:${if (it.online) "online" else "offline"}" }
+        "profiles" -> "profiles " + nori.settings.value.servers.joinToString(",") { it.name }
+        "reset" -> { sync.reset(); "reset" }
+        else -> "unknown sync check $arg"
     }
 }
 

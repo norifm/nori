@@ -278,6 +278,7 @@ fn a_device_not_paired_or_with_sync_off_opens_nothing() {
     settle(&[&pixel, &mac]);
     assert_eq!((mac.syncing.state(), mac.net.open_sockets()), (SyncState::Idle, 0), "off closes every connection");
     assert!(mac.tasks.waits().is_empty(), "and leaves no timer");
+    assert_eq!(Arc::strong_count(&mac.tasks), 2, "and no task: the executor is the test's and its maker's alone");
     assert!(crate::paired(&mac.settings), "and forgets nothing");
     assert!(!pixel.syncing.devices()[0].online);
     mac.set_sync(true);
@@ -293,7 +294,7 @@ fn a_dropped_connection_comes_back_quietly_and_a_refusal_is_a_state() {
     pair(&pixel, &mac);
     mac.net.drop_all();
     settle(&[&pixel, &mac]);
-    let SyncState::Waiting { refused: None, .. } = mac.syncing.state() else { panic!("waiting: {:?}", mac.syncing.state()) };
+    let SyncState::Offline { .. } = mac.syncing.state() else { panic!("offline: {:?}", mac.syncing.state()) };
     assert!(!pixel.syncing.devices()[0].online);
     assert!(mac.told.events.lock().unwrap().is_empty(), "a drop is no event");
     mac.tasks.pass(5 * S);
@@ -304,7 +305,7 @@ fn a_dropped_connection_comes_back_quietly_and_a_refusal_is_a_state() {
     settle(&[&pixel, &mac]);
     mac.tasks.pass(5 * S);
     settle(&[&pixel, &mac]);
-    let SyncState::Waiting { refused: Some(Refusal::DailyWall), retry_ms } = mac.syncing.state() else { panic!("refused: {:?}", mac.syncing.state()) };
+    let SyncState::Refused { refused: Refusal::DailyWall, retry_ms } = mac.syncing.state() else { panic!("refused: {:?}", mac.syncing.state()) };
     let day = 24 * 60 * 60 * 1000;
     assert!(retry_ms > nori_time::unix_ms() && retry_ms % day <= 30 * 60 * 1000, "after midnight UTC");
     assert_eq!(mac.told.events.lock().unwrap()[..], [SyncEvent::Refused { reason: Refusal::DailyWall }]);
@@ -365,6 +366,12 @@ fn a_phone_playing_with_the_screen_off_or_paused_arms_no_timer_of_its_own() {
     phone.syncing.playing(true);
     settle(&[&mac, &phone]);
     assert_eq!(phone.syncing.state(), SyncState::Connected, "it plays: connected again");
+    phone.syncing.foreground(false);
+    settle(&[&mac, &phone]);
+    assert!(phone.tasks.waits().is_empty());
+    phone.set_sync(false);
+    settle(&[&mac, &phone]);
+    assert_eq!(Arc::strong_count(&phone.tasks), 2, "sync off with no timer due, its task ends all the same");
 }
 
 #[test]

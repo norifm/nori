@@ -86,8 +86,10 @@ pub enum SyncState {
     Idle,
     Connecting,
     Connected,
-    /// Not connected; tries again at `retry_ms` (Unix ms). `refused` when the server refused.
-    Waiting { refused: Option<Refusal>, retry_ms: i64 },
+    /// The connection dropped or could not be made; tries again at `retry_ms` (Unix ms).
+    Offline { retry_ms: i64 },
+    /// The server refused; tries again at `retry_ms` (Unix ms).
+    Refused { refused: Refusal, retry_ms: i64 },
     /// Refused until nori starts again: a protocol version the server does not speak, or a bug.
     Stopped { refused: Refusal },
     /// Let go: paused in the background for a while. It connects again when nori is opened or plays.
@@ -246,19 +248,6 @@ impl Syncing {
         r
     }
 
-    /// The sync and sync server settings, or whether the device is paired, may have changed: sync starts
-    /// or stops to match. Off closes every connection and forgets nothing.
-    pub fn settings_changed(&self) {
-        self.with(|s, inner, now| {
-            let wanted = s.sync_on() && (paired(&s.settings) || inner.running.as_ref().is_some_and(|r| r.pair.is_some()));
-            match (wanted, inner.running.is_some()) {
-                (true, false) => s.start(inner, now),
-                (false, true) => s.stop(inner),
-                _ => {}
-            }
-        });
-    }
-
     fn start(&self, inner: &mut Inner, now: i64) {
         let tasks = (self.executor)();
         let running = Running { unix_offset: nori_time::unix_ms() * 1000 - tasks.now_us(), tasks: tasks.clone(), paired: None, pair: None, stop: Arc::default() };
@@ -281,6 +270,8 @@ impl Syncing {
         let Some(r) = inner.running.take() else { return };
         r.links().for_each(Link::leave_all);
         r.stop.store(true, Ordering::Relaxed);
+        // The timer task may wait for nothing but a wake: it ends, and its executor with it.
+        self.wake.notify();
         if r.pair.is_some() {
             inner.pairing = PairingView::Refused { reason: PairingRefused::SyncOff };
         }
@@ -461,7 +452,13 @@ impl Syncing {
         }
         match paired.link.room(&paired.session.room()) {
             Some(RoomState::Open) => SyncState::Connected,
-            Some(RoomState::Waiting { until, refused }) => SyncState::Waiting { refused, retry_ms: (until.max(now) + running.unix_offset) / 1000 },
+            Some(RoomState::Waiting { until, refused }) => {
+                let retry_ms = (until.max(now) + running.unix_offset) / 1000;
+                match refused {
+                    Some(refused) => SyncState::Refused { refused, retry_ms },
+                    None => SyncState::Offline { retry_ms },
+                }
+            }
             Some(RoomState::Stopped(refused)) => SyncState::Stopped { refused },
             Some(RoomState::Opening) | None => SyncState::Connecting,
         }
@@ -473,9 +470,40 @@ impl Syncing {
     }
 }
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+impl Syncing {
+    /// Sync for a native client, on a thread of its own made only when sync starts.
+    pub fn native(settings: Arc<Settings>, sockets: Arc<dyn Sockets>, client: Arc<dyn SyncClient>, reach: Reach) -> Arc<Syncing> {
+        Syncing::new(settings, sockets, client, reach, Box::new(|| Arc::new(nori_tasks::Native::new("nori-sync").expect("a thread for sync")) as Arc<dyn Tasks>))
+    }
+}
+
+#[cfg(feature = "ffi")]
+#[uniffi::export]
+impl Syncing {
+    /// A phone's sync (Android).
+    #[uniffi::constructor]
+    pub fn on_phone(settings: Arc<Settings>, sockets: Arc<dyn Sockets>, client: Arc<dyn SyncClient>) -> Arc<Syncing> {
+        Syncing::native(settings, sockets, client, Reach::Phone)
+    }
+}
+
 /// The calls a client makes.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Syncing {
+    /// The sync and sync server settings, or whether the device is paired, may have changed: sync starts
+    /// or stops to match. Off closes every connection and forgets nothing.
+    pub fn settings_changed(&self) {
+        self.with(|s, inner, now| {
+            let wanted = s.sync_on() && (paired(&s.settings) || inner.running.as_ref().is_some_and(|r| r.pair.is_some()));
+            match (wanted, inner.running.is_some()) {
+                (true, false) => s.start(inner, now),
+                (false, true) => s.stop(inner),
+                _ => {}
+            }
+        });
+    }
+
     /// A frame from socket `id`.
     pub fn frame(&self, id: SocketId, frame: Vec<u8>) {
         self.with(|_, inner, _| inner.running.iter().flat_map(Running::links).for_each(|l| l.frame(id, &frame)));

@@ -31,6 +31,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         let dir = dataDirectory().path
         nori_ios_keep_log(dir, Int32(TimeZone.current.secondsFromGMT() / 60))
         DispatchQueue.global(qos: .userInitiated).async {
+            if let failed = (dir.withCString { d in taken(nori_ios_sync_open(d)) }) { NSLog("nori: sync: %@", failed) }
             let failed = dir.withCString { d in taken(nori_ios_open(d, nil)) }
             guard failed == nil else {
                 // No profile yet: the first run's welcome.

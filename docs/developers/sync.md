@@ -56,8 +56,9 @@ the terminal and the iPod `nori-http`'s `WebSockets`.
   when it leaves, so the server's clock is read from the way there and back, as NTP does.
 - A connection that drops comes back after a random wait of 1 to 5 s. The wait doubles while connecting
   fails, up to 5 minutes. A welcome starts the waits again. Its members are told as having left.
-- A refusal is a `RoomState::Waiting` with the time to try again. The daily wall waits until midnight
-  UTC plus up to 30 minutes, too many rooms a minute, the rest the growing wait. A version the
+- A refusal waits with the time to try again, and a client shows it as `SyncState::Refused`. The daily
+  wall waits until midnight UTC plus up to 30 minutes, too many rooms a minute, the rest the growing
+  wait. A drop shows as `SyncState::Offline`. A version the
   server does not speak, a frame this version cannot read, and `bad_request` stop the room until it is
   joined again.
 - A meeting room's end (`room_closed`) is `Heard::Closed`.
@@ -259,6 +260,27 @@ with its `Sockets`, its `SyncClient` and its `Reach`, and calls these:
 - `changed`: `state` or `pairing` changed.
 
 These calls never come while sync holds its lock, so they may call it back.
+
+### Each client
+
+| Client | Sockets | Reach | Where it is made | Its calls |
+|---|---|---|---|---|
+| Android | OkHttp, `Http.sockets` (the one pool, no profile's TLS) | Phone | `sync/Sync.kt`, started in `Nori.warmUp` | uniffi, and `RustPlayerJni.syncWakes` lends the engine's wakes |
+| Desktop | `nori_http::WebSockets` | Computer | `App::sync` in `crates/desktop/src/app.rs` | Rust |
+| Terminal | `nori_http::WebSockets` | Computer | `Runner::sync` in `crates/cli/src/runner.rs`, and `nori-cli --sync` (`sync_control.rs`) for scripts | Rust |
+| iPod | `nori_http::WebSockets` | Phone | `crates/ios/src/sync.rs` | `nori_ios_sync_*` in `nori_ios.h` |
+| Web | The browser's WebSocket in the worker | Computer | `crates/web/src/sync.rs` | The worker's `sync_*` calls |
+
+The keep-alive differs where the platform forces it. `nori-http` sends a WebSocket ping. OkHttp sends
+pings only on a timer of its own, and a browser cannot send them. So Android and the web send the text
+`ping`, which the server answers with `pong`.
+
+`nori-http`'s sockets go through the proxy the environment names (`HTTPS_PROXY`, `ALL_PROXY`, and
+`NO_PROXY`), by CONNECT, with ureq's TLS and Mozilla's roots. A profile's proxy, certificate and
+self-signed switch do not apply: the sync server is no profile's server.
+
+A client tells sync whether nori is on screen and playing. Android does it from `MainActivity` and the
+playback service. The iPod does it from its foreground and background calls and its engine's state.
 
 A paired device uses its group's server. The `syncServer` setting names the server a new code is made
 on: nori's own unless another is named. With `sync` off, nothing connects and pairing answers
