@@ -17,7 +17,7 @@ compiler=$(jar "org.jetbrains.kotlin/kotlin-compiler-embeddable/$kotlin" '*.jar'
 script=$(jar "org.jetbrains.kotlin/kotlin-script-runtime/$kotlin" '*.jar')
 daemon=$(jar "org.jetbrains.kotlin/kotlin-daemon-embeddable/$kotlin" '*.jar')
 reflect=$(jar org.jetbrains.kotlin/kotlin-reflect 'kotlin-reflect-2.4*.jar')
-coroutines=$(jar org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm 'kotlinx-coroutines-core-jvm-1.10*.jar')
+coroutines=$(jar org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm 'kotlinx-coroutines-core-jvm-1.11*.jar')
 annotations=$(jar org.jetbrains/annotations 'annotations-13.0.jar')
 for j in "$stdlib" "$compiler" "$script" "$daemon" "$reflect" "$coroutines" "$annotations"; do
     [[ -f $j ]] || { echo "missing a Kotlin compiler jar; build the app once so Gradle fetches them" >&2; exit 1; }
@@ -25,7 +25,7 @@ done
 
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
-if (($#)); then gens=("$@"); else mapfile -t gens < <(ls crates/*/testdata/twins/*.kt); fi
+if (($#)); then gens=("$@"); else gens=(crates/*/testdata/twins/*.kt); fi
 for kt in "${gens[@]}"; do
     name=$(basename "$kt" .kt)
     table="$(dirname "$kt")/$(echo "$name" | sed 's/\([a-z0-9]\)\([A-Z]\)/\1_\2/g' | tr 'A-Z' 'a-z').tsv"
