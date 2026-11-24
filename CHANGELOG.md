@@ -6,6 +6,23 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-24
+
+### Added
+
+- The desktop's headphone noise control is a card of chips
+- The desktop's Home is a centered column with more room
+- The web manages every saved profile and recolors as one
+- The desktop's Home shows recents as tiles and songs as rows
+- Desktop library pages take Home's frame; Favorites gets shelves
+
+### Fixed
+
+- The desktop's full player and mix cards follow a theme switch
+- The iPod player wears the new theme's colors after a theme change
+- Desktop profile Edit opens, with scrobbling; long text grows rows
+- Signing in again keeps a profile's picture and scrobbling switch
+
 ## [1.0.0] - 2026-11-23
 
 nori 1.0 is the first major release of nori.

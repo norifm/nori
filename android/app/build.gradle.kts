@@ -15,8 +15,8 @@ android {
         applicationId = "dev.nori.music"
         minSdk = 26
         targetSdk = 36
-        versionName = "1.0.0"
-        versionCode = 1000099
+        versionName = "1.1.0"
+        versionCode = 1010099
         // For checking the updater only: `-PpretendVersion=0.3.9` builds this as that older version (its code as
         // bump-version.sh makes it), so it finds the latest GitHub release newer and can install it in place.
         (project.findProperty("pretendVersion") as String?)?.let { v ->
