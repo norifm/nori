@@ -1,6 +1,7 @@
 //! The sync server as this crate sees it: rooms that pass opaque messages between their members, the
 //! server's time, and a group room's kept copy. A client hands a [`Relay`] to one server in, and gives
-//! back what it hears as [`Heard`], in order. The wire encoding is the transport's.
+//! back what it hears as [`Heard`], in order. A real server's is [`crate::Link`] (link.rs); its wire is
+//! wire.rs.
 
 use crate::keys::RoomName;
 
@@ -38,6 +39,11 @@ pub enum Refusal {
     Version,
     /// A kept copy's put or delete with another write secret than the first put's.
     WrongSecret,
+    /// The server could not run the room or reach its store now; it is tried again later.
+    Unavailable,
+    /// The server found what this nori sent invalid, or this nori what the server sent: a bug in one of
+    /// them, not tried again until nori starts again.
+    Invalid,
 }
 
 /// The request a refusal answers.
@@ -62,11 +68,11 @@ pub enum Heard {
     Closed { room: RoomName },
     /// A payload as `from` sent it.
     Message { room: RoomName, from: Member, payload: Vec<u8> },
-    /// The server's clock, Unix ms.
-    Time { ms: i64 },
+    /// The server's clock, Unix ms, as asked in `room`.
+    Time { room: RoomName, ms: i64 },
     /// The kept copy of `room`; None when it has none.
     Copy { room: RoomName, blob: Option<Vec<u8>> },
-    Refused { asked: Asked, reason: Refusal },
+    Refused { room: RoomName, asked: Asked, reason: Refusal },
 }
 
 /// One connection to one sync server. Every call returns at once; answers come back as [`Heard`].
@@ -74,7 +80,8 @@ pub trait Relay {
     fn join(&self, room: &RoomName, kind: RoomKind);
     fn leave(&self, room: &RoomName);
     fn send(&self, room: &RoomName, to: To, payload: Vec<u8>);
-    fn ask_time(&self);
+    /// Asks the server's clock through the connection to `room`.
+    fn ask_time(&self, room: &RoomName);
     /// Replaces the kept copy of group room `room`; the first put sets `secret`, later ones present it.
     fn put_copy(&self, room: &RoomName, secret: [u8; 32], blob: Vec<u8>);
     fn get_copy(&self, room: &RoomName);

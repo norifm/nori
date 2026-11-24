@@ -119,7 +119,7 @@ impl Session {
         &self.group().key
     }
 
-    fn room(&self) -> RoomName {
+    pub(crate) fn room(&self) -> RoomName {
         self.group().key.room()
     }
 
@@ -241,7 +241,7 @@ impl Session {
             }
             Heard::Message { room: r, from, payload } if r == room => self.message(relay, from, &payload, servers, here, now_ms),
             Heard::Copy { room: r, blob } if r == room => self.copy(relay, blob, servers, here, now_ms),
-            Heard::Refused { reason, .. } => Outcome { events: vec![SyncEvent::Refused { reason }], ..Outcome::default() },
+            Heard::Refused { room: r, reason, .. } if r == room => Outcome { events: vec![SyncEvent::Refused { reason }], ..Outcome::default() },
             _ => Outcome::default(),
         }
     }

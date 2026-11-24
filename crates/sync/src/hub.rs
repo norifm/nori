@@ -8,8 +8,9 @@ use std::sync::{Arc, Mutex};
 use crate::keys::RoomName;
 use crate::room::{Asked, Heard, Member, Refusal, Relay, RoomKind, To};
 
-/// How long a meeting room stays open.
+/// How long a meeting room stays open, and how long it then refuses connections.
 pub const MEETING_MS: i64 = 5 * 60 * 1000;
+const MEETING_CLOSED_MS: i64 = 60 * 60 * 1000;
 /// The largest message the server passes.
 const MESSAGE_BYTES: usize = 64 * 1024;
 
@@ -24,6 +25,8 @@ struct Room {
 struct State {
     now_ms: i64,
     rooms: BTreeMap<RoomName, Room>,
+    /// Meeting rooms whose time ran out, and when.
+    closed: BTreeMap<RoomName, i64>,
     copies: BTreeMap<RoomName, ([u8; 32], Vec<u8>)>,
     inboxes: Vec<VecDeque<Heard>>,
     next_member: u32,
@@ -35,8 +38,8 @@ impl State {
         self.inboxes[link].push_back(heard);
     }
 
-    fn refuse(&mut self, link: usize, asked: Asked, reason: Refusal) {
-        self.tell(link, Heard::Refused { asked, reason });
+    fn refuse(&mut self, link: usize, room: &RoomName, asked: Asked, reason: Refusal) {
+        self.tell(link, Heard::Refused { room: room.clone(), asked, reason });
     }
 
     /// `link` leaves `room`; the others hear it, and an empty room closes.
@@ -82,7 +85,9 @@ impl Hub {
         s.now_ms += ms;
         let now = s.now_ms;
         let over: Vec<RoomName> = s.rooms.iter().filter(|(_, r)| r.kind == RoomKind::Meeting && now - r.opened_ms >= MEETING_MS).map(|(n, _)| n.clone()).collect();
+        s.closed.retain(|_, at| now - *at < MEETING_CLOSED_MS);
         for name in over {
+            s.closed.insert(name.clone(), now);
             let room = s.rooms.remove(&name).expect("listed");
             for (_, link) in room.members {
                 s.tell(link, Heard::Closed { room: name.clone() });
@@ -121,11 +126,11 @@ impl HubLink {
         }
     }
 
-    /// The state, unless the wall refuses `asked`.
-    fn open(&self, asked: Asked) -> Option<std::sync::MutexGuard<'_, State>> {
+    /// The state, unless the wall refuses `asked` in `room`.
+    fn open(&self, room: &RoomName, asked: Asked) -> Option<std::sync::MutexGuard<'_, State>> {
         let mut s = self.hub.lock().unwrap();
         if s.wall {
-            s.refuse(self.link, asked, Refusal::DailyWall);
+            s.refuse(self.link, room, asked, Refusal::DailyWall);
             return None;
         }
         Some(s)
@@ -134,12 +139,15 @@ impl HubLink {
 
 impl Relay for HubLink {
     fn join(&self, room: &RoomName, kind: RoomKind) {
-        let Some(mut s) = self.open(Asked::Join) else { return };
+        let Some(mut s) = self.open(room, Asked::Join) else { return };
+        if s.closed.contains_key(room) {
+            return s.tell(self.link, Heard::Closed { room: room.clone() });
+        }
         let now = s.now_ms;
         let member = Member(s.next_member);
         let r = s.rooms.entry(room.clone()).or_insert(Room { kind, opened_ms: now, members: Vec::new() });
         if r.kind == RoomKind::Meeting && r.members.len() >= 2 {
-            return s.refuse(self.link, Asked::Join, Refusal::Limit);
+            return s.refuse(self.link, room, Asked::Join, Refusal::Limit);
         }
         let others = r.members.clone();
         r.members.push((member, self.link));
@@ -155,9 +163,9 @@ impl Relay for HubLink {
     }
 
     fn send(&self, room: &RoomName, to: To, payload: Vec<u8>) {
-        let Some(mut s) = self.open(Asked::Send) else { return };
+        let Some(mut s) = self.open(room, Asked::Send) else { return };
         if payload.len() > MESSAGE_BYTES {
-            return s.refuse(self.link, Asked::Send, Refusal::Limit);
+            return s.refuse(self.link, room, Asked::Send, Refusal::Limit);
         }
         let Some(r) = s.rooms.get(room) else { return };
         let Some(from) = r.members.iter().find(|(_, l)| *l == self.link).map(|(m, _)| *m) else { return };
@@ -167,33 +175,33 @@ impl Relay for HubLink {
         }
     }
 
-    fn ask_time(&self) {
-        let Some(mut s) = self.open(Asked::Time) else { return };
+    fn ask_time(&self, room: &RoomName) {
+        let Some(mut s) = self.open(room, Asked::Time) else { return };
         let ms = s.now_ms;
-        s.tell(self.link, Heard::Time { ms });
+        s.tell(self.link, Heard::Time { room: room.clone(), ms });
     }
 
     fn put_copy(&self, room: &RoomName, secret: [u8; 32], blob: Vec<u8>) {
-        let Some(mut s) = self.open(Asked::PutCopy) else { return };
+        let Some(mut s) = self.open(room, Asked::PutCopy) else { return };
         if s.rooms.get(room).is_some_and(|r| r.kind != RoomKind::Group) || blob.len() > MESSAGE_BYTES {
-            return s.refuse(self.link, Asked::PutCopy, Refusal::Limit);
+            return s.refuse(self.link, room, Asked::PutCopy, Refusal::Limit);
         }
         if s.copies.get(room).is_some_and(|(set, _)| *set != secret) {
-            return s.refuse(self.link, Asked::PutCopy, Refusal::WrongSecret);
+            return s.refuse(self.link, room, Asked::PutCopy, Refusal::WrongSecret);
         }
         s.copies.insert(room.clone(), (secret, blob));
     }
 
     fn get_copy(&self, room: &RoomName) {
-        let Some(mut s) = self.open(Asked::GetCopy) else { return };
+        let Some(mut s) = self.open(room, Asked::GetCopy) else { return };
         let blob = s.copies.get(room).map(|(_, blob)| blob.clone());
         s.tell(self.link, Heard::Copy { room: room.clone(), blob });
     }
 
     fn delete_copy(&self, room: &RoomName, secret: [u8; 32]) {
-        let Some(mut s) = self.open(Asked::DeleteCopy) else { return };
+        let Some(mut s) = self.open(room, Asked::DeleteCopy) else { return };
         match s.copies.get(room) {
-            Some((set, _)) if *set != secret => s.refuse(self.link, Asked::DeleteCopy, Refusal::WrongSecret),
+            Some((set, _)) if *set != secret => s.refuse(self.link, room, Asked::DeleteCopy, Refusal::WrongSecret),
             _ => {
                 s.copies.remove(room);
             }
@@ -215,12 +223,17 @@ mod tests {
         c.join(&room, RoomKind::Meeting);
         assert_eq!(a.heard(), [Heard::Joined { room: room.clone(), me: Member(0), members: vec![] }, Heard::Arrived { room: room.clone(), member: Member(1) }]);
         assert_eq!(b.heard(), [Heard::Joined { room: room.clone(), me: Member(1), members: vec![Member(0)] }]);
-        assert_eq!(c.heard(), [Heard::Refused { asked: Asked::Join, reason: Refusal::Limit }]);
+        assert_eq!(c.heard(), [Heard::Refused { room: room.clone(), asked: Asked::Join, reason: Refusal::Limit }]);
         b.send(&room, To::Everyone, b"hi".to_vec());
         assert_eq!(a.heard(), [Heard::Message { room: room.clone(), from: Member(1), payload: b"hi".to_vec() }]);
         hub.advance(MEETING_MS);
         assert_eq!(a.heard(), [Heard::Closed { room: room.clone() }]);
         assert_eq!(hub.members(&room), 0);
+        c.join(&room, RoomKind::Meeting);
+        assert_eq!(c.heard(), [Heard::Closed { room: room.clone() }], "a closed meeting room refuses for an hour");
+        hub.advance(MEETING_CLOSED_MS);
+        c.join(&room, RoomKind::Meeting);
+        assert!(matches!(c.heard()[..], [Heard::Joined { .. }]), "then its name is free again");
     }
 
     #[test]
@@ -235,17 +248,17 @@ mod tests {
         a.get_copy(&room);
         let heard = a.heard();
         assert_eq!(heard[1..], [
-            Heard::Refused { asked: Asked::PutCopy, reason: Refusal::WrongSecret },
-            Heard::Refused { asked: Asked::DeleteCopy, reason: Refusal::WrongSecret },
+            Heard::Refused { room: room.clone(), asked: Asked::PutCopy, reason: Refusal::WrongSecret },
+            Heard::Refused { room: room.clone(), asked: Asked::DeleteCopy, reason: Refusal::WrongSecret },
             Heard::Copy { room: room.clone(), blob: Some(b"one".to_vec()) },
         ]);
         hub.wall(true);
-        a.ask_time();
-        assert_eq!(a.heard(), [Heard::Refused { asked: Asked::Time, reason: Refusal::DailyWall }]);
+        a.ask_time(&room);
+        assert_eq!(a.heard(), [Heard::Refused { room: room.clone(), asked: Asked::Time, reason: Refusal::DailyWall }]);
         hub.wall(false);
-        a.ask_time();
+        a.ask_time(&room);
         a.delete_copy(&room, [1; 32]);
         a.get_copy(&room);
-        assert_eq!(a.heard(), [Heard::Time { ms: 7 }, Heard::Copy { room, blob: None }]);
+        assert_eq!(a.heard(), [Heard::Time { room: room.clone(), ms: 7 }, Heard::Copy { room, blob: None }]);
     }
 }

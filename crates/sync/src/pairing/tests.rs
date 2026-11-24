@@ -79,8 +79,7 @@ fn a_key_arriving_after_five_minutes_by_this_device_s_clock_is_refused() {
     let mut admitting = Admitting::read(&link, Came::Camera, None).unwrap();
     admitting.check(&pixel);
     steps(&pixel, &mut admitting, None, &[]);
-    admitting.admit_first(&pixel, "Pixel".into(), false, Settings::new(), NOW);
-    steps(&pixel, &mut admitting, None, &[]);
+    admitting.admit_first(&pixel, "Pixel".into(), false, Settings::new(), NOW).expect("sent");
     let late = Duration::from_millis(CODE_MS as u64 + 1);
     assert!(matches!(&join_steps(&mac, &mut joining, late)[..], [JoinStep::Refused(PairingRefused::Expired)]));
 }
@@ -132,8 +131,7 @@ fn a_tampered_or_misdirected_key_is_refused_and_the_device_waits_on() {
     let mut admitting = Admitting::read(&link, Came::Camera, None).unwrap();
     admitting.check(&pixel);
     steps(&pixel, &mut admitting, None, &[]);
-    admitting.admit_first(&pixel, "Pixel".into(), false, Settings::new(), NOW);
-    assert_eq!(steps(&pixel, &mut admitting, None, &[]), [AdmitStep::Sent]);
+    assert!(admitting.admit_first(&pixel, "Pixel".into(), false, Settings::new(), NOW).is_ok());
     assert!(matches!(&join_steps(&mac, &mut joining, Duration::ZERO)[..], [JoinStep::Paired(_)]));
 }
 
@@ -146,8 +144,7 @@ fn a_replayed_key_is_refused() {
     let mut admitting = Admitting::read(&link, Came::Camera, None).unwrap();
     admitting.check(&pixel);
     steps(&pixel, &mut admitting, None, &[]);
-    admitting.admit_first(&pixel, "Pixel".into(), false, Settings::new(), NOW);
-    steps(&pixel, &mut admitting, None, &[]);
+    admitting.admit_first(&pixel, "Pixel".into(), false, Settings::new(), NOW).expect("sent");
     let Some(Heard::Message { payload, .. }) = mac.heard().into_iter().find(|h| matches!(h, Heard::Message { .. })) else { panic!("the key") };
     let welcome = Heard::Message { room: Code::parse(&link).unwrap().meeting, from: crate::room::Member(9), payload: payload.clone() };
     assert!(matches!(joining.heard(&mac, welcome.clone(), Duration::ZERO), Some(JoinStep::Paired(_))));
@@ -205,8 +202,9 @@ fn a_new_device_gone_before_the_key_is_told_apart() {
     admitting.check(&pixel);
     steps(&pixel, &mut admitting, None, &[]);
     mac.drop_connection();
-    admitting.admit_first(&pixel, "Pixel".into(), false, Settings::new(), NOW);
-    assert_eq!(steps(&pixel, &mut admitting, None, &[]), [AdmitStep::Refused(PairingRefused::Gone)]);
+    steps(&pixel, &mut admitting, None, &[]);
+    assert_eq!(admitting.admit_first(&pixel, "Pixel".into(), false, Settings::new(), NOW).err(), Some(PairingRefused::Gone));
+    assert_eq!(hub.members(&Code::parse(&link).unwrap().meeting), 0, "and left the meeting");
 }
 
 #[test]

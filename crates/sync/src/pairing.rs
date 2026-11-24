@@ -45,6 +45,8 @@ pub enum PairingRefused {
     Spent,
     /// The sync server refused.
     Server { reason: Refusal },
+    /// Sync is off in the settings: nothing connects to a sync server.
+    SyncOff,
 }
 
 /// How the code reached the device with the profiles. Only the camera needs no check of the words.
@@ -178,7 +180,7 @@ impl Joining {
         let group = previous.map(|s| (s.devices().len() as u32, s.key().tag(lock.key())));
         let joining = Joining { lock, meeting: RoomName::random(), server, name, plays, group, started: now, joined: false, time_ms: None, paired: false };
         relay.join(&joining.meeting, RoomKind::Meeting);
-        relay.ask_time();
+        relay.ask_time(&joining.meeting);
         joining
     }
 
@@ -189,12 +191,12 @@ impl Joining {
                 self.joined = true;
                 self.code()
             }
-            Heard::Time { ms } if self.time_ms.is_none() => {
+            Heard::Time { room, ms } if room == self.meeting && self.time_ms.is_none() => {
                 self.time_ms = Some(ms);
                 self.code()
             }
             Heard::Closed { room } if room == self.meeting && !self.paired => Some(JoinStep::Refused(PairingRefused::Expired)),
-            Heard::Refused { reason, .. } if !self.paired => {
+            Heard::Refused { room, reason, .. } if room == self.meeting && !self.paired => {
                 relay.leave(&self.meeting);
                 Some(JoinStep::Refused(PairingRefused::Server { reason }))
             }
@@ -258,22 +260,23 @@ pub enum AdmitStep {
     Refused(PairingRefused),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum AdmitState {
-    /// Asking the server's time, to tell a dead code.
+    /// In the meeting room, asking the server's time, to tell a dead code.
     Checking,
     /// Waiting for the user.
     Asking,
-    /// The sealed key, waiting to be sent in the meeting room.
-    Sending(Vec<u8>),
     Done,
 }
 
-/// The side of the device with the profiles: it takes a code, says what to confirm, and sends the key.
+/// The side of the device with the profiles: it takes a code, waits with the new device in its meeting
+/// room while the user confirms, and sends the key there.
 pub struct Admitting {
     code: Code,
     came: Came,
     state: AdmitState,
+    /// The new device is in the meeting room.
+    present: bool,
 }
 
 impl Admitting {
@@ -286,7 +289,7 @@ impl Admitting {
                 return Err(PairingRefused::AlreadyPaired);
             }
         }
-        Ok(Admitting { code, came, state: AdmitState::Checking })
+        Ok(Admitting { code, came, state: AdmitState::Checking, present: false })
     }
 
     /// The server the meeting is on: the client connects a [`Relay`] there.
@@ -294,9 +297,11 @@ impl Admitting {
         &self.code.server
     }
 
-    /// Asks the server's time; [`Admitting::heard`] answers with what to confirm.
+    /// Joins the meeting room and asks the server's time there; [`Admitting::heard`] answers with what
+    /// to confirm.
     pub fn check(&self, relay: &dyn Relay) {
-        relay.ask_time();
+        relay.join(&self.code.meeting, RoomKind::Meeting);
+        relay.ask_time(&self.code.meeting);
     }
 
     fn confirmation(&self, own: Option<&Session>, servers: &[SavedServer]) -> Confirmation {
@@ -309,66 +314,89 @@ impl Admitting {
         }
     }
 
+    /// Ends this pairing with `refused`, leaving the meeting room.
+    fn end(&mut self, relay: &dyn Relay, refused: PairingRefused) -> AdmitStep {
+        self.state = AdmitState::Done;
+        relay.leave(&self.code.meeting);
+        AdmitStep::Refused(refused)
+    }
+
     /// What the server said; `own` and `servers` are this device's group and profiles.
     pub fn heard(&mut self, relay: &dyn Relay, heard: Heard, own: Option<&Session>, servers: &[SavedServer]) -> Option<AdmitStep> {
-        match (heard, &self.state) {
-            (Heard::Time { ms }, AdmitState::Checking) if ms >= self.code.expires_ms => {
-                self.state = AdmitState::Done;
-                Some(AdmitStep::Refused(PairingRefused::Expired))
+        let meeting = &self.code.meeting;
+        if self.state == AdmitState::Done {
+            return None;
+        }
+        match heard {
+            Heard::Joined { room, members, .. } if room == *meeting => {
+                self.present = !members.is_empty();
+                None
             }
-            (Heard::Time { .. }, AdmitState::Checking) => {
+            Heard::Arrived { room, .. } if room == *meeting => {
+                self.present = true;
+                None
+            }
+            Heard::Left { room, .. } if room == *meeting => {
+                self.present = false;
+                None
+            }
+            Heard::Time { room, ms } if room == *meeting && self.state == AdmitState::Checking => {
+                if ms >= self.code.expires_ms {
+                    return Some(self.end(relay, PairingRefused::Expired));
+                }
                 self.state = AdmitState::Asking;
                 Some(AdmitStep::Confirm(self.confirmation(own, servers)))
             }
-            (Heard::Joined { room, members, .. }, AdmitState::Sending(sealed)) if room == self.code.meeting => {
-                if !members.is_empty() {
-                    relay.send(&room, To::Everyone, sealed.clone());
-                }
-                relay.leave(&room);
+            Heard::Closed { room } if room == *meeting => {
                 self.state = AdmitState::Done;
-                Some(if members.is_empty() { AdmitStep::Refused(PairingRefused::Gone) } else { AdmitStep::Sent })
+                Some(AdmitStep::Refused(PairingRefused::Expired))
             }
-            (Heard::Refused { reason, .. }, state) if *state != AdmitState::Done => {
-                self.state = AdmitState::Done;
-                Some(AdmitStep::Refused(PairingRefused::Server { reason }))
-            }
+            Heard::Refused { room, reason, .. } if room == *meeting => Some(self.end(relay, PairingRefused::Server { reason })),
             _ => None,
         }
     }
 
-    fn send(&mut self, relay: &dyn Relay, group: &Group) {
+    /// Seals `group`'s key to the new device's lock and sends it, if the device is still there.
+    fn send(&mut self, relay: &dyn Relay, group: &Group) -> AdmitStep {
+        if !self.present {
+            return self.end(relay, PairingRefused::Gone);
+        }
         let welcome = Welcome { v: VERSION, key: group.key.text(), server: group.server.clone(), keep: group.keep.clone() };
         let plain = serde_json::to_vec(&welcome).expect("a welcome serializes");
-        let Some(sealed) = self.code.lock.seal(&plain, &self.code.meeting) else {
-            self.state = AdmitState::Done;
-            return;
-        };
-        self.state = AdmitState::Sending(sealed);
-        relay.join(&self.code.meeting, RoomKind::Meeting);
+        // A lock no key seals to (a low-order point) was never a new device's.
+        let Some(sealed) = self.code.lock.seal(&plain, &self.code.meeting) else { return self.end(relay, PairingRefused::NotACode) };
+        relay.send(&self.code.meeting, To::Everyone, sealed);
+        relay.leave(&self.code.meeting);
+        self.state = AdmitState::Done;
+        AdmitStep::Sent
     }
 
-    /// The user confirmed: `own`'s key goes to the new device.
-    pub fn admit(&mut self, relay: &dyn Relay, own: &Session) {
-        if self.state == AdmitState::Asking {
-            self.send(relay, own.group());
-        }
+    /// The user confirmed: `own`'s key goes to the new device. [`AdmitStep::Sent`], or
+    /// [`PairingRefused::Gone`] when it left the meeting.
+    pub fn admit(&mut self, relay: &dyn Relay, own: &Session) -> Option<AdmitStep> {
+        (self.state == AdmitState::Asking).then(|| self.send(relay, own.group()))
     }
 
     /// The user confirmed the group's first pairing: this device, `name`, makes the group on the code's
     /// server, keeping a copy there when `keep_copy`, and sends its key. The session is the client's to
-    /// keep and connect.
-    pub fn admit_first(&mut self, relay: &dyn Relay, name: String, keep_copy: bool, store: Arc<Settings>, now_ms: i64) -> Option<Session> {
+    /// keep and connect; no group is made when the new device left the meeting
+    /// ([`PairingRefused::Gone`]).
+    pub fn admit_first(&mut self, relay: &dyn Relay, name: String, keep_copy: bool, store: Arc<Settings>, now_ms: i64) -> Result<Session, PairingRefused> {
         if self.state != AdmitState::Asking {
-            return None;
+            return Err(PairingRefused::Gone);
         }
         let device = new_device_id();
         let mut book = Book::default();
         let keep = KeepCopy { on: keep_copy, stamp: book.next(&device, now_ms) };
         let group = Group { key: GroupKey::new(), server: self.code.server.clone(), device, name, seen: Vec::new(), keep };
-        self.send(relay, &group);
-        let session = Session::with(Kept { group, book }, store, false);
-        session.save();
-        Some(session)
+        match self.send(relay, &group) {
+            AdmitStep::Refused(refused) => Err(refused),
+            _ => {
+                let session = Session::with(Kept { group, book }, store, false);
+                session.save();
+                Ok(session)
+            }
+        }
     }
 }
 

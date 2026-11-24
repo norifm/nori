@@ -263,10 +263,15 @@ pub struct Settings {
     layer: Mutex<crate::overrides::Layer>,
     /// Told the settings before and after each change, while a plugin hears of them.
     watch: RwLock<Option<Watch>>,
+    /// Told after each change of the saved profiles, while profile sync runs.
+    profiles_watch: RwLock<Option<ProfilesWatch>>,
 }
 
 /// See [`Settings::watch`].
 pub type Watch = Arc<dyn Fn(&StoredPrefs, &StoredPrefs) + Send + Sync>;
+
+/// See [`Settings::watch_profiles`].
+pub type ProfilesWatch = Arc<dyn Fn() + Send + Sync>;
 
 impl Settings {
     /// What enabled plugins lay over the settings now: nothing while the switch turns every plugin off.
@@ -346,18 +351,24 @@ impl Settings {
     /// concurrent edits reach it in the order they were kept.
     fn write<R>(&self, f: impl FnOnce(&mut Option<SettingsStore>) -> R) -> R {
         let watch = self.watch.read().clone();
+        let profiles_watch = self.profiles_watch.read().clone();
         let mut k = self.kept.write();
         let before = watch.as_ref().and_then(|_| Some(k.as_ref()?.prefs.clone()));
+        let servers_before = profiles_watch.as_ref().and_then(|_| Some(k.as_ref()?.prefs.servers.clone()));
         let r = f(&mut k);
         if let Some(s) = k.as_ref() {
             self.model.switched(s.prefs.auto_mix.on(), &self.writer);
         }
         let after = k.as_ref().map(|s| s.prefs.clone());
+        let servers_changed = servers_before.is_some_and(|b| k.as_ref().is_some_and(|s| s.prefs.servers != b));
         drop(k);
         if let (Some(watch), Some(before), Some(after)) = (watch, before, after) {
             if before != after {
                 watch(&before, &after);
             }
+        }
+        if let Some(told) = profiles_watch.filter(|_| servers_changed) {
+            told();
         }
         r
     }
@@ -365,6 +376,12 @@ impl Settings {
     /// Tells `watch` of every change from now on; None stops.
     pub fn watch(&self, watch: Option<Watch>) {
         *self.watch.write() = watch;
+    }
+
+    /// Tells `watch` after every change of the saved profiles from now on, on the changing thread; None
+    /// stops.
+    pub fn watch_profiles(&self, watch: Option<ProfilesWatch>) {
+        *self.profiles_watch.write() = watch;
     }
 
     fn with_store<R>(&self, f: impl FnOnce(&mut SettingsStore) -> Option<R>) -> Option<R> {
@@ -613,6 +630,27 @@ mod tests {
         write(&mut s.db.lock(), &StoredPrefs { crossfade_sec: 4, ..s.prefs.clone() }).unwrap();
         drop(s);
         assert_eq!(open(&dir).prefs.crossfade_sec, 4);
+    }
+
+    #[test]
+    fn the_profiles_watch_hears_changes_of_the_saved_profiles_only() {
+        let dir = nori_testdir::TempDir::new("settings-profiles-watch");
+        let settings = Settings::new();
+        settings.open(&dir.join("nori.db").display().to_string()).unwrap();
+        let told = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counted = told.clone();
+        settings.watch_profiles(Some(Arc::new(move || {
+            counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        })));
+        let with = |name: &str| StoredPrefs { servers: vec![SavedServer { id: "a".into(), name: name.into(), ..Default::default() }], ..settings.current().unwrap() };
+        settings.put(with("Home"));
+        settings.put(StoredPrefs { crossfade_sec: 3, ..settings.current().unwrap() });
+        settings.put(with("Home"));
+        settings.put(with("Music"));
+        assert_eq!(told.load(std::sync::atomic::Ordering::Relaxed), 2, "added, then renamed");
+        settings.watch_profiles(None);
+        settings.put(with("Work"));
+        assert_eq!(told.load(std::sync::atomic::Ordering::Relaxed), 2);
     }
 
     #[test]
