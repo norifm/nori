@@ -45,7 +45,10 @@ case "${1:-}" in
       sleep 0.5
     done
     send state ;;
-  open|play|state|set|login|do|remote|plugin|queuesaved|webcookies) send "$@" ;;
+  # A setting the app refuses (a renamed one, a value it no longer takes) is said where a run's log shows it.
+  set) reply=$(send "$@") || exit 1; printf '%s\n' "$reply"
+    [[ "$reply" != "unknown setting "* ]] || { echo "app.sh $*: $reply" >&2; exit 1; } ;;
+  open|play|state|login|do|remote|plugin|queuesaved|webcookies) send "$@" ;;
   # Back once the screen is on, 5 s at most.
   wake) adb shell input keyevent 224 >/dev/null; adb shell wm dismiss-keyguard >/dev/null 2>&1
     for _ in $(seq 25); do adb shell dumpsys power | grep -q 'mWakefulness=Awake' && break; sleep 0.2; done ;;

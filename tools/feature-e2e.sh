@@ -930,6 +930,9 @@ if want sheets; then section "a sheet over the sideways player, the shade pulled
 fi
 
 if want queue-panel; then section "the song playing, tapped in the queue"
+  # Autofill (on by default) fills the queue as it starts; off, Clear below takes the one song enqueued.
+  remember_settings autoFill
+  "$app" set autoFill off >/dev/null
   "$app" play "$PLAIN" >/dev/null; "$app" do "enqueue $SONG" >/dev/null
   check "the song plays a few seconds" wait_for positionMs '>3000' 15
   "$app" do pause >/dev/null; check "paused" wait_for playing False 5
@@ -969,8 +972,6 @@ PY
   check "and stand still while paused" wait_until 5 bars_still
   # Clear and its Undo: which songs go and where they come back are the core's (crates/queue undo.rs);
   # here, the session command the service carries out, and media3's list following the core's both ways.
-  remember_settings autoFill
-  "$app" set autoFill false >/dev/null
   check "Clear is offered with a song after the one playing" wait_until 5 on_screen 'text="Clear"'
   playing_title=$(field title)
   adb exec-out screencap -p > "$shots/clear-before.png"
