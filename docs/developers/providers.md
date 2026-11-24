@@ -101,6 +101,7 @@ through. Many methods have defaults, so a provider writes only what it has.
 | `reminds_to_sign_in` | Whether the client reminds the user to sign in after the session ended |
 | `stop_reminding` | Stops the reminder until the next ended session |
 | `account_picture` | The signed-in account's picture |
+| `account_id` | The signed-in account's stable id, which profile sync checks a sign-in against |
 | `identities` | Who the account may act as, such as a Google account's YouTube channels |
 | `choose_identity` | Switches the account to one of those identities |
 
@@ -195,6 +196,21 @@ A client's only code for each provider is its words. Each client keeps one entry
 | The desktop app | `words::provider` in `crates/desktop/src/words.rs` |
 | The terminal app | `text::provider` in `crates/cli/src/text.rs` |
 | The iPod app | `Say.provider` in `ios/Sources/Say.swift` |
+
+## A plugin's songs in a jam
+
+A jam's guest away from the host's network gets a plugin provider's songs as the plugin's manifest
+declares (`guest_streams`, see the [plugin reference](plugin-reference.md)). `Kinds::guest_streams` reads
+the declaration of an installed plugin. `jam::GuestStreams::source` then decides, for one guest, where
+each song comes from (`jam::GuestSource`):
+
+| Declared | On the host's network | Away, the plugin runs on the guest | Away, it does not |
+|---|---|---|---|
+| `SameNetwork` | `Host` | `RequestsOnly` | `RequestsOnly` |
+| `HostAddress` | `Host` | `HostAddress`, then the guest's lookup | `HostAddress` |
+| `GuestLookup` | `Host` | `Lookup` | `RequestsOnly` |
+
+`Host` is how a LAN jam's guest plays today, through `HostedProvider`.
 
 ## Add a provider
 

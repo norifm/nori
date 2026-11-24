@@ -22,7 +22,7 @@ use nori_plugin_sdk::types::Value;
 use nori_plugin_sdk::slots::{InfoLine, Motion, Sleeve};
 use nori_plugin_sdk::provider;
 use nori_plugin_sdk::types::{Artist, Error, Explicit, Found, Item, Playlist, Song};
-use nori_plugin_sdk::{settings, state, store, Glyph, Hooks, ItemKind, Lifecycle, Manifest, MenuAction, Place, Provider, Row, Slot, Slots, SoundStage};
+use nori_plugin_sdk::{settings, state, store, Account, Glyph, GuestStreams, Hooks, ItemKind, Lifecycle, Manifest, MenuAction, Place, Provider, Row, SignInCopy, Slot, Slots, SoundStage};
 
 #[derive(Default)]
 struct Test {
@@ -256,6 +256,13 @@ impl Provider for Test {
     }
 }
 
+/// Its account is the same wherever it is signed in.
+impl Account for Test {
+    fn id(&mut self) -> Option<String> {
+        (self.ended == Some(false)).then(|| "ada-account".into())
+    }
+}
+
 impl Slots for Test {
     /// The song titled "loop" plays a loop with a poster; any other keeps nori's cover.
     fn artwork(&mut self, song: Song) -> Option<Sleeve> {
@@ -310,10 +317,12 @@ const MANIFEST: Manifest = Manifest {
     commands: hooked::COMMANDS,
     cache_mb: hooked::CACHE_MB,
     assets: hooked::ASSETS,
+    sign_in_copy: SignInCopy::Copied,
+    guest_streams: GuestStreams::GuestLookup,
     ..Manifest::new(if cfg!(feature = "second") { "fm.nori.test.second" } else { "fm.nori.test" })
 };
 
 #[cfg(feature = "rows-only")]
 nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle);
 #[cfg(not(any(feature = "headphones", feature = "rows-only")))]
-nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots, preparation, automix, deciders, lyrics, scrobbler, notification);
+nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots, preparation, automix, deciders, lyrics, scrobbler, notification, account);

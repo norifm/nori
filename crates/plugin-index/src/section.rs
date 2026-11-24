@@ -1,12 +1,13 @@
 //! A plugin's `nori:plugin` custom section, as the SDK's `plugin!` writes it: the one reader of those
 //! bytes, in plain fields. The host maps them to its own kinds; the web client reads them as they are.
 
-/// The plugin API major version this host speaks. A component's types must match exactly, so a plugin
-/// built for another can't run: any change to a type in `wit/` raises it.
+/// The plugin API major version this host speaks, the WIT package's major version. A component's types
+/// must match exactly, so a plugin built for another can't run: any change to a type in `wit/` raises
+/// it. An addition (a host import, an extension point the host looks up) keeps it.
 pub const API: u32 = 7;
 
-/// The extension points in the order of `wit/`'s `plugin` world exports: a section's bits, in turn.
-pub const POINTS: [&str; 12] = ["lifecycle", "hooks", "provider", "sound-stage", "preparation", "automix", "deciders", "slots", "device-control", "lyrics", "scrobbler", "notification"];
+/// The extension points in the order of `wit/`'s `current` world exports: a section's bits, in turn.
+pub const POINTS: [&str; 13] = ["lifecycle", "hooks", "provider", "sound-stage", "preparation", "automix", "deciders", "slots", "device-control", "lyrics", "scrobbler", "notification", "account"];
 
 /// A plugin's categories, in the order the SDK writes them; the last is a plugin's that names none.
 pub const CATEGORIES: [&str; 4] = ["service", "device", "playback", "other"];
@@ -68,6 +69,14 @@ pub struct Asset {
 /// A plugin's permissions by the byte its section keeps.
 pub const PERMISSIONS: [&str; 6] = ["PlaybackRead", "PlaybackControl", "LibraryRead", "LibraryWrite", "Subsonic", "Schedule"];
 
+/// How a provider's sign-in and songs go to other devices, as bytes into the SDK's `SignInCopy` and
+/// `GuestStreams`: what a plugin built before them doesn't say.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Travel {
+    pub sign_in_copy: u8,
+    pub guest_streams: u8,
+}
+
 /// The part a plugin built before it doesn't have.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Later {
@@ -97,6 +106,7 @@ pub struct Section {
     pub places: Vec<u8>,
     pub devices: Vec<Device>,
     pub later: Option<Later>,
+    pub travel: Option<Travel>,
 }
 
 /// Reads the section's fields in order.
@@ -193,8 +203,12 @@ impl Section {
                 (r.page, r.glyph) = (i.opt_str()?, Some(i.byte()?).filter(|g| *g != u8::MAX));
             }
         }
-        // Its category follows; a client reads it from the index (`Listed::category`).
-        Some(Section { id, version, api, bits, stage, net, signin, overrides, rows, menu, places, devices, later })
+        // Its category, which a client reads from the index (`Listed::category`), then how it travels.
+        let travel = match (i.byte(), i.byte(), i.byte()) {
+            (Some(_), Some(sign_in_copy), Some(guest_streams)) => Some(Travel { sign_in_copy, guest_streams }),
+            _ => None,
+        };
+        Some(Section { id, version, api, bits, stage, net, signin, overrides, rows, menu, places, devices, later, travel })
     }
 
     /// Its extension points, by name.

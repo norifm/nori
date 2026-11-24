@@ -11,6 +11,7 @@ mod plugged;
 pub(crate) mod hosted;
 pub mod flow;
 pub mod code;
+pub mod jam;
 #[cfg(test)]
 mod fake;
 #[cfg(test)]
@@ -148,6 +149,12 @@ pub trait Provider: Send + Sync {
 
     /// The signed-in account's picture as it acts now, a cover as the profile's covers are.
     async fn account_picture(&self, _client: &Client) -> Option<String> {
+        None
+    }
+
+    /// The signed-in account's stable identifier, the same on every device; None while signed out, or
+    /// when the source names none.
+    async fn account_id(&self, _client: &Client) -> Option<String> {
         None
     }
 
@@ -451,6 +458,21 @@ impl nori_queue::scrobble::Scrobbles for PluginScrobbles {
 }
 
 impl Kinds {
+    /// How a jam's guest gets the songs of plugin `id`'s provider, as its manifest declares;
+    /// [`jam::GuestStreams::SameNetwork`] for a plugin not installed here.
+    pub fn guest_streams(&self, id: &str) -> jam::GuestStreams {
+        #[cfg(feature = "plugins")]
+        if let Some(i) = self.plugins.iter().flat_map(|p| p.installed()).find(|i| i.manifest.id == id) {
+            return match i.manifest.guest_streams {
+                nori_plugins::GuestStreams::SameNetwork => jam::GuestStreams::SameNetwork,
+                nori_plugins::GuestStreams::HostAddress => jam::GuestStreams::HostAddress,
+                nori_plugins::GuestStreams::GuestLookup => jam::GuestStreams::GuestLookup,
+            };
+        }
+        let _ = id;
+        jam::GuestStreams::SameNetwork
+    }
+
     /// The enabled plugins' lyrics services; none without plugins.
     pub(crate) fn lyrics_services(&self) -> Vec<Arc<dyn nori_lyrics::race::PluginLyrics>> {
         #[cfg(feature = "plugins")]
@@ -829,6 +851,13 @@ impl Client {
     /// ([`crate::settings::SavedServer::picture`]); None while signed out or when it has none.
     pub async fn account_picture(&self) -> Option<String> {
         self.core.provider().account_picture(self).await
+    }
+
+    /// The signed-in account's stable identifier, for profile sync to check a sign-in here against
+    /// the account the profile syncs with (`nori_sync::Session::signed_in`); None while signed out,
+    /// or when the source names none.
+    pub async fn account_id(&self) -> Option<String> {
+        self.core.provider().account_id(self).await
     }
 
     /// Those the signed-in account may act as, the account's own first, the one it acts as chosen.

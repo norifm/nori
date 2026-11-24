@@ -38,6 +38,29 @@ pub struct Manifest {
     /// Its cache's quota, bytes.
     pub cache_bytes: u64,
     pub assets: Vec<AssetSpec>,
+    /// A provider's sign-in on the person's other devices.
+    pub sign_in_copy: SignInCopy,
+    /// How a jam's guest gets a provider's songs.
+    pub guest_streams: GuestStreams,
+}
+
+/// Whether a provider's sign-in may go to the person's other devices, as its manifest says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignInCopy {
+    /// Each device signs in itself: what a plugin that says nothing gets.
+    EachDevice,
+    Copied,
+}
+
+/// How a jam's guest gets a provider's songs, as its manifest says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuestStreams {
+    /// Only through the host on its network: what a plugin that says nothing gets.
+    SameNetwork,
+    /// The address the host resolved, which works on any device for hours.
+    HostAddress,
+    /// The guest's own lookup by the song's id, signed out.
+    GuestLookup,
 }
 
 /// The page of Get plugins a plugin is listed on, as its manifest says and its repo's index repeats.
@@ -411,7 +434,12 @@ impl Manifest {
         let places = w.places.iter().map(|p| PLACES.get(*p as usize).copied()).collect::<Option<Vec<_>>>()?;
         let devices = w.devices.iter().map(|d| DeviceFilter { name: d.name.clone(), service: d.service.clone(), vendor: u16::try_from(d.vendor).ok() }).collect();
         let points = w.points();
-        let mut m = Manifest { points, stage, rows, menu, places, devices, id: w.id, version: w.version, api: w.api, net: w.net, signin: w.signin, overrides: w.overrides, permissions: Vec::new(), hooks: Vec::new(), wake: Vec::new(), commands: Vec::new(), cache_bytes: 0, assets: Vec::new() };
+        // A kind a newer SDK adds reads as the default, as does a plugin built before them.
+        const SIGN_IN_COPY: [SignInCopy; 2] = [SignInCopy::EachDevice, SignInCopy::Copied];
+        const GUEST_STREAMS: [GuestStreams; 3] = [GuestStreams::SameNetwork, GuestStreams::HostAddress, GuestStreams::GuestLookup];
+        let sign_in_copy = w.travel.and_then(|t| SIGN_IN_COPY.get(t.sign_in_copy as usize).copied()).unwrap_or(SignInCopy::EachDevice);
+        let guest_streams = w.travel.and_then(|t| GUEST_STREAMS.get(t.guest_streams as usize).copied()).unwrap_or(GuestStreams::SameNetwork);
+        let mut m = Manifest { points, stage, rows, menu, places, devices, id: w.id, version: w.version, api: w.api, net: w.net, signin: w.signin, overrides: w.overrides, permissions: Vec::new(), hooks: Vec::new(), wake: Vec::new(), commands: Vec::new(), cache_bytes: 0, assets: Vec::new(), sign_in_copy, guest_streams };
         let Some(later) = w.later else { return Some(m) };
         const PERMISSIONS: [Permission; 6] = [Permission::PlaybackRead, Permission::PlaybackControl, Permission::LibraryRead, Permission::LibraryWrite, Permission::Subsonic, Permission::Schedule];
         // Kinds a newer SDK adds are skipped.
@@ -515,15 +543,15 @@ mod tests {
         assert_eq!(read.places, vec![Place::Artwork, Place::Devices]);
     }
 
-    /// The SDK writes the category last, as its byte in `CATEGORIES`' order: what a repo's `pack.py` reads
-    /// into its index.
+    /// The SDK writes the category after the rows' pages, before the travel's two bytes, as its byte in
+    /// `CATEGORIES`' order: what a repo's `pack.py` reads into its index.
     #[test]
-    fn the_category_is_the_last_byte_in_the_indexs_order() {
+    fn the_category_follows_the_rows_pages_in_the_indexs_order() {
         for (said, read) in [(sdk::Category::Service, Category::Service), (sdk::Category::Device, Category::Device), (sdk::Category::Playback, Category::Playback), (sdk::Category::Other, Category::Other)] {
             let m = sdk::Manifest { category: said, ..sdk::Manifest::new("fm.nori.c") };
             let bytes: [u8; 256] = sdk::encode::<256>(&m, "1.2.3", 0);
-            let last = bytes[sdk::encoded_len(&m, "1.2.3") - 1] as usize;
-            assert_eq!(Category::named(nori_plugin_index::section::CATEGORIES.get(last).copied()), read);
+            let category = bytes[sdk::encoded_len(&m, "1.2.3") - 3] as usize;
+            assert_eq!(Category::named(nori_plugin_index::section::CATEGORIES.get(category).copied()), read);
         }
         assert_eq!((Category::named(Some("lyrics")), Category::named(None)), (Category::Other, Category::Other), "one this nori doesn't know, or none");
     }
@@ -546,20 +574,26 @@ mod tests {
         assert!(read.hears(Hook::LyricLine) && !read.hears(Hook::QueueChanged));
     }
 
+    /// The bits follow the `current` world's exports, whose first are the `plugin` world's, which every
+    /// plugin has; it imports what `plugin` does.
     #[test]
     fn the_points_are_wits_in_its_order() {
         let mut resolve = wit_parser::Resolve::default();
         let (pkg, _) = resolve.push_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wit")).unwrap();
-        let world = resolve.select_world(&[pkg], Some("plugin")).unwrap();
-        let names: Vec<String> = resolve.worlds[world]
-            .exports
-            .values()
-            .filter_map(|i| match i {
-                wit_parser::WorldItem::Interface { id, .. } => resolve.interfaces[*id].name.clone(),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(names, POINTS.to_vec());
+        let names = |world: &str, exported: bool| -> Vec<String> {
+            let world = &resolve.worlds[resolve.select_world(&[pkg], Some(world)).unwrap()];
+            let items = if exported { &world.exports } else { &world.imports };
+            items
+                .values()
+                .filter_map(|i| match i {
+                    wit_parser::WorldItem::Interface { id, .. } => resolve.interfaces[*id].name.clone(),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(names("current", true), POINTS.to_vec());
+        assert!(POINTS.starts_with(&names("plugin", true).iter().map(String::as_str).collect::<Vec<_>>()));
+        assert_eq!(names("current", false), names("plugin", false));
     }
 
     #[test]
@@ -596,19 +630,23 @@ mod tests {
         const FILTERS: [sdk::DeviceFilter; 1] = [sdk::DeviceFilter::ANY.name("WH-*")];
         // The bytes an empty group takes: the devices' count, then the permissions', hooks' and wakes'
         // counts, the commands' count, the cache quota and the assets' count; the rows' pages' count; the
-        // category.
-        let (devices, session, pages, category) = (2, 2 * 3 + 2 + 4 + 2, 2, 1);
-        let full = sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, hooks: &[sdk::Hook::SongChanged], ..sdk::Manifest::new("fm.nori.new") };
-        for (m, cut, has_devices, has_hooks) in [
+        // category; the travel.
+        let (devices, session, pages, category, travel) = (2, 2 * 3 + 2 + 4 + 2, 2, 1, 2);
+        let full = sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, hooks: &[sdk::Hook::SongChanged], sign_in_copy: sdk::SignInCopy::Copied, guest_streams: sdk::GuestStreams::HostAddress, ..sdk::Manifest::new("fm.nori.new") };
+        let said = (SignInCopy::Copied, GuestStreams::HostAddress);
+        let unsaid = (SignInCopy::EachDevice, GuestStreams::SameNetwork);
+        for (m, cut, has_devices, has_hooks, travels) in [
             // Released plugins: nothing after the places.
-            (sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") }, devices + session + pages + category, false, false),
+            (sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") }, devices + session + pages + category + travel, false, false, unsaid),
             // Built with devices, before the session's fields.
-            (sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, ..sdk::Manifest::new("fm.nori.devices") }, session + pages + category, true, false),
+            (sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, ..sdk::Manifest::new("fm.nori.devices") }, session + pages + category + travel, true, false, unsaid),
             // Built before the rows' pages.
-            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, pages + category, true, true),
+            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, pages + category + travel, true, true, unsaid),
             // Built before categories.
-            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, category, true, true),
-            (full, 0, true, true),
+            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, category + travel, true, true, unsaid),
+            // Built before the travel.
+            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, travel, true, true, unsaid),
+            (full, 0, true, true, said),
         ] {
             let bytes: [u8; 1024] = sdk::encode::<1024>(&m, "1.0.0", 1 << 1);
             let read = Manifest::decode(&bytes[..sdk::encoded_len(&m, "1.0.0") - cut]).unwrap();
@@ -616,6 +654,7 @@ mod tests {
             assert_eq!(read.reaches_devices(), has_devices, "{}", m.id);
             assert_eq!(read.hears(Hook::SongChanged), has_hooks, "{}", m.id);
             assert!(read.permissions.is_empty() && read.assets.is_empty() && read.cache_bytes == 0, "{}", m.id);
+            assert_eq!((read.sign_in_copy, read.guest_streams), travels, "{} cut by {cut}", m.id);
         }
     }
 

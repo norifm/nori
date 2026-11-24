@@ -13,7 +13,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", wit.display());
     let mut resolve = Resolve::default();
     let (package, _) = resolve.push_dir(&wit).expect("wit/ parses");
-    let world = resolve.select_world(&[package], Some("plugin")).expect("the plugin world");
+    let world = resolve.select_world(&[package], Some("current")).expect("the current world");
     let exported: Vec<_> = resolve.worlds[world]
         .exports
         .values()

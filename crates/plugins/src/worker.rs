@@ -10,19 +10,19 @@ use wasmtime::component::Component;
 use wasmtime::Store;
 
 use crate::manifest::{Manifest, Refusal};
-use crate::runtime::{self, Host, Plugin};
+use crate::runtime::{self, Exports, Host};
 use crate::safe::Mark;
 
 /// A running instance: its store and its exports.
 pub struct Running {
     pub store: Store<Host>,
-    pub plugin: Plugin,
+    pub plugin: Exports,
 }
 
 type Job = Box<dyn FnOnce(&mut Option<Running>) + Send>;
 
 /// What an instance is told before its calls ([`Worker::opens`]).
-type Opening = Arc<dyn Fn(&mut Store<Host>, &Plugin) -> wasmtime::Result<()> + Send + Sync>;
+type Opening = Arc<dyn Fn(&mut Store<Host>, &Exports) -> wasmtime::Result<()> + Send + Sync>;
 
 /// The handle the core calls a plugin through.
 #[derive(Clone)]
@@ -46,7 +46,7 @@ impl Worker {
                 let make = || -> wasmtime::Result<Running> {
                     let mut store = runtime::store(manifest.clone(), &dir, shared.clone(), mark.clone());
                     store.set_fuel(runtime::CALL_FUEL)?;
-                    let plugin = Plugin::instantiate(&mut store, &component, &linker)?;
+                    let plugin = Exports::instantiate(&mut store, &component, &linker)?;
                     if manifest.extends("lifecycle") {
                         plugin.nori_plugin_lifecycle().call_start(&mut store)?;
                     }
@@ -75,7 +75,7 @@ impl Worker {
 
     /// Tells the instance `f` now, and each fresh one (started after a failed call) before its calls:
     /// what a plugin keeps in memory, such as the profile open.
-    pub fn opens(&self, f: impl Fn(&mut Store<Host>, &Plugin) -> wasmtime::Result<()> + Send + Sync + 'static) {
+    pub fn opens(&self, f: impl Fn(&mut Store<Host>, &Exports) -> wasmtime::Result<()> + Send + Sync + 'static) {
         let (f, opening): (Opening, _) = (Arc::new(f), self.opening.clone());
         let _ = self.jobs.send(Box::new(move |running| {
             *opening.lock().expect("not poisoned") = Some(f.clone());
@@ -84,7 +84,7 @@ impl Worker {
     }
 
     /// Runs `f` on the plugin's thread without waiting for it.
-    pub fn post(&self, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<()> + Send + 'static) {
+    pub fn post(&self, f: impl FnOnce(&mut Store<Host>, &Exports) -> wasmtime::Result<()> + Send + 'static) {
         let _ = self.jobs.send(Box::new(move |running| {
             attempt(running, f);
         }));
@@ -92,7 +92,7 @@ impl Worker {
 
     /// Runs `f` on the plugin's thread; None when it isn't running or its call failed (a trap, its
     /// budget spent).
-    pub async fn call<R: Send + 'static>(&self, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
+    pub async fn call<R: Send + 'static>(&self, f: impl FnOnce(&mut Store<Host>, &Exports) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
         let (tx, rx) = futures_channel::oneshot::channel();
         let job: Job = Box::new(move |running| {
             // Its caller has gone (a search typed over): the thread goes on to what is still awaited.
@@ -115,7 +115,7 @@ impl Worker {
     /// Runs `f` on the plugin's thread with a decider's fuel and waits at most `budget` for it; None
     /// past it, or when its call failed. An answer that comes later is dropped, and a call whose
     /// caller has gone by its turn is skipped.
-    pub fn decide<R: Send + 'static>(&self, budget: std::time::Duration, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
+    pub fn decide<R: Send + 'static>(&self, budget: std::time::Duration, f: impl FnOnce(&mut Store<Host>, &Exports) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
         let (tx, rx) = mpsc::sync_channel(1);
         let job: Job = Box::new(move |running| {
             let Some(r) = running.as_mut() else { return };
@@ -137,7 +137,7 @@ impl Worker {
 }
 
 /// `f` on the running instance; a failed call lets it go, and the next job starts a fresh one.
-fn attempt<R>(running: &mut Option<Running>, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R>) -> Option<R> {
+fn attempt<R>(running: &mut Option<Running>, f: impl FnOnce(&mut Store<Host>, &Exports) -> wasmtime::Result<R>) -> Option<R> {
     let r = running.as_mut()?;
     match f(&mut r.store, &r.plugin) {
         Ok(v) => Some(v),

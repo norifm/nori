@@ -205,6 +205,30 @@ impl DeviceFilter {
     }
 }
 
+/// Whether a provider's sign-in may go to the person's other devices, which sync its profiles.
+#[derive(Clone, Copy)]
+pub enum SignInCopy {
+    /// Each device signs in itself, to the same account: the service replaces the session, or ends
+    /// one that two devices use.
+    EachDevice,
+    /// The profile's password and API key work on every device, and go to them. What the plugin
+    /// keeps in its store stays on its device.
+    Copied,
+}
+
+/// How a jam's guest gets a provider's songs.
+#[derive(Clone, Copy)]
+pub enum GuestStreams {
+    /// Only on the host's network: the host's device answers the guest's reads and streams.
+    SameNetwork,
+    /// The address `provider.source` gives works on any device for hours: the host sends it, and a
+    /// guest who has the plugin looks the song up itself when the address fails.
+    HostAddress,
+    /// The address works only for the device that asked, or only for minutes: a guest who has the
+    /// plugin looks the song up by its id, signed out.
+    GuestLookup,
+}
+
 pub struct Manifest {
     /// Reverse DNS ("fm.nori.orbit").
     pub id: &'static str,
@@ -230,11 +254,15 @@ pub struct Manifest {
     pub cache_mb: u32,
     pub assets: &'static [Asset],
     pub category: Category,
+    /// A provider's sign-in on the person's other devices.
+    pub sign_in_copy: SignInCopy,
+    /// How a jam's guest gets a provider's songs.
+    pub guest_streams: GuestStreams,
 }
 
 impl Manifest {
     pub const fn new(id: &'static str) -> Manifest {
-        Manifest { id, stage: None, net: &[], signin: &[], overrides: &[], rows: &[], menu: &[], places: &[], devices: &[], permissions: &[], hooks: &[], wake: &[], commands: &[], cache_mb: 0, assets: &[], category: Category::Other }
+        Manifest { id, stage: None, net: &[], signin: &[], overrides: &[], rows: &[], menu: &[], places: &[], devices: &[], permissions: &[], hooks: &[], wake: &[], commands: &[], cache_mb: 0, assets: &[], category: Category::Other, sign_in_copy: SignInCopy::EachDevice, guest_streams: GuestStreams::SameNetwork }
     }
 }
 
@@ -449,7 +477,7 @@ const fn write<const N: usize>(m: &Manifest, version: &str, points: u32) -> Out<
         });
         k += 1;
     }
-    o.byte(m.category as u8)
+    o.byte(m.category as u8).byte(m.sign_in_copy as u8).byte(m.guest_streams as u8)
 }
 
 /// The section's bytes (`N` from [`encoded_len`]).

@@ -54,7 +54,7 @@ impl PluginProvider {
     }
 
     /// Runs `f` on the plugin's thread and waits for it here.
-    fn now<R: Send + 'static>(&self, f: impl FnOnce(&mut Store, &nori_plugins::wit::Plugin) -> CallResult<R> + Send + 'static) -> Option<R> {
+    fn now<R: Send + 'static>(&self, f: impl FnOnce(&mut Store, &nori_plugins::wit::Exports) -> CallResult<R> + Send + 'static) -> Option<R> {
         block_on(self.worker.call(f))
     }
 
@@ -258,7 +258,7 @@ impl Provider for PluginProvider {
         }
         match self.ask_info() {
             Some(info) => self.info.get_or_init(|| info).clone(),
-            None => ProviderInfo { kind: self.kind(), fields: Vec::new(), sign_in: Vec::new(), identities: None, sign_in_copy: SignInCopy::EachDevice },
+            None => ProviderInfo { kind: self.kind(), fields: Vec::new(), sign_in: Vec::new(), identities: None, sign_in_copy: self.sign_in_copy() },
         }
     }
 
@@ -397,6 +397,10 @@ impl Provider for PluginProvider {
         self.worker.call(|s, x| x.nori_plugin_provider().call_account_picture(s)).await.flatten()
     }
 
+    async fn account_id(&self, _client: &Client) -> Option<String> {
+        self.worker.call(|s, x| x.call_account_id(s)).await.flatten()
+    }
+
     async fn identities(&self, client: &Client) -> NetResult<Vec<Identity>> {
         let said = self.worker.call(|s, x| x.nori_plugin_provider().call_identities(s)).await.ok_or_else(stopped)?;
         let said = self.heard(client, said)?;
@@ -440,6 +444,15 @@ impl PluginProvider {
         result
     }
 
+    /// Whether its sign-in may go to the person's other devices, as its manifest says.
+    fn sign_in_copy(&self) -> SignInCopy {
+        let manifest = self.plugins.installed().into_iter().find(|i| i.manifest.id == self.id).map(|i| i.manifest);
+        match manifest.map(|m| m.sign_in_copy) {
+            Some(nori_plugins::SignInCopy::Copied) => SignInCopy::Copied,
+            Some(nori_plugins::SignInCopy::EachDevice) | None => SignInCopy::EachDevice,
+        }
+    }
+
     /// Its form and sign-in as it says; None when it didn't answer. A provider saying nothing asks nothing.
     fn ask_info(&self) -> Option<ProviderInfo> {
         let said = self.now(|s, x| x.nori_plugin_provider().call_info(s))?;
@@ -464,8 +477,7 @@ impl PluginProvider {
             identities: said.identities.map(|k| match k {
                 w::IdentityKind::Channel => IdentityKind::Channel,
             }),
-            // The plugin interface does not say yet: a sign-in nobody vouched for stays on its device.
-            sign_in_copy: SignInCopy::EachDevice,
+            sign_in_copy: self.sign_in_copy(),
         })
     }
 }
