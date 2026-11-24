@@ -23,6 +23,8 @@ mod destination;
 pub mod session;
 pub mod support;
 mod sleep;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub mod sync;
 mod tuning;
 
 use std::path::Path;
@@ -184,6 +186,16 @@ pub fn server_scrobble_switched(settings: &Settings, id: &str, on: bool) {
 /// Saved profile `id` without its scrobbling account `account`.
 pub fn scrobbler_removed(settings: &Settings, id: &str, account: &str) {
     profile_look(settings, id, |p| *p = nori_core::settings::profile_scrobbler_removed(std::mem::take(p), account.to_string()));
+}
+
+/// Removes saved profile `id`'s rows from the database in `data`, off this thread: a library is many
+/// rows.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub fn forget_profile_rows(data: &Path, id: String) {
+    let db = db_path(data);
+    spawn("nori-forget", move || {
+        let _ = nori_core::db::db_forget_server(db, id);
+    });
 }
 
 /// Runs `f` on a named thread.

@@ -30,6 +30,8 @@ pub use nori_core::transport::block_on;
 
 /// Everything that wakes the event loop.
 pub enum Msg {
+    /// Sync changed the saved profiles, which the settings now keep.
+    Synced(nori_core::sync::ProfilesSynced),
     Key(KeyEvent),
     Mouse(MouseEvent),
     Paste(String),
@@ -131,6 +133,7 @@ impl Msg {
     /// A short description for the debug log, without lyrics, pixels or passwords.
     pub fn brief(&self) -> String {
         match self {
+            Msg::Synced(s) => format!("profiles synced: {:?}, {} removed", s.active, s.removed.len()),
             Msg::Key(k) => format!("key {:?} {:?} {:?}", k.code, k.modifiers, k.kind),
             Msg::Mouse(m) => format!("mouse {:?} at {},{}", m.kind, m.column, m.row),
             Msg::Paste(p) => format!("paste of {} bytes", p.len()),

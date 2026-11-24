@@ -60,6 +60,33 @@ pub enum ProfileRemoved {
     Last,
 }
 
+/// See [`Root::sync_client`].
+struct SyncTold {
+    root: Arc<Root>,
+    profiles: Box<dyn Fn(nori_core::sync::ProfilesSynced) + Send + Sync>,
+}
+
+impl nori_core::sync::SyncClient for SyncTold {
+    fn here(&self) -> nori_core::sync::Here {
+        self.root.plugins().kinds.sync_here()
+    }
+
+    fn profiles(&self, synced: nori_core::sync::ProfilesSynced) {
+        crate::sync::profiles_synced(&self.root.data, &synced);
+        (self.profiles)(synced);
+    }
+
+    fn install(&self, plugins: Vec<nori_core::sync::NeededPlugin>) {
+        nori_core::alog::info(&format!("sync: the profiles need plugins {:?}", plugins.iter().map(|p| &p.id).collect::<Vec<_>>()));
+    }
+
+    fn event(&self, event: nori_core::sync::SyncEvent) {
+        nori_core::alog::info(&format!("sync: {event:?}"));
+    }
+
+    fn changed(&self) {}
+}
+
 /// A desktop client's object graph root (as Kotlin's `Nori`): the queue session over the settings, which
 /// every view reads, and the plugins installed under the data directory, opened at the first ask.
 pub struct Root {
@@ -100,15 +127,18 @@ impl Root {
         (prefs.servers, prefs.active_server_id) = (left.servers, left.active_server_id);
         let next = prefs.active_server().cloned();
         settings.put(prefs);
-        let (db, server) = (crate::db_path(&self.data), id.to_string());
-        crate::spawn("nori-forget", move || {
-            let _ = nori_core::db::db_forget_server(db, server);
-        });
+        crate::forget_profile_rows(&self.data, id.to_string());
         match next {
             _ if !was_active => ProfileRemoved::Elsewhere,
             Some(p) => ProfileRemoved::Opens(Box::new(p)),
             None => ProfileRemoved::Last,
         }
+    }
+
+    /// What sync tells the desktop or terminal client: changed profiles go to `profiles`, after their
+    /// removed ones' rows. Plugins needed and what to word are logged until the screens show them.
+    pub fn sync_client(self: &Arc<Root>, profiles: impl Fn(nori_core::sync::ProfilesSynced) + Send + Sync + 'static) -> Arc<dyn nori_core::sync::SyncClient> {
+        Arc::new(SyncTold { root: self.clone(), profiles: Box::new(profiles) })
     }
 
     /// The plugins, laid over the settings, and the kinds of profile they and nori open.

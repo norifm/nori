@@ -1164,6 +1164,33 @@ fn plain_playback_wakes_once_per_burst() {
     assert!(rig.time.clock.sleeps() - sleeps <= bursts, "{} wakes in a minute", rig.time.clock.sleeps() - sleeps);
 }
 
+/// Work riding on the engine's wakes (sync's keep-alive) is called once per wake and adds none.
+#[test]
+fn a_wake_hook_rides_on_the_bursts() {
+    let a = vec![8000i16; RATE as usize * 2 * 90];
+    let rig = Rig::new(&[("a", &a)], prefs_off(), Settings::default());
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 10));
+    rig.server.let_go.reach(1);
+    let called = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let counted = called.clone();
+    rig.engine.on_wake(Some(Box::new(move || {
+        counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    })));
+    rig.run(1_000);
+    let (sleeps, calls) = (rig.time.clock.sleeps(), called.load(std::sync::atomic::Ordering::Relaxed));
+    rig.run(60_000);
+    let (woke, hooked) = (rig.time.clock.sleeps() - sleeps, called.load(std::sync::atomic::Ordering::Relaxed) - calls);
+    let bursts = 60_000_000 / (nori_player::burst::BUFFER_US - nori_engine::output::WAKE_LOW_US) as u64 + 1;
+    assert!(woke <= bursts, "{woke} wakes in a minute: the hook woke the engine");
+    assert!(hooked > 0 && hooked.abs_diff(woke) <= 1, "{hooked} calls for {woke} wakes: once each");
+    rig.engine.on_wake(None);
+    rig.run(1_000);
+    let calls = called.load(std::sync::atomic::Ordering::Relaxed);
+    rig.run(30_000);
+    assert_eq!(called.load(std::sync::atomic::Ordering::Relaxed), calls, "let go, it is called no more");
+}
+
 /// The status is as old as the last wake; `look` refreshes it at once.
 #[test]
 fn look_refreshes_place_between_bursts() {

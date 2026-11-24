@@ -345,6 +345,21 @@ Some sections need more than the emulator:
 visible seal and the media session's buttons through JNI. It roots the emulator for a moment to find the
 app's listener, then restores adb's previous state.
 
+### The sync server check
+
+`tools/sync-check.sh` checks pairing and profile sync against a real sync server. It builds and starts the
+self-hosted program of the neighbouring `nori-sync` checkout (`NORI_SYNC_ROOT` names another) on a free
+local port, with two members to a group room. It then drives headless `nori-cli --sync` instances:
+
+- Two devices pair, see each other online, and sync a profile both ways.
+- The server stops. Both wait quietly, then come back by themselves when it starts again.
+- A third device pairs and shows the full group room as a refusal (`Waiting { refused: Some(Limit) }`).
+
+`tools/sync-check.sh --android SERIAL` then pairs the app's debug build on that device into the group, through
+`tools/app.sh sync`, and syncs a profile with it. The emulator reaches the server on this Mac at
+`10.0.2.2`. The Rust tests cover the protocol, reconnecting and the keep-alive rules. This check covers
+what only a real server and real sockets show.
+
 ### Checked by hand
 
 - **Updates.** The core decides which release to offer (`update.rs`), and Android downloads and installs

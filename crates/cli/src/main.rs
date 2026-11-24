@@ -12,6 +12,7 @@ mod runner;
 mod script;
 mod settings_view;
 mod support;
+mod sync_control;
 mod term;
 mod text;
 mod ui;
@@ -50,6 +51,7 @@ fn usage() -> ! {
          \x20               [--url URL --user USER --password PASSWORD | --provider KIND] [--install-plugin FILE]\n\
          \x20      nori-cli --script ... (the non-interactive player; nori-cli --script --help)\n\
          \x20      nori-cli --devices\n\
+         \x20      nori-cli --sync [--data DIR] [--name NAME] [--phone] (pairing and sync; commands on stdin)\n\
          The url, user and password may also come from NORI_URL, NORI_USER and NORI_PASSWORD.\n\
          KIND is a profile kind that needs no server, as the settings store it (a plugin's id).\n\
          --install-plugin installs (or updates) a .noriplugin package or plugin folder and turns it on.\n\
@@ -72,6 +74,10 @@ fn main() {
 
 fn run() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--sync") {
+        sync_control::main(args);
+        return;
+    }
     let script = args.iter().any(|a| matches!(a.as_str(), "--script" | "--search" | "--play" | "--wav" | "--devices" | "--songs" | "--download"));
     if script {
         let rest = args.into_iter().filter(|a| a != "--script").collect();

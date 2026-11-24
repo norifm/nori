@@ -443,8 +443,12 @@ enum Command {
     NetworkBack,
     Focus(nori_player::focus::Focus),
     AskFocus(Box<dyn FocusRequest>),
+    OnWake(Option<Woken>),
     Stop,
 }
+
+/// Called at the end of each of the engine's wakes ([`Engine::on_wake`]).
+pub type Woken = Box<dyn Fn() + Send>;
 
 impl Command {
     /// Sent by [`Engine::press`]: the status shows it until the worker takes it.
@@ -691,6 +695,12 @@ impl Engine {
     /// Asks the platform's audio focus of `request` before playing, and gives it back on pause.
     pub fn ask_focus_of(&self, request: Box<dyn FocusRequest>) {
         self.send(Command::AskFocus(request));
+    }
+
+    /// Calls `woken` at the end of each wake from now on, None no more: work that may ride on the wakes
+    /// the audio causes anyway (sync's keep-alive), on the engine's thread, so it must be cheap.
+    pub fn on_wake(&self, woken: Option<Woken>) {
+        self.send(Command::OnWake(woken));
     }
 
     pub fn toggle(&self) {
@@ -1072,6 +1082,8 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     facts: OutputFacts,
     idle_release_ms: i64,
     watch: Option<crate::watch::Watcher>,
+    /// See [`Engine::on_wake`].
+    woken: Option<Woken>,
     playback: Playback,
     dip: Option<Dip>,
     parked: Option<Parked>,
@@ -1133,6 +1145,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             facts: OutputFacts::default(),
             idle_release_ms,
             watch,
+            woken: None,
             playback: Playback::Idle,
             dip: None,
             parked: None,
@@ -1193,6 +1206,12 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let took = self.now() - started;
         if took >= SLOW_TURN_MS {
             self.p.app.log(&format!("one turn of the engine took {took} ms"));
+        }
+        // Once per wake: a turn that goes on at once is part of the same wake.
+        if let (Some(woken), Some(w)) = (&self.woken, wake) {
+            if w != Some(0) {
+                woken();
+            }
         }
         wake
     }
@@ -1740,6 +1759,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         match c {
             Command::Focus(change) => return self.focus_changed(change, now),
             Command::AskFocus(request) => return self.ask_focus_of(request),
+            Command::OnWake(woken) => return self.woken = woken,
             Command::Play | Command::Toggle if (matches!(c, Command::Play) || self.toggles_to_play()) && !self.focus_play() => {
                 self.plays += matches!(c, Command::Play) as u64;
                 return;
@@ -1928,7 +1948,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.leave(now);
                 self.obey_away(Command::Elsewhere(playing, ms), now);
             }
-            Command::Back | Command::Look | Command::Stop | Command::Focus(_) | Command::AskFocus(_) => {}
+            Command::Back | Command::Look | Command::Stop | Command::Focus(_) | Command::AskFocus(_) | Command::OnWake(_) => {}
         }
     }
 

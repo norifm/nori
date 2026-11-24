@@ -2066,7 +2066,7 @@ impl App {
                 self.cmds.push(Cmd::Plugin(PluginCmd::Read));
             }
             Msg::PluginsChanged => self.cmds.push(Cmd::Plugin(PluginCmd::Read)),
-            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) | Msg::Readme { .. } | Msg::PluginSignIn { .. } | Msg::BackedUp(_) | Msg::Restored(_) => {}
+            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) | Msg::Readme { .. } | Msg::PluginSignIn { .. } | Msg::BackedUp(_) | Msg::Restored(_) | Msg::Synced(_) => {}
         }
     }
 

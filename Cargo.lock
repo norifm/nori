@@ -5201,10 +5201,14 @@ name = "nori-http"
 version = "1.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
+ "getrandom 0.4.3",
  "nori-core",
  "nori-engine",
+ "ring",
  "rustls",
  "ureq",
+ "webpki-roots",
 ]
 
 [[package]]

@@ -154,6 +154,8 @@ struct Runner {
     /// have run.
     code: Option<(u32, Arc<nori_core::providers::code::CodeSignIn>)>,
     codes: u32,
+    /// Pairing and profile sync; runs nothing unless this computer is paired with sync on.
+    sync: Arc<nori_core::sync::Syncing>,
 }
 
 pub fn run(o: Options) -> Result<(), String> {
@@ -225,7 +227,13 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start("").ok().map(Arc::new)).flatten();
     app.shared = root.app.clone();
     app.settings.own.shared = root.app.clone();
-    let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, code: None, codes: 0, o };
+    let sockets = nori_http::WebSockets::new();
+    let told = tx.clone();
+    let sync = nori_core::sync::Syncing::native(root.app.settings.clone(), sockets.clone(), root.sync_client(move |synced| {
+        let _ = told.send(Msg::Synced(synced));
+    }), nori_core::sync::Reach::Computer);
+    sockets.tell(&sync);
+    let mut r = Runner { sync, root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, code: None, codes: 0, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
     let notices = r.tx.clone();
@@ -626,7 +634,23 @@ impl Runner {
             // The plugin installed is shown, and asked to be turned on, from its card.
             Msg::Installed(_) => self.plugin(app, crate::app::PluginCmd::Read),
             Msg::BackedUp(r) => return app.say(r.as_ref().map_or_else(crate::text::backup_failed, |_| crate::text::BACKUP_SAVED.into()), r.is_err()),
+            Msg::Synced(synced) => {
+                prefs_changed(app);
+                if synced.active != nori_core::sync::ActiveProfile::Same {
+                    match self.root.app.settings.current().and_then(|p| p.active_server().cloned()) {
+                        Some(p) => self.open(app, p, None),
+                        None => {
+                            if let Some(s) = self.session.take() {
+                                s.close_for(None);
+                            }
+                            app.session_ended();
+                        }
+                    }
+                }
+            }
             Msg::Restored(Ok(r)) => {
+                // The backup brings its sync and sync server settings, never the pairing.
+                self.sync.settings_changed();
                 let said = crate::text::restored(r);
                 match (&self.session, r.settings.prefs.active_server()) {
                     (Some(s), _) => s.backup_restored(&r.settings),
