@@ -94,6 +94,22 @@ struct Server {
     /// with no length, unless the server ignores it and sends the whole file.
     transcodes: Mutex<Vec<String>>,
     ignores_offsets: AtomicBool,
+    /// How a request from a later byte is answered.
+    ranges: Mutex<Ranges>,
+    /// Songs fetched whole from their start ([`ByteSource::whole`]).
+    whole: Mutex<Vec<String>>,
+}
+
+/// How a server answers a request for a song from a later byte.
+#[derive(Debug, Clone, Copy, Default)]
+enum Ranges {
+    /// With the song from there.
+    #[default]
+    Kept,
+    /// With the whole song.
+    Ignored,
+    /// With the song from there, labeled as the whole file (octo-fiesta in front of Navidrome).
+    PartAsWhole,
 }
 
 /// From each byte on, so many bytes a second.
@@ -186,10 +202,19 @@ impl ByteSource for Server {
         let file = self.files.lock().iter().find(|(u, _)| u == url).map(|(_, f)| f.clone()).ok_or("404")?;
         let len = file.len() as u64;
         let mut c = Cursor::new(Bytes(file));
-        c.set_position(from);
+        // Where the body starts in the song, and the length the answer says.
+        let (start, said) = match *self.ranges.lock() {
+            Ranges::Kept => (from, len),
+            Ranges::Ignored => (0, len),
+            Ranges::PartAsWhole => (0, len - from),
+        };
+        c.set_position(if matches!(*self.ranges.lock(), Ranges::Ignored) { 0 } else { from });
         if let (Some(steps), Some(clock)) = (self.paced.lock().iter().find(|(u, _)| u == url).map(|p| p.1.clone()), self.clock.lock().clone()) {
             let reader = Paced { inner: c, delivery: clock.delivery(), steps, at_ns: clock.now_ns() };
-            return Ok(Body { start: from, len: Some(len), reader: Box::new(reader) });
+            return Ok(Body { start, len: Some(said), reader: Box::new(reader) });
+        }
+        if start != from {
+            return Ok(Body { start, len: Some(said), reader: Box::new(c) });
         }
         if let Some((at, _)) = gap.filter(|_| first) {
             return Ok(Body { start: from, len: Some(len), reader: Box::new(Broken(c, at)) });
@@ -201,6 +226,10 @@ impl ByteSource for Server {
             return Ok(Body { start: from, len: Some(len), reader: Box::new(Broken(c, at)) });
         }
         Ok(Body { start: from, len: Some(len), reader: Box::new(Answer(c, self.let_go.clone())) })
+    }
+
+    fn whole(&self, url: &str) -> bool {
+        self.whole.lock().iter().any(|w| w == url)
     }
 }
 
@@ -828,6 +857,32 @@ fn mp3_opened_mid_way_streams_from_there() {
         let s = rig.engine.status();
         assert!((20_000..22_000).contains(&s.position_ms), "plays from about 20 s: {s:?}");
         assert!(rig.server.requests.lock().iter().any(|(_, f)| *f > 250_000), "asked from about there: {:?}", rig.server.requests.lock());
+    }
+}
+
+/// A song opened mid-way (a jam's guest joining mid-song) plays from there however its server answers a
+/// request from a later byte. One fetched whole, from a server that labels a part as the whole file, is
+/// only ever asked for from its start.
+#[test]
+fn a_song_opened_mid_way_plays_from_there_however_ranges_are_answered() {
+    let a = music(24.0, 93);
+    for (ranges, whole) in [(Ranges::Kept, false), (Ranges::Ignored, false), (Ranges::PartAsWhole, true)] {
+        let extra = Extra::default();
+        *extra.server.ranges.lock() = ranges;
+        // 16 s of the song take 1.4 s to come.
+        extra.server.paced.lock().push(("a".into(), vec![(0, 2_000_000)]));
+        if whole {
+            extra.server.whole.lock().push("a".into());
+        }
+        let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings::default(), extra);
+        rig.engine.play_at(0, 16_000);
+        let second = 2 * RATE as usize;
+        assert!(rig.wait_for(20, |r| r.heard.lock().len() > 2 * second), "{ranges:?}");
+        let from = 16 * second;
+        let heard = rig.heard.lock().clone();
+        let asked = rig.server.requests.lock().clone();
+        assert!(heard[second..2 * second] == a[from + second..from + 2 * second], "{ranges:?}: the song from 16 s");
+        assert!(!whole || asked.iter().all(|(_, from)| *from == 0), "{ranges:?}: from the start only: {asked:?}");
     }
 }
 

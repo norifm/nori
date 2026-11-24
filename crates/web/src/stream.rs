@@ -5,7 +5,7 @@
 use std::future::poll_fn;
 
 use js_sys::Uint8Array;
-use nori_engine::{Filling, Next, OpenError};
+use nori_engine::{answer_span, Filling, Next, OpenError};
 use nori_tasks::{Local, Tasks};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -83,23 +83,11 @@ async fn ask(url: &str, from: u64) -> Result<(Open, u64, Option<u64>), OpenError
     }
     let scope: WorkerGlobalScope = js_sys::global().unchecked_into();
     let answer: Response = JsFuture::from(scope.fetch_with_request(&req)).await.map_err(failed)?.unchecked_into();
-    let range = answer.headers().get("Content-Range").ok().flatten();
-    let (start, len) = match answer.status() {
-        200 => (0, answer.headers().get("Content-Length").ok().flatten().and_then(|l| l.parse().ok())),
-        206 => content_range(range.as_deref()).ok_or_else(|| OpenError::Failed(format!("a partial answer without its range: {range:?}")))?,
-        416 => return Err(OpenError::PastEnd { len: range.as_deref().and_then(|r| r.strip_prefix("bytes */")).and_then(|n| n.parse().ok()) }),
-        status => return Err(OpenError::Status(status)),
-    };
+    let header = |name: &str| answer.headers().get(name).ok().flatten();
+    let (start, len) = answer_span(from, answer.status(), header("Content-Range").as_deref(), header("Content-Length").and_then(|l| l.parse().ok()))?;
     let stream = answer.body().ok_or_else(|| OpenError::Failed("an answer without a body".into()))?;
     let reader: ReadableStreamDefaultReader = stream.get_reader().unchecked_into();
     Ok((Open { reader, abort }, start, len))
-}
-
-/// `bytes 100-199/5000` as its first byte and the whole length.
-fn content_range(range: Option<&str>) -> Option<(u64, Option<u64>)> {
-    let (span, len) = range?.strip_prefix("bytes ")?.split_once('/')?;
-    let start = span.split_once('-')?.0.parse().ok()?;
-    Some((start, len.parse().ok()))
 }
 
 /// The body's next chunk; None at its end.

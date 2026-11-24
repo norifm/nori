@@ -339,6 +339,10 @@ impl ByteSource for Resolving {
         }
     }
 
+    fn whole(&self, url: &str) -> bool {
+        self.bytes.whole(url)
+    }
+
     fn forget(&self, url: &str) -> bool {
         self.bytes.forget(url)
     }
