@@ -8,6 +8,7 @@ mod compositor;
 #[cfg(all(feature = "test-control", unix))]
 mod control;
 mod eq;
+mod form;
 mod icon;
 mod jam;
 mod look;
@@ -61,9 +62,8 @@ fn main() -> Result<(), String> {
     }
     std::fs::create_dir_all(&data).map_err(|e| format!("{}: {e}", data.display()))?;
     nori_host::keep_log(&data);
-    let db = nori_host::db_path(&data);
     let root = std::sync::Arc::new(nori_host::desktop::Root::new(&data));
-    let mut prefs = root.app.settings.open(&db).map_err(|e| format!("the settings: {e}"))?;
+    let mut prefs = root.open_settings().map_err(|e| format!("the settings: {e}"))?;
     // A server given on the command line is added if new, and made active.
     if let (Some(url), Some(user)) = (url, user) {
         let found = prefs.servers.iter().find(|s| s.url == url && s.user == user).map(|s| s.id.clone());

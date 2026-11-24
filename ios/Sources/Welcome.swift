@@ -77,10 +77,10 @@ final class WelcomePage: CardsPage {
         onward.isEnabled = !picked.isEmpty
         onward.alpha = picked.isEmpty ? 0.38 : 1
         sources.set(LoginPage.kinds.map { k in
-            let words = Say.provider(k.id)
-            let on = picked.contains(k.id)
+            let words = Say.provider(k)
+            let on = picked.contains(k)
             let row = GroupRow(words.name, subtitle: words.about, icon: Glyph.draw(Iconoir.server, 20), trailing: PickMark(on)) { [weak self] in
-                self?.on(NORI_WELCOME_TOGGLED, k.id)
+                self?.on(NORI_WELCOME_TOGGLED, k)
                 self?.lay()
             }
             row.isAccessibilityElement = true

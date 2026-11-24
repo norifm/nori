@@ -4,6 +4,7 @@
 use nori_host::desktop::Root;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::Path;
 use std::rc::{Rc, Weak};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -21,7 +22,6 @@ use nori_covers::loader::{Shown, Ticket};
 use nori_covers::memory::Image as Picture;
 use nori_engine::{Event, State};
 use nori_host::remote::Elsewhere;
-use nori_http::Http;
 use nori_look::cover::CoverColours;
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
 
@@ -531,7 +531,6 @@ pub struct App {
     mpris: Option<Arc<nori_mpris::Mpris>>,
     /// The queue session over the settings, and the plugins.
     root: Arc<Root>,
-    http: Arc<Http>,
     session: Option<Session>,
     art: Rc<RefCell<Art>>,
     lyric_faces: Option<crate::sung::Faces>,
@@ -594,8 +593,8 @@ pub struct App {
     /// The id of the saved profile the Edit page shows (its form, account and scrobbling); None while the
     /// form adds one.
     editing: Option<String>,
-    /// The form's proxy, as its sheet last saved it.
-    form_proxy: Option<nori_core::proxy::SavedProxy>,
+    /// The sign-in form on its kind's page, or the Edit page's.
+    form: Option<crate::form::Form>,
     /// The album list's pages, its order, and whether only the favorites.
     album_pages: Paged<u32>,
     album_sort: AlbumSort,
@@ -857,32 +856,6 @@ fn albums_paged(list: &mut Vec<nori_core::Album>, pages: &mut Paged<u32>, sort: 
     pages.ask()
 }
 
-/// The profile the sign-in form saves from its fields (name, address, user, password) and its `proxy`
-/// for provider `info`: a new one, or `editing` changed, which keeps its id, and its password when none
-/// is typed.
-fn login_draft(info: &nori_core::providers::ProviderInfo, editing: Option<SavedServer>, [name, url, user, password]: [String; 4], proxy: Option<nori_core::proxy::SavedProxy>) -> SavedServer {
-    use nori_core::providers::FormField;
-    let asks = |what| info.fields.iter().any(|f| f.what == what && !f.advanced);
-    let base = editing.unwrap_or_else(|| SavedServer { id: nori_core::settings::new_server_id(), ..Default::default() });
-    // What the form does not ask stays as saved (nothing, for a new profile).
-    let text = |what, typed: String, saved: &str| if asks(what) { typed.trim().to_string() } else { saved.to_string() };
-    SavedServer {
-        kind: info.kind.clone(),
-        name: text(FormField::Name, name, &base.name),
-        url: text(FormField::Address, url, &base.url).trim_end_matches('/').to_string(),
-        user: text(FormField::User, user, &base.user),
-        password: if asks(FormField::Password) && !password.is_empty() { password } else { base.password.clone() },
-        proxy: if asks_proxy(info) { proxy } else { base.proxy.clone() },
-        ..base
-    }
-}
-
-/// The form has the proxy's fields (`FormField::Proxy` and its login's): on a kind's page whatever its
-/// step, as signing in goes through the proxy too.
-fn asks_proxy(info: &nori_core::providers::ProviderInfo) -> bool {
-    info.fields.iter().any(|f| f.what == nori_core::providers::FormField::Proxy)
-}
-
 /// The library's Home shelves of `rows`, empty until read.
 fn home_shelves(rows: &[nori_core::settings::HomeRow]) -> Vec<Shelf> {
     let shapes = home_shapes(&rows.iter().map(|&r| row_holds(r)).collect::<Vec<_>>());
@@ -972,7 +945,6 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             inbox,
             mpris: nori_mpris::Mpris::for_app(crate::APP_ID).ok().map(Arc::new),
             root,
-            http: Http::new(),
             session: None,
             art,
             lyric_faces: crate::sung::Faces::inter(),
@@ -1009,7 +981,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             shelves,
             home_rows: Vec::new(),
             editing: None,
-            form_proxy: None,
+            form: None,
             album_pages: Paged::new(0),
             song_pages: Paged::new(0),
             song_sort: String::new(),
@@ -1132,8 +1104,8 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
         // Now Playing's lyrics: the line they are scrolled to sharp, the rest blurred by the compositor.
         let weak = ui.as_weak();
         a.compositor.set_focus_source(move || lyrics_focus(&weak.upgrade()?));
-        // Plugins reach the web before any profile opens; a session's own transport takes over.
-        a.kinds().set_transport(a.http.clone());
+        // Plugins reach the web before a session opens, over the active profile's connections; the session's own take over.
+        a.kinds().set_transport(a.root.http());
         let tx = a.tx.clone();
         a.root.plugins().watched.hear(move |n| tx.send(Msg::Note { text: n.words, error: n.problem }));
         let tx = a.tx.clone();
@@ -1226,11 +1198,11 @@ enum Asked {
     Page(String),
 }
 
-/// A kind of profile as its page shows it: `about`, the plugin's own words, in place of the note.
+/// The words of a kind of profile's page: `about`, the plugin's own, in place of the note. Which boxes it
+/// asks is its form's ([`crate::form::Form::open`]).
 fn login_form(kinds: &nori_core::providers::Kinds, info: &nori_core::providers::ProviderInfo, about: Option<&str>, step: nori_core::providers::FirstStep) -> LoginKind {
-    use nori_core::providers::{FirstStep, FormField};
+    use nori_core::providers::FirstStep;
     let w = words::provider_of(kinds, &info.kind);
-    let asks = |what| step == FirstStep::Form && info.fields.iter().any(|f| f.what == what && !f.advanced);
     let account = step == FirstStep::Account;
     LoginKind {
         sign_in: if account { words::provider_sign_in(&w.name).into() } else { SharedString::default() },
@@ -1238,17 +1210,13 @@ fn login_form(kinds: &nori_core::providers::Kinds, info: &nori_core::providers::
         name: w.name.into(),
         note: about.unwrap_or(w.note).into(),
         add: w.add.into(),
-        asks_name: asks(FormField::Name),
-        asks_address: asks(FormField::Address),
-        asks_user: asks(FormField::User),
-        asks_password: asks(FormField::Password),
-        asks_proxy: asks_proxy(info),
+        ..Default::default()
     }
 }
 
-/// The proxy's sheet saved what was typed in it: the proxy the core reads there, now the form's, on its
-/// Proxy line, the sheet closed; or None, the sheet saying what is wrong.
-fn proxy_sheet_saved(ui: &AppWindow, address: String, user: String, password: String) -> Option<Option<nori_core::proxy::SavedProxy>> {
+/// The proxy's sheet saved what was typed in it: the proxy the core reads there, now the form's, the
+/// sheet closed; or None, the sheet saying what is wrong.
+pub(crate) fn proxy_sheet_saved(ui: &AppWindow, address: String, user: String, password: String) -> Option<Option<nori_core::proxy::SavedProxy>> {
     match nori_core::proxy::proxy_from_form(address, user, password) {
         Ok(proxy) => {
             form_proxy_drawn(ui, proxy.as_ref());
@@ -1262,8 +1230,8 @@ fn proxy_sheet_saved(ui: &AppWindow, address: String, user: String, password: St
     }
 }
 
-/// `proxy` on the form's Proxy line, and in its sheet when that opens.
-fn form_proxy_drawn(ui: &AppWindow, proxy: Option<&nori_core::proxy::SavedProxy>) {
+/// `proxy` in the proxy's sheet when that opens.
+pub(crate) fn form_proxy_drawn(ui: &AppWindow, proxy: Option<&nori_core::proxy::SavedProxy>) {
     let login = proxy.and_then(|p| p.login.clone()).unwrap_or_default();
     ui.set_login_proxy(nori_core::proxy::proxy_address(proxy.cloned()).into());
     ui.set_login_proxy_user(login.user.into());
@@ -1534,7 +1502,12 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(jam.on_promote, h, |a, member, admin| a.jam_act(Op::Promote { member: member.into(), admin }));
     on!(jam.on_send_out, h, |a, member| a.jam_act(Op::Kick { member: member.into() }));
     on!(ui.on_login, h, |a| a.login(AfterAdding::Remind));
-    on!(ui.on_proxy_saved, h, |a, address, user, password| a.proxy_saved(address.into(), user.into(), password.into()));
+    on!(ui.on_proxy_saved, h, |a, address, user, password| a.on_form(|f, ui, _| f.proxy_saved(ui, address.into(), user.into(), password.into())));
+    on!(ui.on_option_typed, h, |a, field, text| a.on_form(|f, ui, _| f.typed(ui, field, text.into())));
+    on!(ui.on_option_toggled, h, |a, field, on| a.on_form(|f, _, _| f.toggled(field, on)));
+    on!(ui.on_option_opened, h, |a, field| a.on_form(|f, ui, _| f.opened(ui, field)));
+    on!(ui.on_cert_saved, h, |a, path, password| a.on_form(|f, ui, data| f.cert_saved(ui, data, &path, password.into())));
+    on!(ui.on_cert_removed, h, |a| a.on_form(|f, ui, _| f.cert_removed(ui)));
     // Back from a profile's Edit page goes to Settings, where it was opened.
     on!(ui.on_cancel_login, h, |a| {
         let back = if a.editing.is_some() { View::Settings } else { View::Home };
@@ -1830,12 +1803,12 @@ impl App {
 
     fn login(&mut self, after: AfterAdding) {
         let ui = self.ui();
-        let Some(info) = self.add.kind().and_then(|k| self.kinds().providers().into_iter().find(|i| i.kind == *k)) else { return };
-        let form = [ui.get_login_name(), ui.get_login_url(), ui.get_login_user(), ui.get_login_password()].map(|t| t.to_string());
+        let Some(form) = &self.form else { return };
+        let boxes = [ui.get_login_name(), ui.get_login_url(), ui.get_login_user(), ui.get_login_password()].map(|t| t.to_string());
         let prefs = self.root.app.settings.current().unwrap_or_default();
         // The profile as saved now: its scrobbling and account may have changed on the page since it opened.
         let saved = self.editing.as_ref().and_then(|id| prefs.servers.iter().find(|s| &s.id == id)).cloned();
-        let draft = login_draft(&info, saved, form, self.form_proxy.clone());
+        let draft = form.draft(boxes, saved);
         let ready = self.kinds().server_ready(draft.clone());
         let list = nori_core::settings::ServerList { servers: prefs.servers, active_server_id: prefs.active_server_id };
         let added = self.kinds().adds_profile(list, draft.clone()).then_some(after);
@@ -1845,16 +1818,13 @@ impl App {
         }
     }
 
-    fn proxy_saved(&mut self, address: String, user: String, password: String) {
-        if let Some(proxy) = proxy_sheet_saved(&self.ui(), address, user, password) {
-            self.form_proxy = proxy;
+    /// What is done to the form ([`crate::form::Form`]), while it shows.
+    fn on_form(&mut self, act: impl FnOnce(&mut crate::form::Form, &AppWindow, &Path)) {
+        let ui = self.ui();
+        let data = self.root.data().to_path_buf();
+        if let Some(form) = &mut self.form {
+            act(form, &ui, &data);
         }
-    }
-
-    /// `proxy` as the form's.
-    fn form_proxy_shown(&mut self, proxy: Option<nori_core::proxy::SavedProxy>) {
-        form_proxy_drawn(&self.ui(), proxy.as_ref());
-        self.form_proxy = proxy;
     }
 
     /// Takes `event` on the pages of adding a profile and shows where that leaves them.
@@ -3808,27 +3778,23 @@ impl App {
         let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
         let providers = self.kinds().providers();
         let ui = self.ui();
-        if let Some(info) = providers.iter().find(|i| i.kind == profile.kind).or(providers.first()) {
-            // A saved profile is renamed from its menu; with nothing else to ask, nothing is saved here.
-            let form = login_form(self.kinds(), info, None, nori_core::providers::FirstStep::Form);
-            let saves = form.asks_address || form.asks_user || form.asks_password || form.asks_proxy;
-            ui.set_login_form(LoginKind {
-                name: words::profile_label(&profile, self.kinds()).into(),
-                note: SharedString::default(),
-                add: if saves { words::SAVE.into() } else { SharedString::default() },
-                asks_name: false,
-                ..form
-            });
-            self.add_on(AddEvent::Edit { kind: info.kind.clone() });
-        }
-        ui.set_login_adding(false);
         ui.set_login_name(profile.name.as_str().into());
         ui.set_login_url(profile.url.as_str().into());
         ui.set_login_user(profile.user.as_str().into());
         ui.set_login_password("".into());
-        ui.set_login_advanced_open(nori_core::providers::field_set(nori_core::providers::FormField::Proxy, &profile));
-        ui.set_login_proxy_open(false);
-        self.form_proxy_shown(profile.proxy.clone());
+        if let Some(info) = providers.iter().find(|i| i.kind == profile.kind).or(providers.first()) {
+            // A saved profile is renamed from its menu (its form doesn't show its name); with nothing else
+            // to ask, nothing is saved here.
+            let words = login_form(self.kinds(), info, None, nori_core::providers::FirstStep::Form);
+            ui.set_login_form(LoginKind { name: words::profile_label(&profile, self.kinds()).into(), note: SharedString::default(), ..words });
+            let form = crate::form::Form::open(&ui, info.clone(), nori_core::providers::FirstStep::Form, profile.clone(), false);
+            let mut kind = ui.get_login_form();
+            kind.add = if form.saves() { words::SAVE.into() } else { SharedString::default() };
+            ui.set_login_form(kind);
+            self.form = Some(form);
+            self.add_on(AddEvent::Edit { kind: info.kind.clone() });
+        }
+        ui.set_login_adding(false);
         ui.set_login_editing(true);
         let kinds: Vec<crate::ScrobblerKindLine> = nori_core::scrobblers::scrobbler_kinds()
             .into_iter()
@@ -3929,6 +3895,8 @@ impl App {
         let step = self.add.step().unwrap_or(nori_core::providers::FirstStep::AddNow);
         let ui = self.ui();
         ui.set_login_form(login_form(self.kinds(), &info, self.plugged.about_of(&kind), step));
+        let profile = SavedServer { id: nori_core::settings::new_server_id(), kind: info.kind.clone(), ..Default::default() };
+        self.form = Some(crate::form::Form::open(&ui, info, step, profile, true));
         ui.set_login_adding(true);
         if then == AddDo::Connect {
             self.login(AfterAdding::Remind);
@@ -4687,11 +4655,14 @@ impl App {
             Some(start) => nori_sign_in_window::SignInWindow::open_at(self.kinds().clone(), kind, title, start, proxy, done),
             None => nori_sign_in_window::SignInWindow::open(self.kinds().clone(), kind, title, proxy, done),
         };
-        let Some(window) = window else {
-            let ui = self.ui();
-            ui.set_signin_pasting(true);
-            ui.set_signin_error(words::SIGN_IN_WINDOW_FAILED.into());
-            return;
+        let window = match window {
+            Ok(window) => window,
+            Err(why) => {
+                let ui = self.ui();
+                ui.set_signin_pasting(true);
+                ui.set_signin_error(words::no_sign_in_window(why).into());
+                return;
+            }
         };
         self.sign_in_on(SignInEvent::Sent);
         self.sign_in_window = Some(window);
@@ -4759,7 +4730,7 @@ impl App {
         }
         ui.set_join_busy(true);
         ui.set_join_error("".into());
-        let (http, tx, remote, settings) = (self.http.clone(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()), self.root.app.settings.clone());
+        let (http, tx, remote, settings) = (self.root.http(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()), self.root.app.settings.clone());
         nori_host::spawn("nori-jam-join", move || {
             let joined = nori_host::jam_join(http, &settings, link, &nori_host::device_name(), remote);
             tx.send(Msg::Joined(joined.map_err(|e| words::jam_join_failed(&e))))
@@ -6210,9 +6181,7 @@ impl App {
                 for set in [AppWindow::set_login_name, AppWindow::set_login_user, AppWindow::set_login_password] {
                     set(&ui, "".into());
                 }
-                ui.set_login_advanced_open(false);
-                ui.set_login_proxy_open(false);
-                self.form_proxy_shown(None);
+                self.form = None;
                 ui.set_login_url("https://".into());
                 self.choose_provider();
             }
@@ -6787,7 +6756,7 @@ fn dialog_drawn(ui: &AppWindow, p: &mut crate::settings::Plugged, prefs: &nori_c
 mod search_tests;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// The test plugin's song action is on the songs' menus alone, and its page's rows on the devices panel.
@@ -6810,7 +6779,7 @@ mod tests {
     }
 
     /// A window in the theme's colors, as the app paints it, its items' menus wired as the app's.
-    fn window() -> AppWindow {
+    pub(crate) fn window() -> AppWindow {
         let ui = AppWindow::new().unwrap();
         dressed().paint(&ui);
         card_menus(&ui, &AppHandle(Weak::new()));
@@ -7288,7 +7257,7 @@ mod tests {
         let session = nori_host::session::Session::open(nori_host::session::Open {
             queue,
             data: dir.path(),
-            http: Http::new(),
+            http: nori_http::Http::new(),
             profile,
             kinds: nori_core::providers::Kinds::builtin(),
             output: Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)),
@@ -7439,22 +7408,6 @@ mod tests {
             }
         }
         assert!(cut.is_empty(), "{cut:#?}");
-    }
-
-    #[test]
-    fn an_edited_profile_keeps_its_id_and_password() {
-        let info = nori_core::providers::Kinds::builtin().providers().into_iter().find(|i| i.kind == nori_core::settings::ServerKind::Subsonic).unwrap();
-        let saved = SavedServer { id: "p1".into(), url: "https://old".into(), user: "me".into(), password: "secret".into(), music_folder_ids: vec!["f".into()], ..Default::default() };
-        let proxy = nori_core::proxy::proxy_from_form("proxy.lan:1080".into(), String::new(), String::new()).unwrap();
-        let saved = SavedServer { name: "Home".into(), proxy: proxy.clone(), ..saved };
-        let form = |pw: &str| ["Typed".to_string(), "https://new/".into(), " me ".into(), pw.into()];
-        let edited = login_draft(&info, Some(saved.clone()), form(""), proxy.clone());
-        assert_eq!((edited.id.as_str(), edited.url.as_str(), edited.user.as_str(), edited.password.as_str(), edited.name.as_str()), ("p1", "https://new", "me", "secret", "Home"));
-        assert_eq!(edited.music_folder_ids, saved.music_folder_ids, "what the form does not ask stays, its name too");
-        assert_eq!(edited.proxy, proxy);
-        let new = login_draft(&info, Some(saved), form("new"), None);
-        assert_eq!((new.password.as_str(), new.proxy), ("new", None), "the proxy field emptied");
-        assert_ne!(login_draft(&info, None, form("pw"), None).id, "p1", "a new profile");
     }
 
     #[test]
@@ -8362,83 +8315,6 @@ mod tests {
         assert_eq!(ui.get_plugin_top().title.to_string(), "Sony", "back on the plugin's page");
     }
 
-    /// The sign-in form folds what few profiles set under Advanced settings, which opens and closes; its Proxy
-    /// line says what is set and opens the proxy's sheet, where Save goes through the core (an error stays in
-    /// the sheet), Cancel keeps what was, and Remove saves none.
-    #[test]
-    fn the_sign_in_forms_proxy_waits_under_advanced_settings() {
-        use i_slint_backend_testing::ElementHandle;
-        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
-        ))).unwrap();
-        let ui = window();
-        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-        ui.set_login_form(LoginKind { asks_address: true, asks_user: true, asks_password: true, asks_proxy: true, ..Default::default() });
-        ui.set_view(View::Login);
-        let kept = Rc::new(RefCell::new(None));
-        let (weak, k) = (ui.as_weak(), kept.clone());
-        ui.on_proxy_saved(move |address, user, password| {
-            if let Some(proxy) = proxy_sheet_saved(&weak.unwrap(), address.into(), user.into(), password.into()) {
-                *k.borrow_mut() = proxy;
-            }
-        });
-        ui.show().unwrap();
-        let settle = || {
-            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
-            slint::platform::update_timers_and_animations();
-            ui.window().take_snapshot().unwrap();
-        };
-        let fields = || ElementHandle::find_by_element_type_name(&ui, "Field").count();
-        let said = |words: &str| ElementHandle::find_by_accessible_label(&ui, words).next();
-        // The Proxy line's value, while it shows.
-        let line = || ElementHandle::find_by_element_type_name(&ui, "GoLine").next().and_then(|l| l.accessible_value()).map(|v| v.to_string());
-        let click = |words: &str| {
-            let e = said(words).unwrap_or_else(|| panic!("{words} shows"));
-            press(ui.window(), e.absolute_position().x + e.size().width / 2.0, e.absolute_position().y + e.size().height / 2.0, slint::platform::PointerEventButton::Left);
-            settle();
-        };
-        let proxy_line = || {
-            let e = ElementHandle::find_by_element_type_name(&ui, "GoLine").next().expect("the Proxy line");
-            press(ui.window(), e.absolute_position().x + e.size().width / 2.0, e.absolute_position().y + e.size().height / 2.0, slint::platform::PointerEventButton::Left);
-            settle();
-        };
-        // The sheet's address field takes `text`, as typed.
-        let typed = |text: &str| {
-            let sheet = ElementHandle::find_by_element_type_name(&ui, "Dialog").next().expect("the proxy's sheet");
-            let input = sheet.query_descendants().match_inherits("TextInput").find_first().expect("its address field");
-            input.set_accessible_value(text);
-            settle();
-        };
-        settle();
-        assert_eq!((fields(), line()), (3, None), "the address, the user and the password, the proxy folded away");
-        click("Advanced settings");
-        assert_eq!(line().as_deref(), Some("None"), "unfolded, the Proxy line says none is set");
-        assert!(said("Advanced settings").is_some(), "the head stays, to fold it again");
-        click("Advanced settings");
-        assert_eq!(line(), None, "folded again");
-        click("Advanced settings");
-        proxy_line();
-        assert!(fields() == 6 && said("Remove proxy").is_none(), "the sheet's three fields over the form's; nothing to remove");
-        typed("http://proxy.example:1080");
-        click("Save");
-        let refused = words::proxy_error(nori_core::proxy::ProxyError::NotSocks5);
-        assert!(fields() == 6 && said(refused).is_some(), "the sheet stays and says why");
-        typed("proxy.example");
-        click("Save");
-        let proxy = nori_core::proxy::proxy_from_form("proxy.example:1080".into(), String::new(), String::new()).unwrap();
-        assert_eq!((fields(), line().as_deref(), kept.borrow().clone()), (3, Some("proxy.example:1080"), proxy.clone()), "saved as the core reads it");
-        click("Advanced settings");
-        click("Advanced settings");
-        assert_eq!(line().as_deref(), Some("proxy.example:1080"), "folding loses nothing");
-        proxy_line();
-        typed("other.example:1080");
-        click("Cancel");
-        assert_eq!((fields(), line().as_deref(), kept.borrow().clone()), (3, Some("proxy.example:1080"), proxy), "cancelled, the proxy stays");
-        proxy_line();
-        click("Remove proxy");
-        assert_eq!((fields(), line().as_deref(), kept.borrow().clone()), (3, Some("None"), None), "removed");
-    }
-
     /// The main window and its player pill as the app joins them, the pill at x 140 and 1000 wide.
     fn window_and_pill() -> (AppWindow, crate::PlayerBar) {
         let ui = window();
@@ -8462,7 +8338,7 @@ mod tests {
         (ui, bar)
     }
 
-    fn press(window: &slint::Window, x: f32, y: f32, button: slint::platform::PointerEventButton) {
+    pub(crate) fn press(window: &slint::Window, x: f32, y: f32, button: slint::platform::PointerEventButton) {
         let at = slint::LogicalPosition::new(x, y);
         window.dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
         window.dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
@@ -9450,7 +9326,7 @@ mod tests {
         let page = login_form(&Kinds::builtin(), &info(Vec::new(), web()), Some("Music from A"), nori_core::providers::FirstStep::Account);
         assert_eq!((page.guest.as_str(), page.sign_in.as_str(), page.note.as_str()), (words::CONTINUE_AS_GUEST, "Sign in to a.b", "Music from A"));
         let form = login_form(&Kinds::builtin(), &info(vec![FieldSpec { what: FormField::Address, advanced: false }], web()), None, nori_core::providers::FirstStep::Form);
-        assert_eq!((form.guest.as_str(), form.asks_address, form.name.as_str()), ("", true, "a.b"), "titled with the provider");
+        assert_eq!((form.guest.as_str(), form.name.as_str()), ("", "a.b"), "titled with the provider");
     }
 
     #[test]
@@ -10920,7 +10796,7 @@ mod tests {
         let session = nori_host::session::Session::open(nori_host::session::Open {
             queue: Arc::new(nori_core::queue::Session::new(settings.clone())),
             data: dir.path(),
-            http: Http::new(),
+            http: nori_http::Http::new(),
             profile,
             kinds: nori_core::providers::Kinds::builtin(),
             output: Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)),

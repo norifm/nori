@@ -98,13 +98,13 @@ fn an_account_apart_gives_the_plugins_back() {
     let r = rig("plugin-transport-apart");
     let (open, apart) = (Arc::new(Connections::default()), Arc::new(Connections::default()));
     let subsonic = SavedServer { id: "own".into(), url: "http://own".into(), ..Default::default() };
-    for (profile, kind) in [(plugin_profile("open"), ServerKind::Plugin { id: FIXTURE.into() }), (subsonic, ServerKind::Plugin { id: FIXTURE.into() })] {
+    for profile in [plugin_profile("open"), subsonic] {
         let session = r.client(&profile, open.clone());
         r.kinds.set_transport(open.clone());
         // As an account apart signing in, which hands the plugin its client.
-        let _apart = r.client(&plugin_profile("apart"), apart.clone());
+        let account = r.client(&plugin_profile("apart"), apart.clone());
         r.kinds.set_transport(apart.clone());
-        session.take_plugins_back(profile.clone(), kind).unwrap();
+        session.take_plugins_back(profile.clone(), account).unwrap();
         r.plugin_asks();
         assert_eq!((open.asked(), apart.asked()), (vec![PUT.to_string()], Vec::new()), "{:?}", profile.kind);
     }

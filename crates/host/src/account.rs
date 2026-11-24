@@ -28,7 +28,7 @@ struct Parts {
 impl Drop for Parts {
     fn drop(&mut self) {
         if let Some((open, profile)) = self.give_back.take() {
-            let _ = open.take_plugins_back(profile, self.client.core().kind());
+            let _ = open.take_plugins_back(profile, self.client.clone());
         }
     }
 }

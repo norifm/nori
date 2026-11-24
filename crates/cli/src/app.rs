@@ -208,6 +208,8 @@ pub enum Cmd {
     /// The playing song cover by id, and the colors the player wears from it.
     Cover(String),
     Login(Box<SavedServer>),
+    /// The .p12 file at `path`, opened with `password`, kept as `profile`'s client certificate.
+    ImportCert { profile: Box<SavedServer>, path: String, password: String },
     SwitchServer(String),
     /// Saved profile `0` renamed `1`; blank, it is called after its provider again.
     RenameProfile(String, String),
@@ -313,6 +315,7 @@ impl Cmd {
             Cmd::Enqueue(songs, next) => format!("enqueue {} songs next={next}", songs.len()),
             Cmd::Download(songs) => format!("download {} songs", songs.len()),
             Cmd::Login(p) => format!("log in to {}", p.url),
+            Cmd::ImportCert { path, .. } => format!("import the client certificate {path}"),
             Cmd::Cover(art) => format!("cover {art}"),
             Cmd::LyricsRefresh => "lyrics refresh".into(),
             Cmd::Toggle => "toggle".into(),
@@ -917,13 +920,14 @@ impl Search {
 /// The login form.
 #[derive(Default)]
 pub struct Login {
-    /// Name, address, user, password.
-    pub fields: [String; 4],
+    /// The profile as the form has it, from its kind's choice on (its id too, which a client certificate
+    /// is kept by).
+    pub typed: SavedServer,
+    /// The extra headers as typed, one per line.
+    pub headers: String,
     pub focus: LoginLine,
     /// Its Advanced lines show.
     pub advanced: bool,
-    /// The proxy as its popup last saved it.
-    pub proxy: Option<nori_core::proxy::SavedProxy>,
     /// Selection in the saved servers list.
     pub sel: Sel,
     /// Whether the saved servers list has the keys.
@@ -968,32 +972,97 @@ pub enum ProviderLine {
     Offered { id: String, name: String },
 }
 
-pub const LOGIN_FIELDS: [&str; 4] = ["Name (optional)", "Server address", "User", "Password"];
-/// What each of `LOGIN_FIELDS` fills in.
-const LOGIN_ASKS: [nori_core::providers::FormField; 4] = {
-    use nori_core::providers::FormField::*;
-    [Name, Address, User, Password]
-};
-
-/// Whether the login field `i` (of `LOGIN_FIELDS`) is a password, drawn hidden.
-pub fn login_hidden(i: usize) -> bool {
-    LOGIN_ASKS[i] == nori_core::providers::FormField::Password
-}
-
 /// A line of the login form the keys are on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginLine {
-    /// One of `LOGIN_FIELDS`, by index.
-    Field(usize),
+    /// A field the core lists for the kind ([`login_option`] says how it takes the keys).
+    Field(nori_core::providers::FormField),
     /// The Advanced head, which folds its lines away and back.
     Advanced,
-    /// The proxy's line, which opens its popup.
-    Proxy,
 }
 
 impl Default for LoginLine {
     fn default() -> Self {
-        LoginLine::Field(0)
+        LoginLine::Field(nori_core::providers::FormField::Address)
+    }
+}
+
+/// How a login field takes the keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginOption {
+    /// Typed into; `hidden`, drawn as dots.
+    Text { hidden: bool },
+    /// Lines of text: Enter starts another.
+    Lines,
+    /// On or off.
+    Switch,
+    /// Opens a popup of its own (the proxy's, the client certificate's).
+    Entry,
+}
+
+pub fn login_option(what: nori_core::providers::FormField) -> LoginOption {
+    use nori_core::providers::FormField::*;
+    match what {
+        Password => LoginOption::Text { hidden: true },
+        Name | Address | User | SecondAddress | ApiKey => LoginOption::Text { hidden: false },
+        Headers => LoginOption::Lines,
+        LegacyAuth | SelfSigned | WifiOnly => LoginOption::Switch,
+        ClientCert | Proxy => LoginOption::Entry,
+    }
+}
+
+impl Login {
+    /// The text of field `what` as typed; None for one that isn't typed into.
+    pub fn text(&self, what: nori_core::providers::FormField) -> Option<&String> {
+        use nori_core::providers::FormField::*;
+        let p = &self.typed;
+        Some(match what {
+            Name => &p.name,
+            Address => &p.url,
+            User => &p.user,
+            Password => &p.password,
+            SecondAddress => &p.alt_url,
+            ApiKey => &p.api_key,
+            Headers => &self.headers,
+            LegacyAuth | SelfSigned | WifiOnly | ClientCert | Proxy => return None,
+        })
+    }
+
+    fn text_mut(&mut self, what: nori_core::providers::FormField) -> Option<&mut String> {
+        use nori_core::providers::FormField::*;
+        let p = &mut self.typed;
+        Some(match what {
+            Name => &mut p.name,
+            Address => &mut p.url,
+            User => &mut p.user,
+            Password => &mut p.password,
+            SecondAddress => &mut p.alt_url,
+            ApiKey => &mut p.api_key,
+            Headers => &mut self.headers,
+            LegacyAuth | SelfSigned | WifiOnly | ClientCert | Proxy => return None,
+        })
+    }
+
+    /// Switch `what`'s state; None for one that isn't a switch.
+    pub fn switch(&self, what: nori_core::providers::FormField) -> Option<bool> {
+        use nori_core::providers::FormField::*;
+        match what {
+            LegacyAuth => Some(self.typed.legacy_auth),
+            SelfSigned => Some(self.typed.allow_self_signed),
+            WifiOnly => Some(self.typed.wifi_only),
+            _ => None,
+        }
+    }
+
+    fn switched(&mut self, what: nori_core::providers::FormField) {
+        use nori_core::providers::FormField::*;
+        let p = &mut self.typed;
+        match what {
+            LegacyAuth => p.legacy_auth = !p.legacy_auth,
+            SelfSigned => p.allow_self_signed = !p.allow_self_signed,
+            WifiOnly => p.wifi_only = !p.wifi_only,
+            _ => {}
+        }
     }
 }
 
@@ -1007,6 +1076,26 @@ pub struct ProxyDraft {
 }
 
 pub const PROXY_FIELDS: [&str; 3] = ["SOCKS5 address", "User", "Password"];
+
+/// The client certificate's popup over the login form: the path of its .p12 file and its password as
+/// typed, the one the keys are on, and what was wrong on Enter; `busy` while the file is read.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CertDraft {
+    pub fields: [String; 2],
+    pub focus: usize,
+    pub error: Option<CertWrong>,
+    pub busy: bool,
+}
+
+/// Why the certificate's popup did not take what was typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CertWrong {
+    /// No file named, and none set.
+    NoFile,
+    Refused(nori_core::cert::CertError),
+}
+
+pub const CERT_FIELDS: [&str; 2] = ["File (.p12)", "Password"];
 
 /// Playback state for drawing; position extrapolated from `at`.
 #[derive(Debug, Clone, Copy)]
@@ -1336,11 +1425,24 @@ pub enum Overlay {
     Pair { text: String, error: Option<String>, busy: bool },
     /// The login form's proxy, as its popup has it.
     Proxy(ProxyDraft),
+    /// The login form's client certificate, as its popup has it.
+    Cert(CertDraft),
     /// The profile's account with a provider: who is signed in (empty: no one), whether the provider
     /// ended the session, cookies being pasted, why signing in failed, and a sign-in under way.
-    /// `ways` are its provider's, in order; `flow` is the core's; `window_failed`, that the sign-in
-    /// window would not open.
-    Account { kind: nori_core::settings::ServerKind, ways: Vec<nori_core::providers::SignIn>, user: String, pasting: bool, text: String, flow: SignInFlow, window_failed: bool },
+    /// `ways` are its provider's, in order; `flow` is the core's; `no_window`, why the sign-in window
+    /// would not open.
+    Account { kind: nori_core::settings::ServerKind, ways: Vec<nori_core::providers::SignIn>, user: String, pasting: bool, text: String, flow: SignInFlow, no_window: Option<NoWindow> },
+}
+
+/// Why the sign-in window did not open.
+#[cfg(feature = "sign-in-window")]
+pub use nori_sign_in_window::NoWindow;
+
+/// Why the sign-in window did not open: built without one, none can.
+#[cfg(not(feature = "sign-in-window"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoWindow {
+    Unavailable,
 }
 
 /// A change to a profile's scrobbling accounts.
@@ -2741,9 +2843,13 @@ impl App {
             t.push_str(&text);
         } else if let Some(Overlay::Proxy(d)) = &mut self.overlay {
             d.fields[d.focus].push_str(&text);
+        } else if let Some(Overlay::Cert(d)) = &mut self.overlay {
+            d.fields[d.focus].push_str(&text);
         } else if self.view == View::Login {
-            if let (false, LoginLine::Field(i)) = (self.login_choosing(), self.login.focus) {
-                self.login.fields[i].push_str(&text);
+            if let (false, LoginLine::Field(what)) = (self.login_choosing(), self.login.focus) {
+                if let Some(t) = self.login.text_mut(what) {
+                    t.push_str(&text);
+                }
             }
         } else if nori_core::remote::is_invite(&text) {
             // An invite pasted anywhere offers to join its jam, a pairing code to pair.
@@ -2880,39 +2986,100 @@ impl App {
         self.settings.own.kinds.providers().into_iter().find(|i| i.kind == *kind)
     }
 
-    /// Which of `LOGIN_FIELDS` the kind chosen asks.
-    pub fn login_fields(&self) -> Vec<usize> {
-        let Some(info) = self.login_info().filter(|_| self.login.flow.step() == Some(FirstStep::Form)) else { return Vec::new() };
-        (0..LOGIN_ASKS.len()).filter(|&i| info.fields.iter().any(|f| f.what == LOGIN_ASKS[i])).collect()
+    /// The fields the form shows, in the core's order: those the kind lists that a computer honors
+    /// (`form_fields`).
+    pub fn login_fields(&self) -> Vec<nori_core::providers::FieldSpec> {
+        let Some(info) = self.login_info() else { return Vec::new() };
+        nori_core::providers::form_fields(&info, nori_core::providers::Platform::Computer, &self.login.typed, true)
     }
 
-    /// The form's lines in order: its fields, then, where the kind asks for a proxy, the Advanced head and,
-    /// unfolded, the proxy's line.
+    /// The form's lines in order: its plain fields on a page that is the form, then, where the kind has
+    /// advanced ones, the Advanced head and, unfolded, those (the proxy carries signing in elsewhere too).
     pub fn login_lines(&self) -> Vec<LoginLine> {
-        let mut lines: Vec<LoginLine> = self.login_fields().into_iter().map(LoginLine::Field).collect();
-        let proxied = self.login_info().is_some_and(|i| i.fields.iter().any(|f| f.what == nori_core::providers::FormField::Proxy));
-        if !lines.is_empty() && proxied {
+        let fields = self.login_fields();
+        let form = self.login.flow.step() == Some(FirstStep::Form);
+        let mut lines: Vec<LoginLine> = fields.iter().filter(|f| form && !f.advanced).map(|f| LoginLine::Field(f.what)).collect();
+        if fields.iter().any(|f| f.advanced) {
             lines.push(LoginLine::Advanced);
             if self.login.advanced {
-                lines.push(LoginLine::Proxy);
+                lines.extend(fields.iter().filter(|f| f.advanced).map(|f| LoginLine::Field(f.what)));
             }
         }
         lines
     }
 
-    /// The form's line `line` pressed: its field takes the keys, Advanced folds or unfolds, the proxy's
-    /// popup opens on what the form has.
+    /// The form's line `line` pressed: its field takes the keys, a switch turns, an entry's popup opens on
+    /// what the form has, Advanced folds or unfolds.
     fn login_line_pressed(&mut self, line: LoginLine) {
+        use nori_core::providers::FormField;
         self.login.focus = line;
         match line {
-            LoginLine::Field(_) => {}
+            LoginLine::Field(what) => match (login_option(what), what) {
+                (LoginOption::Switch, _) => self.login.switched(what),
+                (LoginOption::Entry, FormField::Proxy) => {
+                    let p = self.login.typed.proxy.clone();
+                    let login = p.as_ref().and_then(|p| p.login.clone()).unwrap_or_default();
+                    let fields = [nori_core::proxy::proxy_address(p), login.user, login.password];
+                    self.overlay = Some(Overlay::Proxy(ProxyDraft { fields, ..Default::default() }));
+                }
+                (LoginOption::Entry, _) => self.overlay = Some(Overlay::Cert(CertDraft::default())),
+                _ => {}
+            },
             LoginLine::Advanced => self.login.advanced = !self.login.advanced,
-            LoginLine::Proxy => {
-                let p = self.login.proxy.clone();
-                let login = p.as_ref().and_then(|p| p.login.clone()).unwrap_or_default();
-                let fields = [nori_core::proxy::proxy_address(p), login.user, login.password];
-                self.overlay = Some(Overlay::Proxy(ProxyDraft { fields, ..Default::default() }));
+        }
+    }
+
+    /// A key on the client certificate's popup: Enter on its last field has the file read with the
+    /// password ([`App::cert_imported`] says how it went), a set one staying when no file is named; Esc
+    /// leaves the form's; ctrl+d takes a set one off.
+    fn cert_key(&mut self, k: KeyEvent) {
+        let set = !self.login.typed.client_cert.is_empty();
+        let Some(Overlay::Cert(d)) = &mut self.overlay else { return };
+        let control = k.modifiers.contains(KeyModifiers::CONTROL);
+        match k.code {
+            _ if d.busy => self.dirty = false,
+            KeyCode::Tab | KeyCode::Down => d.focus = (d.focus + 1) % d.fields.len(),
+            KeyCode::BackTab | KeyCode::Up => d.focus = (d.focus + d.fields.len() - 1) % d.fields.len(),
+            KeyCode::Enter if d.focus + 1 < d.fields.len() => d.focus += 1,
+            KeyCode::Enter => match d.fields[0].trim() {
+                "" if set => self.overlay = None,
+                "" => d.error = Some(CertWrong::NoFile),
+                path => {
+                    let (path, password) = (path.to_string(), d.fields[1].clone());
+                    d.busy = true;
+                    self.cmds.push(Cmd::ImportCert { profile: Box::new(self.login.typed.clone()), path, password });
+                }
+            },
+            KeyCode::Esc => self.overlay = None,
+            KeyCode::Char('d') if control && set => {
+                (self.login.typed.client_cert, self.login.typed.client_cert_password) = (String::new(), String::new());
+                self.overlay = None;
             }
+            KeyCode::Backspace => {
+                d.fields[d.focus].pop();
+                d.error = None;
+            }
+            KeyCode::Char('u') if control => {
+                d.fields[d.focus].clear();
+                d.error = None;
+            }
+            KeyCode::Char(c) if !control => {
+                d.fields[d.focus].push(c);
+                d.error = None;
+            }
+            _ => self.dirty = false,
+        }
+    }
+
+    /// How reading the certificate's file went: kept as the form's, the popup closed, or the popup says why.
+    pub fn cert_imported(&mut self, r: Result<SavedServer, nori_core::cert::CertError>) {
+        let Some(Overlay::Cert(d)) = &mut self.overlay else { return };
+        match r {
+            Ok(p) => {
+                (self.login.typed.client_cert, self.login.typed.client_cert_password) = (p.client_cert, p.client_cert_password);
+                self.overlay = None;
+            }
+            Err(e) => (d.error, d.busy) = (Some(CertWrong::Refused(e)), false),
         }
     }
 
@@ -2929,15 +3096,15 @@ impl App {
                 let [address, user, password] = d.fields.clone();
                 match nori_core::proxy::proxy_from_form(address, user, password) {
                     Ok(proxy) => {
-                        self.login.proxy = proxy;
+                        self.login.typed.proxy = proxy;
                         self.overlay = None;
                     }
                     Err(e) => d.error = Some(e),
                 }
             }
             KeyCode::Esc => self.overlay = None,
-            KeyCode::Char('d') if control && self.login.proxy.is_some() => {
-                self.login.proxy = None;
+            KeyCode::Char('d') if control && self.login.typed.proxy.is_some() => {
+                self.login.typed.proxy = None;
                 self.overlay = None;
             }
             KeyCode::Backspace => {
@@ -2976,7 +3143,11 @@ impl App {
     /// See [`App::provider_chosen`].
     pub(crate) fn provider_opened(&mut self, info: &nori_core::providers::ProviderInfo) {
         let then = self.login.flow.on(AddEvent::Chose { info: info.clone() });
-        self.login.focus = LoginLine::Field(self.login_fields().first().copied().unwrap_or(0));
+        if self.login.typed.kind != info.kind || self.login.typed.id.is_empty() {
+            self.login.typed = SavedServer { id: nori_core::settings::new_server_id(), kind: info.kind.clone(), ..Default::default() };
+            self.login.headers.clear();
+        }
+        self.login.focus = self.login_lines().first().copied().unwrap_or_default();
         if then == AddDo::Connect {
             self.connect(AfterAdding::Remind);
         }
@@ -3157,66 +3328,77 @@ impl App {
             }
         }
         let lines = self.login_lines();
-        let l = &mut self.login;
-        let at = lines.iter().position(|&f| f == l.focus);
-        let field = match l.focus {
-            LoginLine::Field(i) => Some(i),
-            LoginLine::Advanced | LoginLine::Proxy => None,
+        let at = lines.iter().position(|&f| f == self.login.focus);
+        let typing = match self.login.focus {
+            LoginLine::Field(what) => matches!(login_option(what), LoginOption::Text { .. } | LoginOption::Lines).then_some(what),
+            LoginLine::Advanced => None,
         };
-        // Enter on a field goes on to the next field, and on the last one connects.
-        let next_field = at.and_then(|i| lines.get(i + 1)).filter(|l| matches!(l, LoginLine::Field(_))).copied();
+        // Enter on a text goes on to the next text, and on the last one connects; on lines of text it starts
+        // another.
+        let next_text = at.and_then(|i| lines.get(i + 1)).filter(|l| matches!(l, LoginLine::Field(w) if matches!(login_option(*w), LoginOption::Text { .. } | LoginOption::Lines))).copied();
+        let control = k.modifiers.contains(KeyModifiers::CONTROL);
         match k.code {
             KeyCode::Tab | KeyCode::Down => {
                 if let Some(i) = at {
-                    l.focus = lines[(i + 1) % lines.len()];
+                    self.login.focus = lines[(i + 1) % lines.len()];
                 }
             }
             KeyCode::BackTab | KeyCode::Up => {
                 if let Some(i) = at {
-                    l.focus = lines[(i + lines.len() - 1) % lines.len()];
+                    self.login.focus = lines[(i + lines.len() - 1) % lines.len()];
                 }
             }
-            KeyCode::Enter => match (field, next_field) {
+            KeyCode::Enter => match (typing, next_text) {
+                (Some(nori_core::providers::FormField::Headers), _) => self.login.headers.push('\n'),
                 (None, _) => {
-                    let line = l.focus;
+                    let line = self.login.focus;
                     self.login_line_pressed(line);
                 }
-                (Some(_), Some(next)) => l.focus = next,
+                (Some(_), Some(next)) => self.login.focus = next,
                 (Some(_), None) => self.connect(AfterAdding::Remind),
             },
+            KeyCode::Char(' ') if typing.is_none() && at.is_some() => {
+                let line = self.login.focus;
+                self.login_line_pressed(line);
+            }
             KeyCode::Esc => {
-                l.flow.on(AddEvent::Back);
+                self.login.flow.on(AddEvent::Back);
                 // The one source picked signs in on its own page: back is the welcome's sources.
                 if self.welcome.one().is_some() {
                     self.welcome_on(WelcomeEvent::Back);
                 }
             }
             KeyCode::Backspace if at.is_some() => {
-                if let Some(i) = field {
-                    l.fields[i].pop();
+                if let Some(t) = typing.and_then(|w| self.login.text_mut(w)) {
+                    t.pop();
                 }
             }
-            KeyCode::Char(c) if at.is_some() && !k.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Some(i) = field {
-                    l.fields[i].push(c);
+            KeyCode::Char(c) if at.is_some() && !control => {
+                if let Some(t) = typing.and_then(|w| self.login.text_mut(w)) {
+                    t.push(c);
                 }
             }
             _ => {}
         }
     }
 
+    /// Sends the form: the profile of what it shows, the address with https:// where typed without a scheme.
     fn connect(&mut self, after: AfterAdding) {
         let Some(info) = self.login_info() else { return };
-        let asked = self.login_fields();
-        let l = &mut self.login;
-        let typed = |i: usize| if asked.contains(&i) { l.fields[i].clone() } else { String::new() };
-        let url = typed(1).trim().trim_end_matches('/').to_string();
-        let url = if url.is_empty() || url.contains("://") { url } else { format!("https://{url}") };
-        let draft = SavedServer { id: nori_core::settings::new_server_id(), kind: info.kind.clone(), name: typed(0).trim().to_string(), url, user: typed(2).trim().to_string(), password: typed(3), proxy: l.proxy.clone(), ..Default::default() };
+        let fields = self.login_fields();
+        let l = &self.login;
+        let mut typed = nori_core::settings::server_from_form(l.typed.clone(), l.headers.clone());
+        let url = typed.url.trim_end_matches('/');
+        typed.url = if url.is_empty() || url.contains("://") { url.to_string() } else { format!("https://{url}") };
+        for text in [&mut typed.name, &mut typed.user, &mut typed.api_key] {
+            *text = text.trim().to_string();
+        }
+        let base = SavedServer { id: l.typed.id.clone(), kind: info.kind.clone(), ..Default::default() };
+        let draft = nori_core::providers::form_taken(base, &typed, &fields);
         let list = nori_core::settings::ServerList { servers: self.prefs.servers.clone(), active_server_id: self.prefs.active_server_id.clone() };
         let added = self.settings.own.kinds.adds_profile(list, draft.clone()).then_some(after);
         let ready = self.settings.own.kinds.server_ready(draft.clone());
-        if let AddDo::Send { .. } = l.flow.on(AddEvent::Send { ready, added }) {
+        if let AddDo::Send { .. } = self.login.flow.on(AddEvent::Send { ready, added }) {
             self.cmds.push(Cmd::Login(Box::new(draft)));
         }
     }
@@ -3328,6 +3510,7 @@ impl App {
         let Some(o) = &mut self.overlay else { return };
         match o {
             Overlay::Proxy(_) => self.proxy_key(k),
+            Overlay::Cert(_) => self.cert_key(k),
             Overlay::Help { scroll } => match k.code {
                 KeyCode::Down | KeyCode::Char('j') => *scroll += 1,
                 KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
@@ -3394,9 +3577,9 @@ impl App {
                 KeyCode::Esc | KeyCode::Char('q') => self.overlay = None,
                 _ => {}
             },
-            Overlay::Account { pasting: true, text, flow, window_failed, .. } => match k.code {
+            Overlay::Account { pasting: true, text, flow, no_window, .. } => match k.code {
                 KeyCode::Enter if !text.trim().is_empty() => {
-                    *window_failed = false;
+                    *no_window = None;
                     if flow.on(SignInEvent::Sent) {
                         self.cmds.push(Cmd::SignIn(text.trim().to_string()));
                     }
@@ -3413,21 +3596,21 @@ impl App {
                 KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
                 _ => {}
             },
-            Overlay::Account { user, ways, pasting, flow, window_failed, .. } => match k.code {
+            Overlay::Account { user, ways, pasting, flow, no_window, .. } => match k.code {
                 KeyCode::Enter if !user.is_empty() => {
                     self.cmds.push(Cmd::SignOut);
                     self.overlay = None;
                 }
                 KeyCode::Enter if ways.first() == Some(&nori_core::providers::SignIn::Code) => self.sign_in_with_code(),
                 KeyCode::Enter => {
-                    *window_failed = false;
+                    *no_window = None;
                     flow.on(SignInEvent::Retry);
                     if flow.on(SignInEvent::Sent) {
                         self.cmds.push(Cmd::SignInWindow);
                     }
                 }
                 KeyCode::Char('w') if user.is_empty() && ways.first() == Some(&nori_core::providers::SignIn::Code) && ways.iter().any(|w| matches!(w, nori_core::providers::SignIn::WebPage { .. })) => {
-                    *window_failed = false;
+                    *no_window = None;
                     flow.on(SignInEvent::Retry);
                     if flow.on(SignInEvent::Sent) {
                         self.cmds.push(Cmd::SignInWindow);
@@ -4775,8 +4958,8 @@ impl App {
 
     /// The account sheet's code step: a new code asked for, to be shown and checked.
     pub fn sign_in_with_code(&mut self) {
-        if let Some(Overlay::Account { flow, window_failed, .. }) = &mut self.overlay {
-            *window_failed = false;
+        if let Some(Overlay::Account { flow, no_window, .. }) = &mut self.overlay {
+            *no_window = None;
             if flow.on(SignInEvent::Code) {
                 self.cmds.push(Cmd::SignInCode);
             }

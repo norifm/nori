@@ -1,26 +1,18 @@
 import UIKit
 
 /// Adds a profile of one of the kinds the core offers (`nori_ios_providers`), with the fields its form
-/// asks: the core checks it, saves it as the active one, and the page opens it.
-final class LoginPage: UIViewController, UITextFieldDelegate {
-    /// A kind offered, and its form's fields by the login JSON's keys, plain or advanced.
-    struct Kind {
-        let id: String
-        let plain: Set<String>
-        let advanced: Set<String>
-    }
-
-    static let kinds: [Kind] = (takenJSON(nori_ios_providers()) as? [[String: Any]] ?? []).map { p in
-        let fields = p["fields"] as? [[String: Any]] ?? []
-        let named = { (advanced: Bool) in Set(fields.filter { $0["advanced"] as? Bool == advanced }.compactMap { $0["what"] as? String }) }
-        return Kind(id: p["kind"] as? String ?? "", plain: named(false), advanced: named(true))
-    }
+/// shows (`nori_ios_form_fields`): the core checks it, saves it as the active one, and the page opens it.
+/// What few profiles set folds under Advanced as one card of rows in the core's order.
+final class LoginPage: UIViewController, UITextFieldDelegate, UIDocumentPickerDelegate {
+    static let kinds: [String] = (takenJSON(nori_ios_providers()) as? [[String: Any]] ?? []).compactMap { $0["kind"] as? String }
     private let kinds = LoginPage.kinds
     /// The kind chosen before the form (the welcome's), whose choice the form no longer offers.
     private let given: String?
     /// What follows the profile opening; otherwise the form closes.
     var added: (() -> Void)?
-    private lazy var kind = UISegmentedControl(items: kinds.map { Say.provider($0.id).name })
+    /// The profile's id from the page's opening: a client certificate is kept by it.
+    private let id = taken(nori_ios_new_id()) ?? ""
+    private lazy var kind = UISegmentedControl(items: kinds.map { Say.provider($0).name })
     private let hint = UILabel()
     private let address = UITextField()
     private let user = UITextField()
@@ -28,10 +20,29 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
     private let name = UITextField()
     private let second = UITextField()
     private let key = UITextField()
+    private let legacyAuth = UISwitch()
+    private let selfSigned = UISwitch()
+    /// The extra headers, one per line.
+    private var headers = ""
+    /// The client certificate kept: its file's name (empty for none) and its password.
+    private var cert = (name: "", password: "")
     /// The proxy as its sheet last saved it: the address as the core shows it (empty for none), and its login.
     private var proxy = (address: "", user: "", password: "")
+    private lazy var headersRow = GroupRow(Say.extraHeaders, subtitle: Say.extraHeadersHint, value: Say.headers(0), chevron: true) { [weak self] in self?.askHeaders() }
+    private lazy var certRow = GroupRow(Say.clientCert, value: Say.proxyNone, chevron: true) { [weak self] in self?.certTapped() }
     private lazy var proxyRow = GroupRow(Say.proxy, value: Say.proxyNone, chevron: true) { [weak self] in self?.askProxy() }
-    private lazy var proxyCard = GroupCard([proxyRow], margin: 0)
+    /// The Advanced card's rows by the login JSON's keys.
+    private lazy var rows: [String: UIView] = [
+        "name": GroupRow(Say.name, trailing: name),
+        "alt": GroupRow(Say.secondAddress, subtitle: Say.secondAddressHint, trailing: second),
+        "key": GroupRow(Say.apiKey, subtitle: Say.apiKeyHint, trailing: key),
+        "headers": headersRow,
+        "legacyAuth": GroupRow(Say.legacyAuth, subtitle: Say.legacyAuthHint, trailing: legacyAuth),
+        "selfSigned": GroupRow(Say.selfSigned, subtitle: Say.selfSignedHint, trailing: selfSigned),
+        "clientCert": certRow,
+        "proxy": proxyRow,
+    ]
+    private let advancedCard = GroupCard([], margin: 0)
     private let more = UIButton(type: .system)
     private let scroll = UIScrollView()
     private let connect = UIButton(type: .system)
@@ -75,7 +86,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         spinner.hidesWhenStopped = true
         spinner.color = Theme.label
 
-        kind.selectedSegmentIndex = kinds.firstIndex { $0.id == given } ?? 0
+        kind.selectedSegmentIndex = kinds.firstIndex { $0 == given } ?? 0
         kind.isHidden = kinds.count < 2 || given != nil
         kind.addTarget(self, action: #selector(kindChanged), for: .valueChanged)
         hint.textColor = Theme.secondary
@@ -84,19 +95,20 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         hint.numberOfLines = 0
         hint.textAlignment = .center
 
-        field(name, Say.nameOptional, .default, false)
+        inRow(name, Say.optional, .default)
         name.autocapitalizationType = .words
-        field(second, Say.secondAddress, .URL, false)
-        field(key, Say.apiKey, .default, true)
+        inRow(second, Say.secondAddressPlaceholder, .URL)
+        inRow(key, "", .default)
+        key.addTarget(self, action: #selector(keyEdited), for: .editingChanged)
+        for toggle in [legacyAuth, selfSigned] {
+            toggle.onTintColor = Theme.switchOn
+        }
         more.setTitle(Say.advanced, for: .normal)
         more.tintColor = Theme.secondary
         more.contentHorizontalAlignment = .leading
         more.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
-        for f in [name, second, key] {
-            f.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        }
         kindChanged()
-        let stack = UIStackView(arrangedSubviews: [kind, address, user, password, more, name, second, key, proxyCard, connect, spinner, status, hint])
+        let stack = UIStackView(arrangedSubviews: [kind, address, user, password, more, advancedCard, connect, spinner, status, hint])
         stack.axis = .vertical
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -137,7 +149,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
             user.becomeFirstResponder()
         } else if textField === user {
             password.becomeFirstResponder()
-        } else if textField === name {
+        } else if textField === name && !advancedCard.isHidden {
             second.becomeFirstResponder()
         } else if textField === second {
             key.becomeFirstResponder()
@@ -156,9 +168,100 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         scroll.scrollIndicatorInsets.bottom = covered
     }
 
-    /// The boxes by the login JSON's keys, and the proxy's entry.
+    /// The plain boxes by the login JSON's keys.
     private var boxes: [String: UIView] {
-        ["name": name, "url": address, "user": user, "password": password, "alt": second, "key": key, "proxy": proxyCard]
+        ["url": address, "user": user, "password": password]
+    }
+
+    /// The fields the core shows for the form as typed: the plain boxes, and the Advanced card's rows in
+    /// its order.
+    private func shown() {
+        let fields = formJSON().withCString { takenJSON(nori_ios_form_fields($0)) } as? [[String: Any]] ?? []
+        let named = { (advanced: Bool) in fields.filter { $0["advanced"] as? Bool == advanced }.compactMap { $0["what"] as? String } }
+        let (plain, folded) = (named(false), named(true))
+        for (what, box) in boxes { box.isHidden = !plain.contains(what) }
+        advancedCard.set(folded.compactMap { rows[$0] })
+        more.isHidden = folded.isEmpty
+    }
+
+    /// An API key typed or cleared takes the user and password away or brings them back.
+    @objc private func keyEdited() {
+        shown()
+    }
+
+    /// The headers' sheet: a line each, and one more to add; Save keeps those filled in.
+    private func askHeaders() {
+        let ask = UIAlertController(title: Say.extraHeaders, message: nil, preferredStyle: .alert)
+        ask.view.tintColor = .black
+        let lines = headers.split(separator: "\n").map(String.init) + [""]
+        for line in lines {
+            ask.addTextField { field in
+                field.placeholder = Say.headerPlaceholder
+                field.text = line
+                field.autocapitalizationType = .none
+                field.autocorrectionType = .no
+            }
+        }
+        let save = UIAlertAction(title: Say.save, style: .default) { [weak self] _ in
+            let kept = (ask.textFields ?? []).compactMap { $0.text }.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            self?.headers = kept.joined(separator: "\n")
+            self?.headersRow.value.text = Say.headers(kept.count)
+        }
+        ask.addAction(save)
+        ask.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
+        ask.preferredAction = save
+        present(ask, animated: true)
+    }
+
+    /// The certificate's row: a .p12 picked from Files, or, with one kept, replaced or removed.
+    private func certTapped() {
+        guard !cert.name.isEmpty else { return pickCert() }
+        let ask = UIAlertController(title: Say.clientCert, message: nil, preferredStyle: .actionSheet)
+        ask.addAction(UIAlertAction(title: Say.clientCertReplace, style: .default) { [weak self] _ in self?.pickCert() })
+        ask.addAction(UIAlertAction(title: Say.clientCertRemove, style: .destructive) { [weak self] _ in self?.certKept("", "") })
+        ask.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
+        present(ask, animated: true)
+    }
+
+    private func pickCert() {
+        let picker = UIDocumentPickerViewController(documentTypes: ["com.rsa.pkcs-12", "public.data"], in: .import)
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        if let url = urls.first { askCertPassword(url) }
+    }
+
+    /// The picked file's password, saying why the last one didn't open it: the core keeps the file once it does.
+    private func askCertPassword(_ file: URL, failed: String? = nil) {
+        let ask = UIAlertController(title: Say.clientCert, message: failed ?? file.lastPathComponent, preferredStyle: .alert)
+        ask.view.tintColor = .black
+        ask.addTextField { field in
+            field.placeholder = Say.clientCertPassword
+            field.isSecureTextEntry = true
+        }
+        let save = UIAlertAction(title: Say.save, style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            let typed = ask.textFields?.first?.text ?? ""
+            var error: Int32 = 0
+            let kept = dataDirectory().path.withCString { d in
+                self.id.withCString { i in file.path.withCString { f in typed.withCString { p in nori_ios_import_cert(d, i, f, p, &error) } } }
+            }
+            guard let name = taken(kept) else { return self.askCertPassword(file, failed: Say.certError(error)) }
+            self.certKept(name, typed)
+        }
+        ask.addAction(save)
+        ask.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
+        ask.preferredAction = save
+        present(ask, animated: true)
+    }
+
+    /// The certificate kept, `name` empty for none, on its row.
+    private func certKept(_ name: String, _ password: String) {
+        cert = (name, password)
+        certRow.value.text = name.isEmpty ? Say.proxyNone : Say.clientCertImported
+        certRow.accessibilityLabel = "\(Say.clientCert), \(certRow.value.text ?? "")"
     }
 
     /// The proxy's sheet, on what the page has or on what was typed when the core said `failed`: Save keeps
@@ -201,39 +304,44 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         proxyRow.accessibilityLabel = "\(Say.proxy), \(proxyRow.value.text ?? "")"
     }
 
-    private var chosen: Kind? { kinds.indices.contains(kind.selectedSegmentIndex) ? kinds[kind.selectedSegmentIndex] : nil }
+    private var chosen: String? { kinds.indices.contains(kind.selectedSegmentIndex) ? kinds[kind.selectedSegmentIndex] : nil }
 
-    /// The chosen kind's advanced fields: shown on asking.
+    /// The Advanced card: shown on asking.
     @objc private func moreTapped() {
-        guard let k = chosen else { return }
-        let show = k.advanced.contains { boxes[$0]?.isHidden ?? false }
+        let show = advancedCard.isHidden
         UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.25) {
-            for f in k.advanced { self.boxes[f]?.isHidden = !show }
+            self.advancedCard.isHidden = !show
         }
         more.setTitle(show ? Say.hideAdvanced : Say.advanced, for: .normal)
     }
 
     /// The chosen kind's plain fields, its advanced ones folded away, and its words.
     @objc private func kindChanged() {
-        let k = chosen
-        for (what, box) in boxes { box.isHidden = !(k?.plain.contains(what) ?? false) }
-        more.isHidden = k?.advanced.isEmpty ?? true
+        shown()
+        advancedCard.isHidden = true
         more.setTitle(Say.advanced, for: .normal)
-        let words = Say.provider(k?.id ?? "")
+        let words = Say.provider(chosen ?? "")
         hint.text = words.note
         connect.setTitle(words.add, for: .normal)
         status.text = ""
     }
 
-    @objc private func submit() {
-        view.endEditing(true)
-        let fields: [String: String] = [
-            "kind": chosen?.id ?? "",
+    /// The form as the login JSON has it (`nori_ios_login`).
+    private func formJSON() -> String {
+        let fields: [String: Any] = [
+            "id": id, "kind": chosen ?? "",
             "url": address.text ?? "", "user": user.text ?? "", "password": password.text ?? "",
-            "name": name.text ?? "", "alt": second.text ?? "", "key": key.text ?? "",
+            "name": name.text ?? "", "alt": second.text ?? "", "key": key.text ?? "", "headers": headers,
+            "legacyAuth": legacyAuth.isOn, "selfSigned": selfSigned.isOn,
+            "clientCert": cert.name, "clientCertPassword": cert.password,
             "proxy": proxy.address, "proxyUser": proxy.user, "proxyPassword": proxy.password,
         ]
-        let form = (try? JSONSerialization.data(withJSONObject: fields)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return (try? JSONSerialization.data(withJSONObject: fields)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
+    @objc private func submit() {
+        view.endEditing(true)
+        let form = formJSON()
         connect.isEnabled = false
         connect.setTitle(Say.connecting, for: .normal)
         status.text = ""
@@ -258,10 +366,26 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
                     }
                 }
                 self.status.text = opened ?? Say.failure(code, extra)
-                self.connect.setTitle(Say.provider(self.chosen?.id ?? "").add, for: .normal)
+                self.connect.setTitle(Say.provider(self.chosen ?? "").add, for: .normal)
                 self.connect.isEnabled = true
             }
         }
+    }
+
+    /// A text typed at the end of its row, in the row's ink.
+    private func inRow(_ box: UITextField, _ placeholder: String, _ keyboard: UIKeyboardType) {
+        box.keyboardType = keyboard
+        box.autocapitalizationType = .none
+        box.autocorrectionType = .no
+        box.keyboardAppearance = Theme.keyboard
+        box.textColor = Theme.label
+        box.tintColor = Theme.accent
+        box.textAlignment = .right
+        box.font = Fonts.font(16)
+        box.adjustsFontForContentSizeCategory = true
+        box.delegate = self
+        box.attributedPlaceholder = NSAttributedString(string: placeholder, attributes: [.foregroundColor: Theme.secondary])
+        box.widthAnchor.constraint(equalToConstant: 130).isActive = true
     }
 
     private func field(_ box: UITextField, _ placeholder: String, _ keyboard: UIKeyboardType, _ secure: Bool) {

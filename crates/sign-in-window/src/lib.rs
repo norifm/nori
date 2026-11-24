@@ -34,22 +34,39 @@ pub fn serve_if_asked() {
 /// A sign-in window open; closed when dropped.
 pub struct SignInWindow(Child);
 
+/// Why no sign-in window opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoWindow {
+    /// The provider has no page, or no window can start here.
+    Unavailable,
+    /// The profile has a proxy and this system's web view takes none: it signs in by pasting.
+    ProxyUnsupported,
+}
+
+/// Whether a window through a proxy (`proxied`) is refused here: WKWebView takes a proxy from macOS 14
+/// (wry's `mac-proxy`), and nori runs from macOS 11.
+fn refused(proxied: bool) -> Option<NoWindow> {
+    (cfg!(target_os = "macos") && proxied).then_some(NoWindow::ProxyUnsupported)
+}
+
 impl SignInWindow {
     /// Opens `kind`'s sign-in page (one of `kinds`) titled `title`, through `proxy` (the profile's);
     /// `done` gets the window's [`SignInWindow::id`] and the signed-in session's cookies (a `Cookie`
-    /// header's value), on a thread of its own. None where the provider has no page or no window can start.
-    pub fn open(kinds: Arc<Kinds>, kind: ServerKind, title: String, proxy: Option<SavedProxy>, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
-        let start = kinds.providers().into_iter().find(|i| i.kind == kind)?.page()?.to_string();
+    /// header's value), on a thread of its own.
+    pub fn open(kinds: Arc<Kinds>, kind: ServerKind, title: String, proxy: Option<SavedProxy>, done: impl FnOnce(u32, String) + Send + 'static) -> Result<SignInWindow, NoWindow> {
+        let start = kinds.providers().into_iter().find(|i| i.kind == kind).and_then(|i| i.page().map(str::to_string)).ok_or(NoWindow::Unavailable)?;
         SignInWindow::open_at(kinds, kind, title, start, proxy, done)
     }
 
     /// [`SignInWindow::open`] at `start`: a page the provider's plugin asked for (`sign-in.open`).
-    pub fn open_at(kinds: Arc<Kinds>, kind: ServerKind, title: String, start: String, proxy: Option<SavedProxy>, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
-        // WKWebView takes a proxy from macOS 14 (wry's `mac-proxy`), and nori runs from macOS 11: a profile
-        // with a proxy is signed in by pasting there, rather than past its proxy.
-        if cfg!(target_os = "macos") && proxy.is_some() {
-            return None;
+    pub fn open_at(kinds: Arc<Kinds>, kind: ServerKind, title: String, start: String, proxy: Option<SavedProxy>, done: impl FnOnce(u32, String) + Send + 'static) -> Result<SignInWindow, NoWindow> {
+        if let Some(why) = refused(proxy.is_some()) {
+            return Err(why);
         }
+        SignInWindow::start(kinds, kind, title, start, proxy, done).ok_or(NoWindow::Unavailable)
+    }
+
+    fn start(kinds: Arc<Kinds>, kind: ServerKind, title: String, start: String, proxy: Option<SavedProxy>, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
         let me = std::env::current_exe().ok()?;
         let mut window = Command::new(me);
         // WebKitGTK hands the page's frames to the window as GPU buffers, which fail silently where its
@@ -91,5 +108,18 @@ impl Drop for SignInWindow {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Only macOS, whose web view takes no proxy here, refuses a window through one; without a proxy no
+    /// system does.
+    #[test]
+    fn a_proxy_is_refused_only_where_the_web_view_takes_none() {
+        let proxied = if cfg!(target_os = "macos") { Some(NoWindow::ProxyUnsupported) } else { None };
+        assert_eq!((refused(true), refused(false)), (proxied, None));
     }
 }

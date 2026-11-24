@@ -1,6 +1,7 @@
-//! Desktop HTTP: the core's [`Transport`] and the engine's [`ByteSource`] over one ureq agent (rustls),
-//! so API calls, covers and audio share one connection pool; a profile's agent goes through its SOCKS5
-//! proxy (socks.rs).
+//! Desktop HTTP: the core's [`Transport`] and the engine's [`ByteSource`] over ureq agents (rustls), so
+//! API calls, covers and audio share one connection pool; a profile's agents go through its SOCKS5 proxy
+//! (socks.rs), and its server's requests, decided at each redirect, carry its headers over an agent of
+//! their own with its TLS exceptions (its client certificate read by nori_core::cert).
 
 mod socks;
 
@@ -9,6 +10,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::task::{Context, Poll, Waker};
@@ -16,17 +18,115 @@ use std::time::Duration;
 
 use nori_core::proxy::{proxy_host, skips_proxy, SavedProxy};
 use nori_core::settings::SavedServer;
-use nori_core::transport::{Exchange, FailureKind, HttpHeader, HttpMethod, Transport, TransportError, TransportResponse, USER_AGENT};
+use nori_core::transport::{Exchange, FailureKind, HttpHeader, HttpMethod, ServerHosts, Transport, TransportError, TransportResponse, USER_AGENT};
 use nori_engine::{Body, ByteSource, Cancel, OpenError};
+use ureq::tls::{Certificate, ClientCert, PrivateKey, TlsConfig};
 use ureq::unversioned::resolver::DefaultResolver;
 use ureq::unversioned::transport::{Buffers, ConnectProxyConnector, ConnectionDetails, Connector, Either, LazyBuffers, NextTimeout, RustlsConnector};
-use ureq::{Agent, ProxyProtocol, RequestBuilder};
+use ureq::http::{self, Method, Response};
+use ureq::{Agent, AsSendBody, ProxyProtocol};
 
 /// Largest API response body read.
 const MAX_ANSWER: u64 = 256 * 1024 * 1024;
 
+/// Most redirects one request follows.
+const MAX_REDIRECTS: usize = 10;
+
 pub struct Http {
+    agents: Agents,
+}
+
+/// The agents a request goes over: the plain one, and its profile's server's.
+#[derive(Clone)]
+struct Agents {
+    /// Every request but the profile's server's.
+    plain: Agent,
+    /// The profile's server; None for no profile's.
+    server: Option<Arc<Server>>,
+}
+
+/// A profile's server: which requests are its, what they carry that others don't, and the agent they go
+/// over, with its TLS exceptions.
+struct Server {
+    hosts: ServerHosts,
+    headers: HashMap<String, String>,
     agent: Agent,
+}
+
+/// What a request sends, again at each redirect it follows.
+struct Ask<'a> {
+    method: Method,
+    url: &'a str,
+    headers: &'a [(&'a str, &'a str)],
+    /// Its body and the body's type.
+    body: Option<(&'a [u8], Option<&'a str>)>,
+    /// A whole-request timeout; 0 keeps the agent's.
+    timeout_ms: u32,
+}
+
+impl Agents {
+    /// Sends `ask`, following each redirect as a hop of its own: a hop to the profile's server goes over
+    /// its agent with its headers, any other over the plain agent without them. An `Authorization` header
+    /// asked for goes only where the first hop went (its scheme, host and port), as on Android.
+    fn send(&self, ask: Ask) -> Result<Response<ureq::Body>, ureq::Error> {
+        let (mut method, mut url, mut body) = (ask.method, ask.url.to_string(), ask.body);
+        let origin = |url: &str| url::Url::parse(url).ok().map(|u| u.origin());
+        let first = origin(&url);
+        for _ in 0..=MAX_REDIRECTS {
+            let same_origin = origin(&url) == first;
+            let server = self.server.as_deref().filter(|s| s.hosts.policy(&url).server);
+            let agent = server.map_or(&self.plain, |s| &s.agent);
+            let mut req = http::Request::builder().method(method.clone()).uri(&url);
+            for (name, value) in ask.headers.iter().filter(|(name, _)| same_origin || !name.eq_ignore_ascii_case("authorization")) {
+                req = req.header(*name, *value);
+            }
+            for (name, value) in server.iter().flat_map(|s| &s.headers) {
+                req = req.header(name, value);
+            }
+            let r = match body {
+                Some((bytes, kind)) => {
+                    if let Some(kind) = kind {
+                        req = req.header("Content-Type", kind);
+                    }
+                    run(agent, req.body(bytes)?, ask.timeout_ms)?
+                }
+                None => run(agent, req.body(())?, ask.timeout_ms)?,
+            };
+            let status = r.status().as_u16();
+            let location = r.headers().get("location").and_then(|l| l.to_str().ok());
+            let Some(next) = location.filter(|_| r.status().is_redirection()).and_then(|l| url::Url::parse(&url).ok()?.join(l).ok()) else { return Ok(r) };
+            if (status == 303 && method != Method::HEAD) || (matches!(status, 301 | 302) && method == Method::POST) {
+                (method, body) = (Method::GET, None);
+            }
+            url = next.into();
+        }
+        Err(ureq::Error::TooManyRedirects)
+    }
+}
+
+/// `req` over `agent`, within `timeout_ms` when not 0. That timeout is also the wait for the answer: a
+/// held poll answers only when there is news.
+fn run(agent: &Agent, req: http::Request<impl AsSendBody>, timeout_ms: u32) -> Result<Response<ureq::Body>, ureq::Error> {
+    if timeout_ms == 0 {
+        return agent.run(req);
+    }
+    let timeout = Some(Duration::from_millis(timeout_ms as u64));
+    agent.run(agent.configure_request(req).timeout_global(timeout).timeout_recv_response(timeout).build())
+}
+
+/// An agent with `config`, which follows no redirect: [`Agents::send`] does.
+fn agent(config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>) -> Agent {
+    let config = config
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .user_agent(USER_AGENT)
+        // Covers, API, audio and held polls share one host.
+        .max_idle_connections_per_host(8)
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        .build();
+    let connector = ().chain(ConnectProxyConnector::default()).chain(Sockets).chain(RustlsConnector::default());
+    Agent::with_parts(config, connector, DefaultResolver::default())
 }
 
 impl Http {
@@ -36,31 +136,43 @@ impl Http {
         Http::with_config(Agent::config_builder())
     }
 
-    /// [`Http::new`] for `profile`: through its proxy where it has one, in place of the environment's.
-    pub fn for_profile(profile: &SavedServer) -> Arc<Http> {
-        match &profile.proxy {
-            Some(proxy) => Http::with_config(Agent::config_builder().proxy(Some(socks5(proxy)))),
-            None => Http::new(),
-        }
+    /// [`Http::new`] for `profile`, its client certificate kept under `data`: through its proxy where it
+    /// has one, in place of the environment's; its server's requests with its headers, and its TLS
+    /// accepting any certificate or sending its own where it says so. A certificate that can't be read is
+    /// left out, so the server says what it lacks.
+    pub fn for_profile(profile: &SavedServer, data: &Path) -> Arc<Http> {
+        let own = match nori_core::cert::client_identity(&data.to_string_lossy(), profile.clone()) {
+            Ok(identity) => identity.and_then(tls_cert),
+            Err(e) => {
+                nori_core::alog::info(&format!("http: the client certificate: {e}"));
+                None
+            }
+        };
+        let proxied = || match &profile.proxy {
+            Some(proxy) => Agent::config_builder().proxy(Some(socks5(proxy))),
+            None => Agent::config_builder(),
+        };
+        let server_config = match profile.allow_self_signed || own.is_some() {
+            true => proxied().tls_config(TlsConfig::builder().disable_verification(profile.allow_self_signed).client_cert(own).build()),
+            false => proxied(),
+        };
+        let hosts = ServerHosts::new(Some(profile.url.clone()), Some(profile.alt_url.clone()), profile.wifi_only);
+        let server = Server { hosts, headers: profile.headers.clone(), agent: agent(server_config) };
+        Arc::new(Http { agents: Agents { plain: agent(proxied()), server: Some(Arc::new(server)) } })
     }
 
     fn with_config(config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>) -> Arc<Http> {
-        let config = config
-            .http_status_as_error(false)
-            .user_agent(USER_AGENT)
-            // Covers, API, audio and held polls share one host.
-            .max_idle_connections_per_host(8)
-            .timeout_connect(Some(Duration::from_secs(10)))
-            .timeout_recv_response(Some(Duration::from_secs(30)))
-            .build();
-        let connector = ().chain(ConnectProxyConnector::default()).chain(Sockets).chain(RustlsConnector::default());
-        let agent = Agent::with_parts(config, connector, DefaultResolver::default());
-        Arc::new(Http { agent })
+        Arc::new(Http { agents: Agents { plain: agent(config), server: None } })
+    }
+
+    /// A GET of `url` with `headers`.
+    fn get_of(&self, url: &str, headers: &[(&str, &str)]) -> Result<Response<ureq::Body>, ureq::Error> {
+        self.agents.send(Ask { method: Method::GET, url, headers, body: None, timeout_ms: 0 })
     }
 
     /// `url`'s total length from a `bytes=0-0` request; None unless the server answers 206.
     fn total_length(&self, url: &str) -> Option<u64> {
-        let r = self.agent.get(url).header("Range", "bytes=0-0").call().ok()?;
+        let r = self.get_of(url, &[("Range", "bytes=0-0")]).ok()?;
         if r.status().as_u16() != 206 {
             return None;
         }
@@ -69,13 +181,16 @@ impl Http {
 
     /// GETs `url` from byte `from` on, up to `end` (exclusive) when given.
     fn open_now(&self, url: &str, from: u64, end: Option<u64>) -> Result<Body, OpenError> {
-        let mut req = self.agent.get(url);
-        match end {
-            Some(end) => req = req.header("Range", format!("bytes={from}-{}", end.saturating_sub(1))),
-            None if from > 0 => req = req.header("Range", format!("bytes={from}-")),
-            None => {}
-        }
-        let r = req.call().map_err(|e| e.to_string())?;
+        let range = match end {
+            Some(end) => Some(format!("bytes={from}-{}", end.saturating_sub(1))),
+            None if from > 0 => Some(format!("bytes={from}-")),
+            None => None,
+        };
+        let headers: &[(&str, &str)] = match &range {
+            Some(range) => &[("Range", range)],
+            None => &[],
+        };
+        let r = self.get_of(url, headers).map_err(|e| e.to_string())?;
         let status = r.status().as_u16();
         let header = |name: &str| r.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
         // Range past the end (the length was an estimate): report the real length, asking for it when
@@ -94,6 +209,20 @@ impl Http {
         let reader: Box<dyn Read + Send> = Box::new(r.into_body().into_reader());
         Ok(Body { start, len, reader })
     }
+}
+
+/// `identity` as TLS sends it; None for a key TLS does not take.
+fn tls_cert(identity: nori_core::cert::Identity) -> Option<ClientCert> {
+    let chain: Vec<Certificate<'static>> = identity.chain.iter().map(|c| Certificate::from_der(c).to_owned()).collect();
+    Some(ClientCert::new_with_certs(&chain, tls_key(&identity.key)?))
+}
+
+/// PKCS#8 key `der` as TLS takes it. ureq names a DER key's kind only in a type of its own it keeps
+/// private: a PEM's label says it.
+fn tls_key(der: &[u8]) -> Option<PrivateKey<'static>> {
+    use base64::Engine;
+    let pem = format!("-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n", base64::engine::general_purpose::STANDARD.encode(der));
+    PrivateKey::from_pem(pem.as_bytes()).ok()
 }
 
 /// `proxy` as the agent keeps it: its login percent-encoded in its address, which [`Sockets`] decodes.
@@ -139,20 +268,7 @@ fn unsatisfied_range(v: &str) -> Option<u64> {
     v.strip_prefix("bytes ")?.trim().strip_prefix("*/")?.trim().parse().ok()
 }
 
-/// Adds `headers` and a whole-request timeout (0 keeps the agent's) to `req`. That timeout is also the
-/// wait for the answer: a held poll answers only when there is news.
-fn configured<B>(mut req: RequestBuilder<B>, headers: &HashMap<String, String>, timeout_ms: u32) -> RequestBuilder<B> {
-    for (name, value) in headers {
-        req = req.header(name, value);
-    }
-    if timeout_ms > 0 {
-        let timeout = Some(Duration::from_millis(timeout_ms as u64));
-        req = req.config().timeout_global(timeout).timeout_recv_response(timeout).build();
-    }
-    req
-}
-
-fn response(r: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<TransportResponse, TransportError> {
+fn response(r: Result<Response<ureq::Body>, ureq::Error>) -> Result<TransportResponse, TransportError> {
     let r = r.map_err(failure)?;
     let status = r.status().as_u16();
     let headers = r.headers().iter().filter_map(|(name, value)| Some(HttpHeader { name: name.as_str().to_string(), value: value.to_str().ok()?.to_string() })).collect();
@@ -164,30 +280,27 @@ fn response(r: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<
 #[async_trait::async_trait]
 impl Transport for Http {
     async fn get(&self, url: String, timeout_ms: u32) -> Result<TransportResponse, TransportError> {
-        let agent = self.agent.clone();
-        Call::run(move || response(configured(agent.get(&url), &HashMap::new(), timeout_ms).call())).await
+        let agents = self.agents.clone();
+        Call::run(move || response(agents.send(Ask { method: Method::GET, url: &url, headers: &[], body: None, timeout_ms }))).await
     }
 
     async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
-        let agent = self.agent.clone();
+        let agents = self.agents.clone();
         Call::run(move || {
-            let (url, headers, timeout) = (&request.url, &request.headers, request.timeout_ms);
-            let (body, kind) = request.payload().unwrap_or((&[], None));
-            let sent = |b: RequestBuilder<ureq::typestate::WithBody>| {
-                let b = configured(b, headers, timeout);
-                match kind {
-                    Some(kind) => b.header("Content-Type", kind).send(body),
-                    None => b.send(body),
-                }
+            let headers: Vec<(&str, &str)> = request.headers.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();
+            let method = match request.method() {
+                HttpMethod::Get => Method::GET,
+                HttpMethod::Head => Method::HEAD,
+                HttpMethod::Delete => Method::DELETE,
+                HttpMethod::Post => Method::POST,
+                HttpMethod::Put => Method::PUT,
+                HttpMethod::Patch => Method::PATCH,
             };
-            response(match request.method() {
-                HttpMethod::Get => configured(agent.get(url), headers, timeout).call(),
-                HttpMethod::Head => configured(agent.head(url), headers, timeout).call(),
-                HttpMethod::Delete => configured(agent.delete(url), headers, timeout).call(),
-                HttpMethod::Post => sent(agent.post(url)),
-                HttpMethod::Put => sent(agent.put(url)),
-                HttpMethod::Patch => sent(agent.patch(url)),
-            })
+            let body = match method {
+                Method::POST | Method::PUT | Method::PATCH => Some(request.payload().unwrap_or((&[], None))),
+                _ => None,
+            };
+            response(agents.send(Ask { method, url: &request.url, headers: &headers, body, timeout_ms: request.timeout_ms }))
         })
         .await
     }
@@ -512,7 +625,7 @@ impl ByteSource for Http {
 
     /// Radio stream with ICY metadata requested; also returns `icy-metaint` (audio bytes between metadata blocks).
     fn open_live(&self, url: &str) -> Result<(Body, Option<usize>), String> {
-        let r = self.agent.get(url).header("Icy-MetaData", "1").call().map_err(|e| e.to_string())?;
+        let r = self.get_of(url, &[("Icy-MetaData", "1")]).map_err(|e| e.to_string())?;
         let status = r.status().as_u16();
         if !(200..300).contains(&status) {
             return Err(format!("HTTP {status}"));

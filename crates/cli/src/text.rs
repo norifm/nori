@@ -70,6 +70,66 @@ pub const PROXY: &str = "Proxy";
 pub const PROXY_NONE: &str = "none";
 pub const PROXY_HINT: &str = "host:port";
 pub const PROXY_LINE_KEYS: &str = "tab next · enter set the proxy · esc choose again";
+
+/// A login field's name on its line.
+pub fn login_label(what: nori_core::providers::FormField) -> &'static str {
+    use nori_core::providers::FormField::*;
+    match what {
+        Name => "Name (optional)",
+        Address => "Server address",
+        User => "User",
+        Password => "Password",
+        SecondAddress => "Second address",
+        ApiKey => "API key",
+        Headers => "HTTP headers",
+        LegacyAuth => "Legacy auth",
+        SelfSigned => "Accept self-signed",
+        WifiOnly => "Wi-Fi only",
+        ClientCert => "Client certificate",
+        Proxy => PROXY,
+    }
+}
+
+/// What a login field's name doesn't say, shown while it has the keys.
+pub fn login_hint(what: nori_core::providers::FormField) -> &'static str {
+    use nori_core::providers::FormField::*;
+    match what {
+        SecondAddress => "Used when the first one does not answer, for example away from home",
+        ApiKey => "Instead of a password (OpenSubsonic)",
+        Headers => "One per line, Name: value: for reverse proxies, basic auth, Cloudflare Access",
+        LegacyAuth => "For old servers without token auth",
+        SelfSigned => "Only for your own server",
+        WifiOnly => "Never over mobile data",
+        Name | Address | User | Password | ClientCert | Proxy => "",
+    }
+}
+
+/// The keys of a login field's line.
+pub fn login_keys(what: nori_core::providers::FormField) -> &'static str {
+    use crate::app::LoginOption;
+    match (crate::app::login_option(what), what) {
+        (LoginOption::Text { .. }, _) => LOGIN_KEYS,
+        (LoginOption::Lines, _) => "tab next field · enter new line · esc choose again",
+        (LoginOption::Switch, _) => "tab next · enter or space switch · esc choose again",
+        (LoginOption::Entry, nori_core::providers::FormField::Proxy) => PROXY_LINE_KEYS,
+        (LoginOption::Entry, _) => "tab next · enter set the certificate · esc choose again",
+    }
+}
+
+/// A client certificate set, on its line.
+pub const CERT_SET: &str = "imported";
+
+/// Why the certificate's popup did not take what was typed.
+pub fn cert_wrong(e: crate::app::CertWrong) -> &'static str {
+    use nori_core::cert::CertError;
+    match e {
+        crate::app::CertWrong::NoFile => "Type the path of a .p12 file.",
+        crate::app::CertWrong::Refused(CertError::File) => "The file can't be read.",
+        crate::app::CertWrong::Refused(CertError::Password) => "The password doesn't open this certificate.",
+        crate::app::CertWrong::Refused(CertError::NotPkcs12) => "This isn't a .p12 certificate with its key.",
+        crate::app::CertWrong::Refused(CertError::Unsupported) => "This certificate is encrypted in a way nori doesn't read.",
+    }
+}
 pub const PROXY_KEYS: &str = "tab next field · enter save · esc cancel";
 pub const PROXY_KEYS_SET: &str = "tab next field · enter save · esc cancel · ctrl+d remove";
 pub const PROVIDER_CHOOSE: &str = "Choose a provider";
@@ -1390,7 +1450,14 @@ pub const CODE_KEYS: &str = "esc close";
 pub const CODE_AGAIN_KEYS: &str = "enter get a new code · esc close";
 pub const SIGNING_IN: &str = "Finish signing in in the window that opened.";
 pub const PASTE_COOKIES: &str = "Sign in in a private browser window, copy the Cookie header of any request the page makes from the developer tools, and paste it here. enter signs in · esc back";
-pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window couldn't open here. Paste cookies from a browser instead.";
+/// Why the sign-in window did not open, over the pasting it falls back to.
+pub fn no_sign_in_window(why: crate::app::NoWindow) -> &'static str {
+    match why {
+        crate::app::NoWindow::Unavailable => "The sign-in window couldn't open here. Paste cookies from a browser instead.",
+        #[cfg(feature = "sign-in-window")]
+        crate::app::NoWindow::ProxyUnsupported => "On macOS, a profile with a proxy signs in by pasting. Paste cookies from a browser instead.",
+    }
+}
 pub const THIS_COMPUTER: &str = "This computer";
 pub const NOISE_CONTROL: &str = "Noise control";
 pub const DEVICE_SETTINGS: &str = "Device settings";

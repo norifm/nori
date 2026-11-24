@@ -522,7 +522,7 @@ fn start_queue(
     let session = Session::open(Open {
         queue,
         data: dir,
-        http: Http::for_profile(&profile),
+        http: Http::for_profile(&profile, dir),
         profile,
         kinds: nori_core::providers::Kinds::builtin(),
         output,
@@ -573,6 +573,8 @@ fn open_saved(dir: &Path, server_id: &str) -> Result<(), String> {
         .settings
         .open(&nori_host::db_path(dir))
         .map_err(|e| format!("the database: {e}"))?;
+    // No form is open while a session opens: the client certificates no profile uses go.
+    nori_core::cert::forget_unused_client_certs(&dir.to_string_lossy(), prefs.servers.clone());
     let profile = saved(&prefs, server_id).ok_or_else(|| "no saved server".to_string())?;
     start_queue(dir, queue, profile, device_output()?, false, Some(Arc::new(crate::remote::Bonjour)))?;
     if BACKGROUND.load(Ordering::Relaxed) {

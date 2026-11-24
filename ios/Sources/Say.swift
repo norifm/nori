@@ -403,14 +403,41 @@ enum Say {
     static let serverUrl = "Server URL"
     static let advanced = "Advanced"
     static let hideAdvanced = "Hide advanced"
-    static let nameOptional = "Name (optional)"
-    static let secondAddress = "Second address (e.g. public URL)"
-    static let apiKey = "API key instead of password (OpenSubsonic)"
+    static let name = "Name"
+    static let optional = "Optional"
+    static let secondAddress = "Second address"
+    static let secondAddressHint = "Used when the first one does not answer, for example away from home."
+    static let secondAddressPlaceholder = "Public URL"
+    static let apiKey = "API key"
+    static let apiKeyHint = "Instead of a password (OpenSubsonic)."
     static let proxy = "Proxy"
     static let proxyNone = "None"
     static let proxyAddress = "SOCKS5 address (host:port)"
     static let proxyUser = "User (optional)"
     static let proxyRemove = "Remove proxy"
+    static let extraHeaders = "Extra HTTP headers"
+    static let extraHeadersHint = "One per line, Name: value. For reverse proxies, basic auth, Cloudflare Access."
+    static let headerPlaceholder = "Name: value"
+    /// How many extra headers are set.
+    static func headers(_ n: Int) -> String { n == 0 ? proxyNone : n == 1 ? "1 header" : "\(n) headers" }
+    static let legacyAuth = "Legacy authentication"
+    static let legacyAuthHint = "For old servers without token auth. Detected automatically when the server says so."
+    static let selfSigned = "Accept self-signed certificate"
+    static let selfSignedHint = "Only for your own server."
+    static let clientCert = "Client certificate"
+    static let clientCertImported = "Imported"
+    static let clientCertPassword = "Its password"
+    static let clientCertReplace = "Replace certificate"
+    static let clientCertRemove = "Remove certificate"
+    /// Why a client certificate was not taken (a NORI_CERT_ code).
+    static func certError(_ code: Int32) -> String {
+        switch code {
+        case NORI_CERT_FILE: return "The file can’t be read."
+        case NORI_CERT_PASSWORD: return "The password doesn’t open this certificate."
+        case NORI_CERT_UNSUPPORTED: return "This certificate is encrypted in a way nori doesn’t read."
+        default: return "This isn’t a .p12 certificate with its key."
+        }
+    }
     /// Why the proxy's sheet's fields are not a proxy (a NORI_PROXY_ code).
     static func proxyError(_ code: Int32) -> String {
         switch code {

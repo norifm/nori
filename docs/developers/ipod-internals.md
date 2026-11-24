@@ -240,8 +240,6 @@ opens in place of your own (`nori_host::jam_joined`), and it follows `ProfileRul
 
 - **Plugins.** The library builds `nori-core` and `nori-host` without default features, so it has no
   plugin host. It plays from Subsonic servers only, so there is no YouTube Music.
-- **Server options.** `nori-http` applies no custom headers, self-signed certificates or client
-  certificates.
 - **Better beat detection.** The `neural-beats` feature is not built for this device.
 - **Hosting a jam.** The iPod can only join one.
 - **Background downloads.** Nothing downloads while the app is suspended. There is no `NSURLSession`

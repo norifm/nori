@@ -92,14 +92,60 @@ The core also owns the parts a client is most tempted to write itself:
   `nori-http`, which is ureq over rustls with webpki roots. `Transport::send` carries a third party's
   headers and body as given, for lyrics services and Apple's catalog.
 - **Server headers.** `ServerHosts::policy(url)` says whether a request goes to the music server. Such
-  a request carries the profile's headers, and it may be limited to an unmetered network. Only
-  Android's OkHttp applies profile headers, self-signed certificates and client certificates.
-  `nori-http` applies none of them.
+  a request carries the profile's headers and its TLS exceptions, and it may be limited to an unmetered
+  network. See [The profile's connection options](#the-profiles-connection-options).
 - **The profile's proxy.** `SavedServer::proxy` is a SOCKS5 proxy (`nori_core::proxy`). See
   [The profile's proxy](#the-profiles-proxy).
 - **One connection pool** serves the API, covers and audio, so the radio wakes once. With `nori-http`,
   each profile has its own pool.
 - **Network state.** `Transport::network` answers whether the network is metered.
+
+### The profile's connection options
+
+A profile's form lists its fields in `ProviderInfo::fields`, each plain or folded under the form's
+advanced part. A client draws what `form_fields(info, platform, profile, adding)` returns, in that
+order, and keeps no list of its own. `form_fields` leaves out these fields:
+
+- Wi-Fi only on `Platform::Computer` and `Platform::Ipod`. The desktop and terminal apps say every
+  network is unmetered, and the iPod has only Wi-Fi.
+- The user and password, while an API key is given.
+- The name, when the form edits a saved profile. A saved profile is renamed from its menu.
+
+A saved profile's form opens its advanced part when `advanced_shown` says one of its fields has a value.
+On Save, `form_taken` lays the fields shown over the saved profile, so a value the form
+does not show stays.
+
+Each field is one of three kinds of line. A text is typed, the extra headers as one line each. A switch
+turns legacy authentication, a self-signed certificate or Wi-Fi only. An entry shows what is set and
+opens a sheet: the client certificate and the proxy.
+
+The options act in these places:
+
+| Option | Where it acts |
+| --- | --- |
+| Second address | The core: `Client::choose_address` after a failed request, `login_check` when signing in |
+| API key, legacy authentication | The core's request signing (`ServerConfig`) |
+| Extra headers | The transport, on requests that `ServerHosts::policy` calls the server's |
+| Self-signed certificate | The transport: no certificate check on the server's requests |
+| Client certificate | The transport: the PKCS#12 file at `<data>/certs/<client_cert>`, sent to the server |
+| Wi-Fi only | Android's transport, which refuses the server's requests on a metered network |
+
+Each transport decides again at every hop of a redirect whether a request is the server's. A hop to
+the server gets the headers and the TLS exceptions, and a hop to another host gets neither:
+
+- `nori-http` (`Http::for_profile(profile, data)`) follows redirects itself. The server's hops go over an
+  agent with the profile's TLS config, built once per profile, and every other hop over a plain agent.
+- Android's OkHttp adds the headers in a network interceptor, which runs at each hop. Its trust manager
+  and key manager ask `ServerHosts` about the host of each TLS handshake.
+
+`nori-cert` reads the `.p12` file and checks its MAC first. It reads bags in the clear, PBES2 with AES
+(OpenSSL 3), and PKCS#12's 3DES and RC2 with SHA-1 (older exports). Every client calls it:
+
+| Function | What it does |
+| --- | --- |
+| `import_client_cert` | Checks a file with its password, or gives a `CertError`. Keeps it as `<profile id>-<hash>.p12`, so the file of the saved profile stays until Save |
+| `client_identity` | Gives the key and chain a transport sends |
+| `forget_unused_client_certs` | Removes the files that no saved profile uses. A client calls it as it starts, before a form can import a file |
 
 ### The profile's proxy
 
@@ -121,10 +167,10 @@ user's own network, so local remote control and jams would break through it.
 
 | Destination | Goes |
 | --- | --- |
-| `localhost` | Directly |
-| A loopback, private (RFC 1918), link-local or unique-local address, IPv4 or IPv6 | Directly |
+| `localhost`, and a `.local` name (mDNS) | Directly |
+| A loopback, private (RFC 1918), shared (RFC 6598, `100.64.0.0/10`), link-local or unique-local address, IPv4 or IPv6 | Directly |
 | Any other address | Through the proxy |
-| Any other name, `.local` names too | Through the proxy, which looks it up |
+| Any other name | Through the proxy, which looks it up |
 
 The clients apply the rule as follows:
 
@@ -140,7 +186,11 @@ The clients apply the rule as follows:
   sign-in window, where wry gives it to WebKitGTK and WebView2 without a bypass list. Sign-in pages are
   public pages, so the bypass does not matter there.
 - WKWebView takes a proxy only from macOS 14, and the desktop app runs from macOS 11. So on macOS, a
-  profile with a proxy opens no sign-in window, and the account is signed in by pasting.
+  profile with a proxy opens no sign-in window: `SignInWindow::open` returns
+  `NoWindow::ProxyUnsupported`, and the client says that the account signs in by pasting.
+- What reaches the web outside a session goes over the active profile's connections too: a jam joined
+  (`Root::http` on the desktop and terminal apps, the session's `Client::transport` on the iPod), and
+  plugins' requests before a session opens.
 - A browser's `fetch` takes no proxy, so the web client has no proxy fields.
 
 Plugins' sockets, the cast sinks, the LAN door and mDNS never use the proxy: they open their own

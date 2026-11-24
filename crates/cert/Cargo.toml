@@ -1,0 +1,28 @@
+[package]
+name = "nori-cert"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A profile's client certificate: its PKCS#12 file read, checked and kept, for every client but the web"
+publish = false
+
+[lib]
+name = "nori_cert"
+
+[features]
+# The uniffi exports the Android app's Kotlin bindings are generated from.
+ffi = ["dep:uniffi", "nori-settings/ffi"]
+
+[dependencies]
+uniffi = { workspace = true, optional = true }
+nori-settings = { path = "../settings" }
+thiserror = "2"
+# Its hashes and key derivation (rustls's already), and the block ciphers it is sealed with.
+ring = "0.17"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+des = "0.8"
+rc2 = "0.8"
+
+[dev-dependencies]
+nori-testdir = { path = "../testdir" }

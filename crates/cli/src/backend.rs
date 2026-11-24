@@ -17,7 +17,7 @@ use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot, ShelfItems};
 pub use nori_host::pages::ALBUM_PAGE;
 pub use nori_host::session::{Audio, Chore};
 use nori_host::session::{Note, Said, UpdateFound};
-pub use nori_host::{db_path, Fetch};
+pub use nori_host::Fetch;
 use nori_look::cover::CoverColours;
 use nori_output_cpal::CpalOutput;
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};

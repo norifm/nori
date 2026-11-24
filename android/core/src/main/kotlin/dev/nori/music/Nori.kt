@@ -324,8 +324,7 @@ class Nori private constructor(private val context: Context) {
             val own = http.transportOf(profile)
             Client(open(dev.nori.music.ffi.settings.serverDb(profile.id), profile), own, CoverNet().also { it.setTransport(own) }).also { it.setProfile(profile.net()) }.let { profile.id to it }
         }
-        val gone = was?.let { (id, _) -> settings.value.servers.firstOrNull { it.id == id } }
-        if (gone != null && active != null) runCatching { client.takePluginsBack(active, gone.kind) }
+        if (was != null && active != null) runCatching { client.takePluginsBack(active, was.second) }
     }
 
     /** The client the account calls go through, and the profile whose account it is. */

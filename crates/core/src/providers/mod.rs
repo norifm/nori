@@ -390,6 +390,70 @@ fn field_set(what: FormField, profile: &SavedServer) -> bool {
     }
 }
 
+/// What a client runs on, as far as which of a form's fields it can honor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Platform {
+    /// Android: it tells a metered network from others.
+    Phone,
+    /// The desktop and terminal clients: every network is the same to them (their transport's
+    /// `network` is always unmetered).
+    Computer,
+    /// The iPod touch, which has only Wi-Fi.
+    Ipod,
+}
+
+impl Platform {
+    /// Whether a value in `what` does anything here: Wi-Fi only needs a metered network to keep off.
+    fn honors(self, what: FormField) -> bool {
+        what != FormField::WifiOnly || self == Platform::Phone
+    }
+}
+
+/// The fields of `info`'s form on `platform`, in its order, as they show for `profile` as typed: those the
+/// platform honors; a user and password step aside while an API key is given; a saved profile (`adding`
+/// false) is renamed from its menu, not on its form.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn form_fields(info: &ProviderInfo, platform: Platform, profile: &SavedServer, adding: bool) -> Vec<FieldSpec> {
+    let keyed = field_set(FormField::ApiKey, profile) && info.asks(FormField::ApiKey);
+    let shown = |what: FormField| match what {
+        FormField::User | FormField::Password => !keyed,
+        FormField::Name => adding,
+        _ => true,
+    };
+    info.fields.iter().copied().filter(|f| platform.honors(f.what) && shown(f.what)).collect()
+}
+
+/// What a form of `fields` saves over `base` (the profile it edits, or a new one): each field's value as
+/// `typed`; what the form doesn't show stays as `base` has it.
+pub fn form_taken(base: SavedServer, typed: &SavedServer, fields: &[FieldSpec]) -> SavedServer {
+    let mut p = base;
+    for f in fields {
+        match f.what {
+            FormField::Name => p.name = typed.name.clone(),
+            FormField::Address => p.url = typed.url.clone(),
+            FormField::User => p.user = typed.user.clone(),
+            FormField::Password => p.password = typed.password.clone(),
+            FormField::SecondAddress => p.alt_url = typed.alt_url.clone(),
+            FormField::ApiKey => p.api_key = typed.api_key.clone(),
+            FormField::Headers => p.headers = typed.headers.clone(),
+            FormField::LegacyAuth => p.legacy_auth = typed.legacy_auth,
+            FormField::SelfSigned => p.allow_self_signed = typed.allow_self_signed,
+            FormField::WifiOnly => p.wifi_only = typed.wifi_only,
+            FormField::ClientCert => (p.client_cert, p.client_cert_password) = (typed.client_cert.clone(), typed.client_cert_password.clone()),
+            FormField::Proxy => p.proxy = typed.proxy.clone(),
+        }
+    }
+    p
+}
+
+/// Whether a form of `fields` ([`form_fields`]) opens with its advanced part shown: one of them has a value
+/// in `profile`.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn advanced_shown(fields: &[FieldSpec], profile: &SavedServer) -> bool {
+    fields.iter().any(|f| f.advanced && field_set(f.what, profile))
+}
+
 /// A way to sign a profile's account in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -822,12 +886,12 @@ impl Client {
         self.core.provider().sign_in(self, answer).await
     }
 
-    /// Takes the plugins back from an account opened apart from this profile, on a profile of kind `apart`:
-    /// their requests go through this client's transport again, and a plugin `profile` (this client's)
-    /// plays from too serves it again.
-    pub fn take_plugins_back(&self, profile: SavedServer, apart: ServerKind) -> nori_model::Result<()> {
+    /// Takes the plugins back from `apart`, the client of an account opened apart from this profile (even
+    /// one since removed): their requests go through this client's transport again, and a plugin both
+    /// play from serves `profile` (this client's) again.
+    pub fn take_plugins_back(&self, profile: SavedServer, apart: Arc<Client>) -> nori_model::Result<()> {
         self.core.kinds.read().set_transport(self.transport.clone());
-        match apart == profile.kind {
+        match apart.core.kind() == profile.kind {
             true => self.core.configure_profile(profile),
             false => Ok(()),
         }
@@ -930,6 +994,67 @@ mod tests {
             }
         }
         assert!(!field_set(Name, &SavedServer { name: "  ".into(), ..Default::default() }), "blank is not set");
+    }
+
+    /// A server's form on each platform: Wi-Fi only only where a metered network can be kept off, a user
+    /// and password only without an API key, a name only on a profile being added.
+    #[test]
+    fn a_form_shows_what_its_platform_honors() {
+        use FormField::*;
+        let server = subsonic::Subsonic.info();
+        let keyed = SavedServer { api_key: "k".into(), ..Default::default() };
+        let all = [Address, User, Password, Name, SecondAddress, ApiKey, Headers, LegacyAuth, SelfSigned, WifiOnly, ClientCert, Proxy];
+        let without = |gone: &[FormField]| all.iter().copied().filter(|f| !gone.contains(f)).collect::<Vec<_>>();
+        for (platform, profile, adding, want) in [
+            (Platform::Phone, SavedServer::default(), true, without(&[])),
+            (Platform::Computer, SavedServer::default(), true, without(&[WifiOnly])),
+            (Platform::Ipod, SavedServer::default(), true, without(&[WifiOnly])),
+            (Platform::Phone, keyed.clone(), true, without(&[User, Password])),
+            (Platform::Computer, keyed, false, without(&[User, Password, Name, WifiOnly])),
+            (Platform::Phone, SavedServer::default(), false, without(&[Name])),
+        ] {
+            let shown: Vec<FormField> = form_fields(&server, platform, &profile, adding).iter().map(|f| f.what).collect();
+            assert_eq!(shown, want, "{platform:?}, adding {adding}");
+        }
+        let unasked = info(vec![FieldSpec { what: User, advanced: false }], Vec::new());
+        assert_eq!(form_fields(&unasked, Platform::Phone, &SavedServer { api_key: "k".into(), ..Default::default() }, true).len(), 1, "a key the form doesn't ask hides nothing");
+    }
+
+    /// Each field shown takes its value as typed, in place of the saved one; one not shown keeps it.
+    #[test]
+    fn a_form_saves_only_what_it_shows() {
+        let proxy = crate::proxy::proxy_from_form("proxy.lan".into(), String::new(), String::new()).unwrap();
+        let saved = SavedServer { id: "p1".into(), name: "Home".into(), wifi_only: true, alt_max_bit_rate: 128, ..Default::default() };
+        let typed = SavedServer {
+            name: "Away".into(),
+            url: "https://m".into(),
+            alt_url: "http://lan".into(),
+            api_key: "k".into(),
+            headers: std::collections::HashMap::from([("X-A".to_string(), "b".to_string())]),
+            legacy_auth: true,
+            allow_self_signed: true,
+            client_cert: "p1.p12".into(),
+            client_cert_password: "pw".into(),
+            proxy: proxy.clone(),
+            ..Default::default()
+        };
+        let fields = form_fields(&subsonic::Subsonic.info(), Platform::Computer, &typed, false);
+        let kept = form_taken(saved.clone(), &typed, &fields);
+        let want = SavedServer { name: saved.name.clone(), wifi_only: true, user: String::new(), password: String::new(), id: "p1".into(), alt_max_bit_rate: 128, ..typed.clone() };
+        assert_eq!(kept, want, "Name, Wi-Fi only, user and password aren't on this form");
+        assert_eq!(form_taken(saved.clone(), &typed, &[]), saved);
+    }
+
+    /// The advanced part opens on a value of its own; one the platform doesn't show doesn't open it.
+    #[test]
+    fn the_advanced_part_opens_on_a_value_it_shows() {
+        let server = subsonic::Subsonic.info();
+        let shown = |p: &SavedServer, platform| advanced_shown(&form_fields(&server, platform, p, false), p);
+        assert!(!shown(&SavedServer { url: "https://m".into(), user: "a".into(), ..Default::default() }, Platform::Computer), "only plain fields set");
+        assert!(shown(&SavedServer { allow_self_signed: true, ..Default::default() }, Platform::Computer));
+        assert!(shown(&SavedServer { wifi_only: true, ..Default::default() }, Platform::Phone));
+        assert!(!shown(&SavedServer { wifi_only: true, ..Default::default() }, Platform::Computer), "Wi-Fi only isn't shown there");
+        assert!(!shown(&SavedServer { name: "Home".into(), ..Default::default() }, Platform::Phone), "a saved profile's name is renamed from its menu");
     }
 
     #[test]

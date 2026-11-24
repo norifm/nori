@@ -2,6 +2,7 @@
 MEMBERS = ['crates/android',
  'crates/automix',
  'crates/backup',
+ 'crates/cert',
  'crates/cli',
  'crates/core',
  'crates/covers',

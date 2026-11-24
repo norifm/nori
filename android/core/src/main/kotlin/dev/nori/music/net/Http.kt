@@ -32,15 +32,23 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import java.io.File
 import java.io.IOException
+import java.security.KeyFactory
 import java.security.KeyStore
+import java.security.Principal
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.security.spec.PKCS8EncodedKeySpec
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLEngine
+import javax.net.ssl.SSLSession
+import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManagerFactory
-import javax.net.ssl.X509TrustManager
+import javax.net.ssl.X509ExtendedKeyManager
+import javax.net.ssl.X509ExtendedTrustManager
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import dev.nori.music.settings.server
@@ -91,9 +99,6 @@ class Http(private val context: Context) {
     /** The profile in use's. */
     @Volatile private var hosts = Hosts(null)
 
-    /** The logins of the SOCKS proxies clients were built with, by host and port ([SocksLogins]). */
-    private val socksLogins = java.util.concurrent.ConcurrentHashMap<Pair<String, Int>, dev.nori.music.ffi.settings.ProxyLogin>()
-
     /**
      * What failed connecting through the profile's proxy, as OkHttp told [ProxyConnects]: [proxyFailure] words
      * those as the proxy's, and no other failure. Weak, so one nobody asks about goes.
@@ -142,9 +147,21 @@ class Http(private val context: Context) {
         override fun connectFailed(uri: java.net.URI, address: java.net.SocketAddress, e: IOException) {}
     }
 
-    /** Keeps each failure of a connection through a SOCKS proxy in [failed]. */
-    private class ProxyConnects(private val failed: MutableSet<IOException>) : okhttp3.EventListener() {
+    /**
+     * A client's connections through its SOCKS proxy [own]: while one connects, its thread offers [own]'s login
+     * ([SocksLogin]); each failure is kept in [failed].
+     */
+    private class ProxyConnects(private val failed: MutableSet<IOException>, private val own: SavedProxy) : okhttp3.EventListener() {
+        override fun connectStart(call: Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy) {
+            if (proxy.type() == java.net.Proxy.Type.SOCKS) SocksLogin.connecting.set(own)
+        }
+
+        override fun connectEnd(call: Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy, protocol: okhttp3.Protocol?) {
+            SocksLogin.connecting.remove()
+        }
+
         override fun connectFailed(call: Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy, protocol: okhttp3.Protocol?, ioe: IOException) {
+            SocksLogin.connecting.remove()
             if (proxy.type() == java.net.Proxy.Type.SOCKS) failed.add(ioe)
         }
     }
@@ -167,24 +184,26 @@ class Http(private val context: Context) {
     }
 
     /**
-     * The logins of the profiles' SOCKS proxies, the newest for a host and port. Java signs in to a SOCKS
-     * proxy only through the process's one Authenticator, so this is it from the first client built with
-     * such a proxy on, and it answers those proxies alone.
+     * The login of the SOCKS proxy a client is connecting through. Java signs in to a SOCKS proxy only through
+     * the process's one Authenticator, asked on the connecting thread: this is it once a client with such a
+     * proxy is built, and it answers with the login of the client connecting on that thread ([ProxyConnects]),
+     * for its proxy alone.
      */
-    private class SocksLogins(private val logins: Map<Pair<String, Int>, dev.nori.music.ffi.settings.ProxyLogin>) : java.net.Authenticator() {
-        override fun getPasswordAuthentication(): java.net.PasswordAuthentication? {
-            if (requestingProtocol != "SOCKS5") return null
-            val login = logins[requestingHost to requestingPort] ?: return null
-            return java.net.PasswordAuthentication(login.user, login.password.toCharArray())
-        }
-    }
+    private object SocksLogin : java.net.Authenticator() {
+        val connecting = ThreadLocal<SavedProxy?>()
+        private var installed = false
 
-    /** [proxy]'s login, for [SocksLogins]; the Authenticator is set with the first. */
-    private fun keepLogin(proxy: SavedProxy) {
-        val login = proxy.login ?: return
-        synchronized(socksLogins) {
-            if (socksLogins.isEmpty()) java.net.Authenticator.setDefault(SocksLogins(socksLogins))
-            socksLogins[proxy.host to proxy.port.toInt()] = login
+        @Synchronized
+        fun install() {
+            if (!installed) java.net.Authenticator.setDefault(this)
+            installed = true
+        }
+
+        override fun getPasswordAuthentication(): java.net.PasswordAuthentication? {
+            val proxy = connecting.get() ?: return null
+            val login = proxy.login ?: return null
+            if (requestingProtocol != "SOCKS5" || requestingHost != proxy.host || requestingPort != proxy.port.toInt()) return null
+            return java.net.PasswordAuthentication(login.user, login.password.toCharArray())
         }
     }
 
@@ -212,47 +231,101 @@ class Http(private val context: Context) {
                 // the answer depends on it.
                 val rule = if (now != null) route.policyOf(request.url) else null
                 if (rule?.unmeteredOnly == true && metered) throw MeteredNetworkException()
-                val sent = request.newBuilder().apply {
-                    // Public services ask clients to identify themselves; some reject OkHttp's default outright.
-                    // One the core's exchange names (a provider's) is its own.
-                    if (request.header("User-Agent") == null) header("User-Agent", policy.userAgent)
-                    if (rule?.server == true) now?.headers?.forEach { (k, v) -> header(k, v) }
-                }.build()
+                // Public services ask clients to identify themselves; some reject OkHttp's default outright.
+                // One the core's exchange names (a provider's) is its own.
+                val sent = if (request.header("User-Agent") == null) request.newBuilder().header("User-Agent", policy.userAgent).build() else request
                 try {
                     chain.proceed(sent)
                 } catch (e: IOException) {
                     throw proxyFailure(e) ?: e
                 }
             }
-        if (p != null && (p.allowSelfSigned || p.clientCert.isNotEmpty())) tls(b, p)
+            // The server's headers, decided at each hop of a redirect: one leaving the server carries none.
+            .addNetworkInterceptor { chain ->
+                val route = hosts()
+                val request = chain.request()
+                val headers = route.profile?.headers.orEmpty()
+                if (headers.isEmpty() || !route.policyOf(request.url).server) chain.proceed(request)
+                else chain.proceed(request.newBuilder().apply { headers.forEach { (k, v) -> header(k, v) } }.build())
+            }
+        if (p != null && (p.allowSelfSigned || p.clientCert.isNotEmpty())) tls(b, p, hosts)
         if (proxy != null) {
-            keepLogin(proxy)
-            b.proxySelector(ProfileProxy(proxy)).eventListener(ProxyConnects(proxyConnectFailures))
+            if (proxy.login != null) SocksLogin.install()
+            b.proxySelector(ProfileProxy(proxy)).eventListener(ProxyConnects(proxyConnectFailures, proxy))
         }
         return b.build()
     }
 
-    /** Self-signed servers and client certificates. Both are per profile and opt-in. */
-    private fun tls(b: OkHttpClient.Builder, p: SavedServer) {
-        val trust: X509TrustManager = if (p.allowSelfSigned) TrustAll else {
-            TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(null as KeyStore?) }.trustManagers.filterIsInstance<X509TrustManager>().first()
+    /**
+     * [p]'s TLS exceptions, for its server alone ([Hosts.policyOf] at each connection, a redirect's too): any
+     * certificate accepted where it says so, and its client certificate (read by the core,
+     * `cert::client_identity`) sent; every other host is checked as usual and gets none.
+     */
+    private fun tls(b: OkHttpClient.Builder, p: SavedServer, hosts: () -> Hosts) {
+        val toServer = { host: String?, port: Int ->
+            host != null && port > 0 && hosts().policyOf(okhttp3.HttpUrl.Builder().scheme("https").host(host).port(port).build()).server
         }
-        val keys = if (p.clientCert.isEmpty()) null else runCatching {
-            val store = KeyStore.getInstance("PKCS12")
-            File(context.filesDir, "certs/${p.clientCert}").inputStream().use { store.load(it, p.clientCertPassword.toCharArray()) }
-            KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(store, p.clientCertPassword.toCharArray()) }.keyManagers
-        }.getOrNull()
+        val ofServer = { session: SSLSession? -> session != null && toServer(session.peerHost, session.peerPort) }
+        val system = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(null as KeyStore?) }
+            .trustManagers.filterIsInstance<X509ExtendedTrustManager>().first()
+        val trust = if (p.allowSelfSigned) ServerTrust(system, ofServer) else system
+        val keys = clientKeys(p)?.let { arrayOf(ServerKeys(it, ofServer)) }
         val ssl = SSLContext.getInstance("TLS").apply { init(keys, arrayOf(trust), null) }
         b.sslSocketFactory(ssl.socketFactory, trust)
-        if (p.allowSelfSigned) b.hostnameVerifier { _, _ -> true }
+        if (p.allowSelfSigned) {
+            val checked = HttpsURLConnection.getDefaultHostnameVerifier()
+            b.hostnameVerifier { host, session -> toServer(host, session.peerPort) || checked.verify(host, session) }
+        }
     }
 
-    /** The user ticked "accept any certificate" for this server: their own box with a self-signed cert. */
-    @SuppressLint("CustomX509TrustManager", "TrustAllX509TrustManager")
-    private object TrustAll : X509TrustManager {
-        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+    /** [p]'s client certificate as Java's TLS sends it; null without one, or for one the core can't read. */
+    private fun clientKeys(p: SavedServer): X509ExtendedKeyManager? {
+        val identity = try {
+            dev.nori.music.ffi.cert.clientIdentity(context.filesDir.path, p)
+        } catch (e: dev.nori.music.ffi.cert.CertException) {
+            dev.nori.music.NoriLog.w("http: the client certificate", e)
+            null
+        } ?: return null
+        val factory = CertificateFactory.getInstance("X.509")
+        val chain = identity.chain.map { factory.generateCertificate(it.inputStream()) }.toTypedArray()
+        val spec = PKCS8EncodedKeySpec(identity.key)
+        val key = listOf("RSA", "EC", "Ed25519").firstNotNullOfOrNull { runCatching { KeyFactory.getInstance(it).generatePrivate(spec) }.getOrNull() } ?: return null
+        val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null); setKeyEntry("client", key, CharArray(0), chain) }
+        return KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(store, CharArray(0)) }
+            .keyManagers.filterIsInstance<X509ExtendedKeyManager>().first()
+    }
+
+    /** The user ticked "accept any certificate" for their server ([ofServer]); every other host is [system]'s to check. */
+    @SuppressLint("CustomX509TrustManager")
+    private class ServerTrust(private val system: X509ExtendedTrustManager, private val ofServer: (SSLSession?) -> Boolean) : X509ExtendedTrustManager() {
+        override fun checkServerTrusted(chain: Array<out X509Certificate>, authType: String, socket: java.net.Socket?) {
+            if (!ofServer((socket as? SSLSocket)?.handshakeSession)) system.checkServerTrusted(chain, authType, socket)
+        }
+
+        override fun checkServerTrusted(chain: Array<out X509Certificate>, authType: String, engine: SSLEngine?) {
+            if (!ofServer(engine?.handshakeSession)) system.checkServerTrusted(chain, authType, engine)
+        }
+
+        override fun checkServerTrusted(chain: Array<out X509Certificate>, authType: String) = system.checkServerTrusted(chain, authType)
+        override fun checkClientTrusted(chain: Array<out X509Certificate>, authType: String, socket: java.net.Socket?) = system.checkClientTrusted(chain, authType, socket)
+        override fun checkClientTrusted(chain: Array<out X509Certificate>, authType: String, engine: SSLEngine?) = system.checkClientTrusted(chain, authType, engine)
+        override fun checkClientTrusted(chain: Array<out X509Certificate>, authType: String) = system.checkClientTrusted(chain, authType)
+        override fun getAcceptedIssuers(): Array<X509Certificate> = system.acceptedIssuers
+    }
+
+    /** The client certificate in [keys], offered to the profile's server alone ([ofServer]). */
+    private class ServerKeys(private val keys: X509ExtendedKeyManager, private val ofServer: (SSLSession?) -> Boolean) : X509ExtendedKeyManager() {
+        override fun chooseClientAlias(keyType: Array<out String>?, issuers: Array<out Principal>?, socket: java.net.Socket?): String? =
+            if (ofServer((socket as? SSLSocket)?.handshakeSession)) keys.chooseClientAlias(keyType, issuers, socket) else null
+
+        override fun chooseEngineClientAlias(keyType: Array<out String>?, issuers: Array<out Principal>?, engine: SSLEngine?): String? =
+            if (ofServer(engine?.handshakeSession)) keys.chooseEngineClientAlias(keyType, issuers, engine) else null
+
+        override fun getClientAliases(keyType: String?, issuers: Array<out Principal>?): Array<String>? = keys.getClientAliases(keyType, issuers)
+        override fun getServerAliases(keyType: String?, issuers: Array<out Principal>?): Array<String>? = null
+        override fun chooseServerAlias(keyType: String?, issuers: Array<out Principal>?, socket: java.net.Socket?): String? = null
+        override fun getCertificateChain(alias: String?): Array<X509Certificate>? = keys.getCertificateChain(alias)
+        override fun getPrivateKey(alias: String?): java.security.PrivateKey? = keys.getPrivateKey(alias)
     }
 
     /** The status and the whole body. Cancelling the coroutine cancels the call, which is what makes live search cheap. */

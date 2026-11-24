@@ -234,5 +234,8 @@ class Settings(private val context: Context) {
         if (effect != 0u) _effects.tryEmit(effect.toInt())
     }
 
-    private fun load(): StoredPrefs = core.open(java.io.File(context.filesDir, dbFileName()).path)
+    /** The settings as kept. The client certificates no profile uses go now, before a form can import one. */
+    private fun load(): StoredPrefs = core.open(java.io.File(context.filesDir, dbFileName()).path).also {
+        dev.nori.music.ffi.cert.forgetUnusedClientCerts(context.filesDir.path, it.servers)
+    }
 }
