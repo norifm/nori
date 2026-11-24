@@ -231,6 +231,18 @@ fn a_sign_in_on_another_device_is_accepted_only_for_the_same_account() {
 }
 
 #[test]
+fn a_sign_in_naming_no_account_is_kept_unchecked_and_names_none() {
+    let (mut a, mut b) = (Device::new("a", vec![youtube("yt")]), Device::new("b", vec![]));
+    a.meet(&mut b);
+    assert_eq!(a.book.signed_in("yt", None, "a", 2_000), (SignInCheck::Unchecked, Changes::default()));
+    let local = b.get("YT").id.clone();
+    let (check, said) = b.book.signed_in(&local, Some("UC2".into()), "b", 3_000);
+    assert_eq!(check, SignInCheck::Accepted, "no account was named before");
+    a.hear(said);
+    assert_eq!(a.book.signed_in("yt", Some("UC1".into()), "a", 4_000).0, SignInCheck::OtherAccount, "the account named first is the profile's");
+}
+
+#[test]
 fn a_plugin_a_profile_needs_is_installed_where_plugins_run() {
     let mut a = Device::new("a", vec![youtube("yt")]);
     let mut b = Device { here: Here { plugins: vec![], ..phone() }, ..Device::new("b", vec![]) };

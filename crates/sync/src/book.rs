@@ -345,7 +345,7 @@ impl Book {
     pub(crate) fn signed_in(&mut self, local: &str, account: Option<String>, by: &str, now_ms: i64) -> (SignInCheck, Changes) {
         let Some(i) = self.records.iter().position(|r| r.local == local && !r.off) else { return (SignInCheck::Accepted, Changes::default()) };
         let check = sign_in_check(self.records[i].shared.account.as_deref(), account.as_deref());
-        if check == SignInCheck::OtherAccount || account.is_none() || self.records[i].shared.account.is_some() {
+        if check != SignInCheck::Accepted || self.records[i].shared.account.is_some() {
             return (check, Changes::default());
         }
         let stamp = self.next(by, now_ms);

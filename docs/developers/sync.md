@@ -159,10 +159,18 @@ paired device.
 ### Sign-ins that are not copied
 
 A provider says how its sign-in behaves in `ProviderInfo::sign_in_copy`. Subsonic servers are `Copied`.
-A plugin's provider is `EachDevice` until the plugin interface lets it say otherwise. Such a profile
-syncs without its sign-in, and each device keeps its own. `Session::signed_in` checks a sign-in here
-against the account the profile syncs with, and refuses another account (`OtherAccount`). The first known
-account becomes the profile's.
+A plugin's provider says it in its manifest, and is `EachDevice` when it says nothing. Such a profile
+syncs without its sign-in, and each device keeps its own. After a sign-in, the client passes
+`Client::account_id` to `Session::signed_in`, which checks it against the account the profile syncs
+with:
+
+| `SignInCheck` | When |
+|---|---|
+| `Accepted` | The same account, or the first one named, which becomes the profile's |
+| `OtherAccount` | Another account than the profile's |
+| `Unchecked` | The provider names no account, such as a plugin built before `account` |
+
+An unchecked sign-in stays, and the profile's account stays unknown.
 
 ### A device that cannot play a profile
 

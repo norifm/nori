@@ -162,12 +162,16 @@ pub enum SignInCheck {
     Accepted,
     /// Another account than the one the profile's other devices are signed in to.
     OtherAccount,
+    /// Kept, though the provider names no stable account (a plugin built before it could), so it may
+    /// be another account than the one the profile's other devices are signed in to.
+    Unchecked,
 }
 
 /// Whether a sign-in to `signed_in` is accepted for a profile synced with `synced`: only the same
-/// account, compared when both are known.
+/// account. The first account named becomes the profile's.
 pub(crate) fn sign_in_check(synced: Option<&str>, signed_in: Option<&str>) -> SignInCheck {
     match (synced, signed_in) {
+        (_, None) => SignInCheck::Unchecked,
         (Some(a), Some(b)) if a != b => SignInCheck::OtherAccount,
         _ => SignInCheck::Accepted,
     }
@@ -255,6 +259,7 @@ pub(crate) mod tests {
         assert_eq!(sign_in_check(Some("UC1"), Some("UC1")), SignInCheck::Accepted);
         assert_eq!(sign_in_check(Some("UC1"), Some("UC2")), SignInCheck::OtherAccount);
         assert_eq!(sign_in_check(None, Some("UC2")), SignInCheck::Accepted, "the first sign-in names the account");
-        assert_eq!(sign_in_check(Some("UC1"), None), SignInCheck::Accepted, "a provider that names no account cannot be checked");
+        assert_eq!(sign_in_check(Some("UC1"), None), SignInCheck::Unchecked, "a provider that names no account cannot be checked");
+        assert_eq!(sign_in_check(None, None), SignInCheck::Unchecked);
     }
 }
