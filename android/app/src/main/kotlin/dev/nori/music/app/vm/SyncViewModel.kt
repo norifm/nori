@@ -36,7 +36,7 @@ data class SyncView(
     val server: String = "",
     val state: SyncState = SyncState.Idle,
     val pairing: PairingView = PairingView.Idle,
-    /** The group's other devices, in [deviceOrder]. */
+    /** The group's other devices, in the core's order: those in the room first, then the most recently seen. */
     val devices: List<Seen> = emptyList(),
     val keepsCopy: Boolean = false,
     /** Saved profiles that may be one account. */
@@ -104,9 +104,6 @@ fun showsCodeAtOnce(view: SyncView): Boolean = view.on && !view.paired
 /** Whether this device can take another's code: it has profiles to give. */
 fun takesCode(profiles: Int): Boolean = profiles > 0
 
-/** The group's other devices as the list shows them: those in the room first, then the most recently seen. */
-fun deviceOrder(devices: List<Seen>): List<Seen> = devices.sortedWith(compareByDescending<Seen> { it.online }.thenByDescending { it.lastMs })
-
 /** Whether turning Sync this profile off asks about the other devices: only for a profile that syncs. */
 fun syncOffAsks(profile: String, view: SyncView): Boolean = view.paired && profile in view.synced
 
@@ -155,7 +152,7 @@ class SyncViewModel(app: Application) : NoriViewModel(app) {
             val p = nori.settings.value
             val next = sync.call { s ->
                 SyncView(
-                    read = true, on = p.sync, server = p.syncServer.orEmpty(), state = s.state(), pairing = s.pairing(), devices = deviceOrder(s.devices()),
+                    read = true, on = p.sync, server = p.syncServer.orEmpty(), state = s.state(), pairing = s.pairing(), devices = s.devices(),
                     keepsCopy = s.keepsCopy(), offers = s.offers(), synced = p.servers.map { it.id }.filter(s::synced).toSet(),
                     needed = s.neededPlugins(), installing = _view.value.installing,
                 )

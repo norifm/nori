@@ -4,7 +4,6 @@ import dev.nori.music.ffi.sync.Confirmation
 import dev.nori.music.ffi.sync.PairingRefused
 import dev.nori.music.ffi.sync.PairingView
 import dev.nori.music.ffi.sync.Refusal
-import dev.nori.music.ffi.sync.Seen
 import dev.nori.music.ffi.sync.SyncEvent
 import dev.nori.music.ffi.sync.SyncState
 import org.junit.Assert.assertEquals
@@ -62,13 +61,6 @@ class SyncScreensTest {
         assertFalse("sync off", showsCodeAtOnce(alone.copy(on = false)))
         assertTrue(takesCode(profiles = 1))
         assertFalse(takesCode(profiles = 0))
-    }
-
-    @Test fun `devices in the room come first, then the most recently seen`() {
-        val old = Seen("1", "iPad", 1_000, false)
-        val recent = Seen("2", "MacBook", 5_000, false)
-        val here = Seen("3", "PC", 2_000, true)
-        assertEquals(listOf(here, recent, old), deviceOrder(listOf(old, recent, here)))
     }
 
     @Test fun `only a profile that syncs asks about the other devices`() {

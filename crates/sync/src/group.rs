@@ -27,6 +27,12 @@ pub struct Seen {
     pub online: bool,
 }
 
+/// Puts `devices` in the order a list shows them: those in the group's room first, then the most recently
+/// seen.
+pub(crate) fn in_order(devices: &mut [Seen]) {
+    devices.sort_by(|a, b| b.online.cmp(&a.online).then(b.last_ms.cmp(&a.last_ms)));
+}
+
 /// The group's choice to keep a copy on the server; it syncs, the newer choice winning.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct KeepCopy {
@@ -108,4 +114,17 @@ pub struct ResetNotice {
     /// This device's profiles whose sign-ins the other devices hold: change those passwords if one was
     /// lost.
     pub signed_in: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn devices_in_the_room_come_first_then_the_most_recently_seen() {
+        let seen = |device: &str, last_ms: i64, online: bool| Seen { device: device.into(), name: device.into(), last_ms, online };
+        let mut devices = vec![seen("iPad", 1_000, false), seen("MacBook", 5_000, false), seen("PC", 2_000, true)];
+        in_order(&mut devices);
+        assert_eq!(devices.iter().map(|d| d.device.as_str()).collect::<Vec<_>>(), ["PC", "MacBook", "iPad"]);
+    }
 }

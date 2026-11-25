@@ -7,6 +7,7 @@
   import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
   import { remote } from "../state/remote.svelte";
+  import { sync } from "../state/sync.svelte";
   import type { Profiles, Scrobbling, ScrobblerKindForm } from "../state/types";
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
@@ -15,6 +16,7 @@
   import Page from "./Page.svelte";
 
   let { id }: { id: string } = $props();
+  void sync.read();
   let rev = $state(0);
   const page = reading("settings", async () => {
     void rev;
@@ -57,6 +59,20 @@
 
   /** A scrobbling account being added. */
   let adding = $state(false);
+
+  /** Sync this profile: turned off on a profile that syncs, the other devices keep it or remove it too. */
+  async function syncSwitch(on: boolean, input: HTMLInputElement) {
+    const name = page.data?.profile.label || W.subsonic;
+    let elsewhere = false;
+    if (!on && sync.view?.paired && sync.view.synced.includes(id)) {
+      const answer = await ui.either(W.syncProfileOffTitle(name), W.syncProfileOffText, W.syncProfileOffRemove, W.syncProfileOffKeep);
+      if (!answer) return void (input.checked = true);
+      elsewhere = answer === "yes";
+    }
+    await ask("sync_profile", id, on, elsewhere);
+    await sync.read();
+    rev++;
+  }
 </script>
 
 <Page title={page.data?.profile.label || W.subsonic} back narrow ready={!!page.data} error={page.error}>
@@ -92,6 +108,13 @@
         <Icon name="plus" />
         <span class="words"><span>{W.addScrobblerAccount}</span>{#if !s.list.length && !s.itself}<span class="sub">{W.scrobblingNote}</span>{/if}</span>
       </button>
+    </div>
+    <div class="group-label">{W.advanced}</div>
+    <div class="group">
+      <label class="group-row" id="sync-profile">
+        <span class="words">{W.syncProfile}</span>
+        <input type="checkbox" class="switch" aria-label={W.syncProfile} checked={!page.data.profile.syncOff} onchange={(e) => void syncSwitch(e.currentTarget.checked, e.currentTarget)} />
+      </label>
     </div>
     {#if adding}<AddScrobbler profile={id} kinds={page.data.kinds} close={() => (adding = false)} added={() => ((adding = false), rev++)} />{/if}
   {/if}

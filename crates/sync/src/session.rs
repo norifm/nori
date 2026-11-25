@@ -218,10 +218,13 @@ impl Session {
         relay.join(&self.room(), RoomKind::Group);
     }
 
-    /// The group's other devices, with when each was last seen.
+    /// The group's other devices, with when each was last seen: those in the room first, then the most
+    /// recently seen.
     pub fn devices(&self) -> Vec<Seen> {
         let online = |s: &Seen| self.members.values().any(|c| c.device == s.device);
-        self.group().seen.iter().map(|s| Seen { online: online(s), ..s.clone() }).collect()
+        let mut seen: Vec<Seen> = self.group().seen.iter().map(|s| Seen { online: online(s), ..s.clone() }).collect();
+        crate::group::in_order(&mut seen);
+        seen
     }
 
     /// Whether the group keeps a copy on the server.

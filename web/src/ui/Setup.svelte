@@ -2,19 +2,24 @@
   // The first run's questions once its first profile is in, over the app opening under them, one to a page
   // (the core's `setup_steps`). A question shows what the answer chosen does on four covers, its
   // answers as rows: a pick is taken at once and plays across the preview, Continue moves on. The look is
-  // Settings' own, taken as it is picked, and Start listening ends the run.
+  // Settings' own, taken as it is picked. While the browser is in no group, the last page offers Pair a
+  // device, which ends the run on its sheet, over the sync server's switch and address; Start listening
+  // ends the run.
   import { Tween } from "svelte/motion";
   import { cubicOut } from "svelte/easing";
   import { ask } from "../rpc";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
   import Look from "./Look.svelte";
+  import SyncServer from "./SyncServer.svelte";
+  import { sync } from "../state/sync.svelte";
   import { arrive, still } from "./motion";
 
   type Step = { step: string; answers: string[] };
   let { steps, end }: { steps: Step[]; end: () => void } = $props();
 
   let at = $state(0);
+  void sync.read();
   /** Which way the last move went: 1 forward, -1 back. */
   let way = $state(1);
   /** The answers given so far, by step, so going back shows them. */
@@ -113,14 +118,20 @@
             </button>
           {/each}
         </div>
+      {:else if shown.step === "Pair"}
+        <div class="group-label">{W.advanced}</div>
+        <SyncServer />
       {:else}
         <Look />
       {/if}
     </div>
   {/key}
   <div class="start">
-    {#if last}<button class="pill" id="setup-start" onclick={end}>{W.setupStart}</button>
-    {:else}<button class="pill" id="setup-continue" disabled={!chosen} onclick={() => go(1)}>{W.continueOn}</button>{/if}
+    {#if shown.step === "Pair"}
+      <button class="pill" id="setup-pair" disabled={!sync.view?.on} onclick={() => ((sync.pairing = true), end())}>{W.syncPair}</button>
+      <button class="text-action" id="setup-start" onclick={end}>{W.setupStart}</button>
+    {:else if last}<button class="pill" id="setup-start" onclick={end}>{W.setupStart}</button>
+    {:else}<button class="pill" id="setup-continue" disabled={!chosen && shown.answers.length > 0} onclick={() => go(1)}>{W.continueOn}</button>{/if}
   </div>
 </div>
 
@@ -252,6 +263,12 @@
     max-width: 560px;
     margin: 0 auto;
     padding: 12px var(--gutter) 16px;
+  }
+  .start {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
   }
   .start .pill {
     width: 100%;

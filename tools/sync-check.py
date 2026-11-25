@@ -7,11 +7,14 @@ nori-sync checkout, or NORI_SYNC_ROOT), with nori-cli --sync instances that have
 
 It starts the server on a free local port, pairs two devices through it, syncs a profile both ways, stops
 the server and sees both come back when it starts again, and makes a third device meet a full group
-room, which it shows as a refusal. Then two paired terminals with a profile of the fixture Navidrome
+room, which it shows as a refusal. Two more pair both ways round: each shows its code once and takes the
+other's once. Then two paired terminals with a profile of the fixture Navidrome
 (tools/dev-server.sh, on localhost:4533) play and control each other: through the server, and directly
 once the server is gone; a profile that does not sync offers no device. With --android SERIAL it pairs
 the app on that device (its debug build, driven by tools/app.sh) into a group, syncs a profile with it,
-and controls it from a terminal and back. It stops everything it started.
+and controls it from a terminal and back. With --web URL it runs web/check/sync.mjs against the web client
+served there (web/serve.py beside the fixture Navidrome), which pairs a browser with terminals both ways
+round; --shots DIR keeps its screenshots. It stops everything it started.
 """
 import os
 import queue
@@ -166,13 +169,16 @@ def pair(old, new):
 
 def main():
     args = sys.argv[1:]
-    android = None
-    if "--android" in args:
-        at = args.index("--android")
-        android = args[at + 1]
+    def option(name):
+        if name not in args:
+            return None
+        at = args.index(name)
+        value = args[at + 1]
         del args[at:at + 2]
+        return value
+    android, web, shots = option("--android"), option("--web"), option("--shots")
     if len(args) != 2:
-        sys.exit("usage: sync-check.py NORI_CLI SYNC_SERVER_BINARY [--android SERIAL]")
+        sys.exit("usage: sync-check.py NORI_CLI SYNC_SERVER_BINARY [--android SERIAL] [--web URL [--shots DIR]]")
     cli, server_binary = args
     work = Path(tempfile.mkdtemp(prefix="nori-sync-check."))
     port = free_port()
@@ -209,6 +215,9 @@ def main():
         for d in (pixel, mac, ipad):
             d.quit()
         server.stop()
+        check_both_ways(cli, server_binary, work, devices)
+        if web:
+            check_web(cli, server_binary, work, web, shots)
         if not fixture_up():
             print("  NOTE  remote control needs the fixture Navidrome: tools/dev-server.sh")
         else:
@@ -229,6 +238,39 @@ def main():
         shutil.rmtree(work, ignore_errors=True)
     print(f"sync check: {passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
+
+
+def check_both_ways(cli, server_binary, work, devices):
+    """Two terminals pair, then pair again the other way round: the one that took a code shows its own."""
+    server = Server(server_binary, free_port(), work / "server-ways", members=4)
+    server.start()
+    try:
+        first, second = Device(cli, work / "first", "First"), Device(cli, work / "second", "Second")
+        devices += [first, second]
+        for d in (first, second):
+            d.ask(f"server http://127.0.0.1:{server.port}")
+        first.ask("add Home http://music.example admin secret")
+        check("the first terminal takes the second's code", pair(first, second))
+        check("the second has the profile", second.until("the profile", 20, "profiles", r"^profiles Home$"))
+        second.ask("reset")
+        check("after Reset pairing the second is alone", second.until("alone", 20, "devices", r"^devices $"))
+        check("the second takes the first's code", pair(second, first))
+        check("and both list each other", first.until("the second", 20, "devices", r"Second:online") and second.until("the first", 20, "devices", r"First:online"))
+    finally:
+        server.stop()
+
+
+def check_web(cli, server_binary, work, url, shots):
+    """The browser at `url` pairs with terminals both ways round (web/check/sync.mjs)."""
+    server = Server(server_binary, free_port(), work / "server-web", members=10)
+    server.start()
+    try:
+        if shots:
+            Path(shots).mkdir(parents=True, exist_ok=True)
+        ran = subprocess.run(["node", str(HERE.parent / "web/check/sync.mjs"), url, cli, f"http://127.0.0.1:{server.port}", *([shots] if shots else [])], timeout=600)
+        check("the browser pairs and syncs with terminals (web/check/sync.mjs)", ran.returncode == 0)
+    finally:
+        server.stop()
 
 
 def playing(device, where, state):

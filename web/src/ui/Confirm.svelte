@@ -13,6 +13,7 @@
   <p class="line">{c.line}</p>
   <div class="end">
     <button type="button" class="text-action" onclick={() => c.done(false)}>{W.cancel}</button>
+    {#if c.other}<button type="button" class="text-action" id="confirm-other" onclick={() => c.done("other")}>{c.other}</button>{/if}
     <!-- svelte-ignore a11y_autofocus -->
     <button type="button" class="text-action" id="confirm-yes" autofocus onclick={() => c.done(true)}>{c.action}</button>
   </div>

@@ -211,7 +211,7 @@ impl Nori {
             covers: None,
             offline: false,
             mpris: None,
-            device: nori_core::remote::RemoteMe { name: "Browser".into(), kind: nori_core::remote::wire::DeviceKind::Desktop },
+            device: nori_core::remote::RemoteMe { name: crate::DEVICE_NAME.into(), kind: nori_core::remote::wire::DeviceKind::Desktop },
             discovery: None,
             sync: Some(self.sync.clone()),
             tasks: Arc::new(Local),
@@ -764,11 +764,6 @@ impl Nori {
         if let Some(r) = self.with(|h| h.remote()).flatten() {
             r.jam_act(nori_core::remote::wire::Op::Kick { member });
         }
-    }
-
-    /// `text` as a QR code: `{ size, dark }`, `dark` a string of `1` and `0` row by row; null when too long.
-    pub fn qr(&self, text: String) -> String {
-        nori_core::remote::qr_code(text).map_or_else(|| "null".into(), |q| json!({ "size": q.size, "dark": q.dark.iter().map(|&d| if d { '1' } else { '0' }).collect::<String>() }).to_string())
     }
 
     /// Accepts or declines request `request` (host or admin).

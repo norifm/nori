@@ -31,7 +31,7 @@ class Ui {
   open = $state.raw<Menu | null>(null);
   prompt = $state.raw<{ title: string; value: string; done: (v: string | null) => void } | null>(null);
   /** A question before something that cannot be undone (deleting a playlist). */
-  confirming = $state.raw<{ title: string; line: string; action: string; done: (yes: boolean) => void } | null>(null);
+  confirming = $state.raw<{ title: string; line: string; action: string; other?: string; done: (answer: boolean | "other") => void } | null>(null);
   /** Joining someone's jam: the sheet asking for its link. */
   joining = $state(false);
   /** Adding `songIds` to a playlist: where they can go (the core's `playlist_choices`), null while read. */
@@ -125,6 +125,23 @@ class Ui {
     });
   }
 
+  /** Asks whether to `action` or `other` (the buttons' words), `title` and `line` saying what each does:
+   * "yes", "other", or null when neither. */
+  either(title: string, line: string, action: string, other: string): Promise<"yes" | "other" | null> {
+    return new Promise((done) => {
+      this.confirming = {
+        title,
+        line,
+        action,
+        other,
+        done: (answer) => {
+          this.confirming = null;
+          done(answer === true ? "yes" : answer === "other" ? "other" : null);
+        },
+      };
+    });
+  }
+
   /** Asks whether to `action` (the button's word), `title` and `line` saying what goes; true for yes. */
   confirm(title: string, line: string, action: string): Promise<boolean> {
     return new Promise((done) => {
@@ -134,7 +151,7 @@ class Ui {
         action,
         done: (yes) => {
           this.confirming = null;
-          done(yes);
+          done(yes === true);
         },
       };
     });

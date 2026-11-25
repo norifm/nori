@@ -363,6 +363,7 @@ local port, with two members to a group room. It then drives headless `nori-cli 
 - Two devices pair, see each other online, and sync a profile both ways.
 - The server stops. Both wait quietly, then come back by themselves when it starts again.
 - A third device pairs and shows the full group room as a refusal (`Refused { refused: Limit, .. }`).
+- Two more devices pair both ways round: each shows its code once and takes the other's once.
 - Two paired terminals open a profile of the fixture Navidrome (`tools/dev-server.sh`). One plays, and
   the other sees it, pauses it, mirrors it and moves the music to itself. The server then stops: they
   control each other and sync a profile through their LAN doors. A profile that stops syncing offers no
@@ -375,6 +376,12 @@ server stopped, the app is handed the terminal's door (`tools/mdns-door.py`) and
 through it. `adb reverse` gives the device the server's and Navidrome's ports, so both sides reach them
 at one address. The Rust tests cover the protocol and the rules. This check covers what only a real
 server, real sockets and a real network show.
+
+`tools/sync-check.sh --web URL [--shots DIR]` also runs `web/check/sync.mjs` against the web client served
+at `URL` (`python3 web/serve.py --port 8082 --server http://localhost:4533`). A new browser pairs from the
+welcome with a terminal and opens the profile that came. A new terminal then pairs into the browser's
+group by its pasted link. The browser's Sync this profile and Reset pairing go through their questions.
+`--shots` keeps the pairing sheet and Your devices in Day and Night.
 
 ### Checked by hand
 

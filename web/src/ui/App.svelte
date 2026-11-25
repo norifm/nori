@@ -2,12 +2,15 @@
   // Starting: a new build waiting takes over; one tab holds the databases; the profile signed in last
   // opens, or sign in. A page served by a Subsonic server signs in to that server only; one served
   // elsewhere asks for the server's address. An install with no profile yet welcomes first (the core's
-  // `WelcomeFlow`), and once its first profile is in, asks its questions over the app.
+  // `WelcomeFlow`), and once its first profile is in, asks its questions over the app. Pairing from the
+  // welcome brings another device's profiles: the one in use opens once sync brings it.
   import { ask, boot, facts, onMovedAway, playerSoon, takeOver } from "../rpc";
   import { drawn } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
   import { refreshTheme } from "../state/theme.svelte";
   import { remote } from "../state/remote.svelte";
+  import { sync } from "../state/sync.svelte";
+  import PairDevice from "./PairDevice.svelte";
   import { W } from "../words";
   import Setup from "./Setup.svelte";
   import Shell from "./Shell.svelte";
@@ -85,6 +88,7 @@
     if (await updated()) return;
     player.listen();
     remote.follow();
+    sync.follow((open) => void synced(open).catch(() => {}));
     onMovedAway(() => {
       facts.movedAway = true;
       phase = "elsewhere";
@@ -103,6 +107,18 @@
       if (first) await welcomeOn({ kind: "read" });
       phase = "login";
     }
+  }
+
+  /** Sync changed the saved profiles; `open`: the one in use changed, or another took its place. It opens
+   * (in place of the welcome on a new browser); with none left, the next start signs in. */
+  async function synced(open: boolean) {
+    if (!open) return;
+    if (!(await ask<boolean>("resume"))) {
+      location.hash = "";
+      return location.reload();
+    }
+    if (phase === "in") remote.switched();
+    else enter();
   }
 
   /** Tells the welcome what happened (`{ kind, source }`) and shows where it is now. */
@@ -128,7 +144,7 @@
   <Shell />
   {#if setup}<Setup steps={setup} end={() => (setup = null)} />{/if}
 {:else if phase === "login" && first && welcome.page === "picking"}
-  <Welcome picked={welcome.picked} toggle={(source) => void welcomeOn({ kind: "toggled", source })} next={() => void welcomeOn({ kind: "continue" })} />
+  <Welcome picked={welcome.picked} toggle={(source) => void welcomeOn({ kind: "toggled", source })} next={() => void welcomeOn({ kind: "continue" })} pair={() => (sync.pairing = true)} />
 {:else if phase === "login"}
   <form id="login" class="gate" onsubmit={signIn}>
     <h1>{W.subsonic}</h1>
@@ -147,6 +163,7 @@
 {:else}
   <p class="loading">{W.appName}</p>
 {/if}
+{#if sync.pairing && (phase === "in" || phase === "login")}<PairDevice />{/if}
 
 <style>
   .gate {

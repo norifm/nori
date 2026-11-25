@@ -1,11 +1,11 @@
 <script lang="ts">
   // The first run, while the install has no profile: where the music is, any number of sources picked, then
   // Continue (the core's `WelcomeFlow`). A browser plays from its own kind only: a provider plugin can't run
-  // here.
+  // here. Pair a device brings another device's profiles instead.
   import { W } from "../words";
   import Icon from "./Icon.svelte";
 
-  let { picked, toggle, next }: { picked: string[]; toggle: (source: string) => void; next: () => void } = $props();
+  let { picked, toggle, next, pair }: { picked: string[]; toggle: (source: string) => void; next: () => void; pair: () => void } = $props();
 
   /** What a browser plays from, by its kind's id, with its glyph and words. */
   const sources = [{ id: "subsonic", icon: "server", name: W.subsonic, about: W.subsonicAbout }];
@@ -25,6 +25,7 @@
         </button>
       {/each}
     </div>
+    <button class="text-action" id="welcome-pair" onclick={pair}>{W.syncPair}</button>
   </div>
   <div class="end"><button class="pill" id="welcome-continue" disabled={!picked.length} onclick={next}>{W.continueOn}</button></div>
 </div>

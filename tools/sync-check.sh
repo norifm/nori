@@ -3,6 +3,7 @@
 # nori-sync checkout (or NORI_SYNC_ROOT), with headless nori-cli instances (tools/sync-check.py).
 #   tools/sync-check.sh                    the terminal client only
 #   tools/sync-check.sh --android SERIAL   and the app's debug build on that device or emulator
+#   tools/sync-check.sh --web URL [--shots DIR]  and the web client served there (web/check/sync.mjs)
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 common=$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)

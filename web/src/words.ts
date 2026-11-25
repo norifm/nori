@@ -29,7 +29,7 @@ export const W = {
   setupSkip: "Skip",
   setupStart: "Start listening",
   /** A question's title, by the core's `SetupStep`. */
-  setupSteps: { Listening: "Between songs", Look: "Make it yours" } as Record<string, string>,
+  setupSteps: { Listening: "Between songs", Look: "Make it yours", Pair: "Pair a device" } as Record<string, string>,
   /** An answer's name and line, by the core's `SetupAnswer`. */
   setupAnswers: {
     NoMixing: ["No mixing", "Songs play whole, one after another"],
@@ -198,6 +198,9 @@ export const W = {
   connecting: "Connecting…",
   removeProfileTitle: (name: string) => `Remove ${name}?`,
   removeProfileLine: "What nori keeps for it on this device goes with it.",
+  removeProfileEverywhere: "It’s removed from all your devices, with what nori keeps for it.",
+  /** A plugin's profile, synced to a browser, which runs no plugins. */
+  profileUnavailable: "Unavailable: its plugin can’t run here",
   scrobbling: "Scrobbling",
   scrobblingNote: "Plays go to each one that's on, whatever this profile plays from",
   scrobbler: (kind: string) => ({ listenbrainz: "ListenBrainz", librefm: "Libre.fm", lastfm: "Last.fm" })[kind] ?? kind,
@@ -528,4 +531,98 @@ export const W = {
   restarted: "The player stopped and started again where it was.",
   elsewhere: "nori is open in another tab",
   useHere: "Use here",
+
+  // Your devices and pairing (Settings › Library › Other devices › Your devices), as Android's sync_*.
+  yourDevices: "Your devices",
+  /** Settings' line to Your devices: whether this device is paired, and with how many. */
+  yourDevicesCount: (paired: boolean, others: number) => (paired ? plural(others + 1, "device", "devices") : "Not paired"),
+  syncThisDevice: "This device",
+  syncNotPaired: "This device isn’t paired with another.",
+  syncPair: "Pair a device",
+  syncReset: "Reset pairing",
+  syncResetTitle: "Reset pairing?",
+  syncResetText: (lost: string[]) => "Your other devices keep their data and stop syncing with this one." + (lost.length ? `\n\nA lost device keeps the sign-ins it had. Change the passwords of ${lost.join(", ")}.` : ""),
+  syncResetConfirm: "Reset",
+  syncSeen: (lastMs: number, online: boolean, now: number) => {
+    if (online) return "Online";
+    const m = Math.floor(Math.max(0, now - lastMs) / 60000);
+    if (m < 1) return "Seen just now";
+    if (m < 60) return m === 1 ? "Seen 1 minute ago" : `Seen ${m} minutes ago`;
+    if (m < 120) return "Seen 1 hour ago";
+    if (m < 24 * 60) return `Seen ${Math.floor(m / 60)} hours ago`;
+    if (m < 48 * 60) return "Seen yesterday";
+    return `Seen ${Math.floor(m / (24 * 60))} days ago`;
+  },
+  syncSectionDevices: "Devices",
+  syncSectionServer: "Sync server",
+  syncOn: "Use a sync server",
+  syncServer: "Sync server address",
+  syncServerOwn: "nori’s own",
+  syncKeepCopy: "Keep an encrypted copy",
+  syncKeepCopyDetail: "Only your devices can read it.",
+  /** Where sync stands, by the core's `SyncState`; a refusal, by its `Refusal`, says when it tries again. */
+  syncState: (state: string, refused?: string, retryMs?: number) => {
+    const at = retryMs ? new Date(retryMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "";
+    switch (state) {
+      case "Connecting": return "Connecting";
+      case "Connected": return "Connected";
+      case "Offline": return "Offline";
+      case "Resting": return "Paused while nori is in the background";
+      case "Refused": return `${W.syncRefused[refused ?? ""] ?? ""} Trying again at ${at}.`;
+      case "Stopped": return W.syncRefused[refused ?? ""] ?? "";
+      default: return "";
+    }
+  },
+  syncRefused: {
+    Limit: "The sync server is busy.",
+    DailyWall: "The sync server reached its daily limit.",
+    Version: "The sync server needs another version of nori. Update nori.",
+    WrongSecret: "The sync server didn’t take the encrypted copy.",
+    Unavailable: "The sync server isn’t working right now.",
+    Invalid: "nori and the sync server don’t understand each other. Sync stops until nori starts again.",
+  } as Record<string, string>,
+  /** What happened in the group, by the core's `SyncEvent`. */
+  syncEvent: (e: { kind: string; name?: string; refused?: string }) =>
+    ({
+      NewDevice: `New device paired: ${e.name}`,
+      DeviceLeft: `${e.name} stopped syncing with this device.`,
+      UpdateThis: "Another device runs a newer nori. Update nori to keep syncing.",
+      UpdateOther: `${e.name} needs a newer nori to keep syncing.`,
+      Refused: W.syncRefused[e.refused ?? ""] ?? "",
+    })[e.kind] ?? "",
+  syncPaired: "Paired",
+  syncShowCode: "Show this device’s code",
+  syncPaste: "Paste a link",
+  syncLink: "Pairing link",
+  syncCodeLasts: "The code works for five minutes.",
+  syncCodeWords: "Check that your other device shows these three words.",
+  syncNewCode: "New code",
+  syncStarting: "Reaching the sync server…",
+  syncConfirmTitle: (name: string, profiles: number) => `Give ‘${name}’ your sign-ins for ${plural(profiles, "profile", "profiles")}?`,
+  syncConfirmWords: "Check that the other screen shows the same three words.",
+  syncConfirmLeaves: (name: string, others: number) => `${name} will stop syncing with its ${plural(others, "other device", "other devices")}.`,
+  syncKeepCopyAsk: "Keep an encrypted copy on the sync server",
+  syncKeepCopyAskDetail: "It’s encrypted on your devices. Nobody running the server can read it, only devices you pair.",
+  syncPairAction: "Pair",
+  /** Why pairing stopped or refused a code, by the core's `PairingRefused`; `showing`: on the device whose code ran out. */
+  pairingRefused: (reason: string, showing: boolean, server?: string) =>
+    ({
+      NotACode: "This isn’t a nori pairing code.",
+      Newer: "This code comes from a newer nori. Update nori to pair.",
+      Expired: showing ? "This code ran out." : "This code ran out. Make a new one on the other device.",
+      AlreadyPaired: "That device is already paired with this one.",
+      Gone: "This code was used, or the other device stopped pairing.",
+      Tampered: "A key came that doesn’t fit this code. Still waiting.",
+      Spent: "A key came for a code that was already used. Still waiting.",
+      Server: W.syncRefused[server ?? ""] ?? "",
+      SyncOff: "Turn on Use a sync server to pair.",
+    })[reason] ?? "",
+  syncProfile: "Sync this profile",
+  syncProfileOffTitle: (name: string) => `Stop syncing ${name}?`,
+  syncProfileOffText: "Your other devices can keep it, or remove it too.",
+  syncProfileOffRemove: "Remove there",
+  syncProfileOffKeep: "Keep there",
+  syncMergeTitle: "The same account?",
+  syncMerge: "Merge",
+  syncKeepBoth: "Keep both",
 };

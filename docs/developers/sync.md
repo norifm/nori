@@ -416,8 +416,8 @@ self-signed switch do not apply: the sync server is no profile's server.
 A client tells sync whether nori is on screen and playing. Android does it from `MainActivity` and the
 playback service. The iPod does it from its foreground and background calls and its engine's state.
 
-Android, the desktop and the terminal have the pairing screens: Your devices, Pair a device, Sync this
-profile and the merge offers. Their first run ends with Pair a device while the device is in no group:
+Android, the desktop, the terminal and the web client have the pairing screens: Your devices, Pair a
+device, Sync this profile and the merge offers. Their first run ends with Pair a device while the device is in no group:
 `setup_steps(_, pairs)` makes `SetupStep::Pair` its last step. The sync server's switch and address show
 under it, as Your devices has them. Their welcome offers Pair a device too, so a new device can take its
 profiles from another before it has any.
@@ -425,6 +425,11 @@ profiles from another before it has any.
 The terminal's screens are `crates/cli/src/pairing.rs` (what it shows, and the sheet's stage for each
 `PairingView`), Your devices in `settings_view.rs` and the sheet in `ui.rs`. It draws the QR code in half
 blocks, as the jam invite does, and copies the link through the terminal itself (OSC 52).
+
+The web client's are `pages/Devices.svelte`, `ui/PairDevice.svelte` and `ui/SyncServer.svelte` over
+`state/sync.svelte.ts`, which reads the worker's `sync_state` again whenever sync says something changed.
+A browser has no local network, so its sheet lists no device waiting nearby. It runs no plugins, so Your
+devices lists none that profiles need. A plugin's profile shows as unavailable there.
 
 A paired device uses its group's server. The `syncServer` setting names the server a new code is made
 on: nori's own unless another is named. With `sync` off, nothing connects and pairing answers

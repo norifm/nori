@@ -125,8 +125,16 @@ impl SyncClient for Told {
         self.say(json!({ "kind": "sync", "profiles": format!("{:?}", synced.active) }));
     }
 
+    /// `event`: `{ kind, name?, refused? }`, `kind` the `SyncEvent` by name.
     fn event(&self, event: SyncEvent) {
-        self.say(json!({ "kind": "sync", "event": format!("{event:?}") }));
+        let said = match &event {
+            SyncEvent::NewDevice { name } => json!({ "kind": "NewDevice", "name": name }),
+            SyncEvent::DeviceLeft { name } => json!({ "kind": "DeviceLeft", "name": name }),
+            SyncEvent::UpdateThis => json!({ "kind": "UpdateThis" }),
+            SyncEvent::UpdateOther { name } => json!({ "kind": "UpdateOther", "name": name }),
+            SyncEvent::Refused { reason } => json!({ "kind": "Refused", "refused": format!("{reason:?}") }),
+        };
+        self.say(json!({ "kind": "sync", "event": said }));
     }
 
     fn changed(&self) {
@@ -142,10 +150,25 @@ pub(crate) fn syncing(settings: Arc<Settings>, tell: js_sys::Function) -> Arc<Sy
     syncing
 }
 
-/// Where sync stands, as the page reads it: `{ state, refused?, retryMs?, pairing, code?, words?,
-/// confirm?, devices: [{ name, online, lastMs }] }`.
-pub(crate) fn state(sync: &Syncing) -> String {
-    let mut v = json!({ "devices": sync.devices().iter().map(|d| json!({ "name": d.name, "online": d.online, "lastMs": d.last_ms })).collect::<Vec<_>>() });
+/// Where sync stands, as the page reads it: `{ paired, on, server, state, refused?, retryMs?, pairing,
+/// code?, words?, confirm?, reason?, serverRefused?, opens, gives, devices: [{ name, online, lastMs }], keepsCopy, offers:
+/// [{ a, b }], synced: [id] }`. `opens` is the side a pairing screen opens on (`pair_side`); a refused
+/// pairing's `reason` is a `PairingRefused` by name, `serverRefused` the server's `Refusal` with it.
+pub(crate) fn state(sync: &Syncing, settings: &Settings) -> String {
+    let prefs = settings.current().unwrap_or_default();
+    let paired = nori_core::sync::paired(settings);
+    let pairing = sync.pairing();
+    let mut v = json!({
+        "paired": paired,
+        "on": prefs.sync,
+        "server": prefs.sync_server.clone().unwrap_or_default(),
+        "opens": format!("{:?}", nori_core::sync::pair_side(pairing.clone(), paired, prefs.servers.len() as u32)),
+        "gives": !prefs.servers.is_empty(),
+        "devices": sync.devices().iter().map(|d| json!({ "name": d.name, "online": d.online, "lastMs": d.last_ms })).collect::<Vec<_>>(),
+        "keepsCopy": sync.keeps_copy(),
+        "offers": sync.offers().iter().map(|o| json!({ "a": o.a, "b": o.b })).collect::<Vec<_>>(),
+        "synced": prefs.servers.iter().map(|p| p.id.clone()).filter(|id| sync.synced(id.clone())).collect::<Vec<_>>(),
+    });
     match sync.state() {
         SyncState::Offline { retry_ms } => {
             v["state"] = "Offline".into();
@@ -162,7 +185,7 @@ pub(crate) fn state(sync: &Syncing) -> String {
         }
         other => v["state"] = format!("{other:?}").into(),
     }
-    match sync.pairing() {
+    match pairing {
         PairingView::Code { link, words } => {
             v["pairing"] = "Code".into();
             v["code"] = link.into();
@@ -172,7 +195,16 @@ pub(crate) fn state(sync: &Syncing) -> String {
             v["pairing"] = "Confirm".into();
             v["confirm"] = json!({ "name": c.name, "profiles": c.profiles, "leaves": c.leaves, "words": c.words, "asksKeepCopy": c.asks_keep_copy });
         }
-        PairingView::Refused { reason } => v["pairing"] = format!("Refused {reason:?}").into(),
+        PairingView::Refused { reason } => {
+            v["pairing"] = "Refused".into();
+            match reason {
+                nori_core::sync::PairingRefused::Server { reason } => {
+                    v["reason"] = "Server".into();
+                    v["serverRefused"] = format!("{reason:?}").into();
+                }
+                reason => v["reason"] = format!("{reason:?}").into(),
+            }
+        }
         other => v["pairing"] = format!("{other:?}").into(),
     }
     v.to_string()

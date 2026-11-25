@@ -11,6 +11,7 @@
   import { reading } from "../state/library.svelte";
   import { remote } from "../state/remote.svelte";
   import { route, href } from "../state/route.svelte";
+  import { sync } from "../state/sync.svelte";
   import { refreshTheme } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
   import type { Profile, ProfileIcon, Profiles, SettingRow, SettingsSection } from "../state/types";
@@ -26,8 +27,10 @@
 
   const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "quote-message", Library: "album-list", Servers: "server", Plugins: "view-grid", About: "info-circle" };
   let rev = $state(0);
+  void sync.read();
   const page = reading("settings", async () => {
     void rev;
+    void sync.profiles;
     const names = JSON.parse(await ask<string>("settings_pages")) as string[];
     const name = route.arg;
     const sections = names.includes(name) ? (JSON.parse(await ask<string>("settings_page", name)) as SettingsSection[]) : [];
@@ -70,7 +73,9 @@
     opened();
   }
   async function remove(p: Profile) {
-    if (!(await ui.confirm(W.removeProfileTitle(named(p)), W.removeProfileLine, W.remove))) return;
+    // A profile that syncs goes from every paired device.
+    const everywhere = !!sync.view?.paired && sync.view.synced.includes(p.id);
+    if (!(await ui.confirm(W.removeProfileTitle(named(p)), everywhere ? W.removeProfileEverywhere : W.removeProfileLine, W.remove))) return;
     // None left: the next start signs in.
     if (!(await ask<boolean>("profile_remove", p.id))) return signedOut();
     if (p.on) opened();
@@ -144,7 +149,7 @@
         {:else}
           <ProfileMark icon={p.icon} letter={p.letter} />
         {/if}
-        <button class="opens" disabled={p.on} onclick={() => void open(p)}><span class="words"><span>{named(p)}</span><span class="sub">{p.user}</span></span></button>
+        <button class="opens" disabled={p.on || p.unavailable} onclick={() => void open(p)}><span class="words"><span>{named(p)}</span><span class="sub">{p.unavailable ? W.profileUnavailable : p.user}</span></span></button>
         {#if p.on}<span class="in-use" title={W.inUse} aria-label={W.inUse}><Icon name="check" /></span>{/if}
         {#if profiles?.picks}<button class="glyph" aria-label={W.more} title={W.more} onclick={(e) => menu(e, p)}><Icon name="more-horiz" /></button>{/if}
       </div>
@@ -152,6 +157,20 @@
     {#if profiles?.picks}<button class="group-row" id="add-profile-row" onclick={() => (adding = true)}><Icon name="plus" /><span class="words">{W.addProfile}</span></button>{/if}
     <button class="group-row" onclick={() => void signOut()}><Icon name="log-out" /><span class="words">{W.signOut}</span></button>
   </div>
+  {#each sync.view?.offers ?? [] as o (o.a + o.b)}
+    {@const a = profiles?.list.find((p) => p.id === o.a)}
+    {@const b = profiles?.list.find((p) => p.id === o.b)}
+    {#if a && b}
+      <div class="group-label">{W.syncMergeTitle}</div>
+      <div class="group merge-offer">
+        {#each [a, b] as p (p.id)}<div class="group-row profile"><ProfileMark icon={p.icon} letter={p.letter} /><span class="words"><span>{named(p)}</span><span class="sub">{p.user}</span></span></div>{/each}
+        <div class="merge-buttons">
+          <button class="text-action" onclick={() => void sync.act("sync_keep_apart", o.a, o.b)}>{W.syncKeepBoth}</button>
+          <button class="text-action" id="merge" onclick={() => void sync.act("sync_merge", o.a, o.b).then(() => opened())}>{W.syncMerge}</button>
+        </div>
+      </div>
+    {/if}
+  {/each}
   {#if adding}<AddProfile close={() => (adding = false)} added={() => ((adding = false), opened())} />{/if}
   {#if picking && profiles}{@const p = picking}<ProfileIconPicker profile={p} icons={profiles.icons} pick={(icon) => void pickIcon(p, icon)} close={() => (picking = null)} />{/if}
 {/snippet}
@@ -173,7 +192,10 @@
   {#if r.item.kind === "note"}
     <p class="note">{W.notes[r.item.note] ?? ""}</p>
   {:else if r.item.kind === "link"}
-    <a class="group-row" href={href(r.item.to)} data-link={r.item.to}><span class="words">{W.equalizer}</span><Icon name="nav-arrow-right" /></a>
+    {@const devices = r.item.to === "devices"}
+    <a class="group-row" href={href(r.item.to)} data-link={r.item.to}
+      ><span class="words">{devices ? W.yourDevices : W.equalizer}</span>{#if devices && sync.view}<span class="value">{W.yourDevicesCount(sync.view.paired, sync.view.devices.length)}</span>{/if}<Icon name="nav-arrow-right" /></a
+    >
   {:else}
     {@const it = r.item}
     {#if it.type === "Switch"}
@@ -305,6 +327,12 @@
   }
   .off {
     opacity: 0.5;
+  }
+  .merge-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    padding: 4px 8px;
   }
   .note {
     margin: 0;

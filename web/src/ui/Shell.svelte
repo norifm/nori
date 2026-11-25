@@ -42,6 +42,7 @@
     settings: () => import("../pages/Settings.svelte"),
     equalizer: () => import("../pages/Equalizer.svelte"),
     support: () => import("../pages/Support.svelte"),
+    devices: () => import("../pages/Devices.svelte"),
   };
   const nowPlaying = () => import("./NowPlaying.svelte");
   const lyricsInfo = () => import("./LyricsInfo.svelte");

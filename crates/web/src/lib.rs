@@ -92,6 +92,9 @@ pub struct Nori {
     grids: std::cell::RefCell<std::collections::VecDeque<(u32, nori_core::paged::Paged<u32>)>>,
 }
 
+/// What this browser is called to the other devices: in a jam, under remote control and in its group.
+pub(crate) const DEVICE_NAME: &str = "Browser";
+
 /// Album grids whose pages are kept.
 const KEPT_GRIDS: usize = 8;
 
@@ -134,17 +137,31 @@ impl Nori {
 
     /// Where sync stands (`sync::state`).
     pub fn sync_state(&self) -> String {
-        sync::state(&self.sync)
+        sync::state(&self.sync, &self.app.settings)
     }
 
-    /// The sync or sync server setting changed.
-    pub fn sync_settings_changed(&self) {
+    /// `text` as a QR code (a jam's invite, a pairing code): `{ size, dark }`, `dark` a string of `1` and `0`
+    /// row by row; null when too long.
+    pub fn qr(&self, text: String) -> String {
+        nori_core::remote::qr_code(text).map_or_else(|| "null".into(), |q| json!({ "size": q.size, "dark": q.dark.iter().map(|&d| if d { '1' } else { '0' }).collect::<String>() }).to_string())
+    }
+
+    /// Use a sync server on or off: off, nothing connects.
+    pub fn sync_on(&self, on: bool) {
+        self.app.settings.change(|p| nori_core::settings::StoredPrefs { sync: on, ..p.clone() });
         self.sync.settings_changed();
     }
 
-    /// Shows a code to pair this browser, `name`, into a group; `sync_state` then holds it.
-    pub fn sync_code(&self, name: String) {
-        self.sync.pair_show(name);
+    /// The sync server's address; blank for nori's own.
+    pub fn sync_server(&self, address: String) {
+        let kept = Some(address.trim().to_string()).filter(|a| !a.is_empty());
+        self.app.settings.change(|p| nori_core::settings::StoredPrefs { sync_server: kept.clone(), ..p.clone() });
+        self.sync.settings_changed();
+    }
+
+    /// Shows a code to pair this browser into a group; `sync_state` then holds it.
+    pub fn sync_code(&self) {
+        self.sync.pair_show(DEVICE_NAME.into());
     }
 
     /// Takes another device's code, pasted; why it was refused at once, if it was.
@@ -153,8 +170,8 @@ impl Nori {
     }
 
     /// The user confirmed the pairing `sync_state` asked about; `keep` keeps a copy at a first pairing.
-    pub fn sync_confirm(&self, name: String, keep: bool) {
-        self.sync.pair_confirm(name, keep);
+    pub fn sync_confirm(&self, keep: bool) {
+        self.sync.pair_confirm(DEVICE_NAME.into(), keep);
     }
 
     pub fn sync_cancel(&self) {
@@ -171,6 +188,33 @@ impl Nori {
         self.sync.keep_copy(on);
     }
 
+    /// What Reset pairing does, for its confirmation: `{ others, signedIn: [label] }`, the profiles whose
+    /// sign-ins the other devices hold by name; null while not paired.
+    pub fn sync_reset_notice(&self) -> Option<String> {
+        let notice = self.sync.reset_notice()?;
+        let servers = self.app.settings.current().unwrap_or_default().servers;
+        let named: Vec<String> = notice.signed_in.iter().filter_map(|id| servers.iter().find(|p| p.id == *id)).map(|p| nori_core::settings::label(&p.name, &p.url)).collect();
+        Some(json!({ "others": notice.others, "signedIn": named }).to_string())
+    }
+
+    /// Makes profiles `a` and `b` one on every device (the core keeps the one open).
+    pub fn sync_merge(&self, a: String, b: String) {
+        self.sync.merge(nori_core::sync::MergeOffer { a, b });
+    }
+
+    /// Profiles `a` and `b` are not one.
+    pub fn sync_keep_apart(&self, a: String, b: String) {
+        self.sync.keep_apart(a, b);
+    }
+
+    /// Sync this profile on or off for profile `id`; off with `elsewhere`, the other devices remove it too.
+    pub fn sync_profile(&self, id: String, on: bool, elsewhere: bool) -> Result<(), JsValue> {
+        if !on {
+            self.sync.sync_off(id.clone(), elsewhere);
+        }
+        self.profile_changed(&id, |p| SavedServer { sync_off: !on, ..p })
+    }
+
     /// The saved profiles in their order, as `{ picks, icons, list: [{ id, label, user, host, icon, letter,
     /// on }] }`: `label` its name, else its address's host (`label`); `icon` what its circle shows (a
     /// `ProfileIcon` by name) and `letter` the one `Letter` shows (`profile_letter`); `on` the one open.
@@ -179,13 +223,16 @@ impl Nori {
     pub fn profiles(&self) -> String {
         use nori_core::settings::{label, profile_icons, profile_letter};
         let prefs = self.app.settings.current().unwrap_or_default();
+        let kinds = nori_core::providers::Kinds::builtin();
         let list: Vec<Value> = prefs
             .servers
             .iter()
             .map(|p| {
                 let named = label(&p.name, &p.url);
                 let letter = profile_letter(p.clone(), named.clone());
-                json!({ "id": p.id, "label": named, "user": p.user, "host": label("", &p.url), "icon": format!("{:?}", p.icon), "letter": letter, "on": p.id == prefs.active_server_id })
+                // A plugin's profile, synced here, which a browser cannot play.
+                let unavailable = kinds.waits(p.clone()) == Some(nori_core::providers::ProfileWait::NoPlugins);
+                json!({ "id": p.id, "label": named, "user": p.user, "host": label("", &p.url), "icon": format!("{:?}", p.icon), "letter": letter, "on": p.id == prefs.active_server_id, "unavailable": unavailable, "syncOff": p.sync_off })
             })
             .collect();
         let icons: Vec<String> = profile_icons().iter().map(|i| format!("{i:?}")).collect();
@@ -400,7 +447,9 @@ impl Nori {
     /// `[{ step, answers }]` by name. A browser streams over no mobile data of its own.
     pub fn setup_steps(&self) -> String {
         use nori_core::setup::{setup_answers, setup_steps};
-        let steps: Vec<Value> = setup_steps(false, false)
+        // A browser pairs as the last step while it is in no group.
+        let pairs = !nori_core::sync::paired(&self.app.settings);
+        let steps: Vec<Value> = setup_steps(false, pairs)
             .into_iter()
             .map(|s| json!({ "step": format!("{s:?}"), "answers": setup_answers(s).iter().map(|a| format!("{a:?}")).collect::<Vec<_>>() }))
             .collect();
@@ -959,6 +1008,7 @@ fn settings_row(r: &settings_pages::SettingsRow) -> Option<Value> {
         RowItem::Setting { spec, value, chips } => json!({ "kind": "setting", "name": spec.name, "type": format!("{:?}", spec.kind), "options": spec.options, "min": spec.min, "max": spec.max, "value": value, "chips": chips }),
         RowItem::Note { note } => json!({ "kind": "note", "note": format!("{note:?}") }),
         RowItem::Link { to: settings_pages::SettingsLink::Equalizer } => json!({ "kind": "link", "to": "equalizer" }),
+        RowItem::Link { to: settings_pages::SettingsLink::YourDevices } => json!({ "kind": "link", "to": "devices" }),
         _ => return None,
     };
     Some(json!({ "item": item, "shown": r.shown, "enabled": r.enabled, "depth": r.depth }))
