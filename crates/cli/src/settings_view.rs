@@ -121,8 +121,8 @@ pub enum Row {
     /// `options` are (label, value); `shown` is the chosen label, or the raw value if none matches.
     /// `chips`: few options, all on view.
     Choice { target: Target, title: String, options: Vec<(String, String)>, shown: String, enabled: bool, chips: bool },
-    /// Any of a few, all on view, those `lit` on: enter picks one to switch. `options` are (label, the
-    /// value switching it stores).
+    /// Any of a few, all on view, those `lit` on: ← → move the cursor along them, enter switches the one
+    /// it is on. `options` are (label, the value switching it stores).
     Flags { target: Target, title: String, options: Vec<(String, String)>, lit: Vec<bool> },
     /// One of the four seasons: its name, its kanji, its theme's accent in the mode the interface is in,
     /// whether it is the one worn, and whether picking it changes the setting.
@@ -433,8 +433,8 @@ impl SettingsView {
         self.own.stack.push((page, self.row));
         self.invalidate();
         let lines = Self::lines(self.pages(prefs));
-        let first = lines.iter().position(|l| matches!(l, Line::Row(r) if open_row((*r).clone()).is_some()));
-        self.row = Sel { at: first.unwrap_or(0), top: 0 };
+        let first = lines.iter().position(|l| matches!(l, Line::Row(r) if open_row((*r).clone(), 0).is_some()));
+        self.row = Sel::on(first.unwrap_or(0));
     }
 
     /// Back to what the open plugin page covers, the selection where it was; false with none open.
@@ -535,6 +535,7 @@ impl SettingsView {
         use crate::text::hints as h;
         match (self.own.stack.last(), self.selected()) {
             (_, Some(Row::Plugin { .. })) => h::PLUGIN_ROW,
+            (_, Some(Row::Flags { .. })) => h::FLAGS_ROW,
             (_, Some(Row::Server { name: Some(_), .. })) => h::PROFILE_ROW,
             (Some((PluginPage::Browser, _)), _) => h::PLUGIN_BROWSER,
             (Some((PluginPage::Plugin(_), _)), _) => h::PLUGIN_PAGE,
@@ -546,12 +547,12 @@ impl SettingsView {
 
     /// Enter on the selection.
     pub fn open(&self) -> Option<Opened> {
-        open_row(self.selected()?.clone())
+        open_row(self.selected()?.clone(), self.row.across())
     }
 
     /// ← or → on the selection: previous or next option, off or on, a slider step.
-    pub fn step(&self, up: bool) -> Vec<Cmd> {
-        self.selected().cloned().map_or_else(Vec::new, |row| step_row(row, up))
+    pub fn step(&mut self, up: bool) -> Vec<Cmd> {
+        self.selected().cloned().map_or_else(Vec::new, |row| step_row(row, up, &mut self.row))
     }
 
     /// The selected lyrics service's key, to add or change, or the selected profile's or repo's new name.
@@ -965,8 +966,8 @@ fn all_off(off: bool) -> Vec<Cmd> {
     vec![Cmd::Setting("pluginsOff".into(), off.to_string()), Cmd::Plugin(PluginCmd::Switched)]
 }
 
-/// Enter on `row`.
-pub fn open_row(row: Row) -> Option<Opened> {
+/// Enter on `row`, the cursor on its option `across`.
+pub fn open_row(row: Row, across: usize) -> Option<Opened> {
     Some(match row {
         Row::Toggle { switch: Switch::Setting(name), on, enabled, .. } => {
             if !enabled {
@@ -982,12 +983,9 @@ pub fn open_row(row: Row) -> Option<Opened> {
         Row::Toggle { switch, .. } => Opened::Own(switch),
         Row::Choice { target, title, options, shown, enabled: true, .. } => {
             let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
-            Opened::Overlay(Overlay::Picker { title, options, sel: Sel { at, ..Sel::default() }, target })
+            Opened::Overlay(Overlay::Picker { title, options, sel: Sel::on(at), target })
         }
-        Row::Flags { target, title, options, lit } => {
-            let options = options.into_iter().zip(lit).map(|((label, bits), on)| (text::flag(&label, on), bits)).collect();
-            Opened::Overlay(Overlay::Picker { title, options, sel: Sel::default(), target })
-        }
+        Row::Flags { target, options, .. } => Opened::Cmds(options.into_iter().nth(across).and_then(|o| target.cmd(o.1)).into_iter().collect()),
         Row::Link { action, .. } | Row::Action { action, enabled: true, .. } | Row::Button { action, .. } => match action {
             Act::Equalizer => Opened::View(View::Equalizer),
             Act::Support => Opened::View(View::Support),
@@ -1026,9 +1024,14 @@ pub fn backup_asked(restore: bool) -> Overlay {
     Overlay::Input { title: text::backup_path(restore).into(), text: String::new(), secret: false, target: Target::BackupFile { restore } }
 }
 
-/// ← or → on `row`: previous or next option, off or on, a slider step.
-pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
+/// ← or → on `row`, selected by `sel`: previous or next option, off or on, a slider step; on a flags
+/// row the cursor's option.
+pub fn step_row(row: Row, up: bool, sel: &mut Sel) -> Vec<Cmd> {
     match row {
+        Row::Flags { options, .. } => {
+            sel.move_across(up, options.len());
+            Vec::new()
+        }
         Row::Choice { target, options, shown, enabled: true, .. } => {
             let at = options.iter().position(|o| o.0 == shown);
             let to = match at {

@@ -111,7 +111,7 @@ impl Support {
                 let all = support_currencies();
                 let at = all.iter().position(|x| x.code == c.currency.code).unwrap_or(0);
                 let options = all.iter().map(|x| (format!("{}  {}", x.code, nori_host::support::currency_name(&x.code)), x.code.clone())).collect();
-                Some(Opened::Overlay(Overlay::Picker { title: crate::text::SUPPORT_CURRENCY.into(), options, sel: Sel { at, ..Sel::default() }, target: Target::SupportCurrency }))
+                Some(Opened::Overlay(Overlay::Picker { title: crate::text::SUPPORT_CURRENCY.into(), options, sel: Sel::on(at), target: Target::SupportCurrency }))
             }
             Line::Give => c.amount.map(|_| Opened::Cmds(vec![Cmd::SupportGive(Box::new(c.clone()))])),
         }

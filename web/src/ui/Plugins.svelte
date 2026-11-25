@@ -252,24 +252,24 @@
       ><span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span><span class="value">{r.options[number(i, r)]}</span><Icon name="nav-arrow-right" /></button
     >
   {:else if r.kind === "Flags"}
-    <div class="group-row level" class:off data-row={r.id}>
+    <div class="group-row chips-row" class:off data-row={r.id}>
       <span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span>
-      <span class="segments" role="group" aria-label={r.label}>
+      <div class="choices" role="group" aria-label={r.label}>
         {#each r.options as o, n (n)}
-          <button aria-pressed={flagOn(i, r, n)} class:chosen={flagOn(i, r, n)} disabled={off} onclick={() => set(i, r, flagSwitched(i, r, n))}>{o}</button>
+          <button class="chip" class:on={flagOn(i, r, n)} aria-pressed={flagOn(i, r, n)} disabled={off} onclick={() => set(i, r, flagSwitched(i, r, n))}>{o}</button>
         {/each}
-      </span>
+      </div>
     </div>
   {:else if r.kind === "Page"}
     <a class="group-row" class:off data-row={r.id} href={off ? undefined : subPage(i.plugin.id, r.id)}><span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span><Icon name="nav-arrow-right" /></a>
   {:else if r.kind === "Segments"}
-    <div class="group-row level" class:off data-row={r.id}>
+    <div class="group-row chips-row" class:off data-row={r.id}>
       <span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span>
-      <span class="segments" role="radiogroup" aria-label={r.label}>
+      <div class="choices" role="radiogroup" aria-label={r.label}>
         {#each r.options as o, n (n)}
-          <button role="radio" aria-checked={n === number(i, r)} class:chosen={n === number(i, r)} disabled={off} onclick={() => set(i, r, n)}>{o}</button>
+          <button class="chip" class:on={n === number(i, r)} role="radio" aria-checked={n === number(i, r)} disabled={off} onclick={() => n !== number(i, r) && set(i, r, n)}>{o}</button>
         {/each}
-      </span>
+      </div>
     </div>
   {:else if r.kind === "Meter"}
     {@const [min, max] = [r.min ?? 0, r.max ?? 1]}
@@ -412,29 +412,6 @@
 {/if}
 
 <style>
-  .segments {
-    display: flex;
-    gap: 2px;
-    padding: 2px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--ink) 6%, transparent);
-  }
-  .segments button {
-    flex: 1;
-    min-height: 32px;
-    border: 0;
-    border-radius: 999px;
-    background: none;
-    color: var(--ink2);
-    font: inherit;
-    font-size: 13.5px;
-  }
-  .segments button.chosen {
-    background: var(--surface);
-    color: var(--ink);
-    outline: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
-    outline-offset: -1px;
-  }
   .meter {
     display: block;
     height: 4px;

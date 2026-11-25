@@ -360,6 +360,29 @@ button.group-row:hover:enabled {
   color: var(--ink);
 }
 
+/* A row's chips under its name, the same room above and below them. */
+.chips-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+/* On one line they share its width, the narrower ones widened to a common width; they wrap when their
+   words don't fit on one line. */
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.choices .chip {
+  flex: 1 1 0;
+  min-width: max-content;
+  justify-content: center;
+}
+
 /* A row of chips that runs out past the gutters and scrolls sideways. */
 .chips {
   display: flex;

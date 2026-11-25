@@ -1237,11 +1237,12 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
     } else {
         Rect { width: body.width.min(110), ..body }
     };
-    list(f, body, &mut v.row, len, ListRef::Settings, hits, t, focused, &|i, w| setting_line(&lines[i], w, t));
+    let (at, across) = (v.row.at, v.row.across());
+    list(f, body, &mut v.row, len, ListRef::Settings, hits, t, focused, &|i, w| setting_line(&lines[i], (i == at).then_some(across), w, t));
 }
 
-/// One settings page line.
-fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
+/// One settings page line; `across`, the option its cursor is on while selected.
+fn setting_line(line: &SLine<'_>, across: Option<usize>, w: usize, t: &Theme) -> Line<'static> {
     let row = match line {
         SLine::Group(title, summary) => return Line::from(vec![Span::styled(title.to_string(), bold().fg(t.ink)), Span::styled(format!("   {summary}"), t.dim())]),
         SLine::Title(title) => return Line::from(Span::styled(format!("  {}", title.to_uppercase()), t.dim())),
@@ -1261,18 +1262,19 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
             Span::styled(format!("  {name}"), if *worn { bold().fg(t.ink) } else { t.dim() }),
         ]);
     }
-    // A few options, all on view: the chosen one (a flags row's, those on) in ink, underlined.
-    let chips: Option<Vec<(&str, bool)>> = match row {
-        settings_view::Row::Choice { options, shown, chips: true, .. } => Some(options.iter().map(|o| (o.0.as_str(), o.0 == *shown)).collect()),
-        settings_view::Row::Flags { options, lit, .. } => Some(options.iter().zip(lit).map(|(o, on)| (o.0.as_str(), *on)).collect()),
-        _ => None,
+    // A few options, all on view: the chosen one (a flags row's, those on) in ink, underlined; on a
+    // selected flags row the cursor's option in brackets.
+    let (chips, cursor): (Option<Vec<(&str, bool)>>, _) = match row {
+        settings_view::Row::Choice { options, shown, chips: true, .. } => (Some(options.iter().map(|o| (o.0.as_str(), o.0 == *shown)).collect()), None),
+        settings_view::Row::Flags { options, lit, .. } => (Some(options.iter().zip(lit).map(|(o, on)| (o.0.as_str(), *on)).collect()), across),
+        _ => (None, None),
     };
     if let Some(chips) = chips {
-        let mut spans = vec![Span::styled(format!("    {}", pad(&title, 24)), text_style)];
-        for (label, on) in chips {
+        let mut spans = vec![Span::styled(format!("    {}", pad(&title, 23)), text_style)];
+        for (at, (label, on)) in chips.into_iter().enumerate() {
             let style = if on && live { bold().fg(t.ink).add_modifier(Modifier::UNDERLINED) } else { t.dim() };
-            spans.push(Span::styled(label.to_string(), style));
-            spans.push(Span::raw("  "));
+            let (open, close) = if cursor == Some(at) { ("[", "]") } else { (" ", " ") };
+            spans.extend([Span::styled(open, Style::default().fg(t.ink)), Span::styled(label.to_string(), style), Span::styled(close, Style::default().fg(t.ink)), Span::raw(" ")]);
         }
         return Line::from(spans);
     }
@@ -1362,7 +1364,7 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
         }
         DeviceRow::Settings(_) => Line::from(vec![Span::raw("  "), Span::styled(crate::text::DEVICE_SETTINGS, Style::default().fg(t.ink))]),
         DeviceRow::PluginName(c) => Line::from(Span::styled(format!("  {}", d.plugins[c].name.to_uppercase()), t.dim())),
-        DeviceRow::Plugin(c, r) => d.plugin_row(c, r).map_or_else(Line::default, |row| setting_line(&SLine::Row(&row), w, t)),
+        DeviceRow::Plugin(c, r) => d.plugin_row(c, r).map_or_else(Line::default, |row| setting_line(&SLine::Row(&row), (i == d.sel.at).then_some(d.sel.across()), w, t)),
         DeviceRow::PluginHint(c, r) => Line::from(Span::styled(fit(&format!("    {}", d.plugins[c].rows[r].hint.as_deref().unwrap_or_default()), w).into_owned(), t.dim().add_modifier(Modifier::ITALIC))),
     });
     devices.sel = sel;
@@ -2202,11 +2204,11 @@ fn look_page(f: &mut Frame, area: Rect, app: &mut App, s: &crate::app::Setup, t:
     let mut y = area.y;
     let mut at = 0;
     for section in &sections {
-        put(f, Paragraph::new(setting_line(&SLine::Title(&section.title), area.width as usize, t)), Rect { y, height: 1, ..area });
+        put(f, Paragraph::new(setting_line(&SLine::Title(&section.title), None, area.width as usize, t)), Rect { y, height: 1, ..area });
         y += 1;
         for row in &section.rows {
             let r = Rect { y, height: 1, ..area };
-            let mut line = setting_line(&SLine::Row(row), r.width as usize, t);
+            let mut line = setting_line(&SLine::Row(row), None, r.width as usize, t);
             if s.line == at {
                 let st = t.select(true);
                 line.spans.iter_mut().for_each(|s| s.style = s.style.patch(st));

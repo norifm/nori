@@ -375,9 +375,28 @@ impl SoundToolCmd {
 pub struct Sel {
     pub at: usize,
     pub top: usize,
+    /// On a row whose options are each switched on their own (a plugin's flags): the row and the option
+    /// the cursor is on.
+    across: (usize, usize),
 }
 
 impl Sel {
+    /// Selects line `at`.
+    pub fn on(at: usize) -> Sel {
+        Sel { at, ..Sel::default() }
+    }
+
+    /// The option the cursor is on along the selected row; the first on a row just reached.
+    pub fn across(&self) -> usize {
+        if self.across.0 == self.at { self.across.1 } else { 0 }
+    }
+
+    /// Moves the cursor one option along the selected row of `len`.
+    pub fn move_across(&mut self, up: bool, len: usize) {
+        let at = self.across();
+        self.across = (self.at, if up { (at + 1).min(len.saturating_sub(1)) } else { at.saturating_sub(1) });
+    }
+
     pub fn by(&mut self, d: isize, len: usize) {
         if len == 0 {
             self.at = 0;
@@ -2850,10 +2869,10 @@ impl App {
         match (k.code, row) {
             (KeyCode::Up | KeyCode::Char('k'), _) => s.line = s.line.saturating_sub(1),
             (KeyCode::Down | KeyCode::Char('j'), _) => s.line = (s.line + 1).min(rows.len()),
-            (KeyCode::Left | KeyCode::Char('h'), Some(row)) => self.cmds.extend(crate::settings_view::step_row(row, false)),
-            (KeyCode::Right | KeyCode::Char('l'), Some(row)) => self.cmds.extend(crate::settings_view::step_row(row, true)),
+            (KeyCode::Left | KeyCode::Char('h'), Some(row)) => self.cmds.extend(crate::settings_view::step_row(row, false, &mut Sel::on(s.line))),
+            (KeyCode::Right | KeyCode::Char('l'), Some(row)) => self.cmds.extend(crate::settings_view::step_row(row, true, &mut Sel::on(s.line))),
             (KeyCode::Enter | KeyCode::Char(' '), None) => self.setup = None,
-            (KeyCode::Enter | KeyCode::Char(' '), Some(row)) => match crate::settings_view::open_row(row) {
+            (KeyCode::Enter | KeyCode::Char(' '), Some(row)) => match crate::settings_view::open_row(row, 0) {
                 Some(Opened::Cmds(c)) => self.cmds.extend(c),
                 Some(Opened::Overlay(o)) => self.overlay = Some(o),
                 _ => {}
@@ -3230,7 +3249,7 @@ impl App {
             Action::Decrease | Action::Increase => {
                 let up = a == Action::Increase;
                 if let Some(row) = self.plugin_device_row() {
-                    return self.cmds.extend(crate::settings_view::step_row(row, up));
+                    return self.cmds.extend(crate::settings_view::step_row(row, up, &mut self.devices.sel));
                 }
                 match self.view {
                     View::Equalizer => self.eq_step(up),
@@ -4199,7 +4218,7 @@ impl App {
                 }
                 None => self.dirty = false,
             },
-            Some(DeviceRow::Plugin(c, r)) => match self.devices.plugin_row(c, r).and_then(crate::settings_view::open_row) {
+            Some(DeviceRow::Plugin(c, r)) => match self.devices.plugin_row(c, r).and_then(|row| crate::settings_view::open_row(row, self.devices.sel.across())) {
                 Some(Opened::Cmds(c)) => self.cmds.extend(c),
                 Some(Opened::Overlay(o)) => self.overlay = Some(o),
                 Some(Opened::Plugins(page)) => self.open_over_player(page),

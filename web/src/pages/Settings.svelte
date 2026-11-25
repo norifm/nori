@@ -333,19 +333,6 @@
     font-size: 13px;
     color: var(--ink2);
   }
-  /* Chips under their name, the same room above and below them. */
-  .chips-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-    padding-top: 12px;
-    padding-bottom: 12px;
-  }
-  .choices {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
   .level {
     flex-wrap: wrap;
   }

@@ -106,24 +106,15 @@
   .tile.on .name {
     color: var(--ink);
   }
-  .chips-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-    padding-top: 12px;
-    padding-bottom: 12px;
-  }
-  .choices {
-    display: flex;
-    gap: 8px;
-  }
   /* The top bar's menu as the desktop's gear menu: the four on one line, centered, under the calendar's
      switch with no heading or card of their own. */
   :global(.popover) .choices {
+    flex-wrap: nowrap;
     justify-content: center;
     gap: 2px;
   }
   :global(.popover) .chip {
+    flex: none;
     height: 30px;
     padding: 0 10px;
     font-size: 13px;

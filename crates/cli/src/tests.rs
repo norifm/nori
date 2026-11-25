@@ -2849,8 +2849,7 @@ fn a_controlled_device_shows_its_battery_and_sets_its_noise_control() {
 }
 
 /// The panel leads on to a device's settings, a plugin's flags are one row of its options, those on lit,
-/// whose picker stores the bits with the option picked switched, and `b` moves the headphones playing to
-/// the next mode of their cycle.
+/// and `b` moves the headphones playing to the next mode of their cycle.
 #[test]
 fn a_controlled_devices_settings_and_noise_key() {
     use nori_plugins::{Battery, ControlledDevice, Noise, RowKind, Value};
@@ -2900,9 +2899,43 @@ fn a_controlled_devices_settings_and_noise_key() {
         draw(&mut a, 140, 60)
     };
     assert!(s.lines().any(|l| l.contains("Flags row") && l.contains("ANC") && l.contains("Normal")), "its options on its line: {s}");
-    let Some(crate::settings_view::Opened::Overlay(crate::app::Overlay::Picker { options, target, .. })) = crate::settings_view::open_row(rows[0].clone()) else { panic!("a picker") };
-    assert_eq!(options, [("✓ ANC".to_string(), "0".to_string()), ("  Normal".to_string(), "3".to_string())]);
-    assert_eq!(target.cmd(options[1].1.clone()), Some(Cmd::Plugin(crate::app::PluginCmd::Set("dev.example.buds".into(), "cycle".into(), Value::Flags(0b11)))));
+}
+
+/// On a flags row ← → move the cursor along its options, changing nothing, and enter switches the one
+/// it is on alone, the others staying as they are.
+#[test]
+fn a_flags_row_switches_the_option_under_its_cursor() {
+    use nori_plugins::{RowKind, Value};
+    let flags = |bits| nori_plugins::PluginRow { options: vec!["ANC".into(), "Ambient".into(), "Off".into()], ..plugin_row("cycle", RowKind::Flags, Some(Value::Flags(bits))) };
+    let mut a = plugins_app(vec![card("dev.example.buds", "Buds", vec![flags(0b001)])], vec![official()], Default::default());
+    open_plugin(&mut a, "dev.example.buds");
+    select_row(&mut a, |r| matches!(r, Row::Flags { .. }));
+    a.cmds.clear();
+    let set = |bits| Some(Cmd::Plugin(crate::app::PluginCmd::Set("dev.example.buds".into(), "cycle".into(), Value::Flags(bits))));
+    let line = |a: &mut App| draw(a, 140, 60).lines().find(|l| l.contains("Flags row")).map(str::to_string).expect("the row shows");
+    assert!(line(&mut a).contains("[ANC]"), "the cursor starts on the first");
+
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.pop(), None, "moving changes nothing");
+    assert!(line(&mut a).contains("[Ambient]"));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), set(0b011), "Ambient on beside ANC");
+
+    a.settings.own.plugins[0].rows[0] = flags(0b011);
+    a.settings.invalidate();
+    assert!(line(&mut a).contains("[Ambient]"), "the cursor stays where it was");
+    key(&mut a, KeyCode::Right);
+    key(&mut a, KeyCode::Right);
+    let s = draw(&mut a, 140, 60);
+    dump("plugin-flags-row", &s);
+    assert!(s.contains("[Off]"), "the cursor stops at the last: {s}");
+    assert!(s.contains("← → move  enter switch"), "the foot names its keys: {s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), set(0b111), "all three on");
+    key(&mut a, KeyCode::Left);
+    key(&mut a, KeyCode::Left);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), set(0b010), "ANC alone off");
 }
 
 /// A plugin's page row opens its page over the one it is on, under its name and hint, its own page rows
