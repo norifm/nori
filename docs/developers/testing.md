@@ -323,6 +323,7 @@ with that reason.
 | `device-sound` | An output's sound profile applies on connect | The platform's output events |
 | `sheets` | A sheet over the sideways player keeps the status bar away | Android's status bar rules and insets |
 | `queue-panel` | Tapping, scrolling, Clear and Undo in the queue panel | Compose, the panel, media3's list |
+| `sync` | Your devices and Pair a device, both ways round, Sync this profile, removing, Reset pairing, the server going | The screens, OkHttp's WebSockets through `adb reverse` |
 | `remote` | The terminal app as the other device, through every system surface | NsdManager, the remote media session, MediaRouter2 |
 | `jam` | Hosting a jam with two guests, then joining one as a guest | The service, the invite intent, media3 |
 | `scrobble` (opt-in, local) | A qualifying listen counts once, and an early skip does not | media3's track callbacks |
@@ -335,6 +336,9 @@ Some sections need more than the emulator:
 - `plugins` serves a plugin repo from this computer. It takes orbit and the showcase from
   `nori-dev-plugins/dist` beside this checkout (or `NORI_DEV_PLUGINS_DIST`), and the official plugins
   from `nori-plugins/dist` (or `NORI_PLUGINS_DIST`).
+- `sync` runs the self-hosted sync server from the `nori-sync` checkout beside this one (or
+  `NORI_SYNC_ROOT`), and `nori-cli --sync` as the other device. It starts the phone in no group by
+  removing the group from the stopped app's database.
 - `remote` resolves the terminal app's live mDNS announcement. It uses `dns-sd` on macOS and Python's
   zeroconf on Linux. `python3 tools/test-mdns.py` checks that a stale announcement is rejected.
 - `jam` needs the relay from `tools/jam-server.sh`. Its guests are `tools/jam-guest.py`, and its host is

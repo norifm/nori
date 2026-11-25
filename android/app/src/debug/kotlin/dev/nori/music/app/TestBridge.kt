@@ -74,9 +74,10 @@ class TestBridge : BroadcastReceiver() {
             Thread({ answer(runCatching { remoteCheck(nori, arg, value, context) }.getOrElse { "remote failed: ${it.javaClass.simpleName}" }) }, "remotecheck").start()
             return
         }
-        // Pairing and profile sync, which have no screen yet (tools/sync-check.sh): "server <url>", "code",
-        // "pairing", "take <link>", "confirm [keep]", "state", "devices", "profiles", "reset". Off the main
-        // thread, as the app calls the core.
+        // Pairing and profile sync (tools/sync-check.sh, feature-e2e.sh's sync): "server <url>", "code",
+        // "pairing", "take <link>", "confirm [keep]", "state", "devices", "profiles", "keeps", "reset",
+        // "nearby <name>|<link>" (empty: none), the waiting devices the core does not announce yet, and "drop
+        // <profile>" (removed here only). Off the main thread, as the app calls the core.
         if (cmd == "sync") {
             val nori = dev.nori.music.Nori.get(context)
             Thread({ answer(runCatching { syncCheck(nori, arg, value, context) }.getOrElse { "sync failed: ${it.javaClass.simpleName}" }) }, "synccheck").start()
@@ -166,7 +167,16 @@ private fun syncCheck(nori: dev.nori.music.Nori, arg: String, value: String, con
         "state" -> "state ${sync.state()}"
         "devices" -> "devices " + sync.devices().joinToString(",") { "${it.name}:${if (it.online) "online" else "offline"}" }
         "profiles" -> "profiles " + nori.settings.value.servers.joinToString(",") { it.name }
+        "keeps" -> "keeps ${sync.keepsCopy()}"
         "reset" -> { sync.reset(); "reset" }
+        "drop" -> {
+            nori.settings.value.servers.filter { it.name == value }.forEach { p -> sync.syncOff(p.id, false); android.os.Handler(android.os.Looper.getMainLooper()).post { nori.removeServer(p.id) } }
+            "drop $value"
+        }
+        "nearby" -> {
+            nori.sync.heardNearby(value.split('|', limit = 2).takeIf { it.size == 2 }?.let { (n, link) -> listOf(dev.nori.music.sync.Nearby(n, link)) }.orEmpty())
+            "nearby $value"
+        }
         else -> "unknown sync check $arg"
     }
 }
