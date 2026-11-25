@@ -93,7 +93,7 @@ pub struct Session {
     store: Arc<Settings>,
     /// The members that said who they are.
     members: BTreeMap<Member, Card>,
-    /// Just paired: its first hello says so.
+    /// Just paired: its hellos say so while this session lasts, to the devices that reach the room late too.
     new: bool,
 }
 
@@ -225,8 +225,7 @@ impl Session {
         let room = self.room();
         match heard {
             Heard::Joined { room: r, .. } if r == room => {
-                let new = std::mem::take(&mut self.new);
-                self.say(relay, To::Everyone, &Said::Hello { card: self.card(here), answer: false, new });
+                self.say(relay, To::Everyone, &Said::Hello { card: self.card(here), answer: false, new: self.new });
                 if self.keeps_copy() {
                     relay.get_copy(&room);
                 }
@@ -256,15 +255,16 @@ impl Session {
         let mut out = Outcome::default();
         match said {
             Said::Hello { card, answer, new } => {
+                let news = new && !self.group().seen.iter().any(|s| s.device == card.device);
                 self.kept.group.saw(&card.device, &card.name, now_ms);
-                if new {
+                if news {
                     out.events.push(SyncEvent::NewDevice { name: card.name.clone() });
                 }
                 if card.version < READ_BY {
                     out.events.push(SyncEvent::UpdateOther { name: card.name.clone() });
                 }
                 if !answer {
-                    self.say(relay, To::Member(from), &Said::Hello { card: self.card(here), answer: true, new: false });
+                    self.say(relay, To::Member(from), &Said::Hello { card: self.card(here), answer: true, new: self.new });
                 }
                 let whole = self.kept.book.state().fitted(card.plays);
                 self.say(relay, To::Member(from), &Said::Profiles { changes: whole, keep: self.group().keep.clone(), whole: true });

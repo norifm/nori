@@ -118,11 +118,14 @@ The code holds nothing secret: a photographed or forwarded code is useless.
 3. It answers a `Confirmation` for the user. It names the new device, the profiles it receives, and the
    group it leaves. It holds the words unless the code came by camera, and asks about a kept copy at the
    first pairing.
-4. On a yes, `admit` seals the key to the lock and sends it into the meeting room. It answers `Gone`
-   when the new device left. At the first pairing, `admit_first` makes the group first.
+4. On a yes, `admit` seals the key to the lock and sends it into the meeting room, with the group's
+   devices it knows, itself among them. It answers `Gone` when the new device left. At the first
+   pairing, `admit_first` makes the group first.
 5. The new device opens it (`JoinStep::Paired`). `Welcomed::join` says goodbye to its old group, if any.
    It keeps the device's profile sync and stores the new group.
-6. The new device joins the group room, and its first hello makes the others report `NewDevice`.
+6. The new device joins the group room. Its hellos say that it is new while that session lasts. A
+   device reports `NewDevice` for a new device it has not seen yet, so a device that reaches the room
+   late reports it too, and the new device reports none of the devices the key came with.
 
 The code is one link, also the QR code's text:
 

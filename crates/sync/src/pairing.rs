@@ -11,7 +11,7 @@ use nori_settings::settings_store::Settings;
 use serde::{Deserialize, Serialize};
 
 use crate::book::Book;
-use crate::group::{new_device_id, Group, KeepCopy, Kept};
+use crate::group::{new_device_id, Group, KeepCopy, Kept, Seen};
 use crate::keys::{b64, unb64, GroupKey, Lock, LockKey, RoomName};
 use crate::profile::{guest, Plays};
 use crate::room::{Heard, Refusal, Relay, RoomKind, To};
@@ -144,6 +144,9 @@ struct Welcome {
     key: String,
     server: String,
     keep: KeepCopy,
+    /// The group's devices the sending device knows, itself among them: none is news to the new device.
+    #[serde(default)]
+    seen: Vec<Seen>,
 }
 
 /// What a step of pairing on the new device came to.
@@ -229,7 +232,7 @@ impl Joining {
         let Some(key) = GroupKey::from_text(&welcome.key) else { return JoinStep::Refused(PairingRefused::Tampered) };
         self.paired = true;
         relay.leave(&self.meeting);
-        let group = Group { key, server: welcome.server, device: new_device_id(), name: self.name.clone(), seen: Vec::new(), keep: welcome.keep };
+        let group = Group { key, server: welcome.server, device: new_device_id(), name: self.name.clone(), seen: welcome.seen, keep: welcome.keep };
         JoinStep::Paired(Welcomed { group })
     }
 }
@@ -357,11 +360,13 @@ impl Admitting {
     }
 
     /// Seals `group`'s key to the new device's lock and sends it, if the device is still there.
-    fn send(&mut self, relay: &dyn Relay, group: &Group) -> AdmitStep {
+    fn send(&mut self, relay: &dyn Relay, group: &Group, now_ms: i64) -> AdmitStep {
         if !self.present {
             return self.end(relay, PairingRefused::Gone);
         }
-        let welcome = Welcome { v: VERSION, key: group.key.text(), server: group.server.clone(), keep: group.keep.clone() };
+        let me = Seen { device: group.device.clone(), name: group.name.clone(), last_ms: now_ms, online: false };
+        let seen = group.seen.iter().cloned().chain([me]).collect();
+        let welcome = Welcome { v: VERSION, key: group.key.text(), server: group.server.clone(), keep: group.keep.clone(), seen };
         let plain = serde_json::to_vec(&welcome).expect("a welcome serializes");
         // A lock no key seals to (a low-order point) was never a new device's.
         let Some(sealed) = self.code.lock.seal(&plain, &self.code.meeting) else { return self.end(relay, PairingRefused::NotACode) };
@@ -373,8 +378,8 @@ impl Admitting {
 
     /// The user confirmed: `own`'s key goes to the new device. [`AdmitStep::Sent`], or
     /// [`PairingRefused::Gone`] when it left the meeting.
-    pub fn admit(&mut self, relay: &dyn Relay, own: &Session) -> Option<AdmitStep> {
-        (self.state == AdmitState::Asking).then(|| self.send(relay, own.group()))
+    pub fn admit(&mut self, relay: &dyn Relay, own: &Session, now_ms: i64) -> Option<AdmitStep> {
+        (self.state == AdmitState::Asking).then(|| self.send(relay, own.group(), now_ms))
     }
 
     /// The user confirmed the group's first pairing: this device, `name`, makes the group on the code's
@@ -389,7 +394,7 @@ impl Admitting {
         let mut book = Book::default();
         let keep = KeepCopy { on: keep_copy, stamp: book.next(&device, now_ms) };
         let group = Group { key: GroupKey::new(), server: self.code.server.clone(), device, name, seen: Vec::new(), keep };
-        match self.send(relay, &group) {
+        match self.send(relay, &group, now_ms) {
             AdmitStep::Refused(refused) => Err(refused),
             _ => {
                 let session = Session::with(Kept { group, book }, store, false);

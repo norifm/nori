@@ -44,6 +44,28 @@ fn every_device_says_who_it_is_and_the_list_keeps_when_each_was_seen() {
 }
 
 #[test]
+fn a_device_that_reaches_the_room_after_the_new_one_said_hello_still_hears_it_is_new() {
+    let hub = Hub::new(NOW);
+    let (mut pixel, mut mac) = two(&hub);
+    pixel.link.drop_connection();
+    let mut ipad = Device::new(&hub, "iPad", phone(), vec![]);
+    pair(&mut mac, &mut ipad, NOW + 1);
+    settle(&mut [&mut mac, &mut ipad], NOW + 1);
+    assert_eq!(mac.take_events(), [SyncEvent::NewDevice { name: "iPad".into() }]);
+    pixel.act(|s, link| s.connect(link));
+    settle(&mut [&mut pixel, &mut mac, &mut ipad], NOW + 2);
+    assert_eq!(pixel.take_events(), [SyncEvent::NewDevice { name: "iPad".into() }]);
+    // Told once: the iPad's hellos after a drop are not news to anyone.
+    for d in [&pixel, &mac] {
+        d.link.drop_connection();
+    }
+    pixel.act(|s, link| s.connect(link));
+    mac.act(|s, link| s.connect(link));
+    settle(&mut [&mut pixel, &mut mac, &mut ipad], NOW + 3);
+    assert_eq!((pixel.take_events(), mac.take_events(), ipad.take_events()), (vec![], vec![], vec![]));
+}
+
+#[test]
 fn a_device_that_cannot_play_a_profile_gets_no_sign_in_for_it() {
     let hub = Hub::new(NOW);
     let copies = crate::profile::Here { copied: vec!["subsonic".into(), PLUGIN.into()], ..phone() };

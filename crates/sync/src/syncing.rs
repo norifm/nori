@@ -694,7 +694,7 @@ impl Syncing {
             let unix_ms = (now + running.unix_offset) / 1000;
             let Some(Pair::Admitting(admitting, link)) = running.pair.as_mut() else { return };
             let step = match running.paired.as_ref() {
-                Some(own) => admitting.admit(link, &own.session),
+                Some(own) => admitting.admit(link, &own.session, unix_ms),
                 None => match admitting.admit_first(link, name, keep_copy, s.settings.clone(), unix_ms) {
                     Ok(session) => {
                         running.paired = Some(s.paired(session, running, presence, now));
