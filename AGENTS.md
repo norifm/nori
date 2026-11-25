@@ -160,8 +160,12 @@ asks; `docs/research/plugins.md` is the plugin plan.
 
 ## Design: Nori Seasons
 
-Android is the reference; the Mac, web, terminal and iPod clients follow it, not another app. The full
-system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw.
+Android is the reference; the Mac, web, terminal and iPod clients follow it, not another app. They make
+Android's choices: what a screen holds, its pages and sub-pages, sheets and back steps, flows and words.
+They don't flatten, merge or restructure them. Only the layout fits the platform: a wide window gets a
+layout made for it, not a phone screen scaled up, and a structure changes only where it plainly works
+better on a big screen (say why in the report). The full system (tokens, components) is
+https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw.
 
 - Paper, not white: every page is its season's paper (Spring, Summer, Autumn, Winter, marked 春 夏 秋 冬),
   Day, Night or Midnight. Five roles carry it: page, surface, ink, accent, on; every other grey is a fixed
