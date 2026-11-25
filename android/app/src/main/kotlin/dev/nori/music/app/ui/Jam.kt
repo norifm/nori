@@ -6,13 +6,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -27,18 +24,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorProducer
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -48,7 +41,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.R
 import dev.nori.music.app.vm.PlayerViewModel
@@ -299,27 +291,13 @@ internal fun InviteBody(link: String) {
 @Composable
 internal fun LinkCode(link: String, hint: String, homeOnly: String? = null) {
     val vm: RemoteViewModel = viewModel()
-    val qr by produceState<dev.nori.music.ffi.remote.QrCode?>(null, link) { value = vm.qr(link) }
     val context = LocalContext.current
     val copied = words(R.string.jam_link_copied)
     Column(
         Modifier.fillMaxWidth().windowInsetsPadding(gestureBarRoom).padding(start = Space.gutter, end = Space.gutter, bottom = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // White under the code whatever the theme, as a scanner wants it; the room is kept while it is made.
-        Box(Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White).padding(18.dp).size(232.dp)) {
-            qr?.let { code ->
-                Spacer(Modifier.fillMaxSize().drawWithCache {
-                    val n = code.size.toInt()
-                    val cell = size.width / n
-                    val path = Path()
-                    for (y in 0 until n) for (x in 0 until n) {
-                        if (code.dark[y * n + x]) path.addRect(androidx.compose.ui.geometry.Rect(Offset(x * cell, y * cell), Size(cell + 0.5f, cell + 0.5f)))
-                    }
-                    onDrawBehind { drawPath(path, Color.Black) }
-                })
-            }
-        }
+        QrPicture(link, 232.dp)
         Text(
             hint, Modifier.padding(top = 16.dp), textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,

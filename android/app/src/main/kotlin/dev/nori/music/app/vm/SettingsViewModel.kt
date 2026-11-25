@@ -327,7 +327,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         // The backup brings its sync and sync server settings, never the pairing.
         nori.sync.settingsChanged()
         if (r.settings.server) r.settings.prefs.server?.let(nori::activate)
-        BackupUi.Restored(r.plugins)
+        BackupUi.Restored(r.plugins, r.pairingNotRestored)
     }
 
     private fun backupStep(restore: Boolean, step: suspend () -> BackupUi) = viewModelScope.launch {
@@ -524,6 +524,9 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     private val _account = MutableStateFlow(AccountUi())
     val account: StateFlow<AccountUi> = _account
+
+    /** A sign-in profile sync refused, being to another account than the profile syncs with. */
+    val otherAccount: StateFlow<dev.nori.music.OtherAccount?> = nori.otherAccount
 
     /** The open profile's rules as its core reports them; [rules] reads them. */
     val reportedRules = nori.reportedRules

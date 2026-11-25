@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -78,6 +80,9 @@ private class OkSockets(private val client: () -> OkHttpClient) : Sockets {
     }
 }
 
+/** A device waiting nearby with its pairing screen open: its name and its code. */
+data class Nearby(val name: String, val link: String)
+
 /**
  * Pairing and profile sync (the core's `Syncing`): nothing runs unless this phone is paired with sync on.
  * It hears whether the app is shown and playing, and lends sync's keep-alive the engine's wakes, so it
@@ -92,10 +97,17 @@ class Sync(private val nori: Nori) : SyncClient {
     private val main = Handler(Looper.getMainLooper())
     /** Calls into the core leave the main thread here, one at a time. */
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "nori-sync-calls") }
+    private val calls = worker.asCoroutineDispatcher()
+
+    /** [ask] of the core's sync, on the thread its calls leave the main thread on. */
+    suspend fun <T> call(ask: (Syncing) -> T): T = withContext(calls) { ask(syncing) }
+
+    /** [act] on the core's sync there, whatever becomes of the caller (a screen left). */
+    fun post(act: (Syncing) -> Unit) = worker.execute { act(syncing) }
 
     private val _changes = MutableStateFlow(0L)
 
-    /** Bumped when [state] or the pairing changed; screens read them again. */
+    /** Bumped when where sync stands, the pairing or the group's devices changed; screens read them again. */
     val changes: StateFlow<Long> = _changes.asStateFlow()
 
     private val _events = MutableSharedFlow<SyncEvent>(extraBufferCapacity = 16)
@@ -107,6 +119,18 @@ class Sync(private val nori: Nori) : SyncClient {
 
     /** Plugins the synced profiles need, for the plugin screens to install from their repos. */
     val installs: StateFlow<List<NeededPlugin>> = _installs.asStateFlow()
+
+    private val _nearby = MutableStateFlow<List<Nearby>>(emptyList())
+
+    /**
+     * Devices waiting nearby with their pairing screen open. The core does not announce them yet: the
+     * debug build's test bridge sets the list ([heardNearby]) until it does.
+     */
+    val nearby: StateFlow<List<Nearby>> = _nearby.asStateFlow()
+
+    fun heardNearby(devices: List<Nearby>) {
+        _nearby.value = devices
+    }
 
     /** The playback service's engine while it runs, which sync's keep-alive rides on while sync runs. */
     private var engine: EnginePlayer? = null
@@ -153,6 +177,7 @@ class Sync(private val nori: Nori) : SyncClient {
     }
 
     override fun event(event: SyncEvent) {
+        NoriLog.i("sync: $event")
         _events.tryEmit(event)
     }
 

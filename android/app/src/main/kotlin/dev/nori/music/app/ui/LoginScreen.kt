@@ -91,7 +91,11 @@ private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, profile: Stri
         }
         return
     }
-    Column(Modifier.padding(horizontal = GROUP_MARGIN), Arrangement.spacedBy(12.dp)) { SignInWays(vm, info, ui) }
+    val other by vm.otherAccount.collectAsStateWithLifecycle()
+    Column(Modifier.padding(horizontal = GROUP_MARGIN), Arrangement.spacedBy(12.dp)) {
+        other?.takeIf { it.profile == profile }?.let { Text(say.syncOtherAccount(it.syncsWith), Modifier.padding(horizontal = GROUP_MARGIN).testTag("other-account"), color = MaterialTheme.colorScheme.error) }
+        SignInWays(vm, info, ui)
+    }
 }
 
 /** The ways [info]'s provider signs in, for an account that is not signed in, or whose session [ui] says ended. */
@@ -294,16 +298,17 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
                 Fields(main)
                 Switches(main)
             }
-            if (folded.isNotEmpty()) {
-                GroupCard(Modifier.padding(top = 8.dp)) {
-                    GroupRow(say.advanced, { advanced = !advanced }, Modifier.testTag("advanced"), divider = false) {
-                        Icon(if (advanced) Iconoir.NavArrowUp else Iconoir.NavArrowDown, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+            val saved = vm.prefs.collectAsStateWithLifecycle().value.servers.firstOrNull { it.id == p.id }?.takeIf { !adding }
+            // The provider's advanced fields, and Sync this profile.
+            GroupCard(Modifier.padding(top = 8.dp)) {
+                GroupRow(say.advanced, { advanced = !advanced }, Modifier.testTag("advanced"), divider = false) {
+                    Icon(if (advanced) Iconoir.NavArrowUp else Iconoir.NavArrowDown, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (advanced) {
-                    Fields(folded)
-                    Switches(folded)
-                }
+            }
+            if (advanced) {
+                Fields(folded)
+                Switches(folded)
+                GroupCard(Modifier.padding(top = 12.dp)) { SyncProfileSwitch(saved, !p.syncOff) { on -> p = p.copy(syncOff = !on) } }
             }
             // A saved profile with nothing to edit here has no button: it is renamed from its menu.
             val saves = adding || (main + folded).any { it != Field.NAME }
@@ -328,7 +333,6 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
                 )
             }
             if (info != null && info.signIn.isNotEmpty() && !adding) AccountPart(vm, info, p.id) { name -> p = p.copy(user = name) }
-            val saved = vm.prefs.collectAsStateWithLifecycle().value.servers.firstOrNull { it.id == p.id }?.takeIf { !adding }
             if (saved != null) ScrobblingPart(vm, saved)
             Spacer(Modifier.height(24.dp))
         }
@@ -433,7 +437,7 @@ fun WaitingProfile(vm: SettingsViewModel, wait: dev.nori.music.ffi.ProfileWait) 
                 say.profileWaitAction(name, wait)?.let { action ->
                     PillButton(action, null, {
                         when (wait) {
-                            dev.nori.music.ffi.ProfileWait.INSTALL -> installing = true
+                            dev.nori.music.ffi.ProfileWait.INSTALL -> plugins.bring(id) { installing = true }
                             dev.nori.music.ffi.ProfileWait.TURN_ON -> plugins.turn(id, true)
                             dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> plugins.allOff(vm, false)
                             dev.nori.music.ffi.ProfileWait.UPDATE, dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> {}

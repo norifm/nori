@@ -986,4 +986,92 @@
     <string name="plugins_stopped_crashed">Off: nori stopped while it ran</string>
     <string name="plugins_stopped_this_start">Off until nori starts again</string>
     <string name="plugins_restart">Restart</string>
+    <!-- Your devices and pairing (Settings > Library > Other devices > Your devices). -->
+    <string name="sync_this_device">This device</string>
+    <string name="sync_not_paired">This device isn’t paired with another.</string>
+    <string name="sync_pair">Pair a device</string>
+    <string name="sync_reset">Reset pairing</string>
+    <string name="sync_reset_title">Reset pairing?</string>
+    <string name="sync_reset_text">Your other devices keep their data and stop syncing with this one.</string>
+    <string name="sync_reset_lost">A lost device keeps the sign-ins it had. Change the passwords of %1$s.</string>
+    <string name="sync_reset_confirm">Reset</string>
+    <string name="sync_online">Online</string>
+    <string name="sync_seen">Seen %1$s</string>
+    <string name="sync_section_devices">Devices</string>
+    <string name="sync_section_server">Sync server</string>
+    <string name="sync_server_placeholder">nori’s own</string>
+    <string name="sync_keep_copy">Keep an encrypted copy</string>
+    <string name="sync_keep_copy_detail">Only your devices can read it.</string>
+    <string name="sync_install">Install %1$s</string>
+    <string name="sync_section_install">Plugins your profiles need</string>
+    <string name="sync_install_file">Installed from a file on your other device</string>
+    <!-- Where sync stands. -->
+    <string name="sync_state_connecting">Connecting</string>
+    <string name="sync_state_connected">Connected</string>
+    <string name="sync_state_offline">Offline</string>
+    <string name="sync_state_resting">Paused while nori is in the background</string>
+    <string name="sync_retry">%1$s Trying again at %2$s.</string>
+    <string name="sync_refused_limit">The sync server is busy.</string>
+    <string name="sync_refused_daily">The sync server reached its daily limit.</string>
+    <string name="sync_refused_version">The sync server needs another version of nori. Update nori.</string>
+    <string name="sync_refused_secret">The sync server didn’t take the encrypted copy.</string>
+    <string name="sync_refused_unavailable">The sync server isn’t working right now.</string>
+    <string name="sync_refused_invalid">nori and the sync server don’t understand each other. Sync stops until nori starts again.</string>
+    <!-- What happened in the group, as the app's notice. -->
+    <string name="sync_new_device">New device paired: %1$s</string>
+    <string name="sync_device_left">%1$s stopped syncing with this device.</string>
+    <string name="sync_update_this">Another device runs a newer nori. Update nori to keep syncing.</string>
+    <string name="sync_update_other">%1$s needs a newer nori to keep syncing.</string>
+    <string name="sync_paired">Paired</string>
+    <!-- Pair a device. -->
+    <string name="sync_section_code">This device’s code</string>
+    <string name="sync_section_take">Another device’s code</string>
+    <string name="sync_code_lasts">The code works for five minutes.</string>
+    <string name="sync_code_words">Check that your other device shows these three words.</string>
+    <string name="sync_code_ran_out">This code ran out.</string>
+    <string name="sync_new_code">New code</string>
+    <string name="sync_show_code">Show this device’s code</string>
+    <string name="sync_copy_link">Copy link</string>
+    <string name="sync_scan">Scan a code</string>
+    <string name="sync_paste">Paste a link</string>
+    <string name="sync_link">Pairing link</string>
+    <string name="sync_scan_hint">Point the camera at the code on your other device.</string>
+    <string name="sync_camera_denied">nori can’t use the camera. Paste the link instead.</string>
+    <string name="sync_no_camera">This device has no camera. Paste the link instead.</string>
+    <string name="sync_section_nearby">Waiting nearby</string>
+    <string name="sync_starting">Reaching the sync server…</string>
+    <plurals name="sync_confirm_title">
+        <item quantity="one">Give ‘%1$s’ your sign-ins for %2$d profile?</item>
+        <item quantity="other">Give ‘%1$s’ your sign-ins for %2$d profiles?</item>
+    </plurals>
+    <string name="sync_confirm_words">Check that the other screen shows the same three words.</string>
+    <plurals name="sync_confirm_leaves">
+        <item quantity="one">%1$s will stop syncing with its %2$d other device.</item>
+        <item quantity="other">%1$s will stop syncing with its %2$d other devices.</item>
+    </plurals>
+    <string name="sync_keep_copy_ask">Keep an encrypted copy on the sync server</string>
+    <string name="sync_keep_copy_ask_detail">It’s encrypted on your devices. Nobody running the server can read it, only devices you pair.</string>
+    <string name="sync_pair_action">Pair</string>
+    <!-- Why pairing stopped. -->
+    <string name="sync_refused_not_a_code">This isn’t a nori pairing code.</string>
+    <string name="sync_refused_newer">This code comes from a newer nori. Update nori to pair.</string>
+    <string name="sync_refused_expired">This code ran out. Make a new one on the other device.</string>
+    <string name="sync_refused_already">That device is already paired with this one.</string>
+    <string name="sync_refused_gone">This code was used, or the other device stopped pairing.</string>
+    <string name="sync_refused_tampered">A key came that doesn’t fit this code. Still waiting.</string>
+    <string name="sync_refused_spent">A key came for a code that was already used. Still waiting.</string>
+    <string name="sync_refused_off">Turn on Use a sync server to pair.</string>
+    <!-- A profile and sync. -->
+    <string name="sync_profile">Sync this profile</string>
+    <string name="sync_sign_in">Sign in</string>
+    <string name="sync_profile_off_title">Stop syncing %1$s?</string>
+    <string name="sync_profile_off_text">Your other devices can keep it, or remove it too.</string>
+    <string name="sync_profile_off_remove">Remove there</string>
+    <string name="sync_profile_off_keep">Keep there</string>
+    <string name="sync_remove_everywhere">It’s removed from all your devices, with what nori keeps for it.</string>
+    <string name="sync_merge_title">The same account?</string>
+    <string name="sync_merge">Merge</string>
+    <string name="sync_keep_both">Keep both</string>
+    <string name="sync_other_account">This profile syncs with %1$s. Sign in to that account.</string>
+    <string name="sync_other_account_unnamed">This profile syncs with another account. Sign in to that one.</string>
 </resources>

@@ -6,7 +6,6 @@ import dev.nori.music.ffi.JamView
 import dev.nori.music.ffi.RelaySupport
 import dev.nori.music.ffi.RemoteDevice
 import dev.nori.music.ffi.remote.Op
-import dev.nori.music.ffi.remote.QrCode
 import dev.nori.music.settings.server
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -20,7 +19,6 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * The devices sheet and the jam (its header in the queue, the invite, the people, a guest's requests) over the
@@ -179,7 +177,4 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
 
     /** The server's address when an invite to it works only on a home network (the core's `is_home_only`). */
     fun homeOnly(): String? = nori.settings.value.server?.url?.takeIf { dev.nori.music.ffi.remote.isHomeOnly(it) }
-
-    /** The invite as a QR code, made off the main thread. */
-    suspend fun qr(link: String): QrCode? = withContext(Dispatchers.Default) { dev.nori.music.ffi.remote.qrCode(link) }
 }

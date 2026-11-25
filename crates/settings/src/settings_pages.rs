@@ -108,6 +108,8 @@ pub enum SettingsLink {
     HomeRows,
     LyricsSources,
     Downloads,
+    /// Your devices: this device's group, pairing and the sync server.
+    YourDevices,
 }
 
 /// What a row's button does.
@@ -445,7 +447,11 @@ impl Page<'_> {
         }
         out.push((SectionId::History, vec![self.setting("tasteModel")]));
         out.push((SectionId::Online, vec![self.setting("thirdPartyLookups")]));
-        let mut devices = vec![self.setting("remoteControl")];
+        let mut devices = Vec::new();
+        if self.phone() {
+            devices.push(row(RowItem::Link { to: SettingsLink::YourDevices }));
+        }
+        devices.push(self.setting("remoteControl"));
         match self.client {
             SettingsClient::Phone => devices.push(self.setting("queueOffer")),
             SettingsClient::Terminal => devices.push(row(RowItem::Action { action: SettingsAction::JoinJam })),
@@ -649,6 +655,15 @@ mod tests {
         // A nightly build has no beta channel to choose.
         let nightly = PageFacts { nightly: true, ..facts() };
         assert!(!names(&every_row(SettingsClient::Phone, &d, &nightly), false).iter().any(|n| n == "updateBeta"));
+    }
+
+    #[test]
+    fn the_phone_reaches_your_devices_from_other_devices() {
+        let d = StoredPrefs::default();
+        let s = state(&d, Output::default(), &model());
+        let library = page(SettingsPage::Library, SettingsClient::Phone, &d, &s, &facts());
+        let devices = library.iter().find(|s| s.id == SectionId::Devices).expect("the phone has Other devices");
+        assert_eq!(devices.rows[0].item, RowItem::Link { to: SettingsLink::YourDevices });
     }
 
     #[test]

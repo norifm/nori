@@ -329,6 +329,7 @@
     <string name="settings_backup_working">Working…</string>
     <string name="settings_backup_saved">Backup saved.</string>
     <string name="settings_backup_restored">Restored.</string>
+    <string name="settings_backup_not_paired">Pairing wasn’t restored.</string>
     <string name="settings_backup_plugin_other">%1$s came back at %2$s</string>
     <string name="settings_backup_plugin_file">%1$s was installed from a file: install it again</string>
     <string name="settings_backup_plugin_gone">%1$s wasn\'t found in its repo</string>
@@ -420,6 +421,12 @@
     <string name="settings_section_devices">Other devices</string>
     <string name="settings_remote_control">Remote control and jams</string>
     <string name="settings_hint_remote_control">Remote control, play on another device, Jam, group session, listen together</string>
+    <string name="settings_your_devices">Your devices</string>
+    <string name="settings_hint_your_devices">Pair a device, profile sync, reset pairing</string>
+    <string name="settings_sync">Use a sync server</string>
+    <string name="settings_hint_sync">Pairing, profile sync between your devices</string>
+    <string name="settings_sync_server">Sync server address</string>
+    <string name="settings_hint_sync_server">Self-hosted sync server, custom server</string>
     <!-- Settings > Plugins: one switch over every plugin. -->
     <string name="settings_headphone_sound">Headphone sound</string>
     <string name="settings_headphone_natural">Natural</string>

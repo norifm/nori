@@ -577,6 +577,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
                         SettingsGroupScreen(settings, e.arguments!!.getString("id")!!, e.arguments?.getString("key").orEmpty(), actions)
                     }
                     page("equalizer") { EqualizerScreen(settings) }
+                    page("pair-device") { PairDevice() }
                     page("plugins") { PluginsScreen(plugins, settings, LocalNav.current.pluginPages()) }
                     page("plugin-browser") { PluginBrowser(plugins, LocalNav.current.pluginPages()) }
                     page("plugin-repos") { PluginRepos(plugins) }

@@ -81,7 +81,7 @@ val LocalSpotlight = androidx.compose.runtime.compositionLocalOf { SettingSpotli
 
 /** The wash that says "this is the one you searched for", fading out once you have seen it. */
 @Composable
-private fun Modifier.spotlight(key: String?): Modifier {
+internal fun Modifier.spotlight(key: String?): Modifier {
     val spot = LocalSpotlight.current
     val on = key != null && spot.key == key
     if (!on) return this
@@ -389,6 +389,9 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
                     page.sections.forEach { s -> SettingsSectionRows(vm, s, actions) }
                 }
                 "licences" -> LicencesContent { title, content -> Section(title, content) }
+                dev.nori.music.app.vm.DEVICES -> YourDevices(vm)
+                // Profiles that may be one account, over the profiles themselves.
+                "servers" -> { MergeOffers(vm); page.sections.forEach { s -> SettingsSectionRows(vm, s, actions) } }
                 else -> page.sections.forEach { s -> SettingsSectionRows(vm, s, actions) }
             }
             Spacer(Modifier.height(Space.section + LocalChromeInset.current))
@@ -476,6 +479,7 @@ internal fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection
                 )
             }
             "downloads" -> nav.downloads()
+            "pair-device" -> nav.go("pair-device")
             "add-server" -> { vm.openLogin(null); editing = vm.newProfile() }
             "backup" -> saveBackup.launch(dev.nori.music.ffi.backup.backupFileName())
             "restore" -> openBackup.launch(arrayOf("*/*"))
@@ -633,6 +637,8 @@ internal fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection
                     // A jam guest switches between the profiles; changing them is not its to do.
                     val options = dev.nori.music.ffi.settings.SettingsPart.SERVER_OPTIONS in LocalRules.current.settings
                     var removing by remember(row.id) { mutableStateOf(false) }
+                    val sync: dev.nori.music.app.vm.SyncViewModel = viewModel()
+                    val synced = row.id in sync.view.collectAsStateWithLifecycle().value.synced
                     var picking by remember(row.id) { mutableStateOf(false) }
                     var renaming by remember(row.id) { mutableStateOf(false) }
                     ProfileIconPicker(vm, profile.takeIf { picking }) { picking = false }
@@ -640,7 +646,8 @@ internal fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection
                     NoriDialog(removing, { removing = false }) {
                         AlertCard(
                             title = { Text(say.removeProfileTitle(row.label)) },
-                            text = { Text(say.removeProfileText) },
+                            // A profile that syncs goes from every paired device.
+                            text = { Text(if (synced) say.syncRemoveEverywhere else say.removeProfileText) },
                             confirmButton = { TextAction(say.remove, { removing = false; vm.removeServer(row.id) }, destructive = true) },
                             dismissButton = { TextAction(say.cancel, { removing = false }) },
                         )

@@ -24,9 +24,14 @@ import dev.nori.music.settings.withServers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 import dev.nori.music.settings.server
 import dev.nori.music.settings.loggedIn
+
+/** A sign-in profile sync refused: to [profile], whose synced account is called [syncsWith] (empty when unknown). */
+data class OtherAccount(val profile: String, val syncsWith: String)
 
 /**
  * The object graph, built by hand: there are a dozen long-lived objects and a DI
@@ -370,13 +375,35 @@ class Nori private constructor(private val context: Context) {
         return r
     }
 
-    /** How a sign-in went, whichever way it went (a page, pasting, a code). Main thread. */
+    /**
+     * How a sign-in went, whichever way it went (a page, pasting, a code). Main thread. Profile sync
+     * accepts a sign-in only to the account the profile syncs with (the core's `Syncing::signed_in`):
+     * another one is signed out again, and the profile keeps what it was called.
+     */
     fun signedIn(r: dev.nori.music.ffi.SignInResult) {
-        if (r is dev.nori.music.ffi.SignInResult.SignedIn) accountProfile()?.let {
-            updateServer(it.copy(user = r.name))
-            pluginScope.launch { keepAccountPicture() }
+        if (r !is dev.nori.music.ffi.SignInResult.SignedIn) return
+        val before = accountProfile() ?: return
+        val client = accountClient
+        _otherAccount.value = null
+        pluginScope.launch {
+            val account = client.accountId()
+            val other = sync.call { it.signedIn(before.id, account) } == dev.nori.music.ffi.sync.SignInCheck.OTHER_ACCOUNT
+            withContext(Dispatchers.Main) {
+                if (other) {
+                    client.signOut()
+                    _otherAccount.value = OtherAccount(before.id, before.user)
+                } else {
+                    settings.value.servers.firstOrNull { it.id == before.id }?.let { updateServer(it.copy(user = r.name)) }
+                }
+            }
+            if (!other) keepAccountPicture()
         }
     }
+
+    private val _otherAccount = MutableStateFlow<OtherAccount?>(null)
+
+    /** The last sign-in profile sync refused, being to another account than the profile's. */
+    val otherAccount: StateFlow<OtherAccount?> = _otherAccount
 
     /**
      * Signs the profile in use's account in with a code allowed in a browser (the core's
