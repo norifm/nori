@@ -1,6 +1,8 @@
-//! `nori-cli --sync`: pairing and profile sync with no screen, for scripts (tools/sync-check.sh). It
-//! reads one command per line on stdin and answers each with one line on stdout; what sync tells on its
-//! own (events, changed profiles) comes as lines starting with `told`.
+//! `nori-cli --sync`: pairing, profile sync and remote control with no screen, for scripts
+//! (tools/sync-check.sh). It reads one command per line on stdin and answers each with one line on
+//! stdout; what sync tells on its own (events, changed profiles) comes as lines starting with `told`.
+//! `open` opens the profile in use as the terminal client does, with remote control on and silent, so
+//! the device plays, serves and controls the group's other devices.
 //!
 //! ```text
 //! nori-cli --sync --data DIR [--name NAME] [--phone]
@@ -17,7 +19,9 @@ use nori_host::desktop::Root;
 
 const HELP: &str = "state, code, take <link>, confirm [keep], cancel, devices, reset, keep-copy on|off, profiles, \
 add <name> <url> <user> <password>, rename <name> <new name>, remove <name>, sync on|off, server <url>|-, \
-foreground on|off, playing on|off, woke, quit";
+foreground on|off, playing on|off, woke, look on|off, nearby, take-nearby <name>, open, play <query>, now, \
+remote watch on|off, remote devices, remote send <name>|* play|pause|next, remote pick <name>|*|here, \
+local <name>, quit";
 
 /// Prints a line at once, whichever thread says it.
 fn say(line: &str) {
@@ -82,10 +86,9 @@ fn run(data: &Path, name: String, reach: Reach) -> Result<(), String> {
     let root = Arc::new(Root::new(data));
     let settings = root.app.settings.clone();
     settings.open(&nori_host::db_path(data)).map_err(|e| format!("the settings: {e}"))?;
-    let sockets = nori_http::WebSockets::new();
     let told = Arc::new(Told { root: root.clone(), data: data.into() });
-    let syncing = nori_core::sync::Syncing::native(settings.clone(), sockets.clone(), told, reach);
-    sockets.tell(&syncing);
+    let syncing = nori_host::sync::computer(settings.clone(), told, reach);
+    let mut session: Option<crate::backend::Session> = None;
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         let words: Vec<&str> = line.split_whitespace().collect();
@@ -162,13 +165,127 @@ fn run(data: &Path, name: String, reach: Reach) -> Result<(), String> {
                 syncing.woke();
                 "woke".into()
             }
+            ["local", which] => {
+                let id = settings.with_prefs(|p| p.servers.iter().find(|s| s.name == *which).map(|s| s.id.clone())).flatten();
+                if let Some(id) = id {
+                    syncing.sync_off(id.clone(), false);
+                    edit(&settings, |mut list| {
+                        list.servers.iter_mut().filter(|s| s.id == id).for_each(|s| s.sync_off = true);
+                        list
+                    });
+                }
+                profiles(&settings)
+            }
+            ["look", w] => {
+                syncing.pair_look(on(Some(w)));
+                "look".into()
+            }
+            ["nearby"] => format!("nearby {}", syncing.nearby().iter().map(|d| d.name.clone()).collect::<Vec<_>>().join(",")),
+            ["take-nearby", name] => match syncing.nearby().into_iter().find(|d| d.name == *name) {
+                Some(d) => format!("take {:?}", syncing.pair_take(d.link, Came::Nearby)),
+                None => "take none".into(),
+            },
+            ["open"] => {
+                session = None;
+                match open_session(&root, &syncing) {
+                    Ok(s) => {
+                        session = Some(s);
+                        format!("open {}", settings.with_prefs(|p| p.active_server().map(|s| s.name.clone())).flatten().unwrap_or_default())
+                    }
+                    Err(e) => format!("open failed: {e}"),
+                }
+            }
+            // As a search typed and answered by the server.
+            ["play", query @ ..] => match session.as_ref().and_then(|s| s.search_server_now(s.search_typed(&query.join(" ")).query, |e| e.to_string())) {
+                Some(nori_core::search::SearchView { answer: nori_core::search::SearchShown::Found { result }, .. }) if !result.songs.is_empty() => {
+                    let s = session.as_ref().expect("open");
+                    s.play(result.songs.clone(), 0, false, None);
+                    format!("play {}", result.songs.len())
+                }
+                _ => "play nothing".into(),
+            },
+            ["now"] => session.as_ref().map_or("now closed".into(), |s| now(&s.now())),
+            ["remote", rest @ ..] => match session.as_ref().and_then(|s| s.remote()) {
+                Some(r) => remote(&r, rest),
+                None => "remote off".into(),
+            },
             _ => format!("unknown: {HELP}"),
         };
         say(&answer);
     }
+    if let Some(s) = session.take() {
+        s.close();
+    }
     syncing.settings_changed();
     settings.writer.flush();
     Ok(())
+}
+
+/// The profile in use opened as the terminal client opens it, remote control on, the music silent.
+fn open_session(root: &Root, syncing: &Arc<nori_core::sync::Syncing>) -> Result<crate::backend::Session, String> {
+    let settings = &root.app.settings;
+    settings.change(|p| StoredPrefs { remote_control: true, ..p.clone() });
+    let profile = settings.with_prefs(|p| p.active_server().cloned()).flatten().ok_or("no profile")?;
+    // What the session tells a screen goes nowhere: these commands ask instead.
+    let (tx, _) = std::sync::mpsc::channel();
+    let o = crate::backend::Open { root, http: nori_http::Http::new(), profile, device: None, images: false, offline: false, mpris: None, sync: Some(syncing.clone()), tx };
+    let s = crate::backend::Session::open(o)?;
+    s.set_volume(0.0);
+    s.in_sight(true);
+    Ok(s)
+}
+
+/// What the player shows: where it plays, playing or paused, and the song.
+fn now(now: &nori_host::player::Now) -> String {
+    let title = now.song.as_ref().map_or("-", |s| s.title.as_str());
+    format!("now {} {} {title}", now.device.as_deref().unwrap_or("here"), if now.playing { "playing" } else { "paused" })
+}
+
+/// A remote control command's answer.
+fn remote(r: &Arc<nori_core::remote::Remote>, words: &[&str]) -> String {
+    use nori_core::remote::wire::Op;
+    // `*`: the first device listed, as two terminals on one computer share its name.
+    let id_of = |name: &str| r.devices().into_iter().find(|d| name == "*" || d.name == name).map(|d| d.id);
+    match words {
+        ["watch", w] => {
+            r.clone().watch(*w == "on");
+            "remote watch".into()
+        }
+        ["devices"] => {
+            let listed: Vec<String> = r.devices().iter().map(|d| {
+                let st = d.state.as_ref().map_or("none".to_string(), |s| format!("{} {}", if s.playing { "playing" } else { "paused" }, d.now.as_ref().map_or("-", |e| e.title.as_str())));
+                format!("{}{}:{st}", d.name, if d.nearby { " (nearby)" } else { "" })
+            }).collect();
+            format!("remote devices {}", listed.join("|"))
+        }
+        ["send", name, op] => {
+            let op = match *op {
+                "play" => Op::Play,
+                "pause" => Op::Pause,
+                "next" => Op::Next,
+                _ => return format!("unknown: {HELP}"),
+            };
+            match id_of(name) {
+                Some(id) => {
+                    r.clone().send(id, op);
+                    "remote sent".into()
+                }
+                None => "remote no such device".into(),
+            }
+        }
+        ["pick", "here"] => {
+            r.clone().pick(None);
+            "remote picked here".into()
+        }
+        ["pick", name] => match id_of(name) {
+            Some(id) => {
+                r.clone().pick(Some(id));
+                "remote picked".into()
+            }
+            None => "remote no such device".into(),
+        },
+        _ => format!("unknown: {HELP}"),
+    }
 }
 
 /// The pairing as a line: a code shows its link and words.

@@ -7,9 +7,11 @@ nori-sync checkout, or NORI_SYNC_ROOT), with nori-cli --sync instances that have
 
 It starts the server on a free local port, pairs two devices through it, syncs a profile both ways, stops
 the server and sees both come back when it starts again, and makes a third device meet a full group
-room, which it shows as a refusal. With --android SERIAL it then pairs the app on that device (its
-debug build, driven by tools/app.sh) into the group and syncs a profile with it. It stops everything it
-started.
+room, which it shows as a refusal. Then two paired terminals with a profile of the fixture Navidrome
+(tools/dev-server.sh, on localhost:4533) play and control each other: through the server, and directly
+once the server is gone; a profile that does not sync offers no device. With --android SERIAL it pairs
+the app on that device (its debug build, driven by tools/app.sh) into a group, syncs a profile with it,
+and controls it from a terminal and back. It stops everything it started.
 """
 import os
 import queue
@@ -116,8 +118,16 @@ class Device:
         return self.ask("state").split(" ", 1)[1]
 
     def until(self, what, secs, command, pattern):
-        """Asks command until its answer matches pattern; the match or None."""
-        return wait_until(f"{self.name}: {what}", secs, lambda: re.search(pattern, self.ask(command)))
+        """Asks command until its answer matches pattern; the match or None, saying the last answer."""
+        last = [""]
+
+        def matched():
+            last[0] = self.ask(command)
+            return re.search(pattern, last[0])
+        found = wait_until(f"{self.name}: {what}", secs, matched)
+        if not found:
+            print(f"     ({self.name} last said: {last[0]})", file=sys.stderr)
+        return found
 
     def quit(self):
         if self.proc.poll() is not None:
@@ -128,6 +138,17 @@ class Device:
             self.proc.wait(10)
         except (OSError, subprocess.TimeoutExpired):
             self.proc.kill()
+
+
+FIXTURE = "http://localhost:4533"
+
+
+def fixture_up():
+    try:
+        with socket.create_connection(("127.0.0.1", 4533), timeout=1):
+            return True
+    except OSError:
+        return False
 
 
 def pair(old, new):
@@ -185,11 +206,22 @@ def main():
         ipad.ask(f"server {address}")
         check("a third device pairs", pair(pixel, ipad))
         check("and shows the full group room as a refusal", ipad.until("refused", 20, "state", r"Refused \{ refused: Limit"))
-        if android:
-            # The group room holds two: the app takes the place of the Mac and the iPad.
-            for d in (mac, ipad):
-                d.quit()
-            check_android(android, pixel, address)
+        for d in (pixel, mac, ipad):
+            d.quit()
+        server.stop()
+        if not fixture_up():
+            print("  NOTE  remote control needs the fixture Navidrome: tools/dev-server.sh")
+        else:
+            remote = Server(server_binary, free_port(), work / "server-remote", members=20)
+            server = remote
+            remote.start()
+            address = f"http://127.0.0.1:{remote.port}"
+            desk, laptop = Device(cli, work / "desk", "Desk"), Device(cli, work / "laptop", "Laptop")
+            devices += [desk, laptop]
+            check_remote(desk, laptop, remote, address)
+            if android:
+                laptop.quit()
+                check_android(android, desk, remote, address, work / "desk")
     finally:
         for d in devices:
             d.quit()
@@ -199,38 +231,119 @@ def main():
     sys.exit(1 if failed else 0)
 
 
+def playing(device, where, state):
+    """Whether device's player shows `where` (here, or another device's name) `state` (playing, paused)."""
+    return lambda: re.match(rf"now {where} {state}", device.ask("now"))
+
+
+def check_remote(desk, laptop, server, address):
+    """Two paired terminals: the desk plays, the laptop sees it, controls it and moves the music to itself,
+    through the server and then directly; a profile that does not sync offers no device."""
+    for d in (desk, laptop):
+        d.ask(f"server {address}")
+    desk.ask(f"add Home {FIXTURE} admin admin")
+    check("two terminals pair for remote control", pair(desk, laptop))
+    check("the profile synced", laptop.until("the profile", 20, "profiles", r"^profiles Home$"))
+    for d in (desk, laptop):
+        check(f"{d.name} opens its profile", d.ask("open").startswith("open Home"))
+    check("the desk plays", desk.ask("play Long Track").startswith("play ") and wait_until("the desk playing", 30, playing(desk, "here", "playing")))
+    laptop.ask("remote watch on")
+    check("the laptop sees the desk playing", laptop.until("the desk", 30, "remote devices", r"devices [^|]*:playing Long Track"))
+    laptop.ask("remote send * pause")
+    check("the laptop pauses it", wait_until("the desk paused", 20, playing(desk, "here", "paused")))
+    laptop.ask("remote pick *")
+    laptop.ask("remote watch off")
+    check("and shows it as the device playing", wait_until("the mirror", 20, lambda: re.match(r"now (?!here)\S.* paused", laptop.ask("now"))))
+    laptop.ask("remote send * play")
+    check("plays it again", wait_until("the desk playing again", 20, playing(desk, "here", "playing")))
+    laptop.ask("remote pick here")
+    check("and moves the music to itself", wait_until("the laptop playing", 30, playing(laptop, "here", "playing")))
+    check("the desk hands over and follows the laptop", wait_until("the desk following", 20, lambda: re.match(r"now (?!here)\S.* playing", desk.ask("now"))))
+    check("on one network the devices find each other directly", desk.until("nearby", 60, "remote devices", r"\(nearby\)"))
+    server.stop()
+    check("both lose the server", desk.until("offline", 20, "state", r"Offline") and laptop.until("offline", 20, "state", r"Offline"))
+    desk.ask("remote watch on")
+    desk.ask("remote send * pause")
+    check("without it the desk pauses the laptop through its door", wait_until("the laptop paused", 20, playing(laptop, "here", "paused")))
+    desk.ask("remote send * play")
+    check("and plays it again", wait_until("the laptop playing", 20, playing(laptop, "here", "playing")))
+    desk.ask("rename Home Records")
+    check("profile sync goes through the door too", laptop.until("the rename", 30, "profiles", r"^profiles Records$"))
+    server.start()
+    check("both come back to the server", desk.until("back", 60, "state", "Connected") and laptop.until("back", 60, "state", "Connected"))
+    laptop.ask("local Records")
+    check("a profile that does not sync offers no device", desk.until("the laptop gone", 30, "remote devices", r"^remote devices $"))
+
+
 def app(serial, *words):
     out = subprocess.run([str(HERE / "app.sh"), *words], env=dict(os.environ, ANDROID_SERIAL=serial), capture_output=True, text=True, timeout=60)
     return out.stdout.strip()
 
 
-def check_android(serial, pixel, address):
-    """The app on `serial` pairs into pixel's group through the server on this Mac, and syncs."""
-    # A code carries its server, which both sides must reach at one address: the device's own port is
-    # this Mac's.
-    port = address.rsplit(":", 1)[1]
-    subprocess.run(["adb", "-s", serial, "reverse", f"tcp:{port}", f"tcp:{port}"], check=True, capture_output=True)
+def check_android(serial, desk, server, address, data):
+    """The app on `serial`, started afresh, pairs into the desk's group through the server on this Mac,
+    plays the group's profile, and the desk controls it: through the server, as the emulator hears no
+    mDNS, and then directly once the desk's door is handed to it."""
+    # A code carries its server, which both sides must reach at one address, and the synced profile its
+    # Navidrome: the device's own ports are this Mac's.
+    ports = [address.rsplit(":", 1)[1], "4533"]
+    for port in ports:
+        subprocess.run(["adb", "-s", serial, "reverse", f"tcp:{port}", f"tcp:{port}"], check=True, capture_output=True)
     try:
-        check_app(serial, pixel, address)
+        check_app(serial, desk, server, address, data)
     finally:
-        subprocess.run(["adb", "-s", serial, "reverse", "--remove", f"tcp:{port}"], capture_output=True)
+        for port in ports:
+            subprocess.run(["adb", "-s", serial, "reverse", "--remove", f"tcp:{port}"], capture_output=True)
 
 
-def check_app(serial, pixel, address):
+def app_playing(serial, playing):
+    return lambda: f'"playing":{"true" if playing else "false"}' in app(serial, "state")
+
+
+def check_app(serial, desk, server, address, data):
+    subprocess.run(["adb", "-s", serial, "shell", "pm", "clear", "dev.nori.music"], capture_output=True)
+    app(serial, "launch")
     app(serial, "sync", "server", address)
     app(serial, "sync", "code")
     code = wait_until("the app's code", 30, lambda: re.search(r"(nori://pair#\S+)", app(serial, "sync", "pairing")))
     check("the app shows a code", code)
     if not code:
         return
-    pixel.ask(f"take {code.group(1)}")
-    asked = pixel.until("what to confirm", 30, "pairing", r"Confirm")
-    pixel.ask("confirm keep")
+    desk.ask(f"take {code.group(1)}")
+    asked = desk.until("what to confirm", 30, "pairing", r"Confirm")
+    desk.ask("confirm")
     check("the app pairs into the group", asked and wait_until("paired", 30, lambda: "Paired" in app(serial, "sync", "pairing")))
     check("the app is connected", wait_until("connected", 30, lambda: "Connected" in app(serial, "sync", "state")))
-    check("the app has the group's profiles", wait_until("profiles", 30, lambda: "Music" in app(serial, "sync", "profiles")))
-    pixel.ask("rename Music Records")
-    check("a change reaches the app", wait_until("the rename", 30, lambda: "Records" in app(serial, "sync", "profiles")))
+    check("the app has the group's profile", wait_until("profiles", 30, lambda: "Records" in app(serial, "sync", "profiles")))
+    app(serial, "set", "remoteControl", "true")
+    app(serial, "play", "search:Long Track 01")
+    check("the app plays the synced profile", wait_until("the app playing", 60, app_playing(serial, True)))
+    desk.ask("remote watch on")
+    check("the desk sees the app playing, through the server", desk.until("the app", 30, "remote devices", r"devices (?![^|]*nearby)[^|]*:playing Long Track"))
+    desk.ask("remote send * pause")
+    check("the desk pauses the app", wait_until("the app paused", 20, app_playing(serial, False)))
+    desk.ask("remote send * play")
+    check("and plays it again", wait_until("the app playing again", 20, app_playing(serial, True)))
+    desk.ask("remote pick *")
+    desk.ask("remote watch off")
+    desk.ask("remote pick here")
+    check("the desk moves the music to itself", wait_until("the desk playing", 30, playing(desk, "here", "playing")))
+    check("and the app hands it over, following the desk", wait_until("the app following", 20, lambda: re.search(r'"playingOn":"[^"]+"', app(serial, "state"))))
+    # The emulator hears no multicast from here: the app is handed the desk's door as mDNS has it.
+    resolved = subprocess.run([sys.executable, str(HERE / "mdns-door.py"), str(data / "nori.db")], capture_output=True, text=True)
+    check("the desk announces its door", resolved.returncode == 0)
+    if resolved.returncode != 0:
+        return
+    door = __import__("json").loads(resolved.stdout)["door"]
+    server.stop()
+    app(serial, "remote", "watch", "on")
+    app(serial, "remote", "found", door)
+    check("without the server the app finds the desk at its door", wait_until("nearby", 30, lambda: "(nearby): playing" in app(serial, "remote", "devices")))
+    app(serial, "remote", "watch", "off")
+    app(serial, "remote", "pick", "here")
+    check("and takes the music back through it", wait_until("the app playing", 30, app_playing(serial, True)))
+    check("the desk hands it over", wait_until("the desk following", 20, lambda: not re.match(r"now here playing", desk.ask("now"))))
+    server.start()
 
 
 if __name__ == "__main__":

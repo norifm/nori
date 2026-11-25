@@ -76,8 +76,7 @@ class TestBridge : BroadcastReceiver() {
         }
         // Pairing and profile sync (tools/sync-check.sh, feature-e2e.sh's sync): "server <url>", "code",
         // "pairing", "take <link>", "confirm [keep]", "state", "devices", "profiles", "keeps", "reset",
-        // "nearby <name>|<link>" (empty: none), the waiting devices the core does not announce yet, and "drop
-        // <profile>" (removed here only). Off the main thread, as the app calls the core.
+        // and "drop <profile>" (removed here only). Off the main thread, as the app calls the core.
         if (cmd == "sync") {
             val nori = dev.nori.music.Nori.get(context)
             Thread({ answer(runCatching { syncCheck(nori, arg, value, context) }.getOrElse { "sync failed: ${it.javaClass.simpleName}" }) }, "synccheck").start()

@@ -1212,7 +1212,14 @@ remote_checks() {
   else
     peer="nori-e2e-peer-$ANDROID_SERIAL"; data="$here/../build/e2e/$ANDROID_SERIAL/peer"; cli="$here/../target/debug/nori-cli"
     python3 "$here/with-resource.py" build cargo build -j4 -p nori-cli >/dev/null || return 1
-    tmux kill-session -t "$peer" 2>/dev/null; mkdir -p "$data"
+    tmux kill-session -t "$peer" 2>/dev/null; rm -rf "$data"; mkdir -p "$data"
+    # Remote control reaches only paired devices: the peer is paired with this phone through a sync server
+    # on this computer, and its profile, this computer's server, syncs to the phone, which opens it
+    # through adb reverse.
+    paired=$(python3 "$here/pair-peer.py" "$cli" "$data" http://localhost:4533 "$USER" "$PASS") || { check "the peer pairs with this phone" false; return 1; }
+    read -r sync_pid sync_port url_port <<<"$paired"
+    "$app" login "http://localhost:4533|$USER|$PASS" >/dev/null
+    check "this phone opens the peer's profile" wait_for server http://localhost:4533 30 || return 1
     # Seed the peer's setting before startup; no screen navigation or stale selection.
     python3 - "$data/nori.db" <<'PY'
 import sqlite3, sys
@@ -1222,9 +1229,9 @@ with sqlite3.connect(sys.argv[1]) as db:
         ("remoteControl", '{"b":true}'), ("crossfadeSec", '{"i":4}'),
     ])
 PY
-    tmux new-session -d -s "$peer" -x 160 -y 45 "$cli --data $data --url http://localhost:4533 --user $USER --password $PASS --no-images --no-mpris"
+    tmux new-session -d -s "$peer" -x 160 -y 45 "$cli --data $data --no-images --no-mpris"
     keys() { tmux send-keys -t "$peer" -- "$@"; }
-    check "the CLI peer starts" wait_until 15 bash -c "tmux capture-pane -p -t $peer | grep -q 'localhost:4533'" || return 1
+    check "the CLI peer starts on its profile" wait_until 15 bash -c "tmux capture-pane -p -t $peer | grep -q 'Listen now'" || return 1
     for _ in $(seq 16); do keys -; done   # quiet on the peer's speakers
     # Its door as mDNS has it; the emulator hears no multicast from here, so the app is handed it.
     resolved=$(python3 "$here/mdns-door.py" "$data/nori.db") || { check "the CLI peer announces its door" false; return 1; }
@@ -1347,7 +1354,8 @@ PY
     check "\"This phone\" brings it back" wait_for playingOn "" 15
     check "with the peer's latest song again" wait_for title "Long Track 04" 10
     check "and it sounds here again" sounds 15
-    check "the peer paused" wait_until 10 bash -c "tmux capture-pane -p -t $peer | grep -q '▶'"
+    # Its own player pauses; its screen follows the music here, as a device that handed it on does.
+    check "the peer paused" wait_until 10 bash -c "'$app' remote devices | grep -Eq '$name( \(nearby\))?: paused'"
     "$app" remote pick "$peer_id" >/dev/null
     check "the phone can hand playback back to the peer" wait_for playingOn "$name" 10
     check "the phone releases its output again" silent 10
@@ -1366,6 +1374,13 @@ if want remote; then
   "$app" remote pick here >/dev/null
   "$app" set remoteControl false >/dev/null
   [ -z "${peer:-}" ] || tmux kill-session -t "$peer" 2>/dev/null
+  # The peer's sync server and ports, and this phone's own profile, however the section ended.
+  if [ -n "${sync_pid:-}" ]; then
+    kill "$sync_pid" 2>/dev/null
+    adb reverse --remove "tcp:$sync_port" >/dev/null 2>&1; adb reverse --remove "tcp:$url_port" >/dev/null 2>&1
+    "$app" login "$APP_URL|$USER|$PASS" >/dev/null
+    check "this phone's own profile opens again" wait_for server "$APP_URL" 30
+  fi
 fi
 
 jam_checks() {

@@ -340,14 +340,18 @@ Some sections need more than the emulator:
 - `sync` runs the self-hosted sync server from the `nori-sync` checkout beside this one (or
   `NORI_SYNC_ROOT`), and `nori-cli --sync` as the other device. It starts the phone in no group by
   removing the group from the stopped app's database.
-- `remote` resolves the terminal app's live mDNS announcement. It uses `dns-sd` on macOS and Python's
-  zeroconf on Linux. `python3 tools/test-mdns.py` checks that a stale announcement is rejected.
+- `remote` first pairs the terminal app's data folder with the phone through a sync server on this
+  computer (`tools/pair-peer.py`). It needs the sync server that `tools/sync-check.sh` builds. The phone
+  then opens the terminal's profile through `adb reverse`. The section resolves the terminal's live mDNS
+  announcement. It uses `dns-sd` on macOS and Python's zeroconf on Linux. `python3 tools/test-mdns.py`
+  checks that a stale announcement is rejected.
 - `jam` needs the relay from `tools/jam-server.sh`. Its guests are `tools/jam-guest.py`, and its host is
   `tools/jam-host.py`. `NORI_JAM_ADMINS=1` makes every guest an admin.
 - `youtube-music` is opt-in because YouTube can refuse on any day.
 
 `NORI_E2E_SERVER=local tools/library-sync-e2e.sh` checks that a favorite changed over the LAN reaches the
-visible seal and the media session's buttons through JNI. It roots the emulator for a moment to find the
+visible seal and the media session's buttons through JNI. It pairs the phone with a terminal data folder
+as `remote` does, and signs as the group's devices sign. It roots the emulator for a moment to find the
 app's listener, then restores adb's previous state.
 
 ### The sync server check
@@ -359,11 +363,18 @@ local port, with two members to a group room. It then drives headless `nori-cli 
 - Two devices pair, see each other online, and sync a profile both ways.
 - The server stops. Both wait quietly, then come back by themselves when it starts again.
 - A third device pairs and shows the full group room as a refusal (`Refused { refused: Limit, .. }`).
+- Two paired terminals open a profile of the fixture Navidrome (`tools/dev-server.sh`). One plays, and
+  the other sees it, pauses it, mirrors it and moves the music to itself. The server then stops: they
+  control each other and sync a profile through their LAN doors. A profile that stops syncing offers no
+  device.
 
-`tools/sync-check.sh --android SERIAL` then pairs the app's debug build on that device into the group, through
-`tools/app.sh sync`, and syncs a profile with it. `adb reverse` gives the device the server's port, so
-both sides reach it at one address, which the pairing code carries. The Rust tests cover the protocol, reconnecting and the keep-alive rules. This check covers
-what only a real server and real sockets show.
+`tools/sync-check.sh --android SERIAL` then clears the app's debug build on that device and pairs it into
+the group through `tools/app.sh sync`. The app plays the group's profile, and a terminal controls it and
+takes the music. The emulator hears no mDNS from the computer, so that goes through the server. With the
+server stopped, the app is handed the terminal's door (`tools/mdns-door.py`) and takes the music back
+through it. `adb reverse` gives the device the server's and Navidrome's ports, so both sides reach them
+at one address. The Rust tests cover the protocol and the rules. This check covers what only a real
+server, real sockets and a real network show.
 
 ### Checked by hand
 
