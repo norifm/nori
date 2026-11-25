@@ -202,9 +202,16 @@ fn a_dropped_connection_comes_back_quietly_and_a_refusal_is_a_state() {
     let day = 24 * 60 * 60 * 1000;
     assert!(retry_ms > nori_time::unix_ms() && retry_ms % day <= 30 * 60 * 1000, "after midnight UTC");
     assert_eq!(mac.told.events.lock().unwrap()[..], [SyncEvent::Refused { reason: Refusal::DailyWall }]);
+    // The retry time is on the real clock, which the device read when sync started; its own clock has
+    // since moved ahead of the real one by what the test passed, a few seconds.
+    let until_retry = Duration::from_millis((retry_ms - nori_time::unix_ms()).max(0) as u64);
     let opened = mac.net.opened.load(Ordering::Relaxed);
-    mac.tasks.pass(60 * 60 * S);
+    mac.tasks.pass(until_retry.saturating_sub(60 * S));
+    settle(&[&pixel, &mac]);
     assert_eq!(mac.net.opened.load(Ordering::Relaxed), opened, "and does not try again before then");
+    mac.tasks.pass(120 * S);
+    settle(&[&pixel, &mac]);
+    assert!(mac.net.opened.load(Ordering::Relaxed) > opened, "but does once it is past");
 }
 
 /// A screen hears each change it shows: this device's connection, and another device going and coming back.
