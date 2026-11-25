@@ -1683,12 +1683,13 @@ pub unsafe extern "C" fn nori_ios_set(name: *const c_char, value: *const c_char)
 }
 
 /// The first run's questions: the iPod touch has no mobile data, so none about it.
+/// The first run's steps: pairing last while the iPod is in no group.
 fn setup_steps() -> Vec<SetupStep> {
-    nori_core::setup::setup_steps(false, false)
+    nori_core::setup::setup_steps(false, !crate::sync::paired())
 }
 
 /// The first run's questions as JSON to free, in order: `[{step, answers}]`, each by its name in the core
-/// (`Listening`, `Look`; `Albums`, `Blended`, ...).
+/// (`Listening`, `Look`, `Pair`; `Albums`, `Blended`, ...).
 #[no_mangle]
 pub extern "C" fn nori_ios_setup() -> *mut c_char {
     let named = |a: &SetupAnswer| format!("{a:?}");

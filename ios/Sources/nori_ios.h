@@ -67,11 +67,13 @@ typedef struct NoriReport {
 /// The support service answered: flag NORI_SUPPORT_*, text the page to open or why not, index 1 when a
 /// monthly payment runs in another currency.
 #define NORI_REPORT_SUPPORT 27
-/// Sync told the app something: flag NORI_SYNC_CHANGED (text is nori_ios_sync_state's JSON) or
-/// NORI_SYNC_PROFILES (the saved profiles changed; count 1 when the one in use did: nori_ios_reopen).
+/// Sync told the app something: flag NORI_SYNC_CHANGED (text is nori_ios_sync_state's JSON),
+/// NORI_SYNC_PROFILES (the saved profiles changed; count 1 when the one in use did: nori_ios_reopen) or
+/// NORI_SYNC_EVENT (text is {kind, name, refused}, kind the SyncEvent by name, to word).
 #define NORI_REPORT_SYNC 28
 #define NORI_SYNC_CHANGED 0
 #define NORI_SYNC_PROFILES 1
+#define NORI_SYNC_EVENT 2
 #define NORI_SUPPORT_FAILED 0
 #define NORI_SUPPORT_GIVEN 1
 #define NORI_SUPPORT_REFRESHED 2
@@ -137,7 +139,8 @@ char *nori_ios_reopen(const char *data_dir);
 /// with sync on. NULL on success; otherwise an error to free with nori_ios_free.
 char *nori_ios_sync_open(const char *data_dir);
 /// Where sync stands, as JSON to free: {state, refused, retryMs, devices: [{name, online, lastMs}], nearby:
-/// [{name, link}], pairing}.
+/// [{name, link}], pairing, paired, on, server, opens, gives, keepsCopy, offers: [{a, b}], synced: [id]};
+/// opens is the side a pairing screen opens on ("Show" or "Take"), gives whether the iPod has profiles.
 char *nori_ios_sync_state(void);
 /// The pairing screen opened (1) or closed: while open, nearby lists the devices waiting to be paired that
 /// have a server account of this iPod's.
@@ -162,8 +165,22 @@ void nori_ios_sync_cancel(void);
 void nori_ios_sync_reset(void);
 /// The sync or sync server setting changed.
 void nori_ios_sync_settings_changed(void);
+/// Turns the group's kept copy on (1) or off.
+void nori_ios_sync_keep_copy(int32_t on);
+/// Use a sync server on (1) or off: off, nothing connects.
+void nori_ios_sync_on(int32_t on);
+/// The sync server's address; blank for nori's own.
+void nori_ios_sync_server(const char *address);
+/// Makes saved profiles a and b one on every device; the one in use stays.
+void nori_ios_sync_merge(const char *a, const char *b);
+/// Saved profiles a and b are not one.
+void nori_ios_sync_keep_apart(const char *a, const char *b);
+/// What Reset pairing does, as JSON to free: {others, signedIn: [label]}; NULL while not paired.
+char *nori_ios_sync_reset_notice(void);
+/// Sync this profile on (1) or off for saved server id; off with elsewhere 1, the other devices remove it too.
+void nori_ios_profile_sync(const char *data_dir, const char *id, int32_t on, int32_t elsewhere);
 
-/// The saved servers as JSON to free: [{id, label, url, active, kind, waits, icon, letter}]; an empty
+/// The saved servers as JSON to free: [{id, label, url, active, kind, waits, icon, letter, syncOff}]; an empty
 /// label: call it by its kind. `icon` one of nori_ios_profile_icons' ids, `letter` the letter its circle
 /// shows (empty for none).
 char *nori_ios_servers(const char *data_dir);

@@ -220,6 +220,10 @@ serves the LAN door, as on the desktop. Swift does the Bonjour part: `Devices.sw
 looks for the group's other devices while the core asks (`nori_ios_on_bonjour`). When the app is paused
 in the background, iOS suspends it, and its door stops with it.
 
+Pairing and profile sync have their own pages in `Sync.swift`: Your devices and Pair a device. They read
+`nori_ios_sync_state` again on each `NORI_REPORT_SYNC`. Sync keeps its own handle on the settings, so
+`nori_ios_sync_on`, `nori_ios_sync_server` and `nori_ios_profile_sync` write through it.
+
 The iPod joins a jam only as a guest, from a pasted invite link or a `nori://jam` link. A guest profile
 opens in place of your own (`nori_host::jam_joined`), and it follows `ProfileRules` (`nori_ios_rules`).
 
@@ -240,7 +244,8 @@ opens in place of your own (`nori_host::jam_joined`), and it follows `ProfileRul
 ## What the iPod client does not have
 
 - **Plugins.** The library builds `nori-core` and `nori-host` without default features, so it has no
-  plugin host. It plays from Subsonic servers only, so there is no YouTube Music.
+  plugin host. It plays from Subsonic servers only, so there is no YouTube Music. A plugin's profile that
+  sync brings waits, and Your devices lists no plugins for the profiles to install.
 - **Server options.** `nori-http` applies no custom headers, self-signed certificates or client
   certificates.
 - **Better beat detection.** The `neural-beats` feature is not built for this device.

@@ -28,7 +28,8 @@ final class FirstRun: NavController {
 
 /// The welcome: where the music is, as many sources as one plays from picked, then Continue on to each one's
 /// form; the core's `WelcomeFlow` keeps the picks and says which form shows. The iPod has no plugins and restores
-/// no backups, so its own kinds are all it offers, and one picked goes straight to its form.
+/// no backups, so its own kinds are all it offers, and one picked goes straight to its form. Pair a device brings
+/// another device's profiles instead: the first run ends once one of them opens.
 final class WelcomePage: CardsPage {
     private let flow = nori_ios_welcome_new()
     private let sources = GroupCard()
@@ -43,7 +44,11 @@ final class WelcomePage: CardsPage {
         let head = UIStackView(arrangedSubviews: [name])
         head.isLayoutMarginsRelativeArrangement = true
         head.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 40, leading: Space.gutter, bottom: 2, trailing: Space.gutter)
-        set([head, GroupLabel(Say.welcomeWhere), sources])
+        let pair = GroupCard([GroupRow(Say.syncPair, icon: Glyph.draw(Iconoir.plus, 20), chevron: true) { [weak self] in
+            self?.navigationController?.pushViewController(PairPage(), animated: true)
+        }])
+        set([head, GroupLabel(Say.welcomeWhere), sources, pair])
+        NotificationCenter.default.addObserver(self, selector: #selector(opened), name: .noriOpened, object: nil)
         onward.addAction { [weak self] in self?.goOn() }
         view.addSubview(onward)
         NSLayoutConstraint.activate([
@@ -59,6 +64,12 @@ final class WelcomePage: CardsPage {
         super.viewWillAppear(animated)
         on(NORI_WELCOME_BACK)
         lay()
+    }
+
+    /// A profile sync brought opened: the app is ready under the welcome.
+    @objc private func opened() {
+        guard Core.shared.isOpen, navigationController?.viewControllers.contains(where: { $0 is LoginPage }) == false else { return }
+        navigationController?.presentingViewController?.dismiss(animated: !Motion.plain)
     }
 
     @discardableResult
@@ -218,7 +229,7 @@ final class SetupPage: UIViewController {
         }
         let q = run.questions[run.at]
         answering = nil
-        let page = q.answers.isEmpty ? look() : answers(q)
+        let page = q.step == "Pair" ? pairing() : q.answers.isEmpty ? look() : answers(q)
         page.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(page)
         NSLayoutConstraint.activate([
@@ -326,9 +337,36 @@ final class SetupPage: UIViewController {
             (UIApplication.shared.delegate as? AppDelegate)?.restyle()
         }
         let page = scrolling([heading(run.questions[run.at].step)] + AppearancePage.controls(picked), spacing: 0, foot: 78)
-        let start = PillButton(Say.setupStart, nil)
+        let start = PillButton(run.at + 1 < run.questions.count ? Say.continueLabel : Say.setupStart, nil)
         start.addAction { [weak self] in self?.move(1) }
         pin(start, in: page)
+        return page
+    }
+
+    /// The last page while the iPod is in no group: Pair a device ends the run on its page, Start listening
+    /// ends it; the sync server's switch and address under Advanced, as Your devices has them.
+    private func pairing() -> UIView {
+        let v = SyncView.read()
+        let server = syncServerCard(v, from: self) { [weak self] in self?.show(0) }
+        let page = scrolling([heading(run.questions[run.at].step), GroupLabel(Say.advanced), server], spacing: 0, foot: 138)
+        let start = PillButton(Say.setupStart, nil, prominent: false)
+        start.addAction { [weak self] in self?.move(1) }
+        pin(start, in: page)
+        let pair = PillButton(Say.syncPair, Glyph.draw(Iconoir.plus, 18))
+        pair.isEnabled = v.on
+        pair.alpha = v.on ? 1 : 0.38
+        pair.addAction { [weak self] in
+            let host = self?.presentingViewController
+            self?.presentingViewController?.dismiss(animated: !Motion.plain) {
+                (host as? ShellController)?.current.pushViewController(PairPage(), animated: true)
+            }
+        }
+        page.addSubview(pair)
+        NSLayoutConstraint.activate([
+            pair.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: Space.groupMargin),
+            pair.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -Space.groupMargin),
+            pair.bottomAnchor.constraint(equalTo: start.topAnchor, constant: -10),
+        ])
         return page
     }
 

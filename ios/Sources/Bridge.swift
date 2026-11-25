@@ -463,6 +463,12 @@ final class Core {
             switchProfile(count == 0 ? Say.jamLeft : Say.jamEnded(text))
         case NORI_REPORT_SYNC where flag == NORI_SYNC_PROFILES && count != 0:
             switchProfile(nil)
+            NotificationCenter.default.post(name: .noriSync, object: nil)
+        case NORI_REPORT_SYNC where flag == NORI_SYNC_EVENT:
+            let e = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] ?? [:]
+            if let words = Say.syncEvent(e["kind"] as? String ?? "", name: e["name"] as? String ?? "", refused: e["refused"] as? String ?? "") { Toast.show(words) }
+        case NORI_REPORT_SYNC:
+            NotificationCenter.default.post(name: .noriSync, object: nil)
         case NORI_REPORT_SUPPORT:
             NotificationCenter.default.post(name: .noriSupport, object: SupportAnswer(flag: flag, text: text, index: Int(count)))
         case NORI_REPORT_VOLUME:

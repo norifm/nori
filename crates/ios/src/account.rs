@@ -104,9 +104,9 @@ fn edit_servers(dir: &Path, change: impl FnOnce(ServerList) -> ServerList) -> Re
     Ok(())
 }
 
-/// The saved servers as `{id, label, name, url, active, kind, waits, icon, letter}`, in the order they were
-/// saved; `name` as it was given (empty for none), `icon` as the settings store it, `letter` what its circle
-/// shows for the letter.
+/// The saved servers as `{id, label, name, url, active, kind, waits, icon, letter, syncOff}`, in the order
+/// they were saved; `name` as it was given (empty for none), `icon` as the settings store it, `letter` what
+/// its circle shows for the letter, `syncOff` that Sync this profile is off.
 pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
     let (_, prefs) = opened(dir)?;
     Ok(prefs
@@ -118,7 +118,7 @@ pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
             let waits = Kinds::builtin().waits(s.clone()).is_some();
             let letter = profile_letter(s.clone(), nori_core::settings::label(&s.name, &s.url));
             serde_json::json!({ "id": s.id, "label": label(s), "name": s.name, "url": s.url, "active": active, "kind": s.kind.id(), "waits": waits,
-                "icon": s.icon.id(), "letter": letter })
+                "icon": s.icon.id(), "letter": letter, "syncOff": s.sync_off })
         })
         .collect())
 }
@@ -433,6 +433,22 @@ pub unsafe extern "C" fn nori_ios_rename_server(data_dir: *const c_char, id: *co
 pub extern "C" fn nori_ios_profile_icons() -> *mut c_char {
     let ids: Vec<&str> = profile_icons().into_iter().map(ProfileIcon::id).collect();
     owned(&serde_json::Value::from(ids).to_string()).into_raw()
+}
+
+/// Sync this profile on (1) or off for saved server `id`; off with `elsewhere` 1, the other devices remove it
+/// too.
+///
+/// # Safety
+/// Both are NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_profile_sync(data_dir: *const c_char, id: *const c_char, on: i32, elsewhere: i32) {
+    let id = text(id);
+    crate::sync::profile_sync(&id, on != 0, elsewhere != 0);
+    // The open session's handle on the settings keeps it too.
+    let _ = edit_servers(Path::new(&text(data_dir)), |mut list| {
+        list.servers.iter_mut().filter(|s| s.id == id).for_each(|s| s.sync_off = on == 0);
+        list
+    });
 }
 
 /// Forgets saved server `id`. Its downloads and index stay in the database.

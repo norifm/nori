@@ -3,6 +3,120 @@ import Foundation
 /// The app's words. The library answers with codes and keys; this is where they become English,
 /// following the Android app's `strings.xml`.
 enum Say {
+    // Your devices and pairing, as Android's strings_ui.xml sync_* says them, "this device" as "this iPod".
+    static let yourDevices = "Your devices"
+    static let syncNotPaired = "This iPod isn’t paired with another."
+    static let syncPair = "Pair a device"
+    static let syncReset = "Reset pairing"
+    static let syncResetTitle = "Reset pairing?"
+    static func syncResetText(_ lost: [String]) -> String {
+        "Your other devices keep their data and stop syncing with this one."
+            + (lost.isEmpty ? "" : "\n\nA lost device keeps the sign-ins it had. Change the passwords of \(lost.joined(separator: ", ")).")
+    }
+    static let syncResetConfirm = "Reset"
+    static let syncSectionDevices = "Devices"
+    static let syncSectionServer = "Sync server"
+    static let syncOn = "Use a sync server"
+    static let syncServer = "Sync server address"
+    static let syncServerOwn = "nori’s own"
+    static let syncKeepCopy = "Keep an encrypted copy"
+    static let syncKeepCopyDetail = "Only your devices can read it."
+    static func yourDevicesCount(_ paired: Bool, _ others: Int) -> String {
+        paired ? (others == 0 ? "1 device" : "\(others + 1) devices") : "Not paired"
+    }
+    /// When another device of the group was last seen.
+    static func syncSeen(_ lastMs: Int64, online: Bool, now: Int64) -> String {
+        if online { return "Online" }
+        let m = max(0, now - lastMs) / 60_000
+        switch m {
+        case 0: return "Seen just now"
+        case 1: return "Seen 1 minute ago"
+        case 2..<60: return "Seen \(m) minutes ago"
+        case 60..<120: return "Seen 1 hour ago"
+        case 120..<(24 * 60): return "Seen \(m / 60) hours ago"
+        case (24 * 60)..<(48 * 60): return "Seen yesterday"
+        default: return "Seen \(m / (24 * 60)) days ago"
+        }
+    }
+    static let syncRefused: [String: String] = [
+        "Limit": "The sync server is busy.",
+        "DailyWall": "The sync server reached its daily limit.",
+        "Version": "The sync server needs another version of nori. Update nori.",
+        "WrongSecret": "The sync server didn’t take the encrypted copy.",
+        "Unavailable": "The sync server isn’t working right now.",
+        "Invalid": "nori and the sync server don’t understand each other. Sync stops until nori starts again.",
+    ]
+    /// Where sync stands, by the core's `SyncState`; a refusal says when it tries again.
+    static func syncState(_ state: String, refused: String?, retryMs: Int64?) -> String {
+        switch state {
+        case "Connecting": return "Connecting"
+        case "Connected": return "Connected"
+        case "Offline": return "Offline"
+        case "Resting": return "Paused while nori is in the background"
+        case "Refused":
+            let at = DateFormatter.localizedString(from: Date(timeIntervalSince1970: TimeInterval(retryMs ?? 0) / 1000), dateStyle: .none, timeStyle: .short)
+            return "\(syncRefused[refused ?? ""] ?? "") Trying again at \(at)."
+        case "Stopped": return syncRefused[refused ?? ""] ?? ""
+        default: return ""
+        }
+    }
+    /// What happened in the group, by the core's `SyncEvent`.
+    static func syncEvent(_ kind: String, name: String, refused: String) -> String? {
+        switch kind {
+        case "NewDevice": return "New device paired: \(name)"
+        case "DeviceLeft": return "\(name) stopped syncing with this iPod."
+        case "UpdateThis": return "Another device runs a newer nori. Update nori to keep syncing."
+        case "UpdateOther": return "\(name) needs a newer nori to keep syncing."
+        case "Refused": return syncRefused[refused]
+        default: return nil
+        }
+    }
+    static let syncPaired = "Paired"
+    static let syncShowCode = "Show this iPod’s code"
+    static let syncPaste = "Paste a link"
+    static let syncLink = "Pairing link"
+    static let syncCopyLink = "Copy link"
+    static let linkCopied = "Link copied"
+    static let syncCodeLasts = "The code works for five minutes."
+    static let syncCodeWords = "Check that your other device shows these three words."
+    static let syncNewCode = "New code"
+    static let syncStarting = "Reaching the sync server…"
+    static let syncSectionNearby = "Waiting nearby"
+    static func syncConfirmTitle(_ name: String, _ profiles: Int) -> String {
+        "Give ‘\(name)’ your sign-ins for \(profiles) \(profiles == 1 ? "profile" : "profiles")?"
+    }
+    static let syncConfirmWords = "Check that the other screen shows the same three words."
+    static func syncConfirmLeaves(_ name: String, _ others: Int) -> String {
+        "\(name) will stop syncing with its \(others) \(others == 1 ? "other device" : "other devices")."
+    }
+    static let syncKeepCopyAsk = "Keep an encrypted copy on the sync server"
+    static let syncKeepCopyAskDetail = "It’s encrypted on your devices. Nobody running the server can read it, only devices you pair."
+    static let syncPairAction = "Pair"
+    /// Why pairing stopped or refused a code, by the core's `PairingRefused`; `showing`: on the device whose
+    /// code ran out.
+    static func pairingRefused(_ reason: String, showing: Bool, server: String?) -> String {
+        switch reason {
+        case "NotACode": return "This isn’t a nori pairing code."
+        case "Newer": return "This code comes from a newer nori. Update nori to pair."
+        case "Expired": return showing ? "This code ran out." : "This code ran out. Make a new one on the other device."
+        case "AlreadyPaired": return "That device is already paired with this one."
+        case "Gone": return "This code was used, or the other device stopped pairing."
+        case "Tampered": return "A key came that doesn’t fit this code. Still waiting."
+        case "Spent": return "A key came for a code that was already used. Still waiting."
+        case "Server": return syncRefused[server ?? ""] ?? ""
+        case "SyncOff": return "Turn on Use a sync server to pair."
+        default: return ""
+        }
+    }
+    static let syncProfile = "Sync this profile"
+    static func syncProfileOffTitle(_ name: String) -> String { "Stop syncing \(name)?" }
+    static let syncProfileOffText = "Your other devices can keep it, or remove it too."
+    static let syncProfileOffRemove = "Remove there"
+    static let syncProfileOffKeep = "Keep there"
+    static let syncRemoveEverywhere = "It’s removed from all your devices, with what nori keeps for it."
+    static let syncMergeTitle = "The same account?"
+    static let syncMerge = "Merge"
+    static let syncKeepBoth = "Keep both"
     static let mixing = "Mixing"
     static let jamNotPlayingHere = "Not playing here"
     static func shelf(_ key: String) -> String {
@@ -348,7 +462,13 @@ enum Say {
     static let setupSkip = "Skip"
     static let setupStart = "Start listening"
     /// A first-run question's title, by its name in the core. The iPod is never asked about mobile data.
-    static func setupStep(_ step: String) -> String { step == "Listening" ? "Between songs" : "Make it yours" }
+    static func setupStep(_ step: String) -> String {
+        switch step {
+        case "Listening": return "Between songs"
+        case "Pair": return syncPair
+        default: return "Make it yours"
+        }
+    }
     /// A first-run answer's name and the line under it, by its name in the core.
     static func setupAnswer(_ answer: String) -> (name: String, line: String) {
         switch answer {

@@ -2,7 +2,8 @@ import UIKit
 
 /// Settings → Servers: the saved ones in their order with their marks, the active one ticked where it
 /// stands. A tap switches to it at once; a tap on its mark chooses its icon; holding and dragging one moves
-/// it in the order (the core's `profilePlace`); a swipe renames or forgets it; the last row adds one.
+/// it in the order (the core's `profilePlace`); a swipe renames or forgets it, or sets Sync this profile; the
+/// row after them adds one. Two profiles sync says may be one account follow, each with Merge or Keep both.
 final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDelegate {
     fileprivate struct Saved {
         let id: String
@@ -17,9 +18,12 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
         let icon: ProfileIcon
         /// What its circle shows for the letter; empty for none.
         let letter: String
+        /// Sync this profile is off.
+        let syncOff: Bool
     }
 
     private var servers: [Saved] = []
+    private var sync = SyncView(d: [:])
     private var switching = false
 
     override func viewDidLoad() {
@@ -46,22 +50,48 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
                       url: $0["url"] as? String ?? "", active: $0["active"] as? Bool ?? false,
                       waits: $0["waits"] as? Bool ?? false, kind: $0["kind"] as? String ?? "",
                       icon: ($0["icon"] as? String).flatMap(ProfileIcon.init(rawValue:)) ?? .letter,
-                      letter: $0["letter"] as? String ?? "")
+                      letter: $0["letter"] as? String ?? "", syncOff: $0["syncOff"] as? Bool ?? false)
             }
+            let sync = SyncView.read()
             DispatchQueue.main.async {
                 self.servers = saved
+                self.sync = sync
                 self.tableView.reloadData()
             }
         }
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int { 2 }
+    override func numberOfSections(in tableView: UITableView) -> Int { 3 }
+
+    /// The merge offers whose two profiles are both here.
+    private var offers: [(a: Saved, b: Saved)] {
+        sync.offers.compactMap { o in
+            guard let a = servers.first(where: { $0.id == o.a }), let b = servers.first(where: { $0.id == o.b }) else { return nil }
+            return (a, b)
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        section == 2 && !offers.isEmpty ? Say.syncMergeTitle : nil
+    }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        section == 0 ? servers.count : 1
+        switch section {
+        case 0: return servers.count
+        case 1: return 1
+        default: return offers.count
+        }
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if indexPath.section == 2 {
+            let cell = row(tableView, id: "merge", style: .subtitle)
+            let o = offers[indexPath.row]
+            cell.textLabel?.text = Say.syncMergeTitle
+            cell.detailTextLabel?.text = "\(o.a.label) · \(o.b.label)"
+            cell.accessoryType = .disclosureIndicator
+            return cell
+        }
         if indexPath.section == 1 {
             let cell = row(tableView, id: "add")
             cell.textLabel?.text = Say.addServer
@@ -81,7 +111,11 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
         }
         cell.accessibilityCustomActions = [SpokenAction(Say.profileIcon) { [weak self] in self?.chooseIcon(s) },
                                            SpokenAction(Say.rename) { [weak self] in self?.rename(s) },
-                                           SpokenAction(Say.scrobbling) { [weak self] in self?.scrobbling(s) }]
+                                           SpokenAction(Say.scrobbling) { [weak self] in self?.scrobbling(s) },
+                                           SpokenAction(Say.syncProfile) { [weak self] in
+                                               guard let self else { return }
+                                               syncProfileSheet(id: s.id, name: s.label, on: !s.syncOff, from: self) { [weak self] in self?.load() }
+                                           }]
         return cell
     }
 
@@ -102,6 +136,20 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
         tableView.deselectRow(at: indexPath, animated: true)
         if indexPath.section == 1 {
             navigationController?.pushViewController(LoginPage(), animated: true)
+            return
+        }
+        if indexPath.section == 2 {
+            let o = offers[indexPath.row]
+            let sheet = Sheet(Say.syncMergeTitle, "\(o.a.label) · \(o.b.label)")
+            sheet.add(Say.syncMerge) { [weak self] in
+                o.a.id.withCString { a in o.b.id.withCString { nori_ios_sync_merge(a, $0) } }
+                self?.switchTo {}
+            }
+            sheet.add(Say.syncKeepBoth) { [weak self] in
+                o.a.id.withCString { a in o.b.id.withCString { nori_ios_sync_keep_apart(a, $0) } }
+                self?.load()
+            }
+            sheet.show(from: self)
             return
         }
         let s = servers[indexPath.row]
@@ -130,7 +178,13 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
             self?.scrobbling(s)
         }
         scrobbling.backgroundColor = Theme.secondary
-        let actions = UISwipeActionsConfiguration(actions: [forget, rename, scrobbling])
+        let sync = UIContextualAction(style: .normal, title: Say.syncProfile) { [weak self] _, _, done in
+            done(true)
+            guard let self else { return }
+            syncProfileSheet(id: s.id, name: s.label, on: !s.syncOff, from: self) { [weak self] in self?.load() }
+        }
+        sync.backgroundColor = Theme.secondary
+        let actions = UISwipeActionsConfiguration(actions: [forget, rename, scrobbling, sync])
         actions.performsFirstActionWithFullSwipe = false
         return actions
     }
@@ -159,7 +213,9 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
 
     private func forget(_ s: Saved) {
         guard !switching else { return }
-        let sheet = Sheet(Say.forgetServer(s.label), Say.forgetServerNote)
+        // A profile that syncs goes from every paired device.
+        let everywhere = sync.paired && sync.synced.contains(s.id)
+        let sheet = Sheet(Say.forgetServer(s.label), everywhere ? Say.syncRemoveEverywhere : Say.forgetServerNote)
         sheet.add(Say.forget, destructive: true) { [weak self] in
             let forget = { dataDirectory().path.withCString { d in s.id.withCString { nori_ios_remove_server(d, $0) } } }
             if s.active {

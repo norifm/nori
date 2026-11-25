@@ -142,6 +142,8 @@ final class SettingsGroupPage: CardsPage {
         for s in Say.settings where group.sections.contains(s.section) {
             var rows = s.rows.filter { shown($0.name) }.map { row($0.name, $0.label) }
             if s.section == "Remote control" {
+                let sync = SyncView.read()
+                rows.insert(GroupRow(Say.yourDevices, value: Say.yourDevicesCount(sync.paired, sync.devices.count), chevron: true) { push(YourDevicesPage()) }, at: 0)
                 rows.append(GroupRow(Say.joinJam, chevron: true) { [weak self] in
                     guard let self else { return }
                     JamJoin.ask(from: self)
