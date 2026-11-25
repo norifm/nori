@@ -624,6 +624,62 @@ export global Jam {
     callback leave();
 }
 
+// The Pair a device sheet's fixed words (words.rs).
+export struct PairWords {
+    title: string,
+    show-code: string,
+    paste-link: string,
+    copy-link: string,
+    valid: string,
+    placeholder: string,
+    pair: string,
+    cancel: string,
+    done: string,
+    nearby: string,
+    check: string,
+    keep-title: string,
+    keep-line: string,
+}
+
+// Pair a device (pairing.rs fills it): this computer's code to show (`role` 0), or another device's to
+// take (1), and what pairing came to. `stage`: 0 a line while it waits, 1 the code, 2 taking a code, 3 the
+// confirmation, 4 done, 5 stopped, with `again` to start over.
+export global PairSheet {
+    in-out property <bool> open;
+    in property <PairWords> words;
+    in property <int> role;
+    in property <int> stage;
+    in property <image> qr;
+    in property <string> link;
+    // The three words, under the code and in the confirmation; empty in a confirmation by camera.
+    in property <string> code-words;
+    in property <string> line;
+    // Why the code taken was refused, under its field.
+    in property <string> error;
+    in property <string> question;
+    in property <string> leaves;
+    in property <bool> asks-keep;
+    in-out property <bool> keep: true;
+    in property <string> again;
+    // Devices nearby waiting to be paired.
+    in property <[string]> nearby;
+    in-out property <string> pasted;
+    callback role-chosen(int);
+    callback copy();
+    callback take(string);
+    callback nearby-picked(int);
+    callback confirm(bool);
+    callback restart();
+    callback close();
+}
+
+// Settings › Your devices, a page over Settings: its rows are the settings list's (settings.rs).
+export global YourDevices {
+    in-out property <bool> open;
+    in property <string> title;
+    callback back();
+}
+
 // Opens an artist's or an album's page, from wherever its name shows (app.rs answers).
 export global Go {
     callback artist(string);
@@ -5187,7 +5243,8 @@ component SettingLine inherits VerticalLayout {
     if root.item.kind == 8: RankPlate {
         item: root.item;
         movable: root.item.options.length > 0;
-        clickable: !root.item.on;
+        // A profile this computer can't play is grayed and opens nothing.
+        clickable: !root.item.on && root.item.enabled;
         clicked => { root.action("server:" + root.item.name); }
         placed(id, by) => { root.placed(id, by); }
         ProfileCircle {
@@ -5201,7 +5258,7 @@ component SettingLine inherits VerticalLayout {
             horizontal-stretch: 1;
             Wrapped {
                 text: root.item.title;
-                color: Theme.text;
+                color: Theme.text.transparentize(root.item.enabled ? 0 : 0.55);
                 font-size: 14px;
             }
             if root.item.detail != "": Wrapped {
@@ -5354,8 +5411,8 @@ component SettingLine inherits VerticalLayout {
                     enabled: root.item.enabled;
                     toggled(v) => { root.toggled(root.item.name, v); }
                 }
-                // A switch's menu (a scrobbling account's Remove).
-                if root.item.kind == 1 && root.item.options.length > 0: RowMenu {
+                // A switch's or a button's menu (a scrobbling account's Remove, a merge offer's Keep both).
+                if (root.item.kind == 1 || root.item.kind == 3) && root.item.options.length > 0: RowMenu {
                     y: (parent.height - self.height) / 2;
                     options: root.item.options;
                     values: root.item.values;
@@ -7824,6 +7881,9 @@ export component AppWindow inherits Window {
     in property <string> ask-note;
     in property <string> ask-name;
     in property <string> ask-button;
+    // A second answer beside the button, sent as `setting-typed(ask-other-name, "")`; none when empty.
+    in property <string> ask-other;
+    in property <string> ask-other-name;
     in property <bool> ask-field;
     in property <bool> ask-secret;
     in property <string> ask-placeholder;
@@ -7930,7 +7990,7 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open;
+    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || PairSheet.open;
     // What plugins say under the player's output, and a plugin's still drawn as Now Playing's cover.
     in property <[string]> plugin-status;
     in property <image> sleeve;
@@ -8267,7 +8327,8 @@ export component AppWindow inherits Window {
                             font-size: 12px;
                             wrap: word-wrap;
                         }
-                        // Restoring a backup brings back its profiles, which open the app.
+                        // Restoring a backup, or pairing with a device that has them, brings the profiles,
+                        // which open the app.
                         VerticalLayout {
                             padding-top: 10px;
                             padding-left: 6px;
@@ -8275,6 +8336,7 @@ export component AppWindow inherits Window {
                             spacing: 2px;
                             HorizontalLayout {
                                 alignment: start;
+                                spacing: 8px;
                                 TextButton {
                                     text: root.first-run-words.restore;
                                     opacity: root.welcome-restore-busy ? 0.45 : 1;
@@ -8283,6 +8345,10 @@ export component AppWindow inherits Window {
                                             root.setting-action("restore");
                                         }
                                     }
+                                }
+                                TextButton {
+                                    text: PairSheet.words.title;
+                                    clicked => { root.setting-action("sync-pair"); }
                                 }
                             }
                             if root.welcome-restore-line != "": Text {
@@ -9591,15 +9657,17 @@ export component AppWindow inherits Window {
                         content-height: prefs.preferred-height;
                         property <int> page-seen: root.plugin-page-seen;
                         changed page-seen => { self.content-y = 0; }
+                        property <bool> devices-seen: YourDevices.open;
+                        changed devices-seen => { self.content-y = 0; }
                         prefs := VerticalLayout {
                             width: parent.width;
                             padding-bottom: 100px;
-                            // A plugin page takes the whole page: its own head, no tabs.
-                            if root.plugins-tab && root.plugin-top.back: Rectangle {
+                            // A plugin page and Your devices take the whole page: their own head, no tabs.
+                            if (root.plugins-tab && root.plugin-top.back) || YourDevices.open: Rectangle {
                                 height: Chrome.top-room + 16px;
                             }
                             // The title, then the tabs and the column at one reading width under the top pill.
-                            if !(root.plugins-tab && root.plugin-top.back): Text {
+                            if !((root.plugins-tab && root.plugin-top.back) || YourDevices.open): Text {
                                 text: "Settings";
                                 color: Theme.text;
                                 font-family: Type.title;
@@ -9610,7 +9678,7 @@ export component AppWindow inherits Window {
                                 height: Chrome.top-room + 52px;
                                 vertical-alignment: bottom;
                             }
-                            if !(root.plugins-tab && root.plugin-top.back): HorizontalLayout {
+                            if !((root.plugins-tab && root.plugin-top.back) || YourDevices.open): HorizontalLayout {
                                 padding-left: Chrome.top-x + max(0px, Chrome.top-w - 720px) / 2;
                                 padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w) + max(0px, Chrome.top-w - 720px) / 2;
                                 padding-top: 16px;
@@ -9630,7 +9698,27 @@ export component AppWindow inherits Window {
                                 padding-left: Chrome.top-x + max(0px, Chrome.top-w - 720px) / 2;
                                 padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w) + max(0px, Chrome.top-w - 720px) / 2;
                                 VerticalLayout {
-                                    if root.plugins-tab: PluginHead {
+                                    if YourDevices.open: HorizontalLayout {
+                                        padding-left: 16px;
+                                        padding-top: 4px;
+                                        spacing: 12px;
+                                        IconButton {
+                                            y: (parent.height - self.height) / 2;
+                                            glyph: Icons.nav-arrow-left;
+                                            clicked => { YourDevices.back(); }
+                                        }
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: YourDevices.title;
+                                            color: Theme.text;
+                                            font-family: Type.title;
+                                            font-size: 26px;
+                                            font-weight: 700;
+                                            overflow: elide;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    if root.plugins-tab && !YourDevices.open: PluginHead {
                                         top: root.plugin-top;
                                         action(name) => { root.setting-action(name); }
                                         toggled(name, on) => { root.setting-toggled(name, on); }
@@ -11217,7 +11305,8 @@ export component AppWindow inherits Window {
 
         if root.ask-open: Dialog {
             title: root.ask-title;
-            sheet-width: 420px;
+            // Wide enough for two answers and Cancel on one line.
+            sheet-width: root.ask-other != "" ? 500px : 420px;
             dismissed => { root.ask-open = false; }
             if root.ask-note != "": Text {
                 text: root.ask-note;
@@ -11250,6 +11339,14 @@ export component AppWindow inherits Window {
                     y: (parent.height - self.height) / 2;
                     text: "Cancel";
                     clicked => { root.ask-open = false; }
+                }
+                if root.ask-other != "": SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: root.ask-other;
+                    clicked => {
+                        root.ask-open = false;
+                        root.setting-typed(root.ask-other-name, "");
+                    }
                 }
                 Capsule {
                     text: root.ask-button;
@@ -12239,6 +12336,184 @@ export component AppWindow inherits Window {
                             root.pair(root.pair-link);
                         }
                     }
+                }
+            }
+        }
+
+        // Pair a device, with the sync server: this computer's code to show, or another device's to paste,
+        // then the confirmation and what pairing came to (PairSheet, pairing.rs).
+        if PairSheet.open: Dialog {
+            title: PairSheet.stage == 3 ? PairSheet.question : PairSheet.words.title;
+            sheet-width: 420px;
+            dismissed => { PairSheet.close(); }
+            if PairSheet.stage != 3 && PairSheet.stage != 4: HorizontalLayout {
+                alignment: start;
+                spacing: 4px;
+                Chip {
+                    text: PairSheet.words.show-code;
+                    lit: PairSheet.role == 0;
+                    clicked => { PairSheet.role-chosen(0); }
+                }
+                Chip {
+                    text: PairSheet.words.paste-link;
+                    lit: PairSheet.role == 1;
+                    clicked => { PairSheet.role-chosen(1); }
+                }
+            }
+            if PairSheet.stage == 0 || PairSheet.stage == 4 || PairSheet.stage == 5: Wrapped {
+                text: PairSheet.line;
+                color: PairSheet.stage == 5 ? Theme.danger : Theme.text;
+                font-size: 13px;
+            }
+            // The code: drawn on white, as a QR code reads, its three words, the link and how long it lives.
+            if PairSheet.stage == 1: HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 208px;
+                    height: 208px;
+                    border-radius: 16px;
+                    background: white;
+                    Image {
+                        width: 184px;
+                        height: 184px;
+                        source: PairSheet.qr;
+                        image-rendering: pixelated;
+                    }
+                }
+            }
+            // The confirmation on the device with the profiles: whom it leaves, under the question.
+            if PairSheet.stage == 3 && PairSheet.leaves != "": Wrapped {
+                text: PairSheet.leaves;
+                color: Theme.dim;
+                font-size: 13px;
+            }
+            if PairSheet.stage == 1 || (PairSheet.stage == 3 && PairSheet.code-words != ""): VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: PairSheet.code-words;
+                    color: Theme.text;
+                    font-size: 18px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                Wrapped {
+                    text: PairSheet.words.check;
+                    color: Theme.dim;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                }
+            }
+            if PairSheet.stage == 1: HorizontalLayout {
+                spacing: 8px;
+                Rectangle {
+                    height: 32px;
+                    horizontal-stretch: 1;
+                    border-radius: 8px;
+                    background: Theme.fill;
+                    Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        text: PairSheet.link;
+                        color: Theme.dim;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: PairSheet.words.copy-link;
+                    clicked => { PairSheet.copy(); }
+                }
+            }
+            if PairSheet.stage == 1: Wrapped {
+                text: PairSheet.words.valid;
+                color: Theme.dim;
+                font-size: 12px;
+            }
+            // Another device's code, pasted; under it the devices nearby waiting to be paired.
+            if PairSheet.stage == 2: Field {
+                height: 34px;
+                border-radius: 8px;
+                clip: true;
+                icon: Icons.smartphone-device;
+                placeholder: PairSheet.words.placeholder;
+                text <=> PairSheet.pasted;
+                accepted => { PairSheet.take(PairSheet.pasted); }
+            }
+            if PairSheet.stage == 2 && PairSheet.error != "": Wrapped {
+                text: PairSheet.error;
+                color: Theme.danger;
+                font-size: 12px;
+            }
+            if PairSheet.stage == 2 && PairSheet.nearby.length > 0: VerticalLayout {
+                spacing: 6px;
+                Text {
+                    text: PairSheet.words.nearby;
+                    color: Theme.dim;
+                    font-size: 11.5px;
+                    font-weight: 600;
+                    letter-spacing: 0.7px;
+                }
+                DialogGroup {
+                    for n[i] in PairSheet.nearby: GoLine {
+                        title: n;
+                        glyph: Icons.nav-arrow-right;
+                        divider: i + 1 < PairSheet.nearby.length;
+                        clicked => { PairSheet.nearby-picked(i); }
+                    }
+                }
+            }
+            if PairSheet.stage == 3 && PairSheet.asks-keep: DialogGroup {
+                HorizontalLayout {
+                    padding: 8px;
+                    spacing: 12px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+                        Wrapped {
+                            text: PairSheet.words.keep-title;
+                            color: Theme.text;
+                            font-size: 13px;
+                        }
+                        Wrapped {
+                            text: PairSheet.words.keep-line;
+                            color: Theme.dim;
+                            font-size: 12px;
+                        }
+                    }
+                    Toggle {
+                        y: (parent.height - self.height) / 2;
+                        on: PairSheet.keep;
+                        toggled(v) => { PairSheet.keep = v; }
+                    }
+                }
+            }
+            // Cancel while a pairing is under way, Done once it came to something.
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                if PairSheet.stage == 5 && PairSheet.again != "": SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: PairSheet.again;
+                    clicked => { PairSheet.restart(); }
+                }
+                if PairSheet.stage < 4: SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: PairSheet.words.cancel;
+                    clicked => { PairSheet.close(); }
+                }
+                if PairSheet.stage == 2: Capsule {
+                    text: PairSheet.words.pair;
+                    clicked => { PairSheet.take(PairSheet.pasted); }
+                }
+                if PairSheet.stage == 3: Capsule {
+                    text: PairSheet.words.pair;
+                    clicked => { PairSheet.confirm(PairSheet.keep); }
+                }
+                if PairSheet.stage >= 4: Capsule {
+                    text: PairSheet.words.done;
+                    clicked => { PairSheet.close(); }
                 }
             }
         }

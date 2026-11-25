@@ -161,6 +161,14 @@ pub enum Msg {
     Restored(Result<Box<nori_core::backup::Restored>, nori_host::desktop::BackupFailure>),
     /// Sync changed the saved profiles, which the settings now keep.
     Synced(nori_core::sync::ProfilesSynced),
+    /// Where sync stands or the pairing changed.
+    SyncChanged,
+    /// Something happened in the group, to word.
+    SyncEvent(nori_core::sync::SyncEvent),
+    /// Plugins the synced profiles need.
+    SyncInstall(Vec<nori_core::sync::NeededPlugin>),
+    /// A sign-in here was to another account than the profile syncs with, and was signed out.
+    OtherAccount,
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -327,6 +335,7 @@ impl Session {
                 syncing: false,
                 unsent: client.unsent().map_or((0, 0), |u| (u.waiting, u.dropped)),
                 rules: core.rules(),
+                sync: Default::default(),
             })));
         });
     }

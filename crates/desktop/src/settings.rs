@@ -122,6 +122,32 @@ pub struct Facts {
     pub unsent: (u32, u32),
     /// What the open profile offers: a jam guest's settings are this computer's own.
     pub rules: nori_core::browse::ProfileRules,
+    pub sync: SyncFacts,
+}
+
+/// Pairing and profile sync, as Your devices and the profiles show them.
+#[derive(Clone)]
+pub struct SyncFacts {
+    pub paired: bool,
+    pub state: nori_core::sync::SyncState,
+    /// The group's other devices.
+    pub devices: Vec<nori_core::sync::Seen>,
+    pub keeps_copy: bool,
+    /// Profiles that may be one.
+    pub offers: Vec<nori_core::sync::MergeOffer>,
+    /// A backup restored here had a pairing, which it doesn't bring.
+    pub not_restored: bool,
+    /// This computer's name in the group.
+    pub name: String,
+    /// Unix ms, and the local time's offset from UTC in seconds, for when devices were seen.
+    pub now_ms: i64,
+    pub offset_s: i64,
+}
+
+impl Default for SyncFacts {
+    fn default() -> SyncFacts {
+        SyncFacts { paired: false, state: nori_core::sync::SyncState::Idle, devices: Vec::new(), keeps_copy: false, offers: Vec::new(), not_restored: false, name: String::new(), now_ms: 0, offset_s: 0 }
+    }
 }
 
 /// Row name of the output device choice (a desktop setting, not the core's).
@@ -145,6 +171,18 @@ const ADD_SERVER: &str = "add-server";
 const BACKUP: &str = "backup";
 const RESTORE: &str = "restore";
 const CHECK_UPDATE: &str = "check-update";
+const YOUR_DEVICES: &str = "your-devices";
+const PAIR_DEVICE: &str = "sync-pair";
+const RESET_PAIRING: &str = "sync-reset";
+const SYNC_ADDRESS: &str = "sync-address";
+/// Your devices' kept copy switch.
+pub const KEEP_COPY: &str = "sync-keep-copy";
+/// The ask sheet's names: Reset pairing confirmed, the sync server's address typed, Sync this profile
+/// off for profile `<id>` with it removed from the other devices or kept there.
+pub const RESET_CONFIRMED: &str = "sync-reset-confirmed";
+pub const SYNC_SERVER_TYPED: &str = "sync-server";
+pub const SYNC_OFF_THERE: &str = "sync-off-there:";
+pub const SYNC_OFF_HERE: &str = "sync-off-here:";
 const BACKUP_PASSWORD: &str = "backup-password";
 const RESTORE_PASSWORD: &str = "restore-password";
 
@@ -181,6 +219,23 @@ pub enum Act {
     /// Asks for the password of the backup at `path`.
     BackupPassword { restore: bool, path: String },
     CheckUpdate,
+    /// Settings › Your devices.
+    YourDevices,
+    /// The Pair a device sheet.
+    PairDevice,
+    /// Asks before Reset pairing.
+    ResetPairing,
+    /// Asks for the sync server's address.
+    SyncAddress,
+    /// Merges the second profile into the first, on every device.
+    Merge(String, String),
+    /// The two profiles are not one.
+    KeepApart(String, String),
+}
+
+/// The two profiles a merge offer's row names: `a|b`.
+fn pair_of(text: &str) -> Option<(String, String)> {
+    text.split_once('|').map(|(a, b)| (a.to_string(), b.to_string()))
 }
 
 impl Act {
@@ -198,6 +253,12 @@ impl Act {
         if let Some(id) = name.strip_prefix("remove:") {
             return Some(Act::Remove(id.to_string()));
         }
+        if let Some((a, b)) = name.strip_prefix("merge:").and_then(pair_of) {
+            return Some(Act::Merge(a, b));
+        }
+        if let Some((a, b)) = name.strip_prefix("keep-apart:").and_then(pair_of) {
+            return Some(Act::KeepApart(a, b));
+        }
         if let Some((what, path)) = name.split_once(':').filter(|(what, _)| matches!(*what, BACKUP_PASSWORD | RESTORE_PASSWORD)) {
             return Some(Act::BackupPassword { restore: what == RESTORE_PASSWORD, path: path.to_string() });
         }
@@ -208,6 +269,10 @@ impl Act {
             BACKUP => Some(Act::Backup { restore: false }),
             RESTORE => Some(Act::Backup { restore: true }),
             CHECK_UPDATE => Some(Act::CheckUpdate),
+            YOUR_DEVICES => Some(Act::YourDevices),
+            PAIR_DEVICE => Some(Act::PairDevice),
+            RESET_PAIRING => Some(Act::ResetPairing),
+            SYNC_ADDRESS => Some(Act::SyncAddress),
             _ => CHORES.into_iter().find(|c| chore_name(*c) == name).map(Act::Chore),
         }
     }
@@ -567,6 +632,11 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             }
             let title = crate::words::profile_label(sv, kinds);
             let mark = profile_mark(plugged, sv, &title);
+            // A plugin's profile, synced to a computer that runs no plugins.
+            let unavailable = kinds.waits(sv.clone()) == Some(nori_core::providers::ProfileWait::NoPlugins);
+            if unavailable {
+                detail = words::UNAVAILABLE.to_string();
+            }
             // A jam guest switches between the profiles; changing them is not its to do.
             let edits = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
             let menu = if edits {
@@ -575,7 +645,7 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
                 Vec::new()
             };
             Row {
-                kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, options: menu, rank: index as i32,
+                kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: !unavailable, options: menu, rank: index as i32,
                 icon: mark.icon, letter: mark.letter.into(), glyph: mark.glyph, picture: mark.picture, ..Default::default()
             }
         }
@@ -607,6 +677,8 @@ pub enum ProfilePart {
     Scrobbler(String),
     RemoveScrobbler(String),
     AddScrobbler,
+    /// Sync this profile, switched.
+    Sync,
 }
 
 impl ProfilePart {
@@ -621,6 +693,7 @@ impl ProfilePart {
             "profile-account" => Some(ProfilePart::Account),
             "scrobble-server" => Some(ProfilePart::ServerScrobbles),
             "scrobbler-add" => Some(ProfilePart::AddScrobbler),
+            "profile-sync" => Some(ProfilePart::Sync),
             _ => None,
         }
     }
@@ -632,17 +705,20 @@ impl ProfilePart {
             ProfilePart::Scrobbler(id) => format!("scrobbler:{id}"),
             ProfilePart::RemoveScrobbler(id) => format!("scrobbler-remove:{id}"),
             ProfilePart::AddScrobbler => "scrobbler-add".into(),
+            ProfilePart::Sync => "profile-sync".into(),
         }
     }
 }
 
 /// The rows of profile `sv`'s Edit page under its form, as Android's: its account where its provider signs
 /// in to one, then where its plays go: its own server first where it takes them (`itself`, the core's
-/// rules), each scrobbling account with its switch and a menu removing it, then adding one.
-pub fn profile_rows(kinds: &Kinds, sv: &SavedServer, itself: bool, p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+/// rules), each scrobbling account with its switch and a menu removing it, then adding one; then Sync this
+/// profile. `signed_out`: the open profile's account is signed out here, though the profile names one (it
+/// came by sync without its sign-in).
+pub fn profile_rows(kinds: &Kinds, sv: &SavedServer, itself: bool, signed_out: bool, p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
     let mut groups = Vec::new();
     if kinds.providers().into_iter().any(|i| i.kind == sv.kind && !i.sign_in.is_empty()) {
-        let signed = !sv.user.is_empty();
+        let signed = !sv.user.is_empty() && !signed_out;
         let account = Row {
             kind: ACTION,
             name: ProfilePart::Account.name(),
@@ -672,7 +748,53 @@ pub fn profile_rows(kinds: &Kinds, sv: &SavedServer, itself: bool, p: &StoredPre
     let hint = if sv.scrobblers.is_empty() && !itself { words::SCROBBLING_HINT } else { "" };
     rows.push(Row { kind: BUTTON, name: ProfilePart::AddScrobbler.name(), title: words::ADD_SCROBBLER.into(), detail: hint.into(), enabled: true, ..Default::default() });
     groups.push((words::SCROBBLING.to_string(), rows));
+    let sync = Row { kind: TOGGLE, name: ProfilePart::Sync.name(), title: words::SYNC_THIS_PROFILE.into(), on: !sv.sync_off, enabled: true, ..Default::default() };
+    groups.push((words::ADVANCED.to_string(), vec![sync]));
     model(groups, p, f, today)
+}
+
+/// Two profiles here that may be one: both named, with Merge, and Keep both in its menu.
+fn merge_row(o: &nori_core::sync::MergeOffer, p: &StoredPrefs, kinds: &Kinds) -> Option<Row> {
+    let label = |id: &str| p.servers.iter().find(|s| s.id == id).map(|s| words::profile_label(s, kinds));
+    let (a, b) = (label(&o.a)?, label(&o.b)?);
+    let pair = format!("{}|{}", o.a, o.b);
+    Some(Row {
+        kind: ACTION,
+        name: format!("merge:{pair}"),
+        title: words::merge_offer(&a, &b),
+        detail: words::MERGE_DETAIL.into(),
+        button: words::MERGE.into(),
+        enabled: true,
+        options: vec![(words::KEEP_BOTH.to_string(), format!("keep-apart:{pair}"))],
+        ..Default::default()
+    })
+}
+
+/// Settings › Your devices: this computer and the group's others with when each was last seen, Pair a
+/// device and Reset pairing, then the sync server and the kept copy.
+pub fn your_devices_rows(p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    let s = &f.sync;
+    let mut devices = Vec::new();
+    if s.paired {
+        let state = words::sync_state(s.state, s.now_ms, s.offset_s);
+        devices.push(info(&s.name, format!("This computer · {state}")));
+        devices.extend(s.devices.iter().map(|d| info(&d.name, words::last_seen(d, s.now_ms))));
+    } else {
+        devices.push(info(if s.not_restored { words::PAIRING_NOT_RESTORED } else { words::NOT_PAIRED }, String::new()));
+    }
+    devices.push(Row { kind: BUTTON, name: PAIR_DEVICE.into(), title: words::PAIR_A_DEVICE.into(), enabled: p.sync, ..Default::default() });
+    if s.paired {
+        devices.push(Row { kind: ACTION, name: RESET_PAIRING.into(), title: words::RESET_PAIRING.into(), button: words::RESET.into(), enabled: true, ..Default::default() });
+    }
+    let mut server = vec![Row { kind: TOGGLE, name: "sync".into(), title: words::USE_SYNC_SERVER.into(), on: p.sync, enabled: true, ..Default::default() }];
+    if p.sync {
+        let address = p.sync_server.clone().unwrap_or_else(|| words::NORIS_OWN.into());
+        server.push(Row { kind: ACTION, name: SYNC_ADDRESS.into(), title: words::SYNC_ADDRESS.into(), detail: address, button: words::CHANGE.into(), enabled: true, ..Default::default() });
+        if s.paired {
+            server.push(Row { kind: TOGGLE, name: KEEP_COPY.into(), title: words::KEEP_COPY.into(), detail: words::KEEP_COPY_DETAIL.into(), on: s.keeps_copy, enabled: true, ..Default::default() });
+        }
+    }
+    model(vec![(words::DEVICES.into(), devices), (words::SYNC_SERVER.into(), server)], p, f, today)
 }
 
 /// The ask sheet's name for removing profile `id`, once confirmed.
@@ -726,6 +848,12 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
             let appearance = Row { kind: APPEARANCE_ROW, name: APPEARANCE.into(), title: "Appearance".into(), options: ["System", "Day", "Night", "Midnight"].map(|o| (o.to_string(), o.to_string())).to_vec(), enabled: true, ..Default::default() };
             vec![tiles, follow, appearance]
         }).collect();
+        let mut rows = rows;
+        match sec.id {
+            SectionId::Devices => rows.push(Row { kind: LINK, name: YOUR_DEVICES.into(), title: words::YOUR_DEVICES.into(), detail: words::your_devices_count(f.sync.paired, f.sync.devices.len()), enabled: true, ..Default::default() }),
+            SectionId::Accounts => rows.extend(f.sync.offers.iter().filter_map(|o| merge_row(o, p, kinds))),
+            _ => {}
+        }
         // The season stands under a heading of its own, as on Android, above the rest of the theme.
         let (season, rows): (Vec<Row>, Vec<Row>) = match rows.iter().position(|r| r.kind == SEASONS) {
             Some(at) => {
@@ -1805,23 +1933,106 @@ mod tests {
         let account = SavedScrobbler { id: "a".into(), kind: ScrobblerKind::ListenBrainz, on: true, user: "me".into(), ..Default::default() };
         let sv = SavedServer { id: "p".into(), scrobblers: vec![account], scrobble_off: true, ..Default::default() };
         let shown = |sv: &SavedServer, itself: bool| -> Vec<(i32, String, bool, Vec<String>, String)> {
-            profile_rows(&kinds, sv, itself, &StoredPrefs::default(), &Facts::default(), OCTOBER)
+            profile_rows(&kinds, sv, itself, false, &StoredPrefs::default(), &Facts::default(), OCTOBER)
                 .iter()
                 .map(|r| (r.kind, r.name.to_string(), r.on, r.values.iter().map(|v| v.to_string()).collect(), r.detail.to_string()))
                 .collect()
         };
         let rows = shown(&sv, true);
         let names: Vec<&str> = rows.iter().map(|r| r.1.as_str()).collect();
-        assert_eq!(names, ["", "scrobble-server", "scrobbler:a", "scrobbler-add"], "a server signs in with the form, so no account row");
+        assert_eq!(names, ["", "scrobble-server", "scrobbler:a", "scrobbler-add", "", "profile-sync"], "a server signs in with the form, so no account row");
         assert!(!rows[1].2, "the server's switch is off where its plays are off");
         assert_eq!(rows[2].3, ["scrobbler-remove:a"]);
         assert_eq!(rows[3].4, "", "accounts take the plays");
+        assert!(rows[5].2, "Sync this profile is on by default");
+        assert!(!shown(&SavedServer { sync_off: true, ..sv.clone() }, true)[5].2, "and off where the profile stays here");
         let alone = shown(&SavedServer { scrobblers: Vec::new(), ..sv }, false);
-        assert_eq!(alone.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), ["", "scrobbler-add"]);
+        assert_eq!(alone.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), ["", "scrobbler-add", "", "profile-sync"]);
         assert_eq!(alone[1].4, crate::words::SCROBBLING_HINT, "nothing takes the plays yet");
-        for part in [ProfilePart::Account, ProfilePart::ServerScrobbles, ProfilePart::Scrobbler("a".into()), ProfilePart::RemoveScrobbler("a".into()), ProfilePart::AddScrobbler] {
+        for part in [ProfilePart::Account, ProfilePart::ServerScrobbles, ProfilePart::Scrobbler("a".into()), ProfilePart::RemoveScrobbler("a".into()), ProfilePart::AddScrobbler, ProfilePart::Sync] {
             assert_eq!(ProfilePart::of(&part.name()), Some(part.clone()));
         }
+    }
+
+    fn seen(name: &str, ago_ms: i64, online: bool) -> nori_core::sync::Seen {
+        nori_core::sync::Seen { device: name.to_lowercase(), name: name.into(), last_ms: NOW - ago_ms, online }
+    }
+
+    /// 2026-11-24 13:00 UTC.
+    const NOW: i64 = 1_795_525_200_000;
+
+    fn devices_page(p: &StoredPrefs, sync: SyncFacts) -> Vec<(i32, String, String, bool, bool)> {
+        let f = Facts { sync, ..Default::default() };
+        your_devices_rows(p, &f, OCTOBER).iter().map(|r| (r.kind, r.title.to_string(), r.detail.to_string(), r.on, r.enabled)).collect()
+    }
+
+    /// Your devices, not paired: one plain line and Pair a device; after a restore, that pairing wasn't
+    /// restored. Paired: this computer and the group's others, Reset pairing and the kept copy.
+    #[test]
+    fn your_devices_lists_the_group_or_says_this_computer_is_alone() {
+        let on = StoredPrefs { sync: true, ..Default::default() };
+        let titles = |rows: &[(i32, String, String, bool, bool)]| rows.iter().map(|r| r.1.clone()).collect::<Vec<_>>();
+        let alone = devices_page(&on, SyncFacts { name: "Desk".into(), now_ms: NOW, ..Default::default() });
+        assert_eq!(titles(&alone), ["DEVICES", "This computer isn’t paired with your other devices.", "Pair a device", "SYNC SERVER", "Use the sync server", "Address"]);
+        assert_eq!(alone[5].2, "nori’s own", "an empty address is nori’s own server");
+        let restored = devices_page(&on, SyncFacts { not_restored: true, ..Default::default() });
+        assert_eq!(restored[1].1, "Pairing wasn’t restored from the backup.");
+        let group = SyncFacts {
+            paired: true,
+            state: nori_core::sync::SyncState::Connected,
+            devices: vec![seen("Pixel 8", 0, true), seen("iPod", 3 * 3_600_000, false)],
+            keeps_copy: true,
+            name: "Desk".into(),
+            now_ms: NOW,
+            ..Default::default()
+        };
+        let mine = StoredPrefs { sync_server: Some("https://sync.example".into()), ..on.clone() };
+        let paired = devices_page(&mine, group.clone());
+        let lines: Vec<(String, String)> = paired.iter().map(|r| (r.1.clone(), r.2.clone())).collect();
+        assert_eq!(lines[1..4], [("Desk".into(), "This computer · Connected".into()), ("Pixel 8".into(), "Online".into()), ("iPod".into(), "Seen 3 hours ago".into())]);
+        assert_eq!(titles(&paired)[4..], ["Pair a device", "Reset pairing", "SYNC SERVER", "Use the sync server", "Address", "Keep an encrypted copy"]);
+        assert_eq!(paired[8].2, "https://sync.example");
+        assert!(paired[9].3, "the kept copy's switch says whether the group keeps one");
+        let off = devices_page(&StoredPrefs { sync: false, ..Default::default() }, SyncFacts { state: nori_core::sync::SyncState::Idle, ..group });
+        assert_eq!(off[1].2, "This computer · Off");
+        assert!(!off.iter().find(|r| r.1 == "Pair a device").unwrap().4, "nothing pairs with the sync server off");
+        assert_eq!(titles(&off)[6..], ["SYNC SERVER", "Use the sync server"], "nor has it an address or a copy");
+    }
+
+    /// Settings › Library's devices lead to Your devices, saying whether this computer is paired.
+    #[test]
+    fn the_devices_section_opens_your_devices() {
+        let f = |paired: bool| Facts { rules: nori_core::browse::profile_rules(false), sync: SyncFacts { paired, devices: vec![seen("Pixel 8", 0, true)], ..Default::default() }, ..Default::default() };
+        let link = |f: &Facts| {
+            (0..8).flat_map(|tab| groups(&Default::default(), &StoredPrefs::default(), f, &Kinds::builtin(), &Plugged::default(), tab_page(f, tab), OCTOBER)).flat_map(|(_, rows)| rows).find(|r| r.name == YOUR_DEVICES).map(|r| (r.kind, r.title, r.detail)).unwrap()
+        };
+        assert_eq!(link(&f(false)), (LINK, "Your devices".into(), "Not paired".into()));
+        assert_eq!(link(&f(true)).2, "2 devices");
+        let alone = Facts { sync: SyncFacts { devices: Vec::new(), ..f(true).sync }, ..f(true) };
+        assert_eq!(link(&alone).2, "1 device", "after Reset pairing, a group of its own");
+        assert_eq!(Act::of(YOUR_DEVICES), Some(Act::YourDevices));
+    }
+
+    /// Two profiles that may be one show both, with Merge, and Keep both in the row's menu; a plugin's
+    /// profile on a computer that runs no plugins is grayed, Unavailable.
+    #[test]
+    fn the_profiles_offer_merges_and_gray_what_cannot_play() {
+        let sv = |id: &str, name: &str, kind: ServerKind| SavedServer { id: id.into(), name: name.into(), kind, ..Default::default() };
+        let p = StoredPrefs {
+            servers: vec![sv("a", "Home", ServerKind::Subsonic), sv("b", "Away", ServerKind::Subsonic), sv("c", "Tube", ServerKind::Plugin { id: "fm.nori.yt".into() })],
+            active_server_id: "a".into(),
+            ..Default::default()
+        };
+        let f = Facts { rules: nori_core::browse::profile_rules(false), sync: SyncFacts { offers: vec![nori_core::sync::MergeOffer { a: "a".into(), b: "b".into() }], ..Default::default() }, ..Default::default() };
+        let rows: Vec<Row> = groups(&Default::default(), &p, &f, &Kinds::builtin(), &Plugged::default(), SettingsPage::Servers, OCTOBER).into_iter().flat_map(|(_, r)| r).collect();
+        let merge = rows.iter().find(|r| r.name.starts_with("merge:")).expect("the offer");
+        assert_eq!((merge.title.as_str(), merge.button.as_str()), ("Home and Away may be one profile", "Merge"));
+        assert_eq!(Act::of(&merge.name), Some(Act::Merge("a".into(), "b".into())));
+        assert_eq!(Act::of(&merge.options[0].1), Some(Act::KeepApart("a".into(), "b".into())));
+        assert_eq!(merge.options[0].0, "Keep both");
+        let tube = rows.iter().find(|r| r.name == "c").unwrap();
+        assert_eq!((tube.detail.as_str(), tube.enabled), ("Unavailable", false));
+        assert!(rows.iter().find(|r| r.name == "b").unwrap().enabled, "a server's profile plays");
     }
 
     #[test]

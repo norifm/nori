@@ -593,6 +593,10 @@ pub struct App {
     asked: HashSet<String>,
     /// Those the signed-in account may act as, as last read, for the account sheet.
     identities: Vec<nori_core::providers::Identity>,
+    /// The Pair a device sheet.
+    pair: crate::pairing::Sheet,
+    /// A backup restored here had a pairing, which it doesn't bring: Your devices says so.
+    not_restored: bool,
 }
 
 /// Wraps `f` to run on the main window while it is open.
@@ -797,7 +801,8 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
     let (tx, inbox) = Tx::new(ui.as_weak());
     let sockets = nori_http::WebSockets::new();
     let told = tx.clone();
-    let sync = nori_core::sync::Syncing::native(root.app.settings.clone(), sockets.clone(), root.sync_client(move |synced| told.send(Msg::Synced(synced))), nori_core::sync::Reach::Computer);
+    let told = Arc::new(crate::pairing::Told { root: root.clone(), tx: told });
+    let sync = nori_core::sync::Syncing::native(root.app.settings.clone(), sockets.clone(), told, nori_core::sync::Reach::Computer);
     sockets.tell(&sync);
     let art = Rc::new(RefCell::new(Art::default()));
     let app = Rc::new_cyclic(|me: &Weak<RefCell<App>>| {
@@ -912,6 +917,8 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             jam_controls: None,
             asked: HashSet::new(),
             identities: Vec::new(),
+            pair: Default::default(),
+            not_restored: false,
         })
     });
     let h = app.borrow().me.clone();
@@ -1054,6 +1061,8 @@ enum Asked {
     Curve,
     /// Opens this page: a newer release's.
     Page(String),
+    /// Opens Pair a device.
+    Pair,
 }
 
 /// A kind of profile as its page shows it: `about`, the plugin's own words, in place of the note.
@@ -1244,6 +1253,28 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(jam.on_copy_link, h, |a| a.jam_copy_link());
     on!(ui.on_copy_pairing, h, |a| a.copy(a.ui().get_pairing_link().into(), words::LINK_COPIED));
+    let sheet = ui.global::<crate::PairSheet>();
+    sheet.set_words(words::pair_words());
+    on!(sheet.on_role_chosen, h, |a, i| a.pair_role(if i == 0 { crate::pairing::Role::Show } else { crate::pairing::Role::Take }));
+    on!(sheet.on_copy, h, |a| a.copy(a.ui().global::<crate::PairSheet>().get_link().into(), words::LINK_COPIED));
+    on!(sheet.on_take, h, |a, link| a.pair_take(link.to_string(), nori_core::sync::Came::Link));
+    on!(sheet.on_nearby_picked, h, |a, i| {
+        if let Some(n) = a.pair.nearby.get(i.max(0) as usize).cloned() {
+            a.pair_take(n.link, nori_core::sync::Came::Nearby);
+        }
+    });
+    on!(sheet.on_confirm, h, |a, keep| {
+        a.sync.pair_confirm(nori_host::device_name(), keep);
+        a.pair_shown();
+    });
+    on!(sheet.on_restart, h, |a| {
+        a.sync.pair_show(nori_host::device_name());
+        a.pair_shown();
+    });
+    on!(sheet.on_close, h, |a| a.pair_close());
+    let page = ui.global::<crate::YourDevices>();
+    page.set_title(words::YOUR_DEVICES.into());
+    on!(page.on_back, h, |a| a.devices_page(false));
     on!(jam.on_leave, h, |a| a.leave_jam());
     on!(ui.on_forget_device, h, |a, id| {
         if let Some(remote) = a.session.as_ref().and_then(|s| s.remote()) {
@@ -1373,6 +1404,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_settings_tab_chosen, h, |a, t| {
         a.ui().set_settings_tab(t);
+        a.ui().global::<crate::YourDevices>().set_open(false);
         a.plugins_read();
         if t == crate::settings::tabs(&a.facts.rules.settings).len() as i32 {
             a.plugins_look();
@@ -1381,6 +1413,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.settings_shown();
     });
     on!(ui.on_setting_toggled, h, |a, name, on| match (crate::settings::PluginAct::of(&name), crate::settings::ProfilePart::of(&name)) {
+        _ if name == crate::settings::KEEP_COPY => {
+            a.sync.keep_copy(on);
+            a.settings_shown();
+        }
         (Some(act), _) => a.plugin_set(act, nori_plugins::Value::Switch(on)),
         (None, Some(part)) => a.profile_part(part, on),
         (None, None) => {
@@ -1406,6 +1442,13 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_setting_typed, h, |a, name, text| match (crate::settings::PluginAct::of(&name), crate::settings::Act::of(&name)) {
         _ if name == words::REMOVE_DOWNLOADS => a.remove_asked(),
         _ if name.starts_with(crate::settings::REMOVE_PROFILE) => a.remove_profile(&name[crate::settings::REMOVE_PROFILE.len()..]),
+        _ if name == crate::settings::RESET_CONFIRMED => {
+            a.sync.reset();
+            a.settings_shown();
+        }
+        _ if name == crate::settings::SYNC_SERVER_TYPED => a.sync_server_typed(text.trim()),
+        _ if name.starts_with(crate::settings::SYNC_OFF_THERE) => a.sync_off(&name[crate::settings::SYNC_OFF_THERE.len()..], true),
+        _ if name.starts_with(crate::settings::SYNC_OFF_HERE) => a.sync_off(&name[crate::settings::SYNC_OFF_HERE.len()..], false),
         (Some(act), _) => a.plugin_typed(act, text.to_string()),
         (None, Some(act)) => a.backup_typed(act, text.to_string()),
         (None, None) => a.setting(&name, &text),
@@ -1514,10 +1557,11 @@ impl App {
     }
 
     /// The note's button: the session's last AutoEQ notice answered, or a release's page opened.
-    fn note_act(&self) {
+    fn note_act(&mut self) {
         match self.note_asks.take() {
             Some(Asked::Curve) => self.on_session(|s| s.curve_answer()),
             Some(Asked::Page(url)) => nori_host::desktop::open_in_browser(&url),
+            Some(Asked::Pair) => self.pair_open(),
             None => {}
         }
         let ui = self.ui();
@@ -3224,6 +3268,17 @@ impl App {
             ProfilePart::Scrobbler(account) => nori_host::scrobbler_switched(settings, &id, &account, on),
             ProfilePart::RemoveScrobbler(account) => nori_host::scrobbler_removed(settings, &id, &account),
             ProfilePart::AddScrobbler => return self.ui().set_scrobbler_step(1),
+            ProfilePart::Sync if on => nori_host::profile_look(settings, &id, |p| p.sync_off = false),
+            // A profile the other devices have: asked whether they keep it.
+            ProfilePart::Sync if self.sync.synced(id.clone()) => {
+                let prefs = settings.current().unwrap_or_default();
+                let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };
+                let (title, note) = words::stop_syncing(&words::profile_label(p, self.kinds()));
+                let there = format!("{}{id}", crate::settings::SYNC_OFF_THERE);
+                let here = format!("{}{id}", crate::settings::SYNC_OFF_HERE);
+                return self.ask_choice(&title, note, (words::REMOVE_THERE_TOO, &there), (words::KEEP_THERE, &here));
+            }
+            ProfilePart::Sync => nori_host::profile_look(settings, &id, |p| p.sync_off = true),
         }
         self.profile_parts_shown();
     }
@@ -3558,6 +3613,7 @@ impl App {
         ui.set_ask_note(note.into());
         ui.set_ask_name(name.into());
         ui.set_ask_button(button.into());
+        ui.set_ask_other("".into());
         ui.set_ask_field(field.is_some());
         ui.set_ask_secret(secret);
         ui.set_ask_text(field.unwrap_or_default().into());
@@ -3566,6 +3622,14 @@ impl App {
         ui.set_ask_status("".into());
         ui.set_ask_failed(false);
         ui.set_ask_open(true);
+    }
+
+    /// Asks with two answers: `button` sends `name`, `other` sends `other_name` (`setting_typed`).
+    fn ask_choice(&self, title: &str, note: &str, (button, name): (&str, &str), (other, other_name): (&str, &str)) {
+        self.ask_sheet(title, note, name, button, None, false);
+        let ui = self.ui();
+        ui.set_ask_other(other.into());
+        ui.set_ask_other_name(other_name.into());
     }
 
     /// Asks for a line of text: the sheet sends it back by `name` (`setting_typed`).
@@ -3798,6 +3862,23 @@ impl App {
         self.plugins_read();
     }
 
+    /// A sign-in to a profile that syncs is to the account it syncs with, or is signed out again: the
+    /// provider's account, off this thread, checked by sync.
+    fn sign_in_checked(&self) {
+        let (Some(profile), Some(account)) = (self.sheet_profile(), self.sheet_account()) else { return };
+        if !self.sync.synced(profile.id.clone()) {
+            return;
+        }
+        let (sync, tx) = (self.sync.clone(), self.tx.clone());
+        nori_host::spawn("nori-sign-in-check", move || {
+            let id = nori_core::transport::block_on(account.client().account_id());
+            if sync.signed_in(profile.id, id) == nori_core::sync::SignInCheck::OtherAccount {
+                account.sign_out();
+                tx.send(Msg::OtherAccount);
+            }
+        });
+    }
+
     /// The ended session's sheet no longer comes back at start.
     fn sign_in_quiet(&mut self) {
         self.on_session(|s| s.client.stop_reminding());
@@ -3951,11 +4032,11 @@ impl App {
         let prefs = self.root.app.settings.current().unwrap_or_default();
         let Some(profile) = self.editing.as_ref().and_then(|id| prefs.servers.iter().find(|s| &s.id == id)).cloned() else { return };
         // The open profile's rules as its session has them; another's as the core reads the saved profile.
-        let itself = match &self.session {
-            Some(s) if prefs.active_server_id == profile.id => s.rules().scrobbles,
-            _ => self.kinds().rules_of(profile.clone(), false).scrobbles,
+        let (itself, signed_out) = match &self.session {
+            Some(s) if prefs.active_server_id == profile.id => (s.rules().scrobbles, s.client.account() == nori_core::providers::AccountState::SignedOut),
+            _ => (self.kinds().rules_of(profile.clone(), false).scrobbles, false),
         };
-        let rows = crate::settings::profile_rows(self.kinds(), &profile, itself, &prefs, &self.facts, crate::look::Today::now());
+        let rows = crate::settings::profile_rows(self.kinds(), &profile, itself, signed_out, &prefs, &self.facts, crate::look::Today::now());
         self.ui().set_profile_rows(rows);
     }
 
@@ -4460,6 +4541,20 @@ impl App {
                 }
             }
             Msg::Synced(synced) => self.synced(synced),
+            Msg::SyncChanged => {
+                self.pair_shown();
+                self.settings_shown();
+            }
+            Msg::SyncEvent(e) => {
+                let trouble = !matches!(e, nori_core::sync::SyncEvent::NewDevice { .. } | nori_core::sync::SyncEvent::DeviceLeft { .. });
+                self.say(&words::sync_event(&e), trouble);
+                self.settings_shown();
+            }
+            Msg::SyncInstall(plugins) => self.install_needed(plugins),
+            Msg::OtherAccount => {
+                self.say(words::OTHER_ACCOUNT, true);
+                self.account_kept();
+            }
             Msg::PluginsChanged => {
                 self.plugins_read();
                 self.output_shown();
@@ -4473,10 +4568,17 @@ impl App {
                 self.on_session(|s| s.backup_restored(&r.settings));
                 // The backup brings its sync and sync server settings, never the pairing.
                 self.sync.settings_changed();
+                self.not_restored = r.pairing_not_restored;
                 self.settings_shown();
                 self.jam_shown();
                 self.plugins_read();
-                self.welcome_restore(&words::restored(&r), false, false);
+                // Said in the note even on the welcome, which the profiles it brought back close.
+                if r.pairing_not_restored {
+                    self.ui().set_welcome_restore_busy(false);
+                    self.ask(&format!("{} · {}", words::restored(&r), words::PAIRING_NOT_RESTORED), words::PAIR_A_DEVICE, Asked::Pair);
+                } else {
+                    self.welcome_restore(&words::restored(&r), false, false);
+                }
                 // On the welcome, the profiles it brought back open the app.
                 if self.session.is_none() {
                     if let Some(p) = r.settings.prefs.active_server().cloned() {
@@ -4525,6 +4627,9 @@ impl App {
             }
             Msg::SignedIn(r) => {
                 let signed_in = matches!(r, nori_core::providers::SignInResult::SignedIn { .. });
+                if signed_in {
+                    self.sign_in_checked();
+                }
                 self.sign_in_on(SignInEvent::Answered { result: r });
                 if signed_in {
                     self.ui().set_signin_text("".into());
@@ -5009,6 +5114,7 @@ impl App {
         let today = crate::look::Today::now();
         let view = ui.get_view();
         if view == View::Settings {
+            self.facts.sync = self.sync_facts();
             // The core's pages, then Plugins.
             let mut tabs: Vec<SharedString> = crate::settings::tabs(&self.facts.rules.settings).into_iter().map(|p| SharedString::from(crate::settings::tab_name(p))).collect();
             let plugins_tab = tabs.len() as i32;
@@ -5017,7 +5123,9 @@ impl App {
             let tab = ui.get_settings_tab();
             ui.set_plugins_tab(tab == plugins_tab);
             ui.set_plugin_top(crate::settings::plugin_top(&self.plugged, prefs.plugins_off));
-            ui.set_settings(if tab == plugins_tab {
+            ui.set_settings(if ui.global::<crate::YourDevices>().get_open() {
+                crate::settings::your_devices_rows(&prefs, &self.facts, today)
+            } else if tab == plugins_tab {
                 crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today)
             } else {
                 crate::settings::rows(&self.root.app.settings.model, &prefs, &self.facts, self.kinds(), &self.plugged, tab, today)
@@ -5039,8 +5147,130 @@ impl App {
         if changed.is_none() {
             self.say(&format!("{name}: not a setting"), true);
         }
+        if name == "sync" {
+            self.sync.settings_changed();
+        }
         self.settings_shown();
         self.jam_shown();
+    }
+
+    /// The sync server's address as typed; empty for nori's own. A new code is made on it.
+    fn sync_server_typed(&mut self, address: &str) {
+        let address = Some(address.to_string()).filter(|a| !a.is_empty());
+        self.root.app.settings.change(|p| nori_core::settings::StoredPrefs { sync_server: address, ..p.clone() });
+        self.sync.settings_changed();
+        self.settings_shown();
+    }
+
+    /// Sync this profile off for profile `id`; `elsewhere`, it is removed from the other devices too.
+    fn sync_off(&mut self, id: &str, elsewhere: bool) {
+        self.sync.sync_off(id.to_string(), elsewhere);
+        nori_host::profile_look(&self.root.app.settings, id, |p| p.sync_off = true);
+        self.profile_parts_shown();
+    }
+
+    /// Opens Settings › Your devices, or goes back from it.
+    fn devices_page(&mut self, open: bool) {
+        let ui = self.ui();
+        ui.global::<crate::YourDevices>().set_open(open);
+        if open && ui.get_view() != View::Settings {
+            self.go(View::Settings);
+        }
+        self.settings_shown();
+    }
+
+    /// Pairing and profile sync as Your devices and the profiles show them now.
+    fn sync_facts(&self) -> crate::settings::SyncFacts {
+        let paired = nori_core::sync::paired(&self.root.app.settings);
+        let now_ms = nori_core::db::now_ms();
+        crate::settings::SyncFacts {
+            paired,
+            state: self.sync.state(),
+            devices: self.sync.devices(),
+            keeps_copy: self.sync.keeps_copy(),
+            offers: self.sync.offers(),
+            not_restored: self.not_restored && !paired,
+            name: nori_host::device_name(),
+            now_ms,
+            offset_s: nori_core::library::local_offset_s(now_ms / 1000),
+        }
+    }
+
+    /// Opens Pair a device: a computer in no group shows its code at once, one in a group takes a code.
+    fn pair_open(&mut self) {
+        let paired = nori_core::sync::paired(&self.root.app.settings);
+        self.pair = crate::pairing::Sheet::new(if paired { crate::pairing::Role::Take } else { crate::pairing::Role::Show });
+        if paired {
+            self.sync.pair_cancel();
+        } else {
+            self.sync.pair_show(nori_host::device_name());
+        }
+        let ui = self.ui();
+        let sheet = ui.global::<crate::PairSheet>();
+        sheet.set_pasted("".into());
+        sheet.set_open(true);
+        self.pair_shown();
+    }
+
+    /// The sheet's other role: showing this computer's code starts one; taking a code stops it.
+    fn pair_role(&mut self, role: crate::pairing::Role) {
+        if role == self.pair.role {
+            return;
+        }
+        self.pair.role = role;
+        match role {
+            crate::pairing::Role::Show => self.sync.pair_show(nori_host::device_name()),
+            crate::pairing::Role::Take => self.sync.pair_cancel(),
+        }
+        self.pair_shown();
+    }
+
+    /// Takes another device's code, as it `came`.
+    fn pair_take(&mut self, link: String, came: nori_core::sync::Came) {
+        if link.trim().is_empty() {
+            return;
+        }
+        self.sync.pair_take(link.trim().to_string(), came);
+        self.pair_shown();
+    }
+
+    /// Closes the sheet: a pairing under way stops.
+    fn pair_close(&mut self) {
+        self.sync.pair_cancel();
+        self.ui().global::<crate::PairSheet>().set_open(false);
+        self.settings_shown();
+    }
+
+    /// Draws the pairing on the sheet while it is open.
+    fn pair_shown(&mut self) {
+        let ui = self.ui();
+        if ui.global::<crate::PairSheet>().get_open() {
+            self.pair.fill(&ui, &self.sync.pairing());
+        }
+    }
+
+    /// Installs the plugins synced profiles need, each from its repo where this computer has that repo,
+    /// signed by the key it pinned; a profile waiting for one opens once it is in.
+    fn install_needed(&self, plugins: Vec<nori_core::sync::NeededPlugin>) {
+        let (host, tx) = (self.plugin_host().clone(), self.tx.clone());
+        nori_host::spawn("nori-sync-install", move || {
+            let offers = nori_core::transport::block_on(host.offers()).offers;
+            let mut installed = false;
+            for p in plugins {
+                let offer = offers.iter().find(|o| o.id == p.id && Some(&o.repo.url) == p.repo.as_ref());
+                let Some(version) = offer.and_then(|o| o.versions.iter().find(|v| p.key.is_none() || v.key == p.key)) else {
+                    nori_core::alog::info(&format!("sync: plugin {} is in no repo here", p.id));
+                    continue;
+                };
+                match nori_core::transport::block_on(host.install_version(version.clone())) {
+                    Ok(_) => installed = true,
+                    Err(e) => nori_core::alog::info(&format!("sync: plugin {}: {e}", p.id)),
+                }
+            }
+            if installed {
+                tx.send(Msg::PluginsChanged);
+            }
+        });
     }
 
     /// How restoring a backup goes: under the welcome's Restore while it shows, else in a note.
@@ -5588,7 +5818,7 @@ impl App {
             Some(Act::Remove(id)) => {
                 let prefs = self.root.app.settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };
-                let (title, note) = words::remove_profile(&words::profile_label(p, self.kinds()));
+                let (title, note) = words::remove_profile(&words::profile_label(p, self.kinds()), self.sync.synced(id.clone()));
                 self.ask_sheet(&title, note, &format!("{}{id}", crate::settings::REMOVE_PROFILE), words::REMOVE, None, false);
             }
             Some(Act::Rename(id)) => {
@@ -5604,6 +5834,27 @@ impl App {
             Some(Act::CheckUpdate) => {
                 self.on_session(|s| s.update_check(true));
                 self.say("Checking…", false);
+            }
+            Some(Act::YourDevices) => self.devices_page(true),
+            Some(Act::PairDevice) => self.pair_open(),
+            Some(Act::ResetPairing) => {
+                let Some(notice) = self.sync.reset_notice() else { return };
+                let prefs = self.root.app.settings.current().unwrap_or_default();
+                let names: Vec<String> = notice.signed_in.iter().filter_map(|id| prefs.servers.iter().find(|s| s.id == *id)).map(|p| words::profile_label(p, self.kinds())).collect();
+                let (title, note) = words::reset_pairing(&names);
+                self.ask_sheet(title, &note, crate::settings::RESET_CONFIRMED, words::RESET_PAIRING, None, false);
+            }
+            Some(Act::SyncAddress) => {
+                let address = self.root.app.settings.current().and_then(|p| p.sync_server).unwrap_or_default();
+                self.ask_sheet(words::SYNC_ADDRESS_ASK, words::SYNC_ADDRESS_NOTE, crate::settings::SYNC_SERVER_TYPED, words::SAVE, Some(&address), false);
+            }
+            Some(Act::Merge(keep, drop)) => {
+                self.sync.merge(keep, drop);
+                self.settings_shown();
+            }
+            Some(Act::KeepApart(a, b)) => {
+                self.sync.keep_apart(a, b);
+                self.settings_shown();
             }
             Some(Act::Chore(c)) => {
                 self.on_session(|s| s.action(c));
@@ -5672,6 +5923,9 @@ impl App {
     /// The back button: the page this one was opened from, else the tab it was opened on; Home from a
     /// page of its own.
     fn back(&mut self) {
+        if self.ui().get_view() == View::Settings && self.ui().global::<crate::YourDevices>().get_open() {
+            return self.devices_page(false);
+        }
         if self.ui().get_view() == View::Settings && !self.plugged.stack.is_empty() {
             return self.plugin_act(crate::settings::PluginAct::Back);
         }
@@ -8636,6 +8890,231 @@ mod tests {
         shot(&ui, "after-pairing");
         click("Pair");
         assert_eq!(*asked.borrow(), [link]);
+    }
+
+    fn testing_platform() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+    }
+
+    /// Draws a few frames, as the window does between events.
+    fn settle(ui: &AppWindow) {
+        for _ in 0..3 {
+            ui.window().take_snapshot().unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+        }
+    }
+
+    fn shown(ui: &AppWindow, label: &str) -> bool {
+        settle(ui);
+        i_slint_backend_testing::ElementHandle::find_by_accessible_label(ui, label).next().is_some()
+    }
+
+    /// Clicks the middle of the last element labeled `label`.
+    fn click(ui: &AppWindow, label: &str) {
+        settle(ui);
+        let found = i_slint_backend_testing::ElementHandle::find_by_accessible_label(ui, label).last().unwrap_or_else(|| panic!("{label} shown"));
+        let (at, size) = (found.absolute_position(), found.size());
+        let at = slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0);
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: slint::platform::PointerEventButton::Left });
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button: slint::platform::PointerEventButton::Left });
+        settle(ui);
+    }
+
+    /// The sheet's callbacks, as heard.
+    fn hear_sheet(ui: &AppWindow) -> Rc<RefCell<Vec<String>>> {
+        let heard = Rc::new(RefCell::new(Vec::new()));
+        let sheet = ui.global::<crate::PairSheet>();
+        sheet.set_words(words::pair_words());
+        let h = heard.clone();
+        sheet.on_take(move |l| h.borrow_mut().push(format!("take {l}")));
+        let h = heard.clone();
+        sheet.on_confirm(move |keep| h.borrow_mut().push(format!("confirm {keep}")));
+        let h = heard.clone();
+        sheet.on_close(move || h.borrow_mut().push("close".into()));
+        let h = heard.clone();
+        sheet.on_role_chosen(move |i| h.borrow_mut().push(format!("role {i}")));
+        let h = heard.clone();
+        sheet.on_copy(move || h.borrow_mut().push("copy".into()));
+        let h = heard.clone();
+        sheet.on_restart(move || h.borrow_mut().push("restart".into()));
+        heard
+    }
+
+    #[test]
+    fn the_pair_sheet_takes_a_link_and_asks_with_the_three_words() {
+        use nori_core::sync::{Confirmation, PairingRefused, PairingView};
+        testing_platform();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        let heard = hear_sheet(&ui);
+        let mut pair = crate::pairing::Sheet::new(crate::pairing::Role::Take);
+        pair.nearby = vec![crate::pairing::Nearby { name: "Pixel 8".into(), link: "nori://pair#near".into() }];
+        pair.fill(&ui, &PairingView::Idle);
+        let sheet = ui.global::<crate::PairSheet>();
+        sheet.set_open(true);
+        ui.show().unwrap();
+        assert!(shown(&ui, "Pair a device") && shown(&ui, "Show a code") && shown(&ui, "Paste a link"), "both roles on one sheet");
+        assert!(shown(&ui, "NEARBY") && shown(&ui, "Pixel 8"), "the devices waiting nearby are listed");
+        sheet.set_pasted("nori://pair#v=1".into());
+        click(&ui, "Pair");
+        click(&ui, "Show a code");
+        assert_eq!(*heard.borrow(), ["take nori://pair#v=1", "role 0"]);
+        pair.fill(&ui, &PairingView::Refused { reason: PairingRefused::NotACode });
+        assert!(shown(&ui, "That isn’t a nori pairing code."));
+        let ask = |words: Option<Vec<String>>, leaves, asks_keep_copy| PairingView::Confirm { confirmation: Confirmation { name: "Pixel 8".into(), profiles: 3, leaves, words, asks_keep_copy } };
+        pair.fill(&ui, &ask(Some(["acorn", "bison", "cedar"].map(String::from).to_vec()), Some(1), true));
+        shot(&ui, "pair-confirm");
+        for line in ["Give ‘Pixel 8’ your sign-ins for 3 profiles?", "acorn bison cedar", "Check that the other screen shows the same three words.", "Pixel 8 will stop syncing with its 1 other device.", "Keep an encrypted copy on the sync server"] {
+            assert!(shown(&ui, line), "{line}");
+        }
+        assert!(!shown(&ui, "Show a code"), "no roles while it asks");
+        heard.borrow_mut().clear();
+        click(&ui, "Pair");
+        sheet.set_keep(false);
+        click(&ui, "Pair");
+        click(&ui, "Cancel");
+        assert_eq!(*heard.borrow(), ["confirm true", "confirm false", "close"], "keeping a copy is chosen first, and can be turned off");
+        // Opened again, as pair_open makes it.
+        let mut pair = crate::pairing::Sheet::new(crate::pairing::Role::Take);
+        pair.fill(&ui, &ask(None, None, false));
+        assert!(!shown(&ui, "Check that the other screen shows the same three words.") && !shown(&ui, "Keep an encrypted copy on the sync server"), "a scanned code shows no words, a later pairing asks nothing of a copy");
+        assert!(sheet.get_keep(), "the next confirmation asks to keep one again");
+        pair.fill(&ui, &PairingView::Sent);
+        assert!(shown(&ui, "Pixel 8 is paired."));
+    }
+
+    #[test]
+    fn the_new_device_shows_its_code_and_a_new_one_when_it_ran_out() {
+        use nori_core::sync::{PairingRefused, PairingView};
+        testing_platform();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        let heard = hear_sheet(&ui);
+        let mut pair = crate::pairing::Sheet::new(crate::pairing::Role::Show);
+        pair.fill(&ui, &PairingView::Starting);
+        ui.global::<crate::PairSheet>().set_open(true);
+        ui.show().unwrap();
+        assert!(shown(&ui, "Reaching the sync server…"));
+        let link = "nori://pair#v=1&s=aHR0cHM6Ly9zeW5jLm5vcmlmbS5jb20&r=room&l=lock&n=RGVzaw&p=a&e=1";
+        pair.fill(&ui, &PairingView::Code { link: link.into(), words: ["acorn", "bison", "cedar"].map(String::from).to_vec() });
+        shot(&ui, "pair-code");
+        assert!(ui.global::<crate::PairSheet>().get_qr().size().width > 0, "the QR code is drawn");
+        for line in ["acorn bison cedar", "The code works for five minutes.", "Copy link"] {
+            assert!(shown(&ui, line), "{line}");
+        }
+        click(&ui, "Copy link");
+        pair.fill(&ui, &PairingView::Refused { reason: PairingRefused::Expired });
+        assert!(shown(&ui, "The code ran out.") && !shown(&ui, "Copy link"));
+        click(&ui, "New code");
+        assert_eq!(*heard.borrow(), ["copy", "restart"]);
+    }
+
+    /// Sync this profile off on a profile the other devices have: the ask sheet's second answer keeps it
+    /// there.
+    #[test]
+    fn the_ask_sheet_sends_its_second_answer() {
+        testing_platform();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        let typed = Rc::new(RefCell::new(Vec::new()));
+        let h = typed.clone();
+        ui.on_setting_typed(move |name, _| h.borrow_mut().push(name.to_string()));
+        let (title, note) = words::stop_syncing("Home");
+        for (set, v) in [(AppWindow::set_ask_title as fn(&AppWindow, SharedString), title.as_str()), (AppWindow::set_ask_note, note), (AppWindow::set_ask_button, words::REMOVE_THERE_TOO), (AppWindow::set_ask_name, "there"), (AppWindow::set_ask_other, words::KEEP_THERE), (AppWindow::set_ask_other_name, "here")] {
+            set(&ui, v.into());
+        }
+        ui.set_ask_open(true);
+        ui.show().unwrap();
+        assert!(shown(&ui, "Stop syncing ‘Home’?"));
+        let pane = ui.global::<crate::DialogPane>().get_at();
+        let remove = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, words::REMOVE_THERE_TOO).last().unwrap();
+        assert!(remove.absolute_position().x + remove.size().width + 16.0 <= pane.x + pane.width, "both answers fit inside the sheet's padding");
+        click(&ui, "Keep on other devices");
+        assert!(!ui.get_ask_open());
+        ui.set_ask_open(true);
+        click(&ui, "Remove from other devices");
+        assert_eq!(*typed.borrow(), ["here", "there"]);
+    }
+
+    /// A new computer pairs from the welcome, beside restoring a backup: either brings its profiles.
+    #[test]
+    fn the_welcome_offers_pairing() {
+        testing_platform();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.set_first_run_words(words::first_run());
+        ui.global::<crate::PairSheet>().set_words(words::pair_words());
+        ui.set_view(View::Login);
+        ui.set_login_choosing(true);
+        ui.set_welcome(true);
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let h = asked.clone();
+        ui.on_setting_action(move |name| h.borrow_mut().push(name.to_string()));
+        ui.show().unwrap();
+        click(&ui, words::RESTORE);
+        click(&ui, words::PAIR_A_DEVICE);
+        assert_eq!(*asked.borrow(), ["restore", "sync-pair"]);
+    }
+
+    /// The pixel at `(x, y)` of the window as drawn now.
+    fn pixel(ui: &AppWindow, x: f32, y: f32) -> slint::Rgba8Pixel {
+        let shot = ui.window().take_snapshot().unwrap();
+        shot.as_slice()[y as usize * shot.width() as usize + x as usize]
+    }
+
+    fn ink(c: slint::Color) -> slint::Rgba8Pixel {
+        slint::Rgba8Pixel { r: c.red(), g: c.green(), b: c.blue(), a: 255 }
+    }
+
+    /// Day to Night with the Pair a device sheet open over Your devices: the sheet and the page's plates
+    /// take Night's paper.
+    #[test]
+    fn a_theme_switch_repaints_the_pair_sheet_and_your_devices() {
+        use nori_core::settings::{StoredPrefs, ThemeMode};
+        testing_platform();
+        let today = crate::look::Today { month: 10, day: 19, southern: false };
+        let dress = |theme| crate::look::plain(&Default::default(), &StoredPrefs { theme, ..Default::default() }, false, today);
+        let ui = AppWindow::new().unwrap();
+        dress(ThemeMode::Light).paint(&ui);
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.global::<crate::Chrome>().set_top_x(190.0);
+        ui.global::<crate::Chrome>().set_top_w(900.0);
+        ui.set_view(View::Settings);
+        ui.global::<crate::YourDevices>().set_open(true);
+        ui.global::<crate::YourDevices>().set_title(words::YOUR_DEVICES.into());
+        let prefs = StoredPrefs { sync: true, ..Default::default() };
+        ui.set_settings(crate::settings::your_devices_rows(&prefs, &Default::default(), today));
+        ui.show().unwrap();
+        assert!(shown(&ui, "Your devices") && shown(&ui, "Use the sync server"));
+        let row = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "Use the sync server").next().unwrap();
+        let plate = (row.absolute_position().x - 8.0, row.absolute_position().y + 2.0);
+        let mut pair = crate::pairing::Sheet::new(crate::pairing::Role::Show);
+        ui.global::<crate::PairSheet>().set_words(words::pair_words());
+        pair.fill(&ui, &nori_core::sync::PairingView::Code { link: "nori://pair#v=1".into(), words: vec!["acorn".into(), "bison".into(), "cedar".into()] });
+        ui.global::<crate::PairSheet>().set_open(true);
+        settle(&ui);
+        let pane = ui.global::<crate::DialogPane>().get_at();
+        let inside = (pane.x + 6.0, pane.y + pane.height / 2.0);
+        let day_sheet = pixel(&ui, inside.0, inside.1);
+        assert_eq!(day_sheet, ink(ui.global::<crate::Theme>().get_ground()), "the sheet is the day's paper");
+        ui.global::<crate::PairSheet>().set_open(false);
+        settle(&ui);
+        let day_row = pixel(&ui, plate.0, plate.1);
+        assert_eq!(day_row, ink(ui.global::<crate::Theme>().get_panel()), "the row sits on the day's surface");
+        ui.global::<crate::PairSheet>().set_open(true);
+        dress(ThemeMode::Dark).paint(&ui);
+        settle(&ui);
+        shot(&ui, "pair-night");
+        let night = ink(ui.global::<crate::Theme>().get_ground());
+        assert_ne!(night, day_sheet);
+        assert_eq!(pixel(&ui, inside.0, inside.1), night, "the open sheet takes the night's paper");
+        ui.global::<crate::PairSheet>().set_open(false);
+        settle(&ui);
+        assert_eq!(pixel(&ui, plate.0, plate.1), ink(ui.global::<crate::Theme>().get_panel()), "and the page's plates the night's surface");
     }
 
     /// Saves the window as `name`.raw (its size, then RGBA) under NORI_DESKTOP_SHOTS, when set.

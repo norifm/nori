@@ -14,6 +14,7 @@ mod look;
 mod lyrics;
 mod menu;
 mod motion;
+mod pairing;
 mod session;
 mod settings;
 mod setup;
