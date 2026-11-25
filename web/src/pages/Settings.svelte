@@ -325,7 +325,7 @@
     height: 20px;
   }
   .off {
-    opacity: 0.5;
+    opacity: 0.38;
   }
   .note {
     margin: 0;

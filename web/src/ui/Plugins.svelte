@@ -464,6 +464,10 @@
   .group.off {
     opacity: 0.38;
   }
+  /* A plugin's row it turned off, dimmed as Android dims it. */
+  .group-row[data-row].off {
+    opacity: 0.38;
+  }
   .tile {
     width: 44px;
     height: 44px;
