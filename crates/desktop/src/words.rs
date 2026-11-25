@@ -301,7 +301,6 @@ pub fn asset_state(a: &nori_plugins::AssetLine) -> String {
 }
 pub const BATTERY: &str = "Battery";
 pub const DEVICE_SETTINGS: &str = "Device settings";
-pub const BACK: &str = "Back";
 
 pub fn noise(n: nori_plugins::Noise) -> &'static str {
     use nori_plugins::Noise;

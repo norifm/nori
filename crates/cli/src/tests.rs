@@ -2282,13 +2282,16 @@ fn no_plugins_offers_the_browser_then_repos_and_a_file() {
     assert!(matches!(SettingsView::lines(&pages)[a.settings.row.at], Line::Row(Row::Link { .. })), "back on Get plugins");
 }
 
-/// A plugin's page shows the devices it controls with their controls, its assets and the way to
-/// fetch them on mobile data, and a row it turned off as a line that takes no input.
+/// A plugin's page shows its assets and the way to fetch them on mobile data, and a row it turned off as
+/// a line that takes no input; a device it controls has its settings on its own page.
 #[test]
-fn a_plugins_page_shows_its_devices_assets_and_rows_turned_off() {
+fn a_plugins_page_shows_its_assets_and_rows_turned_off() {
     use crate::app::PluginCmd;
     use nori_plugins::{AssetLine, AssetState, Battery, ControlledDevice, Noise, RowKind, Value};
-    let gain = card("dev.example.gain", "Gain", vec![plugin_row("on", RowKind::Switch, Some(Value::Switch(true)))]);
+    let gain = nori_plugins::PluginCard {
+        points: vec!["device-control".into()],
+        ..card("dev.example.gain", "Gain", vec![plugin_row("on", RowKind::Switch, Some(Value::Switch(true))), plugin_row("help", RowKind::Link, None)])
+    };
     let mut a = plugins_app(vec![gain.clone()], vec![official()], Default::default());
     a.settings.own.off.insert(("dev.example.gain".into(), "on".into()));
     a.settings.own.assets.insert("dev.example.gain".into(), vec![AssetLine { name: "model".into(), size: 3 << 20, state: AssetState::WaitingForWifi }]);
@@ -2298,17 +2301,22 @@ fn a_plugins_page_shows_its_devices_assets_and_rows_turned_off() {
     let s = draw(&mut a, 140, 300);
     dump("plugins-page-devices", &s);
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
-    assert!(s.contains("TEST BUDS") && line("Battery").contains("80%"), "{s}");
     assert!(line("model").contains("Waiting for Wi-Fi") && s.contains("FILES"), "{s}");
-    assert!(line("Switch row").contains("On"));
+    assert!(s.contains("Link row") && !s.contains("TEST BUDS") && !s.contains("Switch row"), "the device's settings are on its page: {s}");
 
+    a.settings.enter(crate::settings_view::PluginPage::Device("AA".into()), &a.prefs.clone());
+    let s = draw(&mut a, 140, 300);
+    dump("device-page", &s);
+    let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
+    assert!(s.contains("Test Buds") && line("Battery").contains("80%") && line("Switch row").contains("On") && !s.contains("Link row"), "{s}");
     select_row(&mut a, |r| matches!(r, Row::Info { title, .. } if title == "Switch row"));
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.is_empty(), "a row turned off takes no input");
+    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Plugin(_))), "a row turned off takes no input: {:?}", a.cmds);
     select_row(&mut a, |r| matches!(r, Row::Choice { title, .. } if title == "Noise control"));
     key(&mut a, KeyCode::Right);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Noise("AA".into(), Noise::Canceling))));
+    key(&mut a, KeyCode::Esc);
     select_row(&mut a, |r| matches!(r, Row::Button { title, .. } if title == "Download on mobile data"));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::AllowMobileAssets("dev.example.gain".into()))));
@@ -2863,9 +2871,25 @@ fn a_controlled_devices_settings_and_noise_key() {
     assert!(a.devices.rows().contains(&crate::app::DeviceRow::Settings(0)));
     key(&mut a, KeyCode::Char('C'));
     let at = a.devices.rows().iter().position(|r| *r == crate::app::DeviceRow::Settings(0)).unwrap();
+    a.settings.own.controlled = a.devices.controlled.clone();
+    a.go(View::Albums);
+    a.pages.push(crate::app::Page::Album { id: "al".into(), detail: Default::default(), sel: Default::default() });
+    key(&mut a, KeyCode::Char('C'));
     a.devices.sel.at = at;
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.view, View::Settings, "the settings show");
+    assert_eq!((a.view, a.full), (View::Settings, false), "the device's page shows");
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Buds") && s.contains("Flags row"), "{s}");
+    key(&mut a, KeyCode::Esc);
+    assert_eq!((a.view, a.pages.len(), a.full, a.panel), (View::Albums, 1, true, Panel::Devices), "back where it was opened");
+    assert!(!a.settings.deep());
+
+    a.devices.sel.at = at;
+    key(&mut a, KeyCode::Enter);
+    a.settings.own.controlled.clear();
+    assert!(a.settings.device_gone());
+    a.device_page_left();
+    assert_eq!((a.view, a.full), (View::Albums, true), "its device gone, the page closes as Back does");
 
     let rows = crate::settings_view::plugin_rows("dev.example.buds", &flags, false);
     let on: Vec<bool> = rows.iter().filter_map(|r| if let crate::settings_view::Row::Toggle { on, .. } = r { Some(*on) } else { None }).collect();

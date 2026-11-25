@@ -3367,10 +3367,20 @@ impl App {
         }
         let mut shown_here = host.device_cards("en".into());
         self.plugged.off.extend(watched.as_said(&mut shown_here));
-        let paged = crate::settings::paged_device(&self.plugged.controlled, self.plugged.device_page.as_deref());
-        ui.set_device_paged(paged.is_some());
-        ui.set_device_controls(crate::settings::controlled_rows(if paged.is_some() { &[] } else { &self.plugged.controlled }, &prefs, &self.facts, today));
-        ui.set_device_plugin_rows(crate::settings::device_rows(&shown_here, &self.plugged.controlled, &self.plugged.off, paged, &prefs, &self.facts, today));
+        ui.set_device_controls(crate::settings::controlled_rows(&self.plugged.controlled, &prefs, &self.facts, today));
+        ui.set_device_plugin_rows(crate::settings::device_rows(&shown_here, &self.plugged.controlled, &self.plugged.off, &prefs, &self.facts, today));
+        match crate::settings::opened_device(&self.plugged.controlled, self.plugged.device_page.as_deref()) {
+            Some(d) => {
+                ui.set_device_name(d.name.as_str().into());
+                ui.set_device_rows(crate::settings::device_page_rows(d, &self.plugged.off, &prefs, &self.facts, today));
+                ui.set_device_open(true);
+            }
+            // Its device gone, the dialog closes and stays closed when it comes back.
+            None => {
+                self.plugged.device_page = None;
+                ui.set_device_open(false);
+            }
+        }
         let menus = ui.global::<crate::PluginMenus>();
         let labels = |k: usize| ModelRc::new(VecModel::from(self.plugin_menus[k].iter().map(|e| SharedString::from(e.label.as_str())).collect::<Vec<_>>()));
         menus.set_album(labels(0));
@@ -3636,7 +3646,7 @@ impl App {
     /// A button of Settings › Plugins.
     fn plugin_act(&mut self, act: crate::settings::PluginAct) {
         use crate::settings::PluginAct;
-        if matches!(act, PluginAct::DeviceOpen(_) | PluginAct::DeviceBack) {
+        if matches!(act, PluginAct::DeviceOpen(_) | PluginAct::DeviceClose) {
             self.plugged.device_page = if let PluginAct::DeviceOpen(device) = act { Some(device) } else { None };
             return self.plugins_read();
         }
@@ -3718,7 +3728,7 @@ impl App {
                 return self.plugins_shown();
             }
             PluginAct::AllowMobile(id) => host.allow_mobile_assets(id),
-            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Flags(..) | PluginAct::DeviceOpen(_) | PluginAct::DeviceBack | PluginAct::Search | PluginAct::Chip | PluginAct::Category => return,
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Flags(..) | PluginAct::DeviceOpen(_) | PluginAct::DeviceClose | PluginAct::Search | PluginAct::Chip | PluginAct::Category => return,
         }
         self.plugins_read();
     }
@@ -5975,7 +5985,7 @@ mod tests {
         host.turn(id, true);
         let labels: Vec<Vec<String>> = MENU_KINDS.iter().map(|k| host.menu_entries(*k, "en".into()).into_iter().map(|e| e.label).collect()).collect();
         assert_eq!(labels, [vec![], vec![], vec![], vec!["Count letters".to_string()]]);
-        let rows = crate::settings::device_rows(&host.device_cards("en".into()), &[], &Default::default(), None, &Default::default(), &Default::default(), crate::look::Today { month: 10, day: 19, southern: false });
+        let rows = crate::settings::device_rows(&host.device_cards("en".into()), &[], &Default::default(), &Default::default(), &Default::default(), crate::look::Today { month: 10, day: 19, southern: false });
         let titles: Vec<String> = rows.iter().map(|r| r.title.to_string()).collect();
         assert_eq!(titles, ["TEST", "Gain: 0.5"]);
     }
@@ -6986,6 +6996,104 @@ mod tests {
         click(chip.absolute_position().x + chip.size().width / 2.0, chip.absolute_position().y + chip.size().height / 2.0);
         click(left + 20.0, chip.absolute_position().y + chip.size().height + 10.0 + 27.0);
         assert_eq!(*did.borrow(), ["device-noise:AA 2", "device-open:AA"]);
+    }
+
+    /// A controlled device's settings open in a dialog in the middle of the window, over the page: the panel
+    /// keeps its card, the dialog shows the plugin's rows and sets them, Done or a press beside it closes it,
+    /// and a switch from Day to Night repaints it open.
+    #[test]
+    fn a_controlled_devices_settings_open_in_a_dialog_over_the_page() {
+        use i_slint_backend_testing::ElementHandle;
+        use nori_core::settings::{StoredPrefs, ThemeMode};
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        let today = crate::look::Today { month: 10, day: 19, southern: false };
+        let paint = |theme| crate::look::plain(&Default::default(), &StoredPrefs { theme, ..Default::default() }, false, today).paint(&ui);
+        paint(ThemeMode::Light);
+        ui.set_devices_on(true);
+        let words = |w: &[&str]| ModelRc::new(VecModel::from(w.iter().map(|o| slint::SharedString::from(*o)).collect::<Vec<_>>()));
+        let noise = |first| crate::SettingRow { kind: 23, name: "device-noise:AA".into(), options: words(&["Normal", "ANC", "Transparent"]), chosen: 1, enabled: true, first, ..Default::default() };
+        ui.set_device_controls(ModelRc::new(VecModel::from(vec![
+            crate::SettingRow { kind: 22, title: "WH-1000XM5".into(), detail: "80%".into(), first: true, ..Default::default() },
+            noise(false),
+            crate::SettingRow { kind: 11, name: "device-open:AA".into(), title: "Device settings".into(), enabled: true, last: true, ..Default::default() },
+        ])));
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let seen = did.clone();
+        ui.on_setting_action(move |name| seen.borrow_mut().push(name.to_string()));
+        let seen = did.clone();
+        ui.on_setting_toggled(move |name, on| seen.borrow_mut().push(format!("{name} {on}")));
+        ui.set_inspector(Panel::Devices);
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap()
+        };
+        let middle = |e: &ElementHandle| (e.absolute_position().x + e.size().width / 2.0, e.absolute_position().y + e.size().height / 2.0);
+        let click = |(x, y): (f32, f32)| {
+            press(ui.window(), x, y, slint::platform::PointerEventButton::Left);
+            settle();
+        };
+        settle();
+        let sheet = || ElementHandle::find_by_element_type_name(&ui, "Dialog").next().map(|d| d.query_descendants().match_inherits("MenuSheet").find_first().unwrap());
+        assert!(sheet().is_none() && !ui.get_dialog_open());
+        let view = ElementHandle::find_by_element_type_name(&ui, "DevicesView").next().expect("the devices panel");
+        let chips = || view.query_descendants().match_inherits("Chip").find_all().len();
+        let open = view.query_descendants().match_inherits("SettingLine").find_all().pop().expect("the way on to its settings");
+        click(middle(&open));
+        assert_eq!(did.borrow_mut().drain(..).collect::<Vec<_>>(), ["device-open:AA"]);
+
+        // As app.rs answers it.
+        ui.set_device_name("WH-1000XM5".into());
+        ui.set_device_rows(ModelRc::new(VecModel::from(vec![
+            crate::SettingRow { kind: 4, title: "Battery".into(), detail: "80%".into(), first: true, ..Default::default() },
+            noise(false),
+            crate::SettingRow { kind: 1, name: "plugin-row:dev.sony:wear".into(), title: "Wear detection".into(), on: true, enabled: true, last: true, ..Default::default() },
+        ])));
+        ui.set_device_open(true);
+        settle();
+        let pane = sheet().expect("the dialog");
+        let (x, width) = (pane.absolute_position().x, pane.size().width);
+        assert!(ui.get_dialog_open(), "it blurs and holds the page as the other dialogs do");
+        assert!((x + width / 2.0 - 640.0).abs() < 1.0 && width == 480.0, "in the window's middle: {x} {width}");
+        assert_eq!(chips(), 3, "the panel keeps the card's chips");
+        let toggle = pane.query_descendants().match_inherits("Toggle").find_first().expect("the plugin's switch");
+        click(middle(&toggle));
+        assert_eq!(did.borrow_mut().drain(..).collect::<Vec<_>>(), ["plugin-row:dev.sony:wear false"]);
+
+        // Day to Night, open: its paper is the new theme's.
+        let paper = |shot: &slint::SharedPixelBuffer<slint::Rgba8Pixel>| {
+            let (px, py) = ((x + width / 2.0) as usize, pane.absolute_position().y as usize + 4);
+            let p = shot.as_slice()[py * shot.width() as usize + px];
+            slint::Color::from_rgb_u8(p.r, p.g, p.b)
+        };
+        let shots = std::env::var_os("NORI_DESKTOP_SHOTS");
+        let mut papers = Vec::new();
+        for (theme, name) in [(ThemeMode::Light, "day"), (ThemeMode::Dark, "night")] {
+            paint(theme);
+            let shot = settle();
+            papers.push(paper(&shot));
+            assert_eq!(papers.last(), Some(&ui.global::<crate::Theme>().get_ground()), "{name}");
+            if let Some(dir) = &shots {
+                let mut ppm = format!("P6 {} {} 255\n", shot.width(), shot.height()).into_bytes();
+                ppm.extend(shot.as_bytes().chunks(4).flat_map(|p| [p[0], p[1], p[2]]));
+                let _ = std::fs::write(std::path::Path::new(dir).join(format!("device-dialog-{name}.ppm")), ppm);
+            }
+        }
+        assert_ne!(papers[0], papers[1], "Night's paper is not Day's");
+
+        let done = pane.query_descendants().match_inherits("Capsule").find_first().expect("Done");
+        click(middle(&done));
+        click((40.0, 780.0));
+        assert_eq!(did.borrow_mut().drain(..).collect::<Vec<_>>(), ["device-close", "device-close"], "Done, then a press beside it");
+        ui.set_device_open(false);
+        settle();
+        assert!(sheet().is_none() && !ui.get_dialog_open());
+        assert_eq!(chips(), 3, "the panel as it was");
     }
 
     /// The main window and its player pill as the app joins them, the pill at x 140 and 1000 wide.

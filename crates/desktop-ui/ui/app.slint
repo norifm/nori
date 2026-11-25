@@ -5580,10 +5580,9 @@ component DevicesView inherits Rectangle {
     in property <[DeviceRow]> devices;
     in property <string> pairing-link;
     in property <[PairedRow]> paired;
-    // The devices plugins control (Android's card: the headphones, their noise modes, their settings), which
-    // head the panel; while one's settings show (`paged`, the children) they fill it.
+    // The devices plugins control (Android's card: the headphones, their noise modes, the way on to their
+    // settings, which open in a dialog), which head the panel.
     in property <[SettingRow]> controls;
-    in property <bool> paged;
     callback control-chosen(string, int);
     callback control-action(string);
     callback forget(PairedRow);
@@ -5599,7 +5598,7 @@ component DevicesView inherits Rectangle {
             padding-left: 10px;
             padding-right: 10px;
             spacing: 2px;
-            if !root.paged && root.controls.length > 0: VerticalLayout {
+            if root.controls.length > 0: VerticalLayout {
                 padding-bottom: 10px;
                 for r in root.controls: SettingLine {
                     item: r;
@@ -5607,7 +5606,7 @@ component DevicesView inherits Rectangle {
                     action(name) => { root.control-action(name); }
                 }
             }
-            if !root.paged: VerticalLayout {
+            VerticalLayout {
                 spacing: 2px;
                 for d in root.devices: VerticalLayout {
                     PanelRow {
@@ -7930,16 +7929,19 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open;
+    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open;
     // What plugins say under the player's output, and a plugin's still drawn as Now Playing's cover.
     in property <[string]> plugin-status;
     in property <image> sleeve;
     in property <bool> sleeved;
     // The plugins' rows the devices panel shows too.
     in property <[SettingRow]> device-plugin-rows;
-    // The devices plugins control, which head the devices panel; and one's settings fill it (app.rs).
+    // The devices plugins control, which head the devices panel (app.rs).
     in property <[SettingRow]> device-controls;
-    in property <bool> device-paged;
+    // One's settings, in a dialog under its name; closing it is the `device-close` action.
+    in property <bool> device-open;
+    in property <string> device-name;
+    in property <[SettingRow]> device-rows;
     // Adding a song to a playlist: the sheet open, the playlists offered (the core's `playlist_choices`, by
     // index), whether a new one is being named, and its name.
     in-out property <bool> picker-open;
@@ -10108,7 +10110,6 @@ export component AppWindow inherits Window {
                     pairing-link: root.pairing-link;
                     paired: root.paired;
                     controls: root.device-controls;
-                    paged: root.device-paged;
                     control-chosen(name, i) => { root.setting-chosen(name, i); }
                     control-action(name) => { root.setting-action(name); }
                     forget(p) => { root.forgetting = p; root.forget-open = true; }
@@ -10844,7 +10845,6 @@ export component AppWindow inherits Window {
                 pairing-link: root.pairing-link;
                 paired: root.paired;
                 controls: root.device-controls;
-                paged: root.device-paged;
                 control-chosen(name, i) => { root.setting-chosen(name, i); }
                 control-action(name) => { root.setting-action(name); }
                 forget(p) => { root.forgetting = p; root.forget-open = true; }
@@ -11212,6 +11212,39 @@ export component AppWindow inherits Window {
                 label: Theme.season-accents[0];
                 opacity: root.support-asking ? 0.38 : 1;
                 clicked => { if !root.support-asking { root.support-stop(); } }
+            }
+        }
+
+        // A device a plugin controls: its batteries, its noise modes and its plugin's settings for it, over the
+        // page that opened it.
+        if root.device-open: Dialog {
+            title: root.device-name;
+            sheet-width: 480px;
+            dismissed => { root.setting-action("device-close"); }
+            Flickable {
+                content-width: self.width;
+                vertical-stretch: 1;
+                min-height: min(device-lines.preferred-height, 120px);
+                preferred-height: device-lines.preferred-height;
+                content-height: device-lines.preferred-height;
+                device-lines := VerticalLayout {
+                    width: parent.width;
+                    for r in root.device-rows: SettingLine {
+                        item: r;
+                        toggled(name, on) => { root.setting-toggled(name, on); }
+                        chosen(name, i) => { root.setting-chosen(name, i); }
+                        action(name) => { root.setting-action(name); }
+                        slid(name, v, last) => { root.setting-slid(name, v, last); }
+                        typed(name, text) => { root.setting-typed(name, text); }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                Capsule {
+                    text: "Done";
+                    clicked => { root.setting-action("device-close"); }
+                }
             }
         }
 

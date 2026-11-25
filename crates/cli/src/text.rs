@@ -965,6 +965,7 @@ pub mod hints {
     pub const TYPING: Hints = &[("enter", "results"), ("esc", "stop typing"), ("ctrl u", "clear")];
     pub const PLUGIN_ROW: Hints = &[("enter", "open"), ("← →", "off, on"), ("m", "menu"), ("K J", "move"), ("d", "remove"), ("?", "keys")];
     pub const PLUGIN_PAGE: Hints = &[("enter", "switch or open"), ("← →", "change"), ("m", "move, remove"), ("esc", "back"), ("?", "keys")];
+    pub const DEVICE_PAGE: Hints = &[("enter", "switch or open"), ("← →", "change"), ("esc", "back"), ("?", "keys")];
     pub const PLUGIN_BROWSER: Hints = &[("enter", "open"), ("/", "search"), ("← →", "repo"), ("esc", "back"), ("?", "keys")];
     pub const PLUGIN_REPOS: Hints = &[("enter", "add"), ("e", "rename"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];

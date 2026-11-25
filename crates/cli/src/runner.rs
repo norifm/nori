@@ -553,14 +553,13 @@ impl Runner {
         own.plugins = cards;
         own.repos = host.repos();
         app.slots.menu = [ItemKind::Song, ItemKind::Album, ItemKind::Artist, ItemKind::Playlist].into_iter().flat_map(|k| host.menu_entries(k, "en".into()).into_iter().map(move |e| (k, e))).collect();
-        // A device's page: its known controls, then its plugin's rows.
-        let controlled = host.controlled("en".into());
-        let mut shown = host.device_cards("en".into());
-        for d in &controlled {
-            if !shown.iter().any(|c| c.id == d.card.id) {
-                shown.push(d.card.clone());
-            }
+        // A controlled device's settings are on its own page, not in the panel.
+        let mut controlled = host.controlled("en".into());
+        for d in &mut controlled {
+            own.off.extend(plugged.watched.as_said(std::slice::from_mut(&mut d.card)));
         }
+        let mut shown = host.device_cards("en".into());
+        shown.retain(|c| !controlled.iter().any(|d| d.card.id == c.id));
         own.off.extend(plugged.watched.as_said(&mut shown));
         app.devices.plugins = shown;
         app.devices.targets = host.cast_targets();
@@ -568,6 +567,9 @@ impl Runner {
         own.controlled = controlled.clone();
         app.devices.controlled = controlled;
         app.settings.invalidate();
+        if app.settings.device_gone() {
+            app.device_page_left();
+        }
         app.cmds.extend(app.settings.readme_wanted());
         app.dirty = true;
         self.waited(app);

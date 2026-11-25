@@ -319,6 +319,8 @@ pub enum PluginPage {
     Repos,
     /// A plugin's page, installed or only offered, by its id.
     Plugin(String),
+    /// A device a plugin controls, by its id: its controls, then its plugin's settings for it.
+    Device(String),
 }
 
 /// What the plugin repos offer, as far as they were asked.
@@ -350,6 +352,7 @@ impl SettingsView {
                 Some((PluginPage::Browser, _)) => vec![Page { title: text::GET_PLUGINS.into(), summary: String::new(), sections: browser(&self.own) }],
                 Some((PluginPage::Repos, _)) => vec![Page { title: text::REPOS.into(), summary: String::new(), sections: repos_page(&self.own) }],
                 Some((PluginPage::Plugin(id), _)) => vec![plugin_page(&self.own, id)],
+                Some((PluginPage::Device(id), _)) => vec![device_page(&self.own, id)],
                 None => GROUPS.iter().filter(|g| !alone || g.id == Gid::Plugins).map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect(),
             });
         }
@@ -429,6 +432,12 @@ impl SettingsView {
         true
     }
 
+    /// Closes the page of a device that went; true if it showed.
+    pub fn device_gone(&mut self) -> bool {
+        let gone = matches!(self.own.stack.last(), Some((PluginPage::Device(id), _)) if !self.own.controlled.iter().any(|d| d.id == *id));
+        gone && self.leave()
+    }
+
     /// Closes the pages of a plugin just removed.
     pub fn plugin_gone(&mut self, id: &str) {
         while matches!(self.own.stack.last(), Some((PluginPage::Plugin(top), _)) if top == id) {
@@ -487,6 +496,7 @@ impl SettingsView {
             (_, Some(Row::Server { name: Some(_), .. })) => h::PROFILE_ROW,
             (Some((PluginPage::Browser, _)), _) => h::PLUGIN_BROWSER,
             (Some((PluginPage::Plugin(_), _)), _) => h::PLUGIN_PAGE,
+            (Some((PluginPage::Device(_), _)), _) => h::DEVICE_PAGE,
             (Some(_), _) => h::PLUGIN_REPOS,
             (None, _) => h::SETTINGS,
         }
@@ -861,15 +871,9 @@ fn plugin_page(own: &Own, id: &str) -> Page {
             rows.push(Row::Toggle { switch: Switch::Hold(c.id.clone()), title: text::KEEP_VERSION.into(), detail: String::new(), on: c.held, enabled: true });
         }
         sections.push(section("", rows));
-        sections.extend(own.controlled.iter().filter(|d| d.card.id == c.id).map(|d| Section { title: d.name.clone(), rows: device_controls(d) }).filter(|s| !s.rows.is_empty()));
-        let (mut title, mut rows) = (String::new(), Vec::new());
-        for r in &nori_plugins::one_page(&c.rows) {
-            match r.kind {
-                RowKind::Section => sections.push(Section { title: std::mem::replace(&mut title, r.label.clone()), rows: std::mem::take(&mut rows) }),
-                _ => rows.extend(plugin_rows(&c.id, r, own.off.contains(&(c.id.clone(), r.id.clone())))),
-            }
-        }
-        sections.push(Section { title, rows });
+        // A device's settings are on the device's own page.
+        let controls_devices = c.points.iter().any(|p| p == "device-control");
+        sections.extend(card_sections(own, c, |r| !controls_devices || !nori_plugins::row_on_device_page(r.kind)));
         if let Some(assets) = own.assets.get(&c.id) {
             let mut rows: Vec<Row> = assets.iter().map(|a| info(&a.name, text::asset_state(a))).collect();
             if assets.iter().any(|a| a.state == AssetState::WaitingForWifi) {
@@ -1042,6 +1046,29 @@ pub fn plugin_rows(plugin: &str, r: &PluginRow, off: bool) -> Vec<Row> {
 /// What row `r` says of its value, as a line.
 fn shown_value(r: &PluginRow) -> String {
     r.value.as_ref().map(|v| text::plugin_value(v, r)).unwrap_or_default()
+}
+
+/// Card `c`'s `shown` rows, each of its pages under its name; those turned off take no input.
+fn card_sections(own: &Own, c: &PluginCard, shown: impl Fn(&PluginRow) -> bool) -> Vec<Section> {
+    let mut sections = Vec::new();
+    let (mut title, mut rows) = (String::new(), Vec::new());
+    for r in nori_plugins::one_page(&c.rows).iter().filter(|r| shown(r)) {
+        match r.kind {
+            RowKind::Section => sections.push(Section { title: std::mem::replace(&mut title, r.label.clone()), rows: std::mem::take(&mut rows) }),
+            _ => rows.extend(plugin_rows(&c.id, r, own.off.contains(&(c.id.clone(), r.id.clone())))),
+        }
+    }
+    sections.push(Section { title, rows });
+    sections
+}
+
+/// Device `id`'s page, under its name: its batteries and noise control, then its plugin's rows for it.
+fn device_page(own: &Own, id: &str) -> Page {
+    let Some(d) = own.controlled.iter().find(|d| d.id == id) else { return Page { title: String::new(), summary: String::new(), sections: Vec::new() } };
+    let mut sections = vec![section("", device_controls(d))];
+    sections.extend(card_sections(own, &d.card, |r| nori_plugins::row_on_device_page(r.kind)));
+    sections.retain(|s| !s.rows.is_empty());
+    Page { title: d.name.clone(), summary: String::new(), sections }
 }
 
 /// A controlled device's batteries and noise control.

@@ -1406,6 +1406,9 @@ pub struct App {
     pub panel: Panel,
     /// Full-window player.
     pub full: bool,
+    /// The view and its pages under the full player when its devices panel opened a device's page, which
+    /// Back from that page returns to.
+    device_under: Option<(View, Vec<Page>)>,
     pub shown: Shown,
     pub queue: Option<PlaylistView>,
     pub queue_sel: Sel,
@@ -1684,6 +1687,7 @@ impl App {
     /// Opens a root view, closing any opened pages, and requests its data if needed.
     pub fn go(&mut self, view: View) {
         self.view = view;
+        self.device_under = None;
         if crate::chrome::tab_name(view) == crate::chrome::tab_name(View::Albums) {
             self.section = view;
         }
@@ -3364,6 +3368,7 @@ impl App {
             return;
         }
         if self.on_settings() && self.settings.leave() {
+            self.device_page_left();
             if self.settings.alone.offer().is_some() && !self.settings.deep() {
                 self.plugins_left();
             }
@@ -3378,6 +3383,16 @@ impl App {
         if self.pages.pop().is_none() {
             self.dirty = false;
         }
+    }
+
+    /// A device's page closed: back to the player and its devices panel that opened it, over the view as it was.
+    /// Nothing opens over a device's page, so it is the page that closed while `device_under` is kept.
+    pub fn device_page_left(&mut self) {
+        let Some((view, pages)) = self.device_under.take() else { return };
+        self.view = view;
+        self.pages = pages;
+        self.follow_sound_page();
+        self.open_full();
     }
 
     /// Back on the first screen from the plugins on their own.
@@ -4188,9 +4203,11 @@ impl App {
             },
             Some(DeviceRow::Settings(i)) => {
                 let Some(c) = d.controlled.get(i) else { return };
-                let id = c.card.id.clone();
+                let id = c.id.clone();
+                let under = (self.view, std::mem::take(&mut self.pages));
                 self.go(View::Settings);
-                self.plugin_page(crate::settings_view::PluginPage::Plugin(id));
+                self.plugin_page(crate::settings_view::PluginPage::Device(id));
+                self.device_under = Some(under);
             }
             Some(DeviceRow::Noise(i)) => {
                 let Some(c) = d.controlled.get(i) else { return };
