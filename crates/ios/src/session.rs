@@ -496,19 +496,11 @@ pub(crate) fn start(
     offline: bool,
     discovery: Option<Arc<dyn Discovery>>,
 ) -> Result<(), String> {
-    let queue = Arc::new(nori_core::queue::Session::new(
-        nori_core::settings_store::Settings::new(),
-    ));
-    queue
-        .settings
-        .open(&nori_host::db_path(dir))
-        .map_err(|e| format!("the database: {e}"))?;
-    start_queue(dir, queue, profile, output, offline, discovery, None)
+    start_queue(dir, profile, output, offline, discovery, None)
 }
 
 fn start_queue(
     dir: &Path,
-    queue: Arc<nori_core::queue::Session>,
     profile: SavedServer,
     output: Box<dyn AudioOutput>,
     offline: bool,
@@ -518,6 +510,7 @@ fn start_queue(
     if held().is_some() {
         return Err("already open".into());
     }
+    let queue = crate::app::app(dir)?;
     let volume = level().clone();
     let out: Out = Arc::new(enqueue);
     let session = Session::open(Open {
@@ -568,16 +561,9 @@ fn open_saved(dir: &Path, server_id: &str) -> Result<(), String> {
     if held().is_some() {
         return Err("already open".into());
     }
-    std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
-    let queue = Arc::new(nori_core::queue::Session::new(
-        nori_core::settings_store::Settings::new(),
-    ));
-    let prefs = queue
-        .settings
-        .open(&nori_host::db_path(dir))
-        .map_err(|e| format!("the database: {e}"))?;
+    let prefs = crate::app::app(dir)?.settings.current().unwrap_or_default();
     let profile = saved(&prefs, server_id).ok_or_else(|| "no saved server".to_string())?;
-    start_queue(dir, queue, profile, device_output()?, false, Some(Arc::new(crate::remote::Bonjour)), crate::sync::syncing())?;
+    start_queue(dir, profile, device_output()?, false, Some(Arc::new(crate::remote::Bonjour)), crate::sync::syncing())?;
     if BACKGROUND.load(Ordering::Relaxed) {
         with_session(|s| s.in_sight(false));
     }
@@ -621,7 +607,7 @@ pub(crate) fn with_session<R>(f: impl FnOnce(&Session) -> R) -> Option<R> {
 
 /// Saves the queue, stops playback and empties the slot.
 #[cfg(test)]
-fn close() {
+pub(crate) fn close() {
     closing(|s| s.close());
 }
 
@@ -685,9 +671,7 @@ pub unsafe extern "C" fn nori_ios_reopen(data_dir: *const c_char) -> *mut c_char
     let Some(dir) = text(data_dir).filter(|d| !d.is_empty()) else {
         return err_ptr("unreadable path");
     };
-    // The saved list may have been changed through another handle on the database.
-    with_session(|s| s.core.session.settings.writer.flush());
-    let next = crate::account::opened(Path::new(&dir)).ok().and_then(|(_, p)| p.active_server().cloned());
+    let next = crate::app::app(Path::new(&dir)).ok().and_then(|app| app.settings.current()?.active_server().cloned());
     closing(|s| s.close_for(next.as_ref()));
     crate::pages::forget_lists();
     match open_saved(Path::new(&dir), "") {
@@ -1259,15 +1243,15 @@ mod tests {
         hear_reports();
         let dir = nori_testdir::TempDir::new("ios-jam");
         let _close = Close;
-        let queue = std::sync::Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
-        let mut prefs = queue.settings.open(&nori_host::db_path(dir.path())).unwrap();
+        let queue = crate::app::app(dir.path()).unwrap();
+        let mut prefs = queue.settings.current().unwrap();
         prefs.servers = vec![profile()];
         prefs.active_server_id = "test".into();
         queue.settings.put(prefs);
         let pass = nori_core::remote::JamPass { url: "http://127.0.0.1:9".into(), api_key: nori_remote::guest_key("k"), kind: Default::default() };
         let guest = nori_host::jam_joined(&queue.settings, pass, "Jam");
         queue.settings.writer.flush();
-        super::start_queue(dir.path(), queue.clone(), guest, Box::new(WavOutput::new(dir.path().join("heard.wav"), 2.0)), true, None, None).unwrap();
+        super::start(dir.path(), guest, Box::new(WavOutput::new(dir.path().join("heard.wav"), 2.0)), true, None).unwrap();
 
         let json = |p: *mut std::ffi::c_char| -> serde_json::Value {
             let v = serde_json::from_str(unsafe { CStr::from_ptr(p) }.to_str().unwrap()).unwrap();
@@ -1394,20 +1378,18 @@ mod tests {
         let announced = Arc::new(Announced::default());
         // The iPod and the phone, each with the profile, paired through a sync server in memory.
         let hub = nori_sync::hub::Hub::real_time();
-        let with_profile = |path: &str, id: &str| {
-            let settings = nori_core::settings_store::Settings::new();
-            let prefs = settings.open(path).unwrap();
+        let with_profile = |dir: &std::path::Path, id: &str| {
+            let settings = crate::app::app(dir).unwrap().settings.clone();
+            let prefs = settings.current().unwrap();
             settings.put(nori_core::settings::StoredPrefs { servers: vec![SavedServer { id: id.into(), ..profile() }], active_server_id: id.into(), sync: true, ..prefs });
             settings
         };
         let phone_dir = nori_testdir::TempDir::new("ios-remote-phone");
-        let (ipod_settings, phone_settings) = (with_profile(&nori_host::db_path(dir.path()), "test"), with_profile(&nori_host::db_path(phone_dir.path()), "phone"));
+        let (ipod_settings, phone_settings) = (with_profile(dir.path(), "test"), with_profile(phone_dir.path(), "phone"));
         let (ipod_sync, ipod_changed) = synced(&hub, ipod_settings);
         let (phone_sync, phone_changed) = synced(&hub, phone_settings.clone());
         pair((&ipod_sync, &ipod_changed), (&phone_sync, &phone_changed));
-        let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
-        queue.settings.open(&nori_host::db_path(dir.path())).unwrap();
-        super::start_queue(dir.path(), queue, profile(), Box::new(out), false, Some(announced.clone()), Some(ipod_sync.clone())).unwrap();
+        super::start_queue(dir.path(), profile(), Box::new(out), false, Some(announced.clone()), Some(ipod_sync.clone())).unwrap();
         // The audio unit, calling back a buffer ahead of each one it plays.
         let stop = Arc::new(AtomicBool::new(false));
         let (played_to, played) = std::sync::mpsc::channel();

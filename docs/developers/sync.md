@@ -70,7 +70,8 @@ reconnect, a keep-alive, letting go. Sockets' frames are handled on the thread t
 one lock, in order. What sync brings is kept in the settings at once, so a second change never starts
 from a list the client has not saved yet. `ProfilesSynced` tells the client which profiles went and
 whether the one in use changed. Profile changes made here reach it through `Settings::watch_profiles`,
-however the client saved them.
+however the client saved them. Each client gives sync the same `Settings` its session uses. A second
+handle over the database keeps its own copy and writes it back over sync's changes.
 
 ### When a device is connected
 

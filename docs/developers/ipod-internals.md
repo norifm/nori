@@ -41,6 +41,9 @@ audio session and the audio unit, and it hands iOS's notifications to Rust.
 These are the modules of `crates/ios/src/`:
 
 - `lib.rs` holds `nori_ios_version` and `nori_ios_free`, which frees every string the library returns.
+- `app.rs` holds the app's one `Settings`, under its queue session, for each database. The session,
+  sync and the saved servers all read and write the settings through it. A second handle would write
+  its older copy back over the first one's changes.
 - `session.rs` holds the one open `nori_host::Session` and the controls. It sends reports, and it handles
   background, foreground and memory warnings.
 - `output.rs` is the sound card: `IosOutput` over a `Sink`, and the render callback.
@@ -221,8 +224,7 @@ looks for the group's other devices while the core asks (`nori_ios_on_bonjour`).
 in the background, iOS suspends it, and its door stops with it.
 
 Pairing and profile sync have their own pages in `Sync.swift`: Your devices and Pair a device. They read
-`nori_ios_sync_state` again on each `NORI_REPORT_SYNC`. Sync keeps its own handle on the settings, so
-`nori_ios_sync_on`, `nori_ios_sync_server` and `nori_ios_profile_sync` write through it.
+`nori_ios_sync_state` again on each `NORI_REPORT_SYNC`.
 
 The iPod joins a jam only as a guest, from a pasted invite link or a `nori://jam` link. A guest profile
 opens in place of your own (`nori_host::jam_joined`), and it follows `ProfileRules` (`nori_ios_rules`).

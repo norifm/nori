@@ -8,10 +8,12 @@
 //! `mod pages` reads pages, covers, lyrics and settings for the screens. `mod sound` is each output's
 //! sound and AutoEQ. `mod menu` is the song menu, playlists and the sleep timer. `mod remote` is remote
 //! control: Bonjour and the devices the music can move to. `mod jam` is a jam this iPod is a guest
-//! in. `mod account` saves servers. `mod sync` is pairing and profile sync. `mod theme` is the season
+//! in. `mod app` is the one handle on the settings every other module goes through. `mod account` saves
+//! servers. `mod sync` is pairing and profile sync. `mod theme` is the season
 //! palette.
 
 mod account;
+mod app;
 mod jam;
 mod lyrics;
 mod menu;

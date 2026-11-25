@@ -1,5 +1,5 @@
-//! Pairing and profile sync for the iPod (nori-sync's `Syncing`), over nori-http's WebSockets, with its
-//! own handle on the app database. The iPod is reached as a phone is: while open or playing, its
+//! Pairing and profile sync for the iPod (nori-sync's `Syncing`), over nori-http's WebSockets and the
+//! app's settings (`crate::app`). The iPod is reached as a phone is: while open or playing, its
 //! keep-alive riding on the engine's wakes in the background. What sync tells the app comes as
 //! `REPORT_SYNC`.
 
@@ -13,7 +13,7 @@ use serde_json::json;
 
 use crate::session::{c, c_text, report, REPORT_SYNC};
 
-/// The process's sync and its handle on the settings: a C entry point has nothing to carry them.
+/// The process's sync and the settings it runs over: a C entry point has nothing to carry them.
 static SYNC: OnceLock<Arc<Syncing>> = OnceLock::new();
 static SETTINGS: OnceLock<Arc<Settings>> = OnceLock::new();
 
@@ -60,8 +60,7 @@ impl SyncClient for Told {
 
 /// Sync over the database under `dir`, made once.
 fn open(dir: &Path) -> Result<(), String> {
-    let settings = Settings::new();
-    settings.open(&nori_host::db_path(dir)).map_err(|e| format!("the settings: {e}"))?;
+    let settings = crate::app::app(dir)?.settings.clone();
     let sockets = nori_http::WebSockets::new();
     let sync = Syncing::native(settings.clone(), sockets.clone(), Arc::new(Told { data: dir.into() }), Reach::Phone);
     sockets.tell(&sync);
@@ -321,13 +320,11 @@ pub unsafe extern "C" fn nori_ios_sync_keep_apart(a: *const c_char, b: *const c_
     }
 }
 
-/// Sync this profile on or off for saved profile `id`, kept in sync's own handle on the settings; off with
-/// `elsewhere`, the other devices remove it too.
-pub(crate) fn profile_sync(id: &str, on: bool, elsewhere: bool) {
-    if let Some(s) = SYNC.get().filter(|_| !on) {
+/// Sync this profile turned off for saved profile `id`; with `elsewhere`, the other devices remove it too.
+pub(crate) fn sync_off(id: &str, elsewhere: bool) {
+    if let Some(s) = SYNC.get() {
         s.sync_off(id.to_string(), elsewhere);
     }
-    change(|p| p.servers.iter_mut().filter(|s| s.id == id).for_each(|s| s.sync_off = !on));
 }
 
 /// Sync's settings changed by `edit`, kept at once, and sync told.
@@ -375,5 +372,45 @@ pub extern "C" fn nori_ios_sync_reset_notice() -> *mut c_char {
 pub extern "C" fn nori_ios_sync_settings_changed() {
     if let Some(s) = SYNC.get() {
         s.settings_changed();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::CString;
+
+    use nori_core::settings::SavedServer;
+    use nori_engine::WavOutput;
+
+    fn profile(id: &str) -> SavedServer {
+        SavedServer { id: id.into(), url: format!("http://127.0.0.1:9/{id}"), user: "u".into(), ..SavedServer::default() }
+    }
+
+    /// Another device removing a profile, then the open session renaming the one it plays: both stay.
+    #[test]
+    fn a_change_sync_makes_survives_the_sessions_next_write() {
+        let _one = crate::pages::ABI_IN_USE.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = nori_testdir::TempDir::new("ios-sync-settings");
+        let saved = nori_core::settings_store::Settings::new();
+        let prefs = saved.open(&nori_host::db_path(dir.path())).unwrap();
+        saved.put(nori_core::settings::StoredPrefs { servers: vec![profile("test"), profile("other")], active_server_id: "test".into(), ..prefs });
+        saved.writer.flush();
+        drop(saved);
+        let data = CString::new(dir.path().to_str().unwrap()).unwrap();
+        assert!(unsafe { super::nori_ios_sync_open(data.as_ptr()) }.is_null());
+        crate::session::start(dir.path(), profile("test"), Box::new(WavOutput::new(dir.path().join("heard.wav"), 2.0)), true, None).unwrap();
+
+        super::change(|p| p.servers.retain(|s| s.id != "other"));
+        let (id, name) = (CString::new("test").unwrap(), CString::new("Home").unwrap());
+        unsafe { crate::account::nori_ios_rename_server(data.as_ptr(), id.as_ptr(), name.as_ptr()) };
+
+        let names = |p: nori_core::settings::StoredPrefs| p.servers.into_iter().map(|s| (s.id, s.name)).collect::<Vec<_>>();
+        let session = crate::session::with_session(|s| s.core.session.settings.current().unwrap()).unwrap();
+        crate::session::close();
+        let kept = crate::account::servers(dir.path()).unwrap();
+        let kept: Vec<(String, String)> = kept.iter().map(|s| (s["id"].as_str().unwrap().into(), s["name"].as_str().unwrap().into())).collect();
+        let want = vec![("test".to_string(), "Home".to_string())];
+        assert_eq!(names(session), want, "the session's settings");
+        assert_eq!(kept, want, "the database");
     }
 }

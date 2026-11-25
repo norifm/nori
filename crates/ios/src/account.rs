@@ -51,13 +51,14 @@ fn address(raw: &str) -> String {
     }
 }
 
-pub(crate) fn opened(dir: &Path) -> Result<(std::sync::Arc<Settings>, StoredPrefs), String> {
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let settings = Settings::new();
-    let prefs = settings
-        .open(&nori_host::db_path(dir))
-        .map_err(|e| e.to_string())?;
-    Ok((settings, prefs))
+/// The app's settings (`crate::app`).
+fn settings(dir: &Path) -> Result<std::sync::Arc<Settings>, String> {
+    crate::app::app(dir).map(|app| app.settings.clone())
+}
+
+/// A copy of the app's settings.
+fn prefs(dir: &Path) -> Result<StoredPrefs, String> {
+    settings(dir).map(|s| s.current().unwrap_or_default())
 }
 
 /// A profile's name, otherwise its user, otherwise its address; empty for none of them (the app then
@@ -72,7 +73,7 @@ fn label(s: &SavedServer) -> String {
 
 /// The active server's label and kind; None when none are saved.
 pub(crate) fn active(dir: &Path) -> Result<Option<(String, ServerKind)>, String> {
-    let (_, prefs) = opened(dir)?;
+    let prefs = prefs(dir)?;
     let server = prefs.active_server().or_else(|| prefs.servers.first());
     Ok(server.map(|s| (label(s), s.kind.clone())))
 }
@@ -84,18 +85,9 @@ fn list_of(prefs: &mut StoredPrefs) -> ServerList {
     }
 }
 
-/// The settings to change the saved list through: the open session's when one is open, as the session
-/// writes the list back from its own copy (an account's name).
-fn live_settings(dir: &Path) -> Result<std::sync::Arc<Settings>, String> {
-    match crate::session::with_session(|s| s.core.session.settings.clone()).filter(|s| s.current().is_some()) {
-        Some(live) => Ok(live),
-        None => opened(dir).map(|(settings, _)| settings),
-    }
-}
-
-/// The saved list changed by `change` ([`live_settings`]).
+/// The saved list changed by `change`.
 fn edit_servers(dir: &Path, change: impl FnOnce(ServerList) -> ServerList) -> Result<(), String> {
-    let settings = live_settings(dir)?;
+    let settings = settings(dir)?;
     let mut prefs = settings.current().unwrap_or_default();
     let list = change(list_of(&mut prefs));
     (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
@@ -108,7 +100,7 @@ fn edit_servers(dir: &Path, change: impl FnOnce(ServerList) -> ServerList) -> Re
 /// they were saved; `name` as it was given (empty for none), `icon` as the settings store it, `letter` what
 /// its circle shows for the letter, `syncOff` that Sync this profile is off.
 pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
-    let (_, prefs) = opened(dir)?;
+    let prefs = prefs(dir)?;
     Ok(prefs
         .servers
         .iter()
@@ -125,7 +117,7 @@ pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
 
 /// Saved server `id`'s circle shows `icon`; an unknown id changes nothing.
 pub(crate) fn set_icon(dir: &Path, id: &str, icon: ProfileIcon) -> Result<(), String> {
-    let settings = live_settings(dir)?;
+    let settings = settings(dir)?;
     nori_host::profile_look(&settings, id, |p| p.icon = icon);
     settings.writer.flush();
     Ok(())
@@ -133,7 +125,7 @@ pub(crate) fn set_icon(dir: &Path, id: &str, icon: ProfileIcon) -> Result<(), St
 
 /// Saved server `id` renamed; blank, it is called after its provider again. An unknown id changes nothing.
 pub(crate) fn rename(dir: &Path, id: &str, name: &str) -> Result<(), String> {
-    let settings = live_settings(dir)?;
+    let settings = settings(dir)?;
     nori_host::profile_renamed(&settings, id, name);
     settings.writer.flush();
     Ok(())
@@ -141,7 +133,7 @@ pub(crate) fn rename(dir: &Path, id: &str, name: &str) -> Result<(), String> {
 
 /// Makes saved server `id` the active one. False when no server has that id.
 pub(crate) fn pick(dir: &Path, id: &str) -> Result<bool, String> {
-    let (settings, _) = opened(dir)?;
+    let settings = settings(dir)?;
     let picked = nori_host::profile_picked(&settings, id).is_some();
     settings.writer.flush();
     Ok(picked)
@@ -322,7 +314,7 @@ pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
     let Some(draft) = draft(form) else {
         return (LOGIN_INCOMPLETE, None);
     };
-    let (settings, _) = match opened(dir) {
+    let settings = match settings(dir) {
         Ok(v) => v,
         Err(e) => return (LOGIN_DATABASE, Some(e)),
     };
@@ -443,12 +435,13 @@ pub extern "C" fn nori_ios_profile_icons() -> *mut c_char {
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_profile_sync(data_dir: *const c_char, id: *const c_char, on: i32, elsewhere: i32) {
     let id = text(id);
-    crate::sync::profile_sync(&id, on != 0, elsewhere != 0);
-    // The open session's handle on the settings keeps it too.
-    let _ = edit_servers(Path::new(&text(data_dir)), |mut list| {
-        list.servers.iter_mut().filter(|s| s.id == id).for_each(|s| s.sync_off = on == 0);
-        list
-    });
+    if on == 0 {
+        crate::sync::sync_off(&id, elsewhere != 0);
+    }
+    if let Ok(settings) = settings(Path::new(&text(data_dir))) {
+        nori_host::profile_look(&settings, &id, |p| p.sync_off = on == 0);
+        settings.writer.flush();
+    }
 }
 
 /// Forgets saved server `id`. Its downloads and index stay in the database.
@@ -467,7 +460,7 @@ pub unsafe extern "C" fn nori_ios_remove_server(data_dir: *const c_char, id: *co
 /// Both are NUL-terminated UTF-8, or NULL.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_scrobblers(data_dir: *const c_char, id: *const c_char) -> *mut c_char {
-    let Ok(settings) = live_settings(Path::new(&text(data_dir))) else { return std::ptr::null_mut() };
+    let Ok(settings) = settings(Path::new(&text(data_dir))) else { return std::ptr::null_mut() };
     let id = text(id);
     let accounts = settings.prefs(|p| p.servers.iter().find(|s| s.id == id).map(|s| s.scrobblers.clone()).unwrap_or_default());
     let rows: Vec<serde_json::Value> = accounts
@@ -484,7 +477,7 @@ pub unsafe extern "C" fn nori_ios_scrobblers(data_dir: *const c_char, id: *const
 /// Both are NUL-terminated UTF-8, or NULL.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_scrobble_itself(data_dir: *const c_char, id: *const c_char) -> i32 {
-    let Ok(settings) = live_settings(Path::new(&text(data_dir))) else { return -1 };
+    let Ok(settings) = settings(Path::new(&text(data_dir))) else { return -1 };
     let (prefs, id) = (settings.current().unwrap_or_default(), text(id));
     let Some(profile) = prefs.servers.iter().find(|s| s.id == id) else { return -1 };
     let open = (prefs.active_server_id == id).then(|| crate::session::with_session(|s| s.rules().scrobbles)).flatten();
@@ -500,7 +493,7 @@ pub unsafe extern "C" fn nori_ios_scrobble_itself(data_dir: *const c_char, id: *
 /// Both are NUL-terminated UTF-8, or NULL.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_switch_scrobble_itself(data_dir: *const c_char, id: *const c_char, on: i32) {
-    if let Ok(settings) = live_settings(Path::new(&text(data_dir))) {
+    if let Ok(settings) = settings(Path::new(&text(data_dir))) {
         nori_host::server_scrobble_switched(&settings, &text(id), on != 0);
         settings.writer.flush();
     }
@@ -512,7 +505,7 @@ pub unsafe extern "C" fn nori_ios_switch_scrobble_itself(data_dir: *const c_char
 /// The strings are NUL-terminated UTF-8, or NULL.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_switch_scrobbler(data_dir: *const c_char, id: *const c_char, account: *const c_char, on: i32) {
-    if let Ok(settings) = live_settings(Path::new(&text(data_dir))) {
+    if let Ok(settings) = settings(Path::new(&text(data_dir))) {
         nori_host::scrobbler_switched(&settings, &text(id), &text(account), on != 0);
         settings.writer.flush();
     }
@@ -524,7 +517,7 @@ pub unsafe extern "C" fn nori_ios_switch_scrobbler(data_dir: *const c_char, id: 
 /// The strings are NUL-terminated UTF-8, or NULL.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_remove_scrobbler(data_dir: *const c_char, id: *const c_char, account: *const c_char) {
-    if let Ok(settings) = live_settings(Path::new(&text(data_dir))) {
+    if let Ok(settings) = settings(Path::new(&text(data_dir))) {
         nori_host::scrobbler_removed(&settings, &text(id), &text(account));
         settings.writer.flush();
     }
@@ -582,7 +575,7 @@ pub unsafe extern "C" fn nori_ios_add_scrobbler(data_dir: *const c_char, id: *co
     let Some(form) = nori_core::scrobblers::ScrobblerForm::from_json(v["kind"].as_str().unwrap_or_default(), &v["fields"], v["approved"].as_str().unwrap_or_default()) else {
         return LOGIN_INCOMPLETE;
     };
-    let (Ok(settings), Some(client)) = (live_settings(Path::new(&text(data_dir))), crate::session::server().map(|(client, _)| client)) else { return LOGIN_DATABASE };
+    let (Ok(settings), Some(client)) = (settings(Path::new(&text(data_dir))), crate::session::server().map(|(client, _)| client)) else { return LOGIN_DATABASE };
     let (code, extra) = match block_on(client.sign_in_scrobbler(form)) {
         Ok(account) => {
             nori_host::scrobbler_kept(&settings, &text(id), account);
@@ -604,16 +597,10 @@ mod tests {
 
     /// Writes `profile` as the active server and waits until the database has it.
     fn keep(dir: &Path, profile: SavedServer) -> Result<(), String> {
-        let (settings, prefs) = opened(dir)?;
-        settings.put(profile_activated(prefs, profile));
+        let settings = settings(dir)?;
+        settings.put(profile_activated(settings.current().unwrap_or_default(), profile));
         settings.writer.flush();
         Ok(())
-    }
-
-    /// Changes to the saved list go to the open session's settings when one is open: these tests wait for
-    /// the tests that open one.
-    fn no_session() -> std::sync::MutexGuard<'static, ()> {
-        crate::pages::ABI_IN_USE.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn profile(id: &str, user: &str) -> SavedServer {
@@ -649,7 +636,6 @@ mod tests {
 
     #[test]
     fn a_picked_server_becomes_active_and_a_removed_one_hands_over() {
-        let _turn = no_session();
         let dir = nori_testdir::TempDir::new("ios-pick");
         keep(dir.path(), profile("one", "ada")).unwrap();
         keep(dir.path(), profile("two", "bob")).unwrap();
@@ -677,7 +663,6 @@ mod tests {
     /// name, else the address's host.
     #[test]
     fn a_chosen_icon_is_listed_with_its_letter() {
-        let _turn = no_session();
         let dir = nori_testdir::TempDir::new("ios-icon");
         keep(dir.path(), profile("one", "ada")).unwrap();
         keep(dir.path(), SavedServer { url: "https://music.example.com/x".into(), ..profile("two", "") }).unwrap();
@@ -690,7 +675,6 @@ mod tests {
 
     #[test]
     fn a_renamed_server_is_listed_by_its_new_name_and_by_its_user_once_blank() {
-        let _turn = no_session();
         let dir = nori_testdir::TempDir::new("ios-rename");
         keep(dir.path(), profile("one", "ada")).unwrap();
         rename(dir.path(), "one", "  Kitchen ").unwrap();
