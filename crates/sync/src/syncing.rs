@@ -38,7 +38,8 @@ pub trait SyncClient: Send + Sync {
     /// Plugins the profiles need: install each from its repo.
     fn install(&self, plugins: Vec<NeededPlugin>);
     fn event(&self, event: SyncEvent);
-    /// [`Syncing::state`] or [`Syncing::pairing`] changed.
+    /// [`Syncing::state`], [`Syncing::pairing`] or [`Syncing::devices`] changed (a device came, went, or
+    /// came online or left).
     fn changed(&self);
 }
 
@@ -228,6 +229,7 @@ impl Syncing {
     fn with<R>(&self, f: impl FnOnce(&Syncing, &mut Inner, i64) -> R) -> R {
         let mut inner = self.inner();
         let now = Syncing::now(&inner);
+        let shown = self.shown(&inner, now);
         for link in inner.running.iter().flat_map(Running::links) {
             link.at(now);
         }
@@ -237,6 +239,9 @@ impl Syncing {
         self.pump(&mut inner, now, &mut tells);
         if inner.running.as_ref().is_some_and(|r| r.paired.is_none() && r.pair.is_none()) {
             self.stop(&mut inner);
+        }
+        if self.shown(&inner, now) != shown {
+            tells.push(Tell::Changed);
         }
         self.woken_ping_at.store(self.woken_ping(&inner), Ordering::Relaxed);
         let woke = self.next_due(&inner) != due;
@@ -366,7 +371,6 @@ impl Syncing {
 
     /// Hands the session and the pairing what their links heard, until nothing more comes.
     fn pump(&self, inner: &mut Inner, now: i64, tells: &mut Vec<Tell>) {
-        let before = (self.state_of(inner, now), inner.pairing.clone());
         let Inner { presence, running, pairing } = inner;
         let Some(running) = running.as_mut() else { return };
         let unix_ms = (now + running.unix_offset) / 1000;
@@ -396,9 +400,12 @@ impl Syncing {
                 break;
             }
         }
-        if before != (self.state_of(inner, now), inner.pairing.clone()) {
-            tells.push(Tell::Changed);
-        }
+    }
+
+    /// What a client shows of sync: the state, the pairing, and which of the group's devices are online.
+    fn shown(&self, inner: &Inner, now: i64) -> (SyncState, PairingView, Vec<(String, bool)>) {
+        let devices = inner.running.as_ref().and_then(|r| r.paired.as_ref()).map(|p| p.session.devices().into_iter().map(|d| (d.device, d.online)).collect()).unwrap_or_default();
+        (self.state_of(inner, now), inner.pairing.clone(), devices)
     }
 
     /// One thing the pairing's link heard.

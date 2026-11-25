@@ -146,6 +146,8 @@ impl Sockets for Net {
 struct Told {
     synced: Mutex<Vec<ProfilesSynced>>,
     events: Mutex<Vec<SyncEvent>>,
+    /// `changed` calls since last read.
+    changed: AtomicUsize,
 }
 
 impl SyncClient for Told {
@@ -159,7 +161,9 @@ impl SyncClient for Told {
     fn event(&self, event: SyncEvent) {
         self.events.lock().unwrap().push(event);
     }
-    fn changed(&self) {}
+    fn changed(&self) {
+        self.changed.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// A device: its settings, its sync, its own executor and clock, and its sockets.
@@ -312,6 +316,26 @@ fn a_dropped_connection_comes_back_quietly_and_a_refusal_is_a_state() {
     let opened = mac.net.opened.load(Ordering::Relaxed);
     mac.tasks.pass(60 * 60 * S);
     assert_eq!(mac.net.opened.load(Ordering::Relaxed), opened, "and does not try again before then");
+}
+
+/// A screen hears each change it shows: this device's connection, and another device going and coming back.
+#[test]
+fn the_client_hears_when_the_state_or_who_is_online_changes() {
+    let hub = Hub::new(NOW);
+    let pixel = Device::new(&hub, Reach::Computer, vec![navidrome("a", "https://music.example")]);
+    let mac = Device::new(&hub, Reach::Computer, vec![]);
+    pair(&pixel, &mac);
+    let heard = |d: &Device| d.told.changed.swap(0, Ordering::Relaxed) > 0;
+    let (_, _) = (heard(&pixel), heard(&mac));
+    mac.net.drop_all();
+    settle(&[&pixel, &mac]);
+    assert_eq!((heard(&mac), heard(&pixel)), (true, true), "the Mac went offline, and left the Pixel's group room");
+    mac.tasks.pass(5 * S);
+    settle(&[&pixel, &mac]);
+    assert_eq!(mac.syncing.state(), SyncState::Connected);
+    assert_eq!((heard(&mac), heard(&pixel)), (true, true), "and came back");
+    settle(&[&pixel, &mac]);
+    assert_eq!((heard(&mac), heard(&pixel)), (false, false), "nothing changed, nothing told");
 }
 
 #[test]

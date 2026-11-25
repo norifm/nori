@@ -257,7 +257,7 @@ with its `Sockets`, its `SyncClient` and its `Reach`, and calls these:
   use again when it changed.
 - `install`: plugins a profile needs.
 - `event`: something to word.
-- `changed`: `state` or `pairing` changed.
+- `changed`: `state`, `pairing` or `devices` changed. A device that came online or left counts.
 
 These calls never come while sync holds its lock, so they may call it back.
 
