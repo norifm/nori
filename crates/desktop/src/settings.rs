@@ -46,6 +46,10 @@ const README_CODE: i32 = 21;
 const CONTROLLED: i32 = 22;
 /// One of a few, as chips sharing the row.
 const SEGMENTS: i32 = 23;
+/// Any of a few, as chips sharing the row, each lit while on (`lit`); a chip sends its `values` name.
+const FLAGS: i32 = 24;
+/// Opens a page of a plugin's: its label over its hint, a chevron at the end.
+const PAGE: i32 = 25;
 
 /// The appearance row's name: the theme setting, offered as segments.
 pub const APPEARANCE: &str = "appearance";
@@ -261,6 +265,8 @@ struct Row {
     glyph: MarkGlyph,
     /// A profile row's account picture.
     picture: slint::Image,
+    /// A flags row's options that are on.
+    lit: Vec<bool>,
 }
 
 /// The profile whose rows are kept under `profile` (`server_db`), as the server list names it.
@@ -833,6 +839,7 @@ fn lines(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Tod
                 glyph: r.glyph,
                 letter: r.letter.into(),
                 picture: r.picture,
+                lit: ModelRc::new(VecModel::from(r.lit)),
                 first: i == 0 || !plated[i - 1],
                 last: i + 1 == n || !plated[i + 1],
             });
@@ -848,6 +855,8 @@ pub enum PluginPage {
     Repos,
     /// A plugin's page, installed or only offered, by its id.
     Plugin(String),
+    /// One of an installed plugin's own pages: the plugin, and the page row it opens from.
+    Sub { plugin: String, page: String },
 }
 
 /// What a plugin's tile shows and what its icon was asked by.
@@ -870,8 +879,10 @@ pub struct Plugged {
     pub assets: HashMap<String, Vec<AssetLine>>,
     /// The connected devices plugins control.
     pub controlled: Vec<ControlledDevice>,
-    /// The device whose settings the device dialog shows.
-    pub device_page: Option<String>,
+    /// The plugins whose rows the devices panel shows too.
+    pub panel: Vec<PluginCard>,
+    /// What the dialog over the window shows.
+    pub dialog: Option<PageDialog>,
     pub repos: Vec<Repo>,
     /// A repo typed is being looked for.
     pub adding_repo: bool,
@@ -929,6 +940,7 @@ impl Plugged {
             Some(PluginPage::Browser) => nori_plugins::offers_found(offers.to_vec(), self.query.clone(), self.repo_shown.clone()).into_iter().map(|o| o.id).collect(),
             Some(PluginPage::Repos) => Vec::new(),
             Some(PluginPage::Plugin(id)) => vec![id.clone()],
+            Some(PluginPage::Sub { .. }) => Vec::new(),
         };
         let wanted: Vec<(String, Option<Offer>)> = shown.into_iter().map(|id| (id.clone(), offer(&id))).collect();
         let fresh: Vec<_> = wanted.into_iter().filter(|(id, o)| !self.icons.asked.contains(&(id.clone(), o.as_ref().and_then(|o| o.icon.clone())))).collect();
@@ -969,8 +981,80 @@ impl Plugged {
 
     /// Closes the pages of a plugin just removed.
     pub fn gone(&mut self, id: &str) {
-        self.stack.retain(|p| !matches!(p, PluginPage::Plugin(top) if top == id));
+        self.stack.retain(|p| !matches!(p, PluginPage::Plugin(top) | PluginPage::Sub { plugin: top, .. } if top == id));
     }
+
+    /// Closes the plugin pages whose page row went, with those over them, in Settings › Plugins and in
+    /// the dialog; the dialog closes once what it shows went.
+    pub fn pages_settled(&mut self) {
+        let mut path = Vec::new();
+        let standing = self
+            .stack
+            .iter()
+            .take_while(|p| match p {
+                PluginPage::Sub { plugin, page } => {
+                    path.push(page.clone());
+                    self.cards.iter().find(|c| c.id == *plugin).is_some_and(|c| nori_plugins::pages_standing(&c.rows, &path) == path.len())
+                }
+                _ => {
+                    path.clear();
+                    true
+                }
+            })
+            .count();
+        self.stack.truncate(standing);
+        let standing = self.dialog.as_ref().and_then(|d| Some(nori_plugins::pages_standing(&self.dialog_card()?.rows, &d.pages)));
+        match (standing, &mut self.dialog) {
+            (Some(n), Some(d)) => d.pages.truncate(n),
+            _ => self.dialog = None,
+        }
+        if self.dialog.as_ref().is_some_and(|d| matches!(d.root, DialogRoot::Plugin(_)) && d.pages.is_empty()) {
+            self.dialog = None;
+        }
+    }
+
+    /// The plugin whose rows the dialog shows.
+    fn dialog_card(&self) -> Option<&PluginCard> {
+        match &self.dialog.as_ref()?.root {
+            DialogRoot::Device(id) => self.controlled.iter().find(|d| d.id == *id).map(|d| &d.card),
+            DialogRoot::Plugin(id) => self.panel.iter().find(|c| c.id == *id),
+        }
+    }
+
+    /// Opens the dialog, opens a page in it, goes back a page or closes it.
+    pub fn dialog_act(&mut self, act: PluginAct) {
+        match act {
+            PluginAct::DeviceOpen(device) => self.dialog = Some(PageDialog { root: DialogRoot::Device(device), pages: Vec::new() }),
+            PluginAct::DeviceClose => self.dialog = None,
+            PluginAct::DialogPage(plugin, page) => match &mut self.dialog {
+                Some(d) => d.pages.push(page),
+                None => self.dialog = Some(PageDialog { root: DialogRoot::Plugin(plugin), pages: vec![page] }),
+            },
+            PluginAct::DialogBack => {
+                if let Some(d) = &mut self.dialog {
+                    d.pages.pop();
+                }
+            }
+            _ => return,
+        }
+        self.pages_settled();
+    }
+}
+
+/// What the dialog over the window shows: what it opened on, and the plugin's pages opened in it since, the
+/// first on the plugin's own page and each after it on the one before.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageDialog {
+    pub root: DialogRoot,
+    pub pages: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DialogRoot {
+    /// A controlled device's settings, by its id.
+    Device(String),
+    /// A page of a plugin's the devices panel opened, by the plugin's id: the dialog's first page.
+    Plugin(String),
 }
 
 /// What the plugin repos offer, as far as they were asked.
@@ -1010,6 +1094,8 @@ pub enum PluginAct {
     Repos,
     /// A plugin's page over what shows.
     Page(String),
+    /// One of a plugin's own pages over what shows: the plugin and the page row.
+    SubPage(String, String),
     /// Back to what the page shown covers.
     Back,
     /// The browser's search, as typed.
@@ -1031,6 +1117,11 @@ pub enum PluginAct {
     DeviceOpen(String),
     /// Closes that dialog.
     DeviceClose,
+    /// One of a plugin's pages, in the dialog over the window (opening it from the devices panel): the
+    /// plugin and the page row.
+    DialogPage(String, String),
+    /// Back to the dialog's page before.
+    DialogBack,
     /// Lets a plugin fetch its assets on mobile data.
     AllowMobile(String),
     /// The first screen's choice: this kind's form.
@@ -1076,6 +1167,10 @@ impl PluginAct {
             "plugin-browser" => PluginAct::Browser,
             "plugin-repos" => PluginAct::Repos,
             "plugin-page" => PluginAct::Page(id()),
+            "plugin-subpage" => {
+                let (plugin, page) = rest.split_once(':')?;
+                PluginAct::SubPage(plugin.into(), page.into())
+            }
             "plugin-back" => PluginAct::Back,
             "plugin-search" => PluginAct::Search,
             "plugin-chip" => PluginAct::Chip,
@@ -1091,6 +1186,11 @@ impl PluginAct {
             }
             "device-open" => PluginAct::DeviceOpen(id()),
             "device-close" => PluginAct::DeviceClose,
+            "device-page" => {
+                let (plugin, page) = rest.split_once(':')?;
+                PluginAct::DialogPage(plugin.into(), page.into())
+            }
+            "device-back" => PluginAct::DialogBack,
             "plugin-mobile" => PluginAct::AllowMobile(id()),
             "provider-own" => PluginAct::Choose(ServerKind::Subsonic),
             "provider" => PluginAct::Choose(ServerKind::Plugin { id: id() }),
@@ -1121,6 +1221,7 @@ impl PluginAct {
             PluginAct::Browser => "plugin-browser".into(),
             PluginAct::Repos => "plugin-repos".into(),
             PluginAct::Page(id) => format!("plugin-page:{id}"),
+            PluginAct::SubPage(plugin, page) => format!("plugin-subpage:{plugin}:{page}"),
             PluginAct::Back => "plugin-back".into(),
             PluginAct::Search => "plugin-search".into(),
             PluginAct::Chip => "plugin-chip".into(),
@@ -1132,6 +1233,8 @@ impl PluginAct {
             PluginAct::Flags(plugin, row, bits) => format!("plugin-flags:{plugin}:{row}:{bits}"),
             PluginAct::DeviceOpen(device) => format!("device-open:{device}"),
             PluginAct::DeviceClose => "device-close".into(),
+            PluginAct::DialogPage(plugin, page) => format!("device-page:{plugin}:{page}"),
+            PluginAct::DialogBack => "device-back".into(),
             PluginAct::AllowMobile(id) => format!("plugin-mobile:{id}"),
             PluginAct::Choose(ServerKind::Subsonic) => "provider-own".into(),
             PluginAct::Choose(ServerKind::Plugin { id }) => format!("provider:{id}"),
@@ -1156,7 +1259,16 @@ fn plugin_groups(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
         Some(PluginPage::Browser) => browser(p),
         Some(PluginPage::Repos) => repos_page(p),
         Some(PluginPage::Plugin(id)) => plugin_page(p, id),
+        Some(PluginPage::Sub { plugin, page }) => sub_page(p, plugin, page),
     }
+}
+
+/// Page `page` of installed plugin `plugin`, under its head: the rows on it.
+fn sub_page(p: &Plugged, plugin: &str, page: &str) -> Vec<(String, Vec<Row>)> {
+    let Some(c) = p.cards.iter().find(|c| c.id == plugin) else { return Vec::new() };
+    let mut groups = card_groups(String::new(), c, Some(page), Vec::new(), &p.off, |_| true, Opens::Settings);
+    groups.retain(|(_, rows)| !rows.is_empty());
+    groups
 }
 
 /// The first screen as it draws: what a new profile can play from.
@@ -1429,7 +1541,7 @@ fn plugin_page(p: &Plugged, id: &str) -> Vec<(String, Vec<Row>)> {
         }
         // A device's settings are on the device's own page.
         let controls_devices = c.points.iter().any(|p| p == "device-control");
-        groups.extend(card_groups(String::new(), c, head, &p.off, |r| !controls_devices || !nori_plugins::row_on_device_page(r.kind)));
+        groups.extend(card_groups(String::new(), c, None, head, &p.off, |r| !controls_devices || !nori_plugins::row_on_device_page(r.kind), Opens::Settings));
         if let Some(assets) = p.assets.get(&c.id) {
             let mut rows: Vec<Row> = assets.iter().map(|a| info(&a.name, words::asset_state(a))).collect();
             if assets.iter().any(|a| a.state == AssetState::WaitingForWifi) {
@@ -1529,6 +1641,11 @@ pub fn plugin_top(p: &Plugged, all_off: bool) -> PluginTop {
                 ..Default::default()
             }
         }
+        Some(PluginPage::Sub { plugin, page }) => {
+            let row = p.cards.iter().find(|c| c.id == *plugin).and_then(|c| c.rows.iter().find(|r| r.id == *page));
+            let (title, about) = row.map(|r| (r.label.clone(), r.hint.clone().unwrap_or_default())).unwrap_or_default();
+            PluginTop { title: title.into(), back, about: about.into(), ..Default::default() }
+        }
         Some(PluginPage::Plugin(id)) => {
             let at = p.cards.iter().position(|c| c.id == *id);
             let card = at.map(|at| &p.cards[at]);
@@ -1579,9 +1696,18 @@ pub fn plugin_top(p: &Plugged, all_off: bool) -> PluginTop {
     }
 }
 
+/// Where a plugin's page row opens its page.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Opens {
+    /// Over Settings › Plugins.
+    Settings,
+    /// In the dialog over the window.
+    Dialog,
+}
+
 /// One row of plugin `plugin`'s page, drawn as the settings' own rows are; its hint is the quiet line
-/// under it. Off, it shows but takes no input.
-fn plugin_row(plugin: &str, r: &PluginRow, off: bool) -> Row {
+/// under it. Off, it shows but takes no input. A page row opens its page where `opens` says.
+fn plugin_row(plugin: &str, r: &PluginRow, off: bool, opens: Opens) -> Row {
     let name = PluginAct::Row(plugin.into(), r.id.clone()).name();
     let hint = r.hint.clone().unwrap_or_default();
     let base = Row { name, title: r.label.clone(), detail: hint.clone(), enabled: !off, ..Default::default() };
@@ -1618,7 +1744,19 @@ fn plugin_row(plugin: &str, r: &PluginRow, off: bool) -> Row {
             Row { kind: ACTION, detail: said(detail), button: words::CHANGE.into(), ..base }
         }
         RowKind::Action => Row { kind: BUTTON, ..base },
-        RowKind::Flags => Row { kind: INFO, ..base },
+        RowKind::Flags => Row {
+            kind: FLAGS,
+            options: r.options.iter().enumerate().map(|(at, o)| (o.clone(), PluginAct::Flags(plugin.into(), r.id.clone(), r.flag_switched(at)).name())).collect(),
+            lit: (0..r.options.len()).map(|at| r.flag_on(at)).collect(),
+            ..base
+        },
+        RowKind::Page => {
+            let open = match opens {
+                Opens::Settings => PluginAct::SubPage(plugin.into(), r.id.clone()),
+                Opens::Dialog => PluginAct::DialogPage(plugin.into(), r.id.clone()),
+            };
+            Row { kind: PAGE, name: open.name(), ..base }
+        }
         RowKind::Status => Row { kind: INFO, detail: said(r.value.as_ref().map(|v| words::plugin_value(v, &r.options)).unwrap_or_default()), ..base },
         RowKind::Meter => {
             let shown = match r.value {
@@ -1631,46 +1769,49 @@ fn plugin_row(plugin: &str, r: &PluginRow, off: bool) -> Row {
             Some(url) => Row { kind: LINK, name: PluginAct::Open(url.clone()).name(), ..base },
             None => Row { kind: INFO, ..base },
         },
-        // Pages are laid out as headings by `one_page`.
-        RowKind::Note | RowKind::Section | RowKind::Page => note(&r.label),
+        RowKind::Note | RowKind::Section => note(&r.label),
     }
 }
 
-/// `r` as rows: a flags row is its title, then a switch for each option, as the settings' own flags are.
-fn plugin_lines(plugin: &str, r: &PluginRow, off: bool) -> Vec<Row> {
-    let row = plugin_row(plugin, r, off);
-    if r.kind != RowKind::Flags {
-        return vec![row];
-    }
-    let switches = r.options.iter().enumerate().map(|(at, option)| Row {
-        kind: TOGGLE,
-        name: PluginAct::Flags(plugin.into(), r.id.clone(), r.flag_switched(at)).name(),
-        title: option.clone(),
-        on: r.flag_on(at),
-        enabled: !off,
-        ..Default::default()
-    });
-    std::iter::once(row).chain(switches).collect()
-}
-
-/// Card `c`'s `shown` rows as groups: under `title` (after `head`), each section under its own; those in
-/// `off` take no input.
-fn card_groups(title: String, c: &PluginCard, head: Vec<Row>, off: &HashSet<(String, String)>, shown: impl Fn(&PluginRow) -> bool) -> Vec<(String, Vec<Row>)> {
+/// Card `c`'s `shown` rows on `page` (none for its own) as groups: under `title` (after `head`), each
+/// section under its own; those in `off` take no input, and page rows open where `opens` says.
+fn card_groups(title: String, c: &PluginCard, page: Option<&str>, head: Vec<Row>, off: &HashSet<(String, String)>, shown: impl Fn(&PluginRow) -> bool, opens: Opens) -> Vec<(String, Vec<Row>)> {
     let mut groups = Vec::new();
     let (mut title, mut rows) = (title, head);
-    for r in nori_plugins::one_page(&c.rows).iter().filter(|r| shown(r)) {
+    for r in nori_plugins::page_rows(&c.rows, page).filter(|r| shown(r)) {
         match r.kind {
             RowKind::Section => groups.push((std::mem::replace(&mut title, r.label.clone()), std::mem::take(&mut rows))),
-            _ => rows.extend(plugin_lines(&c.id, r, off.contains(&(c.id.clone(), r.id.clone())))),
+            _ => rows.push(plugin_row(&c.id, r, off.contains(&(c.id.clone(), r.id.clone())), opens)),
         }
     }
     groups.push((title, rows));
     groups
 }
 
-/// The device whose settings the device dialog shows: `page`'s, while a plugin controls it.
-pub fn opened_device<'a>(controlled: &'a [ControlledDevice], page: Option<&str>) -> Option<&'a ControlledDevice> {
-    page.and_then(|id| controlled.iter().find(|d| d.id == id))
+/// The dialog over the window as it draws.
+pub struct DialogShown {
+    pub title: String,
+    /// It has a page to go back to.
+    pub back: bool,
+    pub rows: ModelRc<SettingRow>,
+}
+
+/// The dialog as it draws: a controlled device's batteries, noise modes and its plugin's rows for it under
+/// the device's name, or the plugin page last opened in it under that page's name.
+pub fn dialog_shown(p: &Plugged, prefs: &StoredPrefs, f: &Facts, today: Today) -> Option<DialogShown> {
+    let d = p.dialog.as_ref()?;
+    let card = p.dialog_card()?;
+    let Some(page) = d.pages.last() else {
+        let DialogRoot::Device(id) = &d.root else { return None };
+        let device = p.controlled.iter().find(|c| c.id == *id)?;
+        return Some(DialogShown { title: device.name.clone(), back: false, rows: dialog_lines(device_page(device, &p.off), prefs, f, today) });
+    };
+    let row = card.rows.iter().find(|r| r.id == *page)?;
+    let hint = row.hint.iter().map(|h| note(h)).collect();
+    let mut groups = card_groups(String::new(), card, Some(page), hint, &p.off, |_| true, Opens::Dialog);
+    groups.retain(|(_, rows)| !rows.is_empty());
+    let back = d.pages.len() > 1 || matches!(d.root, DialogRoot::Device(_));
+    Some(DialogShown { title: row.label.clone(), back, rows: dialog_lines(groups, prefs, f, today) })
 }
 
 /// The devices plugins control, which head the devices panel as Android's card does: each one's name over
@@ -1686,10 +1827,9 @@ pub fn device_rows(cards: &[PluginCard], controlled: &[ControlledDevice], off: &
     model(panel_groups(cards, controlled, off), prefs, f, today)
 }
 
-/// Device `d`'s settings, as its dialog shows them under its name: its batteries and noise modes, then its
-/// plugin's rows for it.
-pub fn device_page_rows(d: &ControlledDevice, off: &HashSet<(String, String)>, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
-    let mut rows = lines(device_page(d, off), prefs, f, today);
+/// `groups` as the dialog's rows.
+fn dialog_lines(groups: Vec<(String, Vec<Row>)>, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    let mut rows = lines(groups, prefs, f, today);
     // The dialog's title stands over the first plate.
     if rows.first().is_some_and(|r| r.kind == HEADING && r.title.is_empty()) {
         rows.remove(0);
@@ -1726,14 +1866,14 @@ fn device_card(d: &ControlledDevice) -> Vec<Row> {
 
 fn panel_groups(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>) -> Vec<(String, Vec<Row>)> {
     let apart = cards.iter().filter(|c| !controlled.iter().any(|d| d.card.id == c.id));
-    let mut groups: Vec<_> = apart.flat_map(|c| card_groups(c.name.clone(), c, Vec::new(), off, |_| true)).collect();
+    let mut groups: Vec<_> = apart.flat_map(|c| card_groups(c.name.clone(), c, None, Vec::new(), off, |_| true, Opens::Dialog)).collect();
     groups.retain(|(_, rows)| !rows.is_empty());
     groups
 }
 
 fn device_page(d: &ControlledDevice, off: &HashSet<(String, String)>) -> Vec<(String, Vec<Row>)> {
     let mut groups = vec![(String::new(), device_controls(d, false))];
-    groups.extend(card_groups(String::new(), &d.card, Vec::new(), off, |r| nori_plugins::row_on_device_page(r.kind)));
+    groups.extend(card_groups(String::new(), &d.card, None, Vec::new(), off, |r| nori_plugins::row_on_device_page(r.kind), Opens::Dialog));
     groups.retain(|(_, rows)| !rows.is_empty());
     groups
 }
@@ -2361,13 +2501,13 @@ mod tests {
             page: None,
             glyph: None,
         };
-        let level = plugin_row("p", &row(RowKind::Level, Some(Value::Level(1.5)), Some("Before the limiter"), Some("dB"), None), false);
+        let level = plugin_row("p", &row(RowKind::Level, Some(Value::Level(1.5)), Some("Before the limiter"), Some("dB"), None), false, Opens::Settings);
         assert_eq!((level.title.as_str(), level.detail.as_str()), ("Gain: 1.50 dB", "Before the limiter"));
-        let status = plugin_row("p", &row(RowKind::Status, Some(Value::Text("Fine".into())), Some("Checked hourly"), None, None), false);
+        let status = plugin_row("p", &row(RowKind::Status, Some(Value::Text("Fine".into())), Some("Checked hourly"), None, None), false, Opens::Settings);
         assert_eq!(status.detail, "Fine · Checked hourly");
-        let meter = plugin_row("p", &row(RowKind::Meter, Some(Value::Level(8.0)), None, Some("%"), None), false);
+        let meter = plugin_row("p", &row(RowKind::Meter, Some(Value::Level(8.0)), None, Some("%"), None), false, Opens::Settings);
         assert_eq!(meter.detail, "8.00 %");
-        let link = plugin_row("p", &row(RowKind::Link, None, None, None, Some("https://x.example/help")), false);
+        let link = plugin_row("p", &row(RowKind::Link, None, None, None, Some("https://x.example/help")), false, Opens::Settings);
         assert_eq!((link.kind, PluginAct::of(&link.name)), (LINK, Some(PluginAct::Open("https://x.example/help".into()))));
     }
 
@@ -2393,9 +2533,13 @@ mod tests {
         assert_eq!(shown.iter().map(|r| (r.kind, r.first, r.last)).collect::<Vec<_>>(), [(CONTROLLED, true, false), (SEGMENTS, false, false), (LINK, false, true)], "one plate, no heading over it");
         assert!(panel_groups(&[card(&d.card.id), card("dev.other")], controlled, &HashSet::new()).iter().all(|(title, _)| title == "dev.other"), "its plugin's rows wait in its dialog");
 
-        assert_eq!(opened_device(controlled, Some("gone")), None, "the device gone, no dialog");
-        let page = device_page_rows(opened_device(controlled, Some("AA")).unwrap(), &HashSet::new(), &Default::default(), &Default::default(), Today { month: 10, day: 19, southern: false });
-        let page: Vec<_> = page.iter().map(|r| (r.kind, r.detail.to_string(), r.name.to_string())).collect();
+        let mut p = Plugged { controlled: controlled.to_vec(), ..Default::default() };
+        p.dialog_act(PluginAct::DeviceOpen("gone".into()));
+        assert_eq!(p.dialog, None, "the device gone, no dialog");
+        p.dialog_act(PluginAct::DeviceOpen("AA".into()));
+        let shown = dialog_shown(&p, &Default::default(), &Default::default(), Today { month: 10, day: 19, southern: false }).unwrap();
+        assert_eq!((shown.title.as_str(), shown.back), ("WH-1000XM5", false));
+        let page: Vec<_> = shown.rows.iter().map(|r| (r.kind, r.detail.to_string(), r.name.to_string())).collect();
         assert_eq!(page[..2].iter().map(|r| (r.0, r.1.as_str())).collect::<Vec<_>>(), [(INFO, "80%"), (SEGMENTS, "")], "the title names it: its batteries alone, then the chips");
         assert_eq!(page[2..].iter().map(|r| (r.0, r.2.as_str())).collect::<Vec<_>>(), [(HEADING, ""), (TOGGLE, "plugin-row:dev.sony:on")]);
     }
@@ -2404,18 +2548,19 @@ mod tests {
     #[test]
     fn a_plugins_segments_are_chips_and_its_choice_a_popover() {
         let r = |kind| PluginRow { id: "mode".into(), label: "Mode".into(), kind, options: vec!["A".into(), "B".into()], value: Some(Value::Choice(1)), ..row_blank() };
-        let kinds: Vec<(i32, Option<i32>)> = [RowKind::Segments, RowKind::Choice].into_iter().map(|k| plugin_row("p", &r(k), false)).map(|row| (row.kind, row.chosen)).collect();
+        let kinds: Vec<(i32, Option<i32>)> = [RowKind::Segments, RowKind::Choice].into_iter().map(|k| plugin_row("p", &r(k), false, Opens::Settings)).map(|row| (row.kind, row.chosen)).collect();
         assert_eq!(kinds, [(SEGMENTS, Some(1)), (CHOICE, Some(1))]);
     }
 
-    /// A flags row is its title and a switch for each option, which stores the bits with that one switched.
+    /// A flags row is one row of chips under its label, as Android's, each lit while on and storing the bits
+    /// with it switched.
     #[test]
-    fn a_plugins_flags_are_switches() {
+    fn a_plugins_flags_are_chips() {
         let r = PluginRow { id: "cycle".into(), label: "Cycle".into(), kind: RowKind::Flags, options: vec!["A".into(), "B".into()], value: Some(Value::Flags(0b01)), ..row_blank() };
-        let lines = plugin_lines("p", &r, false);
-        assert_eq!(lines.iter().map(|l| (l.kind, l.on)).collect::<Vec<_>>(), [(INFO, false), (TOGGLE, true), (TOGGLE, false)]);
-        assert_eq!(PluginAct::of(&lines[1].name), Some(PluginAct::Flags("p".into(), "cycle".into(), 0b00)));
-        assert_eq!(PluginAct::of(&lines[2].name), Some(PluginAct::Flags("p".into(), "cycle".into(), 0b11)));
+        let row = plugin_row("p", &r, false, Opens::Settings);
+        assert_eq!((row.kind, row.title.as_str(), row.lit.as_slice()), (FLAGS, "Cycle", [true, false].as_slice()));
+        let sends: Vec<_> = row.options.iter().map(|o| (o.0.as_str(), PluginAct::of(&o.1))).collect();
+        assert_eq!(sends, [("A", Some(PluginAct::Flags("p".into(), "cycle".into(), 0b00))), ("B", Some(PluginAct::Flags("p".into(), "cycle".into(), 0b11)))]);
     }
 
     fn row_blank() -> PluginRow {

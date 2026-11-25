@@ -49,8 +49,6 @@ pub enum Switch {
     Transparent,
     /// A plugin's switch row.
     Plugin { plugin: String, row: String },
-    /// An option of a plugin's flags row, and the bits switching it stores.
-    PluginFlags { plugin: String, row: String, bits: u64 },
     /// A plugin itself, on its page.
     Turn(String),
     /// Keeps a plugin at its version: no automatic updates.
@@ -123,6 +121,9 @@ pub enum Row {
     /// `options` are (label, value); `shown` is the chosen label, or the raw value if none matches.
     /// `chips`: few options, all on view.
     Choice { target: Target, title: String, options: Vec<(String, String)>, shown: String, enabled: bool, chips: bool },
+    /// Any of a few, all on view, those `lit` on: enter picks one to switch. `options` are (label, the
+    /// value switching it stores).
+    Flags { target: Target, title: String, options: Vec<(String, String)>, lit: Vec<bool> },
     /// One of the four seasons: its name, its kanji, its theme's accent in the mode the interface is in,
     /// whether it is the one worn, and whether picking it changes the setting.
     Season { value: String, name: &'static str, kanji: &'static str, accent: u32, worn: bool, picked: bool, enabled: bool },
@@ -303,6 +304,14 @@ pub struct Own {
 }
 
 impl Own {
+    /// The rows of plugin `plugin` as shown: on `device`'s page, that device's.
+    fn card_of(&self, plugin: &str, device: Option<&str>) -> Option<&PluginCard> {
+        match device {
+            Some(id) => self.controlled.iter().find(|d| d.id == id).map(|d| &d.card),
+            None => self.plugins.iter().find(|c| c.id == plugin),
+        }
+    }
+
     /// What the repos offer, as last read.
     pub fn offers(&self) -> &[Offer] {
         match &self.shelf {
@@ -321,6 +330,9 @@ pub enum PluginPage {
     Plugin(String),
     /// A device a plugin controls, by its id: its controls, then its plugin's settings for it.
     Device(String),
+    /// One of a plugin's own pages: the plugin, the device whose page it opened from (its rows are that
+    /// device's), and the page row.
+    Sub { plugin: String, device: Option<String>, page: String },
 }
 
 /// What the plugin repos offer, as far as they were asked.
@@ -353,6 +365,7 @@ impl SettingsView {
                 Some((PluginPage::Repos, _)) => vec![Page { title: text::REPOS.into(), summary: String::new(), sections: repos_page(&self.own) }],
                 Some((PluginPage::Plugin(id), _)) => vec![plugin_page(&self.own, id)],
                 Some((PluginPage::Device(id), _)) => vec![device_page(&self.own, id)],
+                Some((PluginPage::Sub { plugin, device, page }, _)) => vec![sub_page(&self.own, plugin, device.as_deref(), page)],
                 None => GROUPS.iter().filter(|g| !alone || g.id == Gid::Plugins).map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect(),
             });
         }
@@ -432,17 +445,46 @@ impl SettingsView {
         true
     }
 
-    /// Closes the page of a device that went; true if it showed.
+    /// Closes the page of a device that went, with the pages over it; true if one was open.
     pub fn device_gone(&mut self) -> bool {
-        let gone = matches!(self.own.stack.last(), Some((PluginPage::Device(id), _)) if !self.own.controlled.iter().any(|d| d.id == *id));
-        gone && self.leave()
+        let gone = self.own.stack.iter().position(|(p, _)| matches!(p, PluginPage::Device(id) if !self.own.controlled.iter().any(|d| d.id == *id)));
+        self.close_from(gone)
     }
 
     /// Closes the pages of a plugin just removed.
     pub fn plugin_gone(&mut self, id: &str) {
-        while matches!(self.own.stack.last(), Some((PluginPage::Plugin(top), _)) if top == id) {
+        let first = self.own.stack.iter().position(|(p, _)| matches!(p, PluginPage::Plugin(top) | PluginPage::Sub { plugin: top, .. } if top == id));
+        self.close_from(first);
+    }
+
+    /// Closes the plugin pages whose page row went, with those over them; true if one was open.
+    pub fn pages_gone(&mut self) -> bool {
+        let mut path = Vec::new();
+        let gone = self.own.stack.iter().position(|(p, _)| match p {
+            PluginPage::Sub { plugin, device, page } => {
+                path.push(page.clone());
+                self.own.card_of(plugin, device.as_deref()).is_none_or(|c| nori_plugins::pages_standing(&c.rows, &path) < path.len())
+            }
+            _ => {
+                path.clear();
+                false
+            }
+        });
+        self.close_from(gone)
+    }
+
+    /// Closes the page at `at` in the stack and those over it; true if there was one.
+    fn close_from(&mut self, at: Option<usize>) -> bool {
+        let Some(at) = at else { return false };
+        while self.own.stack.len() > at {
             self.leave();
         }
+        true
+    }
+
+    /// How many pages are open over the settings.
+    pub fn depth(&self) -> usize {
+        self.own.stack.len()
     }
 
     /// Whether the browser shows.
@@ -496,7 +538,7 @@ impl SettingsView {
             (_, Some(Row::Server { name: Some(_), .. })) => h::PROFILE_ROW,
             (Some((PluginPage::Browser, _)), _) => h::PLUGIN_BROWSER,
             (Some((PluginPage::Plugin(_), _)), _) => h::PLUGIN_PAGE,
-            (Some((PluginPage::Device(_), _)), _) => h::DEVICE_PAGE,
+            (Some((PluginPage::Device(_) | PluginPage::Sub { .. }, _)), _) => h::DEVICE_PAGE,
             (Some(_), _) => h::PLUGIN_REPOS,
             (None, _) => h::SETTINGS,
         }
@@ -873,7 +915,7 @@ fn plugin_page(own: &Own, id: &str) -> Page {
         sections.push(section("", rows));
         // A device's settings are on the device's own page.
         let controls_devices = c.points.iter().any(|p| p == "device-control");
-        sections.extend(card_sections(own, c, |r| !controls_devices || !nori_plugins::row_on_device_page(r.kind)));
+        sections.extend(card_sections(own, c, None, None, |r| !controls_devices || !nori_plugins::row_on_device_page(r.kind)));
         if let Some(assets) = own.assets.get(&c.id) {
             let mut rows: Vec<Row> = assets.iter().map(|a| info(&a.name, text::asset_state(a))).collect();
             if assets.iter().any(|a| a.state == AssetState::WaitingForWifi) {
@@ -933,8 +975,6 @@ pub fn open_row(row: Row) -> Option<Opened> {
             Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())])
         }
         Row::Toggle { switch: Switch::Stores(name, value), .. } => Opened::Cmds(vec![Cmd::Setting(name, value)]),
-        Row::Toggle { switch: Switch::PluginFlags { .. }, enabled: false, .. } => return None,
-        Row::Toggle { switch: Switch::PluginFlags { plugin, row, bits }, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Flags(bits)))]),
         Row::Toggle { switch: Switch::Plugin { plugin, row }, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(!on)))]),
         Row::Toggle { switch: Switch::Turn(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(plugin, !on))]),
         Row::Toggle { switch: Switch::Hold(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Hold(plugin, !on))]),
@@ -943,6 +983,10 @@ pub fn open_row(row: Row) -> Option<Opened> {
         Row::Choice { target, title, options, shown, enabled: true, .. } => {
             let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
             Opened::Overlay(Overlay::Picker { title, options, sel: Sel { at, ..Sel::default() }, target })
+        }
+        Row::Flags { target, title, options, lit } => {
+            let options = options.into_iter().zip(lit).map(|((label, bits), on)| (text::flag(&label, on), bits)).collect();
+            Opened::Overlay(Overlay::Picker { title, options, sel: Sel::default(), target })
         }
         Row::Link { action, .. } | Row::Action { action, enabled: true, .. } | Row::Button { action, .. } => match action {
             Act::Equalizer => Opened::View(View::Equalizer),
@@ -1006,8 +1050,6 @@ pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
                 Switch::Stores(name, value) if enabled => vec![Cmd::Setting(name, value)],
                 Switch::Setting(_) | Switch::Stores(..) => Vec::new(),
                 Switch::Plugin { plugin, row } => vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(up)))],
-                Switch::PluginFlags { .. } if !enabled => Vec::new(),
-                Switch::PluginFlags { plugin, row, bits } => vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Flags(bits)))],
                 Switch::Turn(plugin) => vec![Cmd::Plugin(PluginCmd::Turn(plugin, up))],
                 Switch::Hold(plugin) => vec![Cmd::Plugin(PluginCmd::Hold(plugin, up))],
                 Switch::AllOff => all_off(!up),
@@ -1026,20 +1068,11 @@ pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
     }
 }
 
-/// One row of plugin `plugin`'s page, then its hint; `off`, it shows but takes no input.
-pub fn plugin_rows(plugin: &str, r: &PluginRow, off: bool) -> Vec<Row> {
+/// One row of plugin `plugin`'s page (`device`'s, on a device's), then its hint; `off`, it shows but takes
+/// no input.
+pub fn plugin_rows(plugin: &str, r: &PluginRow, device: Option<&str>, off: bool) -> Vec<Row> {
     let hint = r.hint.clone().map(|text| Row::Note { text });
-    if r.kind == RowKind::Flags {
-        let switches = r.options.iter().enumerate().map(|(at, option)| Row::Toggle {
-            switch: Switch::PluginFlags { plugin: plugin.into(), row: r.id.clone(), bits: r.flag_switched(at) },
-            title: format!("  {option}"),
-            detail: String::new(),
-            on: r.flag_on(at),
-            enabled: !off,
-        });
-        return std::iter::once(Row::Info { title: r.label.clone(), detail: String::new() }).chain(switches).chain(hint).collect();
-    }
-    let row = if off { Row::Info { title: r.label.clone(), detail: shown_value(r) } } else { plugin_row(plugin, r) };
+    let row = if off { Row::Info { title: r.label.clone(), detail: shown_value(r) } } else { plugin_row(plugin, r, device) };
     std::iter::once(row).chain(hint).collect()
 }
 
@@ -1048,27 +1081,41 @@ fn shown_value(r: &PluginRow) -> String {
     r.value.as_ref().map(|v| text::plugin_value(v, r)).unwrap_or_default()
 }
 
-/// Card `c`'s `shown` rows, each of its pages under its name; those turned off take no input.
-fn card_sections(own: &Own, c: &PluginCard, shown: impl Fn(&PluginRow) -> bool) -> Vec<Section> {
+/// Card `c`'s `shown` rows on `page` (none for its own; `device`'s, on a device's), each section under its
+/// name; those turned off take no input.
+fn card_sections(own: &Own, c: &PluginCard, page: Option<&str>, device: Option<&str>, shown: impl Fn(&PluginRow) -> bool) -> Vec<Section> {
     let mut sections = Vec::new();
     let (mut title, mut rows) = (String::new(), Vec::new());
-    for r in nori_plugins::one_page(&c.rows).iter().filter(|r| shown(r)) {
+    for r in nori_plugins::page_rows(&c.rows, page).filter(|r| shown(r)) {
         match r.kind {
             RowKind::Section => sections.push(Section { title: std::mem::replace(&mut title, r.label.clone()), rows: std::mem::take(&mut rows) }),
-            _ => rows.extend(plugin_rows(&c.id, r, own.off.contains(&(c.id.clone(), r.id.clone())))),
+            _ => rows.extend(plugin_rows(&c.id, r, device, own.off.contains(&(c.id.clone(), r.id.clone())))),
         }
     }
     sections.push(Section { title, rows });
     sections
 }
 
+fn blank_page() -> Page {
+    Page { title: String::new(), summary: String::new(), sections: Vec::new() }
+}
+
 /// Device `id`'s page, under its name: its batteries and noise control, then its plugin's rows for it.
 fn device_page(own: &Own, id: &str) -> Page {
-    let Some(d) = own.controlled.iter().find(|d| d.id == id) else { return Page { title: String::new(), summary: String::new(), sections: Vec::new() } };
+    let Some(d) = own.controlled.iter().find(|d| d.id == id) else { return blank_page() };
     let mut sections = vec![section("", device_controls(d))];
-    sections.extend(card_sections(own, &d.card, |r| nori_plugins::row_on_device_page(r.kind)));
+    sections.extend(card_sections(own, &d.card, None, Some(id), |r| nori_plugins::row_on_device_page(r.kind)));
     sections.retain(|s| !s.rows.is_empty());
     Page { title: d.name.clone(), summary: String::new(), sections }
+}
+
+/// Page `page` of plugin `plugin` (`device`'s, opened from a device's page), under its name and hint.
+fn sub_page(own: &Own, plugin: &str, device: Option<&str>, page: &str) -> Page {
+    let Some(c) = own.card_of(plugin, device) else { return blank_page() };
+    let Some(row) = c.rows.iter().find(|r| r.id == page) else { return blank_page() };
+    let mut sections = card_sections(own, c, Some(page), device, |_| true);
+    sections.retain(|s| !s.rows.is_empty());
+    Page { title: row.label.clone(), summary: row.hint.clone().unwrap_or_default(), sections }
 }
 
 /// A controlled device's batteries and noise control.
@@ -1087,8 +1134,8 @@ fn device_controls(d: &ControlledDevice) -> Vec<Row> {
     rows
 }
 
-/// One row of plugin `plugin`'s page, drawn as the settings' own rows are.
-pub fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
+/// One row of plugin `plugin`'s page (`device`'s, on a device's), drawn as the settings' own rows are.
+pub fn plugin_row(plugin: &str, r: &PluginRow, device: Option<&str>) -> Row {
     let target = Target::Plugin { plugin: plugin.into(), row: r.id.clone(), kind: r.kind };
     let title = r.label.clone();
     match r.kind {
@@ -1126,11 +1173,11 @@ pub fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
         }
         RowKind::Action => Row::Button { title, action: Act::PluginAction { plugin: plugin.into(), row: r.id.clone() } },
         RowKind::Status | RowKind::Meter => Row::Info { title, detail: shown_value(r) },
-        RowKind::Flags => Row::Info { title, detail: r.chosen().join(", ") },
+        RowKind::Flags => Row::Flags { target, title, options: r.options.iter().enumerate().map(|(at, o)| (o.clone(), r.flag_switched(at).to_string())).collect(), lit: (0..r.options.len()).map(|at| r.flag_on(at)).collect() },
+        RowKind::Page => Row::Link { title, status: String::new(), action: Act::Page(PluginPage::Sub { plugin: plugin.into(), device: device.map(Into::into), page: r.id.clone() }) },
         // A link shows where it goes: the terminal opens no pages.
         RowKind::Link => Row::Info { title, detail: r.url.clone().unwrap_or_default() },
-        // Pages are laid out as headings by `one_page`.
-        RowKind::Note | RowKind::Section | RowKind::Page => Row::Note { text: title },
+        RowKind::Note | RowKind::Section => Row::Note { text: title },
     }
 }
 
@@ -1540,7 +1587,7 @@ pub fn row_value(row: &Row) -> String {
 pub fn row_words(row: &Row) -> (String, String) {
     match row {
         Row::Toggle { title, detail, .. } | Row::Ranked { title, detail, .. } | Row::Info { title, detail, .. } => (title.clone(), detail.clone()),
-        Row::Choice { title, .. } | Row::Link { title, .. } | Row::Text { title, .. } => (title.clone(), String::new()),
+        Row::Choice { title, .. } | Row::Flags { title, .. } | Row::Link { title, .. } | Row::Text { title, .. } => (title.clone(), String::new()),
         Row::Plugin { title, detail, .. } | Row::Repo { title, detail, .. } | Row::Offer { title, detail, .. } => (title.clone(), detail.clone()),
         Row::Prose { .. } => (String::new(), String::new()),
         Row::Note { text } => (String::new(), text.clone()),

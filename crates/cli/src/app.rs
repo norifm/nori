@@ -983,7 +983,7 @@ impl Devices {
         }
         for (c, card) in self.plugins.iter().enumerate() {
             rows.push(DeviceRow::PluginName(c));
-            for (r, row) in card.rows.iter().enumerate() {
+            for (r, row) in card.rows.iter().enumerate().filter(|(_, row)| row.page.is_none()) {
                 rows.push(DeviceRow::Plugin(c, r));
                 if row.hint.is_some() {
                     rows.push(DeviceRow::PluginHint(c, r));
@@ -1011,7 +1011,7 @@ impl Devices {
     /// Row `r` of plugin `c` as the settings draw it.
     pub fn plugin_row(&self, c: usize, r: usize) -> Option<crate::settings_view::Row> {
         let card = self.plugins.get(c)?;
-        Some(crate::settings_view::plugin_row(&card.id, card.rows.get(r)?))
+        Some(crate::settings_view::plugin_row(&card.id, card.rows.get(r)?, None))
     }
 
     /// The panel shows: other devices or jams are on, a plugin has rows here, casts or controls a device.
@@ -1406,9 +1406,9 @@ pub struct App {
     pub panel: Panel,
     /// Full-window player.
     pub full: bool,
-    /// The view and its pages under the full player when its devices panel opened a device's page, which
-    /// Back from that page returns to.
-    device_under: Option<(View, Vec<Page>)>,
+    /// The view and its pages under the full player when its devices panel opened a page over the settings
+    /// (a device's, a plugin's), which Back from that page returns to, and the plugin pages open under it.
+    device_under: Option<(View, Vec<Page>, usize)>,
     pub shown: Shown,
     pub queue: Option<PlaylistView>,
     pub queue_sel: Sel,
@@ -3368,7 +3368,7 @@ impl App {
             return;
         }
         if self.on_settings() && self.settings.leave() {
-            self.device_page_left();
+            self.over_player_left();
             if self.settings.alone.offer().is_some() && !self.settings.deep() {
                 self.plugins_left();
             }
@@ -3385,10 +3385,13 @@ impl App {
         }
     }
 
-    /// A device's page closed: back to the player and its devices panel that opened it, over the view as it was.
-    /// Nothing opens over a device's page, so it is the page that closed while `device_under` is kept.
-    pub fn device_page_left(&mut self) {
-        let Some((view, pages)) = self.device_under.take() else { return };
+    /// Pages closed: once the one the devices panel opened did, back to the player and that panel, over
+    /// the view as it was.
+    pub fn over_player_left(&mut self) {
+        if self.device_under.as_ref().is_none_or(|u| self.settings.depth() > u.2) {
+            return;
+        }
+        let Some((view, pages, _)) = self.device_under.take() else { return };
         self.view = view;
         self.pages = pages;
         self.follow_sound_page();
@@ -4199,15 +4202,13 @@ impl App {
             Some(DeviceRow::Plugin(c, r)) => match self.devices.plugin_row(c, r).and_then(crate::settings_view::open_row) {
                 Some(Opened::Cmds(c)) => self.cmds.extend(c),
                 Some(Opened::Overlay(o)) => self.overlay = Some(o),
+                Some(Opened::Plugins(page)) => self.open_over_player(page),
                 _ => self.dirty = false,
             },
             Some(DeviceRow::Settings(i)) => {
                 let Some(c) = d.controlled.get(i) else { return };
                 let id = c.id.clone();
-                let under = (self.view, std::mem::take(&mut self.pages));
-                self.go(View::Settings);
-                self.plugin_page(crate::settings_view::PluginPage::Device(id));
-                self.device_under = Some(under);
+                self.open_over_player(crate::settings_view::PluginPage::Device(id));
             }
             Some(DeviceRow::Noise(i)) => {
                 let Some(c) = d.controlled.get(i) else { return };
@@ -4342,6 +4343,14 @@ impl App {
         }
     }
 
+    /// Opens `page` over the settings from the full player's devices panel; Back from it returns there.
+    fn open_over_player(&mut self, page: crate::settings_view::PluginPage) {
+        let under = (self.view, std::mem::take(&mut self.pages), self.settings.depth());
+        self.go(View::Settings);
+        self.plugin_page(page);
+        self.device_under = Some(under);
+    }
+
     fn plugin_page(&mut self, page: crate::settings_view::PluginPage) {
         self.settings.enter(page, &self.prefs);
         if matches!(self.settings.own.shelf, crate::settings_view::Shelf::Unasked) {
@@ -4355,7 +4364,7 @@ impl App {
             Switch::Mouse => self.do_action(Action::Mouse),
             Switch::Images => self.do_action(Action::Images),
             Switch::Transparent => self.cmds.push(Cmd::Paint(!self.paint)),
-            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::PluginFlags { .. } | Switch::Turn(_) | Switch::Hold(_) | Switch::AllOff => {}
+            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::Turn(_) | Switch::Hold(_) | Switch::AllOff => {}
         }
         self.settings.invalidate();
     }

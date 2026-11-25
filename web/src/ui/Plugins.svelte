@@ -1,7 +1,7 @@
 <script lang="ts">
   // Settings › Plugins and the pages it opens, as Android's: the list (updates, what's installed, the switch
-  // over them all), the browser (`#/settings/Plugins/get`) and a plugin's page (`#/settings/Plugins/<id>`),
-  // installed or only offered. What can run here is the core's to say (`web_fit`); a plugin that can't is
+  // over them all), the browser (`#/settings/Plugins/get`), a plugin's page (`#/settings/Plugins/<id>`),
+  // installed or only offered, and its own pages (`#/settings/Plugins/<id>/<page row>`). What can run here is the core's to say (`web_fit`); a plugin that can't is
   // greyed with its reasons. `tabbed`: the list under Settings' tabs, which give it its title.
   import { ask } from "../rpc";
   import { href, route } from "../state/route.svelte";
@@ -43,9 +43,12 @@
 
   const GET = "get";
   const sub = (page: string) => `${href("settings", "Plugins")}/${encodeURIComponent(page)}`;
+  const subPage = (id: string, page: string) => `${sub(id)}/${encodeURIComponent(page)}`;
   const shown = $derived(route.top === "settings" ? route.sub : "");
   const id = $derived(shown === GET ? "" : shown);
   const card = $derived(id ? host?.find(id) : undefined);
+  /** The page row of the plugin's own page shown. */
+  const pageRow = $derived(route.page ? card?.plugin.rows.find((r) => r.id === route.page && r.kind === "Page") : undefined);
   /** What the repo holds of plugin `id`; one installed from a file comes from no repo. */
   const offerOf = (id: string, i?: Installed) => (i?.fromFile ? undefined : offers?.find((o) => o.id === id));
   const offer = $derived(id ? offerOf(id, card) : undefined);
@@ -130,14 +133,15 @@
     ]);
   }
 
-  /** A card's rows as nori's own settings pages draw theirs: each section the label over the group after it,
-   * then each of its pages under its name. */
-  function groups(i: Installed) {
+  /** Whether option `n` of a flags row is on. */
+  const flagOn = (i: Installed, r: Row, n: number) => ((BigInt(number(i, r)) >> BigInt(n)) & 1n) === 1n;
+  const flagSwitched = (i: Installed, r: Row, n: number) => Number(BigInt(number(i, r)) ^ (1n << BigInt(n)));
+
+  /** A card's rows on `page` (null for the plugin's own) as nori's own settings pages draw theirs: each
+   * section the label over the group after it. */
+  function groups(i: Installed, page: string | null) {
     const out: { label: string | null; rows: Row[] }[] = [{ label: null, rows: [] }];
-    const on = (page: string | null) => i.plugin.rows.filter((r) => r.page === page);
-    const pages = on(null).filter((r) => r.kind === "Page");
-    const laid = [...on(null).filter((r) => r.kind !== "Page"), ...pages.flatMap((p) => [{ ...p, kind: "Section" as const }, ...on(p.id)])];
-    for (const r of laid) {
+    for (const r of i.plugin.rows.filter((r) => r.page === page)) {
       if (running?.shown[r.id]?.shown === false) continue;
       if (r.kind === "Section") out.push({ label: r.label, rows: [] });
       else out[out.length - 1].rows.push(r);
@@ -247,6 +251,17 @@
       onclick={(e) => ui.drop(e, r.options.map((o, n) => ({ label: o, chosen: n === number(i, r), run: () => set(i, r, n) })))}
       ><span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span><span class="value">{r.options[number(i, r)]}</span><Icon name="nav-arrow-right" /></button
     >
+  {:else if r.kind === "Flags"}
+    <div class="group-row level" class:off data-row={r.id}>
+      <span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span>
+      <span class="segments" role="group" aria-label={r.label}>
+        {#each r.options as o, n (n)}
+          <button aria-pressed={flagOn(i, r, n)} class:chosen={flagOn(i, r, n)} disabled={off} onclick={() => set(i, r, flagSwitched(i, r, n))}>{o}</button>
+        {/each}
+      </span>
+    </div>
+  {:else if r.kind === "Page"}
+    <a class="group-row" class:off data-row={r.id} href={off ? undefined : subPage(i.plugin.id, r.id)}><span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span><Icon name="nav-arrow-right" /></a>
   {:else if r.kind === "Segments"}
     <div class="group-row level" class:off data-row={r.id}>
       <span class="words"><span>{r.label}</span>{#if r.hint}<span class="sub">{r.hint}</span>{/if}</span>
@@ -289,6 +304,15 @@
   {/if}
 {/snippet}
 
+{#snippet rowGroups(i: Installed, page: string | null)}
+  {#each groups(i, page) as g}
+    {#if g.label}<div class="group-label">{g.label}</div>{:else}<div class="gap"></div>{/if}
+    <div class="group">
+      {#each g.rows as r (r.id)}{@render rowOf(i, r)}{/each}
+    </div>
+  {/each}
+{/snippet}
+
 {#snippet pluginPage()}
   {@const name = card?.plugin.name ?? offer?.name ?? ""}
   {@const about = card?.plugin.about ?? offer?.about}
@@ -325,12 +349,7 @@
         </label>
       {/if}
     </div>
-    {#each groups(i) as g}
-      {#if g.label}<div class="group-label">{g.label}</div>{:else}<div class="gap"></div>{/if}
-      <div class="group">
-        {#each g.rows as r (r.id)}{@render rowOf(i, r)}{/each}
-      </div>
-    {/each}
+    {@render rowGroups(i, null)}
   {/if}
   {#if readme.length > 0}
     <div class="group-label">{W.pluginAbout}</div>
@@ -376,6 +395,13 @@
     </label>
   {/snippet}
   <Page title={W.pluginsGet} back narrow head={getHead}>{@render browser()}</Page>
+{:else if shown && route.page}
+  <Page title={pageRow?.label ?? ""} back narrow ready={!!host}>
+    {#if card && pageRow}
+      {#if pageRow.hint}<p class="quiet blurb" data-page-hint>{pageRow.hint}</p>{/if}
+      <div data-plugin-subpage={pageRow.id}>{@render rowGroups(card, pageRow.id)}</div>
+    {/if}
+  </Page>
 {:else if shown}
   <Page back narrow ready={!!host && (!!card || !!offer || !!offers || failed)}>{@render pluginPage()}</Page>
 {:else if tabbed}

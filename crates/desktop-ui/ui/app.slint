@@ -258,6 +258,8 @@ export struct SettingRow {
     // What each of `options` sends (a profile row's menu, a switch's menu), and a profile row's account picture.
     values: [string],
     picture: image,
+    // A flags row's options that are on.
+    lit: [bool],
 }
 
 // One the signed-in account may act as (a channel): its name, what tells it apart, its picture, and whether
@@ -1333,10 +1335,13 @@ export global DialogPane {
 // A press beside it dismisses it.
 component Dialog inherits Rectangle {
     in property <string> title;
+    // A page before the one it shows, which the arrow beside the title goes back to.
+    in property <bool> back;
     in property <length> sheet-width: 380px;
     // Where its middle stands in the window, over the page that opened it; negative: the window's middle.
     in property <length> middle: -1px;
     callback dismissed;
+    callback went-back;
     property <Pane> pane: { x: sheet.absolute-position.x, y: sheet.absolute-position.y, width: sheet.width, height: sheet.height, radius: sheet.border-radius };
     init => { DialogPane.at = self.pane; }
     changed pane => { DialogPane.at = self.pane; }
@@ -1353,12 +1358,22 @@ component Dialog inherits Rectangle {
         body := VerticalLayout {
             padding: 16px;
             spacing: 12px;
-            if root.title != "": Text {
-                text: root.title;
-                color: Theme.text;
-                font-size: 17px;
-                font-weight: 600;
-                wrap: word-wrap;
+            if root.title != "" || root.back: HorizontalLayout {
+                spacing: 8px;
+                if root.back: IconButton {
+                    y: (parent.height - self.height) / 2;
+                    glyph: Icons.nav-arrow-left;
+                    clicked => { root.went-back(); }
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    text: root.title;
+                    color: Theme.text;
+                    font-size: 17px;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                }
             }
             @children
         }
@@ -5300,11 +5315,11 @@ component SettingLine inherits VerticalLayout {
             }
         }
     }
-    if root.item.kind != 0 && root.item.kind != 6 && root.item.kind != 8 && root.item.kind != 9 && root.item.kind != 13 && root.item.kind < 18: Plate {
+    if (root.item.kind != 0 && root.item.kind != 6 && root.item.kind != 8 && root.item.kind != 9 && root.item.kind != 13 && root.item.kind < 18) || root.item.kind == 25: Plate {
         first: root.item.first;
         last: root.item.last;
         min-height: 54px;
-        if root.item.kind == 11 || root.item.kind == 12 || root.item.kind == 17: TouchArea {
+        if root.item.kind == 11 || root.item.kind == 12 || root.item.kind == 17 || (root.item.kind == 25 && root.item.enabled): TouchArea {
             clicked => { root.action(root.item.name); }
         }
         // An action row that opens something of its own besides its button (a repo's name).
@@ -5396,7 +5411,7 @@ component SettingLine inherits VerticalLayout {
                     color: Theme.dim;
                     vertical-alignment: center;
                 }
-                if root.item.kind == 11: Icon {
+                if root.item.kind == 11 || root.item.kind == 25: Icon {
                     y: (parent.height - self.height) / 2;
                     glyph: Icons.nav-arrow-right;
                     colour: Theme.dim;
@@ -5517,9 +5532,10 @@ component SettingLine inherits VerticalLayout {
             background: Theme.hairline;
         }
     }
-    // One of a few as chips sharing the row, as Android's: a plugin's segments under their name, a device's
-    // noise modes alone. Each chip is as wide as its word needs and they share what is left over.
-    if root.item.kind == 23: Plate {
+    // A few as chips sharing the row, as Android's: one of them (a plugin's segments under their name, a
+    // device's noise modes alone) or any of them (a plugin's flags, each lit while on). Each chip is as wide
+    // as its word needs and they share what is left over.
+    if root.item.kind == 23 || root.item.kind == 24: Plate {
         first: root.item.first;
         last: root.item.last;
         VerticalLayout {
@@ -5552,9 +5568,11 @@ component SettingLine inherits VerticalLayout {
                     chip := Chip {
                         width: parent.width;
                         text: o;
-                        lit: i == root.item.chosen;
+                        lit: root.item.kind == 24 ? root.item.lit[i] : i == root.item.chosen;
                         clicked => {
-                            if root.item.enabled && i != root.item.chosen {
+                            if root.item.enabled && root.item.kind == 24 {
+                                root.toggled(root.item.values[i], !root.item.lit[i]);
+                            } else if root.item.enabled && i != root.item.chosen {
                                 root.chosen(root.item.name, i);
                             }
                         }
@@ -7938,9 +7956,13 @@ export component AppWindow inherits Window {
     in property <[SettingRow]> device-plugin-rows;
     // The devices plugins control, which head the devices panel (app.rs).
     in property <[SettingRow]> device-controls;
-    // One's settings, in a dialog under its name; closing it is the `device-close` action.
+    // One's settings in a dialog, or a page of a plugin's the panel opened; its plugin's pages open in it,
+    // and closing it is the `device-close` action.
     in property <bool> device-open;
+    // The name of what it shows (the device, or the plugin page opened in it), and whether it has a page to
+    // go back to (`device-back`).
     in property <string> device-name;
+    in property <bool> device-back;
     in property <[SettingRow]> device-rows;
     // Adding a song to a playlist: the sheet open, the playlists offered (the core's `playlist_choices`, by
     // index), whether a new one is being named, and its name.
@@ -11219,8 +11241,10 @@ export component AppWindow inherits Window {
         // page that opened it.
         if root.device-open: Dialog {
             title: root.device-name;
+            back: root.device-back;
             sheet-width: 480px;
             dismissed => { root.setting-action("device-close"); }
+            went-back => { root.setting-action("device-back"); }
             Flickable {
                 content-width: self.width;
                 vertical-stretch: 1;

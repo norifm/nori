@@ -2848,8 +2848,9 @@ fn a_controlled_device_shows_its_battery_and_sets_its_noise_control() {
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(crate::app::PluginCmd::Noise("AA".into(), Noise::Transparency))));
 }
 
-/// The panel leads on to a device's settings, a plugin's flags are switches storing the bits with that
-/// option switched, and `b` moves the headphones playing to the next mode of their cycle.
+/// The panel leads on to a device's settings, a plugin's flags are one row of its options, those on lit,
+/// whose picker stores the bits with the option picked switched, and `b` moves the headphones playing to
+/// the next mode of their cycle.
 #[test]
 fn a_controlled_devices_settings_and_noise_key() {
     use nori_plugins::{Battery, ControlledDevice, Noise, RowKind, Value};
@@ -2888,14 +2889,93 @@ fn a_controlled_devices_settings_and_noise_key() {
     key(&mut a, KeyCode::Enter);
     a.settings.own.controlled.clear();
     assert!(a.settings.device_gone());
-    a.device_page_left();
+    a.over_player_left();
     assert_eq!((a.view, a.full), (View::Albums, true), "its device gone, the page closes as Back does");
 
-    let rows = crate::settings_view::plugin_rows("dev.example.buds", &flags, false);
-    let on: Vec<bool> = rows.iter().filter_map(|r| if let crate::settings_view::Row::Toggle { on, .. } = r { Some(*on) } else { None }).collect();
-    assert_eq!(on, [true, false]);
-    let Some(crate::settings_view::Opened::Cmds(cmds)) = crate::settings_view::open_row(rows[2].clone()) else { panic!("a switch") };
-    assert_eq!(cmds, [Cmd::Plugin(crate::app::PluginCmd::Set("dev.example.buds".into(), "cycle".into(), Value::Flags(0b11)))]);
+    let rows = crate::settings_view::plugin_rows("dev.example.buds", &flags, None, false);
+    assert!(matches!(&rows[..], [Row::Flags { lit, .. }] if lit == &[true, false]), "{rows:?}");
+    let s = {
+        let mut a = plugins_app(vec![card("dev.example.buds", "Buds", vec![flags.clone()])], vec![official()], Default::default());
+        open_plugin(&mut a, "dev.example.buds");
+        draw(&mut a, 140, 60)
+    };
+    assert!(s.lines().any(|l| l.contains("Flags row") && l.contains("ANC") && l.contains("Normal")), "its options on its line: {s}");
+    let Some(crate::settings_view::Opened::Overlay(crate::app::Overlay::Picker { options, target, .. })) = crate::settings_view::open_row(rows[0].clone()) else { panic!("a picker") };
+    assert_eq!(options, [("✓ ANC".to_string(), "0".to_string()), ("  Normal".to_string(), "3".to_string())]);
+    assert_eq!(target.cmd(options[1].1.clone()), Some(Cmd::Plugin(crate::app::PluginCmd::Set("dev.example.buds".into(), "cycle".into(), Value::Flags(0b11)))));
+}
+
+/// A plugin's page row opens its page over the one it is on, under its name and hint, its own page rows
+/// opening theirs in turn; Esc goes back one page, and a page whose row went closes with those over it.
+#[test]
+fn a_plugins_pages_open_over_each_other_and_esc_goes_back_one() {
+    use nori_plugins::{RowKind, Value};
+    let on = |page: &str| Some(page.to_string());
+    let rows = vec![
+        plugin_row("wear", RowKind::Switch, Some(Value::Switch(true))),
+        nori_plugins::PluginRow { label: "Sound".into(), hint: Some("Before the speaker".into()), ..plugin_row("sound", RowKind::Page, None) },
+        nori_plugins::PluginRow { label: "Bass boost".into(), page: on("sound"), ..plugin_row("bass", RowKind::Switch, Some(Value::Switch(false))) },
+        nori_plugins::PluginRow { label: "Room".into(), page: on("sound"), ..plugin_row("room", RowKind::Page, None) },
+        nori_plugins::PluginRow { label: "Room size".into(), page: on("room"), ..plugin_row("size", RowKind::Switch, Some(Value::Switch(true))) },
+    ];
+    let buds = card("dev.example.buds", "Buds", rows);
+    let mut a = plugins_app(vec![buds.clone()], vec![official()], Default::default());
+    open_plugin(&mut a, "dev.example.buds");
+    let s = draw(&mut a, 140, 60);
+    dump("plugin-page-subpages", &s);
+    assert!(s.lines().any(|l| l.contains("Sound") && l.contains('›')) && !s.contains("Bass boost") && !s.contains("SOUND"), "a row that opens its page, not a heading: {s}");
+
+    follow(&mut a, "Sound");
+    let s = draw(&mut a, 140, 60);
+    dump("plugin-subpage", &s);
+    assert!(s.lines().any(|l| l.contains("Sound") && l.contains("Before the speaker")) && s.contains("Bass boost") && !s.contains("Room size") && !s.contains("Switch row"), "{s}");
+    select_row(&mut a, |r| matches!(r, Row::Toggle { title, .. } if title == "Bass boost"));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(crate::app::PluginCmd::Set("dev.example.buds".into(), "bass".into(), Value::Switch(true)))));
+    follow(&mut a, "Room");
+    assert!(draw(&mut a, 140, 60).contains("Room size"));
+
+    key(&mut a, KeyCode::Esc);
+    let s = draw(&mut a, 140, 60);
+    assert!(s.contains("Bass boost") && !s.contains("Room size"), "back one page: {s}");
+    follow(&mut a, "Room");
+    a.settings.own.plugins[0].rows.retain(|r| r.id != "sound");
+    assert!(a.settings.pages_gone());
+    let s = draw(&mut a, 140, 60);
+    assert!(s.contains("Switch row") && !s.contains("Bass boost") && !s.contains("Room size"), "the page whose row went closes, and the one over it: {s}");
+    key(&mut a, KeyCode::Esc);
+    assert!(!a.settings.deep());
+}
+
+/// A device's page opens its plugin's pages over it, with the device's rows; Esc from them comes back to
+/// the device's page, and from there to the player that opened it.
+#[test]
+fn a_devices_pages_open_over_it_and_esc_returns_to_the_player() {
+    use nori_plugins::{Battery, ControlledDevice, Noise, RowKind, Value};
+    let rows = vec![
+        nori_plugins::PluginRow { label: "Sound".into(), ..plugin_row("sound", RowKind::Page, None) },
+        nori_plugins::PluginRow { label: "LDAC".into(), page: Some("sound".into()), ..plugin_row("ldac", RowKind::Switch, Some(Value::Switch(true))) },
+    ];
+    let mut a = app();
+    a.song = Some(song("1", "Blue", 200));
+    a.devices.controlled = vec![ControlledDevice { id: "AA".into(), name: "Buds".into(), battery: Battery::default(), level: None, noise: Some(Noise::Off), noise_modes: vec![Noise::Off], noise_cycle: Vec::new(), card: card("dev.example.buds", "Buds", rows) }];
+    a.settings.own.controlled = a.devices.controlled.clone();
+    a.go(View::Albums);
+    key(&mut a, KeyCode::Char('C'));
+    a.devices.sel.at = a.devices.rows().iter().position(|r| *r == crate::app::DeviceRow::Settings(0)).unwrap();
+    key(&mut a, KeyCode::Enter);
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Buds") && s.contains("Sound") && !s.contains("LDAC"), "{s}");
+    follow(&mut a, "Sound");
+    let s = draw(&mut a, 140, 40);
+    dump("device-subpage", &s);
+    assert!(s.lines().any(|l| l.contains("LDAC") && l.contains("On")), "the device's own rows: {s}");
+    key(&mut a, KeyCode::Esc);
+    assert_eq!((a.view, a.full), (View::Settings, false), "back on the device's page");
+    assert!(!draw(&mut a, 140, 40).contains("LDAC"));
+    key(&mut a, KeyCode::Esc);
+    assert_eq!((a.view, a.full, a.panel), (View::Albums, true, Panel::Devices), "back on the player that opened it");
 }
 
 /// A row's hint is a quiet line under it, a level shows its unit at its digits, a link where it goes;

@@ -567,8 +567,8 @@ impl Runner {
         own.controlled = controlled.clone();
         app.devices.controlled = controlled;
         app.settings.invalidate();
-        if app.settings.device_gone() {
-            app.device_page_left();
+        if app.settings.device_gone() | app.settings.pages_gone() {
+            app.over_player_left();
         }
         app.cmds.extend(app.settings.readme_wanted());
         app.dirty = true;

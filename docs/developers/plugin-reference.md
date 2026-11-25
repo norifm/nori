@@ -100,8 +100,8 @@ These modifiers change a row:
 
 - `.hint(key)` puts a quiet line under the label.
 - `.unit(key)` puts a unit after a level's or a meter's value.
-- `.on(page)` puts the row on the page that page row `page` opens. A client that draws one long page
-  (the desktop app, the terminal app, the web client) puts each page's rows under its name.
+- `.on(page)` puts the row on the page that page row `page` opens. Every client opens that page over the
+  page it is on, under the page row's label and hint, with a way back. A page row can sit on a page too.
 - `.glyph(glyph)` puts one of nori's glyphs before the label.
 
 A level shows as many decimals as its `step` has.

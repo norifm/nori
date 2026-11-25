@@ -1188,6 +1188,11 @@ pub fn place(p: crate::app::Place) -> &'static str {
     }
 }
 
+/// An option of a flags row in its picker, ticked while on.
+pub fn flag(option: &str, on: bool) -> String {
+    format!("{} {option}", if on { "✓" } else { " " })
+}
+
 /// A switch's state.
 pub fn on_off(on: bool) -> &'static str {
     if on { "On" } else { "Off" }

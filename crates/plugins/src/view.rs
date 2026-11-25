@@ -105,15 +105,18 @@ pub fn page_rows<'a>(rows: &'a [PluginRow], page: Option<&'a str>) -> impl Itera
     rows.iter().filter(move |r| r.page.as_deref() == page)
 }
 
-/// `rows` for a client that draws one long page: the plugin's own rows, then each page's under a heading
-/// of its name (a section row in its place).
-pub fn one_page(rows: &[PluginRow]) -> Vec<PluginRow> {
-    let mut out: Vec<PluginRow> = page_rows(rows, None).filter(|r| r.kind != RowKind::Page).cloned().collect();
-    for p in page_rows(rows, None).filter(|r| r.kind == RowKind::Page) {
-        out.push(PluginRow { kind: RowKind::Section, ..p.clone() });
-        out.extend(page_rows(rows, Some(&p.id)).cloned());
-    }
-    out
+/// How many of the pages opened along `path` still stand in `rows`. `path` holds page row ids: the first
+/// on the plugin's own page, each other on the page before it. A page whose row went closes, and those
+/// over it.
+pub fn pages_standing(rows: &[PluginRow], path: &[String]) -> usize {
+    let mut on: Option<&str> = None;
+    path.iter()
+        .take_while(|id| {
+            let stands = rows.iter().any(|r| r.kind == RowKind::Page && r.id == **id && r.page.as_deref() == on);
+            on = Some(id.as_str());
+            stands
+        })
+        .count()
 }
 
 /// The categories Get plugins has pages for, of plugins in `categories`: each once, in their order.
@@ -290,10 +293,19 @@ mod tests {
     }
 
     #[test]
-    fn one_page_puts_each_page_under_its_heading_after_the_own_rows() {
-        let rows = [row("touch", RowKind::Page, None), row("hold", RowKind::Switch, Some("touch")), row("eq", RowKind::Choice, None), row("sound", RowKind::Page, None), row("bass", RowKind::Level, Some("sound"))];
-        let laid: Vec<_> = one_page(&rows).into_iter().map(|r| (r.id, r.kind)).collect();
-        let want = [("eq", RowKind::Choice), ("touch", RowKind::Section), ("hold", RowKind::Switch), ("sound", RowKind::Section), ("bass", RowKind::Level)];
-        assert_eq!(laid, want.map(|(id, k)| (id.to_string(), k)));
+    fn pages_stand_while_each_row_is_on_the_page_before() {
+        let rows = [row("sound", RowKind::Page, None), row("eq", RowKind::Page, Some("sound")), row("bass", RowKind::Level, Some("eq")), row("touch", RowKind::Switch, None)];
+        let path = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let cases: [(&[&str], usize); 6] = [
+            (&[], 0),
+            (&["sound"], 1),
+            (&["sound", "eq"], 2),
+            (&["eq"], 0),
+            (&["sound", "gone", "eq"], 1),
+            (&["touch"], 0),
+        ];
+        for (opened, standing) in cases {
+            assert_eq!(pages_standing(&rows, &path(opened)), standing, "{opened:?}");
+        }
     }
 }

@@ -98,6 +98,7 @@ export function witValue(row: Row, v: Value) {
   if (row.kind === "Switch") return { tag: "switch", val: v !== 0 };
   if (row.kind === "Choice" || row.kind === "Segments") return { tag: "choice", val: Number(v) };
   if (row.kind === "Level") return { tag: "level", val: Number(v) };
+  if (row.kind === "Flags") return { tag: "flags", val: BigInt(v) };
   return { tag: "text", val: String(v) };
 }
 

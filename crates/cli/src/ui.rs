@@ -1261,12 +1261,17 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
             Span::styled(format!("  {name}"), if *worn { bold().fg(t.ink) } else { t.dim() }),
         ]);
     }
-    // A few options, all on view: the chosen one in ink, underlined.
-    if let settings_view::Row::Choice { options, shown, chips: true, .. } = row {
+    // A few options, all on view: the chosen one (a flags row's, those on) in ink, underlined.
+    let chips: Option<Vec<(&str, bool)>> = match row {
+        settings_view::Row::Choice { options, shown, chips: true, .. } => Some(options.iter().map(|o| (o.0.as_str(), o.0 == *shown)).collect()),
+        settings_view::Row::Flags { options, lit, .. } => Some(options.iter().zip(lit).map(|(o, on)| (o.0.as_str(), *on)).collect()),
+        _ => None,
+    };
+    if let Some(chips) = chips {
         let mut spans = vec![Span::styled(format!("    {}", pad(&title, 24)), text_style)];
-        for (label, _) in options {
-            let style = if label == shown && live { bold().fg(t.ink).add_modifier(Modifier::UNDERLINED) } else { t.dim() };
-            spans.push(Span::styled(label.clone(), style));
+        for (label, on) in chips {
+            let style = if on && live { bold().fg(t.ink).add_modifier(Modifier::UNDERLINED) } else { t.dim() };
+            spans.push(Span::styled(label.to_string(), style));
             spans.push(Span::raw("  "));
         }
         return Line::from(spans);

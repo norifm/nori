@@ -17,6 +17,8 @@ class Route {
   arg = $state("");
   /** A page under `arg` (a plugin's, under Settings › Plugins). */
   sub = $state("");
+  /** A page under `sub` (one of that plugin's own pages, by its page row). */
+  page = $state("");
   /** Bumped by every visit, the same address again too: a page reads itself again. */
   visit = $state(0);
 
@@ -24,10 +26,11 @@ class Route {
   tab = $derived(LIBRARY.includes(this.top) ? "library" : this.top === "row" || this.top === "mix" ? "home" : this.top === "equalizer" || this.top === "support" ? "settings" : this.top);
 
   read() {
-    const [, top = "", a = "", b = ""] = location.hash.replace(/^#\/?/, "/").split("/");
+    const [, top = "", a = "", b = "", c = ""] = location.hash.replace(/^#\/?/, "/").split("/");
     this.top = top || "home";
     this.arg = decoded(a);
     this.sub = decoded(b);
+    this.page = decoded(c);
     this.visit++;
   }
 }

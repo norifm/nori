@@ -3367,20 +3367,12 @@ impl App {
         }
         let mut shown_here = host.device_cards("en".into());
         self.plugged.off.extend(watched.as_said(&mut shown_here));
+        self.plugged.panel = shown_here;
+        // What a page showed gone, the page closes and stays closed when it comes back.
+        self.plugged.pages_settled();
         ui.set_device_controls(crate::settings::controlled_rows(&self.plugged.controlled, &prefs, &self.facts, today));
-        ui.set_device_plugin_rows(crate::settings::device_rows(&shown_here, &self.plugged.controlled, &self.plugged.off, &prefs, &self.facts, today));
-        match crate::settings::opened_device(&self.plugged.controlled, self.plugged.device_page.as_deref()) {
-            Some(d) => {
-                ui.set_device_name(d.name.as_str().into());
-                ui.set_device_rows(crate::settings::device_page_rows(d, &self.plugged.off, &prefs, &self.facts, today));
-                ui.set_device_open(true);
-            }
-            // Its device gone, the dialog closes and stays closed when it comes back.
-            None => {
-                self.plugged.device_page = None;
-                ui.set_device_open(false);
-            }
-        }
+        ui.set_device_plugin_rows(crate::settings::device_rows(&self.plugged.panel, &self.plugged.controlled, &self.plugged.off, &prefs, &self.facts, today));
+        dialog_drawn(&ui, &mut self.plugged, &prefs, &self.facts, today);
         let menus = ui.global::<crate::PluginMenus>();
         let labels = |k: usize| ModelRc::new(VecModel::from(self.plugin_menus[k].iter().map(|e| SharedString::from(e.label.as_str())).collect::<Vec<_>>()));
         menus.set_album(labels(0));
@@ -3646,8 +3638,8 @@ impl App {
     /// A button of Settings › Plugins.
     fn plugin_act(&mut self, act: crate::settings::PluginAct) {
         use crate::settings::PluginAct;
-        if matches!(act, PluginAct::DeviceOpen(_) | PluginAct::DeviceClose) {
-            self.plugged.device_page = if let PluginAct::DeviceOpen(device) = act { Some(device) } else { None };
+        if matches!(act, PluginAct::DeviceOpen(_) | PluginAct::DeviceClose | PluginAct::DialogPage(..) | PluginAct::DialogBack) {
+            self.plugged.dialog_act(act);
             return self.plugins_read();
         }
         let host = self.plugin_host().clone();
@@ -3688,6 +3680,7 @@ impl App {
             PluginAct::Browser => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Browser)),
             PluginAct::Repos => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Repos)),
             PluginAct::Page(id) => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Plugin(id))),
+            PluginAct::SubPage(plugin, page) => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Sub { plugin, page })),
             PluginAct::Back => {
                 self.plugged.stack.pop();
                 // Back from the page of the plugin the first screen offered closes its sheet.
@@ -3728,7 +3721,7 @@ impl App {
                 return self.plugins_shown();
             }
             PluginAct::AllowMobile(id) => host.allow_mobile_assets(id),
-            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Flags(..) | PluginAct::DeviceOpen(_) | PluginAct::DeviceClose | PluginAct::Search | PluginAct::Chip | PluginAct::Category => return,
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Flags(..) | PluginAct::DeviceOpen(_) | PluginAct::DeviceClose | PluginAct::DialogPage(..) | PluginAct::DialogBack | PluginAct::Search | PluginAct::Chip | PluginAct::Category => return,
         }
         self.plugins_read();
     }
@@ -5972,6 +5965,22 @@ impl nori_core::providers::code::CodeHeard for CodeHeard {
     }
 }
 
+/// Draws the dialog over the window as `p` holds it; it closes once what it showed went.
+fn dialog_drawn(ui: &AppWindow, p: &mut crate::settings::Plugged, prefs: &nori_core::settings::StoredPrefs, f: &crate::settings::Facts, today: crate::look::Today) {
+    match crate::settings::dialog_shown(p, prefs, f, today) {
+        Some(d) => {
+            ui.set_device_name(d.title.into());
+            ui.set_device_back(d.back);
+            ui.set_device_rows(d.rows);
+            ui.set_device_open(true);
+        }
+        None => {
+            p.dialog = None;
+            ui.set_device_open(false);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7094,6 +7103,201 @@ mod tests {
         settle();
         assert!(sheet().is_none() && !ui.get_dialog_open());
         assert_eq!(chips(), 3, "the panel as it was");
+    }
+
+    /// Headphones whose plugin's settings are on pages, as the Sony plugin's are: Controls (its flags),
+    /// Sound (a switch with a hint, and a page of its own), and a switch on the plugin's own page.
+    fn paged_headphones() -> nori_plugins::ControlledDevice {
+        use nori_plugins::{Battery, Noise, PluginCard, PluginRow, RowKind, Value};
+        let row = |id: &str, kind, label: &str, page: Option<&str>| PluginRow { id: id.into(), kind, label: label.into(), options: Vec::new(), min: None, max: None, step: None, value: None, hint: None, unit: None, decimals: 0, url: None, page: page.map(Into::into), glyph: None };
+        let rows = vec![
+            row("touch", RowKind::Page, "Controls", None),
+            PluginRow { options: vec!["Noise canceling".into(), "Ambient".into(), "Off".into()], value: Some(Value::Flags(0b011)), ..row("noise_cycle", RowKind::Flags, "Noise control button moves through", Some("touch")) },
+            row("sound", RowKind::Page, "Sound", None),
+            PluginRow { hint: Some("Higher quality, shorter range".into()), value: Some(Value::Switch(true)), ..row("ldac", RowKind::Switch, "LDAC", Some("sound")) },
+            row("room", RowKind::Page, "Room", Some("sound")),
+            PluginRow { options: vec!["Small".into(), "Large".into()], value: Some(Value::Choice(0)), ..row("room_size", RowKind::Segments, "Room size", Some("room")) },
+            PluginRow { value: Some(Value::Switch(true)), ..row("auto_pause", RowKind::Switch, "Pause when taken off", None) },
+        ];
+        let card = PluginCard { id: "dev.sony".into(), version: "0.2.1".into(), name: "Sony".into(), about: None, enabled: true, repo: None, held: false, stopped: None, points: vec!["device-control".into()], overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows };
+        nori_plugins::ControlledDevice { id: "AA".into(), name: "WH-1000XM5".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Canceling), noise_modes: vec![Noise::Off, Noise::Canceling], noise_cycle: Vec::new(), card }
+    }
+
+    /// The window on the testing backend at 1280 × 820, and how it settles, presses and finds an element's middle.
+    fn testing_window() -> AppWindow {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui
+    }
+
+    fn settled(ui: &AppWindow) -> slint::SharedPixelBuffer<slint::Rgba8Pixel> {
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        ui.window().take_snapshot().unwrap()
+    }
+
+    fn click_middle(ui: &AppWindow, e: &i_slint_backend_testing::ElementHandle) {
+        let (at, size) = (e.absolute_position(), e.size());
+        press(ui.window(), at.x + size.width / 2.0, at.y + size.height / 2.0, slint::platform::PointerEventButton::Left);
+        settled(ui);
+    }
+
+    /// Writes `shot` to `NORI_DESKTOP_SHOTS`/`name`.ppm when that is set.
+    fn keep_shot(shot: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, name: &str) {
+        let Some(dir) = std::env::var_os("NORI_DESKTOP_SHOTS") else { return };
+        let mut ppm = format!("P6 {} {} 255\n", shot.width(), shot.height()).into_bytes();
+        ppm.extend(shot.as_bytes().chunks(4).flat_map(|p| [p[0], p[1], p[2]]));
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.ppm")), ppm);
+    }
+
+    /// The line of model `rows` named `name` among `lines` (each row's `SettingLine`, in order).
+    fn line_named(rows: ModelRc<crate::SettingRow>, lines: Vec<i_slint_backend_testing::ElementHandle>, name: &str) -> i_slint_backend_testing::ElementHandle {
+        let at = rows.iter().position(|r| r.name == name).unwrap_or_else(|| panic!("no row {name}: {:?}", rows.iter().map(|r| r.name.to_string()).collect::<Vec<_>>()));
+        assert_eq!(lines.len(), rows.row_count(), "a line per row");
+        lines.into_iter().nth(at).unwrap()
+    }
+
+    /// A device's plugin pages open in its dialog: a page row opens its page under its name with a way back,
+    /// a page on it opens over it, back returns a page at a time, a flags row is its options as chips, a
+    /// switch to Night repaints a page open, and Done or a press beside it closes the dialog from any page.
+    #[test]
+    fn a_devices_plugin_pages_open_in_its_dialog_with_back() {
+        use i_slint_backend_testing::ElementHandle;
+        use nori_core::settings::{StoredPrefs, ThemeMode};
+        let ui = testing_window();
+        let today = crate::look::Today { month: 10, day: 19, southern: false };
+        let paint = |theme| crate::look::plain(&Default::default(), &StoredPrefs { theme, ..Default::default() }, false, today).paint(&ui);
+        paint(ThemeMode::Light);
+        let plugged = Rc::new(RefCell::new(crate::settings::Plugged { controlled: vec![paged_headphones()], ..Default::default() }));
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let draw = {
+            let (ui, plugged) = (ui.as_weak(), plugged.clone());
+            move || dialog_drawn(&ui.unwrap(), &mut plugged.borrow_mut(), &Default::default(), &Default::default(), today)
+        };
+        let (seen, p, redraw) = (did.clone(), plugged.clone(), draw.clone());
+        ui.on_setting_action(move |name| {
+            seen.borrow_mut().push(name.to_string());
+            if let Some(act) = crate::settings::PluginAct::of(&name) {
+                p.borrow_mut().dialog_act(act);
+                redraw();
+            }
+        });
+        let seen = did.clone();
+        ui.on_setting_toggled(move |name, on| seen.borrow_mut().push(format!("{name} {on}")));
+        ui.show().unwrap();
+        plugged.borrow_mut().dialog_act(crate::settings::PluginAct::DeviceOpen("AA".into()));
+        draw();
+        settled(&ui);
+        let pane = || ElementHandle::find_by_element_type_name(&ui, "Dialog").next().map(|d| d.query_descendants().match_inherits("MenuSheet").find_first().unwrap());
+        let lines = || pane().expect("the dialog").query_descendants().match_inherits("SettingLine").find_all();
+        let back = || pane().expect("the dialog").query_descendants().match_inherits("IconButton").find_first();
+        let open = |name: &str| click_middle(&ui, &line_named(ui.get_device_rows(), lines(), name));
+        let shown = || (ui.get_device_name().to_string(), ui.get_device_back(), back().is_some());
+        let names = || ui.get_device_rows().iter().map(|r| r.name.to_string()).filter(|n| !n.is_empty()).collect::<Vec<_>>();
+
+        assert_eq!(shown(), ("WH-1000XM5".into(), false, false), "the device's own page: nothing to go back to");
+        assert_eq!(names(), ["device-noise:AA", "device-page:dev.sony:touch", "device-page:dev.sony:sound", "plugin-row:dev.sony:auto_pause"], "its pages are rows, not sections");
+        keep_shot(&settled(&ui), "device-dialog-main-day");
+        open("device-page:dev.sony:sound");
+        assert_eq!(shown(), ("Sound".into(), true, true));
+        assert_eq!(names(), ["plugin-row:dev.sony:ldac", "device-page:dev.sony:room"], "the rows on it alone");
+        keep_shot(&settled(&ui), "device-dialog-sound-day");
+        open("device-page:dev.sony:room");
+        assert_eq!((shown(), names()), (("Room".into(), true, true), vec!["plugin-row:dev.sony:room_size".to_string()]), "a page on a page");
+        click_middle(&ui, &back().unwrap());
+        assert_eq!(shown(), ("Sound".into(), true, true), "back one page");
+
+        // Day to Night with a page open: its paper is the new theme's.
+        let at = pane().unwrap();
+        let paper = |shot: &slint::SharedPixelBuffer<slint::Rgba8Pixel>| {
+            let (px, py) = ((at.absolute_position().x + at.size().width / 2.0) as usize, at.absolute_position().y as usize + 4);
+            let p = shot.as_slice()[py * shot.width() as usize + px];
+            slint::Color::from_rgb_u8(p.r, p.g, p.b)
+        };
+        paint(ThemeMode::Dark);
+        let shot = settled(&ui);
+        keep_shot(&shot, "device-dialog-sound-night");
+        assert_eq!((paper(&shot), shown()), (ui.global::<crate::Theme>().get_ground(), ("Sound".into(), true, true)));
+        click_middle(&ui, &back().unwrap());
+        keep_shot(&settled(&ui), "device-dialog-main-night");
+        paint(ThemeMode::Light);
+        assert_eq!(shown(), ("WH-1000XM5".into(), false, false));
+
+        open("device-page:dev.sony:touch");
+        let chips = pane().unwrap().query_descendants().match_inherits("Chip").find_all();
+        assert_eq!((chips.len(), pane().unwrap().query_descendants().match_inherits("Toggle").find_all().len()), (3, 0), "the flags row is its options as chips, no switches");
+        keep_shot(&settled(&ui), "device-dialog-controls-day");
+        did.borrow_mut().clear();
+        click_middle(&ui, &chips[2]);
+        click_middle(&ui, &chips[0]);
+        assert_eq!(*did.borrow(), ["plugin-flags:dev.sony:noise_cycle:7 true", "plugin-flags:dev.sony:noise_cycle:2 false"], "a chip switches its option alone");
+
+        let done = pane().unwrap().query_descendants().match_inherits("Capsule").find_first().expect("Done");
+        click_middle(&ui, &done);
+        assert!(pane().is_none() && !ui.get_device_open(), "Done closes it from a page");
+        plugged.borrow_mut().dialog_act(crate::settings::PluginAct::DeviceOpen("AA".into()));
+        draw();
+        settled(&ui);
+        open("device-page:dev.sony:sound");
+        open("device-page:dev.sony:room");
+        press(ui.window(), 40.0, 780.0, slint::platform::PointerEventButton::Left);
+        settled(&ui);
+        assert!(pane().is_none(), "a press beside it closes it from a page on a page");
+        assert_eq!(plugged.borrow().dialog, None);
+    }
+
+    /// Settings › Plugins opens a plugin's page rows as pages over its page, under the page's name with the
+    /// way back, which returns to the plugin's page.
+    #[test]
+    fn a_plugins_pages_open_over_its_page_in_settings() {
+        use i_slint_backend_testing::ElementHandle;
+        use nori_core::settings::StoredPrefs;
+        use crate::settings::{PluginAct, PluginPage, Plugged};
+        let ui = testing_window();
+        let today = crate::look::Today { month: 10, day: 19, southern: false };
+        crate::look::plain(&Default::default(), &StoredPrefs::default(), false, today).paint(&ui);
+        let chrome = ui.global::<crate::Chrome>();
+        chrome.set_top_x(120.0);
+        chrome.set_top_w(1040.0);
+        ui.set_view(View::Settings);
+        ui.set_plugins_tab(true);
+        // A plugin that isn't a device's: its pages are its own.
+        let card = nori_plugins::PluginCard { points: Vec::new(), ..paged_headphones().card };
+        let plugged = Rc::new(RefCell::new(Plugged { cards: vec![card], stack: vec![PluginPage::Plugin("dev.sony".into())], ..Default::default() }));
+        let draw = {
+            let (ui, plugged) = (ui.as_weak(), plugged.clone());
+            move || {
+                let (ui, p) = (ui.unwrap(), plugged.borrow());
+                ui.set_plugin_top(crate::settings::plugin_top(&p, false));
+                ui.set_settings(crate::settings::plugin_rows(&p, &Default::default(), &Default::default(), today));
+            }
+        };
+        let (p, redraw) = (plugged.clone(), draw.clone());
+        ui.on_setting_action(move |name| {
+            match PluginAct::of(&name) {
+                Some(PluginAct::SubPage(plugin, page)) => p.borrow_mut().stack.push(PluginPage::Sub { plugin, page }),
+                Some(PluginAct::Back) => drop(p.borrow_mut().stack.pop()),
+                _ => return,
+            }
+            redraw();
+        });
+        draw();
+        ui.show().unwrap();
+        settled(&ui);
+        let lines = || ElementHandle::find_by_element_type_name(&ui, "SettingLine").collect::<Vec<_>>();
+        let names = || ui.get_settings().iter().map(|r| r.name.to_string()).filter(|n| n.starts_with("plugin-row") || n.starts_with("plugin-subpage")).collect::<Vec<_>>();
+        assert_eq!(names(), ["plugin-subpage:dev.sony:touch", "plugin-subpage:dev.sony:sound", "plugin-row:dev.sony:auto_pause"]);
+        keep_shot(&settled(&ui), "settings-plugin-page");
+        click_middle(&ui, &line_named(ui.get_settings(), lines(), "plugin-subpage:dev.sony:sound"));
+        assert_eq!((ui.get_plugin_top().title.to_string(), ui.get_plugin_top().back), ("Sound".into(), true));
+        assert_eq!(names(), ["plugin-row:dev.sony:ldac", "plugin-subpage:dev.sony:room"]);
+        keep_shot(&settled(&ui), "settings-plugin-sound");
+        let back = ElementHandle::find_by_element_type_name(&ui, "PluginHead").next().unwrap().query_descendants().match_inherits("IconButton").find_first().expect("back");
+        click_middle(&ui, &back);
+        assert_eq!(ui.get_plugin_top().title.to_string(), "Sony", "back on the plugin's page");
     }
 
     /// The main window and its player pill as the app joins them, the pill at x 140 and 1000 wide.
