@@ -50,8 +50,9 @@ The tests need two things that are easy to miss:
 
 - `crates/player/tests/pipeline` runs the whole player on a simulated output.
 - `crates/engine/tests` runs the player on its own thread, on the virtual clock in `tests/common`.
-- `crates/core/tests/scenario.rs` runs whole flows against an in-memory server, and `tests/remote.rs`
-  runs remote control and jams over an in-memory relay.
+- `crates/core/tests/scenario.rs` runs whole flows against an in-memory server. `tests/remote.rs` runs
+  remote control between paired devices through an in-memory sync server (`nori_sync::hub`), and jams
+  over an in-memory relay.
 - `crates/android/src/track.rs` tests the AudioTrack writer on a simulated track, and `lib.rs` checks
   every JNI door against its Kotlin `external fun`.
 - nori-cli and nori-desktop test their screens with ratatui's `TestBackend` and Slint's testing backend.
@@ -323,6 +324,7 @@ with that reason.
 | `device-sound` | An output's sound profile applies on connect | The platform's output events |
 | `sheets` | A sheet over the sideways player keeps the status bar away | Android's status bar rules and insets |
 | `queue-panel` | Tapping, scrolling, Clear and Undo in the queue panel | Compose, the panel, media3's list |
+| `sync` | Your devices and Pair a device, both ways round, a used code, Sync this profile, removing, Reset pairing, the server going | The screens, OkHttp's WebSockets through `adb reverse` |
 | `remote` | The terminal app as the other device, through every system surface | NsdManager, the remote media session, MediaRouter2 |
 | `jam` | Hosting a jam with two guests, then joining one as a guest | The service, the invite intent, media3 |
 | `scrobble` (opt-in, local) | A qualifying listen counts once, and an early skip does not | media3's track callbacks |
@@ -335,15 +337,44 @@ Some sections need more than the emulator:
 - `plugins` serves a plugin repo from this computer. It takes orbit and the showcase from
   `nori-dev-plugins/dist` beside this checkout (or `NORI_DEV_PLUGINS_DIST`), and the official plugins
   from `nori-plugins/dist` (or `NORI_PLUGINS_DIST`).
-- `remote` resolves the terminal app's live mDNS announcement. It uses `dns-sd` on macOS and Python's
-  zeroconf on Linux. `python3 tools/test-mdns.py` checks that a stale announcement is rejected.
+- `sync` runs the self-hosted sync server from the `nori-sync` checkout beside this one (or
+  `NORI_SYNC_ROOT`), and `nori-cli --sync` as the other device. It starts the phone in no group by
+  removing the group from the stopped app's database.
+- `remote` first pairs the terminal app's data folder with the phone through a sync server on this
+  computer (`tools/pair-peer.py`). It needs the sync server that `tools/sync-check.sh` builds. The phone
+  then opens the terminal's profile through `adb reverse`. The section resolves the terminal's live mDNS
+  announcement. It uses `dns-sd` on macOS and Python's zeroconf on Linux. `python3 tools/test-mdns.py`
+  checks that a stale announcement is rejected.
 - `jam` needs the relay from `tools/jam-server.sh`. Its guests are `tools/jam-guest.py`, and its host is
   `tools/jam-host.py`. `NORI_JAM_ADMINS=1` makes every guest an admin.
 - `youtube-music` is opt-in because YouTube can refuse on any day.
 
 `NORI_E2E_SERVER=local tools/library-sync-e2e.sh` checks that a favorite changed over the LAN reaches the
-visible seal and the media session's buttons through JNI. It roots the emulator for a moment to find the
+visible seal and the media session's buttons through JNI. It pairs the phone with a terminal data folder
+as `remote` does, and signs as the group's devices sign. It roots the emulator for a moment to find the
 app's listener, then restores adb's previous state.
+
+### The sync server check
+
+`tools/sync-check.sh` checks pairing and profile sync against a real sync server. It builds and starts the
+self-hosted program of the neighbouring `nori-sync` checkout (`NORI_SYNC_ROOT` names another) on a free
+local port, with two members to a group room. It then drives headless `nori-cli --sync` instances:
+
+- Two devices pair, see each other online, and sync a profile both ways.
+- The server stops. Both wait quietly, then come back by themselves when it starts again.
+- A third device pairs and shows the full group room as a refusal (`Refused { refused: Limit, .. }`).
+- Two paired terminals open a profile of the fixture Navidrome (`tools/dev-server.sh`). One plays, and
+  the other sees it, pauses it, mirrors it and moves the music to itself. The server then stops: they
+  control each other and sync a profile through their LAN doors. A profile that stops syncing offers no
+  device.
+
+`tools/sync-check.sh --android SERIAL` then clears the app's debug build on that device and pairs it into
+the group through `tools/app.sh sync`. The app plays the group's profile, and a terminal controls it and
+takes the music. The emulator hears no mDNS from the computer, so that goes through the server. With the
+server stopped, the app is handed the terminal's door (`tools/mdns-door.py`) and takes the music back
+through it. `adb reverse` gives the device the server's and Navidrome's ports, so both sides reach them
+at one address. The Rust tests cover the protocol and the rules. This check covers what only a real
+server, real sockets and a real network show.
 
 ### Checked by hand
 
@@ -410,6 +441,7 @@ python3 tools/desktop-app.py do pause
 | `appearance` | 0 System, 1 Day, 2 Night or 3 Midnight |
 | `click` | An x and y in the window's logical pixels, and presses and releases the left button there |
 | `state` | Nothing, and prints the UI's state |
+| `sync` | `state`, `code`, `take <link>`, `confirm [keep]`, `cancel` or `reset`, and prints sync's state, the pairing and the devices |
 
 - Each instance needs its own socket and data folder. The app never replaces an existing socket.
 - Playback requests finish after the reply, so wait for the state to change before you assert.

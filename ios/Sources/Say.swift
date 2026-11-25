@@ -3,40 +3,6 @@ import Foundation
 /// The app's words. The library answers with codes and keys; this is where they become English,
 /// following the Android app's `strings.xml`.
 enum Say {
-    static let pairDevice = "Pair a device"
-    static let pairHow = "Copy this iPod's code to your other device, or paste its pairing link here. Paired devices play and control each other on this network."
-    static let pairCopy = "Copy my code"
-    static let pairAccept = "Pair"
-    static let pairing = "Pairing…"
-    static let linkCopied = "Link copied"
-    static let forgetHow = "It stops controlling this iPod, and this iPod it. Pair again to undo."
-    static func forgetDevice(_ name: String) -> String { "Forget \(name)?" }
-    static func pairedWith(_ name: String) -> String { "Paired with \(name)" }
-    static func paired(_ seen: String) -> String { "Paired · \(seen)" }
-    /// Whether a paired device answers now (`reach` 0; 1 found, not answering; 2 not found), or when it was
-    /// last nearby.
-    static func seen(reach: Int, days: Int) -> String {
-        switch (reach, days) {
-        case (0, _): return "nearby"
-        case (1, _): return "can’t reach it"
-        case (_, 0): return "not nearby · seen today"
-        case (_, 1): return "not nearby · seen yesterday"
-        default: return "not nearby · seen \(days) days ago"
-        }
-    }
-    /// Why pairing with the device `name` (empty when its code doesn't say) failed, by its NORI_PAIR_FAILED_* code.
-    static func pairFailed(_ code: Int32, name: String) -> String {
-        let who = name.isEmpty ? "the other device" : name
-        let atStart = name.isEmpty ? "The other device" : name
-        switch code {
-        case NORI_PAIR_FAILED_NOT_A_CODE: return "That is not a pairing link. Copy the whole link from the other device."
-        case NORI_PAIR_FAILED_OWN: return "That is this iPod's own code."
-        case NORI_PAIR_FAILED_UNAVAILABLE: return "This profile doesn't pair: devices signed in to one server find each other."
-        case NORI_PAIR_FAILED_UNREACHABLE: return "Can't reach \(who). Is it on this network, with remote control on?"
-        case NORI_PAIR_FAILED_TIMED_OUT: return "\(atStart) didn't answer in time."
-        default: return "\(atStart) turned the code down. Paste the one it shows now."
-        }
-    }
     static let mixing = "Mixing"
     static let jamNotPlayingHere = "Not playing here"
     static func shelf(_ key: String) -> String {

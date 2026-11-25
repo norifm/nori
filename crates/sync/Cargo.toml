@@ -1,0 +1,50 @@
+[package]
+name = "nori-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pairing a person's devices and syncing their profiles through a sync server that reads nothing"
+publish = false
+
+# The group key and what it seals, pairing a new device, the group as a device keeps it, and profile sync
+# with its merge; the sync server's protocol and a device's life with it, over the WebSockets a client
+# hands in (link.rs, syncing.rs). No I/O of its own.
+[lib]
+name = "nori_sync"
+
+[features]
+# The uniffi records the Android app's Kotlin bindings are generated from.
+ffi = ["dep:uniffi", "nori-settings/ffi"]
+# The in-memory sync server (hub.rs), for other crates' tests.
+testing = []
+
+[dependencies]
+uniffi = { workspace = true, optional = true }
+nori-settings = { path = "../settings" }
+# The log, for what a server sends that this version cannot read.
+nori-model = { path = "../model" }
+# Where sync's one timer task runs, and its clock.
+nori-tasks = { path = "../tasks" }
+nori-time = { path = "../time" }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# Which profiles are a jam guest's, and which addresses only a home network reaches.
+nori-remote = { path = "../remote" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The group key, locks, nonces and ids.
+getrandom = "0.4"
+# What a group's devices say to each other and its kept copy: XChaCha20-Poly1305.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+# The group room's name and the keys under the group key: HKDF-SHA256.
+hkdf = "0.12"
+sha2 = "0.10"
+# The group key sealed to a new device's lock: HPKE (RFC 9180), X25519, HKDF-SHA256, ChaCha20-Poly1305.
+hpke = { version = "0.12", default-features = false, features = ["alloc", "x25519"] }
+# HPKE asks its randomness through rand_core's traits; getrandom fills them.
+rand_core = "0.6"
+# The three words from a lock, slow to search for: Argon2id.
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+base64 = "0.22"
+
+[dev-dependencies]
+nori-testdir = { path = "../testdir" }

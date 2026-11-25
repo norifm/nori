@@ -13,14 +13,16 @@ use std::time::Duration;
 
 use nori_core::client::{Client, NetProfile, Starrable};
 use nori_core::library::StarsShown;
-use nori_core::remote::{jam_join, Controls, JamJoin, JamStart, Discovery, Follower, JamControls, Lead, Listening, Playing, Reach, RelaySupport, Remote, RemoteMe, RemotePlayer, RemoteShown, Sight};
+use nori_core::remote::{jam_join, Controls, JamJoin, JamStart, Discovery, Follower, JamControls, Lead, Listening, Playing, Reach, Remote, RemoteMe, RemotePlayer, RemoteShown, Sight};
 use nori_core::transport::{Exchange, FailureKind, Transport, TransportError, TransportResponse};
 use nori_player::playlist::Hand;
 use nori_core::race::{LyricsPick, LyricsShown};
+use nori_core::settings::{SavedServer, StoredPrefs};
+use nori_core::sync::{Came, Here, PairingView, Plays, ProfilesSynced, Reach as SyncReach, RemoteRoom, SyncClient, SyncEvent, SyncState, Syncing};
+use nori_sync::hub::HubSockets;
 use nori_core::{Core, ServerConfig, Song};
 use nori_model::LyricsTiming;
-use nori_remote::clock;
-use nori_remote::wire::{Answer, Body, DeviceKind, DeviceState, Event, Member, Op, Outgoing, Refusal, Role, Room};
+use nori_remote::wire::{Answer, Body, DeviceKind, DeviceState, Event, GroupSaid, Member, Op, Outgoing, Refusal, Role, Room};
 use nori_tasks::{Busy, Native, Tasks};
 use parking_lot::Mutex;
 
@@ -118,8 +120,6 @@ struct Relay {
     lagged: AtomicU64,
     /// A door's poll answers come back 250 ms late.
     door_late: std::sync::atomic::AtomicBool,
-    /// A device's poll saying it no longer serves reaches the relay 250 ms late.
-    leave_late: std::sync::atomic::AtomicBool,
     /// The server cannot be reached; held polls fail once woken.
     down: std::sync::atomic::AtomicBool,
     /// Lets jam guests stream the host's queue (listening along).
@@ -138,24 +138,16 @@ struct Relay {
     opens: AtomicU64,
     /// Polls with no `since` are not answered: no device has its first answer.
     first_answers_held: std::sync::atomic::AtomicBool,
-    /// The next poll of a device saying it serves stops on its way, sent: see [`Relay::late_poll`].
-    late_poll: Mutex<Option<LatePoll>>,
-    /// A device that hears nothing the relay holds for it, as one gone without leaving.
-    deaf: Mutex<Option<String>>,
     /// Requests to doors are refused, as by a device gone from the network; those under way still answer.
     doors_refuse: std::sync::atomic::AtomicBool,
     /// The devices' network is metered (mobile data).
     metered: std::sync::atomic::AtomicBool,
     /// LRCLIB's answer for any song.
     lrclib: Mutex<Option<String>>,
-}
-
-struct LatePoll {
-    dev: String,
-    caught: Sender<()>,
-    /// The test's word to let the poll arrive, holding the clock still until it has.
-    go: Receiver<Busy>,
-    arrived: Sender<()>,
+    /// The sync server my devices meet at.
+    sync: nori_sync::hub::Hub,
+    /// Each account's devices' syncs, the first made first: one group each.
+    groups: Mutex<HashMap<String, Vec<Arc<Syncing>>>>,
 }
 
 const SERVER_SKEW_US: i64 = 9_000_000;
@@ -202,7 +194,7 @@ impl Relay {
             lan: Mutex::default(),
             sim: Arc::new(Native::simulated("nori-remote-test", START_US).unwrap()),
             devices: Mutex::default(),
-            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None), deaf: Mutex::new(None), doors_refuse: Default::default(), metered: Default::default(), lrclib: Default::default() })
+            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), doors_refuse: Default::default(), metered: Default::default(), lrclib: Default::default(), sync: nori_sync::hub::Hub::new(START_US / 1000), groups: Mutex::default() })
     }
 
     /// Device `dev`'s times read `skew_us` ahead as the relay passes them on. Its states reach the relay
@@ -309,14 +301,6 @@ impl Relay {
         let _hub = self.hub.lock();
         self.down.store(down, Ordering::Relaxed);
         self.wake();
-    }
-
-    /// Device `dev`'s next poll saying it serves stops on its way here, sent and past recall: told on
-    /// the first channel; it goes on once the second is sent to, and has arrived when the third tells.
-    fn late_poll(&self, dev: &str) -> (Receiver<()>, Sender<Busy>, Receiver<()>) {
-        let ((caught, on_way), (go, wait), (arrived, here)) = (channel(), channel(), channel());
-        *self.late_poll.lock() = Some(LatePoll { dev: dev.to_string(), caught, go: wait, arrived });
-        (on_way, go, here)
     }
 
     /// Answers the polls with no `since` held until now, and those to come.
@@ -436,7 +420,7 @@ impl Relay {
                     seq: hub.seq,
                     you: me.clone(),
                     rooms: rooms.iter().filter_map(|r| hub.rooms.get(r).map(|s| Room { room: r.clone(), jam: s.jam, members: s.members.clone() })).collect(),
-                    events: if self.deaf.lock().as_ref() == Some(&me) { Vec::new() } else { mine(&hub) },
+                    events: mine(&hub),
                     along: self.along.load(Ordering::Relaxed),
                     time: self.time.load(Ordering::Relaxed),
                 };
@@ -563,29 +547,7 @@ impl Transport for Relay {
         }
         self.hub.lock().asked.push(format!("{endpoint} {} {}", params.get("id").map_or("", String::as_str), params.get("dev").map_or("", String::as_str)));
         if endpoint == "noriRemote.poll" {
-            if self.leave_late.load(Ordering::Relaxed) && params.get("serve").map(String::as_str) == Some("0") {
-                self.sim.sleep(Duration::from_millis(250)).await;
-            }
-            let late = params.get("serve").filter(|s| *s == "1").and_then(|_| {
-                let mut late = self.late_poll.lock();
-                late.take_if(|l| params.get("dev") == Some(&l.dev))
-            });
-            match late {
-                Some(l) => {
-                    l.caught.send(()).unwrap();
-                    let (relay, sent) = (self.me.upgrade().unwrap(), params.clone());
-                    // Sent, it arrives even if the device gives up waiting for the answer.
-                    let busy = off_thread(None, move || {
-                        let busy = l.go.recv().unwrap();
-                        relay.arrived(&sent);
-                        l.arrived.send(()).unwrap();
-                        busy
-                    })
-                    .await;
-                    drop(busy);
-                }
-                None => self.arrived(&params),
-            }
+            self.arrived(&params);
             if !params.contains_key("since") {
                 self.first_answer().await;
                 if self.down.load(Ordering::Relaxed) {
@@ -769,6 +731,147 @@ struct Device {
     remote: Arc<Remote>,
     ops: Receiver<Op>,
     ended: Arc<Mutex<Vec<Option<String>>>>,
+    /// Its sync and its sockets to the sync server, in its account's group; none for a jam's guest.
+    group: Option<(Arc<Syncing>, Arc<HubSockets>)>,
+    _dir: Option<nori_testdir::TempDir>,
+}
+
+/// A device of ann's group whose remote control the test speaks by hand, as `id`: what it hears, and
+/// what it says.
+struct Puppet {
+    id: String,
+    /// Its profile's id on the puppet.
+    profile: String,
+    settings: Arc<nori_core::settings_store::Settings>,
+    syncing: Arc<Syncing>,
+    net: Arc<HubSockets>,
+    heard: Arc<Mutex<Vec<GroupSaid>>>,
+    _room: Arc<dyn RemoteRoom>,
+    _dir: nori_testdir::TempDir,
+}
+
+/// What a puppet's remote control hears.
+struct PuppetRoom(Arc<Mutex<Vec<GroupSaid>>>);
+
+impl RemoteRoom for PuppetRoom {
+    fn in_room(&self, _: nori_core::sync::InRoom) {}
+    fn keyed(&self) {}
+    fn changed(&self) {}
+    fn heard(&self, _: String, message: serde_json::Value) {
+        self.0.lock().push(serde_json::from_value(message).unwrap());
+    }
+    fn left(&self, _: String) {}
+    fn elsewhere(&self) {}
+}
+
+impl Puppet {
+    fn new(relay: &Arc<Relay>, id: &str) -> Puppet {
+        let puppet = Puppet::with(relay, id, vec![]);
+        puppet.opened(&puppet.profile.clone());
+        puppet
+    }
+
+    /// A puppet with ann's profile and `others`, the first of them open for remote control.
+    fn on_another(relay: &Arc<Relay>, id: &str, others: Vec<SavedServer>) -> Puppet {
+        let puppet = Puppet::with(relay, id, others);
+        let other = puppet.settings.with_prefs(|p| p.active_server_id.clone()).unwrap();
+        puppet.opened(&other);
+        puppet
+    }
+
+    fn with(relay: &Arc<Relay>, id: &str, others: Vec<SavedServer>) -> Puppet {
+        let dir = nori_testdir::TempDir::new("remote-puppet");
+        let settings = nori_core::settings_store::Settings::new();
+        let prefs = settings.open(&dir.path().join("app.db").to_string_lossy()).unwrap();
+        let profile = profile_of(&ann());
+        let active = others.first().unwrap_or(&profile).id.clone();
+        settings.put(StoredPrefs { active_server_id: active, servers: std::iter::once(profile.clone()).chain(others).collect(), sync: true, ..prefs });
+        let (syncing, net) = relay.grouped(&settings, &ann(), id);
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let room: Arc<dyn RemoteRoom> = Arc::new(PuppetRoom(heard.clone()));
+        Puppet { id: id.into(), profile: profile.id, settings, syncing, net, heard, _room: room, _dir: dir }
+    }
+
+    /// As a client's remote does for profile `local` once made: attached to the group's room, it says
+    /// who it is, asking the others. The group's first device is in no room yet.
+    fn opened(&self, local: &str) {
+        let me = Member { id: self.id.clone(), name: self.id.clone(), kind: DeviceKind::Phone, state: None };
+        self.syncing.remote_open(local.into(), self._room.clone(), serde_json::to_value(&me).unwrap());
+        let hello = GroupSaid::Here { member: Box::new(me), ask: true, instance: None };
+        self.syncing.remote_say(local, None, serde_json::to_value(hello).unwrap());
+    }
+
+    /// Says `said` to `to`'s device, or every device of the group.
+    fn say(&self, to: Option<&Device>, said: GroupSaid) {
+        assert!(self.syncing.remote_say(&self.profile, to.map(Device::group_id), serde_json::to_value(said).unwrap()), "said");
+    }
+
+    /// Says it serves, playing `state`.
+    fn here(&self, state: DeviceState) {
+        self.say(None, GroupSaid::Here { member: Box::new(Member { id: self.id.clone(), name: self.id.clone(), kind: DeviceKind::Phone, state: Some(state) }), ask: false, instance: None });
+    }
+
+    /// The commands it heard, with their ids.
+    fn commands(&self) -> Vec<(String, u64, Op)> {
+        self.heard.lock().iter().filter_map(|s| match s {
+            GroupSaid::Event { from, to, body: Body::Command { id, op } } if *to == self.id => Some((from.clone(), *id, (**op).clone())),
+            _ => None,
+        }).collect()
+    }
+
+    /// The answers it heard.
+    fn answers(&self) -> Vec<(u64, Option<Refusal>)> {
+        self.heard.lock().iter().filter_map(|s| match s {
+            GroupSaid::Event { to, body: Body::Ack { id, refusal }, .. } if *to == self.id => Some((*id, *refusal)),
+            _ => None,
+        }).collect()
+    }
+}
+
+/// What sync tells a test's device: nothing it acts on.
+struct Synced;
+
+impl SyncClient for Synced {
+    fn here(&self) -> Here {
+        Here { plays: Plays::ServersAndPlugins, copied: vec!["subsonic".into()], plugins: vec![] }
+    }
+    fn profiles(&self, _: ProfilesSynced) {}
+    fn event(&self, _: SyncEvent) {}
+    fn changed(&self) {}
+}
+
+/// The profile an account's device keeps for `config`.
+fn profile_of(config: &ServerConfig) -> SavedServer {
+    SavedServer { id: format!("{}-{}", config.user, nori_core::settings::new_server_id()), name: "Home".into(), url: config.url.clone(), user: config.user.clone(), password: config.password.clone(), ..Default::default() }
+}
+
+impl Relay {
+    /// A sync for the device whose settings `settings` keep, in the group of `config`'s account: the
+    /// first device makes it when the second pairs. It is a phone playing in the background, whose
+    /// keep-alives ride on the audio: sync arms no timer of its own.
+    fn grouped(&self, settings: &Arc<nori_core::settings_store::Settings>, config: &ServerConfig, name: &str) -> (Arc<Syncing>, Arc<HubSockets>) {
+        let net = HubSockets::new(&self.sync, Some(self.sim.clone()));
+        let sim = self.sim.clone();
+        let syncing = Syncing::new(settings.clone(), net.clone(), Arc::new(Synced), SyncReach::Phone, Box::new(move || sim.clone() as Arc<dyn Tasks>));
+        net.tell(&syncing);
+        syncing.playing(true);
+        let key = format!("{}:{}", config.user, config.password);
+        let first = self.groups.lock().get(&key).and_then(|g| g.first().cloned());
+        if let Some(old) = first.filter(|_| !nori_sync::paired(settings)) {
+            syncing.pair_show(name.into());
+            let link = self.sim.until("a code", || match syncing.pairing() { PairingView::Code { link, .. } => Some(link), _ => None });
+            assert_eq!(old.pair_take(link, Came::Camera), None);
+            self.sim.until("what to confirm", || matches!(old.pairing(), PairingView::Confirm { .. }).then_some(()));
+            old.pair_confirm("First".into(), false);
+            self.sim.until("paired", || (syncing.pairing() == PairingView::Paired).then_some(()));
+            syncing.pair_cancel();
+            old.pair_cancel();
+            let local = settings.with_prefs(|p| p.active_server_id.clone()).unwrap();
+            self.sim.until("the profile synced", || (syncing.state() == SyncState::Connected && syncing.synced(local.clone())).then_some(()));
+        }
+        self.groups.lock().entry(key).or_default().push(syncing.clone());
+        (syncing, net)
+    }
 }
 
 impl Device {
@@ -780,7 +883,26 @@ impl Device {
         Device::with(relay, config, kind, name, discovery, Default::default())
     }
 
+    /// An account's device (a guest's has no group) keeps its settings in a directory of its own
+    /// unless `session` keeps them already, with its account's profile in use.
     fn with(relay: &Arc<Relay>, config: ServerConfig, kind: DeviceKind, name: &str, discovery: Option<Arc<dyn Discovery>>, session: Arc<nori_queue::Session>) -> Device {
+        let account = kind != DeviceKind::Guest;
+        let (session, dir) = match account && session.settings.app_db().is_none() {
+            true => {
+                let dir = nori_testdir::TempDir::new("remote-device");
+                let settings = nori_core::settings_store::Settings::new();
+                let prefs = settings.open(&dir.path().join("app.db").to_string_lossy()).unwrap();
+                settings.put(prefs);
+                (Arc::new(nori_queue::Session::new(settings)), Some(dir))
+            }
+            false => (session, None),
+        };
+        let settings = session.settings.clone();
+        if account && settings.with_prefs(|p| p.servers.is_empty()).unwrap_or(true) {
+            let profile = profile_of(&config);
+            settings.change(|p| StoredPrefs { active_server_id: profile.id.clone(), servers: vec![profile.clone()], sync: true, remote_control: true, ..p.clone() });
+        }
+        let group = account.then(|| relay.grouped(&settings, &config, name));
         let core = Core::new(String::new(), "remote".into(), session).unwrap();
         core.configure(config).unwrap();
         let client = Client::new(core.clone(), relay.clone(), Default::default());
@@ -788,10 +910,10 @@ impl Device {
         let (ops_to, ops) = channel();
         let ended = Arc::new(Mutex::new(Vec::new()));
         let (me, player, shown) = (RemoteMe { name: name.into(), kind }, Arc::new(Player(Mutex::new(ops_to))), Arc::new(Shown(ended.clone())));
-        let remote = Remote::with_tasks(client.clone(), me, player, shown, discovery, relay.sim.clone());
+        let remote = Remote::with_tasks(client.clone(), me, player, shown, discovery, group.as_ref().map(|(s, _)| s.clone()), relay.sim.clone());
 
         relay.devices.lock().push(Arc::downgrade(&remote));
-        Device { sim: relay.sim.clone(), core, client, remote, ops, ended }
+        Device { sim: relay.sim.clone(), core, client, remote, ops, ended, group, _dir: dir }
     }
 
     fn account(relay: &Arc<Relay>, kind: DeviceKind, name: &str) -> Device {
@@ -817,6 +939,16 @@ impl Device {
         self.sim.until("an op for the player", || self.ops.try_recv().ok())
     }
 
+    /// Its id in its group.
+    fn group_id(&self) -> String {
+        self.group.as_ref().and_then(|(s, _)| s.device()).expect("in a group")
+    }
+
+    /// The frames it sent to the sync server so far: what a server on Cloudflare bills.
+    fn billed(&self) -> usize {
+        self.group.as_ref().map_or(0, |(_, net)| net.sent.load(Ordering::Relaxed))
+    }
+
     fn playing(&self, ids: &[&str], start: u32) {
         let songs: Vec<Song> = ids.iter().map(|id| Song { id: id.to_string(), title: id.to_uppercase(), duration: 200, ..Default::default() }).collect();
         self.core.session.register(songs);
@@ -830,30 +962,23 @@ impl Device {
 fn returning_here_does_not_wait_for_a_dead_device() {
     for action in ["wait", "play", "edit"] {
         let relay = Relay::new();
-        let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-        phone.playing(&["s1", "s2"], 0);
-        phone.remote.clone().serve(true);
-        let ghost = phone.until("the phone published", |_| relay.hub.lock().rooms.values().flat_map(|r| &r.members).find(|m| m.id == phone.remote.id() && m.state.as_ref().is_some_and(|s| s.playing)).cloned());
-        phone.remote.clone().stop();
-        phone.remote.sent();
-        relay.hub.lock().rooms.entry("u:ann".into()).or_default().members.push(ghost);
+        // Listed in the group's room as playing, it answers nothing.
+        let ghost = Puppet::new(&relay, "ghost");
         let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
         desk.queued(&["local"]);
         desk.remote.clone().serve(true);
         desk.remote.clone().watch(true);
-        desk.until("the stale relay entry", |r| r.devices().into_iter().find(|d| d.id == phone.remote.id() && d.state.as_ref().is_some_and(|s| s.playing)));
+        ghost.here(DeviceState { playing: true, index: Some(0), len: 1, ..Default::default() });
+        desk.until("the ghost playing", |r| r.devices().into_iter().find(|d| d.id == "ghost" && d.state.as_ref().is_some_and(|s| s.playing)));
         desk.remote.clone().watch(false);
-        desk.remote.clone().pick(Some(phone.remote.id()));
+        desk.remote.clone().pick(Some("ghost".into()));
         assert!(desk.remote.active().is_some());
         desk.remote.clone().pick(None);
         let picked_at = relay.sim.now_us();
         desk.until("the controls here", |r| r.active().is_none().then_some(()));
         assert!(relay.sim.now_us() - picked_at <= 3_000_000, "a dead device holds the controls no longer than a command shows");
         assert_eq!(desk.core.session.playlist(|p| p.ids().to_vec()), ["local"], "the stored local queue remains usable");
-        let request = || relay.hub.lock().rooms["u:ann"].events.iter().find_map(|(_, from, _, body)| match body {
-            Body::Command { id, op } if from == &desk.remote.id() && matches!(op.as_ref(), Op::Transfer { to, .. } if to == &desk.remote.id()) => Some(*id),
-            _ => None,
-        });
+        let request = || ghost.commands().into_iter().find_map(|(from, id, op)| (from == desk.remote.id() && matches!(op, Op::Transfer { ref to, .. } if *to == desk.remote.id())).then_some(id));
         eventually(&relay, "the queue request", || request().is_some());
         let transfer = request();
         match action {
@@ -861,26 +986,51 @@ fn returning_here_does_not_wait_for_a_dead_device() {
             "edit" => desk.queued(&["edited"]),
             _ => {},
         }
-        // A delayed response from the previous app instance must respect what happened here.
-        let outgoing = Outgoing {
-            to: Some(desk.remote.id()),
-            body: Some(Body::Command { id: 999, op: Box::new(Op::Replace {
-                songs: vec![Song::only_id("remote".into())], index: 0, position_ms: 5_000,
-                play: true, order: None, shuffle: false, repeat: 0, transfer, listen: None, mix: None,
-            }) }),
-            ..Default::default()
-        };
-        relay.sim.run("a request", relay.send(Exchange {
-            url: format!("{SERVER}/rest/noriRemote.send?u=ann&dev={}", phone.remote.id()),
-            json: Some(serde_json::to_string(&outgoing).unwrap()), ..Default::default()
-        })).unwrap();
+        // A late answer, from a device that came back, must respect what happened here.
+        let late = Body::Command { id: 999, op: Box::new(Op::Replace {
+            songs: vec![Song::only_id("remote".into())], index: 0, position_ms: 5_000,
+            play: true, order: None, shuffle: false, repeat: 0, transfer, listen: None, mix: None,
+        }) };
+        ghost.say(Some(&desk), GroupSaid::Event { from: "ghost".into(), to: desk.remote.id(), body: late });
         if action == "wait" {
             assert!(matches!(desk.told(), Op::Replace { songs, .. } if songs[0].id == "remote"));
         } else {
-            eventually(&relay, "the late queue refused", || relay.hub.lock().rooms["u:ann"].events.iter().any(|(_, from, _, body)| {
-                from == &desk.remote.id() && matches!(body, Body::Ack { id: 999, refusal: Some(Refusal::Stale) })
-            }));
+            eventually(&relay, "the late queue refused", || ghost.answers().contains(&(999, Some(Refusal::Stale))));
             assert!(desk.ops.try_recv().is_err(), "a late handoff cannot replace local playback or edits");
+        }
+        relay.close();
+    }
+}
+
+/// The phone has ann's profile and another, that one open: the desk lists it all the same, and picking it
+/// with music here opens ann's profile there first, then hands it the music. One that takes too long to
+/// open it is handed nothing.
+#[test]
+fn a_device_with_another_profile_open_opens_this_one_when_picked() {
+    for late in [false, true] {
+        let relay = Relay::new();
+        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+        desk.playing(&["s1", "s2"], 0);
+        desk.remote.clone().serve(true);
+        let other = SavedServer { id: "other".into(), name: "Other".into(), url: "http://other:1".into(), user: "ann".into(), ..Default::default() };
+        let phone = Puppet::on_another(&relay, "phone", vec![other]);
+        let listed = desk.until("the phone listed", |r| r.devices().into_iter().find(|d| d.id == "phone"));
+        assert!(listed.elsewhere && listed.state.is_none(), "with another profile open");
+        desk.remote.clone().pick(Some("phone".into()));
+        eventually(&relay, "the phone on ann's profile", || phone.settings.with_prefs(|p| p.active_server_id.clone()).unwrap() == phone.profile);
+        if late {
+            relay.sim.pass(Duration::from_secs(21));
+        }
+        // Its client opens the profile again, and its remote says it is there.
+        phone.opened(&phone.profile.clone());
+        let handed = || phone.commands().into_iter().any(|(_, _, op)| matches!(op, Op::Replace { ref songs, .. } if songs.len() == 2));
+        if late {
+            relay.sim.pass(Duration::from_secs(5));
+            assert!(!handed(), "the pick was let go");
+            assert!(desk.ops.try_recv().is_err(), "the music plays on here");
+        } else {
+            eventually(&relay, "the music handed to the phone", handed);
+            assert!(matches!(desk.told(), Op::Pause), "the desk pauses, the phone plays on");
         }
         relay.close();
     }
@@ -1046,9 +1196,10 @@ fn active_discovery_uses_lan_without_a_relay() {
     let desk = Device::found(&relay, ann(), DeviceKind::Desktop, "Desk", Some(announced.clone()));
     desk.playing(&["s1", "s2"], 1);
     desk.remote.clone().serve(true);
-    let door = announced.0.lock().clone().unwrap();
     let browsing = Arc::new(Announced::default());
     let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(browsing.clone()));
+    // Announced as the group's devices sign now, with the phone in it.
+    let door = announced.0.lock().clone().unwrap();
     phone.remote.clone().discover_active(true);
     assert!(browsing.1.load(Ordering::Relaxed));
     phone.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
@@ -1172,7 +1323,6 @@ fn a_handoff_during_a_mix_carries_it_on() {
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     let session = &phone.core.session;
-    session.settings.open("").unwrap();
     let mut prefs = session.settings.current().unwrap();
     prefs.crossfade_sec = 6;
     session.settings.put(prefs);
@@ -1212,7 +1362,7 @@ fn a_handoff_during_a_mix_carries_it_on() {
 }
 
 #[test]
-fn two_devices_control_each_other_through_the_relay() {
+fn two_devices_control_each_other_through_their_group() {
     let relay = Relay::new();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
@@ -1364,11 +1514,10 @@ fn a_host_that_stops_serving_still_shows_its_jams_queue() {
     let queue = host.remote.jam_view().and_then(|v| v.queue).map(|q| q.entries.len());
     assert_eq!(queue, Some(2));
 
-    // Serving again, the account's room hears the state anew though nothing but time moved.
-    let listed = || relay.hub.lock().rooms.iter().filter(|(_, r)| !r.jam).flat_map(|(_, r)| &r.members).any(|m| m.id == host.remote.id() && m.state.is_some());
-    eventually(&relay, "the host gone from the account's room", || !listed());
+    // Serving again, the group hears its state anew though nothing but time moved.
+    let watcher = Puppet::new(&relay, "watcher");
     host.remote.clone().serve(true);
-    eventually(&relay, "the host listed again", listed);
+    eventually(&relay, "the host's state said again", || watcher.heard.lock().iter().any(|s| matches!(s, GroupSaid::Here { member, .. } if member.id == host.remote.id() && member.state.is_some())));
     relay.close();
 }
 
@@ -1393,10 +1542,10 @@ fn a_jam_opened_while_a_poll_is_held_hears_its_first_request() {
     relay.close();
 }
 
-/// A device listed at the relay hears it: paused, with nothing on its screen, on a metered network, it
-/// still asks again as each poll is answered, so what another device asks of it arrives at once.
+/// Paused, with nothing on its screen, on a metered network, a device says nothing and still hears what
+/// another device of its group asks of it at once.
 #[test]
-fn out_of_sight_on_mobile_data_a_paused_device_hears_the_relay() {
+fn out_of_sight_on_mobile_data_a_paused_device_hears_its_group() {
     let relay = Relay::new();
     relay.metered.store(true, Ordering::Relaxed);
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
@@ -1405,10 +1554,12 @@ fn out_of_sight_on_mobile_data_a_paused_device_hears_the_relay() {
     phone.remote.clone().played(Playing { playing: false, position_ms: 5_000, volume: Some(40), ..Default::default() });
     phone.remote.clone().serve(true);
     desk.remote.clone().serve(true);
-    phone.remote.clone().sight(Sight::Nothing);
-    relay.sim.pass(Duration::from_secs(400));
     let id = phone.remote.id();
-    assert!(relay.parked(&id), "its poll is held");
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == id));
+    phone.remote.clone().sight(Sight::Nothing);
+    let said = phone.billed();
+    relay.sim.pass(Duration::from_secs(400));
+    assert_eq!(phone.billed(), said, "nothing said while it waits");
     desk.remote.clone().send(id, Op::Play);
     relay.sim.pass(Duration::from_secs(1));
     assert_eq!(phone.ops.try_recv().ok(), Some(Op::Play), "asked to play, it hears within a second");
@@ -1422,7 +1573,6 @@ fn library_discovery_follows_the_foreground_while_playing() {
     let relay = Relay::absent();
     let announced = Arc::new(Announced::default());
     let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
-    phone.core.session.settings.open("").unwrap();
     phone.remote.clone().serve(true);
     phone.playing(&["s1"], 0);
     assert!(announced.1.load(Ordering::Relaxed), "a playing client can find peers for favorite updates");
@@ -1439,11 +1589,9 @@ fn nearby_favorites_update_without_playback_commands() {
     let relay = Relay::absent();
     let announced = Arc::new(Announced::default());
     let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
-    phone.core.session.settings.open("").unwrap();
     phone.remote.clone().serve(true);
-    let door = announced.0.lock().clone().expect("the door announced");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-    desk.core.session.settings.open("").unwrap();
+    let door = announced.0.lock().clone().expect("the door announced");
     desk.remote.clone().watch(true);
     desk.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
     desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.state.is_some()));
@@ -1470,31 +1618,31 @@ fn nearby_favorites_update_without_playback_commands() {
 }
 
 #[test]
-fn nearby_devices_need_no_relay() {
+fn nearby_devices_need_no_server() {
     let relay = Relay::absent();
     let ann = |password: &str| ServerConfig { url: SERVER.into(), user: "ann".into(), password: password.into(), ..Default::default() };
     let announced = Arc::new(Announced::default());
     let phone = Device::found(&relay, ann("pw"), DeviceKind::Phone, "Phone", Some(announced.clone()));
     phone.playing(&["s1", "s2"], 0);
     phone.remote.clone().serve(true);
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     let door = announced.0.lock().clone().expect("the door announced");
     let txt = || door.txt.clone();
 
-    // Another account's device on the network does not list the door.
+    // A device of another group on the network does not list the door.
     let other = Device::new(&relay, ServerConfig { user: "bob".into(), ..ann("pw") }, DeviceKind::Desktop, "Bob");
     other.remote.clone().watch(true);
     other.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, txt());
     assert!(other.remote.devices().is_empty());
 
-    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     desk.remote.clone().watch(true);
     desk.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, txt());
     let seen = desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.state.is_some()));
     assert!(seen.nearby && seen.name == "Phone");
+    let said = desk.billed();
     desk.remote.clone().send(seen.id.clone(), Op::Pause);
     assert_eq!(phone.told(), Op::Pause);
-    let through_relay = format!("noriRemote.send  {}", desk.remote.id());
-    assert!(!relay.asked().contains(&through_relay), "the command went to the door, not the relay");
+    assert_eq!(desk.billed(), said, "the command went to the door, not the sync server");
 
     // Mirrored with the picker closed: its door is still followed, and its whole queue read through it.
     desk.remote.clone().watch(false);
@@ -1521,7 +1669,8 @@ fn nearby_devices_need_no_relay() {
     phone.remote.clone().played(Playing { playing: true, position_ms: 4_000, index: None, volume: None, ..Default::default() });
     desk.until("the phone playing again", |r| r.active().filter(|m| m.playing));
 
-    // Its word comes late through the door; its clock, learned there at once, says when it was heard.
+    // Its word comes late through the door; the sync server's clock, which both know, says when it was
+    // heard.
     relay.door_late.store(true, Ordering::Relaxed);
     let said_before = relay.sim.now_us();
     phone.remote.clone().played(Playing { playing: true, position_ms: 12_000, index: None, volume: None, ..Default::default() });
@@ -1533,11 +1682,11 @@ fn nearby_devices_need_no_relay() {
     assert!((earliest..=latest).contains(&m.position_at(now)), "the desk shows {} ms outside the heard interval {earliest}..={latest}", m.position_at(now));
     relay.door_late.store(false, Ordering::Relaxed);
 
-    // A device of the same user with an old password is not shown the door.
+    // A device of the same account in another group is not shown the door.
     let stranger = Device::new(&relay, ann("old"), DeviceKind::Desktop, "Old");
     stranger.remote.clone().watch(true);
     stranger.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, txt());
-    assert!(stranger.remote.devices().is_empty(), "the announced account tag differs");
+    assert!(stranger.remote.devices().is_empty(), "the announced group tag differs");
 }
 
 /// mDNS says a door went away of a device still there (an announcement missed while the network slept):
@@ -1549,9 +1698,9 @@ fn a_mirrored_door_whose_announcement_went_stays_while_it_answers() {
     let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
     phone.playing(&["s1", "s2"], 0);
     phone.remote.clone().serve(true);
-    let door = announced.0.lock().clone().expect("the door announced");
     let phone_id = phone.remote.id();
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let door = announced.0.lock().clone().expect("the door announced");
     desk.remote.clone().watch(true);
     desk.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, door.txt.clone());
     desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.state.is_some()));
@@ -1577,16 +1726,16 @@ fn a_door_whose_announcement_went_leaves_the_picker_once_closed() {
     let announced = Arc::new(Announced::default());
     let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
     phone.remote.clone().serve(true);
-    let door = announced.0.lock().clone().expect("the door announced");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let door = announced.0.lock().clone().expect("the door announced");
     desk.remote.clone().watch(true);
     desk.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, door.txt.clone());
     desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.state.is_some()));
 
     desk.remote.clone().lan_lost(door.name.clone());
-    assert_eq!(desk.remote.devices().len(), 1, "listed while the open picker follows it");
+    assert!(desk.remote.devices().iter().all(|d| d.nearby), "nearby while the open picker follows it");
     desk.remote.clone().watch(false);
-    assert!(desk.remote.devices().is_empty(), "gone once nothing follows it");
+    assert!(desk.remote.devices().iter().all(|d| !d.nearby), "no longer nearby once nothing follows it, listed through the group");
     relay.close();
 }
 
@@ -1595,7 +1744,7 @@ fn a_server_without_the_relay_is_asked_again_only_by_a_picker() {
     let relay = Relay::absent();
     let dir = nori_testdir::TempDir::new("remote-no-relay");
     let phone = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
-    phone.until("the answer", |r| (r.relay() == RelaySupport::Unsupported).then_some(()));
+    phone.until("the answer", |r| (r.jam_start() == JamStart::Unsupported).then_some(()));
     let asked = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.")).count();
     assert_eq!(asked(), 1, "one probe");
     assert_eq!(phone.remote.jam_start(), JamStart::Unsupported, "every screen says the server lacks the relay");
@@ -1618,18 +1767,18 @@ fn a_picker_opened_asks_again_whether_the_server_relays() {
     let relay = Relay::absent();
     let dir = nori_testdir::TempDir::new("remote-no-relay");
     let phone = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
-    phone.until("the answer", |r| (r.relay() == RelaySupport::Unsupported).then_some(()));
+    phone.until("the answer", |r| (r.jam_start() == JamStart::Unsupported).then_some(()));
     let asked = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.")).count();
 
     phone.remote.clone().watch(true);
     phone.until("asked again", |_| (asked() == 2).then_some(()));
     phone.remote.clone().watch(false);
-    assert_eq!(phone.remote.relay(), RelaySupport::Unsupported);
+    assert_eq!(phone.remote.jam_start(), JamStart::Unsupported);
 
     // The server gained the relay: the next opening finds it, and the picker follows the account's devices.
     relay.absent.store(false, Ordering::Relaxed);
     phone.remote.clone().watch(true);
-    phone.until("the relay", |r| (r.relay() == RelaySupport::Supported).then_some(()));
+    phone.until("the relay", |r| (r.jam_start() == JamStart::Offered).then_some(()));
     assert_eq!(phone.remote.jam_start(), JamStart::Offered);
     phone.until("polling", |_| (phone.polls(&relay) >= 3).then_some(()));
     relay.close();
@@ -1640,7 +1789,7 @@ fn a_picker_opened_asks_again_whether_the_server_relays() {
 fn a_picker_opened_during_an_answer_asks_again() {
     let relay = Relay::absent();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-    phone.until("the answer", |r| (r.relay() == RelaySupport::Unsupported).then_some(()));
+    phone.until("the answer", |r| (r.jam_start() == JamStart::Unsupported).then_some(()));
     let asked = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.")).count();
 
     relay.first_answers_held.store(true, Ordering::Relaxed);
@@ -1653,16 +1802,36 @@ fn a_picker_opened_during_an_answer_asks_again() {
     relay.close();
 }
 
-impl Relay {
-    /// Time exchanges sent through the relay so far.
-    fn clocks(&self) -> usize {
-        let hub = self.hub.lock();
-        hub.rooms.values().flat_map(|r| &r.events).filter(|(_, _, _, b)| matches!(b, Body::Command { op, .. } if matches!(**op, Op::Clock { .. }))).count()
+/// A mirrored device's playhead runs on by the sync server's clock, which both devices know: nothing is
+/// said for it, on screen or off.
+#[test]
+fn a_mirrored_playhead_runs_on_without_a_message() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    desk.remote.clone().watch(true);
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
+    desk.remote.clone().watch(false);
+    desk.remote.clone().pick(Some(phone_id.clone()));
+    desk.until("the phone mirrored whole, playing", |r| r.active().filter(|m| m.playing && m.rows.len() == 2));
+    let said = (desk.billed(), phone.billed());
+    for sight in [Sight::Screen, Sight::Notification, Sight::Screen] {
+        desk.remote.clone().sight(sight);
+        relay.sim.pass(Duration::from_secs(60));
     }
+    assert_eq!((desk.billed(), phone.billed()), said, "a minute each, on screen and off");
+    let now = relay.sim.now_us();
+    let shown = desk.remote.active().unwrap().position_at(now);
+    assert!((185_000..=186_000).contains(&shown), "three minutes on from 5 s: {shown}");
+    relay.close();
 }
 
+/// Nothing shows the mirrored device: what it says still arrives, and nothing is asked of it.
 #[test]
-fn a_mirrored_device_is_timed_only_while_it_plays_on_screen() {
+fn a_mirrored_device_out_of_sight_is_asked_nothing() {
     let relay = Relay::new();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
@@ -1674,167 +1843,15 @@ fn a_mirrored_device_is_timed_only_while_it_plays_on_screen() {
     desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
     desk.remote.clone().watch(false);
     desk.remote.clone().pick(Some(phone_id.clone()));
-    desk.until("the phone mirrored, paused", |r| r.active().filter(|m| !m.playing));
-    // A whole burst's time.
-    relay.sim.pass(Duration::from_millis(2_500));
-    assert_eq!(relay.clocks(), 0, "nothing wakes for a playhead standing still");
+    desk.until("the phone mirrored whole, paused", |r| r.active().filter(|m| !m.playing && m.rows.len() == 2));
 
-    // Playing, with only the notification showing it (the screen off).
-    desk.remote.clone().sight(Sight::Notification);
+    desk.remote.clone().sight(Sight::Nothing);
+    let said = desk.billed();
     phone.remote.clone().played(Playing { playing: true, position_ms: 5_000, ..Default::default() });
     desk.until("the phone playing", |r| r.active().filter(|m| m.playing));
-    relay.sim.pass(Duration::from_millis(2_500));
-    assert_eq!(relay.clocks(), 0, "nor for a playhead nothing shows");
-
+    relay.sim.pass(Duration::from_secs(60));
+    assert_eq!(desk.billed(), said, "the desk said nothing");
     desk.remote.clone().sight(Sight::Screen);
-    desk.until("timed once it plays on screen", |_| (relay.clocks() > 0).then_some(()));
-    relay.close();
-}
-
-/// A mirrored device gone quiet without leaving the relay shows paused once two time exchanges went
-/// unanswered, and plays again once it answers.
-#[test]
-fn a_mirrored_device_gone_quiet_stops_playing() {
-    let relay = Relay::new();
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-    phone.playing(&["s1", "s2"], 0);
-    phone.remote.clone().serve(true);
-    let phone_id = phone.remote.id();
-    desk.remote.clone().watch(true);
-    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.state.is_some()));
-    desk.remote.clone().watch(false);
-    desk.remote.clone().pick(Some(phone_id.clone()));
-    desk.until("the phone mirrored, playing", |r| r.active().filter(|m| m.playing));
-    relay.sim.pass(Duration::from_millis(2_500));
-
-    *relay.deaf.lock() = Some(phone_id.clone());
-    let sent = relay.clocks();
-    eventually(&relay, "two exchanges unanswered", || relay.clocks() == sent + 2);
-    assert!(desk.remote.active().unwrap().playing, "still playing until the next exchange falls due");
-    let quiet = desk.until("shown paused", |r| r.active().filter(|m| !m.playing));
-    assert_eq!(relay.clocks(), sent + 3, "paused as the third falls due");
-    let at = quiet.position_at(relay.sim.now_us());
-    assert!(at > 30_000, "paused where it was last shown, not where it was last heard: {at}");
-    relay.sim.pass(Duration::from_secs(5));
-    assert_eq!(desk.remote.active().unwrap().position_at(relay.sim.now_us()), at, "the playhead stands still");
-
-    *relay.deaf.lock() = None;
-    desk.until("playing again once it answers", |r| r.active().filter(|m| m.playing));
-    relay.close();
-}
-
-/// A mirrored device whose door refuses a time exchange shows paused at once when nothing else reaches
-/// it; with the relay up, the relay's exchanges decide.
-#[test]
-fn a_mirrored_device_whose_door_refuses_stops_playing() {
-    for relayed in [false, true] {
-        let relay = if relayed { Relay::new() } else { Relay::absent() };
-        let announced = Arc::new(Announced::default());
-        let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
-        phone.playing(&["s1", "s2"], 0);
-        phone.remote.clone().serve(true);
-        let door = announced.0.lock().clone().unwrap();
-        let phone_id = phone.remote.id();
-        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-        desk.remote.clone().watch(true);
-        desk.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
-        desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.nearby));
-        desk.remote.clone().watch(false);
-        desk.remote.clone().pick(Some(phone_id.clone()));
-        desk.until("the phone mirrored, playing", |r| r.active().filter(|m| m.playing));
-        relay.sim.pass(Duration::from_millis(2_500));
-
-        let times = || relay.asked().iter().filter(|a| a.starts_with("lan ") && a.contains("noriRemote.time")).count();
-        let (before, refused_at) = (times(), relay.sim.now_us());
-        relay.doors_refuse.store(true, Ordering::Relaxed);
-        if relayed {
-            for _ in 0..45 {
-                relay.sim.pass(Duration::from_secs(1));
-                assert!(desk.remote.active().unwrap().playing, "still playing while the relay reaches it");
-            }
-            assert!(times() > before, "its door was asked and refused");
-        } else {
-            desk.until("shown paused", |r| r.active().filter(|m| !m.playing));
-            assert!(relay.sim.now_us() - refused_at < clock::EVERY_US, "at once");
-            assert_eq!(times(), before + 1, "on the refused time exchange");
-        }
-        relay.close();
-    }
-}
-
-/// A device that stops serving while a poll saying it serves is on its way leaves again after it.
-#[test]
-fn a_device_leaves_after_its_last_poll() {
-    let relay = Relay::new();
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-    phone.playing(&["s1"], 0);
-    phone.remote.clone().serve(true);
-    let id = phone.remote.id();
-    let member = || relay.hub.lock().rooms.values().flat_map(|r| &r.members).any(|m| m.id == id);
-    eventually(&relay, "the phone listed", || relay.hub.lock().rooms.values().flat_map(|r| &r.members).any(|m| m.id == id && m.state.is_some()));
-    let (caught, go, arrived) = relay.late_poll(&id);
-    // Its held poll answers, and the next one sets out.
-    {
-        let mut hub = relay.hub.lock();
-        hub.seq += 1;
-        let seq = hub.seq;
-        room_touched(&mut hub, "u:ann", seq);
-        relay.wake();
-    }
-    relay.sim.until("the next poll on its way", || caught.try_recv().ok());
-    phone.remote.clone().serve(false);
-    eventually(&relay, "the leave at the relay", || !member());
-    go.send(relay.sim.busy()).unwrap();
-    relay.sim.until("the poll arrived", || arrived.try_recv().ok());
-    eventually(&relay, "left again after it", || !member());
-    relay.close();
-}
-
-/// A poll from before the device served, reaching the relay late, takes it off the list: it says its
-/// state again.
-#[test]
-fn a_serving_device_the_relay_dropped_is_listed_again() {
-    let relay = Relay::new();
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-    phone.playing(&["s1"], 0);
-    phone.remote.clone().serve(true);
-    let id = phone.remote.id();
-    let listed = || relay.hub.lock().rooms.values().flat_map(|r| &r.members).any(|m| m.id == id && m.state.is_some());
-    eventually(&relay, "the phone listed", listed);
-    let late: HashMap<String, String> = [("u", "ann"), ("dev", id.as_str()), ("serve", "0")].into_iter().map(|(k, v)| (k.into(), v.into())).collect();
-    relay.arrived(&late);
-    eventually(&relay, "the phone listed again", listed);
-    relay.close();
-}
-
-#[test]
-fn a_paused_device_out_of_sight_is_not_followed() {
-    let relay = Relay::new();
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-    phone.playing(&["s1", "s2"], 0);
-    phone.remote.clone().played(Playing { playing: false, position_ms: 5_000, ..Default::default() });
-    phone.remote.clone().serve(true);
-    let phone_id = phone.remote.id();
-    desk.remote.clone().watch(true);
-    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
-    desk.remote.clone().watch(false);
-    desk.remote.clone().pick(Some(phone_id.clone()));
-    desk.until("the phone mirrored, paused", |r| r.active().filter(|m| !m.playing));
-
-    // Nothing shows the phone on the desk any more: its held poll ends, and the phone playing is not heard.
-    desk.remote.clone().sight(Sight::Nothing);
-    phone.remote.clone().played(Playing { playing: true, position_ms: 5_000, ..Default::default() });
-    let plays = || relay.hub.lock().rooms.values().flat_map(|r| &r.members).any(|m| m.id == phone_id && m.state.as_ref().is_some_and(|s| s.playing));
-    phone.until("the relay has the phone playing", |_| plays().then_some(()));
-    relay.sim.pass(Duration::from_millis(300));
-    assert!(desk.remote.active().is_some_and(|m| !m.playing), "the desk did not hear it");
-    // A poll on its way as the sight changed may still arrive, and is answered; none waits for more.
-    assert!(!relay.parked(&desk.remote.id()), "nor asks");
-
-    desk.remote.clone().sight(Sight::Screen);
-    desk.until("followed again, playing", |r| r.active().filter(|m| m.playing));
     relay.close();
 }
 
@@ -1895,16 +1912,18 @@ fn a_device_playing_elsewhere_is_mirrored_whole() {
     phone.remote.clone().volume_changed(Some(22));
     desk.until("the phone's keys", |r| r.active().filter(|m| m.volume == Some(22) && m.position_ms == 7_000));
 
-    // Gone: no longer followed, and nothing more is asked of the relay for it.
+    // Gone: no longer followed, and another device's news asks nothing of the desk.
     phone.remote.clone().serve(false);
     desk.until("the phone gone", |r| r.active().is_none().then_some(()));
     assert!(!desk.remote.mirroring());
-    let asked = desk.polls(&relay);
     let other = Device::account(&relay, DeviceKind::Phone, "Other");
     other.playing(&["s1"], 0);
     other.remote.clone().serve(true);
-    other.until("serving", |_| (relay.asked().iter().filter(|a| a.ends_with(&other.remote.id())).count() >= 2).then_some(()));
-    assert_eq!(desk.polls(&relay), asked, "the desk stopped polling with nothing to follow");
+    desk.until("the other device", |r| r.devices().into_iter().find(|d| d.name == "Other"));
+    let said = desk.billed();
+    other.remote.clone().played(Playing { playing: false, position_ms: 9_000, ..Default::default() });
+    desk.until("its news", |r| r.devices().into_iter().find(|d| d.name == "Other").and_then(|d| d.state).filter(|s| !s.playing));
+    assert_eq!(desk.billed(), said, "the desk says nothing with nothing to follow");
     relay.close();
 }
 
@@ -1912,18 +1931,12 @@ fn a_device_playing_elsewhere_is_mirrored_whole() {
 fn a_page_past_the_end_of_a_queue_that_shrank_is_empty() {
     let relay = Relay::new();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let desk = Puppet::new(&relay, "desk");
     phone.playing(&["s1", "s2", "s3"], 0);
     phone.remote.clone().serve(true);
-    let phone_id = phone.remote.id();
-    desk.remote.clone().watch(true);
-    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
-
-    desk.remote.clone().send(phone_id, Op::Page { from: 10, count: 50 });
-    eventually(&relay, "an empty page", || {
-        let hub = relay.hub.lock();
-        hub.rooms.values().flat_map(|r| &r.events).any(|(_, _, _, b)| matches!(b, Body::Page { from: 10, entries, .. } if entries.is_empty()))
-    });
+    let asked = Body::Command { id: 1, op: Box::new(Op::Page { from: 10, count: 50 }) };
+    desk.say(Some(&phone), GroupSaid::Event { from: "desk".into(), to: phone.remote.id(), body: asked });
+    eventually(&relay, "an empty page", || desk.heard.lock().iter().any(|s| matches!(s, GroupSaid::Event { body: Body::Page { from: 10, entries, .. }, .. } if entries.is_empty())));
     relay.close();
 }
 
@@ -2159,37 +2172,19 @@ fn a_device_handed_back_its_playback_is_followed_there() {
     relay.close();
 }
 
-/// Two devices each last said they handed their playback to the other (one of them heard before it
-/// was handed back): a controller follows the hand-off once and stays.
 #[test]
 fn hand_offs_in_a_circle_are_followed_once() {
     let relay = Relay::new();
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-    let laptop = Device::account(&relay, DeviceKind::Desktop, "Laptop");
-    phone.playing(&["s1", "s2"], 0);
-    laptop.playing(&["s1", "s2"], 0);
-    for d in [&phone, &laptop] {
-        d.remote.clone().serve(true);
-    }
-    let (phone_id, laptop_id) = (phone.remote.id(), laptop.remote.id());
-    let published = |id: &str| relay.hub.lock().rooms.values().flat_map(|r| &r.members).find(|m| m.id == id && m.state.is_some()).cloned();
-    let mut members = phone.until("both published", |_| Some([published(&phone_id)?, published(&laptop_id)?]));
-    for d in [&phone, &laptop] {
-        d.remote.clone().stop();
-        d.remote.sent();
-    }
-    for (m, to) in members.iter_mut().zip([&laptop_id, &phone_id]) {
-        let state = m.state.as_mut().unwrap();
-        state.playing = false;
-        state.handed_to = Some(to.clone());
-    }
-    relay.hub.lock().rooms.entry("u:ann".into()).or_default().members.extend(members);
-
+    let (phone, laptop) = (Puppet::new(&relay, "phone"), Puppet::new(&relay, "laptop"));
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     desk.remote.clone().watch(true);
+    let entries = vec![nori_remote::wire::Entry { index: 0, id: "s1".into(), duration: 200, ..Default::default() }];
+    let handed = |to: &str| DeviceState { instance: Some(1), seq: 2, index: Some(0), len: 1, entries: entries.clone(), handed_to: Some(to.into()), ..Default::default() };
+    phone.here(handed("laptop"));
+    laptop.here(handed("phone"));
     desk.until("both", |r| (r.devices().iter().filter(|d| d.state.is_some()).count() == 2).then_some(()));
-    desk.remote.clone().pick(Some(phone_id));
-    assert_eq!(desk.remote.active().map(|m| m.id), Some(laptop_id));
+    desk.remote.clone().pick(Some("phone".into()));
+    assert_eq!(desk.remote.active().map(|m| m.id), Some("laptop".to_string()));
     relay.close();
 }
 
@@ -2207,9 +2202,7 @@ fn a_command_shows_until_the_device_says_it_carried_it_out() {
     desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
     desk.remote.clone().pick(Some(phone_id.clone()));
     desk.until("the phone mirrored", |r| r.active().filter(|m| m.playing));
-    // The phone's states reach the relay late.
-    relay.lag(&phone_id, 0);
-
+    // The phone's state is on its way as the desk sends.
     phone.remote.clone().played(Playing { playing: true, position_ms: 8_000, index: None, volume: Some(40), ..Default::default() });
     desk.remote.clone().send(phone_id.clone(), Op::Pause);
     desk.remote.clone().send(phone_id.clone(), Op::Volume { percent: 10 });
@@ -2265,8 +2258,6 @@ fn a_mirrored_playhead_is_where_the_device_is_heard() {
     let relay = Relay::new();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-    // The phone's clock reads seven seconds ahead of the desk's, and its word reaches the relay late.
-    relay.lag(&phone.remote.id(), 7_000_000);
     phone.playing(&["s1", "s2"], 0);
     phone.remote.clone().serve(true);
     let phone_id = phone.remote.id();
@@ -2278,7 +2269,6 @@ fn a_mirrored_playhead_is_where_the_device_is_heard() {
     let said = relay.sim.now_us();
     phone.remote.clone().played(Playing { playing: true, position_ms: 30_000, index: None, volume: Some(40), ..Default::default() });
     desk.until("the phone's new place", |r| r.active().filter(|m| m.position_ms >= 30_000));
-    // The burst of time exchanges is over within three seconds.
     relay.sim.pass(Duration::from_secs(3));
     let m = desk.remote.active().expect("still mirrored");
     let now = relay.sim.now_us();
@@ -2295,11 +2285,11 @@ fn a_stopped_remote_lets_go_of_everything() {
     let phone = Device::found(&relay, ann, DeviceKind::Phone, "Phone", Some(announced.clone()));
     phone.playing(&["s1", "s2"], 0);
     phone.remote.clone().serve(true);
-    let door = announced.0.lock().clone().expect("the door announced");
     let phone_id = phone.remote.id();
 
-    // The desk mirrors the phone through the relay and its door, learning its clock there.
+    // The desk mirrors the phone through the group and its door.
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let door = announced.0.lock().clone().expect("the door announced");
     desk.remote.clone().watch(true);
     desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
     desk.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, door.txt.clone());
@@ -2309,7 +2299,6 @@ fn a_stopped_remote_lets_go_of_everything() {
     desk.until("the phone mirrored", |r| r.active());
     let desk_id = desk.remote.id();
     let asked = || relay.asked().into_iter().filter(|a| (a.starts_with("noriRemote.poll") && a.ends_with(&desk_id)) || (a.starts_with("lan ") && a.contains(&format!("dev={desk_id}")) && !a.contains("noriRemote.send"))).collect::<Vec<_>>();
-    desk.until("a time exchange through the door", |_| asked().iter().any(|a| a.contains("noriRemote.time")).then_some(()));
     desk.until("a held poll at the door", |_| asked().iter().any(|a| a.contains("since=")).then_some(()));
 
     // Its held polls are given up at once, not waited out.
@@ -2323,7 +2312,7 @@ fn a_stopped_remote_lets_go_of_everything() {
     tablet.remote.clone().watch(true);
     phone.remote.clone().played(Playing { playing: false, position_ms: 20_000, index: None, volume: None, ..Default::default() });
     tablet.until("the phone's news", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state).filter(|s| s.position_ms == 20_000));
-    assert_eq!(asked(), before, "no poll or time exchange after the stop");
+    assert_eq!(asked(), before, "no poll after the stop");
     relay.close();
 }
 
@@ -2338,18 +2327,17 @@ fn a_stopped_device_leaves_the_lists_at_once() {
     desk.remote.clone().watch(true);
     desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
 
-    // Its leaving reaches the relay late: a client quitting right after waits for it.
-    relay.leave_late.store(true, Ordering::Relaxed);
+    // A client quitting right after the stop has told the group.
+    let said = phone.billed();
     phone.remote.clone().stop();
     phone.remote.sent();
-    let listed = relay.hub.lock().rooms["u:ann"].members.iter().any(|m| m.id == phone_id);
-    assert!(!listed, "the relay was told before the stop returned");
+    assert!(phone.billed() > said, "the group was told before the client may quit");
     desk.until("the phone gone", |r| r.devices().is_empty().then_some(()));
     relay.close();
 }
 
 /// A device's remote made again at once, as switching to another profile of the same account does,
-/// stays listed though the one before still had its leaving to send.
+/// stays listed though the one before said it is gone after.
 #[test]
 fn a_device_made_again_at_once_stays_listed() {
     let relay = Relay::new();
@@ -2361,23 +2349,26 @@ fn a_device_made_again_at_once_stays_listed() {
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     desk.remote.clone().watch(true);
     let listed = |r: &Remote| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state);
-    desk.until("the phone", listed);
+    let first = desk.until("the phone", listed);
 
-    relay.leave_late.store(true, Ordering::Relaxed);
     phone.remote.clone().stop();
     let again = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
     assert_eq!(again.remote.id(), phone_id, "the same device");
     again.playing(&["s1"], 0);
     again.remote.clone().serve(true);
+    again.until("the new remote's state said", |_| listed(&desk.remote).filter(|s| s.instance > first.instance));
+    // The remote before says it is gone only now, after the new one said it is here.
+    let gone = GroupSaid::Gone { id: phone_id.clone(), instance: first.instance };
+    phone.group.as_ref().unwrap().0.remote_say(&phone.core.session.settings.with_prefs(|p| p.active_server_id.clone()).unwrap(), None, serde_json::to_value(gone).unwrap());
     desk.sim.pass(Duration::from_secs(5));
-    let in_room = relay.hub.lock().rooms["u:ann"].members.iter().any(|m| m.id == phone_id);
-    assert!(in_room, "the leave of the remote before took the device off the relay");
     assert!(listed(&desk.remote).is_some(), "the desk lost the phone");
     relay.close();
 }
 
+/// A device whose connection to the sync server dropped leaves the lists, and is listed again once it
+/// is back.
 #[test]
-fn far_devices_are_hidden_while_the_relay_cannot_be_reached() {
+fn far_devices_are_hidden_while_their_connection_is_down() {
     let relay = Relay::new();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
@@ -2388,38 +2379,35 @@ fn far_devices_are_hidden_while_the_relay_cannot_be_reached() {
     let listed = |r: &Remote| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state);
     desk.until("the phone", listed);
 
-    // What the relay last said is not shown once it no longer answers: the phone may have gone since.
-    relay.go_down(true);
+    desk.group.as_ref().unwrap().1.drop_all();
     desk.until("the phone hidden", |r| r.devices().is_empty().then_some(()));
-
-    // Back as soon as the relay answers, without waiting for news.
-    relay.go_down(false);
-    desk.remote.clone().watch(false);
-    desk.remote.clone().watch(true);
     desk.until("the phone again", listed);
+    phone.group.as_ref().unwrap().1.drop_all();
+    desk.until("the phone hidden while its connection is down", |r| r.devices().is_empty().then_some(()));
+    desk.until("and again once it is back", listed);
     relay.close();
 }
 
-/// A mirrored device that leaves the lists is no longer shown as the one played on: the relay no longer
-/// answers, or lists it without a state.
+/// A mirrored device that leaves the lists is no longer shown as the one played on: it stops serving,
+/// its connection drops, or this device's does.
 #[test]
 fn a_mirrored_device_that_leaves_the_lists_is_no_longer_mirrored() {
-    for relay_down in [true, false] {
+    for how in ["stops serving", "drops", "drops here"] {
         let relay = Relay::new();
+        let phone = Puppet::new(&relay, "phone");
         let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-        relay.list("phone", Some(DeviceState { playing: true, index: Some(0), len: 1, ..Default::default() }));
-        desk.remote.clone().watch(true);
+        phone.here(DeviceState { playing: true, index: Some(0), len: 1, ..Default::default() });
         desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == "phone").and_then(|d| d.state));
         desk.remote.clone().pick(Some("phone".into()));
         desk.until("the phone mirrored", |r| r.active());
 
-        if relay_down {
-            relay.go_down(true);
-        } else {
-            relay.list("phone", None);
+        match how {
+            "stops serving" => phone.say(None, GroupSaid::Here { member: Box::new(Member { id: "phone".into(), name: "phone".into(), kind: DeviceKind::Phone, state: None }), ask: false, instance: None }),
+            "drops" => phone.net.drop_all(),
+            _ => desk.group.as_ref().unwrap().1.drop_all(),
         }
         desk.until("the phone hidden", |r| r.devices().is_empty().then_some(()));
-        desk.until(&format!("the phone no longer mirrored, relay down: {relay_down}"), |r| r.active().is_none().then_some(()));
+        desk.until(&format!("the phone no longer mirrored once it {how}"), |r| r.active().is_none().then_some(()));
         relay.close();
     }
 }
@@ -2924,7 +2912,6 @@ fn a_device_knows_its_own_jams_invites_and_ended_ones() {
 fn a_jam_ended_while_the_relay_missed_it_is_closed_again() {
     let relay = Relay::new();
     let host = Device::account(&relay, DeviceKind::Phone, "Host");
-    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     host.playing(&["s1"], 0);
     host.remote.clone().watch(true);
     opened(&host);
@@ -2933,11 +2920,10 @@ fn a_jam_ended_while_the_relay_missed_it_is_closed_again() {
     eventually(&relay, "the close lost", || relay.asked().iter().any(|a| a == "lost close"));
     relay.lose_closes.store(false, Ordering::Relaxed);
 
-    // News in the account's room: the host's held poll answers, the jam still listed in it.
-    desk.remote.clone().serve(true);
-    host.until("the desk", |r| r.devices().into_iter().find(|d| d.name == "Desk"));
-    assert!(host.remote.jam_view().is_none(), "no jam shown");
+    // News at the relay: the host's held poll answers, the jam still listed in it.
+    relay.list("other", None);
     eventually(&relay, "the jam closed at the relay", || relay.jams() == 0);
+    assert!(host.remote.jam_view().is_none(), "no jam shown");
     relay.close();
 }
 
@@ -2948,7 +2934,6 @@ fn a_jam_is_started_once_and_stays_ended() {
     let dir = nori_testdir::TempDir::new("remote-starts");
     let relay = Relay::new();
     let host = Device::kept(&relay, &dir, DeviceKind::Phone, "Host");
-    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     host.playing(&["s1"], 0);
     host.remote.clone().watch(true);
     eventually(&relay, "the held poll", || !relay.waiting.lock().is_empty());
@@ -2963,8 +2948,7 @@ fn a_jam_is_started_once_and_stays_ended() {
     assert_eq!(host.remote.jam_start(), JamStart::Hosting);
 
     host.remote.clone().jam_close();
-    desk.remote.clone().serve(true);
-    host.until("the desk", |r| r.devices().into_iter().find(|d| d.name == "Desk"));
+    relay.list("other", None);
     eventually(&relay, "no jam at the relay", || relay.jams() == 0);
     assert!(host.remote.jam_view().is_none());
     assert_eq!(host.remote.jam_start(), JamStart::Offered);
@@ -2996,9 +2980,9 @@ fn a_jam_host_shows_once_it_hears_its_guests() {
     host.playing(&["s1"], 0);
     opened(&host);
     let shown = || relay.hub.lock().rooms.values().filter(|r| r.jam).flat_map(|r| &r.members).any(|m| m.id == host.remote.id() && m.state.is_some());
-    // Sent after the jam's first state would have been, the same way.
-    host.remote.clone().send("nobody".into(), Op::Play);
-    eventually(&relay, "the command at the relay", || relay.hub.lock().rooms.values().flat_map(|r| &r.events).any(|e| e.2.as_deref() == Some("nobody")));
+    // Its state changes, and would have reached the jam's room by now.
+    host.remote.clone().played(Playing { playing: false, position_ms: 7_000, ..Default::default() });
+    relay.sim.pass(Duration::from_secs(1));
     assert!(!shown(), "shown before its first answer");
     relay.release_first_answers();
     eventually(&relay, "the host shown", shown);
@@ -3288,13 +3272,8 @@ fn spawned<T: Send + 'static>(sim: &Native, f: impl Future<Output = T> + Send + 
     out
 }
 
-impl Relay {
-    /// Whether device `id` is listed with a state.
-    fn lists(&self, id: &str) -> bool {
-        self.hub.lock().rooms.values().flat_map(|r| &r.members).any(|m| m.id == id && m.state.is_some())
-    }
-}
-
+/// The relay a jam screen polls: a poll that failed waits twice as long each time, until the network is
+/// back.
 #[test]
 fn a_failed_poll_waits_longer_each_time_until_the_network_is_back() {
     let relay = Relay::new();
@@ -3302,42 +3281,43 @@ fn a_failed_poll_waits_longer_each_time_until_the_network_is_back() {
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
     let sim = &relay.sim;
     phone.playing(&["s1"], 0);
-    phone.remote.clone().serve(true);
-    let id = phone.remote.id();
+    phone.remote.clone().watch(true);
+    let polls = || relay.asked_for("noriRemote.poll");
     // Its first poll fails once everything here is said: nothing changes while it rests.
-    eventually(&relay, "the first poll at the relay", || relay.asked_for("noriRemote.poll") == 1);
+    eventually(&relay, "the first poll at the relay", || polls() == 1);
     relay.go_down(true);
     waiting(sim, "the retry", Duration::from_secs(30));
     relay.go_down(false);
     relay.release_first_answers();
     sim.pass(Duration::from_secs(29));
     assert_eq!(sim.waits(), [Duration::from_secs(1)], "only the retry waits");
-    assert_eq!(relay.asked_for("noriRemote.poll"), 1, "not asked again before its time");
+    assert_eq!(polls(), 1, "not asked again before its time");
     sim.pass(Duration::from_secs(1));
-    eventually(&relay, "listed once asked again", || relay.lists(&id));
+    eventually(&relay, "asked again", || polls() > 1);
 
     // Down for good: each failed poll waits twice as long as the last, up to 5 min, and a change here
     // does not ask early.
     relay.go_down(true);
     for secs in [30, 60, 120, 240, 300, 300] {
         waiting(sim, "the retry", Duration::from_secs(secs));
-        phone.remote.clone().watch(true);
+        phone.remote.clone().played(Playing { playing: true, position_ms: secs as i64 * 1_000, ..Default::default() });
         waiting(sim, "the same retry after a change", Duration::from_secs(secs));
         sim.pass(Duration::from_secs(secs));
     }
     phone.remote.network_back();
     waiting(sim, "the first wait again once the network is back", Duration::from_secs(30));
     relay.go_down(false);
+    let asked = polls();
     phone.remote.network_back();
-    eventually(&relay, "listed again", || relay.lists(&id));
+    eventually(&relay, "answered again", || polls() > asked + 1);
 
     // Down again after an answer: the wait starts over, and the network coming back asks at once.
     relay.go_down(true);
     waiting(sim, "the retry after that", Duration::from_secs(30));
     relay.go_down(false);
-    let polls = relay.asked_for("noriRemote.poll");
+    let asked = polls();
     phone.remote.network_back();
-    eventually(&relay, "asked again once the network is back", || relay.asked_for("noriRemote.poll") > polls);
+    eventually(&relay, "asked again once the network is back", || polls() > asked);
     relay.close();
 }
 
@@ -3347,11 +3327,11 @@ fn leaving_gives_up_the_held_poll_and_leaves_nothing_waiting() {
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
     let sim = &relay.sim;
     phone.playing(&["s1"], 0);
-    phone.remote.clone().serve(true);
+    phone.remote.clone().watch(true);
     let id = phone.remote.id();
-    eventually(&relay, "the held poll", || relay.parked(&id) && relay.lists(&id));
-    phone.remote.clone().serve(false);
-    eventually(&relay, "left, its poll no longer held", || !relay.parked(&id) && !relay.lists(&id));
+    eventually(&relay, "the held poll", || relay.parked(&id));
+    phone.remote.clone().watch(false);
+    eventually(&relay, "its poll no longer held", || !relay.parked(&id));
     assert!(sim.waits().is_empty(), "no timer waits: {:?}", sim.waits());
 
     // A jam guest's leave goes, and stopping gives up the rest at once.
@@ -3372,7 +3352,7 @@ fn leaving_gives_up_the_held_poll_and_leaves_nothing_waiting() {
 }
 
 #[test]
-fn sends_reach_the_relay_in_the_order_made() {
+fn sends_reach_the_device_in_the_order_made() {
     let relay = Relay::new();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
@@ -3381,43 +3361,11 @@ fn sends_reach_the_relay_in_the_order_made() {
     desk.remote.clone().watch(true);
     let phone_id = phone.remote.id();
     desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
-    // Its sends take from none to 170 ms each on the way.
-    relay.lag(&desk.remote.id(), 0);
     for ms in 1..=12 {
         desk.remote.clone().send(phone_id.clone(), Op::Seek { ms: ms * 1_000 });
     }
     let told: Vec<Op> = (0..12).map(|_| phone.told()).collect();
     assert_eq!(told, (1..=12).map(|ms| Op::Seek { ms: ms * 1_000 }).collect::<Vec<_>>());
-    relay.close();
-}
-
-#[test]
-fn a_mirrored_clock_is_learned_in_a_burst_then_every_quarter_minute() {
-    let relay = Relay::new();
-    let sim = &relay.sim;
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-    phone.playing(&["s1", "s2"], 0);
-    phone.remote.clone().serve(true);
-    let phone_id = phone.remote.id();
-    desk.remote.clone().watch(true);
-    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
-    desk.remote.clone().watch(false);
-    desk.remote.clone().pick(Some(phone_id.clone()));
-    desk.until("the phone mirrored, playing", |r| r.active().filter(|m| m.playing));
-    eventually(&relay, "the first exchange", || relay.clocks() == 1);
-    let gap = Duration::from_millis(250);
-    for sent in 2..=clock::BURST {
-        waiting(sim, "the burst's gap", gap);
-        sim.pass(gap);
-        eventually(&relay, "the burst's next exchange", || relay.clocks() == sent);
-    }
-    let every = Duration::from_micros(clock::EVERY_US as u64);
-    waiting(sim, "the quarter minute", every);
-    sim.pass(every - gap);
-    assert_eq!(relay.clocks(), clock::BURST, "none before the quarter minute");
-    sim.pass(gap);
-    eventually(&relay, "the next exchange", || relay.clocks() == clock::BURST + 1);
     relay.close();
 }
 
@@ -3492,5 +3440,184 @@ fn a_device_handed_the_queue_does_not_follow_the_one_that_handed_it() {
     desk.remote.clone().discover_active(true);
     relay.sim.pass(Duration::from_secs(5));
     assert!(desk.remote.active().is_none(), "the desk plays the queue handed to it");
+    relay.close();
+}
+
+/// The sync server bills each message it is sent, so nothing goes on a timer: an hour of listening, with
+/// another device showing the music on screen, costs one message a song.
+#[test]
+fn an_hour_of_listening_watched_costs_a_message_a_song() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let ids: Vec<String> = (0..20).map(|n| format!("s{n}")).collect();
+    let songs: Vec<Song> = ids.iter().map(|id| Song { id: id.clone(), title: id.to_uppercase(), duration: 180, ..Default::default() }).collect();
+    phone.core.session.register(songs);
+    phone.core.session.set(ids.clone(), Some(0), false, None);
+    phone.remote.clone().played(Playing { playing: true, position_ms: 0, index: Some(0), volume: Some(40), ..Default::default() });
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    desk.remote.clone().watch(true);
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
+    desk.remote.clone().watch(false);
+    desk.remote.clone().pick(Some(phone_id.clone()));
+    desk.until("the phone mirrored whole", |r| r.active().filter(|m| m.rows.len() == 20));
+    let said = phone.billed() + desk.billed();
+    for song in 1..20u32 {
+        relay.sim.pass(Duration::from_secs(180));
+        phone.remote.clone().played(Playing { playing: true, position_ms: 0, index: Some(song), volume: Some(40), ..Default::default() });
+        desk.until("the next song shown", |r| r.active().filter(|m| m.at.is_some_and(|at| m.rows[at as usize].song.id == format!("s{song}"))));
+    }
+    relay.sim.pass(Duration::from_secs(180));
+    assert_eq!(phone.billed() + desk.billed() - said, 19, "an hour, 19 songs after the first");
+    relay.close();
+}
+
+/// A command the nearby door does not take reaches the device through the group's room.
+#[test]
+fn a_command_the_door_does_not_take_goes_through_the_group() {
+    let relay = Relay::absent();
+    let announced = Arc::new(Announced::default());
+    let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().serve(true);
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let door = announced.0.lock().clone().expect("the door announced");
+    desk.remote.clone().watch(true);
+    desk.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
+    let phone_id = phone.remote.id();
+    desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.nearby && d.state.is_some()));
+    relay.doors_refuse.store(true, Ordering::Relaxed);
+    let said = desk.billed();
+    desk.remote.clone().send(phone_id, Op::Pause);
+    assert_eq!(phone.told(), Op::Pause);
+    assert_eq!(desk.billed(), said + 1, "once, through the sync server");
+    relay.close();
+}
+
+/// A profile that does not sync is no profile of my devices: neither of them is offered the other.
+#[test]
+fn a_profile_that_does_not_sync_offers_no_device() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1"], 0);
+    phone.remote.clone().serve(true);
+    desk.remote.clone().serve(true);
+    desk.remote.clone().watch(true);
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.name == "Phone"));
+    phone.until("the desk", |r| r.devices().into_iter().find(|d| d.name == "Desk"));
+    let (syncing, _) = desk.group.as_ref().unwrap();
+    let local = desk.core.session.settings.with_prefs(|p| p.active_server_id.clone()).unwrap();
+    syncing.sync_off(local.clone(), false);
+    desk.core.session.settings.change(|p| StoredPrefs { servers: p.servers.iter().map(|s| SavedServer { sync_off: s.id == local, ..s.clone() }).collect(), ..p.clone() });
+    desk.until("the phone no longer offered", |r| r.devices().is_empty().then_some(()));
+    phone.remote.clone().played(Playing { playing: false, position_ms: 9_000, ..Default::default() });
+    relay.sim.pass(Duration::from_secs(5));
+    assert!(desk.remote.devices().is_empty(), "nor heard again");
+    phone.remote.clone().watch(true);
+    phone.until("the desk gone from the phone", |r| r.devices().is_empty().then_some(()));
+    relay.close();
+}
+
+/// A state goes through the sync server only to my devices with the profile open that this one does
+/// not reach on the network: with none open, or the one watching reading it at the door, it costs nothing.
+#[test]
+fn a_state_costs_nothing_when_no_device_needs_the_server_for_it() {
+    let relay = Relay::new();
+    let announced = Arc::new(Announced::default());
+    let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    let at = |ms: i64| Playing { playing: true, position_ms: ms, volume: Some(40), ..Default::default() };
+
+    // The desk reads the phone's state at its door.
+    let door = announced.0.lock().clone().expect("the door announced");
+    desk.remote.clone().watch(true);
+    desk.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
+    desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.nearby && d.state.is_some()));
+    let said = phone.billed();
+    phone.remote.clone().played(at(60_000));
+    desk.until("the phone's new place", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state).filter(|s| s.position_ms == 60_000));
+    assert_eq!(phone.billed(), said, "heard at the door");
+
+    // No other device has the profile open.
+    stop(&desk);
+    relay.sim.pass(Duration::from_secs(1));
+    let said = phone.billed();
+    phone.remote.clone().played(at(90_000));
+    relay.sim.pass(Duration::from_secs(1));
+    assert_eq!(phone.billed(), said, "said to nobody");
+    relay.close();
+}
+
+/// Two of my devices on one network sync their profiles through the door while the sync server
+/// refuses them.
+#[test]
+fn profiles_sync_through_the_door_when_the_server_refuses() {
+    let relay = Relay::absent();
+    let announced = Arc::new(Announced::default());
+    let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
+    phone.remote.clone().serve(true);
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let door = announced.0.lock().clone().expect("the door announced");
+    relay.sync.wall(true);
+    for d in [&phone, &desk] {
+        d.group.as_ref().unwrap().1.drop_all();
+    }
+    desk.remote.clone().watch(true);
+    desk.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
+    desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.nearby));
+    let names = |d: &Device| d.core.session.settings.with_prefs(|p| p.servers.iter().map(|s| s.name.clone()).collect::<Vec<_>>()).unwrap();
+    desk.core.session.settings.change(|p| StoredPrefs { servers: p.servers.iter().map(|s| SavedServer { name: "Music".into(), ..s.clone() }).collect(), ..p.clone() });
+    phone.until("the rename through the door", |_| (names(&phone) == ["Music"]).then_some(()));
+    relay.close();
+}
+
+/// A device whose door this one reaches may not reach this one's (a phone on an emulator's network): its
+/// state still goes to it through the sync server.
+#[test]
+fn a_state_reaches_a_device_that_cannot_reach_this_ones_door() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let announced = Arc::new(Announced::default());
+    let desk = Device::found(&relay, ann(), DeviceKind::Desktop, "Desk", Some(announced.clone()));
+    desk.remote.clone().serve(true);
+    let door = announced.0.lock().clone().expect("the desk's door announced");
+    phone.remote.clone().watch(true);
+    phone.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
+    phone.until("the desk nearby", |r| r.devices().into_iter().find(|d| d.nearby));
+    phone.remote.clone().watch(false);
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().serve(true);
+    desk.remote.clone().watch(true);
+    let phone_id = phone.remote.id();
+    desk.until("the phone playing, through the server", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state).filter(|s| s.playing));
+    relay.close();
+}
+
+/// A device that stopped reading another's door hears that device through the group's room again: what
+/// changes there after it let go of the door reaches it, and is shown over what the door last said.
+#[test]
+fn a_device_that_lets_go_of_a_door_hears_through_the_group() {
+    let relay = Relay::new();
+    let announced = Arc::new(Announced::default());
+    let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().serve(true);
+    let door = announced.0.lock().clone().expect("the door announced");
+    let phone_id = phone.remote.id();
+    desk.remote.clone().watch(true);
+    desk.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
+    desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.nearby && d.state.is_some()));
+    desk.remote.clone().watch(false);
+    let at = |ms: i64, playing: bool| Playing { playing, position_ms: ms, volume: Some(40), ..Default::default() };
+    phone.remote.clone().played(at(9_000, false));
+    relay.sim.pass(Duration::from_secs(1));
+    phone.remote.clone().played(at(20_000, true));
+    desk.until("the phone's latest word", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state).filter(|s| s.position_ms == 20_000));
     relay.close();
 }

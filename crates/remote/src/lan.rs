@@ -1,12 +1,12 @@
-//! Authenticated LAN control and scoped jams. Devices pair using a random secret; Subsonic profiles
-//! can also use their existing account credential. Discovery carries only a keyed tag. A jam uses its
+//! Authenticated LAN control and scoped jams. My devices in a group sign with a key from the group's.
+//! Discovery carries only a keyed tag. A jam uses its
 //! own invite credential and derives a separate credential for every guest, without sharing an account.
 
 use alloc::{format, string::{String, ToString}, vec::Vec};
 use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 use sha2::{Digest, Sha256};
 
-/// A 256-bit pairing or invite credential from the operating system.
+/// A 256-bit invite credential from the operating system.
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub fn new_secret() -> std::io::Result<String> {
     let mut bytes = [0; 32];
@@ -27,39 +27,6 @@ pub fn member_secret(invite: &str, nonce: &str) -> String {
 /// The secret in a temporary YouTube LAN jam profile.
 pub fn guest_secret(api_key: &str) -> Option<&str> {
     api_key.strip_prefix("nori-jam-lan-")
-}
-
-/// What a device's pairing code (and QR code) carries: the invite its door pairs a new device with,
-/// never an account's credential, and where that door is.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PairCode {
-    /// 256 bits, hex.
-    pub invite: String,
-    /// The device showing it.
-    pub id: String,
-    pub name: String,
-    /// Its door at each of its addresses ([`door_addresses`]), at least one.
-    pub doors: Vec<SocketAddr>,
-}
-
-const PAIR_LINK: &str = "nori://pair#";
-
-/// Device pairing is separate from a jam invitation. Each door is an `a`; an older nori reads the first.
-pub fn pairing_link(code: &PairCode) -> String {
-    let PairCode { invite, id, name, doors } = code;
-    let doors: String = doors.iter().map(|d| format!("&a={}", crate::encode(&d.to_string()))).collect();
-    format!("{PAIR_LINK}k={invite}&d={}{doors}&n={}", crate::encode(id), crate::encode(name))
-}
-
-/// The code a pairing link carries; None for anything else, an older nori's code without its door among them.
-pub fn parse_pairing(link: &str) -> Option<PairCode> {
-    let fragment = link.trim().strip_prefix(PAIR_LINK)?;
-    let all = |key: &'static str| fragment.split('&').filter_map(|kv| kv.split_once('=')).filter(move |(k, _)| *k == key).filter_map(|(_, v)| crate::decode(v));
-    let get = |key| all(key).next();
-    let invite = get("k").filter(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit()))?.to_ascii_lowercase();
-    let id = get("d").filter(|d| !d.is_empty())?;
-    let doors: Vec<SocketAddr> = all("a").filter_map(|a| a.parse().ok()).collect();
-    (!doors.is_empty()).then(|| PairCode { invite, id, name: get("n").unwrap_or_default(), doors })
 }
 
 /// One of a device's IPv4 addresses, and the length of its network's prefix.
@@ -105,34 +72,11 @@ pub fn door_order(doors: impl IntoIterator<Item = SocketAddr>, nets: &[Net]) -> 
     out
 }
 
-/// The key a device paired with `invite` signs with: made on both devices from the pairing's nonce, never sent.
-pub fn pair_key(invite: &str, nonce: &str) -> String {
-    hex(&hmac(invite.as_bytes(), format!("nori-pair:{nonce}").as_bytes()))
-}
-
-/// Why a device did not pair.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Error))]
-pub enum PairError {
-    /// Not a pairing code.
-    NotACode,
-    /// This device's own code.
-    Own,
-    /// This profile does not pair: a server account's devices find each other, and a jam's guest controls none.
-    Unavailable,
-    /// Nothing answered where the code says the device is: it is on another network, or its remote control is off.
-    Unreachable,
-    /// It did not answer in time.
-    TimedOut,
-    /// It turned the code down: it shows another one now.
-    Refused,
-}
-
 /// The door listens on a socket, which a browser cannot.
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 mod door;
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
-pub use door::{Access, Ask, Asker, Door, Handler, PairChange, Pairs, Told, Unanswered};
+pub use door::{Ask, Asker, Door, Handler, Told, Unanswered};
 
 /// The mDNS service type a door is announced as.
 pub const SERVICE: &str = "_nori._tcp";
@@ -160,10 +104,10 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// What a door announces so the account's devices recognise it: a keyed hash of the user name, so
-/// another account's devices on the network neither match it nor learn the name.
-pub fn account_tag(user: &str, secret: &str) -> String {
-    hex(&hmac(secret.as_bytes(), format!("nori-account:{user}").as_bytes()))[..16].to_string()
+/// A keyed hash of `name` under `secret`, short: what a door announces so my devices recognize it, and
+/// a LAN jam guest's id. Devices without the secret neither match it nor learn anything from it.
+pub fn tag(name: &str, secret: &str) -> String {
+    hex(&hmac(secret.as_bytes(), format!("nori-account:{name}").as_bytes()))[..16].to_string()
 }
 
 fn signature(secret: &str, method: &str, target: &str, body: &[u8]) -> String {
@@ -215,41 +159,13 @@ mod tests {
         assert!(!verified("sesame", "GET", &t, b"{}", 1_000_000), "another method");
         assert!(!verified("sesame", "POST", &t.replace("dev=a", "dev=b"), b"{}", 1_000_000), "another device");
         assert!(!verified("sesame", "POST", &t, b"{}", 1_000_001 + SKEW_MS), "too old");
-        assert_eq!(account_tag("ann", "pw"), account_tag("ann", "pw"));
-        assert_ne!(account_tag("ann", "pw"), account_tag("ann", "pw2"));
-        assert_ne!(account_tag("ann", "pw"), account_tag("bob", "pw"));
-    }
-
-    #[test]
-    fn pairing_codes_read_back() {
-        let invite = "ab".repeat(32);
-        let doors = vec!["192.168.196.241:41234".parse().unwrap(), "192.168.0.105:41234".parse().unwrap()];
-        let code = PairCode { invite: invite.clone(), id: "d3sk".into(), name: "Ann's Mac & co".into(), doors };
-        assert_eq!(parse_pairing(&format!(" {} ", pairing_link(&code))), Some(code.clone()));
-        let link = |fragment: &str| format!("nori://pair#{fragment}");
-        let one = |door: &str| PairCode { name: String::new(), doors: vec![door.parse().unwrap()], ..code.clone() };
-        let cases = [
-            (link(&format!("k={}&d=d3sk&a=10.0.0.2%3A1", invite.to_uppercase())), Some(one("10.0.0.2:1"))),
-            (link(&format!("k={invite}&d=d3sk&a=%5Bfe80%3A%3A1%5D%3A41234")), Some(one("[fe80::1]:41234"))),
-            (link(&format!("k={invite}&d=d3sk&a=nori.local%3A1&a=10.0.0.2%3A1")), Some(one("10.0.0.2:1"))),
-            (link(&format!("k={invite}")), None),
-            (link(&format!("k={invite}&d=d3sk")), None),
-            (link(&format!("k={invite}&d=d3sk&a=")), None),
-            (link(&format!("k={invite}&a=10.0.0.2%3A1")), None),
-            (link(&format!("k={}&d=d3sk&a=10.0.0.2%3A1", &invite[1..])), None),
-            (link(&format!("k={}&d=d3sk&a=10.0.0.2%3A1", "zz".repeat(32))), None),
-            (format!("nori://jam?k={invite}&d=d3sk&a=10.0.0.2%3A1"), None),
-            (String::new(), None),
-        ];
-        for (link, code) in cases {
-            assert_eq!(parse_pairing(&link), code, "{link}");
-        }
-        assert_ne!(pair_key(&invite, "n1"), pair_key(&invite, "n2"));
-        assert_ne!(pair_key(&invite, "n1"), pair_key(&"cd".repeat(32), "n1"));
+        assert_eq!(tag("ann", "pw"), tag("ann", "pw"));
+        assert_ne!(tag("ann", "pw"), tag("ann", "pw2"));
+        assert_ne!(tag("ann", "pw"), tag("bob", "pw"));
     }
 
     /// A Mac on Ethernet (192.168.192.0/20, its route to the internet) and on the phone's Wi-Fi
-    /// (192.168.0.0/24): its code names both, and the phone tries the Wi-Fi one first.
+    /// (192.168.0.0/24): its door is reached at both, and the phone tries the Wi-Fi one first.
     #[test]
     fn a_device_on_two_networks_is_reached_on_each() {
         let net = |ip: &str, prefix| Net { ip: ip.parse().unwrap(), prefix };

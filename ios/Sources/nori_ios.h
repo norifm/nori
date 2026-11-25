@@ -61,15 +61,17 @@ typedef struct NoriReport {
 #define NORI_REPORT_CURVE 22
 #define NORI_REPORT_STARRED 23
 #define NORI_REPORT_WAITING 24
-/// A device paired (flag 1, text its name) or not (flag 0: count is why, a NORI_PAIR_FAILED_* code, text the
-/// device's name when its code says it).
-#define NORI_REPORT_PAIRED 25
 /// Downloaded songs offered an analysis: count of them, about ms minutes; flag 1 when an update changed the
 /// analysis, 0 when AutoMix was turned on. nori_ios_analyse_downloads is the yes.
 #define NORI_REPORT_ANALYSIS_OFFER 26
 /// The support service answered: flag NORI_SUPPORT_*, text the page to open or why not, index 1 when a
 /// monthly payment runs in another currency.
 #define NORI_REPORT_SUPPORT 27
+/// Sync told the app something: flag NORI_SYNC_CHANGED (text is nori_ios_sync_state's JSON) or
+/// NORI_SYNC_PROFILES (the saved profiles changed; count 1 when the one in use did: nori_ios_reopen).
+#define NORI_REPORT_SYNC 28
+#define NORI_SYNC_CHANGED 0
+#define NORI_SYNC_PROFILES 1
 #define NORI_SUPPORT_FAILED 0
 #define NORI_SUPPORT_GIVEN 1
 #define NORI_SUPPORT_REFRESHED 2
@@ -130,6 +132,36 @@ void nori_ios_memory_warning(void);
 
 /// Closes the open session and opens the active saved server: NULL, or an error to free.
 char *nori_ios_reopen(const char *data_dir);
+
+/// Starts pairing and profile sync over the database under data_dir: nothing runs unless this iPod is paired
+/// with sync on. NULL on success; otherwise an error to free with nori_ios_free.
+char *nori_ios_sync_open(const char *data_dir);
+/// Where sync stands, as JSON to free: {state, refused, retryMs, devices: [{name, online, lastMs}], nearby:
+/// [{name, link}], pairing}.
+char *nori_ios_sync_state(void);
+/// The pairing screen opened (1) or closed: while open, nearby lists the devices waiting to be paired that
+/// have a server account of this iPod's.
+void nori_ios_sync_look(int32_t on);
+/// Takes the code of a device listed nearby; its words are checked as for a link.
+void nori_ios_sync_take_nearby(const char *link);
+/// The nearby way of pairing over the app's Bonjour: announce(name, txt JSON) while the code shows, name NULL
+/// withdraws it; browse(on) while a pairing screen looks. Found and lost go to the two below.
+typedef void (*NoriPairAnnounceFn)(const char *name, const char *txt);
+typedef void (*NoriPairBrowseFn)(int32_t on);
+void nori_ios_sync_on_nearby(NoriPairAnnounceFn announce, NoriPairBrowseFn browse);
+void nori_ios_sync_nearby_found(const char *service, const char *txt);
+void nori_ios_sync_nearby_lost(const char *service);
+/// Shows a code to pair this iPod into a group; NORI_REPORT_SYNC follows with it.
+void nori_ios_sync_code(void);
+/// Takes another device's pasted code: NULL when it reads, otherwise why not, to free.
+char *nori_ios_sync_take(const char *link);
+/// Confirms the pairing asked; keep non-zero keeps a copy on the server at a group's first pairing.
+void nori_ios_sync_confirm(int32_t keep);
+void nori_ios_sync_cancel(void);
+/// Reset pairing: this iPod leaves its group for one of its own.
+void nori_ios_sync_reset(void);
+/// The sync or sync server setting changed.
+void nori_ios_sync_settings_changed(void);
 
 /// The saved servers as JSON to free: [{id, label, url, active, kind, waits, icon, letter}]; an empty
 /// label: call it by its kind. `icon` one of nori_ios_profile_icons' ids, `letter` the letter its circle
@@ -198,26 +230,6 @@ void nori_ios_remote_watch(int32_t on);
 char *nori_ios_remote_devices(void);
 /// Moves the music to device `id`, or here (empty).
 void nori_ios_remote_pick(const char *id);
-/// This iPod's pairing code, to free; NULL where pairing is unavailable.
-char *nori_ios_pairing(void);
-/// The devices paired with this iPod, as JSON to free; NULL where pairing is unavailable:
-/// [{id, name, kind, reach, active, days}], reach 0 answers (a pick moves the music there), 1 found, not
-/// answering, 2 not found; active it plays or is followed; days whole days since it was last nearby.
-char *nori_ios_paired(void);
-/// Pairs with the device whose code `link` is. NORI_PAIR_STARTED: NORI_REPORT_PAIRED says how it went.
-int32_t nori_ios_pair(const char *link);
-#define NORI_PAIR_STARTED 0
-#define NORI_PAIR_NOT_A_CODE 1
-#define NORI_PAIR_CLOSED 2
-/// Why pairing failed, as NORI_REPORT_PAIRED's count says it.
-#define NORI_PAIR_FAILED_NOT_A_CODE 0
-#define NORI_PAIR_FAILED_OWN 1
-#define NORI_PAIR_FAILED_UNAVAILABLE 2
-#define NORI_PAIR_FAILED_UNREACHABLE 3
-#define NORI_PAIR_FAILED_TIMED_OUT 4
-#define NORI_PAIR_FAILED_REFUSED 5
-/// Forgets paired device `id`.
-void nori_ios_forget(const char *id);
 
 /// Note report codes (`flag`; `index` is the count where there is one).
 #define NORI_NOTE_QUEUED_NEXT 1

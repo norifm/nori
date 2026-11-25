@@ -20,6 +20,8 @@ nori-settings = { path = "../settings" }
 # The favorites kept on this device, every profile's.
 nori-db = { path = "../db" }
 nori-plugins = { path = "../plugins" }
+# Whether the device is paired, which a backup notes and never holds.
+nori-sync = { path = "../sync" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -30,6 +32,7 @@ chacha20poly1305 = { version = "0.10", default-features = false, features = ["al
 getrandom = "0.4"
 
 [dev-dependencies]
+nori-sync = { path = "../sync", features = ["testing"] }
 nori-plugins = { path = "../plugins", features = ["testing"] }
 nori-net = { path = "../net" }
 nori-tasks = { path = "../tasks" }

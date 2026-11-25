@@ -56,8 +56,8 @@ blocks.
   autofill, scrobbling), `nori-transfers` (downloads), `nori-lyrics`
 - sound and look: `nori-devices` (outputs, AutoEQ), `nori-automix`, `nori-covers`, `nori-look` (colors
   from covers, themes)
-- the rest: `nori-remote` (remote control and jams), `nori-plugins` (the plugin host), `nori-backup`,
-  `nori-perf`
+- the rest: `nori-remote` (remote control and jams), `nori-sync` (pairing and profile sync, see
+  [Pairing and profile sync](sync.md)), `nori-plugins` (the plugin host), `nori-backup`, `nori-perf`
 
 `nori-tasks` says where async work runs: one thread per executor natively, the event loop in a
 browser. `nori-time` is the one clock every crate reads, and tests move it by hand.

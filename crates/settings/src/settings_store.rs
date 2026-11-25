@@ -100,6 +100,17 @@ fn migrate_profiles(c: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The devices paired one by one over the local network before pairing went through a sync server, and
+/// the code this device paired them with: forgotten, as only the sync server's pairing pairs now.
+const LAN_PAIRINGS: [&str; 2] = ["remotePaired", "remoteLanSecret"];
+
+fn forget_lan_pairings(c: &Connection) -> rusqlite::Result<()> {
+    for key in LAN_PAIRINGS {
+        c.execute("DELETE FROM app_kv WHERE key=?1", [key])?;
+    }
+    Ok(())
+}
+
 /// Replaces every stored setting in one transaction.
 fn write(c: &mut Connection, prefs: &StoredPrefs) -> rusqlite::Result<()> {
     let put = save(prefs);
@@ -157,6 +168,7 @@ impl SettingsStore {
         if legacy {
             migrate_profiles(&c)?;
         }
+        forget_lan_pairings(&c)?;
         Ok(SettingsStore { db: Arc::new(Mutex::new(c)), writer, written: Arc::new(Mutex::new(prefs.clone())), prefs, writes: Arc::new(AtomicU64::new(0)) })
     }
 
@@ -263,10 +275,15 @@ pub struct Settings {
     layer: Mutex<crate::overrides::Layer>,
     /// Told the settings before and after each change, while a plugin hears of them.
     watch: RwLock<Option<Watch>>,
+    /// Told after each change of the saved profiles, while profile sync runs.
+    profiles_watch: RwLock<Option<ProfilesWatch>>,
 }
 
 /// See [`Settings::watch`].
 pub type Watch = Arc<dyn Fn(&StoredPrefs, &StoredPrefs) + Send + Sync>;
+
+/// See [`Settings::watch_profiles`].
+pub type ProfilesWatch = Arc<dyn Fn() + Send + Sync>;
 
 impl Settings {
     /// What enabled plugins lay over the settings now: nothing while the switch turns every plugin off.
@@ -329,6 +346,12 @@ impl Settings {
         !self.layer.lock().overrides.is_empty()
     }
 
+    /// A copy of the settings as the user set them, which the settings screens show and edits start
+    /// from; None before they are open. What nori does reads [`Settings::effective`].
+    pub fn current(&self) -> Option<StoredPrefs> {
+        self.with_prefs(StoredPrefs::clone)
+    }
+
     /// Replaces the settings. Returns the effect bits; 0 when nothing changed or the settings are not open.
     pub fn put(&self, prefs: StoredPrefs) -> u32 {
         self.with_store(|s| s.edit(|_| prefs)).unwrap_or(0)
@@ -346,18 +369,24 @@ impl Settings {
     /// concurrent edits reach it in the order they were kept.
     fn write<R>(&self, f: impl FnOnce(&mut Option<SettingsStore>) -> R) -> R {
         let watch = self.watch.read().clone();
+        let profiles_watch = self.profiles_watch.read().clone();
         let mut k = self.kept.write();
         let before = watch.as_ref().and_then(|_| Some(k.as_ref()?.prefs.clone()));
+        let servers_before = profiles_watch.as_ref().and_then(|_| Some(k.as_ref()?.prefs.servers.clone()));
         let r = f(&mut k);
         if let Some(s) = k.as_ref() {
             self.model.switched(s.prefs.auto_mix.on(), &self.writer);
         }
         let after = k.as_ref().map(|s| s.prefs.clone());
+        let servers_changed = servers_before.is_some_and(|b| k.as_ref().is_some_and(|s| s.prefs.servers != b));
         drop(k);
         if let (Some(watch), Some(before), Some(after)) = (watch, before, after) {
             if before != after {
                 watch(&before, &after);
             }
+        }
+        if let Some(told) = profiles_watch.filter(|_| servers_changed) {
+            told();
         }
         r
     }
@@ -365,6 +394,12 @@ impl Settings {
     /// Tells `watch` of every change from now on; None stops.
     pub fn watch(&self, watch: Option<Watch>) {
         *self.watch.write() = watch;
+    }
+
+    /// Tells `watch` after every change of the saved profiles from now on, on the changing thread; None
+    /// stops.
+    pub fn watch_profiles(&self, watch: Option<ProfilesWatch>) {
+        *self.profiles_watch.write() = watch;
     }
 
     fn with_store<R>(&self, f: impl FnOnce(&mut SettingsStore) -> Option<R>) -> Option<R> {
@@ -488,12 +523,6 @@ impl Settings {
         Ok(())
     }
 
-    /// A copy of the settings as the user set them, which the settings screens show and edits start
-    /// from; None before they are open. What nori does reads [`Settings::effective`].
-    pub fn current(&self) -> Option<StoredPrefs> {
-        self.with_prefs(StoredPrefs::clone)
-    }
-
     /// `f` applied to the settings as the user set them, without copying them; None before they are open.
     pub fn with_prefs<R>(&self, f: impl FnOnce(&StoredPrefs) -> R) -> Option<R> {
         self.kept.read().as_ref().map(|k| f(&k.prefs))
@@ -613,6 +642,40 @@ mod tests {
         write(&mut s.db.lock(), &StoredPrefs { crossfade_sec: 4, ..s.prefs.clone() }).unwrap();
         drop(s);
         assert_eq!(open(&dir).prefs.crossfade_sec, 4);
+    }
+
+    #[test]
+    fn devices_paired_over_the_local_network_are_forgotten_on_opening() {
+        let dir = nori_testdir::TempDir::new("settings-lan-pairings");
+        let s = open(&dir);
+        for key in ["remotePaired", "remoteLanSecret", "syncGroup"] {
+            s.db.lock().execute("INSERT INTO app_kv(key, value) VALUES(?1, 'x')", [key]).unwrap();
+        }
+        drop(s);
+        let s = open(&dir);
+        let kept: Vec<String> = s.db.lock().prepare("SELECT key FROM app_kv").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(kept, ["syncGroup"], "a sync pairing stays");
+    }
+
+    #[test]
+    fn the_profiles_watch_hears_changes_of_the_saved_profiles_only() {
+        let dir = nori_testdir::TempDir::new("settings-profiles-watch");
+        let settings = Settings::new();
+        settings.open(&dir.join("nori.db").display().to_string()).unwrap();
+        let told = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counted = told.clone();
+        settings.watch_profiles(Some(Arc::new(move || {
+            counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        })));
+        let with = |name: &str| StoredPrefs { servers: vec![SavedServer { id: "a".into(), name: name.into(), ..Default::default() }], ..settings.current().unwrap() };
+        settings.put(with("Home"));
+        settings.put(StoredPrefs { crossfade_sec: 3, ..settings.current().unwrap() });
+        settings.put(with("Home"));
+        settings.put(with("Music"));
+        assert_eq!(told.load(std::sync::atomic::Ordering::Relaxed), 2, "added, then renamed");
+        settings.watch_profiles(None);
+        settings.put(with("Work"));
+        assert_eq!(told.load(std::sync::atomic::Ordering::Relaxed), 2);
     }
 
     #[test]

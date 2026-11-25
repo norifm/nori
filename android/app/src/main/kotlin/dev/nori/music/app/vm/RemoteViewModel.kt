@@ -3,10 +3,8 @@ package dev.nori.music.app.vm
 import android.app.Application
 import androidx.lifecycle.viewModelScope
 import dev.nori.music.ffi.JamView
-import dev.nori.music.ffi.RelaySupport
 import dev.nori.music.ffi.RemoteDevice
 import dev.nori.music.ffi.remote.Op
-import dev.nori.music.ffi.remote.QrCode
 import dev.nori.music.settings.server
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -20,7 +18,6 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * The devices sheet and the jam (its header in the queue, the invite, the people, a guest's requests) over the
@@ -42,32 +39,6 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
     /** What other devices can cast to and this phone cannot, each once. */
     val outputs: StateFlow<List<dev.nori.music.ffi.ReachedOutput>> = _outputs.asStateFlow()
 
-    private val _pairingLink = MutableStateFlow<String?>(null)
-    /** This phone's pairing code; null where this profile doesn't pair, or remote control is off. */
-    val pairingLink: StateFlow<String?> = _pairingLink.asStateFlow()
-    private val _paired = MutableStateFlow<List<dev.nori.music.ffi.PairedDevice>>(emptyList())
-    /** The devices paired with this phone, the nearby ones first. */
-    val paired: StateFlow<List<dev.nori.music.ffi.PairedDevice>> = _paired.asStateFlow()
-    private val _pairRequest = MutableStateFlow<String?>(null)
-    /** A pairing code opened from outside the app (a link, the system camera), waiting for a yes. */
-    val pairRequest: StateFlow<String?> = _pairRequest.asStateFlow()
-
-    fun offerPairing(link: String) { _pairRequest.value = link }
-    fun dismissPairing() { _pairRequest.value = null }
-
-    /** Pairs with the device whose code [link] is; [then] gets the device paired, or why not. */
-    fun pair(link: String, then: (Result<dev.nori.music.ffi.PairedDevice>) -> Unit) = viewModelScope.launch {
-        val paired = runCatching { remotes.pair(link) }
-        if (paired.isSuccess) refresh()
-        then(paired)
-    }
-
-    /** Forgets paired device [id]. */
-    fun forget(id: String) {
-        _paired.value = _paired.value.filter { it.id != id }
-        remotes.forget(id)
-    }
-
     private val me = dev.nori.music.ffi.RemoteMe(dev.nori.music.remote.Remotes.deviceName(app), dev.nori.music.ffi.remote.DeviceKind.PHONE)
     private val kinds = app.resources.let { r ->
         dev.nori.music.ffi.KindWords(
@@ -88,9 +59,6 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
     val destination: StateFlow<dev.nori.music.ffi.Destination> = combine(remotes.mirror, remotes.jam, nori.plugins.cast) { _, _, c -> remotes.destination(c) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), dev.nori.music.ffi.Destination.Here(false))
-
-    /** Whether the server relays: jams and devices elsewhere only then. */
-    val relay: StateFlow<RelaySupport> = remotes.relay
 
     /** Where starting a jam here stands (the core's `jam_start`): offered, being started, or hosted. */
     val jamStarting: StateFlow<dev.nori.music.ffi.JamStart> = remotes.jamStart
@@ -115,22 +83,17 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
     }
 
     private fun refresh() = remotes.ask({ r ->
-        val link = r.pairingLink()
-        Shown(r.outputs(), r.devices().let { d -> d to dev.nori.music.ffi.deviceNames(d, me, kinds) }, link, if (link != null) r.paired() else emptyList())
+        Shown(r.outputs(), r.devices().let { d -> d to dev.nori.music.ffi.deviceNames(d, me, kinds) })
     }) { shown ->
         _outputs.value = shown.outputs
         _devices.value = shown.devices.first
         _names.value = shown.devices.second
-        _pairingLink.value = shown.link
-        _paired.value = shown.paired
     }
 
     /** What one read of the remote shows. */
     private class Shown(
         val outputs: List<dev.nori.music.ffi.ReachedOutput>,
         val devices: Pair<List<RemoteDevice>, List<String>>,
-        val link: String?,
-        val paired: List<dev.nori.music.ffi.PairedDevice>,
     )
 
     /** A sheet that shows devices is on screen (true) or gone (false): other devices are followed while it is. */
@@ -179,7 +142,4 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
 
     /** The server's address when an invite to it works only on a home network (the core's `is_home_only`). */
     fun homeOnly(): String? = nori.settings.value.server?.url?.takeIf { dev.nori.music.ffi.remote.isHomeOnly(it) }
-
-    /** The invite as a QR code, made off the main thread. */
-    suspend fun qr(link: String): QrCode? = withContext(Dispatchers.Default) { dev.nori.music.ffi.remote.qrCode(link) }
 }

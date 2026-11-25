@@ -594,7 +594,7 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::{FieldSpec, FormField, SignIn};
+    use crate::providers::{FieldSpec, FormField, SignIn, SignInCopy};
 
     fn info(kind: &str, fields: &[FormField], page: bool) -> ProviderInfo {
         ProviderInfo {
@@ -602,6 +602,7 @@ mod tests {
             fields: fields.iter().map(|&what| FieldSpec { what, advanced: false }).collect(),
             sign_in: if page { vec![SignIn::WebPage { start_url: "https://x".into() }] } else { Vec::new() },
             identities: None,
+            sign_in_copy: SignInCopy::EachDevice,
         }
     }
 

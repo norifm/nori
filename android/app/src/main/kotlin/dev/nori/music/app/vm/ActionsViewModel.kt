@@ -68,6 +68,9 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         viewModelScope.launch { runCatching { nori.library.syncKept(KeptCheck.SHOWN) }.onSuccess(nori.downloads::kept) }
     }
 
+    // What happened among this device's paired devices ("New device paired: MacBook").
+    init { viewModelScope.launch { nori.sync.events.collect { e -> if (told(e)) _messages.trySend(say.syncEvent(e)) } } }
+
     // What plugins show while they run, said as the app's own messages are.
     init { viewModelScope.launch { nori.plugins.notices.collect { _messages.trySend(it.line) } } }
 

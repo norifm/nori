@@ -1717,7 +1717,7 @@ pub extern "C" fn nori_ios_music_folders() -> *mut c_char {
 
 /// The first run's questions: the iPod touch has no mobile data, so none about it.
 fn setup_steps() -> Vec<SetupStep> {
-    nori_core::setup::setup_steps(false)
+    nori_core::setup::setup_steps(false, false)
 }
 
 /// The first run's questions as JSON to free, in order: `[{step, answers}]`, each by its name in the core

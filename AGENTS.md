@@ -86,7 +86,8 @@ via nori-core):
 | web | the web client's core in a browser's Dedicated Worker (`core.wasm`, `player.wasm`), over fetch, played through an AudioWorklet |
 | desktop-ui | the desktop client's Slint interface (`ui/app.slint`), its own crate so Rust edits don't recompile it |
 | ios | the iPod touch client's static library over nori-host behind a C ABI (docs/developers/ipod-internals.md) |
-| remote | remote control and jams: one protocol (wire.rs) over octo-fiesta's relay or the LAN door (lan.rs); what a controlled device admits (device.rs), a jam's members and requests (jam.rs) |
+| remote | remote control and jams: one protocol (wire.rs) over a group's room on the sync server, the LAN door (lan.rs), or octo-fiesta's relay (jams); what a controlled device admits (device.rs), a jam's members and requests (jam.rs) |
+| sync | pairing a person's devices (one group key; a new device's one-time lock, sealed to with HPKE; three words to compare) and profile sync with its merge, through a sync server that reads nothing: the client's `Relay` (room.rs), in memory for tests (hub.rs); it carries remote control between paired devices, and lists devices waiting to be paired nearby (nearby.rs) |
 | tasks, time | where async work runs (one thread per executor natively, the event loop in a browser); the one clock every crate reads |
 | host | the session every client shares (terminal, desktop and iPod today; Android is moving onto it): engine, queue saving, remote and jams, config, index sync, media controls |
 | uniffi-jni-runtime, uniffi-bindgen | upstream uniffi JNI runtime with changes marked `NORI`; Kotlin binding generator |

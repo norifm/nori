@@ -14,6 +14,7 @@ mod look;
 mod lyrics;
 mod menu;
 mod motion;
+mod pairing;
 mod session;
 mod settings;
 mod setup;
@@ -81,6 +82,6 @@ fn main() -> Result<(), String> {
     // Held for the whole run: the exit hook only has a weak handle.
     let _app = app::start(&ui, root, compositor);
     #[cfg(all(feature = "test-control", unix))]
-    let _control = control_socket.map(|path| control::start(path, ui.as_weak())).transpose()?;
+    let _control = control_socket.map(|path| control::start(path, ui.as_weak(), _app.borrow().sync.clone())).transpose()?;
     ui.run().map_err(|e| e.to_string())
 }

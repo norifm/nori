@@ -74,6 +74,14 @@ class TestBridge : BroadcastReceiver() {
             Thread({ answer(runCatching { remoteCheck(nori, arg, value, context) }.getOrElse { "remote failed: ${it.javaClass.simpleName}" }) }, "remotecheck").start()
             return
         }
+        // Pairing and profile sync (tools/sync-check.sh, feature-e2e.sh's sync): "server <url>", "code",
+        // "pairing", "take <link>", "confirm [keep]", "state", "devices", "profiles", "keeps", "reset",
+        // and "drop <profile>" (removed here only). Off the main thread, as the app calls the core.
+        if (cmd == "sync") {
+            val nori = dev.nori.music.Nori.get(context)
+            Thread({ answer(runCatching { syncCheck(nori, arg, value, context) }.getOrElse { "sync failed: ${it.javaClass.simpleName}" }) }, "synccheck").start()
+            return
+        }
         // The plugin host, as the plugin checks drive it: "install <path>" (answers the id), "turn <id> on|off",
         // "cards" (each installed plugin's id and whether it is on), "reset". Off the main thread, as the app calls it.
         if (cmd == "plugin") {
@@ -137,6 +145,37 @@ class TestBridge : BroadcastReceiver() {
     }
 }
 
+/** One line about pairing and profile sync; see the "sync" command. */
+private fun syncCheck(nori: dev.nori.music.Nori, arg: String, value: String, context: Context): String {
+    val sync = nori.sync.syncing
+    val name = dev.nori.music.remote.Remotes.deviceName(context)
+    fun pairing() = when (val p = sync.pairing()) {
+        is dev.nori.music.ffi.sync.PairingView.Code -> "pairing Code ${p.link} ${p.words.joinToString(" ")}"
+        else -> "pairing $p"
+    }
+    return when (arg) {
+        "server" -> {
+            nori.settings.update { it.copy(syncServer = value.ifEmpty { null }) }
+            sync.settingsChanged()
+            "server $value"
+        }
+        "code" -> { sync.pairShow(name); pairing() }
+        "pairing" -> pairing()
+        "take" -> "take ${sync.pairTake(value, dev.nori.music.ffi.sync.Came.LINK)}"
+        "confirm" -> { sync.pairConfirm(name, value == "keep"); pairing() }
+        "state" -> "state ${sync.state()}"
+        "devices" -> "devices " + sync.devices().joinToString(",") { "${it.name}:${if (it.online) "online" else "offline"}" }
+        "profiles" -> "profiles " + nori.settings.value.servers.joinToString(",") { it.name }
+        "keeps" -> "keeps ${sync.keepsCopy()}"
+        "reset" -> { sync.reset(); "reset" }
+        "drop" -> {
+            nori.settings.value.servers.filter { it.name == value }.forEach { p -> sync.syncOff(p.id, false); android.os.Handler(android.os.Looper.getMainLooper()).post { nori.removeServer(p.id) } }
+            "drop $value"
+        }
+        else -> "unknown sync check $arg"
+    }
+}
+
 /** One line about the remote control or the jam; see the "remote" command. */
 private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String, context: Context): String {
     val r = { nori.remotes.peek() }
@@ -146,12 +185,6 @@ private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String, c
             val st = d.state?.let { s -> "${if (s.playing) "playing" else "paused"} ${s.entries.firstOrNull { it.index == s.index }?.title}" } ?: "no state"
             "${d.name}${if (d.nearby) " (nearby)" else ""}: $st${d.refused?.let { " refused $it" } ?: ""}"
         }?.ifEmpty { "none" } ?: "no remote"
-        "pair-export" -> r()?.pairingLink()?.let { java.io.File(context.cacheDir, "nori-pairing").writeText(it); "saved" } ?: "pairing unavailable"
-        // "pair <link>": "paired <name>", or why not (the core's PairError).
-        "pair" -> runCatching { kotlinx.coroutines.runBlocking { nori.remotes.pair(value) } }.fold({ "paired ${it.name}" }, { "not paired: ${it.javaClass.simpleName}" })
-        // "paired": each paired device as "<name> (answers|silent|away)", " active" while it plays or is followed.
-        "paired" -> r()?.paired()?.joinToString("; ") { "${it.name} (${it.reach.name.lowercase()})${if (it.active) " active" else ""}" }?.ifEmpty { "none" } ?: "no remote"
-        "forget" -> { nori.remotes.forget(value); "forgot" }
         "jam" -> kotlinx.coroutines.runBlocking { nori.remotes.jamOpen() }?.let { java.io.File(context.cacheDir, "nori-jam").writeText(it); "saved" } ?: "nothing started"
         "view" -> r()?.jamView()?.let { v ->
             "hosting=${v.hosting} members=${v.members.joinToString(",") { "${it.name}:${it.role}" }} pending=${v.pending.joinToString(",") { it.song.title }} next=${v.queue?.entries?.joinToString(",") { it.title }} along=${v.along} listening=${v.listening}"

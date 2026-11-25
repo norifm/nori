@@ -129,7 +129,8 @@ sealed interface BackupUi {
     data object Idle : BackupUi
     data class Working(val restore: Boolean) : BackupUi
     data object Saved : BackupUi
-    data class Restored(val plugins: List<dev.nori.music.ffi.plugins.PluginRestored>) : BackupUi
+    /** [pairingNotRestored]: the backup's device was paired and this one is not. */
+    data class Restored(val plugins: List<dev.nori.music.ffi.plugins.PluginRestored>, val pairingNotRestored: Boolean = false) : BackupUi
     /** [error] is the core's; null when the file itself couldn't be read or written. */
     data class Failed(val restore: Boolean, val error: dev.nori.music.ffi.backup.BackupException?) : BackupUi
 }
@@ -148,7 +149,8 @@ fun backupWords(res: Resources, b: BackupUi, restore: Boolean): String? = when (
                 is dev.nori.music.ffi.plugins.PluginReturn.Unavailable -> res.getString(R.string.settings_backup_plugin_gone, p.id)
             }
         }
-        (listOf(res.getString(R.string.settings_backup_restored)) + each).joinToString(" ")
+        val pairing = if (b.pairingNotRestored) listOf(res.getString(R.string.settings_backup_not_paired)) else emptyList()
+        (listOf(res.getString(R.string.settings_backup_restored)) + each + pairing).joinToString(" ")
     } else null
     is BackupUi.Failed -> if (b.restore == restore) res.getString(
         when (b.error) {
@@ -191,8 +193,21 @@ fun settingsGroups(res: Resources, parts: List<SettingsPart>): List<SettingsGrou
     return GROUPS.filter { it.second in pages && it.third.second != 0 }.map { (id, _, words) -> SettingsGroup(id, res.getString(words.first), res.getString(words.second)) }
 }
 
+/** Your devices: pairing and the sync server, a page of the screen's own reached from Library's Other devices. */
+const val DEVICES = "devices"
+
+/** The settings Your devices draws, which no page of the core's lists. */
+private val DEVICES_SETTINGS = listOf("sync", "syncServer")
+
 /** A page's title: a group's, or one of the pages reached from inside another (`page:<id>`). */
-private fun pageTitle(id: String): Int? = GROUPS.firstOrNull { it.first == id }?.third?.first ?: if (id == "licences") R.string.settings_page_licences else null
+private fun pageTitle(id: String): Int? = GROUPS.firstOrNull { it.first == id }?.third?.first ?: when (id) {
+    "licences" -> R.string.settings_page_licences
+    DEVICES -> R.string.settings_your_devices
+    else -> null
+}
+
+/** A setting's title, by the name the core changes it by. */
+fun settingTitle(res: Resources, name: String): String = SETTING_WORDS[name]?.first?.let(res::getString) ?: name
 
 /** Each lyrics service's name and what it is good at, by the id the core stores it under. */
 private val SERVICES: Map<String, Pair<Int, Int>> = mapOf(
@@ -266,6 +281,8 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "queueOffer" to (R.string.settings_queue_offer to 0),
     "thirdPartyLookups" to (R.string.settings_lookups to R.string.settings_hint_lookups),
     "remoteControl" to (R.string.settings_remote_control to R.string.settings_hint_remote_control),
+    "sync" to (R.string.settings_sync to R.string.settings_hint_sync),
+    "syncServer" to (R.string.settings_sync_server to R.string.settings_hint_sync_server),
     "wifi" to (R.string.settings_quality_wifi to 0),
     "mobile" to (R.string.settings_quality_mobile to 0),
     "download" to (R.string.settings_quality_download to 0),
@@ -312,6 +329,7 @@ private fun itemWords(item: RowItem): Pair<Int, Int>? = when (item) {
         SettingsLink.HOME_ROWS -> R.string.settings_home_rows to 0
         SettingsLink.LYRICS_SOURCES -> R.string.settings_lyrics_sources to R.string.settings_hint_lyrics_sources
         SettingsLink.DOWNLOADS -> R.string.settings_downloads to 0
+        SettingsLink.YOUR_DEVICES -> R.string.settings_your_devices to R.string.settings_hint_your_devices
     }
     is RowItem.Action -> when (item.action) {
         SettingsAction.SYNC_LIBRARY -> R.string.settings_offline_search to R.string.settings_hint_offline_search
@@ -362,7 +380,8 @@ class SettingsSearch(private val res: Resources, p: StoredPrefs, s: SettingsStat
             } ?: return@mapNotNull null
             Triple(id, title, hint)
         }
-    } + listOf(Triple("about", res.getString(R.string.settings_page_licences), res.getString(R.string.settings_hint_licences)))
+    } + listOf(Triple("about", res.getString(R.string.settings_page_licences), res.getString(R.string.settings_hint_licences))) +
+        DEVICES_SETTINGS.map { name -> SETTING_WORDS.getValue(name).let { (t, h) -> Triple(DEVICES, res.getString(t), res.getString(h)) } }
     private val text: TextIndex by lazy { TextIndex(entries.map { (_, t, h) -> listOf(t, h) }) }
 
     fun find(query: String): List<SettingsHit> = text.ranked(query.trim()).map { i ->
@@ -374,7 +393,7 @@ class SettingsSearch(private val res: Resources, p: StoredPrefs, s: SettingsStat
 
 /** One group's page for these settings, facts and the core's state; null for a group there is not, or one the profile does not open ([parts]). */
 fun settingsPage(res: Resources, id: String, p: StoredPrefs, f: SettingsFacts, s: SettingsState, parts: List<SettingsPart>): SettingsPage? {
-    if (id == "licences") return SettingsPage(res.getString(R.string.settings_page_licences), emptyList())
+    if (id == "licences" || id == DEVICES) return SettingsPage(res.getString(pageTitle(id)!!), emptyList())
     val (_, page, words) = GROUPS.firstOrNull { it.first == id } ?: return null
     if (page !in dev.nori.music.ffi.settings.settingsPages(SettingsClient.PHONE, parts)) return null
     val b = PageBuilder(res, p, f, s)
@@ -667,6 +686,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             linkRow(R.string.settings_lyrics_sources, status, n == 0, "page:lyrics-sources")
         }
         SettingsLink.DOWNLOADS -> actionRow(R.string.settings_downloads, str(R.string.settings_downloads_detail), str(R.string.settings_show), true, "downloads")
+        SettingsLink.YOUR_DEVICES -> linkRow(R.string.settings_your_devices, "", false, "page:$DEVICES")
     }
 
     fun action(a: SettingsAction, enabled: Boolean): SettingRow? {
@@ -717,8 +737,11 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         val t = str(if (restore) R.string.settings_restore else R.string.settings_back_up)
         val said = backupWords(res, b, restore) ?: str(if (restore) R.string.settings_restore_detail else R.string.settings_back_up_detail)
         val failed = b is BackupUi.Failed && b.restore == restore
-        val button = str(if (restore) R.string.settings_backup_open else R.string.settings_backup_save)
-        return SettingRow.Action(settingKey(t), t, said, button, enabled && b !is BackupUi.Working, failed, if (restore) "restore" else "backup")
+        // After a restore that left the pairing behind, the row offers pairing again.
+        val pair = restore && (b as? BackupUi.Restored)?.pairingNotRestored == true
+        val button = str(if (pair) R.string.sync_pair else if (restore) R.string.settings_backup_open else R.string.settings_backup_save)
+        val act = if (pair) "pair-device" else if (restore) "restore" else "backup"
+        return SettingRow.Action(settingKey(t), t, said, button, enabled && b !is BackupUi.Working, failed, act)
     }
 
     fun actionRow(title: Int, detail: String, button: String, enabled: Boolean, act: String): SettingRow.Action {

@@ -556,7 +556,7 @@ pub(crate) mod tests {
         let core = nori_core::Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let client = nori_core::client::Client::new(core, Arc::new(crate::session::Offline), Default::default());
         let me = nori_core::remote::RemoteMe { name: "Mac".into(), kind: nori_remote::wire::DeviceKind::Desktop };
-        let remote = Remote::new(client, me, Arc::new(Nothing), Arc::new(Nothing), None);
+        let remote = Remote::new(client, me, Arc::new(Nothing), Arc::new(Nothing), None, None);
         let row = |index: u32, id: &str| MirrorRow { index, song: Song { id: id.into(), duration: 200, ..Default::default() } };
         let mirror = Mirror {
             id: "desk".into(),

@@ -189,7 +189,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         val step = dev.nori.music.ffi.welcomeOn(_welcome.value, event)
         _welcome.value = step.flow
         if (step.then == dev.nori.music.ffi.WelcomeDo.Questions) {
-            _setup.value = SetupUi(dev.nori.music.ffi.settings.setupSteps(mobileData))
+            _setup.value = SetupUi(dev.nori.music.ffi.settings.setupSteps(mobileData, pairs = !nori.sync.paired.value))
             loadSetupCovers()
             _welcome.value = WELCOME
         }
@@ -324,8 +324,10 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         }
         val r = nori.plugins.restore(file, password)
         took(r.settings)
+        // The backup brings its sync and sync server settings, never the pairing.
+        nori.sync.settingsChanged()
         if (r.settings.server) r.settings.prefs.server?.let(nori::activate)
-        BackupUi.Restored(r.plugins)
+        BackupUi.Restored(r.plugins, r.pairingNotRestored)
     }
 
     private fun backupStep(restore: Boolean, step: suspend () -> BackupUi) = viewModelScope.launch {
@@ -522,6 +524,9 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     private val _account = MutableStateFlow(AccountUi())
     val account: StateFlow<AccountUi> = _account
+
+    /** A sign-in profile sync refused, being to another account than the profile syncs with. */
+    val otherAccount: StateFlow<dev.nori.music.OtherAccount?> = nori.otherAccount
 
     /** The open profile's rules as its core reports them; [rules] reads them. */
     val reportedRules = nori.reportedRules

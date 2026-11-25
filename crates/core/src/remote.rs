@@ -1,14 +1,16 @@
 //! Remote control and jams over a client (nori-remote has the protocol). A [`Remote`] exists only while
-//! remote control or jams are switched on, or the profile is a jam guest's; it polls the relay only
-//! while it serves (this device is controllable), watches (a device picker or jam screen is open),
-//! mirrors the account's active device or hosts a jam, and holds each poll up to [`HOLD_MS`], so a quiet
-//! device wakes about once a minute. Nearby devices are reached through their LAN door instead of the relay.
+//! remote control or jams are switched on, or the profile is a jam guest's.
 //!
-//! One device of the account plays at a time: the active one. This one is it until a transfer moves the
+//! "My devices" are the devices paired into this one's group (nori-sync) that have the same synced
+//! profile open. They meet in the group's room on the sync server, which carries what they say sealed
+//! ([`GroupSaid`]), or directly on one network through each other's LAN door. Nothing goes on a timer: a
+//! device says its state when it changes, and a watching device runs the playhead on by the sync
+//! server's clock, which both know. A jam opens on octo-fiesta's relay, which is polled only for it, holding each
+//! poll up to [`HOLD_MS`], or on the LAN door for a profile without a server.
+//!
+//! One of my devices plays at a time: the active one. This one is it until a transfer moves the
 //! playback elsewhere ([`Remote::pick`], or another device's transfer); it then mirrors that device
-//! ([`Remote::active`]) until playback comes back, a transfer moves it on, or the device goes. While it
-//! mirrors, it keeps learning how the device's clock stands to its own (nori-remote's clock.rs): a burst
-//! of time exchanges, then one every quarter minute, so the playhead shown is the one heard there.
+//! ([`Remote::active`]) until playback comes back, a transfer moves it on, or the device goes.
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -29,7 +31,8 @@ use nori_player::engine::Plan;
 use nori_player::transitions::engine_plan;
 use nori_player::types::TransitionPlan;
 use crate::race::LyricsPick;
-use nori_remote::wire::{Along, Answer, Body, CastOutput, DeviceKind, DeviceState, Entry, JamLyrics, JamMember, JamState, Member, Mix, Obeyed, Op, Outgoing, Pending, Refusal, Role, Room, SongLyrics, HOLD_MS};
+use nori_remote::wire::{Along, Answer, Body, CastOutput, DeviceKind, DeviceState, Entry, GroupSaid, JamLyrics, JamMember, JamState, Member, Mix, Obeyed, Op, Outgoing, Pending, Refusal, Role, Room, SongLyrics, HOLD_MS};
+use nori_sync::{InRoom, RemoteRoom, Syncing};
 use parking_lot::Mutex;
 use serde::Deserialize;
 
@@ -38,11 +41,6 @@ use crate::transport::{self, Exchange, NetError, Transport};
 use crate::{api, db, Param, Song};
 use nori_settings::settings_store::Settings;
 
-mod pairing;
-#[cfg(not(target_arch = "wasm32"))]
-pub use pairing::{pairing_name, pairing_valid, PairedDevice, PairedReach};
-#[cfg(not(target_arch = "wasm32"))]
-pub use nori_remote::lan::PairError;
 
 /// The frames, for clients that speak them (the terminal and desktop host).
 pub use nori_remote::wire;
@@ -76,8 +74,11 @@ const SENT_WAIT_MS: u64 = 3_000;
 /// How long a send waits for its answer.
 const SEND_TIMEOUT_MS: u32 = 15_000;
 /// How long a send to a nearby device's door waits: one on this network answers at once, and what it
-/// does not take goes through the relay next.
+/// does not take goes through the group's room next.
 const DOOR_TIMEOUT_MS: u32 = 3_000;
+/// Exchanges a profile sync through a door makes at most: who it is and the answer, and what each holds
+/// newer than the other.
+const SYNC_ROUNDS: usize = 3;
 
 /// A held poll's own timeout: the hold plus the way there and back.
 const POLL_TIMEOUT_MS: u32 = HOLD_MS + 15_000;
@@ -85,12 +86,17 @@ const POLL_TIMEOUT_MS: u32 = HOLD_MS + 15_000;
 /// A published position this close to where the last one runs on to is not sent again.
 const POSITION_SLACK_MS: i64 = 5;
 
-/// The relay's clock learned this close to as last published is not sent again, µs.
+/// A server's clock (the relay's or the sync server's) learned this close to as last published is not
+/// sent again, µs.
 const SERVER_SLACK_US: i64 = 1_000;
 
 /// Time exchanges of a burst go out this far apart: more than most round trips through a relay, so an
 /// answer does not wait behind the one before.
 const BURST_GAP_MS: u64 = 250;
+
+/// How long a device asked to open this profile has to say it is here before the pick waiting for it is
+/// let go, µs.
+const SWITCH_WAIT_US: i64 = 20_000_000;
 
 /// How long a command sent to the mirrored device shows as foreseen while the device does not say it
 /// carried it out: an older device never says, and one that could not hear it falls back to its state.
@@ -184,10 +190,12 @@ pub struct RemoteDevice {
     pub now: Option<Entry>,
     /// How long ago `state` arrived (`nori_remote::position_now`).
     pub age_ms: i64,
-    /// Reached on this network rather than through the relay.
+    /// Reached on this network, at its door.
     pub nearby: bool,
     /// Its answer to the last command sent to it, when it refused.
     pub refused: Option<Refusal>,
+    /// Another profile is open there: picking it, or handing it the music, opens this one there first.
+    pub elsewhere: bool,
 }
 
 /// A speaker or such another device casts to, as a picker lists it.
@@ -577,8 +585,10 @@ pub fn jam_return(settings: &crate::settings_store::Settings, list: crate::setti
 /// Where a command came from, and so how to answer it.
 #[derive(Debug, Clone)]
 enum Via {
-    /// The relay; the room is a jam's (None: the account's).
-    Relay(Option<String>),
+    /// The group's room on the sync server, or this device itself.
+    Group,
+    /// The relay, from jam room `room`.
+    Relay(String),
     /// This device's door.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code, reason = "a browser opens no door"))]
     Door,
@@ -592,22 +602,35 @@ enum Via {
 /// Whose clock the time keeper learns.
 #[derive(Debug, Clone, PartialEq)]
 enum Timed {
-    /// Another device's, reached through the jam room `room` (None: the account's, or its door).
-    Device { id: String, room: Option<String> },
+    /// A jam's host's, reached through the jam room `room`.
+    Device { id: String, room: String },
     /// The relay's (`nori/time`).
     Server,
 }
 
-/// Where a send goes: the relay, or a nearby door's address.
+/// Which of my devices a state goes to through the sync server.
+enum Far {
+    /// All of them: one message reaches every device in the room.
+    All,
+    /// These, each with a message of its own; none when every one is reached on the network.
+    Some(Vec<String>),
+}
+
+/// Where a send goes: the relay (a jam's room), the group's room to a device (its group id), or a
+/// nearby door's address, with the group device to try when the door does not take it.
 #[derive(Debug, Clone)]
 enum Link {
     Relay,
-    Lan(String),
+    Group(String),
+    Lan { base: String, then: Option<String> },
 }
 
 enum Out {
     Send(Link, Box<Outgoing>),
-    /// A GET to the relay (leaving, closing a jam, sending a member out).
+    /// Who this device is, to one device in the group's room (its group id), or every one with this
+    /// profile open.
+    Group { to: Option<String>, said: Box<GroupSaid> },
+    /// A GET to the relay (closing a jam, sending a member out, leaving one).
     Get(String),
 }
 
@@ -630,17 +653,16 @@ pub enum Sight {
     Nothing,
 }
 
-/// Whether the server relays remote control and jams (octo-fiesta's `noriRemote.*`), as asked when the
-/// remote is made for a profile.
+/// Whether the server relays jams (octo-fiesta's `noriRemote.*`), as asked when the remote is made for
+/// a profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum RelaySupport {
+enum RelaySupport {
     /// Not known yet (not asked, or the server was unreachable).
     #[default]
     Unknown,
     Supported,
-    /// Plain Navidrome, or an octo-fiesta without the hub: nearby devices only, no jams. Asked again only
-    /// when a device picker opens.
+    /// Plain Navidrome, or an octo-fiesta without the hub: no jams. Asked again only when a device
+    /// picker opens.
     Unsupported,
 }
 
@@ -695,8 +717,8 @@ struct Mirrored {
     at: i64,
     /// The same moment on the device's clock, as it said (None: foreseen here, or an older device).
     device_at: Option<i64>,
-    /// How the device's clock stands to this one's.
-    clock: ClockSync,
+    /// The device's clock less this one's, µs, from the sync server's clock as each tells it.
+    offset: Option<i64>,
     /// The queue by turn, at `shown`'s revision, as its pages arrive.
     pages: Vec<Option<Entry>>,
     /// The turn the page asked for and not answered yet starts at.
@@ -707,7 +729,6 @@ struct Mirrored {
     cleared: bool,
     /// This device's commands the device has not said it carried out yet, oldest first.
     foreseen: Vec<Foreseen>,
-    presence: Presence,
     /// Its state (instance, seq) when playback was handed to it: a hand-off said in that state or an
     /// older one came before, and is not followed.
     handed_at: Option<(Option<u64>, u64)>,
@@ -722,14 +743,6 @@ enum Known {
     Handed,
     /// Its state as it last arrived, and when (this device's clock).
     Heard { state: DeviceState, arrived: i64 },
-}
-
-/// Whether the mirrored device is there.
-enum Presence {
-    /// Heard from; `unanswered`: time exchanges sent through the relay since.
-    Answering { unanswered: u32 },
-    /// Not there since `since` (this device's clock): shown paused from then.
-    Gone { since: i64 },
 }
 
 /// A command sent to the mirrored device, as it is expected to come out.
@@ -776,13 +789,14 @@ fn song_at(state: &DeviceState) -> Option<&str> {
 
 impl Mirrored {
     fn new(id: String, now: i64) -> Mirrored {
-        Mirrored { id, known: Known::Nothing, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), cleared: false, foreseen: Vec::new(), presence: Presence::Answering { unanswered: 0 }, handed_at: None }
+        Mirrored { id, known: Known::Nothing, shown: None, at: now, device_at: None, offset: None, pages: Vec::new(), asking: None, taken: Vec::new(), cleared: false, foreseen: Vec::new(), handed_at: None }
     }
 
-    /// A state arrived from the device (`at`: when, on this device's clock). It ends the foresight of
-    /// every command of this device's (`me`) it says it carried out and shows; the rest still shows over it. False
-    /// when it is the one already heard.
-    fn heard(&mut self, state: &DeviceState, at: i64, me: &str) -> bool {
+    /// A state arrived from the device (`at`: when, on this device's clock; `clock`: the sync server's
+    /// clock less this device's now). It ends the foresight of every command of this device's (`me`) it
+    /// says it carried out and shows; the rest still shows over it. False when it is the one already
+    /// heard.
+    fn heard(&mut self, state: &DeviceState, at: i64, me: &str, clock: Option<i64>) -> bool {
         // Shown what this device handed it (`handed`), its state from before the hand-off is old news.
         let handed_here = matches!(self.known, Known::Handed);
         if handed_here && self.handed_at.is_some_and(|h| (state.instance, state.seq) <= h) {
@@ -797,7 +811,6 @@ impl Mirrored {
                 if state.instance < last.instance {
                     return false;
                 }
-                self.clock = ClockSync::default();
                 self.foreseen.clear();
                 self.pages.clear();
                 self.asking = None;
@@ -828,9 +841,9 @@ impl Mirrored {
                 *slot = Some(e.clone());
             }
         }
+        self.offset = state.sync_us.zip(clock).map(|(there, here)| here - there);
         self.known = Known::Heard { state: state.clone(), arrived: at };
         self.show();
-        self.reached();
         true
     }
 
@@ -851,31 +864,6 @@ impl Mirrored {
             self.known = Known::Handed;
         }
         self.show();
-    }
-
-    /// Heard from it: it is there.
-    fn reached(&mut self) {
-        self.presence = Presence::Answering { unanswered: 0 };
-    }
-
-    /// Found not there at `now`; whether that is news.
-    fn lost(&mut self, now: i64) -> bool {
-        let news = matches!(self.presence, Presence::Answering { .. });
-        if news {
-            self.presence = Presence::Gone { since: now };
-        }
-        news
-    }
-
-    /// A time exchange goes through the relay at `now`, `waited` a whole [`clock::EVERY_US`] after the one
-    /// before: with the two before it unanswered, it is not there. Whether that is news.
-    fn asked_time(&mut self, waited: bool, now: i64) -> bool {
-        let Presence::Answering { unanswered } = &mut self.presence else { return false };
-        if waited && *unanswered >= 2 {
-            return self.lost(now);
-        }
-        *unanswered += 1;
-        false
     }
 
     /// `shown`: the state heard, with the commands foreseen over it.
@@ -951,10 +939,10 @@ impl Mirrored {
         self.shown.as_ref().is_some_and(|s| s.playing)
     }
 
-    /// When `shown`'s position was right, on this device's clock: the device's own word, once its clock
-    /// is known here.
+    /// When `shown`'s position was right, on this device's clock: the device's own word, once both know
+    /// the sync server's clock.
     fn shown_at(&self) -> i64 {
-        match (self.device_at, self.clock.offset_at(self.at)) {
+        match (self.device_at, self.offset) {
             (Some(there), Some(offset)) => there - offset,
             _ => self.at,
         }
@@ -975,7 +963,7 @@ impl Mirrored {
 
     /// The page to ask for next: where the first song not known yet is, unless one is being asked for.
     fn wanted(&self) -> Option<u32> {
-        if self.asking.is_some() || matches!(self.presence, Presence::Gone { .. }) {
+        if self.asking.is_some() {
             return None;
         }
         self.pages.iter().position(Option::is_none).map(|p| p as u32)
@@ -1042,7 +1030,7 @@ impl Mirrored {
         let rows = self.rows();
         let at = rows.iter().position(|e| Some(e.index) == st.index).map(|p| p as u32);
         let (next, previous) = skips(at, rows.len() as u32, st.len, st.repeat);
-        let mut mirror = Mirror {
+        Some(Mirror {
             id: self.id.clone(),
             name,
             kind,
@@ -1063,16 +1051,7 @@ impl Mirrored {
             repeat: st.repeat,
             volume: st.volume,
             refused,
-        };
-        if let Presence::Gone { since: at } = self.presence {
-            mirror.position_ms = mirror.position_at(at);
-            mirror.at_us = at;
-            mirror.playing = false;
-            mirror.buffering = false;
-            mirror.mixing = false;
-            mirror.rate = 0.0;
-        }
-        Some(mirror)
+        })
     }
 }
 
@@ -1192,13 +1171,19 @@ struct Inner {
     /// it answered the last.
     probes_asked: u64,
     probes_answered: u64,
-    /// The last relay poll failed: the devices it listed may have gone since, and are not shown.
-    relay_down: bool,
     /// What the relay's last answer said of it, as logged.
     relay_said: Option<String>,
     since: Option<u64>,
     you: String,
+    /// The jams' rooms on the relay.
     rooms: Vec<Room>,
+    /// My devices that serve, as the group's room told them.
+    group: Vec<Member>,
+    /// The group id of each device heard in the group's room, by its remote's id: where to say what
+    /// is for it.
+    routes: HashMap<String, String>,
+    /// The latest instance of each device's remote heard in the group's room.
+    instances: HashMap<String, u64>,
     /// When each other member's state last changed here, on this device's clock.
     received: HashMap<String, i64>,
     /// When each other device was last heard playing, on this device's clock.
@@ -1245,6 +1230,23 @@ struct Inner {
     guest: GuestJam,
     /// The name of the host of the jam this guest is in, as last seen.
     jam_host: Option<String>,
+    /// A device asked to open this profile, and what waits for it to be here.
+    switching: Option<Switching>,
+}
+
+/// A device of the group asked to open this profile first ([`Remote::pick`], [`Remote::hand_over`]).
+struct Switching {
+    /// Its remote's id.
+    id: String,
+    then: AfterSwitch,
+    /// When it was asked, on this device's clock.
+    at: i64,
+}
+
+/// What waits for a device to open this profile.
+enum AfterSwitch {
+    Pick { cast: bool },
+    Hand,
 }
 
 /// The jam this device hosts.
@@ -1329,8 +1331,10 @@ impl Inner {
         self.probes_asked != self.probes_answered
     }
 
+    /// Whether the relay is polled, for jams only: one this device hosts, the one this guest listens
+    /// along to, or while a device picker or jam screen shows them.
     fn wants_relay(&self) -> bool {
-        self.probing() || self.relay != RelaySupport::Unsupported && !matches!(self.guest, GuestJam::Over) && (self.serving || self.watching || self.active.discovering() || self.active.taking().is_some() || self.follows_mirror() || self.hosted().is_some() || self.guest.listen().is_some())
+        self.probing() || self.relay != RelaySupport::Unsupported && !matches!(self.guest, GuestJam::Over) && (self.hosted().is_some() || self.watching || self.guest.listen().is_some())
     }
 
     /// Whether the mirrored device is followed: while something here shows it, or it plays.
@@ -1363,11 +1367,65 @@ impl Inner {
 
     /// Device `id`'s last state and when it arrived; a nearby device's door says it first.
     fn state_of(&self, id: &str) -> Option<(&DeviceState, Option<i64>)> {
-        if let Some(p) = self.peers.iter().find(|p| p.member.id == id) {
-            return p.member.state.as_ref().map(|s| (s, Some(p.received)));
+        let (m, received) = self.heard_of(id)?;
+        m.state.as_ref().map(|s| (s, received))
+    }
+
+    /// Device `id` as last heard, with when its state last changed here: at its door or in the group's
+    /// room, whichever said the newer state (the door when they say the same).
+    fn heard_of(&self, id: &str) -> Option<(&Member, Option<i64>)> {
+        let at_door = self.peers.iter().find(|p| p.member.id == id).map(|p| (&p.member, Some(p.received)));
+        let in_group = self.group.iter().find(|m| m.id == id).map(|m| (m, self.received.get(id).copied()));
+        let said = |m: &Member| m.state.as_ref().map(|s| (s.instance, s.seq));
+        match (at_door, in_group) {
+            (Some(door), Some(group)) if said(group.0) > said(door.0) => Some(group),
+            (door @ Some(_), _) => door,
+            (None, group) => group,
         }
-        let m = self.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members).find(|m| m.id == id)?;
-        m.state.as_ref().map(|s| (s, self.received.get(id).copied()))
+    }
+
+    /// The group devices with this profile open that do not hear this device on the network: its state
+    /// goes to them through the sync server. A device that polls its door hears it there; one whose door
+    /// this device reaches may not reach this one's.
+    fn out_of_reach(&self) -> Far {
+        #[cfg(not(target_arch = "wasm32"))]
+        let polling = self.door.as_ref().map(Door::polling).unwrap_or_default();
+        #[cfg(target_arch = "wasm32")]
+        let polling: Vec<String> = Vec::new();
+        let near = |id: &String| polling.contains(id);
+        let all: std::collections::BTreeSet<&String> = self.routes.values().collect();
+        let far: std::collections::BTreeSet<&String> = self.routes.iter().filter(|(id, _)| !near(id)).map(|(_, device)| device).collect();
+        if !far.is_empty() && far.len() == all.len() {
+            Far::All
+        } else {
+            Far::Some(far.into_iter().cloned().collect())
+        }
+    }
+
+    /// Whether what device `id`'s remote `instance` said in the group's room is older than what a
+    /// later remote of the device said; it then counts as the latest heard.
+    fn older(&mut self, id: &str, instance: Option<u64>) -> bool {
+        let Some(instance) = instance else { return false };
+        let latest = self.instances.entry(id.to_string()).or_insert(instance);
+        if instance < *latest {
+            return true;
+        }
+        *latest = instance;
+        false
+    }
+
+    /// Where to reach device `id` through the sync server: its group id.
+    fn route(&self, id: &str) -> Option<String> {
+        self.routes.get(id).cloned()
+    }
+
+    /// How a send to device `id` goes: through its door when it is near, the group's room otherwise;
+    /// None when neither reaches it.
+    fn link_to(&self, id: &str) -> Option<Link> {
+        match self.peers.iter().find(|p| p.member.id == id) {
+            Some(p) => Some(Link::Lan { base: p.base(), then: self.route(id) }),
+            None => self.route(id).map(Link::Group),
+        }
     }
 
     /// Lets go of the doors mDNS said went that nothing follows.
@@ -1377,10 +1435,9 @@ impl Inner {
     }
 
     /// Whether device `id` is still there to be followed, as [`Remote::devices`] lists it: heard from nearby,
-    /// or through the relay while it answers.
+    /// or in the group's room.
     fn listed(&self, id: &str) -> bool {
-        let far = self.rooms.iter().filter(|r| !r.jam && !self.relay_down).flat_map(|r| &r.members);
-        self.peers.iter().map(|p| &p.member).chain(far).any(|m| m.id == id && m.state.is_some())
+        self.peers.iter().map(|p| &p.member).chain(&self.group).any(|m| m.id == id && m.state.is_some())
     }
 
     /// Whether device `id` plays, as last heard.
@@ -1401,7 +1458,7 @@ impl Inner {
 
     /// Device `id` as it is listed.
     fn member(&self, id: &str) -> Option<&Member> {
-        self.peers.iter().map(|p| &p.member).chain(self.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members)).find(|m| m.id == id)
+        self.heard_of(id).map(|(m, _)| m)
     }
 
     /// Whether what device `id` plays is what a cast through it is to carry: it plays now and this one
@@ -1435,12 +1492,9 @@ impl Inner {
         Some((room, room.members.iter().find(|m| m.state.as_ref().is_some_and(|s| s.jam.is_some()))))
     }
 
-    /// Whose clock is learned now: the mirrored device's; the relay's while hosting a jam whose guests
-    /// listen along, or listening along to a host that knows it; else that host's, through the jam's room.
+    /// Whose clock is learned now: the relay's while hosting a jam whose guests listen along, or
+    /// listening along to a host that knows it; else that host's, through the jam's room.
     fn timed(&self) -> Option<Timed> {
-        if let Some(m) = self.active.mirror() {
-            return Some(Timed::Device { id: m.id.clone(), room: None });
-        }
         if self.hosts_along() {
             return self.relay_time.then_some(Timed::Server);
         }
@@ -1450,13 +1504,13 @@ impl Inner {
         if self.relay_time && host.state.as_ref().is_some_and(|s| s.server_us.is_some()) {
             return Some(Timed::Server);
         }
-        Some(Timed::Device { id: host.id.clone(), room: Some(room.room.clone()) })
+        Some(Timed::Device { id: host.id.clone(), room: room.room.clone() })
     }
 
     /// Whether another clock is to be learned now: a guest listening along plays by its host's, the
     /// screen on or off; a host by the relay's for its guests.
     fn wants_time(&self) -> bool {
-        self.guest.listen().is_some() || (self.sight == Sight::Screen && self.active.mirror().is_some_and(Mirrored::playing)) || (self.hosts_along() && self.relay_time)
+        self.guest.listen().is_some() || (self.hosts_along() && self.relay_time)
     }
 
     /// A jam is hosted here or being started: it plays on this device only.
@@ -1577,6 +1631,12 @@ pub struct Remote {
     player: Arc<dyn RemotePlayer>,
     shown: Arc<dyn RemoteShown>,
     discovery: Option<Arc<dyn Discovery>>,
+    /// The device's sync, whose group room reaches my devices; None where the client has none.
+    group: Option<Arc<Syncing>>,
+    /// The profile this remote is for, by its id on this device.
+    profile: String,
+    /// What the group's room tells this remote, while attached.
+    room: Mutex<Option<Arc<dyn RemoteRoom>>>,
     inner: Mutex<Inner>,
     /// Where the pollers, the time keeper and the sender run.
     tasks: Arc<dyn Tasks>,
@@ -1595,6 +1655,49 @@ pub struct Remote {
     running: Arc<Running>,
     /// What plays along with a jam's host here.
     follower: Mutex<Option<Arc<dyn Follower>>>,
+}
+
+/// What the group's room tells a remote.
+struct GroupRoom(std::sync::Weak<Remote>);
+
+impl RemoteRoom for GroupRoom {
+    fn in_room(&self, now: InRoom) {
+        if let Some(r) = self.0.upgrade() {
+            r.group_room(now);
+        }
+    }
+
+    fn keyed(&self) {
+        if let Some(r) = self.0.upgrade() {
+            r.group_keyed();
+        }
+    }
+
+    fn changed(&self) {
+        if let Some(r) = self.0.upgrade() {
+            let peers: Vec<String> = r.inner.lock().peers.iter().filter(|p| p.since.is_some()).map(|p| p.base()).collect();
+            peers.into_iter().for_each(|base| r.sync_through(base));
+        }
+    }
+
+    fn heard(&self, device: String, message: serde_json::Value) {
+        // What a newer nori says that this one cannot read is passed over.
+        if let (Some(r), Ok(said)) = (self.0.upgrade(), serde_json::from_value(message)) {
+            r.group_heard(device, said);
+        }
+    }
+
+    fn left(&self, device: String) {
+        if let Some(r) = self.0.upgrade() {
+            r.group_left(&device);
+        }
+    }
+
+    fn elsewhere(&self) {
+        if let Some(r) = self.0.upgrade() {
+            r.shown.changed();
+        }
+    }
 }
 
 /// The app's key for the one id every client over an app database had before each kind of client had
@@ -1682,6 +1785,9 @@ impl Remote {
 
     /// [`Self::pick`]; `cast`: to carry a cast through it.
     fn pick_for(self: Arc<Self>, device: Option<String>, cast: bool) {
+        if device.as_deref().is_some_and(|d| self.switch_first(d, AfterSwitch::Pick { cast })) {
+            return;
+        }
         self.clone().set_discovering(false);
         // Picked here again while the queue asked for is on its way: asked anew, the device would hand
         // it over twice and its first answer be refused; cancelled, the queue left here would play.
@@ -1772,13 +1878,14 @@ impl Remote {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Remote {
     /// A remote whose work runs on a thread of its own (in a browser, on the page's event loop).
+    /// `group`: the device's sync, through whose group room my devices are reached.
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
-    pub fn new(client: Arc<Client>, me: RemoteMe, player: Arc<dyn RemotePlayer>, shown: Arc<dyn RemoteShown>, discovery: Option<Arc<dyn Discovery>>) -> Arc<Remote> {
+    pub fn new(client: Arc<Client>, me: RemoteMe, player: Arc<dyn RemotePlayer>, shown: Arc<dyn RemoteShown>, discovery: Option<Arc<dyn Discovery>>, group: Option<Arc<Syncing>>) -> Arc<Remote> {
         #[cfg(not(target_arch = "wasm32"))]
         let tasks = Arc::new(nori_tasks::Native::new("nori-remote").expect("a thread for the remote"));
         #[cfg(target_arch = "wasm32")]
         let tasks = Arc::new(nori_tasks::Local);
-        Remote::with_tasks(client, me, player, shown, discovery, tasks)
+        Remote::with_tasks(client, me, player, shown, discovery, group, tasks)
     }
 
     /// Current library favorites, including changes received from nearby devices.
@@ -1786,12 +1893,7 @@ impl Remote {
         self.client.core.stars.lock().clone()
     }
 
-    /// Whether the server relays remote control and jams; the screens offer jams and far devices only then.
-    pub fn relay(&self) -> RelaySupport {
-        self.inner.lock().relay
-    }
-
-    /// This device's id, as other devices and the relay know it.
+    /// This device's id, as other devices know it.
     pub fn id(&self) -> String {
         self.id.clone()
     }
@@ -1811,11 +1913,6 @@ impl Remote {
             let before = i.browsing();
             i.serving = on;
             i.unsaid = true;
-            // A held poll saying this device serves says so again as it ends: it is asked anew.
-            if !on && i.relay_poller.is_some() {
-                i.end_relay_poll();
-                self.cancel.notify();
-            }
             (self.reopen_door(&mut i, on), (before != i.browsing()).then_some(i.browsing()))
         };
         if let Some(d) = &self.discovery {
@@ -1825,7 +1922,7 @@ impl Remote {
         if on {
             self.publish();
         } else {
-            self.leave();
+            self.say_here(None, false);
         }
         self.keep_polling();
     }
@@ -1962,19 +2059,22 @@ impl Remote {
         self.pick_for(device, false);
     }
 
-    /// The account's other devices, nearby ones first; through the relay only while it answers.
+    /// My other devices with this profile open, nearby ones first, then those with another open.
     pub fn devices(&self) -> Vec<RemoteDevice> {
+        let elsewhere = self.elsewhere();
         let now = self.now();
         let i = self.inner.lock();
         let active = i.active.mirror().map(|m| m.id.as_str());
         let song = |m: &Member| m.state.as_ref().filter(|s| s.playing || active == Some(m.id.as_str())).and_then(|s| s.entries.iter().find(|e| Some(e.index) == s.index).cloned());
-        let seen = |m: &Member, age_ms: i64, nearby: bool| RemoteDevice { id: m.id.clone(), name: m.name.clone(), kind: m.kind, state: m.state.clone(), now: song(m), age_ms, nearby, refused: i.refused.get(&m.id).copied() };
-        let mut out: Vec<RemoteDevice> = i.peers.iter().filter(|p| p.member.state.is_some()).map(|p| seen(&p.member, (now - p.received) / 1000, true)).collect();
-        for room in i.rooms.iter().filter(|r| !r.jam && !i.relay_down) {
-            for m in room.members.iter().filter(|m| m.state.is_some()) {
-                if !out.iter().any(|d| d.id == m.id) {
-                    out.push(seen(m, i.age(&m.id, now), false));
-                }
+        let seen = |m: &Member, age_ms: i64, nearby: bool| RemoteDevice { id: m.id.clone(), name: m.name.clone(), kind: m.kind, state: m.state.clone(), now: song(m), age_ms, nearby, refused: i.refused.get(&m.id).copied(), elsewhere: false };
+        let mut out: Vec<RemoteDevice> = Vec::new();
+        for id in i.peers.iter().map(|p| p.member.id.as_str()).chain(i.group.iter().map(|m| m.id.as_str())) {
+            let Some((m, received)) = i.heard_of(id).filter(|(m, _)| m.state.is_some() && !out.iter().any(|d| d.id == m.id)) else { continue };
+            out.push(seen(m, received.map_or(0, |at| (now - at) / 1000), i.peers.iter().any(|p| p.member.id == id)));
+        }
+        for (_, m) in elsewhere {
+            if !i.routes.contains_key(&m.id) && !out.iter().any(|d| d.id == m.id) {
+                out.push(RemoteDevice { id: m.id, name: m.name, kind: m.kind, state: None, now: None, age_ms: 0, nearby: false, refused: None, elsewhere: true });
             }
         }
         out
@@ -2035,10 +2135,7 @@ impl Remote {
     pub fn lan_found(self: Arc<Self>, service: String, hosts: Vec<String>, port: u16, txt: Vec<Param>) {
         let get = |k: &str| txt.iter().find(|p| p.key == k).map(|p| p.value.clone()).unwrap_or_default();
         let id = get("id");
-        let known = match self.account_tag() {
-            Some(tag) => get("acct") == tag,
-            None => pairing::is_paired(&self.client, &id),
-        };
+        let known = self.door_tag().is_some_and(|tag| get("tag") == tag);
         if !known || id.is_empty() || id == self.id {
             return;
         }
@@ -2062,9 +2159,6 @@ impl Remote {
                 return;
             }
             i.peers.retain(|p| p.service != service && p.member.id != id);
-            if self.account_tag().is_none() {
-                pairing::seen(&self.client, &id);
-            }
             let member = Member { id, name: get("name"), kind, state: None };
             i.peers.push(Peer { library_marks: get("marks") == "1", service, bases, failed: 0, member, received: self.now(), since: None, poller: None, lost: false });
         }
@@ -2093,7 +2187,7 @@ impl Remote {
         }
         #[cfg(not(target_arch = "wasm32"))]
         if self.client.core.serverless() { return self.open_lan_jam(); }
-        if self.relay() == RelaySupport::Unsupported {
+        if self.inner.lock().relay == RelaySupport::Unsupported {
             return Err(NetError::Http { status: 404 });
         }
         let attempt = {
@@ -2234,7 +2328,7 @@ impl Remote {
         };
         match host {
             None => {
-                let _ = self.carry_out(&Via::Relay(None), &self.id.clone(), self.next_id(), op);
+                let _ = self.carry_out(&Via::Group, &self.id.clone(), self.next_id(), op);
                 self.shown.changed();
             }
             Some((room, host)) => {
@@ -2322,7 +2416,7 @@ impl Remote {
         reach
     }
 
-    /// Ends remote control here for good: leaves the relay, withdraws the door, ends a hosted jam, stops
+    /// Ends remote control here for good: leaves the group's room, withdraws the door, ends a hosted jam, stops
     /// mirroring, and ends every task this remote started, a held poll at once. It returns at once, its
     /// device id free for the next remote; what was queued still goes ([`Remote::sent`] waits for it).
     pub fn stop(self: Arc<Self>) {
@@ -2340,6 +2434,10 @@ impl Remote {
             i.timing += 1;
         }
         self.unfollow();
+        self.out(Out::Group { to: None, said: Box::new(GroupSaid::Gone { id: self.id.clone(), instance: self.instance }) });
+        if let (Some(group), Some(room)) = (&self.group, self.room.lock().take()) {
+            group.remote_close(&room);
+        }
         self.retry.notify();
         self.timing.notify();
         self.cancel.notify();
@@ -2638,9 +2736,9 @@ impl Drop for Outbox {
     }
 }
 
-/// Sends what `sends` queues one at a time, in order, until it closes; `who` is this device's
-/// [`Remote::who`]. It holds no [`Remote`], so it ends once the remote stops or goes.
-async fn send_all(sends: Arc<Sends>, client: Arc<Client>, who: Vec<(String, String)>) {
+/// Sends what `sends` queues one at a time, in order, until it closes. It holds no [`Remote`], so it
+/// ends once the remote stops or goes.
+async fn send_all(sends: Arc<Sends>, to: Outward) {
     loop {
         let changed = sends.changed.notified();
         let (next, closed) = {
@@ -2648,7 +2746,7 @@ async fn send_all(sends: Arc<Sends>, client: Arc<Client>, who: Vec<(String, Stri
             (q.waiting.pop_front(), q.sender == Sending::Closed)
         };
         match next {
-            Some(o) => deliver(&client, &who, o).await,
+            Some(o) => to.deliver(o).await,
             None if closed => break,
             None => changed.await,
         }
@@ -2714,41 +2812,74 @@ fn remote_url(client: &Client, endpoint: &str, params: &[(String, String)], meth
     lan_jam_url(&client.core, endpoint, params, method, body).unwrap_or_else(|| client.core.server.read().url(endpoint, params))
 }
 
-/// Sends `o`; `who` is this device's [`Remote::who`].
-async fn deliver(client: &Client, who: &[(String, String)], o: Out) {
-    let relay = |json: &str| remote_url(client, "noriRemote.send", who, "POST", json.as_bytes());
-    let (url, json, timeout_ms, relayed) = match o {
-        Out::Get(url) => (url, None, SEND_TIMEOUT_MS, None),
-        Out::Send(link, outgoing) => {
-            let json = serde_json::to_string(&outgoing).unwrap_or_default();
-            match link {
-                Link::Relay => (relay(&json), Some(json), SEND_TIMEOUT_MS, None),
-                Link::Lan(base) => {
-                    let Some(secret) = outgoing.to.as_deref().and_then(|to| pairing::lan_key(client, to)) else { return };
-                    let dev = &who[0].1;
-                    let url = format!("{base}{}", lan::signed(&secret, "POST", &format!("/rest/noriRemote.send?dev={dev}"), json.as_bytes(), db::now_ms()));
-                    // A time exchange measures the door itself; anything else may go by the relay.
-                    let timing = matches!(&outgoing.body, Some(Body::Command { op, .. }) if matches!(**op, Op::Clock { .. })) || matches!(outgoing.body, Some(Body::Clock { .. }));
-                    let relayed = (!timing && !client.core.serverless()).then(|| relay(&json));
-                    (url, Some(json), DOOR_TIMEOUT_MS, relayed)
-                }
+/// What the sender sends with: the client, the device's sync, this device as others list it, and the
+/// profile's id here.
+struct Outward {
+    client: Arc<Client>,
+    group: Option<Arc<Syncing>>,
+    me: Member,
+    profile: String,
+}
+
+impl Outward {
+    /// Says `said` in the group's room, to `to` (a group id) or every device with this profile open;
+    /// false when it cannot go.
+    fn say(&self, to: Option<String>, said: &GroupSaid) -> bool {
+        let Some(group) = &self.group else { return false };
+        group.remote_say(&self.profile, to, serde_json::to_value(said).expect("what is said serializes"))
+    }
+
+    /// `outgoing`'s event, said in the group's room to device `device`.
+    fn say_event(&self, device: String, outgoing: &Outgoing) -> bool {
+        let (Some(to), Some(body)) = (outgoing.to.clone(), outgoing.body.clone()) else { return false };
+        self.say(Some(device), &GroupSaid::Event { from: self.me.id.clone(), to, body })
+    }
+
+    /// Sends `o`.
+    async fn deliver(&self, o: Out) {
+        let client = &self.client;
+        let who = who(&self.me);
+        let (url, json, timeout_ms, then) = match o {
+            Out::Group { to, said } => {
+                self.say(to, &said);
+                return;
+            }
+            Out::Get(url) => (url, None, SEND_TIMEOUT_MS, None),
+            Out::Send(Link::Group(device), outgoing) => {
+                self.say_event(device, &outgoing);
+                return;
+            }
+            Out::Send(Link::Relay, outgoing) => {
+                let json = serde_json::to_string(&outgoing).unwrap_or_default();
+                (remote_url(client, "noriRemote.send", &who, "POST", json.as_bytes()), Some(json), SEND_TIMEOUT_MS, None)
+            }
+            Out::Send(Link::Lan { base, then }, outgoing) => {
+                let Some(secret) = shared_key(client, self.group.as_ref().and_then(|g| g.lan_secret(&self.profile))) else { return };
+                let json = serde_json::to_string(&outgoing).unwrap_or_default();
+                let url = format!("{base}{}", lan::signed(&secret, "POST", &format!("/rest/noriRemote.send?dev={}", self.me.id), json.as_bytes(), db::now_ms()));
+                (url, Some(json), DOOR_TIMEOUT_MS, then.map(|device| (device, outgoing)))
+            }
+        };
+        let sent = client.transport.send(Exchange { url, json, timeout_ms, ..Default::default() }).await;
+        let failed = match sent {
+            Ok(answer) if (200..300).contains(&answer.status) => return,
+            Ok(answer) => format!("HTTP {}", answer.status),
+            Err(e) => e.to_string(),
+        };
+        crate::alog::info(&format!("remote: not sent: {failed}"));
+        // A door seen on this network that does not take it (the device asleep, its address stale): the
+        // group's room reaches the device where it is connected.
+        if let Some((device, outgoing)) = then {
+            if !self.say_event(device, &outgoing) {
+                crate::alog::info("remote: not sent through the sync server either");
             }
         }
-    };
-    let sent = client.transport.send(Exchange { url, json: json.clone(), timeout_ms, ..Default::default() }).await;
-    let failed = match sent {
-        Ok(answer) if (200..300).contains(&answer.status) => return,
-        Ok(answer) => format!("HTTP {}", answer.status),
-        Err(e) => e.to_string(),
-    };
-    crate::alog::info(&format!("remote: not sent: {failed}"));
-    // A door seen on this network that does not take it (the device asleep, its address stale): the
-    // relay reaches the device where it polls there.
-    if let Some(url) = relayed {
-        if let Err(e) = client.transport.send(Exchange { url, json, timeout_ms: SEND_TIMEOUT_MS, ..Default::default() }).await {
-            crate::alog::info(&format!("remote: not sent through the relay either: {e}"));
-        }
     }
+}
+
+/// `me`'s id, name and kind, as the relay is told them (the device id first).
+fn who(me: &Member) -> Vec<(String, String)> {
+    vec![("dev".into(), me.id.clone()), ("name".into(), me.name.clone()), ("kind".into(), kind_name(me.kind))]
 }
 
 impl Remote {
@@ -2761,14 +2892,40 @@ impl Remote {
         m.starred(id)
     }
 
-    /// Hands this device's queue and position to device `to`, which plays on; this one pauses.
+    /// Hands this device's queue and position to device `to`, which plays on; this one pauses. A device
+    /// with another profile open opens this one first.
     pub fn hand_over(self: Arc<Self>, to: String) {
+        if self.switch_first(&to, AfterSwitch::Hand) {
+            return;
+        }
         let me = self.id.clone();
-        self.transfer(&Via::Relay(None), &me, to, None, false);
+        self.transfer(&Via::Group, &me, to, None, false);
+    }
+
+    /// The group's devices with this profile but another open, by group id, as their remotes say they
+    /// are.
+    fn elsewhere(&self) -> Vec<(String, Member)> {
+        let Some(group) = &self.group else { return Vec::new() };
+        group.remote_elsewhere(&self.profile).into_iter().filter_map(|e| Some((e.device, serde_json::from_value::<Member>(e.remote).ok()?))).filter(|(_, m)| m.id != self.id).collect()
+    }
+
+    /// Device `id`, if it has another profile open, is asked to open this one: `then` waits for it to
+    /// say it is here. False for a device with this profile open.
+    fn switch_first(self: &Arc<Self>, id: &str, then: AfterSwitch) -> bool {
+        if self.inner.lock().routes.contains_key(id) {
+            return false;
+        }
+        let Some((device, _)) = self.elsewhere().into_iter().find(|(_, m)| m.id == id) else { return false };
+        if !self.group.as_ref().is_some_and(|g| g.remote_switch(&self.profile, &device)) {
+            return false;
+        }
+        self.inner.lock().switching = Some(Switching { id: id.to_string(), then, at: self.now() });
+        self.shown.changed();
+        true
     }
 
     /// A remote whose work runs on `tasks`.
-    pub fn with_tasks(client: Arc<Client>, me: RemoteMe, player: Arc<dyn RemotePlayer>, shown: Arc<dyn RemoteShown>, discovery: Option<Arc<dyn Discovery>>, tasks: Arc<dyn Tasks>) -> Arc<Remote> {
+    pub fn with_tasks(client: Arc<Client>, me: RemoteMe, player: Arc<dyn RemotePlayer>, shown: Arc<dyn RemoteShown>, discovery: Option<Arc<dyn Discovery>>, group: Option<Arc<Syncing>>, tasks: Arc<dyn Tasks>) -> Arc<Remote> {
         let settings = &client.core.session.settings;
         let (id, id_lock) = claim_device_id(settings, me.kind);
         // Persist once per process so delayed states stay ordered across restarts.
@@ -2778,13 +2935,23 @@ impl Remote {
                 [], |row| row.get::<_, String>(0),
             ).map_err(|e| crate::alog::info(&format!("remote: could not keep instance: {e}"))).ok()?.parse().ok()
         });
+        let profile = settings.with_prefs(|p| p.active_server_id.clone()).unwrap_or_default();
         let sends = Arc::new(Sends::default());
-        let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), #[cfg(not(target_arch = "wasm32"))] sends: sends.clone(), running: Arc::default(), follower: Mutex::default() });
-        remote.tasks.spawn(Box::pin(send_all(sends, remote.client.clone(), remote.who())));
+        let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, group, profile, room: Mutex::default(), inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), #[cfg(not(target_arch = "wasm32"))] sends: sends.clone(), running: Arc::default(), follower: Mutex::default() });
+        let me = Member { id: remote.id.clone(), name: remote.me.name.clone(), kind: remote.me.kind, state: None };
+        let card = serde_json::to_value(&me).expect("a member serializes");
+        let to = Outward { client: remote.client.clone(), group: remote.group.clone(), me, profile: remote.profile.clone() };
+        remote.tasks.spawn(Box::pin(send_all(sends, to)));
         *remote.client.core.remote.lock() = Arc::downgrade(&remote);
         if remote.client.core.serverless() && remote.client.core.lan_jam.read().is_none() {
             remote.inner.lock().relay = RelaySupport::Unsupported;
         } else { remote.probe(); }
+        // A jam's guest is no device of the group's.
+        if let Some(group) = remote.group.as_ref().filter(|_| remote.me.kind != DeviceKind::Guest) {
+            let room: Arc<dyn RemoteRoom> = Arc::new(GroupRoom(Arc::downgrade(&remote)));
+            *remote.room.lock() = Some(room.clone());
+            group.remote_open(remote.profile.clone(), room, card);
+        }
         remote
     }
 
@@ -3018,16 +3185,21 @@ impl Remote {
         remote_url(&self.client, endpoint, &p, "GET", b"")
     }
 
-    /// This device's id, name and kind, as the relay is told them (the device id first).
-    fn who(&self) -> Vec<(String, String)> {
-        let kind = kind_name(self.me.kind);
-        vec![("dev".into(), self.id.clone()), ("name".into(), self.me.name.clone()), ("kind".into(), kind)]
+    /// This device as others list it, without its state.
+    fn member(&self) -> Member {
+        Member { id: self.id.clone(), name: self.me.name.clone(), kind: self.me.kind, state: None }
     }
 
-    /// A poll for the events after `since`, held until there are some if `hold`.
-    fn poll_url(&self, since: Option<u64>, hold: bool, serve: bool) -> String {
+    /// This device's id, name and kind, as the relay is told them (the device id first).
+    fn who(&self) -> Vec<(String, String)> {
+        who(&self.member())
+    }
+
+    /// A poll for the events after `since`, held until there are some if `hold`. This device never
+    /// serves through the relay: my devices control it through the group's room.
+    fn poll_url(&self, since: Option<u64>, hold: bool) -> String {
         let mut p = self.who();
-        p.push(("serve".into(), (serve as u8).to_string()));
+        p.push(("serve".into(), "0".into()));
         if let Some(s) = since {
             p.push(("since".into(), s.to_string()));
             if hold {
@@ -3037,11 +3209,30 @@ impl Remote {
         remote_url(&self.client, "noriRemote.poll", &p, "GET", b"")
     }
 
-    /// What the account's devices (or a LAN jam's) announce their doors with; None where devices pair
-    /// one by one and are known by id.
-    fn account_tag(&self) -> Option<String> {
-        let user = self.client.core.account.read().as_ref().map(|a| a.user.clone()).unwrap_or_else(|| "youtube".into());
-        pairing::shared_key(&self.client).map(|secret| lan::account_tag(&user, &secret))
+    /// What my devices with this profile open (or a LAN jam's members) sign their requests to each
+    /// other's doors with; None outside a group and a jam.
+    fn shared_key(&self) -> Option<String> {
+        shared_key(&self.client, self.group.as_ref().and_then(|g| g.lan_secret(&self.profile)))
+    }
+
+    /// What this device's door admits my devices by: [`Self::shared_key`], or outside a group a key
+    /// nobody holds, as a door that serves a jam admits none of them.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn door_secret(&self) -> Option<String> {
+        self.shared_key().or_else(|| lan::new_secret().ok())
+    }
+
+    /// The door admits by the key my devices hold now.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn reopen_access(&self) {
+        if let (Some(door), Some(secret)) = (&self.inner.lock().door, self.door_secret()) {
+            door.set_secret(secret);
+        }
+    }
+
+    /// What my devices with this profile open announce their doors by; None outside a group.
+    fn door_tag(&self) -> Option<String> {
+        self.shared_key().map(|secret| lan::tag("door", &secret))
     }
 
     /// Likes this account made on another device: this session's marks, and the cached pages they touch
@@ -3091,7 +3282,7 @@ impl Remote {
         };
         for (to, base) in peers {
             let op = Op::LibraryMarks { marks: vec![wire::LibraryMark { kind, id: id.clone(), on }] };
-            self.out(Out::send(Link::Lan(base), Outgoing { to: Some(to), body: Some(Body::Command { id: command, op: Box::new(op) }), ..Default::default() }));
+            self.out(Out::send(Link::Lan { base, then: None }, Outgoing { to: Some(to), body: Some(Body::Command { id: command, op: Box::new(op) }), ..Default::default() }));
         }
     }
 
@@ -3100,7 +3291,7 @@ impl Remote {
         let mut txt = self.who();
         txt[0].0 = "id".into();
         txt.push(("marks".into(), "1".into()));
-        txt.push(("acct".into(), self.account_tag().unwrap_or_default()));
+        txt.push(("tag".into(), self.door_tag().unwrap_or_default()));
         Announcement { name: format!("nori-{}", self.id), port, txt: txt.into_iter().map(|(key, value)| Param { key, value }).collect() }
     }
 
@@ -3187,26 +3378,49 @@ impl Remote {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn open_door(self: &Arc<Self>) -> Option<Door> {
-        let access = pairing::door_access(&self.client)?;
+        let secret = self.door_secret()?;
         let me = Member { id: self.id.clone(), name: self.me.name.clone(), kind: self.me.kind, state: None };
         let weak = Arc::downgrade(self);
-        let paired = weak.clone();
         let opened = Door::open(
             me,
-            access,
+            secret,
             Box::new(move |from, body| {
                 if let (Some(r), Body::Command { id, op }) = (weak.upgrade(), body) {
                     r.obey(Via::Door, from.to_string(), id, *op, r.now());
                 }
             }),
-            Box::new(move |change| {
-                if let Some(r) = paired.upgrade() {
-                    r.door_paired(change);
-                }
-            }),
             self.tasks.clone(),
         );
-        opened.map_err(|e| crate::alog::info(&format!("remote: no door: {e}"))).ok()
+        let door = opened.map_err(|e| crate::alog::info(&format!("remote: no door: {e}"))).ok()?;
+        // My devices' profile sync comes through it too.
+        if let Some(group) = self.group.clone().filter(|g| g.lan_secret(&self.profile).is_some()) {
+            door.carry(Some(Box::new(move |said| group.direct_heard(said))));
+        }
+        Some(door)
+    }
+
+    /// Profile sync with the device of the group whose door is at `base`: this device says who it is,
+    /// and they answer each other until neither has more to say. Through the door, as the group's
+    /// devices on one network sync without the server too.
+    fn sync_through(self: &Arc<Self>, base: String) {
+        let Some(group) = self.group.clone() else { return };
+        let me = self.clone();
+        self.spawn(async move {
+            let Some(mut said) = group.direct_hello().map(|hello| vec![hello]) else { return };
+            for _ in 0..SYNC_ROUNDS {
+                let Some(secret) = group.lan_secret(&me.profile) else { return };
+                let json = serde_json::to_string(&said).unwrap_or_default();
+                let url = format!("{base}{}", lan::signed(&secret, "POST", &format!("/rest/noriRemote.sync?dev={}", me.id), json.as_bytes(), db::now_ms()));
+                let answer = match me.client.transport.send(Exchange { url, json: Some(json), timeout_ms: DOOR_TIMEOUT_MS, ..Default::default() }).await {
+                    Ok(a) if (200..300).contains(&a.status) => serde_json::from_slice::<Vec<Vec<u8>>>(&a.body).unwrap_or_default(),
+                    _ => return,
+                };
+                said = group.direct_heard(answer);
+                if said.is_empty() {
+                    return;
+                }
+            }
+        });
     }
 
     /// Asks whether the server relays: the relay poller's first poll, which is not held. Polls side by
@@ -3223,14 +3437,7 @@ impl Remote {
             i.relay_poller = Some(poller);
             poller
         };
-        self.spawn(self.clone().poll_relay(poller));
-    }
-
-    /// Tells the relay this device no longer serves.
-    fn leave(&self) {
-        if self.relay() != RelaySupport::Unsupported {
-            self.out(Out::Get(self.poll_url(None, false, false)));
-        }
+        self.spawn(self.clone().relay_polls(poller));
     }
 
     /// Starts the pollers that should run and are not.
@@ -3261,7 +3468,7 @@ impl Remote {
         if let Some(poller) = start_relay {
             // An older poller resting after a failure ends now.
             self.retry.notify();
-            self.spawn(self.clone().poll_relay(poller));
+            self.spawn(self.clone().relay_polls(poller));
         }
         for (service, poller) in start_peers {
             self.spawn(self.clone().poll_peer(service, poller));
@@ -3269,45 +3476,29 @@ impl Remote {
         self.shown.changed();
     }
 
-    async fn poll_relay(self: Arc<Self>, poller: u64) {
-        let said_serving = self.clone().relay_polls(poller).await;
-        // Its last poll, saying this device serves, may reach the relay after the leave: it goes again.
-        if said_serving && !self.inner.lock().serving {
-            self.leave();
-        }
-    }
-
-    /// Polls the relay while `poller` is current; whether its last poll said this device serves.
-    async fn relay_polls(self: Arc<Self>, poller: u64) -> bool {
+    /// Polls the relay while `poller` is current.
+    async fn relay_polls(self: Arc<Self>, poller: u64) {
         let mut first_poll = true;
-        let mut said_serving = false;
+        // The last poll failed: the next is not held, so the relay is heard at once when it is back.
+        let mut down = false;
         let mut retry_ms = RETRY_MS;
         loop {
             let (url, probes) = {
                 let mut i = self.inner.lock();
                 if i.relay_poller != Some(poller) {
-                    return said_serving;
+                    return;
                 }
-                // A mirrored device paused out of sight: nothing else wants the relay.
                 if !i.wants_relay() {
                     i.relay_poller = None;
-                    return said_serving;
+                    return;
                 }
-                let url = self.poll_url(i.since, !first_poll && !i.relay_down, i.serving);
+                let url = self.poll_url(i.since, !first_poll && !down);
                 first_poll = false;
-                said_serving = i.serving;
                 (url, i.probes_asked)
             };
             let poll = std::pin::pin!(transport::get(&*self.client.transport, url, POLL_TIMEOUT_MS));
             let got = match select(std::pin::pin!(self.given_up(|i| i.relay_poller == Some(poller))), poll).await {
-                Either::Left(((), poll)) => {
-                    // A poll saying this device serves may reach the relay after its leave: the leave goes
-                    // again once the relay answered it (or the remote stopped).
-                    if said_serving && !self.inner.lock().serving {
-                        select(std::pin::pin!(self.given_up(|_| true)), poll).await;
-                    }
-                    return said_serving;
-                }
+                Either::Left(_) => return,
                 Either::Right((got, _)) => got,
             };
             let received = self.now();
@@ -3315,7 +3506,7 @@ impl Remote {
                 let mut i = self.inner.lock();
                 // Asked for before the rooms changed: its seq may pass events of a room it did not cover.
                 if i.relay_poller != Some(poller) {
-                    return said_serving;
+                    return;
                 }
                 i.probes_answered = probes;
                 i.probing()
@@ -3324,25 +3515,23 @@ impl Remote {
             self.note_relay(found, &got);
             if self.jam_gone(&got) {
                 self.jam_ended(poller);
-                return said_serving;
+                return;
             }
             match (found, got) {
                 (Some(RelaySupport::Supported), Ok(body)) => {
                     self.inner.lock().relay = RelaySupport::Supported;
                     retry_ms = RETRY_MS;
+                    down = false;
                     self.took(answer(&body).unwrap_or_default(), received);
                 }
                 // Asked again while this answer was on its way: the server may have gained the relay since.
                 (Some(_), _) if asked_since => first_poll = true,
                 (Some(_), _) => {
                     self.no_relay(poller);
-                    return said_serving;
+                    return;
                 }
                 (None, _) => {
-                    if !std::mem::replace(&mut self.inner.lock().relay_down, true) {
-                        self.follow_active();
-                        self.shown.changed();
-                    }
+                    down = true;
                     let retry = self.retry.notified();
                     if self.inner.lock().relay_poller == Some(poller) {
                         retry_ms = match select(self.tasks.sleep(Duration::from_millis(retry_ms)), retry).await {
@@ -3413,7 +3602,7 @@ impl Remote {
 
     async fn poll_peer(self: Arc<Self>, service: String, poller: u64) {
         loop {
-            let (base, since, peer) = {
+            let (base, since) = {
                 let mut i = self.inner.lock();
                 let Some(at) = i.peers.iter().position(|p| p.service == service) else { return };
                 if i.peers[at].poller != Some(poller) {
@@ -3423,9 +3612,9 @@ impl Remote {
                     i.peers[at].poller = None;
                     return;
                 }
-                (i.peers[at].base(), i.peers[at].since, i.peers[at].member.id.clone())
+                (i.peers[at].base(), i.peers[at].since)
             };
-            let Some(secret) = pairing::lan_key(&self.client, &peer) else { return };
+            let Some(secret) = self.shared_key() else { return };
             let query = match since {
                 Some(s) => format!("/rest/noriRemote.poll?dev={}&since={s}&hold=1", self.id),
                 None => format!("/rest/noriRemote.poll?dev={}", self.id),
@@ -3450,10 +3639,10 @@ impl Remote {
                 continue;
             };
             let mut commands = Vec::new();
-            let (from, base) = {
+            let (from, base, first) = {
                 let mut i = self.inner.lock();
                 let Some(p) = i.peers.iter_mut().find(|p| p.service == service) else { return };
-                p.since = Some(a.seq);
+                let first = p.since.replace(a.seq).is_none();
                 let mut played = false;
                 if let Some(m) = a.rooms.into_iter().flat_map(|r| r.members).next() {
                     if m.state != p.member.state {
@@ -3468,8 +3657,11 @@ impl Remote {
                     i.heard_playing.insert(from.clone(), received);
                 }
                 commands.extend(a.events.into_iter().filter_map(|e| heard(&mut i, &from, e.body, received)));
-                (from, base)
+                (from, base, first)
             };
+            if first {
+                self.sync_through(base.clone());
+            }
             for (id, op) in commands {
                 self.obey(Via::Peer(base.clone()), from.clone(), id, op, received);
             }
@@ -3478,10 +3670,12 @@ impl Remote {
         }
     }
 
-    /// A relay poll's answer, received at `received` (this device's clock).
+    /// A relay poll's answer, received at `received` (this device's clock): its jams' rooms. The
+    /// account's own room it lists too is no longer this device's: my devices are the group's.
     fn took(self: &Arc<Self>, mut a: Answer, received: i64) {
-        // A request from before this device served, reaching the relay late, takes it off the list.
-        let unlisted = !a.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members).any(|m| m.id == self.id && m.state.is_some());
+        a.rooms.retain(|r| r.jam);
+        let rooms: Vec<&str> = a.rooms.iter().map(|r| r.room.as_str()).collect();
+        a.events.retain(|e| rooms.contains(&e.room.as_str()));
         // The relay may still list this device from before it restarted: it is never one of the others.
         for r in &mut a.rooms {
             r.members.retain(|m| m.id != self.id);
@@ -3505,13 +3699,12 @@ impl Remote {
                 }
             }
             // Commands are heard from the first answer on: only then is this device's state said to the
-            // relay, so no controller or guest sends it one before it can hear it.
-            if i.since.is_none() && (i.serving || i.hosted().is_some()) || i.serving && unlisted {
+            // jam's room, so no guest sends it one before it can hear it.
+            if i.since.is_none() && i.hosted().is_some() {
                 i.unsaid = true;
                 republish = true;
             }
             i.since = Some(a.seq);
-            i.relay_down = false;
             i.you = a.you;
             i.relay_along = a.along;
             // The time keeper may wait for it.
@@ -3536,8 +3729,7 @@ impl Remote {
             }
             for e in a.events {
                 if let Some((id, op)) = heard(&mut i, &e.from, e.body, received) {
-                    let jam = a.rooms.iter().any(|r| r.jam && r.room == e.room);
-                    commands.push((Via::Relay(jam.then_some(e.room)), e.from, id, op));
+                    commands.push((Via::Relay(e.room), e.from, id, op));
                 }
             }
             i.rooms = a.rooms;
@@ -3627,7 +3819,7 @@ impl Remote {
         let generation = {
             let mut i = self.inner.lock();
             i.timing += 1;
-            (i.active.mirror().is_some() || i.guest.listen().is_some() || i.hosts_along()).then_some(i.timing)
+            (i.guest.listen().is_some() || i.hosts_along()).then_some(i.timing)
         };
         self.timing.notify();
         if let Some(generation) = generation {
@@ -3636,11 +3828,9 @@ impl Remote {
     }
 
     /// While what needs another clock stays the same (`generation`), learns how that clock stands to this
-    /// one's: a burst of time exchanges, then one every [`clock::EVERY_US`]. The mirrored device's only
-    /// while it plays on screen (paused its playhead stands still, and off screen nothing shows it to the
-    /// millisecond: nothing wakes for it), through its door when it is near, else through the relay,
-    /// whose answer comes with a poll. A jam's host and its guests listening along each learn the relay's
-    /// clock when it tells it, the guests the host's otherwise.
+    /// one's: a burst of time exchanges, then one every [`clock::EVERY_US`]. A jam's host and its guests
+    /// listening along each learn the relay's clock when it tells it, the guests the host's otherwise,
+    /// through the jam's room. My devices need none of it: each knows the sync server's clock.
     async fn keep_time(self: Arc<Self>, generation: u64) {
         let mut sent = 0;
         let mut last = None;
@@ -3649,7 +3839,7 @@ impl Remote {
                 let gap = if sent < clock::BURST { Duration::from_millis(BURST_GAP_MS) } else { Duration::from_micros(clock::EVERY_US as u64) };
                 self.wait_timing(gap, |i| i.timing != generation || i.timed() != last).await;
             }
-            let (target, link) = loop {
+            let target = loop {
                 let timing = self.timing.notified();
                 {
                     let i = self.inner.lock();
@@ -3661,13 +3851,7 @@ impl Remote {
                         match i.timed() {
                             None if i.guest.listen().is_none() => return,
                             None => {}
-                            Some(target) => {
-                                let door = match &target {
-                                    Timed::Device { id, room: None } => i.peers.iter().find(|p| p.member.id == *id).map(|p| Link::Lan(p.base())),
-                                    _ => None,
-                                };
-                                break (target, door.or((i.relay != RelaySupport::Unsupported).then_some(Link::Relay)));
-                            }
+                            Some(target) => break target,
                         }
                     }
                 }
@@ -3679,8 +3863,8 @@ impl Remote {
                 last = Some(target.clone());
             }
             sent += 1;
-            match (target, link) {
-                (Timed::Server, _) => {
+            match target {
+                Timed::Server => {
                     let base = self.client.profile.read().url.trim_end_matches('/').to_string();
                     let Some(got) = self.get(format!("{base}/nori/time?t1={}", self.now()), 5_000, |_| true).await else { return };
                     let t4 = self.now();
@@ -3691,50 +3875,10 @@ impl Remote {
                         self.shown.changed();
                     }
                 }
-                (Timed::Device { id, .. }, Some(Link::Lan(base))) => {
-                    let Some(secret) = pairing::lan_key(&self.client, &id) else { return };
-                    let t1 = self.now();
-                    let url = format!("{base}{}", lan::signed(&secret, "GET", &format!("/rest/noriRemote.time?dev={}&t1={t1}", self.id), b"", db::now_ms()));
-                    let Some(got) = self.get(url, 5_000, |_| true).await else { return };
-                    let t4 = self.now();
-                    match got {
-                        Ok(body) => {
-                            if let Ok(Body::Clock { t1, t2, t3 }) = serde_json::from_slice(&body) {
-                                let mut i = self.inner.lock();
-                                if let Some(m) = i.active.mirror_mut().filter(|m| m.id == id) {
-                                    m.reached();
-                                }
-                                timed(&mut i, &id, clock::Exchange { t1, t2, t3, t4 });
-                                drop(i);
-                                self.follow_lead();
-                                self.shown.changed();
-                            }
-                        }
-                        // Without the relay nothing else reaches it; with it, the relay's exchanges decide.
-                        Err(NetError::Transport { .. }) => {
-                            let lost = {
-                                let mut i = self.inner.lock();
-                                let alone = i.relay == RelaySupport::Unsupported;
-                                i.active.mirror_mut().filter(|m| alone && m.id == id).is_some_and(|m| m.lost(t4))
-                            };
-                            if lost {
-                                self.shown.changed();
-                            }
-                        }
-                        Err(_) => {}
-                    }
-                }
-                (Timed::Device { id, room }, Some(Link::Relay)) => {
-                    let waited = sent > clock::BURST;
-                    let now = self.now();
-                    let lost = self.inner.lock().active.mirror_mut().filter(|m| m.id == id).is_some_and(|m| m.asked_time(waited, now));
-                    if lost {
-                        self.shown.changed();
-                    }
+                Timed::Device { id, room } => {
                     let command = Body::Command { id: self.next_id(), op: Box::new(Op::Clock { t1: self.now() }) };
-                    self.out(Out::send(Link::Relay, Outgoing { room, to: Some(id), body: Some(command), ..Default::default() }));
+                    self.out(Out::send(Link::Relay, Outgoing { room: Some(room), to: Some(id), body: Some(command), ..Default::default() }));
                 }
-                (Timed::Device { .. }, None) => {}
             }
         }
     }
@@ -3754,7 +3898,7 @@ impl Remote {
         let discovered = {
             let mut i = self.inner.lock();
             let to = if i.active.discovering() && !i.playing.playing && !i.jams() {
-                i.peers.iter().map(|p| &p.member).chain(i.rooms.iter().filter(|r| !r.jam && !i.relay_down).flat_map(|r| &r.members))
+                i.peers.iter().map(|p| &p.member).chain(&i.group)
                     .find(|m| i.state_of(&m.id).is_some_and(|(s, _)| s.playing && s.index.is_some() && !i.before_handing_here(&self.id, &m.id, s)))
                     .map(|m| m.id.clone())
             } else {
@@ -3791,12 +3935,13 @@ impl Remote {
             }
             let heard = i.state_of(&id).map(|(s, at)| (s.clone(), at.unwrap_or_else(|| self.now())));
             let me = self.id.clone();
+            let clock = self.sync_clock();
             let m = i.active.mirror_mut().expect("mirrored");
             if let (Some((st, _)), Some(last)) = (&heard, m.last()) {
                 liked = liked_since(last, st);
             }
             let moved = match heard {
-                Some((st, at)) if m.heard(&st, at, &me) => {
+                Some((st, at)) if m.heard(&st, at, &me, clock) => {
                     // It may have started or stopped playing: the time keeper looks again.
                     self.timing.notify();
                     let newer = m.handed_at.is_none_or(|h| (st.instance, st.seq) > h);
@@ -3837,7 +3982,7 @@ impl Remote {
                 Body::Ack { id, refusal }
             }
             Op::Clock { t1 } => Body::Clock { t1, t2: received, t3: self.now() },
-            Op::Page { from: turn, count } if !matches!(via, Via::Relay(Some(_)) | Via::LanJam) => {
+            Op::Page { from: turn, count } if !matches!(via, Via::Relay(_) | Via::LanJam) => {
                 let q = self.read_queue(|_, len| {
                     let start = (turn as usize).min(len);
                     start..(turn.saturating_add(count.min(PAGE_MAX)) as usize).min(len)
@@ -3851,7 +3996,12 @@ impl Remote {
 
     fn answer_to(&self, via: Via, to: String, body: Body) {
         match via {
-            Via::Relay(room) => self.out(Out::send(Link::Relay, Outgoing { room, to: Some(to), body: Some(body), state: None })),
+            Via::Group => {
+                if let Some(device) = self.inner.lock().route(&to) {
+                    self.out(Out::send(Link::Group(device), Outgoing { to: Some(to), body: Some(body), ..Default::default() }));
+                }
+            }
+            Via::Relay(room) => self.out(Out::send(Link::Relay, Outgoing { room: Some(room), to: Some(to), body: Some(body), state: None })),
             #[cfg(not(target_arch = "wasm32"))]
             Via::Door | Via::LanJam => {
                 if let Some(d) = &self.inner.lock().door {
@@ -3860,12 +4010,15 @@ impl Remote {
             }
             #[cfg(target_arch = "wasm32")]
             Via::Door | Via::LanJam => {}
-            Via::Peer(base) => self.out(Out::send(Link::Lan(base), Outgoing { to: Some(to), body: Some(body), ..Default::default() })),
+            Via::Peer(base) => {
+                let then = self.inner.lock().route(&to);
+                self.out(Out::send(Link::Lan { base, then }, Outgoing { to: Some(to), body: Some(body), ..Default::default() }));
+            }
         }
     }
 
     fn carry_out(self: &Arc<Self>, via: &Via, from: &str, id: u64, op: Op) -> Result<(), Refusal> {
-        let in_jam = matches!(via, Via::Relay(Some(_)) | Via::LanJam);
+        let in_jam = matches!(via, Via::Relay(_) | Via::LanJam);
         if is_jam(&op) {
             let kick = match &op {
                 Op::Kick { member } => Some(member.clone()),
@@ -3984,12 +4137,8 @@ impl Remote {
                 foreseen = true;
             }
             i.refused.remove(&device);
-            let lan = i.peers.iter().find(|p| p.member.id == device).map(|p| Link::Lan(p.base()));
-            match lan {
-                Some(l) => l,
-                None if i.relay == RelaySupport::Unsupported => return,
-                None => Link::Relay,
-            }
+            let Some(link) = i.link_to(&device) else { return };
+            link
         };
         if foreseen {
             self.end_foresight();
@@ -4036,7 +4185,7 @@ impl Remote {
         let rev = self.client.core.session.playlist(|p| p.rev());
         let link = {
             let mut i = self.inner.lock();
-            let link = i.peers.iter().find(|p| p.member.id == from).map_or(Link::Relay, |p| Link::Lan(p.base()));
+            let Some(link) = i.link_to(&from) else { return };
             i.active.take_back(PendingTransfer { from: from.clone(), id, rev });
             link
         };
@@ -4072,6 +4221,13 @@ impl Remote {
         if to != self.id && self.inner.lock().jams() {
             return;
         }
+        let link = match to == from {
+            true => None,
+            false => match self.inner.lock().link_to(&to) {
+                Some(link) => Some(link),
+                None => return,
+            },
+        };
         let session = &self.client.core.session;
         // A weighted shuffle's list is already in play order: shown shuffled, it goes as that order.
         let (ids, index, order, shuffle, repeat) = session.playlist(|p| (p.ids().to_vec(), p.current(), p.lit().then(|| p.play_order().map(|i| i as u32).collect()), p.lit(), p.repeat()));
@@ -4094,7 +4250,7 @@ impl Remote {
         let songs = ids.into_iter().map(|id| session.song(&id).unwrap_or_else(|| Song::only_id(id))).collect();
         let accepts_listen = (to == from && listen_handoff) || {
             let i = self.inner.lock();
-            i.peers.iter().map(|p| &p.member).chain(i.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members))
+            i.peers.iter().map(|p| &p.member).chain(&i.group)
                 .any(|m| m.id == to && m.state.as_ref().is_some_and(|s| s.listen_handoff))
         };
         let listen = accepts_listen.then(|| session.hand_listen(self.now() / 1_000)).flatten();
@@ -4103,8 +4259,7 @@ impl Remote {
         let command = Body::Command { id, op: Box::new(op) };
         if to == from {
             self.answer_to(via.clone(), to.clone(), command);
-        } else {
-            let link = self.inner.lock().peers.iter().find(|p| p.member.id == to).map_or(Link::Relay, |p| Link::Lan(p.base()));
+        } else if let Some(link) = link {
             self.out(Out::send(link, Outgoing { to: Some(to.clone()), body: Some(command), ..Default::default() }));
         }
         self.player.apply(Op::Pause);
@@ -4181,6 +4336,7 @@ impl Remote {
             obeyed: i.obeyed.clone(),
             at_us: None,
             server_us: None,
+            sync_us: None,
             rate: Some(p.rate),
             source: Some(self.client.core.kind().id().to_string()),
             outputs: i.outputs.clone(),
@@ -4203,12 +4359,19 @@ impl Remote {
         }
         st.at_us = Some(now);
         st.server_us = i.server_clock.settled_offset_at(now).filter(|_| i.hosts_along());
+        st.sync_us = self.sync_clock();
         st
     }
 
-    /// Publishes this device's state where it is followed, unless only time moved on.
+    /// The sync server's clock less this device's, µs, once the server told it.
+    fn sync_clock(&self) -> Option<i64> {
+        self.group.as_ref()?.server_clock()
+    }
+
+    /// Publishes this device's state where it is followed, unless only time moved on: my devices in the
+    /// group's room and nearby (while it serves), and a jam's room.
     fn publish(self: &Arc<Self>) {
-        let (state, serving, jam_room, relay) = {
+        let (state, serving, jam_room) = {
             let mut i = self.inner.lock();
             let mut state = self.state_now(&i);
             if !i.unsaid && i.published.as_ref().is_some_and(|(last, _)| same_but_time(last, &state)) {
@@ -4218,21 +4381,164 @@ impl Remote {
             i.seq += 1;
             state.seq = i.seq;
             i.published = Some((state.clone(), self.now()));
+            // Who reads the door is read first: telling the door answers their polls.
+            let far = i.serving.then(|| i.out_of_reach());
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(d) = &i.door {
                 d.publish(state.clone());
             }
             let heard = i.since.is_some();
-            (state, i.serving && heard, i.jam_room().filter(|_| heard).map(str::to_string), i.relay != RelaySupport::Unsupported)
+            (state, far, i.jam_room().filter(|_| heard).map(str::to_string))
         };
-        if serving && relay {
-            self.out(Out::send(Link::Relay, Outgoing { state: Some(state.clone()), ..Default::default() }));
+        if let Some(far) = serving {
+            let said = GroupSaid::Here { member: Box::new(Member { state: Some(state.clone()), ..self.member() }), ask: false, instance: self.instance };
+            match far {
+                Far::All => self.out(Out::Group { to: None, said: Box::new(said) }),
+                Far::Some(devices) => devices.into_iter().for_each(|to| self.out(Out::Group { to: Some(to), said: Box::new(said.clone()) })),
+            }
         }
         if let Some(room) = jam_room {
             self.out(Out::send(Link::Relay, Outgoing { room: Some(room), state: Some(state), ..Default::default() }));
         }
         self.shown.changed();
     }
+
+    /// Tells `to` (a group id), or every device with this profile open, who this device is: with its
+    /// state as last published while it serves. `ask`: the others that serve say theirs back.
+    fn say_here(&self, to: Option<String>, ask: bool) {
+        let state = {
+            let i = self.inner.lock();
+            i.published.as_ref().filter(|_| i.serving).map(|(s, _)| s.clone())
+        };
+        self.out(Out::Group { to, said: Box::new(GroupSaid::Here { member: Box::new(Member { state, ..self.member() }), ask, instance: self.instance }) });
+    }
+
+    /// The key my devices sign their LAN requests with changed: the door admits by the new one and
+    /// is announced by it, with the state last published.
+    fn group_keyed(self: &Arc<Self>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.reopen_access();
+        let announce = {
+            let mut i = self.inner.lock();
+            let serving = i.serving;
+            let announce = self.reopen_door(&mut i, serving);
+            #[cfg(not(target_arch = "wasm32"))]
+            if let (Some(door), Some((state, _))) = (&i.door, &i.published) {
+                door.publish(state.clone());
+            }
+            announce
+        };
+        if let Some(d) = &self.discovery {
+            d.announce(announce);
+        }
+    }
+
+    /// Where this device stands in the group's room: in it afresh or out of it, the devices heard
+    /// there before are gone. In it, it says who it is, with a state just made, and asks the others.
+    /// Out of it while the room stays open (its profile stopped syncing), it says it is gone.
+    fn group_room(self: &Arc<Self>, now: InRoom) {
+        let open = now != InRoom::Left;
+        {
+            let mut i = self.inner.lock();
+            if now != InRoom::Renamed {
+                i.group.clear();
+                i.routes.clear();
+            }
+            if open && i.serving {
+                let mut state = self.state_now(&i);
+                i.unsaid = false;
+                i.seq += 1;
+                state.seq = i.seq;
+                i.published = Some((state, self.now()));
+            }
+        }
+        match now {
+            InRoom::Left => self.out(Out::Group { to: None, said: Box::new(GroupSaid::Gone { id: self.id.clone(), instance: self.instance }) }),
+            _ => self.say_here(None, true),
+        }
+        self.follow_active();
+        self.shown.changed();
+    }
+
+    /// Device `device` (a group id) said `said` in the group's room.
+    fn group_heard(self: &Arc<Self>, device: String, said: GroupSaid) {
+        let received = self.now();
+        let mut commands = Vec::new();
+        let mut answer = false;
+        let mut switched = None;
+        {
+            let mut i = self.inner.lock();
+            match said {
+                GroupSaid::Here { member, ask, instance } => {
+                    if member.id == self.id || i.older(&member.id, instance) {
+                        return;
+                    }
+                    // A device asked to open this profile opened it in time: what waited for it goes on.
+                    switched = i.switching.take_if(|s| s.id == member.id).filter(|s| received - s.at <= SWITCH_WAIT_US);
+                    let new = i.routes.insert(member.id.clone(), device.clone()).is_none();
+                    let before = i.group.iter().position(|m| m.id == member.id).map(|at| i.group.remove(at));
+                    let before = before.and_then(|m| m.state);
+                    if before.as_ref() != member.state.as_ref() {
+                        i.received.insert(member.id.clone(), received);
+                    }
+                    // It played until now if it plays, or did as last heard.
+                    if before.iter().chain(&member.state).any(|s| s.playing) {
+                        i.heard_playing.insert(member.id.clone(), received);
+                    }
+                    if member.state.is_some() {
+                        i.group.push(*member);
+                    }
+                    // Asked, or a device this one's state did not reach: it may have gone to nobody.
+                    answer = ask || new && i.serving;
+                }
+                GroupSaid::Gone { id, instance } => {
+                    if i.older(&id, instance) {
+                        return;
+                    }
+                    i.group.retain(|m| m.id != id);
+                    i.routes.remove(&id);
+                }
+                GroupSaid::Event { from, to, body } => {
+                    if to != self.id {
+                        return;
+                    }
+                    i.routes.insert(from.clone(), device.clone());
+                    commands.extend(heard(&mut i, &from, body, received).map(|c| (from, c)));
+                }
+            }
+        }
+        if answer {
+            self.say_here(Some(device), false);
+        }
+        for (from, (id, op)) in commands {
+            self.obey(Via::Group, from, id, op, received);
+        }
+        self.follow_active();
+        self.shown.changed();
+        match switched {
+            Some(Switching { id, then: AfterSwitch::Pick { cast }, .. }) => self.clone().pick_for(Some(id), cast),
+            Some(Switching { id, then: AfterSwitch::Hand, .. }) => self.clone().hand_over(id),
+            None => {}
+        }
+    }
+
+    /// Device `device` (a group id) left the group's room.
+    fn group_left(self: &Arc<Self>, device: &str) {
+        {
+            let mut i = self.inner.lock();
+            let gone: Vec<String> = i.routes.iter().filter(|(_, d)| *d == device).map(|(id, _)| id.clone()).collect();
+            i.group.retain(|m| !gone.contains(&m.id));
+            i.routes.retain(|_, d| d != device);
+        }
+        self.follow_active();
+        self.shown.changed();
+    }
+}
+
+/// The key every device of a LAN jam, or of the group (`group`, its devices' key for this profile), signs
+/// its requests to the others' doors with.
+fn shared_key(client: &Client, group: Option<String>) -> Option<String> {
+    client.core.lan_jam.read().as_ref().map(|(_, secret)| secret.clone()).or(group)
 }
 
 /// What [`Remote::read_queue`] read.
@@ -4268,9 +4574,6 @@ fn plan_of(mix: &Mix, entries: &[Entry]) -> Option<(String, Plan)> {
 /// Event `body` from device `from` arrived at `received` (this device's clock): an answer, a page or a
 /// time exchange is noted in `i`; a command is handed back, to obey once `i` is let go.
 fn heard(i: &mut Inner, from: &str, body: Body, received: i64) -> Option<(u64, Op)> {
-    if let Some(m) = i.active.mirror_mut().filter(|m| m.id == from) {
-        m.reached();
-    }
     match body {
         Body::Command { id, op } => return Some((id, *op)),
         Body::Ack { id, refusal } => note(i, from, id, refusal, received),
@@ -4287,11 +4590,8 @@ fn paged(i: &mut Inner, from: &str, rev: u64, turn: u32, entries: Vec<Entry>) {
     }
 }
 
-/// A time exchange with device `from` came back.
+/// A time exchange with device `from`, a jam's host, came back.
 fn timed(i: &mut Inner, from: &str, exchange: clock::Exchange) {
-    if let Some(m) = i.active.mirror_mut().filter(|m| m.id == from) {
-        m.clock.add(exchange);
-    }
     let host = i.joined().and_then(|(_, h)| h).is_some_and(|h| h.id == from);
     if let Some(l) = i.guest.listen_mut().filter(|_| host) {
         l.clock.add(exchange);
@@ -4331,7 +4631,11 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         (a, b) => a == b,
     };
     // Each field named, so a new one is compared too.
-    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed, source, outputs, lyrics } = last;
+    let sync_same = match (last.sync_us, now.sync_us) {
+        (Some(a), Some(b)) => (a - b).abs() <= SERVER_SLACK_US,
+        (a, b) => a == b,
+    };
+    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, sync_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed, source, outputs, lyrics } = last;
     let ran = |rate: Option<f32>| if *playing && !*buffering { (elapsed_ms as f64 * rate.unwrap_or(1.0) as f64) as i64 } else { 0 };
     let jam_same = match (jam, &now.jam) {
         (Some(a), Some(b)) => jam_same_but_time(a, b, ran),
@@ -4339,6 +4643,7 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
     };
     (expected - now.position_ms).abs() <= POSITION_SLACK_MS
         && server_same
+        && sync_same
         && jam_same
         && *instance == now.instance
         && *listen_handoff == now.listen_handoff
@@ -4388,7 +4693,7 @@ mod tests {
     fn each_output_shows_once_through_the_device_playing_and_none_this_one_reaches() {
         use nori_remote::wire::CastOutput;
         let speaker = |id: &str| CastOutput { plugin: "p".into(), id: id.into(), name: id.to_uppercase(), look: Default::default() };
-        let device = |id: &str, outputs: Vec<CastOutput>| RemoteDevice { id: id.into(), name: id.to_uppercase(), kind: DeviceKind::Phone, state: Some(DeviceState { outputs, ..Default::default() }), now: None, age_ms: 0, nearby: true, refused: None };
+        let device = |id: &str, outputs: Vec<CastOutput>| RemoteDevice { id: id.into(), name: id.to_uppercase(), kind: DeviceKind::Phone, state: Some(DeviceState { outputs, ..Default::default() }), now: None, age_ms: 0, nearby: true, refused: None, elsewhere: false };
         let devices = [device("a", vec![speaker("kitchen"), speaker("hall")]), device("b", vec![speaker("kitchen"), speaker("bath")]), device("c", vec![speaker("own")])];
         let list = |active| reached(&[speaker("own")], &devices, active).into_iter().map(|r| (r.output.id, r.device)).collect::<Vec<_>>();
         let pair = |o: &str, d: &str| (o.to_string(), d.to_string());
@@ -4518,7 +4823,7 @@ mod tests {
     #[test]
     fn a_guest_whose_songs_are_refused_stops_listening_until_it_asks_again() {
         let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
-        let remote = Remote::new(client, RemoteMe { name: "Guest".into(), kind: DeviceKind::Guest }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let remote = Remote::new(client, RemoteMe { name: "Guest".into(), kind: DeviceKind::Guest }, Arc::new(Quiet), Arc::new(Quiet), None, None);
         remote.clone().cannot_listen();
         assert_eq!(remote.inner.lock().listening(), Listening::Watching, "only a guest listening can be refused");
         {
@@ -4538,7 +4843,7 @@ mod tests {
     #[test]
     fn a_guest_whose_jam_is_over_listens_along_no_more() {
         let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
-        let remote = Remote::new(client, RemoteMe { name: "Guest".into(), kind: DeviceKind::Guest }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let remote = Remote::new(client, RemoteMe { name: "Guest".into(), kind: DeviceKind::Guest }, Arc::new(Quiet), Arc::new(Quiet), None, None);
         remote.clone().listen(true);
         assert!(remote.inner.lock().guest.listen().is_some());
         remote.clone().jam_leave();
@@ -4571,24 +4876,15 @@ mod tests {
     }
 
     #[test]
-    fn a_mirrored_device_is_gone_after_three_unanswered_exchanges_until_heard() {
-        let mut m = Mirrored::new("tv".into(), 0);
-        assert!(!m.asked_time(true, 1) && !m.asked_time(true, 2));
-        assert!(!m.asked_time(false, 3), "a burst does not wait between exchanges");
-        assert!(m.asked_time(true, 4), "gone is news once");
-        assert!(!m.asked_time(true, 5) && !m.lost(6));
-        assert!(matches!(m.presence, Presence::Gone { since: 4 }));
-        m.reached();
-        assert!(!m.asked_time(true, 7), "heard from, it counts again");
-        assert!(m.lost(8), "a door that refuses is gone at once");
-    }
-
-    #[test]
     fn songs_go_only_to_a_device_of_the_same_source() {
         let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
-        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None, None);
         let device = |id: &str, source: Option<&str>| Member { id: id.into(), name: id.into(), kind: DeviceKind::Phone, state: Some(DeviceState { source: source.map(Into::into), ..Default::default() }) };
-        remote.inner.lock().rooms = vec![Room { room: "u".into(), jam: false, members: vec![device("youtube", Some("fm.nori.youtube-music")), device("same", Some("subsonic")), device("older", None)] }];
+        {
+            let mut i = remote.inner.lock();
+            i.group = vec![device("youtube", Some("fm.nori.youtube-music")), device("same", Some("subsonic")), device("older", None)];
+            i.routes = i.group.iter().map(|m| (m.id.clone(), format!("group-{}", m.id))).collect();
+        }
         let add = || Op::Add { songs: vec![Song { id: "s".into(), ..Default::default() }], next: false };
         for (id, refused) in [("youtube", Some(Refusal::OtherSource)), ("same", None), ("older", None)] {
             remote.clone().command(1, id.into(), add());
@@ -4598,30 +4894,6 @@ mod tests {
         assert_eq!(remote.inner.lock().refused.get("youtube").copied(), Some(Refusal::OtherSource), "nor are its songs taken here");
     }
 
-    /// A command a nearby device's door does not take goes through the relay instead of being lost;
-    /// one the door takes goes once; a time exchange, which only measures the door, is not sent on.
-    #[test]
-    fn a_command_the_door_does_not_take_goes_through_the_relay() {
-        use crate::transport::FailureKind;
-        let (client, net) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
-        let who = vec![("dev".to_string(), "me".to_string())];
-        let command = |op: Op| Out::send(Link::Lan("http://phone.test".into()), Outgoing { to: Some("phone".into()), body: Some(Body::Command { id: 1, op: Box::new(op) }), ..Default::default() });
-        let transfer = || command(Op::Transfer { to: "me".into(), listen_handoff: true });
-        let sent = |net: &crate::client::tests::Fake| -> Vec<String> { net.sent.lock().drain(..).map(|e| e.url.split('?').next().unwrap_or_default().to_string()).collect() };
-
-        net.answers.lock().extend([Err(FailureKind::Connect), Ok((200, crate::client::tests::OK.as_bytes().to_vec()))]);
-        crate::transport::block_on(deliver(&client, &who, transfer()));
-        assert_eq!(sent(&net), ["http://phone.test/rest/noriRemote.send", "http://test/rest/noriRemote.send"]);
-
-        net.answers.lock().push_back(Ok((200, b"{}".to_vec())));
-        crate::transport::block_on(deliver(&client, &who, transfer()));
-        assert_eq!(sent(&net), ["http://phone.test/rest/noriRemote.send"]);
-
-        net.answers.lock().push_back(Err(FailureKind::Connect));
-        crate::transport::block_on(deliver(&client, &who, command(Op::Clock { t1: 1 })));
-        assert_eq!(sent(&net), ["http://phone.test/rest/noriRemote.send"]);
-    }
-
     /// This device picked again while the queue it asked for is on its way keeps waiting for that
     /// queue: asked once, it is still taken when it comes, also after the controls came back here. The
     /// request is held in flight: one that failed would end the wait.
@@ -4629,7 +4901,7 @@ mod tests {
     fn picking_here_again_keeps_the_queue_asked_for() {
         let (client, net) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
         *net.held.lock() = true;
-        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None, None);
         let playing = DeviceState { index: Some(0), playing: true, ..Default::default() };
         {
             let mut i = remote.inner.lock();
@@ -4659,7 +4931,7 @@ mod tests {
     fn stop_returns_at_once_and_its_last_sends_go_after() {
         let (client, fake) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
         *fake.held.lock() = true;
-        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None, None);
         remote.out(Out::send(Link::Relay, Outgoing { room: Some("room".into()), to: None, body: None, state: None }));
         let (stopped, returned) = std::sync::mpsc::channel();
         let stopping = remote.clone();
@@ -4679,7 +4951,7 @@ mod tests {
     #[test]
     fn stop_returns_while_a_task_starts_another() {
         let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
-        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None, None);
         let late = remote.clone();
         let (started, running) = std::sync::mpsc::channel();
         remote.spawn(async move {
@@ -4708,7 +4980,7 @@ mod tests {
     fn published_state_uses_one_player_report() {
         let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
         client.core.session.set(vec!["a".into(), "b".into()], Some(0), false, None);
-        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None, None);
         remote.inner.lock().playing = Playing { index: Some(0), volume: Some(0), ..Default::default() };
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let start = Arc::new(std::sync::Barrier::new(2));
@@ -4742,24 +5014,24 @@ mod tests {
         let old = DeviceState { seq: 1, index: Some(0), len: 3, entries, ..Default::default() };
         for refused in [false, true] {
             let mut m = Mirrored::new("desk".into(), clock::now_us());
-            m.heard(&old, 0, "me");
+            m.heard(&old, 0, "me", None);
             m.foresee(1, &Op::Next, clock::now_us());
             assert_eq!(m.shown.as_ref().unwrap().index, Some(1));
             let accepted = DeviceState { seq: 2, obeyed: vec![Obeyed { from: "me".into(), id: 1 }], ..old.clone() };
-            m.heard(&accepted, 1, "me");
+            m.heard(&accepted, 1, "me", None);
             assert_eq!(m.shown.as_ref().unwrap().index, Some(1), "accepting the command keeps the next song");
             assert!(!m.forget(None, clock::now_us() + FORESEEN_US * 2), "an accepted skip waits for the player");
             assert_eq!(m.shown.as_ref().unwrap().index, Some(1));
             if refused {
                 assert!(m.forget(Some(1), clock::now_us()));
             } else {
-                m.heard(&DeviceState { seq: 3, index: Some(1), ..accepted }, 2, "me");
+                m.heard(&DeviceState { seq: 3, index: Some(1), ..accepted }, 2, "me", None);
             }
             assert!(m.foreseen.is_empty(), "the heard song or a refusal settles the skip");
             assert_eq!(m.shown.as_ref().unwrap().index, Some(if refused { 0 } else { 1 }));
         }
         let mut unanswered = Mirrored::new("legacy".into(), clock::now_us());
-        unanswered.heard(&old, 0, "me");
+        unanswered.heard(&old, 0, "me", None);
         unanswered.foresee(1, &Op::Next, clock::now_us());
         assert!(unanswered.forget(None, clock::now_us() + FORESEEN_US * 2));
         assert_eq!(unanswered.shown.as_ref().unwrap().index, Some(0), "an unanswered skip expires");
@@ -4769,12 +5041,12 @@ mod tests {
     fn older_remote_state_cannot_undo_a_confirmed_command() {
         let old = DeviceState { seq: 2, playing: true, index: Some(0), len: 1, entries: vec![Entry { duration: 300, ..Default::default() }], ..Default::default() };
         let mut m = Mirrored::new("desk".into(), clock::now_us());
-        m.heard(&old, 0, "me");
+        m.heard(&old, 0, "me", None);
         m.foresee(1, &Op::Pause, clock::now_us());
         let paused = DeviceState { seq: 3, playing: false, obeyed: vec![Obeyed { from: "me".into(), id: 1 }], ..old.clone() };
-        m.heard(&paused, 1, "me");
+        m.heard(&paused, 1, "me", None);
         assert!(m.foreseen.is_empty());
-        assert!(!m.heard(&old, 2, "me"), "a delayed relay answer cannot replace the newer direct answer");
+        assert!(!m.heard(&old, 2, "me", None), "a delayed relay answer cannot replace the newer direct answer");
         assert!(!m.shown.as_ref().unwrap().playing);
     }
 
@@ -4784,13 +5056,13 @@ mod tests {
             let entries = (0..3).map(|index| Entry { index, turn: index, duration: 300, ..Default::default() }).collect();
             let old = DeviceState { seq: 1, index: Some(0), len: 3, entries, playing: true, ..Default::default() };
             let mut m = Mirrored::new("desk".into(), clock::now_us());
-            m.heard(&old, 0, "me");
+            m.heard(&old, 0, "me", None);
             for (k, op) in ops.iter().enumerate() {
                 m.foresee(k as u64 + 1, op, clock::now_us());
             }
             let expected = m.shown.clone().unwrap();
             let confirmed = DeviceState { seq: 2, obeyed: vec![Obeyed { from: "me".into(), id: 2 }], ..expected.clone() };
-            m.heard(&confirmed, 1, "me");
+            m.heard(&confirmed, 1, "me", None);
             assert!(m.foreseen.is_empty());
             let shown = m.shown.as_ref().unwrap();
             assert_eq!((shown.index, shown.playing), (expected.index, expected.playing));
@@ -4804,10 +5076,10 @@ mod tests {
         let handed = DeviceState { seq: 9, index: Some(2), position_ms: 40_000, playing: true, ..before.clone() };
         let mut m = Mirrored { handed_at: Some((before.instance, before.seq)), ..Mirrored::new("desk".into(), clock::now_us()) };
         m.handed(1, Box::new(handed), clock::now_us());
-        assert!(!m.heard(&before, 0, "me"), "its state from before the hand-off is old news");
+        assert!(!m.heard(&before, 0, "me", None), "its state from before the hand-off is old news");
         let shown = m.shown.as_ref().unwrap();
         assert_eq!((shown.index, shown.playing, shown.position_ms), (Some(2), true, 40_000));
-        assert!(m.heard(&DeviceState { seq: 6, index: Some(2), position_ms: 40_100, playing: true, ..before }, 1, "me"));
+        assert!(m.heard(&DeviceState { seq: 6, index: Some(2), position_ms: 40_100, playing: true, ..before }, 1, "me", None));
         assert_eq!(m.shown.as_ref().unwrap().position_ms, 40_100);
     }
 
@@ -4815,18 +5087,18 @@ mod tests {
     fn restarted_remote_replaces_its_old_process() {
         let old = DeviceState { instance: Some(1), seq: 80, playing: true, len: 2, rev: 1, ..Default::default() };
         let mut m = Mirrored::new("desk".into(), clock::now_us());
-        m.heard(&old, 0, "me");
+        m.heard(&old, 0, "me", None);
         m.foresee(1, &Op::Pause, clock::now_us());
         let restarted = DeviceState { instance: Some(2), seq: 1, len: 2, rev: 1, playing: true, ..Default::default() };
-        assert!(m.heard(&restarted, 1, "me"));
+        assert!(m.heard(&restarted, 1, "me", None));
         assert!(m.foreseen.is_empty());
         assert!(m.shown.as_ref().unwrap().playing);
-        assert!(!m.heard(&DeviceState { seq: 81, ..old }, 2, "me"));
-        assert!(!m.heard(&DeviceState { seq: 90, ..Default::default() }, 3, "me"));
+        assert!(!m.heard(&DeviceState { seq: 81, ..old }, 2, "me", None));
+        assert!(!m.heard(&DeviceState { seq: 90, ..Default::default() }, 3, "me", None));
         assert_eq!(m.last().unwrap().instance, Some(2));
         let mut fresh = Mirrored::new("desk".into(), clock::now_us());
-        fresh.heard(&restarted, 0, "me");
-        assert!(!fresh.heard(&DeviceState { instance: Some(1), seq: 100, ..Default::default() }, 1, "me"));
+        fresh.heard(&restarted, 0, "me", None);
+        assert!(!fresh.heard(&DeviceState { instance: Some(1), seq: 100, ..Default::default() }, 1, "me", None));
     }
 
     #[test]
@@ -4850,7 +5122,7 @@ mod tests {
         let window = vec![entry(1, 1, "b", true), entry(2, 2, "c", false)];
         let st = DeviceState { seq: 1, rev: 7, index: Some(1), len: 4, entries: window, ..Default::default() };
         let mut m = Mirrored::new("desk".into(), clock::now_us());
-        m.heard(&st, 0, "me");
+        m.heard(&st, 0, "me", None);
         let from_rows = |m: &Mirrored, id: &str| m.view("Desk".into(), DeviceKind::Desktop, None).unwrap().rows.iter().find(|r| r.song.id == id).map(|r| r.song.starred);
         let ids = ["a", "b", "c", "d", "e"];
         for id in ids {
@@ -4870,26 +5142,28 @@ mod tests {
         let st = DeviceState { seq: 4, playing: true, position_ms: 10_000, index: Some(0), len: 1, entries, at_us: Some(50_000_000), ..Default::default() };
         let mut m = Mirrored::new("desk".into(), clock::now_us());
         let view = |m: &Mirrored| m.view("Desk".into(), DeviceKind::Desktop, None).unwrap();
-        // Its clock not known yet: as of when the state arrived.
-        assert!(m.heard(&st, 2_000_000, "me"));
+        // The sync server's clock not known here yet: as of when the state arrived.
+        assert!(m.heard(&st, 2_000_000, "me", None));
         assert_eq!((view(&m).position_ms, view(&m).at_us), (10_000, 2_000_000));
         // The same state read again (every poll answer carries it) does not start the clock again.
-        assert!(!m.heard(&st, 3_000_000, "me"));
+        assert!(!m.heard(&st, 3_000_000, "me", None));
         assert_eq!(view(&m).at_us, 2_000_000);
-        // Its clock 49.2 s ahead of this one's: heard there at 0.8 s here, though it arrived at 2 s.
-        m.clock.add(clock::Exchange { t1: 1_000_000, t2: 50_201_000, t3: 50_201_500, t4: 1_002_500 });
+        // The server's clock 1 s ahead of this one's and 48.2 s behind the device's: the device's clock
+        // is 49.2 s ahead, so it was heard there at 0.8 s here, though it arrived at 2 s.
+        let (here, st) = (Some(1_000_000), DeviceState { sync_us: Some(-48_200_000), ..st });
+        assert!(m.heard(&DeviceState { seq: 5, ..st.clone() }, 2_000_000, "me", here));
         let v = view(&m);
         assert_eq!(v.at_us, 800_000);
         assert_eq!(v.position_at(1_800_000), 11_000);
         assert_eq!(v.position_at(400_000_000), 300_000, "held at the song's end");
         // Playing at 1.25 times: a second there is a second and a quarter of the song.
-        assert!(m.heard(&DeviceState { seq: 5, rate: Some(1.25), ..st.clone() }, 3_500_000, "me"));
+        assert!(m.heard(&DeviceState { seq: 6, rate: Some(1.25), ..st.clone() }, 3_500_000, "me", here));
         assert_eq!(view(&m).position_at(1_800_000), 11_250);
-        let stalled = DeviceState { seq: 6, buffering: true, ..st.clone() };
-        assert!(m.heard(&stalled, 4_000_000, "me"));
+        let stalled = DeviceState { seq: 7, buffering: true, ..st.clone() };
+        assert!(m.heard(&stalled, 4_000_000, "me", here));
         assert_eq!(view(&m).position_at(9_000_000), 10_000, "waiting for audio holds the playhead");
         assert_eq!(view(&m).rate, 0.0, "client clocks hold while buffering");
-        assert!(m.heard(&DeviceState { seq: 7, position_ms: 12_000, at_us: Some(55_000_000), ..st }, 6_000_000, "me"));
+        assert!(m.heard(&DeviceState { seq: 8, position_ms: 12_000, at_us: Some(55_000_000), ..st }, 6_000_000, "me", here));
         assert_eq!(view(&m).position_at(6_800_000), 13_000, "the playhead resumes from the next heard position");
         // A command foreseen here runs on from when it was sent.
         m.foresee(1, &Op::Pause, clock::now_us());
@@ -4911,7 +5185,7 @@ mod tests {
             (&[("Mac", Terminal, "1111ab"), ("Mac", Terminal, "2222cd")], &["Mac (1111)", "Mac (2222)"]),
         ];
         for (devices, want) in cases {
-            let devices = devices.iter().map(|&(name, kind, id)| RemoteDevice { id: id.into(), name: name.into(), kind, state: None, now: None, age_ms: 0, nearby: false, refused: None }).collect();
+            let devices = devices.iter().map(|&(name, kind, id)| RemoteDevice { id: id.into(), name: name.into(), kind, state: None, now: None, age_ms: 0, nearby: false, refused: None, elsewhere: false }).collect();
             assert_eq!(device_names(devices, me.clone(), words.clone()), *want);
         }
     }
@@ -4954,6 +5228,7 @@ mod tests {
             },
             Arc::new(Quiet),
             Arc::new(Quiet),
+            None,
             None,
         );
         for playing in [true, false] {
@@ -5037,7 +5312,7 @@ mod tests {
             .position_ms = Some(29_000);
         assert!(same_but_time(&last, &now));
         let mut mirrored = Mirrored::new("host".into(), clock::now_us());
-        mirrored.heard(&now, 2_000_000, "guest");
+        mirrored.heard(&now, 2_000_000, "guest", None);
         assert!(
             mirrored
                 .view("Host".into(), DeviceKind::Phone, None)

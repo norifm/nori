@@ -283,8 +283,8 @@ pub async fn get(transport: &dyn Transport, url: String, timeout_ms: u32) -> Res
 }
 
 /// [`get`] with `form` POSTed rather than in the URL.
-pub async fn post_form(transport: &dyn Transport, url: String, form: String) -> Result<Vec<u8>, NetError> {
-    subsonic_answer(transport.send(Exchange { url, form: Some(form), ..Default::default() }).await?)
+pub async fn post_form(transport: &dyn Transport, url: String, form: String, timeout_ms: u32) -> Result<Vec<u8>, NetError> {
+    subsonic_answer(transport.send(Exchange { url, form: Some(form), timeout_ms, ..Default::default() }).await?)
 }
 
 fn subsonic_answer(r: TransportResponse) -> Result<Vec<u8>, NetError> {

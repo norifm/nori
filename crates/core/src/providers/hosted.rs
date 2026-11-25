@@ -8,7 +8,7 @@ use std::sync::Arc;
 use nori_remote::wire::{HostPage, HostRead, HostSource};
 use parking_lot::Mutex;
 
-use super::{nowhere, resolved_song, resolved_stream, sized, Answer, Provider, ProviderInfo, ResolveStream, StreamParts};
+use super::{nowhere, resolved_song, resolved_stream, sized, Answer, Provider, ProviderInfo, ResolveStream, SignInCopy, StreamParts};
 use crate::browse::ProfileRules;
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Write};
@@ -32,7 +32,7 @@ pub(crate) struct HostedProvider {
 impl Provider for HostedProvider {
     /// Never offered: a guest profile is made by joining.
     fn info(&self) -> ProviderInfo {
-        ProviderInfo { kind: self.kind.clone(), fields: Vec::new(), sign_in: Vec::new(), identities: None }
+        ProviderInfo { kind: self.kind.clone(), fields: Vec::new(), sign_in: Vec::new(), identities: None, sign_in_copy: SignInCopy::EachDevice }
     }
 
     fn ready(&self, _: &SavedServer) -> bool {

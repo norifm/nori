@@ -1,4 +1,4 @@
-//! A remote stopped while the desktop's transport holds a relay poll, against a relay on this machine
+//! A remote stopped while the desktop's transport holds a jam's relay poll, against a relay on this machine
 //! that answers a first poll at once and holds the later ones for as long as the client keeps them.
 
 use std::io::{Read, Write};
@@ -80,7 +80,7 @@ fn stopping_ends_a_held_poll_at_once() {
     core.configure(ServerConfig { url: url.clone(), user: "ann".into(), password: "pw".into(), ..Default::default() }).unwrap();
     let client = Client::new(core, Http::new(), Default::default());
     client.set_profile(NetProfile { url, ..Default::default() });
-    let remote = Remote::new(client, RemoteMe { name: "Desk".into(), kind: DeviceKind::Desktop }, Arc::new(Nothing), Arc::new(Nothing), None);
+    let remote = Remote::new(client, RemoteMe { name: "Desk".into(), kind: DeviceKind::Desktop }, Arc::new(Nothing), Arc::new(Nothing), None, None);
     remote.clone().watch(true);
     assert_eq!(heard.recv_timeout(Duration::from_secs(10)), Ok(Heard::Held));
 

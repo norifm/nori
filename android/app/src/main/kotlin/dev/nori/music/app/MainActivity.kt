@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import dev.nori.music.Nori
 import dev.nori.music.downloads.ACTION_OPEN_DOWNLOADS
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import dev.nori.music.app.ui.App
 import dev.nori.music.settings.loggedIn
@@ -50,8 +51,9 @@ class MainActivity : ComponentActivity() {
     private var started = false
     /** The same one App's messages come from: one per activity. */
     private val actions: dev.nori.music.app.vm.ActionsViewModel by viewModels()
-    private val remote: dev.nori.music.app.vm.RemoteViewModel by viewModels()
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    /** Refused, paired devices talk through the sync server (sync/LocalNetwork.kt). */
+    private val askLocalNetwork = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     /** What was asked for from outside; App does it and clears this. */
     private val launchRoute = androidx.compose.runtime.mutableStateOf<LaunchRoute?>(null)
 
@@ -64,6 +66,11 @@ class MainActivity : ComponentActivity() {
         window.attributes = window.attributes.apply { rotationAnimation = android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_CROSSFADE }
         // Asked once there is music to tell of; the first run asks as it ends (SetupPages).
         if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null && Nori.get(this).settings.value.loggedIn) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        // The local network, once this phone is paired; a pairing screen asks when it opens.
+        if (savedInstanceState == null) lifecycleScope.launch {
+            Nori.get(this@MainActivity).sync.paired.first { it }
+            if (dev.nori.music.sync.LocalNetwork.wanted(this@MainActivity)) askLocalNetwork.launch(dev.nori.music.sync.LocalNetwork.PERMISSION)
+        }
         // The composition runs under the app's own animation speed, not Android's: see AppMotion.
         @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
         val recomposer = window.decorView.createLifecycleAwareWindowRecomposer(dev.nori.music.app.ui.AppMotion, lifecycle)
@@ -100,8 +107,10 @@ class MainActivity : ComponentActivity() {
     /** A jam invite opened: this phone joins as a guest, and the app shows the host's playback (App, LocalRules). */
     private fun joinJam(intent: Intent?) {
         val link = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
-        if (dev.nori.music.ffi.pairingValid(link)) {
-            remote.offerPairing(link)
+        // A pairing code opened (the system camera's scan, a link): Pair a device takes it.
+        if (dev.nori.music.ffi.sync.isPairingCode(link)) {
+            Nori.get(this).sync.offered.value = link
+            launchRoute.value = LaunchRoute.Page("pair-device")
             return
         }
         if (!dev.nori.music.ffi.remote.isInvite(link)) return
@@ -139,6 +148,7 @@ class MainActivity : ComponentActivity() {
         Nori.get(this).updates.resumed()
         super.onStart()
         Nori.get(this).remotes.appShown(true)
+        Nori.get(this).sync.shown(true)
         // Binding starts the playback service, which builds a player on this thread: right after the next frame is
         // drawn, not once the main thread goes idle, which a page's items arriving keep it from for most of a second.
         afterNextDraw { startedPlugins(); if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress(); updatePlugins(); actions.shown() } }
@@ -177,6 +187,7 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         started = false
         Nori.get(this).remotes.appShown(false)
+        Nori.get(this).sync.shown(false)
         lifecycleScope.launch { Nori.get(this@MainActivity).plugins.appShown(false) }
         // The service keeps playing on its own; holding a controller while hidden would only keep callbacks flowing.
         Nori.get(this).player.disconnect()

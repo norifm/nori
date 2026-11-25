@@ -41,7 +41,7 @@ fn everything() -> String {
         "playlist":{{"id":"p1","name":"P","entry":[{SONG}]}},
         "albumList2":{{"album":[{ALBUM},{PROVIDER_ALBUM}]}},
         "artists":{{"index":[{{"name":"A","artist":[{ARTIST}]}},{{"name":"B","artist":[{{"id":"ar2","name":"B"}}]}}]}},
-        "playlists":{{"playlist":[{{"id":"p1","name":"P"}}]}},
+        "playlists":{{"playlist":[{{"id":"p1","name":"P"}},{{"id":"p9","name":"nori-jam-1a2b3c4d"}}]}},
         "genres":{{"genre":[{{"value":"Jazz","songCount":1}},{{"value":"Rock","songCount":9}}]}},
         "randomSongs":{{"song":[{SONG}]}},
         "song":{PROVIDER_SONG},
@@ -107,6 +107,7 @@ fn every_read_makes_page_and_index() {
         (Read::RandomSongs { size: 5, genre: None }, "songs s1", (0, 0, 1)),
         // randomSongs comes before a single song.
         (Read::SongById { id: id() }, r#"song Some("s1")"#, (0, 0, 1)),
+        // A jam's playlist is never listed.
         (Read::PlaylistList, "playlists p1", (0, 0, 0)),
         (Read::PlaylistById { id: id() }, "playlist p1 songs s1", (0, 0, 1)),
         (Read::PlaylistSongs { id: id() }, "songs s1", (0, 0, 1)),

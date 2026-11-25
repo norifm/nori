@@ -4,8 +4,9 @@ This page lists the manifest, rows, strings, the package, the extension points, 
 permissions, limits and repos of plugin API 7. For what a plugin is, see [Plugins](plugins.md).
 
 The API is the WIT in `wit/`. `types.wit`, `host.wit` and `net.wit` hold what a plugin calls.
-`plugin.wit` holds what it exports, and the `plugin` world. The SDK, `crates/plugin-sdk`, is that WIT as
-Rust. WIT names become snake case, and a Rust keyword gets a trailing `_`: `settings::override_`,
+`plugin.wit` holds what it exports, and two worlds. The `plugin` world is what every plugin of the API
+has. The `current` world adds the extension points added since, and the SDK builds it. The SDK,
+`crates/plugin-sdk`, is that WIT as Rust. WIT names become snake case, and a Rust keyword gets a trailing `_`: `settings::override_`,
 `session::move_`.
 
 ## Manifest
@@ -40,6 +41,8 @@ nori_plugin_sdk::plugin!(MyPlugin, MANIFEST, lifecycle, hooks);
 | `cache_mb` | `u32` | 0 | Its cache's quota, in MB |
 | `assets` | `&[Asset]` | Empty | Large files nori downloads for it |
 | `category` | `Category` | `Other` | The page of Get plugins it is listed on |
+| `sign_in_copy` | `SignInCopy` | `EachDevice` | Whether a provider's sign-in goes to the person's other devices |
+| `guest_streams` | `GuestStreams` | `SameNetwork` | How a jam's guest gets a provider's songs |
 
 `category` is `Category::Service` for a music service to play from, `Device` for headphones, speakers and
 other devices, `Playback` for how music plays and sounds, and `Other` for the rest. Get plugins shows a
@@ -47,6 +50,33 @@ page per category, from the `category` its repo's index repeats. A plugin built 
 `Other`.
 
 In `net`, a leading `*.` takes in a host's subdomains, and `lan` opens private addresses.
+
+### A provider on other devices
+
+Two fields say what happens to a provider's profile away from the device that added it. A plugin that
+names neither gets the defaults, which are always safe.
+
+`sign_in_copy` is for profile sync, which gives a person's paired devices the same profiles:
+
+| Value | Use it when | What syncs |
+|---|---|---|
+| `SignInCopy::EachDevice` | The service replaces the session, or ends one that two devices use | The profile alone |
+| `SignInCopy::Copied` | The same sign-in works on every device at once | The profile with its password and API key |
+
+With `EachDevice`, each device signs in itself. `Copied` sends only the profile's own fields. What the plugin keeps in its store stays on its device.
+With `EachDevice`, nori accepts a sign-in on another device only for the same account, which the
+`account` extension point names.
+
+`guest_streams` is for a jam with a guest who is not on the host's network:
+
+| Value | Use it when | How the guest gets a song |
+|---|---|---|
+| `GuestStreams::SameNetwork` | Neither of the others holds | Only through the host's device, on its network |
+| `GuestStreams::HostAddress` | The address `provider.source` gives works on any device for hours | The address the host sends |
+| `GuestStreams::GuestLookup` | The address works only for the device that asked, or only for minutes | Its own lookup by the song's id |
+
+With `HostAddress`, a guest who has the plugin looks the song up itself when the address fails. A
+lookup runs signed out. A guest who cannot get a song sees the queue and asks for songs.
 
 `plugin!` writes the manifest into the wasm's `nori:plugin` custom section. It adds the version from the
 crate's `Cargo.toml`, the API version, and the extension points named after the manifest. nori calls
@@ -181,8 +211,13 @@ write gives nori's own answer: `None`, "unsupported", empty, or what it was hand
 | `lyrics` | `Lyrics` | `lookup` |
 | `scrobbler` | `Scrobbler` | `now-playing`, `scrobble` |
 | `notification` | `Notification` | `buttons` |
+| `account` | `Account` | `id` |
 
 `slots` also declares `shelf`, `page` and `search`. nori does not call them.
+
+`account.id` names the provider's signed-in account. Its value is the same on every device and does not
+change while the account lives, such as the service's user id. It is never a display name or a handle.
+It answers `None` while signed out.
 
 `lifecycle.start` runs when the plugin is turned on, before any other call. `lifecycle.action` runs for
 an action row, a command, a cast target picked (`cast:<id>`), and a notification button of the
@@ -375,9 +410,17 @@ seek or song.
 ## API version
 
 A plugin runs only on a nori with the same plugin API version. The API is 7: `API` in the SDK, and the
-`nori:plugin@7.0.0` package in `wit/`. A changed record, function or export makes a new API. A new host
-interface does not, since a plugin built before it still runs. An older nori refuses a plugin that calls
-the new interface, as `Needs`.
+`nori:plugin@7.0.0` package in `wit/`. A changed record, function or export makes a new API. These
+additions do not, and the package keeps its version:
+
+- A new host interface. A plugin built before it still runs. An older nori refuses a plugin that calls
+  the new interface, as `Needs`.
+- A new extension point, in the `current` world. nori looks it up by name and does not call it where a
+  plugin lacks it. An older nori ignores it.
+- New manifest fields, after the others. A plugin built before them gets their defaults. An older nori
+  ignores them.
+
+So a plugin built for API 7 runs on every nori of API 7 that has the host interfaces it calls.
 
 A plugin built for an older API stays installed with its store, but it runs nothing. Its profile waits,
 and nori looks for its update at once, even when the user keeps its version. A repo lists the versions

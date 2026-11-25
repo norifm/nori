@@ -60,6 +60,29 @@ pub enum ProfileRemoved {
     Last,
 }
 
+/// See [`Root::sync_client`].
+struct SyncTold {
+    root: Arc<Root>,
+    profiles: Box<dyn Fn(nori_core::sync::ProfilesSynced) + Send + Sync>,
+}
+
+impl nori_core::sync::SyncClient for SyncTold {
+    fn here(&self) -> nori_core::sync::Here {
+        self.root.plugins().kinds.sync_here()
+    }
+
+    fn profiles(&self, synced: nori_core::sync::ProfilesSynced) {
+        crate::sync::profiles_synced(&self.root.data, &synced);
+        (self.profiles)(synced);
+    }
+
+    fn event(&self, event: nori_core::sync::SyncEvent) {
+        nori_core::alog::info(&format!("sync: {event:?}"));
+    }
+
+    fn changed(&self) {}
+}
+
 /// A desktop client's object graph root (as Kotlin's `Nori`): the queue session over the settings, which
 /// every view reads, and the plugins installed under the data directory, opened at the first ask.
 pub struct Root {
@@ -100,15 +123,18 @@ impl Root {
         (prefs.servers, prefs.active_server_id) = (left.servers, left.active_server_id);
         let next = prefs.active_server().cloned();
         settings.put(prefs);
-        let (db, server) = (crate::db_path(&self.data), id.to_string());
-        crate::spawn("nori-forget", move || {
-            let _ = nori_core::db::db_forget_server(db, server);
-        });
+        crate::forget_profile_rows(&self.data, id.to_string());
         match next {
             _ if !was_active => ProfileRemoved::Elsewhere,
             Some(p) => ProfileRemoved::Opens(Box::new(p)),
             None => ProfileRemoved::Last,
         }
+    }
+
+    /// What sync tells the desktop or terminal client: changed profiles go to `profiles`, after their
+    /// removed ones' rows. Plugins needed and what to word are logged until the screens show them.
+    pub fn sync_client(self: &Arc<Root>, profiles: impl Fn(nori_core::sync::ProfilesSynced) + Send + Sync + 'static) -> Arc<dyn nori_core::sync::SyncClient> {
+        Arc::new(SyncTold { root: self.clone(), profiles: Box::new(profiles) })
     }
 
     /// The plugins, laid over the settings, and the kinds of profile they and nori open.
@@ -486,8 +512,10 @@ pub struct DesktopOpen<'a> {
     pub offline: bool,
     /// The process's media controls, driven by this session while it is open.
     pub mpris: Option<Arc<nori_mpris::Mpris>>,
-    /// This client, as the account's other devices list it.
+    /// This client, as my other devices list it.
     pub kind: DeviceKind,
+    /// The client's sync, whose group room reaches my devices.
+    pub sync: Option<Arc<nori_core::sync::Syncing>>,
     pub out: Out,
 }
 
@@ -512,6 +540,7 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
         mpris: o.mpris,
         device: nori_core::remote::RemoteMe { name: crate::device_name(), kind: o.kind },
         discovery: None,
+        sync: o.sync,
         tasks: crate::tasks(),
         keeps_music: true,
         decoders: Default::default(),

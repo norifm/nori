@@ -36,13 +36,13 @@ mod no_alloc;
 pub mod testing;
 
 pub use clock::{Clock, Monotonic};
-pub use engine::{run_ms, runs, Config, Driven, Engine, Event, Followed, FocusRequest, Lead, OutputFacts, Path, Settings, State, Status, REMAKE_LEAD_MS};
+pub use engine::{run_ms, runs, Config, Driven, Engine, Event, Followed, FocusRequest, Lead, OutputFacts, Path, Settings, State, Status, Woken, REMAKE_LEAD_MS};
 pub use offload::{Coded, Coding, OffloadOutput, OnCpu, Support};
 pub use library::{FromSecond, Library, Located, Source, Sources};
 pub use nori_player::decode::Platform;
 pub use nori_player::pipeline::{App, Queue, Sound};
 pub use output::{AudioOutput, Device, DeviceWatch, Feed, Heard, OutputFormat, OutputKind};
-pub use source::{Body, ByteSource, Cancel, Fetching, Filling, Held, Loader, Next, OpenError, Waits, Window};
+pub use source::{answer_span, Body, ByteSource, Cancel, Fetching, Filling, Held, Loader, Next, OpenError, Waits, Window};
 pub use store::{CacheOrder, Store};
 pub use wav::WavOutput;
 

@@ -1,5 +1,5 @@
 //! Desktop HTTP: the core's [`Transport`] and the engine's [`ByteSource`] over one ureq agent (rustls),
-//! so API calls, covers and audio share one connection pool.
+//! so API calls, covers and audio share one connection pool; and the sync server's WebSockets (socket.rs).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -16,6 +16,9 @@ use nori_engine::{Body, ByteSource, Cancel, OpenError};
 use ureq::unversioned::resolver::DefaultResolver;
 use ureq::unversioned::transport::{Buffers, ConnectProxyConnector, ConnectionDetails, Connector, Either, LazyBuffers, NextTimeout, RustlsConnector};
 use ureq::{Agent, RequestBuilder};
+
+mod socket;
+pub use socket::WebSockets;
 
 /// Largest API response body read.
 const MAX_ANSWER: u64 = 256 * 1024 * 1024;

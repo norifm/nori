@@ -88,6 +88,8 @@ pub fn setup_step(step: nori_core::setup::SetupStep) -> &'static str {
         S::Listening => "Between songs",
         S::Data => "On mobile data",
         S::Look => "Make it yours",
+        // The terminal has no pairing screen: its first run asks nothing of pairing.
+        S::Pair => "Pair a device",
     }
 }
 
@@ -1463,55 +1465,6 @@ pub fn room_settings(along: bool, remote_songs: bool) -> [String; 2] {
     ]
 }
 
-pub const PAIRED_TITLE: &str = "PAIRED DEVICES";
-pub const PAIR_DEVICE: &str = "Pair a device";
-pub const PAIR_TITLE: &str = " Pair a device · enter pairs, esc closes ";
-pub const PAIR_SHOW: &str = "Scan this code with nori on your other device, or paste its pairing link below.";
-pub const PAIR_ROOM: &str = "Make the window bigger to show this computer's code.";
-pub const PAIRING: &str = "Pairing…";
-pub const FORGET: &str = "Forget";
-pub const FORGET_HOW: &str = "It stops controlling this computer, and this computer it. Pair again to undo.";
-
-pub fn forget_title(name: &str) -> String {
-    format!("Forget {name}?")
-}
-
-pub fn paired_with(name: &str) -> String {
-    format!("Paired with {name}")
-}
-
-/// A paired device's kind, and whether it answers now or when it was last nearby.
-pub fn paired_line(d: &nori_core::remote::PairedDevice) -> String {
-    use nori_core::remote::PairedReach;
-    let seen = match (d.reach, d.seen_days) {
-        (PairedReach::Answers, _) => "nearby".to_string(),
-        (PairedReach::Silent, _) => "can't reach it".into(),
-        (PairedReach::Away, 0) => "not nearby · seen today".into(),
-        (PairedReach::Away, 1) => "not nearby · seen yesterday".into(),
-        (PairedReach::Away, n) => format!("not nearby · seen {n} days ago"),
-    };
-    format!("{} · {seen}", device_kind(d.kind))
-}
-
-/// Enter on a paired device that does not answer.
-pub fn cant_reach(name: &str) -> String {
-    format!("Can't reach {name}. Is it on this network, with remote control on?")
-}
-
-/// Why pairing with the device `name` (when its code says it) failed.
-pub fn pair_failed(e: nori_core::remote::PairError, name: Option<&str>) -> String {
-    use nori_core::remote::PairError;
-    let (who, at_start) = name.map_or(("the other device", "The other device"), |n| (n, n));
-    match e {
-        PairError::NotACode => "That is not a pairing link. Copy the whole link from the other device.".into(),
-        PairError::Own => "That is this computer's own code.".into(),
-        PairError::Unavailable => "This profile doesn't pair: devices signed in to one server find each other.".into(),
-        PairError::Unreachable => format!("Can't reach {who}. Is it on this network, with remote control on?"),
-        PairError::TimedOut => format!("{at_start} didn't answer in time."),
-        PairError::Refused => format!("{at_start} turned the code down. Paste the one it shows now."),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1564,7 +1517,7 @@ mod tests {
             ..Default::default()
         };
         let wish = state(true).entries.pop();
-        let mut d = RemoteDevice { id: "d".into(), name: "Desk".into(), kind: DeviceKind::Desktop, state: Some(state(true)), now: wish.clone(), age_ms: 0, nearby: true, refused: None };
+        let mut d = RemoteDevice { id: "d".into(), name: "Desk".into(), kind: DeviceKind::Desktop, state: Some(state(true)), now: wish.clone(), age_ms: 0, nearby: true, refused: None, elsewhere: false };
         assert_eq!(device_line(&d), "Wish · Gus");
         d.state = Some(state(false));
         assert_eq!(device_line(&d), "Paused · Wish", "the active device, paused");

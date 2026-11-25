@@ -275,6 +275,19 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Plugin [id] ready to install from its page, then [open]: when a profile sync brought plays from it,
+     * the repo it came from on the other device is added here first if it is missing.
+     */
+    fun bring(id: String, open: () -> Unit) {
+        viewModelScope.launch {
+            val repo = nori.sync.call { it.neededPlugins() }.firstOrNull { it.id == id }?.repo
+            if (repo != null && repos.value.none { it.url == repo }) host.addRepo(repo)
+            loadOffers()
+            open()
+        }
+    }
+
     fun renameRepo(url: String, name: String) = viewModelScope.launch { host.renameRepo(url, name) }
 
     fun removeRepo(url: String) = viewModelScope.launch { host.removeRepo(url); loadOffers() }

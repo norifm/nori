@@ -98,8 +98,6 @@ pub enum Msg {
     SetupCovers(Vec<Vec<u8>>),
     /// A plugin picked on the welcome installed and on, or not.
     WelcomeInstalled { plugin: String, on: bool },
-    /// A device paired (its name), or what to say of why not.
-    Paired(Result<String, String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.
     Joined(Result<nori_core::remote::JamPass, String>),
     /// The jam this guest is in ended (its host's name, if seen).
@@ -159,6 +157,17 @@ pub enum Msg {
     BackedUp(Result<(), nori_host::desktop::BackupFailure>),
     /// What a backup restored, or why it couldn't.
     Restored(Result<Box<nori_core::backup::Restored>, nori_host::desktop::BackupFailure>),
+    /// Sync changed the saved profiles, which the settings now keep.
+    Synced(nori_core::sync::ProfilesSynced),
+    /// Where sync stands or the pairing changed.
+    SyncChanged,
+    /// Something happened in the group, to word.
+    SyncEvent(nori_core::sync::SyncEvent),
+    /// Install on Your devices is done.
+    NeededInstalled,
+    /// A sign-in here was to another account than the profile syncs with, named when known, and was
+    /// signed out.
+    OtherAccount(Option<String>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -236,7 +245,7 @@ impl std::ops::Deref for Session {
 impl Session {
     /// Opens the profile without touching the network, so an unreachable server still opens.
     /// `mpris`: the process's media controls, driven by this session while it is open.
-    pub fn open(root: &nori_host::desktop::Root, http: Arc<Http>, profile: SavedServer, tx: Tx, mpris: Option<Arc<nori_mpris::Mpris>>) -> Result<Session, String> {
+    pub fn open(root: &nori_host::desktop::Root, http: Arc<Http>, profile: SavedServer, tx: Tx, mpris: Option<Arc<nori_mpris::Mpris>>, sync: Arc<nori_core::sync::Syncing>) -> Result<Session, String> {
         static IDS: AtomicU64 = AtomicU64::new(0);
         let id = IDS.fetch_add(1, Ordering::Relaxed);
         let to = tx.clone();
@@ -252,6 +261,7 @@ impl Session {
             offline: false,
             mpris,
             kind: DeviceKind::Desktop,
+            sync: Some(sync),
             out,
         };
         Ok(Session { id, host: nori_host::desktop::open(o)?, tx })
@@ -325,6 +335,7 @@ impl Session {
                 syncing: false,
                 unsent: client.unsent().map_or((0, 0), |u| (u.waiting, u.dropped)),
                 rules: core.rules(),
+                sync: Default::default(),
             })));
         });
     }

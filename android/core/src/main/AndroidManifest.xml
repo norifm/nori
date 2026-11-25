@@ -16,6 +16,9 @@
          the locks are held only then. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Paired devices talking directly on one network, and devices waiting to be paired found there
+         (sync/LocalNetwork.kt): Android 17 asks for it once this phone is paired or pairing opens. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <!-- The app updating itself from its GitHub releases (update/Updates.kt); with the second, Android 12+
          installs updates without asking, from the update after the one that brought it. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />

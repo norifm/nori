@@ -319,7 +319,7 @@ pub(crate) struct Around {
 
 impl Around {
     /// Asks the controlling plugin for `device`'s state and keeps it.
-    pub(crate) fn refresh(&self, s: &mut Store, p: &crate::wit::Plugin, device: &str) -> wasmtime::Result<()> {
+    pub(crate) fn refresh(&self, s: &mut Store, p: &crate::wit::Exports, device: &str) -> wasmtime::Result<()> {
         let plugin = s.data().id.clone();
         if self.controls.of(device).as_deref() != Some(&plugin) {
             return Ok(());

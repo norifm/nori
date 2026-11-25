@@ -24,9 +24,14 @@ import dev.nori.music.settings.withServers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 import dev.nori.music.settings.server
 import dev.nori.music.settings.loggedIn
+
+/** A sign-in profile sync refused: to [profile], whose synced account is called [syncsWith] (empty when unknown). */
+data class OtherAccount(val profile: String, val syncsWith: String?)
 
 /**
  * The object graph, built by hand: there are a dozen long-lived objects and a DI
@@ -137,6 +142,9 @@ class Nori private constructor(private val context: Context) {
     /** Remote control and jams; nothing runs unless they are switched on (or this is a jam guest). */
     val remotes = dev.nori.music.remote.Remotes(context, this)
 
+    /** Pairing and profile sync; nothing runs unless this phone is paired with sync on. */
+    val sync = dev.nori.music.sync.Sync(this, context)
+
     /**
      * What the app offers over the profile in use: as its core has them once it is open (an account whose
      * session ended offers what a signed-out one does), else the core's `rules_of` over the saved profile.
@@ -203,6 +211,7 @@ class Nori private constructor(private val context: Context) {
         val t = android.os.SystemClock.elapsedRealtime()
         kotlinx.coroutines.runBlocking { plugins.refresh() }
         core; http; sources
+        sync.start()
         if (settings.value.loggedIn) player.showSaved()
         dev.nori.music.NoriLog.i("core ready in ${android.os.SystemClock.elapsedRealtime() - t} ms")
     }
@@ -309,6 +318,33 @@ class Nori private constructor(private val context: Context) {
 
     fun logout() = settings.value.server?.let { removeServer(it.id) }
 
+    /**
+     * Sync changed the saved profiles, which the core already keeps (the core's `ProfilesSynced`): the
+     * settings here follow, a removed profile's rows go, and the profile in use opens again when it
+     * changed or another took its place. Main thread.
+     */
+    fun profilesSynced(synced: dev.nori.music.ffi.sync.ProfilesSynced) {
+        settings.reload()
+        val db = File(context.filesDir, dev.nori.music.ffi.db.dbFileName()).path
+        if (synced.removed.isNotEmpty()) Thread({ synced.removed.forEach { id -> runCatching { dev.nori.music.ffi.db.dbForgetServer(db, id) } } }, "nori-forget").start()
+        when (synced.active) {
+            dev.nori.music.ffi.sync.ActiveProfile.SAME -> {}
+            dev.nori.music.ffi.sync.ActiveProfile.EDITED -> settings.value.server?.let { p ->
+                http.configure(p)
+                opened?.takeIf { it.key == p.id }?.client?.setProfile(p.net())
+                library.onServerChanged()
+            }
+            dev.nori.music.ffi.sync.ActiveProfile.SWITCHED -> {
+                player.clear()
+                synchronized(lock) { opened = null }
+                http.configure(settings.value.server)
+                library.onServerChanged()
+                library.onProfileChanged()
+                remotes.refresh()
+            }
+        }
+    }
+
     /** The account looked at for a profile other than the one in use: its id and a client of its own. */
     @Volatile private var apart: Pair<String, Client>? = null
 
@@ -339,13 +375,34 @@ class Nori private constructor(private val context: Context) {
         return r
     }
 
-    /** How a sign-in went, whichever way it went (a page, pasting, a code). Main thread. */
+    /**
+     * How a sign-in went, whichever way it went (a page, pasting, a code). Main thread. Profile sync
+     * accepts a sign-in only to the account the profile syncs with, and signs another one out again (the
+     * core's `Client::synced_sign_in`): the profile keeps what it was called.
+     */
     fun signedIn(r: dev.nori.music.ffi.SignInResult) {
-        if (r is dev.nori.music.ffi.SignInResult.SignedIn) accountProfile()?.let {
-            updateServer(it.copy(user = r.name))
-            pluginScope.launch { keepAccountPicture() }
+        if (r !is dev.nori.music.ffi.SignInResult.SignedIn) return
+        val before = accountProfile() ?: return
+        val client = accountClient
+        _otherAccount.value = null
+        pluginScope.launch {
+            val check = client.syncedSignIn(sync.call { it }, before.id, r.name)
+            val other = check as? dev.nori.music.ffi.sync.SignInCheck.OtherAccount
+            withContext(Dispatchers.Main) {
+                if (other != null) {
+                    _otherAccount.value = OtherAccount(before.id, other.name)
+                } else {
+                    settings.value.servers.firstOrNull { it.id == before.id }?.let { updateServer(it.copy(user = r.name)) }
+                }
+            }
+            if (other == null) keepAccountPicture()
         }
     }
+
+    private val _otherAccount = MutableStateFlow<OtherAccount?>(null)
+
+    /** The last sign-in profile sync refused, being to another account than the profile's. */
+    val otherAccount: StateFlow<OtherAccount?> = _otherAccount
 
     /**
      * Signs the profile in use's account in with a code allowed in a browser (the core's

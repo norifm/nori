@@ -1,5 +1,6 @@
-//! First-run setup: the questions asked once the first profile is in, and the settings each answer sets.
-//! The welcome page before it is the profile's own adding (`nori_core::providers::flow`).
+//! First-run setup: the questions asked once the first profile is in, and the settings each answer sets,
+//! then pairing with another device. The welcome page before it is the profile's own adding
+//! (`nori_core::providers::flow`).
 
 use crate::codec::Choice;
 use crate::settings::AutoMixMode;
@@ -14,6 +15,9 @@ pub enum SetupStep {
     Data,
     /// Appearance and season, each pick taken as it is made; no [`SetupAnswer`].
     Look,
+    /// Pairing with another device, which brings its profiles; under it the sync server's address and
+    /// switch. No [`SetupAnswer`].
+    Pair,
 }
 
 /// An answer to a [`SetupStep`].
@@ -42,10 +46,16 @@ pub struct SettingPick {
     pub value: String,
 }
 
-/// The questions a first run asks, in order; `mobile_data`: the device streams over a mobile network.
+/// The questions a first run asks, in order; `mobile_data`: the device streams over a mobile network;
+/// `pairs`: the client has a pairing screen and the device is in no group yet.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn setup_steps(mobile_data: bool) -> Vec<SetupStep> {
-    [SetupStep::Listening, SetupStep::Data, SetupStep::Look].into_iter().filter(|s| mobile_data || *s != SetupStep::Data).collect()
+pub fn setup_steps(mobile_data: bool, pairs: bool) -> Vec<SetupStep> {
+    let asked = |s: &SetupStep| match s {
+        SetupStep::Data => mobile_data,
+        SetupStep::Pair => pairs,
+        _ => true,
+    };
+    [SetupStep::Listening, SetupStep::Data, SetupStep::Look, SetupStep::Pair].into_iter().filter(asked).collect()
 }
 
 /// The answers `step` offers, in order.
@@ -55,7 +65,7 @@ pub fn setup_answers(step: SetupStep) -> Vec<SetupAnswer> {
     match step {
         SetupStep::Listening => vec![NoMixing, AutoMix, AutoMixDj],
         SetupStep::Data => vec![Original, High, SaveData],
-        SetupStep::Look => Vec::new(),
+        SetupStep::Look | SetupStep::Pair => Vec::new(),
     }
 }
 
@@ -111,8 +121,9 @@ mod tests {
     }
 
     #[test]
-    fn data_is_asked_only_with_mobile_data() {
-        assert_eq!(setup_steps(true), [SetupStep::Listening, SetupStep::Data, SetupStep::Look]);
-        assert_eq!(setup_steps(false), [SetupStep::Listening, SetupStep::Look]);
+    fn data_is_asked_only_with_mobile_data_and_pairing_last_where_it_pairs() {
+        assert_eq!(setup_steps(true, true), [SetupStep::Listening, SetupStep::Data, SetupStep::Look, SetupStep::Pair]);
+        assert_eq!(setup_steps(false, true), [SetupStep::Listening, SetupStep::Look, SetupStep::Pair]);
+        assert_eq!(setup_steps(false, false), [SetupStep::Listening, SetupStep::Look]);
     }
 }

@@ -16,6 +16,7 @@ mod play;
 #[cfg(feature = "engine")]
 mod stream;
 mod support;
+mod sync;
 
 use std::sync::Arc;
 
@@ -73,6 +74,8 @@ struct PluginNamed {
 pub struct Nori {
     /// The app's queue session over its settings.
     app: Arc<nori_core::queue::Session>,
+    /// Pairing and profile sync: nothing runs unless this browser is paired with sync on.
+    sync: Arc<nori_core::sync::Syncing>,
     /// The databases are kept in the origin's private file system, not in memory.
     stored: bool,
     /// The search box's: what it holds and the answers it has had.
@@ -105,10 +108,12 @@ impl Nori {
         let settings = Settings::new();
         let path = if kept.is_ok() { db() } else { String::new() };
         settings.open(&path).map_err(error)?;
+        let sync = sync::syncing(settings.clone(), tell.clone());
         let app = Arc::new(nori_core::queue::Session::new(settings));
         #[cfg(not(feature = "engine"))]
         let _ = (tell, wake);
         Ok(Nori {
+            sync,
             #[cfg(feature = "engine")]
             live: play::Live::new(tell, wake),
             app,
@@ -125,6 +130,45 @@ impl Nori {
     #[wasm_bindgen(getter)]
     pub fn stored(&self) -> bool {
         self.stored
+    }
+
+    /// Where sync stands (`sync::state`).
+    pub fn sync_state(&self) -> String {
+        sync::state(&self.sync)
+    }
+
+    /// The sync or sync server setting changed.
+    pub fn sync_settings_changed(&self) {
+        self.sync.settings_changed();
+    }
+
+    /// Shows a code to pair this browser, `name`, into a group; `sync_state` then holds it.
+    pub fn sync_code(&self, name: String) {
+        self.sync.pair_show(name);
+    }
+
+    /// Takes another device's code, pasted; why it was refused at once, if it was.
+    pub fn sync_take(&self, link: String) -> Option<String> {
+        self.sync.pair_take(link, nori_core::sync::Came::Link).map(|r| format!("{r:?}"))
+    }
+
+    /// The user confirmed the pairing `sync_state` asked about; `keep` keeps a copy at a first pairing.
+    pub fn sync_confirm(&self, name: String, keep: bool) {
+        self.sync.pair_confirm(name, keep);
+    }
+
+    pub fn sync_cancel(&self) {
+        self.sync.pair_cancel();
+    }
+
+    /// Reset pairing: this browser leaves its group for one of its own.
+    pub fn sync_reset(&self) {
+        self.sync.reset();
+    }
+
+    /// Turns the group's kept copy on or off.
+    pub fn sync_keep_copy(&self, on: bool) {
+        self.sync.keep_copy(on);
     }
 
     /// The saved profiles in their order, as `{ picks, icons, list: [{ id, label, user, host, icon, letter,
@@ -378,7 +422,7 @@ impl Nori {
     /// `[{ step, answers }]` by name. A browser streams over no mobile data of its own.
     pub fn setup_steps(&self) -> String {
         use nori_core::setup::{setup_answers, setup_steps};
-        let steps: Vec<Value> = setup_steps(false)
+        let steps: Vec<Value> = setup_steps(false, false)
             .into_iter()
             .map(|s| json!({ "step": format!("{s:?}"), "answers": setup_answers(s).iter().map(|a| format!("{a:?}")).collect::<Vec<_>>() }))
             .collect();
@@ -394,7 +438,7 @@ impl Nori {
     /// [`Nori::setting`] does.
     pub fn setup_answer(&self, answer: String) -> Result<(), JsValue> {
         use nori_core::setup::{setup_answers, setup_settings, setup_steps};
-        let answer = setup_steps(true).into_iter().flat_map(setup_answers).find(|a| format!("{a:?}") == answer).ok_or_else(|| error(format!("no answer {answer}")))?;
+        let answer = setup_steps(true, false).into_iter().flat_map(setup_answers).find(|a| format!("{a:?}") == answer).ok_or_else(|| error(format!("no answer {answer}")))?;
         for pick in setup_settings(answer) {
             if !self.setting(pick.name.clone(), pick.value) {
                 return Err(error(format!("no setting {}", pick.name)));

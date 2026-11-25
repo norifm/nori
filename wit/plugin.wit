@@ -642,8 +642,16 @@ interface notification {
     buttons: func(now: playing, nori: list<button>) -> option<list<button>>;
 }
 
-/// What every plugin is: every host interface it may import and every extension point it may
-/// export. The SDK answers each export it doesn't implement with nori's own answer.
+/// The account a provider's profile is signed in to. Added to API 7 after its first plugins were
+/// built: a plugin built before lacks it.
+interface account {
+    /// The signed-in account's stable identifier: the same on every device and for as long as the
+    /// account lives, unlike its name. None while signed out, or when the service names none.
+    id: func() -> option<string>;
+}
+
+/// What nori requires of every plugin of API 7: what its first plugins had. nori looks up each
+/// extension point added since (`current`'s), and leaves it uncalled where a plugin lacks it.
 world plugin {
     import log;
     import store;
@@ -678,4 +686,44 @@ world plugin {
     export lyrics;
     export scrobbler;
     export notification;
+}
+
+/// What a plugin built with this SDK is: every host interface it may import and every extension
+/// point it may export, in the order of their bits in its manifest: `plugin`'s, then those added since.
+/// The SDK answers each export it doesn't implement with nori's own answer.
+world current {
+    import log;
+    import store;
+    import cache;
+    import assets;
+    import http;
+    import notices;
+    import settings;
+    import session;
+    import subsonic;
+    import timers;
+    import sign-in;
+    import wake;
+    import rows;
+    import sockets;
+    import discovery;
+    import lan-serve;
+    import audio-out;
+    import media;
+    import cast;
+    import bluetooth;
+
+    export lifecycle;
+    export hooks;
+    export provider;
+    export sound-stage;
+    export preparation;
+    export automix;
+    export deciders;
+    export slots;
+    export device-control;
+    export lyrics;
+    export scrobbler;
+    export notification;
+    export account;
 }

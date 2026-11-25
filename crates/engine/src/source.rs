@@ -57,6 +57,26 @@ pub enum OpenError {
     TimedOut,
 }
 
+/// Where an HTTP answer to a request for a song from byte `from` starts in the song, and the song's
+/// length: from its `status`, its `Content-Range` (`range`) and its `Content-Length` (`length`). A 206
+/// whose range cannot be read (a browser hides it on another origin's answer, as on Navidrome's share
+/// addresses) starts at the byte asked for.
+pub fn answer_span(from: u64, status: u16, range: Option<&str>, length: Option<u64>) -> Result<(u64, Option<u64>), OpenError> {
+    match status {
+        200 => Ok((0, length)),
+        206 => Ok(range.and_then(content_range).unwrap_or((from, length.map(|l| from + l)))),
+        416 => Err(OpenError::PastEnd { len: range.and_then(|r| r.strip_prefix("bytes */")).and_then(|n| n.parse().ok()) }),
+        status => Err(OpenError::Status(status)),
+    }
+}
+
+/// `bytes 100-199/5000` as its first byte and the whole length (None for `*`).
+fn content_range(range: &str) -> Option<(u64, Option<u64>)> {
+    let (span, len) = range.strip_prefix("bytes ")?.split_once('/')?;
+    let start = span.split_once('-')?.0.parse().ok()?;
+    Some((start, len.parse().ok()))
+}
+
 impl From<String> for OpenError {
     fn from(why: String) -> OpenError {
         OpenError::Failed(why)
@@ -542,6 +562,13 @@ pub trait ByteSource: Send + Sync {
         self.open(url, 0).map(|b| (b, None)).map_err(|e| e.to_string())
     }
 
+    /// Whether `url` is asked for from its start only and read forward to where it is wanted: its server
+    /// answers a request for part of it with that part labeled as the whole file (octo-fiesta in front of
+    /// Navidrome), so no `Range` is ever sent for it.
+    fn whole(&self, _url: &str) -> bool {
+        false
+    }
+
     /// Drops the copy of `url` the client's own cache holds (media3's on Android); true if one went.
     fn forget(&self, _url: &str) -> bool {
         false
@@ -991,6 +1018,10 @@ pub struct Filling {
     /// The cache entry and the taker, made at the first step.
     start: Option<(Option<Keep>, Option<Listening>)>,
     skipping: Option<Skip>,
+    /// Asked for from its start only ([`ByteSource::whole`]).
+    whole: bool,
+    /// The byte wanted when the open asked for the start instead.
+    rewound: Option<u64>,
 }
 
 impl Filling {
@@ -1020,6 +1051,7 @@ impl Filling {
     /// The answer to [`Next::Open`] from `from`: where its body starts and the song's length, or why there
     /// is none. Rest this long before the next step, if any.
     pub fn opened(&mut self, from: u64, answer: Result<(u64, Option<u64>), OpenError>) -> Option<Duration> {
+        let from = self.rewound.take().unwrap_or(from);
         match answer {
             // A rangeless answer: read forward to `from`.
             Ok((start, len)) if start < from => {
@@ -1095,7 +1127,14 @@ impl Filling {
         match &self.skipping {
             Some(_) if s.closed => Next::Stop,
             Some(k) => Next::Read(k.at),
-            None => self.loaded.next(s, &mut self.run),
+            None => match self.loaded.next(s, &mut self.run) {
+                // Read forward from the start, as a server that ignores ranges is.
+                Next::Open(from) if self.whole && from > 0 => {
+                    self.rewound = Some(from);
+                    Next::Open(0)
+                }
+                next => next,
+            },
         }
     }
 }
@@ -1146,7 +1185,7 @@ impl Loader {
         let loaded = Arc::new(Loaded::new(fetching, State { budget, pushed: true, ..State::default() }, waits));
         fetching.alive(&loaded);
         let run = Run { load, duration_ms, open: false, failures: 0, brought: false, go_on: false, keep: None, taker: None };
-        let fill = Filling { loaded: loaded.clone(), run, url: url.clone(), start: Some((keep, taker)), skipping: None };
+        let fill = Filling { loaded: loaded.clone(), run, whole: source.whole(&url), url: url.clone(), start: Some((keep, taker)), skipping: None, rewound: None };
         if let Some(fill) = source.push(fill) {
             loaded.state.lock().pushed = false;
             let (l, from) = (loaded.clone(), source.clone());
@@ -2174,6 +2213,23 @@ impl MediaSource for LoadedReader {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
+
+    #[test]
+    fn an_answer_says_where_its_body_starts() {
+        for (status, range, length, span) in [
+            (200, None, Some(5_000), Ok((0, Some(5_000)))),
+            (206, Some("bytes 1000-4999/5000"), Some(4_000), Ok((1_000, Some(5_000)))),
+            (206, Some("bytes 1000-4999/*"), Some(4_000), Ok((1_000, None))),
+            // A browser hid the range: the byte asked for, and the length from there.
+            (206, None, Some(4_000), Ok((1_000, Some(5_000)))),
+            (206, None, None, Ok((1_000, None))),
+            (416, Some("bytes */900"), None, Err(OpenError::PastEnd { len: Some(900) })),
+            (416, None, None, Err(OpenError::PastEnd { len: None })),
+            (503, None, None, Err(OpenError::Status(503))),
+        ] {
+            assert_eq!(answer_span(1_000, status, range, length), span, "{status} {range:?} {length:?}");
+        }
+    }
 
     /// A count a test waits on.
     #[derive(Default)]

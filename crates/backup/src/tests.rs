@@ -184,7 +184,7 @@ fn a_restore_puts_back_what_it_finds() {
     kept.plugins.push(KeptPlugin { repo: None, ..kept.plugins[0].clone() });
     kept.plugins.last_mut().unwrap().id = "fm.nori.sideloaded".into();
     kept.plugins.push(KeptPlugin { id: "fm.nori.dropped".into(), ..kept.plugins[1].clone() });
-    let contents = Contents { settings: a.settings.backed_up(), sound_profiles: Vec::new(), plugins: kept, favorites: Vec::new() };
+    let contents = Contents { settings: a.settings.backed_up(), sound_profiles: Vec::new(), plugins: kept, favorites: Vec::new(), paired: false };
     let file = seal::seal(&serde_json::to_vec(&contents).unwrap(), "pw", CHEAP).unwrap();
 
     let b = Device::new("backup-found");
@@ -254,7 +254,7 @@ fn favorites_kept_here_come_back() {
 #[test]
 fn a_backup_without_favorites_restores() {
     let a = set_up();
-    let mut contents = serde_json::to_value(Contents { settings: a.settings.backed_up(), sound_profiles: Vec::new(), plugins: KeptPlugins::default(), favorites: Vec::new() }).unwrap();
+    let mut contents = serde_json::to_value(Contents { settings: a.settings.backed_up(), sound_profiles: Vec::new(), plugins: KeptPlugins::default(), favorites: Vec::new(), paired: false }).unwrap();
     contents.as_object_mut().unwrap().remove("favorites");
     let file = seal::seal(&serde_json::to_vec(&contents).unwrap(), "pw", CHEAP).unwrap();
     let b = Device::new("backup-before-favorites");
@@ -262,4 +262,42 @@ fn a_backup_without_favorites_restores() {
     let r = b.restore(&file, "pw").unwrap();
     assert_eq!(r.settings.prefs.crossfade_sec, 4);
     assert!(b.favorites("s1").is_empty());
+}
+
+/// Pairs `settings`' device as the first of a group, through an in-memory sync server.
+fn pair(settings: Arc<Settings>) {
+    use nori_sync::{hub::Hub, AdmitStep, Admitting, Came, JoinStep, Joining, Plays};
+    use std::time::Duration;
+    let hub = Hub::new(0);
+    let (new, old) = (hub.link(), hub.link());
+    let mut joining = Joining::start(&new, "https://sync.example".into(), "Mac".into(), Plays::Servers, None, Duration::ZERO);
+    let link = new.heard().into_iter().find_map(|h| match joining.heard(&new, h, Duration::ZERO) {
+        Some(JoinStep::Code { link, .. }) => Some(link),
+        _ => None,
+    });
+    let mut admitting = Admitting::read(&link.unwrap(), Came::Camera, None).unwrap();
+    admitting.check(&old);
+    assert!(old.heard().into_iter().any(|h| matches!(admitting.heard(&old, h, None, &[]), Some(AdmitStep::Confirm(_)))));
+    admitting.admit_first(&old, "Pixel".into(), true, settings.clone(), 0).unwrap();
+    settings.writer.flush();
+}
+
+#[test]
+fn a_backup_never_holds_the_pairing_and_a_restore_says_so() {
+    let a = Device::new("backup-paired");
+    let plain = make_at(&a.settings, &a.plugins, "pw", CHEAP).unwrap();
+    pair(a.settings.clone());
+    let group: serde_json::Value = serde_json::from_str(&a.settings.app_value("syncGroup").expect("kept beside the profiles")).unwrap();
+    let key = group["group"]["key"].as_str().unwrap().to_string();
+    let paired = make_at(&a.settings, &a.plugins, "pw", CHEAP).unwrap();
+    let contents = String::from_utf8(seal::open(&paired, "pw").unwrap()).unwrap();
+    assert!(!contents.contains(&key) && !contents.contains("syncGroup"), "no key, no group");
+
+    let b = Device::new("backup-paired-restored");
+    let restored = b.restore(&paired, "pw").unwrap();
+    assert!(restored.pairing_not_restored);
+    assert!(!nori_sync::paired(&b.settings));
+    assert!(!b.restore(&plain, "pw").unwrap().pairing_not_restored, "a device that was not paired");
+    pair(b.settings.clone());
+    assert!(!b.restore(&paired, "pw").unwrap().pairing_not_restored, "this device's own pairing stays");
 }

@@ -85,6 +85,13 @@ pub fn older_api_package() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/test-api3.noriplugin")
 }
 
+/// The test plugin as nori 1.1.0's SDK built it, for this API (tests/data/test-1.1.noriplugin): fixture/
+/// at a2cd3745, built as [`older_api_package`] was. It has neither `account` nor the manifest's travel,
+/// added since, and runs here.
+pub fn built_by_nori_1_1() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/test-1.1.noriplugin")
+}
+
 /// Lays out [`older_api_package`] under plugins folder `dir` as an older nori left it installed: on, from
 /// `repo`, held or not, with a key in its store. Installing refuses it here, so it is written as is.
 pub fn installed_by_an_older_nori(dir: &Path, repo: Option<&str>, held: bool) {

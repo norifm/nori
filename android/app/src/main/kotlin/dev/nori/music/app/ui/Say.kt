@@ -552,6 +552,7 @@ class Say(private val r: Resources) {
             dev.nori.music.ffi.settings.SetupStep.LISTENING -> R.string.setup_listening
             dev.nori.music.ffi.settings.SetupStep.DATA -> R.string.setup_data
             dev.nori.music.ffi.settings.SetupStep.LOOK -> R.string.setup_look
+            dev.nori.music.ffi.settings.SetupStep.PAIR -> R.string.sync_pair
         },
     )
     /** A first-run answer's name and the line under it. */
@@ -1123,28 +1124,121 @@ class Say(private val r: Resources) {
     /** The line under "Automatic": whether a known curve is used or offered. */
     fun deviceAutomatic(autoApply: Boolean): String = r.getString(if (autoApply) R.string.device_auto_uses else R.string.device_auto_offers)
 
-    /** A paired device's line: whether it answers now, or when it was last nearby. */
-    fun pairSeen(d: dev.nori.music.ffi.PairedDevice): String = when {
-        d.reach == dev.nori.music.ffi.PairedReach.ANSWERS -> r.getString(R.string.pair_nearby)
-        d.reach == dev.nori.music.ffi.PairedReach.SILENT -> r.getString(R.string.pair_cant_reach)
-        d.seenDays == 0u -> r.getString(R.string.pair_seen_today)
-        d.seenDays == 1u -> r.getString(R.string.pair_seen_yesterday)
-        else -> r.getString(R.string.pair_seen_days, d.seenDays.toInt())
+    val syncThisDevice: String get() = r.getString(R.string.sync_this_device)
+    val syncNotPaired: String get() = r.getString(R.string.sync_not_paired)
+    val syncPair: String get() = r.getString(R.string.sync_pair)
+    val syncReset: String get() = r.getString(R.string.sync_reset)
+    val syncResetTitle: String get() = r.getString(R.string.sync_reset_title)
+    val syncResetConfirm: String get() = r.getString(R.string.sync_reset_confirm)
+    val syncSectionDevices: String get() = r.getString(R.string.sync_section_devices)
+    val syncSectionServer: String get() = r.getString(R.string.sync_section_server)
+    val syncServerPlaceholder: String get() = r.getString(R.string.sync_server_placeholder)
+    val syncKeepCopy: String get() = r.getString(R.string.sync_keep_copy)
+    val syncKeepCopyDetail: String get() = r.getString(R.string.sync_keep_copy_detail)
+    val syncSectionInstall: String get() = r.getString(R.string.sync_section_install)
+    val syncInstallFile: String get() = r.getString(R.string.sync_install_file)
+    val syncOn: String get() = r.getString(R.string.settings_sync)
+    val syncServer: String get() = r.getString(R.string.settings_sync_server)
+    val syncPaired: String get() = r.getString(R.string.sync_paired)
+    val syncSectionCode: String get() = r.getString(R.string.sync_section_code)
+    val syncSectionTake: String get() = r.getString(R.string.sync_section_take)
+    val syncCodeLasts: String get() = r.getString(R.string.sync_code_lasts)
+    val syncCodeWords: String get() = r.getString(R.string.sync_code_words)
+    val syncCodeRanOut: String get() = r.getString(R.string.sync_code_ran_out)
+    val syncNewCode: String get() = r.getString(R.string.sync_new_code)
+    val syncShowCode: String get() = r.getString(R.string.sync_show_code)
+    val syncCopyLink: String get() = r.getString(R.string.sync_copy_link)
+    val syncScan: String get() = r.getString(R.string.sync_scan)
+    val syncPaste: String get() = r.getString(R.string.sync_paste)
+    val syncLink: String get() = r.getString(R.string.sync_link)
+    val syncScanHint: String get() = r.getString(R.string.sync_scan_hint)
+    val syncCameraDenied: String get() = r.getString(R.string.sync_camera_denied)
+    val syncNoCamera: String get() = r.getString(R.string.sync_no_camera)
+    val syncSectionNearby: String get() = r.getString(R.string.sync_section_nearby)
+    val syncStarting: String get() = r.getString(R.string.sync_starting)
+    val syncConfirmWords: String get() = r.getString(R.string.sync_confirm_words)
+    val syncKeepCopyAsk: String get() = r.getString(R.string.sync_keep_copy_ask)
+    val syncKeepCopyAskDetail: String get() = r.getString(R.string.sync_keep_copy_ask_detail)
+    val syncPairAction: String get() = r.getString(R.string.sync_pair_action)
+    val syncProfile: String get() = r.getString(R.string.sync_profile)
+    val syncProfileOffText: String get() = r.getString(R.string.sync_profile_off_text)
+    val syncProfileOffRemove: String get() = r.getString(R.string.sync_profile_off_remove)
+    val syncProfileOffKeep: String get() = r.getString(R.string.sync_profile_off_keep)
+    fun syncProfileOffTitle(name: String): String = r.getString(R.string.sync_profile_off_title, name)
+    val syncRemoveEverywhere: String get() = r.getString(R.string.sync_remove_everywhere)
+    val syncMergeTitle: String get() = r.getString(R.string.sync_merge_title)
+    val syncMerge: String get() = r.getString(R.string.sync_merge)
+    val syncKeepBoth: String get() = r.getString(R.string.sync_keep_both)
+
+    /** "Give ‘MacBook’ your sign-ins for 3 profiles?" */
+    fun syncConfirmTitle(name: String, profiles: Int): String = r.getQuantityString(R.plurals.sync_confirm_title, profiles, name, profiles)
+
+    /** "MacBook will stop syncing with its 1 other device." */
+    fun syncConfirmLeaves(name: String, others: Int): String = r.getQuantityString(R.plurals.sync_confirm_leaves, others, name, others)
+
+    /** Reset pairing's confirmation: the others stop syncing with this device, and a lost one's sign-ins ([signedIn], profile names). */
+    fun syncResetText(signedIn: List<String>): String {
+        val stop = r.getString(R.string.sync_reset_text)
+        return if (signedIn.isEmpty()) stop else stop + "\n\n" + r.getString(R.string.sync_reset_lost, signedIn.joinToString(", "))
     }
 
-    /** Why pairing with the device [name] (when its code says it) failed. */
-    fun pairFailed(e: Throwable, name: String?): String {
-        val who = name ?: r.getString(R.string.pair_other_device)
-        val first = name ?: r.getString(R.string.pair_other_device_start)
-        return when (e) {
-            is dev.nori.music.ffi.remote.PairException.NotACode -> r.getString(R.string.pair_failed_not_a_code)
-            is dev.nori.music.ffi.remote.PairException.Own -> r.getString(R.string.pair_failed_own)
-            is dev.nori.music.ffi.remote.PairException.Unreachable -> r.getString(R.string.pair_failed_unreachable, who)
-            is dev.nori.music.ffi.remote.PairException.TimedOut -> r.getString(R.string.pair_failed_timed_out, first)
-            is dev.nori.music.ffi.remote.PairException.Refused -> r.getString(R.string.pair_failed_refused, first)
-            else -> r.getString(R.string.pair_failed_unavailable)
-        }
+    /** When another device of the group was last there: online now, or how long ago. */
+    fun syncSeen(d: dev.nori.music.ffi.sync.Seen, nowMs: Long): String =
+        if (d.online) r.getString(R.string.sync_online)
+        else r.getString(R.string.sync_seen, android.text.format.DateUtils.getRelativeTimeSpanString(d.lastMs, nowMs, android.text.format.DateUtils.MINUTE_IN_MILLIS).toString())
+
+    /** Where sync stands, in one line; nothing while it does not run. */
+    fun syncState(s: dev.nori.music.ffi.sync.SyncState): String = when (s) {
+        dev.nori.music.ffi.sync.SyncState.Idle -> ""
+        dev.nori.music.ffi.sync.SyncState.Connecting -> r.getString(R.string.sync_state_connecting)
+        dev.nori.music.ffi.sync.SyncState.Connected -> r.getString(R.string.sync_state_connected)
+        is dev.nori.music.ffi.sync.SyncState.Offline -> r.getString(R.string.sync_state_offline)
+        is dev.nori.music.ffi.sync.SyncState.Refused -> r.getString(R.string.sync_retry, syncRefusal(s.refused), clock(s.retryMs))
+        is dev.nori.music.ffi.sync.SyncState.Stopped -> syncRefusal(s.refused)
+        dev.nori.music.ffi.sync.SyncState.Resting -> r.getString(R.string.sync_state_resting)
     }
+
+    /** Why the sync server refused, in one sentence. */
+    fun syncRefusal(why: dev.nori.music.ffi.sync.Refusal): String = r.getString(
+        when (why) {
+            dev.nori.music.ffi.sync.Refusal.LIMIT -> R.string.sync_refused_limit
+            dev.nori.music.ffi.sync.Refusal.DAILY_WALL -> R.string.sync_refused_daily
+            dev.nori.music.ffi.sync.Refusal.VERSION -> R.string.sync_refused_version
+            dev.nori.music.ffi.sync.Refusal.WRONG_SECRET -> R.string.sync_refused_secret
+            dev.nori.music.ffi.sync.Refusal.UNAVAILABLE -> R.string.sync_refused_unavailable
+            dev.nori.music.ffi.sync.Refusal.INVALID -> R.string.sync_refused_invalid
+        },
+    )
+
+    /** Why pairing stopped, or what the new device goes on waiting after. */
+    fun pairingRefused(why: dev.nori.music.ffi.sync.PairingRefused): String = when (why) {
+        dev.nori.music.ffi.sync.PairingRefused.NotACode -> r.getString(R.string.sync_refused_not_a_code)
+        dev.nori.music.ffi.sync.PairingRefused.Newer -> r.getString(R.string.sync_refused_newer)
+        dev.nori.music.ffi.sync.PairingRefused.Expired -> r.getString(R.string.sync_refused_expired)
+        dev.nori.music.ffi.sync.PairingRefused.AlreadyPaired -> r.getString(R.string.sync_refused_already)
+        dev.nori.music.ffi.sync.PairingRefused.Gone -> r.getString(R.string.sync_refused_gone)
+        dev.nori.music.ffi.sync.PairingRefused.Tampered -> r.getString(R.string.sync_refused_tampered)
+        dev.nori.music.ffi.sync.PairingRefused.Spent -> r.getString(R.string.sync_refused_spent)
+        is dev.nori.music.ffi.sync.PairingRefused.Server -> syncRefusal(why.reason)
+        dev.nori.music.ffi.sync.PairingRefused.SyncOff -> r.getString(R.string.sync_refused_off)
+    }
+
+    /** What happened in the group, as the app's notice. */
+    fun syncEvent(e: dev.nori.music.ffi.sync.SyncEvent): String = when (e) {
+        is dev.nori.music.ffi.sync.SyncEvent.NewDevice -> r.getString(R.string.sync_new_device, e.name)
+        is dev.nori.music.ffi.sync.SyncEvent.DeviceLeft -> r.getString(R.string.sync_device_left, e.name)
+        dev.nori.music.ffi.sync.SyncEvent.UpdateThis -> r.getString(R.string.sync_update_this)
+        is dev.nori.music.ffi.sync.SyncEvent.UpdateOther -> r.getString(R.string.sync_update_other, e.name)
+        is dev.nori.music.ffi.sync.SyncEvent.Refused -> syncRefusal(e.reason)
+    }
+
+    /** A sign-in to another account than the one profile sync holds, which [name] is (null when unknown). */
+    fun syncOtherAccount(name: String?): String =
+        if (name == null) r.getString(R.string.sync_other_account_unnamed) else r.getString(R.string.sync_other_account, name)
+
+    /** A time of day in Unix ms, as the phone shows times. */
+    private fun clock(unixMs: Long): String = java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT)
+        .format(java.time.Instant.ofEpochMilli(unixMs).atZone(java.time.ZoneId.systemDefault()))
 
     /** The snackbar about the device that just connected: its words and its one action. */
     fun deviceNotice(offer: Boolean, curve: String): Pair<String, String> =

@@ -236,6 +236,11 @@ impl Ahead {
         let mut promised = None;
         for again in [false, true] {
             let from = entry.written();
+            // Never asked for from a later byte: the player goes on with it.
+            if from > 0 && bytes.whole(&song.url) {
+                entry.leave();
+                return;
+            }
             let body = match open_watched(bytes, &song.url, Some(&song.key), from, request) {
                 Ok(b) if b.start == from => b,
                 // Nothing past what the entry holds: complete.
@@ -339,6 +344,8 @@ mod tests {
         held: Mutex<Option<(String, Receiver<()>)>>,
         stopped: Arc<Signal>,
         called_off: Arc<Signal>,
+        /// Fetched whole from their start ([`ByteSource::whole`]).
+        whole: Mutex<Vec<String>>,
     }
 
     struct Held(Cursor<Vec<u8>>, Option<Receiver<()>>, Arc<Signal>);
@@ -370,6 +377,10 @@ mod tests {
             let off = self.called_off.clone();
             cancel.on_cancel(move || off.bump());
             self.open(url, from)
+        }
+
+        fn whole(&self, url: &str) -> bool {
+            self.whole.lock().iter().any(|w| w == url)
         }
     }
 
@@ -427,6 +438,26 @@ mod tests {
         });
         assert!(finished.recv_timeout(std::time::Duration::from_secs(10)).is_ok(), "{} requests", net.asked.lock().len());
         assert_eq!(*net.asked.lock(), ["http://m/a", "http://m/b", "http://m/c"]);
+    }
+
+    /// A song whose server labels a part as the whole file is never resumed from a later byte: the
+    /// player goes on with what came.
+    #[test]
+    fn a_song_fetched_whole_is_not_resumed() {
+        let (_dir, s) = store("whole-only");
+        let net = Arc::new(Net::default());
+        let (go, wait) = channel();
+        *net.held.lock() = Some(("http://m/a".into(), wait));
+        s.fetch_ahead(net.clone(), songs(&["a"]), None);
+        wait_held(&net);
+        s.fetch_ahead(net.clone(), songs(&["b"]), None);
+        go.send(()).unwrap();
+        s.wait_ahead();
+        net.whole.lock().push("http://m/a".into());
+        s.fetch_ahead(net.clone(), songs(&["a"]), None);
+        s.wait_ahead();
+        assert!(s.peek("a:0").is_none(), "not whole here");
+        assert!(net.from.lock().iter().all(|&f| f == 0), "{:?}", net.from.lock());
     }
 
     #[test]

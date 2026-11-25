@@ -9,7 +9,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 
 use crate::AppWindow;
 
@@ -40,6 +40,64 @@ enum Command {
     Appearance(i32),
     /// Presses and releases the left button at this point of the window, in logical pixels.
     Click(f32, f32),
+    /// Settings › Your devices, as its row opens it.
+    DevicesPage,
+    /// Pair a device, as its button opens it.
+    PairOpen,
+    /// The sheet's role: 0 shows this computer's code, 1 takes another's.
+    PairRole(i32),
+    /// Pastes a link on the sheet and presses Pair.
+    PairPaste(String),
+    /// Presses Pair on the confirmation; true keeps an encrypted copy where it is asked.
+    PairConfirm(bool),
+    PairClose,
+    /// Presses a settings row's switch, button or link by its name (`sync`, `sync-reset`, `your-devices`).
+    SettingToggle(String, bool),
+    SettingAction(String),
+    /// Types this in the ask sheet's field.
+    AskText(String),
+    /// Presses the ask sheet's button, or its other answer.
+    AskAnswer(bool),
+}
+
+/// A line on the socket: a command for the window, or one straight to sync, answered off the UI thread
+/// (`{"sync": {"do": "take", "arg": "nori://pair#…"}}`).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Request {
+    Sync { sync: SyncAsk },
+    Window(Command),
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "do", content = "arg", rename_all = "snake_case")]
+enum SyncAsk {
+    State,
+    /// Shows a code to pair this computer into a group.
+    Code,
+    /// Takes another device's code.
+    Take(String),
+    /// Confirms the pairing asked; true keeps a copy on the server at a group's first pairing.
+    Confirm(bool),
+    Cancel,
+    Reset,
+}
+
+/// Where sync stands: its state, the pairing and the group's other devices.
+fn sync_answer(sync: &nori_core::sync::Syncing, ask: SyncAsk) -> serde_json::Value {
+    let name = nori_host::device_name();
+    match ask {
+        SyncAsk::State => {}
+        SyncAsk::Code => sync.pair_show(name),
+        SyncAsk::Take(link) => {
+            sync.pair_take(link, nori_core::sync::Came::Link);
+        }
+        SyncAsk::Confirm(keep) => sync.pair_confirm(name, keep),
+        SyncAsk::Cancel => sync.pair_cancel(),
+        SyncAsk::Reset => sync.reset(),
+    }
+    let devices: Vec<serde_json::Value> = sync.devices().iter().map(|d| serde_json::json!({"name": d.name, "online": d.online})).collect();
+    serde_json::json!({"state": format!("{:?}", sync.state()), "pairing": format!("{:?}", sync.pairing()), "devices": devices})
 }
 
 #[derive(Deserialize)]
@@ -72,6 +130,20 @@ struct State {
     setup: i32,
     /// The welcome's sign-ins show.
     welcome_signing: bool,
+    /// Your devices is open; the Pair a device sheet and what it shows.
+    devices_page: bool,
+    pair_open: bool,
+    pair_stage: i32,
+    pair_line: String,
+    pair_error: String,
+    pair_link: String,
+    pair_words: String,
+    pair_question: String,
+    pair_leaves: String,
+    /// The ask sheet: its title and note.
+    ask: String,
+    /// The settings rows shown, as title · detail.
+    settings: Vec<String>,
 }
 
 fn dispatch(ui: &AppWindow, command: Command) -> State {
@@ -125,6 +197,28 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
                 ui.window().dispatch_event(event);
             }
         }
+        Command::DevicesPage => ui.invoke_setting_action("your-devices".into()),
+        Command::PairOpen => ui.invoke_setting_action("sync-pair".into()),
+        Command::PairRole(i) => ui.global::<crate::PairSheet>().invoke_role_chosen(i),
+        Command::PairPaste(link) => {
+            let sheet = ui.global::<crate::PairSheet>();
+            sheet.set_pasted(link.as_str().into());
+            sheet.invoke_take(link.into());
+        }
+        Command::PairConfirm(keep) => {
+            let sheet = ui.global::<crate::PairSheet>();
+            sheet.set_keep(keep);
+            sheet.invoke_confirm(keep);
+        }
+        Command::PairClose => ui.global::<crate::PairSheet>().invoke_close(),
+        Command::SettingToggle(name, on) => ui.invoke_setting_toggled(name.into(), on),
+        Command::SettingAction(name) => ui.invoke_setting_action(name.into()),
+        Command::AskText(text) => ui.set_ask_text(text.into()),
+        Command::AskAnswer(main) => {
+            ui.set_ask_open(false);
+            let name = if main { ui.get_ask_name() } else { ui.get_ask_other_name() };
+            ui.invoke_setting_typed(name, ui.get_ask_text());
+        }
         Command::Shot(path) => {
             if let Err(e) = shot(ui, &path) {
                 eprintln!("nori: shot {}: {e}", path.display());
@@ -150,6 +244,17 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
         artist: ui.get_now_artist().to_string(), note: ui.get_note().to_string(), note_error: ui.get_note_error(),
         setup: if ui.get_setup_open() { ui.get_setup_at() } else { -1 },
         welcome_signing: ui.get_welcome_signing(),
+        devices_page: ui.global::<crate::YourDevices>().get_open(),
+        pair_open: ui.global::<crate::PairSheet>().get_open(),
+        pair_stage: ui.global::<crate::PairSheet>().get_stage(),
+        pair_line: ui.global::<crate::PairSheet>().get_line().into(),
+        pair_error: ui.global::<crate::PairSheet>().get_error().into(),
+        pair_link: ui.global::<crate::PairSheet>().get_link().into(),
+        pair_words: ui.global::<crate::PairSheet>().get_code_words().into(),
+        pair_question: ui.global::<crate::PairSheet>().get_question().into(),
+        pair_leaves: ui.global::<crate::PairSheet>().get_leaves().into(),
+        ask: if ui.get_ask_open() { format!("{} · {}", ui.get_ask_title(), ui.get_ask_note()) } else { String::new() },
+        settings: ui.get_settings().iter().map(|r| format!("{} · {}", r.title, r.detail)).collect(),
     }
 }
 
@@ -167,7 +272,7 @@ pub struct Control {
     thread: Option<JoinHandle<()>>,
 }
 
-pub fn start(path: PathBuf, ui: slint::Weak<AppWindow>) -> Result<Control, String> {
+pub fn start(path: PathBuf, ui: slint::Weak<AppWindow>, sync: Arc<nori_core::sync::Syncing>) -> Result<Control, String> {
     let listener = UnixListener::bind(&path).map_err(|e| format!("control socket: {e}"))?;
     if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
         let _ = std::fs::remove_file(&path);
@@ -182,18 +287,21 @@ pub fn start(path: PathBuf, ui: slint::Weak<AppWindow>) -> Result<Control, Strin
             let timeout = Some(Duration::from_secs(2));
             let _ = stream.set_read_timeout(timeout);
             let _ = stream.set_write_timeout(timeout);
-            let reply = request(&mut stream, &ui).unwrap_or_else(|e| serde_json::json!({"error": e}));
+            let reply = request(&mut stream, &ui, &sync).unwrap_or_else(|e| serde_json::json!({"error": e}));
             let _ = writeln!(stream, "{reply}");
         }
     });
     Ok(Control { path, stop, thread: Some(thread) })
 }
 
-fn request(stream: &mut UnixStream, ui: &slint::Weak<AppWindow>) -> Result<serde_json::Value, String> {
+fn request(stream: &mut UnixStream, ui: &slint::Weak<AppWindow>, sync: &nori_core::sync::Syncing) -> Result<serde_json::Value, String> {
     let mut line = String::new();
     BufReader::new(stream.take(4097)).read_line(&mut line).map_err(|e| e.to_string())?;
     if line.len() > 4096 { return Err("command is too long".into()); }
-    let command = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+    let command = match serde_json::from_str(&line).map_err(|e| e.to_string())? {
+        Request::Sync { sync: ask } => return Ok(sync_answer(sync, ask)),
+        Request::Window(command) => command,
+    };
     let (tx, rx) = mpsc::sync_channel(1);
     ui.upgrade_in_event_loop(move |ui| { let _ = tx.send(dispatch(&ui, command)); }).map_err(|e| e.to_string())?;
     let state = rx.recv_timeout(Duration::from_secs(2)).map_err(|e| e.to_string())?;

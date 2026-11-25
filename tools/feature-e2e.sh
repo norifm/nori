@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="plugins lyrics status-bar notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
+SECTIONS="plugins lyrics status-bar notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel sync remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -79,6 +79,7 @@ print(any(s['id']=='$1' for s in d.get('song',[])))"; }
 
 cleanup_feature() {
   [ "${feature_finished:-0}" = 0 ] || return 0
+  [ -z "${sync_server:-}" ] || sync_cleanup
   if [ -n "${peer:-}" ]; then
     "$app" remote pick here >/dev/null
     "$app" set remoteControl false >/dev/null
@@ -453,52 +454,6 @@ WIDGET
   check "YouTube radio plays through the AudioTrack" sounds 20
   check "the song the radio started from plays on" wait_for positionMs ">$((radio_from + 30000))" 45
   check "without moving on" wait_for songId "$radio_seed" 1
-  # Crossplay without a server: the terminal client on a YouTube profile, paired with its code.
-  # Pairing, its failures, signing and the door's refusals are Rust's (crates/host tests/lan_jam.rs); here
-  # the phone pairs through JNI with the terminal's door, follows it, hands its YouTube queue over, and
-  # forgets it.
-  ytpeer="nori-e2e-ytpeer-$ANDROID_SERIAL"; ytdata="$here/../build/e2e/$ANDROID_SERIAL/ytpeer"
-  python3 "$here/with-resource.py" build cargo build -j4 -p nori-cli >/dev/null
-  tmux kill-session -t "$ytpeer" 2>/dev/null; rm -rf "$ytdata"; mkdir -p "$ytdata"
-  python3 - "$ytdata/nori.db" <<'PY'
-import sqlite3, sys
-with sqlite3.connect(sys.argv[1]) as db:
-    db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID")
-    db.execute("INSERT OR REPLACE INTO settings VALUES('remoteControl', '{\"b\":true}')")
-PY
-  # The peer plays from the same plugin, installed in its own data folder and on.
-  tmux new-session -d -s "$ytpeer" -x 160 -y 45 "$here/../target/debug/nori-cli --data $ytdata --install-plugin $(plugin_package youtube-music) --provider fm.nori.youtube-music --no-images --no-mpris"
-  for _ in $(seq 16); do tmux send-keys -t "$ytpeer" -- -; done
-  "$app" set remoteControl true >/dev/null
-  ytresolved=$(python3 "$here/mdns-door.py" "$ytdata/nori.db")
-  check "the YouTube terminal peer announces its door" test -n "$ytresolved"
-  field_of() { printf '%s' "$ytresolved" | python3 -c "import json,sys; print(json.load(sys.stdin)['$1'])"; }
-  ytname=$(field_of name); ytdoor=$(field_of door); ytlink=$(field_of pair)
-  ytpeer_id=$(printf '%s' "$ytdoor" | python3 -c 'import sys; print(dict(p.split("=",1) for p in sys.stdin.read().split("|",2)[2].split(";"))["id"])')
-  check "the phone pairs with the terminal's code" test "$("$app" remote pair "$ytlink")" = "paired $ytname"
-  check "a code pairs one device" test "$("$app" remote pair "$ytlink")" = "not paired: Refused"
-  check "the phone lists the terminal as paired" bash -c "'$app' remote paired | grep -Fq '$ytname'"
-  "$app" remote watch on >/dev/null
-  "$app" remote found "$ytdoor" >/dev/null
-  check "the paired YouTube peer is listed" wait_until 15 bash -c "'$app' remote devices | grep -Fq '$ytname'"
-  check "the paired list offers it to pick" bash -c "'$app' remote paired | grep -Fq '$ytname (answers)'"
-  "$app" remote watch off >/dev/null
-  "$app" remote pick "$ytpeer_id" >/dev/null
-  check "the phone hands its YouTube queue to the terminal" wait_for playingOn "$ytname" 15
-  check "the paired list shows it as the one playing" bash -c "'$app' remote paired | grep -Fq '$ytname (answers) active'"
-  check "this phone's output is let go" silent 10
-  check "the terminal resolves and plays the YouTube song" wait_until 45 bash -c "'$app' remote devices | grep -Fq '$ytname (nearby): playing'"
-  "$app" remote pick here >/dev/null
-  check "\"This phone\" brings the YouTube queue back" wait_for playingOn "" 15
-  check "and it sounds here" sounds 20
-  check "forgetting the terminal answers" test "$("$app" remote forget "$ytpeer_id")" = forgot
-  check "it is no longer paired" test "$("$app" remote paired)" = none
-  "$app" remote watch on >/dev/null
-  "$app" remote found "$ytdoor" >/dev/null
-  check "once forgotten the terminal is no longer controllable" wait_until 15 bash -c "! '$app' remote devices | grep -Fq '$ytname'"
-  "$app" remote watch off >/dev/null
-  tmux kill-session -t "$ytpeer" 2>/dev/null
-  "$app" set remoteControl false >/dev/null
   "$app" login "$APP_URL|$USER|$PASS" >/dev/null
   check "the server's profile opens again" wait_for server "$APP_URL" 30
   "$app" play "$SONG" >/dev/null
@@ -1033,6 +988,175 @@ for t, s in sorted(rows): print(s, t)'
   fi
 fi
 
+sync_checks() {
+  section "pairing and profile sync: Your devices, Pair a device, against a sync server on this computer"
+  # Pairing, the merge and what each refusal is are the core's (crates/sync tests). Here: the screens
+  # driving it through the app's own sockets, both ways round, with nori-cli --sync as the other device.
+  local sync_root cli work port address
+  sync_root="${NORI_SYNC_ROOT:-$(dirname "$(dirname "$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)")")/nori-sync}"
+  [ -f "$sync_root/PROTOCOL.md" ] || { echo "  NOTE  needs a nori-sync checkout (NORI_SYNC_ROOT)"; return 0; }
+  cli="$here/../target/debug/nori-cli"; work="$here/../build/e2e/$ANDROID_SERIAL/sync"
+  python3 "$here/with-resource.py" build cargo build -j4 -p nori-cli >/dev/null || return 1
+  python3 "$here/with-resource.py" build bash -c "cd '$sync_root' && cargo build -j4 --release -p nori-sync-server" >/dev/null 2>&1 || return 1
+  rm -rf "$work"; mkdir -p "$work"
+  port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+  # A code carries its server, which both sides reach at one address: the phone's port is this computer's.
+  address="http://127.0.0.1:$port"; sync_port=$port
+  adb reverse "tcp:$port" "tcp:$port" >/dev/null
+  sync_server_up() { curl -sf "$address/" 2>/dev/null | grep -q 'nori-sync v1'; }
+  sync_server_start() {
+    NORI_SYNC_BIND=127.0.0.1 NORI_SYNC_PORT=$port NORI_SYNC_DATA="$work/server" NORI_SYNC_ROOMS_PER_MINUTE=1000 \
+      "$sync_root/target/release/nori-sync-server" >/dev/null 2>&1 & sync_server=$!
+    wait_until 30 sync_server_up
+  }
+  check "the sync server starts" sync_server_start || return 1
+  # The other device: one nori-cli --sync at a time on fds 7 (to it) and 8 (from it), its answers read a
+  # line each, "told" lines aside. Named pipes: the Mac's bash 3.2 has no coproc.
+  peer_start() {
+    peer_stop
+    rm -f "$work/to-peer" "$work/from-peer"; mkfifo "$work/to-peer" "$work/from-peer"
+    "$cli" --sync --data "$work/$1" --name "$1" < "$work/to-peer" > "$work/from-peer" 2>>"$work/peer.err" & sync_peer=$!
+    exec 7> "$work/to-peer" 8< "$work/from-peer"
+    peer "server $address" >/dev/null
+  }
+  peer() {
+    local line
+    printf '%s\n' "$*" >&7
+    while IFS= read -r -t 20 line <&8; do
+      if [[ "$line" == "told "* ]]; then printf '%s\n' "$line" >> "$work/told"; else printf '%s\n' "$line"; return 0; fi
+    done
+    return 1
+  }
+  peer_says() { [[ "$(peer "$1")" =~ $2 ]]; }
+  peer_told() { grep -q -- "$1" "$work/told" 2>/dev/null; }
+  peer_stop() { if [ -n "${sync_peer:-}" ]; then printf 'quit\n' >&7 2>/dev/null; exec 7>&- 8<&-; wait "$sync_peer" 2>/dev/null; sync_peer=; fi; }
+  app_profiles() { "$app" sync profiles; }
+  app_has() { [[ ",$(app_profiles | sed 's/^profiles //')," == *",$1,"* ]]; }
+  devices_page() { "$app" open home >/dev/null; "$app" open settings/devices >/dev/null; wait_until 10 on_screen 'text="Your devices"'; }
+  # The editor of saved profile $1, from the Profiles page: its More button is its place in the list.
+  edit_profile() {
+    local at; at=$(app_profiles | sed 's/^profiles //' | tr ',' '\n' | grep -nx -- "$1" | cut -d: -f1)
+    "$app" open settings/servers >/dev/null
+    wait_until 10 on_screen "text=\"$1\"" && tapnode content-desc More "$at" && tapnode text "${2:-Edit}"
+  }
+  tap_or_scroll() { tapnode_now text "$1" && return 0; adb shell input swipe 540 1800 540 900 300; return 1; }
+  sync_off() { # sync_off <profile> <Keep there|Remove there>
+    edit_profile "$1" && tapnode text Advanced && wait_until 15 tap_or_scroll "Sync this profile" &&
+      wait_until 10 on_screen "Stop syncing $1?" && tapnode text "$2" && adb shell input keyevent KEYCODE_BACK ||
+      { adb exec-out screencap -p > "$work/sync-off-$1.png"; return 1; }
+  }
+
+  sync_forget
+  devices_page
+  check "a device in no group says so" wait_until 10 on_screen 'isn’t paired with another'
+  tapnode text "Sync server address"; wait_until 5 field_focused; fill_field "$address"
+  adb shell input keyevent KEYCODE_ENTER
+  devices_page
+  check "the sync server address is kept" wait_until 10 on_screen "text=\"$address\""
+
+  # The phone has the profiles: it takes the new device's pasted link and confirms with the three words.
+  peer_start iPad
+  local shown link words w
+  peer_code() { shown=$(peer pairing); [[ "$shown" == "pairing Code "* ]]; }
+  peer code >/dev/null
+  wait_until 20 peer_code
+  link=$(cut -d' ' -f3 <<< "$shown"); words=$(cut -d' ' -f4- <<< "$shown")
+  check "the other device shows a code" test -n "$link" || return 1
+  tapnode text "Pair a device"
+  check "a device in no group shows its code at once" wait_until 15 on_screen 'The code works for five minutes.'
+  tapnode text "Paste a link"; wait_until 5 field_focused; fill_field "$link"
+  # Done takes the link (Pair is under the keyboard).
+  adb shell input keyevent KEYCODE_ENTER
+  check "the confirmation names the new device and its profiles" wait_until 20 on_screen 'Give ‘iPad’ your sign-ins for'
+  for w in $words; do check "and shows the word $w" on_screen "$w"; done
+  check "the first pairing asks about the encrypted copy" on_screen 'Keep an encrypted copy on the sync server'
+  tapnode text Pair
+  check "the phone says the new device was paired" wait_until 15 on_screen 'New device paired: iPad'
+  check "the new device is paired" wait_until 20 peer_says pairing '^pairing Paired'
+  check "it has this phone's profiles" wait_until 20 peer_says profiles '^profiles .+'
+  check "the group keeps an encrypted copy" wait_until 10 bash -c "'$app' sync keeps | grep -q true"
+  devices_page
+  check "Your devices lists it" wait_until 15 on_screen 'text="iPad"'
+
+  # The phone as the new device: it shows its code, which the Mac takes, and leaves the iPad's group.
+  peer_start Mac
+  peer "add Home http://home.example u p" >/dev/null
+  tapnode text "Pair a device"
+  tapnode text "Show this device’s code"
+  check "the phone shows its code" wait_until 20 bash -c "'$app' sync pairing | grep -q 'pairing Code'"
+  check "with its three words" wait_until 10 on_screen 'Check that your other device shows these three words.'
+  link=$("$app" sync pairing | cut -d' ' -f3)
+  peer "take $link" >/dev/null
+  check "the Mac asks to confirm" wait_until 20 peer_says pairing Confirm
+  peer "confirm keep" >/dev/null
+  check "the phone is paired" wait_until 20 on_screen 'text="Paired"'
+  check "Your devices lists the Mac" wait_until 20 on_screen 'text="Mac"'
+  # The code was used: taken again, it says so before asking anything.
+  peer "take $link" >/dev/null
+  check "a used code is refused before any question" wait_until 20 peer_says pairing 'Refused.*Gone'
+  peer cancel >/dev/null
+  check "and not the iPad it left" off_screen 'text="iPad"'
+  check "the phone has the Mac's profile" wait_until 20 app_has Home
+  peer "add Spare http://spare.example u p" >/dev/null
+  check "a profile added on the Mac reaches the phone" wait_until 20 app_has Spare
+
+  # Removing a profile that syncs removes it everywhere.
+  edit_profile Spare Remove
+  check "removing says it goes from every device" wait_until 10 on_screen 'removed from all your devices'
+  tapnode text Remove
+  removed_there() { ! peer_says profiles 'Spare'; }
+  check "the profile removed on the phone goes from the Mac" wait_until 20 removed_there
+
+  # Sync this profile off, keeping it on the other devices: what they change no longer reaches the phone.
+  check "Sync this profile off asks about the other devices" sync_off Home "Keep there"
+  peer "rename Home Den" >/dev/null
+  peer "add Probe http://probe.example u p" >/dev/null
+  check "what still syncs reaches the phone" wait_until 20 app_has Probe
+  check "the Mac keeps the profile" peer_says profiles 'Den'
+  check "and its change stays there" bash -c "! '$app' sync profiles | grep -q Den"
+  # And removing it there.
+  check "Sync this profile off, removing it elsewhere" sync_off Probe "Remove there"
+  gone_there() { ! peer_says profiles 'Probe'; }
+  check "the Mac removes it" wait_until 20 gone_there
+  check "the phone keeps it" app_has Probe
+
+  # The server stopped and back: the page says where sync stands.
+  devices_page
+  check "connected" wait_until 20 on_screen 'text="Connected"'
+  kill "$sync_server"; wait "$sync_server" 2>/dev/null
+  check "the server stopped, the page says offline" wait_until 30 on_screen 'text="Offline"'
+  check "the sync server starts again" sync_server_start
+  check "and connected again" wait_until 60 on_screen 'text="Connected"'
+
+  # Reset pairing.
+  tapnode text "Reset pairing"
+  check "Reset pairing says the others keep their data" wait_until 10 on_screen 'keep their data and stop syncing with this one'
+  tapnode text Reset
+  heard_left() { peer devices >/dev/null; peer_told DeviceLeft; }
+  check "the Mac hears the phone left" wait_until 20 heard_left
+  check "Your devices lists no other device" wait_until 20 off_screen 'text="Mac"'
+}
+# This phone in no group, as one that never paired: the group and the sync server address leave the app
+# database while the app is stopped, so nothing of it is open or being written.
+sync_forget() {
+  adb shell am force-stop "$pkg"
+  adb shell "run-as $pkg sqlite3 files/nori.db \"DELETE FROM app_kv WHERE key='syncGroup'; DELETE FROM settings WHERE key='syncServer';\""
+  app_up >/dev/null
+}
+sync_cleanup() {
+  peer_stop 2>/dev/null
+  [ -z "${sync_server:-}" ] || { kill "$sync_server" 2>/dev/null; wait "$sync_server" 2>/dev/null; }
+  [ -z "${sync_port:-}" ] || adb reverse --remove "tcp:$sync_port" >/dev/null 2>&1
+  sync_forget
+  local p; for p in Home Den Spare Probe; do "$app" sync drop "$p" >/dev/null; done
+  sync_server=; sync_port=
+}
+if want sync; then
+  failures_before=$fail
+  sync_checks || { [ "$fail" -gt "$failures_before" ] || check "sync setup succeeds" false; }
+  sync_cleanup
+fi
+
 remote_checks() {
   section "playing on another device: the terminal client on this computer"
   # Who plays, the queue, the place, the volume and a transfer's order are the core's (crates/core
@@ -1046,7 +1170,14 @@ remote_checks() {
   else
     peer="nori-e2e-peer-$ANDROID_SERIAL"; data="$here/../build/e2e/$ANDROID_SERIAL/peer"; cli="$here/../target/debug/nori-cli"
     python3 "$here/with-resource.py" build cargo build -j4 -p nori-cli >/dev/null || return 1
-    tmux kill-session -t "$peer" 2>/dev/null; mkdir -p "$data"
+    tmux kill-session -t "$peer" 2>/dev/null; rm -rf "$data"; mkdir -p "$data"
+    # Remote control reaches only paired devices: the peer is paired with this phone through a sync server
+    # on this computer, and its profile, this computer's server, syncs to the phone, which opens it
+    # through adb reverse.
+    paired=$(python3 "$here/pair-peer.py" "$cli" "$data" http://localhost:4533 "$USER" "$PASS") || { check "the peer pairs with this phone" false; return 1; }
+    read -r sync_pid sync_port url_port <<<"$paired"
+    "$app" login "http://localhost:4533|$USER|$PASS" >/dev/null
+    check "this phone opens the peer's profile" wait_for server http://localhost:4533 30 || return 1
     # Seed the peer's setting before startup; no screen navigation or stale selection.
     python3 - "$data/nori.db" <<'PY'
 import sqlite3, sys
@@ -1056,9 +1187,9 @@ with sqlite3.connect(sys.argv[1]) as db:
         ("remoteControl", '{"b":true}'), ("crossfadeSec", '{"i":4}'),
     ])
 PY
-    tmux new-session -d -s "$peer" -x 160 -y 45 "$cli --data $data --url http://localhost:4533 --user $USER --password $PASS --no-images --no-mpris"
+    tmux new-session -d -s "$peer" -x 160 -y 45 "$cli --data $data --no-images --no-mpris"
     keys() { tmux send-keys -t "$peer" -- "$@"; }
-    check "the CLI peer starts" wait_until 15 bash -c "tmux capture-pane -p -t $peer | grep -q 'localhost:4533'" || return 1
+    check "the CLI peer starts on its profile" wait_until 15 bash -c "tmux capture-pane -p -t $peer | grep -q 'Listen now'" || return 1
     for _ in $(seq 16); do keys -; done   # quiet on the peer's speakers
     # Its door as mDNS has it; the emulator hears no multicast from here, so the app is handed it.
     resolved=$(python3 "$here/mdns-door.py" "$data/nori.db") || { check "the CLI peer announces its door" false; return 1; }
@@ -1181,7 +1312,8 @@ PY
     check "\"This phone\" brings it back" wait_for playingOn "" 15
     check "with the peer's latest song again" wait_for title "Long Track 04" 10
     check "and it sounds here again" sounds 15
-    check "the peer paused" wait_until 10 bash -c "tmux capture-pane -p -t $peer | grep -q '▶'"
+    # Its own player pauses; its screen follows the music here, as a device that handed it on does.
+    check "the peer paused" wait_until 10 bash -c "'$app' remote devices | grep -Eq '$name( \(nearby\))?: paused'"
     "$app" remote pick "$peer_id" >/dev/null
     check "the phone can hand playback back to the peer" wait_for playingOn "$name" 10
     check "the phone releases its output again" silent 10
@@ -1200,6 +1332,13 @@ if want remote; then
   "$app" remote pick here >/dev/null
   "$app" set remoteControl false >/dev/null
   [ -z "${peer:-}" ] || tmux kill-session -t "$peer" 2>/dev/null
+  # The peer's sync server and ports, and this phone's own profile, however the section ended.
+  if [ -n "${sync_pid:-}" ]; then
+    kill "$sync_pid" 2>/dev/null
+    adb reverse --remove "tcp:$sync_port" >/dev/null 2>&1; adb reverse --remove "tcp:$url_port" >/dev/null 2>&1
+    "$app" login "$APP_URL|$USER|$PASS" >/dev/null
+    check "this phone's own profile opens again" wait_for server "$APP_URL" 30
+  fi
 fi
 
 jam_checks() {

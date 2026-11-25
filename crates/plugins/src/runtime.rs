@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use sha2::{Digest, Sha256};
-use wasmtime::component::{Component, ComponentType, HasSelf, Lift, Linker, Lower};
+use wasmtime::component::{Component, ComponentType, HasSelf, Lift, Linker, Lower, TypedFunc};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 
 use crate::host::Side;
@@ -25,6 +25,42 @@ wasmtime::component::bindgen!({
 
 pub use exports::nori::plugin as points;
 pub use nori::plugin::types;
+
+/// The `account` export, which a plugin built before it lacks.
+const ACCOUNT: &str = "nori:plugin/account@7.0.0";
+
+/// A plugin's exports: the `plugin` world's, which every plugin of this API has, and those added since,
+/// which a plugin built before lacks.
+pub struct Exports {
+    plugin: Plugin,
+    account_id: Option<TypedFunc<(), (Option<String>,)>>,
+}
+
+impl Exports {
+    pub(crate) fn instantiate(store: &mut Store<Host>, component: &Component, linker: &Linker<Host>) -> wasmtime::Result<Exports> {
+        let instance = linker.instantiate(&mut *store, component)?;
+        let plugin = Plugin::new(&mut *store, &instance)?;
+        let extends = store.data().manifest.extends("account");
+        let id = extends.then(|| instance.get_export_index(&mut *store, None, ACCOUNT)).flatten().and_then(|account| instance.get_export_index(&mut *store, Some(&account), "id"));
+        let account_id = id.map(|f| instance.get_typed_func(&mut *store, f)).transpose()?;
+        Ok(Exports { plugin, account_id })
+    }
+
+    /// The signed-in account's stable identifier (`account.id`); None from a plugin that doesn't extend
+    /// `account`, or was built before it.
+    pub fn call_account_id(&self, store: &mut Store<Host>) -> wasmtime::Result<Option<String>> {
+        let Some(f) = &self.account_id else { return Ok(None) };
+        Ok(f.call(store, ())?.0)
+    }
+}
+
+impl std::ops::Deref for Exports {
+    type Target = Plugin;
+
+    fn deref(&self) -> &Plugin {
+        &self.plugin
+    }
+}
 
 /// The host interfaces linked for a plugin; a plugin importing another can't be installed here.
 pub const LINKED: [&str; 20] = ["log", "store", "http", "settings", "rows", "notices", "sockets", "bluetooth", "discovery", "lan-serve", "audio-out", "media", "cast", "session", "subsonic", "timers", "sign-in", "wake", "cache", "assets"];

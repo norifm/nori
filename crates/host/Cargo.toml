@@ -67,3 +67,5 @@ nori-engine = { path = "../engine", features = ["testing"] }
 nori-testdir = { path = "../testdir" }
 # The test plugin, whose provider has no Subsonic server (tests/lan_jam.rs).
 nori-plugins = { path = "../plugins", features = ["testing"] }
+# A sync server in memory, which my devices in the tests are grouped through.
+nori-sync = { path = "../sync", features = ["testing"] }

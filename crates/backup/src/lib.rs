@@ -2,7 +2,8 @@
 //! profiles, the favorites kept on this device and the installed plugins (their order, being on and
 //! held, their stores with their rows, overrides and secrets), in one file sealed with a password the
 //! user sets as it is made (seal.rs). Restoring puts the settings back, the profiles and favorites here
-//! kept beside the backup's, and reinstalls the plugins from their repos.
+//! kept beside the backup's, and reinstalls the plugins from their repos. The pairing with other devices
+//! (nori-sync) is never in a backup: a restore says it was not restored.
 
 mod seal;
 
@@ -46,6 +47,9 @@ struct Contents {
     /// Every profile's favorites kept on this device (a provider's account couldn't keep them).
     #[serde(default)]
     favorites: Vec<KeptFavorite>,
+    /// Whether the device was paired; the pairing itself stays out.
+    #[serde(default)]
+    paired: bool,
 }
 
 /// A favorite kept on this device, as a backup holds it.
@@ -106,6 +110,9 @@ pub struct Restored {
     pub settings: SettingChange,
     /// Each plugin backed up, in its order, and how it came back.
     pub plugins: Vec<PluginRestored>,
+    /// The backup's device was paired and this one is not: the client says pairing was not restored and
+    /// offers Pair a device.
+    pub pairing_not_restored: bool,
 }
 
 fn database(e: nori_model::CoreError) -> BackupError {
@@ -122,7 +129,7 @@ fn make_at(settings: &Settings, plugins: &Plugins, password: &str, cost: seal::C
     if password.is_empty() {
         return Err(BackupError::NoPassword);
     }
-    let contents = Contents { settings: settings.backed_up(), sound_profiles: settings.sound_profiles().map_err(database)?, plugins: plugins.kept(), favorites: favorites(settings)? };
+    let contents = Contents { settings: settings.backed_up(), sound_profiles: settings.sound_profiles().map_err(database)?, plugins: plugins.kept(), favorites: favorites(settings)?, paired: nori_sync::paired(settings) };
     seal::seal(&serde_json::to_vec(&contents).expect("JSON values serialize"), password, cost)
 }
 
@@ -136,7 +143,7 @@ pub async fn restore(settings: &Settings, plugins: &Plugins, file: &[u8], passwo
     let change = settings.restore(&contents.settings);
     restore_favorites(settings, &contents.favorites, &backed, &change.prefs.servers)?;
     let plugins = plugins.restore(contents.plugins).await;
-    Ok(Restored { settings: change, plugins })
+    Ok(Restored { settings: change, plugins, pairing_not_restored: contents.paired && !nori_sync::paired(settings) })
 }
 
 /// [`make`] for the platform.

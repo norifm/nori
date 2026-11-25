@@ -1410,7 +1410,7 @@ fn device(id: &str, name: &str, kind: nori_core::remote::wire::DeviceKind, playi
     use nori_core::remote::wire::{DeviceState, Entry};
     let state = playing.map(|title| DeviceState { playing: true, index: Some(0), entries: vec![Entry { title: title.into(), artist: "Artist".into(), ..Default::default() }], ..Default::default() });
     let now = state.as_ref().and_then(|s| s.entries.first().cloned());
-    nori_core::remote::RemoteDevice { id: id.into(), name: name.into(), kind, state, now, age_ms: 0, nearby: true, refused: None }
+    nori_core::remote::RemoteDevice { id: id.into(), name: name.into(), kind, state, now, age_ms: 0, nearby: true, refused: None, elsewhere: false }
 }
 
 /// A hosted jam with two listeners and two requests, the first a provider's song.
@@ -3007,7 +3007,7 @@ fn the_kind_chosen_reaches_its_form() {
 /// A provider with nothing to ask is added from the first screen, which stays until that's answered.
 #[test]
 fn nothing_to_ask_adds_at_once() {
-    use nori_core::providers::{ProviderInfo, SignIn};
+    use nori_core::providers::{ProviderInfo, SignIn, SignInCopy};
     use nori_core::settings::ServerKind;
     let dir = nori_testdir::TempDir::new("cli-login-add-now");
     let mut a = app_with_provider(&dir);
@@ -3022,24 +3022,24 @@ fn nothing_to_ask_adds_at_once() {
     // With an account it waits: sign in, or go on as a guest.
     a.login = Default::default();
     let web = vec![SignIn::WebPage { start_url: "https://a.example".into() }];
-    a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: web.clone(), identities: None });
+    a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: web.clone(), identities: None, sign_in_copy: SignInCopy::EachDevice });
     assert!(!a.login.flow.choosing() && a.login.flow.failure().is_none(), "not added yet");
     // A name is nothing to ask there.
     let name = vec![nori_core::providers::FieldSpec { what: nori_core::providers::FormField::Name, advanced: false }];
-    a.provider_opened(&ProviderInfo { kind, fields: name, sign_in: web, identities: None });
+    a.provider_opened(&ProviderInfo { kind, fields: name, sign_in: web, identities: None, sign_in_copy: SignInCopy::EachDevice });
     assert!(a.login_account() && a.login_fields().is_empty());
 }
 
 /// On the account page Enter signs in and g goes on as a guest.
 #[test]
 fn the_account_pages_keys_say_how_it_goes_on() {
-    use nori_core::providers::{ProviderInfo, SignIn};
+    use nori_core::providers::{ProviderInfo, SignIn, SignInCopy};
     use nori_core::settings::ServerKind;
     let dir = nori_testdir::TempDir::new("cli-login-account-keys");
     for code in [KeyCode::Enter, KeyCode::Char('g')] {
         let mut a = app_with_provider(&dir);
         let kind = ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() };
-        a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: vec![SignIn::WebPage { start_url: "https://a.example".into() }], identities: None });
+        a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: vec![SignIn::WebPage { start_url: "https://a.example".into() }], identities: None, sign_in_copy: SignInCopy::EachDevice });
         let page = draw(&mut a, 100, 40);
         dump("login-account", &page);
         assert!(page.contains("Continue as guest"), "{page}");
@@ -3275,76 +3275,6 @@ fn a_profiles_scrobbling_accounts_are_switched_removed_and_added() {
     assert!(s.contains(page), "{s}");
     key(&mut a, KeyCode::Enter);
     assert_eq!(change(&mut a), ScrobblerChange::SignIn(Box::new(nori_core::scrobblers::ScrobblerForm { approved: "tk".into(), ..form })));
-}
-
-#[test]
-fn paired_devices_are_listed_picked_forgotten_and_paired_with_a_reason_when_not() {
-    use nori_core::remote::{wire::DeviceKind, PairError, PairedDevice, PairedReach};
-    let mut a = app();
-    let code = format!("nori://pair#k={}&d=desk&a=10.0.0.2%3A41234&n=Desk", "ab".repeat(32));
-    a.devices.on = true;
-    a.devices.pairing = Some(code.clone());
-    a.devices.paired = vec![
-        PairedDevice { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, reach: PairedReach::Answers, active: false, seen_days: 0 },
-        PairedDevice { id: "pixel".into(), name: "Pixel".into(), kind: DeviceKind::Phone, reach: PairedReach::Away, active: false, seen_days: 3 },
-    ];
-    key(&mut a, KeyCode::Char('C'));
-    let s = draw(&mut a, 120, 30);
-    dump("paired", &s);
-    let row = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
-    assert!(row(crate::text::PAIRED_TITLE).trim() == crate::text::PAIRED_TITLE, "{s}");
-    assert!(row("Desk").contains("computer · nearby") && row("Pixel").contains("phone · not nearby · seen 3 days ago"), "{s}");
-    assert!(row(crate::text::PAIR_DEVICE).contains(crate::text::PAIR_DEVICE), "{s}");
-
-    // Enter on a paired device that answers picks it, as on a device above; on one that does not, says so.
-    let to = |a: &mut crate::app::App, row| {
-        let at = a.devices.rows().iter().position(|r| *r == row).unwrap();
-        while a.devices.sel.at < at {
-            key(a, KeyCode::Down);
-        }
-    };
-    to(&mut a, crate::app::DeviceRow::Paired(0));
-    a.cmds.clear();
-    key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds, [Cmd::Pick(Some("desk".into()))]);
-    assert!(a.overlay.is_none(), "not asked to forget it");
-    to(&mut a, crate::app::DeviceRow::Paired(1));
-    a.cmds.clear();
-    key(&mut a, KeyCode::Enter);
-    let s = draw(&mut a, 120, 30);
-    assert!(a.cmds.is_empty() && a.overlay.is_none() && s.contains("Can't reach Pixel"), "{:?}\n{s}", a.cmds);
-
-    // d on a paired device asks, then forgets that one.
-    key(&mut a, KeyCode::Char('d'));
-    let s = draw(&mut a, 120, 30);
-    assert!(a.cmds.is_empty() && s.contains("Forget Pixel?"), "{:?}\n{s}", a.cmds);
-    key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.last(), Some(&Cmd::Forget("pixel".into())));
-
-    // The last row shows this computer's code and takes the other's.
-    key(&mut a, KeyCode::Char('G'));
-    key(&mut a, KeyCode::Enter);
-    let s = draw(&mut a, 120, 40);
-    dump("pair", &s);
-    assert!(matches!(a.overlay, Some(Overlay::Pair { .. })) && s.contains("▀") && s.contains("Scan this code"), "{s}");
-    chars(&mut a, "hello");
-    key(&mut a, KeyCode::Enter);
-    assert!(draw(&mut a, 120, 40).contains("That is not a pairing link") && a.cmds.len() == 1, "nothing sent");
-    a.handle(Msg::Key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)));
-    a.handle(Msg::Paste(code.clone()));
-    key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.last(), Some(&Cmd::Pair(code.clone())));
-    assert!(draw(&mut a, 120, 40).contains(crate::text::PAIRING));
-    a.handle(Msg::Paired(Err(crate::text::pair_failed(PairError::Unreachable, Some("Desk")))));
-    let s = draw(&mut a, 120, 40);
-    assert!(s.contains("Can't reach Desk") && !s.contains(crate::text::PAIRING), "{s}");
-    key(&mut a, KeyCode::Enter);
-    a.handle(Msg::Paired(Ok("Desk".into())));
-    assert!(a.overlay.is_none() && a.note.as_ref().is_some_and(|n| n.0 == "Paired with Desk"));
-
-    // A code pasted anywhere offers to pair.
-    a.handle(Msg::Paste(code.clone()));
-    assert!(matches!(&a.overlay, Some(Overlay::Pair { text, .. }) if *text == code));
 }
 
 #[test]

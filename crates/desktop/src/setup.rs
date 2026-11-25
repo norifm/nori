@@ -63,6 +63,7 @@ impl Setup {
         ui.set_setup_count(self.steps.len() as i32);
         ui.set_setup_way(self.way);
         ui.set_setup_look(step == SetupStep::Look);
+        ui.set_setup_pair(step == SetupStep::Pair);
         ui.set_setup_title(words::setup_step(step).into());
         let cards: Vec<SetupCard> = answers.iter().map(|&a| words::setup_answer(a)).map(|(name, line)| SetupCard { name: name.into(), line: line.into() }).collect();
         ui.set_setup_answers(ModelRc::new(VecModel::from(cards)));

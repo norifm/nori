@@ -26,7 +26,7 @@ pub fn provider(kind: &ServerKind, plugin_name: Option<String>) -> ProviderWords
         ServerKind::Subsonic => ProviderWords { name: "OpenSubsonic".into(), note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In".into(), no_user: "API key" },
         ServerKind::Plugin { id } => {
             let name = plugin_name.unwrap_or_else(|| id.clone());
-            ProviderWords { add: format!("Add {name}"), name, note: "From a plugin.", no_user: "No account" }
+            ProviderWords { add: format!("Add {name}"), name, note: "From a plugin.", no_user: "Not signed in" }
         }
     }
 }
@@ -206,6 +206,7 @@ pub fn setup_step(step: nori_core::setup::SetupStep) -> &'static str {
         S::Listening => "Between songs",
         S::Data => "On mobile data",
         S::Look => "Make it yours",
+        S::Pair => PAIR_A_DEVICE,
     }
 }
 
@@ -259,9 +260,11 @@ pub fn remove_downloads(n: usize) -> (String, &'static str) {
     if n == 1 { ("Remove the download?".into(), "It no longer plays offline.") } else { (format!("Remove {n} downloads?"), "They no longer play offline.") }
 }
 
-/// Asks before profile `name` is removed: the question, and what goes with it.
-pub fn remove_profile(name: &str) -> (String, &'static str) {
-    (format!("Remove {name}?"), "What nori keeps for it on this computer goes with it.")
+/// Asks before profile `name` is removed: the question, and what goes with it; a profile that syncs goes
+/// from every paired device.
+pub fn remove_profile(name: &str, synced: bool) -> (String, &'static str) {
+    let note = if synced { "It’s removed from all your devices, with what nori keeps for it." } else { "What nori keeps for it on this computer goes with it." };
+    (format!("Remove {name}?"), note)
 }
 
 /// Asks before removing `name`.
@@ -814,8 +817,6 @@ pub fn mix_name(n: nori_core::mixes::board::MixName) -> &'static str {
     }
 }
 
-
-
 /// The devices panel's first row, which brings the music back.
 pub const THIS_COMPUTER: &str = "This computer";
 
@@ -1012,38 +1013,6 @@ pub fn cleared(songs: usize) -> String {
 }
 
 pub const LINK_COPIED: &str = "Link copied";
-
-pub fn paired_with(name: &str) -> String {
-    format!("Paired with {name}")
-}
-
-/// A paired device's row: whether it answers now, or when it was last nearby.
-pub fn paired_row(d: &nori_core::remote::PairedDevice) -> crate::PairedRow {
-    use nori_core::remote::PairedReach;
-    let line = match (d.reach, d.seen_days) {
-        (PairedReach::Answers, _) => "Nearby".to_string(),
-        (PairedReach::Silent, _) => "Can’t reach it".into(),
-        (PairedReach::Away, 0) => "Not nearby · seen today".into(),
-        (PairedReach::Away, 1) => "Not nearby · seen yesterday".into(),
-        (PairedReach::Away, n) => format!("Not nearby · seen {n} days ago"),
-    };
-    let reachable = d.reach == PairedReach::Answers;
-    crate::PairedRow { id: d.id.clone().into(), name: d.name.clone().into(), line: line.into(), kind: device_glyph(d.kind), reachable, active: d.active }
-}
-
-/// Why pairing with the device `name` (when its code says it) failed.
-pub fn pair_failed(e: nori_core::remote::PairError, name: Option<&str>) -> String {
-    use nori_core::remote::PairError;
-    let (who, at_start) = name.map_or(("the other device", "The other device"), |n| (n, n));
-    match e {
-        PairError::NotACode => "That is not a pairing link. Copy the whole link from the other device.".into(),
-        PairError::Own => "That is this computer’s own code.".into(),
-        PairError::Unavailable => "This profile doesn’t pair: devices signed in to one server find each other.".into(),
-        PairError::Unreachable => format!("Can’t reach {who}. Is it on this network, with remote control on?"),
-        PairError::TimedOut => format!("{at_start} didn’t answer in time."),
-        PairError::Refused => format!("{at_start} turned the code down. Paste the one it shows now."),
-    }
-}
 
 /// Why pasted cookies did not sign the account in.
 pub fn sign_in_failed(r: &nori_core::providers::SignInResult) -> String {
@@ -1270,6 +1239,186 @@ pub fn support_failed(e: &NetError) -> String {
     }
 }
 
+// Pairing and profile sync (Settings › Your devices, the Pair a device sheet), in Android's words
+// (strings_ui.xml's sync_*), "this device" said as "this computer".
+pub const YOUR_DEVICES: &str = "Your devices";
+pub const PAIR_A_DEVICE: &str = "Pair a device";
+pub const RESET_PAIRING: &str = "Reset pairing";
+pub const RESET: &str = "Reset";
+pub const DEVICES: &str = "Devices";
+pub const SYNC_SERVER: &str = "Sync server";
+pub const USE_SYNC_SERVER: &str = "Use a sync server";
+pub const SYNC_ADDRESS: &str = "Sync server address";
+pub const NORIS_OWN: &str = "nori’s own";
+pub const KEEP_COPY: &str = "Keep an encrypted copy";
+pub const KEEP_COPY_DETAIL: &str = "Only your devices can read it.";
+pub const NOT_PAIRED: &str = "This computer isn’t paired with another.";
+pub const PAIRING_NOT_RESTORED: &str = "Pairing wasn’t restored.";
+pub const SYNC_THIS_PROFILE: &str = "Sync this profile";
+pub const ADVANCED: &str = "Advanced";
+pub const MERGE: &str = "Merge";
+pub const KEEP_BOTH: &str = "Keep both";
+pub const MERGE_TITLE: &str = "The same account?";
+pub const UNAVAILABLE: &str = "Unavailable";
+pub const REMOVE_THERE: &str = "Remove there";
+pub const KEEP_THERE: &str = "Keep there";
+pub const PLUGINS_NEEDED: &str = "Plugins your profiles need";
+pub const INSTALLED_FROM_FILE: &str = "Installed from a file on your other device";
+
+/// A sign-in to another account than the one profile sync holds, `name`d when known.
+pub fn other_account(name: Option<&str>) -> String {
+    match name {
+        Some(name) => format!("This profile syncs with {name}. Sign in to that account."),
+        None => "This profile syncs with another account. Sign in to that one.".into(),
+    }
+}
+
+/// The Pair a device sheet's fixed words.
+pub fn pair_words() -> crate::PairWords {
+    crate::PairWords {
+        title: PAIR_A_DEVICE.into(),
+        show_code: "Show this computer’s code".into(),
+        paste_link: "Paste a link".into(),
+        copy_link: "Copy link".into(),
+        valid: "The code works for five minutes.".into(),
+        placeholder: "Pairing link".into(),
+        pair: "Pair".into(),
+        cancel: "Cancel".into(),
+        done: "Done".into(),
+        nearby: "Waiting nearby".into(),
+        check: "Check that the other screen shows the same three words.".into(),
+        code_check: "Check that your other device shows these three words.".into(),
+        keep_title: "Keep an encrypted copy on the sync server".into(),
+        keep_line: "It’s encrypted on your devices. Nobody running the server can read it, only devices you pair.".into(),
+    }
+}
+
+pub const PAIR_REACHING_SERVER: &str = "Reaching the sync server…";
+pub const PAIRED: &str = "Paired";
+pub const NEW_CODE: &str = "New code";
+
+/// The device with the profiles asks before it gives them to `name`.
+pub fn give_sign_ins(name: &str, profiles: u32) -> String {
+    match profiles {
+        1 => format!("Give ‘{name}’ your sign-ins for 1 profile?"),
+        n => format!("Give ‘{name}’ your sign-ins for {n} profiles?"),
+    }
+}
+
+/// The new device `name` leaves its group of `others` other devices.
+pub fn leaves_group(name: &str, others: u32) -> String {
+    match others {
+        1 => format!("{name} will stop syncing with its 1 other device."),
+        n => format!("{name} will stop syncing with its {n} other devices."),
+    }
+}
+
+/// Why pairing stopped or refused a code; `showing` on the device that shows its code, whose code ran out.
+pub fn pairing_refused(reason: nori_core::sync::PairingRefused, showing: bool) -> String {
+    use nori_core::sync::PairingRefused as R;
+    match reason {
+        R::NotACode => "This isn’t a nori pairing code.".into(),
+        R::Newer => "This code comes from a newer nori. Update nori to pair.".into(),
+        R::Expired if showing => "This code ran out.".into(),
+        R::Expired => "This code ran out. Make a new one on the other device.".into(),
+        R::AlreadyPaired => "That device is already paired with this one.".into(),
+        R::Gone => "This code was used, or the other device stopped pairing.".into(),
+        R::Tampered => "A key came that doesn’t fit this code. Still waiting.".into(),
+        R::Spent => "A key came for a code that was already used. Still waiting.".into(),
+        R::Server { reason } => refused(reason),
+        R::SyncOff => format!("Turn on {USE_SYNC_SERVER} to pair."),
+    }
+}
+
+/// A local time of day for Unix ms `at`, with the local time's offset from UTC `offset_s`.
+fn clock(at: i64, offset_s: i64) -> String {
+    let t = (at.div_euclid(1000) + offset_s).rem_euclid(86_400);
+    format!("{:02}:{:02}", t / 3600, t % 3600 / 60)
+}
+
+/// Why the sync server refused, in one sentence.
+pub fn refused(r: nori_core::sync::Refusal) -> String {
+    use nori_core::sync::Refusal as R;
+    match r {
+        R::Limit => "The sync server is busy.",
+        R::DailyWall => "The sync server reached its daily limit.",
+        R::Version => "The sync server needs another version of nori. Update nori.",
+        R::WrongSecret => "The sync server didn’t take the encrypted copy.",
+        R::Unavailable => "The sync server isn’t working right now.",
+        R::Invalid => "nori and the sync server don’t understand each other. Sync stops until nori starts again.",
+    }
+    .into()
+}
+
+/// Where sync stands, in one line; nothing while it does not run.
+pub fn sync_state(state: nori_core::sync::SyncState, offset_s: i64) -> String {
+    use nori_core::sync::SyncState as S;
+    match state {
+        S::Idle => String::new(),
+        S::Connecting => "Connecting".into(),
+        S::Connected => "Connected".into(),
+        S::Offline { .. } => "Offline".into(),
+        S::Refused { refused: r, retry_ms } => format!("{} Trying again at {}.", refused(r), clock(retry_ms, offset_s)),
+        S::Stopped { refused: r } => refused(r),
+        S::Resting => "Paused while nori is in the background".into(),
+    }
+}
+
+/// When another device of the group was last seen.
+pub fn last_seen(d: &nori_core::sync::Seen, now_ms: i64) -> String {
+    if d.online {
+        return "Online".into();
+    }
+    let minutes = (now_ms - d.last_ms).max(0) / 60_000;
+    match minutes {
+        0 => "Seen just now".into(),
+        1 => "Seen 1 minute ago".into(),
+        m if m < 60 => format!("Seen {m} minutes ago"),
+        m if m < 120 => "Seen 1 hour ago".into(),
+        m if m < 24 * 60 => format!("Seen {} hours ago", m / 60),
+        m if m < 48 * 60 => "Seen yesterday".into(),
+        m => format!("Seen {} days ago", m / (24 * 60)),
+    }
+}
+
+/// Settings' line to Your devices: whether this computer is paired, and with how many.
+pub fn your_devices_count(paired: bool, others: usize) -> String {
+    if !paired {
+        return "Not paired".into();
+    }
+    match others {
+        0 => "1 device".into(),
+        n => format!("{} devices", n + 1),
+    }
+}
+
+/// What happened in the group, as a notice.
+pub fn sync_event(e: &nori_core::sync::SyncEvent) -> String {
+    use nori_core::sync::SyncEvent as E;
+    match e {
+        E::NewDevice { name } => format!("New device paired: {name}"),
+        E::DeviceLeft { name } => format!("{name} stopped syncing with this computer."),
+        E::UpdateThis => "Another device runs a newer nori. Update nori to keep syncing.".into(),
+        E::UpdateOther { name } => format!("{name} needs a newer nori to keep syncing."),
+        E::Refused { reason } => refused(*reason),
+    }
+}
+
+/// Reset pairing's confirmation: its title and what it says, with the profiles whose sign-ins the other
+/// devices hold.
+pub fn reset_pairing(signed_in: &[String]) -> (&'static str, String) {
+    let mut note = "Your other devices keep their data and stop syncing with this one.".to_string();
+    if !signed_in.is_empty() {
+        note.push_str(&format!("\n\nA lost device keeps the sign-ins it had. Change the passwords of {}.", signed_in.join(", ")));
+    }
+    ("Reset pairing?", note)
+}
+
+/// Asks before Sync this profile goes off on a profile that syncs.
+pub fn stop_syncing(name: &str) -> (String, &'static str) {
+    (format!("Stop syncing {name}?"), "Your other devices can keep it, or remove it too.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1344,6 +1493,65 @@ mod tests {
         assert!(preview_note(&p, false, &[]).contains(&"Unsigned".to_string()));
         let last = |turns_on| preview_note(&p, turns_on, &[]).last().cloned();
         assert_eq!((last(false).as_deref(), last(true).as_deref()), (Some("Unsigned"), Some(INSTALLED_ON)), "only what turns on says so");
+    }
+
+    /// 2026-11-24 13:00 UTC; the computer's clock an hour ahead.
+    const NOW: i64 = 1_795_525_200_000;
+    const CET: i64 = 3600;
+
+    /// Android's words (strings_ui.xml's sync_*), "this device" said as "this computer".
+    #[test]
+    fn every_sync_state_has_words() {
+        use nori_core::sync::{Refusal as R, SyncState as S};
+        let in_min = |m: i64| NOW + m * 60_000;
+        for (state, words) in [
+            (S::Connecting, "Connecting"),
+            (S::Connected, "Connected"),
+            (S::Idle, ""),
+            (S::Offline { retry_ms: in_min(5) }, "Offline"),
+            (S::Refused { refused: R::Limit, retry_ms: in_min(1) }, "The sync server is busy. Trying again at 14:01."),
+            (S::Refused { refused: R::DailyWall, retry_ms: in_min(11 * 60 + 12) }, "The sync server reached its daily limit. Trying again at 01:12."),
+            (S::Stopped { refused: R::Version }, "The sync server needs another version of nori. Update nori."),
+            (S::Stopped { refused: R::Invalid }, "nori and the sync server don’t understand each other. Sync stops until nori starts again."),
+            (S::Resting, "Paused while nori is in the background"),
+        ] {
+            assert_eq!(sync_state(state, CET), words, "{state:?}");
+        }
+    }
+
+    #[test]
+    fn a_pairing_refused_says_why_in_a_sentence() {
+        use nori_core::sync::{PairingRefused as P, Refusal};
+        for (reason, showing, words) in [
+            (P::Expired, true, "This code ran out."),
+            (P::Expired, false, "This code ran out. Make a new one on the other device."),
+            (P::Gone, false, "This code was used, or the other device stopped pairing."),
+            (P::Server { reason: Refusal::DailyWall }, false, "The sync server reached its daily limit."),
+            (P::SyncOff, true, "Turn on Use a sync server to pair."),
+        ] {
+            assert_eq!(pairing_refused(reason, showing), words, "{reason:?}");
+        }
+    }
+
+    #[test]
+    fn a_device_is_online_or_was_seen_a_while_ago() {
+        let seen = |ago_min: i64, online: bool| last_seen(&nori_core::sync::Seen { device: "d".into(), name: "Pixel 8".into(), last_ms: NOW - ago_min * 60_000, online }, NOW);
+        let said: Vec<String> = [(0, true), (0, false), (1, false), (59, false), (61, false), (5 * 60, false), (30 * 60, false), (4 * 24 * 60, false)].map(|(m, o)| seen(m, o)).into();
+        assert_eq!(said, ["Online", "Seen just now", "Seen 1 minute ago", "Seen 59 minutes ago", "Seen 1 hour ago", "Seen 5 hours ago", "Seen yesterday", "Seen 4 days ago"]);
+    }
+
+    #[test]
+    fn pairing_asks_and_tells_in_the_cores_numbers() {
+        assert_eq!(give_sign_ins("Pixel 8", 3), "Give ‘Pixel 8’ your sign-ins for 3 profiles?");
+        assert_eq!(give_sign_ins("Pixel 8", 1), "Give ‘Pixel 8’ your sign-ins for 1 profile?");
+        assert_eq!(leaves_group("Pixel 8", 2), "Pixel 8 will stop syncing with its 2 other devices.");
+        assert_eq!(sync_event(&nori_core::sync::SyncEvent::NewDevice { name: "Pixel 8".into() }), "New device paired: Pixel 8");
+        let (title, note) = reset_pairing(&["Home".into(), "Work".into(), "Tube".into()]);
+        assert_eq!(title, "Reset pairing?");
+        assert_eq!(note, "Your other devices keep their data and stop syncing with this one.\n\nA lost device keeps the sign-ins it had. Change the passwords of Home, Work, Tube.");
+        assert_eq!(reset_pairing(&[]).1, "Your other devices keep their data and stop syncing with this one.", "no sign-in to change");
+        assert_eq!(other_account(Some("Ann")), "This profile syncs with Ann. Sign in to that account.");
+        assert_eq!(remove_profile("Home", false).1, "What nori keeps for it on this computer goes with it.");
     }
 
     #[test]

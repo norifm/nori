@@ -138,7 +138,7 @@ mod tests {
     use super::*;
     use crate::cache_policy::Read;
     use crate::client::{NetResult, Write};
-    use crate::providers::{Answer, Provider, ProviderInfo, SignIn};
+    use crate::providers::{Answer, Provider, ProviderInfo, SignIn, SignInCopy};
     use crate::settings::{SavedServer, ServerKind};
     use crate::stream::{StreamQuality, StreamTarget};
     use crate::transport::Transport;
@@ -160,7 +160,7 @@ mod tests {
     #[async_trait::async_trait]
     impl Provider for Coded {
         fn info(&self) -> ProviderInfo {
-            ProviderInfo { kind: ServerKind::default(), fields: Vec::new(), sign_in: vec![SignIn::Code], identities: None }
+            ProviderInfo { kind: ServerKind::default(), fields: Vec::new(), sign_in: vec![SignIn::Code], identities: None, sign_in_copy: SignInCopy::EachDevice }
         }
         fn ready(&self, _: &SavedServer) -> bool {
             true

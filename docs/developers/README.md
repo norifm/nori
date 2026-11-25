@@ -31,6 +31,8 @@ these pages.
 | [Contributing](contributing.md) | Every contributor | The checks before a commit, commits, pull requests, where docs go |
 | [Writing a client](writing-a-client.md) | Client authors | What the core does, what a client builds, how to call the core |
 | [Providers](providers.md) | Client and core authors | Where a profile's music comes from, and how to add a source |
+| [Pairing and profile sync](sync.md) | Client and core authors | The group key, pairing a device, and how profiles merge |
+| [A jam's share on Navidrome](jam-share.md) | Core authors | How a jam's guests get the music from the host's Navidrome, provider songs included |
 | [Plugins](plugins.md) | Plugin authors | What a plugin can do, and how it runs |
 | [Plugin tutorial](plugin-tutorial.md) | Plugin authors | A first plugin, built step by step |
 | [Plugin reference](plugin-reference.md) | Plugin authors | The manifest, the API, the extension points |

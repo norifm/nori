@@ -64,7 +64,7 @@ pub use kept::{KeptPlugin, KeptPlugins, PluginRestored, PluginReturn};
 pub use lan::{Cast, CastButton, CastKind, CastLook, CastTarget};
 pub use sink::{Encoding, Sink};
 pub use notification::{ButtonPress, NotificationButton};
-pub use manifest::{AssetSpec, Category, DeviceFilter, Glyph, Hook, ItemKind, Manifest, MenuSpec, Permission, Place, Refusal, RowKind, RowSpec, Slot, WakeEvent, API, POINTS};
+pub use manifest::{AssetSpec, Category, DeviceFilter, Glyph, GuestStreams, Hook, ItemKind, Manifest, MenuSpec, Permission, Place, Refusal, RowKind, RowSpec, SignInCopy, Slot, WakeEvent, API, POINTS};
 pub use session::{Control, Found, Library, Moment, Profile, Repeat, Route};
 pub use wake::Command;
 pub use runtime::{Host, LINKED};
@@ -79,7 +79,7 @@ pub type CallResult<T> = wasmtime::Result<T>;
 /// The plugin API's generated types and calls, for the core's side of an extension point.
 pub mod wit {
     pub use crate::runtime::points::{lifecycle, provider};
-    pub use crate::runtime::{types, Plugin};
+    pub use crate::runtime::{types, Exports};
 }
 
 use nori_player::stage::StageSpec;

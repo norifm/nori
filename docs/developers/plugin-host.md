@@ -18,7 +18,7 @@ For what a plugin can do, see [Plugins](plugins.md). For the manifest, the limit
 
 | Part | Where | What it owns |
 |---|---|---|
-| The API | `wit/` | The `nori:plugin` package: host interfaces, extension points, the `plugin` world |
+| The API | `wit/` | The `nori:plugin` package: host interfaces, extension points, the `plugin` and `current` worlds |
 | The SDK | `crates/plugin-sdk` | The WIT as Rust, the manifest's encoding, `plugin!`, the signing example |
 | The index rules | `crates/plugin-index` | `index.json`, the manifest section, package checks, `web_blocks`, README blocks |
 | The host | `crates/plugins` | Installing, compiling, workers, host interfaces, safe mode, repos |
@@ -99,7 +99,10 @@ wait on a plugin.
   its turn comes.
 - **Memory.** Each store is capped at 256 MB and 16 instances.
 - **WASI.** `runtime::wasi` answers randomness, the clocks and an empty environment, at whatever WASI
-  versions the component imports. It links every other import to a trap.
+  versions the component imports. It links every other import to a trap, by the import's exact name.
+- **Exports.** `runtime::Exports` holds the `plugin` world's exports, which every plugin of the API has.
+  It looks up each extension point added since by name, only when the manifest names it. A plugin built
+  before one answers as nori would without it.
 
 Dropping an instance's `Host` lets go of what it holds on the LAN (`Lan::forget`): its browsing,
 endpoints, audio and cast. This happens when the plugin is turned off, removed or updated, or a call
@@ -398,15 +401,19 @@ installed, none of this loads: `nori-plugins` in `localStorage` says one is.
 
 ## Where to change things
 
-- **A new host interface or call.** Add it to `wit/host.wit` or `wit/net.wit` and to the `plugin`
-  world, link it in `runtime::linker` and `runtime::LINKED`, and implement it on `Host`. Add it to
+- **A new host interface or call.** Add it to `wit/host.wit` or `wit/net.wit` and to the `plugin` and
+  `current` worlds. Link it in `runtime::linker` and `runtime::LINKED`, and implement it on `Host`. Add it to
   `WEB_IMPORTS` in `crates/plugin-index` if the web host answers it. Update the fingerprint in
   `tests/api.rs`. The API version stays.
-- **A changed record, function or export, or a new extension point.** This is a new API. Raise `API` in
+- **A new extension point.** Add its interface to `wit/plugin.wit` and to the end of the `current`
+  world's exports, not to `plugin`. Add it at the end of `POINTS`, whose order is the manifest's bits,
+  and of `POINTS` in nori-plugins' `tools/pack.py`. Look it up in `runtime::Exports`. The API and the
+  package version stay. The WASI stubs match imports by exact name, so a new package version would
+  stop every plugin built before.
+- **A changed record, function or export.** This is a new API. Raise `API` in
   `crates/plugin-index/src/section.rs` and in the SDK's `manifest.rs`. Raise the package version in
-  `wit/` and in the export names in the SDK's `build.rs` and the host's `stage.rs`. A new point also goes
-  at the end of `POINTS`, whose order is the manifest's bits, and of `POINTS` in nori-plugins'
-  `tools/pack.py`. Then release every plugin for the new API.
+  `wit/` and in the export names in the SDK's `build.rs` and the host's `stage.rs` and `runtime.rs`.
+  Then release every plugin for the new API.
 - **A new row kind.** Add it at the end of `RowKind` in the SDK, in `crates/plugins/src/manifest.rs`
   and in `ROW_KINDS`, then draw it in every client that runs plugins.
 - **A new manifest field.** Write it after the last group in the SDK's `manifest::write`, so a manifest

@@ -570,6 +570,9 @@ pub struct SavedServer {
     pub scrobble_off: bool,
     /// Where its plays go besides its server or provider.
     pub scrobblers: Vec<SavedScrobbler>,
+    /// Kept on this device only, out of profile sync ("Sync this profile" off).
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub sync_off: bool,
 }
 
 /// A scrobbling account a profile's plays go to, whatever the profile plays from.
@@ -804,6 +807,12 @@ pub struct StoredPrefs {
     /// Remote playback control and hosting jams, through the relay or the local network.
     #[setting("remoteControl", FLAG, default = true, show = K::Switch)]
     pub remote_control: bool,
+    /// Pairing and profile sync through a sync server; off, nothing connects to one.
+    #[setting("sync", FLAG, default = true, hidden)]
+    pub sync: bool,
+    /// The sync server's address; None for nori's own.
+    #[setting("syncServer", SYNC_SERVER, default = None, hidden)]
+    pub sync_server: Option<String>,
     /// Every plugin off, each one's own switch kept: nothing is laid over the settings and no plugin is
     /// called, to tell a nori bug from a plugin's. Any value a plugin overrides may change.
     #[setting("pluginsOff", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | APPLY_GAIN | REPLAN | SOUND | PLAYER | CACHE_LIMIT)]
@@ -851,6 +860,14 @@ const SERVERS: Custom<Vec<SavedServer>> = Custom {
             .unwrap_or_default()
     },
     save: |s| Value::Array(s.iter().map(server_json).collect()).to_string(),
+    set: None,
+    show: None,
+};
+
+/// An address, stored empty for none.
+const SYNC_SERVER: Custom<Option<String>> = Custom {
+    load: |t, d| t.map_or(d, |t| Some(t.trim()).filter(|t| !t.is_empty()).map(String::from)),
+    save: |a| a.clone().unwrap_or_default(),
     set: None,
     show: None,
 };
@@ -1340,7 +1357,7 @@ fn with_bass_boost(s: SoundSettings, db: f32) -> SoundSettings {
 }
 
 /// One server from the stored list; None without an id.
-fn server_from(v: &Value) -> Option<SavedServer> {
+pub fn server_from(v: &Value) -> Option<SavedServer> {
     let o = v.as_object()?;
     // Absent in profiles saved before there were kinds.
     let kind = o.get("kind").and_then(Value::as_str);
@@ -1366,8 +1383,15 @@ fn server_from(v: &Value) -> Option<SavedServer> {
         picture: o.get("picture").and_then(Value::as_str).map(String::from),
         scrobble_off: opt_bool(o, "scrobbleOff"),
         scrobblers: o.get("scrobblers").and_then(Value::as_array).map_or_else(Vec::new, |a| a.iter().filter_map(scrobbler_from).collect()),
+        sync_off: opt_bool(o, "syncOff"),
     })
 }
+
+/// Every key [`server_from`] reads.
+pub const SERVER_KEYS: [&str; 22] = [
+    "id", "kind", "name", "url", "altUrl", "user", "password", "apiKey", "legacyAuth", "headers", "allowSelfSigned", "clientCert", "clientCertPassword",
+    "wifiOnly", "musicFolderIds", "musicFolderId", "altMaxBitRate", "icon", "picture", "scrobbleOff", "scrobblers", "syncOff",
+];
 
 /// An account of a kind nori no longer has is left out.
 fn scrobbler_from(v: &Value) -> Option<SavedScrobbler> {
@@ -1396,7 +1420,8 @@ fn folder_ids(o: &Map<String, Value>) -> Vec<String> {
     }
 }
 
-fn server_json(s: &SavedServer) -> Value {
+/// One server as the list stores it.
+pub fn server_json(s: &SavedServer) -> Value {
     let mut v = serde_json::json!({
         "id": s.id, "kind": s.kind.id(), "name": s.name, "url": s.url, "altUrl": s.alt_url, "user": s.user, "password": s.password,
         "apiKey": s.api_key, "legacyAuth": s.legacy_auth, "headers": s.headers, "allowSelfSigned": s.allow_self_signed,
@@ -1411,6 +1436,9 @@ fn server_json(s: &SavedServer) -> Value {
     }
     if !s.scrobblers.is_empty() {
         v["scrobblers"] = s.scrobblers.iter().map(scrobbler_json).collect();
+    }
+    if s.sync_off {
+        v["syncOff"] = true.into();
     }
     v
 }
@@ -2392,6 +2420,30 @@ mod tests {
             saved.insert("remoteControl".into(), PrefValue::Flag { v: false });
             assert!(!load(&saved).remote_control, "the merged switch can be turned off after migration");
         }
+    }
+
+    #[test]
+    fn a_profile_is_stored_with_every_key_it_is_read_from() {
+        let full = SavedServer {
+            id: "a".into(), kind: ServerKind::Plugin { id: "fm.nori.example".into() }, name: "n".into(), url: "u".into(), alt_url: "v".into(), user: "w".into(),
+            password: "x".into(), api_key: "y".into(), legacy_auth: true, headers: [("h".to_string(), "1".to_string())].into(), allow_self_signed: true,
+            client_cert: "c".into(), client_cert_password: "d".into(), wifi_only: true, music_folder_ids: vec!["1".into()], alt_max_bit_rate: 96,
+            icon: ProfileIcon::Think, picture: Some("p".into()), scrobble_off: true, scrobblers: vec![SavedScrobbler { id: "s".into(), ..Default::default() }], sync_off: true,
+        };
+        let json = server_json(&full);
+        let mut written: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+        let mut read: Vec<&str> = SERVER_KEYS.into_iter().filter(|k| *k != "musicFolderId").collect();
+        written.sort_unstable();
+        read.sort_unstable();
+        assert_eq!(written, read);
+        assert_eq!(server_from(&json), Some(full));
+    }
+
+    #[test]
+    fn an_empty_sync_server_is_nori_s_own() {
+        assert_eq!(load(&raw(&[("syncServer", t(" "))])).sync_server, None);
+        assert_eq!(load(&raw(&[("syncServer", t(" https://sync.example "))])).sync_server.as_deref(), Some("https://sync.example"));
+        assert_eq!(save(&StoredPrefs::default()).get("syncServer"), Some(&t("")));
     }
 
     #[test]

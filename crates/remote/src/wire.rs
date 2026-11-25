@@ -1,6 +1,7 @@
-//! The JSON both the relay (octo-fiesta's `noriRemote.*`) and a device's LAN door speak. A poll answers
-//! with the rooms the caller is in (their members, each with the state it last published) and the
-//! events addressed to it; a send publishes the sender's state or posts an event.
+//! The JSON remote control and jams speak: through a group's room on the sync server ([`GroupSaid`]),
+//! a device's LAN door, and octo-fiesta's relay (`noriRemote.*`, jams only). A poll of a door or the
+//! relay answers with the rooms the caller is in (their members, each with the state it last
+//! published) and the events addressed to it; a send publishes the sender's state or posts an event.
 
 use alloc::{boxed::Box, string::String, vec::Vec};
 use nori_model::Song;
@@ -97,6 +98,22 @@ pub struct Outgoing {
     pub to: Option<String>,
     pub state: Option<DeviceState>,
     pub body: Option<Body>,
+}
+
+/// What a device's remote says in its group's room on the sync server (crates/sync seals and carries
+/// it), to the group's devices with the same profile open. Nothing goes on a timer: a state when it
+/// changes, a command, its answer. `instance` is the remote's [`DeviceState::instance`]: a remote made
+/// again for the device may be heard before the last word of the one before, which is then old.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "t", rename_all = "camelCase")]
+pub enum GroupSaid {
+    /// Who the device is, with its state while it serves (none: it only controls); `ask`: the others
+    /// that serve say theirs back.
+    Here { member: Box<Member>, ask: bool, instance: Option<u64> },
+    /// Its remote stopped.
+    Gone { id: String, instance: Option<u64> },
+    /// An event from device `from` for device `to`.
+    Event { from: String, to: String, body: Body },
 }
 
 /// An event's content.
@@ -316,6 +333,10 @@ pub struct DeviceState {
     /// The relay's clock less the device's, µs, as the device learned it: a jam's guest who knows the
     /// relay's clock too reads `at_us` on its own without learning the host's.
     pub server_us: Option<i64>,
+    /// The sync server's clock less the device's, µs, as the device learned it: another device of its
+    /// group that knows the sync server's clock too reads `at_us` on its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync_us: Option<i64>,
     /// Song ms per real ms at `at_us`: the speed times a mix's tempo; None from an older device (1).
     pub rate: Option<f32>,
     /// The current list index.
@@ -571,6 +592,11 @@ mod tests {
         assert_eq!(serde_json::from_str::<DeviceState>(&json).unwrap(), sung);
         let odd: DeviceState = serde_json::from_str(r#"{"seq":2,"lyrics":{"song":"s2","timing":"soon"}}"#).unwrap();
         assert_eq!((odd.seq, odd.lyrics), (2, None));
+
+        let said = GroupSaid::Event { from: "desk".into(), to: "phone".into(), body: Body::Command { id: 4, op: Box::new(Op::Pause) } };
+        let json = serde_json::to_string(&said).unwrap();
+        assert!(json.contains(r#""t":"event""#), "{json}");
+        assert_eq!(serde_json::from_str::<GroupSaid>(&json).unwrap(), said);
 
         let page = Body::Page { id: 2, rev: 9, from: 40, entries: vec![Entry::of(3, 40, &song, None)] };
         let json = serde_json::to_string(&page).unwrap();

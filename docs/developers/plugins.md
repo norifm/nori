@@ -44,6 +44,7 @@ write answers as nori would on its own, so a plugin writes only what it changes:
 | `lyrics` | A lyrics service that nori asks beside its own | None |
 | `scrobbler` | A service that hears what you play, beside your server | None |
 | `notification` | The buttons on Android's media notification and lock screen | None |
+| `account` | The stable id of a provider's signed-in account, for profile sync | `youtube-music`, `soundcloud` |
 
 For a provider, also read [Providers](providers.md): it says what nori expects of a music source.
 

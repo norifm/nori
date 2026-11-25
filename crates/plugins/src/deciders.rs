@@ -32,7 +32,7 @@ impl Plugins {
 
     /// `nori` passed through each deciding plugin's `ask` in turn, within `budget`; an answer `fits`
     /// refuses is passed over.
-    fn decided<T: Clone + Send + 'static>(&self, nori: T, budget: Duration, fits: impl Fn(&T) -> bool, ask: impl Fn(&mut crate::Store, &crate::runtime::Plugin, T) -> wasmtime::Result<Option<T>> + Clone + Send + 'static) -> Option<T> {
+    fn decided<T: Clone + Send + 'static>(&self, nori: T, budget: Duration, fits: impl Fn(&T) -> bool, ask: impl Fn(&mut crate::Store, &crate::runtime::Exports, T) -> wasmtime::Result<Option<T>> + Clone + Send + 'static) -> Option<T> {
         let mut answer: Option<T> = None;
         for (_, w) in self.deciding_workers() {
             let so_far = answer.clone().unwrap_or_else(|| nori.clone());

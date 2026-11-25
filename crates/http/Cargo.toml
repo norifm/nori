@@ -3,7 +3,7 @@ name = "nori-http"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "nori's HTTP for the desktop: the core's Transport and the engine's ByteSource over one ureq agent"
+description = "nori's HTTP for the desktop: the core's Transport and the engine's ByteSource over one ureq agent, and the sync server's WebSockets"
 
 [lib]
 name = "nori_http"
@@ -14,7 +14,10 @@ nori-engine = { path = "../engine" }
 async-trait = "0.1"
 # rustls, no OpenSSL: one small TLS stack that builds the same everywhere.
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
-
-[dev-dependencies]
-# The HTTPS proxy a test goes through.
+# The sync server's WebSockets (socket.rs): TLS by the rustls, ring and Mozilla roots ureq uses, its
+# handshake key by ring's SHA-1, its masks by the system's randomness.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+ring = "0.17"
+webpki-roots = "1"
+getrandom = "0.4"
+base64 = "0.22"

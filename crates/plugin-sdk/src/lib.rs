@@ -15,7 +15,7 @@
 //! Build with `cargo build --target wasm32-wasip2 --release`; the `.wasm` is the plugin's `plugin.wasm`.
 
 wit_bindgen::generate!({
-    world: "nori:plugin/plugin",
+    world: "nori:plugin/current",
     path: "../../wit",
     pub_export_macro: true,
     export_macro_name: "__export",
@@ -31,7 +31,7 @@ use std::cell::RefCell;
 pub mod manifest;
 
 pub use exports::nori::plugin::*;
-pub use manifest::{Asset, Category, DeviceFilter, Glyph, Hook, ItemKind, Manifest, MenuAction, Permission, Place, Row, RowKind, Slot, Wake};
+pub use manifest::{Asset, Category, DeviceFilter, Glyph, GuestStreams, Hook, ItemKind, Manifest, MenuAction, Permission, Place, Row, RowKind, SignInCopy, Slot, Wake};
 pub use nori::plugin::{assets, audio_out, bluetooth, cache, cast, discovery, http, lan_serve, log, media, notices, rows, session, settings, sign_in, sockets, store, subsonic, timers, types, wake};
 
 include!(concat!(env!("OUT_DIR"), "/points.rs"));

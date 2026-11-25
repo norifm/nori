@@ -29,6 +29,7 @@ pub mod update;
 pub mod support;
 pub mod remote;
 pub mod jam_pick;
+pub mod jam_share;
 pub mod destination;
 pub mod providers;
 pub mod scrobblers;
@@ -47,6 +48,7 @@ pub use nori_db::{self as db, background};
 pub use nori_model::{alog, deciders, heap, lines, model, numbers, CoreError, SmartProblem};
 #[cfg(feature = "plugins")]
 pub use nori_backup as backup;
+pub use nori_sync as sync;
 pub use nori_automix::beat_model;
 pub use nori_devices::{autoeq, outputs};
 pub use nori_library::{menus, offer, paged, pages, rows, stars};
@@ -98,24 +100,17 @@ pub(crate) struct Account {
 
 pub(crate) enum Secret {
     /// An API key.
-    Key(String),
+    Key,
     /// A password, which Navidrome's own API also logs in with.
     Password(String),
 }
 
 impl Account {
-    /// What the LAN's remote control proves the account with.
-    pub(crate) fn proof(&self) -> &str {
-        match &self.secret {
-            Secret::Key(s) | Secret::Password(s) => s,
-        }
-    }
-
     /// The user and password Navidrome's own API logs in with; None with an API key.
     pub(crate) fn login(&self) -> Option<(String, String)> {
         match &self.secret {
             Secret::Password(p) => Some((self.user.clone(), p.clone())),
-            Secret::Key(_) => None,
+            Secret::Key => None,
         }
     }
 }

@@ -4,11 +4,12 @@
 
 mod reads;
 mod server;
+mod sharing;
 pub(crate) mod wire;
 
 use std::sync::Arc;
 
-use super::{Answer, FieldSpec, FormField, Provider, ProviderInfo};
+use super::{Answer, FieldSpec, FormField, Provider, ProviderInfo, SignInCopy};
 use crate::browse::{profile_rules, ProfileRules};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Write};
@@ -18,6 +19,8 @@ use crate::transport::{NetError, Transport};
 use crate::Core;
 
 pub use server::login_check;
+pub use sharing::ShareError;
+pub(crate) use sharing::{Navidrome, Share};
 
 /// The Subsonic error for an item the server does not have.
 const NOT_FOUND: i32 = 70;
@@ -42,7 +45,7 @@ impl Provider for Subsonic {
             field(WifiOnly, true),
             field(ClientCert, true),
         ];
-        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in: Vec::new(), identities: None }
+        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in: Vec::new(), identities: None, sign_in_copy: SignInCopy::Copied }
     }
 
     fn ready(&self, p: &SavedServer) -> bool {
