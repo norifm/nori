@@ -176,6 +176,28 @@ pub enum PairingView {
     Refused { reason: PairingRefused },
 }
 
+/// Which side of a pairing a pairing screen takes: the new device shows its code, the device with the
+/// profiles takes another's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum PairSide {
+    Show,
+    Take,
+}
+
+/// The side a pairing screen opens on while sync shows `view`, on a device `paired` or not with `profiles`
+/// saved profiles: a pairing under way is taken up on its side; a device in a group with profiles to give
+/// takes a code; any other shows its own.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn pair_side(view: PairingView, paired: bool, profiles: u32) -> PairSide {
+    match view {
+        PairingView::Code { .. } => PairSide::Show,
+        PairingView::Confirm { .. } => PairSide::Take,
+        _ if paired && profiles > 0 => PairSide::Take,
+        _ => PairSide::Show,
+    }
+}
+
 /// The paired device's session and its connection.
 struct Paired {
     session: Session,
@@ -787,13 +809,15 @@ impl Syncing {
         self.inner().running.as_ref().and_then(|r| r.paired.as_ref()).map(|p| p.session.offers(&servers)).unwrap_or_default()
     }
 
-    /// Merges profile `drop` into `keep` on every device.
-    pub fn merge(&self, keep: String, drop: String) {
+    /// Makes the two profiles of `offer` one on every device: the one in use stays, else the first.
+    pub fn merge(&self, offer: MergeOffer) {
+        let active = self.settings.with_prefs(|p| p.active_server_id.clone()).unwrap_or_default();
+        let (keep, drop) = offer.kept(&active);
         let mut tells = Vec::new();
         self.with(|s, inner, now| {
             let unix_ms = Syncing::unix_ms(inner, now);
             if let Some(p) = inner.running.as_mut().and_then(|r| r.paired.as_mut()) {
-                let servers = p.session.merge(&p.link, &keep, &drop, &s.servers(), unix_ms);
+                let servers = p.session.merge(&p.link, keep, drop, &s.servers(), unix_ms);
                 s.keep(servers, &mut tells);
             }
         });

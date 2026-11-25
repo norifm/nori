@@ -107,9 +107,6 @@ fun takesCode(profiles: Int): Boolean = profiles > 0
 /** The group's other devices as the list shows them: those in the room first, then the most recently seen. */
 fun deviceOrder(devices: List<Seen>): List<Seen> = devices.sortedWith(compareByDescending<Seen> { it.online }.thenByDescending { it.lastMs })
 
-/** Of two profiles that may be one, the one a merge keeps: the one in use, else the first. */
-fun mergeKeeps(offer: MergeOffer, active: String): Pair<String, String> = if (offer.b == active) offer.b to offer.a else offer.a to offer.b
-
 /** Whether turning Sync this profile off asks about the other devices: only for a profile that syncs. */
 fun syncOffAsks(profile: String, view: SyncView): Boolean = view.paired && profile in view.synced
 
@@ -253,11 +250,8 @@ class SyncViewModel(app: Application) : NoriViewModel(app) {
 
     fun reset() = act { it.reset() }
 
-    /** Merges the two profiles of [offer] on every device, keeping the one in use. */
-    fun merge(offer: MergeOffer) {
-        val (keep, drop) = mergeKeeps(offer, nori.settings.value.activeServerId)
-        act { it.merge(keep, drop) }
-    }
+    /** Merges the two profiles of [offer] on every device; the core keeps the one in use. */
+    fun merge(offer: MergeOffer) = act { it.merge(offer) }
 
     fun keepApart(offer: MergeOffer) = act { it.keepApart(offer.a, offer.b) }
 

@@ -2013,6 +2013,10 @@ fn welcome(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         let rr = Rect { x: col.x + 1, y, width: restore.width() as u16, height: 1 };
         put(f, Paragraph::new(Span::styled(restore, t.dim())), rr);
         app.hits.push((rr, Hit::Button(Button::WelcomeRestore)));
+        let pair = format!(" {} ", crate::text::PAIR_A_DEVICE);
+        let pr = Rect { x: rr.x + rr.width + 2, y, width: pair.width() as u16, height: 1 };
+        put(f, Paragraph::new(Span::styled(pair, t.dim())), pr);
+        app.hits.push((pr, Hit::Button(Button::WelcomePair)));
     }
     if let Some((said, error, _)) = &app.note {
         text(f, Rect { x: col.x + 2, y: y + 1, width: col.width.saturating_sub(2), height: 1 }, said, if *error { Style::default().fg(Color::LightRed) } else { t.dim() });
@@ -2070,7 +2074,7 @@ fn provider_choice(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
 fn setup(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let Some(s) = app.setup.clone() else { return };
     let step = s.step();
-    let look = step == nori_core::setup::SetupStep::Look;
+    let look = matches!(step, nori_core::setup::SetupStep::Look | nori_core::setup::SetupStep::Pair);
     let answers = nori_core::setup::setup_answers(step);
     let height = if look { 17 } else { 14 + 3 * answers.len() as u16 };
     let col = centred(Rect { x: area.x + 2, width: area.width.saturating_sub(4), ..area }, 64, height);
@@ -2206,9 +2210,12 @@ fn look_page(f: &mut Frame, area: Rect, app: &mut App, s: &crate::app::Setup, t:
         }
         y += 1;
     }
-    let start = Rect { y, height: 1, ..area };
-    pill(f, start, crate::text::SETUP_START, true, s.line == at, t);
-    app.hits.push((start, Hit::Button(Button::SetupStart)));
+    for (i, (words, button)) in app.setup_ends().into_iter().enumerate() {
+        let end = Rect { y: y + 2 * i as u16, height: 1, ..area };
+        let enabled = button != Button::WelcomePair || app.prefs.sync;
+        pill(f, end, words, enabled, s.line == at + i, t);
+        app.hits.push((end, Hit::Button(button)));
+    }
 }
 
 /// The chosen kind's page: its form, or with an account and nothing to fill, two ways on.
@@ -2265,6 +2272,122 @@ fn sign_in_form(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     put(f, Paragraph::new(msg).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x, y, width: inner.width, height: 2.min(bottom.saturating_sub(y)) });
 }
 
+/// The Pair a device sheet: the two sides as tabs where this computer has profiles to give, then this
+/// computer's code (the QR code, its three words, how long it works, its link), the devices waiting
+/// nearby and the pasted link, or the question on the device with the profiles; the keys at its foot.
+fn pair_sheet(f: &mut Frame, area: Rect, hits: &mut Vec<(Rect, Hit)>, sync: &crate::pairing::SyncShown, gives: bool, sheet: &Overlay, t: &Theme) {
+    use crate::pairing::{stage, Stage};
+        use nori_core::sync::PairSide as Role;
+    let Overlay::Pair { role, text: typed, at, keep, shown } = sheet else { return };
+    let (role, at, keep) = (*role, *at, *keep);
+    let now = stage(role, &sync.pairing, shown.as_ref());
+    let ink = Style::default().fg(t.ink);
+    let red = Style::default().fg(Color::LightRed);
+    let qr = match &now {
+        Stage::Code { link, .. } => nori_core::remote::qr_code(link.clone()).as_ref().map(qr_lines).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let qr_w = qr.first().map_or(0, |l| l.width() as u16);
+    let w = (qr_w + 6).max(72).min(area.width);
+    let iw = w.saturating_sub(4).max(1) as usize;
+    let fits = qr_w + 4 <= area.width && qr.len() as u16 + 16 <= area.height;
+    let mut lines: Vec<Line> = Vec::new();
+    let said = |lines: &mut Vec<Line>, words: &str, style: Style| lines.extend(wrap(words, iw).into_iter().map(|l| Line::from(Span::styled(l, style))));
+    let tabs = gives && !matches!(now, Stage::Confirm { .. });
+    if tabs {
+        lines.push(Line::from(""));
+    }
+    let keys = match &now {
+        Stage::Confirm { question, words, leaves, asks_keep } => {
+            lines.push(Line::from(Span::styled(question.clone(), bold().fg(t.ink))));
+            lines.push(Line::from(""));
+            if let Some(w) = words {
+                lines.push(Line::from(Span::styled(w.clone(), bold().fg(t.accent))));
+                said(&mut lines, crate::text::CHECK_WORDS, t.dim());
+                lines.push(Line::from(""));
+            }
+            if let Some(l) = leaves {
+                said(&mut lines, l, ink);
+                lines.push(Line::from(""));
+            }
+            if *asks_keep {
+                let mark = if keep { "[✓] " } else { "[ ] " };
+                lines.push(Line::from(vec![Span::styled(mark, if keep { t.current() } else { t.dim() }), Span::styled(crate::text::KEEP_COPY_ASK, ink)]));
+                said(&mut lines, &format!("    {}", crate::text::KEEP_COPY_ASK_DETAIL), t.dim());
+                lines.push(Line::from(""));
+            }
+            crate::text::PAIR_CONFIRM_KEYS
+        }
+        Stage::Code { link, words, note } => {
+            if fits {
+                lines.extend(qr.into_iter().map(|l| l.alignment(Alignment::Center)));
+            } else {
+                lines.push(Line::from(Span::styled(crate::text::PAIR_ROOM, t.dim())).alignment(Alignment::Center));
+            }
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(words.clone(), bold().fg(t.ink))).alignment(Alignment::Center));
+            lines.push(Line::from(Span::styled(crate::text::CODE_CHECK, t.dim())).alignment(Alignment::Center));
+            if let Some(n) = note {
+                lines.push(Line::from(Span::styled(n.clone(), red)).alignment(Alignment::Center));
+            }
+            lines.push(Line::from(Span::styled(crate::text::CODE_VALID, t.dim())).alignment(Alignment::Center));
+            lines.push(Line::from(""));
+            said(&mut lines, link, t.dim());
+            lines.push(Line::from(""));
+            if gives { crate::text::PAIR_CODE_KEYS } else { crate::text::PAIR_CODE_ONLY_KEYS }
+        }
+        Stage::Stopped(why) => {
+            said(&mut lines, why, red);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(format!(" {} ", crate::text::NEW_CODE), t.select(true))));
+            lines.push(Line::from(""));
+            crate::text::PAIR_STOPPED_KEYS
+        }
+        Stage::Waiting if role == Role::Show => {
+            lines.push(Line::from(Span::styled(crate::text::PAIR_REACHING_SERVER, t.dim())));
+            lines.push(Line::from(""));
+            crate::text::PAIR_CODE_ONLY_KEYS
+        }
+        Stage::Taking(_) | Stage::Waiting => {
+            if !sync.nearby.is_empty() {
+                lines.push(Line::from(Span::styled(crate::text::WAITING_NEARBY.to_uppercase(), t.dim())));
+                for (i, d) in sync.nearby.iter().enumerate() {
+                    let picked = i == at.min(sync.nearby.len() - 1) && typed.trim().is_empty();
+                    lines.push(Line::from(vec![Span::styled(if picked { " › " } else { "   " }, t.current()), Span::styled(d.name.clone(), ink)]));
+                }
+                lines.push(Line::from(""));
+            }
+            lines.push(Line::from(Span::styled(crate::text::PAIRING_LINK.to_uppercase(), t.dim())));
+            let end: String = typed.chars().rev().take(iw.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect();
+            lines.push(Line::from(Span::styled(format!("{end}▏"), ink)));
+            lines.push(Line::from(""));
+            match &now {
+                Stage::Taking(Some(why)) => said(&mut lines, why, red),
+                Stage::Waiting => said(&mut lines, crate::text::PAIR_REACHING_SERVER, t.dim()),
+                _ => {}
+            }
+            lines.push(Line::from(""));
+            crate::text::PAIR_TAKE_KEYS
+        }
+        Stage::Done => "",
+    };
+    said(&mut lines, keys, t.dim());
+    let r = centred(area, w, lines.len() as u16 + 3);
+    let inner = popup(f, r, Span::styled(crate::text::PAIR_TITLE, bold().fg(t.ink)), t);
+    let body = Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(1) };
+    put(f, Paragraph::new(lines), body);
+    if tabs {
+        let mut x = body.x;
+        for (side, words) in [(Role::Show, crate::text::SHOW_CODE), (Role::Take, crate::text::PASTE_LINK)] {
+            let label = format!(" {words} ");
+            let tab = Rect { x, y: body.y, width: (label.width() as u16).min(body.width), height: 1 };
+            put(f, Paragraph::new(Span::styled(label.clone(), if side == role { t.select(true) } else { t.dim() })), tab);
+            hits.push((tab, Hit::Button(Button::PairRole(side))));
+            x += label.width() as u16 + 2;
+        }
+    }
+}
+
 /// Light modules around the code, so a camera finds its edges on a dark terminal.
 const QR_QUIET: usize = 2;
 
@@ -2283,7 +2406,7 @@ fn qr_lines(code: &nori_core::remote::QrCode) -> Vec<Line<'static>> {
 
 fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let missing = app.page_missing();
-    let App { overlay, hits, devices, settings, .. } = app;
+    let App { overlay, hits, devices, settings, prefs, .. } = app;
     let kinds = &*settings.own.kinds;
     let Some(o) = overlay else { return };
     match o {
@@ -2359,6 +2482,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             let inner = popup(f, r, Span::styled(crate::text::INVITE_TITLE, bold().fg(t.ink)), t);
             put(f, Paragraph::new(lines).alignment(Alignment::Center), Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner });
         }
+        Overlay::Pair { .. } => pair_sheet(f, area, hits, &settings.own.sync, !prefs.servers.is_empty(), o, t),
         Overlay::AddRepo { text: typed, problem, busy } => {
             let w = 72.min(area.width);
             let iw = w.saturating_sub(4).max(1) as usize;
@@ -2487,7 +2611,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             let shown = if *secret { "•".repeat(typed.chars().count()) } else { typed.clone() };
             put(f, Paragraph::new(format!(" {shown}▏")), inner);
         }
-        Overlay::Confirm { title, lines: said, yes, .. } => {
+        Overlay::Confirm { title, lines: said, yes, other, .. } => {
             let w = 64.min(area.width);
             let iw = w.saturating_sub(4).max(1) as usize;
             let mut lines = Vec::new();
@@ -2495,7 +2619,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 lines.push(Line::from(Span::styled(l.clone(), if i == 0 { Style::default().fg(t.ink) } else { t.dim() })));
                 lines.push(Line::from(""));
             }
-            lines.push(Line::from(Span::styled(crate::text::confirm_keys(yes), t.dim())));
+            lines.push(Line::from(Span::styled(crate::text::confirm_keys(yes, other.as_ref().map(|o| o.0.as_str())), t.dim())));
             let rows: usize = said.iter().map(|l| l.chars().count().div_ceil(iw).max(1) + 1).sum::<usize>() + 1;
             let r = centred(area, w, rows as u16 + 2);
             let inner = popup(f, r, Span::styled(format!(" {title} "), bold().fg(t.ink)), t);

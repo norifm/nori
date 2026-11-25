@@ -233,7 +233,7 @@ impl App {
     /// Asks before downloads `ids` are removed.
     pub(crate) fn ask_remove(&mut self, ids: Vec<String>) {
         let (title, note) = crate::text::remove_downloads(ids.len());
-        self.overlay = Some(Overlay::Confirm { title, lines: vec![note.into()], yes: crate::text::REMOVE.into(), cmd: Box::new(Cmd::DownloadRemove(ids)) });
+        self.overlay = Some(Overlay::Confirm { title, lines: vec![note.into()], yes: crate::text::REMOVE.into(), cmd: Box::new(Cmd::DownloadRemove(ids)), other: None });
     }
 }
 

@@ -42,6 +42,8 @@ ratatui-image = { version = "10.0.8", default-features = false, features = ["cro
 image = { version = "0.25", default-features = false }
 # Text cut to the columns it has (already in the tree through ratatui). MIT or Apache-2.0.
 unicode-width = "0.2"
+# A pairing link copied through the terminal (OSC 52), base64 (already in the tree). MIT or Apache-2.0.
+base64 = "0.22"
 
 # stderr sent to the log while the screen is ours (term.rs).
 [target.'cfg(unix)'.dependencies]

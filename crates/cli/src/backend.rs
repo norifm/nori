@@ -32,6 +32,15 @@ pub use nori_core::transport::block_on;
 pub enum Msg {
     /// Sync changed the saved profiles, which the settings now keep.
     Synced(nori_core::sync::ProfilesSynced),
+    /// Where sync stands, the pairing or the group's devices changed.
+    SyncChanged,
+    /// Something happened in the group, to word.
+    SyncEvent(nori_core::sync::SyncEvent),
+    /// The plugins synced profiles need were installed, or tried.
+    NeededInstalled,
+    /// A sign-in was to another account than the one profile sync holds, `name`d when known: it was
+    /// signed out again.
+    OtherAccount(Option<String>),
     Key(KeyEvent),
     Mouse(MouseEvent),
     Paste(String),
@@ -132,6 +141,10 @@ impl Msg {
     pub fn brief(&self) -> String {
         match self {
             Msg::Synced(s) => format!("profiles synced: {:?}, {} removed", s.active, s.removed.len()),
+            Msg::SyncChanged => "sync changed".into(),
+            Msg::SyncEvent(e) => format!("sync: {e:?}"),
+            Msg::NeededInstalled => "needed plugins installed".into(),
+            Msg::OtherAccount(_) => "signed in to another account".into(),
             Msg::Key(k) => format!("key {:?} {:?} {:?}", k.code, k.modifiers, k.kind),
             Msg::Mouse(m) => format!("mouse {:?} at {},{}", m.kind, m.column, m.row),
             Msg::Paste(p) => format!("paste of {} bytes", p.len()),

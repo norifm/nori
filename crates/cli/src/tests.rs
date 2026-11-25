@@ -11,7 +11,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, Mo
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use crate::app::{App, Button, Cmd, Focus, Hit, Item, ListRef, Overlay, Panel, Target, View};
+use crate::app::{App, Button, Cmd, Focus, Hit, Item, ListRef, Overlay, Panel, SyncCmd, Target, View};
 use crate::backend::{block_on, Data, Msg, Req};
 use crate::settings_view::{Facts, Line, Row, SettingsView, Switch, GROUPS};
 
@@ -3553,8 +3553,8 @@ fn the_first_question_previews_how_songs_follow() {
     assert_eq!(a.setup.as_ref().map(|s| s.step()), Some(SetupStep::Look), "and so does a click on it");
 }
 
-/// The look: Settings' own season and appearance rows, each change sent as it is made; Start listening
-/// ends the run.
+/// The look: Settings' own season and appearance rows, each change sent as it is made; Continue goes on
+/// to pairing, or Start listening ends the run where the computer is in a group.
 #[test]
 fn the_look_is_taken_as_it_is_picked() {
     use nori_core::settings::ThemeMode;
@@ -3566,12 +3566,13 @@ fn the_look_is_taken_as_it_is_picked() {
         key(&mut a, KeyCode::Char('s'));
         let s = draw(&mut a, 90, 30);
         dump(&format!("setup-look-{name}"), &s);
-        for words in ["Make it yours", "SEASON", "Spring", "Winter", "Follow the calendar", "THEME", "Appearance", "System", "Day", "Night", "Midnight", crate::text::SETUP_START, "‹ Back"] {
+        for words in ["Make it yours", "SEASON", "Spring", "Winter", "Follow the calendar", "THEME", "Appearance", "System", "Day", "Night", "Midnight", crate::text::SETUP_CONTINUE, "‹ Back"] {
             assert!(s.contains(words), "{words}:\n{s}");
         }
         assert!(!s.contains("Skip"), "none on the last:\n{s}");
     }
     let mut a = app();
+    a.sync_shown(crate::pairing::SyncShown { paired: true, ..Default::default() });
     a.setup_start();
     key(&mut a, KeyCode::Char('s'));
     key(&mut a, KeyCode::Enter);
@@ -3585,4 +3586,377 @@ fn the_look_is_taken_as_it_is_picked() {
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
     assert!(a.setup.is_none(), "Start listening ends the run");
+}
+
+// ---- pairing and profile sync ----
+
+/// 2026-11-24 13:00 UTC.
+const SYNC_NOW: i64 = 1_795_525_200_000;
+
+fn seen(name: &str, ago_min: i64, online: bool) -> nori_core::sync::Seen {
+    nori_core::sync::Seen { device: name.to_lowercase(), name: name.into(), last_ms: SYNC_NOW - ago_min * 60_000, online }
+}
+
+/// This computer in a group with a phone online and an iPod seen three hours ago.
+fn grouped() -> crate::pairing::SyncShown {
+    crate::pairing::SyncShown {
+        paired: true,
+        state: nori_core::sync::SyncState::Connected,
+        devices: vec![seen("Pixel 8", 0, true), seen("iPod", 180, false)],
+        keeps_copy: true,
+        name: "Desk".into(),
+        now_ms: SYNC_NOW,
+        ..Default::default()
+    }
+}
+
+fn profile(id: &str, name: &str) -> nori_core::settings::SavedServer {
+    nori_core::settings::SavedServer { id: id.into(), name: name.into(), url: format!("https://{id}.example"), user: "ann".into(), ..Default::default() }
+}
+
+/// An app in Settings with `sync` shown and the profiles `servers`, the first in use.
+fn syncing_app(prefs: StoredPrefs, sync: crate::pairing::SyncShown) -> App {
+    let mut a = app();
+    a.prefs_changed(prefs.clone(), prefs);
+    a.settings.set_facts(Facts { rules: nori_core::browse::profile_rules(false), ..Facts::default() });
+    a.go(View::Settings);
+    a.sync_shown(sync);
+    a
+}
+
+fn your_devices(a: &mut App) -> String {
+    select_row(a, |r| matches!(r, Row::Link { title, .. } if title == crate::text::YOUR_DEVICES));
+    key(a, KeyCode::Enter);
+    draw(a, 100, 40)
+}
+
+/// Your devices, in Day and in Night: not paired, one plain line over Pair a device, then the sync server;
+/// after a restore, that pairing wasn't restored. Paired: this computer and the group's others with when
+/// each was seen, Reset pairing asking first, and the kept copy.
+#[test]
+fn your_devices_lists_the_group_or_says_this_computer_is_alone() {
+    use nori_core::settings::ThemeMode;
+    for (mode, name) in [(ThemeMode::Light, "day"), (ThemeMode::Dark, "night")] {
+        let mut a = syncing_app(StoredPrefs { theme: mode, servers: vec![profile("a", "Home")], active_server_id: "a".into(), ..StoredPrefs::default() }, crate::pairing::SyncShown { name: "Desk".into(), ..Default::default() });
+        let s = your_devices(&mut a);
+        dump(&format!("your-devices-alone-{name}"), &s);
+        for words in ["Your devices", "This computer isn't paired with another.", "Pair a device", "[ Pair ]", "SYNC SERVER", "Use a sync server", "Sync server address", "nori's own"] {
+            assert!(s.contains(words), "{words}:\n{s}");
+        }
+        assert!(!s.contains("Reset pairing") && !s.contains("Keep an encrypted copy"), "nothing of a group:\n{s}");
+        a.sync_shown(grouped());
+        let s = draw(&mut a, 100, 40);
+        dump(&format!("your-devices-{name}"), &s);
+        for words in ["Desk", "This computer · Connected", "Pixel 8", "Online", "iPod", "Seen 3 hours ago", "Reset pairing", "Keep an encrypted copy", "Only your devices can read it."] {
+            assert!(s.contains(words), "{words}:\n{s}");
+        }
+    }
+    let mut a = syncing_app(StoredPrefs { servers: vec![profile("a", "Home")], active_server_id: "a".into(), ..StoredPrefs::default() }, crate::pairing::SyncShown { not_restored: true, ..Default::default() });
+    let s = your_devices(&mut a);
+    assert!(s.contains("Pairing wasn't restored."), "{s}");
+    select_row(&mut a, |r| matches!(r, Row::Action { title, .. } if title == crate::text::PAIR_A_DEVICE));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.overlay, Some(Overlay::Pair { role: nori_core::sync::PairSide::Show, .. })), "a computer in no group shows its code");
+    assert_eq!(a.cmds, [Cmd::Sync(SyncCmd::Look(true)), Cmd::Sync(SyncCmd::Show)]);
+    key(&mut a, KeyCode::Esc);
+    assert!(a.overlay.is_none());
+    assert!(a.cmds.ends_with(&[Cmd::Sync(SyncCmd::Cancel), Cmd::Sync(SyncCmd::Look(false))]), "closing stops the pairing and the looking");
+
+    a.sync_shown(grouped());
+    select_row(&mut a, |r| matches!(r, Row::Action { title, .. } if title == crate::text::RESET_PAIRING));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::AskReset)), "asked first, with what it does");
+    select_row(&mut a, |r| matches!(r, Row::Toggle { switch: Switch::KeepCopy, .. }));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::KeepCopy(false))));
+    select_row(&mut a, |r| matches!(r, Row::Text { target: Target::SyncServer(_), .. }));
+    key(&mut a, KeyCode::Enter);
+    chars(&mut a, "https://sync.example");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::Server("https://sync.example".into()))));
+
+    let off = StoredPrefs { sync: false, servers: vec![profile("a", "Home")], active_server_id: "a".into(), ..StoredPrefs::default() };
+    let mut a = syncing_app(off, crate::pairing::SyncShown::default());
+    let s = your_devices(&mut a);
+    assert!(!s.contains("Sync server address"), "no address while sync is off:\n{s}");
+    select_row(&mut a, |r| matches!(r, Row::Action { title, .. } if title == crate::text::PAIR_A_DEVICE));
+    key(&mut a, KeyCode::Enter);
+    assert!(a.overlay.is_none(), "nothing pairs with the sync server off");
+}
+
+/// Settings › Library's devices lead to Your devices, saying whether this computer is paired.
+#[test]
+fn the_devices_section_opens_your_devices() {
+    let prefs = StoredPrefs { servers: vec![profile("a", "Home")], active_server_id: "a".into(), ..StoredPrefs::default() };
+    let line = |sync: crate::pairing::SyncShown| {
+        let mut a = syncing_app(prefs.clone(), sync);
+        let s = draw(&mut a, 170, 260);
+        s.lines().find(|l| l.contains(crate::text::YOUR_DEVICES)).map(str::to_string).unwrap_or_else(|| panic!("listed:\n{s}"))
+    };
+    assert!(line(crate::pairing::SyncShown::default()).contains("Not paired ›"));
+    assert!(line(grouped()).contains("3 devices ›"));
+    assert!(line(crate::pairing::SyncShown { paired: true, ..Default::default() }).contains("1 device ›"), "after Reset pairing, a group of its own");
+}
+
+/// The plugins synced profiles need are listed with one Install for them all; one installed from a file
+/// on the other device says so, and alone has nothing to install.
+#[test]
+fn your_devices_lists_the_plugins_profiles_need_with_one_install() {
+    let prefs = StoredPrefs { servers: vec![profile("a", "Home")], active_server_id: "a".into(), ..StoredPrefs::default() };
+    let needing = |needed: Vec<(&str, bool)>, installing: bool| {
+        let mut a = syncing_app(prefs.clone(), crate::pairing::SyncShown { needed: needed.into_iter().map(|(n, f)| (n.to_string(), f)).collect(), installing, ..grouped() });
+        let s = your_devices(&mut a);
+        (a, s)
+    };
+    let (mut a, s) = needing(vec![("YouTube Music", false), ("Mine", true)], false);
+    for words in ["PLUGINS YOUR PROFILES NEED", "YouTube Music", "Mine", "Installed from a file on your other device", "[ Install ]"] {
+        assert!(s.contains(words), "{words}:\n{s}");
+    }
+    select_row(&mut a, |r| matches!(r, Row::Button { title, .. } if title == crate::text::INSTALL));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::InstallNeeded)));
+    let (_, s) = needing(vec![("YouTube Music", false)], true);
+    assert!(s.contains(crate::text::INSTALLING) && !s.contains("[ Install ]"), "not twice at once:\n{s}");
+    let (_, s) = needing(vec![("Mine", true)], false);
+    assert!(!s.contains("[ Install ]"), "nothing to fetch:\n{s}");
+}
+
+fn pair_open(sync: crate::pairing::SyncShown, servers: Vec<nori_core::settings::SavedServer>) -> App {
+    let prefs = StoredPrefs { active_server_id: servers.first().map(|s| s.id.clone()).unwrap_or_default(), servers, ..StoredPrefs::default() };
+    let mut a = syncing_app(prefs, sync);
+    a.pair_open();
+    a.cmds.clear();
+    a
+}
+
+fn code_view() -> nori_core::sync::PairingView {
+    let link = "nori://pair#v=1&s=aHR0cHM6Ly9zeW5jLmV4YW1wbGU&r=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&l=QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQA&n=RGVzaw&p=a&e=1795525500000";
+    nori_core::sync::PairingView::Code { link: link.into(), words: vec!["acorn".into(), "bison".into(), "cedar".into()] }
+}
+
+/// The new device's side, in Day and in Night: its code as a QR code a camera reads, its three words,
+/// how long it works and its link, copied by a key; a computer with no profiles has only this side.
+#[test]
+fn the_pair_sheet_shows_this_computers_code() {
+    use nori_core::settings::ThemeMode;
+    let view = code_view();
+    let nori_core::sync::PairingView::Code { link, .. } = view.clone() else { unreachable!() };
+    for (mode, name) in [(ThemeMode::Light, "day"), (ThemeMode::Dark, "night")] {
+        let mut a = pair_open(crate::pairing::SyncShown { pairing: view.clone(), ..Default::default() }, Vec::new());
+        let p = StoredPrefs { theme: mode, ..a.prefs.clone() };
+        a.prefs_changed(p.clone(), p);
+        let mut t = Terminal::new(TestBackend::new(120, 60)).unwrap();
+        t.draw(|f| crate::ui::draw(f, &mut a, None)).unwrap();
+        let buf = t.backend().buffer().clone();
+        let s: String = (0..buf.area.height).map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n").collect();
+        LAST.with(|l| *l.borrow_mut() = Some(buf.clone()));
+        dump(&format!("pair-code-{name}"), &s);
+        for words in ["Pair a device", "acorn bison cedar", crate::text::CODE_CHECK, crate::text::CODE_VALID, "y copy link"] {
+            assert!(s.contains(words), "{words}:\n{s}");
+        }
+        assert!(!s.contains(crate::text::PASTE_LINK), "nothing to give, nothing to take:\n{s}");
+        let (w, h, px) = photographed(&buf, 4);
+        let mut image = rqrr::PreparedImage::prepare_from_greyscale(w, h, |x, y| px[y * w + x]);
+        let grids = image.detect_grids();
+        assert_eq!(grids.len(), 1, "one code on the screen");
+        assert_eq!(grids[0].decode().map(|(_, text)| text).ok(), Some(link.clone()));
+    }
+    let mut a = pair_open(crate::pairing::SyncShown { pairing: view.clone(), ..Default::default() }, Vec::new());
+    key(&mut a, KeyCode::Char('y'));
+    assert_eq!(a.cmds, [Cmd::Copy(link.clone())]);
+    assert_eq!(a.note.as_ref().map(|n| n.0.as_str()), Some(crate::text::LINK_COPIED));
+    key(&mut a, KeyCode::Tab);
+    assert!(matches!(a.overlay, Some(Overlay::Pair { role: nori_core::sync::PairSide::Show, .. })), "no other side without profiles");
+    // Its code ran out: New code makes another.
+    a.sync_shown(crate::pairing::SyncShown { pairing: nori_core::sync::PairingView::Refused { reason: nori_core::sync::PairingRefused::Expired }, ..Default::default() });
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("This code ran out.") && s.contains("New code"), "{s}");
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds, [Cmd::Sync(SyncCmd::Show)]);
+    // The new device is in the group: the sheet closes and says so.
+    a.sync_shown(crate::pairing::SyncShown { pairing: nori_core::sync::PairingView::Paired, paired: true, ..Default::default() });
+    assert!(a.overlay.is_none());
+    assert_eq!(a.note.as_ref().map(|n| n.0.as_str()), Some(crate::text::PAIRED));
+}
+
+/// The device with the profiles' side: the devices waiting nearby, picked with the arrows, and a pasted
+/// link under them; a link refused says why under it, and tab goes to this computer's code.
+#[test]
+fn the_pair_sheet_takes_a_link_or_a_device_waiting_nearby() {
+    let nearby = vec![
+        nori_core::sync::NearbyDevice { service: "a".into(), name: "MacBook".into(), link: "nori://pair#mac".into() },
+        nori_core::sync::NearbyDevice { service: "b".into(), name: "Pixel 8".into(), link: "nori://pair#pixel".into() },
+    ];
+    let mut a = pair_open(crate::pairing::SyncShown { nearby, ..grouped() }, vec![profile("a", "Home")]);
+    assert!(matches!(a.overlay, Some(Overlay::Pair { role: nori_core::sync::PairSide::Take, .. })), "a computer in a group takes a code");
+    let s = draw(&mut a, 100, 40);
+    dump("pair-take", &s);
+    for words in ["Show this computer's code", "Paste a link", "WAITING NEARBY", "› MacBook", "Pixel 8", "PAIRING LINK"] {
+        assert!(s.contains(words), "{words}:\n{s}");
+    }
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::Take { link: "nori://pair#pixel".into(), nearby: true })));
+    chars(&mut a, "nori://pair#typed");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::Take { link: "nori://pair#typed".into(), nearby: false })), "a link typed goes before the list");
+    a.sync_shown(crate::pairing::SyncShown { pairing: nori_core::sync::PairingView::Refused { reason: nori_core::sync::PairingRefused::Gone }, ..grouped() });
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("This code was used, or the other device stopped pairing.") && s.contains("nori://pair#typed"), "the link stays to fix, under its refusal:\n{s}");
+    key(&mut a, KeyCode::Tab);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::Show)));
+    assert!(matches!(a.overlay, Some(Overlay::Pair { role: nori_core::sync::PairSide::Show, .. })));
+}
+
+/// The question on the device with the profiles: who and how many sign-ins, the three words to compare,
+/// the group the new device leaves, and at a first pairing the kept copy, on unless switched off.
+#[test]
+fn the_pair_sheet_asks_before_giving_the_sign_ins() {
+    use nori_core::settings::ThemeMode;
+    let confirm = nori_core::sync::PairingView::Confirm {
+        confirmation: nori_core::sync::Confirmation { name: "Pixel 8".into(), profiles: 2, leaves: Some(1), words: Some(vec!["acorn".into(), "bison".into(), "cedar".into()]), asks_keep_copy: true },
+    };
+    for (mode, name) in [(ThemeMode::Light, "day"), (ThemeMode::Dark, "night")] {
+        let mut a = pair_open(crate::pairing::SyncShown { pairing: confirm.clone(), ..Default::default() }, vec![profile("a", "Home")]);
+        let p = StoredPrefs { theme: mode, ..a.prefs.clone() };
+        a.prefs_changed(p.clone(), p);
+        let s = draw(&mut a, 100, 40);
+        dump(&format!("pair-confirm-{name}"), &s);
+        for words in ["Give ‘Pixel 8’ your sign-ins for 2 profiles?", "acorn bison cedar", crate::text::CHECK_WORDS, "Pixel 8 will stop syncing with its 1 other device.", "[✓] Keep an encrypted copy on the sync server", "enter pair"] {
+            assert!(s.contains(words), "{words}:\n{s}");
+        }
+    }
+    let mut a = pair_open(crate::pairing::SyncShown { pairing: confirm, ..Default::default() }, vec![profile("a", "Home")]);
+    key(&mut a, KeyCode::Char(' '));
+    assert!(draw(&mut a, 100, 40).contains("[ ] Keep an encrypted copy"));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::Confirm { keep: false })));
+    a.sync_shown(crate::pairing::SyncShown { pairing: nori_core::sync::PairingView::Sent, ..grouped() });
+    assert!(a.overlay.is_none(), "the key went: the group's notice says the new device came");
+}
+
+/// A pairing link pasted anywhere opens the sheet taking it.
+#[test]
+fn a_pairing_link_pasted_anywhere_pairs() {
+    let mut a = syncing_app(StoredPrefs { servers: vec![profile("a", "Home")], active_server_id: "a".into(), ..StoredPrefs::default() }, grouped());
+    a.go(View::Home);
+    let nori_core::sync::PairingView::Code { link, .. } = code_view() else { unreachable!() };
+    a.handle(Msg::Paste(link.clone()));
+    assert!(matches!(&a.overlay, Some(Overlay::Pair { role: nori_core::sync::PairSide::Take, .. })));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::Take { link, nearby: false })));
+}
+
+/// Two profiles that may be one show both, with Merge and Keep both; Sync this profile sits under each
+/// profile, and turning it off on one that syncs asks whether the other devices keep it; removing one
+/// that syncs says it goes from every device.
+#[test]
+fn the_profiles_offer_merges_and_sync_each_one() {
+    let offer = nori_core::sync::MergeOffer { a: "a".into(), b: "b".into() };
+    let prefs = StoredPrefs { servers: vec![profile("a", "Home"), profile("b", "Away")], active_server_id: "a".into(), ..StoredPrefs::default() };
+    let mut a = syncing_app(prefs, crate::pairing::SyncShown { offers: vec![offer.clone()], synced: vec!["a".into()], ..grouped() });
+    let s = draw(&mut a, 170, 260);
+    dump("profiles-sync", &s);
+    for words in ["The same account?", "Home · Away", "[ Merge ]", "[ Keep both ]", "Sync this profile"] {
+        assert!(s.contains(words), "{words}:\n{s}");
+    }
+    select_row(&mut a, |r| matches!(r, Row::Action { action: crate::settings_view::Act::Merge(_), .. }));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::Merge(offer.clone()))));
+    select_row(&mut a, |r| matches!(r, Row::Button { action: crate::settings_view::Act::KeepApart(_), .. }));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::KeepApart(offer))));
+
+    select_row(&mut a, |r| matches!(r, Row::Toggle { switch: Switch::SyncProfile { id, .. }, .. } if id == "a"));
+    key(&mut a, KeyCode::Enter);
+    let Some(Overlay::Confirm { title, lines, yes, other, .. }) = &a.overlay else { panic!("asked first") };
+    assert_eq!((title.as_str(), lines[0].as_str(), yes.as_str(), other.as_ref().map(|o| o.0.as_str())), ("Stop syncing Home?", "Your other devices can keep it, or remove it too.", "Remove there", Some("Keep there")));
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("enter remove there · k keep there · esc cancel"), "{s}");
+    key(&mut a, KeyCode::Char('k'));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::Profile { id: "a".into(), on: false, elsewhere: false })));
+    select_row(&mut a, |r| matches!(r, Row::Toggle { switch: Switch::SyncProfile { id, .. }, .. } if id == "b"));
+    key(&mut a, KeyCode::Enter);
+    assert!(a.overlay.is_none(), "one that doesn't sync asks nothing");
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sync(SyncCmd::Profile { id: "b".into(), on: false, elsewhere: false })));
+
+    for (id, note) in [("a", "It's removed from all your devices, with what nori keeps for it."), ("b", "What nori keeps for it on this computer goes with it.")] {
+        select_row(&mut a, |r| matches!(r, Row::Server { id: i, .. } if i == id));
+        key(&mut a, KeyCode::Char('d'));
+        let Some(Overlay::Confirm { lines, cmd, .. }) = &a.overlay else { panic!("asked first") };
+        assert_eq!((lines[0].as_str(), cmd.as_ref()), (note, &Cmd::RemoveProfile(id.into())));
+        key(&mut a, KeyCode::Esc);
+    }
+}
+
+/// The first run's last page, while this computer is in no group: Pair a device over Start listening, the
+/// sync server's switch and address under Advanced; the look before it goes on with Continue.
+#[test]
+fn the_first_run_ends_offering_to_pair() {
+    use nori_core::settings::ThemeMode;
+    use nori_core::setup::SetupStep;
+    for (mode, name) in [(ThemeMode::Light, "day"), (ThemeMode::Dark, "night")] {
+        let mut a = app();
+        let p = StoredPrefs { theme: mode, ..a.prefs.clone() };
+        a.prefs_changed(p.clone(), p);
+        a.setup_start();
+        key(&mut a, KeyCode::Char('s'));
+        assert!(draw(&mut a, 90, 30).contains(crate::text::SETUP_CONTINUE), "the look goes on");
+        let rows = a.setup_look().iter().map(|s| s.rows.len()).sum::<usize>();
+        for _ in 0..rows {
+            key(&mut a, KeyCode::Down);
+        }
+        key(&mut a, KeyCode::Enter);
+        assert_eq!(a.setup.as_ref().map(|s| s.step()), Some(SetupStep::Pair));
+        let s = draw(&mut a, 90, 30);
+        dump(&format!("setup-pair-{name}"), &s);
+        for words in ["Pair a device", "ADVANCED", "Use a sync server", "Sync server address", "nori's own", crate::text::SETUP_START, "‹ Back"] {
+            assert!(s.contains(words), "{words}:\n{s}");
+        }
+    }
+    // The pairing page, past the look.
+    let at_pairing = || {
+        let mut a = app();
+        a.setup_start();
+        key(&mut a, KeyCode::Char('s'));
+        draw(&mut a, 90, 30);
+        let r = hit_rect(&a, Hit::Button(Button::SetupContinue));
+        click(&mut a, r.x + 1, r.y);
+        assert_eq!(a.setup.as_ref().map(|s| s.step()), Some(SetupStep::Pair));
+        a
+    };
+    let mut a = at_pairing();
+    draw(&mut a, 90, 30);
+    let r = hit_rect(&a, Hit::Button(Button::WelcomePair));
+    click(&mut a, r.x + 1, r.y);
+    assert!(a.setup.is_none() && matches!(a.overlay, Some(Overlay::Pair { .. })), "Pair a device ends the run on the sheet");
+    let mut a = at_pairing();
+    let rows = a.setup_look().iter().map(|s| s.rows.len()).sum::<usize>();
+    for _ in 0..rows + 1 {
+        key(&mut a, KeyCode::Down);
+    }
+    key(&mut a, KeyCode::Enter);
+    assert!(a.setup.is_none() && a.overlay.is_none(), "Start listening ends it");
+    let mut a = app();
+    a.sync_shown(crate::pairing::SyncShown { paired: true, ..Default::default() });
+    a.setup_start();
+    assert!(!a.setup.as_ref().unwrap().steps.contains(&SetupStep::Pair), "a computer in a group has paired");
+}
+
+/// A new computer pairs from the welcome, beside restoring a backup: either brings its profiles.
+#[test]
+fn the_welcome_offers_pairing() {
+    let dir = nori_testdir::TempDir::new("cli-welcome-pair");
+    let mut a = app_with_provider(&dir);
+    let s = draw(&mut a, 90, 30);
+    assert!(s.contains(crate::text::RESTORE) && s.contains(crate::text::PAIR_A_DEVICE) && s.contains("r restore · d pair · q quit"), "{s}");
+    key(&mut a, KeyCode::Char('d'));
+    assert!(matches!(a.overlay, Some(Overlay::Pair { role: nori_core::sync::PairSide::Show, .. })), "its code, as it has nothing to give");
+    assert!(a.cmds.contains(&Cmd::Sync(SyncCmd::Show)));
+    key(&mut a, KeyCode::Esc);
+    draw(&mut a, 90, 30);
+    let r = hit_rect(&a, Hit::Button(Button::WelcomePair));
+    click(&mut a, r.x + 1, r.y);
+    assert!(matches!(a.overlay, Some(Overlay::Pair { .. })), "and so does a click");
 }

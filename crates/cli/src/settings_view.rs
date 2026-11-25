@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 use nori_plugins::{AssetLine, AssetState, Category, ControlledDevice, Offer, OfferState, Offers, PluginCard, PluginRow, ReadmeBlock, Repo, RowKind, Value};
 
-use crate::app::{Cmd, Overlay, PluginCmd, Sel, SoundToolCmd, Target, View};
+use crate::app::{Cmd, Overlay, PluginCmd, Sel, SoundToolCmd, SyncCmd, Target, View};
 use crate::art::Day;
 
 /// A group of the page: the terminal's own, one of the core's pages, the plugins, or About.
@@ -32,9 +32,11 @@ pub enum Opened {
     View(View),
     /// A terminal-only switch (never `Switch::Setting`).
     Own(Switch),
-    /// One of the plugin pages.
-    Plugins(PluginPage),
+    /// One of the plugin pages, or Your devices.
+    Plugins(SubPage),
     Login,
+    /// The Pair a device sheet.
+    Pair,
 }
 
 /// What a toggle row switches: a core setting by name, or a terminal-only switch.
@@ -49,6 +51,11 @@ pub enum Switch {
     Transparent,
     /// A plugin's switch row.
     Plugin { plugin: String, row: String },
+    /// Whether the group keeps an encrypted copy on the sync server.
+    KeepCopy,
+    /// Sync this profile, for saved profile `id`; `asks`, the profile's name where turning it off asks
+    /// about the other devices (it syncs).
+    SyncProfile { id: String, asks: Option<String> },
     /// An option of a plugin's flags row, and the bits switching it stores.
     PluginFlags { plugin: String, row: String, bits: u64 },
     /// A plugin itself, on its page.
@@ -98,7 +105,7 @@ pub enum Act {
     /// Asks the repos what they offer.
     LookForPlugins,
     /// One of the plugin pages.
-    Page(PluginPage),
+    Page(SubPage),
     /// Installs version `version` (newest first) of the offer at place `offer` in those last read.
     GetPlugin { offer: u32, version: u32 },
     /// Asks for a repo's address to add.
@@ -112,6 +119,16 @@ pub enum Act {
     CheckUpdate,
     /// The Support page.
     Support,
+    /// The Pair a device sheet.
+    PairDevice,
+    /// Asks before Reset pairing.
+    ResetPairing,
+    /// Installs the plugins synced profiles need.
+    InstallNeeded,
+    /// Makes two profiles one on every device.
+    Merge(nori_core::sync::MergeOffer),
+    /// The two profiles are not one.
+    KeepApart(nori_core::sync::MergeOffer),
 }
 
 pub use nori_host::session::Chore;
@@ -286,7 +303,7 @@ pub struct Own {
     pub repos: Vec<Repo>,
     pub shelf: Shelf,
     /// The plugin pages open over Settings › Plugins, each with the selection to come back to.
-    pub stack: Vec<(PluginPage, Sel)>,
+    pub stack: Vec<(SubPage, Sel)>,
     /// The browser's search, and the repo it is narrowed to.
     pub query: String,
     pub repo_shown: Option<String>,
@@ -300,6 +317,8 @@ pub struct Own {
     /// The plugin whose package is on its way for its install sheet, or whose install is: no other
     /// version is got meanwhile.
     pub getting: Option<String>,
+    /// Pairing and profile sync, as the runner last read them.
+    pub sync: crate::pairing::SyncShown,
 }
 
 impl Own {
@@ -312,9 +331,10 @@ impl Own {
     }
 }
 
-/// A page under Settings › Plugins.
+/// A page over Settings: Your devices, or one under Settings › Plugins.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PluginPage {
+pub enum SubPage {
+    YourDevices,
     Browser,
     Repos,
     /// A plugin's page, installed or only offered, by its id.
@@ -347,9 +367,10 @@ impl SettingsView {
             let today = Day::now();
             let alone = self.alone != Alone::No;
             self.pages = Some(match self.own.stack.last() {
-                Some((PluginPage::Browser, _)) => vec![Page { title: text::GET_PLUGINS.into(), summary: String::new(), sections: browser(&self.own) }],
-                Some((PluginPage::Repos, _)) => vec![Page { title: text::REPOS.into(), summary: String::new(), sections: repos_page(&self.own) }],
-                Some((PluginPage::Plugin(id), _)) => vec![plugin_page(&self.own, id)],
+                Some((SubPage::Browser, _)) => vec![Page { title: text::GET_PLUGINS.into(), summary: String::new(), sections: browser(&self.own) }],
+                Some((SubPage::Repos, _)) => vec![Page { title: text::REPOS.into(), summary: String::new(), sections: repos_page(&self.own) }],
+                Some((SubPage::YourDevices, _)) => vec![Page { title: text::YOUR_DEVICES.into(), summary: String::new(), sections: your_devices(prefs, &self.own.sync) }],
+                Some((SubPage::Plugin(id), _)) => vec![plugin_page(&self.own, id)],
                 None => GROUPS.iter().filter(|g| !alone || g.id == Gid::Plugins).map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect(),
             });
         }
@@ -413,7 +434,7 @@ impl SettingsView {
     }
 
     /// Opens `page` over what shows, on its first row that does something.
-    pub fn enter(&mut self, page: PluginPage, prefs: &StoredPrefs) {
+    pub fn enter(&mut self, page: SubPage, prefs: &StoredPrefs) {
         self.own.stack.push((page, self.row));
         self.invalidate();
         let lines = Self::lines(self.pages(prefs));
@@ -431,14 +452,14 @@ impl SettingsView {
 
     /// Closes the pages of a plugin just removed.
     pub fn plugin_gone(&mut self, id: &str) {
-        while matches!(self.own.stack.last(), Some((PluginPage::Plugin(top), _)) if top == id) {
+        while matches!(self.own.stack.last(), Some((SubPage::Plugin(top), _)) if top == id) {
             self.leave();
         }
     }
 
     /// Whether the browser shows.
     pub fn browsing(&self) -> bool {
-        matches!(self.own.stack.last(), Some((PluginPage::Browser, _)))
+        matches!(self.own.stack.last(), Some((SubPage::Browser, _)))
     }
 
     /// The browser's search field, as typed so far.
@@ -449,7 +470,7 @@ impl SettingsView {
     /// What the open plugin page's README has to be asked for: again when the plugin's version or the
     /// offer's address changed. None when asked already.
     pub fn readme_wanted(&mut self) -> Option<Cmd> {
-        let Some((PluginPage::Plugin(id), _)) = self.own.stack.last() else { return None };
+        let Some((SubPage::Plugin(id), _)) = self.own.stack.last() else { return None };
         let card = self.own.plugins.iter().find(|c| c.id == *id);
         let offer = nori_plugins::offer_of(self.own.offers(), id, card).map(|(_, o)| o.clone());
         let asked = (id.clone(), card.map(|c| c.version.clone()), offer.as_ref().and_then(|o| o.readme.clone()));
@@ -485,8 +506,9 @@ impl SettingsView {
         match (self.own.stack.last(), self.selected()) {
             (_, Some(Row::Plugin { .. })) => h::PLUGIN_ROW,
             (_, Some(Row::Server { name: Some(_), .. })) => h::PROFILE_ROW,
-            (Some((PluginPage::Browser, _)), _) => h::PLUGIN_BROWSER,
-            (Some((PluginPage::Plugin(_), _)), _) => h::PLUGIN_PAGE,
+            (Some((SubPage::YourDevices, _)), _) => h::YOUR_DEVICES,
+            (Some((SubPage::Browser, _)), _) => h::PLUGIN_BROWSER,
+            (Some((SubPage::Plugin(_), _)), _) => h::PLUGIN_PAGE,
             (Some(_), _) => h::PLUGIN_REPOS,
             (None, _) => h::SETTINGS,
         }
@@ -518,7 +540,7 @@ impl SettingsView {
     /// The plugin selected in a list, or whose page shows, if installed.
     fn plugin_here(&self) -> Option<&PluginCard> {
         let id = match (self.selected(), self.own.stack.last()) {
-            (Some(Row::Plugin { id, .. }), _) | (_, Some((PluginPage::Plugin(id), _))) => id,
+            (Some(Row::Plugin { id, .. }), _) | (_, Some((SubPage::Plugin(id), _))) => id,
             _ => return None,
         };
         self.own.plugins.iter().find(|c| c.id == *id)
@@ -543,13 +565,22 @@ impl SettingsView {
 
     /// Asks before removing plugin `c`.
     fn remove_sheet(c: &PluginCard) -> Overlay {
-        Overlay::Confirm { title: text::remove_plugin(&c.name), lines: vec![text::REMOVE_PLUGIN_NOTE.into()], yes: text::REMOVE.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::Uninstall(c.id.clone()))) }
+        Overlay::Confirm { title: text::remove_plugin(&c.name), lines: vec![text::REMOVE_PLUGIN_NOTE.into()], yes: text::REMOVE.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::Uninstall(c.id.clone()))), other: None }
     }
 
-    /// d on a plugin, or a repo the user added: asks before removing it.
-    pub fn plugin_key(&self) -> Option<Overlay> {
-        if let Some(Row::Repo { url, title, removable: true, .. }) = self.selected() {
-            return Some(Overlay::Confirm { title: text::remove_plugin(title), lines: vec![url.clone()], yes: text::REMOVE.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::RemoveRepo(url.clone()))) });
+    /// d on a plugin, a repo the user added, or a profile that may be changed here: asks before removing
+    /// it. A profile that syncs goes from every paired device.
+    pub fn remove_key(&self) -> Option<Overlay> {
+        match self.selected() {
+            Some(Row::Repo { url, title, removable: true, .. }) => {
+                return Some(Overlay::Confirm { title: text::remove_plugin(title), lines: vec![url.clone()], yes: text::REMOVE.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::RemoveRepo(url.clone()))), other: None });
+            }
+            Some(Row::Server { id, label, name: Some(_), .. }) => {
+                let synced = self.own.sync.paired && self.own.sync.synced.contains(id);
+                let (title, note) = text::remove_profile(label, synced);
+                return Some(Overlay::Confirm { title, lines: vec![note.into()], yes: text::REMOVE.into(), cmd: Box::new(Cmd::RemoveProfile(id.clone())), other: None });
+            }
+            _ => {}
         }
         self.plugin_here().map(Self::remove_sheet)
     }
@@ -652,8 +683,13 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
                         continue;
                     }
                     let identities = identity_row(&r, p, f, &own.kinds);
-                    rows.extend(flag_rows(&r, s).unwrap_or_else(|| row_of(r, p, s, f, &own.kinds).into_iter().collect()));
+                    let sync = sync_row(&r, p, f, own);
+                    rows.extend(flag_rows(&r, s).unwrap_or_else(|| row_of(r, p, s, f, own).into_iter().collect()));
                     rows.extend(identities);
+                    rows.extend(sync);
+                }
+                if sec.id == SectionId::Accounts {
+                    rows.extend(own.sync.offers.iter().flat_map(|o| merge_rows(o, p, &own.kinds)));
                 }
                 sections.push(section(section_title(sec.id), rows));
             }
@@ -671,6 +707,76 @@ pub fn setup_look(p: &StoredPrefs, own: &Own, dark: bool, rules: nori_core::brow
     let facts = Facts { rules, ..Facts::default() };
     let theme = section_title(SectionId::Theme);
     page(Gid::Core(SettingsPage::Look), p, &state, &facts, &Own { dark, ..own.clone() }, today).sections.into_iter().filter(|s| s.title == SEASON || s.title == theme).collect()
+}
+
+/// Under a profile that may be changed here, Sync this profile; None for any other row.
+fn sync_row(r: &settings_pages::SettingsRow, p: &StoredPrefs, f: &Facts, own: &Own) -> Option<Row> {
+    let RowItem::Server { index } = r.item else { return None };
+    let sv = p.servers.get(index as usize).filter(|_| f.rules.settings.contains(&SettingsPart::ServerOptions))?;
+    let syncs = own.sync.paired && own.sync.synced.contains(&sv.id);
+    let asks = syncs.then(|| profile_label(sv, &own.kinds));
+    Some(Row::Toggle { switch: Switch::SyncProfile { id: sv.id.clone(), asks }, title: format!("  {}", text::SYNC_THIS_PROFILE), detail: String::new(), on: !sv.sync_off, enabled: true })
+}
+
+/// A saved profile's name as its row shows it.
+fn profile_label(sv: &nori_core::settings::SavedServer, kinds: &Kinds) -> String {
+    Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| text::provider_of(kinds, &sv.kind).name)
+}
+
+/// Two profiles here that may be one: both named, with Merge, then Keep both.
+fn merge_rows(o: &nori_core::sync::MergeOffer, p: &StoredPrefs, kinds: &Kinds) -> Vec<Row> {
+    let label = |id: &str| p.servers.iter().find(|s| s.id == id).map(|s| profile_label(s, kinds));
+    let (Some(a), Some(b)) = (label(&o.a), label(&o.b)) else { return Vec::new() };
+    vec![
+        Row::Action { title: text::MERGE_TITLE.into(), detail: format!("{a} · {b}"), button: text::MERGE.into(), enabled: true, action: Act::Merge(o.clone()) },
+        Row::Button { title: text::KEEP_BOTH.into(), action: Act::KeepApart(o.clone()) },
+    ]
+}
+
+/// Settings › Your devices: this computer and the group's others with when each was last seen, Pair a
+/// device and Reset pairing, the plugins synced profiles need with Install, then the sync server and the
+/// kept copy.
+fn your_devices(p: &StoredPrefs, s: &crate::pairing::SyncShown) -> Vec<Section> {
+    let mut devices = Vec::new();
+    if s.paired {
+        let state = text::sync_state(s.state, s.offset_s);
+        let line = [text::THIS_COMPUTER, state.as_str()].into_iter().filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" · ");
+        devices.push(info(&s.name, line));
+        devices.extend(s.devices.iter().map(|d| info(&d.name, text::last_seen(d, s.now_ms))));
+    } else {
+        devices.push(info(if s.not_restored { text::PAIRING_NOT_RESTORED } else { text::NOT_PAIRED }, String::new()));
+    }
+    devices.push(Row::Action { title: text::PAIR_A_DEVICE.into(), detail: String::new(), button: text::PAIR.into(), enabled: p.sync, action: Act::PairDevice });
+    if s.paired {
+        devices.push(Row::Action { title: text::RESET_PAIRING.into(), detail: String::new(), button: text::RESET.into(), enabled: true, action: Act::ResetPairing });
+    }
+    let mut needed: Vec<Row> = s.needed.iter().map(|(name, from_file)| info(name, if *from_file { text::INSTALLED_FROM_FILE.into() } else { String::new() })).collect();
+    match (s.installing, s.needed.iter().any(|(_, from_file)| !from_file)) {
+        (true, _) => needed.push(info(text::INSTALLING, String::new())),
+        (false, true) => needed.push(Row::Button { title: text::INSTALL.into(), action: Act::InstallNeeded }),
+        (false, false) => {}
+    }
+    let mut server = sync_server_rows(p);
+    if p.sync && s.paired {
+        server.push(Row::Toggle { switch: Switch::KeepCopy, title: text::KEEP_COPY.into(), detail: text::KEEP_COPY_DETAIL.into(), on: s.keeps_copy, enabled: true });
+    }
+    [section(text::DEVICES, devices), section(text::PLUGINS_NEEDED, needed), section(text::SYNC_SERVER, server)].into_iter().filter(|s| !s.rows.is_empty()).collect()
+}
+
+/// Use a sync server, and while it is on the server's address.
+fn sync_server_rows(p: &StoredPrefs) -> Vec<Row> {
+    let mut rows = vec![Row::Toggle { switch: Switch::Setting("sync".into()), title: text::USE_SYNC_SERVER.into(), detail: String::new(), on: p.sync, enabled: true }];
+    if p.sync {
+        let address = p.sync_server.clone().unwrap_or_default();
+        let shown = if address.is_empty() { text::NORIS_OWN.to_string() } else { address.clone() };
+        rows.push(Row::Text { title: text::SYNC_ADDRESS.into(), shown, secret: false, target: Target::SyncServer(address) });
+    }
+    rows
+}
+
+/// The first run's pairing page: the sync server's switch and address, under Advanced.
+pub fn setup_pair(p: &StoredPrefs) -> Vec<Section> {
+    vec![section(text::ADVANCED, sync_server_rows(p))]
 }
 
 /// The terminal's own group.
@@ -696,7 +802,7 @@ fn own_page(o: &Own, f: &Facts) -> Vec<Section> {
 /// page) and the switch over them all.
 fn plugins_page(own: &Own, all_off: bool) -> Vec<Section> {
     let cards = &own.plugins;
-    let mut sections = vec![section("", vec![Row::Link { title: text::GET_PLUGINS.into(), status: String::new(), action: Act::Page(PluginPage::Browser) }])];
+    let mut sections = vec![section("", vec![Row::Link { title: text::GET_PLUGINS.into(), status: String::new(), action: Act::Page(SubPage::Browser) }])];
     if cards.is_empty() {
         sections.push(section("", vec![Row::Note { text: text::NO_PLUGINS.into() }]));
         return sections;
@@ -742,7 +848,7 @@ fn browser(own: &Own) -> Vec<Section> {
         let shown = options.iter().find(|o| own.repo_shown.as_ref().is_some_and(|u| *u == o.1)).unwrap_or(&options[0]).0.clone();
         tools.push(Row::Choice { target: Target::PluginRepo, title: text::REPOS.into(), chips: options.len() <= 4, options, shown, enabled: true });
     }
-    tools.push(Row::Link { title: text::REPOS.into(), status: own.repos.len().to_string(), action: Act::Page(PluginPage::Repos) });
+    tools.push(Row::Link { title: text::REPOS.into(), status: own.repos.len().to_string(), action: Act::Page(SubPage::Repos) });
     tools.push(Row::Button { title: text::INSTALL_FROM_FILE.into(), action: Act::InstallPlugin });
     let mut rows = Vec::new();
     match &own.shelf {
@@ -935,6 +1041,13 @@ pub fn open_row(row: Row) -> Option<Opened> {
         Row::Toggle { switch: Switch::Turn(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(plugin, !on))]),
         Row::Toggle { switch: Switch::Hold(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Hold(plugin, !on))]),
         Row::Toggle { switch: Switch::AllOff, on, .. } => Opened::Cmds(all_off(on)),
+        Row::Toggle { switch: Switch::KeepCopy, on, .. } => Opened::Cmds(vec![Cmd::Sync(SyncCmd::KeepCopy(!on))]),
+        Row::Toggle { switch: Switch::SyncProfile { id, asks: Some(name) }, on: true, .. } => {
+            let (title, note) = text::stop_syncing(&name);
+            let sync_off = |elsewhere| Box::new(Cmd::Sync(SyncCmd::Profile { id: id.clone(), on: false, elsewhere }));
+            Opened::Overlay(Overlay::Confirm { title, lines: vec![note.into()], yes: text::REMOVE_THERE.into(), cmd: sync_off(true), other: Some((text::KEEP_THERE.into(), sync_off(false))) })
+        }
+        Row::Toggle { switch: Switch::SyncProfile { id, .. }, on, .. } => Opened::Cmds(vec![Cmd::Sync(SyncCmd::Profile { id, on: !on, elsewhere: false })]),
         Row::Toggle { switch, .. } => Opened::Own(switch),
         Row::Choice { target, title, options, shown, enabled: true, .. } => {
             let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
@@ -957,10 +1070,16 @@ pub fn open_row(row: Row) -> Option<Opened> {
             Act::AllowMobileAssets(id) => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::AllowMobileAssets(id))]),
             Act::Restart(id) => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(id, true))]),
             Act::Backup { restore } => Opened::Overlay(backup_asked(restore)),
+            Act::PairDevice => Opened::Pair,
+            Act::ResetPairing => Opened::Cmds(vec![Cmd::Sync(SyncCmd::AskReset)]),
+            Act::InstallNeeded => Opened::Cmds(vec![Cmd::Sync(SyncCmd::InstallNeeded)]),
+            Act::Merge(o) => Opened::Cmds(vec![Cmd::Sync(SyncCmd::Merge(o))]),
+            Act::KeepApart(o) => Opened::Cmds(vec![Cmd::Sync(SyncCmd::KeepApart(o))]),
         },
+        Row::Text { title, target: Target::SyncServer(address), .. } => Opened::Overlay(Overlay::Input { title, text: address.clone(), secret: false, target: Target::SyncServer(address) }),
         Row::Text { title, shown, target: Target::PluginSearch, .. } => Opened::Overlay(Overlay::Input { title, text: shown, secret: false, target: Target::PluginSearch }),
         Row::Text { title, secret, target, .. } => Opened::Overlay(Overlay::Input { title, text: String::new(), secret, target }),
-        Row::Plugin { id, .. } | Row::Offer { id, .. } => Opened::Plugins(PluginPage::Plugin(id)),
+        Row::Plugin { id, .. } | Row::Offer { id, .. } => Opened::Plugins(SubPage::Plugin(id)),
         // The profile in use: its account, where its provider signs in to one.
         Row::Server { active: true, .. } => Opened::Cmds(vec![Cmd::OfferSignIn]),
         Row::Server { id, .. } => Opened::Cmds(vec![Cmd::SwitchServer(id)]),
@@ -1007,6 +1126,10 @@ pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
                 Switch::Turn(plugin) => vec![Cmd::Plugin(PluginCmd::Turn(plugin, up))],
                 Switch::Hold(plugin) => vec![Cmd::Plugin(PluginCmd::Hold(plugin, up))],
                 Switch::AllOff => all_off(!up),
+                Switch::KeepCopy => vec![Cmd::Sync(SyncCmd::KeepCopy(up))],
+                // Turning off a profile that syncs asks first: enter.
+                Switch::SyncProfile { asks: Some(_), .. } if !up => Vec::new(),
+                Switch::SyncProfile { id, .. } => vec![Cmd::Sync(SyncCmd::Profile { id, on: up, elsewhere: false })],
                 Switch::Mouse => vec![Cmd::Mouse(up)],
                 Switch::Images => vec![Cmd::Images(up)],
                 Switch::Transparent => vec![Cmd::Paint(!up)],
@@ -1323,7 +1446,8 @@ fn counted(n: u32, one: &str, many: &str) -> String {
 }
 
 /// The terminal's row for one of the core's, or None for one it does not draw.
-fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: &Kinds) -> Option<Row> {
+fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own) -> Option<Row> {
+    let kinds = &*own.kinds;
     let indent = if r.depth > 0 { "  " } else { "" };
     let enabled = r.enabled;
     Some(match r.item {
@@ -1358,6 +1482,10 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
         }
         RowItem::Link { to: SettingsLink::Downloads } => {
             Row::Action { title: "Downloads".into(), detail: "Remove them from the Downloads page.".into(), button: "Show".into(), enabled: true, action: Act::Downloads }
+        }
+        RowItem::Link { to: SettingsLink::YourDevices } => {
+            let sync = &own.sync;
+            Row::Link { title: text::YOUR_DEVICES.into(), status: text::your_devices_count(sync.paired, sync.devices.len()), action: Act::Page(SubPage::YourDevices) }
         }
         RowItem::Link { .. } | RowItem::CompressionMeter => return None,
         RowItem::Action { action } => {

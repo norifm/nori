@@ -1,7 +1,6 @@
 package dev.nori.music.app.vm
 
 import dev.nori.music.ffi.sync.Confirmation
-import dev.nori.music.ffi.sync.MergeOffer
 import dev.nori.music.ffi.sync.PairingRefused
 import dev.nori.music.ffi.sync.PairingView
 import dev.nori.music.ffi.sync.Refusal
@@ -70,13 +69,6 @@ class SyncScreensTest {
         val recent = Seen("2", "MacBook", 5_000, false)
         val here = Seen("3", "PC", 2_000, true)
         assertEquals(listOf(here, recent, old), deviceOrder(listOf(old, recent, here)))
-    }
-
-    @Test fun `a merge keeps the profile in use`() {
-        val offer = MergeOffer("home", "public")
-        assertEquals("public" to "home", mergeKeeps(offer, active = "public"))
-        assertEquals("home" to "public", mergeKeeps(offer, active = "home"))
-        assertEquals("home" to "public", mergeKeeps(offer, active = "other"))
     }
 
     @Test fun `only a profile that syncs asks about the other devices`() {

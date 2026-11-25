@@ -5818,8 +5818,8 @@ impl App {
                 self.ui().set_ask_placeholder(words::NORIS_OWN.into());
             }
             Some(Act::InstallNeeded) => self.install_needed(),
-            Some(Act::Merge(keep, drop)) => {
-                self.sync.merge(keep, drop);
+            Some(Act::Merge(a, b)) => {
+                self.sync.merge(nori_core::sync::MergeOffer { a, b });
                 self.settings_shown();
             }
             Some(Act::KeepApart(a, b)) => {

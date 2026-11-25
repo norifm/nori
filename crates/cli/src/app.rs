@@ -227,7 +227,40 @@ pub enum Cmd {
     JamAlong(bool),
     JamRemoteSongs(bool),
     Plugin(PluginCmd),
+    /// Pairing and profile sync.
+    Sync(SyncCmd),
+    /// Copies the text to the terminal's clipboard.
+    Copy(String),
+    /// Removes saved profile `id`.
+    RemoveProfile(String),
     Quit,
+}
+
+/// What the runner asks of sync (the core's `Syncing`); each reads where sync stands again after.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SyncCmd {
+    /// Shows this computer's code, to join a group.
+    Show,
+    /// Takes another device's code: pasted, or a device waiting nearby's.
+    Take { link: String, nearby: bool },
+    /// Yes to the confirmation; `keep` answers the first pairing's question.
+    Confirm { keep: bool },
+    /// Stops the pairing under way, or forgets how the last one ended.
+    Cancel,
+    /// A pairing sheet opened or closed: devices waiting nearby are looked for while it is open.
+    Look(bool),
+    /// Asks before Reset pairing, with what it does.
+    AskReset,
+    Reset,
+    KeepCopy(bool),
+    Merge(nori_core::sync::MergeOffer),
+    KeepApart(nori_core::sync::MergeOffer),
+    /// Sync this profile on or off for profile `id`; off with `elsewhere`, the other devices remove it too.
+    Profile { id: String, on: bool, elsewhere: bool },
+    /// The sync server's address; blank for nori's own.
+    Server(String),
+    /// The plugins synced profiles need, each from its repo.
+    InstallNeeded,
 }
 
 /// What the runner does with the plugins (Settings › Plugins); each reads them again after.
@@ -335,6 +368,10 @@ impl Cmd {
             Cmd::JamRemoteSongs(on) => format!("room remote songs {on}"),
             Cmd::Listen(on) => format!("listen along {on}"),
             Cmd::Quit => "quit".into(),
+            Cmd::Sync(SyncCmd::Take { .. }) => "sync take a code".into(),
+            Cmd::Sync(c) => format!("sync {c:?}"),
+            Cmd::Copy(_) => "copy".into(),
+            Cmd::RemoveProfile(_) => "remove a profile".into(),
             Cmd::Plugin(PluginCmd::Set(id, row, _)) => format!("plugin {id} row {row}"),
             Cmd::Plugin(c) => format!("plugin {c:?}"),
             _ => "an edit".into(),
@@ -866,7 +903,7 @@ fn preview_sheet(p: nori_plugins::PluginPreview, turns_on: bool, repos: &[nori_p
     lines.extend(p.repo.as_deref().map(|url| crate::text::from_repo(url, repos)));
     lines.extend(p.key.is_none().then(|| crate::text::UNSIGNED.to_string()));
     lines.extend(turns_on.then(|| crate::text::INSTALLED_ON.to_string()));
-    Overlay::Confirm { title: crate::text::install_version(&c.name, &c.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
+    Overlay::Confirm { title: crate::text::install_version(&c.name, &c.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))), other: None }
 }
 
 /// What the enabled plugins add to the screens, as last read.
@@ -1085,14 +1122,18 @@ pub enum Overlay {
     Picker { title: String, options: Vec<(String, String)>, sel: Sel, target: Target },
     /// A text field whose text goes to `target`.
     Input { title: String, text: String, secret: bool, target: Target },
-    /// A question before `cmd` is carried out: what it is about, and the word for going ahead.
-    Confirm { title: String, lines: Vec<String>, yes: String, cmd: Box<Cmd> },
+    /// A question before `cmd` is carried out: what it is about, and the word for going ahead; `other`, a
+    /// second answer and what it carries out, taken by its first letter.
+    Confirm { title: String, lines: Vec<String>, yes: String, cmd: Box<Cmd>, other: Option<(String, Box<Cmd>)> },
     /// What the selection's menu offers, the song's less used actions `folded` under More until it opens.
     Menu { title: String, item: Box<Item>, lines: Vec<crate::menu::MenuLine>, folded: Vec<crate::menu::MenuLine>, sel: Sel },
     /// A new playlist's name, for `songs`.
     NewPlaylist { text: String, songs: Vec<String> },
     /// The jam's invite: its link and QR code.
     Invite { link: String },
+    /// Pair a device, in `role`: the link typed or pasted, the nearby device picked (`at`), whether to keep
+    /// an encrypted copy at a first pairing, and the code shown last.
+    Pair { role: nori_core::sync::PairSide, text: String, at: usize, keep: bool, shown: Option<(String, Vec<String>)> },
     /// The thanks for a seal paid while the Support page is open, of `season`; any key ends it.
     Thanks { season: nori_look::theme::Season },
     JamSettings,
@@ -1171,6 +1212,8 @@ pub enum Target {
     SupportCurrency,
     /// What to do with the monthly payment: its card and receipts, stopping it or keeping it going.
     SupportMonthly,
+    /// The sync server's address, as set now (empty for nori's own).
+    SyncServer(String),
 }
 
 impl Target {
@@ -1213,6 +1256,7 @@ impl Target {
                 (!name.is_empty()).then(|| Cmd::EditPlaylist { id: id.clone(), write: nori_core::client::Write::RenamePlaylist { id, name }, said })
             }
             Target::Identity => value.parse().ok().map(Cmd::ChooseIdentity),
+            Target::SyncServer(_) => Some(Cmd::Sync(SyncCmd::Server(value))),
             // The Support page keeps these itself.
             Target::SupportOther | Target::SupportCurrency | Target::SupportMonthly => None,
             Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
@@ -1329,6 +1373,10 @@ pub enum Button {
     LoginPlugins,
     /// The welcome's Restore a backup.
     WelcomeRestore,
+    /// The welcome's and the first run's last page's Pair a device.
+    WelcomePair,
+    /// The Pair a device sheet's two roles: this computer's code, or pasting another's.
+    PairRole(nori_core::sync::PairSide),
     WelcomeContinue,
     SetupBack,
     SetupSkip,
@@ -1935,7 +1983,7 @@ impl App {
             Msg::Starred(marks) => self.marks = marks,
             Msg::AnalysisOffer(offer) => {
                 let (title, lines) = crate::text::analysis_offer(&offer);
-                self.overlay = Some(Overlay::Confirm { title, lines, yes: crate::text::ANALYZE.into(), cmd: Box::new(Cmd::AnalyseDownloads) });
+                self.overlay = Some(Overlay::Confirm { title, lines, yes: crate::text::ANALYZE.into(), cmd: Box::new(Cmd::AnalyseDownloads), other: None });
             }
             // The runner read the devices into `devices`, and the settings in effect.
             Msg::Remote | Msg::Overridden => {}
@@ -2031,7 +2079,7 @@ impl App {
                 self.cmds.push(Cmd::Plugin(PluginCmd::Read));
             }
             Msg::PluginsChanged => self.cmds.push(Cmd::Plugin(PluginCmd::Read)),
-            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) | Msg::Readme { .. } | Msg::PluginSignIn { .. } | Msg::BackedUp(_) | Msg::Restored(_) | Msg::Synced(_) => {}
+            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) | Msg::Readme { .. } | Msg::PluginSignIn { .. } | Msg::BackedUp(_) | Msg::Restored(_) | Msg::Synced(_) | Msg::SyncChanged | Msg::SyncEvent(_) | Msg::NeededInstalled | Msg::OtherAccount(_) => {}
         }
     }
 
@@ -2399,15 +2447,19 @@ impl App {
 
     fn paste(&mut self, text: &str) {
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
-        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::AddRepo { text: t, busy: false, .. } | Overlay::Account { text: t, pasting: true, .. }) = &mut self.overlay {
+        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::AddRepo { text: t, busy: false, .. } | Overlay::Account { text: t, pasting: true, .. } | Overlay::Pair { role: nori_core::sync::PairSide::Take, text: t, .. }) = &mut self.overlay {
             t.push_str(&text);
         } else if self.view == View::Login {
             if !self.login_choosing() {
                 self.login.fields[self.login.focus].push_str(&text);
             }
         } else if nori_core::remote::is_invite(&text) {
-            // An invite pasted anywhere offers to join its jam.
+            // An invite pasted anywhere offers to join its jam, a pairing code to pair.
             self.overlay = Some(Overlay::Join { text, error: None, busy: false });
+        } else if nori_core::sync::is_pairing_code(text.trim().to_string()) && self.overlay.is_none() {
+            self.pair_open();
+            self.pair_role(nori_core::sync::PairSide::Take);
+            self.pair_take(text.trim().to_string(), false);
         } else {
             if self.view != View::Search {
                 self.go(View::Search);
@@ -2574,6 +2626,7 @@ impl App {
             KeyCode::Enter | KeyCode::Char(' ') => self.welcome_line(at),
             KeyCode::Char('c') => self.welcome_on(WelcomeEvent::Continue),
             KeyCode::Char('r') if !signing => self.overlay = Some(crate::settings_view::backup_asked(true)),
+            KeyCode::Char('d') if !signing => self.pair_open(),
             KeyCode::Char('p') if !signing => self.plugins_alone(Alone::Plugins),
             KeyCode::Esc if signing => self.welcome_on(WelcomeEvent::Back),
             KeyCode::Esc | KeyCode::Char('q') => self.quit = true,
@@ -2614,7 +2667,7 @@ impl App {
             Some(ProviderLine::Offered { id, .. }) if self.settings.own.plugins.iter().any(|c| c.id == id) => self.cmds.push(Cmd::Plugin(PluginCmd::TurnOnChosen(id))),
             Some(ProviderLine::Offered { id, .. }) => {
                 self.plugins_alone(Alone::Offer(id.clone()));
-                self.plugin_page(crate::settings_view::PluginPage::Plugin(id));
+                self.plugin_page(crate::settings_view::SubPage::Plugin(id));
             }
             None => {}
         }
@@ -2728,13 +2781,38 @@ impl App {
     /// The first run's questions, once the install's first profile is in; this computer streams over no
     /// mobile network.
     pub fn setup_start(&mut self) {
-        self.setup = Some(Setup { steps: nori_core::setup::setup_steps(false, false), at: 0, answers: Vec::new(), line: 0 });
+        let pairs = !self.settings.own.sync.paired;
+        self.setup = Some(Setup { steps: nori_core::setup::setup_steps(false, pairs), at: 0, answers: Vec::new(), line: 0 });
         self.setup_to(0);
     }
 
-    /// The first run's look: Settings' own season and appearance sections, as the settings stand.
+    /// The first run's look: Settings' own season and appearance sections, as the settings stand; on its
+    /// pairing page, the sync server's switch and address.
     pub fn setup_look(&self) -> Vec<crate::settings_view::Section> {
-        crate::settings_view::setup_look(&self.prefs, &self.settings.own, self.dark, self.rules.clone(), crate::art::Day::now())
+        match self.setup.as_ref().map(Setup::step) {
+            Some(SetupStep::Pair) => crate::settings_view::setup_pair(&self.prefs),
+            _ => crate::settings_view::setup_look(&self.prefs, &self.settings.own, self.dark, self.rules.clone(), crate::art::Day::now()),
+        }
+    }
+
+    /// The pills under the first run's look or pairing page: Start listening on the last page, Continue
+    /// before it; Pair a device over Start listening on the pairing page.
+    pub fn setup_ends(&self) -> Vec<(&'static str, Button)> {
+        let Some(s) = &self.setup else { return Vec::new() };
+        match s.step() {
+            SetupStep::Pair => vec![(crate::text::PAIR_A_DEVICE, Button::WelcomePair), (crate::text::SETUP_START, Button::SetupStart)],
+            _ if s.at + 1 < s.steps.len() => vec![(crate::text::SETUP_CONTINUE, Button::SetupContinue)],
+            _ => vec![(crate::text::SETUP_START, Button::SetupStart)],
+        }
+    }
+
+    /// Pair a device on the welcome or the first run's last page: the run is over, and the sheet opens.
+    fn setup_pair(&mut self) {
+        if !self.prefs.sync {
+            return self.dirty = false;
+        }
+        self.setup = None;
+        self.pair_open();
     }
 
     /// The run's page `at`, the keys on the answer given there before.
@@ -2770,9 +2848,9 @@ impl App {
         self.cmds.extend(nori_core::setup::setup_settings(answer).into_iter().map(|p| Cmd::Setting(p.name, p.value)));
     }
 
-    /// Continue: the next page, once the question shown is answered.
+    /// Continue: the next page, once the question shown is answered; a page that asks none goes on.
     fn setup_continue(&mut self) {
-        if self.setup.as_ref().is_some_and(|s| s.answered(s.step()).is_some()) {
+        if self.setup.as_ref().is_some_and(|s| s.answered(s.step()).is_some() || nori_core::setup::setup_answers(s.step()).is_empty()) {
             self.setup_next();
         }
     }
@@ -2780,7 +2858,7 @@ impl App {
     fn setup_key(&mut self, k: KeyEvent) {
         let Some(s) = &mut self.setup else { return };
         let step = s.step();
-        if step == SetupStep::Look {
+        if matches!(step, SetupStep::Look | SetupStep::Pair) {
             return self.look_key(k);
         }
         let answers = nori_core::setup::setup_answers(step);
@@ -2802,14 +2880,19 @@ impl App {
     /// has them, each change taken at once.
     fn look_key(&mut self, k: KeyEvent) {
         let rows: Vec<crate::settings_view::Row> = self.setup_look().into_iter().flat_map(|s| s.rows).collect();
+        let ends = self.setup_ends();
         let Some(s) = &mut self.setup else { return };
         let row = rows.get(s.line).cloned();
+        let end = s.line.checked_sub(rows.len()).and_then(|i| ends.get(i)).map(|e| e.1);
         match (k.code, row) {
             (KeyCode::Up | KeyCode::Char('k'), _) => s.line = s.line.saturating_sub(1),
-            (KeyCode::Down | KeyCode::Char('j'), _) => s.line = (s.line + 1).min(rows.len()),
+            (KeyCode::Down | KeyCode::Char('j'), _) => s.line = (s.line + 1).min(rows.len() + ends.len().saturating_sub(1)),
             (KeyCode::Left | KeyCode::Char('h'), Some(row)) => self.cmds.extend(crate::settings_view::step_row(row, false)),
             (KeyCode::Right | KeyCode::Char('l'), Some(row)) => self.cmds.extend(crate::settings_view::step_row(row, true)),
-            (KeyCode::Enter | KeyCode::Char(' '), None) => self.setup = None,
+            (KeyCode::Enter | KeyCode::Char(' '), None) => match end {
+                Some(b) => self.button(b),
+                None => self.dirty = false,
+            },
             (KeyCode::Enter | KeyCode::Char(' '), Some(row)) => match crate::settings_view::open_row(row) {
                 Some(Opened::Cmds(c)) => self.cmds.extend(c),
                 Some(Opened::Overlay(o)) => self.overlay = Some(o),
@@ -3015,14 +3098,20 @@ impl App {
                 KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
                 _ => {}
             },
-            Overlay::Confirm { cmd, .. } => match k.code {
+            Overlay::Confirm { cmd, other, .. } => match k.code {
                 KeyCode::Enter => {
                     self.cmds.push((**cmd).clone());
+                    self.overlay = None;
+                }
+                KeyCode::Char(c) if other.as_ref().is_some_and(|(word, _)| crate::text::answer_key(word) == c) => {
+                    let then = other.as_ref().map(|(_, cmd)| (**cmd).clone()).expect("checked");
+                    self.cmds.push(then);
                     self.overlay = None;
                 }
                 KeyCode::Esc => self.overlay = None,
                 _ => self.dirty = false,
             },
+            Overlay::Pair { .. } => self.pair_key(k),
             Overlay::Input { text, target, .. } => match k.code {
                 KeyCode::Enter => {
                     let (target, typed) = (target.clone(), text.clone());
@@ -3196,7 +3285,7 @@ impl App {
                     None => self.dirty = false,
                 }
             }
-            Action::Remove if self.focus == Focus::Main && self.view == View::Settings => match self.settings.plugin_key() {
+            Action::Remove if self.focus == Focus::Main && self.view == View::Settings => match self.settings.remove_key() {
                 Some(o) => self.overlay = Some(o),
                 None => self.dirty = false,
             },
@@ -4112,7 +4201,7 @@ impl App {
                 let Some(c) = d.controlled.get(i) else { return };
                 let id = c.card.id.clone();
                 self.go(View::Settings);
-                self.plugin_page(crate::settings_view::PluginPage::Plugin(id));
+                self.plugin_page(crate::settings_view::SubPage::Plugin(id));
             }
             Some(DeviceRow::Noise(i)) => {
                 let Some(c) = d.controlled.get(i) else { return };
@@ -4214,11 +4303,128 @@ impl App {
             Some(Opened::View(v)) => self.go(v),
             Some(Opened::Own(switch)) => self.own_toggle(switch),
             Some(Opened::Plugins(page)) => self.plugin_page(page),
+            Some(Opened::Pair) => self.pair_open(),
             Some(Opened::Login) => {
                 self.login = Login::default();
                 self.choose_provider();
             }
             None => self.dirty = false,
+        }
+    }
+
+    // ---- pairing ----
+
+    /// What sync shows now, as the runner read it. The Pair a device sheet closes once the pairing is
+    /// over: the device that sent the key hears the core's one notice of the new device, the new device
+    /// says it is paired.
+    pub fn sync_shown(&mut self, shown: crate::pairing::SyncShown) {
+        if let Some(Overlay::Pair { role, shown: code, .. }) = &mut self.overlay {
+            if let nori_core::sync::PairingView::Code { link, words } = &shown.pairing {
+                *code = Some((link.clone(), words.clone()));
+            }
+            if crate::pairing::stage(*role, &shown.pairing, code.as_ref()) == crate::pairing::Stage::Done {
+                if shown.pairing == nori_core::sync::PairingView::Paired {
+                    self.say(crate::text::PAIRED, false);
+                }
+                self.pair_close();
+            }
+        }
+        self.settings.own.sync = shown;
+        self.settings.invalidate();
+        self.dirty = true;
+    }
+
+    /// Opens Pair a device on the side this computer takes: in no group, its code shows at once.
+    pub fn pair_open(&mut self) {
+        let role = nori_core::sync::pair_side(self.settings.own.sync.pairing.clone(), self.settings.own.sync.paired, self.prefs.servers.len() as u32);
+        self.overlay = Some(Overlay::Pair { role, text: String::new(), at: 0, keep: true, shown: None });
+        self.cmds.push(Cmd::Sync(SyncCmd::Look(true)));
+        let under_way = !matches!(self.settings.own.sync.pairing, nori_core::sync::PairingView::Idle | nori_core::sync::PairingView::Refused { .. } | nori_core::sync::PairingView::Sent | nori_core::sync::PairingView::Paired);
+        if !under_way {
+            self.cmds.push(Cmd::Sync(if role == nori_core::sync::PairSide::Show { SyncCmd::Show } else { SyncCmd::Cancel }));
+        }
+    }
+
+    /// The sheet's other role: showing this computer's code starts one; pasting a code stops it. A
+    /// computer with no profiles has nothing to give, so only shows its code.
+    fn pair_role(&mut self, to: nori_core::sync::PairSide) {
+        let gives = !self.prefs.servers.is_empty();
+        let Some(Overlay::Pair { role, text, shown, .. }) = &mut self.overlay else { return };
+        if *role == to || (to == nori_core::sync::PairSide::Take && !gives) {
+            return self.dirty = false;
+        }
+        *role = to;
+        text.clear();
+        *shown = None;
+        self.cmds.push(Cmd::Sync(if to == nori_core::sync::PairSide::Show { SyncCmd::Show } else { SyncCmd::Cancel }));
+    }
+
+    /// Takes the other device's code, as typed or pasted (`nearby`: a device waiting nearby's).
+    fn pair_take(&mut self, link: String, nearby: bool) {
+        if let Some(Overlay::Pair { keep, .. }) = &mut self.overlay {
+            *keep = true;
+        }
+        if !link.trim().is_empty() {
+            self.cmds.push(Cmd::Sync(SyncCmd::Take { link: link.trim().to_string(), nearby }));
+        }
+    }
+
+    /// Closes the sheet: a pairing under way stops.
+    fn pair_close(&mut self) {
+        self.overlay = None;
+        self.cmds.push(Cmd::Sync(SyncCmd::Cancel));
+        self.cmds.push(Cmd::Sync(SyncCmd::Look(false)));
+    }
+
+    /// A key on the Pair a device sheet: on the question, enter pairs and space switches the copy; on this
+    /// computer's code, y copies its link and enter makes a new one once it stopped; while taking a code,
+    /// typing fills the link, ↑ ↓ pick a device waiting nearby and enter pairs; tab changes sides.
+    fn pair_key(&mut self, k: KeyEvent) {
+        use crate::pairing::{stage, Stage};
+        use nori_core::sync::PairSide as Role;
+        let Some(Overlay::Pair { role, text, at, keep, shown }) = &mut self.overlay else { return };
+        let sync = &self.settings.own.sync;
+        let now = stage(*role, &sync.pairing, shown.as_ref());
+        let control = k.modifiers.contains(KeyModifiers::CONTROL);
+        match (now, k.code) {
+            (_, KeyCode::Esc) => self.pair_close(),
+            (Stage::Confirm { .. }, KeyCode::Enter) => {
+                let keep = *keep;
+                self.cmds.push(Cmd::Sync(SyncCmd::Confirm { keep }));
+            }
+            (Stage::Confirm { asks_keep: true, .. }, KeyCode::Char(' ')) => *keep = !*keep,
+            (Stage::Confirm { .. }, _) => self.dirty = false,
+            (_, KeyCode::Tab | KeyCode::BackTab) => {
+                let to = if *role == Role::Show { Role::Take } else { Role::Show };
+                self.pair_role(to);
+            }
+            (Stage::Code { link, .. }, KeyCode::Char('y')) => {
+                self.cmds.push(Cmd::Copy(link));
+                self.say(crate::text::LINK_COPIED, false);
+            }
+            (Stage::Stopped(_), KeyCode::Enter) => {
+                *shown = None;
+                self.cmds.push(Cmd::Sync(SyncCmd::Show));
+            }
+            (Stage::Taking(_) | Stage::Waiting, _) if *role == Role::Take => match k.code {
+                KeyCode::Up => *at = at.saturating_sub(1),
+                KeyCode::Down => *at = (*at + 1).min(sync.nearby.len().saturating_sub(1)),
+                KeyCode::Enter if text.trim().is_empty() => match sync.nearby.get(*at).map(|d| d.link.clone()) {
+                    Some(link) => self.pair_take(link, true),
+                    None => self.dirty = false,
+                },
+                KeyCode::Enter => {
+                    let link = text.clone();
+                    self.pair_take(link, false);
+                }
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char('u') if control => text.clear(),
+                KeyCode::Char(c) if !control => text.push(c),
+                _ => self.dirty = false,
+            },
+            _ => self.dirty = false,
         }
     }
 
@@ -4240,7 +4446,7 @@ impl App {
         }
     }
 
-    fn plugin_page(&mut self, page: crate::settings_view::PluginPage) {
+    fn plugin_page(&mut self, page: crate::settings_view::SubPage) {
         self.settings.enter(page, &self.prefs);
         if matches!(self.settings.own.shelf, crate::settings_view::Shelf::Unasked) {
             self.cmds.push(Cmd::Plugin(PluginCmd::Look));
@@ -4253,7 +4459,7 @@ impl App {
             Switch::Mouse => self.do_action(Action::Mouse),
             Switch::Images => self.do_action(Action::Images),
             Switch::Transparent => self.cmds.push(Cmd::Paint(!self.paint)),
-            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::PluginFlags { .. } | Switch::Turn(_) | Switch::Hold(_) | Switch::AllOff => {}
+            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::PluginFlags { .. } | Switch::Turn(_) | Switch::Hold(_) | Switch::AllOff | Switch::KeepCopy | Switch::SyncProfile { .. } => {}
         }
         self.settings.invalidate();
     }
@@ -4263,7 +4469,7 @@ impl App {
         match self.view {
             View::Equalizer => Some(SoundPage::Equalizer),
             View::Settings => match self.settings.own.stack.last() {
-                Some((crate::settings_view::PluginPage::Plugin(_), _)) => Some(SoundPage::Plugin),
+                Some((crate::settings_view::SubPage::Plugin(_), _)) => Some(SoundPage::Plugin),
                 Some(_) => None,
                 None => (self.settings.alone == crate::settings_view::Alone::No).then_some(SoundPage::Sound),
             },
@@ -4515,6 +4721,8 @@ impl App {
             Button::LoginGuest => self.connect(AfterAdding::Guest),
             Button::LoginPlugins => self.plugins_alone(Alone::Plugins),
             Button::WelcomeRestore => self.overlay = Some(crate::settings_view::backup_asked(true)),
+            Button::WelcomePair => self.setup_pair(),
+            Button::PairRole(role) => self.pair_role(role),
             Button::WelcomeContinue => self.welcome_on(WelcomeEvent::Continue),
             Button::SetupBack => self.setup_back(),
             Button::SetupSkip => self.setup_next(),

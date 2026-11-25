@@ -156,6 +156,10 @@ struct Runner {
     codes: u32,
     /// Pairing and profile sync; runs nothing unless this computer is paired with sync on.
     sync: Arc<nori_core::sync::Syncing>,
+    /// Install on Your devices is under way.
+    installing: bool,
+    /// A backup restored here had a pairing, which it doesn't bring: Your devices says so.
+    not_restored: bool,
 }
 
 pub fn run(o: Options) -> Result<(), String> {
@@ -227,13 +231,12 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start("").ok().map(Arc::new)).flatten();
     app.shared = root.app.clone();
     app.settings.own.shared = root.app.clone();
-    let told = tx.clone();
-    let sync = nori_host::sync::computer(root.app.settings.clone(), root.sync_client(move |synced| {
-        let _ = told.send(Msg::Synced(synced));
-    }), nori_core::sync::Reach::Computer);
-    let mut r = Runner { sync, root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, code: None, codes: 0, o };
+    let told = Arc::new(crate::pairing::Told { root: root.clone(), tx: tx.clone() });
+    let sync = nori_host::sync::computer(root.app.settings.clone(), told, nori_core::sync::Reach::Computer);
+    let mut r = Runner { sync, installing: false, not_restored: false, root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, code: None, codes: 0, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
+    r.sync_read(&mut app);
     let notices = r.tx.clone();
     r.root.plugins().watched.hear(move |n| {
         let _ = notices.send(Msg::Note { text: n.words, error: n.problem });
@@ -594,6 +597,119 @@ impl Runner {
         }
     }
 
+    /// Where sync stands, read again for the screens.
+    fn sync_read(&mut self, app: &mut App) {
+        let (s, settings) = (&self.sync, &self.root.app.settings);
+        let paired = nori_core::sync::paired(settings);
+        let servers = settings.current().map(|p| p.servers).unwrap_or_default();
+        let own = &app.settings.own;
+        let now_ms = nori_core::db::now_ms();
+        let shown = crate::pairing::SyncShown {
+            paired,
+            state: s.state(),
+            pairing: s.pairing(),
+            devices: s.devices(),
+            keeps_copy: s.keeps_copy(),
+            offers: s.offers(),
+            synced: servers.into_iter().map(|p| p.id).filter(|id| s.synced(id.clone())).collect(),
+            needed: s.needed_plugins().into_iter().map(|n| (nori_plugins::plugin_display_name(n.id, own.plugins.clone(), own.offers().to_vec()), n.repo.is_none())).collect(),
+            installing: self.installing,
+            not_restored: self.not_restored && !paired,
+            nearby: s.nearby(),
+            name: nori_host::device_name(),
+            now_ms,
+            offset_s: nori_core::library::local_offset_s(now_ms / 1000),
+        };
+        app.sync_shown(shown);
+    }
+
+    /// What Your devices, a profile's Sync this profile and the Pair a device sheet ask of sync.
+    fn sync_cmd(&mut self, app: &mut App, c: crate::app::SyncCmd) {
+        use crate::app::SyncCmd as C;
+        let s = self.sync.clone();
+        let settings = self.root.app.settings.clone();
+        match c {
+            C::Show => s.pair_show(nori_host::device_name()),
+            C::Take { link, nearby } => {
+                s.pair_take(link, if nearby { nori_core::sync::Came::Nearby } else { nori_core::sync::Came::Link });
+            }
+            C::Confirm { keep } => s.pair_confirm(nori_host::device_name(), keep),
+            C::Cancel => s.pair_cancel(),
+            C::Look(on) => s.pair_look(on),
+            C::AskReset => {
+                let Some(notice) = s.reset_notice() else { return };
+                let servers = settings.current().map(|p| p.servers).unwrap_or_default();
+                let names: Vec<String> = notice.signed_in.iter().filter_map(|id| servers.iter().find(|p| p.id == *id)).map(|p| nori_core::settings::label(&p.name, &p.url)).collect();
+                let (title, lines) = crate::text::reset_pairing(&names);
+                app.overlay = Some(crate::app::Overlay::Confirm { title: title.into(), lines, yes: crate::text::RESET.into(), cmd: Box::new(Cmd::Sync(C::Reset)), other: None });
+                return;
+            }
+            C::Reset => s.reset(),
+            C::KeepCopy(on) => s.keep_copy(on),
+            C::Merge(offer) => s.merge(offer),
+            C::KeepApart(offer) => s.keep_apart(offer.a, offer.b),
+            C::Profile { id, on, elsewhere } => {
+                if !on {
+                    s.sync_off(id.clone(), elsewhere);
+                }
+                settings.change(|p| {
+                    let mut p = p.clone();
+                    p.servers.iter_mut().filter(|sv| sv.id == id).for_each(|sv| sv.sync_off = !on);
+                    p
+                });
+                prefs_changed(app);
+            }
+            C::Server(address) => {
+                let kept = Some(address.trim().to_string()).filter(|a| !a.is_empty());
+                settings.change(|p| nori_core::settings::StoredPrefs { sync_server: kept.clone(), ..p.clone() });
+                s.settings_changed();
+                prefs_changed(app);
+            }
+            C::InstallNeeded => {
+                if self.installing {
+                    return;
+                }
+                self.installing = true;
+                let (kinds, needed, tx) = (self.root.plugins().kinds.clone(), s.needed_plugins(), self.tx.clone());
+                nori_host::spawn("nori-sync-install", move || {
+                    nori_core::transport::block_on(kinds.install_needed(needed));
+                    let _ = tx.send(Msg::NeededInstalled);
+                });
+            }
+        }
+        self.sync_read(app);
+    }
+
+    /// A sign-in as `name`, to the profile in use, is to the account the profile syncs with: profile
+    /// sync signs another one out again (the core's `Client::synced_sign_in`), off this thread.
+    fn sign_in_checked(&self, name: String) {
+        let (Some(s), Some(profile)) = (&self.session, self.root.app.settings.current().map(|p| p.active_server_id)) else { return };
+        let (client, sync, tx) = (s.client.clone(), self.sync.clone(), self.tx.clone());
+        nori_host::spawn("nori-sign-in-check", move || {
+            if let nori_core::sync::SignInCheck::OtherAccount { name } = block_on(client.synced_sign_in(sync, profile, name)) {
+                let _ = tx.send(Msg::OtherAccount(name));
+            }
+        });
+    }
+
+    /// Removes saved profile `id`: the next one opens in place of the one in use, the first screen when
+    /// none is left.
+    fn remove_profile(&mut self, app: &mut App, id: &str) {
+        let active = self.root.app.settings.current().is_some_and(|p| p.active_server_id == id);
+        if active {
+            if let Some(s) = self.session.take() {
+                s.close_for(None);
+            }
+        }
+        match self.root.remove_profile(id) {
+            nori_host::desktop::ProfileRemoved::Elsewhere => {}
+            nori_host::desktop::ProfileRemoved::Opens(next) => self.open(app, *next, None),
+            nori_host::desktop::ProfileRemoved::Last => app.session_ended(),
+        }
+        prefs_changed(app);
+        self.sync_read(app);
+    }
+
     /// The profile in use opened again, as signing in or out left it.
     fn reopen(&mut self, app: &mut App) {
         let Some(profile) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) else { return };
@@ -633,8 +749,24 @@ impl Runner {
             // The plugin installed is shown, and asked to be turned on, from its card.
             Msg::Installed(_) => self.plugin(app, crate::app::PluginCmd::Read),
             Msg::BackedUp(r) => return app.say(r.as_ref().map_or_else(crate::text::backup_failed, |_| crate::text::BACKUP_SAVED.into()), r.is_err()),
+            Msg::SyncChanged => return self.sync_read(app),
+            Msg::SyncEvent(e) => {
+                let trouble = !matches!(e, nori_core::sync::SyncEvent::NewDevice { .. } | nori_core::sync::SyncEvent::DeviceLeft { .. });
+                app.say(crate::text::sync_event(e), trouble);
+                return self.sync_read(app);
+            }
+            Msg::NeededInstalled => {
+                self.installing = false;
+                self.plugin(app, crate::app::PluginCmd::Read);
+                return self.sync_read(app);
+            }
+            Msg::OtherAccount(name) => {
+                app.say(crate::text::other_account(name.as_deref()), true);
+                return self.reopen(app);
+            }
             Msg::Synced(synced) => {
                 prefs_changed(app);
+                self.sync_read(app);
                 if synced.active != nori_core::sync::ActiveProfile::Same {
                     match self.root.app.settings.current().and_then(|p| p.active_server().cloned()) {
                         Some(p) => self.open(app, p, None),
@@ -650,7 +782,12 @@ impl Runner {
             Msg::Restored(Ok(r)) => {
                 // The backup brings its sync and sync server settings, never the pairing.
                 self.sync.settings_changed();
-                let said = crate::text::restored(r);
+                self.not_restored = r.pairing_not_restored;
+                self.sync_read(app);
+                let mut said = crate::text::restored(r);
+                if r.pairing_not_restored {
+                    said = format!("{said} · {}", crate::text::PAIRING_NOT_RESTORED);
+                }
                 match (&self.session, r.settings.prefs.active_server()) {
                     (Some(s), _) => s.backup_restored(&r.settings),
                     // Restored on the welcome: its profiles open the app.
@@ -699,11 +836,12 @@ impl Runner {
                 }
                 return;
             }
-            Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => {
+            Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { name }) => {
                 #[cfg(feature = "sign-in-window")]
                 {
                     self.sign_in_window = None;
                 }
+                self.sign_in_checked(name.clone());
                 app.handle(m);
                 return self.reopen(app);
             }
@@ -926,6 +1064,9 @@ impl Runner {
                 return self.offer_sign_in(app, offer);
             }
             Cmd::Plugin(c) => return self.plugin(app, c),
+            Cmd::Sync(c) => return self.sync_cmd(app, c),
+            Cmd::Copy(text) => return crate::term::copy(&text),
+            Cmd::RemoveProfile(id) => return self.remove_profile(app, &id),
             Cmd::Backup { restore: false, path, password } => {
                 let tx = self.tx.clone();
                 return self.root.make_backup(path.into(), password, move |r| {
@@ -1014,6 +1155,10 @@ impl Runner {
                     app.say(format!("{name}: not a setting"), true);
                 }
                 prefs_changed(app);
+                if matches!(name.as_str(), "sync" | "syncServer") {
+                    self.sync.settings_changed();
+                    self.sync_read(app);
+                }
                 // Remote control or jams may have come or gone.
                 self.remote_read(app);
                 return;
@@ -1286,7 +1431,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::Scrobbler { .. } | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::Scrobbler { .. } | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } | Cmd::Sync(_) | Cmd::Copy(_) | Cmd::RemoveProfile(_) => {}
         }
     }
 

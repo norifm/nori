@@ -8,6 +8,7 @@ mod chrome;
 mod keys;
 mod lyrics;
 mod menu;
+mod pairing;
 mod runner;
 mod script;
 mod settings_view;

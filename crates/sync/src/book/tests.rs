@@ -62,6 +62,14 @@ fn named(name: &str, url: &str) -> SavedServer {
 }
 
 #[test]
+fn a_merge_keeps_the_profile_in_use_else_the_first() {
+    let offer = MergeOffer { a: "home".into(), b: "public".into() };
+    assert_eq!(offer.kept("public"), ("public", "home"));
+    assert_eq!(offer.kept("home"), ("home", "public"));
+    assert_eq!(offer.kept("other"), ("home", "public"));
+}
+
+#[test]
 fn profiles_added_on_two_devices_apart_are_both_kept() {
     let (mut a, mut b) = (Device::new("a", vec![named("Home", "https://home.example")]), Device::new("b", vec![named("Work", "https://work.example")]));
     a.meet(&mut b);

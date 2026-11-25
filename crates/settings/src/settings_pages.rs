@@ -447,11 +447,7 @@ impl Page<'_> {
         }
         out.push((SectionId::History, vec![self.setting("tasteModel")]));
         out.push((SectionId::Online, vec![self.setting("thirdPartyLookups")]));
-        let mut devices = Vec::new();
-        if self.phone() {
-            devices.push(row(RowItem::Link { to: SettingsLink::YourDevices }));
-        }
-        devices.push(self.setting("remoteControl"));
+        let mut devices = vec![row(RowItem::Link { to: SettingsLink::YourDevices }), self.setting("remoteControl")];
         match self.client {
             SettingsClient::Phone => devices.push(self.setting("queueOffer")),
             SettingsClient::Terminal => devices.push(row(RowItem::Action { action: SettingsAction::JoinJam })),
@@ -658,12 +654,14 @@ mod tests {
     }
 
     #[test]
-    fn the_phone_reaches_your_devices_from_other_devices() {
+    fn every_client_reaches_your_devices_from_other_devices() {
         let d = StoredPrefs::default();
         let s = state(&d, Output::default(), &model());
-        let library = page(SettingsPage::Library, SettingsClient::Phone, &d, &s, &facts());
-        let devices = library.iter().find(|s| s.id == SectionId::Devices).expect("the phone has Other devices");
-        assert_eq!(devices.rows[0].item, RowItem::Link { to: SettingsLink::YourDevices });
+        for client in [SettingsClient::Phone, SettingsClient::Desktop, SettingsClient::Terminal, SettingsClient::Web] {
+            let library = page(SettingsPage::Library, client, &d, &s, &facts());
+            let devices = library.iter().find(|s| s.id == SectionId::Devices).expect("Other devices");
+            assert_eq!(devices.rows[0].item, RowItem::Link { to: SettingsLink::YourDevices }, "{client:?}");
+        }
     }
 
     #[test]
@@ -682,7 +680,7 @@ mod tests {
             RowItem::Link { to } => Some(to),
             _ => None,
         }).collect();
-        assert_eq!(links, [SettingsLink::Equalizer], "the equalizer is the web's one page within Settings");
+        assert_eq!(links, [SettingsLink::Equalizer, SettingsLink::YourDevices], "the web's pages within Settings");
         assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");
         assert!(!live(SettingsClient::Web, &StoredPrefs { auto_mix: crate::settings::AutoMixMode::Smooth, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
     }

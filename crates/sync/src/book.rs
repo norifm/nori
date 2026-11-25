@@ -60,6 +60,17 @@ pub struct MergeOffer {
     pub b: String,
 }
 
+impl MergeOffer {
+    /// The profile a merge keeps and the one it drops: the one in use, `active`, else the first.
+    pub fn kept(&self, active: &str) -> (&str, &str) {
+        if self.b == active {
+            (&self.b, &self.a)
+        } else {
+            (&self.a, &self.b)
+        }
+    }
+}
+
 /// This device's profile sync.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Book {

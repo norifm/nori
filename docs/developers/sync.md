@@ -221,7 +221,8 @@ the device's id only settle a tie. The rules:
   becomes the lower of the two, on every device. So the first sync after pairing is a union.
 - Two profiles with one kind and user at two addresses may be one. That is when one address is reached
   only at home, or is the other's second address. `Session::offers` lists them. `merge` makes one of them
-  on every device, and each device keeps the profile its user added there. `keep_apart` stops the offer.
+  on every device, and each device keeps the profile its user added there. `Syncing::merge` keeps the one
+  in use here, else the first (`MergeOffer::kept`). `keep_apart` stops the offer.
 
 When a device sees a hello, it sends that device everything it holds. A device that hears a state answers
 with what it holds newer, so two devices agree after one exchange.
@@ -415,9 +416,15 @@ self-signed switch do not apply: the sync server is no profile's server.
 A client tells sync whether nori is on screen and playing. Android does it from `MainActivity` and the
 playback service. The iPod does it from its foreground and background calls and its engine's state.
 
-Android and the desktop have a pairing screen. Their first run ends with Pair a device while the device
-is in no group: `setup_steps(_, pairs)` makes `SetupStep::Pair` its last step. The sync server's
-switch and address show under it, as Your devices has them.
+Android, the desktop and the terminal have the pairing screens: Your devices, Pair a device, Sync this
+profile and the merge offers. Their first run ends with Pair a device while the device is in no group:
+`setup_steps(_, pairs)` makes `SetupStep::Pair` its last step. The sync server's switch and address show
+under it, as Your devices has them. Their welcome offers Pair a device too, so a new device can take its
+profiles from another before it has any.
+
+The terminal's screens are `crates/cli/src/pairing.rs` (what it shows, and the sheet's stage for each
+`PairingView`), Your devices in `settings_view.rs` and the sheet in `ui.rs`. It draws the QR code in half
+blocks, as the jam invite does, and copies the link through the terminal itself (OSC 52).
 
 A paired device uses its group's server. The `syncServer` setting names the server a new code is made
 on: nori's own unless another is named. With `sync` off, nothing connects and pairing answers

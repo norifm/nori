@@ -178,6 +178,16 @@ pub fn set_mouse(on: bool) {
     let _ = if on { out.write_all(b"\x1b[?1000h\x1b[?1002h\x1b[?1006h").and_then(|()| out.flush()) } else { execute!(out, DisableMouseCapture) };
 }
 
+/// Puts `text` on the clipboard through the terminal (OSC 52), as kitty, iTerm2, WezTerm, foot and tmux
+/// with `set-clipboard` take it; inside tmux, passed through to the terminal around it as well.
+pub fn copy(text: &str) {
+    use base64::Engine;
+    let code = format!("\x1b]52;c;{}\x07", base64::engine::general_purpose::STANDARD.encode(text));
+    let code = if in_tmux() { format!("\x1bPtmux;{}\x1b\\", code.replace('\x1b', "\x1b\x1b")) } else { code };
+    let mut out = io::stdout();
+    let _ = out.write_all(code.as_bytes()).and_then(|()| out.flush());
+}
+
 /// Undoes [`enter`]. Idempotent; called from the panic hook too.
 pub fn leave() {
     if !ON.swap(false, Ordering::SeqCst) {

@@ -110,6 +110,21 @@ fn pair(old: &Device, new: &Device) {
 }
 
 #[test]
+fn a_pairing_screen_opens_on_the_side_the_device_can_take() {
+    let confirm = PairingView::Confirm { confirmation: crate::pairing::Confirmation { name: "Pixel".into(), profiles: 1, leaves: None, words: None, asks_keep_copy: false } };
+    let code = PairingView::Code { link: "nori://pair#v=1".into(), words: Vec::new() };
+    for (view, paired, profiles, side) in [
+        (PairingView::Idle, false, 2, PairSide::Show),
+        (PairingView::Idle, true, 2, PairSide::Take),
+        (PairingView::Idle, true, 0, PairSide::Show),
+        (confirm, false, 1, PairSide::Take),
+        (code, true, 3, PairSide::Show),
+    ] {
+        assert_eq!(pair_side(view.clone(), paired, profiles), side, "{view:?} paired {paired} with {profiles}");
+    }
+}
+
+#[test]
 fn two_devices_pair_through_the_server_and_their_profiles_sync_both_ways() {
     let hub = Hub::new(NOW);
     let pixel = Device::new(&hub, Reach::Computer, vec![navidrome("a", "https://music.example")]);
@@ -493,6 +508,9 @@ fn a_pairing_screen_lists_a_waiting_device_of_the_same_account_and_pairs_it_by_i
     settle(&[&pixel, &mac]);
     let PairingView::Code { words, .. } = mac.syncing.pairing() else { panic!("a code") };
     let waiting = on_mac.announced().expect("announced while the code shows");
+    for d in [&pixel, &stranger] {
+        d.told.changed.swap(0, Ordering::Relaxed);
+    }
     for (d, mdns) in [(&pixel, &on_pixel), (&stranger, &on_stranger)] {
         d.syncing.nearby_found(waiting.name.clone(), waiting.txt.clone());
         assert!(d.syncing.nearby().is_empty(), "nothing listed outside a pairing screen");
@@ -501,6 +519,7 @@ fn a_pairing_screen_lists_a_waiting_device_of_the_same_account_and_pairs_it_by_i
         d.syncing.nearby_found(waiting.name.clone(), waiting.txt.clone());
     }
     assert!(stranger.syncing.nearby().is_empty(), "another account's device lists nothing");
+    assert!(pixel.told.changed.swap(0, Ordering::Relaxed) > 0 && stranger.told.changed.swap(0, Ordering::Relaxed) == 0, "the screen hears its list changed, and only then");
     let listed = pixel.syncing.nearby();
     assert_eq!(listed.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["MacBook"]);
     assert_eq!(pixel.syncing.pair_take(listed[0].link.clone(), Came::Nearby), None);
@@ -513,6 +532,9 @@ fn a_pairing_screen_lists_a_waiting_device_of_the_same_account_and_pairs_it_by_i
     assert!(on_mac.announced().is_none(), "withdrawn once paired");
     pixel.syncing.pair_look(false);
     assert!(!on_pixel.looks() && pixel.syncing.nearby().is_empty());
+    pixel.told.changed.swap(0, Ordering::Relaxed);
+    pixel.syncing.nearby_lost(waiting.name.clone());
+    assert_eq!(pixel.told.changed.load(Ordering::Relaxed), 0, "losing what was not listed changes nothing");
 }
 
 #[test]
