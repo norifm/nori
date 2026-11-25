@@ -1046,6 +1046,28 @@ sync_checks() {
       { adb exec-out screencap -p > "$work/sync-off-$1.png"; return 1; }
   }
 
+  # A new phone pairs from the welcome, before any profile: the Mac's profile comes, and the app opens on
+  # it. It is the suite's own account, which signing in again keeps.
+  adb shell pm clear "$pkg" >/dev/null
+  adb shell pm grant "$pkg" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+  "$app" launch >/dev/null
+  check "a new phone's welcome offers Pair a device" wait_until 30 on_screen 'text="Pair a device"'
+  "$app" sync server "$address" >/dev/null
+  tapnode text "Pair a device"
+  welcome_code() { "$app" sync pairing | grep -q 'pairing Code'; }
+  check "and shows its code at once" wait_until 20 welcome_code
+  check "with how long it works" wait_until 10 on_screen 'The code works for five minutes.'
+  peer_start Mac
+  peer "add Welcome $APP_URL $USER $PASS" >/dev/null
+  peer "take $("$app" sync pairing | cut -d' ' -f3)" >/dev/null
+  check "the Mac asks to confirm" wait_until 20 peer_says pairing Confirm
+  peer "confirm" >/dev/null
+  check "the phone is paired from the welcome" wait_until 30 app_has Welcome
+  check "and opens the profile that came" wait_for loggedIn True 30
+  peer_stop
+  "$app" login "$APP_URL|$USER|$PASS" >/dev/null
+  wait_for server "$APP_URL" 30 >/dev/null
+
   sync_forget
   devices_page
   check "a device in no group says so" wait_until 10 on_screen 'isn’t paired with another'

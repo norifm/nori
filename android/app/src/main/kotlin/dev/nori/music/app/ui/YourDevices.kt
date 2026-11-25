@@ -134,13 +134,13 @@ private fun NeededPlugins(vm: SyncViewModel, v: dev.nori.music.app.vm.SyncView) 
  * Pair a device, with the two roles a device can have: in no group, its code shows at once (the QR code,
  * Copy link, how long it works, a new one once it ran out); with profiles, it scans another's code (the
  * camera asked for only then), takes a pasted link, or a device waiting nearby. The other device's yes
- * comes as a confirmation here. Leaving stops a pairing that did not finish.
+ * comes as a confirmation here. Leaving stops a pairing that did not finish. [done] leaves it: back in the
+ * app, closing it over the welcome.
  */
 @Composable
-fun PairDevice() {
+fun PairDevice(done: () -> Unit = LocalNav.current::back) {
     val vm: SyncViewModel = viewModel()
     val settings: SettingsViewModel = viewModel()
-    val nav = LocalNav.current
     val tell = LocalMessages.current
     val step by vm.step.collectAsStateWithLifecycle()
     val role by vm.role.collectAsStateWithLifecycle()
@@ -159,9 +159,9 @@ fun PairDevice() {
     LaunchedEffect(Unit) { if (dev.nori.music.sync.LocalNetwork.wanted(context)) askLocalNetwork.launch(dev.nori.music.sync.LocalNetwork.PERMISSION) }
     LaunchedEffect(step) {
         when (step) {
-            PairStep.Paired -> { tell(say.syncPaired); nav.back() }
+            PairStep.Paired -> { tell(say.syncPaired); done() }
             // The group's notice says the new device came.
-            PairStep.Sent -> nav.back()
+            PairStep.Sent -> done()
             else -> {}
         }
     }

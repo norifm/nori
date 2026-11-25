@@ -122,6 +122,7 @@ private fun WelcomeSources(vm: SettingsViewModel, plugins: dev.nori.music.app.vm
                 }
                 Refused(flow, offers)
                 WelcomeRestore(vm)
+                WelcomePair()
             }
             PillButton(
                 if (installing.isEmpty()) say.setupContinue else say.pluginInstalling, null, next,
@@ -217,6 +218,26 @@ private fun WelcomeHead() {
 }
 
 /** Under where the music is: restoring a backup brings back its profiles, which open the app. */
+/**
+ * Pair a device on the welcome, before any profile: it brings another device's profiles, and the app opens
+ * on the one in use once sync brought them.
+ */
+@Composable
+private fun WelcomePair() {
+    var pairing by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    NoriDialog(pairing, { pairing = false }, DialogStyle.Page) {
+        Surface(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().systemBarsPadding()) {
+                Box(Modifier.padding(start = 4.dp, top = 4.dp)) { GlyphButton(Iconoir.NavArrowLeft, say.setupBack, Modifier.testTag("pair-back")) { pairing = false } }
+                PairDevice(done = { pairing = false })
+            }
+        }
+    }
+    Column(Modifier.padding(start = Space.gutter - 12.dp, top = 0.dp, bottom = 24.dp)) {
+        TextAction(say.syncPair, { pairing = true }, Modifier.testTag("welcome-pair"))
+    }
+}
+
 @Composable
 private fun WelcomeRestore(vm: SettingsViewModel) {
     val backup by vm.backup.collectAsStateWithLifecycle()
@@ -226,7 +247,7 @@ private fun WelcomeRestore(vm: SettingsViewModel) {
         BackupPasswordDialog(true, { file = null }) { password -> vm.restoreBackup(uri, password); file = null }
     }
     val said = backupWords(LocalContext.current.resources, backup, true)
-    Column(Modifier.padding(start = Space.gutter - 12.dp, top = 10.dp, bottom = 24.dp)) {
+    Column(Modifier.padding(start = Space.gutter - 12.dp, top = 10.dp)) {
         TextAction(say.restoreBackup, { open.launch(arrayOf("*/*")) }, Modifier.testTag("welcome-restore"), enabled = backup !is dev.nori.music.app.vm.BackupUi.Working)
         if (said != null) Text(
             said, Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.bodySmall,
