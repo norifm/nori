@@ -5,10 +5,10 @@
 
 use std::ffi::c_char;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use nori_core::settings_store::Settings;
-use nori_core::sync::{ActiveProfile, Came, Here, NeededPlugin, PairingView, ProfilesSynced, Reach, SyncClient, SyncEvent, SyncState, Syncing};
+use nori_core::sync::{ActiveProfile, Came, Here, Nearby, NearbyAnnouncement, NearbyTxt, NeededPlugin, PairingView, ProfilesSynced, Reach, SyncClient, SyncEvent, SyncState, Syncing};
 use serde_json::json;
 
 use crate::session::{c, c_text, report, REPORT_SYNC};
@@ -57,6 +57,7 @@ fn open(dir: &Path) -> Result<(), String> {
     let sockets = nori_http::WebSockets::new();
     let sync = Syncing::native(settings, sockets.clone(), Arc::new(Told { data: dir.into() }), Reach::Phone);
     sockets.tell(&sync);
+    sync.nearby_with(Arc::new(Bonjour));
     let _ = SYNC.set(sync);
     Ok(())
 }
@@ -95,7 +96,8 @@ fn state(sync: &Syncing) -> String {
         other => (format!("{other:?}"), None, None),
     };
     let devices: Vec<_> = sync.devices().iter().map(|d| json!({ "name": d.name, "online": d.online, "lastMs": d.last_ms })).collect();
-    let mut v = json!({ "state": state, "refused": refused, "retryMs": retry_ms, "devices": devices });
+    let nearby: Vec<_> = sync.nearby().iter().map(|d| json!({ "name": d.name, "link": d.link })).collect();
+    let mut v = json!({ "state": state, "refused": refused, "retryMs": retry_ms, "devices": devices, "nearby": nearby });
     match sync.pairing() {
         PairingView::Code { link, words } => v["pairing"] = json!({ "code": link, "words": words }),
         PairingView::Confirm { confirmation: c } => v["pairing"] = json!({ "confirm": { "name": c.name, "profiles": c.profiles, "leaves": c.leaves, "words": c.words, "asksKeepCopy": c.asks_keep_copy } }),
@@ -144,6 +146,100 @@ pub unsafe extern "C" fn nori_ios_sync_take(link: *const c_char) -> *mut c_char 
     match s.pair_take(c_text(link), Came::Link) {
         None => std::ptr::null_mut(),
         Some(r) => c(&format!("{r:?}")).into_raw(),
+    }
+}
+
+/// Takes the code of a device the pairing screen lists as nearby; its words are checked as for a link.
+///
+/// # Safety
+/// `link` is NUL-terminated UTF-8, or `NULL`.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_sync_take_nearby(link: *const c_char) {
+    if let Some(s) = SYNC.get() {
+        s.pair_take(c_text(link), Came::Nearby);
+    }
+}
+
+/// The pairing screen opened (`on` 1) or closed: while open, `nearby` in the state lists the devices
+/// waiting to be paired that have a server account of this iPod's.
+#[no_mangle]
+pub extern "C" fn nori_ios_sync_look(on: i32) {
+    if let Some(s) = SYNC.get() {
+        s.pair_look(on != 0);
+    }
+}
+
+/// Announces a device waiting to be paired: `name` and its TXT record as a JSON object of strings;
+/// `name` NULL withdraws it.
+pub type PairAnnounceFn = unsafe extern "C" fn(name: *const c_char, txt: *const c_char);
+/// Looks for devices waiting to be paired while `on` is 1, reporting them to
+/// [`nori_ios_sync_nearby_found`] and [`nori_ios_sync_nearby_lost`].
+pub type PairBrowseFn = unsafe extern "C" fn(on: i32);
+
+/// The app's Bonjour for pairing. C callbacks carry no handle, so they live in a process-wide slot.
+static PAIR_HOOKS: Mutex<Option<(PairAnnounceFn, PairBrowseFn)>> = Mutex::new(None);
+
+fn pair_hooks() -> Option<(PairAnnounceFn, PairBrowseFn)> {
+    *PAIR_HOOKS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Where the nearby way of pairing goes. NULL clears it.
+///
+/// # Safety
+/// Both, when set, are functions the process keeps while they stay set.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_sync_on_nearby(announce: Option<PairAnnounceFn>, browse: Option<PairBrowseFn>) {
+    *PAIR_HOOKS.lock().unwrap_or_else(|e| e.into_inner()) = announce.zip(browse);
+}
+
+/// [`Nearby`] over the app's Bonjour.
+struct Bonjour;
+
+impl Nearby for Bonjour {
+    fn announce(&self, waiting: Option<NearbyAnnouncement>) {
+        let Some((announce, _)) = pair_hooks() else { return };
+        match waiting {
+            Some(w) => {
+                let txt: serde_json::Map<String, serde_json::Value> = w.txt.into_iter().map(|t| (t.key, t.value.into())).collect();
+                let (name, txt) = (c(&w.name), c(&serde_json::Value::Object(txt).to_string()));
+                // SAFETY: the strings live through the call; the app copies what it keeps.
+                unsafe { announce(name.as_ptr(), txt.as_ptr()) };
+            }
+            // SAFETY: NULL is the withdrawal the hook expects.
+            None => unsafe { announce(std::ptr::null(), std::ptr::null()) },
+        }
+    }
+
+    fn browse(&self, on: bool) {
+        if let Some((_, browse)) = pair_hooks() {
+            // SAFETY: a plain call into the app.
+            unsafe { browse(i32::from(on)) };
+        }
+    }
+}
+
+/// Bonjour resolved `service`, a device waiting to be paired, with its TXT record as a JSON object of
+/// strings.
+///
+/// # Safety
+/// The strings are NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_sync_nearby_found(service: *const c_char, txt: *const c_char) {
+    let txt: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&c_text(txt)).unwrap_or_default();
+    let txt = txt.into_iter().filter_map(|(key, v)| v.as_str().map(|v| NearbyTxt { key, value: v.into() })).collect();
+    if let Some(s) = SYNC.get() {
+        s.nearby_found(c_text(service), txt);
+    }
+}
+
+/// Bonjour saw a device waiting to be paired go.
+///
+/// # Safety
+/// `service` is NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_sync_nearby_lost(service: *const c_char) {
+    if let Some(s) = SYNC.get() {
+        s.nearby_lost(c_text(service));
     }
 }
 

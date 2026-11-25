@@ -6,6 +6,7 @@ import dev.nori.music.ffi.settings.SavedServer
 import dev.nori.music.ffi.sync.Came
 import dev.nori.music.ffi.sync.Confirmation
 import dev.nori.music.ffi.sync.MergeOffer
+import dev.nori.music.ffi.sync.NearbyDevice
 import dev.nori.music.ffi.sync.NeededPlugin
 import dev.nori.music.ffi.sync.PairingRefused
 import dev.nori.music.ffi.sync.PairingView
@@ -16,7 +17,6 @@ import dev.nori.music.ffi.sync.SyncState
 import dev.nori.music.ffi.sync.Syncing
 import dev.nori.music.remote.Remotes
 import dev.nori.music.settings.label
-import dev.nori.music.sync.Nearby
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -136,7 +136,7 @@ class SyncViewModel(app: Application) : NoriViewModel(app) {
     private var opened = false
 
     /** Devices waiting nearby with their pairing screen open. */
-    val nearby: StateFlow<List<Nearby>> = sync.nearby
+    val nearby: StateFlow<List<NearbyDevice>> = sync.nearby
 
     /** Plugins the synced profiles need, for the existing install path. */
     val installs: StateFlow<List<NeededPlugin>> = sync.installs
@@ -207,7 +207,10 @@ class SyncViewModel(app: Application) : NoriViewModel(app) {
         act { it.pairTake(text.trim(), came) }
     }
 
-    fun take(waiting: Nearby) = take(waiting.link, Came.NEARBY)
+    fun take(waiting: NearbyDevice) = take(waiting.link, Came.NEARBY)
+
+    /** The pairing screen opened or closed: while open, devices waiting nearby are listed. */
+    fun look(on: Boolean) = sync.look(on)
 
     /** Yes to the confirmation; [keepCopy] answers the first pairing's question. */
     fun confirm(keepCopy: Boolean) = act { it.pairConfirm(name, keepCopy) }

@@ -173,10 +173,6 @@ private fun syncCheck(nori: dev.nori.music.Nori, arg: String, value: String, con
             nori.settings.value.servers.filter { it.name == value }.forEach { p -> sync.syncOff(p.id, false); android.os.Handler(android.os.Looper.getMainLooper()).post { nori.removeServer(p.id) } }
             "drop $value"
         }
-        "nearby" -> {
-            nori.sync.heardNearby(value.split('|', limit = 2).takeIf { it.size == 2 }?.let { (n, link) -> listOf(dev.nori.music.sync.Nearby(n, link)) }.orEmpty())
-            "nearby $value"
-        }
         else -> "unknown sync check $arg"
     }
 }

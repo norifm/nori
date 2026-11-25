@@ -144,6 +144,14 @@ fun PairDevice() {
     val takes = takesCode(prefs.servers.size)
     var taking by rememberSaveable { mutableStateOf<Came?>(null) }
     LaunchedEffect(vm) { vm.opened() }
+    // Devices waiting nearby are looked for only while this screen is open.
+    androidx.compose.runtime.DisposableEffect(vm) {
+        vm.look(true)
+        onDispose { vm.look(false) }
+    }
+    val context = LocalContext.current
+    val askLocalNetwork = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(Unit) { if (dev.nori.music.sync.LocalNetwork.wanted(context)) askLocalNetwork.launch(dev.nori.music.sync.LocalNetwork.PERMISSION) }
     LaunchedEffect(step) {
         when (step) {
             PairStep.Paired -> { tell(say.syncPaired); nav.back() }

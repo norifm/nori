@@ -54,13 +54,6 @@ pub enum Role {
     Take,
 }
 
-/// A device nearby waiting to be paired, as the sheet lists it: its name and its code.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Nearby {
-    pub name: String,
-    pub link: String,
-}
-
 /// What the sheet shows of a pairing.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Shown {
@@ -78,8 +71,8 @@ pub struct Shown {
 #[derive(Default)]
 pub struct Sheet {
     pub role: Role,
-    /// Listed while taking a code. Nothing finds them yet: the core's announcements are to come.
-    pub nearby: Vec<Nearby>,
+    /// The devices waiting nearby, listed while taking a code.
+    pub nearby: Vec<nori_core::sync::NearbyDevice>,
     /// The new device's name from the confirmation, for the line once it is paired.
     asked: Option<String>,
     /// The link the QR code was drawn for, and the code.

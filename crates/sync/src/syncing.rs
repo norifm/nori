@@ -24,6 +24,7 @@ use crate::pairing::{AdmitStep, Admitting, Came, Confirmation, JoinStep, Joining
 use crate::presence::{Pings, Presence, Reach};
 use crate::profile::{Here, NeededPlugin, SignInCheck};
 use crate::keys::RoomName;
+use crate::nearby::{self, Nearby, NearbyAnnouncement, NearbyDevice, NearbyTxt};
 use crate::room::{Heard, Refusal, Relay};
 use crate::session::{Outcome, RemoteHeard, Session, SyncEvent};
 use crate::sync_server;
@@ -217,6 +218,18 @@ struct Inner {
     /// The server's clock less the executor's (µs), from the answer that came back fastest since the
     /// group room last opened: (the way there and back, the offset).
     clock: Option<(i64, i64)>,
+    nearby: NearbyState,
+}
+
+/// The nearby way a code travels (nearby.rs), as this device takes part in it.
+#[derive(Default)]
+struct NearbyState {
+    /// The platform's mDNS; none where there is no local network (a browser).
+    hook: Option<Arc<dyn Nearby>>,
+    announced: Option<NearbyAnnouncement>,
+    /// A pairing screen is open here.
+    looking: bool,
+    found: Vec<NearbyDevice>,
 }
 
 /// What to tell the client once the state is let go.
@@ -226,6 +239,8 @@ enum Tell {
     Event(SyncEvent),
     Changed,
     Remote(Arc<dyn RemoteRoom>, ToRemote),
+    Announce(Arc<dyn Nearby>, Option<NearbyAnnouncement>),
+    Browse(Arc<dyn Nearby>, bool),
 }
 
 /// A device's sync. See the module.
@@ -259,7 +274,7 @@ impl Syncing {
             sockets,
             client,
             executor,
-            inner: Mutex::new(Inner { presence: Presence::new(reach), running: None, pairing: PairingView::Idle, remote: None, clock: None }),
+            inner: Mutex::new(Inner { presence: Presence::new(reach), running: None, pairing: PairingView::Idle, remote: None, clock: None, nearby: NearbyState::default() }),
             sockets_made: Arc::default(),
             wake: Arc::default(),
             profiles_changed: AtomicBool::new(false),
@@ -305,6 +320,7 @@ impl Syncing {
             self.stop(&mut inner);
         }
         Syncing::tell_remote(&mut inner, &mut tells);
+        self.tell_nearby(&mut inner, &mut tells);
         if self.shown(&inner, now) != shown {
             tells.push(Tell::Changed);
         }
@@ -484,6 +500,20 @@ impl Syncing {
         }
     }
 
+    /// Announces this device's code while its pairing screen shows one, for the device's server
+    /// accounts; withdraws it otherwise.
+    fn tell_nearby(&self, inner: &mut Inner, tells: &mut Vec<Tell>) {
+        let Some(hook) = inner.nearby.hook.clone() else { return };
+        let wanted = match &inner.pairing {
+            PairingView::Code { link, .. } => nearby::announcement(link, &nearby::account_tags(&self.servers())),
+            _ => None,
+        };
+        if wanted != inner.nearby.announced {
+            inner.nearby.announced = wanted.clone();
+            tells.push(Tell::Announce(hook, wanted));
+        }
+    }
+
     /// Hands the session and the pairing what their links heard, until nothing more comes.
     fn pump(&self, inner: &mut Inner, now: i64, tells: &mut Vec<Tell>) {
         let Inner { presence, running, pairing, remote, clock, .. } = inner;
@@ -524,10 +554,11 @@ impl Syncing {
         }
     }
 
-    /// What a client shows of sync: the state, the pairing, and which of the group's devices are online.
-    fn shown(&self, inner: &Inner, now: i64) -> (SyncState, PairingView, Vec<(String, bool)>) {
+    /// What a client shows of sync: the state, the pairing, which of the group's devices are online, and
+    /// the devices waiting nearby.
+    fn shown(&self, inner: &Inner, now: i64) -> (SyncState, PairingView, Vec<(String, bool)>, Vec<NearbyDevice>) {
         let devices = inner.running.as_ref().and_then(|r| r.paired.as_ref()).map(|p| p.session.devices().into_iter().map(|d| (d.device, d.online)).collect()).unwrap_or_default();
-        (self.state_of(inner, now), inner.pairing.clone(), devices)
+        (self.state_of(inner, now), inner.pairing.clone(), devices, inner.nearby.found.clone())
     }
 
     /// One thing the pairing's link heard.
@@ -833,6 +864,51 @@ impl Syncing {
         });
     }
 
+    /// Where the nearby way of pairing reaches the local network: the platform's mDNS.
+    pub fn nearby_with(&self, nearby: Arc<dyn Nearby>) {
+        self.with(|_, inner, _| inner.nearby.hook = Some(nearby));
+    }
+
+    /// A pairing screen opened here (`on`) or closed: while open, it lists the devices nearby that wait to
+    /// be paired and have a server account of this device's ([`Syncing::nearby`]).
+    pub fn pair_look(&self, on: bool) {
+        let mut tells = Vec::new();
+        self.with(|_, inner, _| {
+            let n = &mut inner.nearby;
+            if n.looking == on {
+                return;
+            }
+            n.looking = on;
+            if !on {
+                n.found.clear();
+            }
+            tells.extend(n.hook.clone().map(|hook| Tell::Browse(hook, on)));
+        });
+        self.tell(tells);
+    }
+
+    /// The platform's mDNS found `service`, a device waiting to be paired, with TXT `txt`.
+    pub fn nearby_found(&self, service: String, txt: Vec<NearbyTxt>) {
+        let ours = nearby::account_tags(&self.servers());
+        self.with(|_, inner, _| {
+            let n = &mut inner.nearby;
+            let Some((link, name)) = nearby::code(&txt, &ours).and_then(|link| Some((link.clone(), crate::pairing::code_name(&link)?))).filter(|_| n.looking) else { return };
+            n.found.retain(|d| d.service != service);
+            n.found.push(NearbyDevice { service, name, link });
+        });
+    }
+
+    /// The platform's mDNS saw `service` go.
+    pub fn nearby_lost(&self, service: String) {
+        self.with(|_, inner, _| inner.nearby.found.retain(|d| d.service != service));
+    }
+
+    /// The devices waiting to be paired that a pairing screen lists: take one with
+    /// [`Syncing::pair_take`], came [`Came::Nearby`].
+    pub fn nearby(&self) -> Vec<NearbyDevice> {
+        self.inner().nearby.found.clone()
+    }
+
     /// Stops the pairing under way, or forgets how the last one ended.
     pub fn pair_cancel(&self) {
         self.with(|_, inner, _| {
@@ -959,6 +1035,8 @@ impl Syncing {
                 Tell::Install(p) => self.client.install(p),
                 Tell::Event(e) => self.client.event(e),
                 Tell::Changed => self.client.changed(),
+                Tell::Announce(hook, waiting) => hook.announce(waiting),
+                Tell::Browse(hook, on) => hook.browse(on),
                 Tell::Remote(room, ToRemote::InRoom(now)) => room.in_room(now),
                 Tell::Remote(room, ToRemote::Keyed) => room.keyed(),
                 Tell::Remote(room, ToRemote::Changed) => room.changed(),

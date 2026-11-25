@@ -424,6 +424,69 @@ fn profiles_sync_directly_when_the_server_refuses_both() {
     assert_eq!(mac.told.events.lock().unwrap().iter().filter(|e| matches!(e, SyncEvent::NewDevice { .. })).count(), 0, "meeting directly is no new device");
 }
 
+/// What a device's mDNS was asked: what it announces, and whether it looks.
+#[derive(Default)]
+struct Mdns(Mutex<(Option<crate::nearby::NearbyAnnouncement>, bool)>);
+
+impl crate::nearby::Nearby for Mdns {
+    fn announce(&self, waiting: Option<crate::nearby::NearbyAnnouncement>) {
+        self.0.lock().unwrap().0 = waiting;
+    }
+    fn browse(&self, on: bool) {
+        self.0.lock().unwrap().1 = on;
+    }
+}
+
+impl Mdns {
+    fn announced(&self) -> Option<crate::nearby::NearbyAnnouncement> {
+        self.0.lock().unwrap().0.clone()
+    }
+    fn looks(&self) -> bool {
+        self.0.lock().unwrap().1
+    }
+}
+
+fn with_mdns(d: &Device) -> Arc<Mdns> {
+    let mdns = Arc::new(Mdns::default());
+    d.syncing.nearby_with(mdns.clone());
+    mdns
+}
+
+#[test]
+fn a_pairing_screen_lists_a_waiting_device_of_the_same_account_and_pairs_it_by_its_words() {
+    let hub = Hub::new(NOW);
+    let pixel = Device::new(&hub, Reach::Computer, vec![navidrome("a", "https://music.example")]);
+    let mac = Device::new(&hub, Reach::Computer, vec![navidrome("m", "https://music.example")]);
+    let stranger = Device::new(&hub, Reach::Computer, vec![SavedServer { password: "other".into(), ..navidrome("s", "https://music.example") }]);
+    let (on_pixel, on_mac, on_stranger) = (with_mdns(&pixel), with_mdns(&mac), with_mdns(&stranger));
+    assert!(on_mac.announced().is_none() && !on_pixel.looks(), "nothing outside a pairing screen");
+
+    mac.syncing.pair_show("MacBook".into());
+    settle(&[&pixel, &mac]);
+    let PairingView::Code { words, .. } = mac.syncing.pairing() else { panic!("a code") };
+    let waiting = on_mac.announced().expect("announced while the code shows");
+    for (d, mdns) in [(&pixel, &on_pixel), (&stranger, &on_stranger)] {
+        d.syncing.nearby_found(waiting.name.clone(), waiting.txt.clone());
+        assert!(d.syncing.nearby().is_empty(), "nothing listed outside a pairing screen");
+        d.syncing.pair_look(true);
+        assert!(mdns.looks());
+        d.syncing.nearby_found(waiting.name.clone(), waiting.txt.clone());
+    }
+    assert!(stranger.syncing.nearby().is_empty(), "another account's device lists nothing");
+    let listed = pixel.syncing.nearby();
+    assert_eq!(listed.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["MacBook"]);
+    assert_eq!(pixel.syncing.pair_take(listed[0].link.clone(), Came::Nearby), None);
+    settle(&[&pixel, &mac]);
+    let PairingView::Confirm { confirmation } = pixel.syncing.pairing() else { panic!("something to confirm") };
+    assert_eq!(confirmation.words, Some(words), "the words are checked as for a link");
+    pixel.syncing.pair_confirm("Pixel".into(), false);
+    settle(&[&pixel, &mac]);
+    assert_eq!(mac.syncing.pairing(), PairingView::Paired);
+    assert!(on_mac.announced().is_none(), "withdrawn once paired");
+    pixel.syncing.pair_look(false);
+    assert!(!on_pixel.looks() && pixel.syncing.nearby().is_empty());
+}
+
 #[test]
 fn a_paired_device_s_sync_tells_its_client_nothing_before_the_client_has_it() {
     let hub = Hub::new(NOW);

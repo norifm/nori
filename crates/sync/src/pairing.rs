@@ -137,6 +137,11 @@ impl Code {
     }
 }
 
+/// The name of the device whose code `text` is; None when it is no code.
+pub(crate) fn code_name(text: &str) -> Option<String> {
+    Code::parse(text).ok().map(|c| c.name)
+}
+
 /// The group's key and what goes with it, sealed to the new device's lock.
 #[derive(Serialize, Deserialize)]
 struct Welcome {

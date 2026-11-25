@@ -148,6 +148,24 @@ first two:
 The other device refuses a code that does not read (`NotACode`), one from a newer nori (`Newer`) and a
 dead one (`Expired`). It answers `Gone` when the new device left before the key was sent.
 
+### A device waiting nearby
+
+The third way a code travels is the local network (`nearby.rs`). It works only between pairing screens:
+
+- While the new device shows its code, it announces it as an mDNS service, `_nori-pair._tcp`. The TXT
+  record holds the code and a tag for each of the device's server accounts. A tag is a keyed hash of the
+  user under the account's password or key, so it tells nothing to a device without them.
+- While a pairing screen is open (`pair_look`), the device looks for such services. It lists those that
+  share one of its accounts' tags (`nearby`), by the name in their code.
+- The user picks one, and the screen takes its code with `pair_take(link, Came::Nearby)`. The words are
+  checked as for a pasted link.
+
+Nothing is announced or looked for outside a pairing screen, so no device is prompted by another. A
+device without a server account announces nothing, as no screen could list it. The client hands sync its
+mDNS as a `Nearby`. The desktop and the terminal use mdns-sd (`nori_host::sync::computer`), Android
+NsdManager (`sync/NsdPairing.kt`), and the iPod Bonjour (`Devices.swift`). A browser has no local
+network and lists nothing.
+
 ## The group on a device
 
 `Kept` holds the group (`Group`) and the profile sync (`Book`). It is JSON in the app database's
@@ -302,6 +320,10 @@ profile open, neither reaches the door nor lists it.
 
 The web client has no door: it always goes through the server.
 
+Android 17 asks the user before an app reaches the local network. The app asks once the phone is paired
+(`sync/LocalNetwork.kt`), and a pairing screen asks when it opens. Refused, mDNS finds nothing and doors
+do not answer, so everything goes through the server.
+
 ## What a client does
 
 The client owns the sockets, the screens and the words. It makes one `Syncing` when the app starts,
@@ -322,6 +344,7 @@ with its `Sockets`, its `SyncClient` and its `Reach`, and calls these:
 | Reset pairing | `reset_notice`, then `reset` |
 | Merge offers | `offers`, `merge`, `keep_apart` |
 | Sync this profile, sign-ins | `synced`, `sync_off`, `signed_in` |
+| A pairing screen opened or closed | `pair_look`, then `nearby` lists the waiting devices |
 | A session's remote control | Hand the `Syncing` to the session (`nori_host::session::Open::sync`, Android's `Remote` constructor) |
 
 `SyncClient` hears what to do:

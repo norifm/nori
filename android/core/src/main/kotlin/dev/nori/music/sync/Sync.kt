@@ -1,11 +1,13 @@
 package dev.nori.music.sync
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import dev.nori.music.Nori
 import dev.nori.music.NoriLog
 import dev.nori.music.ffi.sync.Ended
 import dev.nori.music.ffi.sync.Here
+import dev.nori.music.ffi.sync.NearbyDevice
 import dev.nori.music.ffi.sync.NeededPlugin
 import dev.nori.music.ffi.sync.ProfilesSynced
 import dev.nori.music.ffi.sync.SyncClient
@@ -80,19 +82,22 @@ private class OkSockets(private val client: () -> OkHttpClient) : Sockets {
     }
 }
 
-/** A device waiting nearby with its pairing screen open: its name and its code. */
-data class Nearby(val name: String, val link: String)
-
 /**
  * Pairing and profile sync (the core's `Syncing`): nothing runs unless this phone is paired with sync on.
  * It hears whether the app is shown and playing, and lends sync's keep-alive the engine's wakes, so it
  * never wakes the phone by itself. Built off the main thread ([Nori.warmUp]).
  */
-class Sync(private val nori: Nori) : SyncClient {
+class Sync(private val nori: Nori, context: Context) : SyncClient {
     private val sockets = OkSockets { nori.http.sockets }
+    private val pairing = NsdPairing(context) { syncing }
 
     /** Made on [worker]: it reads whether this phone is paired. */
-    val syncing: Syncing by lazy { Syncing.onPhone(nori.settings.core, sockets, this).also { sockets.sync = it } }
+    val syncing: Syncing by lazy {
+        Syncing.onPhone(nori.settings.core, sockets, this).also {
+            sockets.sync = it
+            it.nearbyWith(pairing)
+        }
+    }
 
     private val main = Handler(Looper.getMainLooper())
     /** Calls into the core leave the main thread here, one at a time. */
@@ -107,7 +112,17 @@ class Sync(private val nori: Nori) : SyncClient {
 
     private val _changes = MutableStateFlow(0L)
 
-    /** Bumped when where sync stands, the pairing or the group's devices changed; screens read them again. */
+    private val _paired = MutableStateFlow(false)
+
+    /** Whether this phone is paired with sync on: the app then asks to reach the local network ([LocalNetwork]). */
+    val paired: StateFlow<Boolean> = _paired.asStateFlow()
+
+    private val _nearby = MutableStateFlow<List<NearbyDevice>>(emptyList())
+
+    /** The devices waiting to be paired that the pairing screen lists, while it looks ([look]). */
+    val nearby: StateFlow<List<NearbyDevice>> = _nearby.asStateFlow()
+
+    /** Bumped when where sync stands, the pairing, the group's devices or the nearby list changed; screens read them again. */
     val changes: StateFlow<Long> = _changes.asStateFlow()
 
     private val _events = MutableSharedFlow<SyncEvent>(extraBufferCapacity = 16)
@@ -120,24 +135,15 @@ class Sync(private val nori: Nori) : SyncClient {
     /** Plugins the synced profiles need, for the plugin screens to install from their repos. */
     val installs: StateFlow<List<NeededPlugin>> = _installs.asStateFlow()
 
-    private val _nearby = MutableStateFlow<List<Nearby>>(emptyList())
-
-    /**
-     * Devices waiting nearby with their pairing screen open. The core does not announce them yet: the
-     * debug build's test bridge sets the list ([heardNearby]) until it does.
-     */
-    val nearby: StateFlow<List<Nearby>> = _nearby.asStateFlow()
-
-    fun heardNearby(devices: List<Nearby>) {
-        _nearby.value = devices
-    }
-
     /** The playback service's engine while it runs, which sync's keep-alive rides on while sync runs. */
     private var engine: EnginePlayer? = null
     private var riding = false
 
     /** Starts sync if this phone is paired with sync on, off the main thread. */
-    fun start() = worker.execute { syncing }
+    fun start() = worker.execute { syncing; heard() }
+
+    /** A pairing screen opened or closed: while open it lists the devices nearby waiting to be paired. */
+    fun look(on: Boolean) = worker.execute { syncing.pairLook(on); heard() }
 
     /** The app came on screen or left it. */
     fun shown(on: Boolean) = worker.execute { syncing.foreground(on) }
@@ -183,6 +189,13 @@ class Sync(private val nori: Nori) : SyncClient {
 
     override fun changed() {
         ride()
+        heard()
         _changes.update { it + 1 }
+    }
+
+    /** Reads again what the flows show. */
+    private fun heard() {
+        _paired.value = syncing.state() != SyncState.Idle
+        _nearby.value = syncing.nearby()
     }
 }

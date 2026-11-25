@@ -139,8 +139,21 @@ char *nori_ios_reopen(const char *data_dir);
 /// Starts pairing and profile sync over the database under data_dir: nothing runs unless this iPod is paired
 /// with sync on. NULL on success; otherwise an error to free with nori_ios_free.
 char *nori_ios_sync_open(const char *data_dir);
-/// Where sync stands, as JSON to free: {state, refused, retryMs, devices: [{name, online, lastMs}], pairing}.
+/// Where sync stands, as JSON to free: {state, refused, retryMs, devices: [{name, online, lastMs}], nearby:
+/// [{name, link}], pairing}.
 char *nori_ios_sync_state(void);
+/// The pairing screen opened (1) or closed: while open, nearby lists the devices waiting to be paired that
+/// have a server account of this iPod's.
+void nori_ios_sync_look(int32_t on);
+/// Takes the code of a device listed nearby; its words are checked as for a link.
+void nori_ios_sync_take_nearby(const char *link);
+/// The nearby way of pairing over the app's Bonjour: announce(name, txt JSON) while the code shows, name NULL
+/// withdraws it; browse(on) while a pairing screen looks. Found and lost go to the two below.
+typedef void (*NoriPairAnnounceFn)(const char *name, const char *txt);
+typedef void (*NoriPairBrowseFn)(int32_t on);
+void nori_ios_sync_on_nearby(NoriPairAnnounceFn announce, NoriPairBrowseFn browse);
+void nori_ios_sync_nearby_found(const char *service, const char *txt);
+void nori_ios_sync_nearby_lost(const char *service);
 /// Shows a code to pair this iPod into a group; NORI_REPORT_SYNC follows with it.
 void nori_ios_sync_code(void);
 /// Takes another device's pasted code: NULL when it reads, otherwise why not, to free.

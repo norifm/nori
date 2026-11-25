@@ -152,24 +152,51 @@ enum JamJoin {
     }
 }
 
-/// Remote control's mDNS through the system's Bonjour: this iPod's door announced while remote control
-/// is on, the account's other doors looked for while "Play on" is open. The library asks from its own
-/// threads; NetService runs on the main run loop.
+/// mDNS through the system's Bonjour, for one service type: remote control's doors (announced while
+/// remote control is on, looked for while "Play on" is open) and devices waiting to be paired (announced
+/// while this iPod's pairing code shows, looked for while a pairing screen is open). The library asks
+/// from its own threads; NetService runs on the main run loop.
 final class Bonjour: NSObject, NetServiceDelegate, NetServiceBrowserDelegate {
-    static let shared = Bonjour()
-    private static let type = "_nori._tcp."
+    /// What a resolved service is handed on with: its name, IPv4 addresses (JSON), port and TXT (JSON).
+    typealias Found = (String, String, UInt16, String) -> Void
+
+    static let remote = Bonjour(type: "_nori._tcp.", found: { name, hosts, port, txt in
+        name.withCString { n in hosts.withCString { h in txt.withCString { nori_ios_lan_found(n, h, port, $0) } } }
+    }, lost: { name in name.withCString { nori_ios_lan_lost($0) } })
+    static let pairing = Bonjour(type: "_nori-pair._tcp.", found: { name, _, _, txt in
+        name.withCString { n in txt.withCString { nori_ios_sync_nearby_found(n, $0) } }
+    }, lost: { name in name.withCString { nori_ios_sync_nearby_lost($0) } })
+
+    private let type: String
+    private let found: Found
+    private let lost: (String) -> Void
     private var announced: NetService?
     private var browser: NetServiceBrowser?
     /// Found and being resolved or resolved, by name: kept so their answers arrive.
-    private var found: [String: NetService] = [:]
+    private var resolving: [String: NetService] = [:]
 
-    func start() {
+    private init(type: String, found: @escaping Found, lost: @escaping (String) -> Void) {
+        self.type = type
+        self.found = found
+        self.lost = lost
+    }
+
+    static func start() {
         nori_ios_on_bonjour({ name, port, txt in
             let name = name.map { String(cString: $0) }
             let txt = txt.map { String(cString: $0) } ?? "{}"
-            DispatchQueue.main.async { Bonjour.shared.announce(name, port, txt) }
+            DispatchQueue.main.async { Bonjour.remote.announce(name, port, txt) }
         }, { on in
-            DispatchQueue.main.async { Bonjour.shared.browse(on != 0) }
+            DispatchQueue.main.async { Bonjour.remote.browse(on != 0) }
+        })
+        // Nothing listens for a waiting device: its announcement carries the code, and a port is only
+        // what DNS-SD asks.
+        nori_ios_sync_on_nearby({ name, txt in
+            let name = name.map { String(cString: $0) }
+            let txt = txt.map { String(cString: $0) } ?? "{}"
+            DispatchQueue.main.async { Bonjour.pairing.announce(name, 9, txt) }
+        }, { on in
+            DispatchQueue.main.async { Bonjour.pairing.browse(on != 0) }
         })
     }
 
@@ -177,7 +204,7 @@ final class Bonjour: NSObject, NetServiceDelegate, NetServiceBrowserDelegate {
         announced?.stop()
         announced = nil
         guard let name else { return }
-        let service = NetService(domain: "local.", type: Bonjour.type, name: name, port: Int32(port))
+        let service = NetService(domain: "local.", type: type, name: name, port: Int32(port))
         let fields = (try? JSONSerialization.jsonObject(with: Data(txt.utf8))) as? [String: String] ?? [:]
         service.setTXTRecord(NetService.data(fromTXTRecord: fields.mapValues { Data($0.utf8) }))
         service.publish()
@@ -187,24 +214,24 @@ final class Bonjour: NSObject, NetServiceDelegate, NetServiceBrowserDelegate {
     private func browse(_ on: Bool) {
         browser?.stop()
         browser = nil
-        found.values.forEach { $0.stop() }
-        found = [:]
+        resolving.values.forEach { $0.stop() }
+        resolving = [:]
         guard on else { return }
         let b = NetServiceBrowser()
         b.delegate = self
-        b.searchForServices(ofType: Bonjour.type, inDomain: "local.")
+        b.searchForServices(ofType: type, inDomain: "local.")
         browser = b
     }
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
-        found[service.name] = service
+        resolving[service.name] = service
         service.delegate = self
         service.resolve(withTimeout: 5)
     }
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
-        found[service.name] = nil
-        service.name.withCString { nori_ios_lan_lost($0) }
+        resolving[service.name] = nil
+        lost(service.name)
     }
 
     /// Every IPv4 address it resolved to goes to the core, which tries those on this iPod's network first.
@@ -214,10 +241,7 @@ final class Bonjour: NSObject, NetServiceDelegate, NetServiceBrowserDelegate {
         let text = { (object: Any) in (try? JSONSerialization.data(withJSONObject: object)).flatMap { String(data: $0, encoding: .utf8) } }
         let fields = NetService.dictionary(fromTXTRecord: sender.txtRecordData() ?? Data())
             .compactMapValues { String(data: $0, encoding: .utf8) }
-        let (json, addresses) = (text(fields) ?? "{}", text(hosts) ?? "[]")
-        sender.name.withCString { name in
-            addresses.withCString { h in json.withCString { nori_ios_lan_found(name, h, UInt16(sender.port), $0) } }
-        }
+        found(sender.name, text(hosts) ?? "[]", UInt16(sender.port), text(fields) ?? "{}")
     }
 
     /// An IPv4 socket address as text.

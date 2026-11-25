@@ -799,11 +799,9 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
     ui.set_mixing_label(words::MIXING.into());
     ui.set_first_run_words(words::first_run());
     let (tx, inbox) = Tx::new(ui.as_weak());
-    let sockets = nori_http::WebSockets::new();
     let told = tx.clone();
     let told = Arc::new(crate::pairing::Told { root: root.clone(), tx: told });
-    let sync = nori_core::sync::Syncing::native(root.app.settings.clone(), sockets.clone(), told, nori_core::sync::Reach::Computer);
-    sockets.tell(&sync);
+    let sync = nori_host::sync::computer(root.app.settings.clone(), told, nori_core::sync::Reach::Computer);
     let art = Rc::new(RefCell::new(Art::default()));
     let app = Rc::new_cyclic(|me: &Weak<RefCell<App>>| {
         let me = AppHandle(me.clone());
@@ -5200,6 +5198,7 @@ impl App {
     fn pair_open(&mut self) {
         let paired = nori_core::sync::paired(&self.root.app.settings);
         self.pair = crate::pairing::Sheet::new(if paired { crate::pairing::Role::Take } else { crate::pairing::Role::Show });
+        self.sync.pair_look(true);
         if paired {
             self.sync.pair_cancel();
         } else {
@@ -5237,6 +5236,7 @@ impl App {
     /// Closes the sheet: a pairing under way stops.
     fn pair_close(&mut self) {
         self.sync.pair_cancel();
+        self.sync.pair_look(false);
         self.ui().global::<crate::PairSheet>().set_open(false);
         self.settings_shown();
     }
@@ -5245,6 +5245,7 @@ impl App {
     fn pair_shown(&mut self) {
         let ui = self.ui();
         if ui.global::<crate::PairSheet>().get_open() {
+            self.pair.nearby = self.sync.nearby();
             self.pair.fill(&ui, &self.sync.pairing());
         }
     }
@@ -8952,7 +8953,7 @@ mod tests {
         ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
         let heard = hear_sheet(&ui);
         let mut pair = crate::pairing::Sheet::new(crate::pairing::Role::Take);
-        pair.nearby = vec![crate::pairing::Nearby { name: "Pixel 8".into(), link: "nori://pair#near".into() }];
+        pair.nearby = vec![nori_core::sync::NearbyDevice { service: "pixel-8".into(), name: "Pixel 8".into(), link: "nori://pair#near".into() }];
         pair.fill(&ui, &PairingView::Idle);
         let sheet = ui.global::<crate::PairSheet>();
         sheet.set_open(true);

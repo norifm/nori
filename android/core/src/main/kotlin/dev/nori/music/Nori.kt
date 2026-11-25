@@ -143,7 +143,7 @@ class Nori private constructor(private val context: Context) {
     val remotes = dev.nori.music.remote.Remotes(context, this)
 
     /** Pairing and profile sync; nothing runs unless this phone is paired with sync on. */
-    val sync = dev.nori.music.sync.Sync(this)
+    val sync = dev.nori.music.sync.Sync(this, context)
 
     /**
      * What the app offers over the profile in use: as its core has them once it is open (an account whose

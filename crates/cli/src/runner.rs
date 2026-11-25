@@ -227,12 +227,10 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start("").ok().map(Arc::new)).flatten();
     app.shared = root.app.clone();
     app.settings.own.shared = root.app.clone();
-    let sockets = nori_http::WebSockets::new();
     let told = tx.clone();
-    let sync = nori_core::sync::Syncing::native(root.app.settings.clone(), sockets.clone(), root.sync_client(move |synced| {
+    let sync = nori_host::sync::computer(root.app.settings.clone(), root.sync_client(move |synced| {
         let _ = told.send(Msg::Synced(synced));
     }), nori_core::sync::Reach::Computer);
-    sockets.tell(&sync);
     let mut r = Runner { sync, root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, code: None, codes: 0, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
