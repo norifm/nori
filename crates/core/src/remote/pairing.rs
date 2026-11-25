@@ -1,7 +1,8 @@
-//! Devices paired with this one over the LAN. A profile without a server account pairs device by device:
-//! one device shows its code (lan.rs's [`nori_remote::lan::PairCode`]), the other sends it back to that device's door,
-//! and both keep a key of their own for the pair. An account's devices need none: they sign with the
-//! account's proof. A browser opens no door, so it only signs with the keys kept; pairing is native.
+//! Devices paired with this one over the LAN. A profile without a server, on a device in no group,
+//! pairs device by device: one device shows its code (lan.rs's [`nori_remote::lan::PairCode`]), the
+//! other sends it back to that device's door, and both keep a key of their own for the pair. My devices
+//! in a group need none: they sign with a key from the group's. A browser opens no door, so it only
+//! signs with the keys kept; pairing is native.
 
 use nori_remote::wire::DeviceKind;
 use nori_settings::settings_store::Settings;
@@ -44,17 +45,18 @@ fn edit_kept<R>(settings: &Settings, edit: impl FnOnce(&mut Vec<Kept>) -> R) -> 
     Some(out)
 }
 
-/// The key every device of the account (or a LAN jam) signs with; None where devices pair one by one.
-pub(super) fn shared_key(client: &Client) -> Option<String> {
+/// The key every device of a LAN jam, or of the group (`group`, its devices' key for this profile),
+/// signs with; None where devices pair one by one.
+pub(super) fn shared_key(client: &Client, group: Option<String>) -> Option<String> {
     if let Some((_, secret)) = client.core.lan_jam.read().as_ref() {
         return Some(secret.clone());
     }
-    client.core.account.read().as_ref().map(|account| account.proof().to_string())
+    group
 }
 
-/// The key this device signs its requests to device `peer`'s door with.
-pub(super) fn lan_key(client: &Client, peer: &str) -> Option<String> {
-    shared_key(client).or_else(|| kept(&client.core.session.settings).into_iter().find(|k| k.id == peer).map(|k| k.key))
+/// The key this device signs its requests to device `peer`'s door with; `shared`: [`shared_key`].
+pub(super) fn lan_key(client: &Client, shared: Option<String>, peer: &str) -> Option<String> {
+    shared.or_else(|| kept(&client.core.session.settings).into_iter().find(|k| k.id == peer).map(|k| k.key))
 }
 
 /// Whether device `id` is paired with this one.
@@ -75,7 +77,7 @@ mod native {
     use nori_remote::wire::{DeviceKind, Member};
     use nori_settings::settings_store::Settings;
 
-    use super::{edit_kept, kept, shared_key, Kept};
+    use super::{edit_kept, kept, Kept};
     use crate::remote::Remote;
     use crate::client::Client;
     use crate::db;
@@ -140,11 +142,11 @@ mod native {
         Some(invite)
     }
 
-    /// What this device's door admits: an account's devices by its proof, a jam guest's host by its
-    /// member key, else the devices paired with it.
-    pub(in crate::remote) fn door_access(client: &Client) -> Option<lan::Access> {
-        if let Some(secret) = shared_key(client) {
-            return Some(lan::Access::Account(secret));
+    /// What this device's door admits: my devices by the key they share (`shared`, [`shared_key`]), else
+    /// the devices paired with it.
+    pub(in crate::remote) fn door_access(client: &Client, shared: Option<String>) -> Option<lan::Access> {
+        if let Some(secret) = shared {
+            return Some(lan::Access::Shared(secret));
         }
         let settings = &client.core.session.settings;
         let invite = invite(settings)?;
@@ -279,7 +281,7 @@ mod native {
     impl Remote {
         /// Whether this profile pairs device by device: one without a server account, not a jam guest's.
         fn pairs(&self) -> bool {
-            self.me.kind != DeviceKind::Guest && shared_key(&self.client).is_none() && self.client.core.serverless()
+            self.me.kind != DeviceKind::Guest && self.shared_key().is_none() && self.client.core.serverless()
         }
 
         /// Keeps a device paired now, shows it, and looks for doors again: the paired device's door, seen
@@ -313,9 +315,9 @@ mod native {
             }
         }
 
-        /// The door admits what the paired list says now.
-        fn reopen_access(&self) {
-                if let (Some(door), Some(access)) = (&self.inner.lock().door, door_access(&self.client)) {
+        /// The door admits what the paired list, or the group, says now.
+        pub(in crate::remote) fn reopen_access(&self) {
+            if let (Some(door), Some(access)) = (&self.inner.lock().door, door_access(&self.client, self.shared_key())) {
                 door.set_access(access);
             }
         }

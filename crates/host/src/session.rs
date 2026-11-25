@@ -274,6 +274,8 @@ pub struct Open<'a> {
     /// The platform's mDNS for remote control (Bonjour on iOS). None: with `desktop`, the session's own
     /// (mdns-sd); without, no nearby devices.
     pub discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
+    /// The client's sync, whose group room reaches my devices for remote control.
+    pub sync: Option<Arc<nori_core::sync::Syncing>>,
     /// Where work that waits on the network runs ([`crate::tasks`] natively).
     pub tasks: Arc<dyn Tasks>,
     /// Songs are kept as files under `data`: the stream cache and downloads. A browser keeps none.
@@ -348,6 +350,7 @@ pub struct Parts {
     /// The rules the client was last told of ([`Parts::account_changed`]).
     rules_shown: parking_lot::Mutex<ProfileRules>,
     discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
+    sync: Option<Arc<nori_core::sync::Syncing>>,
     /// The AutoEQ notice said last, waiting for an answer.
     curve: parking_lot::Mutex<Option<CurveNotice>>,
     /// The sound pages in sight ([`Parts::sound_page`]).
@@ -490,6 +493,7 @@ impl Session {
             profile_id: o.profile.id.clone(),
             rules_shown: parking_lot::Mutex::new(rules),
             discovery: o.discovery,
+            sync: o.sync,
             curve: Default::default(),
             tuning: Default::default(),
             tasks: o.tasks,
@@ -911,7 +915,7 @@ impl Handle {
             let discovery = self.discovery.clone();
             let player = Arc::new(crate::remote::HostPlayer(self.clone()));
             let shown = crate::remote::Shown { out: self.out.clone(), remotes: self.remotes.clone(), engine: self.engine.clone() };
-            let r = nori_core::remote::Remote::with_tasks(self.client.clone(), self.device.clone(), player, Arc::new(shown), discovery, self.tasks.clone());
+            let r = nori_core::remote::Remote::with_tasks(self.client.clone(), self.device.clone(), player, Arc::new(shown), discovery, self.sync.clone(), self.tasks.clone());
             #[cfg(feature = "desktop")]
             if let Some(m) = &mdns {
                 m.serve(&r);
@@ -1908,6 +1912,7 @@ pub(crate) fn test_open<'a>(queue: Arc<nori_core::queue::Session>, data: &'a Pat
         mpris: None,
         device: nori_core::remote::RemoteMe { name: "Mac".into(), kind: nori_remote::wire::DeviceKind::Desktop },
         discovery: None,
+        sync: None,
         tasks: crate::tasks(),
         keeps_music: true,
         decoders: Default::default(),

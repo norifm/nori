@@ -233,6 +233,75 @@ writes it after its own changes and reads it when it joins the room. A copy olde
 holds changes nothing, and the device writes back what is newer. Turning the choice off deletes the copy.
 The choice syncs like a profile, and the newer choice wins.
 
+## Remote control
+
+My devices, for remote control, are the group's devices that have the same synced profile open. The
+protocol is remote control's own (`crates/remote/src/wire.rs`, `GroupSaid`). The device that plays keeps
+the queue and has the last word. The others send it commands and show its state. The core's
+`Remote` speaks it (`crates/core/src/remote.rs`). Sync carries it in the group room as one more kind of
+message, `Said::Remote`, sealed like the rest and named with the profile's sync identity. Sync reads
+nothing else of it.
+
+A remote attaches to its client's `Syncing` with `remote_open`, for the profile it was made for. Sync
+then tells it, through `RemoteRoom`:
+
+| Call | When |
+|---|---|
+| `in_room(Entered)` | The device is in the group room, and the profile syncs |
+| `in_room(Renamed)` | The profile's sync identity changed, as when two profiles merge at a pairing |
+| `in_room(Left)` | The connection dropped, the profile stopped syncing, or the device left the group |
+| `heard` | A device with the same sync identity open said something |
+| `left` | That device's connection left the room |
+| `keyed` | `lan_secret` changed |
+
+Entered, the remote says who it is (`GroupSaid::Here`) and asks the others. Renamed, it says so again
+and keeps the devices it heard: they hear it once their own identity changed too. Left, every device
+heard there is gone. Keyed, the LAN door admits and announces by the new key.
+
+`remote_say` sends whether a remote is attached or not, so a stopped remote's `Gone` still goes. Each
+`Here` and `Gone` carries the remote's `instance`. A remote made again at once, for another profile, may
+be heard before its predecessor's last word, and the older word then counts for nothing.
+
+So a profile that does not sync is offered no device, and neither are local files profiles, which never
+sync. A device that cannot play a profile never opens it. A profile that synced without its sign-in plays
+there without an account, and its remote control works all the same.
+
+### The quiet rule
+
+The sync server bills each message it is sent. Nothing is sent on a timer:
+
+- The device that serves says `Here`, with its state, when more than time changed: a song, play or
+  pause, a seek, the queue, the volume. That is one message a song while music plays on.
+- A device that watches says nothing. It runs the playhead on by the sync server's clock. Each device
+  learns that clock with three time requests when it enters the room (`Syncing::server_clock`), and its
+  states carry it (`DeviceState::sync_us`).
+- A command and its answer are a message each. A device that opens a mirror asks the queue's pages once.
+
+A state goes through the server only to the devices with the profile open that the device does not
+reach on the network. With none open, it costs nothing.
+
+An hour of listening, with another device showing it on screen, costs 19 messages for 20 songs
+(`an_hour_of_listening_watched_costs_a_message_a_song` in `crates/core/tests/remote.rs`). The
+octo-fiesta relay this replaced polled and timed for the same hour: about 1,500 requests.
+
+### On one network
+
+Two of my devices on one network talk through each other's LAN door (`crates/remote/src/lan`). They use
+the server only for what the door does not take. A door admits and announces by `lan_secret`, a key
+derived from the group key and the profile's sync identity. So a device of another group, or with another
+profile open, neither reaches the door nor lists it.
+
+- A command goes to the door first, and through the group room when the door does not take it.
+- A state goes to a device through the door while that device polls this one's door
+  (`Door::polling`). The others hear it through the server: reaching another's door does not mean it
+  reaches this one's.
+- Profile sync takes the door too (`Syncing::direct_hello`, `direct_heard`). A device exchanges with
+  another's door when its first poll there answers, and again when its profiles change. The session
+  handles the messages as from a member of the room, so the group's devices on one network sync while the
+  server refuses them. With the server up, they hear the same changes twice, which merging makes harmless.
+
+The web client has no door: it always goes through the server.
+
 ## What a client does
 
 The client owns the sockets, the screens and the words. It makes one `Syncing` when the app starts,
@@ -253,6 +322,7 @@ with its `Sockets`, its `SyncClient` and its `Reach`, and calls these:
 | Reset pairing | `reset_notice`, then `reset` |
 | Merge offers | `offers`, `merge`, `keep_apart` |
 | Sync this profile, sign-ins | `synced`, `sync_off`, `signed_in` |
+| A session's remote control | Hand the `Syncing` to the session (`nori_host::session::Open::sync`, Android's `Remote` constructor) |
 
 `SyncClient` hears what to do:
 
@@ -262,7 +332,8 @@ with its `Sockets`, its `SyncClient` and its `Reach`, and calls these:
 - `event`: something to word.
 - `changed`: `state`, `pairing` or `devices` changed. A device that came online or left counts.
 
-These calls never come while sync holds its lock, so they may call it back.
+These calls never come while sync holds its lock, so they may call it back. None comes before
+`Syncing::new` returns.
 
 ### Each client
 
@@ -294,6 +365,7 @@ on: nori's own unless another is named. With `sync` off, nothing connects and pa
 `cargo test -j4 -p nori-sync` runs two or three devices through the in-memory hub. The tests pair them,
 sync them, and move the server's clock by hand, with no network and no sleeping. `syncing/tests.rs` runs
 whole devices, each on a simulated executor, through a stand-in server that speaks the protocol over
-the hub. They pair, sync both ways, drop and come back, and meet the daily wall. A phone playing with the
-screen off has no timer waiting. `hub.rs` is also open
-to other crates' tests through the `testing` feature, as `nori-backup` uses it.
+the hub (`HubSockets`). They pair, sync both ways, drop and come back, and meet the daily wall. A phone
+playing with the screen off has no timer waiting. Other crates' tests use `hub.rs` through the
+`testing` feature. `nori-backup` does, and `crates/core/tests/remote.rs` runs remote control through it,
+counting the messages a server would bill (`HubSockets::sent`).

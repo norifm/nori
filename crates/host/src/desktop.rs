@@ -516,8 +516,10 @@ pub struct DesktopOpen<'a> {
     pub offline: bool,
     /// The process's media controls, driven by this session while it is open.
     pub mpris: Option<Arc<nori_mpris::Mpris>>,
-    /// This client, as the account's other devices list it.
+    /// This client, as my other devices list it.
     pub kind: DeviceKind,
+    /// The client's sync, whose group room reaches my devices.
+    pub sync: Option<Arc<nori_core::sync::Syncing>>,
     pub out: Out,
 }
 
@@ -542,6 +544,7 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
         mpris: o.mpris,
         device: nori_core::remote::RemoteMe { name: crate::device_name(), kind: o.kind },
         discovery: None,
+        sync: o.sync,
         tasks: crate::tasks(),
         keeps_music: true,
         decoders: Default::default(),

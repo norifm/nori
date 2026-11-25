@@ -213,6 +213,7 @@ impl Nori {
             mpris: None,
             device: nori_core::remote::RemoteMe { name: "Browser".into(), kind: nori_core::remote::wire::DeviceKind::Desktop },
             discovery: None,
+            sync: Some(self.sync.clone()),
             tasks: Arc::new(Local),
             keeps_music: false,
             decoders: nori_engine::Platform { aac: None, later: Some(crate::later::decoder) },

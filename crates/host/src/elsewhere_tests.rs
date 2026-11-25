@@ -1,4 +1,4 @@
-//! A session showing the account's device that plays elsewhere: what its player and the system's media
+//! A session showing a device of mine that plays elsewhere: what its player and the system's media
 //! controls show of it.
 
 use std::sync::{mpsc, Mutex};
@@ -50,7 +50,7 @@ impl RemoteShown for Quiet {
     fn jam_ended(&self, _: Option<String>) {}
 }
 
-/// The phone: playing song `a` of its queue, controllable from the account's devices nearby; its door.
+/// The phone: playing song `a` of its queue, controllable from the devices paired with it nearby; its door.
 fn phone(dir: &Path) -> (Arc<Remote>, Announcement) {
     let settings = Settings::new();
     let path = db_path(dir);
@@ -64,7 +64,7 @@ fn phone(dir: &Path) -> (Arc<Remote>, Announcement) {
     client.session().register(vec![Song { id: "a".into(), title: "A".into(), duration: 200, ..Default::default() }]);
     client.session().set(vec!["a".into()], Some(0), false, None);
     let door = Arc::new(Announced::default());
-    let phone = Remote::new(client, RemoteMe { name: "Phone".into(), kind: DeviceKind::Phone }, Arc::new(Quiet), Arc::new(Quiet), Some(door.clone()));
+    let phone = Remote::new(client, RemoteMe { name: "Phone".into(), kind: DeviceKind::Phone }, Arc::new(Quiet), Arc::new(Quiet), Some(door.clone()), None);
     phone.clone().serve(true);
     phone.clone().played(Playing { playing: true, index: Some(0), ..Default::default() });
     let announced = door.0.lock().unwrap().clone().expect("the phone's door is announced");

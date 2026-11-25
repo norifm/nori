@@ -1,5 +1,5 @@
-//! Authenticated LAN control and scoped jams. Devices pair using a random secret; Subsonic profiles
-//! can also use their existing account credential. Discovery carries only a keyed tag. A jam uses its
+//! Authenticated LAN control and scoped jams. My devices in a group sign with a key from the group's;
+//! devices in no group pair using a random secret. Discovery carries only a keyed tag. A jam uses its
 //! own invite credential and derives a separate credential for every guest, without sharing an account.
 
 use alloc::{format, string::{String, ToString}, vec::Vec};
@@ -160,10 +160,10 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// What a door announces so the account's devices recognise it: a keyed hash of the user name, so
-/// another account's devices on the network neither match it nor learn the name.
-pub fn account_tag(user: &str, secret: &str) -> String {
-    hex(&hmac(secret.as_bytes(), format!("nori-account:{user}").as_bytes()))[..16].to_string()
+/// A keyed hash of `name` under `secret`, short: what a door announces so my devices recognize it, and
+/// a LAN jam guest's id. Devices without the secret neither match it nor learn anything from it.
+pub fn tag(name: &str, secret: &str) -> String {
+    hex(&hmac(secret.as_bytes(), format!("nori-account:{name}").as_bytes()))[..16].to_string()
 }
 
 fn signature(secret: &str, method: &str, target: &str, body: &[u8]) -> String {
@@ -215,9 +215,9 @@ mod tests {
         assert!(!verified("sesame", "GET", &t, b"{}", 1_000_000), "another method");
         assert!(!verified("sesame", "POST", &t.replace("dev=a", "dev=b"), b"{}", 1_000_000), "another device");
         assert!(!verified("sesame", "POST", &t, b"{}", 1_000_001 + SKEW_MS), "too old");
-        assert_eq!(account_tag("ann", "pw"), account_tag("ann", "pw"));
-        assert_ne!(account_tag("ann", "pw"), account_tag("ann", "pw2"));
-        assert_ne!(account_tag("ann", "pw"), account_tag("bob", "pw"));
+        assert_eq!(tag("ann", "pw"), tag("ann", "pw"));
+        assert_ne!(tag("ann", "pw"), tag("ann", "pw2"));
+        assert_ne!(tag("ann", "pw"), tag("bob", "pw"));
     }
 
     #[test]

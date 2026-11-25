@@ -3,7 +3,6 @@ package dev.nori.music.app.vm
 import android.app.Application
 import androidx.lifecycle.viewModelScope
 import dev.nori.music.ffi.JamView
-import dev.nori.music.ffi.RelaySupport
 import dev.nori.music.ffi.RemoteDevice
 import dev.nori.music.ffi.remote.Op
 import dev.nori.music.settings.server
@@ -86,9 +85,6 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
     val destination: StateFlow<dev.nori.music.ffi.Destination> = combine(remotes.mirror, remotes.jam, nori.plugins.cast) { _, _, c -> remotes.destination(c) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), dev.nori.music.ffi.Destination.Here(false))
-
-    /** Whether the server relays: jams and devices elsewhere only then. */
-    val relay: StateFlow<RelaySupport> = remotes.relay
 
     /** Where starting a jam here stands (the core's `jam_start`): offered, being started, or hosted. */
     val jamStarting: StateFlow<dev.nori.music.ffi.JamStart> = remotes.jamStart

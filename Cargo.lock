@@ -5223,6 +5223,8 @@ dependencies = [
  "nori-look",
  "nori-player",
  "nori-remote",
+ "nori-sync",
+ "nori-tasks",
  "nori-testdir",
  "parking_lot",
  "serde_json",

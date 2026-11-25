@@ -170,7 +170,7 @@ class PlaybackService : MediaLibraryService() {
     private val saveQueue = Runnable { persistQueue(push = false) }
     private val sleepAlarm = AlarmManager.OnAlarmListener { if (nori.session.sleepDue(SystemClock.elapsedRealtime())) player.pause() }
     /**
-     * The network turning unmetered, for the AutoEQ list, and coming back, for the remote's relay poll and a
+     * The network turning unmetered, for the AutoEQ list, and coming back, for a jam's relay poll and a
      * refill that failed meanwhile. One registration for the service's life; a change that leaves the
      * answer as it was is not passed on.
      */

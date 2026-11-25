@@ -267,7 +267,7 @@ pub fn room_url(server: &str, room: &RoomName, kind: RoomKind) -> Option<String>
 }
 
 /// The server's side, for tests that stand in for it.
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl Down {
     pub(crate) fn encode(&self) -> Vec<u8> {
         let tag_of = |asked: &Asked| match asked {
@@ -303,7 +303,7 @@ impl Down {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl Code {
     pub(crate) fn number(self) -> u16 {
         (4000..=4011).find(|&n| Code::of(n) == Some(self)).expect("every code has its number")
@@ -311,7 +311,7 @@ impl Code {
 }
 
 /// What a member sent, read as the server reads it.
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 pub(crate) fn read_up(frame: &[u8]) -> Up<'_> {
     let (&tag, body) = frame.split_first().expect("a frame");
     match tag {

@@ -142,7 +142,7 @@ impl Core {
         self.set_rules(browse::profile_rules(nori_remote::is_guest_key(&key)));
         let secret = match (key.is_empty(), nori_remote::is_guest_key(&key)) {
             (true, _) => Some(crate::Secret::Password(config.password)),
-            (false, false) => Some(crate::Secret::Key(key)),
+            (false, false) => Some(crate::Secret::Key),
             (false, true) => None,
         };
         *self.account.write() = secret.map(|secret| crate::Account { user: config.user, secret });

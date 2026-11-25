@@ -286,6 +286,8 @@ pub struct Open<'a> {
     pub offline: bool,
     /// The process's media controls, driven by this session while it is open.
     pub mpris: Option<Arc<nori_mpris::Mpris>>,
+    /// The client's sync, whose group room reaches my devices.
+    pub sync: Option<Arc<nori_core::sync::Syncing>>,
     pub tx: Sender<Msg>,
 }
 
@@ -324,6 +326,7 @@ impl Session {
             offline: o.offline,
             mpris: o.mpris,
             kind: nori_core::remote::wire::DeviceKind::Terminal,
+            sync: o.sync,
             out,
         })?;
         Ok(Session { id, host, tx: o.tx })

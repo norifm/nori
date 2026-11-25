@@ -32,8 +32,8 @@ pub use pairing::{AdmitStep, Admitting, Came, Confirmation, JoinStep, Joining, P
 pub use presence::Reach;
 pub use profile::{Here, NeededPlugin, Plays, SignInCheck, SignInCopy};
 pub use room::{Asked, Heard, Member, Refusal, Relay, RoomKind, To};
-pub use session::{Outcome, Session, SyncEvent};
-pub use syncing::{ActiveProfile, PairingView, ProfilesSynced, SyncClient, SyncState, Syncing};
+pub use session::{Outcome, RemoteHeard, Session, SyncEvent};
+pub use syncing::{ActiveProfile, InRoom, PairingView, ProfilesSynced, RemoteRoom, SyncClient, SyncState, Syncing};
 
 /// nori's own sync server, used unless the settings name another.
 pub const NORI_SERVER: &str = "https://sync.norifm.com";

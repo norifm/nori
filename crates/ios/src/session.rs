@@ -506,7 +506,7 @@ pub(crate) fn start(
         .settings
         .open(&nori_host::db_path(dir))
         .map_err(|e| format!("the database: {e}"))?;
-    start_queue(dir, queue, profile, output, offline, discovery)
+    start_queue(dir, queue, profile, output, offline, discovery, None)
 }
 
 fn start_queue(
@@ -516,6 +516,7 @@ fn start_queue(
     output: Box<dyn AudioOutput>,
     offline: bool,
     discovery: Option<Arc<dyn Discovery>>,
+    sync: Option<Arc<nori_core::sync::Syncing>>,
 ) -> Result<(), String> {
     if held().is_some() {
         return Err("already open".into());
@@ -536,6 +537,7 @@ fn start_queue(
         mpris: None,
         device: nori_core::remote::RemoteMe { name: DEVICE_NAME.into(), kind: nori_core::remote::wire::DeviceKind::Phone },
         discovery,
+        sync,
         tasks: nori_host::tasks(),
         keeps_music: true,
         decoders: Default::default(),
@@ -578,7 +580,7 @@ fn open_saved(dir: &Path, server_id: &str) -> Result<(), String> {
         .open(&nori_host::db_path(dir))
         .map_err(|e| format!("the database: {e}"))?;
     let profile = saved(&prefs, server_id).ok_or_else(|| "no saved server".to_string())?;
-    start_queue(dir, queue, profile, device_output()?, false, Some(Arc::new(crate::remote::Bonjour)))?;
+    start_queue(dir, queue, profile, device_output()?, false, Some(Arc::new(crate::remote::Bonjour)), crate::sync::syncing())?;
     if BACKGROUND.load(Ordering::Relaxed) {
         with_session(|s| s.in_sight(false));
     }
@@ -1268,7 +1270,7 @@ mod tests {
         let pass = nori_core::remote::JamPass { url: "http://127.0.0.1:9".into(), api_key: nori_remote::guest_key("k"), kind: Default::default() };
         let guest = nori_host::jam_joined(&queue.settings, pass, "Jam");
         queue.settings.writer.flush();
-        super::start_queue(dir.path(), queue.clone(), guest, Box::new(WavOutput::new(dir.path().join("heard.wav"), 2.0)), true, None).unwrap();
+        super::start_queue(dir.path(), queue.clone(), guest, Box::new(WavOutput::new(dir.path().join("heard.wav"), 2.0)), true, None, None).unwrap();
 
         let json = |p: *mut std::ffi::c_char| -> serde_json::Value {
             let v = serde_json::from_str(unsafe { CStr::from_ptr(p) }.to_str().unwrap()).unwrap();
@@ -1329,9 +1331,54 @@ mod tests {
         fn jam_ended(&self, _: Option<String>) {}
     }
 
-    /// The iPod's session as a device of the account, on the simulated audio unit called back in real time,
-    /// and a phone controlling it over the network: it starts the iPod playing, and the playhead it mirrors
-    /// is the place the iPod's listener hears.
+    /// What sync tells a test's device: nothing it acts on, and that something changed.
+    struct Synced(Mutex<std::sync::mpsc::Sender<()>>);
+
+    impl nori_core::sync::SyncClient for Synced {
+        fn here(&self) -> nori_core::sync::Here {
+            nori_core::providers::Kinds::builtin().sync_here()
+        }
+        fn profiles(&self, _: nori_core::sync::ProfilesSynced) {}
+        fn install(&self, _: Vec<nori_core::sync::NeededPlugin>) {}
+        fn event(&self, _: nori_core::sync::SyncEvent) {}
+        fn changed(&self) {
+            let _ = self.0.lock().unwrap().send(());
+        }
+    }
+
+    /// Sync over `settings`, through `hub`; its change notices.
+    fn synced(hub: &nori_sync::hub::Hub, settings: std::sync::Arc<nori_core::settings_store::Settings>) -> (std::sync::Arc<nori_core::sync::Syncing>, std::sync::mpsc::Receiver<()>) {
+        use std::sync::Arc;
+        let tasks: Arc<dyn nori_tasks::Tasks> = Arc::new(nori_tasks::Native::new("ios-test-sync").unwrap());
+        let net = nori_sync::hub::HubSockets::new(hub, Some(tasks.clone()));
+        let (changed_to, changed) = std::sync::mpsc::channel();
+        let sync = nori_core::sync::Syncing::new(settings, net.clone(), Arc::new(Synced(Mutex::new(changed_to))), nori_core::sync::Reach::Computer, Box::new(move || tasks.clone()));
+        net.tell(&sync);
+        (sync, changed)
+    }
+
+    /// Pairs `new` into `old`'s group through their hub.
+    fn pair(old: (&nori_core::sync::Syncing, &std::sync::mpsc::Receiver<()>), new: (&nori_core::sync::Syncing, &std::sync::mpsc::Receiver<()>)) {
+        use nori_core::sync::{Came, PairingView, SyncState};
+        let until = |what: &str, changed: &std::sync::mpsc::Receiver<()>, ready: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !ready() {
+                assert!(changed.recv_timeout(deadline.saturating_duration_since(Instant::now())).is_ok(), "waited for {what}");
+            }
+        };
+        new.0.pair_show("Phone".into());
+        until("a code", new.1, &|| matches!(new.0.pairing(), PairingView::Code { .. }));
+        let PairingView::Code { link, .. } = new.0.pairing() else { unreachable!() };
+        assert_eq!(old.0.pair_take(link, Came::Camera), None);
+        until("what to confirm", old.1, &|| matches!(old.0.pairing(), PairingView::Confirm { .. }));
+        old.0.pair_confirm("iPod touch".into(), false);
+        until("paired", new.1, &|| new.0.pairing() == PairingView::Paired);
+        until("connected", new.1, &|| new.0.state() == SyncState::Connected);
+    }
+
+    /// The iPod's session as a device paired with a phone, on the simulated audio unit called back in real
+    /// time, and the phone controlling it over the network: it starts the iPod playing, and the playhead it
+    /// mirrors is the place the iPod's listener hears.
     #[test]
     fn a_phone_controls_the_ipod_and_mirrors_the_place_heard() {
         use crate::output::sim::Sim;
@@ -1349,7 +1396,22 @@ mod tests {
         let out = crate::IosOutput::new(Box::new(sim.clone()), HostClock);
         let render = out.render.clone();
         let announced = Arc::new(Announced::default());
-        super::start(dir.path(), profile(), Box::new(out), false, Some(announced.clone())).unwrap();
+        // The iPod and the phone, each with the profile, paired through a sync server in memory.
+        let hub = nori_sync::hub::Hub::real_time();
+        let with_profile = |path: &str, id: &str| {
+            let settings = nori_core::settings_store::Settings::new();
+            let prefs = settings.open(path).unwrap();
+            settings.put(nori_core::settings::StoredPrefs { servers: vec![SavedServer { id: id.into(), ..profile() }], active_server_id: id.into(), sync: true, ..prefs });
+            settings
+        };
+        let phone_dir = nori_testdir::TempDir::new("ios-remote-phone");
+        let (ipod_settings, phone_settings) = (with_profile(&nori_host::db_path(dir.path()), "test"), with_profile(&nori_host::db_path(phone_dir.path()), "phone"));
+        let (ipod_sync, ipod_changed) = synced(&hub, ipod_settings);
+        let (phone_sync, phone_changed) = synced(&hub, phone_settings.clone());
+        pair((&ipod_sync, &ipod_changed), (&phone_sync, &phone_changed));
+        let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
+        queue.settings.open(&nori_host::db_path(dir.path())).unwrap();
+        super::start_queue(dir.path(), queue, profile(), Box::new(out), false, Some(announced.clone()), Some(ipod_sync.clone())).unwrap();
         // The audio unit, calling back a buffer ahead of each one it plays.
         let stop = Arc::new(AtomicBool::new(false));
         let (played_to, played) = std::sync::mpsc::channel();
@@ -1382,16 +1444,16 @@ mod tests {
         assert!(!announced.1.load(Ordering::Relaxed));
         super::nori_ios_foreground();
         assert!(announced.1.load(Ordering::Relaxed));
-        let door = announced.0.lock().unwrap().clone().expect("the door announced");
-
-        // The phone, signed in to the same account, finds the door as Bonjour would.
-        let core = nori_core::Core::new(String::new(), "phone".into(), Default::default()).unwrap();
+        // The phone, paired with it, finds the door as Bonjour would.
+        let core = nori_core::Core::new(String::new(), "phone".into(), Arc::new(nori_core::queue::Session::new(phone_settings))).unwrap();
         core.configure(nori_host::config(&profile())).unwrap();
         let client = nori_core::client::Client::new(core, nori_http::Http::new(), Default::default());
         client.set_profile(nori_host::net(&profile()));
         let (news_to, news) = std::sync::mpsc::channel();
         let me = RemoteMe { name: "Phone".into(), kind: DeviceKind::Phone };
-        let phone = Remote::new(client, me, Arc::new(Obeys), Arc::new(News(Mutex::new(news_to))), None);
+        let phone = Remote::new(client, me, Arc::new(Obeys), Arc::new(News(Mutex::new(news_to))), None, Some(phone_sync.clone()));
+        // Announced as the group's devices sign once both are in it.
+        let door = announced.0.lock().unwrap().clone().expect("the door announced");
         phone.clone().watch(true);
         phone.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, door.txt.clone());
         let until = |what: &str, ready: &dyn Fn(&Remote) -> bool| {

@@ -194,7 +194,7 @@ impl Joining {
                 self.joined = true;
                 self.code()
             }
-            Heard::Time { room, ms } if room == self.meeting && self.time_ms.is_none() => {
+            Heard::Time { room, ms, .. } if room == self.meeting && self.time_ms.is_none() => {
                 self.time_ms = Some(ms);
                 self.code()
             }
@@ -343,7 +343,7 @@ impl Admitting {
                 self.present = false;
                 None
             }
-            Heard::Time { room, ms } if room == *meeting && self.state == AdmitState::Checking => {
+            Heard::Time { room, ms, .. } if room == *meeting && self.state == AdmitState::Checking => {
                 if ms >= self.code.expires_ms {
                     return Some(self.end(relay, PairingRefused::Expired));
                 }

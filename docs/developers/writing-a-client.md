@@ -51,9 +51,10 @@ Once open, the session does this work for the client:
 - It says what the player shows (`crates/host/src/player.rs`: `Now`, `QueueShown`, `Playback`). The
   answer is the same for every client and for the system's media controls.
 - It runs remote control and jams while they are on (`crates/host/src/remote.rs`), and joins a jam as a
-  guest. A LAN jam's guest searches and streams through its host, so any native client joins any LAN
-  jam, with or without plugins.
-- It looks for the account's device that plays while the client says it is in sight (`in_sight`).
+  guest. Remote control reaches the devices paired with this one through the client's `Syncing`, which
+  the client hands to the session (`Open::sync`, described in `sync.md`). A LAN jam's guest searches and streams
+  through its host, so any native client joins any LAN jam, with or without plugins.
+- It looks for my device that plays while the client says it is in sight (`in_sight`).
 
 The session reports through `Said`, from any thread, and the client words each report. After
 `Said::Working`, the client reads `progress` once a second until it answers `None`. A client that

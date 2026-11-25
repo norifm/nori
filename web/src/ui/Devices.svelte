@@ -1,7 +1,8 @@
 <script lang="ts">
-  // The devices, as the desktop's panel: this browser and the account's other devices, each with its
-  // kind's glyph in a disc, the one playing lit and ticked; a click moves the music there (through the server's relay: a browser cannot reach
-  // devices on its network itself). Under them the jam, as in Android's devices sheet.
+  // The devices, as the desktop's panel: this browser and the other devices paired with it, each with
+  // its kind's glyph in a disc, the one playing lit and ticked; a click moves the music there (through the
+  // sync server: a browser cannot reach devices on its network itself). Under them the jam, as in
+  // Android's devices sheet.
   import { remote } from "../state/remote.svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";

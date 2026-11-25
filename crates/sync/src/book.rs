@@ -289,6 +289,11 @@ impl Book {
         self.record(local).is_some()
     }
 
+    /// Profile `local`'s sync identity while it syncs.
+    pub(crate) fn sync_id(&self, local: &str) -> Option<&str> {
+        self.record(local).map(|r| r.shared.id.as_str())
+    }
+
     /// Sync this profile off for `local`; with `elsewhere`, it is removed from the other devices too.
     pub(crate) fn sync_off(&mut self, local: &str, elsewhere: bool, by: &str, now_ms: i64) -> Changes {
         let Some(i) = self.records.iter().position(|r| r.local == local && !r.off) else { return Changes::default() };

@@ -246,7 +246,7 @@ impl Link {
                     // As NTP: the server's clock less this one's, from the request's way out and back.
                     let t4 = now + unix_offset;
                     let offset = ((t2 - t1) + (t3 - t4)) / 2;
-                    Heard::Time { room: name, ms: (t4 + offset) / 1000 }
+                    Heard::Time { room: name, ms: (t4 + offset) / 1000, rtt_us: (t4 - t1) - (t3 - t2) }
                 }
                 Down::Kept(blob) => Heard::Copy { room: name, blob },
                 Down::Done(_) => return,

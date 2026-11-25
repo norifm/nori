@@ -1583,7 +1583,7 @@ impl App {
             self.update_plugins();
             return self.choose_provider();
         }
-        match Session::open(&self.root, self.http.clone(), profile, self.tx.clone(), self.mpris.clone()) {
+        match Session::open(&self.root, self.http.clone(), profile, self.tx.clone(), self.mpris.clone(), self.sync.clone()) {
             Ok(s) => {
                 s.check();
                 s.update_check(false);

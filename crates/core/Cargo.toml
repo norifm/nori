@@ -69,6 +69,8 @@ if-addrs = "0.15"
 
 [dev-dependencies]
 nori-player = { path = "../player", features = ["synth"] }
+# My devices meet in a sync server kept in memory.
+nori-sync = { path = "../sync", features = ["testing"] }
 # A test's own directory, for a settings database.
 nori-testdir = { path = "../testdir" }
 # The YouTube Music provider's tests answer with the crate's own trimmed real answers.

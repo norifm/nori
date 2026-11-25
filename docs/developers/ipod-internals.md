@@ -214,10 +214,11 @@ neighbors in the queue into the disk cache.
 
 ## Remote control and jams
 
-Remote control runs only while the `remoteControl` setting is on. The session's remote serves the LAN
-door and the relay, as on the desktop. Swift does the Bonjour part: `Devices.swift` announces the door,
-and it looks for the account's other devices while the core asks (`nori_ios_on_bonjour`). When the app
-is paused in the background, iOS suspends it, and its door stops with it.
+Remote control runs only while the `remoteControl` setting is on. The session's remote reaches the
+devices paired with the iPod through their group's room on the sync server (see `sync.md`). It also
+serves the LAN door, as on the desktop. Swift does the Bonjour part: `Devices.swift` announces the door, and it
+looks for the group's other devices while the core asks (`nori_ios_on_bonjour`). When the app is paused
+in the background, iOS suspends it, and its door stops with it.
 
 The iPod joins a jam only as a guest, from a pasted invite link or a `nori://jam` link. A guest profile
 opens in place of your own (`nori_host::jam_joined`), and it follows `ProfileRules` (`nori_ios_rules`).

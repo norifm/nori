@@ -107,14 +107,14 @@ fn the_server_s_time_is_read_from_the_way_there_and_back() {
     let server = t1 + 20_000 + 2 * S;
     link.at(340_000);
     link.frame(0, &Down::Time { t1, t2: server, t3: server }.encode());
-    assert_eq!(link.heard().pop(), Some(Heard::Time { room: room.clone(), ms: (UNIX + 340_000 + 2 * S) / 1000 }));
+    assert_eq!(link.heard().pop(), Some(Heard::Time { room: room.clone(), ms: (UNIX + 340_000 + 2 * S) / 1000, rtt_us: 40_000 }));
     link.ask_time(&room);
     let Some(Asked::Send(_, f)) = sockets.take().pop() else { panic!("sent at once") };
     let Up::Time(t1) = read_up(&f) else { panic!("a time request") };
     link.at(380_000);
     let server = t1 + 20_000 + 2 * S;
     link.frame(0, &Down::Time { t1, t2: server, t3: server }.encode());
-    assert_eq!(link.heard(), [Heard::Time { room, ms: (UNIX + 380_000 + 2 * S) / 1000 }]);
+    assert_eq!(link.heard(), [Heard::Time { room, ms: (UNIX + 380_000 + 2 * S) / 1000, rtt_us: 40_000 }]);
 }
 
 #[test]

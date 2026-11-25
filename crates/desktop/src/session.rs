@@ -246,7 +246,7 @@ impl std::ops::Deref for Session {
 impl Session {
     /// Opens the profile without touching the network, so an unreachable server still opens.
     /// `mpris`: the process's media controls, driven by this session while it is open.
-    pub fn open(root: &nori_host::desktop::Root, http: Arc<Http>, profile: SavedServer, tx: Tx, mpris: Option<Arc<nori_mpris::Mpris>>) -> Result<Session, String> {
+    pub fn open(root: &nori_host::desktop::Root, http: Arc<Http>, profile: SavedServer, tx: Tx, mpris: Option<Arc<nori_mpris::Mpris>>, sync: Arc<nori_core::sync::Syncing>) -> Result<Session, String> {
         static IDS: AtomicU64 = AtomicU64::new(0);
         let id = IDS.fetch_add(1, Ordering::Relaxed);
         let to = tx.clone();
@@ -262,6 +262,7 @@ impl Session {
             offline: false,
             mpris,
             kind: DeviceKind::Desktop,
+            sync: Some(sync),
             out,
         };
         Ok(Session { id, host: nori_host::desktop::open(o)?, tx })

@@ -61,6 +61,11 @@ fn open(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The process's sync, once made: a session's remote control reaches my devices through it.
+pub(crate) fn syncing() -> Option<Arc<Syncing>> {
+    SYNC.get().cloned()
+}
+
 /// The engine of the session opened now carries sync's keep-alive on its wakes.
 pub(crate) fn ride(engine: &nori_engine::Engine) {
     if let Some(s) = SYNC.get().cloned() {

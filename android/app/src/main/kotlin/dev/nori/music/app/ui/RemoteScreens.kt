@@ -107,12 +107,10 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         val devices by vm.devices.collectAsStateWithLifecycle()
         val names by vm.names.collectAsStateWithLifecycle()
         val jam by vm.jam.collectAsStateWithLifecycle()
-        val relay by vm.relay.collectAsStateWithLifecycle()
         val mirror by vm.mirror.collectAsStateWithLifecycle()
         val destination by vm.destination.collectAsStateWithLifecycle()
         val pairing by vm.pairingLink.collectAsStateWithLifecycle()
         val paired by vm.paired.collectAsStateWithLifecycle()
-        val unsupported = relay == dev.nori.music.ffi.RelaySupport.UNSUPPORTED
         val cast by sound.pluginCast.collectAsStateWithLifecycle()
         val targets by sound.pluginTargets.collectAsStateWithLifecycle()
         val reached by vm.outputs.collectAsStateWithLifecycle()
@@ -211,10 +209,6 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 }
                 if (hosted == null) {
                     mirror?.refused?.let { Text(refusal(it), Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-                    if (unsupported) Text(
-                        words(R.string.devices_nearby_only), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
                 val start by vm.jamStarting.collectAsStateWithLifecycle()
                 val offered = jams && hosted == null && start == dev.nori.music.ffi.JamStart.OFFERED

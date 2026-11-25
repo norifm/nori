@@ -13,7 +13,6 @@ import dev.nori.music.ffi.Client
 import dev.nori.music.ffi.JamControls
 import dev.nori.music.ffi.JamView
 import dev.nori.music.ffi.Mirror
-import dev.nori.music.ffi.RelaySupport
 import dev.nori.music.ffi.Remote
 import dev.nori.music.ffi.RemoteMe
 import dev.nori.music.ffi.RemotePlayer
@@ -75,11 +74,6 @@ class Remotes(private val context: Context, private val nori: Nori) {
 
     /** Where starting a jam here stands (the core's `jam_start`): every screen that offers it reads this. */
     val jamStart: StateFlow<dev.nori.music.ffi.JamStart> = _jamStart.asStateFlow()
-
-    private val _relay = MutableStateFlow(RelaySupport.UNKNOWN)
-
-    /** Whether the server relays: jams and devices elsewhere only then. */
-    val relay: StateFlow<RelaySupport> = _relay.asStateFlow()
 
     /** The playback service's player while it runs; ops go to it, starting the service when it is not. */
     @Volatile var service: RemotePlayer? = null
@@ -165,16 +159,15 @@ class Remotes(private val context: Context, private val nori: Nori) {
         main.post { _mirror.value = m; then() }
     }
 
-    /** Reads the jam and the relay again (on the worker) and shows them. */
+    /** Reads the jam again (on the worker) and shows it. */
     private fun jamNow() {
         val r = remote
         val j = r?.jamView()
         val added = if (j != null) r.jamAdded() else emptyMap()
         val playing = if (j?.hosting == false) r.jamPlaying() else null
         val controls = if (j?.hosting == false) r.jamControls() else null
-        val relay = r?.relay() ?: RelaySupport.UNKNOWN
         val start = r?.jamStart() ?: dev.nori.music.ffi.JamStart.UNAVAILABLE
-        main.post { _jam.value = j; _jamAdded.value = added; _jamPlaying.value = playing; _jamControls.value = controls; _relay.value = relay; _jamStart.value = start }
+        main.post { _jam.value = j; _jamAdded.value = added; _jamPlaying.value = playing; _jamControls.value = controls; _jamStart.value = start }
         if (j?.listening == dev.nori.music.ffi.Listening.PLAYING) {
             // The queue as the follower set it in the session, not as last saved.
             val rev = PlaylistJni.rev(nori.sessionHandle)
@@ -254,7 +247,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
             drop()
             val p = nori.settings.effective.value
             val kind = if (isGuest()) DeviceKind.GUEST else DeviceKind.PHONE
-            remote = Remote(c, RemoteMe(deviceName(context), kind), player, shown, discovery)
+            remote = Remote(c, RemoteMe(deviceName(context), kind), player, shown, discovery, nori.sync.syncing)
             client = c
             if (isGuest()) remote?.let { r -> engine?.follow(r) }
             if (serving) remote?.serve(p.remoteControl)
@@ -282,7 +275,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
         remote?.stop()
         remote = null
         client = null
-        main.post { _mirror.value = null; _jam.value = null; _jamAdded.value = emptyMap(); _jamPlaying.value = null; _relay.value = RelaySupport.UNKNOWN; _jamStart.value = dev.nori.music.ffi.JamStart.UNAVAILABLE }
+        main.post { _mirror.value = null; _jam.value = null; _jamAdded.value = emptyMap(); _jamPlaying.value = null; _jamStart.value = dev.nori.music.ffi.JamStart.UNAVAILABLE }
     }
 
     /** Whether the playback service is up: the device is controllable then, while remote control is on. */

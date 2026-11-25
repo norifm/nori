@@ -1,145 +1,16 @@
-use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::AtomicUsize;
 
 use nori_tasks::Native;
 use nori_testdir::TempDir;
 
 use super::*;
-use crate::hub::{Hub, HubLink};
-use crate::keys::RoomName;
+use crate::hub::{Hub, HubSockets as Net};
 use crate::profile::tests::{navidrome, phone};
-use crate::room::{Heard, Member, Relay, RoomKind, To};
-use crate::wire::{read_up, Code, Down, Up, Welcome};
 
 const S: Duration = Duration::from_secs(1);
 const NOW: i64 = 1_700_000_000_000;
-
-/// One socket of the stand-in server: a hub link in one room.
-struct Socket {
-    link: HubLink,
-    room: RoomName,
-    /// The time requests waiting for their answer, as sent.
-    times: VecDeque<i64>,
-}
-
-/// A sync server speaking the protocol, over the in-memory hub: what a device's sockets reach.
-struct Net {
-    hub: Hub,
-    sockets: Mutex<HashMap<SocketId, Socket>>,
-    /// Sockets that ended on the server's side or the network's, to be told.
-    ended: Mutex<Vec<(SocketId, Ended)>>,
-    opened: AtomicUsize,
-    pings: AtomicUsize,
-}
-
-impl Net {
-    fn new(hub: &Hub) -> Arc<Net> {
-        Arc::new(Net { hub: hub.clone(), sockets: Mutex::default(), ended: Mutex::default(), opened: AtomicUsize::new(0), pings: AtomicUsize::new(0) })
-    }
-
-    fn open_sockets(&self) -> usize {
-        self.sockets.lock().unwrap().len()
-    }
-
-    /// The network drops every socket.
-    fn drop_all(&self) {
-        let gone: Vec<(SocketId, Socket)> = self.sockets.lock().unwrap().drain().collect();
-        for (id, s) in gone {
-            s.link.drop_connection();
-            self.ended.lock().unwrap().push((id, Ended::Dropped));
-        }
-    }
-
-    /// Hands `syncing` what its sockets heard; true when anything.
-    fn deliver(&self, syncing: &Syncing) -> bool {
-        let mut out: Vec<(SocketId, Result<Vec<u8>, Ended>)> = self.ended.lock().unwrap().drain(..).map(|(id, e)| (id, Err(e))).collect();
-        let mut sockets = self.sockets.lock().unwrap();
-        let mut closed = Vec::new();
-        for (&id, s) in sockets.iter_mut() {
-            for h in s.link.heard() {
-                let said = match h {
-                    Heard::Joined { me, members, .. } => {
-                        let w = Welcome { you: me.0 as u16, max_frame: 65_536, messages_per_minute: 240, bytes_per_minute: 4 << 20, max_members: 20, closes_at: None, members: members.iter().map(|m| m.0 as u16).collect() };
-                        Ok(Down::Welcome(w))
-                    }
-                    Heard::Arrived { member, .. } => Ok(Down::Joined(member.0 as u16)),
-                    Heard::Left { member, .. } => Ok(Down::Left(member.0 as u16)),
-                    Heard::Message { from, payload, .. } => Ok(Down::Message { from: from.0 as u16, alone: false, payload }),
-                    Heard::Time { ms, .. } => Ok(Down::Time { t1: s.times.pop_front().expect("asked"), t2: ms * 1000, t3: ms * 1000 }),
-                    Heard::Copy { blob, .. } => Ok(Down::Kept(blob)),
-                    Heard::Closed { .. } => Err(Ended::Closed { code: Code::RoomClosed.number() }),
-                    Heard::Refused { asked: crate::room::Asked::Join, reason, .. } => Err(Ended::Closed { code: refused(reason).number() }),
-                    Heard::Refused { reason, .. } => Ok(Down::Refused { asked: crate::wire::Asked::KeptPut, code: refused(reason), retry_after_ms: 0 }),
-                };
-                if said.is_err() {
-                    closed.push(id);
-                }
-                out.push((id, said.map(|d| d.encode())));
-            }
-        }
-        for id in closed {
-            sockets.remove(&id);
-        }
-        drop(sockets);
-        let any = !out.is_empty();
-        for (id, said) in out {
-            match said {
-                Ok(frame) => syncing.frame(id, frame),
-                Err(how) => syncing.ended(id, how),
-            }
-        }
-        any
-    }
-}
-
-fn refused(reason: Refusal) -> Code {
-    match reason {
-        Refusal::DailyWall => Code::DailyLimit,
-        Refusal::Limit => Code::RoomFull,
-        Refusal::Version => Code::VersionUnsupported,
-        Refusal::WrongSecret => Code::WrongSecret,
-        Refusal::Unavailable => Code::Unavailable,
-        Refusal::Invalid => Code::BadRequest,
-    }
-}
-
-impl Sockets for Net {
-    fn open(&self, id: SocketId, url: String) {
-        self.opened.fetch_add(1, Ordering::Relaxed);
-        let (path, query) = url.split_once("/room/").expect("a room's address").1.split_once('?').expect("a query");
-        let kind = if query.contains("kind=meeting") { RoomKind::Meeting } else { RoomKind::Group };
-        let room = RoomName::parse(path).expect("a room's name");
-        let link = self.hub.link();
-        link.join(&room, kind);
-        self.sockets.lock().unwrap().insert(id, Socket { link, room, times: VecDeque::new() });
-    }
-
-    fn send(&self, id: SocketId, frame: Vec<u8>) {
-        let mut sockets = self.sockets.lock().unwrap();
-        let Some(s) = sockets.get_mut(&id) else { return };
-        match read_up(&frame) {
-            Up::SendAll(p) => s.link.send(&s.room, To::Everyone, p.to_vec()),
-            Up::SendTo(m, p) => s.link.send(&s.room, To::Member(Member(m.into())), p.to_vec()),
-            Up::Time(t1) => {
-                s.times.push_back(t1);
-                s.link.ask_time(&s.room);
-            }
-            Up::KeptGet => s.link.get_copy(&s.room),
-            Up::KeptPut(secret, blob) => s.link.put_copy(&s.room, *secret, blob.to_vec()),
-            Up::KeptDelete(secret) => s.link.delete_copy(&s.room, *secret),
-        }
-    }
-
-    fn ping(&self, _: SocketId) {
-        self.pings.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn close(&self, id: SocketId) {
-        if let Some(s) = self.sockets.lock().unwrap().remove(&id) {
-            s.link.leave(&s.room);
-        }
-    }
-}
+/// How far a device's executor clock is ahead of the device's own.
+const EXECUTOR_AHEAD_US: i64 = 1_000 * 3_600_000_000;
 
 /// What the client heard from sync.
 #[derive(Default)]
@@ -185,8 +56,9 @@ impl Device {
         settings.open(&dir.join("nori.db").display().to_string()).unwrap();
         let active_server_id = servers.first().map(|s| s.id.clone()).unwrap_or_default();
         settings.put(StoredPrefs { servers, active_server_id, ..settings.current().unwrap() });
-        let tasks = Arc::new(Native::simulated("syncing-test", 0).unwrap());
-        let (net, told, made) = (Net::new(hub), Arc::new(Told::default()), Arc::new(AtomicUsize::new(0)));
+        // An executor's clock of its own, far from the device's: sync reads only the executor's.
+        let tasks = Arc::new(Native::simulated("syncing-test", nori_time::device_us() + EXECUTOR_AHEAD_US).unwrap());
+        let (net, told, made) = (Net::new(hub, None), Arc::new(Told::default()), Arc::new(AtomicUsize::new(0)));
         let (executor, counted) = (tasks.clone(), made.clone());
         let syncing = Syncing::new(settings.clone(), net.clone(), told.clone(), reach, Box::new(move || {
             counted.fetch_add(1, Ordering::Relaxed);
@@ -301,9 +173,11 @@ fn a_dropped_connection_comes_back_quietly_and_a_refusal_is_a_state() {
     let SyncState::Offline { .. } = mac.syncing.state() else { panic!("offline: {:?}", mac.syncing.state()) };
     assert!(!pixel.syncing.devices()[0].online);
     assert!(mac.told.events.lock().unwrap().is_empty(), "a drop is no event");
+    let told = mac.told.changed.load(Ordering::Relaxed);
     mac.tasks.pass(5 * S);
     settle(&[&pixel, &mac]);
     assert_eq!((mac.syncing.state(), pixel.syncing.devices()[0].online), (SyncState::Connected, true), "back within 5 s");
+    assert!(mac.told.changed.load(Ordering::Relaxed) >= told + 2, "the client is told it connects, and that it is connected");
     hub.wall(true);
     mac.net.drop_all();
     settle(&[&pixel, &mac]);
@@ -409,4 +283,156 @@ fn what_sync_brings_keeps_the_profile_in_use_unless_it_went() {
     assert_eq!(told, ProfilesSynced { removed: vec!["b".into()], active: ActiveProfile::Same });
     let (after, told) = synced(&prefs("a"), vec![]);
     assert_eq!((after.active_server_id.as_str(), told.active), ("", ActiveProfile::Switched), "none left");
+}
+
+/// What remote control heard in the group room.
+#[derive(Default)]
+struct RoomLog(Mutex<Vec<String>>);
+
+impl RemoteRoom for RoomLog {
+    fn in_room(&self, now: InRoom) {
+        self.0.lock().unwrap().push(match now { InRoom::Entered => "in", InRoom::Renamed => "renamed", InRoom::Left => "out" }.into());
+    }
+    fn keyed(&self) {}
+    fn changed(&self) {
+        self.0.lock().unwrap().push("changed".into());
+    }
+    fn heard(&self, _: String, message: serde_json::Value) {
+        self.0.lock().unwrap().push(format!("heard {message}"));
+    }
+    fn left(&self, _: String) {
+        self.0.lock().unwrap().push("left".into());
+    }
+}
+
+impl RoomLog {
+    fn take(&self) -> Vec<String> {
+        std::mem::take(&mut self.0.lock().unwrap())
+    }
+}
+
+fn attached(d: &Device, local: &str) -> Arc<RoomLog> {
+    let heard = Arc::new(RoomLog::default());
+    d.syncing.remote_open(local.into(), heard.clone());
+    heard
+}
+
+fn local(d: &Device, url: &str) -> String {
+    d.settings.current().unwrap().servers.iter().find(|s| s.url == url).unwrap().id.clone()
+}
+
+#[test]
+fn remote_control_reaches_the_devices_with_the_same_synced_profile_open() {
+    let hub = Hub::new(NOW);
+    let pixel = Device::new(&hub, Reach::Computer, vec![navidrome("a", "https://music.example"), navidrome("b", "https://other.example")]);
+    let mac = Device::new(&hub, Reach::Computer, vec![]);
+    pair(&pixel, &mac);
+    let on_pixel = attached(&pixel, "a");
+    let on_mac = attached(&mac, &local(&mac, "https://music.example"));
+    settle(&[&pixel, &mac]);
+    assert_eq!((on_pixel.take(), on_mac.take()), (vec!["in".to_string()], vec!["in".to_string()]), "each is in the room once attached");
+    assert!(pixel.syncing.server_clock().is_some(), "the server's clock is known once in the room");
+    assert!(pixel.syncing.remote_say("a", None, serde_json::json!("hi")));
+    let mac_id = mac.syncing.device().unwrap();
+    assert!(mac.syncing.remote_say(&local(&mac, "https://music.example"), Some(pixel.syncing.device().unwrap()), serde_json::json!("back")));
+    settle(&[&pixel, &mac]);
+    assert_eq!((on_pixel.take(), on_mac.take()), (vec![r#"heard "back""#.to_string()], vec![r#"heard "hi""#.to_string()]));
+    let other = attached(&mac, &local(&mac, "https://other.example"));
+    assert!(pixel.syncing.remote_say("a", Some(mac_id), serde_json::json!("hi again")));
+    settle(&[&pixel, &mac]);
+    assert_eq!(other.take(), ["in"], "another profile open there hears nothing of this one's");
+    pixel.syncing.reset();
+    settle(&[&pixel, &mac]);
+    assert_eq!((on_pixel.take(), other.take()), (vec!["out".to_string(), "in".to_string()], vec!["left".to_string()]), "a device that resets its pairing is in a room of its own");
+}
+
+#[test]
+fn remote_control_leaves_the_room_with_its_connection_and_learns_the_clock_again() {
+    let hub = Hub::new(NOW);
+    let pixel = Device::new(&hub, Reach::Computer, vec![navidrome("a", "https://music.example")]);
+    let mac = Device::new(&hub, Reach::Computer, vec![]);
+    pair(&pixel, &mac);
+    let on_mac = attached(&mac, &local(&mac, "https://music.example"));
+    settle(&[&pixel, &mac]);
+    assert_eq!(on_mac.take(), ["in"]);
+    mac.net.drop_all();
+    settle(&[&pixel, &mac]);
+    assert_eq!((on_mac.take(), mac.syncing.server_clock()), (vec!["left".to_string(), "out".to_string()], None));
+    mac.tasks.pass(5 * S);
+    settle(&[&pixel, &mac]);
+    assert_eq!(on_mac.take(), ["in"]);
+    assert!(mac.syncing.server_clock().is_some());
+}
+
+#[test]
+fn a_profile_that_does_not_sync_takes_no_part_in_the_group_room() {
+    let hub = Hub::new(NOW);
+    let pixel = Device::new(&hub, Reach::Computer, vec![navidrome("a", "https://music.example"), SavedServer { sync_off: true, ..navidrome("c", "https://mine.example") }]);
+    let mac = Device::new(&hub, Reach::Computer, vec![]);
+    pair(&pixel, &mac);
+    let on_pixel = attached(&pixel, "c");
+    settle(&[&pixel, &mac]);
+    assert!(on_pixel.take().is_empty());
+    assert!(!pixel.syncing.remote_say("c", None, serde_json::json!("hi")));
+    assert_eq!(pixel.syncing.lan_secret("c"), None);
+    attached(&pixel, "a");
+    settle(&[&pixel, &mac]);
+    assert_eq!(pixel.syncing.lan_secret("a").map(|s| s.len()), Some(64));
+    let lone = Device::new(&hub, Reach::Computer, vec![navidrome("a", "https://music.example")]);
+    let heard = attached(&lone, "a");
+    assert!(heard.take().is_empty() && !lone.syncing.remote_say("a", None, serde_json::json!("hi")), "a device never paired");
+    assert_eq!((lone.made.load(Ordering::Relaxed), lone.net.opened.load(Ordering::Relaxed)), (0, 0), "and pays nothing");
+}
+
+/// What `from` says to `to` directly and back, as through `to`'s LAN door, until neither has more.
+fn exchange(from: &Device, to: &Device) {
+    let mut said = vec![from.syncing.direct_hello().expect("paired")];
+    for side in [to, from].into_iter().cycle().take(6) {
+        said = side.syncing.direct_heard(said);
+        if said.is_empty() {
+            return;
+        }
+    }
+    panic!("the exchange never ended");
+}
+
+#[test]
+fn profiles_sync_directly_when_the_server_refuses_both() {
+    let hub = Hub::new(NOW);
+    let pixel = Device::new(&hub, Reach::Computer, vec![navidrome("a", "https://music.example")]);
+    let mac = Device::new(&hub, Reach::Computer, vec![]);
+    pair(&pixel, &mac);
+    hub.wall(true);
+    pixel.net.drop_all();
+    mac.net.drop_all();
+    settle(&[&pixel, &mac]);
+    let on_pixel = attached(&pixel, "a");
+    mac.rename("Music");
+    settle(&[&pixel, &mac]);
+    assert_eq!(pixel.names(), ["Home"], "the server passes nothing on");
+    exchange(&mac, &pixel);
+    assert_eq!(pixel.names(), ["Music"], "the rename came directly");
+    let mut prefs = pixel.settings.current().unwrap();
+    prefs.servers.push(navidrome("w", "https://work.example"));
+    pixel.settings.put(prefs);
+    settle(&[&pixel, &mac]);
+    assert!(on_pixel.take().contains(&"changed".to_string()), "the remote is told, to say it directly");
+    exchange(&pixel, &mac);
+    let mut names = mac.names();
+    names.sort();
+    assert_eq!(names, ["Home", "Music"], "and back: the new profile");
+    assert_eq!(mac.told.events.lock().unwrap().iter().filter(|e| matches!(e, SyncEvent::NewDevice { .. })).count(), 0, "meeting directly is no new device");
+}
+
+#[test]
+fn a_paired_device_s_sync_tells_its_client_nothing_before_the_client_has_it() {
+    let hub = Hub::new(NOW);
+    let pixel = Device::new(&hub, Reach::Computer, vec![navidrome("a", "https://music.example")]);
+    let mac = Device::new(&hub, Reach::Computer, vec![]);
+    pair(&pixel, &mac);
+    let told = Arc::new(Told::default());
+    let tasks = pixel.tasks.clone();
+    let again = Syncing::new(pixel.settings.clone(), Net::new(&hub, None), told.clone(), Reach::Computer, Box::new(move || tasks.clone() as Arc<dyn Tasks>));
+    assert_eq!(told.changed.load(Ordering::Relaxed), 0, "nothing while it is made");
+    assert_eq!(again.state(), SyncState::Connecting, "and it starts at once");
 }

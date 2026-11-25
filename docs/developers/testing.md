@@ -50,8 +50,9 @@ The tests need two things that are easy to miss:
 
 - `crates/player/tests/pipeline` runs the whole player on a simulated output.
 - `crates/engine/tests` runs the player on its own thread, on the virtual clock in `tests/common`.
-- `crates/core/tests/scenario.rs` runs whole flows against an in-memory server, and `tests/remote.rs`
-  runs remote control and jams over an in-memory relay.
+- `crates/core/tests/scenario.rs` runs whole flows against an in-memory server. `tests/remote.rs` runs
+  remote control between paired devices through an in-memory sync server (`nori_sync::hub`), and jams
+  over an in-memory relay.
 - `crates/android/src/track.rs` tests the AudioTrack writer on a simulated track, and `lib.rs` checks
   every JNI door against its Kotlin `external fun`.
 - nori-cli and nori-desktop test their screens with ratatui's `TestBackend` and Slint's testing backend.

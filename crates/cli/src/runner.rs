@@ -299,6 +299,7 @@ impl Runner {
             images: app.images,
             offline: self.o.offline,
             mpris: self.mpris.clone(),
+            sync: Some(self.sync.clone()),
             tx: self.tx.clone(),
         };
         match Session::open(o) {

@@ -118,6 +118,12 @@ impl GroupKey {
         RoomName(b64(&self.derive(b"nori sync room")))
     }
 
+    /// What the group's devices with synced profile `profile` open sign their requests to each other's
+    /// LAN doors with, and announce those doors by: 32 bytes, hex.
+    pub(crate) fn lan_secret(&self, profile: &str) -> String {
+        self.derive(format!("nori lan door {profile}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    }
+
     /// What the kept copy's puts and deletes present; the server learns it with the first put.
     pub(crate) fn copy_secret(&self) -> [u8; 32] {
         self.derive(b"nori sync copy secret")

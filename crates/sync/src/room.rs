@@ -68,8 +68,9 @@ pub enum Heard {
     Closed { room: RoomName },
     /// A payload as `from` sent it.
     Message { room: RoomName, from: Member, payload: Vec<u8> },
-    /// The server's clock, Unix ms, as asked in `room`.
-    Time { room: RoomName, ms: i64 },
+    /// The server's clock, Unix ms, as asked in `room`, and the way there and back, µs: of several
+    /// answers, the shortest way is the truest.
+    Time { room: RoomName, ms: i64, rtt_us: i64 },
     /// The kept copy of `room`; None when it has none.
     Copy { room: RoomName, blob: Option<Vec<u8>> },
     Refused { room: RoomName, asked: Asked, reason: Refusal },

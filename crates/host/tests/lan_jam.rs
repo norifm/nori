@@ -65,7 +65,7 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let host_session = host_client.session().clone();
     let (ops, received) = mpsc::channel();
     let (changes, host_changed) = mpsc::channel();
-    let host = Remote::new(host_client.clone(), RemoteMe { name: "Host".into(), kind: DeviceKind::Desktop }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None);
+    let host = Remote::new(host_client.clone(), RemoteMe { name: "Host".into(), kind: DeviceKind::Desktop }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None, None);
     let link = block_on(host.clone().jam_open()).unwrap().unwrap();
     let pairing = host.pairing_link().unwrap();
     assert!(!link.contains("private-account") && !link.contains("private-cookie"));
@@ -93,7 +93,7 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let (ops, _) = mpsc::channel();
     let (changes, guest_changed) = mpsc::channel();
     let guest_shown = Arc::new(Shown(changes, Mutex::new(false)));
-    let guest = Remote::new(guest_client.clone(), RemoteMe { name: "Guest".into(), kind: DeviceKind::Guest }, Arc::new(Player(ops)), guest_shown.clone(), None);
+    let guest = Remote::new(guest_client.clone(), RemoteMe { name: "Guest".into(), kind: DeviceKind::Guest }, Arc::new(Player(ops)), guest_shown.clone(), None, None);
     guest.clone().watch(true);
     wait(&guest_changed, || guest.jam_view().is_some_and(|v| v.members.len() == 2));
     guest.clone().jam_act(Op::Pause);
@@ -158,10 +158,10 @@ fn paired_devices_control_each_other_and_can_be_forgotten() {
     let (a_ops, a_commands) = mpsc::channel();
     let (a_changes, a_changed) = mpsc::channel();
     let discovery = Arc::new(Discovery::default());
-    let a = Remote::new(make(&a_dir, "a"), RemoteMe { name: "A".into(), kind: DeviceKind::Desktop }, Arc::new(Player(a_ops)), Arc::new(Shown(a_changes, Mutex::new(false))), Some(discovery.clone()));
+    let a = Remote::new(make(&a_dir, "a"), RemoteMe { name: "A".into(), kind: DeviceKind::Desktop }, Arc::new(Player(a_ops)), Arc::new(Shown(a_changes, Mutex::new(false))), Some(discovery.clone()), None);
     let (b_ops, _) = mpsc::channel();
     let (b_changes, b_changed) = mpsc::channel();
-    let b = Remote::new(make(&b_dir, "b"), RemoteMe { name: "B".into(), kind: DeviceKind::Terminal }, Arc::new(Player(b_ops)), Arc::new(Shown(b_changes, Mutex::new(false))), None);
+    let b = Remote::new(make(&b_dir, "b"), RemoteMe { name: "B".into(), kind: DeviceKind::Terminal }, Arc::new(Player(b_ops)), Arc::new(Shown(b_changes, Mutex::new(false))), None, None);
     assert_eq!(a.pairing_link(), None, "no code while the door is closed");
     a.clone().serve(true);
     let mut code = nori_remote::lan::parse_pairing(&here(a.pairing_link().unwrap())).unwrap();
@@ -216,7 +216,7 @@ fn pairing_says_why_it_failed() {
             let client = client(path, SavedServer { id: name.into(), kind: music_plugin(), ..Default::default() }, settings);
             let (ops, _) = mpsc::channel();
             let (changes, _) = mpsc::channel();
-            Remote::new(client, RemoteMe { name: name.into(), kind }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None)
+            Remote::new(client, RemoteMe { name: name.into(), kind }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None, None)
         })
         .collect();
     let (a, guest) = (&devices[0], &devices[1]);
@@ -235,7 +235,7 @@ fn pairing_says_why_it_failed() {
     settings.open(&path).unwrap();
     let (ops, _) = mpsc::channel();
     let (changes, _) = mpsc::channel();
-    let c = Remote::new(client(path, SavedServer { id: "c".into(), kind: music_plugin(), ..Default::default() }, settings), RemoteMe { name: "C".into(), kind: DeviceKind::Phone }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None);
+    let c = Remote::new(client(path, SavedServer { id: "c".into(), kind: music_plugin(), ..Default::default() }, settings), RemoteMe { name: "C".into(), kind: DeviceKind::Phone }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None, None);
     assert_eq!(pair(&c, nori_remote::lan::pairing_link(&gone)), Err(remote::PairError::Unreachable), "nothing listens where the code says");
     assert!(c.paired().is_empty() && a.paired().is_empty());
     c.stop();
@@ -256,10 +256,10 @@ fn a_speaker_reached_through_a_device_is_cast_to_there() {
     let (a_ops, a_commands) = mpsc::channel();
     let (a_changed, _) = mpsc::channel();
     let discovery = Arc::new(Discovery::default());
-    let a = Remote::new(make(&a_dir, "a"), RemoteMe { name: "A".into(), kind: DeviceKind::Desktop }, Arc::new(Player(a_ops)), Arc::new(Shown(a_changed, Mutex::new(false))), Some(discovery.clone()));
+    let a = Remote::new(make(&a_dir, "a"), RemoteMe { name: "A".into(), kind: DeviceKind::Desktop }, Arc::new(Player(a_ops)), Arc::new(Shown(a_changed, Mutex::new(false))), Some(discovery.clone()), None);
     let (b_ops, _) = mpsc::channel();
     let (b_changes, b_changed) = mpsc::channel();
-    let b = Remote::new(make(&b_dir, "b"), RemoteMe { name: "B".into(), kind: DeviceKind::Terminal }, Arc::new(Player(b_ops)), Arc::new(Shown(b_changes, Mutex::new(false))), None);
+    let b = Remote::new(make(&b_dir, "b"), RemoteMe { name: "B".into(), kind: DeviceKind::Terminal }, Arc::new(Player(b_ops)), Arc::new(Shown(b_changes, Mutex::new(false))), None, None);
     a.clone().serve(true);
     pair(&b, here(a.pairing_link().unwrap())).unwrap();
     let announced = discovery.0.lock().unwrap().clone().unwrap();
@@ -346,7 +346,7 @@ fn scanning_a_code_pairs_both_devices() {
                 lan.0.lock().unwrap().push(Seat::default());
                 let (ops, _) = mpsc::channel();
                 let (changes, changed) = mpsc::channel();
-                let remote = Remote::new(client, RemoteMe { name: name.into(), kind }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), Some(Arc::new(Port(lan.clone(), i))));
+                let remote = Remote::new(client, RemoteMe { name: name.into(), kind }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), Some(Arc::new(Port(lan.clone(), i))), None);
                 lan.0.lock().unwrap()[i].remote = Arc::downgrade(&remote);
                 (remote, changed)
             })

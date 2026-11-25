@@ -29,11 +29,14 @@ fn now_ms() -> i64 {
 /// What a door does with a command that came through it: (the sending device's id, the body).
 pub type Handler = Box<dyn Fn(&str, Body) + Send + Sync>;
 
+/// What a door does with profile sync's sealed messages from one of my devices: what to answer.
+pub type Carry = Box<dyn Fn(Vec<Vec<u8>>) -> Vec<Vec<u8>> + Send + Sync>;
+
 /// Who may control this device through its door.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Access {
-    /// The account's devices, all signing with its proof.
-    Account(String),
+    /// My devices with the profile open, all signing with the key the group gives it.
+    Shared(String),
     /// Devices paired one by one, each signing with its own key: (device id, key). A device showing
     /// this one's code pairs with `invite`.
     Paired { invite: String, keys: Vec<(String, String)> },
@@ -43,7 +46,7 @@ impl Access {
     /// Whether device `dev` signed `target` as this access admits.
     fn admits(&self, dev: &str, method: &str, target: &str, body: &[u8]) -> bool {
         match self {
-            Access::Account(secret) => verified(secret, method, target, body, now_ms()),
+            Access::Shared(secret) => verified(secret, method, target, body, now_ms()),
             Access::Paired { keys, .. } => keys.iter().any(|(id, key)| id == dev && verified(key, method, target, body, now_ms())),
         }
     }
@@ -98,6 +101,8 @@ struct Inside {
     /// next change rings and drops them.
     holds: HashMap<u64, (Bell, Option<Box<dyn Send>>)>,
     holds_opened: u64,
+    /// My devices holding a poll here now, with how many each holds.
+    holding: HashMap<String, usize>,
 }
 
 impl Inside {
@@ -118,6 +123,7 @@ struct Shared {
     live: AtomicUsize,
     inside: Mutex<Inside>,
     handler: Handler,
+    carry: Mutex<Option<Arc<Carry>>>,
     jam: Mutex<Option<LanJam>>,
     /// Keeps this device's clock ([`crate::clock::now_us`] but where a test simulates it).
     tasks: Arc<dyn Tasks>,
@@ -144,7 +150,7 @@ impl Door {
     pub fn open(me: Member, access: Access, handler: Handler, pairs: Pairs, tasks: Arc<dyn Tasks>) -> std::io::Result<Door> {
         let listener = TcpListener::bind(("0.0.0.0", 0))?;
         let port = listener.local_addr()?.port();
-        let shared = Arc::new(Shared { access: Mutex::new(access), pairs, closed: AtomicBool::new(false), live: AtomicUsize::new(0), inside: Mutex::new(Inside { seq: 1, me, events: VecDeque::new(), holds: HashMap::new(), holds_opened: 0 }), handler, jam: Mutex::new(None), tasks });
+        let shared = Arc::new(Shared { access: Mutex::new(access), pairs, closed: AtomicBool::new(false), live: AtomicUsize::new(0), inside: Mutex::new(Inside { seq: 1, me, events: VecDeque::new(), holds: HashMap::new(), holds_opened: 0, holding: HashMap::new() }), handler, carry: Mutex::new(None), jam: Mutex::new(None), tasks });
         let s = shared.clone();
         std::thread::Builder::new().name("nori-door".into()).spawn(move || accept_each(&s, listener.incoming()))?;
         Ok(Door { port, shared })
@@ -181,6 +187,18 @@ impl Door {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// Where profile sync's messages from my devices go; None refuses them.
+    pub fn carry(&self, carry: Option<Carry>) {
+        *self.shared.carry.lock() = carry.map(Arc::new);
+    }
+
+    /// My devices holding a poll at this door now: what this device says next reaches them through it,
+    /// as the poll answers with it. A device between two polls asks with what it last heard, so it
+    /// misses nothing.
+    pub fn polling(&self) -> Vec<String> {
+        self.shared.inside.lock().holding.keys().cloned().collect()
     }
 
     fn change(&self, f: impl FnOnce(&mut Inside)) {
@@ -315,7 +333,7 @@ fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8],
         let secret = super::member_secret(&jam.invite, nonce);
         if jam.revoked.contains(&secret) { return Some(("401 Unauthorized", "{}".into())); }
         if jam.members.iter().any(|(key, _)| key == &secret) { return Some(("200 OK", "{}".into())); }
-        let id = super::account_tag("guest", &secret);
+        let id = super::tag("guest", &secret);
         let name = query(target, "name").and_then(crate::decode).unwrap_or_default();
         jam.members.push((secret.clone(), Member { id, name, kind: crate::wire::DeviceKind::Guest, state: None }));
         let changed = jam.changed.clone();
@@ -341,7 +359,8 @@ fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8],
             let hold = query(target, "hold") == Some("1");
             let mut i = s.inside.lock();
             if let (Some(since), true) = (since, hold) {
-                hold_poll(s, &mut i, conn, since)?;
+                let mine = guest.is_none().then(|| dev.clone());
+                hold_poll(s, &mut i, conn, since, mine)?;
             }
             // A device forgotten or a revoked membership can wake a held poll.
             if guest.is_none() && !s.access.lock().admits(&dev, method, target, body) {
@@ -367,7 +386,7 @@ fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8],
         "/rest/noriRemote.unpair" if guest.is_none() && method == "POST" => {
             let forgot = match &mut *s.access.lock() {
                 Access::Paired { keys, .. } => keys.iter().position(|(id, _)| *id == dev).map(|at| keys.remove(at)).is_some(),
-                Access::Account(_) => false,
+                Access::Shared(_) => false,
             };
             if forgot {
                 (s.pairs)(PairChange::Forgot { id: dev });
@@ -401,6 +420,10 @@ fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8],
             }
             let seq = s.inside.lock().seq;
             Some(("200 OK", format!(r#"{{"seq":{seq}}}"#)))
+        }
+        "/rest/noriRemote.sync" if guest.is_none() && method == "POST" => {
+            let (Ok(said), Some(carry)) = (serde_json::from_slice::<Vec<Vec<u8>>>(body), s.carry.lock().clone()) else { return Some(("400 Bad Request", "{}".into())) };
+            Some(("200 OK", serde_json::to_string(&carry(said)).unwrap_or_default()))
         }
         "/rest/noriRemote.read" if guest.is_some() && method == "POST" => {
             let Ok(read) = serde_json::from_slice::<HostRead>(body) else { return Some(("400 Bad Request", "{}".into())) };
@@ -449,10 +472,14 @@ fn asked(s: &Shared, ask: Ask) -> (&'static str, String) {
 
 /// Holds a poll while the door has nothing past `since`, until it changes, closes, [`HOLD_MS`] pass or
 /// the controller speaks again; None when it hung up.
-fn hold_poll(s: &Shared, i: &mut MutexGuard<Inside>, conn: &TcpStream, since: u64) -> Option<()> {
+/// Holds a poll until the door changes, `dev` (one of my devices) counted as holding it meanwhile.
+fn hold_poll(s: &Shared, i: &mut MutexGuard<Inside>, conn: &TcpStream, since: u64, dev: Option<String>) -> Option<()> {
     // Checked and held under one lock, so a change or close after this rings the hold.
     if i.seq > since || s.closed.load(Ordering::Acquire) {
         return Some(());
+    }
+    if let Some(dev) = &dev {
+        *i.holding.entry(dev.clone()).or_default() += 1;
     }
     let until = Instant::now() + Duration::from_millis(HOLD_MS as u64);
     let Ok((bell, ear)) = alarm() else { return Some(()) };
@@ -464,6 +491,14 @@ fn hold_poll(s: &Shared, i: &mut MutexGuard<Inside>, conn: &TcpStream, since: u6
         woke = MutexGuard::unlocked(i, || wait(conn, &ear, until));
     }
     i.holds.remove(&hold);
+    if let Some(dev) = &dev {
+        if let Some(n) = i.holding.get_mut(dev) {
+            *n -= 1;
+            if *n == 0 {
+                i.holding.remove(dev);
+            }
+        }
+    }
     (woke != Woke::HungUp).then_some(())
 }
 
@@ -593,8 +628,31 @@ mod tests {
     }
 
     #[test]
+    fn my_devices_carry_profile_sync_and_are_known_as_polling() {
+        let door = opened(Member { id: "desk".into(), ..Default::default() }, Access::Shared("pw".into()), Box::new(|_, _| {}));
+        let said = serde_json::to_string(&vec![vec![1u8, 2]]).unwrap();
+        assert_eq!(request(door.port(), "pw", "POST", "/rest/noriRemote.sync?dev=phone", &said).0, 400, "nothing carries it yet");
+        door.carry(Some(Box::new(|said| said.into_iter().map(|mut m| { m.reverse(); m }).collect())));
+        assert_eq!(request(door.port(), "pw", "POST", "/rest/noriRemote.sync?dev=phone", &said), (200, "[[2,1]]".into()));
+        assert_eq!(request(door.port(), "other", "POST", "/rest/noriRemote.sync?dev=phone", &said).0, 401, "another group's key");
+        assert_eq!(request(door.port(), "pw", "GET", "/rest/noriRemote.poll?dev=phone", "").0, 200);
+        assert!(door.polling().is_empty(), "a poll answered at once holds nothing");
+        let (port, seq) = (door.port(), door.shared.inside.lock().seq);
+        let held = std::thread::spawn(move || request(port, "pw", "GET", &format!("/rest/noriRemote.poll?dev=phone&since={seq}&hold=1"), "").0);
+        let until = Instant::now() + Duration::from_secs(5);
+        while door.polling().is_empty() {
+            assert!(Instant::now() < until, "the poll is held");
+            std::thread::yield_now();
+        }
+        assert_eq!(door.polling(), ["phone"]);
+        door.publish(DeviceState { playing: true, ..Default::default() });
+        assert_eq!(held.join().unwrap(), 200);
+        assert!(door.polling().is_empty(), "answered, it holds no poll");
+    }
+
+    #[test]
     fn connections_past_the_cap_are_closed_at_once() {
-        let door = opened(Member { id: "host".into(), ..Default::default() }, Access::Account("pw".into()), Box::new(|_, _| {}));
+        let door = opened(Member { id: "host".into(), ..Default::default() }, Access::Shared("pw".into()), Box::new(|_, _| {}));
         let held: Vec<_> = (0..MAX_CONNECTIONS).map(|_| TcpStream::connect(("127.0.0.1", door.port())).unwrap()).collect();
         let mut over = TcpStream::connect(("127.0.0.1", door.port())).unwrap();
         over.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
@@ -605,7 +663,7 @@ mod tests {
     #[test]
     fn held_polls_recheck_access() {
         for guest in [false, true] {
-            let door = opened(Member { id: "host".into(), ..Default::default() }, Access::Account("paired-secret".into()), Box::new(|_, _| {}));
+            let door = opened(Member { id: "host".into(), ..Default::default() }, Access::Shared("paired-secret".into()), Box::new(|_, _| {}));
             let secret = if guest {
                 door.open_jam("invite-secret".into(), Box::new(|_, _| {}), Box::new(|_| {}), Box::new(|_| Err(Unanswered::Failed)));
                 let nonce = "a".repeat(64);
@@ -622,14 +680,14 @@ mod tests {
                 assert!(Instant::now() < until, "poll reached its hold");
                 std::thread::yield_now();
             }
-            if guest { door.kick(&first.you); } else { door.set_access(Access::Account("new-paired-secret".into())); }
+            if guest { door.kick(&first.you); } else { door.set_access(Access::Shared("new-paired-secret".into())); }
             assert_eq!(held.join().unwrap().0, 401, "held poll is revoked, guest={guest}");
         }
     }
 
     #[test]
     fn failing_accepts_wait_and_end_with_the_door() {
-        let door = opened(Member::default(), Access::Account("pw".into()), Box::new(|_, _| {}));
+        let door = opened(Member::default(), Access::Shared("pw".into()), Box::new(|_, _| {}));
         let shared = door.shared.clone();
         let tries = Arc::new(AtomicUsize::new(0));
         let counted = tries.clone();
@@ -646,7 +704,7 @@ mod tests {
 
     #[test]
     fn a_held_poll_ends_at_the_next_change() {
-        let door = opened(Member { id: "desk".into(), ..Default::default() }, Access::Account("pw".into()), Box::new(|_, _| {}));
+        let door = opened(Member { id: "desk".into(), ..Default::default() }, Access::Shared("pw".into()), Box::new(|_, _| {}));
         let port = door.port();
         // A cursor past the door's own: no change reaches it.
         let (answered, answer) = std::sync::mpsc::channel();
@@ -666,7 +724,7 @@ mod tests {
         let jam_commands = Arc::new(Mutex::new(Vec::new()));
         let members = Arc::new(Mutex::new(Vec::new()));
         let got = device_commands.clone();
-        let door = opened(Member { id: "host".into(), ..Default::default() }, Access::Account("paired-secret".into()), Box::new(move |from, body| got.lock().push((from.to_owned(), body))));
+        let door = opened(Member { id: "host".into(), ..Default::default() }, Access::Shared("paired-secret".into()), Box::new(move |from, body| got.lock().push((from.to_owned(), body))));
         let got = jam_commands.clone();
         let listed = members.clone();
         door.open_jam("invite-secret".into(), Box::new(move |from, body| got.lock().push((from.to_owned(), body))), Box::new(move |m| *listed.lock() = m), Box::new(|_| Err(Unanswered::Failed)));
@@ -687,7 +745,7 @@ mod tests {
         assert_eq!(request(door.port(), &secret, "POST", "/rest/noriRemote.send?dev=host", &command).0, 200);
         assert!(device_commands.lock().is_empty(), "guests only reach the jam permission boundary");
         assert_eq!(jam_commands.lock()[0].0, answer.you);
-        door.set_access(Access::Account("new-paired-secret".into()));
+        door.set_access(Access::Shared("new-paired-secret".into()));
         assert_eq!(request(door.port(), "paired-secret", "GET", "/rest/noriRemote.poll?dev=own", "").0, 401);
         assert_eq!(request(door.port(), &secret, "GET", "/rest/noriRemote.poll?dev=guest", "").0, 200, "pair rotation preserves the separate jam");
         door.kick(&answer.you);
@@ -703,7 +761,7 @@ mod tests {
     fn only_jam_members_ask_the_hosts_provider() {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let heard = asked.clone();
-        let door = opened(Member { id: "host".into(), ..Default::default() }, Access::Account("paired-secret".into()), Box::new(|_, _| {}));
+        let door = opened(Member { id: "host".into(), ..Default::default() }, Access::Shared("paired-secret".into()), Box::new(|_, _| {}));
         let source = HostSource { url: "https://cdn.example/a".into(), parts: Some(crate::wire::SourceParts { len: 9, most: 4 }) };
         let told = source.clone();
         door.open_jam("invite-secret".into(), Box::new(|_, _| {}), Box::new(|_| {}), Box::new(move |ask| {
@@ -768,7 +826,7 @@ mod tests {
         assert_eq!((poll(&phone, "phone"), poll(&tablet, "tablet")), (401, 200), "only the device that forgot this one is gone");
         door.set_access(Access::Paired { invite: invite.clone(), keys: Vec::new() });
         assert_eq!(poll(&tablet, "tablet"), 401, "forgotten here");
-        door.set_access(Access::Account("pw".into()));
+        door.set_access(Access::Shared("pw".into()));
         let device = serde_json::to_string(&Member { id: "other".into(), ..Default::default() }).unwrap();
         assert_eq!(request(port, &invite, "POST", &format!("/rest/noriRemote.pair?nonce={nonce}"), &device).0, 404, "an account's devices do not pair");
     }
@@ -778,7 +836,7 @@ mod tests {
         let got = Arc::new(Mutex::new(Vec::new()));
         let g = got.clone();
         let me = Member { id: "desk".into(), name: "Desk".into(), ..Default::default() };
-        let door = opened(me, Access::Account("pw".into()), Box::new(move |from, body| g.lock().push((from.to_string(), body))));
+        let door = opened(me, Access::Shared("pw".into()), Box::new(move |from, body| g.lock().push((from.to_string(), body))));
         door.publish(DeviceState { playing: true, rev: 3, ..Default::default() });
         door.reply("tablet", Body::Ack { id: 9, refusal: None });
 
