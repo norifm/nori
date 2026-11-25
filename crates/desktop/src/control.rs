@@ -9,7 +9,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 
 use crate::AppWindow;
 
@@ -40,10 +40,28 @@ enum Command {
     Appearance(i32),
     /// Presses and releases the left button at this point of the window, in logical pixels.
     Click(f32, f32),
+    /// Settings › Your devices, as its row opens it.
+    DevicesPage,
+    /// Pair a device, as its button opens it.
+    PairOpen,
+    /// The sheet's role: 0 shows this computer's code, 1 takes another's.
+    PairRole(i32),
+    /// Pastes a link on the sheet and presses Pair.
+    PairPaste(String),
+    /// Presses Pair on the confirmation; true keeps an encrypted copy where it is asked.
+    PairConfirm(bool),
+    PairClose,
+    /// Presses a settings row's switch, button or link by its name (`sync`, `sync-reset`, `your-devices`).
+    SettingToggle(String, bool),
+    SettingAction(String),
+    /// Types this in the ask sheet's field.
+    AskText(String),
+    /// Presses the ask sheet's button, or its other answer.
+    AskAnswer(bool),
 }
 
-/// A line on the socket: a command for the window, or one for sync, which has no screen yet and is
-/// answered off the UI thread (`{"sync": {"do": "take", "arg": "nori://pair#…"}}`).
+/// A line on the socket: a command for the window, or one straight to sync, answered off the UI thread
+/// (`{"sync": {"do": "take", "arg": "nori://pair#…"}}`).
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Request {
@@ -112,6 +130,20 @@ struct State {
     setup: i32,
     /// The welcome's sign-ins show.
     welcome_signing: bool,
+    /// Your devices is open; the Pair a device sheet and what it shows.
+    devices_page: bool,
+    pair_open: bool,
+    pair_stage: i32,
+    pair_line: String,
+    pair_error: String,
+    pair_link: String,
+    pair_words: String,
+    pair_question: String,
+    pair_leaves: String,
+    /// The ask sheet: its title and note.
+    ask: String,
+    /// The settings rows shown, as title · detail.
+    settings: Vec<String>,
 }
 
 fn dispatch(ui: &AppWindow, command: Command) -> State {
@@ -165,6 +197,28 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
                 ui.window().dispatch_event(event);
             }
         }
+        Command::DevicesPage => ui.invoke_setting_action("your-devices".into()),
+        Command::PairOpen => ui.invoke_setting_action("sync-pair".into()),
+        Command::PairRole(i) => ui.global::<crate::PairSheet>().invoke_role_chosen(i),
+        Command::PairPaste(link) => {
+            let sheet = ui.global::<crate::PairSheet>();
+            sheet.set_pasted(link.as_str().into());
+            sheet.invoke_take(link.into());
+        }
+        Command::PairConfirm(keep) => {
+            let sheet = ui.global::<crate::PairSheet>();
+            sheet.set_keep(keep);
+            sheet.invoke_confirm(keep);
+        }
+        Command::PairClose => ui.global::<crate::PairSheet>().invoke_close(),
+        Command::SettingToggle(name, on) => ui.invoke_setting_toggled(name.into(), on),
+        Command::SettingAction(name) => ui.invoke_setting_action(name.into()),
+        Command::AskText(text) => ui.set_ask_text(text.into()),
+        Command::AskAnswer(main) => {
+            ui.set_ask_open(false);
+            let name = if main { ui.get_ask_name() } else { ui.get_ask_other_name() };
+            ui.invoke_setting_typed(name, ui.get_ask_text());
+        }
         Command::Shot(path) => {
             if let Err(e) = shot(ui, &path) {
                 eprintln!("nori: shot {}: {e}", path.display());
@@ -190,6 +244,17 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
         artist: ui.get_now_artist().to_string(), note: ui.get_note().to_string(), note_error: ui.get_note_error(),
         setup: if ui.get_setup_open() { ui.get_setup_at() } else { -1 },
         welcome_signing: ui.get_welcome_signing(),
+        devices_page: ui.global::<crate::YourDevices>().get_open(),
+        pair_open: ui.global::<crate::PairSheet>().get_open(),
+        pair_stage: ui.global::<crate::PairSheet>().get_stage(),
+        pair_line: ui.global::<crate::PairSheet>().get_line().into(),
+        pair_error: ui.global::<crate::PairSheet>().get_error().into(),
+        pair_link: ui.global::<crate::PairSheet>().get_link().into(),
+        pair_words: ui.global::<crate::PairSheet>().get_code_words().into(),
+        pair_question: ui.global::<crate::PairSheet>().get_question().into(),
+        pair_leaves: ui.global::<crate::PairSheet>().get_leaves().into(),
+        ask: if ui.get_ask_open() { format!("{} · {}", ui.get_ask_title(), ui.get_ask_note()) } else { String::new() },
+        settings: ui.get_settings().iter().map(|r| format!("{} · {}", r.title, r.detail)).collect(),
     }
 }
 
