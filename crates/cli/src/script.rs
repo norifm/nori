@@ -479,6 +479,11 @@ pub fn main(argv: Vec<String>) {
                 match cli.core.session.settings.edit_by_name(name, value) {
                     Some(c) => {
                         cli.apply(c.effect);
+                        if c.server {
+                            if let Some(s) = c.prefs.active_server() {
+                                cli.client.set_profile(nori_host::net(s));
+                            }
+                        }
                         println!("{name} = {value}");
                     }
                     None => println!("{name}: not a setting"),

@@ -13,7 +13,7 @@
   import { route, href } from "../state/route.svelte";
   import { refreshTheme } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
-  import type { Profile, ProfileIcon, Profiles, SettingRow, SettingsSection } from "../state/types";
+  import type { MusicFolderSwitch, Profile, ProfileIcon, Profiles, SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
   import AddProfile from "../ui/AddProfile.svelte";
   import Icon from "../ui/Icon.svelte";
@@ -32,9 +32,10 @@
     const name = route.arg;
     const sections = names.includes(name) ? (JSON.parse(await ask<string>("settings_page", name)) as SettingsSection[]) : [];
     const profiles = JSON.parse(await ask<string>("profiles")) as Profiles;
+    const folders = name === "Servers" || (!name && ui.wide) ? (JSON.parse(await ask<string>("music_folders").catch(() => "[]")) as MusicFolderSwitch[]) : [];
     // A build with a support service offers its page last.
     const supported = await ask<boolean>("support_offered");
-    return { names, sections, profiles, supported };
+    return { names, sections, profiles, folders, supported };
   });
   /** The page open: on a wide screen the first while none is asked for. */
   const name = $derived(route.arg || (ui.wide ? "Servers" : ""));
@@ -152,6 +153,26 @@
     {#if profiles?.picks}<button class="group-row" id="add-profile-row" onclick={() => (adding = true)}><Icon name="plus" /><span class="words">{W.addProfile}</span></button>{/if}
     <button class="group-row" onclick={() => void signOut()}><Icon name="log-out" /><span class="words">{W.signOut}</span></button>
   </div>
+  {#if page.data?.folders.length}
+    <div class="group-label">{W.thisProfile}</div>
+    <div class="group" id="music-folders">
+      {#each page.data.folders as f (f.id)}
+        <label class="group-row" data-folder={f.id}>
+          <span class="words">{f.name}</span>
+          <input
+            type="checkbox"
+            class="switch"
+            aria-label={f.name}
+            checked={f.on}
+            onchange={(e) => {
+              e.currentTarget.checked = f.on;
+              void set("musicFolders", f.tapped);
+            }}
+          />
+        </label>
+      {/each}
+    </div>
+  {/if}
   {#if adding}<AddProfile close={() => (adding = false)} added={() => ((adding = false), opened())} />{/if}
   {#if picking && profiles}{@const p = picking}<ProfileIconPicker profile={p} icons={profiles.icons} pick={(icon) => void pickIcon(p, icon)} close={() => (picking = null)} />{/if}
 {/snippet}

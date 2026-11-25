@@ -1869,6 +1869,35 @@ mod tests {
     }
 
     #[test]
+    fn music_folder_toggles_flip_and_keep_the_last_one() {
+        use slint::Model;
+        let dir = nori_testdir::TempDir::new("desktop-music-folders");
+        let store = nori_core::settings_store::Settings::new();
+        store.open(dir.join("nori.db").to_str().unwrap()).unwrap();
+        let profile = SavedServer { id: "s1".into(), url: "https://music.example".into(), user: "me".into(), ..Default::default() };
+        store.put(StoredPrefs { servers: vec![profile], active_server_id: "s1".into(), ..store.current().unwrap() });
+        let facts = Facts { folders: vec![("Music".into(), "1".into()), ("Other".into(), "2".into())], ..Facts::default() };
+        let tab = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Servers).unwrap() as i32;
+        let toggles = || {
+            let p = store.current().unwrap();
+            rows(&store.model, &p, &facts, &Kinds::builtin(), &Plugged::default(), tab, OCTOBER)
+                .iter()
+                .filter(|r| r.kind == TOGGLE)
+                .map(|r| (r.title.to_string(), r.name.to_string(), r.on, r.enabled))
+                .collect::<Vec<_>>()
+        };
+        let before = toggles();
+        assert_eq!(before, [("Music".into(), "musicFolders=2".into(), true, true), ("Other".into(), "musicFolders=1".into(), true, true)]);
+        let (name, value) = toggled(&before[0].1, false);
+        assert!(store.edit_by_name(name, &value).is_some());
+        let after = toggles();
+        assert_eq!(after, [("Music".into(), "musicFolders=".into(), false, true), ("Other".into(), "musicFolders=2".into(), true, true)]);
+        let (name, value) = toggled(&after[0].1, true);
+        assert!(store.edit_by_name(name, &value).is_some());
+        assert_eq!(toggles(), before);
+    }
+
+    #[test]
     fn row_names_resolve() {
         let p = StoredPrefs { auto_mix: nori_core::settings::AutoMixMode::Dj, auto_fill: Some(nori_core::settings::AutoFillKind::Songs), compressor: Some(nori_core::settings::CompressorPreset::Light), ..StoredPrefs::default() };
         let f = Facts::default();

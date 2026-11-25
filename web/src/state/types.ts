@@ -144,6 +144,9 @@ export type Profile = { id: string; label: string; user: string; host: string; i
 /** The saved profiles in their order, the icons a circle can show in the picker's order, and whether they may
  * be changed here (a jam guest's are its host's). */
 export type Profiles = { picks: boolean; icons: ProfileIcon[]; list: Profile[] };
+/** One of the active server's music libraries (`music_folders`): whether it is shown, and the
+ * `musicFolders` value switching it stores. */
+export type MusicFolderSwitch = { id: string; name: string; on: boolean; tapped: string };
 /** Where a profile's plays go (`scrobblers`): its own server (null where it takes none), then its accounts. */
 export type Scrobbling = { itself: { on: boolean } | null; list: Scrobbler[] };
 export type ScrobblerKind = "listenbrainz" | "librefm" | "lastfm";

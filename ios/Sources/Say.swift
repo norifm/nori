@@ -301,6 +301,7 @@ enum Say {
     static let play = "Play"
     static let shuffle = "Shuffle"
     static let servers = "Profiles"
+    static let thisProfile = "This profile"
     static let none = "None"
     static let addServer = "Add profile"
     static let profileIcon = "Icon"

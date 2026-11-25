@@ -148,6 +148,28 @@ impl Nori {
         json!({ "picks": self.changes_profile(), "icons": icons, "list": list }).to_string()
     }
 
+    /// The active server's music libraries, when it has more than one and this profile may pick them
+    /// (`SettingsPart::ServerOptions`): `[{ id, name, on, tapped }]`, `tapped` the `musicFolders`
+    /// setting value switching that library stores (`folder_switches`). Empty otherwise.
+    pub async fn music_folders(&self) -> Result<String, JsValue> {
+        if !self.changes_profile() {
+            return Ok("[]".into());
+        }
+        let Some(client) = self.client() else { return Ok("[]".into()) };
+        let folders = match client.read_now(nori_core::cache_policy::Read::MusicFolders).await {
+            Ok(nori_core::cache_policy::Page::Folders { v }) if v.len() > 1 => v,
+            _ => return Ok("[]".into()),
+        };
+        let shown = self.app.settings.prefs(|p| p.active_server().map(|s| s.music_folder_ids.clone()).unwrap_or_default());
+        let switches = nori_core::settings::folder_switches(shown, folders.iter().map(|f| f.id.clone()).collect());
+        let out: Vec<Value> = folders
+            .into_iter()
+            .zip(switches)
+            .map(|(f, s)| json!({ "id": f.id, "name": f.name, "on": s.on, "tapped": s.tapped }))
+            .collect();
+        Ok(Value::from(out).to_string())
+    }
+
     /// Saved profile `id` shows `icon` (a `ProfileIcon` by name, as `profiles` lists them) on its circle.
     pub fn profile_icon(&self, id: String, icon: String) -> Result<(), JsValue> {
         use nori_core::settings::ProfileIcon;
@@ -960,7 +982,13 @@ impl Nori {
 
     /// Sets a setting by name; false if there is no such setting.
     pub fn setting(&self, name: String, value: String) -> bool {
-        self.app.settings.edit_by_name(&name, &value).is_some()
+        let Some(c) = self.app.settings.edit_by_name(&name, &value) else { return false };
+        if c.server {
+            if let (Some(client), Some(s)) = (self.client(), c.prefs.active_server()) {
+                client.set_profile(nori_core::net_profile(s));
+            }
+        }
+        true
     }
 
     /// What the plugins on override: `[[key, value]]`, as text.

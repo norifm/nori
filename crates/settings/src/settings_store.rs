@@ -227,13 +227,13 @@ impl SettingsStore {
         Some((self.edit_sound(s)?, kept))
     }
 
-    /// The active server's own settings (`SettingChange::server`) are returned but not kept: the
-    /// platform applies them through its server update.
+    /// Applies a change by name and keeps it; `SettingChange::server` tells the caller to push the
+    /// active profile's network fields to its client too.
     fn edit_by_name(&mut self, name: &str, value: &str) -> Option<SettingChange> {
         let mut change = None;
         let effect = self.edit(|p| {
             let Some(c) = set_by_name(p, name, value) else { return p.clone() };
-            let next = if c.server { p.clone() } else { c.prefs.clone() };
+            let next = c.prefs.clone();
             change = Some(c);
             next
         });
@@ -867,13 +867,13 @@ mod tests {
         assert_eq!(s.edit_by_name("limiter", "true").unwrap().effect, 0, "unchanged");
         assert_eq!(s.edit_by_name("cacheMb", "512").unwrap().effect, CACHE_LIMIT);
         assert!(s.edit_by_name("noSuchSetting", "1").is_none());
-        // The active server's own settings are returned, not kept.
+        // The active server's own settings are kept and marked as a server change.
         let with_server = StoredPrefs { servers: vec![SavedServer { id: "s1".into(), ..Default::default() }], active_server_id: "s1".into(), ..s.prefs.clone() };
         s.edit(|_| with_server.clone());
         let c = s.edit_by_name("musicFolders", "7").unwrap();
         assert!(c.server);
         assert_eq!(c.prefs.servers[0].music_folder_ids, ["7"]);
-        assert_eq!(s.prefs, with_server);
+        assert_eq!(s.prefs, c.prefs);
         assert_eq!(c.effect, 0);
 
         let tool = s.sound_tool(SoundTool::AddBand { freq: 1000.0, gain_db: 0.0 }).unwrap().unwrap();

@@ -191,6 +191,7 @@ export const W = {
   time: clock,
   servers: "Servers",
   profiles: "Profiles",
+  thisProfile: "This profile",
   addProfile: "Add profile",
   inUse: "In use",
   edit: "Edit",

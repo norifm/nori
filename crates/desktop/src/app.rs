@@ -6179,6 +6179,169 @@ mod tests {
         }
     }
 
+    /// Music library toggles on Settings -> Profiles respond to real clicks in the Slint UI, persist to
+    /// disk, keep the last library on, and send `musicFolderId` to the server.
+    #[test]
+    fn music_folder_toggles_work_end_to_end_in_settings() {
+        use i_slint_backend_testing::ElementHandle;
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
+
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let (stop_srv, seen_srv) = (stop.clone(), seen.clone());
+        let srv = std::thread::spawn(move || {
+            while !stop_srv.load(Ordering::Relaxed) {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                };
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let target = req.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("").to_string();
+                seen_srv.lock().unwrap().push(target.clone());
+                let body = if target.contains("/rest/getMusicFolders") {
+                    r#"{"subsonic-response":{"status":"ok","version":"1.16.1","musicFolders":{"musicFolder":[{"id":1,"name":"Music"},{"id":2,"name":"Other"}]}}}"#
+                } else if target.contains("/rest/getArtists") {
+                    r#"{"subsonic-response":{"status":"ok","version":"1.16.1","artists":{"index":[]}}}"#
+                } else {
+                    r#"{"subsonic-response":{"status":"ok","version":"1.16.1"}}"#
+                };
+                let resp = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+
+        let dir = nori_testdir::TempDir::new("desktop-music-folders-ui");
+        let db = nori_host::db_path(dir.path());
+        let settings = nori_core::settings_store::Settings::new();
+        settings.open(&db).unwrap();
+        let profile = SavedServer { id: "p1".into(), url: format!("http://{addr}"), user: "admin".into(), password: "pw".into(), ..Default::default() };
+        settings.put(nori_core::settings::StoredPrefs { servers: vec![profile.clone()], active_server_id: "p1".into(), remote_control: false, ..settings.current().unwrap() });
+        let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
+        let session = nori_host::session::Session::open(nori_host::session::Open {
+            queue,
+            data: dir.path(),
+            http: Http::new(),
+            profile,
+            kinds: nori_core::providers::Kinds::builtin(),
+            output: Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)),
+            volume: nori_host::Level::new(1.0, None),
+            memory_mb: 8,
+            covers: None,
+            offline: false,
+            mpris: None,
+            device: nori_core::remote::RemoteMe { name: "Test".into(), kind: nori_core::remote::wire::DeviceKind::Desktop },
+            discovery: None,
+            tasks: nori_host::tasks(),
+            keeps_music: false,
+            decoders: nori_engine::Platform::default(),
+            out: Arc::new(|_| {}),
+        }).unwrap();
+        let folders: Vec<(String, String)> = match nori_core::transport::block_on(session.client.read_now(nori_core::cache_policy::Read::MusicFolders)).unwrap() {
+            nori_core::cache_policy::Page::Folders { v } => v.into_iter().map(|f| (f.name, f.id)).collect(),
+            _ => panic!("expected folders"),
+        };
+        assert_eq!(folders, [("Music".into(), "1".into()), ("Other".into(), "2".into())]);
+
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        let chrome = ui.global::<crate::Chrome>();
+        chrome.set_top_x(190.0);
+        chrome.set_top_w(900.0);
+        ui.set_settings_tabs(ModelRc::new(VecModel::from(vec![SharedString::from("Profiles")])));
+        ui.set_view(View::Settings);
+
+        let facts = crate::settings::Facts { folders, ..Default::default() };
+        let today = crate::look::Today { month: 11, day: 25, southern: false };
+        let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers).unwrap() as i32;
+        let session = Rc::new(session);
+        let refresh: Rc<dyn Fn()> = {
+            let (ui, settings, facts) = (ui.as_weak(), settings.clone(), facts.clone());
+            let kinds = nori_core::providers::Kinds::builtin();
+            let plugged = crate::settings::Plugged::default();
+            Rc::new(move || {
+                let ui = ui.unwrap();
+                let prefs = settings.current().unwrap();
+                ui.set_settings(crate::settings::rows(&settings.model, &prefs, &facts, &kinds, &plugged, tab, today));
+            })
+        };
+        refresh();
+        {
+            let session = session.clone();
+            let refresh = refresh.clone();
+            ui.on_setting_toggled(move |name, on| {
+                let (name, value) = crate::settings::toggled(&name, on);
+                assert!(session.setting(name, &value).is_some(), "{name}={value}");
+                refresh();
+            });
+        }
+        ui.show().unwrap();
+        let before_shot = ui.window().take_snapshot().unwrap();
+
+        let toggle_at = |label: &str| {
+            let el = ElementHandle::find_by_accessible_label(&ui, label).next().expect(label);
+            let pos = el.absolute_position();
+            let size = el.size();
+            // The Toggle sits at the right end of the 720px centered column (x = 190 + (900-720)/2 + 720 - 14 - 19 = 967).
+            (967.0, pos.y + size.height / 2.0)
+        };
+        let click = |(x, y): (f32, f32)| {
+            let position = slint::LogicalPosition::new(x, y);
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button: slint::platform::PointerEventButton::Left });
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(300));
+            slint::platform::update_timers_and_animations();
+        };
+        let folder_states = || {
+            ui.get_settings().iter().filter(|r| r.kind == 1).map(|r| (r.title.to_string(), r.on, r.enabled)).collect::<Vec<_>>()
+        };
+
+        assert_eq!(folder_states(), [("Music".into(), true, true), ("Other".into(), true, true)]);
+        // Click "Music" off.
+        click(toggle_at("Music"));
+        let after_shot = ui.window().take_snapshot().unwrap();
+        assert_eq!(folder_states(), [("Music".into(), false, true), ("Other".into(), true, true)]);
+        assert_ne!(before_shot.as_bytes(), after_shot.as_bytes(), "toggle visually changed");
+        assert_eq!(settings.current().unwrap().active_server().unwrap().music_folder_ids, ["2"]);
+
+        // Clicking the last library left on ("Other") keeps it on.
+        click(toggle_at("Other"));
+        assert_eq!(folder_states(), [("Music".into(), false, true), ("Other".into(), true, true)]);
+        assert_eq!(settings.current().unwrap().active_server().unwrap().music_folder_ids, ["2"]);
+
+        // Server reads now include musicFolderId=2.
+        nori_core::transport::block_on(session.client.read_now(nori_core::cache_policy::Read::ArtistIndex)).unwrap();
+        assert!(seen.lock().unwrap().iter().any(|u| u.contains("/rest/getArtists") && u.contains("musicFolderId=2")));
+
+        // Persists across restart.
+        settings.writer.flush();
+        let reopened = nori_core::settings_store::Settings::new();
+        assert_eq!(reopened.open(&db).unwrap().active_server().unwrap().music_folder_ids, ["2"]);
+
+        // Click "Music" back on -> all libraries shown again.
+        click(toggle_at("Music"));
+        assert_eq!(folder_states(), [("Music".into(), true, true), ("Other".into(), true, true)]);
+        assert!(settings.current().unwrap().active_server().unwrap().music_folder_ids.is_empty());
+
+        session.close();
+        stop.store(true, Ordering::Relaxed);
+        let _ = srv.join();
+    }
+
     /// A long description wraps inside its row, whatever the row's kind: the row grows, and the next row
     /// starts under it.
     #[test]

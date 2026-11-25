@@ -19,7 +19,16 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
         let letter: String
     }
 
+    private struct Folder {
+        let id: String
+        let name: String
+        let on: Bool
+        let tapped: String
+    }
+
     private var servers: [Saved] = []
+    private var folders: [Folder] = []
+    private var foldersLoad = 0
     private var switching = false
 
     override func viewDidLoad() {
@@ -53,15 +62,61 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
                 self.tableView.reloadData()
             }
         }
+        loadFolders()
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int { 2 }
+    private func loadFolders() {
+        foldersLoad += 1
+        let ticket = foldersLoad
+        DispatchQueue.global(qos: .userInitiated).async {
+            let rows = takenJSON(nori_ios_music_folders()) as? [[String: Any]] ?? []
+            let loaded = rows.map {
+                Folder(id: $0["id"] as? String ?? "",
+                       name: $0["name"] as? String ?? "",
+                       on: $0["on"] as? Bool ?? true,
+                       tapped: $0["tapped"] as? String ?? "")
+            }
+            DispatchQueue.main.async {
+                guard self.foldersLoad == ticket else { return }
+                self.folders = loaded
+                self.tableView.reloadData()
+            }
+        }
+    }
+
+    override func numberOfSections(in tableView: UITableView) -> Int { folders.isEmpty ? 2 : 3 }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        section == 0 ? servers.count : 1
+        switch section {
+        case 0: return servers.count
+        case 1: return 1
+        default: return folders.count
+        }
+    }
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        section == 2 ? Say.thisProfile : nil
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if indexPath.section == 2 {
+            let cell = row(tableView, id: "folder")
+            let f = folders[indexPath.row]
+            cell.textLabel?.text = f.name
+            let toggle = UISwitch()
+            toggle.isOn = f.on
+            toggle.onTintColor = Theme.switchOn
+            let tapped = f.tapped
+            toggle.addAction { [weak self] in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    _ = "musicFolders".withCString { n in tapped.withCString { v in nori_ios_set(n, v) } }
+                    DispatchQueue.main.async { self?.loadFolders() }
+                }
+            }
+            cell.accessoryView = toggle
+            cell.selectionStyle = .none
+            return cell
+        }
         if indexPath.section == 1 {
             let cell = row(tableView, id: "add")
             cell.textLabel?.text = Say.addServer
@@ -104,6 +159,7 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
             navigationController?.pushViewController(LoginPage(), animated: true)
             return
         }
+        guard indexPath.section == 0 else { return }
         let s = servers[indexPath.row]
         guard !s.active, !switching else { return }
         switchTo { dataDirectory().path.withCString { d in s.id.withCString { _ = nori_ios_pick_server(d, $0) } } }
@@ -210,6 +266,9 @@ final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDele
     /// Runs `change` on the saved list, then reopens on whichever server is active after it.
     private func switchTo(_ change: @escaping () -> Void) {
         switching = true
+        foldersLoad += 1
+        folders = []
+        tableView.reloadData()
         let spinner = UIActivityIndicatorView(style: Theme.dark ? .white : .gray)
         spinner.startAnimating()
         nameEnd = [spinner]

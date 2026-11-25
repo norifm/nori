@@ -2140,6 +2140,32 @@ mod tests {
         s.close();
     }
 
+    /// A profile's own setting (music folders) is kept in the settings store, survives a reopen, and
+    /// updates the client's profile.
+    #[test]
+    fn music_folders_setting_is_kept() {
+        let dir = nori_testdir::TempDir::new("host-music-folders");
+        let db = db_path(dir.path());
+        let settings = nori_core::settings_store::Settings::new();
+        settings.open(&db).unwrap();
+        let profile = SavedServer { id: "own".into(), url: "http://127.0.0.1:9".into(), user: "ann".into(), ..Default::default() };
+        settings.put(StoredPrefs { servers: vec![profile.clone()], active_server_id: "own".into(), ..settings.current().unwrap() });
+        let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
+        let s = Session::open(test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)))).unwrap();
+        let ids = || settings.with_prefs(|p| p.active_server().map(|s| s.music_folder_ids.clone()).unwrap_or_default()).unwrap();
+        assert!(ids().is_empty());
+        assert!(s.setting("musicFolders", "2").is_some());
+        assert_eq!(ids(), ["2"]);
+        s.setting("musicFolders", "");
+        assert!(ids().is_empty(), "all folders again");
+        s.setting("musicFolders", "1,3");
+        assert_eq!(ids(), ["1", "3"]);
+        settings.writer.flush();
+        let reopened = nori_core::settings_store::Settings::new();
+        assert_eq!(reopened.open(&db).unwrap().active_server().unwrap().music_folder_ids, ["1", "3"]);
+        s.close();
+    }
+
     /// A song's request the server never answers is dropped with its song: the connection closes.
     #[test]
     fn a_song_let_go_hangs_up_its_request() {

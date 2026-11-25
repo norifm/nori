@@ -1682,6 +1682,39 @@ pub unsafe extern "C" fn nori_ios_set(name: *const c_char, value: *const c_char)
     with_session(|s| i32::from(s.setting(&name, &value).is_some())).unwrap_or(0)
 }
 
+/// The active server's music libraries as `{id, name, on, tapped}` rows, when it has more than one;
+/// `tapped` is the `musicFolders` value switching that library stores (`folder_switches`).
+fn music_folder_rows(shown: Vec<String>, folders: Vec<nori_core::MusicFolder>) -> Vec<Value> {
+    if folders.len() <= 1 {
+        return Vec::new();
+    }
+    let switches = nori_core::settings::folder_switches(shown, folders.iter().map(|f| f.id.clone()).collect());
+    folders
+        .into_iter()
+        .zip(switches)
+        .map(|(f, s)| json!({ "id": f.id, "name": f.name, "on": s.on, "tapped": s.tapped }))
+        .collect()
+}
+
+/// The active server's music libraries as JSON to free: `[{id, name, on, tapped}]`, empty when the
+/// server has one or fewer, cannot be reached, or this profile does not change server options.
+#[no_mangle]
+pub extern "C" fn nori_ios_music_folders() -> *mut c_char {
+    let rows = with_session(|s| {
+        if !s.rules().settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions) {
+            return Vec::new();
+        }
+        let folders = match nori_core::transport::block_on(s.client.read_now(Read::MusicFolders)) {
+            Ok(Page::Folders { v }) => v,
+            _ => return Vec::new(),
+        };
+        let shown = s.core.session.settings.prefs(|p| p.active_server().map(|sv| sv.music_folder_ids.clone()).unwrap_or_default());
+        music_folder_rows(shown, folders)
+    })
+    .unwrap_or_default();
+    owned(&json!(rows))
+}
+
 /// The first run's questions: the iPod touch has no mobile data, so none about it.
 fn setup_steps() -> Vec<SetupStep> {
     nori_core::setup::setup_steps(false)
@@ -2140,5 +2173,15 @@ mod tests {
             ..a
         };
         assert_eq!(album_json(&bare)["s"], "Joni");
+    }
+
+    #[test]
+    fn music_folder_rows_show_switches_only_for_multiple_folders() {
+        let folder = |id: &str, name: &str| nori_core::MusicFolder { id: id.into(), name: name.into() };
+        assert!(music_folder_rows(vec![], vec![folder("1", "Music")]).is_empty());
+        let rows = music_folder_rows(vec![], vec![folder("1", "Music"), folder("2", "Other")]);
+        assert_eq!(rows, [json!({ "id": "1", "name": "Music", "on": true, "tapped": "2" }), json!({ "id": "2", "name": "Other", "on": true, "tapped": "1" })]);
+        let one = music_folder_rows(vec!["2".into()], vec![folder("1", "Music"), folder("2", "Other")]);
+        assert_eq!(one, [json!({ "id": "1", "name": "Music", "on": false, "tapped": "" }), json!({ "id": "2", "name": "Other", "on": true, "tapped": "2" })]);
     }
 }

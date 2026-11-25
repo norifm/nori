@@ -395,6 +395,10 @@ char *nori_ios_presets(void);
 int32_t nori_ios_preset(uint32_t index);
 char *nori_ios_settings(void);
 int32_t nori_ios_set(const char *name, const char *value);
+/// The active server's music libraries as JSON to free: [{id, name, on, tapped}], empty when there is
+/// one or fewer, the server cannot be reached, or this profile does not change server options. Blocks
+/// on the network.
+char *nori_ios_music_folders(void);
 
 /// The first run's questions, JSON [{step, answers}] to free, each by its name in the core. An answer
 /// given, by those indices: its settings set as nori_ios_set does (0 for none such, or nothing open).
