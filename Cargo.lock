@@ -5183,6 +5183,7 @@ dependencies = [
  "nori-output-cpal",
  "nori-plugins",
  "nori-remote",
+ "nori-sync",
  "nori-tasks",
  "nori-testdir",
  "nori-time",

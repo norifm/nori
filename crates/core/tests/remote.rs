@@ -18,7 +18,7 @@ use nori_core::transport::{Exchange, FailureKind, Transport, TransportError, Tra
 use nori_player::playlist::Hand;
 use nori_core::race::{LyricsPick, LyricsShown};
 use nori_core::settings::{SavedServer, StoredPrefs};
-use nori_core::sync::{Came, Here, NeededPlugin, PairingView, Plays, ProfilesSynced, Reach as SyncReach, RemoteRoom, SyncClient, SyncEvent, SyncState, Syncing};
+use nori_core::sync::{Came, Here, PairingView, Plays, ProfilesSynced, Reach as SyncReach, RemoteRoom, SyncClient, SyncEvent, SyncState, Syncing};
 use nori_sync::hub::HubSockets;
 use nori_core::{Core, ServerConfig, Song};
 use nori_model::LyricsTiming;
@@ -742,6 +742,7 @@ struct Puppet {
     id: String,
     /// Its profile's id on the puppet.
     profile: String,
+    settings: Arc<nori_core::settings_store::Settings>,
     syncing: Arc<Syncing>,
     net: Arc<HubSockets>,
     heard: Arc<Mutex<Vec<GroupSaid>>>,
@@ -760,25 +761,44 @@ impl RemoteRoom for PuppetRoom {
         self.0.lock().push(serde_json::from_value(message).unwrap());
     }
     fn left(&self, _: String) {}
+    fn elsewhere(&self) {}
 }
 
 impl Puppet {
     fn new(relay: &Arc<Relay>, id: &str) -> Puppet {
+        let puppet = Puppet::with(relay, id, vec![]);
+        puppet.opened(&puppet.profile.clone());
+        puppet
+    }
+
+    /// A puppet with ann's profile and `others`, the first of them open for remote control.
+    fn on_another(relay: &Arc<Relay>, id: &str, others: Vec<SavedServer>) -> Puppet {
+        let puppet = Puppet::with(relay, id, others);
+        let other = puppet.settings.with_prefs(|p| p.active_server_id.clone()).unwrap();
+        puppet.opened(&other);
+        puppet
+    }
+
+    fn with(relay: &Arc<Relay>, id: &str, others: Vec<SavedServer>) -> Puppet {
         let dir = nori_testdir::TempDir::new("remote-puppet");
         let settings = nori_core::settings_store::Settings::new();
         let prefs = settings.open(&dir.path().join("app.db").to_string_lossy()).unwrap();
         let profile = profile_of(&ann());
-        settings.put(StoredPrefs { active_server_id: profile.id.clone(), servers: vec![profile.clone()], sync: true, ..prefs });
+        let active = others.first().unwrap_or(&profile).id.clone();
+        settings.put(StoredPrefs { active_server_id: active, servers: std::iter::once(profile.clone()).chain(others).collect(), sync: true, ..prefs });
         let (syncing, net) = relay.grouped(&settings, &ann(), id);
         let heard = Arc::new(Mutex::new(Vec::new()));
         let room: Arc<dyn RemoteRoom> = Arc::new(PuppetRoom(heard.clone()));
-        syncing.remote_open(profile.id.clone(), room.clone());
-        let puppet = Puppet { id: id.into(), profile: profile.id, syncing, net, heard, _room: room, _dir: dir };
-        // As a remote does once in the room: who it is, asking the others. The group's first device is in
-        // no room yet.
-        let hello = GroupSaid::Here { member: Box::new(Member { id: id.into(), name: id.into(), kind: DeviceKind::Phone, state: None }), ask: true, instance: None };
-        puppet.syncing.remote_say(&puppet.profile, None, serde_json::to_value(hello).unwrap());
-        puppet
+        Puppet { id: id.into(), profile: profile.id, settings, syncing, net, heard, _room: room, _dir: dir }
+    }
+
+    /// As a client's remote does for profile `local` once made: attached to the group's room, it says
+    /// who it is, asking the others. The group's first device is in no room yet.
+    fn opened(&self, local: &str) {
+        let me = Member { id: self.id.clone(), name: self.id.clone(), kind: DeviceKind::Phone, state: None };
+        self.syncing.remote_open(local.into(), self._room.clone(), serde_json::to_value(&me).unwrap());
+        let hello = GroupSaid::Here { member: Box::new(me), ask: true, instance: None };
+        self.syncing.remote_say(local, None, serde_json::to_value(hello).unwrap());
     }
 
     /// Says `said` to `to`'s device, or every device of the group.
@@ -816,7 +836,6 @@ impl SyncClient for Synced {
         Here { plays: Plays::ServersAndPlugins, copied: vec!["subsonic".into()], plugins: vec![] }
     }
     fn profiles(&self, _: ProfilesSynced) {}
-    fn install(&self, _: Vec<NeededPlugin>) {}
     fn event(&self, _: SyncEvent) {}
     fn changed(&self) {}
 }
@@ -978,6 +997,40 @@ fn returning_here_does_not_wait_for_a_dead_device() {
         } else {
             eventually(&relay, "the late queue refused", || ghost.answers().contains(&(999, Some(Refusal::Stale))));
             assert!(desk.ops.try_recv().is_err(), "a late handoff cannot replace local playback or edits");
+        }
+        relay.close();
+    }
+}
+
+/// The phone has ann's profile and another, that one open: the desk lists it all the same, and picking it
+/// with music here opens ann's profile there first, then hands it the music. One that takes too long to
+/// open it is handed nothing.
+#[test]
+fn a_device_with_another_profile_open_opens_this_one_when_picked() {
+    for late in [false, true] {
+        let relay = Relay::new();
+        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+        desk.playing(&["s1", "s2"], 0);
+        desk.remote.clone().serve(true);
+        let other = SavedServer { id: "other".into(), name: "Other".into(), url: "http://other:1".into(), user: "ann".into(), ..Default::default() };
+        let phone = Puppet::on_another(&relay, "phone", vec![other]);
+        let listed = desk.until("the phone listed", |r| r.devices().into_iter().find(|d| d.id == "phone"));
+        assert!(listed.elsewhere && listed.state.is_none(), "with another profile open");
+        desk.remote.clone().pick(Some("phone".into()));
+        eventually(&relay, "the phone on ann's profile", || phone.settings.with_prefs(|p| p.active_server_id.clone()).unwrap() == phone.profile);
+        if late {
+            relay.sim.pass(Duration::from_secs(21));
+        }
+        // Its client opens the profile again, and its remote says it is there.
+        phone.opened(&phone.profile.clone());
+        let handed = || phone.commands().into_iter().any(|(_, _, op)| matches!(op, Op::Replace { ref songs, .. } if songs.len() == 2));
+        if late {
+            relay.sim.pass(Duration::from_secs(5));
+            assert!(!handed(), "the pick was let go");
+            assert!(desk.ops.try_recv().is_err(), "the music plays on here");
+        } else {
+            eventually(&relay, "the music handed to the phone", handed);
+            assert!(matches!(desk.told(), Op::Pause), "the desk pauses, the phone plays on");
         }
         relay.close();
     }

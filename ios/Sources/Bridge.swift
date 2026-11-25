@@ -459,11 +459,6 @@ final class Core {
             switchProfile(nil)
         case NORI_REPORT_JAM_JOINED:
             Toast.show(Say.jamJoinFailed(Say.failure(count, text)))
-        case NORI_REPORT_PAIRED where flag != 0:
-            Toast.show(Say.pairedWith(text))
-            NotificationCenter.default.post(name: .noriDevices, object: nil)
-        case NORI_REPORT_PAIRED:
-            Toast.show(Say.pairFailed(count, name: text))
         case NORI_REPORT_JAM_LEFT:
             switchProfile(count == 0 ? Say.jamLeft : Say.jamEnded(text))
         case NORI_REPORT_SYNC where flag == NORI_SYNC_PROFILES && count != 0:

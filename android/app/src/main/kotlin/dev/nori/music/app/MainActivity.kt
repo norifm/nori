@@ -51,7 +51,6 @@ class MainActivity : ComponentActivity() {
     private var started = false
     /** The same one App's messages come from: one per activity. */
     private val actions: dev.nori.music.app.vm.ActionsViewModel by viewModels()
-    private val remote: dev.nori.music.app.vm.RemoteViewModel by viewModels()
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     /** Refused, paired devices talk through the sync server (sync/LocalNetwork.kt). */
     private val askLocalNetwork = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -108,8 +107,10 @@ class MainActivity : ComponentActivity() {
     /** A jam invite opened: this phone joins as a guest, and the app shows the host's playback (App, LocalRules). */
     private fun joinJam(intent: Intent?) {
         val link = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
-        if (dev.nori.music.ffi.pairingValid(link)) {
-            remote.offerPairing(link)
+        // A pairing code opened (the system camera's scan, a link): Pair a device takes it.
+        if (dev.nori.music.ffi.sync.isPairingCode(link)) {
+            Nori.get(this).sync.offered.value = link
+            launchRoute.value = LaunchRoute.Page("pair-device")
             return
         }
         if (!dev.nori.music.ffi.remote.isInvite(link)) return

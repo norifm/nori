@@ -31,7 +31,7 @@ import dev.nori.music.settings.server
 import dev.nori.music.settings.loggedIn
 
 /** A sign-in profile sync refused: to [profile], whose synced account is called [syncsWith] (empty when unknown). */
-data class OtherAccount(val profile: String, val syncsWith: String)
+data class OtherAccount(val profile: String, val syncsWith: String?)
 
 /**
  * The object graph, built by hand: there are a dozen long-lived objects and a DI
@@ -377,8 +377,8 @@ class Nori private constructor(private val context: Context) {
 
     /**
      * How a sign-in went, whichever way it went (a page, pasting, a code). Main thread. Profile sync
-     * accepts a sign-in only to the account the profile syncs with (the core's `Syncing::signed_in`):
-     * another one is signed out again, and the profile keeps what it was called.
+     * accepts a sign-in only to the account the profile syncs with, and signs another one out again (the
+     * core's `Client::synced_sign_in`): the profile keeps what it was called.
      */
     fun signedIn(r: dev.nori.music.ffi.SignInResult) {
         if (r !is dev.nori.music.ffi.SignInResult.SignedIn) return
@@ -386,17 +386,16 @@ class Nori private constructor(private val context: Context) {
         val client = accountClient
         _otherAccount.value = null
         pluginScope.launch {
-            val account = client.accountId()
-            val other = sync.call { it.signedIn(before.id, account) } == dev.nori.music.ffi.sync.SignInCheck.OTHER_ACCOUNT
+            val check = client.syncedSignIn(sync.call { it }, before.id, r.name)
+            val other = check as? dev.nori.music.ffi.sync.SignInCheck.OtherAccount
             withContext(Dispatchers.Main) {
-                if (other) {
-                    client.signOut()
-                    _otherAccount.value = OtherAccount(before.id, before.user)
+                if (other != null) {
+                    _otherAccount.value = OtherAccount(before.id, other.name)
                 } else {
                     settings.value.servers.firstOrNull { it.id == before.id }?.let { updateServer(it.copy(user = r.name)) }
                 }
             }
-            if (!other) keepAccountPicture()
+            if (other == null) keepAccountPicture()
         }
     }
 

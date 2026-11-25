@@ -281,7 +281,7 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun bring(id: String, open: () -> Unit) {
         viewModelScope.launch {
-            val repo = nori.sync.installs.value.firstOrNull { it.id == id }?.repo
+            val repo = nori.sync.call { it.neededPlugins() }.firstOrNull { it.id == id }?.repo
             if (repo != null && repos.value.none { it.url == repo }) host.addRepo(repo)
             loadOffers()
             open()

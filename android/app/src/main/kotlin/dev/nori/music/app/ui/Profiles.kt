@@ -176,9 +176,7 @@ fun ProfileLine(
     // A profile whose plugin doesn't run here is dimmed and says so.
     val waits by vm.profileWaits.collectAsStateWithLifecycle()
     val wait = waits[profile.id]
-    // A plugin's account that profile sync named without its sign-in, which each device makes itself.
-    val signIn = profile.kind is dev.nori.music.ffi.settings.ServerKind.Plugin && profile.user.isNotBlank() && profile.password.isEmpty() && profile.apiKey.isEmpty()
-    val who = wait?.let(say::profileUnavailable) ?: detail ?: if (signIn) say.syncSignIn else profile.user.ifBlank { providerWords(vm, profile.kind).noUser }
+    val who = wait?.let(say::profileUnavailable) ?: detail ?: profile.user.ifBlank { providerWords(vm, profile.kind).noUser }
     Column(modifier.fillMaxWidth().alpha(if (wait != null) 0.5f else 1f)) {
         Row(
             Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)

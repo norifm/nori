@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 use nori_core::settings_store::Settings;
-use nori_core::sync::{Ended, Here, NeededPlugin, PairingView, ProfilesSynced, Reach, SocketId, Sockets, SyncClient, SyncEvent, SyncState, Syncing};
+use nori_core::sync::{Ended, Here, PairingView, ProfilesSynced, Reach, SocketId, Sockets, SyncClient, SyncEvent, SyncState, Syncing};
 use nori_tasks::{Local, OneThread, Tasks};
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
@@ -123,10 +123,6 @@ impl SyncClient for Told {
             let _ = nori_core::db::db_forget_server(crate::db(), id.clone());
         }
         self.say(json!({ "kind": "sync", "profiles": format!("{:?}", synced.active) }));
-    }
-
-    fn install(&self, plugins: Vec<NeededPlugin>) {
-        self.say(json!({ "kind": "sync", "install": plugins.iter().map(|p| &p.id).collect::<Vec<_>>() }));
     }
 
     fn event(&self, event: SyncEvent) {

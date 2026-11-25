@@ -5,8 +5,7 @@
 //! profile open. They meet in the group's room on the sync server, which carries what they say sealed
 //! ([`GroupSaid`]), or directly on one network through each other's LAN door. Nothing goes on a timer: a
 //! device says its state when it changes, and a watching device runs the playhead on by the sync
-//! server's clock, which both know. A profile without a server and no group pairs device by device on
-//! the LAN (pairing.rs). A jam opens on octo-fiesta's relay, which is polled only for it, holding each
+//! server's clock, which both know. A jam opens on octo-fiesta's relay, which is polled only for it, holding each
 //! poll up to [`HOLD_MS`], or on the LAN door for a profile without a server.
 //!
 //! One of my devices plays at a time: the active one. This one is it until a transfer moves the
@@ -42,11 +41,6 @@ use crate::transport::{self, Exchange, NetError, Transport};
 use crate::{api, db, Param, Song};
 use nori_settings::settings_store::Settings;
 
-mod pairing;
-#[cfg(not(target_arch = "wasm32"))]
-pub use pairing::{pairing_name, pairing_valid, PairedDevice, PairedReach};
-#[cfg(not(target_arch = "wasm32"))]
-pub use nori_remote::lan::PairError;
 
 /// The frames, for clients that speak them (the terminal and desktop host).
 pub use nori_remote::wire;
@@ -99,6 +93,10 @@ const SERVER_SLACK_US: i64 = 1_000;
 /// Time exchanges of a burst go out this far apart: more than most round trips through a relay, so an
 /// answer does not wait behind the one before.
 const BURST_GAP_MS: u64 = 250;
+
+/// How long a device asked to open this profile has to say it is here before the pick waiting for it is
+/// let go, µs.
+const SWITCH_WAIT_US: i64 = 20_000_000;
 
 /// How long a command sent to the mirrored device shows as foreseen while the device does not say it
 /// carried it out: an older device never says, and one that could not hear it falls back to its state.
@@ -196,6 +194,8 @@ pub struct RemoteDevice {
     pub nearby: bool,
     /// Its answer to the last command sent to it, when it refused.
     pub refused: Option<Refusal>,
+    /// Another profile is open there: picking it, or handing it the music, opens this one there first.
+    pub elsewhere: bool,
 }
 
 /// A speaker or such another device casts to, as a picker lists it.
@@ -1230,6 +1230,23 @@ struct Inner {
     guest: GuestJam,
     /// The name of the host of the jam this guest is in, as last seen.
     jam_host: Option<String>,
+    /// A device asked to open this profile, and what waits for it to be here.
+    switching: Option<Switching>,
+}
+
+/// A device of the group asked to open this profile first ([`Remote::pick`], [`Remote::hand_over`]).
+struct Switching {
+    /// Its remote's id.
+    id: String,
+    then: AfterSwitch,
+    /// When it was asked, on this device's clock.
+    at: i64,
+}
+
+/// What waits for a device to open this profile.
+enum AfterSwitch {
+    Pick { cast: bool },
+    Hand,
 }
 
 /// The jam this device hosts.
@@ -1675,6 +1692,12 @@ impl RemoteRoom for GroupRoom {
             r.group_left(&device);
         }
     }
+
+    fn elsewhere(&self) {
+        if let Some(r) = self.0.upgrade() {
+            r.shown.changed();
+        }
+    }
 }
 
 /// The app's key for the one id every client over an app database had before each kind of client had
@@ -1762,6 +1785,9 @@ impl Remote {
 
     /// [`Self::pick`]; `cast`: to carry a cast through it.
     fn pick_for(self: Arc<Self>, device: Option<String>, cast: bool) {
+        if device.as_deref().is_some_and(|d| self.switch_first(d, AfterSwitch::Pick { cast })) {
+            return;
+        }
         self.clone().set_discovering(false);
         // Picked here again while the queue asked for is on its way: asked anew, the device would hand
         // it over twice and its first answer be refused; cancelled, the queue left here would play.
@@ -2033,17 +2059,23 @@ impl Remote {
         self.pick_for(device, false);
     }
 
-    /// My other devices with this profile open, nearby ones first.
+    /// My other devices with this profile open, nearby ones first, then those with another open.
     pub fn devices(&self) -> Vec<RemoteDevice> {
+        let elsewhere = self.elsewhere();
         let now = self.now();
         let i = self.inner.lock();
         let active = i.active.mirror().map(|m| m.id.as_str());
         let song = |m: &Member| m.state.as_ref().filter(|s| s.playing || active == Some(m.id.as_str())).and_then(|s| s.entries.iter().find(|e| Some(e.index) == s.index).cloned());
-        let seen = |m: &Member, age_ms: i64, nearby: bool| RemoteDevice { id: m.id.clone(), name: m.name.clone(), kind: m.kind, state: m.state.clone(), now: song(m), age_ms, nearby, refused: i.refused.get(&m.id).copied() };
+        let seen = |m: &Member, age_ms: i64, nearby: bool| RemoteDevice { id: m.id.clone(), name: m.name.clone(), kind: m.kind, state: m.state.clone(), now: song(m), age_ms, nearby, refused: i.refused.get(&m.id).copied(), elsewhere: false };
         let mut out: Vec<RemoteDevice> = Vec::new();
         for id in i.peers.iter().map(|p| p.member.id.as_str()).chain(i.group.iter().map(|m| m.id.as_str())) {
             let Some((m, received)) = i.heard_of(id).filter(|(m, _)| m.state.is_some() && !out.iter().any(|d| d.id == m.id)) else { continue };
             out.push(seen(m, received.map_or(0, |at| (now - at) / 1000), i.peers.iter().any(|p| p.member.id == id)));
+        }
+        for (_, m) in elsewhere {
+            if !i.routes.contains_key(&m.id) && !out.iter().any(|d| d.id == m.id) {
+                out.push(RemoteDevice { id: m.id, name: m.name, kind: m.kind, state: None, now: None, age_ms: 0, nearby: false, refused: None, elsewhere: true });
+            }
         }
         out
     }
@@ -2103,10 +2135,7 @@ impl Remote {
     pub fn lan_found(self: Arc<Self>, service: String, hosts: Vec<String>, port: u16, txt: Vec<Param>) {
         let get = |k: &str| txt.iter().find(|p| p.key == k).map(|p| p.value.clone()).unwrap_or_default();
         let id = get("id");
-        let known = match self.door_tag() {
-            Some(tag) => get("tag") == tag,
-            None => pairing::is_paired(&self.client, &id),
-        };
+        let known = self.door_tag().is_some_and(|tag| get("tag") == tag);
         if !known || id.is_empty() || id == self.id {
             return;
         }
@@ -2130,9 +2159,6 @@ impl Remote {
                 return;
             }
             i.peers.retain(|p| p.service != service && p.member.id != id);
-            if self.door_tag().is_none() {
-                pairing::seen(&self.client, &id);
-            }
             let member = Member { id, name: get("name"), kind, state: None };
             i.peers.push(Peer { library_marks: get("marks") == "1", service, bases, failed: 0, member, received: self.now(), since: None, poller: None, lost: false });
         }
@@ -2828,8 +2854,7 @@ impl Outward {
                 (remote_url(client, "noriRemote.send", &who, "POST", json.as_bytes()), Some(json), SEND_TIMEOUT_MS, None)
             }
             Out::Send(Link::Lan { base, then }, outgoing) => {
-                let shared = pairing::shared_key(client, self.group.as_ref().and_then(|g| g.lan_secret(&self.profile)));
-                let Some(secret) = outgoing.to.as_deref().and_then(|to| pairing::lan_key(client, shared, to)) else { return };
+                let Some(secret) = shared_key(client, self.group.as_ref().and_then(|g| g.lan_secret(&self.profile))) else { return };
                 let json = serde_json::to_string(&outgoing).unwrap_or_default();
                 let url = format!("{base}{}", lan::signed(&secret, "POST", &format!("/rest/noriRemote.send?dev={}", self.me.id), json.as_bytes(), db::now_ms()));
                 (url, Some(json), DOOR_TIMEOUT_MS, then.map(|device| (device, outgoing)))
@@ -2867,10 +2892,36 @@ impl Remote {
         m.starred(id)
     }
 
-    /// Hands this device's queue and position to device `to`, which plays on; this one pauses.
+    /// Hands this device's queue and position to device `to`, which plays on; this one pauses. A device
+    /// with another profile open opens this one first.
     pub fn hand_over(self: Arc<Self>, to: String) {
+        if self.switch_first(&to, AfterSwitch::Hand) {
+            return;
+        }
         let me = self.id.clone();
         self.transfer(&Via::Group, &me, to, None, false);
+    }
+
+    /// The group's devices with this profile but another open, by group id, as their remotes say they
+    /// are.
+    fn elsewhere(&self) -> Vec<(String, Member)> {
+        let Some(group) = &self.group else { return Vec::new() };
+        group.remote_elsewhere(&self.profile).into_iter().filter_map(|e| Some((e.device, serde_json::from_value::<Member>(e.remote).ok()?))).filter(|(_, m)| m.id != self.id).collect()
+    }
+
+    /// Device `id`, if it has another profile open, is asked to open this one: `then` waits for it to
+    /// say it is here. False for a device with this profile open.
+    fn switch_first(self: &Arc<Self>, id: &str, then: AfterSwitch) -> bool {
+        if self.inner.lock().routes.contains_key(id) {
+            return false;
+        }
+        let Some((device, _)) = self.elsewhere().into_iter().find(|(_, m)| m.id == id) else { return false };
+        if !self.group.as_ref().is_some_and(|g| g.remote_switch(&self.profile, &device)) {
+            return false;
+        }
+        self.inner.lock().switching = Some(Switching { id: id.to_string(), then, at: self.now() });
+        self.shown.changed();
+        true
     }
 
     /// A remote whose work runs on `tasks`.
@@ -2888,6 +2939,7 @@ impl Remote {
         let sends = Arc::new(Sends::default());
         let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, group, profile, room: Mutex::default(), inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), #[cfg(not(target_arch = "wasm32"))] sends: sends.clone(), running: Arc::default(), follower: Mutex::default() });
         let me = Member { id: remote.id.clone(), name: remote.me.name.clone(), kind: remote.me.kind, state: None };
+        let card = serde_json::to_value(&me).expect("a member serializes");
         let to = Outward { client: remote.client.clone(), group: remote.group.clone(), me, profile: remote.profile.clone() };
         remote.tasks.spawn(Box::pin(send_all(sends, to)));
         *remote.client.core.remote.lock() = Arc::downgrade(&remote);
@@ -2898,7 +2950,7 @@ impl Remote {
         if let Some(group) = remote.group.as_ref().filter(|_| remote.me.kind != DeviceKind::Guest) {
             let room: Arc<dyn RemoteRoom> = Arc::new(GroupRoom(Arc::downgrade(&remote)));
             *remote.room.lock() = Some(room.clone());
-            group.remote_open(remote.profile.clone(), room);
+            group.remote_open(remote.profile.clone(), room, card);
         }
         remote
     }
@@ -3158,13 +3210,27 @@ impl Remote {
     }
 
     /// What my devices with this profile open (or a LAN jam's members) sign their requests to each
-    /// other's doors with; None where devices pair one by one.
+    /// other's doors with; None outside a group and a jam.
     fn shared_key(&self) -> Option<String> {
-        pairing::shared_key(&self.client, self.group.as_ref().and_then(|g| g.lan_secret(&self.profile)))
+        shared_key(&self.client, self.group.as_ref().and_then(|g| g.lan_secret(&self.profile)))
     }
 
-    /// What my devices with this profile open announce their doors by; None where devices pair one by
-    /// one and are known by id.
+    /// What this device's door admits my devices by: [`Self::shared_key`], or outside a group a key
+    /// nobody holds, as a door that serves a jam admits none of them.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn door_secret(&self) -> Option<String> {
+        self.shared_key().or_else(|| lan::new_secret().ok())
+    }
+
+    /// The door admits by the key my devices hold now.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn reopen_access(&self) {
+        if let (Some(door), Some(secret)) = (&self.inner.lock().door, self.door_secret()) {
+            door.set_secret(secret);
+        }
+    }
+
+    /// What my devices with this profile open announce their doors by; None outside a group.
     fn door_tag(&self) -> Option<String> {
         self.shared_key().map(|secret| lan::tag("door", &secret))
     }
@@ -3312,21 +3378,15 @@ impl Remote {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn open_door(self: &Arc<Self>) -> Option<Door> {
-        let access = pairing::door_access(&self.client, self.shared_key())?;
+        let secret = self.door_secret()?;
         let me = Member { id: self.id.clone(), name: self.me.name.clone(), kind: self.me.kind, state: None };
         let weak = Arc::downgrade(self);
-        let paired = weak.clone();
         let opened = Door::open(
             me,
-            access,
+            secret,
             Box::new(move |from, body| {
                 if let (Some(r), Body::Command { id, op }) = (weak.upgrade(), body) {
                     r.obey(Via::Door, from.to_string(), id, *op, r.now());
-                }
-            }),
-            Box::new(move |change| {
-                if let Some(r) = paired.upgrade() {
-                    r.door_paired(change);
                 }
             }),
             self.tasks.clone(),
@@ -3542,7 +3602,7 @@ impl Remote {
 
     async fn poll_peer(self: Arc<Self>, service: String, poller: u64) {
         loop {
-            let (base, since, peer) = {
+            let (base, since) = {
                 let mut i = self.inner.lock();
                 let Some(at) = i.peers.iter().position(|p| p.service == service) else { return };
                 if i.peers[at].poller != Some(poller) {
@@ -3552,9 +3612,9 @@ impl Remote {
                     i.peers[at].poller = None;
                     return;
                 }
-                (i.peers[at].base(), i.peers[at].since, i.peers[at].member.id.clone())
+                (i.peers[at].base(), i.peers[at].since)
             };
-            let Some(secret) = pairing::lan_key(&self.client, self.shared_key(), &peer) else { return };
+            let Some(secret) = self.shared_key() else { return };
             let query = match since {
                 Some(s) => format!("/rest/noriRemote.poll?dev={}&since={s}&hold=1", self.id),
                 None => format!("/rest/noriRemote.poll?dev={}", self.id),
@@ -4405,6 +4465,7 @@ impl Remote {
         let received = self.now();
         let mut commands = Vec::new();
         let mut answer = false;
+        let mut switched = None;
         {
             let mut i = self.inner.lock();
             match said {
@@ -4412,6 +4473,8 @@ impl Remote {
                     if member.id == self.id || i.older(&member.id, instance) {
                         return;
                     }
+                    // A device asked to open this profile opened it in time: what waited for it goes on.
+                    switched = i.switching.take_if(|s| s.id == member.id).filter(|s| received - s.at <= SWITCH_WAIT_US);
                     let new = i.routes.insert(member.id.clone(), device.clone()).is_none();
                     let before = i.group.iter().position(|m| m.id == member.id).map(|at| i.group.remove(at));
                     let before = before.and_then(|m| m.state);
@@ -4452,6 +4515,11 @@ impl Remote {
         }
         self.follow_active();
         self.shown.changed();
+        match switched {
+            Some(Switching { id, then: AfterSwitch::Pick { cast }, .. }) => self.clone().pick_for(Some(id), cast),
+            Some(Switching { id, then: AfterSwitch::Hand, .. }) => self.clone().hand_over(id),
+            None => {}
+        }
     }
 
     /// Device `device` (a group id) left the group's room.
@@ -4465,6 +4533,12 @@ impl Remote {
         self.follow_active();
         self.shown.changed();
     }
+}
+
+/// The key every device of a LAN jam, or of the group (`group`, its devices' key for this profile), signs
+/// its requests to the others' doors with.
+fn shared_key(client: &Client, group: Option<String>) -> Option<String> {
+    client.core.lan_jam.read().as_ref().map(|(_, secret)| secret.clone()).or(group)
 }
 
 /// What [`Remote::read_queue`] read.
@@ -4619,7 +4693,7 @@ mod tests {
     fn each_output_shows_once_through_the_device_playing_and_none_this_one_reaches() {
         use nori_remote::wire::CastOutput;
         let speaker = |id: &str| CastOutput { plugin: "p".into(), id: id.into(), name: id.to_uppercase(), look: Default::default() };
-        let device = |id: &str, outputs: Vec<CastOutput>| RemoteDevice { id: id.into(), name: id.to_uppercase(), kind: DeviceKind::Phone, state: Some(DeviceState { outputs, ..Default::default() }), now: None, age_ms: 0, nearby: true, refused: None };
+        let device = |id: &str, outputs: Vec<CastOutput>| RemoteDevice { id: id.into(), name: id.to_uppercase(), kind: DeviceKind::Phone, state: Some(DeviceState { outputs, ..Default::default() }), now: None, age_ms: 0, nearby: true, refused: None, elsewhere: false };
         let devices = [device("a", vec![speaker("kitchen"), speaker("hall")]), device("b", vec![speaker("kitchen"), speaker("bath")]), device("c", vec![speaker("own")])];
         let list = |active| reached(&[speaker("own")], &devices, active).into_iter().map(|r| (r.output.id, r.device)).collect::<Vec<_>>();
         let pair = |o: &str, d: &str| (o.to_string(), d.to_string());
@@ -5111,7 +5185,7 @@ mod tests {
             (&[("Mac", Terminal, "1111ab"), ("Mac", Terminal, "2222cd")], &["Mac (1111)", "Mac (2222)"]),
         ];
         for (devices, want) in cases {
-            let devices = devices.iter().map(|&(name, kind, id)| RemoteDevice { id: id.into(), name: name.into(), kind, state: None, now: None, age_ms: 0, nearby: false, refused: None }).collect();
+            let devices = devices.iter().map(|&(name, kind, id)| RemoteDevice { id: id.into(), name: name.into(), kind, state: None, now: None, age_ms: 0, nearby: false, refused: None, elsewhere: false }).collect();
             assert_eq!(device_names(devices, me.clone(), words.clone()), *want);
         }
     }

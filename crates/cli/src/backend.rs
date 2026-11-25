@@ -69,8 +69,6 @@ pub enum Msg {
     Overridden,
     /// Whether the jam asked for opened, or why not.
     Jam(Result<(), String>),
-    /// A device paired (its name), or what to say of why not.
-    Paired(Result<String, String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.
     Joined(Result<nori_core::remote::JamPass, String>),
     /// This guest left its jam, or the jam ended: what to say.
@@ -161,7 +159,6 @@ impl Msg {
             Msg::Overridden => "overrides".into(),
             Msg::Jam(r) => format!("jam opened: {}", r.is_ok()),
             Msg::Joined(r) => format!("jam joined: {}", r.is_ok()),
-            Msg::Paired(r) => format!("paired: {}", r.is_ok()),
             Msg::Left(said) => format!("jam left: {said}"),
             Msg::SignedIn(r) => format!("signed in: {}", matches!(r, nori_core::providers::SignInResult::SignedIn { .. })),
             Msg::IdentityChosen(r) => format!("identity chosen: {}", r.is_ok()),
@@ -454,17 +451,6 @@ impl Session {
         nori_host::spawn("nori-jam", move || {
             let opened = block_on(r.jam_open()).map(drop).map_err(|e| net_error(&e));
             let _ = tx.send(Msg::From(me, Box::new(Msg::Jam(opened))));
-        });
-    }
-
-    /// Pairs with the device whose code `link` is; [`Msg::Paired`] says how it went.
-    pub fn pair(&self, link: String) {
-        let Some(r) = self.remote() else { return };
-        let (tx, me) = (self.tx.clone(), self.id);
-        nori_host::spawn("nori-pair", move || {
-            let name = nori_core::remote::pairing_name(link.clone());
-            let paired = block_on(r.pair(link)).map(|d| d.name).map_err(|e| crate::text::pair_failed(e, name.as_deref()));
-            let _ = tx.send(Msg::From(me, Box::new(Msg::Paired(paired))));
         });
     }
 

@@ -11,7 +11,7 @@ fn two(hub: &Hub) -> (Device, Device) {
     let mut mac = Device::new(hub, "MacBook", phone(), vec![]);
     pair(&mut pixel, &mut mac, NOW);
     settle(&mut [&mut pixel, &mut mac], NOW);
-    assert_eq!(pixel.take_events(), [SyncEvent::NewDevice { name: "MacBook".into() }]);
+    assert!(pixel.take_events().is_empty(), "the device that let it in told its user when it sent the key");
     (pixel, mac)
 }
 
@@ -51,7 +51,8 @@ fn a_device_that_reaches_the_room_after_the_new_one_said_hello_still_hears_it_is
     let mut ipad = Device::new(&hub, "iPad", phone(), vec![]);
     pair(&mut mac, &mut ipad, NOW + 1);
     settle(&mut [&mut mac, &mut ipad], NOW + 1);
-    assert_eq!(mac.take_events(), [SyncEvent::NewDevice { name: "iPad".into() }]);
+    assert!(mac.take_events().is_empty(), "the Mac let it in: its user heard when the key went");
+    assert!(mac.session().devices().iter().any(|d| d.name == "iPad"));
     pixel.act(|s, link| s.connect(link));
     settle(&mut [&mut pixel, &mut mac, &mut ipad], NOW + 2);
     assert_eq!(pixel.take_events(), [SyncEvent::NewDevice { name: "iPad".into() }]);
@@ -186,7 +187,7 @@ fn devices_with_versions_apart_say_which_needs_an_update() {
         let env = serde_json::json!({ "v": 2, "readBy": 2, "said": said });
         key.seal(Sealed::Message, &serde_json::to_vec(&env).unwrap())
     };
-    let older = Card { device: "d".into(), name: "Old phone".into(), plays: Plays::Servers, version: 0 };
+    let older = Card { device: "d".into(), name: "Old phone".into(), plays: Plays::Servers, version: 0, open: None };
     let hello = serde_json::json!({ "v": 0, "readBy": 0, "said": Said::Hello { card: older, answer: true, new: false } });
     let hello = key.seal(Sealed::Message, &serde_json::to_vec(&hello).unwrap());
     mac.link.send(&room, To::Everyone, newer(serde_json::json!({ "t": "future" })));
@@ -214,10 +215,10 @@ fn a_sign_in_here_is_checked_against_the_account_the_profile_syncs_with() {
     let mut mac = Device::new(&hub, "MacBook", phone(), vec![]);
     pair(&mut pixel, &mut mac, NOW);
     settle(&mut [&mut pixel, &mut mac], NOW);
-    assert_eq!(pixel.act(|s, l| s.signed_in(l, "y", Some("UC1".into()), NOW + 1)), SignInCheck::Accepted);
+    assert_eq!(pixel.act(|s, l| s.signed_in(l, "y", Some("UC1".into()), Some("Ann".into()), NOW + 1)), SignInCheck::Accepted);
     settle(&mut [&mut pixel, &mut mac], NOW + 1);
     let local = mac.servers[0].id.clone();
-    assert_eq!(mac.act(|s, l| s.signed_in(l, &local, Some("UC9".into()), NOW + 2)), SignInCheck::OtherAccount);
+    assert_eq!(mac.act(|s, l| s.signed_in(l, &local, Some("UC9".into()), None, NOW + 2)), SignInCheck::OtherAccount { name: Some("Ann".into()) });
 }
 
 #[test]

@@ -761,8 +761,6 @@ impl Runner {
         let d = &mut app.devices;
         // A guest's music is the jam's: it moves to no other device.
         d.on = remote.is_some() && !guest;
-        d.pairing = remote.as_ref().filter(|_| d.on).and_then(|r| r.pairing_link());
-        d.paired = remote.as_ref().filter(|_| d.pairing.is_some()).map(|r| r.paired()).unwrap_or_default();
         d.jam_start = remote.as_ref().filter(|_| d.on).map(|r| match r.jam_start() {
             JamStart::Offered | JamStart::Starting | JamStart::Hosting if !jams => JamStart::Unavailable,
             start => start,
@@ -1200,12 +1198,6 @@ impl Runner {
             Cmd::CastOn(output) => {
                 if let Some(r) = s.remote() {
                     r.cast_on(output);
-                }
-            }
-            Cmd::Pair(link) => s.pair(link),
-            Cmd::Forget(id) => {
-                if let Some(r) = s.remote() {
-                    r.forget(id);
                 }
             }
             Cmd::JamStart => s.jam_open(),

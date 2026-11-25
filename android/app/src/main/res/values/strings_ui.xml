@@ -1001,7 +1001,6 @@
     <string name="sync_server_placeholder">nori’s own</string>
     <string name="sync_keep_copy">Keep an encrypted copy</string>
     <string name="sync_keep_copy_detail">Only your devices can read it.</string>
-    <string name="sync_install">Install %1$s</string>
     <string name="sync_section_install">Plugins your profiles need</string>
     <string name="sync_install_file">Installed from a file on your other device</string>
     <!-- Where sync stands. -->
@@ -1062,7 +1061,6 @@
     <string name="sync_refused_off">Turn on Use a sync server to pair.</string>
     <!-- A profile and sync. -->
     <string name="sync_profile">Sync this profile</string>
-    <string name="sync_sign_in">Sign in</string>
     <string name="sync_profile_off_title">Stop syncing %1$s?</string>
     <string name="sync_profile_off_text">Your other devices can keep it, or remove it too.</string>
     <string name="sync_profile_off_remove">Remove there</string>

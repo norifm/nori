@@ -60,15 +60,6 @@ pub struct MergeOffer {
     pub b: String,
 }
 
-/// What taking the others' profiles did here.
-#[derive(Debug, Default, PartialEq)]
-pub(crate) struct Taken {
-    /// This device's profiles changed.
-    pub changed: bool,
-    /// Plugins the profiles need that are not installed here.
-    pub install: Vec<NeededPlugin>,
-}
-
 /// This device's profile sync.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Book {
@@ -145,7 +136,7 @@ impl Book {
                     }
                 }
                 None => {
-                    let shared = Shared { id: new_sync_id(), stamp: self.next(by, now_ms), profile: body(s, here, None), account: None, plugin: here.plugin(&s.kind), newer: Default::default() };
+                    let shared = Shared { id: new_sync_id(), stamp: self.next(by, now_ms), profile: body(s, here, None), account: None, account_name: None, plugin: here.plugin(&s.kind), newer: Default::default() };
                     out.profiles.push(shared.clone());
                     self.records.push(Record { shared, local: s.id.clone(), from_sync: false, off: false });
                 }
@@ -178,21 +169,30 @@ impl Book {
         }
     }
 
-    /// Takes what another device said into `servers`, this device's profiles.
-    pub(crate) fn take(&mut self, theirs: Changes, servers: &mut Vec<SavedServer>, here: &Here) -> Taken {
-        let mut taken = Taken::default();
+    /// Takes what another device said into `servers`, this device's profiles; true when they changed.
+    pub(crate) fn take(&mut self, theirs: Changes, servers: &mut Vec<SavedServer>, here: &Here) -> bool {
+        let mut changed = false;
         for m in &theirs.removed {
-            taken.changed |= self.fold(m, servers);
+            changed |= self.fold(m, servers);
         }
         for p in theirs.profiles {
-            if let (Some(plugin), true) = (&p.plugin, here.plays.plays(&p.kind())) {
-                if here.plugin(&p.kind()).is_none() && !taken.install.contains(plugin) {
-                    taken.install.push(plugin.clone());
-                }
-            }
-            taken.changed |= self.take_one(p, servers, here);
+            changed |= self.take_one(p, servers, here);
         }
-        taken
+        changed
+    }
+
+    /// The plugins the synced profiles here play from that this device runs plugins for and lacks, once
+    /// each, as the device that installed them knows them.
+    pub(crate) fn needed(&self, here: &Here) -> Vec<NeededPlugin> {
+        let mut out: Vec<NeededPlugin> = Vec::new();
+        for r in self.records.iter().filter(|r| !r.off) {
+            let kind = r.shared.kind();
+            let Some(plugin) = r.shared.plugin.as_ref().filter(|_| here.plays.plays(&kind) && here.plugin(&kind).is_none()) else { continue };
+            if !out.iter().any(|p| p.id == plugin.id) {
+                out.push(plugin.clone());
+            }
+        }
+        out
     }
 
     /// Applies marker `m`; true when this device's profiles changed.
@@ -289,6 +289,11 @@ impl Book {
         self.record(local).is_some()
     }
 
+    /// This device's id for synced profile `id`, while it syncs here.
+    pub(crate) fn local_of(&self, id: &str) -> Option<&str> {
+        self.records.iter().find(|r| r.shared.id == id && !r.off).map(|r| r.local.as_str())
+    }
+
     /// Profile `local`'s sync identity while it syncs.
     pub(crate) fn sync_id(&self, local: &str) -> Option<&str> {
         self.record(local).map(|r| r.shared.id.as_str())
@@ -345,17 +350,18 @@ impl Book {
         }
     }
 
-    /// Checks a sign-in on this device to `account` against the one `local` syncs with; the first known
-    /// account becomes the profile's.
-    pub(crate) fn signed_in(&mut self, local: &str, account: Option<String>, by: &str, now_ms: i64) -> (SignInCheck, Changes) {
+    /// Checks a sign-in on this device to `account`, called `name` by its provider, against the one
+    /// `local` syncs with; the first known account becomes the profile's, and its name follows it.
+    pub(crate) fn signed_in(&mut self, local: &str, account: Option<String>, name: Option<String>, by: &str, now_ms: i64) -> (SignInCheck, Changes) {
         let Some(i) = self.records.iter().position(|r| r.local == local && !r.off) else { return (SignInCheck::Accepted, Changes::default()) };
-        let check = sign_in_check(self.records[i].shared.account.as_deref(), account.as_deref());
-        if check != SignInCheck::Accepted || self.records[i].shared.account.is_some() {
+        let shared = &self.records[i].shared;
+        let check = sign_in_check(shared.account.as_deref(), shared.account_name.as_deref(), account.as_deref());
+        if check != SignInCheck::Accepted || (shared.account == account && shared.account_name == name) {
             return (check, Changes::default());
         }
         let stamp = self.next(by, now_ms);
         let r = &mut self.records[i];
-        (r.shared.account, r.shared.stamp) = (account, stamp);
+        (r.shared.account, r.shared.account_name, r.shared.stamp) = (account, name, stamp);
         (check, Changes { profiles: vec![r.shared.clone()], removed: Vec::new() })
     }
 

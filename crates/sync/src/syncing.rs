@@ -26,7 +26,7 @@ use crate::profile::{Here, NeededPlugin, SignInCheck};
 use crate::keys::RoomName;
 use crate::nearby::{self, Nearby, NearbyAnnouncement, NearbyDevice, NearbyTxt};
 use crate::room::{Heard, Refusal, Relay};
-use crate::session::{Outcome, RemoteHeard, Session, SyncEvent};
+use crate::session::{Elsewhere, Open, Outcome, RemoteHeard, Session, SyncEvent};
 use crate::sync_server;
 
 /// What a client does with what sync brings. Calls come on any thread, never while sync holds its
@@ -35,10 +35,9 @@ use crate::sync_server;
 pub trait SyncClient: Send + Sync {
     /// The profiles this device plays, whose sign-ins it lets go, and its installed plugins.
     fn here(&self) -> Here;
-    /// Sync changed the saved profiles, which the settings now keep.
+    /// Sync changed the saved profiles, which the settings now keep: the plugins they need may have
+    /// changed too ([`Syncing::needed_plugins`]).
     fn profiles(&self, synced: ProfilesSynced);
-    /// Plugins the profiles need: install each from its repo.
-    fn install(&self, plugins: Vec<NeededPlugin>);
     fn event(&self, event: SyncEvent);
     /// [`Syncing::state`], [`Syncing::pairing`] or [`Syncing::devices`] changed (a device came, went, or
     /// came online or left).
@@ -59,6 +58,9 @@ pub trait RemoteRoom: Send + Sync {
     fn heard(&self, device: String, message: serde_json::Value);
     /// Device `device` left the room.
     fn left(&self, device: String);
+    /// A device of the group opened another profile for remote control, or none: those with this
+    /// profile and another open ([`Syncing::remote_elsewhere`]) may have changed.
+    fn elsewhere(&self);
 }
 
 /// Where a device stands in its group's room, as remote control is told.
@@ -82,6 +84,8 @@ struct Attached {
     /// The profile's id on this device.
     local: String,
     room: Arc<dyn RemoteRoom>,
+    /// Who the remote says it is, for the group's devices with another profile open.
+    card: serde_json::Value,
     /// The profile's sync identity and the group room it is in, while the room is open.
     in_room: Option<(String, RoomName)>,
     /// The sync identity it was in the room with before it left: its last word still goes as it.
@@ -96,6 +100,7 @@ enum ToRemote {
     Changed,
     Heard { device: String, message: serde_json::Value },
     Left { device: String },
+    Elsewhere,
 }
 
 /// What a change sync brought means for the client.
@@ -235,7 +240,6 @@ struct NearbyState {
 /// What to tell the client once the state is let go.
 enum Tell {
     Profiles(ProfilesSynced),
-    Install(Vec<NeededPlugin>),
     Event(SyncEvent),
     Changed,
     Remote(Arc<dyn RemoteRoom>, ToRemote),
@@ -449,10 +453,23 @@ impl Syncing {
         if let Some(servers) = out.servers {
             self.keep(servers, tells);
         }
-        if !out.install.is_empty() {
-            tells.push(Tell::Install(out.install));
+        if let Some(local) = out.switch {
+            self.open(local, tells);
         }
         tells.extend(out.events.into_iter().map(Tell::Event));
+    }
+
+    /// Opens profile `local` here, as a device of the group asked: the client opens the profile in use
+    /// again, as when sync changed it.
+    fn open(&self, local: String, tells: &mut Vec<Tell>) {
+        let mut switched = false;
+        self.settings.change(|p| {
+            switched = p.active_server_id != local && p.servers.iter().any(|s| s.id == local);
+            if switched { StoredPrefs { active_server_id: local.clone(), ..p.clone() } } else { p.clone() }
+        });
+        if switched {
+            tells.push(Tell::Profiles(ProfilesSynced { removed: Vec::new(), active: ActiveProfile::Switched }));
+        }
     }
 
     /// Hands remote control what the group room said for the profile it is in the room for.
@@ -463,6 +480,7 @@ impl Syncing {
                 RemoteHeard::Said { profile, device, message } if profile == *ours => ToRemote::Heard { device, message },
                 RemoteHeard::Said { .. } => continue,
                 RemoteHeard::Left { device } => ToRemote::Left { device },
+                RemoteHeard::Opened => ToRemote::Elsewhere,
             };
             tells.push(Tell::Remote(a.room.clone(), told));
         }
@@ -471,6 +489,11 @@ impl Syncing {
     /// Tells remote control where it stands when that changed: in the group room for its profile's
     /// sync identity or no longer, and the LAN key. Entering, it learns the server's clock.
     fn tell_remote(inner: &mut Inner, tells: &mut Vec<Tell>) {
+        if let Some(p) = inner.running.as_mut().and_then(|r| r.paired.as_mut()) {
+            let open = inner.remote.as_ref().and_then(|a| Some(Open { profile: p.session.sync_id(&a.local)?.to_string(), remote: a.card.clone() }));
+            let in_room = !p.resting && p.link.room(&p.session.room()) == Some(RoomState::Open);
+            p.session.opened(&p.link, open, in_room);
+        }
         let paired = inner.running.as_ref().and_then(|r| r.paired.as_ref());
         let open = paired.filter(|p| !p.resting && p.link.room(&p.session.room()) == Some(RoomState::Open));
         if open.is_none() {
@@ -786,16 +809,24 @@ impl Syncing {
         });
     }
 
-    /// A sign-in here to `account` for profile `local`, accepted only for the account the profile syncs
-    /// with.
-    pub fn signed_in(&self, local: String, account: Option<String>) -> SignInCheck {
+    /// A sign-in here to `account`, called `name` by its provider, for profile `local`: accepted only
+    /// for the account the profile syncs with.
+    pub fn signed_in(&self, local: String, account: Option<String>, name: Option<String>) -> SignInCheck {
         self.with(|_, inner, now| {
             let unix_ms = Syncing::unix_ms(inner, now);
             match inner.running.as_mut().and_then(|r| r.paired.as_mut()) {
-                Some(p) => p.session.signed_in(&p.link, &local, account, unix_ms),
+                Some(p) => p.session.signed_in(&p.link, &local, account, name, unix_ms),
                 None => SignInCheck::Accepted,
             }
         })
+    }
+
+    /// The plugins the synced profiles play from that this device runs plugins for and lacks: Install
+    /// brings them all, each from its repo.
+    pub fn needed_plugins(&self) -> Vec<NeededPlugin> {
+        let here = self.client.here();
+        let inner = self.inner();
+        inner.running.as_ref().and_then(|r| r.paired.as_ref()).map(|p| p.session.needed(&here)).unwrap_or_default()
     }
 
     pub fn pairing(&self) -> PairingView {
@@ -838,30 +869,37 @@ impl Syncing {
     }
 
     /// The user confirmed on the device with the profiles; `name` is this device's, `keep_copy` the
-    /// answer to the first pairing's question.
+    /// answer to the first pairing's question. Once the key went, the client hears that the new device
+    /// was paired, once: its arrival in the group's room is no news here.
     pub fn pair_confirm(&self, name: String, keep_copy: bool) {
+        let mut tells = Vec::new();
         self.with(|s, inner, now| {
             let Inner { presence, running, pairing, .. } = inner;
             let Some(running) = running.as_mut() else { return };
             let unix_ms = (now + running.unix_offset) / 1000;
             let Some(Pair::Admitting(admitting, link)) = running.pair.as_mut() else { return };
-            let step = match running.paired.as_ref() {
-                Some(own) => admitting.admit(link, &own.session, unix_ms),
+            let new = admitting.name().to_string();
+            let step = match running.paired.as_mut() {
+                Some(own) => admitting.admit(link, &mut own.session, unix_ms),
                 None => match admitting.admit_first(link, name, keep_copy, s.settings.clone(), unix_ms) {
                     Ok(session) => {
                         running.paired = Some(s.paired(session, running, presence, now));
-                        Some(crate::pairing::AdmitStep::Sent)
+                        Some(AdmitStep::Sent)
                     }
                     Err(reason) => Some(AdmitStep::Refused(reason)),
                 },
             };
             *pairing = match step {
                 Some(AdmitStep::Refused(reason)) => PairingView::Refused { reason },
-                Some(_) => PairingView::Sent,
+                Some(_) => {
+                    tells.push(Tell::Event(SyncEvent::NewDevice { name: new }));
+                    PairingView::Sent
+                }
                 None => return,
             };
             running.pair = None;
         });
+        self.tell(tells);
     }
 
     /// Where the nearby way of pairing reaches the local network: the platform's mDNS.
@@ -922,19 +960,39 @@ impl Syncing {
 
 /// Remote control's side of the group room, for the core.
 impl Syncing {
-    /// Attaches `room`, the remote of profile `local` (its id here): while the device is in its group
-    /// room and the profile syncs, it hears what the group's devices with that profile open say, and
-    /// what it says reaches them. Replaces the one attached before.
-    pub fn remote_open(&self, local: String, room: Arc<dyn RemoteRoom>) {
-        self.with(|_, inner, _| inner.remote = Some(Attached { local, room, in_room: None, left_as: None, lan_secret: None }));
+    /// Attaches `room`, the remote of profile `local` (its id here), which says it is `card`: while the
+    /// device is in its group room and the profile syncs, it hears what the group's devices with that
+    /// profile open say, and what it says reaches them. The group's devices with another profile open
+    /// list it with `card`. Replaces the one attached before.
+    pub fn remote_open(&self, local: String, room: Arc<dyn RemoteRoom>, card: serde_json::Value) {
+        self.with(|_, inner, _| inner.remote = Some(Attached { local, room, card, in_room: None, left_as: None, lan_secret: None }));
     }
 
     /// Detaches the remote attached, if it is `room`.
     pub fn remote_close(&self, room: &Arc<dyn RemoteRoom>) {
-        let mut inner = self.inner();
-        if inner.remote.as_ref().is_some_and(|a| Arc::ptr_eq(&a.room, room)) {
-            inner.remote = None;
-        }
+        self.with(|_, inner, _| {
+            if inner.remote.as_ref().is_some_and(|a| Arc::ptr_eq(&a.room, room)) {
+                inner.remote = None;
+            }
+        });
+    }
+
+    /// The group's devices in the room that play profile `local` (its id here) but have another one
+    /// open for remote control, with who their remote control says it is.
+    pub fn remote_elsewhere(&self, local: &str) -> Vec<Elsewhere> {
+        let kind = self.settings.with_prefs(|p| p.servers.iter().find(|s| s.id == local).map(|s| s.kind.clone())).flatten();
+        let inner = self.inner();
+        let Some((p, kind)) = inner.running.as_ref().and_then(|r| r.paired.as_ref()).zip(kind) else { return Vec::new() };
+        p.session.sync_id(local).map(|id| p.session.elsewhere(id, &kind)).unwrap_or_default()
+    }
+
+    /// Asks device `device` (its group id) to open profile `local` (its id here) for remote control;
+    /// false when the profile does not sync or the device is not in the room.
+    pub fn remote_switch(&self, local: &str, device: &str) -> bool {
+        self.with(|_, inner, _| {
+            let Some(p) = inner.running.as_ref().and_then(|r| r.paired.as_ref()).filter(|p| !p.resting) else { return false };
+            p.session.sync_id(local).is_some_and(|id| p.session.switch(&p.link, device, id))
+        })
     }
 
     /// Says remote control's `message` for profile `local` (its id here) to device `to` (its group id),
@@ -1032,7 +1090,6 @@ impl Syncing {
         for t in tells {
             match t {
                 Tell::Profiles(p) => self.client.profiles(p),
-                Tell::Install(p) => self.client.install(p),
                 Tell::Event(e) => self.client.event(e),
                 Tell::Changed => self.client.changed(),
                 Tell::Announce(hook, waiting) => hook.announce(waiting),
@@ -1042,6 +1099,7 @@ impl Syncing {
                 Tell::Remote(room, ToRemote::Changed) => room.changed(),
                 Tell::Remote(room, ToRemote::Heard { device, message }) => room.heard(device, message),
                 Tell::Remote(room, ToRemote::Left { device }) => room.left(device),
+                Tell::Remote(room, ToRemote::Elsewhere) => room.elsewhere(),
             }
         }
     }

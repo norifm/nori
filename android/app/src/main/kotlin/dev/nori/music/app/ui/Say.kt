@@ -552,6 +552,7 @@ class Say(private val r: Resources) {
             dev.nori.music.ffi.settings.SetupStep.LISTENING -> R.string.setup_listening
             dev.nori.music.ffi.settings.SetupStep.DATA -> R.string.setup_data
             dev.nori.music.ffi.settings.SetupStep.LOOK -> R.string.setup_look
+            dev.nori.music.ffi.settings.SetupStep.PAIR -> R.string.sync_pair
         },
     )
     /** A first-run answer's name and the line under it. */
@@ -1135,7 +1136,6 @@ class Say(private val r: Resources) {
     val syncKeepCopy: String get() = r.getString(R.string.sync_keep_copy)
     val syncKeepCopyDetail: String get() = r.getString(R.string.sync_keep_copy_detail)
     val syncSectionInstall: String get() = r.getString(R.string.sync_section_install)
-    fun syncInstall(name: String): String = r.getString(R.string.sync_install, name)
     val syncInstallFile: String get() = r.getString(R.string.sync_install_file)
     val syncOn: String get() = r.getString(R.string.settings_sync)
     val syncServer: String get() = r.getString(R.string.settings_sync_server)
@@ -1161,7 +1161,6 @@ class Say(private val r: Resources) {
     val syncKeepCopyAskDetail: String get() = r.getString(R.string.sync_keep_copy_ask_detail)
     val syncPairAction: String get() = r.getString(R.string.sync_pair_action)
     val syncProfile: String get() = r.getString(R.string.sync_profile)
-    val syncSignIn: String get() = r.getString(R.string.sync_sign_in)
     val syncProfileOffText: String get() = r.getString(R.string.sync_profile_off_text)
     val syncProfileOffRemove: String get() = r.getString(R.string.sync_profile_off_remove)
     val syncProfileOffKeep: String get() = r.getString(R.string.sync_profile_off_keep)
@@ -1233,36 +1232,13 @@ class Say(private val r: Resources) {
         is dev.nori.music.ffi.sync.SyncEvent.Refused -> syncRefusal(e.reason)
     }
 
-    /** A sign-in to another account than the one profile sync holds, which [name] is (empty when unknown). */
-    fun syncOtherAccount(name: String): String =
-        if (name.isEmpty()) r.getString(R.string.sync_other_account_unnamed) else r.getString(R.string.sync_other_account, name)
+    /** A sign-in to another account than the one profile sync holds, which [name] is (null when unknown). */
+    fun syncOtherAccount(name: String?): String =
+        if (name == null) r.getString(R.string.sync_other_account_unnamed) else r.getString(R.string.sync_other_account, name)
 
     /** A time of day in Unix ms, as the phone shows times. */
     private fun clock(unixMs: Long): String = java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT)
         .format(java.time.Instant.ofEpochMilli(unixMs).atZone(java.time.ZoneId.systemDefault()))
-
-    /** A paired device's line: whether it answers now, or when it was last nearby. */
-    fun pairSeen(d: dev.nori.music.ffi.PairedDevice): String = when {
-        d.reach == dev.nori.music.ffi.PairedReach.ANSWERS -> r.getString(R.string.pair_nearby)
-        d.reach == dev.nori.music.ffi.PairedReach.SILENT -> r.getString(R.string.pair_cant_reach)
-        d.seenDays == 0u -> r.getString(R.string.pair_seen_today)
-        d.seenDays == 1u -> r.getString(R.string.pair_seen_yesterday)
-        else -> r.getString(R.string.pair_seen_days, d.seenDays.toInt())
-    }
-
-    /** Why pairing with the device [name] (when its code says it) failed. */
-    fun pairFailed(e: Throwable, name: String?): String {
-        val who = name ?: r.getString(R.string.pair_other_device)
-        val first = name ?: r.getString(R.string.pair_other_device_start)
-        return when (e) {
-            is dev.nori.music.ffi.remote.PairException.NotACode -> r.getString(R.string.pair_failed_not_a_code)
-            is dev.nori.music.ffi.remote.PairException.Own -> r.getString(R.string.pair_failed_own)
-            is dev.nori.music.ffi.remote.PairException.Unreachable -> r.getString(R.string.pair_failed_unreachable, who)
-            is dev.nori.music.ffi.remote.PairException.TimedOut -> r.getString(R.string.pair_failed_timed_out, first)
-            is dev.nori.music.ffi.remote.PairException.Refused -> r.getString(R.string.pair_failed_refused, first)
-            else -> r.getString(R.string.pair_failed_unavailable)
-        }
-    }
 
     /** The snackbar about the device that just connected: its words and its one action. */
     fun deviceNotice(offer: Boolean, curve: String): Pair<String, String> =

@@ -100,6 +100,17 @@ fn migrate_profiles(c: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The devices paired one by one over the local network before pairing went through a sync server, and
+/// the code this device paired them with: forgotten, as only the sync server's pairing pairs now.
+const LAN_PAIRINGS: [&str; 2] = ["remotePaired", "remoteLanSecret"];
+
+fn forget_lan_pairings(c: &Connection) -> rusqlite::Result<()> {
+    for key in LAN_PAIRINGS {
+        c.execute("DELETE FROM app_kv WHERE key=?1", [key])?;
+    }
+    Ok(())
+}
+
 /// Replaces every stored setting in one transaction.
 fn write(c: &mut Connection, prefs: &StoredPrefs) -> rusqlite::Result<()> {
     let put = save(prefs);
@@ -157,6 +168,7 @@ impl SettingsStore {
         if legacy {
             migrate_profiles(&c)?;
         }
+        forget_lan_pairings(&c)?;
         Ok(SettingsStore { db: Arc::new(Mutex::new(c)), writer, written: Arc::new(Mutex::new(prefs.clone())), prefs, writes: Arc::new(AtomicU64::new(0)) })
     }
 
@@ -630,6 +642,19 @@ mod tests {
         write(&mut s.db.lock(), &StoredPrefs { crossfade_sec: 4, ..s.prefs.clone() }).unwrap();
         drop(s);
         assert_eq!(open(&dir).prefs.crossfade_sec, 4);
+    }
+
+    #[test]
+    fn devices_paired_over_the_local_network_are_forgotten_on_opening() {
+        let dir = nori_testdir::TempDir::new("settings-lan-pairings");
+        let s = open(&dir);
+        for key in ["remotePaired", "remoteLanSecret", "syncGroup"] {
+            s.db.lock().execute("INSERT INTO app_kv(key, value) VALUES(?1, 'x')", [key]).unwrap();
+        }
+        drop(s);
+        let s = open(&dir);
+        let kept: Vec<String> = s.db.lock().prepare("SELECT key FROM app_kv").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(kept, ["syncGroup"], "a sync pairing stays");
     }
 
     #[test]

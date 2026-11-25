@@ -112,20 +112,24 @@ The code holds nothing secret: a photographed or forwarded code is useless.
 1. The new device starts `Joining`. It makes a one-time lock, joins a random meeting room and asks the
    server's time. It then shows the code (`JoinStep::Code`) and its three words.
 2. The device with the profiles reads the code with `Admitting::read`: scanned, pasted, or from a
-   nearby device's announcement (`Came`). It joins the meeting room and asks the server's time there,
-   and a code past its expiry is refused. It waits in the room while the user decides, so it knows
-   whether the new device is still there.
+   nearby device's announcement (`Came`). It joins the meeting room and asks the server's time there.
+   It refuses a code past its expiry. It also refuses a code whose new device left the room (`Gone`):
+   the code was used, or its pairing stopped. Both come before any question. The device waits in the
+   room while the user decides, so it knows whether the new device is still there.
 3. It answers a `Confirmation` for the user. It names the new device, the profiles it receives, and the
    group it leaves. It holds the words unless the code came by camera, and asks about a kept copy at the
    first pairing.
-4. On a yes, `admit` seals the key to the lock and sends it into the meeting room, with the group's
-   devices it knows, itself among them. It answers `Gone` when the new device left. At the first
-   pairing, `admit_first` makes the group first.
+4. On a yes, `admit` seals the key to the lock and sends it into the meeting room. The key goes with
+   the group's devices it knows, itself among them, and the new device's id in the group. The device
+   lists the new device at once. Its client hears `SyncEvent::NewDevice`, the one notice of the pairing
+   there. It answers `Gone` when the new device left. At the first pairing, `admit_first` makes the
+   group first.
 5. The new device opens it (`JoinStep::Paired`). `Welcomed::join` says goodbye to its old group, if any.
    It keeps the device's profile sync and stores the new group.
 6. The new device joins the group room. Its hellos say that it is new while that session lasts. A
-   device reports `NewDevice` for a new device it has not seen yet, so a device that reaches the room
-   late reports it too, and the new device reports none of the devices the key came with.
+   device reports `NewDevice` for a new device it has not seen yet. So a device that reaches the room
+   late reports it too. The device that sent the key lists it already. The new device reports none of
+   the devices the key came with.
 
 The code is one link, also the QR code's text:
 
@@ -145,8 +149,13 @@ first two:
 - `Spent`: a key after the one that paired it.
 - `Expired`: a key after five minutes by its own clock.
 
-The other device refuses a code that does not read (`NotACode`), one from a newer nori (`Newer`) and a
-dead one (`Expired`). It answers `Gone` when the new device left before the key was sent.
+The other device refuses a code that does not read (`NotACode`) and one from a newer nori (`Newer`). It
+refuses a dead code (`Expired`) and a used one (`Gone`). It also answers `Gone` when the new device left
+before the key was sent. `is_pairing_code` tells a client whether a link opened from outside the app is a code.
+
+This is the only pairing. Older versions paired devices one by one on the local network, without a sync
+server. Those pairings are forgotten when the settings open (`remotePaired` and `remoteLanSecret` in
+`app_kv`).
 
 ### A device waiting nearby
 
@@ -190,9 +199,11 @@ profile, so its downloads, history and queue stay with it.
 ### What travels
 
 A profile travels as the profile list stores it (`server_json` in `nori-settings`). What stays on each
-device is left out: its id, its client certificate and Sync this profile. Its sign-in (`password`, `apiKey`)
-travels only to a device that plays the profile, and only when the provider lets it go. A profile also
-names the plugin it needs and, for a sign-in that is not copied, the account it is signed in to.
+device is left out: its id, its client certificate and Sync this profile. Its sign-in (`user`,
+`password`, `apiKey`) travels only to a device that plays the profile, and only when the provider lets it
+go. So a profile that arrives without its sign-in names no account, and every client shows it as not
+signed in until a sign-in here. A profile also names the plugin it needs. For a sign-in that is not
+copied, it names the account it is signed in to: its stable identifier and its name.
 
 A device keeps what a newer nori added, unchanged: unknown keys in the profile and beside it. Settings,
 local data and downloads never travel. Jam guests' profiles never sync.
@@ -227,17 +238,27 @@ paired device.
 
 A provider says how its sign-in behaves in `ProviderInfo::sign_in_copy`. Subsonic servers are `Copied`.
 A plugin's provider says it in its manifest, and is `EachDevice` when it says nothing. Such a profile
-syncs without its sign-in, and each device keeps its own. After a sign-in, the client passes
-`Client::account_id` to `Session::signed_in`, which checks it against the account the profile syncs
-with:
+syncs without its sign-in, and each device keeps its own. After a sign-in, the client calls
+`Client::synced_sign_in` with the name the sign-in gave. It passes `Client::account_id` and the name to
+`Syncing::signed_in`, which checks the account against the one the profile syncs with:
 
 | `SignInCheck` | When |
 |---|---|
-| `Accepted` | The same account, or the first one named, which becomes the profile's |
-| `OtherAccount` | Another account than the profile's |
+| `Accepted` | The same account, or the first one named, which becomes the profile's with its name |
+| `OtherAccount { name }` | Another account than the profile's, which is `name` |
 | `Unchecked` | The provider names no account, such as a plugin built before `account` |
 
-An unchecked sign-in stays, and the profile's account stays unknown.
+`synced_sign_in` signs another account out again at once. An unchecked sign-in stays, and the profile's
+account stays unknown.
+
+### Plugins a profile needs
+
+`Syncing::needed_plugins` lists the plugins the synced profiles play from that this device runs plugins
+for and does not have, once each. A client shows them with one Install, which calls
+`Kinds::install_needed`. It installs each from the repo it came from on the other device, adding that repo
+first when it is missing. Once a version was signed, it installs only a version signed by the same key. A
+plugin installed from a file there has no repo, and Install passes it over. The list changes with the
+profiles (`SyncClient::profiles`) and the plugins installed here.
 
 ### A device that cannot play a profile
 
@@ -283,6 +304,19 @@ be heard before its predecessor's last word, and the older word then counts for 
 So a profile that does not sync is offered no device, and neither are local files profiles, which never
 sync. A device that cannot play a profile never opens it. A profile that synced without its sign-in plays
 there without an account, and its remote control works all the same.
+
+### A device with another profile open
+
+Each device tells the group room which synced profile its remote control has open, with the remote's own
+card (`Said::Opened`, also in its hello). A message goes only when that changes, so switching profiles
+costs one. `Syncing::remote_elsewhere` lists the devices in the room that play the profile but have
+another one open. `Remote::devices` lists them after the others, with `RemoteDevice::elsewhere`.
+
+Picking such a device (`Remote::pick`), or handing it the music (`Remote::hand_over`), first asks it to
+open the profile (`Syncing::remote_switch`, `Said::Switch`). There, sync makes it the profile in use and
+tells the client as `ActiveProfile::Switched`, which opens it as for any change sync makes. When the
+device's remote says it is there, the pick or the hand-over goes on. A device that takes more than 20
+seconds is handed nothing (`SWITCH_WAIT_US`).
 
 ### The quiet rule
 
@@ -337,21 +371,23 @@ with its `Sockets`, its `SyncClient` and its `Reach`, and calls these:
 | The audio woke the device (Android, iPod) | `woke` |
 | A screen shows where sync stands | `state` (`SyncState`) |
 | Pairing on the new device | `pair_show`, then `pairing` shows the code |
+| A link opened from outside the app | `is_pairing_code`, then the pairing screen takes it |
 | Pairing on the other device | `pair_take`, then `pairing` asks to confirm, `pair_confirm` |
 | Stopping a pairing | `pair_cancel` |
 | The device list | `devices` |
 | The kept copy switch | `keeps_copy`, `keep_copy` |
 | Reset pairing | `reset_notice`, then `reset` |
 | Merge offers | `offers`, `merge`, `keep_apart` |
-| Sync this profile, sign-ins | `synced`, `sync_off`, `signed_in` |
+| Sync this profile | `synced`, `sync_off` |
+| A sign-in to a profile | `Client::synced_sign_in` |
+| Plugins the profiles need | `needed_plugins`, then `Kinds::install_needed` |
 | A pairing screen opened or closed | `pair_look`, then `nearby` lists the waiting devices |
 | A session's remote control | Hand the `Syncing` to the session (`nori_host::session::Open::sync`, Android's `Remote` constructor) |
 
 `SyncClient` hears what to do:
 
 - `profiles`: sync changed the saved profiles. Forget a removed profile's rows, and open the profile in
-  use again when it changed.
-- `install`: plugins a profile needs.
+  use again when it changed. A device of the group can also ask this one to open a profile.
 - `event`: something to word.
 - `changed`: `state`, `pairing` or `devices` changed. A device that came online or left counts.
 
@@ -378,6 +414,10 @@ self-signed switch do not apply: the sync server is no profile's server.
 
 A client tells sync whether nori is on screen and playing. Android does it from `MainActivity` and the
 playback service. The iPod does it from its foreground and background calls and its engine's state.
+
+Android and the desktop have a pairing screen. Their first run ends with Pair a device while the device
+is in no group: `setup_steps(_, pairs)` makes `SetupStep::Pair` its last step. The sync server's
+switch and address show under it, as Your devices has them.
 
 A paired device uses its group's server. The `syncServer` setting names the server a new code is made
 on: nori's own unless another is named. With `sync` off, nothing connects and pairing answers

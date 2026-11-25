@@ -101,7 +101,7 @@ pub(crate) fn pair(old: &mut Device, new: &mut Device, now_ms: i64) -> Confirmat
     });
     let confirm = confirm.expect("something to confirm");
     let first = old.session.is_none();
-    match old.session.as_ref() {
+    match old.session.as_mut() {
         Some(own) => assert_eq!(admitting.admit(&old.link, own, now_ms), Some(AdmitStep::Sent)),
         None => old.session = Some(admitting.admit_first(&old.link, old.name.into(), true, old.store.clone(), now_ms).expect("the new device waits")),
     }

@@ -88,6 +88,14 @@ class SyncScreensTest {
         assertTrue(syncOffAsks("a", paired.copy(state = SyncState.Offline(0))))
     }
 
+    @Test fun `install is offered for a plugin with a repo to fetch it from`() {
+        val fromRepo = dev.nori.music.ffi.sync.NeededPlugin("yt", "https://repo.example", "k")
+        val fromFile = dev.nori.music.ffi.sync.NeededPlugin("mine", null, null)
+        assertTrue(installOffered(listOf(fromFile, fromRepo)))
+        assertFalse("nothing to fetch", installOffered(listOf(fromFile)))
+        assertFalse(installOffered(emptyList()))
+    }
+
     @Test fun `a refusal shows where sync stands, the rest as the app's notice`() {
         assertTrue(told(SyncEvent.NewDevice("MacBook")))
         assertTrue(told(SyncEvent.UpdateOther("MacBook")))

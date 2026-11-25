@@ -189,7 +189,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         val step = dev.nori.music.ffi.welcomeOn(_welcome.value, event)
         _welcome.value = step.flow
         if (step.then == dev.nori.music.ffi.WelcomeDo.Questions) {
-            _setup.value = SetupUi(dev.nori.music.ffi.settings.setupSteps(mobileData))
+            _setup.value = SetupUi(dev.nori.music.ffi.settings.setupSteps(mobileData, pairs = !nori.sync.paired.value))
             loadSetupCovers()
             _welcome.value = WELCOME
         }

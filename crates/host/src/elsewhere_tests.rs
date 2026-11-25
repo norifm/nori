@@ -14,7 +14,7 @@ use super::test_card::Card;
 use super::*;
 use crate::player::Playback;
 
-/// The test plugin's provider: its devices pair over the LAN without a server.
+/// The test plugin's provider: a profile without a server, whose devices find each other on the LAN.
 fn plugin() -> ServerKind {
     ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }
 }
@@ -50,12 +50,11 @@ impl RemoteShown for Quiet {
     fn jam_ended(&self, _: Option<String>) {}
 }
 
-/// The phone: playing song `a` of its queue, controllable from the devices paired with it nearby; its door.
-fn phone(dir: &Path) -> (Arc<Remote>, Announcement) {
-    let settings = Settings::new();
+/// The phone, whose settings `settings` keep, of the group `sync` is in: playing song `a` of its queue,
+/// controllable from my devices nearby; its door.
+fn phone(dir: &Path, settings: Arc<Settings>, sync: Arc<nori_core::sync::Syncing>) -> (Arc<Remote>, Announcement) {
     let path = db_path(dir);
-    settings.open(&path).unwrap();
-    let profile = SavedServer { id: "phone".into(), kind: plugin(), ..Default::default() };
+    let profile = settings.with_prefs(|p| p.servers[0].clone()).unwrap();
     let core = Core::new(path, profile.id.clone(), Arc::new(nori_core::queue::Session::new(settings.clone()))).unwrap();
     core.use_kinds(kinds(dir, settings));
     core.configure_profile(profile.clone()).unwrap();
@@ -64,7 +63,7 @@ fn phone(dir: &Path) -> (Arc<Remote>, Announcement) {
     client.session().register(vec![Song { id: "a".into(), title: "A".into(), duration: 200, ..Default::default() }]);
     client.session().set(vec!["a".into()], Some(0), false, None);
     let door = Arc::new(Announced::default());
-    let phone = Remote::new(client, RemoteMe { name: "Phone".into(), kind: DeviceKind::Phone }, Arc::new(Quiet), Arc::new(Quiet), Some(door.clone()), None);
+    let phone = Remote::new(client, RemoteMe { name: "Phone".into(), kind: DeviceKind::Phone }, Arc::new(Quiet), Arc::new(Quiet), Some(door.clone()), Some(sync));
     phone.clone().serve(true);
     phone.clone().played(Playing { playing: true, index: Some(0), ..Default::default() });
     let announced = door.0.lock().unwrap().clone().expect("the phone's door is announced");
@@ -78,11 +77,18 @@ fn phone(dir: &Path) -> (Arc<Remote>, Announcement) {
 #[test]
 fn a_device_playing_elsewhere_is_not_shown_to_the_system_as_playing_here() {
     let (phone_dir, mac_dir) = (nori_testdir::TempDir::new("host-elsewhere-phone"), nori_testdir::TempDir::new("host-elsewhere-mac"));
-    let (phone, door) = phone(phone_dir.path());
+    let phone_settings = Settings::new();
+    let mut p = phone_settings.open(&db_path(phone_dir.path())).unwrap();
+    (p.sync, p.servers, p.active_server_id) = (true, vec![SavedServer { id: "phone".into(), kind: plugin(), ..Default::default() }], "phone".into());
+    phone_settings.put(p);
     let settings = Settings::new();
     let mut p = settings.open(&db_path(mac_dir.path())).unwrap();
-    (p.remote_control, p.auto_fill, p.third_party_lookups) = (true, None, false);
+    (p.remote_control, p.auto_fill, p.third_party_lookups, p.sync) = (true, None, false, true);
     settings.put(p);
+    // One group, the Mac taking the phone's profile as its own.
+    let (hub, sim) = (nori_sync::hub::Hub::real_time(), Arc::new(nori_tasks::Native::new("host-elsewhere-sync").unwrap()));
+    let syncs = nori_sync::hub::grouped(&hub, &sim, &[&phone_settings, &settings]);
+    let (phone, door) = phone(phone_dir.path(), phone_settings, syncs[0].clone());
     let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
     let (said, heard) = mpsc::channel();
     let said = Mutex::new(said);
@@ -91,13 +97,10 @@ fn a_device_playing_elsewhere_is_not_shown_to_the_system_as_playing_here() {
             let _ = said.lock().unwrap().send(());
         }
     });
-    let profile = SavedServer { id: "mac".into(), kind: plugin(), ..Default::default() };
-    let open = Open { kinds: kinds(mac_dir.path(), settings), discovery: Some(Arc::new(Announced::default())), out, ..test_open(queue, mac_dir.path(), profile, Box::new(Card::new())) };
+    let profile = settings.with_prefs(|p| p.servers[0].clone()).unwrap();
+    let open = Open { kinds: kinds(mac_dir.path(), settings), discovery: Some(Arc::new(Announced::default())), out, sync: Some(syncs[1].clone()), ..test_open(queue, mac_dir.path(), profile, Box::new(Card::new())) };
     let mac = Session::open_on(open, Virtual::default()).unwrap();
     let remote = mac.remote().expect("remote control is on");
-    let mut code = nori_remote::lan::parse_pairing(&phone.pairing_link().unwrap()).unwrap();
-    code.doors = vec![std::net::SocketAddr::from(([127, 0, 0, 1], door.port))];
-    nori_core::transport::block_on(remote.clone().pair(nori_remote::lan::pairing_link(&code))).unwrap();
     mac.in_sight(true);
     remote.lan_found("phone".into(), vec!["127.0.0.1".into()], door.port, door.txt);
     let until = Instant::now() + Duration::from_secs(5);

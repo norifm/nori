@@ -80,8 +80,9 @@ pub(crate) struct Stamp {
 /// What stays on each device: its own id for the profile, its client certificate (a file there), and
 /// Sync this profile.
 const LOCAL: [&str; 4] = ["id", "clientCert", "clientCertPassword", "syncOff"];
-/// The sign-in, sent only where it may go.
-const SIGN_IN: [&str; 2] = ["password", "apiKey"];
+/// The sign-in, sent only where it may go: without it, the account's name stays behind too, so a device
+/// that has not signed in shows none.
+const SIGN_IN: [&str; 3] = ["user", "password", "apiKey"];
 
 /// One profile as it travels.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -95,6 +96,9 @@ pub(crate) struct Shared {
     /// The account a sign-in that is not copied must be to: the provider's stable identifier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// That account's name as its provider shows it, for a device to name the account it must sign in to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin: Option<NeededPlugin>,
     /// What a newer nori says about the profile beside these, kept unchanged.
@@ -156,12 +160,13 @@ impl Shared {
 }
 
 /// How a sign-in on this device stands against the account the profile is synced with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SignInCheck {
     Accepted,
-    /// Another account than the one the profile's other devices are signed in to.
-    OtherAccount,
+    /// Another account than the one the profile's other devices are signed in to, `name`d as its provider
+    /// showed it there when it did: the sign-in is to be signed out again.
+    OtherAccount { name: Option<String> },
     /// Kept, though the provider names no stable account (a plugin built before it could), so it may
     /// be another account than the one the profile's other devices are signed in to.
     Unchecked,
@@ -169,10 +174,10 @@ pub enum SignInCheck {
 
 /// Whether a sign-in to `signed_in` is accepted for a profile synced with `synced`: only the same
 /// account. The first account named becomes the profile's.
-pub(crate) fn sign_in_check(synced: Option<&str>, signed_in: Option<&str>) -> SignInCheck {
+pub(crate) fn sign_in_check(synced: Option<&str>, synced_name: Option<&str>, signed_in: Option<&str>) -> SignInCheck {
     match (synced, signed_in) {
         (_, None) => SignInCheck::Unchecked,
-        (Some(a), Some(b)) if a != b => SignInCheck::OtherAccount,
+        (Some(a), Some(b)) if a != b => SignInCheck::OtherAccount { name: synced_name.map(str::to_string) },
         _ => SignInCheck::Accepted,
     }
 }
@@ -205,7 +210,7 @@ pub(crate) mod tests {
     }
 
     fn shared(server: &SavedServer, here: &Here) -> Shared {
-        Shared { id: "s".into(), stamp: Stamp::default(), profile: body(server, here, None), account: None, plugin: here.plugin(&server.kind), newer: Map::new() }
+        Shared { id: "s".into(), stamp: Stamp::default(), profile: body(server, here, None), account: None, account_name: None, plugin: here.plugin(&server.kind), newer: Map::new() }
     }
 
     #[test]
@@ -213,8 +218,9 @@ pub(crate) mod tests {
         let nav = shared(&navidrome("a1", "https://music.example"), &phone());
         assert!(!["id", "clientCert", "clientCertPassword", "syncOff"].iter().any(|k| nav.profile.contains_key(*k)));
         assert_eq!(nav.profile["password"], "pw", "a server's sign-in is copied");
-        let yt = shared(&youtube("b2"), &phone());
+        let yt = shared(&SavedServer { user: "Ann".into(), ..youtube("b2") }, &phone());
         assert!(!yt.profile.contains_key("apiKey"), "a plugin that says nothing is signed in on each device");
+        assert!(!yt.profile.contains_key("user"), "and the account's name stays with its sign-in");
         assert_eq!(yt.plugin.as_ref().map(|p| p.repo.as_deref()), Some(Some("https://repo.example")));
         let copied = Here { copied: vec!["subsonic".into(), PLUGIN.into()], ..phone() };
         assert_eq!(shared(&youtube("b2"), &copied).profile["apiKey"], "cookie", "a plugin that lets it go");
@@ -237,11 +243,13 @@ pub(crate) mod tests {
         let mut theirs = shared(&SavedServer { name: "Renamed".into(), password: "new".into(), ..navidrome("x", "https://music.example") }, &phone());
         let made = theirs.server(Some(&here), "unused").unwrap();
         assert_eq!((made.id.as_str(), made.client_cert.as_str(), made.name.as_str(), made.password.as_str()), ("local", "c.p12", "Renamed", "new"));
+        theirs.profile.remove("user");
         theirs.profile.remove("password");
         theirs.profile.remove("apiKey");
-        assert_eq!(theirs.server(Some(&here), "unused").unwrap().password, "pw", "no sign-in came: this device's own stays");
+        let kept = theirs.server(Some(&here), "unused").unwrap();
+        assert_eq!((kept.user.as_str(), kept.password.as_str()), ("me", "pw"), "no sign-in came: this device's own stays");
         let new = theirs.server(None, "n3").unwrap();
-        assert_eq!((new.id.as_str(), new.client_cert.as_str(), new.password.as_str()), ("n3", "", ""));
+        assert_eq!((new.id.as_str(), new.client_cert.as_str(), new.user.as_str(), new.password.as_str()), ("n3", "", "", ""), "a new profile without its sign-in waits for one, with no account named");
     }
 
     #[test]
@@ -256,10 +264,10 @@ pub(crate) mod tests {
 
     #[test]
     fn only_the_same_account_signs_in() {
-        assert_eq!(sign_in_check(Some("UC1"), Some("UC1")), SignInCheck::Accepted);
-        assert_eq!(sign_in_check(Some("UC1"), Some("UC2")), SignInCheck::OtherAccount);
-        assert_eq!(sign_in_check(None, Some("UC2")), SignInCheck::Accepted, "the first sign-in names the account");
-        assert_eq!(sign_in_check(Some("UC1"), None), SignInCheck::Unchecked, "a provider that names no account cannot be checked");
-        assert_eq!(sign_in_check(None, None), SignInCheck::Unchecked);
+        assert_eq!(sign_in_check(Some("UC1"), Some("Ann"), Some("UC1")), SignInCheck::Accepted);
+        assert_eq!(sign_in_check(Some("UC1"), Some("Ann"), Some("UC2")), SignInCheck::OtherAccount { name: Some("Ann".into()) }, "named as the other device knows it");
+        assert_eq!(sign_in_check(None, None, Some("UC2")), SignInCheck::Accepted, "the first sign-in names the account");
+        assert_eq!(sign_in_check(Some("UC1"), None, None), SignInCheck::Unchecked, "a provider that names no account cannot be checked");
+        assert_eq!(sign_in_check(None, None, None), SignInCheck::Unchecked);
     }
 }

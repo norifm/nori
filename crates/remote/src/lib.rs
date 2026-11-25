@@ -279,7 +279,8 @@ mod tests {
 
     #[test]
     fn a_pairing_code_is_read_back_from_a_camera_frame() {
-        let link = lan::pairing_link(&lan::PairCode { invite: "ab".repeat(32), id: "d3sk".into(), name: "Ann's Mac".into(), doors: ["192.168.196.241:41234", "192.168.0.105:41234", "192.168.64.1:41234"].map(|d| d.parse().unwrap()).into() });
+        // As long as a sync pairing code from a device in a group.
+        let link = format!("nori://pair#v=1&s=aHR0cHM6Ly9zeW5jLm5vcmlmbS5jb20&r={}&l={}&n=QW5uJ3MgTWFj&p=a&e=1700000300000&g=2&t={}", "R".repeat(43), "L".repeat(43), "T".repeat(22));
         let q = qr_code(link.clone()).unwrap();
         // Drawn 4 px a module, off-centre with a quiet zone, on grey paper in a frame whose rows are padded.
         let (width, height, stride, scale, at) = (320, 240, 336, 4, (40, 20));

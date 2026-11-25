@@ -324,7 +324,7 @@ with that reason.
 | `device-sound` | An output's sound profile applies on connect | The platform's output events |
 | `sheets` | A sheet over the sideways player keeps the status bar away | Android's status bar rules and insets |
 | `queue-panel` | Tapping, scrolling, Clear and Undo in the queue panel | Compose, the panel, media3's list |
-| `sync` | Your devices and Pair a device, both ways round, Sync this profile, removing, Reset pairing, the server going | The screens, OkHttp's WebSockets through `adb reverse` |
+| `sync` | Your devices and Pair a device, both ways round, a used code, Sync this profile, removing, Reset pairing, the server going | The screens, OkHttp's WebSockets through `adb reverse` |
 | `remote` | The terminal app as the other device, through every system surface | NsdManager, the remote media session, MediaRouter2 |
 | `jam` | Hosting a jam with two guests, then joining one as a guest | The service, the invite intent, media3 |
 | `scrobble` (opt-in, local) | A qualifying listen counts once, and an early skip does not | media3's track callbacks |

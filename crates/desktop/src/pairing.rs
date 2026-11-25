@@ -32,10 +32,6 @@ impl nori_core::sync::SyncClient for Told {
         self.tx.send(Msg::Synced(synced));
     }
 
-    fn install(&self, plugins: Vec<nori_core::sync::NeededPlugin>) {
-        self.tx.send(Msg::SyncInstall(plugins));
-    }
-
     fn event(&self, event: nori_core::sync::SyncEvent) {
         self.tx.send(Msg::SyncEvent(event));
     }
@@ -73,8 +69,6 @@ pub struct Sheet {
     pub role: Role,
     /// The devices waiting nearby, listed while taking a code.
     pub nearby: Vec<nori_core::sync::NearbyDevice>,
-    /// The new device's name from the confirmation, for the line once it is paired.
-    asked: Option<String>,
     /// The link the QR code was drawn for, and the code.
     qr: (String, Image),
     stage: i32,
@@ -90,7 +84,6 @@ impl Sheet {
         let waiting = |line: &str| Shown { stage: WAITING, line: line.into(), ..Shown::default() };
         match (self.role, view) {
             (_, PairingView::Confirm { confirmation: c }) => {
-                self.asked = Some(c.name.clone());
                 Shown {
                     stage: CONFIRM,
                     question: words::give_sign_ins(&c.name, c.profiles),
@@ -100,12 +93,12 @@ impl Sheet {
                     ..Shown::default()
                 }
             }
-            (_, PairingView::Sent) => Shown { stage: DONE, line: words::pair_sent(self.asked.as_deref().unwrap_or_default()), ..Shown::default() },
-            (_, PairingView::Paired) => Shown { stage: DONE, line: words::PAIR_JOINED.into(), ..Shown::default() },
+            // The sheet closes: the core's notice says the new device was paired, and this one says Paired.
+            (_, PairingView::Sent | PairingView::Paired) => Shown { stage: DONE, ..Shown::default() },
             (Role::Show, PairingView::Code { link, words }) => Shown { stage: CODE, link: link.clone(), code_words: words.join(" "), ..Shown::default() },
             (Role::Show, PairingView::Idle | PairingView::Starting) => waiting(words::PAIR_REACHING_SERVER),
             (Role::Show, PairingView::Refused { reason }) => Shown { stage: STOPPED, line: words::pairing_refused(*reason, true), again: words::NEW_CODE.into(), ..Shown::default() },
-            (Role::Take, PairingView::Starting) => waiting(words::PAIR_REACHING_DEVICE),
+            (Role::Take, PairingView::Starting) => waiting(words::PAIR_REACHING_SERVER),
             (Role::Take, PairingView::Refused { reason }) => Shown { stage: TAKING, error: words::pairing_refused(*reason, false), ..Shown::default() },
             (Role::Take, PairingView::Idle | PairingView::Code { .. }) => Shown { stage: TAKING, ..Shown::default() },
         }
@@ -162,7 +155,6 @@ mod tests {
         assert!(asked.asks_keep);
         let by_camera = sheet.shown(&confirmation(None, None, false));
         assert_eq!((by_camera.code_words.as_str(), by_camera.leaves.as_str(), by_camera.asks_keep), ("", "", false), "a scanned code needs no words, and a device in no group leaves none");
-        assert_eq!(sheet.shown(&PairingView::Sent).line, "Pixel 8 is paired.", "the name the confirmation gave");
     }
 
     #[test]
@@ -172,12 +164,11 @@ mod tests {
         assert_eq!((show.shown(&PairingView::Starting).stage, show.shown(&code).stage), (WAITING, CODE));
         assert_eq!(show.shown(&code).code_words, "acorn bison cedar", "the new device shows the words while it waits");
         let ran_out = show.shown(&PairingView::Refused { reason: PairingRefused::Expired });
-        assert_eq!((ran_out.stage, ran_out.line.as_str(), ran_out.again.as_str()), (STOPPED, "The code ran out.", "New code"));
-        assert_eq!(show.shown(&PairingView::Paired).line, "This computer is paired.");
+        assert_eq!((ran_out.stage, ran_out.line.as_str(), ran_out.again.as_str()), (STOPPED, "This code ran out.", "New code"));
         let mut take = Sheet::new(Role::Take);
         assert_eq!(take.shown(&PairingView::Idle).stage, TAKING);
         let refused = take.shown(&PairingView::Refused { reason: PairingRefused::NotACode });
-        assert_eq!((refused.stage, refused.error.as_str()), (TAKING, "That isn’t a nori pairing code."), "the link stays to fix, under its refusal");
-        assert_eq!(take.shown(&PairingView::Refused { reason: PairingRefused::Expired }).error, "The code ran out, so make a new one on the other device.");
+        assert_eq!((refused.stage, refused.error.as_str()), (TAKING, "This isn’t a nori pairing code."), "the link stays to fix, under its refusal");
+        assert_eq!(take.shown(&PairingView::Refused { reason: PairingRefused::Expired }).error, "This code ran out. Make a new one on the other device.");
     }
 }

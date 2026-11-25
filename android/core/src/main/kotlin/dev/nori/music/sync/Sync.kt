@@ -8,7 +8,6 @@ import dev.nori.music.NoriLog
 import dev.nori.music.ffi.sync.Ended
 import dev.nori.music.ffi.sync.Here
 import dev.nori.music.ffi.sync.NearbyDevice
-import dev.nori.music.ffi.sync.NeededPlugin
 import dev.nori.music.ffi.sync.ProfilesSynced
 import dev.nori.music.ffi.sync.SyncClient
 import dev.nori.music.ffi.sync.SyncEvent
@@ -130,10 +129,8 @@ class Sync(private val nori: Nori, context: Context) : SyncClient {
     /** What happened in the group, for the screens to word. */
     val events: SharedFlow<SyncEvent> = _events
 
-    private val _installs = MutableStateFlow<List<NeededPlugin>>(emptyList())
-
-    /** Plugins the synced profiles need, for the plugin screens to install from their repos. */
-    val installs: StateFlow<List<NeededPlugin>> = _installs.asStateFlow()
+    /** A pairing code opened from outside the app (the system camera, a link), for Pair a device to take. */
+    val offered = MutableStateFlow<String?>(null)
 
     /** The playback service's engine while it runs, which sync's keep-alive rides on while sync runs. */
     private var engine: EnginePlayer? = null
@@ -176,11 +173,6 @@ class Sync(private val nori: Nori, context: Context) : SyncClient {
     override fun here(): Here = nori.plugins.kinds.syncHere()
 
     override fun profiles(synced: ProfilesSynced) = main.post { nori.profilesSynced(synced) }.let {}
-
-    override fun install(plugins: List<NeededPlugin>) {
-        NoriLog.i("sync: the profiles need plugins ${plugins.joinToString { it.id }}")
-        _installs.value = plugins
-    }
 
     override fun event(event: SyncEvent) {
         NoriLog.i("sync: $event")

@@ -53,6 +53,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingRow
 import dev.nori.music.app.vm.SettingsViewModel
+import dev.nori.music.app.vm.SyncViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.SetupUi
 import dev.nori.music.app.vm.backupWords
 import dev.nori.music.ffi.WelcomeDo
@@ -254,7 +256,11 @@ fun SetupPages(vm: SettingsViewModel, setup: SetupUi) {
                 label = "setup",
             ) { at ->
                 val step = setup.steps[at]
-                if (step == SetupStep.LOOK) LookStep(vm) else AnswerStep(vm, step, setup.answers[step])
+                when (step) {
+                    SetupStep.LOOK -> LookStep(vm, last = at == setup.steps.lastIndex)
+                    SetupStep.PAIR -> PairStep(vm)
+                    else -> AnswerStep(vm, step, setup.answers[step])
+                }
             }
         }
     }
@@ -272,7 +278,7 @@ private fun SetupBar(setup: SetupUi, back: () -> Unit, skip: () -> Unit) {
             }
         }
         Box(Modifier.width(96.dp), Alignment.CenterEnd) {
-            if (setup.steps[setup.at] != SetupStep.LOOK) TextAction(say.setupSkip, skip, Modifier.testTag("setup-skip"))
+            if (setup.steps[setup.at] !in setOf(SetupStep.LOOK, SetupStep.PAIR)) TextAction(say.setupSkip, skip, Modifier.testTag("setup-skip"))
         }
     }
 }
@@ -449,11 +455,49 @@ private fun waveform(n: Int, steps: Int): List<Float> = List(n) { i ->
     if (steps > 0) (kotlin.math.ceil(v * steps) / steps).coerceAtMost(1f) else v
 }
 
+/** Ends the run, notifications asked for first: here, as the run ends, rather than over the welcome. */
+@Composable
+private fun rememberFinish(vm: SettingsViewModel): (() -> Unit) -> Unit {
+    val context = LocalContext.current
+    var then by remember { mutableStateOf({}) }
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.setupNext(); then() }
+    return { after ->
+        val asks = android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        then = after
+        if (asks) askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS) else { vm.setupNext(); after() }
+    }
+}
+
 /**
- * The look, taken as it is picked: Settings' own appearance and season rows; Start listening ends the run.
+ * The last page while this phone is in no group: Pair a device ends the run on Pair a device, Start listening
+ * ends it; the sync server's switch and address under Advanced, as Your devices has them.
  */
 @Composable
-private fun LookStep(vm: SettingsViewModel) {
+private fun PairStep(vm: SettingsViewModel) {
+    val sync: SyncViewModel = viewModel()
+    val v by sync.view.collectAsStateWithLifecycle()
+    val nav = LocalNav.current
+    val finish = rememberFinish(vm)
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 160.dp)) {
+            StepTitle(SetupStep.PAIR)
+            GroupLabel(say.advanced)
+            SyncServerCard(sync, v)
+        }
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = GROUP_MARGIN, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            PillButton(say.syncPair, Iconoir.Plus, { finish { nav.go("pair-device") } }, Modifier.fillMaxWidth().testTag("setup-pair"), prominent = true, enabled = v.on)
+            TextAction(say.setupStart, { finish {} }, Modifier.padding(top = 8.dp).testTag("setup-start"))
+        }
+    }
+}
+
+/**
+ * The look, taken as it is picked: Settings' own appearance and season rows; Continue, or Start listening
+ * where it is [last], which ends the run.
+ */
+@Composable
+private fun LookStep(vm: SettingsViewModel, last: Boolean) {
     val prefs by vm.prefs.collectAsStateWithLifecycle()
     val facts by vm.settingsFacts.collectAsStateWithLifecycle()
     val res = LocalContext.current.resources
@@ -463,21 +507,15 @@ private fun LookStep(vm: SettingsViewModel) {
             .map { s -> s.copy(rows = s.rows.filter { r -> r is SettingRow.Seasons || (r as? SettingRow.ChipChoice)?.name == "theme" || (r as? SettingRow.Choice)?.name == "theme" }) }
             .filter { it.rows.isNotEmpty() }
     }
-    // Notifications are asked for here, as the run ends, rather than over the welcome.
-    val context = LocalContext.current
-    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.setupNext() }
-    val start = {
-        val asks = android.os.Build.VERSION.SDK_INT >= 33 &&
-            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (asks) askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS) else vm.setupNext()
-    }
+    val finish = rememberFinish(vm)
+    val start = { if (last) finish {} else vm.setupNext() }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 96.dp)) {
             StepTitle(SetupStep.LOOK)
             sections.forEach { SettingsSectionRows(vm, it, null) }
         }
         PillButton(
-            say.setupStart, null, start,
+            if (last) say.setupStart else say.setupContinue, null, start,
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = GROUP_MARGIN, vertical = 16.dp).testTag("setup-start"), prominent = true,
         )
     }

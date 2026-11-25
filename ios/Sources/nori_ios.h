@@ -61,9 +61,6 @@ typedef struct NoriReport {
 #define NORI_REPORT_CURVE 22
 #define NORI_REPORT_STARRED 23
 #define NORI_REPORT_WAITING 24
-/// A device paired (flag 1, text its name) or not (flag 0: count is why, a NORI_PAIR_FAILED_* code, text the
-/// device's name when its code says it).
-#define NORI_REPORT_PAIRED 25
 /// Downloaded songs offered an analysis: count of them, about ms minutes; flag 1 when an update changed the
 /// analysis, 0 when AutoMix was turned on. nori_ios_analyse_downloads is the yes.
 #define NORI_REPORT_ANALYSIS_OFFER 26
@@ -233,26 +230,6 @@ void nori_ios_remote_watch(int32_t on);
 char *nori_ios_remote_devices(void);
 /// Moves the music to device `id`, or here (empty).
 void nori_ios_remote_pick(const char *id);
-/// This iPod's pairing code, to free; NULL where pairing is unavailable.
-char *nori_ios_pairing(void);
-/// The devices paired with this iPod, as JSON to free; NULL where pairing is unavailable:
-/// [{id, name, kind, reach, active, days}], reach 0 answers (a pick moves the music there), 1 found, not
-/// answering, 2 not found; active it plays or is followed; days whole days since it was last nearby.
-char *nori_ios_paired(void);
-/// Pairs with the device whose code `link` is. NORI_PAIR_STARTED: NORI_REPORT_PAIRED says how it went.
-int32_t nori_ios_pair(const char *link);
-#define NORI_PAIR_STARTED 0
-#define NORI_PAIR_NOT_A_CODE 1
-#define NORI_PAIR_CLOSED 2
-/// Why pairing failed, as NORI_REPORT_PAIRED's count says it.
-#define NORI_PAIR_FAILED_NOT_A_CODE 0
-#define NORI_PAIR_FAILED_OWN 1
-#define NORI_PAIR_FAILED_UNAVAILABLE 2
-#define NORI_PAIR_FAILED_UNREACHABLE 3
-#define NORI_PAIR_FAILED_TIMED_OUT 4
-#define NORI_PAIR_FAILED_REFUSED 5
-/// Forgets paired device `id`.
-void nori_ios_forget(const char *id);
 
 /// Note report codes (`flag`; `index` is the count where there is one).
 #define NORI_NOTE_QUEUED_NEXT 1

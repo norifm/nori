@@ -400,7 +400,7 @@ impl Nori {
     /// `[{ step, answers }]` by name. A browser streams over no mobile data of its own.
     pub fn setup_steps(&self) -> String {
         use nori_core::setup::{setup_answers, setup_steps};
-        let steps: Vec<Value> = setup_steps(false)
+        let steps: Vec<Value> = setup_steps(false, false)
             .into_iter()
             .map(|s| json!({ "step": format!("{s:?}"), "answers": setup_answers(s).iter().map(|a| format!("{a:?}")).collect::<Vec<_>>() }))
             .collect();
@@ -416,7 +416,7 @@ impl Nori {
     /// [`Nori::setting`] does.
     pub fn setup_answer(&self, answer: String) -> Result<(), JsValue> {
         use nori_core::setup::{setup_answers, setup_settings, setup_steps};
-        let answer = setup_steps(true).into_iter().flat_map(setup_answers).find(|a| format!("{a:?}") == answer).ok_or_else(|| error(format!("no answer {answer}")))?;
+        let answer = setup_steps(true, false).into_iter().flat_map(setup_answers).find(|a| format!("{a:?}") == answer).ok_or_else(|| error(format!("no answer {answer}")))?;
         for pick in setup_settings(answer) {
             if !self.setting(pick.name.clone(), pick.value) {
                 return Err(error(format!("no setting {}", pick.name)));

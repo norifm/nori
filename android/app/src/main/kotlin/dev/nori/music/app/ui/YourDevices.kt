@@ -66,22 +66,9 @@ fun YourDevices(settings: SettingsViewModel) {
             GroupRow(say.syncPair, { nav.go("pair-device") }, Modifier.testTag("pair-device"), icon = Iconoir.Plus, divider = false)
         }
     }
-    NeededPlugins(vm)
+    NeededPlugins(vm, v)
     GroupLabel(say.syncSectionServer)
-    GroupCard {
-        Toggle(say.syncOn, say.syncState(v.state), v.on, key = settingKey(say.syncOn)) { vm.setOn(it) }
-        var address by remember(v.server) { mutableStateOf(v.server) }
-        // Kept on Done, and when the page is left.
-        val typed by androidx.compose.runtime.rememberUpdatedState(address)
-        androidx.compose.runtime.DisposableEffect(vm) { onDispose { vm.setServer(typed) } }
-        GroupField(
-            address, { address = it }, Modifier.testTag("sync-server").spotlight(settingKey(say.syncServer)), label = say.syncServer, stacked = true,
-            placeholder = say.syncServerPlaceholder, enabled = v.on, divider = v.paired,
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri),
-            onDone = { vm.setServer(address) },
-        )
-        if (v.paired) Toggle(say.syncKeepCopy, say.syncKeepCopyDetail, v.keepsCopy, divider = false) { vm.keepCopy(it) }
-    }
+    SyncServerCard(vm, v)
     if (v.paired) {
         val scope = rememberCoroutineScope()
         var resetting by remember { mutableStateOf<String?>(null) }
@@ -99,30 +86,48 @@ fun YourDevices(settings: SettingsViewModel) {
 }
 
 /**
- * Plugins the profiles sync brought play from and this device lacks: each opens its page to install it
- * there, its repo added first; one installed from a file on the other device only says so.
+ * Use a sync server and its address, kept on Done and when the page is left; paired, the kept copy's switch.
+ * Your devices has it, and the first run's last page.
  */
 @Composable
-private fun NeededPlugins(vm: SyncViewModel) {
+fun SyncServerCard(vm: SyncViewModel, v: dev.nori.music.app.vm.SyncView) {
+    GroupCard {
+        Toggle(say.syncOn, say.syncState(v.state), v.on, key = settingKey(say.syncOn)) { vm.setOn(it) }
+        var address by remember(v.server) { mutableStateOf(v.server) }
+        val typed by androidx.compose.runtime.rememberUpdatedState(address)
+        androidx.compose.runtime.DisposableEffect(vm) { onDispose { vm.setServer(typed) } }
+        GroupField(
+            address, { address = it }, Modifier.testTag("sync-server").spotlight(settingKey(say.syncServer)), label = say.syncServer, stacked = true,
+            placeholder = say.syncServerPlaceholder, enabled = v.on, divider = v.paired,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri),
+            onDone = { vm.setServer(address) },
+        )
+        if (v.paired) Toggle(say.syncKeepCopy, say.syncKeepCopyDetail, v.keepsCopy, divider = false) { vm.keepCopy(it) }
+    }
+}
+
+/**
+ * Plugins the profiles sync brought play from and this phone lacks, listed with one Install for them all
+ * (each from its repo, the core's rule); one installed from a file on the other device only says so.
+ */
+@Composable
+private fun NeededPlugins(vm: SyncViewModel, v: dev.nori.music.app.vm.SyncView) {
+    if (v.needed.isEmpty()) return
     val plugins: dev.nori.music.app.vm.PluginsViewModel = viewModel()
-    val needed by vm.installs.collectAsStateWithLifecycle()
     val cards by plugins.cards.collectAsStateWithLifecycle()
     val offers by plugins.offers.collectAsStateWithLifecycle()
-    val missing = needed.filter { n -> cards.none { it.id == n.id } }
-    if (missing.isEmpty()) return
-    val nav = LocalNav.current
     LaunchedEffect(Unit) { plugins.loadOffers() }
     GroupLabel(say.syncSectionInstall)
     GroupCard(Modifier.testTag("needed-plugins")) {
-        missing.forEachIndexed { i, p ->
+        v.needed.forEachIndexed { i, p ->
             val name = remember(p.id, cards, offers) { dev.nori.music.ffi.plugins.pluginDisplayName(p.id, cards, offers.offers) }
-            val install = if (p.repo != null) ({ plugins.bring(p.id) { nav.plugin(p.id) } }) else null
-            GroupRow(
-                say.syncInstall(name), install, subtitle = if (p.repo == null) say.syncInstallFile else null,
-                icon = Iconoir.Download, chevron = p.repo != null, divider = i < missing.lastIndex,
-            )
+            GroupRow(name, subtitle = if (p.repo == null) say.syncInstallFile else null, icon = Iconoir.Download, divider = i < v.needed.lastIndex)
         }
     }
+    if (dev.nori.music.app.vm.installOffered(v.needed)) PillButton(
+        say.pluginInstall, Iconoir.Download, vm::installNeeded,
+        Modifier.padding(horizontal = GROUP_MARGIN, vertical = 12.dp).fillMaxWidth().testTag("install-needed"), prominent = true, enabled = !v.installing,
+    )
 }
 
 /**

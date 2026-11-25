@@ -74,9 +74,6 @@ pub const REPORT_CURVE: i32 = 22;
 pub const REPORT_STARRED: i32 = 23;
 /// A song waits for the network (`flag` 1), tried again by itself, or no longer (`flag` 0).
 pub const REPORT_WAITING: i32 = 24;
-/// A device paired (`flag` 1, [`Report::text`] its name) or not (`flag` 0: [`Report::index`] is why, a
-/// `NORI_PAIR_*` code, [`Report::text`] the device's name when its code says it).
-pub const REPORT_PAIRED: i32 = 25;
 /// Downloaded songs offered an analysis: [`Report::index`] of them, about [`Report::ms`] minutes; `flag` 1
 /// when an update changed the analysis, 0 when AutoMix was turned on. `nori_ios_analyse_downloads` is the yes.
 pub const REPORT_ANALYSIS_OFFER: i32 = 26;
@@ -1339,7 +1336,6 @@ mod tests {
             nori_core::providers::Kinds::builtin().sync_here()
         }
         fn profiles(&self, _: nori_core::sync::ProfilesSynced) {}
-        fn install(&self, _: Vec<nori_core::sync::NeededPlugin>) {}
         fn event(&self, _: nori_core::sync::SyncEvent) {}
         fn changed(&self) {
             let _ = self.0.lock().unwrap().send(());

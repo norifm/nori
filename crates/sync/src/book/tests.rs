@@ -23,7 +23,7 @@ impl Device {
         self.book.notice(&self.servers, &self.here, self.by, self.now_ms)
     }
 
-    fn hear(&mut self, theirs: Changes) -> Taken {
+    fn hear(&mut self, theirs: Changes) -> bool {
         self.say();
         let theirs = theirs.fitted(self.here.plays);
         self.book.take(theirs, &mut self.servers, &self.here)
@@ -222,24 +222,27 @@ fn a_sign_in_that_is_not_copied_stays_on_its_device() {
 fn a_sign_in_on_another_device_is_accepted_only_for_the_same_account() {
     let (mut a, mut b) = (Device::new("a", vec![youtube("yt")]), Device::new("b", vec![]));
     a.meet(&mut b);
-    let (check, said) = a.book.signed_in("yt", Some("UC1".into()), "a", 2_000);
+    let (check, said) = a.book.signed_in("yt", Some("UC1".into()), Some("Ann".into()), "a", 2_000);
     assert_eq!(check, SignInCheck::Accepted);
     b.hear(said);
     let local = b.get("YT").id.clone();
-    assert_eq!(b.book.signed_in(&local, Some("UC2".into()), "b", 3_000).0, SignInCheck::OtherAccount);
-    assert_eq!(b.book.signed_in(&local, Some("UC1".into()), "b", 3_000), (SignInCheck::Accepted, Changes::default()));
+    assert_eq!(b.book.signed_in(&local, Some("UC2".into()), Some("Bob".into()), "b", 3_000).0, SignInCheck::OtherAccount { name: Some("Ann".into()) }, "named as the account's own device names it");
+    assert_eq!(b.book.signed_in(&local, Some("UC1".into()), Some("Ann".into()), "b", 3_000), (SignInCheck::Accepted, Changes::default()));
+    let (_, renamed) = b.book.signed_in(&local, Some("UC1".into()), Some("Ann B.".into()), "b", 4_000);
+    a.hear(renamed);
+    assert_eq!(a.book.signed_in("yt", Some("UC3".into()), None, "a", 5_000).0, SignInCheck::OtherAccount { name: Some("Ann B.".into()) }, "the account's new name travels");
 }
 
 #[test]
 fn a_sign_in_naming_no_account_is_kept_unchecked_and_names_none() {
     let (mut a, mut b) = (Device::new("a", vec![youtube("yt")]), Device::new("b", vec![]));
     a.meet(&mut b);
-    assert_eq!(a.book.signed_in("yt", None, "a", 2_000), (SignInCheck::Unchecked, Changes::default()));
+    assert_eq!(a.book.signed_in("yt", None, None, "a", 2_000), (SignInCheck::Unchecked, Changes::default()));
     let local = b.get("YT").id.clone();
-    let (check, said) = b.book.signed_in(&local, Some("UC2".into()), "b", 3_000);
+    let (check, said) = b.book.signed_in(&local, Some("UC2".into()), None, "b", 3_000);
     assert_eq!(check, SignInCheck::Accepted, "no account was named before");
     a.hear(said);
-    assert_eq!(a.book.signed_in("yt", Some("UC1".into()), "a", 4_000).0, SignInCheck::OtherAccount, "the account named first is the profile's");
+    assert_eq!(a.book.signed_in("yt", Some("UC1".into()), None, "a", 4_000).0, SignInCheck::OtherAccount { name: None }, "the account named first is the profile's");
 }
 
 #[test]
@@ -247,10 +250,12 @@ fn a_plugin_a_profile_needs_is_installed_where_plugins_run() {
     let mut a = Device::new("a", vec![youtube("yt")]);
     let mut b = Device { here: Here { plugins: vec![], ..phone() }, ..Device::new("b", vec![]) };
     a.say();
-    let taken = b.hear(a.book.state());
-    assert_eq!(taken.install.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), [PLUGIN]);
+    b.hear(a.book.state());
+    assert_eq!(b.book.needed(&b.here).iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), [PLUGIN]);
+    assert!(b.book.needed(&phone()).is_empty(), "installed, it is needed no more");
     let mut web = Device { here: browser(), ..Device::new("w", vec![]) };
-    assert!(web.hear(a.book.state()).install.is_empty(), "a browser runs no plugins");
+    web.hear(a.book.state());
+    assert!(web.book.needed(&web.here).is_empty(), "a browser runs no plugins");
     assert_eq!(web.names(), ["YT"], "it lists the profile, as unavailable");
 }
 

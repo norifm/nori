@@ -38,7 +38,8 @@ fn the_first_pairing_makes_the_group_and_the_new_device_gets_its_key() {
     assert!(m.keeps_copy(), "the answer the first pairing carried");
     settle(&mut [&mut pixel, &mut mac], NOW);
     assert_eq!(mac.names(), ["Home", "YT"]);
-    assert_eq!(pixel.take_events(), [SyncEvent::NewDevice { name: "MacBook".into() }]);
+    assert!(pixel.take_events().is_empty(), "no news: the Pixel let it in");
+    assert_eq!(pixel.session().devices().iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["MacBook"], "listed from the key on");
 }
 
 #[test]
@@ -91,6 +92,7 @@ fn codes_that_are_wrong_or_from_a_newer_nori_are_refused() {
     let mut joining = Joining::start(&mac, SERVER.into(), "MacBook".into(), Plays::Servers, None, Duration::ZERO);
     let (link, _) = code(&mac, &mut joining);
     assert!(Admitting::read(&format!("  {link}\n"), Came::Link, None).is_ok(), "pasted with spaces");
+    assert!(crate::is_pairing_code(link.clone()) && !crate::is_pairing_code("nori://jam?s=x&k=y".into()));
     let cut = |k: &str| link.split('&').filter(|kv| !kv.starts_with(&format!("{k}="))).collect::<Vec<_>>().join("&");
     for (text, why) in [
         (String::new(), "empty"),
@@ -205,6 +207,23 @@ fn a_new_device_gone_before_the_key_is_told_apart() {
     steps(&pixel, &mut admitting, None, &[]);
     assert_eq!(admitting.admit_first(&pixel, "Pixel".into(), false, Settings::new(), NOW).err(), Some(PairingRefused::Gone));
     assert_eq!(hub.members(&Code::parse(&link).unwrap().meeting), 0, "and left the meeting");
+}
+
+#[test]
+fn a_used_code_says_so_before_asking_anything() {
+    let hub = Hub::new(NOW);
+    let mut pixel = Device::new(&hub, "Pixel", phone(), vec![navidrome("a", "https://m")]);
+    let (mac, ipad) = (hub.link(), hub.link());
+    let mut joining = Joining::start(&mac, SERVER.into(), "MacBook".into(), Plays::Servers, None, Duration::ZERO);
+    let (link, _) = code(&mac, &mut joining);
+    let mut first = Admitting::read(&link, Came::Link, None).unwrap();
+    first.check(&pixel.link);
+    steps(&pixel.link, &mut first, None, &pixel.servers);
+    pixel.session = Some(first.admit_first(&pixel.link, "Pixel".into(), false, pixel.store.clone(), NOW).unwrap());
+    assert!(matches!(&join_steps(&mac, &mut joining, Duration::ZERO)[..], [JoinStep::Paired(_)]));
+    let mut again = Admitting::read(&link, Came::Link, None).unwrap();
+    again.check(&ipad);
+    assert_eq!(steps(&ipad, &mut again, None, &[navidrome("b", "https://n")]), [AdmitStep::Refused(PairingRefused::Gone)], "no confirmation first");
 }
 
 #[test]

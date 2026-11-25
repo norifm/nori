@@ -30,6 +30,26 @@ struct Card {
     name: String,
     plays: Plays,
     version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    open: Option<Open>,
+}
+
+/// The synced profile a device has open for remote control, and who its remote control says it is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Open {
+    /// Its sync identity.
+    pub profile: String,
+    /// Remote control's own card, passed on unread.
+    pub remote: Value,
+}
+
+/// A device of the group with another profile open for remote control than the one asked about.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Elsewhere {
+    /// Its id in the group.
+    pub device: String,
+    /// Who its remote control says it is.
+    pub remote: Value,
 }
 
 /// What a group's devices say to each other.
@@ -44,6 +64,10 @@ enum Said {
     Bye,
     /// Remote control's, for the devices with synced profile `profile` open; sync passes it on unread.
     Remote { profile: String, message: Value },
+    /// The profile the device has open for remote control now, if any.
+    Opened { open: Option<Open> },
+    /// Open synced profile `profile` here: a device of the group picked this one for it.
+    Switch { profile: String },
 }
 
 /// What a device says, with the versions that can read it.
@@ -87,6 +111,8 @@ pub enum RemoteHeard {
     Said { device: String, profile: String, message: Value },
     /// Device `device` left the room.
     Left { device: String },
+    /// A device opened another profile for remote control, or none.
+    Opened,
 }
 
 /// What a call did, for the client to carry out.
@@ -94,8 +120,8 @@ pub enum RemoteHeard {
 pub struct Outcome {
     /// The profiles as they are now, when sync changed them: the client keeps this list.
     pub servers: Option<Vec<SavedServer>>,
-    /// Plugins to install for the profiles.
-    pub install: Vec<NeededPlugin>,
+    /// The profile (its id here) a device of the group asked this one to open.
+    pub switch: Option<String>,
     pub events: Vec<SyncEvent>,
     pub remote: Vec<RemoteHeard>,
 }
@@ -146,6 +172,8 @@ pub struct Session {
     members: BTreeMap<Member, Card>,
     /// Just paired: its hellos say so while this session lasts, to the devices that reach the room late too.
     new: bool,
+    /// The profile open here for remote control, as the others are told.
+    open: Option<Open>,
 }
 
 impl Session {
@@ -155,7 +183,7 @@ impl Session {
     }
 
     pub(crate) fn with(kept: Kept, store: Arc<Settings>, new: bool) -> Session {
-        Session { kept, store, members: BTreeMap::new(), new }
+        Session { kept, store, members: BTreeMap::new(), new, open: None }
     }
 
     pub(crate) fn save(&self) {
@@ -164,6 +192,12 @@ impl Session {
 
     pub(crate) fn group(&self) -> &Group {
         &self.kept.group
+    }
+
+    /// A device this one just let into the group: it is no news when it says hello.
+    pub(crate) fn admitted(&mut self, device: &str, name: &str, now_ms: i64) {
+        self.kept.group.saw(device, name, now_ms);
+        self.save();
     }
 
     pub(crate) fn key(&self) -> &GroupKey {
@@ -205,6 +239,11 @@ impl Session {
         self.kept.book.offers(servers)
     }
 
+    /// The plugins the synced profiles play from that `here` runs plugins for and lacks.
+    pub fn needed(&self, here: &Here) -> Vec<NeededPlugin> {
+        self.kept.book.needed(here)
+    }
+
     /// Profile `local`'s sync identity, the same on every device, while it syncs.
     pub(crate) fn sync_id(&self, local: &str) -> Option<&str> {
         self.kept.book.sync_id(local)
@@ -231,7 +270,36 @@ impl Session {
     }
 
     fn card(&self, here: &Here) -> Card {
-        Card { device: self.group().device.clone(), name: self.group().name.clone(), plays: here.plays, version: VERSION }
+        Card { device: self.group().device.clone(), name: self.group().name.clone(), plays: here.plays, version: VERSION, open: self.open.clone() }
+    }
+
+    /// `open` is the profile open here for remote control now: the others in the room hear of a change,
+    /// those who come later from the hello.
+    pub(crate) fn opened(&mut self, relay: &dyn Relay, open: Option<Open>, in_room: bool) {
+        if self.open == open {
+            return;
+        }
+        self.open = open;
+        if in_room {
+            self.say(relay, To::Everyone, &Said::Opened { open: self.open.clone() });
+        }
+    }
+
+    /// The devices in the room with another profile than `profile` (a sync identity) open for remote
+    /// control, that play a profile of `kind`.
+    pub(crate) fn elsewhere(&self, profile: &str, kind: &nori_settings::settings::ServerKind) -> Vec<Elsewhere> {
+        let open = |c: &Card| c.open.as_ref().filter(|o| o.profile != profile && c.plays.plays(kind)).map(|o| Elsewhere { device: c.device.clone(), remote: o.remote.clone() });
+        self.members.values().filter_map(open).collect()
+    }
+
+    /// Asks device `device` (its group id) to open synced profile `profile`; false when it is not in the
+    /// room.
+    pub(crate) fn switch(&self, relay: &dyn Relay, device: &str, profile: &str) -> bool {
+        let there: Vec<Member> = self.members.iter().filter(|(_, c)| c.device == device).map(|(m, _)| *m).collect();
+        for member in &there {
+            self.say(relay, To::Member(*member), &Said::Switch { profile: profile.into() });
+        }
+        !there.is_empty()
     }
 
     fn say(&self, relay: &dyn Relay, to: To, said: &Said) {
@@ -263,7 +331,6 @@ impl Session {
                 list = changed.clone();
                 out.servers = Some(changed);
             }
-            out.install.extend(o.install);
             out.events.extend(o.events);
         }
         self.members.remove(&DIRECT);
@@ -312,13 +379,13 @@ impl Session {
         self.changed(relay, servers, here, now_ms);
         let theirs = theirs.fitted(here.plays);
         let mut list = servers.to_vec();
-        let taken = self.kept.book.take(theirs, &mut list, here);
+        let changed = self.kept.book.take(theirs, &mut list, here);
         self.kept.book.seen(&keep.stamp);
         if keep.stamp > self.group().keep.stamp {
             self.kept.group.keep = keep;
         }
         self.save();
-        Outcome { servers: taken.changed.then_some(list), install: taken.install, ..Outcome::default() }
+        Outcome { servers: changed.then_some(list), ..Outcome::default() }
     }
 
     /// Hands the session what the server said; what the client is to do follows.
@@ -368,6 +435,9 @@ impl Session {
                 }
                 let whole = self.kept.book.state().fitted(card.plays);
                 self.say(relay, To::Member(from), &Said::Profiles { changes: whole, keep: self.group().keep.clone(), whole: true });
+                if card.open.is_some() {
+                    out.remote.push(RemoteHeard::Opened);
+                }
                 self.members.insert(from, card);
                 self.save();
             }
@@ -396,6 +466,13 @@ impl Session {
                     out.remote.push(RemoteHeard::Said { device: card.device.clone(), profile, message });
                 }
             }
+            Said::Opened { open } => {
+                if let Some(card) = self.members.get_mut(&from) {
+                    card.open = open;
+                    out.remote.push(RemoteHeard::Opened);
+                }
+            }
+            Said::Switch { profile } => out.switch = self.kept.book.local_of(&profile).map(str::to_string),
         }
         out
     }
@@ -461,11 +538,11 @@ impl Session {
         self.save();
     }
 
-    /// A sign-in on this device to `account` (the provider's stable identifier) for profile `local`:
-    /// accepted only for the account the profile syncs with.
-    pub fn signed_in(&mut self, relay: &dyn Relay, local: &str, account: Option<String>, now_ms: i64) -> SignInCheck {
+    /// A sign-in on this device to `account` (the provider's stable identifier), called `name`, for
+    /// profile `local`: accepted only for the account the profile syncs with.
+    pub fn signed_in(&mut self, relay: &dyn Relay, local: &str, account: Option<String>, name: Option<String>, now_ms: i64) -> SignInCheck {
         let by = self.group().device.clone();
-        let (check, changes) = self.kept.book.signed_in(local, account, &by, now_ms);
+        let (check, changes) = self.kept.book.signed_in(local, account, name, &by, now_ms);
         self.spread(relay, &changes);
         check
     }

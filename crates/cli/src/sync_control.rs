@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use nori_core::settings::{servers_activated, ServerList, StoredPrefs};
 use nori_core::settings_store::Settings;
-use nori_core::sync::{Came, Here, NeededPlugin, PairingView, ProfilesSynced, Reach, SyncClient, SyncEvent};
+use nori_core::sync::{Came, Here, PairingView, ProfilesSynced, Reach, SyncClient, SyncEvent};
 use nori_host::desktop::Root;
 
 const HELP: &str = "state, code, take <link>, confirm [keep], cancel, devices, reset, keep-copy on|off, profiles, \
@@ -43,11 +43,6 @@ impl SyncClient for Told {
     fn profiles(&self, synced: ProfilesSynced) {
         nori_host::sync::profiles_synced(&self.data, &synced);
         say(&format!("told profiles {:?} removed {:?}", synced.active, synced.removed));
-    }
-
-    fn install(&self, plugins: Vec<NeededPlugin>) {
-        let ids: Vec<&str> = plugins.iter().map(|p| p.id.as_str()).collect();
-        say(&format!("told install {}", ids.join(" ")));
     }
 
     fn event(&self, event: SyncEvent) {

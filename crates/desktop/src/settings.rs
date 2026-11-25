@@ -139,6 +139,10 @@ pub struct SyncFacts {
     pub not_restored: bool,
     /// This computer's name in the group.
     pub name: String,
+    /// The plugins synced profiles need, by name, each with whether it was installed from a file on the
+    /// other device (no repo to install it from); and whether Install is under way.
+    pub needed: Vec<(String, bool)>,
+    pub installing: bool,
     /// Unix ms, and the local time's offset from UTC in seconds, for when devices were seen.
     pub now_ms: i64,
     pub offset_s: i64,
@@ -146,7 +150,7 @@ pub struct SyncFacts {
 
 impl Default for SyncFacts {
     fn default() -> SyncFacts {
-        SyncFacts { paired: false, state: nori_core::sync::SyncState::Idle, devices: Vec::new(), keeps_copy: false, offers: Vec::new(), not_restored: false, name: String::new(), now_ms: 0, offset_s: 0 }
+        SyncFacts { paired: false, state: nori_core::sync::SyncState::Idle, devices: Vec::new(), keeps_copy: false, offers: Vec::new(), not_restored: false, name: String::new(), needed: Vec::new(), installing: false, now_ms: 0, offset_s: 0 }
     }
 }
 
@@ -175,6 +179,7 @@ const YOUR_DEVICES: &str = "your-devices";
 const PAIR_DEVICE: &str = "sync-pair";
 const RESET_PAIRING: &str = "sync-reset";
 const SYNC_ADDRESS: &str = "sync-address";
+const INSTALL_NEEDED: &str = "sync-install";
 /// Your devices' kept copy switch.
 pub const KEEP_COPY: &str = "sync-keep-copy";
 /// The ask sheet's names: Reset pairing confirmed, the sync server's address typed, Sync this profile
@@ -227,6 +232,8 @@ pub enum Act {
     ResetPairing,
     /// Asks for the sync server's address.
     SyncAddress,
+    /// Installs the plugins synced profiles need.
+    InstallNeeded,
     /// Merges the second profile into the first, on every device.
     Merge(String, String),
     /// The two profiles are not one.
@@ -273,6 +280,7 @@ impl Act {
             PAIR_DEVICE => Some(Act::PairDevice),
             RESET_PAIRING => Some(Act::ResetPairing),
             SYNC_ADDRESS => Some(Act::SyncAddress),
+            INSTALL_NEEDED => Some(Act::InstallNeeded),
             _ => CHORES.into_iter().find(|c| chore_name(*c) == name).map(Act::Chore),
         }
     }
@@ -761,8 +769,8 @@ fn merge_row(o: &nori_core::sync::MergeOffer, p: &StoredPrefs, kinds: &Kinds) ->
     Some(Row {
         kind: ACTION,
         name: format!("merge:{pair}"),
-        title: words::merge_offer(&a, &b),
-        detail: words::MERGE_DETAIL.into(),
+        title: words::MERGE_TITLE.into(),
+        detail: format!("{a} · {b}"),
         button: words::MERGE.into(),
         enabled: true,
         options: vec![(words::KEEP_BOTH.to_string(), format!("keep-apart:{pair}"))],
@@ -771,13 +779,14 @@ fn merge_row(o: &nori_core::sync::MergeOffer, p: &StoredPrefs, kinds: &Kinds) ->
 }
 
 /// Settings › Your devices: this computer and the group's others with when each was last seen, Pair a
-/// device and Reset pairing, then the sync server and the kept copy.
+/// device and Reset pairing, the plugins synced profiles need with Install, then the sync server and the
+/// kept copy.
 pub fn your_devices_rows(p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
     let s = &f.sync;
     let mut devices = Vec::new();
     if s.paired {
-        let state = words::sync_state(s.state, s.now_ms, s.offset_s);
-        devices.push(info(&s.name, format!("This computer · {state}")));
+        let state = words::sync_state(s.state, s.offset_s);
+        devices.push(info(&s.name, [words::THIS_COMPUTER, state.as_str()].iter().filter(|w| !w.is_empty()).copied().collect::<Vec<_>>().join(" · ")));
         devices.extend(s.devices.iter().map(|d| info(&d.name, words::last_seen(d, s.now_ms))));
     } else {
         devices.push(info(if s.not_restored { words::PAIRING_NOT_RESTORED } else { words::NOT_PAIRED }, String::new()));
@@ -786,15 +795,31 @@ pub fn your_devices_rows(p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<Se
     if s.paired {
         devices.push(Row { kind: ACTION, name: RESET_PAIRING.into(), title: words::RESET_PAIRING.into(), button: words::RESET.into(), enabled: true, ..Default::default() });
     }
-    let mut server = vec![Row { kind: TOGGLE, name: "sync".into(), title: words::USE_SYNC_SERVER.into(), on: p.sync, enabled: true, ..Default::default() }];
+    let mut needed: Vec<Row> = s.needed.iter().map(|(name, from_file)| info(name, if *from_file { words::INSTALLED_FROM_FILE.into() } else { String::new() })).collect();
+    if s.needed.iter().any(|(_, from_file)| !from_file) {
+        needed.push(Row { kind: BUTTON, name: INSTALL_NEEDED.into(), title: words::INSTALL.into(), enabled: !s.installing, ..Default::default() });
+    }
+    let mut server = sync_server_rows(p);
+    if p.sync && s.paired {
+        server.push(Row { kind: TOGGLE, name: KEEP_COPY.into(), title: words::KEEP_COPY.into(), detail: words::KEEP_COPY_DETAIL.into(), on: s.keeps_copy, enabled: true, ..Default::default() });
+    }
+    let groups = [(words::DEVICES, devices), (words::PLUGINS_NEEDED, needed), (words::SYNC_SERVER, server)];
+    model(groups.into_iter().filter(|(_, rows)| !rows.is_empty()).map(|(title, rows)| (title.to_string(), rows)).collect(), p, f, today)
+}
+
+/// Use a sync server, and while it is on the server's address.
+fn sync_server_rows(p: &StoredPrefs) -> Vec<Row> {
+    let mut rows = vec![Row { kind: TOGGLE, name: "sync".into(), title: words::USE_SYNC_SERVER.into(), on: p.sync, enabled: true, ..Default::default() }];
     if p.sync {
         let address = p.sync_server.clone().unwrap_or_else(|| words::NORIS_OWN.into());
-        server.push(Row { kind: ACTION, name: SYNC_ADDRESS.into(), title: words::SYNC_ADDRESS.into(), detail: address, button: words::CHANGE.into(), enabled: true, ..Default::default() });
-        if s.paired {
-            server.push(Row { kind: TOGGLE, name: KEEP_COPY.into(), title: words::KEEP_COPY.into(), detail: words::KEEP_COPY_DETAIL.into(), on: s.keeps_copy, enabled: true, ..Default::default() });
-        }
+        rows.push(Row { kind: ACTION, name: SYNC_ADDRESS.into(), title: words::SYNC_ADDRESS.into(), detail: address, button: words::CHANGE.into(), enabled: true, ..Default::default() });
     }
-    model(vec![(words::DEVICES.into(), devices), (words::SYNC_SERVER.into(), server)], p, f, today)
+    rows
+}
+
+/// The first run's pairing page: the sync server's switch and address, under Advanced.
+pub fn setup_pair_rows(p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(vec![(words::ADVANCED.to_string(), sync_server_rows(p))], p, f, today)
 }
 
 /// The ask sheet's name for removing profile `id`, once confirmed.
@@ -1973,10 +1998,10 @@ mod tests {
         let on = StoredPrefs { sync: true, ..Default::default() };
         let titles = |rows: &[(i32, String, String, bool, bool)]| rows.iter().map(|r| r.1.clone()).collect::<Vec<_>>();
         let alone = devices_page(&on, SyncFacts { name: "Desk".into(), now_ms: NOW, ..Default::default() });
-        assert_eq!(titles(&alone), ["DEVICES", "This computer isn’t paired with your other devices.", "Pair a device", "SYNC SERVER", "Use the sync server", "Address"]);
+        assert_eq!(titles(&alone), ["DEVICES", "This computer isn’t paired with another.", "Pair a device", "SYNC SERVER", "Use a sync server", "Sync server address"]);
         assert_eq!(alone[5].2, "nori’s own", "an empty address is nori’s own server");
         let restored = devices_page(&on, SyncFacts { not_restored: true, ..Default::default() });
-        assert_eq!(restored[1].1, "Pairing wasn’t restored from the backup.");
+        assert_eq!(restored[1].1, "Pairing wasn’t restored.");
         let group = SyncFacts {
             paired: true,
             state: nori_core::sync::SyncState::Connected,
@@ -1990,13 +2015,28 @@ mod tests {
         let paired = devices_page(&mine, group.clone());
         let lines: Vec<(String, String)> = paired.iter().map(|r| (r.1.clone(), r.2.clone())).collect();
         assert_eq!(lines[1..4], [("Desk".into(), "This computer · Connected".into()), ("Pixel 8".into(), "Online".into()), ("iPod".into(), "Seen 3 hours ago".into())]);
-        assert_eq!(titles(&paired)[4..], ["Pair a device", "Reset pairing", "SYNC SERVER", "Use the sync server", "Address", "Keep an encrypted copy"]);
+        assert_eq!(titles(&paired)[4..], ["Pair a device", "Reset pairing", "SYNC SERVER", "Use a sync server", "Sync server address", "Keep an encrypted copy"]);
         assert_eq!(paired[8].2, "https://sync.example");
         assert!(paired[9].3, "the kept copy's switch says whether the group keeps one");
         let off = devices_page(&StoredPrefs { sync: false, ..Default::default() }, SyncFacts { state: nori_core::sync::SyncState::Idle, ..group });
-        assert_eq!(off[1].2, "This computer · Off");
+        assert_eq!(off[1].2, "This computer");
         assert!(!off.iter().find(|r| r.1 == "Pair a device").unwrap().4, "nothing pairs with the sync server off");
-        assert_eq!(titles(&off)[6..], ["SYNC SERVER", "Use the sync server"], "nor has it an address or a copy");
+        assert_eq!(titles(&off)[6..], ["SYNC SERVER", "Use a sync server"], "nor has it an address or a copy");
+    }
+
+    /// The plugins synced profiles need are listed with one Install for them all; one installed from a
+    /// file on the other device says so, and alone has nothing to install.
+    #[test]
+    fn your_devices_lists_the_plugins_profiles_need_with_one_install() {
+        let on = StoredPrefs { sync: true, ..Default::default() };
+        let needing = |needed: Vec<(&str, bool)>, installing: bool| devices_page(&on, SyncFacts { paired: true, needed: needed.into_iter().map(|(n, f)| (n.to_string(), f)).collect(), installing, ..Default::default() });
+        let rows = needing(vec![("YouTube Music", false), ("Mine", true)], false);
+        let at = rows.iter().position(|r| r.1 == "PLUGINS YOUR PROFILES NEED").expect("the group");
+        let group: Vec<(String, String, bool)> = rows[at + 1..at + 4].iter().map(|r| (r.1.clone(), r.2.clone(), r.4)).collect();
+        assert_eq!(group, [("YouTube Music".into(), String::new(), false), ("Mine".into(), "Installed from a file on your other device".into(), false), ("Install".into(), String::new(), true)]);
+        assert!(!needing(vec![("YouTube Music", false)], true).iter().find(|r| r.1 == "Install").unwrap().4, "not twice at once");
+        assert!(!needing(vec![("Mine", true)], false).iter().any(|r| r.1 == "Install"), "nothing to fetch");
+        assert!(!needing(vec![], false).iter().any(|r| r.1 == "PLUGINS YOUR PROFILES NEED"));
     }
 
     /// Settings › Library's devices lead to Your devices, saying whether this computer is paired.
@@ -2026,7 +2066,7 @@ mod tests {
         let f = Facts { rules: nori_core::browse::profile_rules(false), sync: SyncFacts { offers: vec![nori_core::sync::MergeOffer { a: "a".into(), b: "b".into() }], ..Default::default() }, ..Default::default() };
         let rows: Vec<Row> = groups(&Default::default(), &p, &f, &Kinds::builtin(), &Plugged::default(), SettingsPage::Servers, OCTOBER).into_iter().flat_map(|(_, r)| r).collect();
         let merge = rows.iter().find(|r| r.name.starts_with("merge:")).expect("the offer");
-        assert_eq!((merge.title.as_str(), merge.button.as_str()), ("Home and Away may be one profile", "Merge"));
+        assert_eq!((merge.title.as_str(), merge.detail.as_str(), merge.button.as_str()), ("The same account?", "Home · Away", "Merge"));
         assert_eq!(Act::of(&merge.name), Some(Act::Merge("a".into(), "b".into())));
         assert_eq!(Act::of(&merge.options[0].1), Some(Act::KeepApart("a".into(), "b".into())));
         assert_eq!(merge.options[0].0, "Keep both");

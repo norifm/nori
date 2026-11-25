@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use nori_core::settings_store::Settings;
-use nori_core::sync::{ActiveProfile, Came, Here, Nearby, NearbyAnnouncement, NearbyTxt, NeededPlugin, PairingView, ProfilesSynced, Reach, SyncClient, SyncEvent, SyncState, Syncing};
+use nori_core::sync::{ActiveProfile, Came, Here, Nearby, NearbyAnnouncement, NearbyTxt, PairingView, ProfilesSynced, Reach, SyncClient, SyncEvent, SyncState, Syncing};
 use serde_json::json;
 
 use crate::session::{c, c_text, report, REPORT_SYNC};
@@ -35,9 +35,6 @@ impl SyncClient for Told {
         nori_host::sync::profiles_synced(&self.data, &synced);
         report(REPORT_SYNC, SYNC_PROFILES, (synced.active != ActiveProfile::Same) as i32, "");
     }
-
-    /// The iPod plays no plugin's profile: none comes here.
-    fn install(&self, _: Vec<NeededPlugin>) {}
 
     fn event(&self, event: SyncEvent) {
         nori_core::alog::info(&format!("sync: {event:?}"));

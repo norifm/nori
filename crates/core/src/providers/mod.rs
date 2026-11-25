@@ -553,6 +553,35 @@ impl Kinds {
         self.or_subsonic(&profile.kind).rules(&profile, guest)
     }
 
+    /// Installs `needed` (`nori_sync::Syncing::needed_plugins`), each from the repo it came from on the
+    /// other device, that repo added here first when missing, and only a version signed by the same key
+    /// once one was; the ids installed. One installed from a file there, or in no repo here, is passed
+    /// over.
+    pub async fn install_needed(&self, needed: Vec<nori_sync::NeededPlugin>) -> Vec<String> {
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &self.plugins {
+            let repos: Vec<String> = p.repos().into_iter().map(|r| r.url).collect();
+            for repo in needed.iter().filter_map(|n| n.repo.as_ref()).filter(|r| !repos.contains(r)) {
+                p.add_repo(repo.clone()).await;
+            }
+            let offers = p.offers().await.offers;
+            let mut installed = Vec::new();
+            for n in &needed {
+                let Some(version) = needed_version(&offers, n) else {
+                    crate::alog::info(&format!("sync: plugin {} is in no repo here", n.id));
+                    continue;
+                };
+                match p.install_version(version.clone()).await {
+                    Ok(id) => installed.push(id),
+                    Err(e) => crate::alog::info(&format!("sync: plugin {}: {e}", n.id)),
+                }
+            }
+            return installed;
+        }
+        let _ = needed;
+        Vec::new()
+    }
+
     /// What this device brings to profile sync: the profiles it plays, the kinds whose sign-in its
     /// provider lets go to another device, and the plugins installed here.
     pub fn sync_here(&self) -> nori_sync::Here {
@@ -860,6 +889,17 @@ impl Client {
         self.core.provider().account_id(self).await
     }
 
+    /// Profile sync's word on a sign-in here, as `name`, to saved profile `profile`: it is accepted only
+    /// for the account the profile syncs with, and another account is signed out again at once, its
+    /// refusal naming the account to sign in to.
+    pub async fn synced_sign_in(&self, sync: Arc<nori_sync::Syncing>, profile: String, name: String) -> nori_sync::SignInCheck {
+        let check = sync.signed_in(profile, self.account_id().await, Some(name));
+        if matches!(check, nori_sync::SignInCheck::OtherAccount { .. }) {
+            self.sign_out();
+        }
+        check
+    }
+
     /// Those the signed-in account may act as, the account's own first, the one it acts as chosen.
     pub async fn identities(&self) -> NetResult<Vec<Identity>> {
         self.core.provider().identities(self).await
@@ -875,9 +915,37 @@ impl Client {
     }
 }
 
+/// The version of `needed` to install from `offers`: the newest its repo offers, signed by its key when it
+/// was signed; none for a plugin installed from a file.
+#[cfg(feature = "plugins")]
+fn needed_version<'a>(offers: &'a [nori_plugins::Offer], needed: &nori_sync::NeededPlugin) -> Option<&'a nori_plugins::Version> {
+    let offer = offers.iter().find(|o| o.id == needed.id && Some(&o.repo.url) == needed.repo.as_ref())?;
+    offer.versions.iter().find(|v| needed.key.is_none() || v.key == needed.key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_needed_plugin_installs_from_its_own_repo_signed_as_it_was() {
+        let version = |repo: &str, v: &str, key: Option<&str>| nori_plugins::Version { repo: repo.into(), version: v.into(), released: None, url: String::new(), sha256: String::new(), key: key.map(str::to_string), signature: None };
+        let offer = |repo: &str, versions| nori_plugins::Offer {
+            repo: nori_plugins::Repo { url: repo.into(), official: false, name: None }, id: "yt".into(), name: "YT".into(), about: None, source: None, readme: None, icon: None,
+            points: vec![], category: nori_plugins::Category::Service, versions, installed: None, state: nori_plugins::OfferState::New,
+        };
+        let offers = [
+            offer("https://fork.example", vec![version("https://fork.example", "9.0.0", Some("theirs"))]),
+            offer("https://repo.example", vec![version("https://repo.example", "2.0.0", Some("new key")), version("https://repo.example", "1.0.0", Some("k"))]),
+        ];
+        let needed = |repo: Option<&str>, key: Option<&str>| nori_sync::NeededPlugin { id: "yt".into(), repo: repo.map(str::to_string), key: key.map(str::to_string) };
+        let picked = |n| needed_version(&offers, &n).map(|v| (v.repo.as_str(), v.version.as_str()));
+        assert_eq!(picked(needed(Some("https://repo.example"), Some("k"))), Some(("https://repo.example", "1.0.0")), "its repo, its key: not the fork, not another key");
+        assert_eq!(picked(needed(Some("https://repo.example"), None)), Some(("https://repo.example", "2.0.0")), "unsigned there: the newest");
+        assert_eq!(picked(needed(None, None)), None, "installed from a file");
+        assert_eq!(picked(needed(Some("https://elsewhere.example"), None)), None);
+    }
 
     fn info(fields: Vec<FieldSpec>, sign_in: Vec<SignIn>) -> ProviderInfo {
         ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in, identities: None, sign_in_copy: SignInCopy::Copied }

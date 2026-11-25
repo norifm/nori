@@ -28,7 +28,6 @@ impl SyncClient for Told {
     fn profiles(&self, synced: ProfilesSynced) {
         self.synced.lock().unwrap().push(synced);
     }
-    fn install(&self, _: Vec<NeededPlugin>) {}
     fn event(&self, event: SyncEvent) {
         self.events.lock().unwrap().push(event);
     }
@@ -105,6 +104,7 @@ fn pair(old: &Device, new: &Device) {
     let PairingView::Confirm { confirmation } = old.syncing.pairing() else { panic!("something to confirm: {:?}", old.syncing.pairing()) };
     assert_eq!(confirmation.name, "MacBook");
     old.syncing.pair_confirm("Pixel".into(), true);
+    assert_eq!(old.told.events.lock().unwrap().last(), Some(&SyncEvent::NewDevice { name: "MacBook".into() }), "told once the key went");
     settle(&[old, new]);
     assert_eq!((old.syncing.pairing(), new.syncing.pairing()), (PairingView::Sent, PairingView::Paired));
 }
@@ -303,6 +303,7 @@ impl RemoteRoom for RoomLog {
     fn left(&self, _: String) {
         self.0.lock().unwrap().push("left".into());
     }
+    fn elsewhere(&self) {}
 }
 
 impl RoomLog {
@@ -313,12 +314,39 @@ impl RoomLog {
 
 fn attached(d: &Device, local: &str) -> Arc<RoomLog> {
     let heard = Arc::new(RoomLog::default());
-    d.syncing.remote_open(local.into(), heard.clone());
+    d.syncing.remote_open(local.into(), heard.clone(), serde_json::json!({ "id": d.syncing.device(), "on": local }));
     heard
 }
 
 fn local(d: &Device, url: &str) -> String {
     d.settings.current().unwrap().servers.iter().find(|s| s.url == url).unwrap().id.clone()
+}
+
+#[test]
+fn a_device_with_another_profile_open_is_listed_and_opens_this_one_when_asked() {
+    let hub = Hub::new(NOW);
+    let pixel = Device::new(&hub, Reach::Computer, vec![navidrome("a", "https://music.example"), navidrome("b", "https://other.example")]);
+    let mac = Device::new(&hub, Reach::Computer, vec![]);
+    pair(&pixel, &mac);
+    let (music, other) = (local(&mac, "https://music.example"), local(&mac, "https://other.example"));
+    let _on_pixel = attached(&pixel, "a");
+    assert!(pixel.syncing.remote_elsewhere("a").is_empty(), "no remote control open on the Mac");
+    mac.settings.put(StoredPrefs { active_server_id: other.clone(), ..mac.settings.current().unwrap() });
+    let on_mac = attached(&mac, &other);
+    settle(&[&pixel, &mac]);
+    let mac_id = mac.syncing.device().unwrap();
+    let elsewhere = pixel.syncing.remote_elsewhere("a");
+    assert_eq!(elsewhere.iter().map(|e| (e.device.as_str(), e.remote["on"].as_str())).collect::<Vec<_>>(), [(mac_id.as_str(), Some(other.as_str()))], "the Mac has the profile, another one open");
+    assert!(pixel.syncing.remote_elsewhere("b").is_empty(), "with the Mac's profile open here, it is no other");
+    mac.told.synced.lock().unwrap().clear();
+    assert!(pixel.syncing.remote_switch("a", &mac_id));
+    settle(&[&pixel, &mac]);
+    assert_eq!(mac.settings.current().unwrap().active_server_id, music, "the profile asked for is the one in use there");
+    assert_eq!(mac.told.synced.lock().unwrap()[..], [ProfilesSynced { removed: vec![], active: ActiveProfile::Switched }], "and its client opens it");
+    mac.syncing.remote_close(&(on_mac as Arc<dyn RemoteRoom>));
+    settle(&[&pixel, &mac]);
+    assert!(pixel.syncing.remote_elsewhere("a").is_empty(), "its remote control closed, it is listed no more");
+    assert!(!pixel.syncing.remote_switch("a", "nobody"));
 }
 
 #[test]

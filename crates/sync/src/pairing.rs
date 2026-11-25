@@ -146,6 +146,9 @@ pub(crate) fn code_name(text: &str) -> Option<String> {
 #[derive(Serialize, Deserialize)]
 struct Welcome {
     v: u32,
+    /// The new device's id in the group: the device that let it in knows it already, so its hello is no
+    /// news there.
+    device: String,
     key: String,
     server: String,
     keep: KeepCopy,
@@ -237,7 +240,7 @@ impl Joining {
         let Some(key) = GroupKey::from_text(&welcome.key) else { return JoinStep::Refused(PairingRefused::Tampered) };
         self.paired = true;
         relay.leave(&self.meeting);
-        let group = Group { key, server: welcome.server, device: new_device_id(), name: self.name.clone(), seen: welcome.seen, keep: welcome.keep };
+        let group = Group { key, server: welcome.server, device: welcome.device, name: self.name.clone(), seen: welcome.seen, keep: welcome.keep };
         JoinStep::Paired(Welcomed { group })
     }
 }
@@ -263,7 +266,7 @@ impl Welcomed {
 pub enum AdmitStep {
     /// Ask the user this; [`Admitting::admit`] or [`Admitting::admit_first`] follows a yes.
     Confirm(Confirmation),
-    /// The key went to the new device.
+    /// The key went to the new device, which the group now lists.
     Sent,
     Refused(PairingRefused),
 }
@@ -303,6 +306,11 @@ impl Admitting {
     /// The server the meeting is on: the client connects a [`Relay`] there.
     pub fn server(&self) -> &str {
         &self.code.server
+    }
+
+    /// The new device's name.
+    pub fn name(&self) -> &str {
+        &self.code.name
     }
 
     /// Joins the meeting room and asks the server's time there; [`Admitting::heard`] answers with what
@@ -352,6 +360,11 @@ impl Admitting {
                 if ms >= self.code.expires_ms {
                     return Some(self.end(relay, PairingRefused::Expired));
                 }
+                // The new device waits in its meeting room until its key comes: gone, the code was used
+                // or its pairing stopped.
+                if !self.present {
+                    return Some(self.end(relay, PairingRefused::Gone));
+                }
                 self.state = AdmitState::Asking;
                 Some(AdmitStep::Confirm(self.confirmation(own, servers)))
             }
@@ -364,27 +377,42 @@ impl Admitting {
         }
     }
 
-    /// Seals `group`'s key to the new device's lock and sends it, if the device is still there.
-    fn send(&mut self, relay: &dyn Relay, group: &Group, now_ms: i64) -> AdmitStep {
+    /// Seals `group`'s key to the new device's lock and sends it, if the device is still there; the id
+    /// the new device has in the group.
+    fn send(&mut self, relay: &dyn Relay, group: &Group, now_ms: i64) -> Result<String, PairingRefused> {
         if !self.present {
-            return self.end(relay, PairingRefused::Gone);
+            self.end(relay, PairingRefused::Gone);
+            return Err(PairingRefused::Gone);
         }
         let me = Seen { device: group.device.clone(), name: group.name.clone(), last_ms: now_ms, online: false };
         let seen = group.seen.iter().cloned().chain([me]).collect();
-        let welcome = Welcome { v: VERSION, key: group.key.text(), server: group.server.clone(), keep: group.keep.clone(), seen };
+        let device = new_device_id();
+        let welcome = Welcome { v: VERSION, device: device.clone(), key: group.key.text(), server: group.server.clone(), keep: group.keep.clone(), seen };
         let plain = serde_json::to_vec(&welcome).expect("a welcome serializes");
         // A lock no key seals to (a low-order point) was never a new device's.
-        let Some(sealed) = self.code.lock.seal(&plain, &self.code.meeting) else { return self.end(relay, PairingRefused::NotACode) };
+        let Some(sealed) = self.code.lock.seal(&plain, &self.code.meeting) else {
+            self.end(relay, PairingRefused::NotACode);
+            return Err(PairingRefused::NotACode);
+        };
         relay.send(&self.code.meeting, To::Everyone, sealed);
         relay.leave(&self.code.meeting);
         self.state = AdmitState::Done;
-        AdmitStep::Sent
+        Ok(device)
     }
 
-    /// The user confirmed: `own`'s key goes to the new device. [`AdmitStep::Sent`], or
-    /// [`PairingRefused::Gone`] when it left the meeting.
-    pub fn admit(&mut self, relay: &dyn Relay, own: &Session, now_ms: i64) -> Option<AdmitStep> {
-        (self.state == AdmitState::Asking).then(|| self.send(relay, own.group(), now_ms))
+    /// The user confirmed: `own`'s key goes to the new device, which `own` then lists.
+    /// [`AdmitStep::Sent`], or [`PairingRefused::Gone`] when it left the meeting.
+    pub fn admit(&mut self, relay: &dyn Relay, own: &mut Session, now_ms: i64) -> Option<AdmitStep> {
+        if self.state != AdmitState::Asking {
+            return None;
+        }
+        Some(match self.send(relay, own.group(), now_ms) {
+            Ok(device) => {
+                own.admitted(&device, &self.code.name, now_ms);
+                AdmitStep::Sent
+            }
+            Err(refused) => AdmitStep::Refused(refused),
+        })
     }
 
     /// The user confirmed the group's first pairing: this device, `name`, makes the group on the code's
@@ -398,15 +426,12 @@ impl Admitting {
         let device = new_device_id();
         let mut book = Book::default();
         let keep = KeepCopy { on: keep_copy, stamp: book.next(&device, now_ms) };
-        let group = Group { key: GroupKey::new(), server: self.code.server.clone(), device, name, seen: Vec::new(), keep };
-        match self.send(relay, &group, now_ms) {
-            AdmitStep::Refused(refused) => Err(refused),
-            _ => {
-                let session = Session::with(Kept { group, book }, store, false);
-                session.save();
-                Ok(session)
-            }
-        }
+        let mut group = Group { key: GroupKey::new(), server: self.code.server.clone(), device, name, seen: Vec::new(), keep };
+        let new = self.send(relay, &group, now_ms)?;
+        group.saw(&new, &self.code.name, now_ms);
+        let session = Session::with(Kept { group, book }, store, false);
+        session.save();
+        Ok(session)
     }
 }
 

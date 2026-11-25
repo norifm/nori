@@ -76,10 +76,6 @@ impl nori_core::sync::SyncClient for SyncTold {
         (self.profiles)(synced);
     }
 
-    fn install(&self, plugins: Vec<nori_core::sync::NeededPlugin>) {
-        nori_core::alog::info(&format!("sync: the profiles need plugins {:?}", plugins.iter().map(|p| &p.id).collect::<Vec<_>>()));
-    }
-
     fn event(&self, event: nori_core::sync::SyncEvent) {
         nori_core::alog::info(&format!("sync: {event:?}"));
     }

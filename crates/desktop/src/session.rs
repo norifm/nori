@@ -98,8 +98,6 @@ pub enum Msg {
     SetupCovers(Vec<Vec<u8>>),
     /// A plugin picked on the welcome installed and on, or not.
     WelcomeInstalled { plugin: String, on: bool },
-    /// A device paired (its name), or what to say of why not.
-    Paired(Result<String, String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.
     Joined(Result<nori_core::remote::JamPass, String>),
     /// The jam this guest is in ended (its host's name, if seen).
@@ -165,10 +163,11 @@ pub enum Msg {
     SyncChanged,
     /// Something happened in the group, to word.
     SyncEvent(nori_core::sync::SyncEvent),
-    /// Plugins the synced profiles need.
-    SyncInstall(Vec<nori_core::sync::NeededPlugin>),
-    /// A sign-in here was to another account than the profile syncs with, and was signed out.
-    OtherAccount,
+    /// Install on Your devices is done.
+    NeededInstalled,
+    /// A sign-in here was to another account than the profile syncs with, named when known, and was
+    /// signed out.
+    OtherAccount(Option<String>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }

@@ -437,6 +437,45 @@ impl Sockets for HubSockets {
     }
 }
 
+/// What sync tells a test's device: nothing it acts on. It plays servers' and plugins' profiles.
+struct Untold;
+
+impl crate::SyncClient for Untold {
+    fn here(&self) -> crate::Here {
+        crate::Here { plays: crate::Plays::ServersAndPlugins, copied: vec!["subsonic".into()], plugins: Vec::new() }
+    }
+    fn profiles(&self, _: crate::ProfilesSynced) {}
+    fn event(&self, _: crate::SyncEvent) {}
+    fn changed(&self) {}
+}
+
+/// Pairs the devices whose settings `devices` keep (sync on) into one group through `hub`, the first
+/// making it, each a computer whose sync runs on `sim`; once every device holds every profile. A device
+/// that brought none takes the others' as its own.
+pub fn grouped(hub: &Hub, sim: &Arc<nori_tasks::Native>, devices: &[&Arc<nori_settings::settings_store::Settings>]) -> Vec<Arc<Syncing>> {
+    let syncs: Vec<Arc<Syncing>> = devices.iter().map(|settings| {
+        let net = HubSockets::new(hub, Some(sim.clone()));
+        let runs = sim.clone();
+        let syncing = Syncing::new((*settings).clone(), net.clone(), Arc::new(Untold), crate::Reach::Computer, Box::new(move || runs.clone() as Arc<dyn Tasks>));
+        net.tell(&syncing);
+        syncing
+    }).collect();
+    for new in &syncs[1..] {
+        new.pair_show("New".into());
+        let link = sim.until("a code", || match new.pairing() { crate::PairingView::Code { link, .. } => Some(link), _ => None });
+        assert_eq!(syncs[0].pair_take(link, crate::Came::Camera), None);
+        sim.until("what to confirm", || matches!(syncs[0].pairing(), crate::PairingView::Confirm { .. }).then_some(()));
+        syncs[0].pair_confirm("First".into(), false);
+        sim.until("paired", || (new.pairing() == crate::PairingView::Paired).then_some(()));
+        new.pair_cancel();
+        syncs[0].pair_cancel();
+    }
+    let all = |s: &Arc<nori_settings::settings_store::Settings>| s.with_prefs(|p| p.servers.iter().map(|s| s.id.clone()).collect::<Vec<_>>()).unwrap_or_default();
+    let count = devices.iter().map(|s| all(s).len()).max().unwrap_or(0);
+    sim.until("every profile on every device", || devices.iter().zip(&syncs).all(|(s, sync)| all(s).len() == count && all(s).into_iter().all(|id| sync.synced(id))).then_some(()));
+    syncs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -43,6 +43,10 @@ data class SyncView(
     val offers: List<MergeOffer> = emptyList(),
     /** The saved profiles that sync: removing one removes it from every paired device. */
     val synced: Set<String> = emptySet(),
+    /** The plugins synced profiles play from that this phone lacks (the core's `needed_plugins`). */
+    val needed: List<NeededPlugin> = emptyList(),
+    /** Install is under way. */
+    val installing: Boolean = false,
 ) {
     /** In a group, as far as this device can tell: sync runs only for a group (or a pairing), and only while on. */
     val paired: Boolean get() = on && state != SyncState.Idle
@@ -109,6 +113,9 @@ fun mergeKeeps(offer: MergeOffer, active: String): Pair<String, String> = if (of
 /** Whether turning Sync this profile off asks about the other devices: only for a profile that syncs. */
 fun syncOffAsks(profile: String, view: SyncView): Boolean = view.paired && profile in view.synced
 
+/** Whether Install has anything to fetch: a plugin installed from a file on the other device has no repo. */
+fun installOffered(needed: List<NeededPlugin>): Boolean = needed.any { it.repo != null }
+
 /** The events the app tells as its usual notice; a refusal shows where sync stands instead. */
 fun told(event: SyncEvent): Boolean = event !is SyncEvent.Refused
 
@@ -138,13 +145,11 @@ class SyncViewModel(app: Application) : NoriViewModel(app) {
     /** Devices waiting nearby with their pairing screen open. */
     val nearby: StateFlow<List<NearbyDevice>> = sync.nearby
 
-    /** Plugins the synced profiles need, for the existing install path. */
-    val installs: StateFlow<List<NeededPlugin>> = sync.installs
-
     init {
         val profiles = nori.settings.prefs.map { it.servers }.distinctUntilChanged()
         val setting = nori.settings.prefs.map { it.sync to it.syncServer.orEmpty() }.distinctUntilChanged()
-        viewModelScope.launch { combine(sync.changes, profiles, setting) { _, _, _ -> }.collect { read() } }
+        // A plugin installed or removed changes the plugins the profiles need.
+        viewModelScope.launch { combine(sync.changes, profiles, setting, nori.plugins.cards) { _, _, _, _ -> }.collect { read() } }
     }
 
     /** Reads where sync stands again: on a change, and when a screen comes back. */
@@ -155,6 +160,7 @@ class SyncViewModel(app: Application) : NoriViewModel(app) {
                 SyncView(
                     read = true, on = p.sync, server = p.syncServer.orEmpty(), state = s.state(), pairing = s.pairing(), devices = deviceOrder(s.devices()),
                     keepsCopy = s.keepsCopy(), offers = s.offers(), synced = p.servers.map { it.id }.filter(s::synced).toSet(),
+                    needed = s.neededPlugins(), installing = _view.value.installing,
                 )
             }
             _view.value = next
@@ -163,15 +169,32 @@ class SyncViewModel(app: Application) : NoriViewModel(app) {
         }
     }
 
+    /** Install: the plugins synced profiles need, each from its repo (the core's `Kinds::install_needed`). */
+    fun installNeeded() {
+        val needed = view.value.needed
+        if (view.value.installing || !installOffered(needed)) return
+        _view.value = _view.value.copy(installing = true)
+        viewModelScope.launch {
+            nori.plugins.kinds.installNeeded(needed)
+            _view.value = _view.value.copy(installing = false)
+            read()
+        }
+    }
+
     /**
-     * The pairing screen opened: it takes up a pairing under way, or a device in no group shows its code
-     * at once, once the core has said where it stands.
+     * The pairing screen opened: it takes up a pairing under way or a code opened from outside the app,
+     * or a device in no group shows its code at once, once the core has said where it stands.
      */
     fun opened() {
         if (opened) return
         opened = true
         viewModelScope.launch {
             val v = view.first { it.read }
+            sync.offered.value?.let { link ->
+                sync.offered.value = null
+                take(link, Came.LINK)
+                return@launch
+            }
             if (_role.value != null) return@launch
             _role.value = pairRole(v.pairing)
             if (_role.value == null && showsCodeAtOnce(v)) showCode() else read()

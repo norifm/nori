@@ -435,7 +435,6 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
             LocalEinkScreen provides (prefs.motion == dev.nori.music.ffi.settings.Motion.EINK),
             LocalHiddenBars provides hiddenBars,
         ) {
-            PairingRequest()
             MobileDownloadQuestion(actions)
             RemoveDownloadsQuestion(actions)
             AnalysisOfferQuestion(actions)
