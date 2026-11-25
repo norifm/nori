@@ -6,6 +6,16 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-26
+
+### Fixed
+
+- Music library toggles save and work on every client (fixes #176)
+- On the desktop, a plugin device's settings (like Sony headphones') open in a window over the page
+- Plugin sub-pages open as pages with back on every client
+- A plugin setting with several options switches in place as chips on the terminal and web
+- The web dims a turned-off setting or plugin row as Android does
+
 ## [1.1.0] - 2026-11-24
 
 ### Added
