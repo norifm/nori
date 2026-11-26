@@ -7415,7 +7415,7 @@ mod tests {
         assert_eq!(band(2), Some(first), "under a dialog the lyrics stay in focus");
         let raised = lyrics_focus(&ui).unwrap().raised;
         // Details' pane: 440 px wide, centered, 80 px down, with its 30 px corners.
-        assert!(matches!(raised[..], [Raised { rect: [420.0, 80.0, 440.0, h], radius: 30.0 }] if h > 0.0), "the dialog's pane stays sharp: {raised:?}");
+        assert!(matches!(raised[..], [Raised { rect: [420.0, _, 440.0, h], radius: 30.0 }] if h > 0.0), "the dialog's pane stays sharp: {raised:?}");
         ui.set_details_open(false);
         assert_eq!(lyrics_focus(&ui).unwrap().raised, [], "a closed dialog leaves nothing sharp");
     }
@@ -10188,17 +10188,19 @@ mod tests {
         };
         settle();
         // The sheet's rows under its title: New playlist, then the playlists; one that has the song takes nothing.
+        // Placed from the sheet's top: it stands in the middle of the window.
+        let below = || i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "Dialog").next().map(|d| d.query_descendants().match_inherits("MenuSheet").find_first().unwrap().absolute_position().y).expect("the sheet") - 80.0;
         let (new, full, other) = (151.0, 215.0, 263.0);
-        tap(600.0, full);
-        tap(600.0, other);
-        tap(600.0, new);
+        tap(600.0, full + below());
+        tap(600.0, other + below());
+        tap(600.0, new + below());
         assert!(ui.get_picker_naming(), "New playlist turns into its name's field");
         for key in ["R", "a", "i", "n"] {
             ui.window().dispatch_event(slint::platform::WindowEvent::KeyPressed { text: key.into() });
             ui.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: key.into() });
         }
         settle();
-        tap(780.0, new);
+        tap(780.0, new + below());
         assert_eq!(*did.borrow(), ["add 1", "new Rain"]);
     }
 

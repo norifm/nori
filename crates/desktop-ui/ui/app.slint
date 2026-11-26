@@ -1220,7 +1220,8 @@ component Capsule inherits Rectangle {
             text: root.text;
             color: root.label;
             font-weight: 600;
-            font-size: root.size * 0.38;
+            // A small capsule's words at the type size of the buttons beside it (SmallButton's).
+            font-size: max(13px, root.size * 0.38);
             vertical-alignment: center;
         }
     }
@@ -1408,7 +1409,8 @@ component Dialog inherits Rectangle {
         }
         sheet := MenuSheet {
             x: root.middle < 0 ? (parent.width - self.width) / 2 : clamp(root.middle - root.absolute-position.x - self.width / 2, 16px, parent.width - self.width - 16px);
-            y: 80px;
+            // In the middle of the window, as a sheet.
+            y: (parent.height - self.height) / 2;
             width: min(root.sheet-width, parent.width - 32px);
             height: min(body.preferred-height, parent.height - 120px);
             TouchArea {}
