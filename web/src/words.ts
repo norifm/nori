@@ -456,7 +456,6 @@ export const W = {
     presets: "Presets",
     preamp: "Pre-amp",
     preampAuto: "Auto pre-amp",
-    preampAutoNote: "Pulls the level down by the largest boost so the curve can't clip",
     output: "Output",
     balance: "Balance",
     mono: "Mono",

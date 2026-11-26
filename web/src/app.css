@@ -360,6 +360,11 @@ button.group-row:hover:enabled {
   color: var(--ink);
 }
 
+/* A chip that does something once (a preset), not one of a choice: edged while not on too. */
+.chip.edged {
+  border-color: var(--hair);
+}
+
 /* A row's chips under its name, the same room above and below them. */
 .chips-row {
   flex-direction: column;

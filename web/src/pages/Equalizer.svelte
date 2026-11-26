@@ -196,16 +196,16 @@
           {@render level(width, band.shape, band.q, eq.ranges.q, 0.01, (v) => place(chosen, band.x, band.gain, v), "q")}
         </div>
       {/if}
-      <div class="chips-line"><button class="chip" onclick={() => { chosen = -1; void send(() => ask<string>("eq_tool", "reset", 0)); }}>{W.eq.reset}</button></div>
+      <div class="chips-line"><button class="chip edged" onclick={() => { chosen = -1; void send(() => ask<string>("eq_tool", "reset", 0)); }}>{W.eq.reset}</button></div>
     </div>
 
     <div class="group-label">{W.eq.presets}</div>
     <div class="group plate">
       <div class="chips-line wrap">
-        {#each eq.presets as p, i (p)}<button class="chip" onclick={() => void send(() => ask<string>("eq_tool", "preset", i))}>{W.eq.presetNames[p] ?? p}</button>{/each}
+        {#each eq.presets as p, i (p)}<button class="chip edged" onclick={() => void send(() => ask<string>("eq_tool", "preset", i))}>{W.eq.presetNames[p] ?? p}</button>{/each}
       </div>
       <label class="group-row">
-        <span class="words"><span>{W.eq.preampAuto}</span><span class="sub">{W.eq.preampAutoNote}</span></span>
+        <span class="words"><span>{W.eq.preampAuto}</span></span>
         <input type="checkbox" class="switch" aria-label={W.eq.preampAuto} checked={eq.auto} onchange={(e) => void set("eqPreampDb", e.currentTarget.checked ? "auto" : String(eq!.preamp))} />
       </label>
       {#if eq.auto}<p class="hint">{W.eq.preamp} {W.eq.db(eq.preamp.toFixed(1))}</p>

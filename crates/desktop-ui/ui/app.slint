@@ -1945,6 +1945,8 @@ component CardView inherits Moving {
 component Chip inherits Rectangle {
     in property <string> text;
     in property <bool> lit;
+    // Edged while not lit too: a button that does something once (a preset), not one of a choice.
+    in property <bool> edged;
     callback clicked;
     // Its width where nothing else sets it.
     out property <length> natural: cl.preferred-width + 28px;
@@ -1952,7 +1954,7 @@ component Chip inherits Rectangle {
     width: root.natural;
     border-radius: self.height / 2;
     background: root.lit ? Theme.panel : ch.has-hover ? Theme.hover : transparent;
-    border-width: root.lit ? 1px : 0;
+    border-width: root.lit || root.edged ? 1px : 0;
     border-color: Theme.hairline;
     cl := Text {
         text: root.text;
@@ -6668,6 +6670,7 @@ component EqualizerPage inherits Flickable {
             alignment: start;
             Chip {
                 text: "Reset";
+                edged: true;
                 clicked => { root.tool("reset", 0); }
             }
         }
@@ -6681,6 +6684,7 @@ component EqualizerPage inherits Flickable {
             alignment: start;
             for pr[i] in root.presets: Chip {
                 text: pr;
+                edged: true;
                 clicked => { root.tool("preset", i); }
             }
         }
@@ -6688,7 +6692,6 @@ component EqualizerPage inherits Flickable {
             padding-top: 12px;
             title: "Auto pre-amp";
             value: root.preamp-label;
-            detail: "Automatic pulls the level down by the largest boost so the curve cannot clip";
             on: root.auto-preamp;
             toggled(v) => { root.tool(v ? "auto-preamp" : "manual-preamp", 0); }
         }
