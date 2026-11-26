@@ -1009,6 +1009,10 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Page::Album { detail: Load::Failed(e), .. } | Page::DownloadedAlbum { detail: Load::Failed(e), .. } | Page::Artist { detail: Load::Failed(e), .. } | Page::Playlist { detail: Load::Failed(e), .. } => {
             return failed(f, area, t, e);
         }
+        // Until it is read, what the entry that opened it knew.
+        Page::Album { known: Some(a), .. } => (a.name.clone(), a.artist.clone(), crate::text::known_caption(a.year, a.song_count, a.duration), stars.then(|| marks.stars.starred(Starrable::Album, &a.id, a.starred))),
+        Page::Artist { known: Some(a), .. } => (a.name.clone(), String::new(), a.album_count.filter(|&n| n > 0).map(|n| crate::text::count(n as u64, "release", "releases")).unwrap_or_default(), stars.then(|| marks.stars.starred(Starrable::Artist, &a.id, a.starred))),
+        Page::Playlist { known: Some(p), .. } => (p.name.clone(), p.owner.clone().unwrap_or_default(), crate::text::known_caption(0, p.song_count, p.duration), account.then(|| prefs.pinned_playlists.contains(&p.id))),
         _ => return loading(f, area, t),
     };
     if area.height < 5 {
@@ -1091,7 +1095,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Page::Row { items, sel, .. } => {
             list(f, body, sel, items.len(), ListRef::Page, hits, t, focused, &|i, w| item_line(&items[i], w, t, starred(&items[i], seals, stars), is_playing(&items[i], playing.as_deref())));
         }
-        _ => {}
+        _ => loading(f, body, t),
     }
 }
 

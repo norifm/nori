@@ -699,6 +699,22 @@ pub fn quality(s: &Song) -> Option<String> {
 }
 
 /// An album page's caption: "2019 · 12 songs · 48:10 · FLAC 16/44.1 · explicit".
+/// What an album's or a playlist's entry knew of its songs before the page is read: "2019 · 12 songs ·
+/// 48:10", each part only when known.
+pub fn known_caption(year: u32, songs: u32, seconds: u32) -> String {
+    let mut parts = Vec::with_capacity(3);
+    if year > 0 {
+        parts.push(year.to_string());
+    }
+    if songs > 0 {
+        parts.push(count(songs as u64, "song", "songs"));
+    }
+    if seconds > 0 {
+        parts.push(numbers::clock(seconds as i64, false));
+    }
+    parts.join(" · ")
+}
+
 pub fn album_caption(d: &AlbumDetail) -> String {
     let mut parts: Vec<String> = Vec::with_capacity(5);
     if d.album.year > 0 {

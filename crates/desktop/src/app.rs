@@ -619,6 +619,8 @@ pub struct App {
     now_cover: Option<CoverColours>,
     /// The view a page was opened from, which back returns to.
     trail: PageTrail,
+    /// The last cards opened, newest last: a page shows what its card knew until it is read.
+    known: VecDeque<Card>,
     /// The look worn (or fading in), and the cross-fade to it.
     look: Option<crate::look::Look>,
     fade: Fade,
@@ -996,6 +998,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             page_cover: None,
             now_cover: None,
             trail: PageTrail { tab: View::Home, ..Default::default() },
+            known: VecDeque::new(),
             look: None,
             fade: Fade::default(),
             tick: Timer::default(),
@@ -1247,9 +1250,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_back, h, |a| a.back());
     on!(ui.on_forward, h, |a| a.forward());
     on!(ui.on_note_act, h, |a| a.note_act());
-    on!(ui.on_open_album, h, |a, id| a.open_page(PageAsk::Album(id.into())));
-    on!(ui.on_open_artist, h, |a, id| a.open_page(PageAsk::Artist(id.into())));
-    on!(ui.on_open_playlist, h, |a, id| a.open_page(PageAsk::Playlist(id.into())));
+    on!(ui.on_open_album, h, |a, card| a.open_card(card));
+    on!(ui.on_open_artist, h, |a, card| a.open_card(card));
+    on!(ui.on_open_playlist, h, |a, card| a.open_card(card));
     on!(ui.on_open_mix, h, |a, id| a.open_page(PageAsk::Mix(id.into())));
     on!(ui.on_play_album, h, |a, id| a.play_fetch(Fetch::Album(id.into())));
     on!(ui.on_play_artist, h, |a, id| a.play_fetch(Fetch::Artist(id.into())));
@@ -1972,6 +1975,18 @@ impl App {
         Some(Req::Home(rows))
     }
 
+    /// Opens the page of `card` (an album's, artist's or playlist's), which shows what the card knew until
+    /// it is read, as Android's pages do.
+    fn open_card(&mut self, card: Card) {
+        let Some(ask) = card_page(&card) else { return };
+        self.known.retain(|c| (c.kind, &c.id) != (card.kind, &card.id));
+        self.known.push_back(card);
+        if self.known.len() > KNOWN_CARDS {
+            self.known.pop_front();
+        }
+        self.open_page(ask);
+    }
+
     fn open_page(&mut self, ask: PageAsk) {
         let at = self.ui().global::<crate::Scroll>().get_at();
         let from = self.ui().get_view();
@@ -2051,6 +2066,9 @@ impl App {
         ui.set_page_songs(ModelRc::default());
         ui.set_page_shelves(ModelRc::default());
         self.page_colours(None);
+        if let Some(c) = self.known.iter().rev().find(|c| card_page(c).as_ref() == Some(&ask)).cloned() {
+            self.show_known(&c);
+        }
         // A mix opens on its tile's name, covers and colors until its songs are read, as on Android.
         if let Some(t) = self.mixes.iter().find(|t| matches!(&ask, PageAsk::Mix(id) if *id == t.id)).cloned() {
             ui.set_page_title(words::mix_name(t.name).into());
@@ -2062,6 +2080,12 @@ impl App {
         ui.set_failed("".into());
         self.mirror();
         self.load(Req::Page(ask));
+    }
+
+    /// The page's head as card `c` knew it ([`known_head`]), in its cover's colors.
+    fn show_known(&mut self, c: &Card) {
+        known_head(&self.ui(), c);
+        self.set_page_art(Some(c.art.to_string()).filter(|a| !a.is_empty()));
     }
 
     /// Opens a page from a name that links to it, leaving Now Playing for it.
@@ -2923,25 +2947,18 @@ impl App {
         use nori_core::search::SearchKind;
         let Some(top) = self.search_layout.top else { return };
         self.search_used();
-        let at = top.at as usize;
-        let found = &self.search_found;
-        match top.kind {
-            SearchKind::Songs => {
-                let Some(song) = found.songs.get(at).cloned() else { return };
+        if top.kind == SearchKind::Songs {
+            if let Some(song) = self.search_found.songs.get(top.at as usize).cloned() {
                 self.play_found(song);
             }
-            SearchKind::Albums => {
-                let id = found.albums[at].id.clone();
-                if play { self.play_fetch(Fetch::Album(id)) } else { self.open_page(PageAsk::Album(id)) }
-            }
-            SearchKind::Artists => {
-                let id = found.artists[at].id.clone();
-                if play { self.play_fetch(Fetch::Artist(id)) } else { self.open_page(PageAsk::Artist(id)) }
-            }
-            SearchKind::Playlists => {
-                let id = found.playlists[at].id.clone();
-                if play { self.play_fetch(Fetch::Playlist(id)) } else { self.open_page(PageAsk::Playlist(id)) }
-            }
+            return;
+        }
+        let card = top_card(&self.search_found, top);
+        if !play {
+            return self.open_card(card);
+        }
+        if let Some(what) = card_fetch(card.kind, card.id.to_string()) {
+            self.play_fetch(what);
         }
     }
 
@@ -3010,16 +3027,14 @@ impl App {
         if let Some(top) = &self.top {
             top.invoke_end_search();
         }
-        let id = |m: &ModelRc<Card>| m.row_data(i).map(|c| c.id.to_string()).unwrap_or_default();
+        let card = ui.get_search_preview().row_data(i).unwrap_or_default();
         let line = self.search_preview.get(i).copied();
         // A song played keeps the query itself.
         if !matches!(line, Some(PreviewLine::Song { .. })) {
             self.search_used();
         }
         match line {
-            Some(PreviewLine::Artist { .. }) => self.open_page(PageAsk::Artist(id(&ui.get_search_preview()))),
-            Some(PreviewLine::Album { .. }) => self.open_page(PageAsk::Album(id(&ui.get_search_preview()))),
-            Some(PreviewLine::Playlist { .. }) => self.open_page(PageAsk::Playlist(id(&ui.get_search_preview()))),
+            Some(PreviewLine::Artist { .. } | PreviewLine::Album { .. } | PreviewLine::Playlist { .. }) => self.open_card(card),
             Some(PreviewLine::Song { at }) => self.song(2, at as usize, -1),
             Some(PreviewLine::All) => {
                 self.trail.left();
@@ -6238,7 +6253,45 @@ fn cards(it: impl Iterator<Item = Card>) -> ModelRc<Card> {
 
 fn album_card(a: &nori_core::Album) -> Card {
     let sub_artist = a.artist_id.clone().unwrap_or_default().into();
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: nori_core::lines::album_subtitle(&a.artist, a.year).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0, remote: a.is_external, ..Default::default() }
+    Card {
+        id: a.id.as_str().into(),
+        title: a.name.as_str().into(),
+        sub: nori_core::lines::album_subtitle(&a.artist, a.year).into(),
+        art: a.cover_art.clone().unwrap_or_default().into(),
+        sub_artist,
+        kind: 0,
+        remote: a.is_external,
+        artist: a.artist.as_str().into(),
+        year: a.year as i32,
+        count: a.song_count as i32,
+        seconds: a.duration as i32,
+        ..Default::default()
+    }
+}
+
+/// A page's head as card `c` knew it, until the page is read: its title, an album's artist, the counts it
+/// had; its cover is set apart, with its colors.
+fn known_head(ui: &AppWindow, c: &Card) {
+    ui.set_page_title(c.title.clone());
+    if c.kind == 0 {
+        ui.set_page_sub(c.artist.clone());
+        ui.set_page_sub_artist(c.sub_artist.clone());
+    }
+    ui.set_page_caption(words::known_caption(c.kind, c.year, c.count, c.seconds).into());
+}
+
+/// The last cards opened that [`App::known`] keeps.
+const KNOWN_CARDS: usize = 8;
+
+/// The page card `c` opens; none for a song's.
+fn card_page(c: &Card) -> Option<PageAsk> {
+    let id = c.id.to_string();
+    match c.kind {
+        0 => Some(PageAsk::Album(id)),
+        1 => Some(PageAsk::Artist(id)),
+        2 => Some(PageAsk::Playlist(id)),
+        _ => None,
+    }
 }
 
 /// The songs card `id` of `Card::kind` (or 4, a mix; 6, a genre) stands for, fetched whole; a song card's are at hand.
@@ -6380,7 +6433,8 @@ fn genre_card(g: &nori_core::browse::GenreTile) -> Card {
 }
 
 fn artist_card(a: &nori_core::Artist) -> Card {
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.filter(|&n| n > 0).map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 1, remote: a.is_external, ..Default::default() }
+    let count = a.album_count.unwrap_or(0) as i32;
+    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.filter(|&n| n > 0).map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 1, remote: a.is_external, count, ..Default::default() }
 }
 
 /// A playlist's card: its song count, or its own line (a provider's, who made it) when not counted.
@@ -6389,7 +6443,7 @@ fn playlist_card(p: &nori_core::Playlist) -> Card {
         Some(line) if p.song_count == 0 => line.clone(),
         _ => words::songs(p.song_count as usize),
     };
-    Card { id: p.id.as_str().into(), title: p.name.as_str().into(), sub: sub.into(), art: p.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 2, remote: nori_core::is_provider_id(&p.id), ..Default::default() }
+    Card { id: p.id.as_str().into(), title: p.name.as_str().into(), sub: sub.into(), art: p.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 2, remote: nori_core::is_provider_id(&p.id), count: p.song_count as i32, seconds: p.duration as i32, ..Default::default() }
 }
 
 /// A song's card on a Home section: played from it, with the section's songs after.
@@ -8499,7 +8553,7 @@ mod tests {
         ui.set_albums(cards((0..4).map(|i| Card { id: i.to_string().into(), title: "Album".into(), ..Default::default() })));
         let opened = Rc::new(RefCell::new(Vec::new()));
         let seen = opened.clone();
-        ui.on_open_album(move |id| seen.borrow_mut().push(id.to_string()));
+        ui.on_open_album(move |c| seen.borrow_mut().push(c.id.to_string()));
         ui.show().unwrap();
         i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
         slint::platform::update_timers_and_animations();
@@ -8521,7 +8575,7 @@ mod tests {
         ui.set_albums(cards((0..24).map(|i| Card { id: i.to_string().into(), title: "Album".into(), ..Default::default() })));
         let opened = Rc::new(RefCell::new(Vec::new()));
         let seen = opened.clone();
-        ui.on_open_album(move |id| seen.borrow_mut().push(id.to_string()));
+        ui.on_open_album(move |c| seen.borrow_mut().push(c.id.to_string()));
         ui.show().unwrap();
         let click = || {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
@@ -9384,6 +9438,56 @@ mod tests {
         }
     }
 
+    /// An album opens on what its card knew, in Day and Night: its title, artist, counts and cover show before
+    /// the album is read. `NORI_DESKTOP_SHOTS` keeps the page as it opened, before (a bare page) and after.
+    #[test]
+    fn an_album_opens_on_what_its_card_knew() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let album = nori_core::Album { id: "al".into(), name: "Glass Harbour".into(), artist: "Mira Vale".into(), artist_id: Some("ar".into()), year: 2019, song_count: 12, duration: 2890, cover_art: Some("glass".into()), ..Default::default() };
+        let card = album_card(&album);
+        for (dark, theme) in [(false, "day"), (true, "night")] {
+            let ui = AppWindow::new().unwrap();
+            crate::look::plain(&Default::default(), &nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 10, day: 19, southern: false }).paint(&ui);
+            ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+            ui.set_view(View::Favorites);
+            ui.set_favorite_albums(cards(std::iter::once(card.clone())));
+            ui.on_art(|id, _, _| if id.is_empty() { Image::default() } else { Image::from_rgba8(cover_pixels()) });
+            let opened = Rc::new(RefCell::new(None));
+            let seen = opened.clone();
+            ui.on_open_album(move |c| *seen.borrow_mut() = Some(c));
+            ui.show().unwrap();
+            settled(&ui);
+            let title = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "Glass Harbour").next().expect("the card");
+            let (p, size) = (title.absolute_position(), title.size());
+            // The card's cover, over its title.
+            press(ui.window(), p.x + size.width / 2.0, p.y - 60.0, slint::platform::PointerEventButton::Left);
+            let card = opened.borrow_mut().take().expect("the card opens its album");
+            ui.set_page_kind(PageLayout::Album);
+            ui.set_view(View::Page);
+            settled(&ui);
+            keep_shot(&ui.window().take_snapshot().unwrap(), &format!("album-before-{theme}"));
+            known_head(&ui, &card);
+            ui.set_page_art(card.art.clone());
+            settled(&ui);
+            keep_shot(&ui.window().take_snapshot().unwrap(), &format!("album-after-{theme}"));
+            let shown = |text: &str| i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, text).next().is_some();
+            assert!(shown("Glass Harbour") && shown("Mira Vale") && shown("2019 · 12 songs · 48:10"), "{theme}");
+            assert_eq!(ui.get_page_sub_artist(), "ar", "the artist links to their page");
+        }
+    }
+
+    /// A cover's pixels for renders: a diagonal of two colors.
+    fn cover_pixels() -> SharedPixelBuffer<Rgba8Pixel> {
+        let mut px = SharedPixelBuffer::<Rgba8Pixel>::new(64, 64);
+        for (i, p) in px.make_mut_slice().iter_mut().enumerate() {
+            let (x, y) = ((i % 64) as u8, (i / 64) as u8);
+            *p = Rgba8Pixel { r: 40 + x * 2, g: 70 + y, b: 150 - y, a: 255 };
+        }
+        px
+    }
+
     /// The favorites page lists the albums and the artists marked with the seal, a shelf each, over the songs;
     /// each card opens what it is, and a right press opens its menu.
     #[test]
@@ -9399,9 +9503,9 @@ mod tests {
         ui.set_songs(ModelRc::new(VecModel::from(vec![SongRow { title: "Glass Harbour".into(), ..Default::default() }])));
         let heard = Rc::new(RefCell::new(Vec::new()));
         let seen = heard.clone();
-        ui.on_open_album(move |id| seen.borrow_mut().push(format!("open {id}")));
+        ui.on_open_album(move |c| seen.borrow_mut().push(format!("open {}", c.id)));
         let seen = heard.clone();
-        ui.on_open_artist(move |id| seen.borrow_mut().push(format!("open {id}")));
+        ui.on_open_artist(move |c| seen.borrow_mut().push(format!("open {}", c.id)));
         let seen = heard.clone();
         ui.on_play_album(move |id| seen.borrow_mut().push(format!("play {id}")));
         ui.show().unwrap();
@@ -9466,7 +9570,7 @@ mod tests {
         ui.set_shelves(ModelRc::from(shelves.clone()));
         let opened = Rc::new(RefCell::new(Vec::new()));
         let seen = opened.clone();
-        ui.on_open_album(move |id| seen.borrow_mut().push(id.to_string()));
+        ui.on_open_album(move |c| seen.borrow_mut().push(c.id.to_string()));
         ui.show().unwrap();
         i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
         slint::platform::update_timers_and_animations();
@@ -9502,7 +9606,7 @@ mod tests {
         ui.set_shelves(ModelRc::from(shelves.clone()));
         let opened = Rc::new(RefCell::new(Vec::new()));
         let seen = opened.clone();
-        ui.on_open_album(move |id| seen.borrow_mut().push(id.to_string()));
+        ui.on_open_album(move |c| seen.borrow_mut().push(c.id.to_string()));
         ui.show().unwrap();
         let wait = |ms| {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(ms));
@@ -9656,7 +9760,7 @@ mod tests {
             let (ui, _) = home_section(1280.0, shape, Some(20));
             let seen = Rc::new(RefCell::new(Vec::new()));
             let s = seen.clone();
-            ui.on_open_album(move |id| s.borrow_mut().push(format!("open {id}")));
+            ui.on_open_album(move |c| s.borrow_mut().push(format!("open {}", c.id)));
             let s = seen.clone();
             ui.on_home_song(move |shelf, i, how| s.borrow_mut().push(format!("song {shelf} {i} {how}")));
             let s = seen.clone();
@@ -9690,7 +9794,7 @@ mod tests {
             let fresh = moved(Some(&first), ["2", "1", "0"].iter().map(|&id| Card { id: id.into(), kind, ..Default::default() }).collect());
             let seen = Rc::new(RefCell::new(Vec::new()));
             let s = seen.clone();
-            ui.on_open_album(move |id| s.borrow_mut().push(id.to_string()));
+            ui.on_open_album(move |c| s.borrow_mut().push(c.id.to_string()));
             let s = seen.clone();
             ui.on_home_song(move |_, i, _| s.borrow_mut().push(i.to_string()));
             let v = items(&ui, shape);

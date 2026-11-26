@@ -173,6 +173,8 @@ wholly in its client. What it shows still comes from the core.
   picture. When the larger picture's colors are alike the smaller one's (`CoverColours::alike`), it
   sends the smaller one's again, so the page changes color once. A client that keeps the pictures
   itself, as Android keeps Bitmaps, asks `nori_covers::stand_in` which of them stands in.
+- A page opened from a tile shows what the tile knew (its title, cover, colors and counts) until the page
+  is read. The client keeps the last few tiles opened, as Android's `Nav` does.
 - Page colors come from `nori_look::cover::derive` (`nori_host::derive` on `nori-host`). Draw them and
   never compute them again.
 - nori does not decode HEIF or AVIF. The view keeps its placeholder.

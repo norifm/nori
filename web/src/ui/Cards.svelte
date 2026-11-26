@@ -1,6 +1,8 @@
 <script lang="ts">
   // Albums, artists or playlists as cards: a grid filling the page, or a shelf of one row that scrolls
-  // sideways. An album's line is the core's (`subtitle`: its artist and year).
+  // sideways. An album's line is the core's (`subtitle`: its artist and year). A card opened is kept for its
+  // page's head (`known`).
+  import { know } from "../state/known";
   import { href } from "../state/route.svelte";
   import { W } from "../words";
   import type { Album, Artist, Playlist } from "../state/types";
@@ -17,13 +19,13 @@
   <div class={row ? "row" : "grid"}>
     {#each artists as a (a.id)}
       <!-- How many albums: two artists of one name are told apart. -->
-      <div class="cell" animate:settle transition:come><Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" remote={a.isExternal} /></div>
+      <div class="cell" animate:settle transition:come><Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" remote={a.isExternal} onopen={() => know("artist", a)} /></div>
     {/each}
     {#each albums as a (a.id)}
-      <div class="cell" animate:settle transition:come><Card href={href("album", a.id)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} remote={a.isExternal} /></div>
+      <div class="cell" animate:settle transition:come><Card href={href("album", a.id)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} remote={a.isExternal} onopen={() => know("album", a)} /></div>
     {/each}
     {#each playlists as p (p.id)}
-      <div class="cell" animate:settle transition:come><Card href={href("playlist", p.id)} kind="playlist" id={p.id} cover={p.cover} title={p.name} sub={p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")} fallback="playlist" editable={!!p.editable} remote={p.remote} /></div>
+      <div class="cell" animate:settle transition:come><Card href={href("playlist", p.id)} kind="playlist" id={p.id} cover={p.cover} title={p.name} sub={p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")} fallback="playlist" editable={!!p.editable} remote={p.remote} onopen={() => know("playlist", p)} /></div>
     {/each}
   </div>
 {/if}

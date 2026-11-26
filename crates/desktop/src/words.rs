@@ -748,6 +748,25 @@ pub fn release_shelf(g: &ReleaseGroup) -> String {
 }
 
 /// "12 songs · 48:10".
+/// What a card of `kind` (0 an album, 1 an artist, 2 a playlist) knew of its page's list, each part only
+/// when known: "2019 · 12 songs · 48:10", "14 releases".
+pub fn known_caption(kind: i32, year: i32, n: i32, seconds: i32) -> String {
+    let mut parts = Vec::new();
+    if year > 0 {
+        parts.push(year.to_string());
+    }
+    match kind {
+        1 if n > 0 => parts.push(count(n as u64, "release", "releases")),
+        1 => {}
+        _ if n > 0 => parts.push(songs(n as usize)),
+        _ => {}
+    }
+    if kind != 1 && seconds > 0 {
+        parts.push(numbers::clock(seconds as i64, false));
+    }
+    parts.join(" · ")
+}
+
 pub fn songs_caption(n: usize, seconds: u64) -> String {
     format!("{} · {}", songs(n), numbers::clock(seconds as i64, false))
 }
@@ -1422,6 +1441,7 @@ mod tests {
         assert_eq!((title.as_str(), time.as_str()), ("Analyze 1 downloaded song?", "About 1 h 20 min"));
         assert!(why.starts_with("AutoMix mixes"));
         assert_eq!([about(0), about(5), about(60)], ["Under a minute", "About 5 min", "About 1 h"]);
+        assert_eq!([known_caption(0, 2019, 12, 2890), known_caption(0, 0, 0, 0), known_caption(1, 0, 14, 0), known_caption(2, 0, 3, 0)], ["2019 · 12 songs · 48:10", "", "14 releases", "3 songs"]);
     }
 
     #[test]

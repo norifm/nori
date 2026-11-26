@@ -1,8 +1,10 @@
 <script lang="ts">
   // A playlist: its head ("8 songs · 36:28", what the core offers for its songs, its menu: rename, delete),
   // and its songs, each movable and removable; the menu and the edits only where the account may change
-  // it (the core's `playlist_editable`). Deleting asks first.
+  // it (the core's `playlist_editable`). Deleting asks first. Its head shows at once from what the card that
+  // opened it knew (`known`).
   import { ask, read } from "../rpc";
+  import { known } from "../state/known";
   import { library, reading } from "../state/library.svelte";
   import { deletePlaylist, itemMark } from "../state/menus";
   import { player } from "../state/player.svelte";
@@ -23,8 +25,11 @@
     const d = await read<{ playlist: Playlist; songs: Song[]; seconds: number }>({ kind: "playlist", id });
     return { ...d, tools: JSON.parse(await ask<string>("page_actions", "Playlist", d.songs.length)) as string[] };
   });
-  const pl = $derived(page.data?.playlist);
-  const songs = $derived(page.data?.songs ?? []);
+  // The answer while it is this page's: the page stays mounted when another playlist opens over it.
+  const data = $derived(page.data?.playlist.id === id ? page.data : undefined);
+  // Until the playlist is read, what the card that opened it knew.
+  const pl = $derived(data?.playlist ?? known("playlist", id));
+  const songs = $derived(data?.songs ?? []);
   // A long list's filter (offered by the core's `filter_offered`), narrowing it by the core's `filter_rows`.
   let filter = $state("");
   let offered = $state(false);
@@ -75,18 +80,28 @@
 
 <Page back ready={!!pl} error={page.error}>
   {#if pl}
-    <Hero cover={pl.cover} title={pl.name} fallback="playlist" item={itemMark("playlist", id, { title: pl.name, line: pl.owner ?? "", cover: pl.cover }, !!pl.editable)} label={songs.length ? W.listCaption(songs.length, page.data?.seconds ?? 0) : ""} playable={songs.length > 0} onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}>
+    <Hero
+      cover={pl.cover}
+      title={pl.name}
+      fallback="playlist"
+      item={itemMark("playlist", id, { title: pl.name, line: pl.owner ?? "", cover: pl.cover }, !!pl.editable)}
+      label={data ? (songs.length ? W.listCaption(songs.length, data.seconds) : "") : pl.songCount ? (pl.duration ? W.listCaption(pl.songCount, pl.duration) : W.songCount(pl.songCount)) : ""}
+      playable={!!data && songs.length > 0}
+      onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}
+    >
       {#snippet by()}{#if pl.comment}<span class="comment">{pl.comment}</span>{/if}{/snippet}
       {#snippet actions()}
         {#if !remote.jam?.guest}<Seal what="playlist" id={pl.id} on={!!pl.pinned} />{/if}
-        <PageTools tools={page.data?.tools ?? []} {songs} />
-        {#if pl.editable}<button class="glyph" aria-label={W.more} title={W.more} onclick={more}><Icon name="more-horiz" /></button>{/if}
+        {#if data}<PageTools tools={data.tools} {songs} />{/if}
+        {#if data && pl.editable}<button class="glyph" aria-label={W.more} title={W.more} onclick={more}><Icon name="more-horiz" /></button>{/if}
       {/snippet}
     </Hero>
     {#if offered}<label class="field search-field filter"><Icon name="search" /><input type="search" placeholder={W.filter} aria-label={W.filter} bind:value={filter} /></label>{/if}
     {#if rows?.length === 0}<p class="empty">{W.nothingMatches(filter)}</p>{/if}
-    {#if songs.length}<SongList {songs} {rows} kind="Playlist" {id} extra={edits} moved={pl.editable && !rows ? moved : undefined} />
-    {:else}<p class="empty"><Icon name="music-note" />{W.noSongs}</p>{/if}
+    {#if data}
+      {#if songs.length}<SongList {songs} {rows} kind="Playlist" {id} extra={edits} moved={pl.editable && !rows ? moved : undefined} />
+      {:else}<p class="empty"><Icon name="music-note" />{W.noSongs}</p>{/if}
+    {/if}
   {/if}
 </Page>
 

@@ -164,6 +164,11 @@ fn song(id: &str, title: &str, secs: u32) -> Song {
     Song { id: id.into(), title: title.into(), artist: "Artist".into(), album: "Album".into(), duration: secs, ..Default::default() }
 }
 
+/// Opens playlist `id`'s page, as its address would.
+fn open_playlist(a: &mut App, id: &str) {
+    a.open_page(crate::app::Page::Playlist { id: id.into(), known: None, detail: crate::app::Load::Loading, sel: Default::default(), filter: Default::default() });
+}
+
 fn album(id: &str, name: &str) -> Album {
     Album { id: id.into(), name: name.into(), artist: "Someone".into(), year: 2001, ..Default::default() }
 }
@@ -331,6 +336,25 @@ fn keys_and_focus() {
     a.handle(Msg::Engine(nori_engine::Event::State(State::Paused)));
     a.handle(Msg::Focus(false));
     assert!(a.dirty);
+}
+
+/// An album opened from its row shows what the row knew (its name, who made it, its counts) while it is read,
+/// as Android's pages do; its answer takes over.
+#[test]
+fn an_album_opens_on_what_its_row_knew() {
+    let mut a = app();
+    a.go(View::Albums);
+    let known = Album { song_count: 12, duration: 2890, ..album("al-0", "Glass Harbour") };
+    a.handle(Msg::Data(albums_req(), Ok(Data::Albums(vec![known]))));
+    draw(&mut a, 160, 40);
+    let r = hit_rect(&a, Hit::Row(ListRef::Albums, a.library.albums_sel.at));
+    click(&mut a, r.x + 2, r.y);
+    let s = draw(&mut a, 160, 40);
+    assert!(s.contains("Glass Harbour") && s.contains("Someone") && s.contains("2001 · 12 songs · 48:10") && s.contains("Loading"), "{s}");
+    let songs = vec![song("s1", "Only Song", 100)];
+    a.handle(Msg::Data(Req::Album("al-0".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-0", "Glass Harbour"), songs, vec![]))))));
+    let s = draw(&mut a, 160, 40);
+    assert!(s.contains("Only Song") && !s.contains("Loading"), "{s}");
 }
 
 #[test]
@@ -1066,7 +1090,7 @@ fn star_marks_from_the_core_redraw_the_seals() {
 #[test]
 fn a_playlists_seal_pins_it() {
     let mut a = app();
-    a.open_playlist("pl-1".into());
+    open_playlist(&mut a, "pl-1");
     let pl = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "pl-1".into(), ..Default::default() }, vec![song("1", "One", 200)]);
     a.handle(Msg::Data(Req::Playlist("pl-1".into()), Ok(Data::Playlist(Box::new(pl)))));
     draw(&mut a, 170, 40);
@@ -1087,7 +1111,7 @@ fn an_own_playlists_rows_move_and_go() {
     let page = |owner: Option<&str>| {
         let mut a = app();
         a.rules = nori_core::browse::ProfileRules { playlists: true, ..Default::default() };
-        a.open_playlist("own-1".into());
+        open_playlist(&mut a, "own-1");
         let pl = nori_core::Playlist { id: "own-1".into(), name: "Rain".into(), owner: owner.map(Into::into), ..Default::default() };
         let detail = nori_core::PlaylistDetail::new(pl, vec![song("1", "One", 200), song("2", "Two", 200), song("3", "Three", 200)]);
         a.handle(Msg::Data(Req::Playlist("own-1".into()), Ok(Data::Playlist(Box::new(detail)))));
@@ -1240,7 +1264,7 @@ fn queue_origin_is_page() {
     assert_eq!(a.cmds.iter().filter_map(from).collect::<Vec<_>>(), [(album_page.clone(), 1), (album_page, 0)]);
     // A playlist's page is its own, not the album's its songs come from.
     key(&mut a, KeyCode::Esc);
-    a.open_playlist("pl-1".into());
+    open_playlist(&mut a, "pl-1");
     let pl = PlaylistDetail::new(Playlist { id: "pl-1".into(), ..Default::default() }, songs);
     a.handle(Msg::Data(Req::Playlist("pl-1".into()), Ok(Data::Playlist(Box::new(pl)))));
     a.cmds.clear();
@@ -2938,7 +2962,7 @@ fn a_controlled_devices_settings_and_noise_key() {
     let at = a.devices.rows().iter().position(|r| *r == crate::app::DeviceRow::Settings(0)).unwrap();
     a.settings.own.controlled = a.devices.controlled.clone();
     a.go(View::Albums);
-    a.pages.push(crate::app::Page::Album { id: "al".into(), detail: Default::default(), sel: Default::default() });
+    a.pages.push(crate::app::Page::Album { id: "al".into(), known: None, detail: Default::default(), sel: Default::default() });
     key(&mut a, KeyCode::Char('C'));
     a.devices.sel.at = at;
     key(&mut a, KeyCode::Enter);
@@ -3895,7 +3919,7 @@ fn genres_list_and_open_their_songs() {
 #[test]
 fn a_long_playlist_filters_as_typed() {
     let mut a = app();
-    a.open_playlist("pl".into());
+    open_playlist(&mut a, "pl");
     let titles = ["Paper Moon", "Glass Harbour", "Moonrise", "Second Wind", "Low Tide", "Copper", "Salt", "Fen", "Kestrel", "Night Swim", "Blue Hour", "Northern Lights", "Half Moon Bay", "Marrow"];
     let songs: Vec<Song> = titles.iter().enumerate().map(|(i, t)| song(&format!("s{i}"), t, 200)).collect();
     let pl = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "pl".into(), name: "Long one".into(), ..Default::default() }, songs);
@@ -3922,7 +3946,7 @@ fn a_long_playlist_filters_as_typed() {
     assert!(s.contains("Marrow") && !s.contains("/ moon"), "esc clears it first:\n{s}");
     assert_eq!(a.pages.len(), 1);
 
-    a.open_playlist("short".into());
+    open_playlist(&mut a, "short");
     let pl = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "short".into(), ..Default::default() }, vec![song("1", "One", 200)]);
     a.handle(Msg::Data(Req::Playlist("short".into()), Ok(Data::Playlist(Box::new(pl)))));
     key(&mut a, KeyCode::Char('/'));

@@ -1,8 +1,9 @@
 <script lang="ts">
   // An album's, playlist's or artist's head: the cover, the title, who, what the list holds ("2026 · 4 songs ·
-  // 8:00 · MP3 128 kbps"), Play and Shuffle, and the page's own buttons (the seal, what the core offers for
-  // its songs, a menu). A right click on the cover or the title opens the menu of the page's `item` (its
-  // `itemMark`). The page and the chrome wear the season's paper dyed with the cover while it is open,
+  // 8:00 · MP3 128 kbps"), Play and Shuffle (dimmed until the songs are read, and on a list with none,
+  // `playable`), and the page's own buttons (the seal, what the core offers for its songs, a menu). A right
+  // click on the cover or the title opens the menu of the page's `item` (its `itemMark`). The page and the
+  // chrome wear the season's paper dyed with the cover while it is open,
   // and the cover's own wash runs across the page's top into it, scrolling with the head, as the desktop's
   // page (not in Midnight).
   import type { Snippet } from "svelte";
@@ -71,7 +72,6 @@
     {#if by}<div class="by">{@render by()}</div>{/if}
     {#if label}<div class="label">{label}</div>{/if}
     <div class="hero-actions">
-      <!-- A list with no songs: Play and Shuffle dimmed. -->
       <button class="pill" disabled={!playable} onclick={() => onplay(false)}><Icon name="play-solid" />{W.play}</button>
       <button class="pill quiet" disabled={!playable} onclick={() => onplay(true)}><Icon name="shuffle" />{W.shuffle}</button>
       <span class="grow"></span>

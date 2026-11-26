@@ -78,6 +78,12 @@ export struct Card {
     sub-artist: string,
     // What it is: 0 an album, 1 an artist, 2 a playlist, 3 a song.
     kind: int,
+    // What its page shows until the page is read: an album's artist and year, the songs of an album or a
+    // playlist (or an artist's releases) and their seconds, 0 where not known.
+    artist: string,
+    year: int,
+    count: int,
+    seconds: int,
     // On a shelf's newer answer: how many places it moved (it slides there from the old one), or that it
     // is new (it fades in).
     shift: int,
@@ -8761,9 +8767,10 @@ export component AppWindow inherits Window {
             root.forward();
         }
     }
-    callback open-album(string);
-    callback open-artist(string);
-    callback open-playlist(string);
+    // A card opened: its page, which shows what the card knew until it is read.
+    callback open-album(Card);
+    callback open-artist(Card);
+    callback open-playlist(Card);
     // The song `id` of Home's shelf `shelf`: the shelf's songs play from it.
     callback shelf-song(int, string);
     // Song `i` of Home's shelf `shelf`: `how` -1 plays the shelf's songs from it, else a line of its menu
@@ -9349,13 +9356,13 @@ export component AppWindow inherits Window {
                                                 picture: root.art(self.card.art, 0, root.covers-rev);
                                                 open => {
                                                     if self.card.kind == 1 {
-                                                        root.open-artist(self.card.id);
+                                                        root.open-artist(self.card);
                                                     } else if self.card.kind == 2 {
-                                                        root.open-playlist(self.card.id);
+                                                        root.open-playlist(self.card);
                                                     } else if self.card.kind == 3 {
                                                         root.home-song(index, self.at, -1);
                                                     } else {
-                                                        root.open-album(self.card.id);
+                                                        root.open-album(self.card);
                                                     }
                                                 }
                                                 play => {
@@ -9585,7 +9592,7 @@ export component AppWindow inherits Window {
                                         side: albums-found.side;
                                         card: c;
                                         picture: root.art(c.art, 0, root.covers-rev);
-                                        open => { root.open-album(c.id); }
+                                        open => { root.open-album(c); }
                                         play => { root.play-album(c.id); }
                                     }
                                 }
@@ -9601,7 +9608,7 @@ export component AppWindow inherits Window {
                                         card: c;
                                         round: true;
                                         picture: root.art(c.art, 0, root.covers-rev);
-                                        open => { root.open-artist(c.id); }
+                                        open => { root.open-artist(c); }
                                         play => { root.play-artist(c.id); }
                                     }
                                 }
@@ -9615,7 +9622,7 @@ export component AppWindow inherits Window {
                                         side: playlists-found.side;
                                         card: c;
                                         picture: root.art(c.art, 0, root.covers-rev);
-                                        open => { root.open-playlist(c.id); }
+                                        open => { root.open-playlist(c); }
                                         play => { root.play-playlist(c.id); }
                                     }
                                 }
@@ -9649,11 +9656,11 @@ export component AppWindow inherits Window {
                                         art(a, size, r) => { return root.art(a, size, r); }
                                         open(c) => {
                                             if c.kind == 1 {
-                                                root.open-artist(c.id);
+                                                root.open-artist(c);
                                             } else if c.kind == 2 {
-                                                root.open-playlist(c.id);
+                                                root.open-playlist(c);
                                             } else {
-                                                root.open-album(c.id);
+                                                root.open-album(c);
                                             }
                                         }
                                         play(c) => {
@@ -9725,7 +9732,7 @@ export component AppWindow inherits Window {
                                 side: artist-row.side;
                                 card: self.c;
                                 picture: root.art(self.c.art, 0, root.covers-rev);
-                                open => { root.open-album(self.c.id); }
+                                open => { root.open-album(self.c); }
                                 play => { root.play-album(self.c.id); }
                             }
                         }
@@ -9753,13 +9760,13 @@ export component AppWindow inherits Window {
                         // A shelf's cards open as what each is (a source's feed mixes kinds).
                         open(c) => {
                             if c.kind == 1 {
-                                root.open-artist(c.id);
+                                root.open-artist(c);
                             } else if c.kind == 3 {
                                 root.shelf-song(root.shown-shelf, c.id);
                             } else if (root.view == View.albums || root.view == View.shelf) && c.kind == 0 {
-                                root.open-album(c.id);
+                                root.open-album(c);
                             } else {
-                                root.open-playlist(c.id);
+                                root.open-playlist(c);
                             }
                         }
                         play(c) => {
@@ -9867,7 +9874,7 @@ export component AppWindow inherits Window {
                                     }
                                     ar := TouchArea {
                                         clicked => { root.choose-artist(a.id); }
-                                        double-clicked => { root.open-artist(a.id); }
+                                        double-clicked => { root.open-artist(a); }
                                         pointer-event(e) => {
                                             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
                                                 Go.card-menu(a, @image-url(""), self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
@@ -9946,7 +9953,7 @@ export component AppWindow inherits Window {
                                 shelves: root.artist-shelves;
                                 rev: root.covers-rev;
                                 art(a, s, r) => { return root.art(a, s, r); }
-                                open(c) => { root.open-album(c.id); }
+                                open(c) => { root.open-album(c); }
                                 play(c) => { root.play-album(c.id); }
                             }
                         }
@@ -10044,7 +10051,7 @@ export component AppWindow inherits Window {
                                     side: liked-albums.side;
                                     card: self.c;
                                     picture: root.art(self.c.art, 0, root.covers-rev);
-                                    open => { root.open-album(self.c.id); }
+                                    open => { root.open-album(self.c); }
                                     play => { root.play-album(self.c.id); }
                                 }
                             }
@@ -10062,7 +10069,7 @@ export component AppWindow inherits Window {
                                     card: self.c;
                                     round: true;
                                     picture: root.art(self.c.art, 0, root.covers-rev);
-                                    open => { root.open-artist(self.c.id); }
+                                    open => { root.open-artist(self.c); }
                                     play => { root.play-artist(self.c.id); }
                                 }
                             }
@@ -10529,7 +10536,7 @@ export component AppWindow inherits Window {
                                     titled: true;
                                     rev: root.covers-rev;
                                     art(a, s, r) => { return root.art(a, s, r); }
-                                    open(c) => { root.open-album(c.id); }
+                                    open(c) => { root.open-album(c); }
                                     play(c) => { root.play-album(c.id); }
                                 }
                                 if root.page-kind == PageLayout.artist && root.page-songs.length > 0: SectionTitle {

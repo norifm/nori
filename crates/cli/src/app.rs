@@ -456,10 +456,11 @@ impl<T> Load<T> {
 
 /// A page opened over the view.
 pub enum Page {
-    Album { id: String, detail: Load<Box<AlbumDetail>>, sel: Sel },
+    /// `known`: what the entry that opened it knew, its head until it is read.
+    Album { id: String, known: Option<Box<nori_core::Album>>, detail: Load<Box<AlbumDetail>>, sel: Sel },
     DownloadedAlbum { id: String, detail: Load<Box<AlbumDetail>>, sel: Sel },
-    Artist { id: String, detail: Load<Box<ArtistDetail>>, sel: Sel },
-    Playlist { id: String, detail: Load<Box<PlaylistDetail>>, sel: Sel, filter: Filter },
+    Artist { id: String, known: Option<Box<nori_core::Artist>>, detail: Load<Box<ArtistDetail>>, sel: Sel },
+    Playlist { id: String, known: Option<Box<nori_core::Playlist>>, detail: Load<Box<PlaylistDetail>>, sel: Sel, filter: Filter },
     /// One of the core's mixes, or the favorites.
     Mix { id: String, detail: Load<Box<MixSheet>>, sel: Sel },
     /// A genre's songs, by its name.
@@ -1912,15 +1913,23 @@ impl App {
     }
 
     pub fn open_album(&mut self, id: String) {
-        self.open_page(Page::Album { id, detail: Load::Loading, sel: Sel::default() });
+        self.open_page(Page::Album { id, known: None, detail: Load::Loading, sel: Sel::default() });
     }
 
     pub fn open_artist(&mut self, id: String) {
-        self.open_page(Page::Artist { id, detail: Load::Loading, sel: Sel::default() });
+        self.open_page(Page::Artist { id, known: None, detail: Load::Loading, sel: Sel::default() });
     }
 
-    pub(crate) fn open_playlist(&mut self, id: String) {
-        self.open_page(Page::Playlist { id, detail: Load::Loading, sel: Sel::default(), filter: Filter::default() });
+    /// Opens the page of entry `item` (an album, artist or playlist), which shows what the entry knew until it
+    /// is read, as Android's pages do.
+    fn open_known(&mut self, item: Item) {
+        let sel = Sel::default();
+        match item {
+            Item::Album(a) => self.open_page(Page::Album { id: a.id.clone(), known: Some(Box::new(a)), detail: Load::Loading, sel }),
+            Item::Artist(a) => self.open_page(Page::Artist { id: a.id.clone(), known: Some(Box::new(a)), detail: Load::Loading, sel }),
+            Item::Playlist(p) => self.open_page(Page::Playlist { id: p.id.clone(), known: Some(Box::new(p)), detail: Load::Loading, sel, filter: Filter::default() }),
+            _ => {}
+        }
     }
 
     /// The topmost opened page.
@@ -3980,10 +3989,9 @@ impl App {
         }
         match (a, item) {
             (Action::Open, Item::Song(songs, i)) => self.tap(songs, i),
-            (Action::Open, Item::Album(al)) => self.open_album(al.id),
+            (Action::Open, item @ Item::Album(_)) => self.open_known(item),
             (Action::Open, Item::DownloadedAlbum(a)) => self.open_page(Page::DownloadedAlbum { id: a.id, detail: Load::Loading, sel: Sel::default() }),
-            (Action::Open, Item::Artist(ar)) => self.open_artist(ar.id),
-            (Action::Open, Item::Playlist(p)) => self.open_playlist(p.id),
+            (Action::Open, item @ (Item::Artist(_) | Item::Playlist(_))) => self.open_known(item),
             (Action::Open, Item::Mix(m)) => self.open_page(Page::Mix { id: m.id, detail: Load::Loading, sel: Sel::default() }),
             (Action::Open, Item::Genre(g)) => self.open_page(Page::Genre { name: g.name, songs: Load::Loading, sel: Sel::default() }),
             (Action::Enqueue | Action::PlayNext, item) => {
