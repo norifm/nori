@@ -17,10 +17,21 @@ case "${1:-}" in
   clippy) shift; exec python3 "$here/with-resource.py" build cargo clippy -j4 --all-targets "$@" -- -D warnings ;;
   rust-doc) shift; exec python3 "$here/with-resource.py" build cargo test -j4 --doc "$@" ;;
   web)
-    # CI's wasm clippy, both modules; the NDK's clang builds the wasm C parts.
-    sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$(sed -n 's/^sdk\.dir=//p' local.properties 2>/dev/null)}}"
-    cc=$(ls -d "${sdk:-$HOME/Library/Android/sdk}"/ndk/*/toolchains/llvm/prebuilt/*/bin/clang 2>/dev/null | sort -V | tail -1 || true)
-    if [ -n "$cc" ]; then export CC_wasm32_unknown_unknown="$cc" AR_wasm32_unknown_unknown="$(dirname "$cc")/llvm-ar"; fi
+    # CI's wasm clippy, both modules; the NDK's clang builds the wasm C parts. The SDK is Gradle's
+    # (ANDROID_HOME, ANDROID_SDK_ROOT, local.properties), else the default place on a Mac or on Linux.
+    sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+    if [ -z "$sdk" ] && [ -f local.properties ]; then sdk=$(sed -n 's/^sdk\.dir=//p' local.properties); fi
+    for d in "$HOME/Library/Android/sdk" "$HOME/Android/Sdk"; do
+      if [ -z "$sdk" ] && [ -d "$d" ]; then sdk=$d; fi
+    done
+    cc=$(ls -d "$sdk"/ndk/*/toolchains/llvm/prebuilt/*/bin/clang 2>/dev/null | sort -V | tail -1 || true)
+    if [ -n "$cc" ]; then
+      export CC_wasm32_unknown_unknown="$cc" AR_wasm32_unknown_unknown="$(dirname "$cc")/llvm-ar"
+    elif [ -z "${CC_wasm32_unknown_unknown:-}" ]; then
+      echo "check.sh web: no NDK clang in ${sdk:-any Android SDK (ANDROID_HOME, ANDROID_SDK_ROOT, local.properties, ~/Library/Android/sdk, ~/Android/Sdk)}." >&2
+      echo "Install the NDK, or set CC_wasm32_unknown_unknown to a clang with a wasm32 target." >&2
+      exit 1
+    fi
     for f in "" --no-default-features; do
       python3 "$here/with-resource.py" build cargo clippy -j4 --target wasm32-unknown-unknown -p nori-web --all-targets $f -- -D warnings
     done ;;
