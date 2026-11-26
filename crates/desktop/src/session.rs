@@ -247,7 +247,7 @@ impl Session {
             root,
             http,
             profile,
-            device: own::text(settings, own::DEVICE),
+            output: nori_host::desktop::Output::Card(own::text(settings, own::DEVICE)),
             volume: own::number(settings, own::VOLUME, 1.0),
             covers: Some(nori_covers::Config { memory_bytes: 0, ..nori_covers::Config::new(root.data().join("covers")) }),
             offline: false,

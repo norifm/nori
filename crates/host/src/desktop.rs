@@ -11,7 +11,7 @@ use nori_core::remote::wire::DeviceKind;
 use nori_core::settings::SavedServer;
 use nori_core::transport::{block_on, NetError};
 use nori_http::Http;
-use nori_output_cpal::CpalOutput;
+use nori_output_cpal::{CpalOutput, Volume};
 
 use crate::session::{Open, Out, Session};
 use crate::Level;
@@ -465,11 +465,22 @@ impl nori_plugins::Client for Watched {
     }
 }
 
-/// The cpal device named `device` (else the system's default) at `volume` (0 to 1).
-fn card(device: Option<&str>) -> CpalOutput {
-    match device {
-        Some(name) => CpalOutput::with_device(name),
-        None => CpalOutput::new(),
+/// Where a desktop session's music goes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Output {
+    /// The sound card by name; None for the system's default.
+    Card(Option<String>),
+    /// Nowhere, at real time ([`nori_engine::WavOutput::silent`]): no sound card opens. A device test's
+    /// peer on the computer the test runs on.
+    Silent,
+}
+
+/// The output `to`, at the level `volume` sets.
+fn card(to: &Output, volume: Volume) -> Box<dyn nori_engine::AudioOutput> {
+    match to {
+        Output::Card(Some(name)) => Box::new(CpalOutput::with_device(name).with_volume(volume)),
+        Output::Card(None) => Box::new(CpalOutput::new().with_volume(volume)),
+        Output::Silent => Box::new(nori_engine::WavOutput::silent()),
     }
 }
 
@@ -478,8 +489,7 @@ pub struct DesktopOpen<'a> {
     pub root: &'a Root,
     pub http: Arc<Http>,
     pub profile: SavedServer,
-    /// The sound card by name; None for the system's default.
-    pub device: Option<String>,
+    pub output: Output,
     /// 0 to 1.
     pub volume: f32,
     pub covers: Option<nori_covers::loader::Config>,
@@ -493,18 +503,21 @@ pub struct DesktopOpen<'a> {
 
 /// Opens the profile on the sound card, without touching the network ([`Session::open`]).
 pub fn open(o: DesktopOpen) -> Result<Session, String> {
-    let output = card(o.device.as_deref());
-    let level = output.volume();
+    if o.output == Output::Silent {
+        nori_core::alog::info("output: silent, no sound card");
+    }
+    let level = Volume::default();
+    let output = card(&o.output, level.clone());
     let set = level.clone();
     let volume = Level::new(o.volume, Some(Box::new(move |v| set.set(v))));
-    let device = o.device.clone();
+    let here = o.output.clone();
     let plugged = o.root.plugins();
     let session = Session::open(Open {
         queue: o.root.app.clone(),
         data: o.root.data(),
         http: o.http,
         profile: o.profile,
-        output: Box::new(output),
+        output,
         volume,
         memory_mb: 256,
         covers: o.covers,
@@ -537,7 +550,7 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
                 let (out, offload) = nori_engine::cast::card(sink, Some(shows));
                 engine.set_card(out, offload, true)
             }
-            nori_plugins::Card::Here => engine.set_card(Box::new(card(device.as_deref()).with_volume(level.clone())), None, false),
+            nori_plugins::Card::Here => engine.set_card(card(&here, level.clone()), None, false),
             nori_plugins::Card::Elsewhere { playing, position_ms } => engine.play_elsewhere(playing, position_ms.map(|ms| ms as i64)),
             nori_plugins::Card::Back => engine.come_back(),
         }

@@ -296,7 +296,7 @@ pub struct Open<'a> {
     pub root: &'a Root,
     pub http: Arc<Http>,
     pub profile: SavedServer,
-    pub device: Option<String>,
+    pub output: nori_host::desktop::Output,
     pub images: bool,
     pub offline: bool,
     /// The process's media controls, driven by this session while it is open.
@@ -333,7 +333,7 @@ impl Session {
             root: o.root,
             http: o.http,
             profile: o.profile,
-            device: o.device.or_else(|| own::text(&o.root.app.settings, own::DEVICE)),
+            output: o.output,
             volume: own::number(&o.root.app.settings, own::VOLUME, 1.0),
             covers: o.images.then(|| nori_covers::Config::new(o.root.data().join("covers"))),
             offline: o.offline,

@@ -4,7 +4,7 @@
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 
-use nori_host::desktop::Root;
+use nori_host::desktop::{Output, Root};
 use std::time::Instant;
 
 use nori_core::remote::wire::Op;
@@ -287,7 +287,7 @@ impl Runner {
             root: &self.root,
             http: self.http.clone(),
             profile,
-            device: self.o.device.clone(),
+            output: self.o.output.clone().unwrap_or_else(|| Output::Card(own::text(&self.root.app.settings, own::DEVICE))),
             images: app.images,
             offline: self.o.offline,
             mpris: self.mpris.clone(),
@@ -313,7 +313,12 @@ impl Runner {
                 (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server, app.settings.own, app.colors, app.paint, app.reduced_motion, app.welcome) = keep;
                 prefs_changed(app);
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
-                app.output = self.o.device.clone().or_else(|| own::text(&self.root.app.settings, own::DEVICE)).unwrap_or_default();
+                app.output = match self.o.output.clone() {
+                    Some(Output::Card(name)) => name,
+                    Some(Output::Silent) => None,
+                    None => own::text(&self.root.app.settings, own::DEVICE),
+                }
+                .unwrap_or_default();
                 match self.session.as_ref().and_then(|s| s.client.sign_in_due(added)) {
                     Some(offer @ SignInEvent::Offer { .. }) => self.offer_sign_in(app, offer),
                     Some(SignInEvent::Code) => {

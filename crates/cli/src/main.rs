@@ -20,12 +20,15 @@ mod tests;
 
 use std::path::PathBuf;
 
+use nori_host::desktop::Output;
+
 /// Command-line options of the full-screen client.
 pub struct Options {
     /// Database, covers, downloads and stream cache directory.
     pub data: PathBuf,
-    /// Output device by name, as `--devices` lists them.
-    pub device: Option<String>,
+    /// The output device by name, as `--devices` lists them, or the silent output; None uses the stored
+    /// setting.
+    pub output: Option<Output>,
     /// Covers on or off; None uses the stored setting.
     pub images: Option<bool>,
     /// Mouse capture on or off; None uses the stored setting.
@@ -46,13 +49,14 @@ pub struct Options {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: nori-cli [--data DIR] [--device NAME] [--no-images] [--no-mouse] [--no-paint] [--no-mpris] [--offline] [--debug]\n\
+        "usage: nori-cli [--data DIR] [--device NAME | --silent-output] [--no-images] [--no-mouse] [--no-paint] [--no-mpris] [--offline] [--debug]\n\
          \x20               [--url URL --user USER --password PASSWORD | --provider KIND] [--install-plugin FILE]\n\
          \x20      nori-cli --script ... (the non-interactive player; nori-cli --script --help)\n\
          \x20      nori-cli --devices\n\
          The url, user and password may also come from NORI_URL, NORI_USER and NORI_PASSWORD.\n\
          KIND is a profile kind that needs no server, as the settings store it (a plugin's id).\n\
          --install-plugin installs (or updates) a .noriplugin package or plugin folder and turns it on.\n\
+         --silent-output plays into nothing at real time and opens no sound card (a device test's peer).\n\
          --no-paint leaves the terminal's own background and text colors; NO_COLOR shows no colors at all.\n\
          --debug (or NORI_DEBUG=1) writes every event, frame and picture sent to nori.log in the data directory."
     );
@@ -79,7 +83,7 @@ fn run() {
         return;
     }
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let mut o = Options { data: nori_host::data_dir(), device: None, images: None, mouse: None, login: None, provider: None, install_plugin: None, offline: false, mpris: true, paint: None };
+    let mut o = Options { data: nori_host::data_dir(), output: None, images: None, mouse: None, login: None, provider: None, install_plugin: None, offline: false, mpris: true, paint: None };
     let (mut url, mut user, mut password) = (env("NORI_URL"), env("NORI_USER"), env("NORI_PASSWORD"));
     if env("NORI_DEBUG").is_some_and(|v| v != "0") {
         term::set_debug(true);
@@ -89,7 +93,8 @@ fn run() {
         let mut v = || it.next().unwrap_or_else(|| usage());
         match k.as_str() {
             "--data" => o.data = v().into(),
-            "--device" => o.device = Some(v()),
+            "--device" if o.output.is_none() => o.output = Some(Output::Card(Some(v()))),
+            "--silent-output" if o.output.is_none() => o.output = Some(Output::Silent),
             "--no-images" => o.images = Some(false),
             "--images" => o.images = Some(true),
             "--no-mouse" => o.mouse = Some(false),

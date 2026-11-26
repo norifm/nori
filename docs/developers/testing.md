@@ -225,6 +225,7 @@ tools/device-check.sh audio --only tuning,restart
 - The jam checks need an octo-fiesta relay on `localhost:5274`. `tools/jam-server.sh` starts one from the
   octo-fiesta checkout beside this one, or the one `NORI_OCTO_ROOT` names.
 - The `remote` and `youtube-music` sections run the terminal app as the other device, in tmux.
+  `host_peer` (`tools/e2e-lib.sh`) starts it, always with `--silent-output`, so no sound card opens.
 
 ## The local server
 

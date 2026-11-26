@@ -25,6 +25,8 @@ mod hung;
 mod stretch;
 #[path = "silent.rs"]
 mod silent;
+#[path = "paced.rs"]
+mod paced;
 #[path = "mp4.rs"]
 mod mp4;
 #[cfg(feature = "core")]

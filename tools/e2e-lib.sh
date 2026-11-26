@@ -291,3 +291,20 @@ for line in sys.stdin:
     if cur and cur>=since and ('Process: '+pkg) in line: n+=1; cur=None
 print(n)" "$2" "$pkg"
 }
+
+# ---- peers on this computer ------------------------------------------------------------------------------
+# A script's nori on this computer (the terminal client in tmux) plays to the silent output: it opens no
+# sound card, so a test never plays through the computer's speakers or headphones. Peers start only here.
+host_peer() { # host_peer <tmux session> <data dir> <client args...>
+  local session="$1" data="$2" cli="$here/../target/debug/nori-cli" a; shift 2
+  for a in "$@"; do
+    case "$a" in --device|--silent-output) echo "host_peer: $a: a peer always plays to the silent output" >&2; return 1 ;; esac
+  done
+  python3 "$here/with-resource.py" build cargo build -j4 -p nori-cli >/dev/null || return 1
+  # Its usage ends in status 2, so it is read whole, not piped (pipefail).
+  grep -q -- '--silent-output' <<< "$("$cli" --help 2>&1)" || { echo "host_peer: $cli has no silent output; not started" >&2; return 1; }
+  rm -rf "$data/logs"
+  tmux new-session -d -s "$session" -x 160 -y 45 "$(printf '%q ' "$cli" --silent-output --data "$data" "$@")"
+}
+# The peer in <data dir> opened its session on the silent output, as its log says.
+peer_silent() { grep -rqs 'output: silent, no sound card' "$1/logs"; }

@@ -466,7 +466,6 @@ WIDGET
   # the phone pairs through JNI with the terminal's door, follows it, hands its YouTube queue over, and
   # forgets it.
   ytpeer="nori-e2e-ytpeer-$ANDROID_SERIAL"; ytdata="$here/../build/e2e/$ANDROID_SERIAL/ytpeer"
-  python3 "$here/with-resource.py" build cargo build -j4 -p nori-cli >/dev/null
   tmux kill-session -t "$ytpeer" 2>/dev/null; rm -rf "$ytdata"; mkdir -p "$ytdata"
   python3 - "$ytdata/nori.db" <<'PY'
 import sqlite3, sys
@@ -475,8 +474,8 @@ with sqlite3.connect(sys.argv[1]) as db:
     db.execute("INSERT OR REPLACE INTO settings VALUES('remoteControl', '{\"b\":true}')")
 PY
   # The peer plays from the same plugin, installed in its own data folder and on.
-  tmux new-session -d -s "$ytpeer" -x 160 -y 45 "$here/../target/debug/nori-cli --data $ytdata --install-plugin $(plugin_package youtube-music) --provider fm.nori.youtube-music --no-images --no-mpris"
-  for _ in $(seq 16); do tmux send-keys -t "$ytpeer" -- -; done
+  host_peer "$ytpeer" "$ytdata" --install-plugin "$(plugin_package youtube-music)" --provider fm.nori.youtube-music --no-images --no-mpris
+  check "the YouTube terminal peer plays to the silent output" wait_until 30 peer_silent "$ytdata"
   "$app" set remoteControl true >/dev/null
   ytresolved=$(python3 "$here/mdns-door.py" "$ytdata/nori.db")
   check "the YouTube terminal peer announces its door" test -n "$ytresolved"
@@ -1082,8 +1081,7 @@ remote_checks() {
   if [ "$NORI_E2E_SERVER" != local ]; then
     echo "  NOTE  needs the local server: the terminal client signs in to it as the other device"
   else
-    peer="nori-e2e-peer-$ANDROID_SERIAL"; data="$here/../build/e2e/$ANDROID_SERIAL/peer"; cli="$here/../target/debug/nori-cli"
-    python3 "$here/with-resource.py" build cargo build -j4 -p nori-cli >/dev/null || return 1
+    peer="nori-e2e-peer-$ANDROID_SERIAL"; data="$here/../build/e2e/$ANDROID_SERIAL/peer"
     tmux kill-session -t "$peer" 2>/dev/null; mkdir -p "$data"
     # Seed the peer's setting before startup; no screen navigation or stale selection.
     python3 - "$data/nori.db" <<'PY'
@@ -1093,11 +1091,13 @@ with sqlite3.connect(sys.argv[1]) as db:
     db.executemany("INSERT OR REPLACE INTO settings VALUES(?, ?)", [
         ("remoteControl", '{"b":true}'), ("crossfadeSec", '{"i":4}'),
     ])
+    # Midway, so a volume key the peer misses, up or down, would show on it.
+    db.execute("CREATE TABLE IF NOT EXISTS app_kv(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID")
+    db.execute("INSERT OR REPLACE INTO app_kv VALUES('tui.volume', '0.5')")
 PY
-    tmux new-session -d -s "$peer" -x 160 -y 45 "$cli --data $data --url http://localhost:4533 --user $USER --password $PASS --no-images --no-mpris"
-    keys() { tmux send-keys -t "$peer" -- "$@"; }
+    host_peer "$peer" "$data" --url http://localhost:4533 --user "$USER" --password "$PASS" --no-images --no-mpris || return 1
     check "the CLI peer starts" wait_until 15 bash -c "tmux capture-pane -p -t $peer | grep -q 'localhost:4533'" || return 1
-    for _ in $(seq 16); do keys -; done   # quiet on the peer's speakers
+    check "the CLI peer plays to the silent output" wait_until 10 peer_silent "$data" || return 1
     # Its door as mDNS has it; the emulator hears no multicast from here, so the app is handed it.
     resolved=$(python3 "$here/mdns-door.py" "$data/nori.db") || { check "the CLI peer announces its door" false; return 1; }
     name=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
@@ -1176,7 +1176,6 @@ PY
       check "the remote queue reaches song $track" wait_for title "Long Track $track" 10
     done
     check "remote skips keep this phone silent" silent 10
-    for _ in $(seq 16); do keys -; done
     # Songs of one album in order never mix: shuffled, the next one does.
     "$app" do shuffle >/dev/null
     "$app" do "seek $(( $(field durationMs) - 4000 ))" >/dev/null
