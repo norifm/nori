@@ -390,3 +390,49 @@ fn page(core: &Core, p: Page, user: Option<&str>) -> Value {
         _ => Value::Null,
     }
 }
+
+/// A name the page knows each listening stats choice by.
+fn named<T: Copy + std::fmt::Debug, const N: usize>(all: [T; N], name: &str) -> Option<T> {
+    all.into_iter().find(|x| format!("{x:?}") == name)
+}
+
+/// The listening stats' choices, as the page offers them: how far back and whose plays, in order, and the
+/// period they open on.
+pub fn stats_choices() -> Value {
+    use nori_core::browse::{StatsPeriod, StatsSource};
+    let names = |v: Vec<String>| Value::from(v);
+    json!({
+        "periods": names(StatsPeriod::ALL.iter().map(|p| format!("{p:?}")).collect()),
+        "sources": names(StatsSource::ALL.iter().map(|s| format!("{s:?}")).collect()),
+        "opened": format!("{:?}", StatsPeriod::OPENED),
+    })
+}
+
+/// The listening stats of `source`'s plays in `period` (names from [`stats_choices`]), the server's charted
+/// at `tz_offset_ms`; with `sync`, the server account's new plays are asked for first, and how that went
+/// comes as `server`.
+pub async fn stats(client: &Client, period: &str, source: &str, sync: bool, tz_offset_ms: i32) -> Result<Value, String> {
+    use nori_core::browse::{StatsPeriod, StatsSource};
+    let period = named(StatsPeriod::ALL, period).ok_or("no such period")?;
+    let source = named(StatsSource::ALL, source).ok_or("no such source")?;
+    let server = if sync { Some(format!("{:?}", client.server_history_sync().await)) } else { None };
+    let core = client.core();
+    let p = core.stats_page(period, source, tz_offset_ms).map_err(|e| e.to_string())?;
+    let art = |c: &Option<String>| c.as_deref().map(|c| cover(core, c, 96));
+    let entries = |v: &[nori_core::TopEntry]| v.iter().map(|e| json!({ "name": e.name, "plays": e.plays, "listenedMs": e.listened_ms, "cover": art(&e.cover_art) })).collect::<Vec<_>>();
+    let st = &p.stats;
+    Ok(json!({
+        "source": format!("{:?}", p.source),
+        "server": server,
+        "plays": st.plays,
+        "listenedMs": st.listened_ms,
+        "tiles": p.tiles.iter().map(|t| json!({ "kind": format!("{:?}", t.kind), "value": t.value })).collect::<Vec<_>>(),
+        "hours": p.hours,
+        "busiestHour": p.busiest_hour,
+        "busiestWeekday": p.busiest_weekday,
+        "songs": st.top_songs.iter().map(|t| json!({ "name": t.song.title, "artist": t.song.artist, "plays": t.plays, "cover": art(&t.song.cover_art) })).collect::<Vec<_>>(),
+        "artists": entries(&st.top_artists),
+        "albums": entries(&st.top_albums),
+        "genres": entries(&st.top_genres),
+    }))
+}

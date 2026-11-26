@@ -1,10 +1,10 @@
 // The web client in headless Chrome against the local Navidrome (tools/dev-server.sh) through
-// web/serve.py: sign-in, browsing, the songs' orders, the genres and a long playlist's filter, search, a
-// profile's icon picked, a song streamed and played, next and previous, a song taken out of the queue, a
-// right click's menu on each kind of item, Back one step out of Now Playing, synced lyrics, a crossfade and
-// an AutoMix transition heard as continuous samples, the seek bar
-// running and holding, a click on a lyric line, how soon a pause is heard, a page reopened where it
-// left. Exits non-zero when something is off, and prints what it saw.
+// web/serve.py: sign-in, browsing, the songs' orders, the genres and a long playlist's filter, the listening
+// stats, search, a profile's icon picked, a song streamed and played, next and previous, a song taken out
+// of the queue, a right click's menu on each kind of item, Back one step out of Now Playing, synced lyrics,
+// a crossfade and an AutoMix transition heard as continuous samples, the seek bar running and holding, a
+// click on a lyric line, how soon a pause is heard, a page reopened where it left. Exits non-zero when
+// something is off, and prints what it saw.
 //
 //   npm --prefix web/check install && node web/check/check.mjs [http://localhost:8080/] [phase]
 //   SLOW_URL=http://localhost:8081/ node web/check/check.mjs ...   (also a Play during a slow load)
@@ -491,6 +491,28 @@ if (!only || only.includes("skip")) {
   const c = await now();
   report.skip = { start: a.index, afterNext: b.index, afterPrevious: c.index };
   expect(a.index === 0 && b.index === 1 && c.index === 0, "next and previous move through the queue");
+}
+
+if (!only || only.includes("stats")) {
+  // History's Listening stats, as Android's: this device's year first, its plays and six numbers; All
+  // devices asks the server account's plays and counts no skips.
+  await hash("#/history", "history");
+  await page.evaluate(() => (window.nori.page = undefined));
+  await page.click('a.text-action[href="#/stats"]');
+  await page.waitForFunction(() => window.nori.page === "stats", { timeout: 30000 });
+  await page.waitForSelector(".choices-bar .chip.on");
+  const chips = () => page.$$eval(".choices-bar .chip", (c) => c.filter((x) => x.classList.contains("on")).map((x) => x.textContent.trim()));
+  const shown = () => page.evaluate(() => ({ plays: Number(document.querySelector(".plays")?.textContent), tiles: [...document.querySelectorAll(".tiles li span")].map((x) => x.textContent), note: !!document.querySelector(".note") }));
+  const device = { on: await chips(), ...(await shown()) };
+  await page.evaluate(() => (window.nori.page = undefined));
+  await (await page.$$(".choices-bar .chip"))[1].click();
+  await page.waitForFunction(() => window.nori.page === "stats" && !!document.querySelector(".note"), { timeout: 30000 });
+  const server = { on: await chips(), ...(await shown()) };
+  report.stats = { device, server };
+  expect(device.on.join() === "This device,Year", "the stats open on this device's year");
+  expect(device.tiles.includes("skips") && device.tiles.length === 6, "this device's plays and six numbers, skips among them");
+  expect(server.on.join() === "All devices,Year" && server.note && !server.tiles.includes("skips") && server.tiles.length === 5, "All devices says what the server counts, and counts no skips");
+  expect(!(await facts()).pageError, "the stats read");
 }
 
 if (!only || only.includes("queue")) {

@@ -3,6 +3,7 @@
   // forget it (the core's `history_page`, `history_clear`).
   import { ask, read } from "../rpc";
   import { library, reading } from "../state/library.svelte";
+  import { href } from "../state/route.svelte";
   import type { Song } from "../state/types";
   import { W } from "../words";
   import Page from "../ui/Page.svelte";
@@ -45,8 +46,27 @@
 
 <Page title={W.history} back ready={!!page.data} error={page.error}>
   {#snippet head()}
-    {#if songs.length}<button class="text-action" onclick={() => void clear()}>{W.clearHistory}</button>{/if}
+    <span class="actions">
+      <a class="text-action" href={href("stats")}>{W.listeningStats}</a>
+      {#if songs.length}<button class="text-action" onclick={() => void clear()}>{W.clearHistory}</button>{/if}
+    </span>
   {/snippet}
   {#if songs.length}<SongList {songs} />{:else}<p class="empty">{W.nothingPlayed}</p>{/if}
   <div bind:this={end}></div>
 </Page>
+
+<style>
+  .actions {
+    display: flex;
+    gap: 4px;
+  }
+  .actions a {
+    display: inline-flex;
+    align-items: center;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .actions a:hover {
+    background: var(--hover);
+  }
+</style>

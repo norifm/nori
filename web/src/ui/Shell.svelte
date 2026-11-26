@@ -39,6 +39,7 @@
     genre: () => import("../pages/Genre.svelte"),
     songs: () => import("../pages/Songs.svelte"),
     history: () => import("../pages/History.svelte"),
+    stats: () => import("../pages/Stats.svelte"),
     favorites: () => import("../pages/Favorites.svelte"),
     search: () => import("../pages/Search.svelte"),
     settings: () => import("../pages/Settings.svelte"),

@@ -121,6 +121,35 @@ impl PageTrail {
     }
 }
 
+/// Shows the listening stats `page`; `server`: how the server account's plays stood when asked for.
+fn show_stats(ui: &AppWindow, page: &nori_core::browse::StatsPage, server_history: Option<nori_core::browse::ServerHistory>) {
+    let fmt = |n: u32| n.to_string();
+    let server = page.source == nori_core::browse::StatsSource::ServerAccount;
+    ui.set_stats_plays(fmt(page.stats.plays).into());
+    ui.set_stats_headline(words::stats_headline(page).into());
+    ui.set_stats_note(if server { words::stats_server_note(server_history) } else { "" }.into());
+    ui.set_stats_plates(ModelRc::new(VecModel::from(page.tiles.iter().map(|t| crate::StatPlate { value: fmt(t.value).into(), label: words::stat_kind(t.kind).into() }).collect::<Vec<_>>())));
+    ui.set_stats_hours(ModelRc::new(VecModel::from(page.hours.clone())));
+    ui.set_stats_habit(words::stats_habit(page).unwrap_or_default().into());
+    let st = &page.stats;
+    let line = |title: &str, sub: String, plays: u32, art: &Option<String>| crate::RankLine { title: title.into(), sub: sub.into(), count: fmt(plays).into(), art: art.clone().unwrap_or_default().into() };
+    let entries = |v: &[nori_core::TopEntry], timed: bool| v.iter().map(|t| line(&t.name, if timed { nori_core::numbers::clock(t.listened_ms / 1000, false) } else { String::new() }, t.plays, &t.cover_art)).collect::<Vec<_>>();
+    let tops = [
+        (words::TOP_SONGS, st.top_songs.iter().map(|t| line(&t.song.title, t.song.artist.clone(), t.plays, &t.song.cover_art)).collect::<Vec<_>>(), false),
+        (words::TOP_ARTISTS, entries(&st.top_artists, !server), true),
+        (words::TOP_ALBUMS, entries(&st.top_albums, false), false),
+        (words::TOP_GENRES, entries(&st.top_genres, false), false),
+    ];
+    let tops = tops.into_iter().filter(|(_, rows, _)| !rows.is_empty()).map(|(title, rows, round)| crate::TopList { title: title.into(), rows: ModelRc::new(VecModel::from(rows)), round });
+    ui.set_stats_tops(ModelRc::new(VecModel::from(tops.collect::<Vec<_>>())));
+    ui.set_stats_ready(true);
+}
+
+/// Fixed words as a model.
+fn words_model<const N: usize>(words: [&str; N]) -> ModelRc<SharedString> {
+    ModelRc::new(VecModel::from(words.map(SharedString::from).to_vec()))
+}
+
 /// An artist's line of counts: its albums, their songs and its own.
 fn artist_caption(d: &nori_core::ArtistDetail) -> String {
     words::artist_caption(d.albums.len(), d.albums.iter().map(|a| a.song_count as usize).sum(), d.songs.len())
@@ -145,12 +174,14 @@ enum BackTo {
 
 /// Where Back leads from `view`, with a plugin's page open on Settings: the one before it; from a page of
 /// Settings' (the equalizer, support), Settings, as its own back arrow; from Downloads or History, `place_from`,
-/// the tab they were opened on; from a page, back along the trail; from a tab or a page of Home's, Home.
+/// the tab they were opened on; from the listening stats, History; from a page, back along the trail; from a
+/// tab or a page of Home's, Home.
 fn back_from(view: View, plugin_page: bool, place_from: View) -> BackTo {
     match view {
         View::Settings if plugin_page => BackTo::PluginPage,
         View::Equalizer | View::Support => BackTo::View(View::Settings),
         View::Downloads | View::History => BackTo::View(place_from),
+        View::Stats => BackTo::View(View::History),
         View::Page => BackTo::Trail,
         _ => BackTo::View(View::Home),
     }
@@ -571,6 +602,11 @@ pub struct App {
     history_pages: Paged<Option<nori_core::browse::HistoryAfter>>,
     /// The tab Downloads or History was opened from, which Back returns to.
     place_from: View,
+    /// What the listening stats show: how far back, whose plays, and how the server account's plays stood
+    /// once asked for (they are asked for once a page).
+    stats_period: nori_core::browse::StatsPeriod,
+    stats_source: nori_core::browse::StatsSource,
+    stats_server: Option<nori_core::browse::ServerHistory>,
     /// The player pill and the top pill: windows of their own, laid over the blurred page.
     player: Option<PlayerBar>,
     top: Option<TopBar>,
@@ -950,6 +986,9 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             songs_favorites: false,
             history_pages: Paged::new(None),
             place_from: View::Home,
+            stats_period: nori_core::browse::StatsPeriod::OPENED,
+            stats_source: nori_core::browse::StatsSource::Device,
+            stats_server: None,
             album_sort: AlbumSort::ByName,
             albums_favorites: false,
             backdrop: None,
@@ -1452,6 +1491,15 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_play_genre, h, |a, name| a.play_fetch(Fetch::Genre(name.into())));
     on!(ui.on_open_downloaded_album, h, |a, id| a.open_page(PageAsk::DownloadedAlbum(id.into())));
     on!(ui.on_clear_history, h, |a| a.clear_history());
+    on!(ui.on_open_stats, h, |a| a.go(View::Stats));
+    on!(ui.on_stats_source_chosen, h, |a, at| {
+        a.stats_source = nori_core::browse::StatsSource::ALL[at as usize];
+        a.read_stats();
+    });
+    on!(ui.on_stats_period_chosen, h, |a, at| {
+        a.stats_period = nori_core::browse::StatsPeriod::ALL[at as usize];
+        a.read_stats();
+    });
     on!(ui.on_open_accounts, h, |a| {
         let accounts = crate::settings::tabs(&a.facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers);
         a.ui().set_settings_tab(accounts.unwrap_or(0) as i32);
@@ -1874,6 +1922,13 @@ impl App {
                 self.songs.clear();
                 self.show_songs();
                 Some(Req::Page(PageAsk::Downloads))
+            }
+            View::Stats => {
+                (self.stats_period, self.stats_source, self.stats_server) = (nori_core::browse::StatsPeriod::OPENED, nori_core::browse::StatsSource::Device, None);
+                ui.set_stats_sources(words_model(nori_core::browse::StatsSource::ALL.map(words::stats_source)));
+                ui.set_stats_periods(words_model(nori_core::browse::StatsPeriod::ALL.map(words::stats_period)));
+                ui.set_stats_ready(false);
+                Some(self.stats_req())
             }
             View::Settings => {
                 self.settings_shown();
@@ -2332,6 +2387,10 @@ impl App {
                 ui.set_more_songs(self.history_pages.more());
                 self.show_songs();
             }
+            Data::Page(PageGot::Stats { page, server }) if shown && ui.get_view() == View::Stats => {
+                self.stats_server = server.or(self.stats_server);
+                show_stats(&ui, &page, self.stats_server);
+            }
             Data::Page(PageGot::Downloads(d)) if ui.get_view() == View::Downloads => {
                 let s = &d.sections;
                 ui.set_downloads_line(words::download_queue(s.active.len() + s.queued.len(), s.failed.len()).into());
@@ -2349,7 +2408,7 @@ impl App {
                 self.page_actions(PageKind::Playlist);
                 self.show_page_songs();
             }
-            Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::Playlist(_) | PageGot::Mix(_) | PageGot::Genre { .. } | PageGot::Downloads(_)) => {}
+            Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::Playlist(_) | PageGot::Mix(_) | PageGot::Genre { .. } | PageGot::Downloads(_) | PageGot::Stats { .. }) => {}
         }
     }
 
@@ -2710,6 +2769,22 @@ impl App {
             self.place_from = from;
         }
         self.go(view);
+    }
+
+    /// The listening stats as chosen; the server account's plays are asked for the first time they show.
+    fn stats_req(&self) -> Req {
+        let (period, source) = (self.stats_period, self.stats_source);
+        let ui = self.ui();
+        ui.set_stats_source(nori_core::browse::StatsSource::ALL.iter().position(|s| *s == source).unwrap_or(0) as i32);
+        ui.set_stats_period(nori_core::browse::StatsPeriod::ALL.iter().position(|p| *p == period).unwrap_or(0) as i32);
+        let sync = source == nori_core::browse::StatsSource::ServerAccount && self.stats_server.is_none();
+        Req::Page(PageAsk::Stats { period, source, sync })
+    }
+
+    fn read_stats(&mut self) {
+        let req = self.stats_req();
+        self.want.retain(|r| !matches!(r, Req::Page(PageAsk::Stats { .. })));
+        self.load(req);
     }
 
     /// Forgets what was played here, and shows the history empty.
@@ -6575,6 +6650,7 @@ mod tests {
             (View::Albums, false, BackTo::View(View::Home)),
             (View::History, false, BackTo::View(View::Songs)),
             (View::Downloads, false, BackTo::View(View::Songs)),
+            (View::Stats, false, BackTo::View(View::History)),
         ];
         for (view, plugin_page, to) in steps {
             assert_eq!(back_from(view, plugin_page, View::Songs), to, "{view:?}");
@@ -10318,6 +10394,114 @@ mod tests {
         press(ui.window(), album.0, album.1 - 60.0, slint::platform::PointerEventButton::Left);
         settled(&ui);
         assert_eq!(*did.borrow(), ["genre Rock", "clear", "album al"]);
+    }
+
+    /// A year of listening, as the core counts it.
+    fn stats_sample(source: nori_core::browse::StatsSource) -> nori_core::browse::StatsPage {
+        use nori_core::{ListeningStats, TopEntry, TopSong};
+        let song = |title: &str, artist: &str, plays| TopSong { song: Song { title: title.into(), artist: artist.into(), cover_art: Some(format!("c-{title}")), ..Default::default() }, plays, listened_ms: plays as i64 * 210_000 };
+        let entry = |name: &str, plays, ms| TopEntry { name: name.into(), cover_art: Some(format!("c-{name}")), plays, listened_ms: ms, ..Default::default() };
+        let mut hours = vec![0u32; 24];
+        for (h, n) in [(7, 18), (8, 42), (9, 30), (12, 25), (13, 20), (17, 36), (18, 51), (19, 64), (20, 88), (21, 97), (22, 70), (23, 31), (0, 9)] {
+            hours[h] = n;
+        }
+        let stats = ListeningStats {
+            plays: 1284,
+            skips: 211,
+            listened_ms: 279_480_000,
+            distinct_songs: 642,
+            distinct_artists: 118,
+            distinct_albums: 203,
+            top_songs: vec![song("Glass Harbour", "Alpha Waves", 41), song("Paper Moon", "Lumen", 33), song("Second Wind", "Alpha Waves", 29), song("Low Tide", "Marrow", 24), song("Northern Lights", "Kestrel", 21)],
+            top_artists: vec![entry("Alpha Waves", 188, 39_480_000), entry("Lumen", 121, 25_410_000), entry("Marrow", 96, 20_160_000), entry("Kestrel", 74, 15_540_000), entry("Fen", 52, 10_920_000)],
+            top_albums: vec![entry("Second Wind", 97, 0), entry("Night Swim", 81, 0), entry("Blue Hour", 66, 0), entry("Copper", 43, 0), entry("Salt", 38, 0)],
+            top_genres: vec![entry("Electronic", 402, 0), entry("Indie", 311, 0), entry("Jazz", 164, 0), entry("Ambient", 120, 0), entry("Folk", 71, 0)],
+            plays_per_hour: hours,
+            plays_per_weekday: vec![160, 150, 171, 188, 240, 220, 155],
+            active_days: 214,
+            longest_streak_days: 19,
+            first_play: None,
+        };
+        nori_core::browse::StatsPage::new(source, stats)
+    }
+
+    /// A cover for `id`: a soft two-tone square of its own hue.
+    fn sample_cover(id: &str) -> Image {
+        let hue = id.bytes().fold(7u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32)) % 360;
+        let c = slint::Color::from_hsva(hue as f32, 0.45, 0.75, 1.0).to_argb_u8();
+        let (r, g, b) = (c.red, c.green, c.blue);
+        let mut px = SharedPixelBuffer::<Rgba8Pixel>::new(64, 64);
+        for (i, p) in px.make_mut_slice().iter_mut().enumerate() {
+            let t = ((i % 64) + i / 64) as f32 / 126.0;
+            let mix = |c: u8| (c as f32 * (1.0 - 0.35 * t)) as u8;
+            *p = Rgba8Pixel { r: mix(r), g: mix(g), b: mix(b), a: 255 };
+        }
+        Image::from_rgba8(px)
+    }
+
+    /// The listening stats, opened from History as on Android: the chips choose whose plays and how far back;
+    /// a wide window sets the plates beside the plays and the top lists two across, a narrow one under them.
+    #[test]
+    fn listening_stats_lay_out_for_the_window() {
+        use nori_core::browse::{StatsPeriod, StatsSource};
+        use nori_core::settings::{StoredPrefs, ThemeMode};
+        let ui = shown_window(1600.0, 1000.0);
+        let did = Rc::new(RefCell::new(Vec::<String>::new()));
+        let seen = did.clone();
+        ui.on_open_stats(move || seen.borrow_mut().push("stats".into()));
+        let seen = did.clone();
+        ui.on_stats_source_chosen(move |i| seen.borrow_mut().push(format!("source {i}")));
+        let seen = did.clone();
+        ui.on_stats_period_chosen(move |i| seen.borrow_mut().push(format!("period {i}")));
+        ui.on_art(|id, _, _| if id.is_empty() { Image::default() } else { sample_cover(&id) });
+        ui.show().unwrap();
+        ui.set_view(View::History);
+        settled(&ui);
+        click(&ui, "Listening stats");
+
+        ui.set_view(View::Stats);
+        ui.set_stats_sources(words_model(StatsSource::ALL.map(words::stats_source)));
+        ui.set_stats_periods(words_model(StatsPeriod::ALL.map(words::stats_period)));
+        ui.set_stats_period(2);
+        show_stats(&ui, &stats_sample(StatsSource::Device), None);
+        let today = crate::look::Today { month: 11, day: 26, southern: false };
+        let paint = |theme| crate::look::plain(&Default::default(), &StoredPrefs { theme, ..Default::default() }, false, today).paint(&ui);
+        let scrolled = |at: f32| {
+            let scroll = ui.global::<crate::Scroll>();
+            scroll.set_want(at);
+            scroll.set_asked(scroll.get_asked() + 1);
+        };
+        for (w, h) in [(1600.0, 1000.0), (1280.0, 800.0)] {
+            ui.window().set_size(slint::LogicalSize::new(w, h));
+            for (theme, name) in [(ThemeMode::Light, "day"), (ThemeMode::Dark, "night")] {
+                paint(theme);
+                scrolled(0.0);
+                keep_shot(&settled(&ui), &format!("stats-{w}x{h}-{name}"));
+                scrolled(420.0);
+                keep_shot(&settled(&ui), &format!("stats-{w}x{h}-{name}-lower"));
+            }
+            scrolled(0.0);
+            settled(&ui);
+            let (plays, days) = (middle(&ui, "1284").unwrap(), middle(&ui, "active days").unwrap());
+            assert!(days.0 > plays.0 + 300.0 && (days.1 - plays.1).abs() < 120.0, "{w}: the plates beside the plays");
+        }
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 2400.0));
+        settled(&ui);
+        let (songs, artists, albums) = (middle(&ui, "Top songs").unwrap(), middle(&ui, "Top artists").unwrap(), middle(&ui, "Top albums").unwrap());
+        assert!(artists.0 > songs.0 && artists.1 == songs.1 && albums.1 > songs.1, "the top lists two across");
+        assert!(middle(&ui, "skips").is_some() && middle(&ui, "Most around 21:00, mostly on Fridays").is_some());
+        click(&ui, "All devices");
+        click(&ui, "Week");
+
+        ui.window().set_size(slint::LogicalSize::new(900.0, 2400.0));
+        show_stats(&ui, &stats_sample(StatsSource::ServerAccount), Some(nori_core::browse::ServerHistory::Current));
+        ui.set_stats_source(1);
+        settled(&ui);
+        let (plays, songs_plate) = (middle(&ui, "1284").unwrap(), middle(&ui, "songs").unwrap());
+        assert!(songs_plate.1 > plays.1 + 60.0, "narrow: the plates under the plays");
+        assert!(middle(&ui, "skips").is_none(), "the server counts no skips");
+        assert!(middle(&ui, "Top artists").unwrap().1 > middle(&ui, "Top songs").unwrap().1, "narrow: one list under another");
+        assert_eq!(*did.borrow(), ["stats", "source 1", "period 0"]);
     }
 
     /// The library's pages offer Downloads and History beside their title, as Android's Library does, where

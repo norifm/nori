@@ -75,6 +75,32 @@ export const W = {
   noSongs: "Your library has no songs yet",
   nothingPlayed: "Nothing played yet, or listening history is off in Settings, under Library",
   clearHistory: "Clear history",
+  listeningStats: "Listening stats",
+  listening: "Listening",
+  /** The listening stats' choices, by the core's names (`StatsPeriod`, `StatsSource`). */
+  statsPeriods: { Week: "Week", Month: "Month", Year: "Year", AllTime: "All time" } as Record<string, string>,
+  statsSources: { Device: "This device", ServerAccount: "All devices" } as Record<string, string>,
+  /** Under the play count: the time listened; the server knows none. */
+  statsHeadline: (server: boolean, listenedMs: number) => (server ? "plays on your server account" : `plays · ${clock(listenedMs)} listened`),
+  /** What the server account's figures are, or why they are missing or old (the core's `ServerHistory`). */
+  statsServerNote: (h: string | null) =>
+    h === "Unreached"
+      ? "Your server didn’t answer. Showing the plays fetched before."
+      : h === "Unavailable"
+        ? "Your server doesn’t share listening history. It needs Navidrome 0.59 or later and a password login."
+        : "Navidrome counts plays from when it was updated to 0.59, without skips or time listened.",
+  /** "Most around 21:00, mostly on Fridays". */
+  statsHabit: (hour: number, weekday: number | null) => {
+    const days = ["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"];
+    return weekday === null ? `Most around ${hour}:00` : `Most around ${hour}:00, mostly on ${days[weekday]}`;
+  },
+  /** What a number of the listening stats counts, by the core's `StatKind`. */
+  statKinds: { Songs: "songs", Artists: "artists", Albums: "albums", Skips: "skips", ActiveDays: "active days", DayStreak: "day streak" } as Record<string, string>,
+  whenYouListen: "When you listen",
+  topSongs: "Top songs",
+  topArtists: "Top artists",
+  topAlbums: "Top albums",
+  topGenres: "Top genres",
   filter: "Filter",
   nothingMatches: (q: string) => `Nothing here has “${q}” in its name`,
   /** The album grid's orders, by the server's names (`album_sorts`). */

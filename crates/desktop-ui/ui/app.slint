@@ -11,7 +11,7 @@ import "../../../android/app/src/main/res/font/inter.ttf";
 import "../../../android/app/src/main/res/font/literata.ttf";
 
 // The main window's views. `shelf` is one of Home's shelves shown whole, `for-you` Home's picks.
-export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites, support, genres, history, downloads }
+export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites, support, genres, history, downloads, stats }
 // A panel beside the player: the inspector on the right, or Now Playing's beside the artwork.
 export enum Panel { none, queue, lyrics, devices }
 // How the page view lays out what it shows: an album's, an artist's, or a list's (a playlist or a mix).
@@ -84,6 +84,28 @@ export struct Card {
     new: bool,
     // A provider's, not in the library yet: the cloud leads its line, as Android's.
     remote: bool,
+}
+
+// A number the listening stats count, and what it counts.
+export struct StatPlate {
+    value: string,
+    label: string,
+}
+
+// A place in a top list of the listening stats: what it is, under it its artist or time heard, how often it
+// played, and its cover.
+export struct RankLine {
+    title: string,
+    sub: string,
+    count: string,
+    art: string,
+}
+
+// A top list of the listening stats: its name, its places, and whether its covers are an artist's (round).
+export struct TopList {
+    title: string,
+    rows: [RankLine],
+    round: bool,
 }
 
 // A piece of the line being sung (sung.rs): a word, a syllable or what lies between, where it was laid
@@ -7403,6 +7425,291 @@ component PageActions inherits HorizontalLayout {
     }
 }
 
+// A top list of the listening stats: its name, then a line per place, its rank, cover, name and play count.
+component TopColumn inherits VerticalLayout {
+    in property <TopList> list;
+    in property <int> rev;
+    pure callback art(string, int, int) -> image;
+    horizontal-stretch: 1;
+    alignment: start;
+    SectionTitle {
+        text: root.list.title;
+    }
+    Rectangle {
+        height: 6px;
+    }
+    for r[i] in root.list.rows: Rectangle {
+        height: 56px;
+        HorizontalLayout {
+            spacing: 12px;
+            Text {
+                width: 22px;
+                text: i + 1;
+                color: Theme.dim;
+                font-size: 14px;
+                font-weight: 600;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+            Art {
+                y: (parent.height - self.height) / 2;
+                width: 44px;
+                height: 44px;
+                border-radius: root.list.round ? 22px : 8px;
+                source: root.art(r.art, 0, root.rev);
+            }
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                Text {
+                    text: r.title;
+                    color: Theme.text;
+                    font-size: 14px;
+                    font-weight: 500;
+                    overflow: elide;
+                }
+                if r.sub != "": Text {
+                    text: r.sub;
+                    color: Theme.dim;
+                    font-size: 13px;
+                    overflow: elide;
+                }
+            }
+            Text {
+                text: r.count;
+                color: Theme.dim;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// The listening stats' plays in large type, what they are, and where the server's come from.
+component StatsHeadline inherits VerticalLayout {
+    in property <string> plays;
+    in property <string> headline;
+    in property <string> note;
+    alignment: start;
+    spacing: 2px;
+    Text {
+        text: root.plays;
+        color: Theme.text;
+        font-size: 64px;
+        font-weight: 700;
+        letter-spacing: -1.5px;
+    }
+    Text {
+        text: root.headline;
+        color: Theme.dim;
+        font-size: 17px;
+        font-weight: 500;
+        wrap: word-wrap;
+    }
+    if root.note != "": Text {
+        text: root.note;
+        color: Theme.dim;
+        font-size: 13px;
+        wrap: word-wrap;
+    }
+}
+
+// The listening stats' numbers on plates: three to a row, the rest sharing the second row.
+component StatPlates inherits Rectangle {
+    in property <[StatPlate]> plates;
+    property <length> gap: 10px;
+    property <length> tall: 84px;
+    property <int> first: min(3, root.plates.length);
+    property <int> second: max(0, root.plates.length - 3);
+    height: root.plates.length > 3 ? 2 * root.tall + root.gap : root.plates.length > 0 ? root.tall : 0;
+    for p[i] in root.plates: Rectangle {
+        property <int> across: i < 3 ? root.first : root.second;
+        width: (root.width - (self.across - 1) * root.gap) / self.across;
+        x: (i < 3 ? i : i - 3) * (self.width + root.gap);
+        y: i < 3 ? 0 : root.tall + root.gap;
+        height: root.tall;
+        border-radius: 16px;
+        background: Theme.fill;
+        VerticalLayout {
+            padding: 16px;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: p.value;
+                color: Theme.text;
+                font-size: 26px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: p.label;
+                color: Theme.dim;
+                font-size: 13px;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+// The listening stats, as Android's (from History): whose plays and how far back, the plays in large type with
+// what else they count on plates, the listening day as 24 bars and when it peaks, then the top lists. A wide
+// window sets the plates beside the plays and the top lists two across.
+component StatsView inherits Remembered {
+    in property <[string]> sources;
+    in property <int> source;
+    in property <[string]> periods;
+    in property <int> period;
+    in property <bool> ready;
+    in property <string> plays;
+    in property <string> headline;
+    in property <string> note;
+    in property <[StatPlate]> plates;
+    in property <[float]> hours;
+    in property <string> habit;
+    in property <[TopList]> tops;
+    in property <int> rev;
+    pure callback art(string, int, int) -> image;
+    callback source-chosen(int);
+    callback period-chosen(int);
+    property <length> gutter: Frame.gutter(self.width);
+    property <bool> wide: self.width - 2 * self.gutter >= 880px;
+    property <int> across: root.wide ? 2 : 1;
+    content-height: page.preferred-height;
+    page := VerticalLayout {
+        width: root.width;
+        padding-left: root.gutter;
+        padding-right: root.gutter;
+        padding-top: Chrome.top-room + 8px;
+        padding-bottom: 100px;
+        HorizontalLayout {
+            padding-left: Frame.back-room;
+            padding-bottom: 18px;
+            Text {
+                text: "Listening";
+                color: Theme.text;
+                font-family: Type.title;
+                font-size: 34px;
+                font-weight: 700;
+                letter-spacing: -0.5px;
+            }
+        }
+        HorizontalLayout {
+            alignment: start;
+            spacing: 8px;
+            padding-bottom: 30px;
+            for s[i] in root.sources: Chip {
+                text: s;
+                lit: i == root.source;
+                clicked => { root.source-chosen(i); }
+            }
+            Rectangle {
+                width: 17px;
+                Rectangle {
+                    width: 1px;
+                    height: 20px;
+                    background: Theme.hairline;
+                }
+            }
+            for p[i] in root.periods: Chip {
+                text: p;
+                lit: i == root.period;
+                clicked => { root.period-chosen(i); }
+            }
+        }
+        if root.ready && root.wide: HorizontalLayout {
+            spacing: 48px;
+            padding-bottom: 44px;
+            StatsHeadline {
+                width: 36%;
+                plays: root.plays;
+                headline: root.headline;
+                note: root.note;
+            }
+            StatPlates {
+                horizontal-stretch: 1;
+                plates: root.plates;
+            }
+        }
+        if root.ready && !root.wide: VerticalLayout {
+            spacing: 20px;
+            padding-bottom: 36px;
+            StatsHeadline {
+                plays: root.plays;
+                headline: root.headline;
+                note: root.note;
+            }
+            StatPlates {
+                plates: root.plates;
+            }
+        }
+        // Twenty-four bars: the shape of a listening day says more than its busiest hour alone.
+        if root.ready && root.habit != "": VerticalLayout {
+            padding-bottom: 44px;
+            SectionTitle {
+                text: "When you listen";
+            }
+            Rectangle {
+                height: 12px;
+            }
+            chart := Rectangle {
+                height: root.wide ? 150px : 104px;
+                property <length> step: self.width / 24;
+                property <length> bar: min(self.step * 0.62, 24px);
+                for share[h] in root.hours: Rectangle {
+                    x: h * chart.step + (chart.step - chart.bar) / 2;
+                    width: chart.bar;
+                    border-radius: self.width / 2;
+                    background: Theme.text.with-alpha(0.12);
+                    if share > 0: Rectangle {
+                        y: parent.height * (1 - share);
+                        height: parent.height * share;
+                        border-radius: parent.border-radius;
+                        background: Theme.text;
+                    }
+                }
+            }
+            Rectangle {
+                height: 22px;
+                for tick in [0, 6, 12, 18, 23]: Text {
+                    x: tick * chart.step + (chart.step - self.width) / 2;
+                    y: 6px;
+                    text: (tick < 10 ? "0" : "") + tick;
+                    color: Theme.dim;
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+            }
+            Text {
+                text: root.habit;
+                color: Theme.dim;
+                font-size: 14px;
+            }
+        }
+        for row in root.ready ? ceil(root.tops.length / root.across) : 0: top-row := HorizontalLayout {
+            property <int> at: row * root.across;
+            // Two across share the row evenly, whatever their names' widths.
+            property <length> column: root.wide ? (self.width - 48px) / 2 : self.width;
+            spacing: 48px;
+            padding-bottom: 32px;
+            TopColumn {
+                width: top-row.column;
+                list: root.tops[top-row.at];
+                rev: root.rev;
+                art(a, s, r) => { return root.art(a, s, r); }
+            }
+            if root.wide && top-row.at + 1 < root.tops.length: TopColumn {
+                width: top-row.column;
+                list: root.tops[top-row.at + 1];
+                rev: root.rev;
+                art(a, s, r) => { return root.art(a, s, r); }
+            }
+            if root.wide && top-row.at + 1 >= root.tops.length: Rectangle {
+                horizontal-stretch: 1;
+            }
+        }
+    }
+}
+
 // Where the window is dragged from, and double-clicked to zoom: the content runs up under the titlebar.
 component TitleStrip inherits TouchArea {
     callback drag;
@@ -7720,6 +8027,24 @@ export component AppWindow inherits Window {
     in property <[Card]> downloaded-albums;
     callback open-downloaded-album(string);
     callback clear-history();
+    // The listening stats (view stats, opened from History): the chips of whose plays and how far back with the
+    // one chosen, whether the page is read, the plays and the words under them, the numbers on plates, the
+    // listening day (each hour's share of the busiest; no habit: nothing played) and the top lists.
+    callback open-stats();
+    in property <[string]> stats-sources;
+    in property <int> stats-source;
+    in property <[string]> stats-periods;
+    in property <int> stats-period;
+    in property <bool> stats-ready;
+    in property <string> stats-plays;
+    in property <string> stats-headline;
+    in property <string> stats-note;
+    in property <[StatPlate]> stats-plates;
+    in property <[float]> stats-hours;
+    in property <string> stats-habit;
+    in property <[TopList]> stats-tops;
+    callback stats-source-chosen(int);
+    callback stats-period-chosen(int);
     // A long list's page offers a field that narrows its songs (the core's `filter_offered`).
     in property <bool> page-filter-offered;
     in property <[Card]> artists;
@@ -9731,6 +10056,11 @@ export component AppWindow inherits Window {
                                 letter-spacing: -0.5px;
                                 horizontal-stretch: 1;
                             }
+                            TextButton {
+                                y: (parent.height - self.height) / 2;
+                                text: "Listening stats";
+                                clicked => { root.open-stats(); }
+                            }
                             if root.songs.length > 0: TextButton {
                                 y: (parent.height - self.height) / 2;
                                 text: "Clear history";
@@ -9773,6 +10103,28 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+                    }
+                }
+
+                if root.view == View.stats: Fade {
+                    push: true;
+                    StatsView {
+                        sources: root.stats-sources;
+                        source: root.stats-source;
+                        periods: root.stats-periods;
+                        period: root.stats-period;
+                        ready: root.stats-ready;
+                        plays: root.stats-plays;
+                        headline: root.stats-headline;
+                        note: root.stats-note;
+                        plates: root.stats-plates;
+                        hours: root.stats-hours;
+                        habit: root.stats-habit;
+                        tops: root.stats-tops;
+                        rev: root.covers-rev;
+                        art(a, s, r) => { return root.art(a, s, r); }
+                        source-chosen(i) => { root.stats-source-chosen(i); }
+                        period-chosen(i) => { root.stats-period-chosen(i); }
                     }
                 }
 
@@ -10325,7 +10677,7 @@ export component AppWindow inherits Window {
 
                 // Back, on a page that was opened from another: a disc under the top pill's left, where Android
                 // has its arrow.
-                if root.view == View.page || root.view == View.shelf || root.view == View.for-you || root.view == View.history || root.view == View.downloads: Rectangle {
+                if root.view == View.page || root.view == View.shelf || root.view == View.for-you || root.view == View.history || root.view == View.downloads || root.view == View.stats: Rectangle {
                     x: root.page-gutter;
                     y: Frame.back-y;
                     width: 40px;

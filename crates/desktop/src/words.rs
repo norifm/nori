@@ -628,6 +628,72 @@ pub fn download_queue(waiting: usize, failed: usize) -> String {
     if parts.is_empty() { "Nothing downloading".into() } else { parts.join(" · ") }
 }
 
+/// Whose plays the listening stats count, as their chip names it.
+pub fn stats_source(s: nori_core::browse::StatsSource) -> &'static str {
+    match s {
+        nori_core::browse::StatsSource::Device => "This device",
+        nori_core::browse::StatsSource::ServerAccount => "All devices",
+    }
+}
+
+/// How far back the listening stats count, as their chip names it.
+pub fn stats_period(p: nori_core::browse::StatsPeriod) -> &'static str {
+    use nori_core::browse::StatsPeriod;
+    match p {
+        StatsPeriod::Week => "Week",
+        StatsPeriod::Month => "Month",
+        StatsPeriod::Year => "Year",
+        StatsPeriod::AllTime => "All time",
+    }
+}
+
+/// Under the play count: the time listened; the server knows none.
+pub fn stats_headline(p: &nori_core::browse::StatsPage) -> String {
+    match p.source {
+        nori_core::browse::StatsSource::Device => format!("plays · {} listened", nori_core::numbers::clock(p.stats.listened_ms / 1000, false)),
+        nori_core::browse::StatsSource::ServerAccount => "plays on your server account".into(),
+    }
+}
+
+/// What the server account's figures are, or why they are missing or old.
+pub fn stats_server_note(h: Option<nori_core::browse::ServerHistory>) -> &'static str {
+    use nori_core::browse::ServerHistory;
+    match h {
+        Some(ServerHistory::Unreached) => "Your server didn’t answer. Showing the plays fetched before.",
+        Some(ServerHistory::Unavailable) => "Your server doesn’t share listening history. It needs Navidrome 0.59 or later and a password login.",
+        Some(ServerHistory::Current) | None => "Navidrome counts plays from when it was updated to 0.59, without skips or time listened.",
+    }
+}
+
+const WEEKDAYS: [&str; 7] = ["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"];
+
+/// "Most around 21:00, mostly on Fridays"; none when nothing was played.
+pub fn stats_habit(p: &nori_core::browse::StatsPage) -> Option<String> {
+    let hour = p.busiest_hour?;
+    Some(match p.busiest_weekday.and_then(|d| WEEKDAYS.get(d as usize)) {
+        Some(day) => format!("Most around {hour}:00, mostly on {day}"),
+        None => format!("Most around {hour}:00"),
+    })
+}
+
+/// What a number under the listening stats' headline counts.
+pub fn stat_kind(k: nori_core::browse::StatKind) -> &'static str {
+    use nori_core::browse::StatKind;
+    match k {
+        StatKind::Songs => "songs",
+        StatKind::Artists => "artists",
+        StatKind::Albums => "albums",
+        StatKind::Skips => "skips",
+        StatKind::ActiveDays => "active days",
+        StatKind::DayStreak => "day streak",
+    }
+}
+
+pub const TOP_SONGS: &str = "Top songs";
+pub const TOP_ARTISTS: &str = "Top artists";
+pub const TOP_ALBUMS: &str = "Top albums";
+pub const TOP_GENRES: &str = "Top genres";
+
 pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
     use nori_core::browse::AlbumSort;
     match sort {
@@ -1405,6 +1471,18 @@ mod tests {
         assert!(preview_note(&p, false, &[]).contains(&"Unsigned".to_string()));
         let last = |turns_on| preview_note(&p, turns_on, &[]).last().cloned();
         assert_eq!((last(false).as_deref(), last(true).as_deref()), (Some("Unsigned"), Some(INSTALLED_ON)), "only what turns on says so");
+    }
+
+    #[test]
+    fn stats_say_when_and_how_long() {
+        use nori_core::browse::{StatsPage, StatsSource};
+        let mut hours = vec![0; 24];
+        hours[21] = 3;
+        let stats = nori_core::ListeningStats { listened_ms: 3_723_000, plays_per_hour: hours, plays_per_weekday: vec![0, 0, 0, 0, 2, 0, 0], ..Default::default() };
+        let device = StatsPage::new(StatsSource::Device, stats.clone());
+        assert_eq!((stats_headline(&device), stats_habit(&device).as_deref()), ("plays · 1:02:03 listened".into(), Some("Most around 21:00, mostly on Fridays")));
+        let nothing = StatsPage::new(StatsSource::ServerAccount, nori_core::ListeningStats { plays_per_hour: vec![0; 24], plays_per_weekday: vec![0; 7], ..Default::default() });
+        assert_eq!((stats_headline(&nothing).as_str(), stats_habit(&nothing)), ("plays on your server account", None));
     }
 
     #[test]

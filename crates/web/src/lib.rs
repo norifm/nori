@@ -425,6 +425,19 @@ impl Nori {
         self.leave();
     }
 
+    /// The listening stats' choices (`pages::stats_choices`), as JSON.
+    pub fn stats_choices(&self) -> String {
+        pages::stats_choices().to_string()
+    }
+
+    /// The listening stats of `source`'s plays in `period`, charted at this browser's time zone; with `sync`
+    /// the server account's new plays are asked for first (`pages::stats`), as JSON.
+    pub async fn stats(&self, period: String, source: String, sync: bool) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let tz_offset_ms = (-js_sys::Date::new_0().get_timezone_offset() * 60_000.0) as i32;
+        pages::stats(&client, &period, &source, sync, tz_offset_ms).await.map(|v| v.to_string()).map_err(error)
+    }
+
     /// Forgets what this browser played (`Core::history_clear`).
     pub fn history_clear(&self) -> Result<(), JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
