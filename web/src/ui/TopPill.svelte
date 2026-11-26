@@ -20,12 +20,19 @@
 <script lang="ts">
   // The top bar on a wide screen, as the desktop's top pill: one outline holding Home and the library's
   // sections in their order (the core's `library_sections`), the current one in the accent and named
-  // while there is room; then the search and the settings button, which opens Settings.
+  // while there is room; then the search, the settings button, which opens Settings, and the profile in
+  // use's mark, which opens the profiles: the one in use checked, the others to switch to, then adding and
+  // managing them.
   import { ask } from "../rpc";
+  import { library } from "../state/library.svelte";
   import { remote } from "../state/remote.svelte";
   import { route } from "../state/route.svelte";
+  import { ui } from "../state/ui.svelte";
+  import type { Profile, Profiles } from "../state/types";
   import { W } from "../words";
+  import AddProfile from "./AddProfile.svelte";
   import Icon from "./Icon.svelte";
+  import ProfileMark from "./ProfileMark.svelte";
   import SearchBox from "./SearchBox.svelte";
 
   /** The page each section's tab is lit on, and stays lit on for the pages opened from it. */
@@ -37,6 +44,43 @@
     void ask<string>("library_sections").then((s) => (sections = (JSON.parse(s) as string[]).filter((x) => x in tops).sort((a, b) => +(a === "Favourites") - +(b === "Favourites"))));
   });
   const on = (...t: string[]) => t.includes(route.from);
+
+  let profiles = $state.raw<Profiles | null>(null);
+  $effect(() => {
+    void ui.profilesRev;
+    void library.rev;
+    void ask<string>("profiles").then((p) => (profiles = JSON.parse(p) as Profiles));
+  });
+  const inUse = $derived(profiles?.list.find((p) => p.on));
+  /** A profile being added. */
+  let adding = $state(false);
+  /** Its name, and under it who signs in, or where when that is its name already (the desktop's). */
+  const named = (p: Profile) => p.label || W.subsonic;
+  const line = (p: Profile) => (p.user && p.user !== named(p) ? p.user : p.host);
+  /** The library and the player are another profile's now. */
+  function opened() {
+    remote.switched();
+    ui.profilesRev++;
+  }
+  function open(e: MouseEvent) {
+    const list = profiles?.list ?? [];
+    const switches = list.map((p) => ({
+      label: named(p),
+      line: line(p),
+      mark: { icon: p.icon, letter: p.letter },
+      chosen: p.on,
+      run: async () => {
+        if (p.on) return;
+        await ask("profile_open", p.id);
+        opened();
+      },
+    }));
+    const manage = [
+      ...(profiles?.picks ? [{ label: W.addProfile, icon: "plus", run: () => (adding = true) }] : []),
+      { label: W.manageProfiles, icon: "settings", run: () => (location.hash = href("settings", "Servers")) },
+    ];
+    ui.drop(e, switches, [manage]);
+  }
 </script>
 
 <header class="top chrome" id="nav">
@@ -49,7 +93,11 @@
   </nav>
   <SearchBox />
   <a class="glyph quiet gear" class:on={on("settings", "equalizer")} aria-label={W.settings} title={W.settings} data-top="settings" href={href("settings")}><Icon name="settings" /></a>
+  {#if inUse}
+    <button class="profile" id="profile-mark" aria-label={W.profiles} title={named(inUse)} aria-haspopup="menu" onclick={open}><ProfileMark icon={inUse.icon} letter={inUse.letter} side={28} /></button>
+  {/if}
 </header>
+{#if adding}<AddProfile close={() => (adding = false)} added={() => ((adding = false), opened())} />{/if}
 
 <style>
   .top {
@@ -121,6 +169,21 @@
   .gear :global(.icon) {
     width: 20px;
     height: 20px;
+  }
+  /* The profile's mark on a 36 px disc, its edge a hairline, as the desktop's. */
+  .profile {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    flex: none;
+    border-radius: 50%;
+  }
+  .profile:hover {
+    background: var(--hover);
+  }
+  .profile :global(.mark) {
+    box-shadow: 0 0 0 1px var(--hair);
   }
   /* Named only while there is room (the window under 912 px), as the desktop's; the current one always. */
   @media (max-width: 911px) {

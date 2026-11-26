@@ -28,6 +28,7 @@
   let rev = $state(0);
   const page = reading("settings", async () => {
     void rev;
+    void ui.profilesRev;
     const names = JSON.parse(await ask<string>("settings_pages")) as string[];
     const name = route.arg;
     const sections = names.includes(name) ? (JSON.parse(await ask<string>("settings_page", name)) as SettingsSection[]) : [];
@@ -56,7 +57,7 @@
   let picking = $state.raw<Profile | null>(null);
   async function pickIcon(p: Profile, icon: ProfileIcon) {
     await ask("profile_icon", p.id, icon);
-    rev++;
+    ui.profilesRev++;
   }
   /** A profile being added. */
   let adding = $state(false);
@@ -64,7 +65,7 @@
   /** The library and the player are another profile's now. */
   function opened() {
     remote.switched();
-    rev++;
+    ui.profilesRev++;
   }
   async function open(p: Profile) {
     await ask("profile_open", p.id);
@@ -75,7 +76,7 @@
     // None left: the next start signs in.
     if (!(await ask<boolean>("profile_remove", p.id))) return signedOut();
     if (p.on) opened();
-    else rev++;
+    else ui.profilesRev++;
   }
   const menu = (e: MouseEvent, p: Profile) =>
     ui.drop(e, [
@@ -85,7 +86,7 @@
           const name = await ui.ask(W.rename, named(p));
           if (name === null) return;
           await ask("profile_rename", p.id, name);
-          rev++;
+          ui.profilesRev++;
         },
       },
       { label: W.edit, run: () => (location.hash = `${href("settings", "Servers")}/${encodeURIComponent(p.id)}`) },

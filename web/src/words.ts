@@ -248,6 +248,7 @@ export const W = {
   profiles: "Profiles",
   thisProfile: "This profile",
   addProfile: "Add profile",
+  manageProfiles: "Manage profiles",
   inUse: "In use",
   edit: "Edit",
   save: "Save",

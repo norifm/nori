@@ -1,10 +1,11 @@
 // What the shell shows over the pages: a line of news, a menu, a question and the full player.
 
-import type { PlaylistChoice } from "./types";
+import type { PlaylistChoice, ProfileIcon } from "./types";
 
 /** A menu's line, or a bare glyph (`lit`: in the accent, a favorite's seal). One that switches a state (the seal)
- * `turns` into the line that switches it back, and the menu stays open. */
-export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean; lit?: boolean; turns?: () => Item };
+ * `turns` into the line that switches it back, and the menu stays open. A profile's line leads with its
+ * `mark` and has a second `line` under its name. */
+export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean; lit?: boolean; turns?: () => Item; mark?: { icon: ProfileIcon; letter: string }; line?: string };
 /** What the full player shows beside the cover (on a phone: in its place). */
 export type Pane = "lyrics" | "queue" | "devices";
 /** A menu's head: what it is about (a song: its cover, title and line), the bare glyphs beside its title, and
@@ -26,6 +27,8 @@ export const pointer = (e: MouseEvent): Anchor => ({ left: e.clientX, top: e.cli
 
 class Ui {
   toast = $state("");
+  /** Moves on whenever a saved profile changes (added, renamed, removed, its icon), for what shows them. */
+  profilesRev = $state(0);
   /** The menu open: on a wide window a popover beside what opened it; on a phone a menu with a head is a
    * sheet from the bottom. */
   open = $state.raw<Menu | null>(null);
@@ -122,10 +125,10 @@ class Ui {
     return next;
   }
 
-  /** A menu of `items` dropped from the button `e` came from. */
-  drop(e: MouseEvent, items: Item[]) {
+  /** A menu of `items`, then the groups `more`, dropped from the button `e` came from. */
+  drop(e: MouseEvent, items: Item[], more: Item[][] = []) {
     this.last = beside(e);
-    this.open = { tools: [], groups: [items], at: this.last };
+    this.open = { tools: [], groups: [items, ...more], at: this.last };
   }
 
   /** Where the last menu opened. */

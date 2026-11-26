@@ -570,6 +570,24 @@ if (!only || only.includes("menus")) {
     expect(m?.title === want && m.lines.includes("Play next"), `${what} opens its menu on a right click`);
 }
 
+if (!only || only.includes("topmark")) {
+  // The profile in use's mark at the top bar's end opens the profiles: the one in use checked, then adding
+  // and managing them; Manage opens Settings' profiles.
+  await hash("#/home", "home");
+  const mark = await page.$eval("#profile-mark .mark", (e) => e.dataset.icon);
+  await page.click("#profile-mark");
+  await page.waitForSelector(".popover .popover-item");
+  const lines = await page.$$eval(".popover .popover-item", (b) => b.map((x) => ({ text: x.textContent.trim(), mark: !!x.querySelector(".mark"), on: !!x.querySelector(".in-use") })));
+  const manage = (await page.$$(".popover .popover-item")).at(-1);
+  await manage.click();
+  await page.waitForFunction(() => window.nori.page === "settings" && location.hash.includes("Servers"), { timeout: 10000 });
+  report.topmark = { mark, lines };
+  const { list } = JSON.parse(await ask("profiles"));
+  expect(!!mark && lines.filter((l) => l.mark).length === list.length, "the top bar's mark lists every profile");
+  expect(lines.filter((l) => l.on).length === 1, "the profile in use is the one marked");
+  expect(lines.at(-1).text === "Manage profiles", "the profiles end with Manage profiles");
+}
+
 if (!only || only.includes("back")) {
   // Back takes one step: out of Now Playing to the page under it, then to the page before.
   await hash("#/albums/alphabeticalByName", "albums");

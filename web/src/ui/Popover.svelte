@@ -8,6 +8,7 @@
   import { ui } from "../state/ui.svelte";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
+  import ProfileMark from "./ProfileMark.svelte";
   import type { Item } from "../state/ui.svelte";
 
   const m = $derived(ui.open!);
@@ -41,7 +42,9 @@
     class="popover-item menu-item"
     role="menuitem"
     disabled={it.disabled}
-    onclick={() => ui.choose(it)}>{#if it.icon}<Icon name={it.icon} />{/if}<span class="clip">{it.label}</span>{#if it.chosen}<Icon name="check" />{/if}</button
+    class:profile={!!it.mark}
+    onclick={() => ui.choose(it)}
+    >{#if it.mark}<ProfileMark icon={it.mark.icon} letter={it.mark.letter} side={30} /><span class="words"><span class="clip" class:in-use={it.chosen}>{it.label}</span>{#if it.line}<span class="sub clip">{it.line}</span>{/if}</span>{:else}{#if it.icon}<Icon name={it.icon} />{/if}<span class="clip">{it.label}</span>{/if}{#if it.chosen}<Icon name="check" />{/if}</button
   >
 {/snippet}
 
@@ -57,7 +60,7 @@
   >
 {/snippet}
 
-<div class="popover drop" role="menu" aria-label={m.head?.title} bind:this={menu} style={place}>
+<div class="popover drop" class:wide={m.groups.some((g) => g.some((it) => it.mark))} role="menu" aria-label={m.head?.title} bind:this={menu} style={place}>
   {#if m.head}
     <div class="head">
       {#if m.head.cover !== undefined}<span class="art"><Cover src={m.head.cover || undefined} radius="var(--inner)" /></span>{/if}
@@ -79,6 +82,23 @@
     width: 260px;
     max-height: calc(100vh - 16px);
     overflow-y: auto;
+  }
+  /* With profiles: the desktop's 300 px, each a 48 px line. */
+  .drop.wide {
+    width: 300px;
+  }
+  .profile {
+    min-height: 48px;
+    gap: 10px;
+  }
+  .profile .words {
+    gap: 1px;
+  }
+  .in-use {
+    font-weight: 600;
+  }
+  .profile > :global(.icon:last-child) {
+    color: var(--accent);
   }
   .head {
     position: relative;
