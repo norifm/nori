@@ -41,15 +41,11 @@
     flex-direction: column;
     min-width: 0;
   }
+  /* The desktop's grid: as many columns as fit at 150 px at least, grown to fill the row. */
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
-    gap: 22px var(--grid-gap);
-  }
-  @media (min-width: 1600px) {
-    .grid {
-      grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
-    }
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 24px var(--grid-gap);
   }
   @media (max-width: 719px) {
     .grid {

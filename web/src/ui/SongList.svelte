@@ -6,7 +6,7 @@
   // place (a playlist's); `one`, a click plays that song alone (a search's results).
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
-  import { beside, pointer, type Item } from "../state/ui.svelte";
+  import { beside, pointer, ui, type Item } from "../state/ui.svelte";
   import type { Song } from "../state/types";
   import { W } from "../words";
   import Cover from "./Cover.svelte";
@@ -32,10 +32,10 @@
   const play = (i: number) => (one ? player.play([songs[i]], 0, false, kind, id) : player.play(songs, i, false, kind, id));
 </script>
 
-{#if !numbered}
+{#if ui.wide && !numbered && !one}
   <div class="heads" aria-hidden="true">
     <span class="cols"><span></span><span>{W.songHeads.song}</span><span>{W.songHeads.artist}</span><span>{W.songHeads.album}</span></span>
-    <span class="seal"></span><span class="len">{W.songHeads.time}</span><span class="room"></span>{#if moved}<span class="room grip"></span>{/if}
+    <span class="seal"></span><span class="len">{W.songHeads.time}</span><span class="room"></span>{#if moved}<span class="room"></span>{/if}
   </div>
 {/if}
 <ol class="songs" class:numbered use:sortable={{ moved: (from, to) => moved?.(from, to) }}>
@@ -47,7 +47,7 @@
         {#if numbered}
           <span class="n">{#if s.id === playingId}<span class="bars" class:still={!player.playing}><i></i><i></i><i></i></span>{:else}{s.track || i + 1}{/if}</span>
         {:else}
-          <span class="art"><Cover src={s.cover} /></span>
+          <span class="art"><Cover src={s.cover} radius="var(--row-art)" /></span>
         {/if}
         <span class="title clip">{s.title}</span>
         <span class="artist clip">{s.artist}</span>
@@ -72,38 +72,13 @@
     margin: 0 -8px;
     padding: 0;
   }
-  li,
-  .heads {
+  li {
     position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
     padding-right: 8px;
-  }
-  li {
     border-radius: 10px;
-  }
-  .heads {
-    margin: 0 -8px 2px;
-    height: 28px;
-    color: var(--ink2);
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .heads .cols {
-    flex: 1;
-    min-width: 0;
-    display: grid;
-    grid-template-columns: 44px 2fr 1.4fr 1.4fr;
-    column-gap: 14px;
-    padding: 0 8px;
-  }
-  .heads .room {
-    width: 40px;
-    flex: none;
-  }
-  .heads .grip {
-    width: 32px;
   }
   li:hover {
     background: var(--hover);
@@ -205,12 +180,78 @@
       opacity: 1;
     }
   }
-  @media (max-width: 719px) {
-    .heads {
-      display: none;
+  /* The desktop's list on a wide window: rows 56 px high with covers (44 numbered), small words, the song,
+     artist and album sharing the room 4:3:3 under their heads. */
+  @media (min-width: 720px) {
+    .songs {
+      --row-art: 5px;
     }
-    .seal:empty {
-      display: none;
+    li {
+      border-radius: 7px;
+      gap: 8px;
+      padding-right: 12px;
+    }
+    .play {
+      grid-template-columns: 44px 4fr 3fr 3fr;
+      column-gap: 12px;
+      min-height: 56px;
+      padding: 6px 0 6px 8px;
+      font-size: 13px;
+    }
+    /* Over the columns, as the desktop's: 28 px high, small and quiet. */
+    .heads {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 28px;
+      margin: 0 -8px;
+      padding-right: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink2);
+    }
+    .cols {
+      flex: 1;
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 44px 4fr 3fr 3fr;
+      column-gap: 12px;
+      padding-left: 8px;
+    }
+    .room {
+      width: 32px;
+      flex: none;
+    }
+    .heads .len {
+      font-size: 12px;
+    }
+    .numbered .play {
+      grid-template-columns: 24px 2fr 1fr;
+      min-height: 44px;
+      padding-block: 0;
+    }
+    .n {
+      justify-content: flex-end;
+    }
+    .title {
+      font-size: 13px;
+      line-height: 17px;
+    }
+    .seal {
+      width: 15px;
+    }
+    .starred :global(.icon) {
+      width: 15px;
+      height: 15px;
+    }
+    .more {
+      width: 32px;
+      height: 32px;
+    }
+  }
+  @media (max-width: 719px) {
+    .songs {
+      --row-art: var(--r-cover);
     }
     .play {
       grid-template-columns: 44px 1fr;

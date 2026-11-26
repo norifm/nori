@@ -47,6 +47,11 @@
     color: var(--accent);
     font-weight: 700;
   }
+  @media (min-width: 720px) {
+    .tab {
+      font-size: 13px;
+    }
+  }
   /* The bold name's room, held by an unseen copy. */
   .name {
     display: inline-grid;

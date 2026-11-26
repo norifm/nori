@@ -92,4 +92,10 @@
   .mix:hover::after {
     background: color-mix(in srgb, var(--card) 15%, transparent);
   }
+  /* The desktop's name sits over its line's descent: 17 px up from the foot. */
+  @media (min-width: 720px) {
+    .words {
+      bottom: 17px;
+    }
+  }
 </style>

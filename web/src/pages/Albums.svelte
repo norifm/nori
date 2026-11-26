@@ -29,7 +29,7 @@
   }
 </script>
 
-<Page title={W.albums} back places>
+<Page title={W.albums} back={!ui.wide} places>
   {#snippet head()}<button class="pill quiet small" onclick={() => void player.shuffleLibrary(true)}><Icon name="shuffle" />{W.shuffle}</button>{/snippet}
   {#if sort}
     <AlbumGrid {sort} {favorites} top="albums">
@@ -72,5 +72,11 @@
   }
   .filter.on :global(svg) {
     color: var(--accent);
+  }
+  /* The desktop's order bar: 140 px down, 22 px over the grid. */
+  @media (min-width: 720px) {
+    .bar {
+      margin: -12px 0 22px;
+    }
   }
 </style>

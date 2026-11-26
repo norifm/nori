@@ -41,10 +41,10 @@
 
 <header class="top chrome" id="nav">
   <nav class="tabs" aria-label={W.library}>
-    <a class="tab" class:on={on("home", "row")} href={href("home")} data-top="home"><Icon name="home-simple" /><span>{W.home}</span></a>
+    <a class="tab" class:on={on("home", "row")} href={href("home")} data-top="home"><Icon name="home-simple" /><span class="name" data-name={W.home}>{W.home}</span></a>
     <span class="sep"></span>
     {#each sections as s (s)}
-      <a class="tab" class:on={on(...tops[s])} href={sectionPage[s][0]} data-top={s === "Albums" ? "library" : undefined}><Icon name={sectionPage[s][1]} /><span>{W.librarySections[s]}</span></a>
+      <a class="tab" class:on={on(...tops[s])} href={sectionPage[s][0]} data-top={s === "Albums" ? "library" : undefined}><Icon name={sectionPage[s][1]} /><span class="name" data-name={W.librarySections[s]}>{W.librarySections[s]}</span></a>
     {/each}
   </nav>
   <SearchBox />
@@ -83,7 +83,6 @@
     border-radius: 18px;
     color: var(--ink2);
     font-size: 13px;
-    font-weight: 500;
     white-space: nowrap;
   }
   .tab :global(.icon) {
@@ -96,6 +95,17 @@
   }
   .tab.on {
     color: var(--accent);
+    font-weight: 700;
+  }
+  /* The bold name's room, held by an unseen copy, so nothing moves as a tab lights. */
+  .name {
+    display: inline-grid;
+  }
+  .name::after {
+    content: attr(data-name);
+    font-weight: 700;
+    height: 0;
+    visibility: hidden;
   }
   .sep {
     width: 1px;
@@ -112,8 +122,8 @@
     width: 20px;
     height: 20px;
   }
-  /* Named only while there is room, as the desktop's; the current one always. */
-  @media (max-width: 1023px) {
+  /* Named only while there is room (the window under 912 px), as the desktop's; the current one always. */
+  @media (max-width: 911px) {
     .tab span {
       display: none;
     }

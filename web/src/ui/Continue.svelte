@@ -162,4 +162,14 @@
     width: 18px;
     height: 18px;
   }
+  /* The desktop's on a wide window: centered on the page, 22 px under its title. */
+  @media (min-width: 720px) {
+    .continue {
+      margin: 6px auto 0;
+    }
+    .close {
+      top: 2px;
+      right: 2px;
+    }
+  }
 </style>

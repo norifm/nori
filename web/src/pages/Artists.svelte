@@ -30,18 +30,6 @@
     };
   });
 
-  /** Where the panes start: under the page's head, wherever its back button and title put it. */
-  let holder = $state<HTMLElement>();
-  let top = $state(0);
-  $effect(() => {
-    if (!holder) return;
-    const at = holder;
-    const measure = () => (top = at.getBoundingClientRect().top + (document.getElementById("main")?.scrollTop ?? 0));
-    measure();
-    addEventListener("resize", measure);
-    return () => removeEventListener("resize", measure);
-  });
-
   let picked = $state<string | null>(null);
   /** The artist on the right: the one picked while it is listed, else the first listed. */
   const chosen = $derived(shown.find((a) => a.id === picked) ?? shown[0]);
@@ -66,29 +54,34 @@
   });
 </script>
 
-<Page title={W.artists} back places ready={!!page.data} error={page.error}>
-  {#snippet head()}<label class="field search-field filter"><Icon name="search" /><input type="search" placeholder={W.filterArtists} aria-label={W.filterArtists} bind:value={filter} /></label>{/snippet}
+{#snippet field()}<label class="field search-field filter"><Icon name="search" /><input type="search" placeholder={W.filterArtists} aria-label={W.filterArtists} bind:value={filter} /></label>{/snippet}
+
+<Page title={W.artists} back={!ui.wide} places ready={!!page.data} error={page.error}>
+  {#snippet head()}{#if !ui.wide}{@render field()}{/if}{/snippet}
   {#if !shown.length}
     <p class="empty"><Icon name="user" />{W.empty}</p>
   {:else if ui.wide}
-    <div bind:this={holder}></div>
-    <div class="panes" style:top="{top}px">
+    <div class="panes">
       <ul class="names" role="listbox" aria-label={W.artists}>
         {#each shown as a (a.id)}
           <li>
             <button class="name" class:chosen={a.id === chosen?.id} role="option" aria-selected={a.id === chosen?.id} onclick={() => (picked = a.id)} ondblclick={() => go("artist", a.id)} {...itemMark("artist", a.id, { title: a.name, line: a.albumCount ? W.albumCount(a.albumCount) : "", cover: a.cover })}>
-              <span class="art"><Cover src={a.cover} round fallback="user" /></span><span class="clip">{a.name}</span>
+              <span class="art"><Cover src={a.cover} round fallback="user" /></span>
+              <span class="words"><span class="clip">{a.name}</span>{#if a.albumCount}<span class="sub">{W.albumCount(a.albumCount)}</span>{/if}</span>
             </button>
           </li>
         {/each}
       </ul>
       <section class="chosen-pane">
-        {#if chosen}
-          <div class="title">
+        <div class="title">
+          {#if chosen}
             <a class="clip" href={href("artist", chosen.id)}>{chosen.name}</a>
             <button class="plate" aria-label={W.play} title={W.play} onclick={() => void player.playWhole("artist", chosen.id, false)}><Icon name="play-solid" /></button>
             <button class="plate" aria-label={W.shuffle} title={W.shuffle} onclick={() => void player.playWhole("artist", chosen.id, true)}><Icon name="shuffle" /></button>
-          </div>
+          {/if}
+          {@render field()}
+        </div>
+        {#if chosen}
           <div class="caption">{caption}</div>
           {#each shelves as s, n (n)}
             <h2 class="shelf">{s.name}</h2>
@@ -126,9 +119,11 @@
     gap: 8px;
     color: var(--ink2);
   }
-  /* Under the page's head, to the window's foot; each side scrolls on its own, under the player. */
+  /* As the desktop's: the names from 140 px down under the title, the one chosen beside the title and its
+     field; to the window's foot, each side scrolling on its own under the player. */
   .panes {
     position: fixed;
+    top: 84px;
     bottom: 0;
     left: 0;
     right: 0;
@@ -141,15 +136,16 @@
     padding-bottom: calc(var(--bar-h) + 12px);
   }
   .names {
+    margin-top: 56px;
     padding: 0 12px calc(var(--bar-h) + 12px);
-    border-right: 1px solid var(--line);
+    border-right: 1px solid var(--hair);
   }
   .name {
     display: flex;
     align-items: center;
     gap: 12px;
     width: 100%;
-    height: 52px;
+    height: 56px;
     padding: 0 10px;
     border-radius: 9px;
     font-size: 13px;
@@ -164,14 +160,21 @@
     box-shadow: inset 0 0 0 var(--hairline) var(--hair);
   }
   .art {
-    width: 38px;
+    width: 40px;
     flex: none;
+  }
+  .name .words {
+    font-size: 13px;
+    line-height: 16px;
+  }
+  .name .sub {
+    font-size: 12px;
   }
   .art.big {
     width: 48px;
   }
   .chosen-pane {
-    padding: 16px 30px calc(var(--bar-h) + 12px);
+    padding: 5px var(--gutter) calc(var(--bar-h) + 12px) 30px;
     min-width: 0;
   }
   .title {
@@ -195,8 +198,12 @@
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: var(--ink);
-    color: var(--page);
+    background: color-mix(in srgb, var(--ink) 14%, var(--page));
+    color: var(--ink);
+    flex: none;
+  }
+  .title .filter {
+    width: 226px;
     flex: none;
   }
   .plate :global(.icon) {

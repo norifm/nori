@@ -128,7 +128,7 @@
 <svelte:window onpointerdown={(e) => open && !box?.contains(e.target as Node) && close()} />
 
 <div class="box" bind:this={box}>
-  <form class="search" class:on={route.tab === "search" || focused} role="search" onsubmit={submit}>
+  <form class="search" class:on={route.tab === "search" || focused} class:previewing={shown} role="search" onsubmit={submit}>
     <Icon name="search" />
     <input
       type="search"
@@ -184,7 +184,8 @@
   .box {
     position: relative;
   }
-  /* As the desktop's: a capsule in the top pill that widens while it is typed in. */
+  /* As the desktop's: a capsule in the top pill that widens while it is typed in, and again while its
+     results show. */
   .search {
     display: flex;
     align-items: center;
@@ -205,22 +206,29 @@
     color: var(--accent);
   }
   .search:focus-within {
-    width: 360px;
+    width: 280px;
     border-color: var(--accent);
+  }
+  .search.previewing {
+    width: 360px;
   }
   .search :global(.icon) {
     width: 18px;
     height: 18px;
     flex: none;
   }
-  @media (max-width: 1023px) {
+  /* A circle in a top bar under 880 px (the window under 912). */
+  @media (max-width: 911px) {
     .search {
       width: 36px;
       padding: 0 8px;
     }
     .search:focus-within {
-      width: 300px;
+      width: 220px;
       padding: 0 12px 0 10px;
+    }
+    .search.previewing {
+      width: 300px;
     }
   }
   input {
@@ -239,10 +247,14 @@
   input::-webkit-search-cancel-button {
     display: none;
   }
-  /* A popover, as the menus: hanging from the field, as wide as it, as the desktop's. Its rows' corners are
-     the tile's less the inset; a cover's are the row's less the 6 px it sits in. */
+  /* As the desktop's: hanging from the field, as wide as it, the chrome's paper and outline. Its rows'
+     corners are its own less the inset. */
   .results {
-    --inner-art: calc(var(--inner) - 6px);
+    --inner: 18px;
+    --inner-art: 6px;
+    border-radius: 24px;
+    background: color-mix(in srgb, var(--page) 88%, transparent);
+    border: 1px solid var(--outline);
     position: absolute;
     top: 46px;
     left: 0;
@@ -252,9 +264,9 @@
     z-index: 5;
   }
   .cap {
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.5px;
     text-transform: uppercase;
     color: var(--ink2);
     padding: 12px 10px 4px;
@@ -287,11 +299,11 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    font-size: 14px;
-    line-height: 18px;
+    font-size: 13px;
+    line-height: 17px;
   }
   .sub {
-    font-size: 12.5px;
+    font-size: 12px;
     color: var(--ink2);
   }
   .res > :global(.icon) {
