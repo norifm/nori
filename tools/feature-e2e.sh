@@ -787,7 +787,7 @@ CAR
   # an earlier section can leave this album's first track there, so another song is current.
   "$app" play "$OTHER" >/dev/null; wait_for playing True 20 >/dev/null; "$app" do pause >/dev/null
   "$app" open library >/dev/null
-  check "the library's Downloads button opens its page" tapnode content-desc Downloads
+  check "the library's Downloads place opens its page" tapnode text Downloads
   check "the phone lists the saved album" wait_until 10 on_screen 'text="Long Album"'
   check "the phone opens the downloaded album" tapnode text "Long Album"
   check "the album uses its downloaded page" wait_for route "downloaded/{id}" 8

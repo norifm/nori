@@ -151,7 +151,8 @@ fun LibraryScreen(actions: ActionsViewModel) {
     // Only the shown section's view model is made, so only it loads anything.
     val albums = if (shown == LibrarySection.ALBUMS) viewModel<AlbumsViewModel>() else null
     Column {
-        LargeTitle(say.library) { Places(favorites = LibrarySection.FAVOURITES in sections) }
+        LargeTitle(say.library)
+        Places(favorites = LibrarySection.FAVOURITES in sections)
         // A section asked for from elsewhere may be far along the strip: it opens scrolled to its chip.
         val strip = rememberLazyListState(initialFirstVisibleItemIndex = chips.indexOf(shown).coerceAtLeast(0))
         LazyRow(Modifier.bleedsToEdges(), strip, contentPadding = edgePadding(horizontal = Space.gutter, vertical = LIST_GAP), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -178,13 +179,22 @@ internal fun LibrarySection.onLibraryPage(): Boolean = when (this) {
     else -> true
 }
 
-/** The places the library keeps, not kinds of music: a glyph each beside its title, each opening its page. */
+/**
+ * The places the library keeps, not kinds of music: a pill each under the title, its glyph and its name,
+ * each opening its page. Above the sections' chips, apart from a section's own Favorites filter.
+ */
 @Composable
 private fun Places(favorites: Boolean) {
     val nav = LocalNav.current
     val rules = LocalRules.current
-    if (favorites) GlyphButton(Kanji.Seal, say.librarySection(LibrarySection.FAVOURITES)) { nav.librarySection(LibrarySection.FAVOURITES) }
-    for (s in listOf(LibrarySection.DOWNLOADS, LibrarySection.HISTORY)) if (s in rules.sections) GlyphButton(sectionIcon(s), say.librarySection(s)) { nav.librarySection(s) }
+    val places = listOfNotNull(LibrarySection.FAVOURITES.takeIf { favorites }) + listOf(LibrarySection.DOWNLOADS, LibrarySection.HISTORY).filter { it in rules.sections }
+    if (places.isEmpty()) return
+    Row(Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (s in places) BarPill(false, { nav.librarySection(s) }) {
+            Icon(sectionIcon(s), null, Modifier.size(16.dp))
+            Text(say.librarySection(s), Modifier.padding(start = 6.dp), style = BAR_TEXT, maxLines = 1)
+        }
+    }
 }
 
 /** The narrowest a card is on a wide screen, and the gap between cards: the grid of the Albums page and of a home row's full view. */
