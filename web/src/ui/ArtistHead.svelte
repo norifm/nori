@@ -50,7 +50,7 @@
   });
 </script>
 
-<div class="banner" bind:this={banner} aria-hidden="true">
+<div class="banner backdrop" bind:this={banner} aria-hidden="true">
   <!-- Another picture's wash comes in afresh; the same one's goes as the colors do (Midnight wears none). -->
   {#if lent.look?.own}{#key lent.look.cover}<canvas class="wash" use:paint={lent.look.own} out:fade={{ duration: still() ? 0 : RECOLOR_MS }}></canvas>{/key}{/if}
   {#if picture}<img src={picture} alt="" class:loaded onload={() => (loaded = true)} />{/if}
@@ -65,13 +65,12 @@
 </header>
 
 <style>
-  /* Across the top of the page that scrolls (main), behind the head. */
+  /* Across the top of the page that scrolls (main), behind the head, and on behind a docked side sheet
+     (`backdrop`). */
   .banner {
     --tall: max(280px, 40vh);
     position: absolute;
     top: 0;
-    left: 0;
-    width: 100%;
     height: var(--tall);
     z-index: -1;
     pointer-events: none;

@@ -217,8 +217,8 @@
     height: 18px;
     flex: none;
   }
-  /* A circle in a top bar under 880 px (the window under 912). */
-  @media (max-width: 911px) {
+  /* A circle in a top bar under 880 px. */
+  @container top (max-width: 861px) {
     .search {
       width: 36px;
       padding: 0 8px;

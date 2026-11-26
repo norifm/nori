@@ -506,6 +506,8 @@ export global Chrome {
     in property <length> player-x;
     in property <length> player-w;
     out property <length> top-radius: 24px;
+    // The top pill's way down from the window's top, and the player pill's up from its foot.
+    out property <length> top-y: 12px;
     // Concentric with the song's cover: its 14 px corner plus the 6 px it sits in from the edge.
     out property <length> player-radius: 20px;
     // How much of the page's colour lies over the blurred page inside a pill: 55 %, or 88 % where it is not blurred.
@@ -1029,14 +1031,16 @@ component TabButton inherits Rectangle {
     in property <Glyph> icon;
     in property <bool> current;
     in property <bool> named;
+    // Its room beside the glyph and the name, on each side.
+    in property <length> pad: 12px;
     callback clicked;
     height: 36px;
     width: row.preferred-width;
     border-radius: 18px;
     background: touch.has-hover ? Theme.hover : transparent;
     row := HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
+        padding-left: root.pad;
+        padding-right: root.pad;
         spacing: 7px;
         // Favorites' seal is stamped while it is the current tab, as a liked one is.
         Icon {
@@ -2492,9 +2496,10 @@ component ShelfView inherits VerticalLayout {
     changed live => { root.hold(); }
     property <int> shown: root.loading ? root.columns : root.lines;
     // The row is seen from a gap before the left margin to a gap past the right one, so the cards beside
-    // the whole ones are not glimpsed; it scrolls until its last card stands at the right margin.
+    // the whole ones are not glimpsed; it scrolls until its last card stands at the right margin. Its right
+    // edge is where the next card's whole pixel starts, as the cards are placed, so not a pixel of it shows.
     property <length> inset: root.pad - root.gap;
-    property <length> seen: root.width - 2 * root.inset;
+    property <length> seen: floor((root.gap + root.columns * root.step) / 1phx) * 1phx;
     property <length> end: min(0, root.seen - (root.gap + root.shown * root.step));
     // An arrow's page moves smoothly; a scroll by hand follows the hand.
     property <bool> paging;
@@ -4551,9 +4556,12 @@ component JamHeader inherits VerticalLayout {
 component PanelTabs inherits HorizontalLayout {
     in property <Panel> current;
     in property <bool> devices;
+    // Each tab's room on its sides: less in the sheet, which keeps a corner for its close button.
+    in property <length> pad: 12px;
     callback picked(Panel);
     spacing: 2px;
     if root.devices: TabButton {
+        pad: root.pad;
         text: "Devices";
         icon: Output.shown;
         named: true;
@@ -4561,6 +4569,7 @@ component PanelTabs inherits HorizontalLayout {
         clicked => { root.picked(Panel.devices); }
     }
     TabButton {
+        pad: root.pad;
         text: "Lyrics";
         icon: Icons.quote-message;
         named: true;
@@ -4568,6 +4577,7 @@ component PanelTabs inherits HorizontalLayout {
         clicked => { root.picked(Panel.lyrics); }
     }
     TabButton {
+        pad: root.pad;
         text: "Queue";
         icon: Icons.playlist;
         named: true;
@@ -8553,9 +8563,20 @@ export component AppWindow inherits Window {
     // The inspector on the right: 0 shut, 1 Playing Next, 2 lyrics, 3 the other devices. It keeps showing
     // the last one while it slides away.
     in-out property <Panel> inspector;
-    // How far the sheet on the right is in: it floats over the page, which stays where it is.
+    // How far the sheet on the right is in.
     property <float> panel-in: self.inspector != Panel.none ? 1 : 0;
     animate panel-in { duration: Motion.reduced ? 0ms : 240ms; enabled: !Motion.reduced; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+    // From this width the sheet docks beside the page, which makes room for it: the page left keeps 764 px,
+    // the settings column under its top pill and four columns of cards. Narrower, it floats over the page.
+    property <bool> docks: self.width >= 1100px;
+    // What the docked sheet takes of the page's width with its inset from the window's edge (the pills'),
+    // eased as it comes and goes (a resize moves it at once). The compositor centers both pills on the page
+    // left; the page's backdrop runs on behind the sheet.
+    out property <length> panel-room: self.docks ? self.panel-in * (Theme.panel-w + 16px) : 0;
+    property <length> page-w: self.width - self.panel-room;
+    // How far the page shown has scrolled, for its backdrop.
+    property <length> page-top;
+    changed panel-room => { root.page-moved(); }
     // Remote control is on: the devices button, and the places the music can play.
     in property <bool> devices-on;
     in property <[DeviceRow]> devices;
@@ -8663,11 +8684,11 @@ export component AppWindow inherits Window {
     callback open-accounts();
     // The text the page's list is narrowed by.
     in-out property <string> find-text;
-    // The library pages' margins (the page is the window's width).
-    property <length> page-gutter: Frame.gutter(self.width);
+    // The library pages' margins (the page is the window's width, less a docked sheet's).
+    property <length> page-gutter: Frame.gutter(self.page-w);
     // Where the page shown starts, and its back disc with it: an album's narrow column, the genres' and the
     // decades', or the gutter.
-    property <length> page-x: (root.view == View.page && root.page-kind == PageLayout.album) || root.view == View.genres || root.view == View.decades ? Frame.column-x(self.width) : root.page-gutter;
+    property <length> page-x: (root.view == View.page && root.page-kind == PageLayout.album) || root.view == View.genres || root.view == View.decades ? Frame.column-x(self.page-w) : root.page-gutter;
     // An artist's picture: at most 40 % of the window's height, so the releases under it show.
     property <length> artist-hero: max(280px, root.height * 0.4);
     // The library list shown has nothing in it.
@@ -9600,10 +9621,51 @@ export component AppWindow inherits Window {
 
         if root.view != View.login: Rectangle {
             visible: full-screen.opacity < 1;
-            // The page; it runs up under the top pill and under the player pill, and gives the panel its room.
-            Rectangle {
+            // A page's backdrop, across the whole window and so under a docked panel too: an album's, a playlist's
+            // or a mix's cover's own wash across the top, running out into the page's dyed paper, as Android's page
+            // lets its cover melt into it; an artist's picture, drifting up slower than the page as it scrolls and
+            // dissolving into the page's colour. It comes in with the page, as far, and scrolls with the cover and
+            // title it sits behind.
+            if root.view == View.page: Fade {
+                push: true;
+                lead: 0.3 * root.page-w / root.width;
+                Image {
+                    y: min(0px, root.page-top);
+                    width: 100%;
+                    height: 440px;
+                    visible: root.covers-tint;
+                    source: root.page-wash;
+                    image-fit: fill;
+                }
+                Rectangle {
+                    y: min(0px, root.page-top);
+                    width: 100%;
+                    height: 440px;
+                    background: @linear-gradient(180deg, Theme.ground.with-alpha(0.15) 0%, Theme.ground.with-alpha(0.55) 55%, Theme.ground 100%);
+                }
+                if root.page-kind == PageLayout.artist: Rectangle {
+                    y: max(-self.height, root.page-top * 0.45);
+                    width: 100%;
+                    height: root.artist-hero;
+                    opacity: 1 + max(-0.8, root.page-top / self.height);
+                    clip: true;
+                    Image {
+                        width: 100%;
+                        height: 100%;
+                        source: root.art(root.page-art, 2, root.covers-rev);
+                        image-fit: cover;
+                        opacity: self.source.width > 0 ? 1 : 0;
+                        animate opacity { duration: Motion.reduced ? 0ms : 400ms; enabled: !Motion.reduced; easing: ease-out; }
+                    }
+                    Rectangle {
+                        background: @linear-gradient(180deg, Theme.ground.with-alpha(0) 0%, Theme.ground.with-alpha(0) 45%, Theme.ground.with-alpha(0.7) 78%, Theme.ground 100%);
+                    }
+                }
+            }
+            // The page; it runs up under the top pill and under the player pill, and gives a docked panel its room.
+            page-area := Rectangle {
                 x: 0;
-                width: parent.width;
+                width: root.page-w;
                 clip: true;
 
 
@@ -9880,8 +9942,8 @@ export component AppWindow inherits Window {
                                 // that need no words, the library's biggest genres and its decades. In the page's column,
                                 // under the top pill.
                                 if root.search-blank && (root.recent-searches.length > 0 || root.search-genres.length > 0 || root.decades.length > 0): HorizontalLayout {
-                                    padding-left: Frame.column-x(root.width);
-                                    padding-right: root.width - Frame.column-x(root.width) - Frame.column-w(root.width);
+                                    padding-left: Frame.column-x(root.page-w);
+                                    padding-right: root.page-w - Frame.column-x(root.page-w) - Frame.column-w(root.page-w);
                                     browse := VerticalLayout {
                                         spacing: 28px;
                                         if root.recent-searches.length > 0: VerticalLayout {
@@ -10808,46 +10870,13 @@ export component AppWindow inherits Window {
                 // into the page, and the page wears the season's paper dyed with it.
                 if root.view == View.page: Fade {
                     push: true;
+                    // Clear, over its backdrop.
+                    background: transparent;
                     Rectangle {
-                        // The cover's own wash across the top, running out into the page's dyed paper, as Android's
-                        // page lets its cover melt into it. Inside the page, which is opaque while it slides in. It
-                        // scrolls with the cover and title it sits behind.
-                        Image {
-                            y: min(0px, page-flick.content-y);
-                            width: 100%;
-                            height: 440px;
-                            visible: root.covers-tint;
-                            source: root.page-wash;
-                            image-fit: fill;
-                        }
-                        Rectangle {
-                            y: min(0px, page-flick.content-y);
-                            height: 440px;
-                            background: @linear-gradient(180deg, Theme.ground.with-alpha(0.15) 0%, Theme.ground.with-alpha(0.55) 55%, Theme.ground 100%);
-                        }
-                        // An artist: the picture across the page's whole width, drifting up slower than the page
-                        // as it scrolls, and dissolving into the page's colour.
-                        if root.page-kind == PageLayout.artist: Rectangle {
-                            y: max(-self.height, page-flick.content-y * 0.45);
-                            width: parent.width;
-                            height: root.artist-hero;
-                            opacity: 1 + max(-0.8, page-flick.content-y / self.height);
-                            clip: true;
-                            Image {
-                                width: 100%;
-                                height: 100%;
-                                source: root.art(root.page-art, 2, root.covers-rev);
-                                image-fit: cover;
-                                opacity: self.source.width > 0 ? 1 : 0;
-                                animate opacity { duration: Motion.reduced ? 0ms : 400ms; enabled: !Motion.reduced; easing: ease-out; }
-                            }
-                            Rectangle {
-                                background: @linear-gradient(180deg, Theme.ground.with-alpha(0) 0%, Theme.ground.with-alpha(0) 45%, Theme.ground.with-alpha(0.7) 78%, Theme.ground 100%);
-                            }
-                        }
-
                         page-flick := Remembered {
                             content-height: detail.preferred-height;
+                            init => { root.page-top = self.content-y; }
+                            changed content-y => { root.page-top = self.content-y; }
                             detail := VerticalLayout {
                                 width: parent.width;
                                 // An album's list holds a number, a title and a time: it keeps to the page's narrow
@@ -11632,35 +11661,53 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // The sheet on the right, floating between the two pills over the page (which stays where it is): the
-            // lyrics sung line by line, what plays next, or the other devices, under their tabs. It wears the
-            // page's own colour, as the player pill does, never the song's colours.
-            Rectangle {
+            // The sheet on the right: the lyrics sung line by line, what plays next, or the other devices, under
+            // their tabs, its corner the tabs' plus their inset, as the top pill's is. Docked, it is a third pill
+            // beside the page, from the top pill's top to the player pill's foot and as far in from the window's
+            // edge, in their outline and paper over the page's backdrop; it slides in from the edge as the page and
+            // both pills make room. On a narrow window it floats between the pills over the page, in the page's own
+            // color as the player pill is (never the song's colors).
+            sheet := Rectangle {
+                // Where its panel starts, under its tabs.
+                property <length> head: 52px;
                 width: Theme.panel-w;
-                x: parent.width - self.width - 16px + (1 - root.panel-in) * 24px;
-                y: Chrome.top-room - 8px;
-                height: parent.height - self.y - Chrome.bottom-room + 12px;
+                x: root.docks ? root.page-w : parent.width - self.width - 16px + (1 - root.panel-in) * 24px;
+                y: root.docks ? Chrome.top-y : Chrome.top-room - 8px;
+                height: parent.height - self.y - (root.docks ? Chrome.top-y : Chrome.bottom-room - 12px);
                 visible: root.panel-in > 0;
-                opacity: root.panel-in;
-                border-radius: 22px;
+                opacity: root.docks ? 1 : root.panel-in;
+                border-radius: Chrome.top-radius;
                 border-width: 1px;
                 border-color: Theme.outline;
-                background: Theme.ground;
+                background: root.docks ? Theme.ground.with-alpha(Chrome.tint) : Theme.ground;
                 clip: true;
                 // Presses and scrolls on the sheet's own ground stay on it, rather than reaching the page under it.
                 TouchArea {
                     scroll-event(e) => { accept }
                 }
                 PanelTabs {
-                    x: 10px;
-                    y: 10px;
+                    x: 8px;
+                    y: 6px;
+                    pad: 10px;
                     current: root.shown-panel;
                     devices: root.devices-on;
                     picked(p) => { root.inspector = root.inspector == p ? Panel.none : p; }
                 }
+                // Its own way shut, which stays put as the pills slide with their buttons; inset as the tabs are, so
+                // its circle is concentric with the corner.
+                close := IconButton {
+                    x: parent.width - self.width - 8px;
+                    y: 8px;
+                    glyph: Icons.xmark;
+                    quiet: true;
+                    accessible-role: button;
+                    accessible-label: "Close";
+                    accessible-action-default => { root.inspector = Panel.none; }
+                    clicked => { root.inspector = Panel.none; }
+                }
                 // Under the tabs, the panel showing.
                 if root.shown-panel == Panel.lyrics && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
-                    y: 56px;
+                    y: sheet.head;
                     height: 120px;
                     x: 24px;
                     width: parent.width - 48px;
@@ -11679,8 +11726,8 @@ export component AppWindow inherits Window {
                     opacity: self.came && !root.lyrics-waiting ? 1 : 0;
                     animate opacity { duration: Motion.reduced ? 0ms : 200ms; enabled: !Motion.reduced; easing: ease-out; }
                     init => { self.came = true; }
-                    y: 56px;
-                    height: parent.height - 56px;
+                    y: sheet.head;
+                    height: parent.height - sheet.head;
                     content-width: self.width;
                     // As tall as where the last line ends, as laid out: the layout's own sum counts a wrapped line
                     // as one row, and long lyrics stopped scrolling before their end.
@@ -11821,8 +11868,8 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.shown-panel == Panel.devices: DevicesView {
-                    y: 56px;
-                    height: parent.height - 56px;
+                    y: sheet.head;
+                    height: parent.height - sheet.head;
                     devices: root.devices;
                     pairing-link: root.pairing-link;
                     paired: root.paired;
@@ -11844,8 +11891,8 @@ export component AppWindow inherits Window {
                     }
                 }
                 if root.shown-panel == Panel.queue && root.panel-in > 0: QueueView {
-                    y: 56px;
-                    height: parent.height - 56px;
+                    y: sheet.head;
+                    height: parent.height - sheet.head;
                     queue: root.queue;
                     from: root.queue-from;
                     covers-rev: root.covers-rev;

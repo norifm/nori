@@ -698,7 +698,7 @@ impl Draw {
             let (Some(texture), true) = (find(role), shared.shown(role)) else {
                 continue;
             };
-            let f = fade_of(role, win);
+            let f = fade_of(role, win, shared.dock.get());
             let u = uniforms(
                 f.strip.scaled(scale),
                 [w, h, w, h],
@@ -707,8 +707,9 @@ impl Draw {
                 [f.at, f.top as u8 as f32, 0.0, 0.0],
                 [0.0; 4],
             );
+            let u = with_raised(u, f.hole.as_slice(), scale);
             self.pass(target, &self.fade, &u, [page, pyramid], false, true);
-            let rect = pill_rect(role, win).scaled(scale);
+            let rect = pill_rect(role, win, shared.dock.get()).scaled(scale);
             let u = uniforms(
                 rect,
                 [w, h, w, h],

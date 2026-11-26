@@ -444,7 +444,7 @@ node web/check/check.mjs http://localhost:8080/ play,seekbar     # only these ph
 ```
 
 The checks drive headless Chrome, at Google Chrome's macOS path by default. `CHROME` names another
-browser. The phases are `browse`, `profile`, `play`, `recolor`, `lyrics`, `skip`, `stats`, `queue`, `instant`,
+browser. The phases are `browse`, `profile`, `play`, `recolor`, `lyrics`, `skip`, `stats`, `queue`, `dock`, `instant`,
 `automix`, `crossfade`, `codecs`, `seekbar`, `edit`, `about`, `crash`, `reopen`, `tabs`, `offline`, `early` and
 `slowstart`.
 

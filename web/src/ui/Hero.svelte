@@ -64,7 +64,7 @@
 </script>
 
 <!-- Midnight wears none: it goes as the colors do. -->
-{#if own}<div class="head-wash" aria-hidden="true" out:fade={{ duration: still() ? 0 : RECOLOR_MS }}><canvas bind:this={washed}></canvas></div>{/if}
+{#if own}<div class="head-wash backdrop" aria-hidden="true" out:fade={{ duration: still() ? 0 : RECOLOR_MS }}><canvas bind:this={washed}></canvas></div>{/if}
 <div class="hero" class:circle={round}>
   <div class="art" {...item}><Cover src={cover} {round} radius="var(--hero-art)" {fallback} /></div>
   <div class="text">
@@ -83,13 +83,12 @@
 {#if ui.wide}<div class="info clip">{label}</div>{/if}
 
 <style>
-  /* Across the top of the page that scrolls (main), behind its head: drawn small and stretched, as it is
-     already soft, under the page's paper growing from 15 % to whole. */
+  /* Across the top of the page that scrolls (main), behind its head, and on behind a docked side sheet
+     (`backdrop`): drawn small and stretched, as it is already soft, under the page's paper growing from 15 %
+     to whole. */
   .head-wash {
     position: absolute;
     top: 0;
-    left: 0;
-    width: 100%;
     height: 440px;
     z-index: -1;
     pointer-events: none;

@@ -190,8 +190,11 @@ https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw.
 - Shapes: covers, cards and grouped rows, sheets and popovers, pills each have their radius; nested
   corners are concentric (outer = inner + inset). Navigation and the player are one outlined pill each,
   the page blurred inside; content scrolls under them. Panels float as sheets over the page; opening one
-  moves nothing else. A shelf that scrolls sideways shows whole cards only on a wide window, as many as fit
-  between the gutters.
+  moves nothing else. On a wide window the side panel (the desktop's and web's devices, lyrics and queue)
+  is a third pill beside the page instead, as tall and as far in as the other two, with its own close
+  button: opening it moves the page's content and both pills over, under the user's hand, while the page's
+  backdrop runs on behind it; below the docking width it floats over the page. A shelf that scrolls
+  sideways shows whole cards only on a wide window, as many as fit between the gutters.
 - A column narrower than the page is centered in it, on a wide window in the top bar's and the player's
   column where it fits; nothing sits at the left beside an empty band.
 - Words are short and plain: a title names the thing, a control says what it does. Settings say only

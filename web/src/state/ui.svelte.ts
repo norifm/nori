@@ -25,6 +25,11 @@ export const beside = (e: MouseEvent): Anchor => {
 /** At the pointer, for a right click. */
 export const pointer = (e: MouseEvent): Anchor => ({ left: e.clientX, top: e.clientY, right: e.clientX, bottom: e.clientY, point: true });
 
+/** The width from which the side sheet docks beside the page. */
+const DOCKS = "(min-width: 1100px)";
+/** How long the page takes to ease to its width beside the side sheet (the sheet's own glide). */
+export const SIDE_MS = 240;
+
 class Ui {
   toast = $state("");
   /** Moves on whenever a saved profile changes (added, renamed, removed, its icon), for what shows them. */
@@ -67,6 +72,13 @@ class Ui {
   tint = $state.raw<{ by: object; vars: string } | null>(null);
   /** The browser is wide enough for the top bar and the player bar (below it: the phone's layout). */
   wide = $state(matchMedia("(min-width: 720px)").matches);
+  /** Wide enough for the side sheet to dock beside the page, which makes room for it: the page left keeps
+   * 764 px, as the desktop's. Narrower, the sheet floats over the page. */
+  docks = $state(matchMedia(DOCKS).matches);
+  /** The side sheet was just opened or shut by a press: the page eases to its new width (a resize moves it
+   * at once). */
+  easing = $state(false);
+  private easingTimer: ReturnType<typeof setTimeout> | undefined;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
   /** What was just taken out of the queue, while its undo is offered: what it says, and the song's id
    * (null: what a clear took). */
@@ -78,6 +90,7 @@ class Ui {
     addEventListener("popstate", () => (this.#full = !!history.state?.full));
     // Reloaded on the full player's step: nothing is open over the page it was taken on.
     if (history.state?.full) history.back();
+    matchMedia(DOCKS).addEventListener("change", (e) => (this.docks = e.matches));
   }
 
   /** A line of news for a few seconds. */
@@ -172,12 +185,24 @@ class Ui {
     this.picking = null;
   }
 
+  /** The side sheet stands docked beside the page, which is narrower by its room (`--dock`). */
+  get docked() {
+    return this.wide && this.docks && !!this.side;
+  }
+
   /** Shows `pane`: on a wide screen in the full player when it is open, else in the side sheet (closed
    * by asking for it again); on a phone in the full player, and asked again it goes back to the cover. */
   show(pane: Pane) {
     if (this.wide && this.full) this.pane = pane;
-    else if (this.wide) this.side = this.side === pane ? null : pane;
-    else {
+    else if (this.wide) {
+      const side = this.side === pane ? null : pane;
+      if (!side !== !this.side && this.docks) {
+        this.easing = true;
+        clearTimeout(this.easingTimer);
+        this.easingTimer = setTimeout(() => (this.easing = false), SIDE_MS);
+      }
+      this.side = side;
+    } else {
       this.full = true;
       this.pane = this.pane === pane ? null : pane;
     }

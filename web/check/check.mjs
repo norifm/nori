@@ -429,13 +429,15 @@ if (!only || only.includes("recolor")) {
   await page.waitForFunction(() => window.nori.page !== undefined, { timeout: 60000 });
 }
 
-/** Opens pane `name` (lyrics, queue, devices, jam) in the side sheet, from the player bar. */
+/** Opens pane `name` (lyrics, queue, devices, jam) in the side sheet, from the player bar, and waits for the
+ * sheet to stand in its place. */
 async function pane(name, p = page) {
   if (!(await p.$(`#side #${name}`))) await p.click(`#bar [data-pane=${name}]`);
   await p.waitForSelector(`#side #${name}`);
+  await p.waitForFunction(() => document.querySelector("#side").getAnimations().length === 0);
 }
 
-/** Closes the side pane a phase left open: it floats over the page's own buttons. */
+/** Closes the side pane a phase left open: it takes the page's room, or floats over its buttons. */
 async function noPane(p = page) {
   const open = await p.$("#bar [data-pane][aria-pressed=true]");
   if (open) await open.click();
@@ -687,6 +689,73 @@ if (!only || only.includes("back")) {
   report.back = { opened, first, second };
   expect(opened && !first.full && first.hash === `#/album/${id}`, "Back from Now Playing closes it and stays on the page under it");
   expect(second.startsWith("#/albums"), "the next Back returns to the page before");
+}
+
+if (!only || only.includes("dock")) {
+  // On a wide window the side sheet docks as a third pill: as far in from the window's edge as the bars,
+  // from the top bar's top to the player bar's foot, rounded and outlined all round over the page blurred;
+  // the page's content ends where it begins and both bars center on the page, while an album's wash runs on
+  // behind it to the window's edge. Its close button shuts it, and the page and the bars are then where they
+  // were before it opened. Narrower, it floats between the bars over the page, which keeps the window's
+  // width. Home's shelves show whole cards only, docked or not, fitted to the page between its gutters. Each
+  // change waited out: the sheet glides and the page eases as it opens or shuts.
+  const settled = () => page.waitForFunction(() => document.getAnimations().every((a) => !(a instanceof CSSTransition) || a.playState !== "running") && !document.querySelector("#side")?.getAnimations().length);
+  await noPane();
+  await settled();
+  await hash("#/albums/alphabeticalByName", "albums");
+  const place = (sel) => page.$eval(sel, (e) => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; });
+  const mid = (r) => (r.left + r.right) / 2;
+  const layout = async () => {
+    const [side, main, top, bar] = [await page.$("#side") && (await place("#side")), await place("#main"), await place("#nav"), await place("#bar")];
+    const cards = await page.$$eval(".grid .card", (c) => c.map((e) => e.getBoundingClientRect()).filter((r) => r.top === c[0].getBoundingClientRect().top).map((r) => r.right));
+    return { side, main: main.right, top: [top.left, top.right], bar: [bar.left, bar.right], columns: cards.length, cardsEnd: Math.max(...cards) };
+  };
+  // Each shelf's cards that are seen at all are seen whole, from the left gutter to the right one (or to its
+  // last card, when they all fit).
+  const shelves = () => page.$$eval("#main .shelf-cards", (all) => all.map((shelf) => {
+    const row = shelf.firstElementChild.getBoundingClientRect();
+    const cards = [...shelf.firstElementChild.children];
+    const seen = cards.map((c) => c.getBoundingClientRect()).filter((r) => r.right > row.left + 0.5 && r.left < row.right - 0.5);
+    const box = shelf.getBoundingClientRect();
+    return { whole: seen.every((r) => r.left >= row.left - 0.5 && r.right <= row.right + 0.5), all: seen.length === cards.length, from: Math.round(seen[0].left - box.left), to: Math.round(box.right - seen.at(-1).right) };
+  }));
+  const shut = await layout();
+  await hash("#/home", "home");
+  await page.waitForSelector("#main .shelf-cards");
+  const homeShut = await shelves();
+  await pane("queue");
+  await settled();
+  const homeDocked = await shelves();
+  const sheet = await page.$eval("#side", (e) => {
+    const s = getComputedStyle(e);
+    return { radius: s.borderTopLeftRadius, borders: [s.borderTopWidth, s.borderRightWidth, s.borderBottomWidth, s.borderLeftWidth], blur: s.backdropFilter };
+  });
+  await hash(`#/album/${album("Second Wind", "Alpha Waves") ?? albums[0].id}`, "album");
+  const wash = await page.waitForSelector(".head-wash", { timeout: 10000 }).then(() => place(".head-wash")).catch(() => null);
+  await hash("#/albums/alphabeticalByName", "albums");
+  await settled();
+  const docked = await layout();
+  await page.click("#side-close");
+  await page.waitForSelector("#side", { hidden: true });
+  await settled();
+  const closed = await layout();
+  await pane("queue");
+  await page.setViewport({ width: 1024, height: 800 });
+  await settled();
+  const floating = await layout();
+  await page.setViewport({ width: 1280, height: 800 });
+  await noPane();
+  await settled();
+  report.dock = { shut, docked, closed, floating, homeShut, homeDocked, sheet, wash };
+  const page_ = 1280 - 336;
+  expect(docked.side?.top === 12 && docked.side?.bottom === 788 && docked.side?.right === 1264 && docked.side?.left === page_, "docked, the side sheet is a third pill, as far in as the bars");
+  expect(sheet.radius === "24px" && new Set(sheet.borders).size === 1 && sheet.borders[0] !== "0px" && sheet.blur.includes("blur"), "docked, the side sheet is rounded and outlined all round, the page blurred inside");
+  expect(docked.main === 1280 && wash?.left === 0 && wash?.right === 1280, "docked, the page's backdrop (an album's wash) runs on behind the side sheet");
+  expect(homeShut.length > 1 && [...homeShut, ...homeDocked].every((r) => r.whole && r.from === 0 && (r.to === 0 || r.all)), "Home's shelves show whole cards from gutter to gutter, docked or not");
+  expect(mid({ left: docked.top[0], right: docked.top[1] }) === page_ / 2 && mid({ left: docked.bar[0], right: docked.bar[1] }) === page_ / 2 && docked.top[1] === page_ - 16, "docked, both bars center on the page");
+  expect(docked.columns < shut.columns && docked.cardsEnd <= page_ - 32, "docked, the page's grid reflows beside the sheet");
+  expect(JSON.stringify(closed) === JSON.stringify(shut), "shut by its close button, the page and the bars are where they were before it opened");
+  expect(floating.side?.top === 68 && floating.main === 1024 && mid({ left: floating.top[0], right: floating.top[1] }) === 512, "narrower, the side sheet floats over the page");
 }
 
 if (!only || only.includes("instant")) {

@@ -100,10 +100,12 @@
 {#if adding}<AddProfile close={() => (adding = false)} added={() => ((adding = false), opened())} />{/if}
 
 <style>
+  /* Centered on the page, beside a docked side sheet. */
   .top {
+    container: top / inline-size;
     position: fixed;
     top: 12px;
-    left: 50%;
+    left: calc((100% - var(--dock)) / 2);
     transform: translateX(-50%);
     width: var(--pill-w);
     height: 48px;
@@ -185,8 +187,8 @@
   .profile :global(.mark) {
     box-shadow: 0 0 0 1px var(--hair);
   }
-  /* Named only while there is room (the window under 912 px), as the desktop's; the current one always. */
-  @media (max-width: 911px) {
+  /* Named only while there is room (the bar under 880 px), as the desktop's; the current one always. */
+  @container top (max-width: 861px) {
     .tab span {
       display: none;
     }

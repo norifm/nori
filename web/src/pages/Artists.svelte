@@ -126,7 +126,7 @@
     top: 84px;
     bottom: 0;
     left: 0;
-    right: 0;
+    right: var(--dock);
     display: grid;
     grid-template-columns: 300px 1fr;
   }

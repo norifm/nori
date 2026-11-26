@@ -15,7 +15,7 @@ struct U {
     face: vec4<f32>,      // pill: blur level in w; fade: the page's colour in rgb
     light: vec4<f32>,     // fade: where its ramp meets the pill, edge at the top; focus: band top, height, pixels per blur step, scale
     gather: vec4<f32>,    // pyramid levels in z
-    raised: array<vec4<f32>, 4>, // focus and the pyramid's first level: rounded rects over the page (x, y, w, h), target pixels; none where w is 0
+    raised: array<vec4<f32>, 4>, // focus, the fades and the pyramid's first level: rounded rects over the page (x, y, w, h), target pixels; none where w is 0
     radii: vec4<f32>,     // their corner radii
 };
 
@@ -184,7 +184,8 @@ fn fs_pill(v: V) -> @location(0) vec4<f32> {
 // The page's colour over what runs out under a pill (Android's `edgeFade`): along the strip, 0 at its far
 // end to 1 at the window's edge. Clear far off, still mostly clear where the pill begins (`light.x`), and
 // thinning out to a trace left at the edge, so the pill's glass has something to show. `light.y` is 1 when
-// the window's edge is at the top of the strip; `face.rgb` the page.
+// the window's edge is at the top of the strip; `face.rgb` the page. A raised shape (the docked side panel)
+// is left out of it.
 fn fade_alpha(t: f32, at: f32) -> f32 {
     let stops = array<f32, 6>(0.0, at, at + (1.0 - at) * 0.3, at + (1.0 - at) * 0.6, at + (1.0 - at) * 0.85, 1.0);
     let alphas = array<f32, 6>(0.0, 0.14, 0.38, 0.64, 0.84, 0.94);
@@ -199,7 +200,7 @@ fn fade_alpha(t: f32, at: f32) -> f32 {
 @fragment
 fn fs_fade(v: V) -> @location(0) vec4<f32> {
     let t = select(v.uv.y, 1.0 - v.uv.y, u.light.y > 0.5);
-    let a = fade_alpha(t, u.light.x);
+    let a = fade_alpha(t, u.light.x) * (1.0 - raised_cover(u.rect.xy + v.uv * u.rect.zw));
     return vec4<f32>(u.face.rgb * a, a);
 }
 

@@ -63,9 +63,11 @@
 </footer>
 
 <style>
+  /* Centered on the page, beside a docked side sheet. */
   .bar {
+    container: bar / inline-size;
     position: fixed;
-    left: 50%;
+    left: calc((100% - var(--dock)) / 2);
     transform: translateX(-50%);
     bottom: 12px;
     width: var(--pill-w);
@@ -196,8 +198,8 @@
   .right :global(.vol .range::-moz-range-thumb) {
     background: transparent;
   }
-  /* No volume slider in a bar under 900 px (the window under 932). */
-  @media (max-width: 931px) {
+  /* No volume slider in a bar under 900 px. */
+  @container bar (max-width: 879px) {
     .right :global(.vol) {
       display: none;
     }

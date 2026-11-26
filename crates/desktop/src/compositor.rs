@@ -40,6 +40,8 @@ const PLAYER_H: f32 = 64.0;
 const PLAYER_BOTTOM: f32 = 12.0;
 const PLAYER_RADIUS: f32 = 20.0;
 const PILL_MAX_W: f32 = 1040.0;
+/// The side panel's width (`Theme.panel-w`); docked, a third pill as tall and as far in as the two.
+const PANEL_W: f32 = 320.0;
 /// A menu's corner (`MenuShape.radius`).
 const MENU_RADIUS: f32 = 14.0;
 /// The window's side margin, and at the top left what the traffic lights take.
@@ -186,6 +188,9 @@ struct Shared {
     proxy: EventLoopProxy<Wake>,
     top_shown: Cell<bool>,
     player_shown: Cell<bool>,
+    /// What the side panel docked on the right takes of the window's width (logical pixels; 0 while it floats
+    /// or is shut): the pills center on the page beside it.
+    dock: Cell<f32>,
     /// The page's colour as painted (RGB, 0 to 1): what the content fades into.
     page_colour: Cell<[f32; 3]>,
     /// The window is not on screen (minimised, covered, locked): nothing is drawn until it shows again.
@@ -371,6 +376,7 @@ pub fn install() -> Result<Compositor, String> {
         proxy: event_loop.create_proxy(),
         top_shown: Cell::new(false),
         player_shown: Cell::new(false),
+        dock: Cell::new(0.0),
         page_colour: Cell::new([0.0; 3]),
         occluded: Cell::new(false),
         focus: RefCell::new(None),
@@ -449,8 +455,16 @@ impl Compositor {
             let l = w.inner_size().to_logical::<f32>(w.scale_factor());
             LogicalSize::new(l.width, l.height)
         });
-        let (top, player) = (pill_rect(Role::Top, size), pill_rect(Role::Player, size));
+        let dock = self.0.dock.get();
+        let (top, player) = (pill_rect(Role::Top, size, dock), pill_rect(Role::Player, size, dock));
         ((top.x, top.w), (player.x, player.w))
+    }
+
+    /// Sets what the docked side panel takes of the window's width (0 while it floats or is shut).
+    pub fn dock(&self, room: f32) {
+        if self.0.dock.replace(room) != room {
+            relayout(&self.0);
+        }
     }
 
     /// Shows or hides the two pills over the page.
@@ -576,10 +590,10 @@ impl Rect {
     }
 }
 
-/// A pill's rect: as wide as the page beside the panel allows up to [`PILL_MAX_W`], centred on that page.
-/// The top pill keeps clear of the traffic lights on both sides.
-fn pill_rect(role: Role, window: LogicalSize) -> Rect {
-    let page = window.width;
+/// A pill's rect: as wide as the page beside the docked panel (`dock` wide) allows up to [`PILL_MAX_W`],
+/// centered on that page. The top pill keeps clear of the traffic lights on both sides.
+fn pill_rect(role: Role, window: LogicalSize, dock: f32) -> Rect {
+    let page = window.width - dock;
     let (side, h, y) = match role {
         Role::Top => (TRAFFIC, TOP_H, TOP_Y),
         _ => (SIDE, PLAYER_H, window.height - PLAYER_H - PLAYER_BOTTOM),
@@ -592,20 +606,23 @@ fn pill_radius(role: Role) -> f32 {
     if role == Role::Top { TOP_RADIUS } else { PLAYER_RADIUS }
 }
 
-/// The fade under a pill: its strip across the window's width (from the window's edge to `reach` past the
-/// pill's outer side), where in the ramp the pill begins, and whether the ramp is opaque at the top.
+/// The fade under a pill: its strip across the window (from the window's edge to `reach` past the pill's outer
+/// side), where in the ramp the pill begins, whether the ramp is opaque at the top, and the docked panel it
+/// leaves out: like the pills, the panel shows the page's backdrop as it is.
 struct Fade {
     strip: Rect,
     at: f32,
     top: bool,
+    hole: Option<Raised>,
 }
 
-fn fade_of(role: Role, window: LogicalSize) -> Fade {
-    let pill = pill_rect(role, window);
+fn fade_of(role: Role, window: LogicalSize, dock: f32) -> Fade {
+    let pill = pill_rect(role, window, dock);
     let top = role == Role::Top;
     let strip = if top { pill.y + pill.h + FADE_PAD } else { window.height - pill.y + FADE_PAD };
     let h = strip + EDGE_REACH;
-    Fade { strip: Rect { x: 0.0, y: if top { 0.0 } else { window.height - h }, w: window.width, h }, at: EDGE_REACH / h, top }
+    let hole = (dock > 0.0).then_some(Raised { rect: [window.width - dock, TOP_Y, PANEL_W, window.height - TOP_Y - PLAYER_BOTTOM], radius: TOP_RADIUS });
+    Fade { strip: Rect { x: 0.0, y: if top { 0.0 } else { window.height - h }, w: window.width, h }, at: EDGE_REACH / h, top, hole }
 }
 
 /// The pyramid level that blurs by [`BLUR_SIGMA`] logical pixels: level k blurs about 0.6 * 2^k pixels.
@@ -614,11 +631,11 @@ fn blur_level(scale: f32) -> f32 {
 }
 
 /// A layer's rect in the window, logical pixels.
-fn place(role: Role, window: LogicalSize) -> (LogicalPosition, LogicalSize) {
+fn place(role: Role, window: LogicalSize, dock: f32) -> (LogicalPosition, LogicalSize) {
     if role == Role::Page {
         return (LogicalPosition::new(0.0, 0.0), window);
     }
-    let r = pill_rect(role, window);
+    let r = pill_rect(role, window, dock);
     (LogicalPosition::new(r.x, r.y), LogicalSize::new(r.w, r.h))
 }
 
@@ -635,7 +652,7 @@ fn layout_layers(s: &Shared) {
     let logical = LogicalSize::new(phys.width as f32 / scale, phys.height as f32 / scale);
     for (layer, role) in s.layers.borrow().iter() {
         let Some(role) = role.get() else { continue };
-        fit_layer(layer, place(role, logical).1, scale);
+        fit_layer(layer, place(role, logical, s.dock.get()).1, scale);
     }
 }
 
@@ -685,7 +702,7 @@ impl Runner {
             if !self.shared.shown(role) || self.layer(role).is_none() {
                 continue;
             }
-            let r = pill_rect(role, win);
+            let r = pill_rect(role, win, self.shared.dock.get());
             let (top, bottom) = if role == Role::Top { (0.0, r.y + r.h + KEEP) } else { (r.y - KEEP, win.height) };
             if at.x >= r.x - KEEP && at.x < r.x + r.w + KEEP && at.y >= top && at.y < bottom {
                 return role;
@@ -696,7 +713,7 @@ impl Runner {
 
     fn local(&self, role: Role, at: LogicalPosition) -> LogicalPosition {
         let Some(win) = self.logical_window() else { return at };
-        let (o, _) = place(role, win);
+        let (o, _) = place(role, win, self.shared.dock.get());
         LogicalPosition::new(at.x - o.x, at.y - o.y)
     }
 
@@ -1144,10 +1161,10 @@ impl Draw {
         let [red, green, blue] = s.page_colour.get();
         for role in [Role::Top, Role::Player] {
             let (Some(view), Some(py), true) = (find(role), &pyramid, s.shown(role)) else { continue };
-            let f = fade_of(role, win);
-            let u = uniforms(f.strip.scaled(scale), [w, h, w, h], [0.0; 4], [red, green, blue, 0.0], [f.at, f.top as u8 as f32, 0.0, 0.0], [0.0; 4]);
+            let f = fade_of(role, win, s.dock.get());
+            let u = with_raised(uniforms(f.strip.scaled(scale), [w, h, w, h], [0.0; 4], [red, green, blue, 0.0], [f.at, f.top as u8 as f32, 0.0, 0.0], [0.0; 4]), f.hole.as_slice(), scale);
             draws.push((&g.fade, g.group(&u, &page, py)));
-            let rect = pill_rect(role, win).scaled(scale);
+            let rect = pill_rect(role, win, s.dock.get()).scaled(scale);
             let u = uniforms(rect, [w, h, w, h], [pill_radius(role) * scale, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, blur_level(scale)], [0.0; 4], [0.0; 4]);
             draws.push((&g.pill, g.group(&u, &page, py)));
             let u = uniforms(rect, [w, h, w, h], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
@@ -1458,30 +1475,45 @@ mod tests {
 
     #[test]
     fn pills_centre_in_the_window_and_stop_at_their_width() {
-        let wide = pill_rect(Role::Player, LogicalSize::new(1600.0, 900.0));
+        let wide = pill_rect(Role::Player, LogicalSize::new(1600.0, 900.0), 0.0);
         assert_eq!((wide.x, wide.w, wide.h), ((1600.0 - PILL_MAX_W) / 2.0, PILL_MAX_W, PLAYER_H));
         assert_eq!(wide.y + wide.h + PLAYER_BOTTOM, 900.0);
-        let narrow = pill_rect(Role::Player, LogicalSize::new(900.0, 600.0));
+        let narrow = pill_rect(Role::Player, LogicalSize::new(900.0, 600.0), 0.0);
         assert_eq!((narrow.x, narrow.w), (SIDE, 900.0 - 2.0 * SIDE));
-        let top = pill_rect(Role::Top, LogicalSize::new(1280.0, 800.0));
+        let top = pill_rect(Role::Top, LogicalSize::new(1280.0, 800.0), 0.0);
         assert_eq!((top.x + top.w / 2.0, top.y, top.h), (640.0, TOP_Y, TOP_H));
         assert!(top.x >= TRAFFIC, "clear of the traffic lights");
-        let tight = pill_rect(Role::Top, LogicalSize::new(860.0, 600.0));
+        let tight = pill_rect(Role::Top, LogicalSize::new(860.0, 600.0), 0.0);
         assert!(tight.x >= TRAFFIC && tight.x + tight.w <= 860.0 - TRAFFIC);
+    }
+
+    #[test]
+    fn beside_a_docked_panel_the_pills_center_on_the_page_and_the_fades_leave_it_out() {
+        let window = LogicalSize::new(1280.0, 800.0);
+        let page = 1280.0 - 336.0;
+        for (role, side) in [(Role::Top, TRAFFIC), (Role::Player, SIDE)] {
+            let r = pill_rect(role, window, 336.0);
+            assert_eq!(r.x + r.w / 2.0, page / 2.0, "{role:?}: centered on the page");
+            assert!(r.x >= side && r.x + r.w <= page - side, "{role:?}: within the page");
+            let fade = fade_of(role, window, 336.0);
+            assert_eq!(fade.strip.w, 1280.0, "{role:?}: the fade runs across the window");
+            assert_eq!(fade.hole, Some(Raised { rect: [1280.0 - 336.0, TOP_Y, PANEL_W, 800.0 - TOP_Y - PLAYER_BOTTOM], radius: TOP_RADIUS }), "{role:?}: but for the panel");
+            assert_eq!(fade_of(role, window, 0.0).hole, None, "{role:?}: shut, nothing is left out");
+        }
     }
 
     #[test]
     fn a_fade_runs_from_the_windows_edge_to_a_reach_past_the_pill() {
         let window = LogicalSize::new(1280.0, 800.0);
-        let bottom = fade_of(Role::Player, window);
-        let pill = pill_rect(Role::Player, window);
+        let bottom = fade_of(Role::Player, window, 0.0);
+        let pill = pill_rect(Role::Player, window, 0.0);
         assert_eq!(bottom.strip.y + bottom.strip.h, 800.0);
         assert!(!bottom.top);
         // The pill's outer side is `at` of the way up the strip's height from where the ramp begins.
         let from_top_of_strip = pill.y - bottom.strip.y;
         assert!((from_top_of_strip - (EDGE_REACH + FADE_PAD)).abs() < 1e-3, "{from_top_of_strip}");
         assert!((bottom.at - EDGE_REACH / bottom.strip.h).abs() < 1e-6);
-        let top = fade_of(Role::Top, window);
+        let top = fade_of(Role::Top, window, 0.0);
         assert!(top.top && top.strip.y == 0.0);
     }
 

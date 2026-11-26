@@ -1,7 +1,9 @@
 <script lang="ts">
   // The app signed in: the page, scrolling under the chrome. On a phone the chrome is one outlined pill at
   // the bottom, the mini player over the tabs (the tabs alone while nothing plays); on a wide screen an
-  // outlined bar along the top and the player's along the bottom. The full player is a layer over them.
+  // outlined bar along the top and the player's along the bottom; on a wide one the side sheet docks as a third
+  // outlined pill beside the page, whose content makes room for it (`--dock`), the two bars centered on what is
+  // left, the page's backdrop running on behind it. The full player is a layer over them.
   // Home comes with the shell; the other pages and the full player load once the first page has drawn,
   // so the first paint carries only what it shows.
   import { untrack, type Component } from "svelte";
@@ -82,7 +84,7 @@
 <!-- Every item's right click opens its menu, wherever it is drawn. -->
 <svelte:window oncontextmenucapture={itemMenu} />
 
-<div class="shell tinted recolors" style={ui.tint?.vars ?? worn.vars} style:--bar-h={ui.wide ? null : playing ? "132px" : "76px"}>
+<div class="shell tinted recolors" class:docked={ui.docked} class:easing={ui.easing} style={ui.tint?.vars ?? worn.vars} style:--bar-h={ui.wide ? null : playing ? "132px" : "76px"}>
   <main id="main">
     {#if pages[route.top]}
       {#await pages[route.top]() then m}<m.default {...props} />{/await}
@@ -112,6 +114,8 @@
   /* The season's colors, or those a page about one cover lends it (`ui.tint`): the page and the chrome
      cross-fade to them (`recolors`). */
   .shell {
+    --dock: 0px;
+    --pill-w: min(1040px, calc(100vw - var(--dock) - 32px));
     position: fixed;
     inset: 0;
     background: var(--page);
@@ -121,15 +125,39 @@
      it holds is 1440 px at most. */
   @media (min-width: 720px) {
     .shell {
-      --gutter: max(clamp(32px, 100vw * 0.032, 40px), (100vw - 1440px) / 2);
+      --gutter: max(clamp(32px, (100vw - var(--dock)) * 0.032, 40px), (100vw - var(--dock) - 1440px) / 2);
     }
   }
-  /* The page scrolls under the chrome, which floats over it. */
+  /* The docked side sheet's room with its inset from the window's edge (the bars'). */
+  .shell.docked {
+    --dock: 336px;
+  }
+  /* The page scrolls under the chrome, which floats over it; its content ends where a docked side sheet
+     begins, its backdrop (a cover's wash) runs on behind it. */
   main {
+    container-type: inline-size;
     position: fixed;
     inset: 0;
+    padding-right: var(--dock);
     overflow-y: auto;
     overscroll-behavior: contain;
+  }
+  /* A page's backdrop (a cover's wash, an artist's picture), placed in its page: from the window's left
+     edge, across the page's content (`cqw`, whatever column the page stands in) and on behind a docked side
+     sheet. */
+  main :global(.backdrop) {
+    left: calc((100% - 100cqw) / 2);
+    width: calc(100cqw + var(--dock));
+  }
+  /* The sheet opened or shut by a press: the page and its bars ease to their place with the sheet's glide
+     (svelte's cubicOut). */
+  .shell.easing main,
+  .shell.easing :global(.top),
+  .shell.easing :global(.bar) {
+    transition:
+      padding-right 240ms cubic-bezier(0.33, 1, 0.68, 1),
+      left 240ms cubic-bezier(0.33, 1, 0.68, 1),
+      width 240ms cubic-bezier(0.33, 1, 0.68, 1);
   }
   .dock {
     position: fixed;
@@ -151,7 +179,7 @@
   }
   .toast {
     position: fixed;
-    left: 50%;
+    left: calc((100% - var(--dock)) / 2);
     bottom: calc(var(--bar-h) + 12px);
     transform: translateX(-50%);
     background: var(--surface);

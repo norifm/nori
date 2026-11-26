@@ -5277,6 +5277,7 @@ impl App {
         let ui = self.ui();
         let shown = !ui.get_full_player() && ui.get_view() != View::Login && self.setup.is_none() && !ui.get_welcome_signing();
         self.compositor.show_pills(shown && self.top.is_some(), shown && self.player.is_some());
+        self.compositor.dock(ui.get_panel_room());
         let chrome = ui.global::<crate::Chrome>();
         let (top, player) = self.compositor.pills();
         chrome.set_top_x(top.0);
@@ -8179,6 +8180,88 @@ pub(crate) mod tests {
         settled(ui);
     }
 
+    /// On a wide window the side panel docks as a third pill: as far in from the window's edge as the pills,
+    /// from the top pill's top to the player pill's foot, the page ending where it begins with its grid
+    /// reflowed to fewer columns, while an album's wash runs on behind it to the window's edge, in Day and in
+    /// Night. The page eases to its width when the panel is opened; its own close button shuts it, and the
+    /// page is then drawn as if it had never opened; a resize below the docking width floats the panel over
+    /// the page at once.
+    #[test]
+    fn the_side_panel_docks_as_a_third_pill_beside_the_page() {
+        use i_slint_backend_testing::ElementHandle;
+        use nori_core::settings::{StoredPrefs, ThemeMode};
+        let ui = testing_window();
+        let today = crate::look::Today { month: 10, day: 19, southern: false };
+        let paint = |theme| crate::look::plain(&Default::default(), &StoredPrefs { theme, ..Default::default() }, false, today).paint(&ui);
+        ui.set_view(View::Albums);
+        ui.set_albums(cards((0..40).map(|i| Card { id: i.to_string().into(), title: format!("Album {i}").into(), ..Default::default() })));
+        ui.show().unwrap();
+        let one = |id: &str| ElementHandle::find_by_element_id(&ui, &format!("AppWindow::{id}")).next().unwrap_or_else(|| panic!("no {id}"));
+        let page_w = || one("page-area").size().width;
+        let sheet = || {
+            let s = one("sheet");
+            (s.absolute_position().x, s.absolute_position().y, s.absolute_position().x + s.size().width, s.absolute_position().y + s.size().height)
+        };
+        // The grid's columns (the cards on its first row) and where its cards end on the right.
+        let grid = || {
+            let all = ElementHandle::find_by_element_type_name(&ui, "CardView").collect::<Vec<_>>();
+            let top = all.iter().map(|c| c.absolute_position().y).fold(f32::MAX, f32::min);
+            let columns = all.iter().filter(|c| c.absolute_position().y == top).count();
+            (columns, all.iter().map(|c| c.absolute_position().x + c.size().width).fold(0.0, f32::max))
+        };
+        let never_opened = settled(&ui);
+        let (columns, _) = grid();
+        assert_eq!(page_w(), 1280.0, "shut, the page is the window's width");
+
+        ui.set_inspector(Panel::Queue);
+        ui.window().take_snapshot().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+        slint::platform::update_timers_and_animations();
+        let easing = page_w();
+        assert!(easing < 1280.0 && easing > 944.0, "the page eases to its width as the panel opens: {easing}");
+        settled(&ui);
+        assert_eq!(sheet(), (1280.0 - 16.0 - 320.0, 12.0, 1280.0 - 16.0, 820.0 - 12.0), "a third pill, as far in as the pills");
+        assert_eq!(page_w(), sheet().0, "the page ends where the panel begins");
+        let (docked, right) = grid();
+        assert!(docked < columns && right <= sheet().0 - 32.0, "the grid reflows beside the panel ({docked} of {columns} columns, ending at {right})");
+
+        one("close").invoke_accessible_default_action();
+        assert_eq!(ui.get_inspector(), Panel::None, "its close button shuts it");
+        let shut = settled(&ui);
+        assert_eq!((page_w(), grid().0), (1280.0, columns), "shut, the page has its width and columns back");
+        assert!(shut.as_bytes() == never_opened.as_bytes(), "shut, the page is drawn as if the panel had never opened");
+
+        ui.set_inspector(Panel::Queue);
+        // An album's wash, a plain red picture: beside the page and behind the panel alike.
+        let mut red = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(4, 4);
+        red.make_mut_slice().fill(slint::Rgba8Pixel { r: 220, g: 30, b: 30, a: 255 });
+        ui.set_page_kind(PageLayout::Album);
+        ui.set_page_wash(slint::Image::from_rgba8(red));
+        ui.set_view(View::Page);
+        for (theme, name) in [(ThemeMode::Light, "day"), (ThemeMode::Dark, "night")] {
+            paint(theme);
+            let shot = settled(&ui);
+            keep_shot(&shot, &format!("docked-panel-{name}"));
+            let color = |x: usize, y: usize| {
+                let p = shot.as_slice()[y * 1280 + x];
+                slint::Color::from_rgb_u8(p.r, p.g, p.b)
+            };
+            let ground = ui.global::<crate::Theme>().get_ground();
+            assert!(color(8, 6) != ground, "{name}: the wash shows beside the page");
+            assert_eq!(color(1280 - 8, 6), color(8, 6), "{name}: the wash runs on behind the panel to the window's edge");
+        }
+        paint(ThemeMode::Light);
+        ui.set_view(View::Albums);
+
+        ui.window().set_size(slint::PhysicalSize::new(1024, 820));
+        ui.window().take_snapshot().unwrap();
+        assert_eq!(page_w(), 1024.0, "narrower, the page takes the window at once");
+        settled(&ui);
+        let (x, top, _, _) = sheet();
+        assert_eq!((x, top), (1024.0 - 16.0 - 320.0, 68.0), "the panel floats between the pills, over the page");
+        assert!(grid().1 > x, "the page runs on under it");
+    }
+
     /// Writes `shot` to `NORI_DESKTOP_SHOTS`/`name`.ppm when that is set.
     fn keep_shot(shot: &slint::SharedPixelBuffer<slint::Rgba8Pixel>, name: &str) {
         let Some(dir) = std::env::var_os("NORI_DESKTOP_SHOTS") else { return };
@@ -8598,13 +8681,14 @@ pub(crate) mod tests {
         let pointer = |e| ui.window().dispatch_event(e);
         use slint::platform::{PointerEventButton::Left, WindowEvent::*};
         let at = |y: f32| slint::LogicalPosition::new(1100.0, y);
-        pointer(PointerMoved { position: at(271.0) });
-        pointer(PointerPressed { position: at(271.0), button: Left });
-        for y in (271..=383).step_by(8) {
+        // Song 1's row in the docked panel, dragged two rows down.
+        pointer(PointerMoved { position: at(211.0) });
+        pointer(PointerPressed { position: at(211.0), button: Left });
+        for y in (211..=323).step_by(8) {
             pointer(PointerMoved { position: at(y as f32) });
             pass(16);
         }
-        pointer(PointerReleased { position: at(383.0), button: Left });
+        pointer(PointerReleased { position: at(323.0), button: Left });
         pass(60);
         assert!(moves.borrow().is_empty(), "still gliding into its slot");
         pass(100);
