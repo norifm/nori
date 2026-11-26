@@ -34,7 +34,7 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 asked getArtistInfo2&id=ar1&count=10
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1/200] #16a140f7cf8f4e2c
 ended: ok
 asked getTopSongs&artist=A&count=20
@@ -83,7 +83,7 @@ stored ArtistIndex: artists [ar1*] #5ac9cc278075b86d digest=true fresh=true
 stored AlbumById { id: "al1" }: album al1/2 [s1/200,s2*/180] #da944b26236fec58 digest=true fresh=true
 stored ArtistById { id: "ar1" }: artist ar1* [al1/2] [] #fa6f2ee99e9d9a5a digest=true fresh=true
 stored ArtistAbout { id: "ar1" }: about Some("http://m") [ar1*] #ee0183797295d1f0 digest=true fresh=true
-stored TopSongs { artist: "A" }: songs [s1/200] #16a140f7cf8f4e2c digest=true fresh=true
+stored TopSongs { name: "A", id: Some("ar1") }: songs [s1/200] #16a140f7cf8f4e2c digest=true fresh=true
 stored PlaylistList: playlists [p1/1] #97710a49413c558f digest=true fresh=true
 stored PlaylistById { id: "p1" }: playlist p1/0 [s1/200] #ca5e40173283c07d digest=true fresh=true
 stored StarredItems: starred [ar1*] [al2*/1] [s2*/180] 1 #539724540a70ecd1 digest=true fresh=true
@@ -121,7 +121,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1/200] #16a140f7cf8f4e2c
 ended: ok
 read_each PlaylistList
@@ -179,7 +179,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1/200] #16a140f7cf8f4e2c
 ended: ok
 read_each PlaylistList
@@ -258,7 +258,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1/200] #16a140f7cf8f4e2c
 ended: ok
 read_each PlaylistList
@@ -438,7 +438,7 @@ read_now ArtistById { id: "ar1" }
 page artist ar1* [al1/2] [] #fa6f2ee99e9d9a5a
 read_now ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
-read_now TopSongs { artist: "A" }
+read_now TopSongs { name: "A", id: Some("ar1") }
 page songs [s1/200] #16a140f7cf8f4e2c
 read_now PlaylistList
 page playlists [p1/1] #97710a49413c558f
@@ -508,7 +508,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1/200] #16a140f7cf8f4e2c
 ended: ok
 read_each PlaylistList
@@ -626,7 +626,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -686,7 +686,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -746,7 +746,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -806,7 +806,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -866,7 +866,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -926,7 +926,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -986,7 +986,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -1046,7 +1046,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -1106,7 +1106,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -1166,7 +1166,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -1226,7 +1226,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
@@ -1286,7 +1286,7 @@ ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1*] #ee0183797295d1f0
 ended: ok
-read_each TopSongs { artist: "A" }
+read_each TopSongs { name: "A", id: Some("ar1") }
 page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList

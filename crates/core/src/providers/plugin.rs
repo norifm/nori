@@ -155,7 +155,7 @@ fn request(read: &Read) -> Option<w::Request> {
     Some(match read {
         Read::Search { query, songs, albums, artists } => w::Request::Search((query.clone(), n(*songs), n(*albums), n(*artists))),
         Read::AlbumById { id } | Read::AlbumSongs { id } => w::Request::Album(id.clone()),
-        Read::ArtistById { id } | Read::TopSongs { artist: id } => w::Request::Artist(id.clone()),
+        Read::ArtistById { id } | Read::TopSongs { id: Some(id), .. } => w::Request::Artist(id.clone()),
         Read::ArtistAbout { id } => w::Request::ArtistAbout(id.clone()),
         Read::PlaylistById { id } | Read::PlaylistSongs { id } => w::Request::Playlist(id.clone()),
         Read::PlaylistList => w::Request::Playlists,
@@ -542,6 +542,15 @@ mod tests {
 
     /// Where the account can't keep favorites (signed out, or none at all), seals are kept here and
     /// Library has them; signed in, they are the account's; a guest has none.
+    /// A plugin reads an artist's top songs from the artist's page, asked by the artist's id; nori's read
+    /// names the artist too, for a server, which asks by name.
+    #[test]
+    fn top_songs_are_asked_by_the_artists_id() {
+        let top = |id: Option<&str>| request(&Read::TopSongs { name: "Daft Punk".into(), id: id.map(str::to_string) });
+        assert!(matches!(top(Some("yt-UC1")), Some(w::Request::Artist(id)) if id == "yt-UC1"), "{:?}", top(Some("yt-UC1")));
+        assert!(top(None).is_none(), "no id: nothing to ask");
+    }
+
     #[test]
     fn favorites_the_account_cant_keep_are_kept_here() {
         let said = |stars: bool| Some(w::ProfileRules { account: stars, downloads: true, radio: true, feed: true, stars, scrobbles: false, sections: vec![w::LibrarySection::History], measures: true, ahead: None });

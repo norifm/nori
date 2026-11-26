@@ -228,7 +228,7 @@ fn kept_reads() -> Vec<Read> {
         Read::AlbumById { id: "al1".into() },
         Read::ArtistById { id: "ar1".into() },
         Read::ArtistAbout { id: "ar1".into() },
-        Read::TopSongs { artist: "A".into() },
+        Read::TopSongs { name: "A".into(), id: Some("ar1".into()) },
         Read::PlaylistList,
         Read::PlaylistById { id: "p1".into() },
         Read::StarredItems,

@@ -69,7 +69,7 @@ impl Client {
         Ok(match basis {
             // Top songs, else songs of the artist's first three albums.
             AutoFillBasis::Artist => {
-                let top = self.first(Read::TopSongs { artist: seed.artist.clone() }).await?.songs();
+                let top = self.first(Read::TopSongs { name: seed.artist.clone(), id: seed.artist_id.clone() }).await?.songs();
                 if !top.is_empty() {
                     return Ok(top);
                 }

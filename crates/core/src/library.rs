@@ -9,6 +9,14 @@ use std::sync::Arc;
 
 pub use nori_library::library::*;
 
+/// The read of `artist`'s top songs for its page, unless the page lists the artist's songs already
+/// (`songs_listed`: a provider's page, whose songs are its top songs). A server reads them by the artist's
+/// name, a provider by its id.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn artist_top_songs(artist: crate::Artist, songs_listed: bool) -> Option<Read> {
+    (!songs_listed).then(|| Read::TopSongs { id: Some(artist.id).filter(|i| !i.is_empty()), name: artist.name })
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
     /// A screen read: shows the cached page, then (unless fresh) the server's if it differs. Failure is an
@@ -296,6 +304,14 @@ pub(crate) mod tests {
     use super::*;
     use crate::client::tests::{block, client};
     use crate::client::NetProfile;
+
+    /// An artist page asks for top songs by the artist's name and id, unless it lists the artist's songs.
+    #[test]
+    fn an_artist_pages_top_songs_name_the_artist_and_its_id() {
+        let artist = crate::Artist { id: "ar1".into(), name: "Daft Punk".into(), ..Default::default() };
+        assert!(matches!(artist_top_songs(artist.clone(), false), Some(Read::TopSongs { name, id: Some(id) }) if name == "Daft Punk" && id == "ar1"));
+        assert!(artist_top_songs(artist, true).is_none(), "a provider's page lists them");
+    }
 
     /// Each mark shown, and whether the stars were free to read then.
     struct Marks(parking_lot::Mutex<Vec<(Option<bool>, bool)>>, Arc<crate::Core>);

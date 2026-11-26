@@ -526,7 +526,9 @@ class ArtistViewModel(app: Application) : DetailViewModel<ArtistUi>(app) {
     override fun load(id: String) = nori.library.artist(id).flatMapLatest { d ->
         combine(
             nori.library.artistInfo(id).map<ArtistInfo, ArtistInfo?> { it }.catch { emit(null) }.onStart { emit(null) },
-            nori.library.topSongs(d.artist.name).catch { emit(emptyList()) }.onStart { emit(emptyList()) },
+            // None where the page lists the artist's songs already (a provider's top songs).
+            (dev.nori.music.ffi.artistTopSongs(d.artist, d.songs.isNotEmpty())?.let { nori.library.topSongs(it) } ?: flowOf(emptyList()))
+                .catch { emit(emptyList()) }.onStart { emit(emptyList()) },
         ) { info, top -> ArtistUi(d, info, top) }
     }
 }

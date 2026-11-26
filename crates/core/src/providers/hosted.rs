@@ -105,7 +105,7 @@ fn host_read(read: &Read) -> Option<HostRead> {
     Some(match read {
         Read::Search { query, songs, albums, artists } => HostRead::Search { query: query.clone(), songs: n(*songs), albums: n(*albums), artists: n(*artists) },
         Read::AlbumById { id } | Read::AlbumSongs { id } => HostRead::Album { id: id.clone() },
-        Read::ArtistById { id } | Read::TopSongs { artist: id } => HostRead::Artist { id: id.clone() },
+        Read::ArtistById { id } | Read::TopSongs { id: Some(id), .. } => HostRead::Artist { id: id.clone() },
         Read::PlaylistById { id } | Read::PlaylistSongs { id } => HostRead::Playlist { id: id.clone() },
         Read::SongById { id } => HostRead::Song { id: id.clone() },
         _ => return None,

@@ -30,7 +30,7 @@ pub(super) fn request(read: &Read) -> Option<Request> {
         Read::AlbumById { id: i } => ("getAlbum", id(i), Parser::Album),
         Read::ArtistById { id: i } => ("getArtist", id(i), Parser::Artist),
         Read::ArtistAbout { id: i } => ("getArtistInfo2", pairs(&[("id", i.clone()), ("count", "10".into())]), Parser::ArtistInfo),
-        Read::TopSongs { artist } => ("getTopSongs", pairs(&[("artist", artist.clone()), ("count", "20".into())]), Parser::Songs),
+        Read::TopSongs { name, .. } => ("getTopSongs", pairs(&[("artist", name.clone()), ("count", "20".into())]), Parser::Songs),
         Read::PlaylistList => ("getPlaylists", vec![], Parser::Playlists),
         Read::PlaylistById { id: i } => ("getPlaylist", id(i), Parser::Playlist),
         Read::StarredItems => ("getStarred2", vec![], Parser::Starred),

@@ -40,7 +40,8 @@ pub enum Read {
     AlbumById { id: String },
     ArtistById { id: String },
     ArtistAbout { id: String },
-    TopSongs { artist: String },
+    /// An artist's top songs: a server reads them by the artist's `name`, a provider by its `id`.
+    TopSongs { name: String, id: Option<String> },
     PlaylistList,
     PlaylistById { id: String },
     StarredItems,
@@ -157,7 +158,7 @@ pub(crate) fn kept_as(read: &Read) -> Option<(String, i64)> {
         Read::AlbumById { id } => (format!("page:album/{id}"), BROWSE),
         Read::ArtistById { id } => (format!("page:artist/{id}"), BROWSE),
         Read::ArtistAbout { id } => (format!("page:about/{id}"), DAY),
-        Read::TopSongs { artist } => (format!("page:top/{artist}"), DAY),
+        Read::TopSongs { name, id } => (format!("page:top/{}/{name}", id.as_deref().unwrap_or_default()), DAY),
         Read::PlaylistList => ("page:playlists".into(), BROWSE),
         Read::PlaylistById { id } => (format!("page:playlist/{id}"), BROWSE),
         Read::StarredItems => ("page:starred".into(), BROWSE),
@@ -738,7 +739,7 @@ mod tests {
             (Read::AlbumById { id: "y".into() }, r#""album":ITEM"#, false),
             (Read::ArtistById { id: "x".into() }, r#""artist":{"id":"ar","name":"A","album":[ITEM]}"#, false),
             (Read::PlaylistById { id: "x".into() }, r#""playlist":{"id":"p","name":"P","entry":[ITEM]}"#, true),
-            (Read::TopSongs { artist: "x".into() }, r#""topSongs":{"song":[ITEM]}"#, true),
+            (Read::TopSongs { name: "x".into(), id: None }, r#""topSongs":{"song":[ITEM]}"#, true),
             (Read::AlbumList { kind: crate::browse::AlbumSort::Newest, size: 5, offset: 0, genre: None }, r#""albumList2":{"album":[ITEM]}"#, false),
         ];
         for (read, answer, songs) in pages {

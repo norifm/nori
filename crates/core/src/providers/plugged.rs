@@ -125,7 +125,13 @@ impl Library for Opened {
         let id = id.to_string();
         match kind {
             ItemKind::Song => self.songs(&[id]),
-            ItemKind::Artist => Ok(self.read(Read::TopSongs { artist: id })?.songs()),
+            ItemKind::Artist => {
+                let Page::ArtistPage { v } = self.read(Read::ArtistById { id })? else { return Err(t::Error { kind: t::ErrorKind::NotFound, detail: String::new() }) };
+                match crate::library::artist_top_songs(v.artist, !v.songs.is_empty()) {
+                    Some(top) => Ok(self.read(top)?.songs()),
+                    None => Ok(v.songs),
+                }
+            }
             _ => Ok(self.read(lookup_read(kind, id))?.songs()),
         }
     }
