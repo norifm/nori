@@ -41,12 +41,15 @@ pub(crate) struct PluginProvider {
     account: RwLock<AccountState>,
     /// The kinds of favorite the account said it has nowhere for, since its rules were last asked.
     unkept: RwLock<Vec<Starrable>>,
+    /// The sizes its covers' image server keeps ready, as its manifest says.
+    cover_sizes: Vec<u32>,
 }
 
 impl PluginProvider {
     pub(crate) fn new(id: &str, plugins: Arc<Plugins>) -> Option<PluginProvider> {
         let worker = plugins.worker(id)?;
-        Some(PluginProvider { id: id.to_string(), plugins, worker, info: std::sync::OnceLock::new(), rules: RwLock::new(None), open: RwLock::default(), account: RwLock::new(AccountState::SignedOut), unkept: RwLock::default() })
+        let cover_sizes = plugins.running().into_iter().find(|i| i.manifest.id == id).map(|i| i.manifest.cover_sizes.clone()).unwrap_or_default();
+        Some(PluginProvider { id: id.to_string(), plugins, worker, info: std::sync::OnceLock::new(), rules: RwLock::new(None), open: RwLock::default(), account: RwLock::new(AccountState::SignedOut), unkept: RwLock::default(), cover_sizes })
     }
 
     fn kind(&self) -> ServerKind {
@@ -180,7 +183,8 @@ fn sort(k: AlbumSort) -> w::AlbumSort {
 }
 
 /// The page `read` asked for, from the plugin's answer; None for nothing (the empty page).
-fn page(read: &Read, p: w::Page) -> Option<Page> {
+/// `p` as nori's page for `read`; a picture in it is sized as the plugin's image server keeps `cover_sizes`.
+fn page(read: &Read, p: w::Page, cover_sizes: &[u32]) -> Option<Page> {
     Some(match (read, p) {
         (Read::AlbumSongs { .. }, w::Page::Album(a)) => Page::Songs { v: a.songs.into_iter().map(song).collect() },
         (Read::PlaylistSongs { .. }, w::Page::Playlist(l)) => Page::Songs { v: l.songs.into_iter().map(song).collect() },
@@ -208,7 +212,7 @@ fn page(read: &Read, p: w::Page) -> Option<Page> {
             ar.album_count = Some(albums.len() as u32);
             Page::ArtistPage { v: ArtistDetail::new(ar, albums, a.top_songs.into_iter().map(song).collect()) }
         }
-        (_, w::Page::About(a)) => Page::About { v: ArtistInfo { biography: a.biography, image_url: a.image_url.map(|u| sized(&u, ABOUT_PX)), similar: a.similar.into_iter().map(artist).collect(), ..Default::default() } },
+        (_, w::Page::About(a)) => Page::About { v: ArtistInfo { biography: a.biography, image_url: a.image_url.map(|u| sized(&u, crate::covers::ready_size(cover_sizes, ABOUT_PX))), similar: a.similar.into_iter().map(artist).collect(), ..Default::default() } },
         (_, w::Page::Playlist(l)) => {
             let songs: Vec<Song> = l.songs.into_iter().map(song).collect();
             Page::PlaylistPage { v: PlaylistDetail::new(playlist(l.playlist), songs) }
@@ -310,7 +314,7 @@ impl Provider for PluginProvider {
         let Some(asked) = request(&read) else { return Ok(None) };
         let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_read(s, &asked)).await.ok_or_else(stopped)?;
         let said = self.heard(client, said)?;
-        Ok(page(&read, said).map(|p| Answer::Page(Box::new(p))))
+        Ok(page(&read, said, &self.cover_sizes).map(|p| Answer::Page(Box::new(p))))
     }
 
     async fn write(&self, client: &Client, c: Write) -> NetResult<()> {
@@ -340,7 +344,11 @@ impl Provider for PluginProvider {
 
     /// A plugin's covers are URLs with their size to fill in: nothing is asked of it per cover.
     fn cover_address(&self, _: &Core, cover: &str, size: u32) -> String {
-        sized(cover, size)
+        sized(cover, crate::covers::ready_size(&self.cover_sizes, size))
+    }
+
+    fn cover_sizes(&self) -> &[u32] {
+        &self.cover_sizes
     }
 
     fn resolver(&self, _client: &Arc<Client>) -> Option<Arc<dyn ResolveStream>> {

@@ -125,6 +125,10 @@ impl Provider for Fake {
         format!("https://fake.example/cover/{cover}/{size}")
     }
 
+    fn cover_sizes(&self) -> &[u32] {
+        &[226, 544, 1200]
+    }
+
     fn resolver(&self, _: &Arc<Client>) -> Option<Arc<dyn ResolveStream>> {
         Some(Arc::new(Opens))
     }
@@ -298,6 +302,18 @@ mod tests {
         c.session().set(vec!["f-1".into(), "f-2".into()], Some(0), false, None);
         assert!(c.precache_targets(false).is_empty(), "nothing past the next song");
         assert_eq!(c.core.cover_address("f-al".into(), 300), "https://fake.example/cover/f-al/300");
+    }
+
+    /// A cover that is an address already is filled with the smallest size its image server keeps ready
+    /// at least each size nori fetches: a tile's, a page head's and its stand-in, and their downloads alike.
+    #[test]
+    fn covers_take_the_sizes_the_image_server_keeps_ready() {
+        let (c, _) = fake();
+        let art = "https://img.example/a=w{size}-h{size}";
+        let at = |px: u32| format!("https://img.example/a=w{px}-h{px}");
+        assert_eq!(c.core.cover_addresses(art, 160), (at(544), Vec::new()));
+        assert_eq!(c.core.cover_addresses(art, 1080), (at(1200), vec![at(544)]));
+        assert_eq!(c.core.download_cover_urls(vec![art.into()]), [at(544), at(1200)]);
     }
 
     /// Signing in is the provider's to judge; signed in, its rules give hearts, and a heart goes to it.

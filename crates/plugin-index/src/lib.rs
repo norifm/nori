@@ -427,6 +427,7 @@ mod tests {
             places: vec![],
             devices: vec![],
             later: None,
+            cover_sizes: vec![],
         };
         let p = web_plugin(&section, &[], "name = \"Orbit\"\nround = \"Round\"\nshape_hint = \"How\"\n", false);
         assert_eq!((p.name.as_str(), p.about), ("Orbit", None));

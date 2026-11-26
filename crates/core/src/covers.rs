@@ -71,6 +71,14 @@ pub struct CoverRules {
     pub size_hole: String,
 }
 
+/// Of the sizes an image server keeps ready, `ready`, the smallest at least `size`, so no picture is
+/// softer than its size asks; the largest when `size` is past them all; `size` itself when the server
+/// makes any size.
+pub(crate) fn ready_size(ready: &[u32], size: u32) -> u32 {
+    let at_least = ready.iter().copied().filter(|&r| r >= size).min();
+    at_least.or_else(|| ready.iter().copied().max()).unwrap_or(size)
+}
+
 /// `cover` with its size filled in, when it is an address already ([`CoverRules::address_mark`]).
 pub(crate) fn own_address(cover: &str, size: u32) -> Option<String> {
     cover.contains(ADDRESS_MARK).then(|| cover.replace(SIZE_HOLE, &size.to_string()))
@@ -131,18 +139,18 @@ const DOWNLOAD_COVERS: u32 = 500;
 impl Core {
     /// Cover URLs to warm for songs being downloaded, so they have artwork offline ([`cover_wants`]).
     pub fn download_cover_urls(&self, arts: Vec<String>) -> Vec<String> {
-        let provider = self.provider();
-        let mut urls: Vec<String> = cover_wants(arts, DOWNLOAD_COVERS).into_iter().map(|w| own_address(&w.id, w.size).unwrap_or_else(|| provider.cover_address(self, &w.id, w.size))).collect();
+        let mut urls: Vec<String> = cover_wants(arts, DOWNLOAD_COVERS).into_iter().map(|w| self.cover_address(w.id, w.size)).collect();
         // An address with no size in it is the same at every size.
         urls.dedup();
         urls
     }
 
     /// The URL of cover `id` at `size` px: its own when it is an address already (a plugin's song
-    /// played elsewhere, in a jam or on a device this one controls), else as the profile's provider
-    /// makes it.
+    /// played elsewhere, in a jam or on a device this one controls), filled with the size the
+    /// provider's image server keeps ready for `size` ([`ready_size`]), else as the profile's provider makes it.
     pub fn cover_address(&self, id: String, size: u32) -> String {
-        own_address(&id, size).unwrap_or_else(|| self.provider().cover_address(self, &id, size))
+        let provider = self.provider();
+        own_address(&id, ready_size(provider.cover_sizes(), size)).unwrap_or_else(|| provider.cover_address(self, &id, size))
     }
 }
 
@@ -403,6 +411,13 @@ mod tests {
         // Images named by their path, not a query.
         assert_ne!(key("https://yt3.googleusercontent.com/abc=w320-h320-l90-rj"), key("https://yt3.googleusercontent.com/def=w320-h320-l90-rj"));
         assert_ne!(key("https://yt3.googleusercontent.com/abc=w320-h320-l90-rj"), key("https://yt3.googleusercontent.com/abc=w800-h800-l90-rj"));
+    }
+
+    #[test]
+    fn the_smallest_ready_size_at_least_the_one_wanted_is_fetched() {
+        for (ready, size, want) in [(&[226, 544, 1200][..], 320, 544), (&[226, 544, 1200], 800, 1200), (&[1200, 226, 544], 544, 544), (&[226, 544, 1200], 200, 226), (&[226, 544, 1200], 5000, 1200), (&[], 320, 320)] {
+            assert_eq!(ready_size(ready, size), want, "{ready:?} for {size}");
+        }
     }
 
     #[test]

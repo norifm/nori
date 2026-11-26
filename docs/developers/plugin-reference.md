@@ -40,6 +40,7 @@ nori_plugin_sdk::plugin!(MyPlugin, MANIFEST, lifecycle, hooks);
 | `cache_mb` | `u32` | 0 | Its cache's quota, in MB |
 | `assets` | `&[Asset]` | Empty | Large files nori downloads for it |
 | `category` | `Category` | `Other` | The page of Get plugins it is listed on |
+| `cover_sizes` | `&[u32]` | Empty | The sizes, in pixels, at which its covers' image server keeps pictures ready |
 
 `category` is `Category::Service` for a music service to play from, `Device` for headphones, speakers and
 other devices, `Playback` for how music plays and sounds, and `Other` for the rest. Get plugins shows a
@@ -47,6 +48,11 @@ page per category, from the `category` its repo's index repeats. A plugin built 
 `Other`.
 
 In `net`, a leading `*.` takes in a host's subdomains, and `lan` opens private addresses.
+
+`cover_sizes` is for a provider whose cover URLs hold `{size}`. Some image servers keep a few sizes ready
+and make every other size when it is asked for, which is slower. nori fills `{size}` with the smallest
+listed size at least the size it wants, so no picture is softer. Past the largest, it takes the largest.
+With an empty list, it takes the size it wants. YouTube Music lists `&[226, 544, 1200]`.
 
 `plugin!` writes the manifest into the wasm's `nori:plugin` custom section. It adds the version from the
 crate's `Cargo.toml`, the API version, and the extension points named after the manifest. nori calls
@@ -377,7 +383,8 @@ seek or song.
 A plugin runs only on a nori with the same plugin API version. The API is 7: `API` in the SDK, and the
 `nori:plugin@7.0.0` package in `wit/`. A changed record, function or export makes a new API. A new host
 interface does not, since a plugin built before it still runs. An older nori refuses a plugin that calls
-the new interface, as `Needs`.
+the new interface, as `Needs`. A new manifest field, such as `cover_sizes`, does not make a new API
+either. An older nori reads the manifest up to the fields it knows and ignores the rest.
 
 A plugin built for an older API stays installed with its store, but it runs nothing. Its profile waits,
 and nori looks for its update at once, even when the user keeps its version. A repo lists the versions

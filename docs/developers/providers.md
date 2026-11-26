@@ -91,6 +91,7 @@ through. Many methods have defaults, so a provider writes only what it has.
 | `ahead` | How many songs past the next one may be fetched ahead |
 | `cover_address` | A cover's URL at a size |
 | `cover_prefix` | The start every cover URL shares, if any |
+| `cover_sizes` | The sizes its image server keeps ready, for covers that are URLs already |
 | `resolver` | A `ResolveStream` that turns stream addresses into URLs |
 | `sign_in_done` | Whether a sign-in page at an address, with its cookies, is done |
 | `sign_in` | Signs the account in with what the page or the user handed over |

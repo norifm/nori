@@ -165,7 +165,8 @@ wholly in its client. What it shows still comes from the core.
   says what a decoded cover becomes: tight RGBA (`Loader::new`) or a platform picture
   (`Loader::with_paint`). Dropping the `Ticket` cancels a request.
 - The server is asked for two renditions only, 320 and 800 px (`cover_rendition`). So every view of a
-  cover shares one download.
+  cover shares one download. A cover that is a provider's URL takes the smallest size its image
+  server keeps ready at least each rendition (`Provider::cover_sizes`).
 - A page's head shows the tile's picture while its larger rendition comes. `Loader::request_standing_in`,
   given the core's `cover_addresses`, answers with the smaller rendition first, from memory or the disk,
   then with the larger one. On `nori-host`, `Handle::cover` does this and sends page colors with each

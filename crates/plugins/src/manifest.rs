@@ -38,6 +38,8 @@ pub struct Manifest {
     /// Its cache's quota, bytes.
     pub cache_bytes: u64,
     pub assets: Vec<AssetSpec>,
+    /// The sizes, px square, at which its cover addresses' image server keeps pictures ready; empty: any.
+    pub cover_sizes: Vec<u32>,
 }
 
 /// The page of Get plugins a plugin is listed on, as its manifest says and its repo's index repeats.
@@ -411,7 +413,7 @@ impl Manifest {
         let places = w.places.iter().map(|p| PLACES.get(*p as usize).copied()).collect::<Option<Vec<_>>>()?;
         let devices = w.devices.iter().map(|d| DeviceFilter { name: d.name.clone(), service: d.service.clone(), vendor: u16::try_from(d.vendor).ok() }).collect();
         let points = w.points();
-        let mut m = Manifest { points, stage, rows, menu, places, devices, id: w.id, version: w.version, api: w.api, net: w.net, signin: w.signin, overrides: w.overrides, permissions: Vec::new(), hooks: Vec::new(), wake: Vec::new(), commands: Vec::new(), cache_bytes: 0, assets: Vec::new() };
+        let mut m = Manifest { points, stage, rows, menu, places, devices, id: w.id, version: w.version, api: w.api, net: w.net, signin: w.signin, overrides: w.overrides, permissions: Vec::new(), hooks: Vec::new(), wake: Vec::new(), commands: Vec::new(), cache_bytes: 0, assets: Vec::new(), cover_sizes: w.cover_sizes };
         let Some(later) = w.later else { return Some(m) };
         const PERMISSIONS: [Permission; 6] = [Permission::PlaybackRead, Permission::PlaybackControl, Permission::LibraryRead, Permission::LibraryWrite, Permission::Subsonic, Permission::Schedule];
         // Kinds a newer SDK adds are skipped.
@@ -515,15 +517,15 @@ mod tests {
         assert_eq!(read.places, vec![Place::Artwork, Place::Devices]);
     }
 
-    /// The SDK writes the category last, as its byte in `CATEGORIES`' order: what a repo's `pack.py` reads
-    /// into its index.
+    /// The SDK writes the category after the rows' pages, as its byte in `CATEGORIES`' order: what a repo's
+    /// `pack.py` reads into its index. Only the cover sizes follow it.
     #[test]
-    fn the_category_is_the_last_byte_in_the_indexs_order() {
+    fn the_category_is_a_byte_in_the_indexs_order() {
         for (said, read) in [(sdk::Category::Service, Category::Service), (sdk::Category::Device, Category::Device), (sdk::Category::Playback, Category::Playback), (sdk::Category::Other, Category::Other)] {
-            let m = sdk::Manifest { category: said, ..sdk::Manifest::new("fm.nori.c") };
+            let m = sdk::Manifest { category: said, cover_sizes: &[226, 544], ..sdk::Manifest::new("fm.nori.c") };
             let bytes: [u8; 256] = sdk::encode::<256>(&m, "1.2.3", 0);
-            let last = bytes[sdk::encoded_len(&m, "1.2.3") - 1] as usize;
-            assert_eq!(Category::named(nori_plugin_index::section::CATEGORIES.get(last).copied()), read);
+            let at = bytes[sdk::encoded_len(&m, "1.2.3") - 2 - 2 * 4 - 1] as usize;
+            assert_eq!(Category::named(nori_plugin_index::section::CATEGORIES.get(at).copied()), read);
         }
         assert_eq!((Category::named(Some("lyrics")), Category::named(None)), (Category::Other, Category::Other), "one this nori doesn't know, or none");
     }
@@ -596,18 +598,20 @@ mod tests {
         const FILTERS: [sdk::DeviceFilter; 1] = [sdk::DeviceFilter::ANY.name("WH-*")];
         // The bytes an empty group takes: the devices' count, then the permissions', hooks' and wakes'
         // counts, the commands' count, the cache quota and the assets' count; the rows' pages' count; the
-        // category.
-        let (devices, session, pages, category) = (2, 2 * 3 + 2 + 4 + 2, 2, 1);
+        // category; the cover sizes' count.
+        let (devices, session, pages, category, covers) = (2, 2 * 3 + 2 + 4 + 2, 2, 1, 2);
         let full = sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, hooks: &[sdk::Hook::SongChanged], ..sdk::Manifest::new("fm.nori.new") };
         for (m, cut, has_devices, has_hooks) in [
             // Released plugins: nothing after the places.
-            (sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") }, devices + session + pages + category, false, false),
+            (sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") }, devices + session + pages + category + covers, false, false),
             // Built with devices, before the session's fields.
-            (sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, ..sdk::Manifest::new("fm.nori.devices") }, session + pages + category, true, false),
+            (sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, ..sdk::Manifest::new("fm.nori.devices") }, session + pages + category + covers, true, false),
             // Built before the rows' pages.
-            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, pages + category, true, true),
+            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, pages + category + covers, true, true),
             // Built before categories.
-            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, category, true, true),
+            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, category + covers, true, true),
+            // Built before cover sizes.
+            (sdk::Manifest { hooks: &[sdk::Hook::SongChanged], ..full }, covers, true, true),
             (full, 0, true, true),
         ] {
             let bytes: [u8; 1024] = sdk::encode::<1024>(&m, "1.0.0", 1 << 1);
@@ -615,8 +619,19 @@ mod tests {
             assert_eq!(read.places, vec![Place::Devices], "{}", m.id);
             assert_eq!(read.reaches_devices(), has_devices, "{}", m.id);
             assert_eq!(read.hears(Hook::SongChanged), has_hooks, "{}", m.id);
-            assert!(read.permissions.is_empty() && read.assets.is_empty() && read.cache_bytes == 0, "{}", m.id);
+            assert!(read.permissions.is_empty() && read.assets.is_empty() && read.cache_bytes == 0 && read.cover_sizes.is_empty(), "{}", m.id);
         }
+    }
+
+    /// The cover sizes come last, after the category: a host that reads only up to the category (every
+    /// nori before them, and a repo's `pack.py`) reads the rest of the manifest as before.
+    #[test]
+    fn cover_sizes_follow_the_category() {
+        let m = sdk::Manifest { cover_sizes: &[226, 544, 1200], ..sdk::Manifest::new("fm.nori.covers") };
+        let bytes: [u8; 1024] = sdk::encode::<1024>(&m, "1.0.0", 0);
+        let len = sdk::encoded_len(&m, "1.0.0");
+        assert_eq!(Manifest::decode(&bytes[..len]).unwrap().cover_sizes, [226, 544, 1200]);
+        assert_eq!(nori_plugin_index::section::Section::read(&bytes[..len - 2 - 3 * 4]).map(|s| s.cover_sizes), Some(Vec::new()), "written before them: none");
     }
 
     #[test]

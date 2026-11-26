@@ -97,6 +97,8 @@ pub struct Section {
     pub places: Vec<u8>,
     pub devices: Vec<Device>,
     pub later: Option<Later>,
+    /// The sizes its cover addresses' image server keeps ready; empty from a plugin built before them.
+    pub cover_sizes: Vec<u32>,
 }
 
 /// Reads the section's fields in order.
@@ -193,8 +195,12 @@ impl Section {
                 (r.page, r.glyph) = (i.opt_str()?, Some(i.byte()?).filter(|g| *g != u8::MAX));
             }
         }
-        // Its category follows; a client reads it from the index (`Listed::category`).
-        Some(Section { id, version, api, bits, stage, net, signin, overrides, rows, menu, places, devices, later })
+        // Its category, which a client reads from the index (`Listed::category`), then the cover sizes.
+        let cover_sizes = match i.byte() {
+            Some(_) if !i.0.is_empty() => (0..i.u16()?).map(|_| i.u32()).collect::<Option<Vec<_>>>()?,
+            _ => Vec::new(),
+        };
+        Some(Section { id, version, api, bits, stage, net, signin, overrides, rows, menu, places, devices, later, cover_sizes })
     }
 
     /// Its extension points, by name.

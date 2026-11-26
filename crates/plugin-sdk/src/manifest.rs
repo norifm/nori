@@ -230,11 +230,15 @@ pub struct Manifest {
     pub cache_mb: u32,
     pub assets: &'static [Asset],
     pub category: Category,
+    /// The sizes, px square, at which the image server of its cover addresses (`{size}` in them) keeps
+    /// pictures ready; nori fills each address with the smallest at least the size it wants (the largest past
+    /// them all). Empty: any size.
+    pub cover_sizes: &'static [u32],
 }
 
 impl Manifest {
     pub const fn new(id: &'static str) -> Manifest {
-        Manifest { id, stage: None, net: &[], signin: &[], overrides: &[], rows: &[], menu: &[], places: &[], devices: &[], permissions: &[], hooks: &[], wake: &[], commands: &[], cache_mb: 0, assets: &[], category: Category::Other }
+        Manifest { id, stage: None, net: &[], signin: &[], overrides: &[], rows: &[], menu: &[], places: &[], devices: &[], permissions: &[], hooks: &[], wake: &[], commands: &[], cache_mb: 0, assets: &[], category: Category::Other, cover_sizes: &[] }
     }
 }
 
@@ -449,7 +453,13 @@ const fn write<const N: usize>(m: &Manifest, version: &str, points: u32) -> Out<
         });
         k += 1;
     }
-    o.byte(m.category as u8)
+    o = o.byte(m.category as u8).u16(m.cover_sizes.len());
+    k = 0;
+    while k < m.cover_sizes.len() {
+        o = o.u32(m.cover_sizes[k]);
+        k += 1;
+    }
+    o
 }
 
 /// The section's bytes (`N` from [`encoded_len`]).

@@ -98,6 +98,12 @@ pub trait Provider: Send + Sync {
     /// The URL of cover `cover` at `size` px.
     fn cover_address(&self, core: &Core, cover: &str, size: u32) -> String;
 
+    /// The sizes, px square, at which the image server of its covers that are addresses already keeps
+    /// pictures ready ([`crate::covers::ready_size`]); empty when it makes any size.
+    fn cover_sizes(&self) -> &[u32] {
+        &[]
+    }
+
     /// What every cover address starts with, the cover's id and size appended ([`crate::covers::cover_url_into`]);
     /// None when each is the provider's own.
     fn cover_prefix(&self, _core: &Core) -> Option<String> {
