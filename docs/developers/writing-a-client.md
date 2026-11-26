@@ -234,6 +234,8 @@ These rules hold behind the answers:
   so the list does not end.
 - **A search asks the server once typing pauses.** Each keystroke is answered from the offline index,
   and an ask that newer typing replaced drops its request.
+- **A song found by search plays alone.** The search's results are no album. `Handle::play` with a
+  `Search` origin queues only that song.
 - **An undo lasts `UNDO_MS`.** A client that offers the undo shows it for that long. After that,
   `playlist_restore` refuses.
 - **A favorite marks at once.** `Client::star` puts the old mark back if the server refuses. Where the

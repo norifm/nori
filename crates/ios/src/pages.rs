@@ -367,9 +367,10 @@ fn songs_section(key: &str, songs: &[Song], from: usize) -> Value {
     )
 }
 
-/// A search answer as four sections, its songs kept for `token`.
-fn found(token: u64, r: &SearchResult, server: bool) -> Value {
-    keep_list(token, r.songs.clone(), None);
+/// A search answer to `query` as four sections, its songs kept for `token` as the search's: a tap plays
+/// the one tapped alone.
+fn found(token: u64, r: &SearchResult, query: &str, server: bool) -> Value {
+    keep_list(token, r.songs.clone(), Some(PageOrigin::new(OriginKind::Search, query)));
     json!({
         "server": server,
         "sections": [
@@ -873,12 +874,12 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                 return send(token, &json!({ "recent": recent, "sections": [] }));
             }
             if let Some(r) = view.answer.result() {
-                send(token, &found(token, r, false));
+                send(token, &found(token, r, &view.query, false));
             }
             let Some(answered) = with_session(|s| s.search_server_now(view.query.clone(), search_failure)).flatten() else { return };
             match answered.answer {
-                SearchShown::Found { result } => send(token, &found(token, &result, true)),
-                SearchShown::NothingFound => send(token, &found(token, &SearchResult::default(), true)),
+                SearchShown::Found { result } => send(token, &found(token, &result, &answered.query, true)),
+                SearchShown::NothingFound => send(token, &found(token, &SearchResult::default(), &answered.query, true)),
                 // The index found nothing either: the page says why, as `send_error` would.
                 SearchShown::Failed { index: None, fallback } => send(token, &serde_json::from_str(&fallback.reason.unwrap_or_default()).unwrap_or(Value::Null)),
                 SearchShown::Failed { .. } | SearchShown::Asking { .. } | SearchShown::Blank => {}
@@ -2037,10 +2038,11 @@ mod tests {
             songs: vec![song("a"), song("b")],
             ..SearchResult::default()
         };
-        let v = found(77, &r, true);
+        let v = found(77, &r, "x", true);
         assert_eq!(v["sections"][3]["items"][1]["i"], 1);
-        let kept: Vec<String> = list(77).unwrap().0.into_iter().map(|s| s.id).collect();
-        assert_eq!(kept, ["a", "b"]);
+        let (kept, origin) = list(77).unwrap();
+        assert_eq!(kept.into_iter().map(|s| s.id).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(origin.map(|o| o.kind), Some(OriginKind::Search), "a tap plays the song alone");
     }
 
     #[test]

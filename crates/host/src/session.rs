@@ -1794,10 +1794,14 @@ impl Handle {
     }
 
     /// [`Handle::play`]; `keep`: the start is the song playing, which goes on with no jump (the queue's
-    /// `set` keeps its entry). Sent to the active device while it is another one.
+    /// `set` keeps its entry). A search's song plays alone: its results are no album. Sent to the active
+    /// device while it is another one.
     fn play_kept(&self, songs: Vec<Song>, start: usize, shuffle: bool, from: Option<PageOrigin>, keep: bool) {
         let picked = songs.get(start).map(|s| s.id.clone());
-        let songs: Vec<Song> = songs.into_iter().filter(|s| !s.is_provider() || Some(&s.id) == picked.as_ref()).collect();
+        let songs: Vec<Song> = match from.as_ref().map(|o| o.kind) {
+            Some(nori_core::OriginKind::Search) => songs.into_iter().nth(start).into_iter().collect(),
+            _ => songs.into_iter().filter(|s| !s.is_provider() || Some(&s.id) == picked.as_ref()).collect(),
+        };
         if songs.is_empty() {
             return;
         }
@@ -2099,6 +2103,23 @@ mod tests {
             queue.playlist(|p| p.repeat())
         }).collect();
         assert_eq!(modes, [nori_core::rules::REPEAT_ALL, nori_core::rules::REPEAT_ONE, nori_core::rules::REPEAT_OFF]);
+        s.close();
+    }
+
+    /// A search's results are no album: the song picked from them plays alone, tapped or already playing.
+    #[test]
+    fn a_search_song_plays_alone() {
+        let dir = nori_testdir::TempDir::new("host-search-play");
+        let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
+        let profile = SavedServer { id: "own".into(), url: "http://own".into(), user: "ann".into(), ..Default::default() };
+        let s = Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        let found: Vec<Song> = ["a", "b", "c"].map(|id| Song { id: id.into(), ..Default::default() }).into();
+        let search = || Some(PageOrigin::new(nori_core::OriginKind::Search, "dogs"));
+        let ids = || queue.playlist(|p| (p.ids().to_vec(), p.current()));
+        s.play(found.clone(), 1, false, search());
+        assert_eq!(ids(), (vec!["b".to_string()], Some(0)));
+        s.keep_playing(found, 2, search());
+        assert_eq!(ids(), (vec!["c".to_string()], Some(0)));
         s.close();
     }
 

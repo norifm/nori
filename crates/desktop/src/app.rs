@@ -2812,7 +2812,7 @@ impl App {
             0 => (self.page_songs.clone(), self.page_fetch.as_ref().map(Fetch::origin)),
             1 => (self.songs.clone(), None),
             3 => (self.queue.as_ref().map(|q| q.songs.to_vec()).unwrap_or_default(), None),
-            _ => (self.search_songs.clone(), None),
+            _ => (self.search_songs.clone(), Some(nori_core::PageOrigin::new(nori_core::OriginKind::Search, self.search_query.as_str()))),
         };
         match how {
             -1 if list == 3 => self.on_session(|s| s.jump(i)),
