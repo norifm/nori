@@ -424,11 +424,10 @@ impl Nori {
     /// `shuffle_all`): the songs played (0: none).
     pub async fn shuffle_library(&self, albums: bool) -> Result<usize, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let (songs, kind) = if albums { (client.shuffle_albums().await, OriginKind::ShuffleAlbums) } else { (client.shuffle_all().await, OriginKind::ShuffleSongs) };
-        let songs = songs.map_err(error)?;
+        let (songs, from) = client.shuffle_library(albums).await.map_err(error)?;
         let n = songs.len();
         if n > 0 {
-            self.with(|h| h.play(songs, 0, false, Some(PageOrigin::new(kind, ""))));
+            self.with(|h| h.play(songs, 0, false, Some(from)));
         }
         Ok(n)
     }

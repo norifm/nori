@@ -44,6 +44,13 @@ impl Client {
         }
         out
     }
+
+    /// The library's Shuffle: random albums, each whole (`albums`), or random songs; with what a queue of
+    /// them is played from, so refills follow.
+    pub async fn shuffle_library(&self, albums: bool) -> NetResult<(Vec<Song>, crate::PageOrigin)> {
+        let (songs, kind) = if albums { (self.shuffle_albums().await?, crate::OriginKind::ShuffleAlbums) } else { (self.shuffle_all().await?, crate::OriginKind::ShuffleSongs) };
+        Ok((songs, crate::PageOrigin::new(kind, "")))
+    }
 }
 
 impl Core {
@@ -242,6 +249,9 @@ pub(crate) mod tests {
         assert_eq!(fake.asked().len(), 1);
         fake.answer(&songs_json("randomSongs", &["x", "ext-deezer-song-1"]));
         assert_eq!(block(c.shuffle_all()).unwrap().iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["x"]);
+        fake.answer(&songs_json("randomSongs", &["y"]));
+        let (songs, from) = block(c.shuffle_library(false)).unwrap();
+        assert_eq!((songs.len(), from.kind), (1, crate::OriginKind::ShuffleSongs), "the library's Shuffle of songs");
 
         // Shuffle albums plays one library album.
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
@@ -252,8 +262,9 @@ pub(crate) mod tests {
         };
         fake.answer(&album("b", &["b1", "ext-deezer-song-9", "b2", "b3"]));
         fake.answer(&album("a", &["a1", "a2"]));
-        let got = block(c.shuffle_albums()).unwrap();
+        let (got, from) = block(c.shuffle_library(true)).unwrap();
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["b1", "b2", "b3"]);
+        assert_eq!(from.kind, crate::OriginKind::ShuffleAlbums, "refills add albums");
         let asked = fake.asked();
         assert!(asked[0].contains("getAlbumList2") && asked[0].contains("type=random"), "{asked:?}");
         assert_eq!(asked.len(), 2, "{asked:?}");

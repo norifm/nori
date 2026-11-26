@@ -1153,10 +1153,8 @@ impl Runner {
             Cmd::ShuffleLibrary { albums } => {
                 let (h, tx, id) = ((**s).clone(), self.tx.clone(), s.id);
                 nori_host::spawn("nori-shuffle", move || {
-                    use nori_core::{OriginKind, PageOrigin};
-                    let (songs, kind) = if albums { (block_on(h.client.shuffle_albums()), OriginKind::ShuffleAlbums) } else { (block_on(h.client.shuffle_all()), OriginKind::ShuffleSongs) };
-                    match songs {
-                        Ok(songs) => h.play(songs, 0, false, Some(PageOrigin::new(kind, ""))),
+                    match block_on(h.client.shuffle_library(albums)) {
+                        Ok((songs, from)) => h.play(songs, 0, false, Some(from)),
                         Err(e) => {
                             let _ = tx.send(Msg::From(id, Box::new(Msg::Note { text: crate::text::net_error(&e), error: true })));
                         }

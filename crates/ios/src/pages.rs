@@ -1247,13 +1247,8 @@ pub unsafe extern "C" fn nori_ios_mix_refresh(id: *const c_char) {
 #[no_mangle]
 pub extern "C" fn nori_ios_shuffle_library(albums: i32) -> i32 {
     let Some((client, _)) = server() else { return 0 };
-    let (songs, kind) = if albums != 0 {
-        (nori_core::transport::block_on(client.shuffle_albums()), OriginKind::ShuffleAlbums)
-    } else {
-        (nori_core::transport::block_on(client.shuffle_all()), OriginKind::ShuffleSongs)
-    };
-    match songs {
-        Ok(songs) if !songs.is_empty() => with_session(|s| s.play(songs, 0, false, Some(PageOrigin::new(kind, "")))).map_or(0, |()| 1),
+    match nori_core::transport::block_on(client.shuffle_library(albums != 0)) {
+        Ok((songs, from)) if !songs.is_empty() => with_session(|s| s.play(songs, 0, false, Some(from))).map_or(0, |()| 1),
         _ => 0,
     }
 }
