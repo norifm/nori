@@ -291,14 +291,25 @@ fn minus(v: &str) -> String {
     v.replace('-', "−")
 }
 
-/// The desktop's categories: the pages the profile in use opens, in the core's order (`pages`). The
-/// version, About's on Android, stands at the foot of Appearance.
-pub fn tabs(parts: &[nori_core::settings_pages::SettingsPart]) -> Vec<SettingsPage> {
-    settings_pages::pages(SettingsClient::Desktop, parts).into_iter().filter(|p| *p != SettingsPage::About).collect()
+/// A category of Settings: one of the core's pages, or the plugins'.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Page(SettingsPage),
+    Plugins,
+}
+
+/// The desktop's categories: the pages the profile in use opens, in the core's order (`pages`), and
+/// Plugins before About, the last, as Android lists them.
+pub fn tabs(parts: &[nori_core::settings_pages::SettingsPart]) -> Vec<Tab> {
+    let mut tabs: Vec<Tab> = settings_pages::pages(SettingsClient::Desktop, parts).into_iter().map(Tab::Page).collect();
+    let about = tabs.iter().position(|t| *t == Tab::Page(SettingsPage::About)).unwrap_or(tabs.len());
+    tabs.insert(about, Tab::Plugins);
+    tabs
 }
 
 /// A category's name, as Android's settings list them.
-pub fn tab_name(page: SettingsPage) -> &'static str {
+pub fn tab_name(tab: Tab) -> &'static str {
+    let Tab::Page(page) = tab else { return words::PLUGINS };
     match page {
         SettingsPage::Servers => "Profiles",
         SettingsPage::Playing => "Playback",
@@ -311,9 +322,12 @@ pub fn tab_name(page: SettingsPage) -> &'static str {
     }
 }
 
-/// The settings page tab `tab` shows; the first where there is no such tab.
+/// The settings page tab `tab` shows; Appearance where it shows none.
 fn tab_page(f: &Facts, tab: i32) -> SettingsPage {
-    tabs(&f.rules.settings).get(tab.max(0) as usize).copied().unwrap_or(SettingsPage::Look)
+    match tabs(&f.rules.settings).get(tab.max(0) as usize) {
+        Some(Tab::Page(page)) => *page,
+        _ => SettingsPage::Look,
+    }
 }
 
 fn section_title(id: SectionId) -> &'static str {
@@ -703,8 +717,8 @@ fn service(id: &str) -> Option<(&'static str, &'static str)> {
     })
 }
 
-/// The groups of settings page `page`: each section's title and rows. The first adds the desktop's own:
-/// the output device and the version.
+/// The groups of settings page `page`: each section's title and rows, with the desktop's own: the output
+/// device on Sound, the support page on About.
 fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, plugged: &Plugged, page: SettingsPage, today: Today) -> Vec<(String, Vec<Row>)> {
     let s = settings_model::state(p, settings_model::Output::default(), model);
     let facts = PageFacts {
@@ -753,20 +767,27 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
             _ => groups.push((title.into(), rows)),
         }
     }
-    if page == SettingsPage::Look {
+    // The device played through ends Sound's Output group, its note under it.
+    if page == SettingsPage::Sound {
         let mut devices = vec![("The system's own".to_string(), String::new())];
         devices.extend(f.devices.iter().map(|d| (d.clone(), d.clone())));
-        let output = vec![
+        let device = [
             Row { kind: CHOICE, name: DEVICE.into(), title: "Play through".into(), options: devices, enabled: true, ..Default::default() },
             note("A new device is used from the next start of nori."),
         ];
-        groups.push(("Output device".into(), output));
-        let mut about = vec![info("nori", format!("Version {}", env!("CARGO_PKG_VERSION")))];
-        // A build with a support service offers its page here.
-        if nori_core::support::support_service().is_some() {
-            about.push(Row { kind: LINK, name: SUPPORT.into(), title: "Support nori".into(), enabled: true, ..Default::default() });
+        let output = section_title(SectionId::Output);
+        match groups.iter_mut().find(|(t, _)| t == output) {
+            Some((_, rows)) => rows.extend(device),
+            None => groups.push((output.into(), device.into())),
         }
-        groups.push(("About".into(), about));
+    }
+    // A build with a support service offers its page under About's rows (the version is the update row's).
+    if page == SettingsPage::About && nori_core::support::support_service().is_some() {
+        let support = Row { kind: LINK, name: SUPPORT.into(), title: "Support nori".into(), enabled: true, ..Default::default() };
+        match groups.last_mut() {
+            Some((_, rows)) => rows.push(support),
+            None => groups.push((words::ABOUT.into(), vec![support])),
+        }
     }
     groups
 }
@@ -1915,7 +1936,7 @@ mod tests {
     #[test]
     fn lyrics_keys_are_asked_as_on_android() {
         let facts = Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
-        let tab = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Lyrics).unwrap() as i32;
+        let tab = tabs(&facts.rules.settings).iter().position(|t| *t == Tab::Page(SettingsPage::Lyrics)).unwrap() as i32;
         let today = Today { month: 10, day: 19, southern: false };
         let source = |p: &StoredPrefs, id: &str| {
             let rows = rows(&Default::default(), p, &facts, &Kinds::builtin(), &Plugged::default(), tab, today);
@@ -1977,10 +1998,31 @@ mod tests {
         }
     }
 
+    /// The device played through is Sound's, last in its Output group, and nowhere on Appearance.
+    #[test]
+    fn the_output_device_is_in_sounds_output_group() {
+        let facts = Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
+        let page = |page| groups(&Default::default(), &StoredPrefs::default(), &facts, &Kinds::builtin(), &Plugged::default(), page, OCTOBER);
+        let sound = page(SettingsPage::Sound);
+        let (_, output) = sound.iter().find(|(t, _)| t == "Output").expect("Sound's Output group");
+        let names: Vec<&str> = output.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names[names.len() - 2..], [DEVICE, ""], "the device, then its note, end the group");
+        assert!(page(SettingsPage::Look).iter().flat_map(|(_, rows)| rows).all(|r| r.name != DEVICE), "Appearance holds no device");
+    }
+
+    /// With no plugin installed the tab says so in its head, with the way to get some; nothing under it.
+    #[test]
+    fn the_plugins_tab_without_plugins_offers_to_get_some() {
+        let top = plugin_top(&Plugged::default(), false);
+        assert_eq!((top.title.as_str(), top.about.as_str(), top.action.as_str()), ("", words::NO_PLUGINS, words::GET_PLUGINS));
+        assert_eq!(PluginAct::of(&top.action_name), Some(PluginAct::Browser));
+        assert!(plugin_list(&Plugged::default(), false).is_empty());
+    }
+
     #[test]
     fn tabs_are_the_pages_the_profile_opens() {
         let names = |guest| tabs(&nori_core::browse::profile_rules(guest).settings).into_iter().map(tab_name).collect::<Vec<_>>();
-        assert_eq!(names(false), ["Profiles", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage"]);
+        assert_eq!(names(false), ["Profiles", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage", "Plugins", "About"]);
         assert!(!names(true).contains(&"Library"), "a jam guest has no library settings to show");
     }
 
@@ -1998,7 +2040,7 @@ mod tests {
     fn the_look_page_has_season_tiles_then_the_theme() {
         use slint::Model;
         let facts = Facts::default();
-        let look = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Look).map_or(0, |i| i as i32);
+        let look = tabs(&facts.rules.settings).iter().position(|t| *t == Tab::Page(SettingsPage::Look)).map_or(0, |i| i as i32);
         let rows = rows(&Default::default(), &StoredPrefs::default(), &facts, &Kinds::builtin(), &Plugged::default(), look, OCTOBER);
         let kinds: Vec<_> = rows.iter().map(|r| r.kind).collect();
         let at = kinds.iter().position(|k| *k == SEASONS).expect("a season row");
@@ -2030,7 +2072,7 @@ mod tests {
         let profile = SavedServer { id: "s1".into(), url: "https://music.example".into(), user: "me".into(), ..Default::default() };
         store.put(StoredPrefs { servers: vec![profile], active_server_id: "s1".into(), ..store.current().unwrap() });
         let facts = Facts { folders: vec![("Music".into(), "1".into()), ("Other".into(), "2".into())], ..Facts::default() };
-        let tab = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Servers).unwrap() as i32;
+        let tab = tabs(&facts.rules.settings).iter().position(|t| *t == Tab::Page(SettingsPage::Servers)).unwrap() as i32;
         let toggles = || {
             let p = store.current().unwrap();
             rows(&store.model, &p, &facts, &Kinds::builtin(), &Plugged::default(), tab, OCTOBER)

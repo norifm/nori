@@ -1501,7 +1501,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.read_stats();
     });
     on!(ui.on_open_accounts, h, |a| {
-        let accounts = crate::settings::tabs(&a.facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers);
+        let accounts = crate::settings::tabs(&a.facts.rules.settings).iter().position(|t| *t == crate::settings::Tab::Page(nori_core::settings_pages::SettingsPage::Servers));
         a.ui().set_settings_tab(accounts.unwrap_or(0) as i32);
         a.go(View::Settings);
     });
@@ -1538,7 +1538,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_settings_tab_chosen, h, |a, t| {
         a.ui().set_settings_tab(t);
         a.plugins_read();
-        if t == crate::settings::tabs(&a.facts.rules.settings).len() as i32 {
+        if crate::settings::tabs(&a.facts.rules.settings).get(t.max(0) as usize) == Some(&crate::settings::Tab::Plugins) {
             a.plugins_look();
         }
         a.follow_sound_page(View::Settings);
@@ -5450,15 +5450,13 @@ impl App {
         let today = crate::look::Today::now();
         let view = ui.get_view();
         if view == View::Settings {
-            // The core's pages, then Plugins.
-            let mut tabs: Vec<SharedString> = crate::settings::tabs(&self.facts.rules.settings).into_iter().map(|p| SharedString::from(crate::settings::tab_name(p))).collect();
-            let plugins_tab = tabs.len() as i32;
-            tabs.push(words::PLUGINS.into());
-            ui.set_settings_tabs(ModelRc::new(VecModel::from(tabs)));
+            let tabs = crate::settings::tabs(&self.facts.rules.settings);
+            ui.set_settings_tabs(ModelRc::new(VecModel::from(tabs.iter().map(|t| SharedString::from(crate::settings::tab_name(*t))).collect::<Vec<_>>())));
             let tab = ui.get_settings_tab();
-            ui.set_plugins_tab(tab == plugins_tab);
+            let plugins = tabs.get(tab.max(0) as usize) == Some(&crate::settings::Tab::Plugins);
+            ui.set_plugins_tab(plugins);
             ui.set_plugin_top(crate::settings::plugin_top(&self.plugged, prefs.plugins_off));
-            ui.set_settings(if tab == plugins_tab {
+            ui.set_settings(if plugins {
                 crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today)
             } else {
                 crate::settings::rows(&self.root.app.settings.model, &prefs, &self.facts, self.kinds(), &self.plugged, tab, today)
@@ -5755,9 +5753,11 @@ impl App {
         match view {
             View::Equalizer => Some(SoundPage::Equalizer),
             View::Settings => {
-                let tabs = crate::settings::tabs(&self.facts.rules.settings);
-                let tab = self.ui().get_settings_tab() as usize;
-                if tab == tabs.len() { Some(SoundPage::Plugin) } else { tabs.get(tab).copied().and_then(SoundPage::of_settings) }
+                match crate::settings::tabs(&self.facts.rules.settings).get(self.ui().get_settings_tab().max(0) as usize) {
+                    Some(crate::settings::Tab::Plugins) => Some(SoundPage::Plugin),
+                    Some(crate::settings::Tab::Page(page)) => SoundPage::of_settings(*page),
+                    None => None,
+                }
             }
             _ => None,
         }
@@ -7076,7 +7076,7 @@ mod tests {
 
         let facts = crate::settings::Facts { folders, ..Default::default() };
         let today = crate::look::Today { month: 11, day: 25, southern: false };
-        let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers).unwrap() as i32;
+        let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|t| *t == crate::settings::Tab::Page(nori_core::settings_pages::SettingsPage::Servers)).unwrap() as i32;
         let session = Rc::new(session);
         let refresh: Rc<dyn Fn()> = {
             let (ui, settings, facts) = (ui.as_weak(), settings.clone(), facts.clone());
@@ -8402,7 +8402,7 @@ mod tests {
         ui.global::<crate::Chrome>().set_top_x(190.0);
         ui.global::<crate::Chrome>().set_top_w(900.0);
         let facts = crate::settings::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
-        let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Lyrics).unwrap() as i32;
+        let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|t| *t == crate::settings::Tab::Page(nori_core::settings_pages::SettingsPage::Lyrics)).unwrap() as i32;
         ui.set_view(View::Settings);
         ui.set_settings(crate::settings::rows(&Default::default(), &nori_core::settings::StoredPrefs::default(), &facts, &nori_core::providers::Kinds::builtin(), &Default::default(), tab, crate::look::Today { month: 10, day: 19, southern: false }));
         let moved = Rc::new(RefCell::new(Vec::new()));
@@ -8445,7 +8445,7 @@ mod tests {
         let prefs = nori_core::settings::StoredPrefs { servers: vec![sv("a"), sv("b"), sv("c")], active_server_id: "a".into(), ..Default::default() };
         let rows = |guest: bool| {
             let facts = crate::settings::Facts { rules: nori_core::browse::profile_rules(guest), ..Default::default() };
-            let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers).unwrap() as i32;
+            let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|t| *t == crate::settings::Tab::Page(nori_core::settings_pages::SettingsPage::Servers)).unwrap() as i32;
             crate::settings::rows(&Default::default(), &prefs, &facts, &nori_core::providers::Kinds::builtin(), &Default::default(), tab, crate::look::Today { month: 10, day: 19, southern: false })
         };
         let moved = Rc::new(RefCell::new(Vec::new()));
