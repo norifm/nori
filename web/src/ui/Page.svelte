@@ -3,10 +3,17 @@
   // then what it shows; while its read is out, a quiet word; if it failed, why. `narrow`: one column
   // centered under a centered title on a wide window, as the desktop's settings.
   import type { Snippet } from "svelte";
+  import { ask } from "../rpc";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
+  import { PLACES, sectionPage } from "./TopPill.svelte";
 
-  let { title = "", back = false, narrow = false, error, ready = true, head, children }: { title?: string; back?: boolean; narrow?: boolean; error?: string; ready?: boolean; head?: Snippet; children: Snippet } = $props();
+  let { title = "", back = false, narrow = false, places = false, error, ready = true, head, children }: { title?: string; back?: boolean; narrow?: boolean; places?: boolean; error?: string; ready?: boolean; head?: Snippet; children: Snippet } = $props();
+  /** `places`: a library page, with the places the profile keeps (History) beside its title. */
+  let kept = $state<string[]>([]);
+  $effect(() => {
+    if (places) void ask<string>("library_sections").then((s) => (kept = (JSON.parse(s) as string[]).filter((x) => PLACES.includes(x))));
+  });
 </script>
 
 <div class="page" class:narrow>
@@ -14,6 +21,11 @@
   {#if title}
     <header class="page-head">
       <h1>{title}</h1>
+      {#if kept.length}
+        <span class="places">
+          {#each kept as p (p)}<a class="glyph quiet" href={sectionPage[p][0]} aria-label={W.librarySections[p]} title={W.librarySections[p]}><Icon name={sectionPage[p][1]} /></a>{/each}
+        </span>
+      {/if}
       {@render head?.()}
     </header>
   {/if}
@@ -45,6 +57,10 @@
   h1 {
     font-size: 34px;
     line-height: 42px;
+  }
+  .places {
+    display: flex;
+    margin-left: auto;
   }
   @media (min-width: 720px) {
     .narrow {

@@ -66,7 +66,7 @@
   });
 </script>
 
-<Page title={W.artists} back ready={!!page.data} error={page.error}>
+<Page title={W.artists} back places ready={!!page.data} error={page.error}>
   {#snippet head()}<label class="field search-field filter"><Icon name="search" /><input type="search" placeholder={W.filterArtists} aria-label={W.filterArtists} bind:value={filter} /></label>{/snippet}
   {#if !shown.length}
     <p class="empty"><Icon name="user" />{W.empty}</p>

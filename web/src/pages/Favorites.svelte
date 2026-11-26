@@ -13,7 +13,7 @@
   const d = $derived(page.data);
 </script>
 
-<Page title={W.favorites} back ready={!!d} error={page.error}>
+<Page title={W.favorites} back places ready={!!d} error={page.error}>
   {#if d}
     {#if d.artists?.length}<h2 class="section">{W.artists}</h2><Cards artists={d.artists} row />{/if}
     {#if d.albums?.length}<h2 class="section">{W.albums}</h2><Cards albums={d.albums} />{/if}

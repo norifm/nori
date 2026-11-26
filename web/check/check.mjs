@@ -1,8 +1,8 @@
 // The web client in headless Chrome against the local Navidrome (tools/dev-server.sh) through
-// web/serve.py: sign-in, browsing, search, a profile's icon picked, a song streamed and played, next and
-// previous, a song taken out of the queue, a right click's menu on each kind of item, Back one step out
-// of Now Playing, synced lyrics,
-// a crossfade and an AutoMix transition heard as continuous samples, the seek bar
+// web/serve.py: sign-in, browsing, the songs' orders, the genres and a long playlist's filter, search, a
+// profile's icon picked, a song streamed and played, next and previous, a song taken out of the queue, a
+// right click's menu on each kind of item, Back one step out of Now Playing, synced lyrics, a crossfade and
+// an AutoMix transition heard as continuous samples, the seek bar
 // running and holding, a click on a lyric line, how soon a pause is heard, a page reopened where it
 // left. Exits non-zero when something is off, and prints what it saw.
 //
@@ -104,6 +104,62 @@ if (!only || only.includes("lit")) {
   report.lit = { fromHome, fromAlbums, back };
   expect(fromHome.join() === "#/home" && back.join() === "#/home", "an album opened from Home keeps Home lit, after Back too");
   expect(fromAlbums.join() === "#/albums", "an album opened from Albums lights Albums");
+}
+
+if (!only || only.includes("lists")) {
+  // The Songs page's bar: an order picked lists the songs in it, picked again turns it around, kept by the
+  // core; Favorites lists the starred alone. Genres come from the core in name order, each with songs. A
+  // long playlist offers its filter, which narrows its rows. History reads.
+  const titles = () => page.$$eval(".songs li .title", (t) => t.map((x) => x.textContent));
+  const artists = () => page.$$eval(".songs li .artist", (t) => t.map((x) => x.textContent));
+  const pickOrder = async (label) => {
+    await page.click(".bar .chip.on");
+    await page.waitForSelector(".popover .popover-item, dialog.menu .menu-item");
+    const items = await page.$$(".popover .popover-item, dialog.menu .menu-item");
+    const words = await Promise.all(items.map((b) => b.evaluate((x) => x.textContent.trim())));
+    await page.evaluate(() => (window.nori.page = undefined));
+    await items[words.indexOf(label)].click();
+    await page.waitForFunction(() => window.nori.page === "songs", { timeout: 30000 });
+    return words;
+  };
+  const sorted = (v, dir) => v.every((x, i) => i === 0 || dir * v[i - 1].localeCompare(x, undefined, { sensitivity: "base", numeric: true }) <= 0);
+  await hash("#/songs", "songs");
+  // Another order first: Title picked while in use would turn it around.
+  const orders = await pickOrder("Album");
+  await pickOrder("Title");
+  const byTitle = await titles();
+  await pickOrder("Artist");
+  const byArtist = await artists();
+  const kept = JSON.parse(await ask("song_sort"));
+  await pickOrder("Artist");
+  const reversed = await artists();
+  const turned = JSON.parse(await ask("song_sort"));
+  await pickOrder("Title");
+  await page.evaluate(() => (window.nori.page = undefined));
+  await page.click(".bar .chip.filter");
+  await page.waitForFunction(() => window.nori.page === "songs", { timeout: 30000 });
+  const starred = await page.$$eval(".songs li", (l) => l.map((x) => !!x.querySelector(".starred")));
+  await page.click(".bar .chip.filter");
+  await hash("#/genres", "genres");
+  const genres = await page.$$eval(".genres li", (l) => l.map((x) => ({ name: x.querySelector(".name").textContent, sub: x.querySelector(".sub").textContent })));
+  const lists = (await read({ kind: "playlists" })).playlists;
+  const long = lists.reduce((a, b) => (b.songCount > (a?.songCount ?? 0) ? b : a), undefined);
+  await hash(`#/playlist/${long.id}`, "playlist");
+  await page.waitForSelector(".filter input", { timeout: 10000 });
+  const all = (await titles()).length;
+  await page.type(".filter input", "Second Wind");
+  await page.waitForFunction((n) => document.querySelectorAll(".songs li").length < n, { timeout: 10000 }, all);
+  const narrowed = await titles();
+  await hash("#/history", "history");
+  report.lists = { orders, kept, turned, genres, playlist: { name: long.name, all, narrowed: narrowed.length } };
+  expect(orders.length === 7 && orders[0] === "Title", "the songs' seven orders, Title first");
+  expect(byTitle.length > 0 && sorted(byTitle, 1), "the songs by title");
+  expect(sorted(byArtist, 1) && kept.name === "ARTIST" && !kept.reversed, "the songs by artist, kept");
+  expect(sorted(reversed, -1) && turned.reversed && turned.way === "down", "Artist again turns the order around");
+  expect(starred.length > 0 && starred.every(Boolean), "Favorites lists the starred songs alone");
+  expect(genres.length > 0 && genres.every((g) => /songs?$/.test(g.sub)) && sorted(genres.map((g) => g.name), 1), "the genres with songs, by name");
+  expect(all > 12 && narrowed.length > 0 && narrowed.every((t) => t.includes("Second Wind")), "a long playlist's filter narrows it");
+  expect(!(await facts()).pageError, "History reads");
 }
 
 if (!only || only.includes("profile")) {

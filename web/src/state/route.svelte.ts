@@ -3,7 +3,7 @@
 import { ui } from "./ui.svelte";
 
 /** Pages under the Library tab on a phone. */
-const LIBRARY = ["library", "albums", "artists", "playlists", "genres", "songs", "favorites"];
+const LIBRARY = ["library", "albums", "artists", "playlists", "genres", "songs", "favorites", "history"];
 /** Pages opened from a tab's page, each with the one it sits under when its address is opened alone. */
 const OPENED: Record<string, string> = { album: "albums", artist: "artists", playlist: "playlists", genre: "genres", mix: "home" };
 

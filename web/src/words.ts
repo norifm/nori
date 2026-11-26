@@ -69,7 +69,14 @@ export const W = {
     Starred: "Favorite albums",
   } as Record<string, string>,
   /** The Library's sections, by the core's `LibrarySection`. */
-  librarySections: { Albums: "Albums", Artists: "Artists", Songs: "Songs", Playlists: "Playlists", Genres: "Genres", Favourites: "Favorites" } as Record<string, string>,
+  librarySections: { Albums: "Albums", Artists: "Artists", Songs: "Songs", Playlists: "Playlists", Genres: "Genres", Favourites: "Favorites", History: "History" } as Record<string, string>,
+  /** The songs list's orders, by the core's names (`song_sorts`). */
+  songSorts: { TITLE: "Title", ARTIST: "Artist", ALBUM: "Album", YEAR: "Year", ADDED: "Added", PLAYS: "Most played", LONGEST: "Longest" } as Record<string, string>,
+  noSongs: "Your library has no songs yet",
+  nothingPlayed: "Nothing played yet, or listening history is off in Settings, under Library",
+  clearHistory: "Clear history",
+  filter: "Filter",
+  nothingMatches: (q: string) => `Nothing here has “${q}” in its name`,
   /** The album grid's orders, by the server's names (`album_sorts`). */
   albumSorts: {
     alphabeticalByName: "Title",

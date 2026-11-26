@@ -27,8 +27,28 @@ pub enum Ask {
     Playlist { id: String },
     Genres,
     Genre { name: String },
-    Songs { offset: i32, count: i32 },
+    /// The songs list in order `sort` (a `browse::song_sorts` name), turned around when `reversed`, only the
+    /// favorites with `favorites`, a page from `offset` (`Client::songs_listed`).
+    Songs {
+        sort: String,
+        #[serde(default)]
+        reversed: bool,
+        #[serde(default)]
+        favorites: bool,
+        #[serde(default)]
+        offset: u32,
+    },
+    /// What this browser played, newest first, a page from `after` (none: the newest).
+    History { after: Option<HistoryPlace> },
     Starred,
+}
+
+/// A place in the history (`browse::HistoryAfter`), as the page keeps it.
+#[derive(Deserialize, serde::Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPlace {
+    started_ms: i64,
+    row: i64,
 }
 
 fn album_sort(name: &str) -> Result<AlbumSort, String> {
@@ -46,8 +66,7 @@ impl Ask {
             Ask::Playlists => Read::PlaylistList,
             Ask::Playlist { id } => Read::PlaylistById { id },
             Ask::Genres => Read::GenreList,
-            Ask::Genre { .. } => return Err("a genre is read whole, by genre_songs".into()),
-            Ask::Songs { offset, count } => Read::SongPage { offset, count },
+            Ask::Genre { .. } | Ask::Songs { .. } | Ask::History { .. } => return Err("read by the core, not the cache".into()),
             Ask::Starred => Read::StarredItems,
         })
     }
@@ -175,9 +194,31 @@ pub async fn album_page(client: &Client, sort: String, favorites: bool, offset: 
 }
 
 async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Value, String> {
-    if let Ask::Genre { name } = ask {
-        let v = client.genre_songs(name).await.map_err(|e| e.to_string())?;
-        return Ok(page(client.core(), Page::Songs { v }, user));
+    let core = client.core();
+    match ask {
+        Ask::Genre { name } => {
+            let v = client.genre_songs(name).await.map_err(|e| e.to_string())?;
+            return Ok(page(core, Page::Songs { v }, user));
+        }
+        Ask::Songs { sort, reversed, favorites, offset } => {
+            let p = client.songs_listed(sort, reversed, favorites, 0, 0, offset).await.map_err(|e| e.to_string())?;
+            return Ok(json!({ "songs": songs(core, &p.songs), "exhausted": p.exhausted }));
+        }
+        Ask::History { after } => {
+            let after = after.map(|a| nori_core::browse::HistoryAfter { started_ms: a.started_ms, row: a.row });
+            let p = core.history_page(after).map_err(|e| e.to_string())?;
+            let next = p.next.map(|n| HistoryPlace { started_ms: n.started_ms, row: n.row });
+            let played: Vec<Song> = p.entries.into_iter().map(|e| e.song).collect();
+            return Ok(json!({ "songs": songs(core, &played), "next": next }));
+        }
+        Ask::Genres => {
+            let mut last = None;
+            client.read_each(Read::GenreList, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
+            let Some(Page::Genres { v }) = last else { return Ok(Value::Null) };
+            let tiles: Vec<Value> = core.genres_listed(v).iter().map(|g| json!({ "name": g.name, "songCount": g.song_count, "cover": g.cover_art.as_deref().map(|c| cover(core, c, 300)) })).collect();
+            return Ok(json!({ "genres": tiles }));
+        }
+        _ => {}
     }
     let paged = match &ask {
         Ask::Albums { sort, size, offset, favorites } => Some((album_sort(sort)?, *favorites, *offset as u32, *size as u32)),
@@ -185,7 +226,6 @@ async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Val
     };
     let mut last = None;
     client.read_each(ask.read()?, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
-    let core = client.core();
     let p = match (last, paged) {
         (None, _) => return Ok(Value::Null),
         (Some(Page::StarredPage { v }), Some((sort, true, ..))) => Page::Albums { v: nori_core::browse::favorites_in_order(v.albums, sort, false) },

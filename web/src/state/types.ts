@@ -39,7 +39,8 @@ export type Playlist = { id: string; name: string; songCount: number; duration: 
 /** A playlist songs can go into: `adds`, the ones it lacks; `holds`, how many it has already. */
 export type PlaylistChoice = { playlist: Playlist; adds: string[]; holds: number };
 /** As the server names it: the name is `value`. */
-export type Genre = { value: string; songCount: number; albumCount: number };
+/** A genre with songs, as the core lists them (`genres_listed`): a cover of its songs where it has one. */
+export type Genre = { name: string; songCount: number; cover?: string };
 
 /** A song of the queue the player shows, in play order: its list `index`, who asked for it in a jam. */
 export type QueueSong = Partial<Song> & { index: number; by?: string };

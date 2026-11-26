@@ -25,6 +25,23 @@
   });
   const pl = $derived(page.data?.playlist);
   const songs = $derived(page.data?.songs ?? []);
+  // A long list's filter (offered by the core's `filter_offered`), narrowing it by the core's `filter_rows`.
+  let filter = $state("");
+  let offered = $state(false);
+  let rows = $state.raw<number[] | undefined>(undefined);
+  $effect(() => {
+    void ask<boolean>("filter_offered", songs.length, filter.trim() !== "").then((o) => (offered = o));
+  });
+  $effect(() => {
+    const all = songs;
+    const f = filter;
+    if (!f.trim()) return void (rows = undefined);
+    let gone = false;
+    void ask<string>("filter_rows", JSON.stringify(all.map((s) => [s.title, s.artist])), f).then((r) => !gone && (rows = JSON.parse(r) as number[]));
+    return () => {
+      gone = true;
+    };
+  });
 
   const moved = (i: number, to: number) => {
     const order = songs.map((s) => s.id);
@@ -66,11 +83,17 @@
         {#if pl.editable}<button class="glyph" aria-label={W.more} title={W.more} onclick={more}><Icon name="more-horiz" /></button>{/if}
       {/snippet}
     </Hero>
-    <SongList {songs} kind="Playlist" {id} extra={edits} moved={pl.editable ? moved : undefined} />
+    {#if offered}<label class="field search-field filter"><Icon name="search" /><input type="search" placeholder={W.filter} aria-label={W.filter} bind:value={filter} /></label>{/if}
+    {#if rows?.length === 0}<p class="empty">{W.nothingMatches(filter)}</p>{/if}
+    <SongList {songs} {rows} kind="Playlist" {id} extra={edits} moved={pl.editable && !rows ? moved : undefined} />
   {/if}
 </Page>
 
 <style>
+  .filter {
+    width: min(320px, 100%);
+    margin: 0 0 14px;
+  }
   .comment {
     font-size: 15px;
     font-weight: 400;

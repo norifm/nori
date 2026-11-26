@@ -29,7 +29,7 @@
   }
 </script>
 
-<Page title={W.albums} back>
+<Page title={W.albums} back places>
   {#snippet head()}<button class="pill quiet small" onclick={() => void player.shuffleLibrary(true)}><Icon name="shuffle" />{W.shuffle}</button>{/snippet}
   {#if sort}
     <AlbumGrid {sort} {favorites} top="albums">

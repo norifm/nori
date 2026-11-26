@@ -425,6 +425,12 @@ impl Nori {
         self.leave();
     }
 
+    /// Forgets what this browser played (`Core::history_clear`).
+    pub fn history_clear(&self) -> Result<(), JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        client.core().history_clear().map_err(error)
+    }
+
     /// Pins playlist `id` in this browser, or lets it go; Home's shelf of pinned playlists follows.
     pub fn pin_playlist(&self, id: String, on: bool) {
         nori_core::browse::pin_playlist(&self.app.settings, id, on);
@@ -697,6 +703,47 @@ impl Nori {
         Value::from(orders.collect::<Vec<_>>()).to_string()
     }
 
+    /// The songs list's orders, in the order offered (`browse::song_sorts`): each by name (`TITLE`, ...).
+    pub fn song_sorts(&self) -> String {
+        Value::from(nori_core::browse::song_sorts().into_iter().map(|s| s.name).collect::<Vec<_>>()).to_string()
+    }
+
+    /// The songs list's order as it was left: `{ name, reversed, way }`, `way` the way it runs now (`up`,
+    /// `down`; `browse::sort_way`).
+    pub fn song_sort(&self) -> String {
+        use nori_core::browse::{song_sort_direction, song_sort_saved, sort_reversed_saved, sort_way, SortDirection, SortedList};
+        let lists = self.app.settings.current().unwrap_or_default().list_prefs;
+        let (name, reversed) = (song_sort_saved(lists.clone()), sort_reversed_saved(lists, SortedList::Songs));
+        let way = match sort_way(song_sort_direction(name.clone()), reversed) {
+            SortDirection::Ascending => "up",
+            SortDirection::Descending => "down",
+            SortDirection::Shuffled => "",
+        };
+        json!({ "name": name, "reversed": reversed, "way": way }).to_string()
+    }
+
+    /// Order `name` picked for the songs list: another order in its own way, the same one turned around
+    /// (`browse::sort_picked`), kept for the next time; then as [`Nori::song_sort`] tells it.
+    pub fn pick_song_sort(&self, name: String) -> Result<String, JsValue> {
+        use nori_core::browse::{song_sort_direction, song_sort_kept, song_sort_saved, song_sorts, sort_picked, sort_reversed_kept, sort_reversed_saved, SortDirection, SortPick, SortedList};
+        let sorts = song_sorts();
+        let at = sorts.iter().position(|s| s.name == name).ok_or_else(|| error(format!("no song order {name}")))?;
+        let mut prefs = self.app.settings.current().unwrap_or_default();
+        let now = song_sort_saved(prefs.list_prefs.clone());
+        let now = SortPick { order: sorts.iter().position(|s| s.name == now).unwrap_or(0) as u32, reversed: sort_reversed_saved(prefs.list_prefs.clone(), SortedList::Songs) };
+        let picked = sort_picked(now, at as u32, song_sort_direction(name.clone()) != SortDirection::Shuffled);
+        for kept in [song_sort_kept(name), sort_reversed_kept(SortedList::Songs, picked.reversed)] {
+            prefs.list_prefs.insert(kept.key, kept.value);
+        }
+        self.app.settings.put(prefs);
+        Ok(self.song_sort())
+    }
+
+    /// Whether a list of `songs` songs offers a filter (`pages::filter_offered`).
+    pub fn filter_offered(&self, songs: u32, filtering: bool) -> bool {
+        nori_core::pages::filter_offered(songs, filtering)
+    }
+
     /// The album grid's order as it was left, by name (`browse::album_sort_saved`).
     pub fn album_sort(&self) -> String {
         let prefs = self.app.settings.current().unwrap_or_default();
@@ -769,6 +816,8 @@ impl Nori {
         use nori_core::settings::LibrarySection::*;
         let shown = nori_core::browse::library_sections_shown(self.rules().sections);
         let drawn: Vec<String> = shown.into_iter().filter(|s| matches!(s, Albums | Artists | Songs | Playlists | Genres | Favourites)).map(|s| format!("{s:?}")).collect();
+        let places = [History].into_iter().filter(|s| self.rules().sections.contains(s)).map(|s| format!("{s:?}"));
+        let drawn: Vec<String> = drawn.into_iter().chain(places).collect();
         Value::from(drawn).to_string()
     }
 
