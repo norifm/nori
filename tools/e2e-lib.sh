@@ -32,6 +32,20 @@ while [ $# -gt 0 ]; do
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 
+# ---- the device ------------------------------------------------------------------------------------------
+# A device that goes away (an emulator that crashed) stops the run at once: otherwise each check after it
+# fails only at its timeout, and `adb wait-for-device` never returns. adbd restarting (`adb root`) is back
+# well within the 30 s.
+device_gone=0
+watch_device() {
+  while adb wait-for-disconnect >/dev/null 2>&1; do
+    timeout 30 adb wait-for-device >/dev/null 2>&1 && continue
+    echo "$ANDROID_SERIAL went away: the run stops" >&3
+    kill -USR1 $$; pkill -TERM -P $$
+    return
+  done
+}
+
 # `want <section>`: is this section to run? Every section of a script is named in its SECTIONS, and
 # `--list` prints them. Sections marked opt-in (OPT_IN) run only when named in --only.
 want() {
@@ -244,10 +258,14 @@ runlog=$(mktemp); runwatcher=""
 whole_run_log() { adb logcat -c; adb logcat -v brief -s nori:* > "$runlog" 2>/dev/null & runwatcher=$!; }
 run_errors() { grep -cE "rust player error: " "$runlog"; }
 cleanup_e2e() {
-  restore_settings
-  [ "${network_off:-0}" = 0 ] || online
+  if [ "$device_gone" = 0 ]; then
+    restore_settings
+    [ "${network_off:-0}" = 0 ] || online
+  fi
   if declare -F cleanup_feature >/dev/null; then cleanup_feature; fi
-  for pid in "$watcher" "$runwatcher"; do
+  # The device's watcher ends with the adb it waits on.
+  [ -z "${device_watcher:-}" ] || pkill -P "$device_watcher"
+  for pid in "$watcher" "$runwatcher" "${device_watcher:-}"; do
     if [ -n "$pid" ]; then kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; fi
   done
   rm -f "$watching" "$runlog"
@@ -255,6 +273,9 @@ cleanup_e2e() {
 trap cleanup_e2e EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
+trap 'device_gone=1; exit 1' USR1
+# Its own stderr would show the adb it ends at cleanup; what it says goes to the script's (3).
+if [ "$LIST" = 0 ]; then watch_device 3>&2 2>/dev/null & device_watcher=$!; fi
 
 # The settings a script changes, read at its start and put back at its end (the ones state reports).
 SAVED=()

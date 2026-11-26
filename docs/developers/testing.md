@@ -226,6 +226,8 @@ tools/device-check.sh audio --only tuning,restart
 - `tools/ui-dump.sh` reads the visible accessibility tree. It does not wait for an animating player to
   go idle. A row under the now playing bar is not in it: scroll to a row with `scrolled_to`
   (`tools/feature-e2e.sh`) before you look for it.
+- A device that goes away for more than 30 s, such as an emulator that crashed, stops the run with a
+  message. A restart of adbd (`adb root`) is shorter and does not stop it.
 - The jam checks need an octo-fiesta relay on `localhost:5274`. `tools/jam-server.sh` starts one from the
   octo-fiesta checkout beside this one, or the one `NORI_OCTO_ROOT` names.
 - The `remote` and `youtube-music` sections run the terminal app as the other device, in tmux.
