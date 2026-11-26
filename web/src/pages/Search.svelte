@@ -408,9 +408,6 @@
     font-size: 13px;
     font-variant-numeric: tabular-nums;
   }
-  .artists :global(.row) {
-    grid-auto-columns: 176px;
-  }
   /* A genre as Android's tile: its name in Literata on the surface, a cover of its songs at the end running
      into the paper; as many columns as the page holds. */
   .genres {

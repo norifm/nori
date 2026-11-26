@@ -83,9 +83,6 @@
   .artist {
     margin-bottom: 22px;
   }
-  .artist :global(.row) {
-    grid-auto-columns: 148px;
-  }
   .name {
     display: flex;
     align-items: center;

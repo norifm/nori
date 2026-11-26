@@ -1,13 +1,14 @@
 <script lang="ts">
   // Albums, artists or playlists as cards: a grid filling the page, or a shelf of one row that scrolls
-  // sideways. An album's line is the core's (`subtitle`: its artist and year). A card opened is kept for its
-  // page's head (`known`).
+  // sideways (`Shelf`). An album's line is the core's (`subtitle`: its artist and year). A card opened is
+  // kept for its page's head (`known`).
   import { know } from "../state/known";
   import { href } from "../state/route.svelte";
   import { W } from "../words";
   import type { Album, Artist, Playlist } from "../state/types";
   import Card from "./Card.svelte";
   import Icon from "./Icon.svelte";
+  import Shelf from "./Shelf.svelte";
   import { come, settle } from "./motion";
 
   let { albums = [], artists = [], playlists = [], row = false, sub }: { albums?: Album[]; artists?: Artist[]; playlists?: Playlist[]; row?: boolean; sub?: (a: Album) => string } = $props();
@@ -15,20 +16,24 @@
 
 {#if albums.length === 0 && artists.length === 0 && playlists.length === 0}
   <p class="empty"><Icon name="music-note" />{W.empty}</p>
+{:else if row}
+  <Shelf count={albums.length + artists.length + playlists.length}>{@render cells()}</Shelf>
 {:else}
-  <div class={row ? "row" : "grid"}>
-    {#each artists as a (a.id)}
-      <!-- How many albums: two artists of one name are told apart. -->
-      <div class="cell" animate:settle transition:come><Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" remote={a.isExternal} onopen={() => know("artist", a)} /></div>
-    {/each}
-    {#each albums as a (a.id)}
-      <div class="cell" animate:settle transition:come><Card href={href("album", a.id)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} remote={a.isExternal} onopen={() => know("album", a)} /></div>
-    {/each}
-    {#each playlists as p (p.id)}
-      <div class="cell" animate:settle transition:come><Card href={href("playlist", p.id)} kind="playlist" id={p.id} cover={p.cover} title={p.name} sub={p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")} fallback="playlist" editable={!!p.editable} remote={p.remote} onopen={() => know("playlist", p)} /></div>
-    {/each}
-  </div>
+  <div class="grid">{@render cells()}</div>
 {/if}
+
+{#snippet cells()}
+  {#each artists as a (a.id)}
+    <!-- How many albums: two artists of one name are told apart. -->
+    <div class="cell" animate:settle transition:come><Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" remote={a.isExternal} onopen={() => know("artist", a)} /></div>
+  {/each}
+  {#each albums as a (a.id)}
+    <div class="cell" animate:settle transition:come><Card href={href("album", a.id)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} remote={a.isExternal} onopen={() => know("album", a)} /></div>
+  {/each}
+  {#each playlists as p (p.id)}
+    <div class="cell" animate:settle transition:come><Card href={href("playlist", p.id)} kind="playlist" id={p.id} cover={p.cover} title={p.name} sub={p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")} fallback="playlist" editable={!!p.editable} remote={p.remote} onopen={() => know("playlist", p)} /></div>
+  {/each}
+{/snippet}
 
 <style>
   .cell {
@@ -41,24 +46,6 @@
     grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
     gap: 22px var(--grid-gap);
   }
-  .row {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 176px;
-    gap: var(--grid-gap);
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-    margin: 0 calc(-1 * var(--gutter));
-    padding: 0 var(--gutter) 6px;
-    scroll-padding: 0 var(--gutter);
-    scrollbar-width: none;
-  }
-  .row::-webkit-scrollbar {
-    display: none;
-  }
-  .row > :global(*) {
-    scroll-snap-align: start;
-  }
   @media (min-width: 1600px) {
     .grid {
       grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
@@ -68,9 +55,6 @@
     .grid {
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
       gap: 18px var(--grid-gap);
-    }
-    .row {
-      grid-auto-columns: 148px;
     }
   }
 </style>

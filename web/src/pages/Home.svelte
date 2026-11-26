@@ -19,13 +19,14 @@
   import MixCard from "../ui/MixCard.svelte";
   import Page from "../ui/Page.svelte";
   import SectionTitle from "../ui/SectionTitle.svelte";
+  import Shelf from "../ui/Shelf.svelte";
   import { come, settle } from "../ui/motion";
 
-  type Shelf = { row: string; albums: Album[]; playlists: Playlist[] };
+  type Row = { row: string; albums: Album[]; playlists: Playlist[] };
   const page = reading("home", async () => {
     const rows = JSON.parse(await ask<string>("home_rows")) as HomeRow[];
     const shelves = await Promise.all(
-      rows.map(async (r): Promise<Shelf> => {
+      rows.map(async (r): Promise<Row> => {
         if (r.kind === "pinned") {
           const p = await read<{ pinned?: Playlist[] }>({ kind: "playlists" }).catch(() => ({ pinned: [] }));
           return { row: r.row, albums: [], playlists: p.pinned ?? [] };
@@ -64,9 +65,9 @@
   {#if mixes.length}
     <section class="shelf" data-row="ForYou">
       <SectionTitle title={W.forYou} />
-      <div class="mixes">
+      <Shelf count={mixes.length}>
         {#each mixes as m (m.id)}<div class="cell" animate:settle transition:come><MixCard mix={m} /></div>{/each}
-      </div>
+      </Shelf>
     </section>
   {/if}
   {#each page.data ?? [] as s (s.row)}
@@ -80,32 +81,8 @@
 </Page>
 
 <style>
-  /* One row of mix cards that scrolls sideways, on the shelves' columns. */
-  .mixes {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 176px;
-    gap: var(--grid-gap);
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-    margin: 0 calc(-1 * var(--gutter));
-    padding: 0 var(--gutter) 6px;
-    scroll-padding: 0 var(--gutter);
-    scrollbar-width: none;
-  }
-  .mixes::-webkit-scrollbar {
-    display: none;
-  }
-  .mixes > :global(*) {
-    scroll-snap-align: start;
-  }
   .cell {
     display: grid;
     min-width: 0;
-  }
-  @media (max-width: 719px) {
-    .mixes {
-      grid-auto-columns: 148px;
-    }
   }
 </style>
