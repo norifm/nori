@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run an existing arm64 AVD with host graphics; choose a distinct even port for each worker.
+# Run an existing AVD headless (tools/test-avd.sh makes nori-test); choose a distinct even port for each worker.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 if [ "${1:-}" = --leased ]; then shift; else
@@ -15,8 +15,11 @@ fi
 # The SDK Gradle builds with (local.properties), unless the environment names one.
 sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$(sed -n 's/^sdk\.dir=//p' "$here/../local.properties")}}"
 mkdir -p "$here/../build/emulators"
+# A Mac draws with its GPU. Linux without a display draws in software: qemu's host renderer and its
+# Vulkan path crash there (SIGSEGV in RenderThread).
+if [ "$(uname)" = Darwin ]; then graphics=(-gpu host); else graphics=(-gpu swiftshader_indirect -feature -Vulkan); fi
 nohup "$sdk/emulator/emulator" \
-  -avd "$avd" -port "$port" -gpu host -cores 4 -no-window -no-audio -no-boot-anim \
+  -avd "$avd" -port "$port" "${graphics[@]}" -no-window -no-audio -no-boot-anim \
   -no-snapshot-save > "$here/../build/emulators/$serial.log" 2>&1 < /dev/null &
 pid=$!
 trap 'kill "$pid" 2>/dev/null || true' EXIT
@@ -27,4 +30,4 @@ until [ "$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d
   sleep 0.3
 done
 trap - EXIT
-echo "$serial ready ($avd, host graphics)"
+echo "$serial ready ($avd)"

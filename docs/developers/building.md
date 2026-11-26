@@ -79,10 +79,10 @@ debugger's variables, set `CARGO_PROFILE_DEV_DEBUG=true` for that session.
 
 ### Build the debug APK and install it on the emulator
 
-You need the Android prerequisites and an Android Virtual Device (AVD), made in Android Studio's Device
-Manager.
+You need the Android prerequisites and an Android Virtual Device (AVD). `tools/test-avd.sh` makes
+`nori-test`: an Automated Test Device image with no Play services, a 720 × 1280 screen, 2 GB and 2 cores.
 
-1. Start the emulator headless: `tools/emulator.sh <avd> 5554`.
+1. Start the emulator headless: `tools/emulator.sh nori-test 5554`.
 
    The script prints `emulator-5554 ready` when the emulator booted. If it says the emulator did not
    boot, read `build/emulators/emulator-5554.log`.
@@ -113,8 +113,9 @@ Give each emulator its own AVD and its own even port. An AVD runs only once at a
 `emulator -list-avds` lists them.
 
 ```sh
-tools/emulator.sh first-avd 5554
-tools/emulator.sh second-avd 5556
+tools/test-avd.sh nori-test-2
+tools/emulator.sh nori-test 5554
+tools/emulator.sh nori-test-2 5556
 ```
 
 [Testing](testing.md) shows how the device checks share these emulators.
