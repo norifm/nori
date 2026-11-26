@@ -9453,6 +9453,8 @@ export component AppWindow inherits Window {
                                 count: root.picks.length;
                                 loading: !root.picks-loaded;
                                 least: Frame.least;
+                                // A pick's card is 186/150 of its side tall: the band holds it and no more.
+                                below: self.side * 36 / 150;
                                 for slot in picks-shelf.slots: PickCard {
                                     property <int> i: picks-shelf.first + slot;
                                     property <Pick> m: root.picks[self.i];

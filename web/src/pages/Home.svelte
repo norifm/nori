@@ -85,17 +85,13 @@
     display: grid;
     min-width: 0;
   }
-  /* The desktop's Home: the first row 22 px under the title (36 under the card to carry on), and the mixes
-     amid a band a fifth of their side taller than they are. */
+  /* The desktop's Home: the first row 22 px under the title (36 under the card to carry on). */
   @media (min-width: 720px) {
     :global(.page-head) + .shelf > :global(.section-title) {
       padding-top: 6px;
     }
     :global(#continue) + .shelf > :global(.section-title) {
       padding-top: 36px;
-    }
-    .cell {
-      padding-block: calc(var(--side) / 15);
     }
   }
 </style>
