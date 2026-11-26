@@ -794,7 +794,7 @@ private val LocalUnderControls = androidx.compose.runtime.compositionLocalOf { 0
  */
 @Composable
 private fun PlayerHalves(wide: Boolean, panel: @Composable ColumnScope.() -> Unit, controls: @Composable ColumnScope.() -> Unit) {
-    if (!wide) Column(Modifier.fillMaxSize().windowInsetsPadding(gestureBarRoom)) { panel(); controls() }
+    if (!wide) Column(Modifier.fillMaxSize().windowInsetsPadding(gestureBarRoom).footOnScreen()) { panel(); controls() }
     else androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         // Wider than it is tall: the sleeve is a band across the cover, cropped above and below rather than at
         // the sides. The controls keep their place (the square's edge) and stand over the sleeve's soft edge,
@@ -819,6 +819,18 @@ private fun PlayerHalves(wide: Boolean, panel: @Composable ColumnScope.() -> Uni
             ) { controls() }
         }
     }
+}
+
+/**
+ * The upright player's column, its foot kept on screen. The sleeve is as tall as the screen's width makes it, so
+ * on a short screen (16:9 with the navigation buttons, a large display size) the column is taller than the
+ * screen. Measured without a height limit, the column shares out only the screen's height among its weights,
+ * which is the same layout wherever it fits; where it doesn't, it rises by the difference: the sleeve's top goes
+ * off the top edge rather than the times and the transport off the bottom.
+ */
+private fun Modifier.footOnScreen(): Modifier = layout { measurable, constraints ->
+    val column = measurable.measure(constraints.copy(minHeight = constraints.maxHeight, maxHeight = androidx.compose.ui.unit.Constraints.Infinity))
+    layout(column.width, constraints.maxHeight) { column.place(0, minOf(0, constraints.maxHeight - column.height)) }
 }
 
 private data class PlayerTitleMeta(
