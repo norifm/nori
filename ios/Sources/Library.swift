@@ -1,7 +1,7 @@
 import UIKit
 
 /// The library, as Android's: a strip of chips for its sections and the one chosen below it, the places it
-/// keeps (Favorites, Downloads) beside its title, and the list's bar of order, filter and Shuffle.
+/// keeps (Favorites, Downloads, History) beside its title, and the list's bar of order, filter and Shuffle.
 final class LibraryPage: UIViewController {
     /// Each chip with the core's LibrarySection it is, and the page it reads.
     private static let all: [(String, Int, Int32)] = [
@@ -121,6 +121,9 @@ final class LibraryPage: UIViewController {
         }
         if rules.sections.contains(11) {
             place(Iconoir.download, Say.downloads) { DownloadsPage() }
+        }
+        if rules.sections.contains(6) {
+            place(Iconoir.clockRotateRight, Say.history) { HistoryPage() }
         }
         return places
     }

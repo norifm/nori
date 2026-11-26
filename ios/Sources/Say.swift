@@ -486,6 +486,40 @@ enum Say {
     static let sort = "Sort"
     static let output = "Output"
 
+    // History and the listening stats, from Android's strings.
+    static let listeningStats = "Listening stats"
+    static let clearHistory = "Clear history"
+    static let listening = "Listening"
+    static let whenYouListen = "When you listen"
+    static let topSongs = "Top songs"
+    static let topArtists = "Top artists"
+    static let topAlbums = "Top albums"
+    static let topGenres = "Top genres"
+    /// A listening stats choice, by the core's name (`StatsPeriod`, `StatsSource`).
+    static func statsChoice(_ name: String) -> String {
+        ["Week": "Week", "Month": "Month", "Year": "Year", "AllTime": "All time", "Device": "This device", "ServerAccount": "All devices"][name] ?? name
+    }
+    /// Under the play count: the time listened; the server knows none.
+    static func statsHeadline(server: Bool, ms: Int) -> String { server ? "plays on your server account" : "plays · \(Fmt.clock(ms: ms)) listened" }
+    /// What the server account's figures are, or why they are missing or old (the core's `ServerHistory`).
+    static func statsServerNote(_ h: String?) -> String {
+        switch h {
+        case "Unreached": return "Your server didn’t answer. Showing the plays fetched before."
+        case "Unavailable": return "Your server doesn’t share listening history. It needs Navidrome 0.59 or later and a password login."
+        default: return "Navidrome counts plays from when it was updated to 0.59, without skips or time listened."
+        }
+    }
+    /// "Most around 21:00, mostly on Fridays".
+    static func statsHabit(hour: Int, weekday: Int?) -> String {
+        let days = ["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"]
+        guard let d = weekday, days.indices.contains(d) else { return "Most around \(hour):00" }
+        return "Most around \(hour):00, mostly on \(days[d])"
+    }
+    /// What a number of the listening stats counts, by the core's `StatKind`.
+    static func statKind(_ kind: String) -> String {
+        ["Songs": "songs", "Artists": "artists", "Albums": "albums", "Skips": "skips", "ActiveDays": "active days", "DayStreak": "day streak"][kind] ?? kind
+    }
+
     // The queue, from Android's strings.xml.
     static let queue = "Queue"
     static let history = "History"

@@ -16,7 +16,7 @@ use nori_core::menus::{download_entries, page_actions, playlist_edit_write, play
 use nori_core::pages::release_groups;
 use nori_core::mixes::board::{MixLookup, MixTile, FAVOURITES_MIX};
 use nori_core::stage::QueueRows;
-use nori_core::{Album, Artist, Genre, Lyrics, OriginKind, PageOrigin, Playlist, Song};
+use nori_core::{Album, Artist, Lyrics, OriginKind, PageOrigin, Playlist, Song};
 use nori_core::lyrics_follow::LyricsNow;
 use nori_core::search::SearchShown;
 use nori_covers::loader::Ticket;
@@ -61,6 +61,10 @@ pub const PAGE_SMART: i32 = 17;
 pub const PAGE_DOWNLOADED_ALBUM: i32 = 18;
 /// A Home row in full: `arg` is its shelf's key, then a newline and the offset of a page past the first.
 pub const PAGE_HOME_ROW: i32 = 19;
+/// This iPod's listening history: `arg` empty for its newest page.
+pub const PAGE_HISTORY: i32 = 20;
+/// The listening stats: `arg` as [`stats`] reads it.
+pub const PAGE_STATS: i32 = 21;
 
 pub type PageFn = unsafe extern "C" fn(u64, *const c_char);
 /// `(token, width, height, rgba, len, owner, stand_in)`: the pixels stay valid until `owner` is given to
@@ -325,8 +329,52 @@ fn mix_json(t: &MixTile) -> Value {
     })
 }
 
-fn genre_json(g: &Genre) -> Value {
-    json!({ "k": "genre", "id": g.name, "t": g.name, "n": g.album_count, "m": g.song_count })
+fn genre_json(g: &nori_core::browse::GenreTile) -> Value {
+    json!({ "k": "genre", "id": g.name, "t": g.name, "n": g.song_count, "c": g.cover_art })
+}
+
+/// The period, the source and whether to ask the server's new plays first, from [`stats`]' `arg`.
+fn stats_asked(arg: &str) -> (nori_core::browse::StatsPeriod, nori_core::browse::StatsSource, bool) {
+    use nori_core::browse::{StatsPeriod, StatsSource};
+    let mut words = arg.split('\n');
+    let period = words.next().and_then(|n| StatsPeriod::ALL.into_iter().find(|p| format!("{p:?}") == n)).unwrap_or(StatsPeriod::OPENED);
+    let source = words.next().and_then(|n| StatsSource::ALL.into_iter().find(|s| format!("{s:?}") == n)).unwrap_or(StatsSource::Device);
+    (period, source, words.next() == Some("1"))
+}
+
+/// The listening stats for `arg` (`period\nsource\nsync`, each by its core name; empty: the ones the page
+/// opens on): the choices and the one taken, how the server account's plays stood when asked for (with
+/// `sync`), the plays, the numbers under them, each hour's share of the busiest and the busiest hour and
+/// weekday, and the top lists.
+fn stats(client: &nori_core::client::Client, core: &nori_core::Core, arg: &str) -> Value {
+    use nori_core::browse::{StatsPeriod, StatsSource};
+    let (period, source, sync) = stats_asked(arg);
+    let server = sync.then(|| format!("{:?}", nori_core::transport::block_on(client.server_history_sync())));
+    let now = nori_core::db::now_ms();
+    let tz = (nori_core::library::local_offset_s(now / 1000) * 1000) as i32;
+    let p = match core.stats_page(period, source, tz) {
+        Ok(p) => p,
+        Err(e) => return json!({ "error": crate::account::LOGIN_DATABASE, "detail": e.to_string() }),
+    };
+    let entries = |v: &[nori_core::TopEntry]| v.iter().map(|e| json!({ "t": e.name, "n": e.plays, "ms": e.listened_ms, "c": e.cover_art })).collect::<Vec<_>>();
+    let st = &p.stats;
+    json!({
+        "periods": StatsPeriod::ALL.map(|p| format!("{p:?}")),
+        "sources": StatsSource::ALL.map(|s| format!("{s:?}")),
+        "period": format!("{period:?}"),
+        "source": format!("{source:?}"),
+        "server": server,
+        "plays": st.plays,
+        "ms": st.listened_ms,
+        "tiles": p.tiles.iter().map(|t| json!({ "k": format!("{:?}", t.kind), "n": t.value })).collect::<Vec<_>>(),
+        "hours": p.hours,
+        "hour": p.busiest_hour,
+        "weekday": p.busiest_weekday,
+        "songs": st.top_songs.iter().map(|t| json!({ "t": t.song.title, "s": t.song.artist, "n": t.plays, "c": t.song.cover_art })).collect::<Vec<_>>(),
+        "artists": entries(&st.top_artists),
+        "albums": entries(&st.top_albums),
+        "genres": entries(&st.top_genres),
+    })
 }
 
 fn section(key: &str, grid: bool, items: Vec<Value>) -> Value {
@@ -408,14 +456,15 @@ fn found(token: u64, v: &nori_core::search::SearchView, server: bool) -> Value {
 
 /// A page of an album grid from `offset`, or with `favorites` the starred albums whole in `sort`'s order:
 /// more follow while pages come full (`browse::next_album_page`).
-fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, favorites: bool, genre: Option<String>, offset: i32) {
+fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, favorites: bool, offset: i32) {
+    let at = paging::From::Offset(offset as u32);
     if offset == 0 {
-        paging::first(token);
+        paging::first(token, at);
     }
     let read = if favorites {
         Read::StarredItems
     } else {
-        Read::AlbumList { kind: sort, size: ALBUM_PAGE, offset, genre }
+        Read::AlbumList { kind: sort, size: ALBUM_PAGE, offset, genre: None }
     };
     let read = pages_sent(client, token, read, &|p| {
         let v = match p {
@@ -429,13 +478,13 @@ fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, f
             vec![section("albums", true, v.iter().map(album_json).collect())]
         };
         Some(json!({
-            "more": paging::answered(token, offset as u32, next_album_page(sort, favorites, offset as u32, ALBUM_PAGE as u32, v.len() as u32)),
+            "more": paging::answered(token, at, next_album_page(sort, favorites, offset as u32, ALBUM_PAGE as u32, v.len() as u32).map(paging::From::Offset)),
             "from": offset,
             "sections": sections,
         }))
     });
     if !read {
-        paging::failed(token, offset as u32);
+        paging::failed(token, at);
     }
 }
 
@@ -499,11 +548,12 @@ fn home_row(token: u64, client: &nori_core::client::Client, core: &nori_core::Co
         return send(token, &json!({ "sections": [], "from": offset }));
     };
     let key = shelf_key(row);
+    let at = paging::From::Offset(offset);
     if offset == 0 {
-        paging::first(token);
+        paging::first(token, at);
     }
     // Whether more may follow a page from `offset` that brought `got`.
-    let more = |got: usize| paging::answered(token, offset, home_row_more(shelf.clone(), got as u32).then_some(offset + got as u32));
+    let more = |got: usize| paging::answered(token, at, home_row_more(shelf.clone(), got as u32).then_some(paging::From::Offset(offset + got as u32)));
     match shelf.clone() {
         HomeShelf::Albums { sort, size, follows_stars } => {
             let read = pages_sent(client, token, shelf_albums_read(sort, size, follows_stars, offset), &|p| match p {
@@ -514,7 +564,7 @@ fn home_row(token: u64, client: &nori_core::client::Client, core: &nori_core::Co
                 _ => None,
             });
             if !read {
-                paging::failed(token, offset);
+                paging::failed(token, at);
             }
         }
         HomeShelf::Songs { sort, descending, limit } => {
@@ -757,7 +807,6 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
             &client,
             album_sort_saved(list_prefs()),
             arg == ALBUMS_FAVORITES,
-            None,
             arg.parse().unwrap_or(0),
         ),
         PAGE_ARTISTS => pages(&client, token, Read::ArtistIndex, &|p| match p {
@@ -772,16 +821,53 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
             })),
             _ => None,
         }),
+        // The genres with songs, by name (`Core::genres_listed`).
         PAGE_GENRES => pages(&client, token, Read::GenreList, &|p| match p {
             Page::Genres { v } => Some(json!({
-                "sections": [section("genres", false, v.iter().map(genre_json).collect())]
+                "sections": [section("genres", false, core.genres_listed(v).iter().map(genre_json).collect())]
             })),
             _ => None,
         }),
-        PAGE_GENRE => {
-            let (genre, offset) = arg.split_once('\n').unwrap_or((arg.as_str(), "0"));
-            album_grid(token, &client, AlbumSort::ByGenre, false, Some(genre.into()), offset.parse().unwrap_or(0))
+        // A genre's songs under its hero, as a mix's page: a cover of them, Play and Shuffle.
+        PAGE_GENRE => match nori_core::transport::block_on(client.genre_songs(arg.clone())) {
+            Ok(songs) => {
+                let seconds: u64 = songs.iter().map(|s| s.duration as u64).sum();
+                let cover = core.genre_cover(arg.clone()).ok().flatten();
+                let v = json!({
+                    "head": { "k": "genre", "id": arg, "t": arg, "c": cover, "n": songs.len(), "count": songs.len(), "sec": seconds },
+                    "sections": [songs_section("songs", &songs, 0)],
+                });
+                keep_list(token, songs, Some(PageOrigin::new(OriginKind::Genre, arg.as_str())));
+                send(token, &v);
+            }
+            Err(e) => send_error(token, &e),
+        },
+        // What this iPod played, newest first, a page from the place the last one ended.
+        PAGE_HISTORY => {
+            let after = paging::From::history(&arg);
+            let at = paging::From::History(after);
+            if after.is_none() {
+                paging::first(token, at);
+            }
+            match core.history_page(after) {
+                Ok(page) => {
+                    let songs: Vec<Song> = page.entries.into_iter().map(|e| e.song).collect();
+                    let kept = if after.is_none() { None } else { extend_list(token, &songs) };
+                    let from = kept.unwrap_or(0);
+                    let more = paging::answered(token, at, page.next.map(|n| paging::From::History(Some(n))));
+                    let v = json!({ "more": more, "from": from, "sections": [songs_section("songs", &songs, from)] });
+                    if kept.is_none() {
+                        keep_list(token, songs, None);
+                    }
+                    send(token, &v);
+                }
+                Err(e) => {
+                    paging::failed(token, at);
+                    send(token, &json!({ "error": crate::account::LOGIN_DATABASE, "detail": e.to_string() }));
+                }
+            }
         }
+        PAGE_STATS => send(token, &stats(&client, &core, &arg)),
         PAGE_STARRED => pages(&client, token, Read::StarredItems, &|p| match p {
             Page::StarredPage { v } => {
                 keep_list(token, v.songs.clone(), None);
@@ -795,8 +881,9 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
         }),
         PAGE_SONGS => {
             let offset = arg.parse().unwrap_or(0);
+            let at = paging::From::Offset(offset);
             if offset == 0 {
-                paging::first(token);
+                paging::first(token, at);
             }
             let sort = song_sort_saved(list_prefs());
             match nori_core::transport::block_on(client.songs_listed(sort.clone(), false, false, 0, 0, offset)) {
@@ -804,7 +891,7 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                     let kept = if offset == 0 { None } else { extend_list(token, &p.songs) };
                     let from = kept.unwrap_or(0);
                     let rows = songs_section("songs", &p.songs, from);
-                    let more = paging::answered(token, offset, (!p.exhausted).then_some(offset + p.songs.len() as u32));
+                    let more = paging::answered(token, at, (!p.exhausted).then_some(paging::From::Offset(offset + p.songs.len() as u32)));
                     let v = json!({
                         "more": more, "from": from, "sections": [rows],
                     });
@@ -814,7 +901,7 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                     send(token, &v);
                 }
                 Err(e) => {
-                    paging::failed(token, offset);
+                    paging::failed(token, at);
                     send_error(token, &e);
                 }
             }
@@ -1186,6 +1273,12 @@ pub extern "C" fn nori_ios_download_entries(token: u64) -> *mut c_char {
     with_session(|s| owned(&entries_of(s, &songs))).unwrap_or(std::ptr::null_mut())
 }
 
+/// Forgets what this iPod played (`Core::history_clear`); 1 when it did.
+#[no_mangle]
+pub extern "C" fn nori_ios_history_clear() -> i32 {
+    server().is_some_and(|(_, core)| core.history_clear().is_ok()) as i32
+}
+
 /// What a page's list head offers for list `token` (`menus::page_actions`), as JSON to free: `[{a, act, n}]`,
 /// `a` 0 download (`act` as [`entries_of`] codes it, `n` the songs it takes), 1 download everything by the
 /// artist, 2 add to the queue, 3 a new draw of the mix, 4 edit. `kind` as in [`nori_ios_read`];
@@ -1193,7 +1286,8 @@ pub extern "C" fn nori_ios_download_entries(token: u64) -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn nori_ios_page_actions(token: u64, kind: i32, refreshable: i32) -> *mut c_char {
     let kind = match kind {
-        PAGE_ALBUM | PAGE_DOWNLOADED_ALBUM => PageKind::Album,
+        // A genre's songs offer what an album's do, as Android's genre page.
+        PAGE_ALBUM | PAGE_DOWNLOADED_ALBUM | PAGE_GENRE => PageKind::Album,
         PAGE_ARTIST => PageKind::Artist,
         PAGE_PLAYLIST => PageKind::Playlist,
         PAGE_MIX => PageKind::Mix { refreshable: refreshable != 0 },
@@ -1458,6 +1552,7 @@ fn page_origin(kind: i32, id: &str) -> Option<PageOrigin> {
         PAGE_PLAYLIST => OriginKind::Playlist,
         PAGE_MIX => OriginKind::Mix,
         PAGE_SMART => OriginKind::Smart,
+        PAGE_GENRE => OriginKind::Genre,
         _ => return None,
     };
     Some(PageOrigin::new(kind, id))
@@ -2008,7 +2103,16 @@ mod tests {
         let downloaded = page_origin(PAGE_DOWNLOADED_ALBUM, "a").unwrap();
         assert!(pausing(hero(Some(&downloaded), &downloaded, false, true, false)));
         assert!(!pausing(hero(Some(&album), &downloaded, false, true, false)));
-        assert_eq!(page_origin(PAGE_GENRE, "g"), None);
+        assert_eq!(page_origin(PAGE_GENRE, "g"), Some(PageOrigin::new(OriginKind::Genre, "g")));
+        assert_eq!(page_origin(PAGE_HISTORY, ""), None);
+    }
+
+    #[test]
+    fn the_stats_open_on_this_devices_year_and_read_the_choice_asked() {
+        use nori_core::browse::{StatsPeriod, StatsSource};
+        assert_eq!(stats_asked(""), (StatsPeriod::Year, StatsSource::Device, false));
+        assert_eq!(stats_asked("AllTime\nServerAccount\n1"), (StatsPeriod::AllTime, StatsSource::ServerAccount, true));
+        assert_eq!(stats_asked("Week\nDevice\n0"), (StatsPeriod::Week, StatsSource::Device, false));
     }
 
     #[test]

@@ -83,7 +83,7 @@ final class ItemCell: UITableViewCell {
         case "playlist":
             line = item.count > 0 ? Say.songs(item.count) : item.subtitle
         case "genre":
-            line = Say.albums(item.count)
+            line = Say.songs(item.count)
         case "smart":
             line = ""
         default:

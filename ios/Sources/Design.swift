@@ -383,6 +383,22 @@ final class ChipStrip: UIScrollView {
     }
 }
 
+/// Words that do something, as Android's TextAction: semibold ink, no plate, a 40 pt target.
+final class TextAction: UIButton {
+    init(_ words: String, run: @escaping () -> Void) {
+        super.init(frame: .zero)
+        setTitle(words, for: .normal)
+        setTitleColor(Theme.label, for: .normal)
+        setTitleColor(Theme.secondary, for: .highlighted)
+        titleLabel?.font = Fonts.font(14, .semibold, .subheadline)
+        contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+        heightAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
+        addAction(run)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 /// The button a page is built around: an ink pill on the page's paper (Play), or the surface's (the others).
 final class PillButton: UIButton {
     init(_ words: String, _ glyph: UIImage?, prominent: Bool = true, look: PageLook = Theme.page, height: CGFloat = 46) {

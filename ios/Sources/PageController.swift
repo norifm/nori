@@ -22,9 +22,9 @@ class PageController: TablePage {
     enum Layout { case list, shelf, grid }
 
     /// Pages drawn under a hero with their cover and name.
-    private static let headed: Set<Int32> = [NORI_PAGE_ALBUM, NORI_PAGE_DOWNLOADED_ALBUM, NORI_PAGE_ARTIST, NORI_PAGE_PLAYLIST, NORI_PAGE_MIX, NORI_PAGE_SMART]
+    private static let headed: Set<Int32> = [NORI_PAGE_ALBUM, NORI_PAGE_DOWNLOADED_ALBUM, NORI_PAGE_ARTIST, NORI_PAGE_PLAYLIST, NORI_PAGE_MIX, NORI_PAGE_SMART, NORI_PAGE_GENRE]
     /// Pages whose prints stand in a grid rather than on shelves.
-    private static let grids: Set<Int32> = [NORI_PAGE_ALBUMS, NORI_PAGE_GENRE, NORI_PAGE_HOME_ROW]
+    private static let grids: Set<Int32> = [NORI_PAGE_ALBUMS, NORI_PAGE_HOME_ROW]
     /// Under a hero with its cover and name.
     var headed: Bool { PageController.headed.contains(kind) }
 
@@ -316,7 +316,8 @@ class PageController: TablePage {
             }
             return [seal]
         }
-        if kind == "mix", (head["count"] as? Int ?? 0) > 0 {
+        // A mix's or a genre's songs kept on the account as a playlist, as Android's pages do.
+        if kind == "mix" || kind == "genre", (head["count"] as? Int ?? 0) > 0 {
             let save = GlyphButton(Glyph.draw(Iconoir.plusCircle, 24), Say.saveAsPlaylist)
             save.look = look
             let name = heroTitle(head)

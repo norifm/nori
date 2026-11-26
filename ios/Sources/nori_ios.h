@@ -258,6 +258,11 @@ void nori_ios_forget(const char *id);
 #define NORI_PAGE_DOWNLOADED_ALBUM 18
 /// A Home row in full: `arg` its shelf's key.
 #define NORI_PAGE_HOME_ROW 19
+/// This iPod's listening history, newest first, a page at a time.
+#define NORI_PAGE_HISTORY 20
+/// The listening stats: `arg` empty for the ones the page opens on, else `period\nsource\nsync` by the
+/// core's names (the answer's `periods` and `sources`), `sync` 1 to ask the server account's new plays first.
+#define NORI_PAGE_STATS 21
 /// NORI_PAGE_ALBUMS' `arg` for the favorite albums only, in the order chosen, all on one page.
 #define NORI_ALBUMS_FAVORITES "favorites"
 
@@ -281,6 +286,8 @@ int32_t nori_ios_download_act(uint64_t token, int32_t act);
 /// A page's list head (page kind as NORI_PAGE_*; `refreshable` a mix drawn again), JSON to free: [{a, act, n}],
 /// a 0 download (act and n as the entries), 1 everything by the artist, 2 add to queue, 3 new mix, 4 edit.
 char *nori_ios_page_actions(uint64_t token, int32_t kind, int32_t refreshable);
+/// Forgets what this iPod played; 1 when it did.
+int32_t nori_ios_history_clear(void);
 /// Draws mix `id` again. Blocks.
 void nori_ios_mix_refresh(const char *id);
 /// Plays the library shuffled: whole random albums (1) or random songs. Blocks; 1 when it plays.
