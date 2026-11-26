@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use wasmtime::component::Component;
 use wasmtime::Store;
 
+use crate::host::Caller;
 use crate::manifest::{Manifest, Refusal};
 use crate::runtime::{self, Host, Plugin};
 use crate::safe::Mark;
@@ -91,20 +92,41 @@ impl Worker {
     }
 
     /// Runs `f` on the plugin's thread; None when it isn't running or its call failed (a trap, its
-    /// budget spent).
+    /// budget spent). Dropped before its answer, the call is skipped, or, begun, its requests are dropped
+    /// ([`crate::host::Caller`]).
     pub async fn call<R: Send + 'static>(&self, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
         let (tx, rx) = futures_channel::oneshot::channel();
+        let caller = Arc::new(Caller::default());
+        let answering = caller.clone();
         let job: Job = Box::new(move |running| {
             // Its caller has gone (a search typed over): the thread goes on to what is still awaited.
             if tx.is_canceled() {
                 return;
             }
-            if let Some(v) = attempt(running, f) {
+            let attach = |running: &mut Option<Running>, c: Option<Arc<Caller>>| {
+                if let Some(r) = running.as_mut() {
+                    r.store.data_mut().started.answering(c);
+                }
+            };
+            attach(running, Some(answering));
+            let v = attempt(running, f);
+            attach(running, None);
+            if let Some(v) = v {
                 let _ = tx.send(v);
             }
         });
         self.jobs.send(job).ok()?;
+        let _leaves = Leaves(caller);
         rx.await.ok()
+    }
+}
+
+/// Lets the call go when its caller does.
+struct Leaves(Arc<Caller>);
+
+impl Drop for Leaves {
+    fn drop(&mut self) {
+        self.0.leave();
     }
 }
 

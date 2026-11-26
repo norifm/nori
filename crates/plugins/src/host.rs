@@ -1,7 +1,7 @@
 //! The host interfaces a plugin calls, over what the rest of nori gives the plugin host ([`Side`]).
 
 use std::collections::HashMap;
-
+use std::future::Future;
 use std::sync::Arc;
 
 use nori_net::transport::{Exchange, FailureKind, HttpMethod, Transport, TransportError};
@@ -201,6 +201,9 @@ pub(crate) fn host_of(url: &str) -> Option<&str> {
 /// An answer to a plugin's request.
 type Answered = Result<http::Response, types::Error>;
 
+/// A request's id and its answer as it comes; None when the call's caller has gone.
+type Came = Option<(u64, Answered)>;
+
 /// The most requests a plugin may have on their way at once.
 const STARTED_MAX: usize = 16;
 
@@ -210,15 +213,57 @@ pub(crate) struct Started {
     next: u64,
     /// By id: its answer, or none while it is on its way.
     answers: HashMap<u64, Option<Answered>>,
-    sent: std::sync::mpsc::Sender<(u64, Answered)>,
-    came: std::sync::mpsc::Receiver<(u64, Answered)>,
+    sent: std::sync::mpsc::Sender<Came>,
+    came: std::sync::mpsc::Receiver<Came>,
+    /// Who waits for the call running now, when it can go before the answer ([`crate::Worker::call`]).
+    caller: Option<Arc<Caller>>,
 }
 
 impl Default for Started {
     fn default() -> Self {
         let (sent, came) = std::sync::mpsc::channel();
-        Started { next: 0, answers: HashMap::new(), sent, came }
+        Started { next: 0, answers: HashMap::new(), sent, came, caller: None }
     }
+}
+
+impl Started {
+    /// The call running from now on is `caller`'s; None after it.
+    pub(crate) fn answering(&mut self, caller: Option<Arc<Caller>>) {
+        if let Some(c) = &caller {
+            *c.wake.lock().expect("not poisoned") = Some(self.sent.clone());
+        }
+        self.caller = caller;
+    }
+
+    fn gone(&self) -> bool {
+        self.caller.as_ref().is_some_and(|c| c.gone.load(std::sync::atomic::Ordering::Acquire))
+    }
+}
+
+/// The caller of a plugin's call, which may go before the call is answered (a search typed over): then
+/// its requests on their way are dropped and answer at once, and it starts no more, so the plugin's
+/// thread goes on to the calls still awaited.
+#[derive(Default)]
+pub(crate) struct Caller {
+    gone: std::sync::atomic::AtomicBool,
+    /// Wakes the call waiting for its requests.
+    wake: std::sync::Mutex<Option<std::sync::mpsc::Sender<Came>>>,
+    /// Each request on its way ends when its sender drops.
+    on_their_way: std::sync::Mutex<Vec<futures_channel::oneshot::Sender<()>>>,
+}
+
+impl Caller {
+    pub(crate) fn leave(&self) {
+        self.gone.store(true, std::sync::atomic::Ordering::Release);
+        self.on_their_way.lock().expect("not poisoned").clear();
+        if let Some(wake) = self.wake.lock().expect("not poisoned").as_ref() {
+            let _ = wake.send(None);
+        }
+    }
+}
+
+fn caller_gone() -> types::Error {
+    error(types::ErrorKind::Refused, "its caller has gone")
 }
 
 impl Host {
@@ -246,7 +291,23 @@ impl Host {
 
 /// `exchange` sent through `transport`, waited for.
 fn sent(transport: &dyn Transport, exchange: Exchange) -> Answered {
-    match nori_tasks::block_on(transport.send(exchange)) {
+    answered(nori_tasks::block_on(transport.send(exchange)))
+}
+
+/// [`sent`], dropped as soon as `ended` is (its caller has gone).
+fn sent_until(transport: &dyn Transport, exchange: Exchange, ended: futures_channel::oneshot::Receiver<()>) -> Answered {
+    let mut send = std::pin::pin!(transport.send(exchange));
+    let mut ended = ended;
+    nori_tasks::block_on(std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(r) = send.as_mut().poll(cx) {
+            return std::task::Poll::Ready(answered(r));
+        }
+        std::pin::Pin::new(&mut ended).poll(cx).map(|_| Err(caller_gone()))
+    }))
+}
+
+fn answered(r: Result<nori_net::transport::TransportResponse, TransportError>) -> Answered {
+    match r {
         Ok(r) => Ok(http::Response {
             status: r.status,
             headers: r.headers.into_iter().map(|h| types::Header { name: h.name, value: h.value }).collect(),
@@ -259,11 +320,17 @@ fn sent(transport: &dyn Transport, exchange: Exchange) -> Answered {
 
 impl http::Host for Host {
     fn fetch(&mut self, request: http::Request) -> Answered {
+        if self.started.gone() {
+            return Err(caller_gone());
+        }
         let (transport, exchange) = self.exchange(request)?;
         self.mark.waiting(|| sent(&*transport, exchange))
     }
 
     fn start(&mut self, request: http::Request) -> Result<u64, types::Error> {
+        if self.started.gone() {
+            return Err(caller_gone());
+        }
         if self.started.answers.len() >= STARTED_MAX {
             return Err(error(types::ErrorKind::Refused, format!("more than {STARTED_MAX} requests on their way")));
         }
@@ -273,34 +340,57 @@ impl http::Host for Host {
         s.next += 1;
         s.answers.insert(id, None);
         let to = s.sent.clone();
+        let ended = s.caller.as_ref().map(|c| {
+            let (end, ended) = futures_channel::oneshot::channel();
+            c.on_their_way.lock().expect("not poisoned").push(end);
+            ended
+        });
         std::thread::Builder::new()
             .name(format!("plugin {} http", self.id))
             .spawn(move || {
-                let _ = to.send((id, sent(&*transport, exchange)));
+                let answer = match ended {
+                    Some(ended) => sent_until(&*transport, exchange, ended),
+                    None => sent(&*transport, exchange),
+                };
+                let _ = to.send(Some((id, answer)));
             })
             .map_err(|e| error(types::ErrorKind::Network, e.to_string()))?;
         Ok(id)
     }
 
-    /// An id never started (or already taken) counts as answered: [`http::Host::take`] says so.
+    /// An id never started (or already taken) counts as answered: [`http::Host::take`] says so. Once the
+    /// call's caller has gone, every request still on its way is.
     fn wait(&mut self, ids: Vec<u64>) -> u64 {
-        let s = &mut self.started;
         loop {
+            let gone = self.started.gone();
+            let s = &mut self.started;
+            if gone {
+                for slot in s.answers.values_mut().filter(|a| a.is_none()) {
+                    *slot = Some(Err(caller_gone()));
+                }
+            }
             if let Some(&id) = ids.iter().find(|id| !matches!(s.answers.get(id), Some(None))) {
                 return id;
             }
-            let Ok((id, answer)) = self.mark.waiting(|| s.came.recv()) else { return ids.first().copied().unwrap_or_default() };
-            if let Some(slot) = s.answers.get_mut(&id) {
-                *slot = Some(answer);
+            match self.mark.waiting(|| s.came.recv()) {
+                Ok(Some((id, answer))) => {
+                    if let Some(slot) = s.answers.get_mut(&id) {
+                        *slot = Some(answer);
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => return ids.first().copied().unwrap_or_default(),
             }
         }
     }
 
     fn take(&mut self, id: u64) -> Option<Answered> {
         let s = &mut self.started;
-        while let Ok((done, answer)) = s.came.try_recv() {
-            if let Some(slot) = s.answers.get_mut(&done) {
-                *slot = Some(answer);
+        while let Ok(came) = s.came.try_recv() {
+            if let Some((done, answer)) = came {
+                if let Some(slot) = s.answers.get_mut(&done) {
+                    *slot = Some(answer);
+                }
             }
         }
         match s.answers.get(&id) {

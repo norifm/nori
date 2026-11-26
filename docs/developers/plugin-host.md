@@ -96,7 +96,9 @@ wait on a plugin.
 - **Fuel.** Each job gets `runtime::CALL_FUEL`. A decider's call gets `worker::DECIDE_FUEL`, and
   `Worker::decide` waits at most its budget. An answer that comes later is dropped.
 - **Callers that left.** A `call` whose caller has gone, such as a search typed over, is skipped when
-  its turn comes.
+  its turn comes. A call that already began stops waiting for its HTTP (`host::Caller`). Its requests
+  on their way are dropped and answer with an error, and new ones are refused. The plugin returns
+  early, and its thread goes on to the next call.
 - **Memory.** Each store is capped at 256 MB and 16 instances.
 - **WASI.** `runtime::wasi` answers randomness, the clocks and an empty environment, at whatever WASI
   versions the component imports. It links every other import to a trap.

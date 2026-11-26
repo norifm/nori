@@ -768,3 +768,66 @@ fn the_switch_turns_every_plugin_off_and_reports_say_so() {
     *session.all_off.lock().unwrap() = false;
     assert!(plugins.worker(ID).is_some());
 }
+
+/// Holds every request until the test lets them go, counting those dropped on their way.
+#[derive(Default)]
+struct Held {
+    asked: Mutex<u32>,
+    asking: std::sync::Condvar,
+    dropped: std::sync::atomic::AtomicU32,
+}
+
+/// Counts its request as dropped unless it was answered.
+struct OnItsWay<'a>(&'a Held);
+
+impl Drop for OnItsWay<'_> {
+    fn drop(&mut self) {
+        self.0.dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[async_trait::async_trait]
+impl Transport for Held {
+    async fn get(&self, _: String, _: u32) -> Result<TransportResponse, TransportError> {
+        let _way = OnItsWay(self);
+        *self.asked.lock().unwrap() += 1;
+        self.asking.notify_all();
+        std::future::pending().await
+    }
+
+    async fn send(&self, e: Exchange) -> Result<TransportResponse, TransportError> {
+        self.get(e.url, e.timeout_ms).await
+    }
+
+    fn address_changed(&self) {}
+
+    fn network(&self) -> Network {
+        Network::Unmetered
+    }
+}
+
+/// A call whose caller has gone (a search typed over) lets its requests go: the next call does not wait
+/// for their answers.
+#[test]
+fn a_call_given_up_drops_its_requests() {
+    let dir = nori_testdir::TempDir::new("plugins-given-up");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.set_transport(Some(session.web.clone()));
+    plugins.install(&fixture("")).unwrap();
+    plugins.turn(ID.into(), true);
+    let w = plugins.worker(ID).unwrap();
+    assert_eq!(nori_tasks::block_on(w.call(|_, _| Ok(1))), Some(1), "started over the web that answers");
+    let held = Arc::new(Held::default());
+    plugins.set_transport(Some(held.clone()));
+    let mut given_up = Box::pin(w.call(|s, p| p.nori_plugin_lifecycle().call_action(s, "together")));
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(std::future::Future::poll(given_up.as_mut(), &mut cx).is_pending());
+    drop(held.asking.wait_while(held.asked.lock().unwrap(), |n| *n < 2).unwrap());
+    drop(given_up);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let next = w.clone();
+    std::thread::spawn(move || tx.send(nori_tasks::block_on(next.call(|_, _| Ok(2)))));
+    assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(Some(2)), "the next call goes on");
+    assert_eq!(held.dropped.load(std::sync::atomic::Ordering::Relaxed), 2, "both requests dropped");
+}
