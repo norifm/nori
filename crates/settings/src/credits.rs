@@ -85,6 +85,35 @@ const ANDROID_CREDITS: [(&str, &str, &str, &str, Option<&str>); 5] = [
     ),
 ];
 
+/// The plugin host (crates/plugins), on every client but the web and the iPod.
+const PLUGIN_HOST_CREDITS: [(&str, &str, &str, &str, Option<&str>); 1] = [(
+    "Wasmtime and Cranelift",
+    "Plugins compiled and run",
+    "Copyright the Bytecode Alliance and the Wasmtime Project Developers",
+    "Apache-2.0 with LLVM exception",
+    Some("Apache-2.0"),
+)];
+
+/// What the desktop and the terminal play and reach the network through (crates/engine, output-cpal,
+/// http, mpris); add a line (and to NOTICE) with each new dependency.
+const NATIVE_CREDITS: [(&str, &str, &str, &str, Option<&str>); 4] = [
+    ("Symphonia", "Reading and decoding the music", "Copyright (c) Philip Deljanov and the Symphonia contributors", "MPL-2.0", Some("MPL-2.0")),
+    ("cpal", "Playing through the sound card", "Copyright the CPAL contributors", "Apache-2.0", Some("Apache-2.0")),
+    ("ureq and rustls", "Every network request, and its encryption", "Copyright (c) 2019 Martin Algesten; Copyright (c) 2016 Joseph Birr-Pixton", "MIT or Apache-2.0", Some("MIT")),
+    ("zbus", "The media controls on Linux", "Copyright (c) 2024 Zeeshan Ali Khan & zbus contributors", "MIT", Some("MIT")),
+];
+
+/// The desktop client's own libraries; add a line (and to NOTICE) with each new dependency.
+const DESKTOP_CREDITS: [(&str, &str, &str, &str, Option<&str>); 7] = [
+    ("Slint", "The user interface toolkit", "Copyright © SixtyFPS GmbH", "GPL-3.0", Some("GPL-3.0")),
+    ("Skia and rust-skia", "Drawing the window: its text, shapes and covers", "Copyright (c) 2011 Google Inc.; rust-skia by Armin Sander and its contributors", "BSD-3-Clause, rust-skia MIT", Some("BSD-3-Clause")),
+    ("wgpu", "The graphics card the window is drawn on", "Copyright (c) 2025 The gfx-rs developers", "MIT or Apache-2.0", Some("MIT")),
+    ("winit and glutin", "The window, its keys and its pointer", "Copyright the winit contributors and Kirill Chibisov", "Apache-2.0", Some("Apache-2.0")),
+    ("arboard", "Copying to the clipboard", "Copyright (c) 2022 The Arboard contributors", "MIT or Apache-2.0", Some("MIT")),
+    ("OpenH264", "A plugin's moving cover, decoded in software", "Copyright (c) 2013, Cisco Systems; the Rust bindings by Ralf Biedert", "BSD-2-Clause", Some("BSD-2-Clause")),
+    ("wry and tao", "A provider's sign-in page, in the system's web view", "Copyright (c) 2020-2023 Ngo Iok Ui & Tauri Programme within The Commons Conservancy", "Apache-2.0", Some("Apache-2.0")),
+];
+
 /// The web client's libraries, Rust's and the page's.
 const WEB_CREDITS: [(&str, &str, &str, &str, Option<&str>); 5] = [
     ("Svelte", "The user interface", "Copyright (c) 2016-2025 Svelte Contributors", "MIT", Some("MIT")),
@@ -146,11 +175,15 @@ pub fn core_credits() -> Vec<Credit> {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn android_credits() -> Vec<Credit> {
-    credits(&ANDROID_CREDITS)
+    [credits(&ANDROID_CREDITS), credits(&PLUGIN_HOST_CREDITS)].concat()
 }
 
 pub fn web_credits() -> Vec<Credit> {
     credits(&WEB_CREDITS)
+}
+
+pub fn desktop_credits() -> Vec<Credit> {
+    [credits(&DESKTOP_CREDITS), credits(&NATIVE_CREDITS), credits(&PLUGIN_HOST_CREDITS)].concat()
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -164,16 +197,21 @@ mod tests {
 
     #[test]
     fn credits_complete() {
-        let (c, a, w, d) = (core_credits(), android_credits(), web_credits(), data_credits());
-        // Every licence named is bundled for the licences page, and nothing is listed twice.
+        // Every licence named is bundled for the licences page, and no client's page lists one twice.
         let texts = concat!(env!("CARGO_MANIFEST_DIR"), "/../../android/app/src/main/assets/licences");
-        let all: Vec<&Credit> = c.iter().chain(&a).chain(&w).chain(&d).collect();
-        let missing: Vec<String> = all.iter().filter_map(|c| c.file.as_ref()).filter(|f| !std::path::Path::new(texts).join(format!("{f}.txt")).is_file()).cloned().collect();
-        assert!(missing.is_empty(), "licence texts named but not in android/app/src/main/assets/licences: {missing:?}");
-        let mut names: Vec<&str> = all.iter().map(|c| c.name.as_str()).collect();
-        names.sort_unstable();
-        let twice: Vec<&&str> = names.windows(2).filter(|w| w[0] == w[1]).map(|w| &w[0]).collect();
-        assert!(twice.is_empty(), "credited twice: {twice:?}");
-        assert!(all.iter().all(|c| !c.what.is_empty() && !c.copyright.is_empty() && !c.licence.is_empty()), "every credit says what, whose and under what terms");
+        let pages = [
+            ("android", [core_credits(), android_credits(), data_credits()].concat()),
+            ("web", [core_credits(), web_credits(), data_credits()].concat()),
+            ("desktop", [core_credits(), desktop_credits(), data_credits()].concat()),
+        ];
+        for (client, all) in &pages {
+            let missing: Vec<&String> = all.iter().filter_map(|c| c.file.as_ref()).filter(|f| !std::path::Path::new(texts).join(format!("{f}.txt")).is_file()).collect();
+            assert!(missing.is_empty(), "{client}: licence texts named but not in android/app/src/main/assets/licences: {missing:?}");
+            let mut names: Vec<&str> = all.iter().map(|c| c.name.as_str()).collect();
+            names.sort_unstable();
+            let twice: Vec<&&str> = names.windows(2).filter(|w| w[0] == w[1]).map(|w| &w[0]).collect();
+            assert!(twice.is_empty(), "{client}: credited twice: {twice:?}");
+            assert!(all.iter().all(|c| !c.what.is_empty() && !c.copyright.is_empty() && !c.licence.is_empty()), "{client}: every credit says what, whose and under what terms");
+        }
     }
 }

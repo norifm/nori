@@ -173,13 +173,13 @@ enum BackTo {
 }
 
 /// Where Back leads from `view`, with a plugin's page open on Settings: the one before it; from a page of
-/// Settings' (the equalizer, support), Settings, as its own back arrow; from Downloads or History, `place_from`,
+/// Settings' (the equalizer, support, the licenses), Settings, as its own back arrow; from Downloads or History, `place_from`,
 /// the tab they were opened on; from the listening stats, History; from the genres or the decades, which the
 /// search's browse opens, Search; from a page, back along the trail; from a tab or a page of Home's, Home.
 fn back_from(view: View, plugin_page: bool, place_from: View) -> BackTo {
     match view {
         View::Settings if plugin_page => BackTo::PluginPage,
-        View::Equalizer | View::Support => BackTo::View(View::Settings),
+        View::Equalizer | View::Support | View::Licences => BackTo::View(View::Settings),
         View::Downloads | View::History => BackTo::View(place_from),
         View::Stats => BackTo::View(View::History),
         View::Genres | View::Decades => BackTo::View(View::Search),
@@ -1992,6 +1992,13 @@ impl App {
             }
             View::Equalizer => {
                 self.settings_shown();
+                None
+            }
+            View::Licences => {
+                let prefs = self.root.app.settings.current().unwrap_or_default();
+                ui.set_licences_title(words::LICENCES.into());
+                ui.set_licence_close(words::CLOSE.into());
+                ui.set_licence_rows(crate::settings::licence_rows(&prefs, &self.facts, crate::look::Today::now()));
                 None
             }
             // Each time it opens, what was paid elsewhere (a monthly payment, another device).
@@ -6175,6 +6182,17 @@ impl App {
         match Act::of(name) {
             Some(Act::Equalizer) => self.go(View::Equalizer),
             Some(Act::Support) => self.go(View::Support),
+            Some(Act::CopyReport) => self.copy(crate::settings::about_report(), words::REPORT_COPIED),
+            Some(Act::Licences) => self.go(View::Licences),
+            Some(Act::Licence(at)) => {
+                let Some((name, owner, terms, text)) = crate::settings::licence(at) else { return };
+                let ui = self.ui();
+                ui.set_licence_name(name.into());
+                ui.set_licence_owner(owner.into());
+                ui.set_licence_terms(terms.into());
+                ui.set_licence_text(text.into());
+                ui.set_licence_open(true);
+            }
             Some(Act::AddServer) => {
                 self.edited();
                 let ui = self.ui();
@@ -6851,6 +6869,7 @@ pub(crate) mod tests {
         let steps = [
             (View::Equalizer, false, BackTo::View(View::Settings)),
             (View::Support, false, BackTo::View(View::Settings)),
+            (View::Licences, false, BackTo::View(View::Settings)),
             (View::Settings, true, BackTo::PluginPage),
             (View::Settings, false, BackTo::View(View::Home)),
             (View::Page, false, BackTo::Trail),

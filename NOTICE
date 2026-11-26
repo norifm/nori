@@ -36,16 +36,38 @@ Linked into the Rust core (crates/core)
     the `neural-beats` feature (the Android app's builds have it), and used only with "Better beat
     detection" on.
 
+The plugin host (crates/plugins; every client but the web and the iPod)
+  Wasmtime and Cranelift — the Bytecode Alliance and the Wasmtime Project Developers, Apache-2.0 with
+    LLVM exception
+
+The desktop client (crates/desktop, crates/desktop-ui, crates/sign-in-window, nori-desktop; not part of
+  the Android app)
+  Slint — Copyright © SixtyFPS GmbH, GNU General Public License v3.0 (GPL-3.0-only, one of the licenses
+    Slint is offered under; full text: android/app/src/main/assets/licences/GPL-3.0.txt)
+  Skia — Copyright (c) 2011 Google Inc., BSD-3-Clause (full text: android/app/src/main/assets/licences/
+    BSD-3-Clause.txt); rust-skia (skia-safe, skia-bindings) — Armin Sander and the rust-skia contributors, MIT
+  wgpu — Copyright (c) 2025 The gfx-rs developers, MIT or Apache-2.0
+  winit, glutin — the winit contributors, Kirill Chibisov; Apache-2.0
+  arboard — Copyright (c) 2022 The Arboard contributors, MIT or Apache-2.0
+  OpenH264 (a plugin's moving cover, built from source) — Copyright (c) 2013, Cisco Systems, BSD-2-Clause
+    (full text: android/app/src/main/assets/licences/BSD-2-Clause.txt); the openh264 crate — Ralf Biedert,
+    BSD-2-Clause
+  wry, tao (a provider's sign-in page) — Copyright (c) 2020-2023 Ngo Iok Ui & Tauri Programme within The
+    Commons Conservancy; wry Apache-2.0 or MIT, tao Apache-2.0
+  x11rb, muda (macOS's menu bar) — MIT or Apache-2.0; objc2 — MIT
+
 The terminal client (crates/cli, nori-cli; not part of the Android app)
   ratatui, ratatui-image, crossterm — The Ratatui developers, Benjamin Große, Timon Post; MIT
   image, icy_sixel, rand, unicode-width, base64-simd (covers drawn in the terminal) — MIT (dual-licensed
     MIT or Apache-2.0 where the crate offers both)
-  symphonia (the desktop player's format readers, crates/engine) — Philip Deljanov and the Symphonia
+
+The desktop and terminal clients' player and network (not part of the Android app)
+  symphonia (the format readers, crates/engine) — Philip Deljanov and the Symphonia
     contributors, Mozilla Public License 2.0
   cpal, alsa (the sound card, crates/output-cpal) — Apache-2.0 (alsa also MIT)
   ureq, rustls, ring, webpki-roots (HTTP and TLS, crates/http) — MIT or Apache-2.0; rustls also ISC;
     ring Apache-2.0 and ISC; webpki-roots' certificate data CDLA-Permissive-2.0
-  zbus, async-io (the desktop's media controls, crates/mpris) — zbus MIT; async-io MIT or Apache-2.0
+  zbus, async-io (the media controls on Linux, crates/mpris) — zbus MIT; async-io MIT or Apache-2.0
 
 The web client (crates/web and web/, nori-web; not part of the Android app)
   Svelte — Copyright (c) 2016-2025 Svelte Contributors, MIT

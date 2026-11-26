@@ -50,6 +50,8 @@ const SEGMENTS: i32 = 23;
 const FLAGS: i32 = 24;
 /// Opens a page of a plugin's: its label over its hint, a chevron at the end.
 const PAGE: i32 = 25;
+/// A fact: its title over its line, a word at its end (`button`), pressed where it has a name.
+const FACT: i32 = 26;
 
 /// The appearance row's name: the theme setting, offered as segments.
 pub const APPEARANCE: &str = "appearance";
@@ -145,6 +147,10 @@ impl<'a> Target<'a> {
 
 const EQUALIZER: &str = "equalizer";
 const SUPPORT: &str = "support";
+const COPY_REPORT: &str = "copy-report";
+const LICENCES: &str = "licences";
+/// A credit's row on the licenses page is `licence:<its place in the page>`.
+const LICENCE: &str = "licence:";
 const ADD_SERVER: &str = "add-server";
 const BACKUP: &str = "backup";
 const RESTORE: &str = "restore";
@@ -170,6 +176,12 @@ pub enum Act {
     Equalizer,
     /// The Support page.
     Support,
+    /// About's facts copied, for a bug report.
+    CopyReport,
+    /// The licenses page.
+    Licences,
+    /// A credit's license, by its place on the licenses page.
+    Licence(usize),
     AddServer,
     /// A server row's Edit: the profile's page, its form, account and scrobbling.
     Edit(String),
@@ -202,12 +214,17 @@ impl Act {
         if let Some(id) = name.strip_prefix("remove:") {
             return Some(Act::Remove(id.to_string()));
         }
+        if let Some(at) = name.strip_prefix(LICENCE) {
+            return at.parse().ok().map(Act::Licence);
+        }
         if let Some((what, path)) = name.split_once(':').filter(|(what, _)| matches!(*what, BACKUP_PASSWORD | RESTORE_PASSWORD)) {
             return Some(Act::BackupPassword { restore: what == RESTORE_PASSWORD, path: path.to_string() });
         }
         match name {
             EQUALIZER => Some(Act::Equalizer),
             SUPPORT => Some(Act::Support),
+            COPY_REPORT => Some(Act::CopyReport),
+            LICENCES => Some(Act::Licences),
             ADD_SERVER => Some(Act::AddServer),
             BACKUP => Some(Act::Backup { restore: false }),
             RESTORE => Some(Act::Backup { restore: true }),
@@ -781,15 +798,88 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
             None => groups.push((output.into(), device.into())),
         }
     }
-    // A build with a support service offers its page under About's rows (the version is the update row's).
-    if page == SettingsPage::About && nori_core::support::support_service().is_some() {
-        let support = Row { kind: LINK, name: SUPPORT.into(), title: "Support nori".into(), enabled: true, ..Default::default() };
-        match groups.last_mut() {
-            Some((_, rows)) => rows.push(support),
-            None => groups.push((words::ABOUT.into(), vec![support])),
-        }
+    if page == SettingsPage::About {
+        return about(groups, nori_core::support::support_service().is_some());
     }
     groups
+}
+
+/// About, as Android's: the version (pressed, it copies the report) and the Support page in a build with a
+/// support service, the core's updates, what nori is built with, and its license with the licenses page.
+fn about(updates: Vec<(String, Vec<Row>)>, support: bool) -> Vec<(String, Vec<Row>)> {
+    let f = words::about_facts(env!("CARGO_PKG_VERSION"), cfg!(debug_assertions), std::env::consts::OS, std::env::consts::ARCH);
+    let fact = |title: &str, detail: &str, end: &str, name: &str| Row { kind: FACT, name: name.into(), title: title.into(), detail: detail.into(), button: end.into(), enabled: true, ..Default::default() };
+    let mut nori = vec![fact(&f.title, &f.build, words::COPY_IT, COPY_REPORT)];
+    if support {
+        nori.push(Row { kind: LINK, name: SUPPORT.into(), title: words::SUPPORT_TITLE.into(), enabled: true, ..Default::default() });
+    }
+    let hood = f.parts.iter().map(|(what, line)| fact(what, line, "", "")).collect();
+    let open = vec![
+        fact(words::FREE_SOFTWARE, words::LICENCE_LINE, "AGPL-3.0", ""),
+        Row { kind: PAGE, name: LICENCES.into(), title: words::LICENCES.into(), detail: words::LICENCES_DETAIL.into(), enabled: true, ..Default::default() },
+    ];
+    let mut groups = vec![("nori".to_string(), nori)];
+    groups.extend(updates);
+    groups.extend([(words::UNDER_THE_HOOD.to_string(), hood), (words::OPEN_SOURCE.to_string(), open)]);
+    groups
+}
+
+/// The desktop's About report, as its version row copies it.
+pub fn about_report() -> String {
+    words::about_facts(env!("CARGO_PKG_VERSION"), cfg!(debug_assertions), std::env::consts::OS, std::env::consts::ARCH).report
+}
+
+/// A group of the licenses page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreditGroup {
+    Core,
+    Desktop,
+    Data,
+}
+
+/// Everything the desktop is built from that is not nori's, grouped (`nori_core::credits`).
+fn credits() -> Vec<(CreditGroup, Vec<nori_core::credits::Credit>)> {
+    use nori_core::credits::{core_credits, data_credits, desktop_credits};
+    vec![(CreditGroup::Core, core_credits()), (CreditGroup::Desktop, desktop_credits()), (CreditGroup::Data, data_credits())]
+}
+
+/// The licenses page: each group's heading, then its credits, the license at each one's end.
+pub fn licence_rows(p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    let mut at = 0;
+    let groups = credits()
+        .into_iter()
+        .map(|(group, list)| {
+            let rows = list
+                .into_iter()
+                .map(|c| {
+                    at += 1;
+                    Row { kind: FACT, name: format!("{LICENCE}{}", at - 1), title: c.name, detail: c.what, button: c.licence, enabled: true, ..Default::default() }
+                })
+                .collect();
+            (words::credit_group(group).to_string(), rows)
+        })
+        .collect();
+    model(groups, p, f, today)
+}
+
+/// The credit at `at` on the licenses page: its name, whose it is, its terms, and their full text.
+pub fn licence(at: usize) -> Option<(String, String, String, &'static str)> {
+    let c = credits().into_iter().flat_map(|(_, list)| list).nth(at)?;
+    let text = c.file.as_deref().map_or(Some(words::NO_LICENCE_TEXT), licence_text)?;
+    Some((c.name, c.copyright, c.licence, text.trim()))
+}
+
+/// The bundled text of license `file` (`Credit::file`), the same texts the Android app ships.
+fn licence_text(file: &str) -> Option<&'static str> {
+    macro_rules! texts {
+        ($($file:literal),*) => {
+            match file {
+                $($file => Some(include_str!(concat!("../../../android/app/src/main/assets/licences/", $file, ".txt"))),)*
+                _ => None,
+            }
+        };
+    }
+    texts!("Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "GPL-3.0", "MIT", "MPL-2.0", "OFL-1.1")
 }
 
 /// Rows of settings tab `tab`: each group's heading, then its rows with first and last marked.
@@ -2024,6 +2114,45 @@ mod tests {
         let names = |guest| tabs(&nori_core::browse::profile_rules(guest).settings).into_iter().map(tab_name).collect::<Vec<_>>();
         assert_eq!(names(false), ["Profiles", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage", "Plugins", "About"]);
         assert!(!names(true).contains(&"Library"), "a jam guest has no library settings to show");
+    }
+
+    /// About is Android's: the version that copies the report, the core's updates, what nori is built with,
+    /// and its license with the licenses page.
+    #[test]
+    fn about_holds_the_version_updates_and_licenses() {
+        let facts = Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
+        let about = groups(&Default::default(), &StoredPrefs::default(), &facts, &Kinds::builtin(), &Plugged::default(), SettingsPage::About, OCTOBER);
+        let titles: Vec<&str> = about.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(titles, ["nori", "Updates", words::UNDER_THE_HOOD, words::OPEN_SOURCE]);
+        let version = &about[0].1[0];
+        assert_eq!((version.kind, version.title.as_str(), version.button.as_str()), (FACT, concat!("nori ", env!("CARGO_PKG_VERSION")), words::COPY_IT));
+        assert!(version.detail.starts_with("Desktop "), "the client and platform under it: {}", version.detail);
+        assert_eq!(Act::of(&version.name), Some(Act::CopyReport));
+        assert_eq!(about[2].1.len(), 4, "playback, library, AutoMix and the interface");
+        let open = &about[3].1;
+        assert_eq!((open[0].title.as_str(), open[0].button.as_str()), (words::FREE_SOFTWARE, "AGPL-3.0"));
+        assert_eq!((open[1].kind, Act::of(&open[1].name)), (PAGE, Some(Act::Licences)));
+    }
+
+    /// The licenses page lists the core's, the desktop's and the data's credits, and each opens its full text.
+    #[test]
+    fn every_credit_opens_its_licence() {
+        use slint::Model;
+        let rows = licence_rows(&StoredPrefs::default(), &Facts::default(), OCTOBER);
+        let headings: Vec<String> = rows.iter().filter(|r| r.kind == HEADING).map(|r| r.title.to_string()).collect();
+        assert_eq!(headings, ["RUST CORE", "DESKTOP", "FONTS AND DATA"]);
+        let credits: Vec<SettingRow> = rows.iter().filter(|r| r.kind == FACT).collect();
+        for name in ["Slint", "cpal", "Symphonia", "rusqlite", "Inter"] {
+            assert!(credits.iter().any(|r| r.title == name), "{name} is credited");
+        }
+        for r in &credits {
+            let Some(Act::Licence(at)) = Act::of(&r.name) else { panic!("{} opens nothing", r.title) };
+            let (name, owner, terms, text) = licence(at).unwrap_or_else(|| panic!("{} has no license text", r.title));
+            assert_eq!((name.as_str(), terms.as_str()), (r.title.as_str(), r.button.as_str()));
+            assert!(!owner.is_empty() && !text.is_empty(), "{name}");
+        }
+        let slint = credits.iter().find(|r| r.title == "Slint").and_then(|r| match Act::of(&r.name) { Some(Act::Licence(at)) => licence(at), _ => None });
+        assert!(slint.is_some_and(|(_, _, _, text)| text.starts_with("GNU GENERAL PUBLIC LICENSE")), "Slint's own terms in full");
     }
 
     #[test]

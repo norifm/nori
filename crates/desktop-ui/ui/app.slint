@@ -11,7 +11,7 @@ import "../../../android/app/src/main/res/font/inter.ttf";
 import "../../../android/app/src/main/res/font/literata.ttf";
 
 // The main window's views. `shelf` is one of Home's shelves shown whole, `for-you` Home's picks.
-export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites, support, genres, history, downloads, stats, decades }
+export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites, support, genres, history, downloads, stats, decades, licences }
 // A panel beside the player: the inspector on the right, or Now Playing's beside the artwork.
 export enum Panel { none, queue, lyrics, devices }
 // How the page view lays out what it shows: an album's, an artist's, or a list's (a playlist or a mix).
@@ -5829,11 +5829,11 @@ component SettingLine inherits VerticalLayout {
             }
         }
     }
-    if (root.item.kind != 0 && root.item.kind != 6 && root.item.kind != 8 && root.item.kind != 9 && root.item.kind != 13 && root.item.kind < 18) || root.item.kind == 25: Plate {
+    if (root.item.kind != 0 && root.item.kind != 6 && root.item.kind != 8 && root.item.kind != 9 && root.item.kind != 13 && root.item.kind < 18) || root.item.kind == 25 || root.item.kind == 26: Plate {
         first: root.item.first;
         last: root.item.last;
         min-height: 54px;
-        if root.item.kind == 11 || root.item.kind == 12 || root.item.kind == 17 || (root.item.kind == 25 && root.item.enabled): TouchArea {
+        if root.item.kind == 11 || root.item.kind == 12 || root.item.kind == 17 || (root.item.kind == 25 && root.item.enabled) || (root.item.kind == 26 && root.item.name != ""): TouchArea {
             clicked => { root.action(root.item.name); }
         }
         // An action row that opens something of its own besides its button (a repo's name).
@@ -5862,7 +5862,7 @@ component SettingLine inherits VerticalLayout {
                     // Dimmed by their colors, not under an `opacity` layer.
                     Wrapped {
                         text: root.item.title;
-                        color: (root.item.kind == 12 ? Theme.accent : Theme.text).transparentize(root.item.enabled || root.item.kind == 4 ? 0 : 0.55);
+                        color: (root.item.kind == 12 ? Theme.accent : Theme.text).transparentize(root.item.enabled || root.item.kind == 4 || root.item.kind == 26 ? 0 : 0.55);
                         font-size: 14px;
                     }
                     if root.item.detail != "" && root.item.kind != 11: Wrapped {
@@ -5914,7 +5914,7 @@ component SettingLine inherits VerticalLayout {
                     text: root.item.button;
                     clicked => { root.action(root.item.control); }
                 }
-                if root.item.kind == 17 && root.item.control == "": Text {
+                if (root.item.kind == 17 && root.item.control == "") || (root.item.kind == 26 && root.item.button != ""): Text {
                     text: root.item.button;
                     color: Theme.dim;
                     font-size: 13px;
@@ -8302,7 +8302,7 @@ component TopContent inherits Rectangle {
         IconButton {
             y: (parent.height - self.height) / 2;
             glyph: Icons.settings;
-            lit: root.view == View.settings || root.view == View.equalizer || root.view == View.support;
+            lit: root.view == View.settings || root.view == View.equalizer || root.view == View.support || root.view == View.licences;
             quiet: true;
             size: 36px;
             clicked => { root.go(View.settings); }
@@ -8684,6 +8684,16 @@ export component AppWindow inherits Window {
     callback play-chosen-artist(/* shuffle */ bool);
     // The equalizer page (view 9), from the settings.
     // The Support page (view support, from About): see SupportPage.
+    // The licenses page (view licences, from About): its title, its credits as settings rows, and the credit
+    // open in its sheet: its name, whose it is, its terms, their full text, and the sheet's button.
+    in property <string> licences-title;
+    in property <[SettingRow]> licence-rows;
+    in-out property <bool> licence-open;
+    in property <string> licence-name;
+    in property <string> licence-owner;
+    in property <string> licence-terms;
+    in property <string> licence-text;
+    in property <string> licence-close;
     in property <[SupportSeal]> support-seals;
     in property <int> support-next;
     // The seal being thanked for (-1 none), and whether the last thanks carried its seal in.
@@ -11286,6 +11296,42 @@ export component AppWindow inherits Window {
 
                 // The equalizer, as the Android app's: the switch, graphic or parametric, the bands, the presets,
                 // the pre-amp, then the output.
+                // Every credit, grouped, in Settings' column: a press opens its license in a sheet.
+                if root.view == View.licences: licences-page := Fade {
+                    property <length> column-w: min(720px, Frame.column-w(self.width));
+                    property <length> column-x: Frame.column-x(self.width) + (Frame.column-w(self.width) - self.column-w) / 2;
+                    Flickable {
+                        content-width: self.width;
+                        content-height: credits.preferred-height;
+                        credits := VerticalLayout {
+                            width: parent.width;
+                            padding-left: licences-page.column-x;
+                            padding-right: parent.width - licences-page.column-x - licences-page.column-w;
+                            padding-bottom: 100px;
+                            Rectangle {
+                                height: Frame.under-title;
+                                Text {
+                                    x: 14px;
+                                    y: Frame.title-y;
+                                    text: root.licences-title;
+                                    color: Theme.text;
+                                    font-family: Type.title;
+                                    font-size: 34px;
+                                    font-weight: 700;
+                                    letter-spacing: -0.5px;
+                                }
+                            }
+                            Rectangle {
+                                height: 16px;
+                            }
+                            for r in root.licence-rows: SettingLine {
+                                item: r;
+                                action(name) => { root.setting-action(name); }
+                            }
+                        }
+                    }
+                }
+
                 if root.view == View.support: Fade {
                     SupportPage {
                         seals: root.support-seals;
@@ -13111,6 +13157,49 @@ export component AppWindow inherits Window {
                 Capsule {
                     text: "Done";
                     clicked => { root.lyrics-sheet-open = false; }
+                }
+            }
+        }
+
+        // A credit's license, as the licenses ask to be shipped: whose it is, its terms and their full text.
+        if root.licence-open: Dialog {
+            title: root.licence-name;
+            sheet-width: 600px;
+            dismissed => { root.licence-open = false; }
+            VerticalLayout {
+                spacing: 2px;
+                Text {
+                    text: root.licence-owner;
+                    color: Theme.text;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.licence-terms;
+                    color: Theme.dim;
+                    font-size: 12px;
+                }
+            }
+            Flickable {
+                content-width: self.width;
+                vertical-stretch: 1;
+                min-height: min(text.preferred-height, 120px);
+                preferred-height: text.preferred-height;
+                content-height: text.preferred-height;
+                text := Text {
+                    width: parent.width;
+                    text: root.licence-text;
+                    color: Theme.dim;
+                    font-family: "monospace";
+                    font-size: 11.5px;
+                    wrap: word-wrap;
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                Capsule {
+                    text: root.licence-close;
+                    clicked => { root.licence-open = false; }
                 }
             }
         }

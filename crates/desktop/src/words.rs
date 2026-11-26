@@ -1483,6 +1483,60 @@ pub fn support_failed(e: &NetError) -> String {
     }
 }
 
+// Settings › About, as Android's: what this is and what it is built out of; the first row copies it all.
+pub const SUPPORT_TITLE: &str = "Support nori";
+pub const COPY_IT: &str = "Copy";
+pub const REPORT_COPIED: &str = "Copied";
+pub const UNDER_THE_HOOD: &str = "Under the hood";
+pub const OPEN_SOURCE: &str = "Open source";
+pub const FREE_SOFTWARE: &str = "nori is free software";
+pub const LICENCE_LINE: &str = "AGPL-3.0 license · Copyright (c) 2026 norifm";
+pub const LICENCES: &str = "Licenses";
+pub const LICENCES_DETAIL: &str = "The libraries, fonts and data this app is made of, and their terms";
+pub const NO_LICENCE_TEXT: &str = "No license text to reproduce.";
+pub const CLOSE: &str = "Close";
+
+/// A group of the licenses page, by what its credits are part of.
+pub fn credit_group(g: crate::settings::CreditGroup) -> &'static str {
+    use crate::settings::CreditGroup;
+    match g {
+        CreditGroup::Core => "Rust core",
+        CreditGroup::Desktop => "Desktop",
+        CreditGroup::Data => "Fonts and data",
+    }
+}
+
+/// What About says this build is: its title, the line under it, each part under the hood (what, how),
+/// and all of it together for a bug report.
+pub struct AboutFacts {
+    pub title: String,
+    pub build: String,
+    pub parts: [(&'static str, &'static str); 4],
+    pub report: String,
+}
+
+/// About's facts for nori `version`, a `debug` build or not, on system `os` and processor `arch` (Rust's
+/// `std::env::consts` names).
+pub fn about_facts(version: &str, debug: bool, os: &str, arch: &str) -> AboutFacts {
+    let os = match os {
+        "linux" => "Linux",
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "freebsd" => "FreeBSD",
+        other => other,
+    };
+    let title = format!("nori {version}");
+    let build = format!("Desktop {} · {os} {arch}", if debug { "debug" } else { "release" });
+    let parts = [
+        ("Playback", "Symphonia decodes, cpal plays · equalizer, crossfeed and limiter in the Rust core"),
+        ("Library and search", "SQLite with full-text search through rusqlite · the Rust core, built in"),
+        ("AutoMix", "Beat and key analysis on this computer with RustFFT · tempo changes by Signalsmith Stretch, ported to Rust"),
+        ("Interface", "Slint, drawn by Skia on wgpu · covers fetched, kept and decoded by the Rust core"),
+    ];
+    let report = std::iter::once(format!("{title} ({build})")).chain(parts.iter().map(|(what, line)| format!("{what}: {line}"))).collect::<Vec<_>>().join("\n");
+    AboutFacts { title, build, parts, report }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1508,6 +1562,16 @@ mod tests {
         assert!(why.starts_with("AutoMix mixes"));
         assert_eq!([about(0), about(5), about(60)], ["Under a minute", "About 5 min", "About 1 h"]);
         assert_eq!([known_caption(0, 2019, 12, 2890), known_caption(0, 0, 0, 0), known_caption(1, 0, 14, 0), known_caption(2, 0, 3, 0)], ["2019 · 12 songs · 48:10", "", "14 releases", "3 songs"]);
+    }
+
+    #[test]
+    fn about_names_the_build_and_reports_every_part() {
+        let f = about_facts("1.2.0", false, "linux", "x86_64");
+        assert_eq!((f.title.as_str(), f.build.as_str()), ("nori 1.2.0", "Desktop release · Linux x86_64"));
+        let lines: Vec<&str> = f.report.lines().collect();
+        assert_eq!(lines[0], "nori 1.2.0 (Desktop release · Linux x86_64)");
+        assert_eq!(lines[1..].iter().map(|l| l.split(": ").next().unwrap()).collect::<Vec<_>>(), ["Playback", "Library and search", "AutoMix", "Interface"]);
+        assert_eq!(about_facts("1.2.0", true, "macos", "aarch64").build, "Desktop debug · macOS aarch64");
     }
 
     #[test]
