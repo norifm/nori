@@ -218,12 +218,15 @@
     align-items: center;
     gap: 8px;
   }
+  /* Large Literata over the artist and album, as Android's player names the song. */
   .title {
     flex: 1;
     min-width: 0;
-    font-size: 16px;
-    font-weight: 600;
-    line-height: 22px;
+    font-family: var(--display);
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+    line-height: 36px;
   }
   .title-row :global(.seal) {
     width: 36px;
@@ -240,8 +243,8 @@
     color: var(--accent);
   }
   .line {
-    font-size: 14px;
-    line-height: 20px;
+    font-size: 15px;
+    line-height: 21px;
     color: color-mix(in srgb, var(--ink) 60%, transparent);
   }
   .album {

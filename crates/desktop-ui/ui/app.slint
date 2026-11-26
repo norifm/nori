@@ -11417,7 +11417,7 @@ export component AppWindow inherits Window {
             }
 
             // The artwork and the controls in the left half; the panel in the right.
-            property <length> side: min(460px, root.height - 330px, root.width / 2 - 120px);
+            property <length> side: min(460px, root.height - 350px, root.width / 2 - 120px);
             property <length> art-rise: root.full-player ? 0px : 30px;
             animate art-rise { duration: Motion.reduced ? 0ms : 420ms; enabled: !Motion.reduced; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
             full-art := VerticalLayout {
@@ -11450,8 +11450,10 @@ export component AppWindow inherits Window {
                                 horizontal-stretch: 1;
                                 text: root.now-title;
                                 color: Theme.text;
-                                font-size: 16px;
-                                font-weight: 600;
+                                font-family: Type.title;
+                                font-size: 28px;
+                                font-weight: 700;
+                                letter-spacing: -0.4px;
                                 overflow: elide;
                                 RightPress {
                                     menu(x, y) => { root.song-menu-at(x, y); }
@@ -11468,12 +11470,12 @@ export component AppWindow inherits Window {
                                 artist: root.now-artist-id;
                                 credits: root.now-credits;
                                 color: Theme.text.with-alpha(0.6);
-                                font-size: 14px;
+                                font-size: 15px;
                             }
                             if root.now-album != "": Text {
                                 text: " — ";
                                 color: Theme.text.with-alpha(0.45);
-                                font-size: 14px;
+                                font-size: 15px;
                             }
                             if root.now-album != "": Link {
                                 horizontal-stretch: 1;
@@ -11481,7 +11483,7 @@ export component AppWindow inherits Window {
                                 album: root.now-album-id;
                                 art: root.now-art;
                                 color: Theme.text.with-alpha(0.45);
-                                font-size: 14px;
+                                font-size: 15px;
                                 overflow: elide;
                             }
                         }
