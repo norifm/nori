@@ -769,12 +769,29 @@ fn the_switch_turns_every_plugin_off_and_reports_say_so() {
     assert!(plugins.worker(ID).is_some());
 }
 
-/// Holds every request until the test lets them go, counting those dropped on their way.
+/// Holds every request until the test lets them go, counting those asked and those dropped on their way.
 #[derive(Default)]
 struct Held {
-    asked: Mutex<u32>,
-    asking: std::sync::Condvar,
-    dropped: std::sync::atomic::AtomicU32,
+    ways: Mutex<Ways>,
+    changed: std::sync::Condvar,
+}
+
+#[derive(Default, Clone, Copy)]
+struct Ways {
+    asked: u32,
+    dropped: u32,
+}
+
+impl Held {
+    fn count(&self, f: impl FnOnce(&mut Ways)) {
+        f(&mut self.ways.lock().unwrap());
+        self.changed.notify_all();
+    }
+
+    /// The counts once `done` holds of them, or after 5 s.
+    fn until(&self, done: impl Fn(&Ways) -> bool) -> Ways {
+        *self.changed.wait_timeout_while(self.ways.lock().unwrap(), std::time::Duration::from_secs(5), |w| !done(w)).unwrap().0
+    }
 }
 
 /// Counts its request as dropped unless it was answered.
@@ -782,7 +799,7 @@ struct OnItsWay<'a>(&'a Held);
 
 impl Drop for OnItsWay<'_> {
     fn drop(&mut self) {
-        self.0.dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.0.count(|w| w.dropped += 1);
     }
 }
 
@@ -790,8 +807,7 @@ impl Drop for OnItsWay<'_> {
 impl Transport for Held {
     async fn get(&self, _: String, _: u32) -> Result<TransportResponse, TransportError> {
         let _way = OnItsWay(self);
-        *self.asked.lock().unwrap() += 1;
-        self.asking.notify_all();
+        self.count(|w| w.asked += 1);
         std::future::pending().await
     }
 
@@ -823,11 +839,12 @@ fn a_call_given_up_drops_its_requests() {
     let mut given_up = Box::pin(w.call(|s, p| p.nori_plugin_lifecycle().call_action(s, "together")));
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
     assert!(std::future::Future::poll(given_up.as_mut(), &mut cx).is_pending());
-    drop(held.asking.wait_while(held.asked.lock().unwrap(), |n| *n < 2).unwrap());
+    assert_eq!(held.until(|w| w.asked == 2).asked, 2, "both requests on their way");
     drop(given_up);
     let (tx, rx) = std::sync::mpsc::channel();
     let next = w.clone();
     std::thread::spawn(move || tx.send(nori_tasks::block_on(next.call(|_, _| Ok(2)))));
     assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(Some(2)), "the next call goes on");
-    assert_eq!(held.dropped.load(std::sync::atomic::Ordering::Relaxed), 2, "both requests dropped");
+    // Each request is dropped on its own thread, in no order with the next call.
+    assert_eq!(held.until(|w| w.dropped == 2).dropped, 2, "both requests dropped");
 }
