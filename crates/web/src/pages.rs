@@ -206,6 +206,33 @@ fn decades(core: &nori_core::Core) -> Result<Vec<Value>, String> {
     Ok(core.browse_decades().map_err(|e| e.to_string())?.iter().map(|d| json!({ "start": d.start, "songCount": d.song_count })).collect())
 }
 
+/// Page `offset` of a Home row's full view (`browse::home_row_page`: the first the shelf's own read, then
+/// pages after it): `{ albums | playlists, more }`, null past its end. A browser keeps no offline index, so
+/// a row of songs has none.
+pub async fn home_row_page(client: &Client, row: nori_core::settings::HomeRow, offset: u32, user: Option<&str>) -> Result<Value, String> {
+    use nori_core::browse::{home_pinned, home_row_more, home_row_page, shelf_albums_read, HomeShelf};
+    let Some(shelf) = home_row_page(row, offset) else { return Ok(Value::Null) };
+    let read = match &shelf {
+        HomeShelf::Albums { sort, size, follows_stars } => shelf_albums_read(*sort, *size, *follows_stars, offset),
+        HomeShelf::Playlists { .. } | HomeShelf::Pinned => Read::PlaylistList,
+        HomeShelf::Songs { .. } => return Ok(Value::Null),
+    };
+    let mut last = None;
+    client.read_each(read, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
+    let core = client.core();
+    let (count, got) = match (last, &shelf) {
+        (Some(Page::Albums { v }), _) => (v.len(), Page::Albums { v }),
+        (Some(Page::Playlists { v }), HomeShelf::Playlists { take }) => (0, Page::Playlists { v: v.into_iter().take(*take as usize).collect() }),
+        (Some(Page::Playlists { v }), _) => (0, Page::Playlists { v: home_pinned(v, core.session.settings.prefs(|p| p.pinned_playlists.clone())) }),
+        _ => return Ok(Value::Null),
+    };
+    let mut v = page(core, got, user);
+    if let Value::Object(m) = &mut v {
+        m.insert("more".into(), json!(home_row_more(shelf, count as u32)));
+    }
+    Ok(v)
+}
+
 async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Value, String> {
     let core = client.core();
     match ask {

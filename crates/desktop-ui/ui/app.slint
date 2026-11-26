@@ -2171,6 +2171,18 @@ component Grid inherits Remembered {
     callback filter-toggled();
     in property <bool> shuffle;
     callback shuffled();
+    // More cards may follow: the next page is asked for as the end comes within a screen, or when the cards
+    // do not fill the grid.
+    in property <bool> more;
+    callback near-end();
+    function ask-more() {
+        if root.more && root.content-height + root.content-y < root.height * 2 {
+            root.near-end();
+        }
+    }
+    changed content-y => { root.ask-more(); }
+    changed content-height => { root.ask-more(); }
+    changed more => { root.ask-more(); }
     property <length> head: root.title == "" ? 0 : root.orders.length > 0 ? Frame.under-bar : Frame.under-title;
     pure callback art(string, int, int) -> image;
     callback open(Card);
@@ -8920,6 +8932,10 @@ export component AppWindow inherits Window {
     callback open-playlist(Card);
     // The song `id` of Home's shelf `shelf`: the shelf's songs play from it.
     callback shelf-song(int, string);
+    // A shelf shown whole (Show all): its cards as they have come, whether more follow, and more asked for.
+    in property <[Card]> shelf-cards;
+    in property <bool> shelf-more;
+    callback shelf-more-asked();
     // Song `i` of Home's shelf `shelf`: `how` -1 plays the shelf's songs from it, else a line of its menu
     // (`SongGo::kind`), whose lines `home-song-menu` gives.
     callback home-song(int, int, int);
@@ -9957,7 +9973,9 @@ export component AppWindow inherits Window {
                         filter-toggled => { root.albums-favorites-toggled(); }
                         shuffle: root.view == View.albums && root.can-shuffle;
                         shuffled => { root.shuffle-library(true); }
-                        cards: root.view == View.shelf ? root.shelves[root.shown-shelf].cards : root.view == View.albums ? root.albums : root.playlists;
+                        cards: root.view == View.shelf ? root.shelf-cards : root.view == View.albums ? root.albums : root.playlists;
+                        more: root.view == View.shelf && root.shelf-more;
+                        near-end => { root.shelf-more-asked(); }
                         rev: root.covers-rev;
                         art(a, s, r) => { return root.art(a, s, r); }
                         // A shelf's cards open as what each is (a source's feed mixes kinds).

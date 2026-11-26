@@ -572,6 +572,10 @@ pub struct App {
     shelf_songs: Vec<Vec<Song>>,
     /// The song card whose menu is open, by its section and place there (list 5).
     card_song: Option<(usize, usize)>,
+    /// Home's sections are a source's feed, not the profile's rows.
+    home_feed: bool,
+    /// The Home row shown whole (Show all), read a page at a time.
+    row_view: Option<RowView>,
     profiles: Vec<nori_core::SoundProfile>,
     /// The sign-in window's process while it is open (nori-sign-in).
     sign_in_window: Option<nori_sign_in_window::SignInWindow>,
@@ -825,6 +829,16 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
 
 /// The album list once its page from `offset` came (`page`), and the page to ask for next: while pages
 /// come full and new, each once (`pages`).
+/// A Home row shown whole: its section on Home, what has come of it (as cards, and its songs where it holds
+/// songs) and its pages (`browse::home_row_page`), the first the shelf's own.
+struct RowView {
+    at: usize,
+    row: nori_core::settings::HomeRow,
+    cards: Vec<Card>,
+    songs: Vec<Song>,
+    pages: Paged<u32>,
+}
+
 fn albums_paged(list: &mut Vec<nori_core::Album>, pages: &mut Paged<u32>, sort: AlbumSort, favorites: bool, offset: u32, page: &[nori_core::Album]) -> Option<u32> {
     let kept = &list[..list.len().min(offset as usize)];
     // A server that ignores the offset would bring the same page without end.
@@ -974,6 +988,8 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             scrobbler_approved: None,
             shelf_songs: Vec::new(),
             card_song: None,
+            home_feed: false,
+            row_view: None,
             profiles: Vec::new(),
             sign_in_window: None,
             apart: None,
@@ -1236,12 +1252,22 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.go(v);
     });
     on!(ui.on_shelf_song, h, |a, shelf, id| {
-        let songs = a.shelf_songs.get(shelf.max(0) as usize).map_or(&[][..], Vec::as_slice);
+        let shelf = shelf.max(0) as usize;
+        // Shown whole, the row's songs as they have come.
+        if let Some(v) = a.row_view.as_ref().filter(|v| v.at == shelf) {
+            if let Some(at) = v.songs.iter().position(|s| s.id == id.as_str()) {
+                let songs = v.songs.clone();
+                a.on_session(|s| s.play(songs, at, false, None));
+            }
+            return;
+        }
+        let songs = a.shelf_songs.get(shelf).map_or(&[][..], Vec::as_slice);
         if let Some(at) = songs.iter().position(|s| s.id == id.as_str()) {
-            a.home_song(shelf.max(0) as usize, at, -1);
+            a.home_song(shelf, at, -1);
         }
     });
     card_menus(ui, h);
+    on!(ui.on_shelf_more_asked, h, |a| a.row_more());
     on!(ui.on_home_song, h, |a, shelf, i, how| a.home_song(shelf.max(0) as usize, i.max(0) as usize, how));
     let menu = h.clone();
     ui.on_home_song_menu(move |shelf, i| {
@@ -1903,6 +1929,7 @@ impl App {
                 let (sort, favorites) = (self.album_sort, self.albums_favorites);
                 self.album_pages.ask().map(|offset| Req::Page(PageAsk::Albums { sort, offset, favorites }))
             }
+            View::Shelf => self.row_open(),
             View::Artists => Some(Req::Page(PageAsk::Artists)),
             View::Playlists => Some(Req::Page(PageAsk::Playlists)),
             View::Favorites => {
@@ -2286,8 +2313,10 @@ impl App {
                     .unzip();
                 put_shelves(&self.shelves, shelves);
                 self.shelf_songs = songs;
+                self.home_feed = true;
             }
             Data::Home(HomePart::Shelf { at, items }) => {
+                self.home_feed = false;
                 let (fresh, songs) = match items {
                     ShelfItems::Albums { v } => (v.iter().map(album_card).collect(), Vec::new()),
                     ShelfItems::Playlists { v } => (v.iter().map(playlist_card).collect(), Vec::new()),
@@ -2303,6 +2332,7 @@ impl App {
                     self.shelf_songs[at] = songs;
                 }
             }
+            Data::Page(got) if matches!(req, Req::Page(PageAsk::HomeRow { .. })) => self.row_page(&req, got),
             Data::Page(PageGot::Albums(v)) => {
                 // Pages of the list, each asked for once the one before came full.
                 let Req::Page(PageAsk::Albums { sort, offset, favorites }) = req else { return };
@@ -2867,6 +2897,12 @@ impl App {
             }
             // A page without its about part is still the page.
             Req::Page(PageAsk::ArtistAbout(_)) => false,
+            Req::Page(PageAsk::HomeRow { offset, .. }) => {
+                if let Some(v) = &mut self.row_view {
+                    v.pages.failed(offset);
+                }
+                *offset == 0
+            }
             _ => true,
         }
     }
@@ -3228,6 +3264,57 @@ impl App {
 
     /// Song `i` of Home's section `shelf`: played with the section's songs after it (`how` -1), or its menu's
     /// line `how` (`SongGo::kind`).
+    /// Shows Home's section `shown-shelf` whole: a source's feed shelf as it is, a row of the profile's from
+    /// its first page (the shelf's own, shown meanwhile), then a page after another as the grid nears its end.
+    fn row_open(&mut self) -> Option<Req> {
+        let ui = self.ui();
+        let at = ui.get_shown_shelf().max(0) as usize;
+        let shelf = self.shelves.row_data(at).map(|s| s.cards).unwrap_or_default();
+        ui.set_shelf_cards(shelf.clone());
+        ui.set_shelf_more(false);
+        self.row_view = None;
+        let row = *self.home_rows.get(at).filter(|_| !self.home_feed)?;
+        let mut pages = Paged::new(0);
+        let offset = pages.ask()?;
+        let songs = self.shelf_songs.get(at).cloned().unwrap_or_default();
+        self.row_view = Some(RowView { at, row, cards: shelf.iter().collect(), songs, pages });
+        Some(Req::Page(PageAsk::HomeRow { row, offset }))
+    }
+
+    /// The next page of the row shown whole, when more may follow and none is on its way.
+    fn row_more(&mut self) {
+        let Some(v) = &mut self.row_view else { return };
+        if let Some(offset) = v.pages.ask() {
+            let row = v.row;
+            self.load(Req::Page(PageAsk::HomeRow { row, offset }));
+        }
+    }
+
+    /// A page of the row shown whole: in place from its offset (the stored page, then the server's), and
+    /// whether more follow (`browse::home_row_more`).
+    fn row_page(&mut self, req: &Req, got: PageGot) {
+        let &Req::Page(PageAsk::HomeRow { row, offset }) = req else { return };
+        let Some(v) = self.row_view.as_mut().filter(|v| v.row == row) else { return };
+        let (fresh, songs, count): (Vec<Card>, Vec<Song>, usize) = match got {
+            PageGot::Albums(a) => (a.iter().map(album_card).collect(), Vec::new(), a.len()),
+            PageGot::Playlists(p) => (p.iter().map(playlist_card).collect(), Vec::new(), p.len()),
+            PageGot::Songs { songs, .. } => (songs.iter().map(song_card).collect(), songs.clone(), songs.len()),
+            _ => return,
+        };
+        let more = nori_core::browse::home_row_page(row, offset).is_some_and(|shelf| nori_core::browse::home_row_more(shelf, count as u32));
+        if !v.pages.answered(&offset, more.then_some(offset + count as u32)) {
+            return;
+        }
+        v.cards.truncate(offset as usize);
+        v.cards.extend(fresh);
+        v.songs.truncate(offset as usize);
+        v.songs.extend(songs);
+        let (cards, more) = (v.cards.clone(), v.pages.more());
+        let ui = self.ui();
+        ui.set_shelf_cards(ModelRc::new(VecModel::from(cards)));
+        ui.set_shelf_more(more);
+    }
+
     fn home_song(&mut self, shelf: usize, i: usize, how: i32) {
         let Some(songs) = self.shelf_songs.get(shelf).filter(|v| i < v.len()) else { return };
         match how {
@@ -9307,6 +9394,7 @@ mod tests {
                 id: i.to_string().into(), art: i.to_string().into(), title: format!("Album {i}").into(), ..Default::default()
             }).collect::<Vec<_>>()));
             ui.set_albums(cards.clone());
+            ui.set_shelf_cards(cards.clone());
             ui.set_shelves(ModelRc::new(VecModel::from(vec![crate::Shelf { loaded: true, cards, ..Default::default() }])));
             let requests = Rc::new(RefCell::new(Vec::<String>::new()));
             let called = requests.clone();
@@ -9331,6 +9419,42 @@ mod tests {
         }
     }
 
+    /// A row shown whole asks for its next page once its end comes within a screen, and only while more
+    /// may follow.
+    #[test]
+    fn show_all_asks_for_more_near_its_end() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_view(View::Shelf);
+        ui.set_shelves(ModelRc::new(VecModel::from(vec![Shelf { title: "Newest".into(), loaded: true, ..Default::default() }])));
+        ui.set_shelf_cards(cards((0..60).map(|i| Card { id: i.to_string().into(), ..Default::default() })));
+        let asked = Rc::new(std::cell::Cell::new(0));
+        let count = asked.clone();
+        ui.on_shelf_more_asked(move || count.set(count.get() + 1));
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        settle();
+        let scroll = |by: f32| ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled { position: slint::LogicalPosition::new(600.0, 400.0), delta_x: 0.0, delta_y: by });
+        scroll(-20000.0);
+        settle();
+        assert_eq!(asked.get(), 0, "the last page in, nothing more is asked");
+        scroll(20000.0);
+        settle();
+        ui.set_shelf_more(true);
+        settle();
+        assert_eq!(asked.get(), 0, "at the top of 60 cards the end is more than a screen away");
+        scroll(-20000.0);
+        settle();
+        assert!(asked.get() > 0, "near the end the next page is asked for");
+    }
+
     #[test]
     fn show_all_opens_scrollable_collections() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -9342,11 +9466,9 @@ mod tests {
             ui.set_picks_loaded(true);
             ui.set_show_all_text(words::SHOW_ALL.into());
     ui.set_mixing_label(words::MIXING.into());
-            ui.set_shelves(ModelRc::new(VecModel::from(vec![Shelf {
-                title: "Recently played".into(), loaded: true,
-                cards: cards((0..100).map(|i| Card { id: i.to_string().into(), art: i.to_string().into(), ..Default::default() })),
-                ..Default::default()
-            }])));
+            let shelf = cards((0..100).map(|i| Card { id: i.to_string().into(), art: i.to_string().into(), ..Default::default() }));
+            ui.set_shelf_cards(shelf.clone());
+            ui.set_shelves(ModelRc::new(VecModel::from(vec![Shelf { title: "Recently played".into(), loaded: true, cards: shelf, ..Default::default() }])));
             if view == View::ForYou {
                 ui.set_picks(ModelRc::new(VecModel::from((0..100).map(|i| crate::Pick {
                     id: i.to_string().into(), covers: ModelRc::new(VecModel::from(vec![i.to_string().into()])), ..Default::default()

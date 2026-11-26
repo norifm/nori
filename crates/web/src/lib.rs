@@ -807,6 +807,14 @@ impl Nori {
         Value::from(out).to_string()
     }
 
+    /// Page `offset` of Home row `row`'s full view (`pages::home_row_page`), for a row the profile shows.
+    pub async fn home_row_page(&self, row: String, offset: u32) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let prefs = self.app.settings.current().unwrap_or_default();
+        let row = nori_core::browse::home_rows_shown(prefs.home_rows, self.rules().account).into_iter().find(|r| format!("{r:?}") == row).ok_or_else(|| error(format!("no home row {row}")))?;
+        pages::home_row_page(&client, row, offset, self.user().as_deref()).await.map(|v| v.to_string()).map_err(error)
+    }
+
     /// Home's "For you" (`pages::mixes`), on the season's paper for the date, zone and `system_dark` as
     /// for [`Nori::theme`]: at once with `warm` false, brought up to date with it true.
     pub async fn mixes(&self, warm: bool, month: u32, day: u32, zone: String, system_dark: bool) -> String {

@@ -633,6 +633,19 @@ if (!only || only.includes("albumfind")) {
   expect(kept.length === albums.filter((a) => /second w/i.test(a.name) || /second w/i.test(a.artist)).length && kept.every((t) => /second w/i.test(t)), "the Albums field keeps the albums that have what is typed");
 }
 
+if (!only || only.includes("row")) {
+  // A Home row in full opens on what its shelf shows, in its order, then goes on past it.
+  await hash("#/home", "home");
+  await page.waitForSelector("section.shelf[data-row]:not([data-row=ForYou]) .card");
+  const name = await page.$eval("section.shelf[data-row]:not([data-row=ForYou])", (e) => e.dataset.row);
+  const shelf = await page.$$eval(`[data-row=${name}] .card`, (c) => c.map((x) => x.getAttribute("href")));
+  await hash(`#/row/${name}`, "row");
+  await page.waitForFunction((n) => document.querySelectorAll(".card").length >= n, { timeout: 10000 }, shelf.length);
+  const full = await page.$$eval(".card", (c) => c.map((x) => x.getAttribute("href")));
+  report.row = { name, shelf: shelf.length, full: full.length };
+  expect(shelf.length > 0 && full.slice(0, shelf.length).join() === shelf.join(), "a row in full opens on its shelf's albums, in order");
+}
+
 if (!only || only.includes("back")) {
   // Back takes one step: out of Now Playing to the page under it, then to the page before.
   await hash("#/albums/alphabeticalByName", "albums");
