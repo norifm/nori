@@ -115,6 +115,18 @@ impl PageTrail {
     }
 }
 
+/// An artist's line of counts: its albums, their songs and its own.
+fn artist_caption(d: &nori_core::ArtistDetail) -> String {
+    words::artist_caption(d.albums.len(), d.albums.iter().map(|a| a.song_count as usize).sum(), d.songs.len())
+}
+
+/// An artist's releases, a shelf per kind, each album under its year.
+fn release_shelves(d: &nori_core::ArtistDetail) -> ModelRc<Shelf> {
+    let card = |a: &nori_core::Album| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) };
+    let shelves = d.groups.iter().map(|g| Shelf { title: words::release_shelf(g).into(), cards: cards(g.albums.iter().filter_map(|&i| d.albums.get(i as usize)).map(card)), loaded: true, ..Default::default() });
+    ModelRc::new(VecModel::from(shelves.collect::<Vec<_>>()))
+}
+
 /// The view Back returns to from a page opened on `view`. Search keeps its field and answer while a page
 /// is open, so Back finds them as they were.
 fn opened_from(view: View) -> View {
@@ -1327,6 +1339,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.narrowed();
     });
     on!(ui.on_choose_artist, h, |a, id| a.choose_artist(id.to_string()));
+    on!(ui.on_play_chosen_artist, h, |a, shuffle| a.play_chosen_artist(shuffle));
     on!(ui.on_album_sort_chosen, h, |a, at| a.sort_albums(at as usize));
     on!(ui.on_albums_favorites_toggled, h, |a| a.toggle_album_favorites());
     on!(ui.on_open_accounts, h, |a| {
@@ -2113,15 +2126,19 @@ impl App {
                 self.page_actions(PageKind::Album);
                 self.show_page_songs();
             }
+            // The artist chosen beside the Artists list, in its own pane.
+            Data::Page(PageGot::Artist(d)) if shown && ui.get_view() == View::Artists => {
+                ui.set_artist_name(d.artist.name.as_str().into());
+                ui.set_artist_caption(artist_caption(&d).into());
+                ui.set_artist_shelves(release_shelves(&d));
+            }
             Data::Page(PageGot::Artist(d)) if shown => {
                 ui.set_page_starred(self.session.as_ref().is_some_and(|s| s.core.starred(nori_core::client::Starrable::Artist, &d.artist.id, d.artist.starred)));
                 ui.set_page_title(d.artist.name.as_str().into());
                 ui.set_page_sub("".into());
-                ui.set_page_caption(words::artist_caption(d.albums.len(), d.albums.iter().map(|a| a.song_count as usize).sum(), d.songs.len()).into());
+                ui.set_page_caption(artist_caption(&d).into());
                 self.set_page_art(d.artist.cover_art.clone().or_else(|| d.albums.first().and_then(|a| a.cover_art.clone())));
-                let card = |a: &nori_core::Album| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) };
-                let shelves = d.groups.iter().map(|g| Shelf { title: words::release_shelf(g).into(), cards: cards(g.albums.iter().filter_map(|&i| d.albums.get(i as usize)).map(card)), loaded: true, ..Default::default() });
-                ui.set_page_shelves(ModelRc::new(VecModel::from(shelves.collect::<Vec<_>>())));
+                ui.set_page_shelves(release_shelves(&d));
                 self.page_songs = d.songs;
                 self.page_actions(PageKind::Artist);
                 self.show_page_songs();
@@ -2468,18 +2485,13 @@ impl App {
         }
     }
 
-    /// Shows an artist beside the Artists list.
+    /// Shows an artist beside the Artists list, in a pane of its own: a page opened since keeps its own.
     fn choose_artist(&mut self, id: String) {
         let ui = self.ui();
         ui.set_artist_chosen(id.as_str().into());
-        ui.set_page_kind(PageLayout::Artist);
-        ui.set_page_id(id.as_str().into());
-        ui.set_page_title("".into());
-        ui.set_page_caption("".into());
-        ui.set_page_shelves(ModelRc::default());
-        self.page_songs.clear();
-        self.page_songs_all = false;
-        (self.page_fetch, self.page) = (Some(Fetch::Artist(id.clone())), Some(PageShown::Artist));
+        ui.set_artist_name("".into());
+        ui.set_artist_caption("".into());
+        ui.set_artist_shelves(ModelRc::default());
         // The artist chosen before is no longer shown.
         self.want.retain(|r| !matches!(r, Req::Page(PageAsk::Artist(_))));
         self.load(Req::Page(PageAsk::Artist(id)));
@@ -3034,6 +3046,19 @@ impl App {
 
     fn play_page(&self, shuffle: bool) {
         let Some(fetch) = self.page_fetch.clone() else { return };
+        self.play_fetched(fetch, &self.page_songs, shuffle);
+    }
+
+    /// Plays the artist chosen beside the Artists list: all its songs.
+    fn play_chosen_artist(&self, shuffle: bool) {
+        let id = self.ui().get_artist_chosen();
+        if !id.is_empty() {
+            self.play_fetched(Fetch::Artist(id.into()), &[], shuffle);
+        }
+    }
+
+    /// Plays what `fetch` reads, of which `songs` are listed; Play on the queue it started pauses and resumes it.
+    fn play_fetched(&self, fetch: Fetch, songs: &[Song], shuffle: bool) {
         if shuffle && self.session.as_ref().is_some_and(|s| s.shuffle_page(&fetch.origin())) {
             return;
         }
@@ -3044,11 +3069,11 @@ impl App {
             return;
         }
         // An artist's Play is all its songs, not the few its page lists.
-        if self.page_songs.is_empty() || matches!(fetch, Fetch::Artist(_)) {
+        if songs.is_empty() || matches!(fetch, Fetch::Artist(_)) {
             self.on_session(|s| s.play_later(fetch, shuffle));
         } else {
             let origin = fetch.origin();
-            self.on_session(|s| s.play(self.page_songs.clone(), 0, shuffle, Some(origin)));
+            self.on_session(|s| s.play(songs.to_vec(), 0, shuffle, Some(origin)));
         }
     }
 
@@ -9302,6 +9327,31 @@ mod tests {
         assert!(titled("Delete “Road trip”?") && !titled("Delete “The Rainbow Goblins”?"));
         tap(confirm.0, confirm.1);
         assert_eq!(*did.borrow(), ["rename road Rain", "delete road Road trip"]);
+    }
+
+    /// The Artists tab's pane shows the artist chosen, never the page opened last (an album's title and
+    /// counts, which the page keeps).
+    #[test]
+    fn the_artists_pane_shows_the_artist_not_the_last_page() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_page_title("The Rainbow Goblins".into());
+        ui.set_page_caption("1981 · 14 songs".into());
+        ui.set_view(View::Artists);
+        ui.set_artists(ModelRc::new(VecModel::from(vec![Card { id: "alpha".into(), title: "Alpha".into(), kind: 1, ..Default::default() }])));
+        ui.set_artist_chosen("alpha".into());
+        ui.set_artist_name("Alpha Waves".into());
+        ui.set_artist_caption("2 albums · 20 songs".into());
+        ui.show().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        ui.window().take_snapshot().unwrap();
+        let shown = |text: &str| i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, text).next().is_some();
+        assert!(shown("Alpha Waves") && shown("2 albums · 20 songs"));
+        assert!(!shown("The Rainbow Goblins") && !shown("1981 · 14 songs"));
     }
 
     /// A page left closes every dialog the window draws but the two app.rs closes itself.

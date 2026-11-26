@@ -7766,9 +7766,14 @@ export component AppWindow inherits Window {
     property <bool> list-empty: (root.view == View.albums && root.albums.length == 0) || (root.view == View.artists && root.artists.length == 0) || (root.view == View.playlists && root.playlists.length == 0) || (root.view == View.songs && root.songs.length == 0) || (root.view == View.favorites && root.songs.length == 0 && root.favorite-albums.length == 0 && root.favorite-artists.length == 0);
     property <string> list-name: root.view == View.shelf ? root.shelves[root.shown-shelf].title : root.view == View.for-you ? "For you" : root.view == View.albums ? "Albums" : root.view == View.artists ? "Artists" : root.view == View.playlists ? "Playlists" : root.view == View.songs ? "Songs" : root.view == View.favorites ? "Favorites" : root.view == View.page && root.page-kind == PageLayout.album ? "Album" : root.view == View.page && root.page-kind == PageLayout.list ? (root.page-mix ? "Mix" : "Playlist") : "";
     callback find-edited(string);
-    // The artist chosen on the Artists page.
+    // The artist chosen on the Artists page, and what its pane shows of it: its name, its line of counts and
+    // its releases; Play and Shuffle play it.
     in property <string> artist-chosen;
+    in property <string> artist-name;
+    in property <string> artist-caption;
+    in property <[Shelf]> artist-shelves;
     callback choose-artist(string);
+    callback play-chosen-artist(/* shuffle */ bool);
     // The equalizer page (view 9), from the settings.
     // The Support page (view support, from About): see SupportPage.
     in property <[SupportSeal]> support-seals;
@@ -9217,7 +9222,7 @@ export component AppWindow inherits Window {
                                 // the window's edge, and 12 px apart, less this pane's own 30 px.
                                 padding-right: 226px + 32px + 12px - 30px;
                                 Text {
-                                    text: root.page-title;
+                                    text: root.artist-name;
                                     color: Theme.text;
                                     font-size: 28px;
                                     font-weight: 700;
@@ -9231,7 +9236,7 @@ export component AppWindow inherits Window {
                                     base: Theme.plate;
                                     size: 32px;
                                     icon: 15px;
-                                    clicked => { root.play-page(false); }
+                                    clicked => { root.play-chosen-artist(false); }
                                 }
                                 IconButton {
                                     y: (parent.height - self.height) / 2;
@@ -9240,11 +9245,11 @@ export component AppWindow inherits Window {
                                     base: Theme.plate;
                                     size: 32px;
                                     icon: 15px;
-                                    clicked => { root.play-page(true); }
+                                    clicked => { root.play-chosen-artist(true); }
                                 }
                             }
                             if root.artist-chosen != "": Text {
-                                text: root.page-caption;
+                                text: root.artist-caption;
                                 color: Theme.dim;
                                 font-size: 12px;
                                 font-weight: 600;
@@ -9254,7 +9259,7 @@ export component AppWindow inherits Window {
                                 background: Theme.hairline;
                             }
                             if root.artist-chosen != "": ReleaseShelves {
-                                shelves: root.page-shelves;
+                                shelves: root.artist-shelves;
                                 rev: root.covers-rev;
                                 art(a, s, r) => { return root.art(a, s, r); }
                                 open(c) => { root.open-album(c.id); }
