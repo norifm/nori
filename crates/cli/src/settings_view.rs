@@ -1550,12 +1550,13 @@ fn quality(v: &str) -> String {
     }
 }
 
-/// Version and credits.
+/// Version, license and credits.
 fn about(own: &Own) -> Vec<Section> {
     let version = Section {
         title: "nori".into(),
         rows: vec![
             info("Version", env!("CARGO_PKG_VERSION").into()),
+            info(text::FREE_SOFTWARE, text::LICENCE_LINE.into()),
             info("Terminal client", "ratatui over crossterm; covers through ratatui-image".into()),
             info("Pictures drawn with", own.protocol.clone()),
             info("Data kept in", own.data.clone()),

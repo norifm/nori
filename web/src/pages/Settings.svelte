@@ -6,7 +6,8 @@
   // its kind and worded here. A row says only what is not obvious from its name. Appearance is the look
   // the top bar's menu has too. Servers lists the saved profiles as Android does: the one in use checked,
   // another opened with a click, each with its icon picked from its circle and a menu to rename it, edit it
-  // (its page, `#/settings/Servers/<id>`, with its scrobbling) or remove it; then adding one.
+  // (its page, `#/settings/Servers/<id>`, with its scrobbling) or remove it; then adding one. Plugins come
+  // before About, the last, as Android lists them; About draws itself, with its licenses page under it.
   import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
   import { remote } from "../state/remote.svelte";
@@ -15,8 +16,10 @@
   import { ui } from "../state/ui.svelte";
   import type { MusicFolderSwitch, Profile, ProfileIcon, Profiles, SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
+  import About from "../ui/About.svelte";
   import AddProfile from "../ui/AddProfile.svelte";
   import Icon from "../ui/Icon.svelte";
+  import Licences from "../ui/Licences.svelte";
   import Look from "../ui/Look.svelte";
   import Page from "../ui/Page.svelte";
   import Plugins from "../ui/Plugins.svelte";
@@ -36,11 +39,15 @@
     const folders = name === "Servers" || (!name && ui.wide) ? (JSON.parse(await ask<string>("music_folders").catch(() => "[]")) as MusicFolderSwitch[]) : [];
     // A build with a support service offers its page last.
     const supported = await ask<boolean>("support_offered");
-    return { names, sections, profiles, folders, supported };
+    const version = name === "About" ? (JSON.parse(await ask<string>("about")) as { version: string }).version : "";
+    return { names, sections, profiles, folders, supported, version };
   });
   /** The page open: on a wide screen the first while none is asked for. */
   const name = $derived(route.arg || (ui.wide ? "Servers" : ""));
-  const tabs = $derived([["Servers", W.servers], ...(page.data?.names ?? []).map((n) => [n, W.settingsPages[n]?.[0] ?? n]), ["Plugins", W.plugins]]);
+  /** The core's pages but About, which follows Plugins. */
+  const pages = $derived((page.data?.names ?? []).filter((n) => n !== "About"));
+  const about = $derived(page.data?.names.includes("About") ?? false);
+  const tabs = $derived([["Servers", W.servers], ...pages.map((n) => [n, W.settingsPages[n]?.[0] ?? n]), ["Plugins", W.plugins], ...(about ? [["About", W.settingsPages.About[0]]] : [])]);
   /** The page's sections the rows draw: Appearance is the look, drawn whole. */
   const drawn = $derived(name === "Look" ? [] : (page.data?.sections ?? []));
 
@@ -117,6 +124,8 @@
   <Plugins />
 {:else if name === "Servers" && route.sub}
   <ProfileEdit id={route.sub} />
+{:else if name === "About" && route.sub}
+  <Licences />
 {:else if ui.wide}
   <!-- One block centered in the page, in the top bar's column: the title, the categories as a rail at its
        left on a wide window (the settings' column ending at its right) and as chips under the title
@@ -138,10 +147,9 @@
   <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
     <div class="group root">
       <a class="group-row" href={href("settings", "Servers")}><Icon name="server" /><span class="words"><span>{W.servers}</span>{#if inUse}<span class="sub">{named(inUse)}</span>{/if}</span><Icon name="nav-arrow-right" /></a>
-      {#each page.data?.names ?? [] as n (n)}
-        <a class="group-row" href={href("settings", n)} data-page={n}><Icon name={glyphs[n] ?? "settings"} /><span class="words"><span>{W.settingsPages[n]?.[0] ?? n}</span><span class="sub">{W.settingsPages[n]?.[1] ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
-      {/each}
+      {#each pages as n (n)}{@render rootRow(n)}{/each}
       <a class="group-row" href={href("settings", "Plugins")}><Icon name="view-grid" /><span class="words">{W.plugins}</span><Icon name="nav-arrow-right" /></a>
+      {#if about}{@render rootRow("About")}{/if}
       {#if page.data?.supported}<a class="group-row" href={href("support")}><Icon name="seal" /><span class="words">{W.supportTitle}</span><Icon name="nav-arrow-right" /></a>{/if}
     </div>
   </Page>
@@ -150,6 +158,10 @@
 {:else}
   <Page title={W.settingsPages[name]?.[0] ?? name} back narrow ready={!!page.data} error={page.error}>{@render settingsPage()}</Page>
 {/if}
+
+{#snippet rootRow(n: string)}
+  <a class="group-row" href={href("settings", n)} data-page={n}><Icon name={glyphs[n] ?? "settings"} /><span class="words"><span>{W.settingsPages[n]?.[0] ?? n}</span><span class="sub">{W.settingsPages[n]?.[1] ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
+{/snippet}
 
 {#snippet serversPage()}
   <div class="group-label">{W.profiles}</div>
@@ -195,6 +207,7 @@
 
 {#snippet settingsPage()}
   {#if name === "Look"}<Look />{/if}
+  {#if name === "About" && page.data}<About version={page.data.version} supported={page.data.supported} />{/if}
   {#each drawn as sec (sec.id)}
     {@const rest = shownRows(sec)}
     {#if rest.length}

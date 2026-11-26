@@ -47,6 +47,14 @@ The terminal client (crates/cli, nori-cli; not part of the Android app)
     ring Apache-2.0 and ISC; webpki-roots' certificate data CDLA-Permissive-2.0
   zbus, async-io (the desktop's media controls, crates/mpris) — zbus MIT; async-io MIT or Apache-2.0
 
+The web client (crates/web and web/, nori-web; not part of the Android app)
+  Svelte — Copyright (c) 2016-2025 Svelte Contributors, MIT
+  wasm-bindgen, js-sys, web-sys — Alex Crichton and the wasm-bindgen developers, MIT or Apache-2.0
+  sqlite-wasm-rs, sqlite-wasm-vfs (SQLite in the browser) — Copyright (c) 2024 Spxg, MIT
+  jco (plugins made into JavaScript, loaded only to install one) — the Bytecode Alliance and the jco
+    contributors, Apache-2.0 with LLVM exception
+  hls.js (a plugin's moving cover, loaded only for one) — Copyright (c) 2017 Dailymotion, Apache-2.0
+
 Android libraries
   AndroidX (Media3, Compose, Material 3, Palette, Navigation, Lifecycle, Activity, Core), OkHttp,
   kotlinx.coroutines — Apache License 2.0

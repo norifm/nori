@@ -211,7 +211,7 @@ pub fn pages(client: SettingsClient, parts: &[SettingsPart]) -> Vec<SettingsPage
     let offered = |p: SettingsPage| match client {
         SettingsClient::Phone => true,
         SettingsClient::Desktop | SettingsClient::Terminal => p != SettingsPage::LyricsSources,
-        SettingsClient::Web => matches!(p, SettingsPage::Playing | SettingsPage::Sound | SettingsPage::Look | SettingsPage::Lyrics | SettingsPage::Library | SettingsPage::Data),
+        SettingsClient::Web => matches!(p, SettingsPage::Playing | SettingsPage::Sound | SettingsPage::Look | SettingsPage::Lyrics | SettingsPage::Library | SettingsPage::Data | SettingsPage::About),
     };
     SettingsPage::ALL.into_iter().filter(|p| !page_parts(*p).iter().all(|part| !parts.contains(part)) && offered(*p)).collect()
 }
@@ -661,7 +661,9 @@ mod tests {
     #[test]
     fn a_browser_offers_what_applies_there() {
         let d = StoredPrefs::default();
-        assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Look, SettingsPage::Lyrics, SettingsPage::Library, SettingsPage::Data]);
+        assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Look, SettingsPage::Lyrics, SettingsPage::Library, SettingsPage::Data, SettingsPage::About]);
+        // About has no updates to check in a browser: the page draws itself.
+        assert!(page(SettingsPage::About, SettingsClient::Web, &d, &state(&d, Output::default(), &model()), &facts()).is_empty());
         let rows = every_row(SettingsClient::Web, &d, &facts());
         let has = names(&rows, false);
         for kept in ["autoMix", "crossfadeSec", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season", "wifi"] {

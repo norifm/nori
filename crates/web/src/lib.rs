@@ -881,6 +881,22 @@ impl Nori {
         Value::from(pages.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>()).to_string()
     }
 
+    /// About's facts: the version, and what the web client is made of that is not nori's, by group (`core`,
+    /// `web`, `data`): `{ version, credits: [{ group, list: [{ name, what, copyright, licence, file }] }] }`,
+    /// `file` naming the license text bundled with the page (null for a service).
+    pub fn about(&self) -> String {
+        use nori_core::credits::{core_credits, data_credits, web_credits};
+        let list = |credits: Vec<nori_core::credits::Credit>| -> Vec<Value> {
+            credits.into_iter().map(|c| json!({ "name": c.name, "what": c.what, "copyright": c.copyright, "licence": c.licence, "file": c.file })).collect()
+        };
+        let groups = [("core", core_credits()), ("web", web_credits()), ("data", data_credits())];
+        json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "credits": groups.into_iter().map(|(group, credits)| json!({ "group": group, "list": list(credits) })).collect::<Vec<_>>(),
+        })
+        .to_string()
+    }
+
     /// The plugins nori's own repo lists, each with what stops it in a browser (`web_fit`; `proxied`: this
     /// page's server carries a plugin's requests), how it stands against `installed` (`[{ id, version,
     /// held, fromFile }]`) and its versions of this API, newest first: `[{ id, name, about, icon, readme,

@@ -3,7 +3,7 @@
 // stats, search, a profile's icon picked, a song streamed and played, next and previous, a song taken out
 // of the queue, a right click's menu on each kind of item, Back one step out of Now Playing, synced lyrics,
 // a crossfade and an AutoMix transition heard as continuous samples, the seek bar running and holding, a
-// click on a lyric line, how soon a pause is heard, a page reopened where it left. Exits non-zero when
+// click on a lyric line, how soon a pause is heard, a page reopened where it left, About and its licenses. Exits non-zero when
 // something is off, and prints what it saw.
 //
 //   npm --prefix web/check install && node web/check/check.mjs [http://localhost:8080/] [phase]
@@ -599,6 +599,30 @@ if (!only || only.includes("storage")) {
   }));
   report.storage = has;
   expect(has.quality && has.parts === 2 && has.clear, "Downloads and storage has the quality, what is kept and Clear");
+}
+
+if (!only || only.includes("about")) {
+  // About: the version, what it runs on and its license, its tab after Plugins; its licenses page lists the
+  // core's, the web's and the data's credits, and a credit shows its license's text.
+  await hash("#/settings/About", "settings");
+  await page.waitForSelector("[data-row=version]");
+  const about = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll(".framed .tabs .tab")].map((t) => t.dataset.page),
+    version: document.querySelector("[data-row=version] .words > span").textContent,
+    groups: document.querySelectorAll(".column .group").length,
+  }));
+  await page.click("[data-link=licenses]");
+  await page.waitForSelector("[data-credits=web] .group-row", { timeout: 10000 });
+  const credits = await page.$$eval("[data-credits]", (g) => g.map((x) => [x.dataset.credits, x.querySelectorAll(".group-row").length]));
+  await page.click("[data-credits=web] .group-row");
+  await page.waitForFunction(() => document.querySelector("#licence pre")?.textContent.length > 200, { timeout: 10000 }).catch(() => {});
+  const text = await page.$eval("#licence pre", (e) => e.textContent).catch(() => "");
+  await page.keyboard.press("Escape");
+  report.about = { ...about, credits, text: text.slice(0, 40) };
+  expect(/^nori \d+\.\d+\.\d+/.test(about.version) && about.groups === 3, "About has the version, what it runs on and its license");
+  expect(about.tabs.at(-1) === "About" && about.tabs.at(-2) === "Plugins", "About is the last tab, after Plugins");
+  expect(credits.map(([g]) => g).join() === "core,web,data" && credits.every(([, n]) => n > 0), "the licenses list the core's, the web's and the data's credits");
+  expect(text.includes("Permission is hereby granted"), "a credit shows its license's text");
 }
 
 if (!only || only.includes("eq")) {

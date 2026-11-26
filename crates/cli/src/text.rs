@@ -310,6 +310,10 @@ pub const RESTORE_DETAIL: &str = "Its settings replace these. Your profiles stay
 pub const BACKUP_SAVED: &str = "Backup saved";
 pub const BACKUP_PASSWORD: &str = "The backup's password";
 
+// About's license, as Android's.
+pub const FREE_SOFTWARE: &str = "nori is free software";
+pub const LICENCE_LINE: &str = "AGPL-3.0 license · Copyright (c) 2026 norifm";
+
 // The Support page.
 pub const SUPPORT_TITLE: &str = "Support nori";
 pub const SUPPORT_LINE: &str = "nori is and always will be free.";

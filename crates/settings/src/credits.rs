@@ -85,6 +85,15 @@ const ANDROID_CREDITS: [(&str, &str, &str, &str, Option<&str>); 5] = [
     ),
 ];
 
+/// The web client's libraries, Rust's and the page's.
+const WEB_CREDITS: [(&str, &str, &str, &str, Option<&str>); 5] = [
+    ("Svelte", "The user interface", "Copyright (c) 2016-2025 Svelte Contributors", "MIT", Some("MIT")),
+    ("wasm-bindgen, js-sys and web-sys", "The core's calls into the browser and back", "Copyright (c) 2014 Alex Crichton and the wasm-bindgen developers", "MIT or Apache-2.0", Some("MIT")),
+    ("sqlite-wasm-rs and sqlite-wasm-vfs", "SQLite built for the browser, its files kept in the browser's own storage", "Copyright (c) 2024 Spxg", "MIT", Some("MIT")),
+    ("jco", "Plugins made into JavaScript, the way a browser runs them", "Copyright the Bytecode Alliance and the jco contributors", "Apache-2.0 with LLVM exception", Some("Apache-2.0")),
+    ("hls.js", "A plugin's moving cover where the browser can't play its stream itself", "Copyright (c) 2017 Dailymotion", "Apache-2.0", Some("Apache-2.0")),
+];
+
 /// The typeface and the third-party data services.
 const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 17] = [
     ("Inter", "The typeface", "Copyright (c) 2016 The Inter Project Authors (Rasmus Andersson)", "OFL-1.1", Some("OFL-1.1")),
@@ -140,6 +149,10 @@ pub fn android_credits() -> Vec<Credit> {
     credits(&ANDROID_CREDITS)
 }
 
+pub fn web_credits() -> Vec<Credit> {
+    credits(&WEB_CREDITS)
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn data_credits() -> Vec<Credit> {
     credits(&DATA_CREDITS)
@@ -151,10 +164,10 @@ mod tests {
 
     #[test]
     fn credits_complete() {
-        let (c, a, d) = (core_credits(), android_credits(), data_credits());
+        let (c, a, w, d) = (core_credits(), android_credits(), web_credits(), data_credits());
         // Every licence named is bundled for the licences page, and nothing is listed twice.
         let texts = concat!(env!("CARGO_MANIFEST_DIR"), "/../../android/app/src/main/assets/licences");
-        let all: Vec<&Credit> = c.iter().chain(&a).chain(&d).collect();
+        let all: Vec<&Credit> = c.iter().chain(&a).chain(&w).chain(&d).collect();
         let missing: Vec<String> = all.iter().filter_map(|c| c.file.as_ref()).filter(|f| !std::path::Path::new(texts).join(format!("{f}.txt")).is_file()).cloned().collect();
         assert!(missing.is_empty(), "licence texts named but not in android/app/src/main/assets/licences: {missing:?}");
         let mut names: Vec<&str> = all.iter().map(|c| c.name.as_str()).collect();

@@ -32,7 +32,7 @@ export default defineConfig(({ mode }) =>
           },
         },
         worker: { format: "es" },
-        // The top bar's wordmark is docs/brand's.
-        server: { fs: { allow: [".", "../docs/brand"] } },
+        // The top bar's wordmark is docs/brand's; the licenses' texts are Android's.
+        server: { fs: { allow: [".", "../docs/brand", "../android/app/src/main/assets/licences"] } },
       },
 );
