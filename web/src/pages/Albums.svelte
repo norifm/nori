@@ -1,8 +1,9 @@
 <script lang="ts">
   // Every album, in the order picked, under a bar: the order and which way it runs, which drops the core's
   // others (`album_sorts`; the one left last when the address names none, kept by the core), and Favorites
-  // apart from them (only the starred, in that order); Shuffle (random albums, each whole) heads the page.
-  // Then the albums: a grid, or a shelf per artist in the Artist order.
+  // apart from them (only the starred, in that order); Shuffle (random albums, each whole) and a field
+  // finding albums by name or artist as it is typed head the page. Then the albums: a grid, or a shelf per
+  // artist in the Artist order.
   import { ask } from "../rpc";
   import { player } from "../state/player.svelte";
   import { go } from "../state/route.svelte";
@@ -16,6 +17,7 @@
   let sorts = $state<{ name: string; way: string }[]>([]);
   let kept = $state("");
   let favorites = $state(false);
+  let filter = $state("");
   void Promise.all([ask<string>("album_sorts"), ask<string>("album_sort")]).then(([all, k]) => {
     sorts = JSON.parse(all);
     kept = k;
@@ -30,9 +32,14 @@
 </script>
 
 <Page title={W.albums} back={!ui.wide} places>
-  {#snippet head()}<button class="pill quiet small" onclick={() => void player.shuffleLibrary(true)}><Icon name="shuffle" />{W.shuffle}</button>{/snippet}
+  {#snippet head()}
+    <div class="tools">
+      <button class="pill quiet small" onclick={() => void player.shuffleLibrary(true)}><Icon name="shuffle" />{W.shuffle}</button>
+      <label class="field search-field filter"><Icon name="search" /><input type="search" placeholder={W.filterAlbums} aria-label={W.filterAlbums} bind:value={filter} /></label>
+    </div>
+  {/snippet}
   {#if sort}
-    <AlbumGrid {sort} {favorites} top="albums">
+    <AlbumGrid {sort} {favorites} {filter} top="albums">
       {#snippet head()}
         <div class="bar">
           <button
@@ -54,6 +61,14 @@
 </Page>
 
 <style>
+  .tools {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .filter {
+    width: 226px;
+  }
   /* The order raised, the filter quiet until it is on; both edged, so the filter reads as a control. */
   .bar {
     display: flex;

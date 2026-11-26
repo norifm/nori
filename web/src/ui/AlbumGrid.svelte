@@ -1,8 +1,8 @@
 <script lang="ts">
   // Every album in the order `sort` (the server's name for it), or with `favorites` the starred ones, read a
   // page after another once the first is in: a grid of cards or, in the Artist order (`artistRows`), a shelf
-  // per artist under their name and how many, the name a way to the artist. `head` goes above (a page's
-  // places and orders).
+  // per artist under their name and how many, the name a way to the artist. `filter` keeps those whose
+  // name or artist has it (the core's `filter_rows`). `head` goes above (a page's places and orders).
   import type { Snippet } from "svelte";
   import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
@@ -12,7 +12,7 @@
   import Cards from "./Cards.svelte";
   import Icon from "./Icon.svelte";
 
-  let { sort, favorites = false, top, head }: { sort: string; favorites?: boolean; top: string; head?: Snippet } = $props();
+  let { sort, favorites = false, filter = "", top, head }: { sort: string; favorites?: boolean; filter?: string; top: string; head?: Snippet } = $props();
   /** This grid's pages, as the core reads them (`album_page`): `first` from the top again; null when none is to be read. */
   const list = ++grids;
   const page = async (first: boolean) => JSON.parse(await ask<string>("album_page", list, sort, favorites, first)) as { albums?: Album[]; more: boolean } | null;
@@ -40,7 +40,19 @@
       gone = true;
     };
   });
-  const albums = $derived([...(first.data?.albums ?? []), ...rest]);
+  const read = $derived([...(first.data?.albums ?? []), ...rest]);
+  /** Those the filter keeps. */
+  let albums = $state.raw<Album[]>([]);
+  $effect(() => {
+    const all = read;
+    const f = filter;
+    if (!f.trim()) return void (albums = all);
+    let gone = false;
+    void ask<string>("filter_rows", JSON.stringify(all.map((a) => [a.name, a.artist])), f).then((r) => !gone && (albums = (JSON.parse(r) as number[]).map((i) => all[i])));
+    return () => {
+      gone = true;
+    };
+  });
   /** In the Artist order: where each artist's shelf starts (the core's `artist_rows`). */
   let starts = $state.raw<number[]>([]);
   $effect(() => {
@@ -62,6 +74,7 @@
 
 {@render head?.()}
 {#if first.error}<p class="empty">{W.failed(first.error)}</p>
+{:else if first.data && !albums.length && filter.trim()}<p class="empty"><Icon name="search" />{W.nothingMatches(filter.trim())}</p>
 {:else if first.data && !albums.length && favorites}<p class="empty"><Icon name="seal" />{W.noFavoriteAlbums}</p>
 {:else if first.data && !albums.length}<p class="empty"><Icon name="compact-disc" />{W.noAlbums}</p>
 {:else if sort === "artistRows"}

@@ -621,6 +621,18 @@ if (!only || only.includes("eq")) {
   expect(headphones.download || headphones.search, "the headphones part offers the AutoEQ list or its search");
 }
 
+if (!only || only.includes("albumfind")) {
+  // The Albums page's field keeps the albums whose name or artist has what is typed, as it is typed.
+  await hash("#/albums/alphabeticalByName", "albums");
+  await page.waitForSelector(".grid .card");
+  const all = await page.$$eval(".grid .card", (c) => c.length);
+  await page.type(".page-head .filter input", "second w");
+  await page.waitForFunction((n) => document.querySelectorAll(".grid .card").length < n, { timeout: 10000 }, all);
+  const kept = await page.$$eval(".grid .card", (c) => c.map((x) => x.textContent));
+  report.albumfind = { all, kept: kept.length };
+  expect(kept.length === albums.filter((a) => /second w/i.test(a.name) || /second w/i.test(a.artist)).length && kept.every((t) => /second w/i.test(t)), "the Albums field keeps the albums that have what is typed");
+}
+
 if (!only || only.includes("back")) {
   // Back takes one step: out of Now Playing to the page under it, then to the page before.
   await hash("#/albums/alphabeticalByName", "albums");

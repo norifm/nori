@@ -119,6 +119,7 @@ export const W = {
   } as Record<string, string>,
   sortBy: "Sort by",
   filterArtists: "Filter artists",
+  filterAlbums: "Filter albums",
   /** An artist's shelf, by the core's `ReleaseKind`; a shelf the server tagged by its tag. */
   shelf: (kind: string, tag: string) =>
     ({ Album: "Albums", Ep: "EPs", Single: "Singles", Live: "Live", Compilation: "Compilations", Soundtrack: "Soundtracks", Remix: "Remixes", Other: "Others" })[kind] ??
