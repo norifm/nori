@@ -36,8 +36,25 @@ class Ui {
   joining = $state(false);
   /** Adding `songIds` to a playlist: where they can go (the core's `playlist_choices`), null while read. */
   picking = $state.raw<{ songIds: string[]; choices: PlaylistChoice[] | null } | null>(null);
-  /** The full player, and what it shows beside the cover (on a phone: in its place). */
-  full = $state(false);
+  /** The full player, and what it shows beside the cover (on a phone: in its place). Open, it is a step in
+   * the browser's history, so Back closes it rather than leaving the page under it. */
+  #full = $state(false);
+  get full() {
+    return this.#full;
+  }
+  set full(on: boolean) {
+    if (on === this.#full) return;
+    this.#full = on;
+    if (on) history.pushState({ full: true }, "");
+    else if (history.state?.full) history.back();
+  }
+  /** Closes the full player for a page opened from it; whether the player's step in the history is the one
+   * shown, for the page to take its place. */
+  leaving(): boolean {
+    const step = this.#full && !!history.state?.full;
+    this.#full = false;
+    return step;
+  }
   pane = $state<Pane | null>(null);
   /** On a wide screen, the sheet beside the pages and what it shows; closed while null. */
   side = $state<Pane | null>(null);
@@ -55,6 +72,9 @@ class Ui {
 
   constructor() {
     matchMedia("(min-width: 720px)").addEventListener("change", (e) => (this.wide = e.matches));
+    addEventListener("popstate", () => (this.#full = !!history.state?.full));
+    // Reloaded on the full player's step: nothing is open over the page it was taken on.
+    if (history.state?.full) history.back();
   }
 
   /** A line of news for a few seconds. */

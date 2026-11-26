@@ -7,7 +7,7 @@
   // the song's menu.
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
-  import { href } from "../state/route.svelte";
+  import { go, href } from "../state/route.svelte";
   import { looks, RECOLOR_MS, worn } from "../state/theme.svelte";
   import { beside, pointer, ui, type Pane } from "../state/ui.svelte";
   import { remote } from "../state/remote.svelte";
@@ -34,6 +34,12 @@
   const close = () => {
     ui.full = false;
     ui.pane = null;
+  };
+  /** A name's page, opened from the player: it takes the player's step in the history (`go`). */
+  const leave = (e: MouseEvent, top: string, id: string) => {
+    e.preventDefault();
+    ui.pane = null;
+    go(top, id);
   };
   const menu = (e: MouseEvent) => {
     e.preventDefault();
@@ -81,7 +87,7 @@
         {#if !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} />{/if}
       </div>
       <div class="line clip">
-        {#if s.artistId}<a href={href("artist", s.artistId)} onclick={close}>{s.artist}</a>{:else}{s.artist}{/if}{#if s.album}<span class="album">&nbsp;— {#if s.albumId}<a href={href("album", s.albumId)} onclick={close}>{s.album}</a>{:else}{s.album}{/if}</span>{/if}
+        {#if s.artistId}<a href={href("artist", s.artistId)} onclick={(e) => leave(e, "artist", s.artistId!)}>{s.artist}</a>{:else}{s.artist}{/if}{#if s.album}<span class="album">&nbsp;— {#if s.albumId}<a href={href("album", s.albumId)} onclick={(e) => leave(e, "album", s.albumId!)}>{s.album}</a>{:else}{s.album}{/if}</span>{/if}
       </div>
       {#if n?.device}
         <button class="there" onclick={() => (ui.pane = "devices")}><Icon name={kindGlyph[n.deviceKind ?? ""] ?? "computer"} />{W.playingOn(n.device)}</button>
@@ -107,7 +113,7 @@
       <div class="phone-title">
         <div class="names">
           <span class="name clip">{s.title}</span>
-          {#if s.artistId}<a class="artist clip" href={href("artist", s.artistId)} onclick={close}>{s.artist}</a>{:else}<span class="artist clip">{s.artist}</span>{/if}
+          {#if s.artistId}<a class="artist clip" href={href("artist", s.artistId)} onclick={(e) => leave(e, "artist", s.artistId!)}>{s.artist}</a>{:else}<span class="artist clip">{s.artist}</span>{/if}
         </div>
         {#if !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} />{/if}
         <button class="glyph" aria-label={W.more} title={W.more} onclick={(e) => void songMenu(s, beside(e), { inPlayer: true })}><Icon name="more-horiz" /></button>

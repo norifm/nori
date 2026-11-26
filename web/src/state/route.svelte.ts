@@ -1,5 +1,7 @@
 // The page shown, by its address (`#/album/<id>`): read from the hash whenever it changes.
 
+import { ui } from "./ui.svelte";
+
 /** Pages under the Library tab on a phone. */
 const LIBRARY = ["library", "albums", "artists", "playlists", "genres", "songs", "favorites"];
 /** Pages opened from a tab's page, each with the one it sits under when its address is opened alone. */
@@ -54,8 +56,11 @@ addEventListener("hashchange", () => {
 /** The address of a page. */
 export const href = (top: string, arg = "") => (arg ? `#/${top}/${encodeURIComponent(arg)}` : `#/${top}`);
 
+/** Opens page `top`; from the full player it takes the player's step in the history, so Back from it comes
+ * to where the player was opened. */
 export function go(top: string, arg = "") {
-  location.hash = href(top, arg);
+  if (ui.leaving()) location.replace(href(top, arg));
+  else location.hash = href(top, arg);
 }
 
 /** Searches for `q`: on the search page the address follows the field, without a step back for each key.

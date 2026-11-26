@@ -133,6 +133,28 @@ fn release_shelves(d: &nori_core::ArtistDetail) -> ModelRc<Shelf> {
     ModelRc::new(VecModel::from(shelves.collect::<Vec<_>>()))
 }
 
+/// Where Back leads from what the pages show.
+#[derive(Debug, PartialEq)]
+enum BackTo {
+    /// The plugin's page before the one shown.
+    PluginPage,
+    /// The page shown was opened from ([`PageTrail::back`]).
+    Trail,
+    View(View),
+}
+
+/// Where Back leads from `view`, with a plugin's page open on Settings: the one before it; from a page of
+/// Settings' (the equalizer, support), Settings, as its own back arrow; from a page, back along the trail; from a
+/// tab or a page of Home's, Home.
+fn back_from(view: View, plugin_page: bool) -> BackTo {
+    match view {
+        View::Settings if plugin_page => BackTo::PluginPage,
+        View::Equalizer | View::Support => BackTo::View(View::Settings),
+        View::Page => BackTo::Trail,
+        _ => BackTo::View(View::Home),
+    }
+}
+
 /// The view Back returns to from a page opened on `view`. Search keeps its field and answer while a page
 /// is open, so Back finds them as they were.
 fn opened_from(view: View) -> View {
@@ -970,8 +992,13 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
                 if let Some(top) = weak.upgrade() { top.invoke_end_search(); }
             });
         }
-        let me = a.me.clone();
-        a.compositor.on_history(move |forward| me.with(|a| if forward { a.forward() } else { a.back() }));
+        // Outside the app: the step calls back into it.
+        let main = ui.as_weak();
+        a.compositor.on_history(move |forward| {
+            if let Some(m) = main.upgrade() {
+                if forward { m.invoke_forward_step() } else { m.invoke_back_step() }
+            }
+        });
         let me = a.me.clone();
         a.compositor.on_shown(move |shown| me.with(|a| {
             a.hidden = !shown;
@@ -1136,6 +1163,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         lines
     });
     on!(ui.on_back, h, |a| a.back());
+    on!(ui.on_forward, h, |a| a.forward());
     on!(ui.on_note_act, h, |a| a.note_act());
     on!(ui.on_open_album, h, |a, id| a.open_page(PageAsk::Album(id.into())));
     on!(ui.on_open_artist, h, |a, id| a.open_page(PageAsk::Artist(id.into())));
@@ -5720,23 +5748,22 @@ impl App {
         }
     }
 
-    /// The back button: the page this one was opened from, else the tab it was opened on; Home from a
-    /// page of its own.
+    /// Back among the pages ([`back_from`]).
     fn back(&mut self) {
-        if self.ui().get_view() == View::Settings && !self.plugged.stack.is_empty() {
-            return self.plugin_act(crate::settings::PluginAct::Back);
-        }
-        if self.ui().get_view() != View::Page {
-            self.trail.left();
-            return self.go(View::Home);
-        }
-        match self.trail.back(self.ui().global::<crate::Scroll>().get_at()) {
-            (Back::Page(page), at) => self.show_page(page, at),
-            (Back::Tab(tab), at) => self.go_at(tab, at),
+        match back_from(self.ui().get_view(), !self.plugged.stack.is_empty()) {
+            BackTo::PluginPage => self.plugin_act(crate::settings::PluginAct::Back),
+            BackTo::Trail => match self.trail.back(self.ui().global::<crate::Scroll>().get_at()) {
+                (Back::Page(page), at) => self.show_page(page, at),
+                (Back::Tab(tab), at) => self.go_at(tab, at),
+            },
+            BackTo::View(view) => {
+                self.trail.left();
+                self.go(view);
+            }
         }
     }
 
-    /// The mouse's forward button: the page Back last left, scrolled where it was.
+    /// Forward: the page Back last left, scrolled where it was.
     fn forward(&mut self) {
         if let Some((page, at)) = self.trail.forward(self.ui().global::<crate::Scroll>().get_at()) {
             self.show_page(page, at);
@@ -6082,6 +6109,83 @@ mod tests {
         let ui = AppWindow::new().unwrap();
         dressed().paint(&ui);
         ui
+    }
+
+    /// Back, from the mouse, takes one step out of what is shown: Now Playing, the first run's screens and
+    /// the sign-in pages before the pages; Forward moves only among the pages.
+    #[test]
+    fn the_mouse_steps_out_of_what_is_shown_first() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, ..Default::default() },
+        ))).unwrap();
+        type Show = fn(&AppWindow);
+        let shown: [(&str, Show, &str); 7] = [
+            ("a page", |ui| ui.set_view(View::Page), "back"),
+            ("a tab", |ui| ui.set_view(View::Albums), "back"),
+            ("Now Playing over a page", |ui| {
+                ui.set_view(View::Page);
+                ui.set_full_player(true);
+            }, "Now Playing closed"),
+            ("the first run's second question over Home", |ui| {
+                ui.set_setup_open(true);
+                ui.set_setup_at(1);
+            }, "setup-back"),
+            ("the first run's sign-in step", |ui| {
+                ui.set_welcome_signing(true);
+                ui.set_welcome_can_back(true);
+            }, "welcome-back"),
+            ("a profile's Edit page", |ui| {
+                ui.set_view(View::Login);
+                ui.set_login_editing(true);
+            }, "cancel-login"),
+            ("a new profile's form", |ui| {
+                ui.set_view(View::Login);
+                ui.set_login_adding(true);
+            }, "provider-again"),
+        ];
+        for (what, show, step) in shown {
+            let ui = AppWindow::new().unwrap();
+            show(&ui);
+            let did = Rc::new(RefCell::new(Vec::<String>::new()));
+            let seen = did.clone();
+            ui.on_back(move || seen.borrow_mut().push("back".into()));
+            let seen = did.clone();
+            ui.on_forward(move || seen.borrow_mut().push("forward".into()));
+            let seen = did.clone();
+            ui.on_setup_back(move || seen.borrow_mut().push("setup-back".into()));
+            let seen = did.clone();
+            ui.on_welcome_back(move || seen.borrow_mut().push("welcome-back".into()));
+            let seen = did.clone();
+            ui.on_cancel_login(move || seen.borrow_mut().push("cancel-login".into()));
+            let seen = did.clone();
+            ui.on_setting_action(move |name| seen.borrow_mut().push(name.into()));
+            let full = ui.get_full_player();
+            ui.invoke_forward_step();
+            let forward = did.borrow_mut().drain(..).collect::<Vec<_>>();
+            ui.invoke_back_step();
+            if full && !ui.get_full_player() {
+                did.borrow_mut().push("Now Playing closed".into());
+            }
+            assert_eq!(*did.borrow(), [step], "{what}");
+            assert_eq!(forward, if step == "back" { vec!["forward"] } else { vec![] }, "{what}: forward");
+        }
+    }
+
+    #[test]
+    fn back_leads_one_step_from_each_view() {
+        let steps = [
+            (View::Equalizer, false, BackTo::View(View::Settings)),
+            (View::Support, false, BackTo::View(View::Settings)),
+            (View::Settings, true, BackTo::PluginPage),
+            (View::Settings, false, BackTo::View(View::Home)),
+            (View::Page, false, BackTo::Trail),
+            (View::Shelf, false, BackTo::View(View::Home)),
+            (View::ForYou, false, BackTo::View(View::Home)),
+            (View::Albums, false, BackTo::View(View::Home)),
+        ];
+        for (view, plugin_page, to) in steps {
+            assert_eq!(back_from(view, plugin_page), to, "{view:?}");
+        }
     }
 
     #[test]

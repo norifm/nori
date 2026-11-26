@@ -8170,7 +8170,42 @@ export component AppWindow inherits Window {
     callback setup-next();
 
     callback go(View);
+    // Back and Forward among the pages: a plugin's page to the one before, a page of Settings' to Settings, a
+    // page to the one it was opened from, a tab to Home; Forward retraces what Back left.
     callback back();
+    callback forward();
+    // The pages are what is shown: nothing of the first run's or Now Playing over them, nor the sign-in.
+    property <bool> pages-shown: !(root.setup-open && root.view != View.login) && !(root.welcome-signing && !(root.view == View.login && !root.login-choosing)) && !root.full-player && root.view != View.login;
+    // The mouse's back button: one step out of what is shown, the step its own back control takes.
+    public function back-step() {
+        if root.pages-shown {
+            root.back();
+        } else if root.setup-open && root.view != View.login {
+            if root.setup-at > 0 {
+                root.setup-back();
+            }
+        } else if root.welcome-signing && !(root.view == View.login && !root.login-choosing) {
+            if root.welcome-can-back {
+                root.welcome-back();
+            }
+        } else if root.full-player {
+            root.full-player = false;
+        } else if !root.login-choosing && (root.login-adding || root.login-editing) && !root.login-busy {
+            if root.login-editing {
+                root.cancel-login();
+            } else {
+                root.setting-action("provider-again");
+            }
+        } else if root.can-cancel-login {
+            root.cancel-login();
+        }
+    }
+    // The mouse's forward button: only among the pages.
+    public function forward-step() {
+        if root.pages-shown {
+            root.forward();
+        }
+    }
     callback open-album(string);
     callback open-artist(string);
     callback open-playlist(string);
@@ -9798,7 +9833,7 @@ export component AppWindow inherits Window {
                         profile-apply(i) => { root.eq-profile-apply(i); }
                         profile-delete(i) => { root.eq-profile-delete(i); }
                         profile-save(name) => { root.eq-profile-save(name); }
-                        back => { root.go(View.settings); }
+                        back => { root.back(); }
                         set(name, value) => { root.eq-set(name, value); }
                         level(name, v, last) => { root.setting-slid(name, v, last); }
                         band(i, x, db, q, kind, channel, last) => { root.eq-band(i, x, db, q, kind, channel, last); }

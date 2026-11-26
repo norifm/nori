@@ -87,9 +87,9 @@ function item(a: MenuAction, s: Song): Item | null {
     case "AddToPlaylist":
       return { label: W.addToPlaylist, icon: "plus-circle", run: () => addToPlaylist([s]) };
     case "GoToAlbum":
-      return { label: W.goToAlbum, icon: "compact-disc", run: () => ((ui.full = false), go("album", a.id!)) };
+      return { label: W.goToAlbum, icon: "compact-disc", run: () => go("album", a.id!) };
     case "GoToArtist":
-      return { label: W.goToArtist(a.name ?? "", !!a.named), icon: "user", run: () => ((ui.full = false), go("artist", a.id!)) };
+      return { label: W.goToArtist(a.name ?? "", !!a.named), icon: "user", run: () => go("artist", a.id!) };
     case "Lyrics":
       return { label: W.lyricsTimingMenu, icon: "quote-message", run: () => (ui.lyricsInfo = true) };
     case "Radio":

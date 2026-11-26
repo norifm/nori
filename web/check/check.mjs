@@ -1,6 +1,6 @@
 // The web client in headless Chrome against the local Navidrome (tools/dev-server.sh) through
 // web/serve.py: sign-in, browsing, search, a profile's icon picked, a song streamed and played, next and
-// previous, a song taken out of the queue, synced lyrics,
+// previous, a song taken out of the queue, Back one step out of Now Playing, synced lyrics,
 // a crossfade and an AutoMix transition heard as continuous samples, the seek bar
 // running and holding, a click on a lyric line, how soon a pause is heard, a page reopened where it
 // left. Exits non-zero when something is off, and prints what it saw.
@@ -458,6 +458,25 @@ if (!only || only.includes("queue")) {
   expect(heardHasNone, "the song heard has no Remove button");
   expect(lines.length > 0 && !lines.some((l) => ["Remove", "Move up", "Move down"].includes(l)), "a queue row's menu is the song's own");
   expect(after.length === before.length - 1 && after.filter((s) => s.title === title).length === before.filter((s) => s.title === title).length - 1, "a row's Remove button takes its song out");
+}
+
+if (!only || only.includes("back")) {
+  // Back takes one step: out of Now Playing to the page under it, then to the page before.
+  await hash("#/albums/alphabeticalByName", "albums");
+  const id = album("Second Wind", "Alpha Waves");
+  await playAlbum(id);
+  await page.click(".song button.art");
+  await page.waitForSelector("#full", { timeout: 10000 }).catch(() => {});
+  const opened = !!(await page.$("#full"));
+  await page.goBack();
+  await page.waitForFunction(() => !document.querySelector("#full"), { timeout: 5000 }).catch(() => {});
+  const first = { full: !!(await page.$("#full")), hash: await page.evaluate(() => location.hash) };
+  await page.goBack();
+  await page.waitForFunction(() => location.hash.startsWith("#/albums"), { timeout: 5000 }).catch(() => {});
+  const second = await page.evaluate(() => location.hash);
+  report.back = { opened, first, second };
+  expect(opened && !first.full && first.hash === `#/album/${id}`, "Back from Now Playing closes it and stays on the page under it");
+  expect(second.startsWith("#/albums"), "the next Back returns to the page before");
 }
 
 if (!only || only.includes("instant")) {
