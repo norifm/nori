@@ -1,7 +1,7 @@
 <script lang="ts">
   // A page: its big title (with a way back where it is not a top page, and its own controls beside),
-  // then what it shows; while its read is out, a quiet word; if it failed, why. `narrow`: one column at a
-  // reading width on a wide window, from the gutter as every page's title is, as the desktop's settings.
+  // then what it shows; while its read is out, a quiet word; if it failed, why. `narrow`: on a wide window,
+  // the page stands in one column centered in it, the top bar's and the player's, edge to edge with them.
   import type { Snippet } from "svelte";
   import { ask } from "../rpc";
   import { W } from "../words";
@@ -78,7 +78,9 @@
   }
   @media (min-width: 720px) {
     .narrow {
-      max-width: calc(720px + 2 * var(--gutter));
+      width: var(--pill-w);
+      margin-inline: auto;
+      padding-inline: 0;
     }
   }
   @media (max-width: 719px) {

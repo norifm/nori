@@ -190,6 +190,8 @@ https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw.
   corners are concentric (outer = inner + inset). Navigation and the player are one outlined pill each,
   the page blurred inside; content scrolls under them. Panels float as sheets over the page; opening one
   moves nothing else.
+- A column narrower than the page is centered in it, on a wide window in the top bar's and the player's
+  column where it fits; nothing sits at the left beside an empty band.
 - Words are short and plain: a title names the thing, a control says what it does. Settings say only
   what is not obvious from their name (a state, a cost), never what the setting does. A page's title
   stands alone: no line of explanation or reassurance under it.

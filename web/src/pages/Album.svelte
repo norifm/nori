@@ -38,11 +38,8 @@
   );
 </script>
 
-<Page back ready={!!a} error={page.error}>
+<Page back narrow ready={!!a} error={page.error}>
   {#if a}
-  <!-- A list of a title and a time keeps a reading width, its head with it, where a wide window would set
-       them a screen apart. -->
-  <div class="reading">
     <Hero cover={a.cover} title={a.name} {label} item={itemMark("album", a.id, { title: a.name, line: a.artist, cover: a.cover })} playable={!!data} onplay={(shuffle) => void player.play(songs, 0, shuffle, "Album", a.id)}>
       {#snippet by()}{#if a.artistId}<a href={href("artist", a.artistId)}>{a.artist}</a>{:else}{a.artist}{/if}{/snippet}
       {#snippet actions()}
@@ -57,12 +54,5 @@
       {#if disc.headed}<h2 class="section">{disc.title ? W.discTitled(disc.disc, disc.title) : W.disc(disc.disc)}</h2>{/if}
       <SongList {songs} kind="Album" id={a.id} numbered rows={disc.songs} />
     {/each}
-  </div>
   {/if}
 </Page>
-
-<style>
-  .reading {
-    max-width: 960px;
-  }
-</style>

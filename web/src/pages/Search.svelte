@@ -79,7 +79,8 @@
   }
 </script>
 
-<Page title={W.search} error={page.error}>
+<!-- Before a search, a narrow page: in the top bar's column, as the desktop's. -->
+<Page title={W.search} narrow={!route.arg.trim()} error={page.error}>
   {#if !ui.wide}
     <label class="field search-field box"><Icon name="search" /><input bind:this={field} type="search" placeholder={W.searchHint} aria-label={W.search} value={route.arg} oninput={(e) => searchFor(e.currentTarget.value)} onkeydown={(e) => e.key === "Enter" && (remember(), e.currentTarget.blur())} /></label>
   {/if}

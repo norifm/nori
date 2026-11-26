@@ -68,7 +68,7 @@
     left: 50%;
     transform: translateX(-50%);
     bottom: 12px;
-    width: min(1040px, calc(100% - 32px));
+    width: var(--pill-w);
     height: 64px;
     z-index: 30;
     display: grid;

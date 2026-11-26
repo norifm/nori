@@ -97,6 +97,8 @@
   /* What the chrome covers: the page starts under the top bar and ends above the player. */
   --top-h: 84px;
   --bar-h: 112px;
+  /* The top bar's and the player's width on a wide window: a page narrower than the window stands in it. */
+  --pill-w: min(1040px, calc(100vw - 32px));
 }
 
 /* Fixed shares of ink over the page, and the chrome (the page blurred inside an outline of ink); made

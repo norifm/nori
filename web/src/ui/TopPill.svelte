@@ -57,7 +57,7 @@
     top: 12px;
     left: 50%;
     transform: translateX(-50%);
-    width: min(1040px, calc(100% - 32px));
+    width: var(--pill-w);
     height: 48px;
     z-index: 30;
     display: flex;

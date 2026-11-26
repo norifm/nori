@@ -7058,9 +7058,10 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        // The pills as the compositor places them in a 1280 px window: Settings stands in their column.
         let chrome = ui.global::<crate::Chrome>();
-        chrome.set_top_x(190.0);
-        chrome.set_top_w(900.0);
+        chrome.set_top_x(120.0);
+        chrome.set_top_w(1040.0);
         ui.set_settings_tabs(ModelRc::new(VecModel::from(vec![SharedString::from("Profiles")])));
         ui.set_view(View::Settings);
         let did = Rc::new(RefCell::new(Vec::new()));
@@ -7083,10 +7084,14 @@ mod tests {
             let row = crate::SettingRow { kind, name: "7".into(), title: "Home".into(), enabled: true, first: true, last: true, options: strings(labels), values: strings(values), ..Default::default() };
             ui.set_settings(ModelRc::new(VecModel::from(vec![crate::SettingRow { kind: 0, title: "ACCOUNTS".into(), ..Default::default() }, row])));
             did.borrow_mut().clear();
-            // The row's "…" at the column's end, then each entry of the menu under it, opened again before each.
+            // The row's "…" at the column's end (the pill's), then each entry of the menu under it, opened again
+            // before each.
+            ui.window().take_snapshot().unwrap();
+            let row = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "Home").next().expect("the row");
+            let y = row.absolute_position().y + row.size().height / 2.0;
             for at in 0..labels.len() {
-                click(990.0, 216.0);
-                click(900.0, 258.0 + 32.0 * at as f32);
+                click(1129.0, y);
+                click(1039.0, y + 42.0 + 32.0 * at as f32);
             }
             assert_eq!(*did.borrow(), values, "kind {kind}");
         }
@@ -7171,9 +7176,10 @@ mod tests {
 
         let ui = window();
         ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        // The pills as the compositor places them in a 1280 px window: Settings stands in their column.
         let chrome = ui.global::<crate::Chrome>();
-        chrome.set_top_x(190.0);
-        chrome.set_top_w(900.0);
+        chrome.set_top_x(120.0);
+        chrome.set_top_w(1040.0);
         ui.set_settings_tabs(ModelRc::new(VecModel::from(vec![SharedString::from("Profiles")])));
         ui.set_view(View::Settings);
 
@@ -7208,8 +7214,8 @@ mod tests {
             let el = ElementHandle::find_by_accessible_label(&ui, label).next().expect(label);
             let pos = el.absolute_position();
             let size = el.size();
-            // The Toggle sits at the right end of the 720px column beside the rail (x = 40 + 220 + 40 + 720 - 14 - 19 = 987).
-            (987.0, pos.y + size.height / 2.0)
+            // The Toggle sits at the right end of the column beside the rail, the pill's end (120 + 1040 - 14 - 19).
+            (1127.0, pos.y + size.height / 2.0)
         };
         let click = |(x, y): (f32, f32)| {
             let position = slint::LogicalPosition::new(x, y);
@@ -9485,6 +9491,18 @@ mod tests {
             settle(View::Shelf, width);
             assert_eq!(at("Recently played").0, gutter + 52.0, "the shelf's title after the disc at {width}");
         }
+        // With the pills placed, an album's narrow column stands in theirs, centered, its disc with it; a page
+        // as wide as the frame keeps the gutter, and so do the pills' ends on the equalizer.
+        ui.global::<crate::Chrome>().set_top_x(280.0);
+        ui.global::<crate::Chrome>().set_top_w(1040.0);
+        settle(View::Page, 1600);
+        let cover = i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "Art").find(|a| a.size().width.round() == 240.0).expect("the page's cover");
+        assert_eq!(cover.absolute_position().x.round(), 280.0 + 52.0, "the album in the pills' column");
+        settle(View::Shelf, 1600);
+        assert_eq!(at("Recently played").0, 80.0 + 52.0, "a full-width page at the gutter");
+        settle(View::Equalizer, 1600);
+        let (left, top) = at("Equalizer");
+        assert_eq!((left, top > 0.0), (280.0 + 52.0, true), "the equalizer's title after its disc, in the pills' column");
     }
 
     /// An album opens on what its card knew, in Day and Night: its title, artist, counts and cover show before
@@ -10302,36 +10320,59 @@ mod tests {
         assert_eq!(played.get(), 1, "a list with a song plays");
     }
 
-    /// Settings' categories: a rail at the left on a window 1280 px wide or more, one under another, and
-    /// chips in a line under the title on a narrower one; either chooses the one pressed.
+    /// Settings stand as one block in the pills' column, centered in the window: on a window wide enough for
+    /// a rail and the column (1280 px), the categories one under another at the pill's left edge with the
+    /// column ending at its right edge; on a narrower one, chips in a line under the title, over the column in
+    /// the pill's middle. The title's words and the categories' start on one line; either chooses the one
+    /// pressed.
     #[test]
-    fn settings_categories_are_a_rail_on_a_wide_window_and_chips_otherwise() {
+    fn settings_stand_in_the_pills_column_with_their_words_on_one_line() {
         use i_slint_backend_testing::ElementHandle;
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
         let ui = window();
         ui.set_settings_tabs(ModelRc::new(VecModel::from(["Profiles", "Playback", "Sound"].map(SharedString::from).to_vec())));
+        ui.set_settings(ModelRc::new(VecModel::from(vec![
+            crate::SettingRow { kind: 0, title: "SEASON".into(), ..Default::default() },
+            crate::SettingRow { kind: 3, name: "x".into(), title: "Follow the calendar".into(), first: true, last: true, enabled: true, ..Default::default() },
+        ])));
         ui.set_view(View::Settings);
         let chosen = Rc::new(std::cell::Cell::new(-1));
         let seen = chosen.clone();
         ui.on_settings_tab_chosen(move |t| seen.set(t));
         ui.show().unwrap();
-        for (width, rail) in [(1280, true), (1100, false)] {
-            ui.window().set_size(slint::PhysicalSize::new(width, 820));
+        for (width, rail) in [(1280.0, true), (1100.0, false)] {
+            // The pills as the compositor places them.
+            let top_w = f32::clamp(width - 168.0, 200.0, 1040.0);
+            let top_x = (width - top_w) / 2.0;
+            ui.global::<crate::Chrome>().set_top_x(top_x);
+            ui.global::<crate::Chrome>().set_top_w(top_w);
+            ui.window().set_size(slint::LogicalSize::new(width, 820.0));
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             ui.window().take_snapshot().unwrap();
-            let at = |label: &str| {
+            let place = |label: &str| {
                 let e = ElementHandle::find_by_accessible_label(&ui, label).next().expect(label);
-                let (p, size) = (e.absolute_position(), e.size());
+                (e.absolute_position(), e.size())
+            };
+            let at = |label: &str| {
+                let (p, size) = place(label);
                 (p.x + size.width / 2.0, p.y + size.height / 2.0)
             };
             let (first, third) = (at("Profiles"), at("Sound"));
+            let (title, words) = (place("Settings").0.x, place("Profiles").0.x);
+            assert!((title - words).abs() < 1.0, "the title and the categories start on one line at {width}: {title} {words}");
+            let plate = ElementHandle::find_by_element_type_name(&ui, "SettingLine").next().expect("a setting").absolute_position().x;
             if rail {
                 assert!(third.1 > first.1 + 60.0, "one under another at {width}: {first:?} {third:?}");
+                assert!((words - (top_x + 14.0)).abs() < 1.0, "the rail at the pill's left edge: {words}");
+                assert!((plate + 720.0 - (top_x + top_w)).abs() < 1.0, "the column ends at the pill's right edge: {plate}");
+                let header = at("SEASON");
+                assert!((header.1 - first.1).abs() < 2.0, "the rail's first row level with the first header: {header:?} {first:?}");
             } else {
                 assert!((third.1 - first.1).abs() < 1.0 && third.0 > first.0, "in a line at {width}: {first:?} {third:?}");
+                assert!((plate - (top_x + (top_w - 720.0) / 2.0)).abs() < 1.0, "the column in the pill's middle: {plate}");
             }
             chosen.set(-1);
             press(ui.window(), third.0, third.1, slint::platform::PointerEventButton::Left);

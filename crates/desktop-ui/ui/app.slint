@@ -531,10 +531,17 @@ export global Frame {
     // The back disc, level with a title's middle, and what a title beside it moves over by.
     out property <length> back-y: Chrome.top-room + 11px;
     out property <length> back-room: 52px;
-    // A list of a title and a time (an album's) at most this wide.
-    out property <length> reading: 960px;
     public pure function gutter(width: length) -> length {
         return max(clamp(width * 0.032, 32px, 40px), (width - root.widest) / 2);
+    }
+    // A page narrower than the window (Settings, the equalizer, an album, the decades, the search's browse)
+    // stands in one column centered in it: the top pill's and the player pill's, edge to edge with them,
+    // while the pills are wide enough for it; between the gutters otherwise.
+    public pure function column-x(width: length) -> length {
+        return Chrome.top-w >= 600px ? Chrome.top-x : root.gutter(width);
+    }
+    public pure function column-w(width: length) -> length {
+        return Chrome.top-w >= 600px ? Chrome.top-w : width - 2 * root.gutter(width);
     }
     // How many cards at least `least` wide fit across `room`: two at the fewest.
     public pure function columns(room: length, least: length) -> int {
@@ -6369,14 +6376,13 @@ component EqualizerPage inherits Flickable {
     property <string> autoeq-query;
     property <string> profile-name;
     content-height: page.preferred-height;
-    // The library pages' frame: the back disc and the title at the gutter, the switch at the column's end; the
-    // parts under them from the gutter, each on a plate as settings' groups are, at most as wide as the curve
-    // reads well.
-    property <length> gutter: Frame.gutter(self.width);
+    // One block centered in the page, on the top pill's column where it fits: the back disc and the title at
+    // its start, the switch at its end; the parts under them each on a plate as settings' groups are, as wide
+    // as the column.
     page := VerticalLayout {
         width: parent.width;
-        padding-left: root.gutter;
-        padding-right: max(root.gutter, root.width - root.gutter - 1040px);
+        padding-left: Frame.column-x(root.width);
+        padding-right: root.width - Frame.column-x(root.width) - Frame.column-w(root.width);
         padding-bottom: 110px;
         spacing: 12px;
         HorizontalLayout {
@@ -8395,6 +8401,9 @@ export component AppWindow inherits Window {
     in-out property <string> find-text;
     // The library pages' margins (the page is the window's width).
     property <length> page-gutter: Frame.gutter(self.width);
+    // Where the page shown starts, and its back disc with it: an album's narrow column, the decades', or the
+    // gutter.
+    property <length> page-x: (root.view == View.page && root.page-kind == PageLayout.album) || root.view == View.decades ? Frame.column-x(self.width) : root.page-gutter;
     // An artist's picture: at most 40 % of the window's height, so the releases under it show.
     property <length> artist-hero: max(280px, root.height * 0.4);
     // The library list shown has nothing in it.
@@ -9514,11 +9523,11 @@ export component AppWindow inherits Window {
                                 padding-top: Chrome.top-room + 8px;
                                 padding-bottom: 100px;
                                 // Before a search, as Android's: the searches made before, newest first, then ways in
-                                // that need no words, the library's biggest genres and its decades. Under the top pill,
-                                // edge to edge with it (the page is the window's width).
+                                // that need no words, the library's biggest genres and its decades. In the page's column,
+                                // under the top pill.
                                 if root.search-blank && (root.recent-searches.length > 0 || root.search-genres.length > 0 || root.decades.length > 0): HorizontalLayout {
-                                    padding-left: Chrome.top-x;
-                                    padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
+                                    padding-left: Frame.column-x(root.width);
+                                    padding-right: root.width - Frame.column-x(root.width) - Frame.column-w(root.width);
                                     browse := VerticalLayout {
                                         spacing: 28px;
                                         if root.recent-searches.length > 0: VerticalLayout {
@@ -10254,11 +10263,11 @@ export component AppWindow inherits Window {
                     push: true;
                     Remembered {
                         content-height: decade-list.preferred-height;
-                        // A narrow list: in the top pill's column, edge to edge with it.
+                        // A narrow list, in the page's column.
                         decade-list := VerticalLayout {
                             width: parent.width;
-                            padding-left: Chrome.top-x;
-                            padding-right: max(0px, self.width - Chrome.top-x - Chrome.top-w);
+                            padding-left: Frame.column-x(self.width);
+                            padding-right: self.width - Frame.column-x(self.width) - Frame.column-w(self.width);
                             padding-top: Chrome.top-room + 8px;
                             padding-bottom: 100px;
                             HorizontalLayout {
@@ -10548,10 +10557,10 @@ export component AppWindow inherits Window {
                             content-height: detail.preferred-height;
                             detail := VerticalLayout {
                                 width: parent.width;
-                                padding-left: root.page-gutter;
-                                // An album's list holds a number, a title and a time: it keeps a reading width, as
-                                // its head does, where a wide window would set them a screen apart.
-                                padding-right: root.page-kind == PageLayout.album ? max(root.page-gutter, self.width - root.page-gutter - Frame.reading) : root.page-gutter;
+                                // An album's list holds a number, a title and a time: it keeps to the page's narrow
+                                // column, as its head does, where a wide window would set them a screen apart.
+                                padding-left: root.page-x;
+                                padding-right: self.width - root.page-x - (root.page-kind == PageLayout.album ? Frame.column-w(self.width) : self.width - 2 * root.page-gutter);
                                 // Level with the back disc, but for an artist's name, low over the picture.
                                 padding-top: root.page-kind == PageLayout.artist ? Chrome.top-room + 8px : Frame.back-y;
                                 padding-bottom: 100px;
@@ -10861,15 +10870,26 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // Settings in the library pages' frame: the title at the gutter, then the categories, a rail
-                // at the left on a wide window (as a Mac's settings list them) and chips under the title
-                // otherwise; the column beside or under them at one reading width.
+                // Settings as one block centered in the page, on the top pill's column where it fits: the title,
+                // then the categories, a rail at the left on a wide window (as a Mac's settings list them) and
+                // chips under the title otherwise, and the column of settings at one reading width. A category's
+                // words and the title share one line, its pill drawn round them; the rail's first row stands
+                // level with the column's first header.
                 if root.view == View.settings: settings-page := Fade {
                     property <bool> whole: root.plugins-tab && root.plugin-top.back;
-                    property <bool> rail: self.width >= 1280px && !self.whole;
-                    property <length> rail-w: 220px;
-                    property <length> column-x: root.page-gutter + (self.rail ? self.rail-w + 40px : 0px);
-                    property <length> column-w: min(720px, self.width - self.column-x - root.page-gutter);
+                    property <length> block-x: Frame.column-x(self.width);
+                    property <length> block-w: Frame.column-w(self.width);
+                    property <length> gap: 40px;
+                    property <bool> rail: self.block-w >= 220px + self.gap + 720px && !self.whole;
+                    property <length> column-w: min(720px, self.block-w);
+                    // Beside the rail, the column ends at the block's right edge; alone, it stands in its middle.
+                    property <length> column-x: self.rail ? self.block-x + self.block-w - self.column-w : self.block-x + (self.block-w - self.column-w) / 2;
+                    property <length> rail-w: self.column-x - self.gap - self.block-x;
+                    // A pill's words, and the title's, this far in from the pill's edge.
+                    property <length> inset: 14px;
+                    property <length> words-x: (self.rail ? self.block-x : self.column-x) + self.inset;
+                    // The column's top, under the title (and the chips).
+                    property <length> column-y: Frame.under-title + 16px;
                     settings-flick := Flickable {
                         // A mouse's press and drag is the lyrics services' handles'; the wheel and touch still scroll.
                         mouse-drag-pan-enabled: false;
@@ -10880,20 +10900,26 @@ export component AppWindow inherits Window {
                         prefs := VerticalLayout {
                             width: parent.width;
                             padding-bottom: 100px;
-                            // A plugin page takes the whole page: its own head, no tabs.
+                            // A plugin page takes the whole column: its own head, no categories.
                             if settings-page.whole: Rectangle {
                                 height: Chrome.top-room + 16px;
                             }
-                            if !settings-page.whole: Heading {
-                                title: "Settings";
-                                padding-left: root.page-gutter;
-                                padding-right: root.page-gutter;
-                                padding-bottom: 0px;
+                            if !settings-page.whole: Rectangle {
+                                height: Frame.under-title;
+                                Text {
+                                    x: settings-page.words-x;
+                                    y: Frame.title-y;
+                                    text: "Settings";
+                                    color: Theme.text;
+                                    font-family: Type.title;
+                                    font-size: 34px;
+                                    font-weight: 700;
+                                    letter-spacing: -0.5px;
+                                }
                             }
                             if !settings-page.whole && !settings-page.rail: HorizontalLayout {
-                                padding-left: root.page-gutter - 14px;
-                                padding-right: root.page-gutter;
-                                padding-top: 14px;
+                                padding-left: settings-page.column-x;
+                                padding-right: settings-page.width - settings-page.column-x - settings-page.column-w;
                                 padding-bottom: 12px;
                                 // The categories in Android's order and words, as chips; the one shown raised.
                                 HorizontalLayout {
@@ -10906,8 +10932,8 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
-                            if settings-page.rail: Rectangle {
-                                height: 18px;
+                            if !settings-page.whole: Rectangle {
+                                height: 16px;
                             }
                             HorizontalLayout {
                                 padding-left: settings-page.column-x;
@@ -10942,11 +10968,11 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
-                    // The rail: the categories one under another, the one shown raised; it stays as the column
-                    // scrolls.
+                    // The rail: the categories one under another, the one shown raised, its first row level with
+                    // the column's first header (whose words stand 22 px into it); it stays as the column scrolls.
                     if self.rail: VerticalLayout {
-                        x: root.page-gutter - 14px;
-                        y: Frame.under-title + 16px;
+                        x: parent.block-x;
+                        y: parent.column-y + 22px + 7px - 18px;
                         width: parent.rail-w;
                         height: self.preferred-height;
                         spacing: 2px;
@@ -10957,8 +10983,8 @@ export component AppWindow inherits Window {
                             border-width: i == root.settings-tab ? 1px : 0px;
                             border-color: Theme.hairline;
                             Text {
-                                x: 14px;
-                                width: parent.width - 28px;
+                                x: settings-page.inset;
+                                width: parent.width - 2 * settings-page.inset;
                                 text: t;
                                 color: i == root.settings-tab ? Theme.text : Theme.dim;
                                 font-size: 14px;
@@ -11090,7 +11116,7 @@ export component AppWindow inherits Window {
                 // Back, on a page that was opened from another: a disc under the top pill's left, where Android
                 // has its arrow.
                 if root.view == View.page || root.view == View.shelf || root.view == View.for-you || root.view == View.history || root.view == View.downloads || root.view == View.stats || root.view == View.genres || root.view == View.decades: Rectangle {
-                    x: root.page-gutter;
+                    x: root.page-x;
                     y: Frame.back-y;
                     width: 40px;
                     height: 40px;

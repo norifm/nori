@@ -110,9 +110,11 @@
 {:else if name === "Servers" && route.sub}
   <ProfileEdit id={route.sub} />
 {:else if ui.wide}
-  <!-- The library pages' frame: the title at the gutter, the categories as a rail at the left on a wide
-       window and as chips under the title otherwise, the column beside or under them. -->
-  <Page title={W.settings} ready={!!page.data} error={page.error}>
+  <!-- One block centered in the page, in the top bar's column: the title, the categories as a rail at its
+       left on a wide window (the settings' column ending at its right) and as chips under the title
+       otherwise, over the column in its middle. A category's words and the title share one line, its pill
+       drawn round them; the rail's first row stands level with the column's first header. -->
+  <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
     <div class="framed">
       <nav class="tabs" aria-label={W.settings}>
         {#each tabs as [n, label] (n)}
@@ -249,30 +251,42 @@
 {/snippet}
 
 <style>
-  /* The pages as chips under the title, as the desktop's; the one open raised on the paper. */
+  /* The title's words where a category's start, inside its pill. */
+  :global(.page:has(> .framed) > .page-head h1) {
+    padding-left: 14px;
+  }
+  /* The pages as chips under the title, as the desktop's; the one open raised on the paper. Without the
+     room for a rail, the block is the column, in the top bar's middle. */
+  :global(.page:has(> .framed)) {
+    width: min(720px, var(--pill-w));
+  }
   .tabs {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    margin: -4px 0 6px -14px;
+    margin: -4px 0 6px;
   }
   .column {
     max-width: 720px;
   }
   @media (min-width: 1280px) {
+    :global(.page:has(> .framed)) {
+      width: var(--pill-w);
+    }
     .framed {
       display: grid;
-      grid-template-columns: 220px minmax(0, 720px);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 720px);
       column-gap: 40px;
       align-items: start;
     }
+    /* Its first row level with the column's first header, whose words stand 22 px down (`.group-label`). */
     .tabs {
       position: sticky;
       top: var(--top-h);
       flex-direction: column;
       flex-wrap: nowrap;
       gap: 2px;
-      margin: 0 0 0 -14px;
+      margin: 12px 0 0;
     }
     .tab {
       height: 36px;
