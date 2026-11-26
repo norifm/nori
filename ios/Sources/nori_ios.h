@@ -5,6 +5,7 @@
 #define NORI_IOS_H
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -322,8 +323,10 @@ int32_t nori_ios_starred(int32_t kind, const char *id, int32_t listed);
 char *nori_ios_now(void);
 
 /// A decoded cover: straight RGBA, `len` bytes, valid until `owner` is given to nori_ios_cover_release.
-/// Delivered on a loader thread without a copy. A failed request has zero dimensions and a null owner.
-typedef void (*NoriCoverFn)(uint64_t token, uint32_t width, uint32_t height, const uint8_t *rgba, size_t len, void *owner);
+/// Delivered on a loader thread without a copy, or at once on the caller's thread from memory. A failed
+/// request has zero dimensions and a null owner. `stand_in`: the picture the core picks to show while the
+/// cover's own comes, which comes after it.
+typedef void (*NoriCoverFn)(uint64_t token, uint32_t width, uint32_t height, const uint8_t *rgba, size_t len, void *owner, bool stand_in);
 void nori_ios_cover_release(void *owner);
 void nori_ios_on_cover(NoriCoverFn cb);
 void nori_ios_cover(uint64_t token, const char *id, uint32_t px);

@@ -35,11 +35,15 @@ class CoverImage internal constructor(val url: String?, loader: CoverLoader?, st
     private val kept = url?.let { loader?.kept(it) }
 
     /**
-     * The picture, once there is one. A smaller one kept from another view may stand in until it comes:
-     * of the same address, or of [standIns] (the same cover asked for at a list's size, a provider's
-     * thumbnail at another address).
+     * What shows first, as the core picks it ([CoverLoader.standIn]): the cover's own kept in memory, or
+     * another that stands in until it comes, of the same address at a smaller size or of [standIns] (the
+     * same cover asked for at a list's size). With none in memory, one kept on disk comes through the
+     * loader.
      */
-    var image by mutableStateOf((kept ?: standIns.firstNotNullOfOrNull { s -> s?.let { loader?.kept(it) } })?.bitmap?.asImageBitmap())
+    private val first = if (url == null || loader == null) null else loader.standIn(listOf(url) + standIns)?.bitmap
+
+    /** The picture, once there is one. */
+    var image by mutableStateOf(first?.asImageBitmap())
         private set
 
     /** In memory when the view was composed: drawn at once, not faded in. */
@@ -49,7 +53,7 @@ class CoverImage internal constructor(val url: String?, loader: CoverLoader?, st
         private set
 
     private val fetch = CoverFetch(
-        url, if (loader != null) Loads(loader) else Nowhere, kept?.bitmap,
+        url, if (loader != null) Loads(loader, standIns.filterNotNull()) else Nowhere, first,
         shown = { b -> if (image?.asAndroidBitmap() !== b) image = b.asImageBitmap(); state = READY },
         missing = { state = MISSING },
     )
@@ -73,12 +77,12 @@ class CoverImage internal constructor(val url: String?, loader: CoverLoader?, st
     internal fun stop() = fetch.stop()
 
     /** The app's loader, as a [CoverFetch] asks it. */
-    private class Loads(private val loader: CoverLoader) : CoverFetch.Source<Bitmap> {
+    private class Loads(private val loader: CoverLoader, private val standIns: List<String>) : CoverFetch.Source<Bitmap> {
         override fun kept(url: String, width: Int, height: Int): Pair<Bitmap, Boolean>? =
             loader.kept(url)?.let { it.bitmap to it.fits(width, height) }
 
-        override fun load(url: String, width: Int, height: Int, done: (Bitmap?, Int) -> Unit): CoverFetch.Handle {
-            val r = loader.request(url, width, height, done)
+        override fun load(url: String, width: Int, height: Int, standing: Boolean, done: (Bitmap?, Int) -> Unit): CoverFetch.Handle {
+            val r = loader.request(url, width, height, if (standing) standIns else emptyList(), done)
             return CoverFetch.Handle { r.cancel() }
         }
 
@@ -101,7 +105,7 @@ class CoverImage internal constructor(val url: String?, loader: CoverLoader?, st
     /** No loader (a preview): nothing is ever asked for. */
     private object Nowhere : CoverFetch.Source<Bitmap> {
         override fun kept(url: String, width: Int, height: Int): Pair<Bitmap, Boolean>? = null
-        override fun load(url: String, width: Int, height: Int, done: (Bitmap?, Int) -> Unit) = CoverFetch.Handle {}
+        override fun load(url: String, width: Int, height: Int, standing: Boolean, done: (Bitmap?, Int) -> Unit) = CoverFetch.Handle {}
         override fun later(ms: Long, run: () -> Unit) = CoverFetch.Handle {}
         override fun failed(url: String, status: Int, again: Boolean) {}
         override fun whenBack(run: () -> Unit) = CoverFetch.Handle {}

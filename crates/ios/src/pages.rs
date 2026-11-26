@@ -63,15 +63,17 @@ pub const PAGE_DOWNLOADED_ALBUM: i32 = 18;
 pub const PAGE_HOME_ROW: i32 = 19;
 
 pub type PageFn = unsafe extern "C" fn(u64, *const c_char);
-/// `(token, width, height, rgba, len, owner)`: the pixels stay valid until `owner` is given to
-/// [`nori_ios_cover_release`], so the app draws from them without a copy.
-pub type CoverFn = unsafe extern "C" fn(u64, u32, u32, *const u8, usize, *mut std::ffi::c_void);
+/// `(token, width, height, rgba, len, owner, stand_in)`: the pixels stay valid until `owner` is given to
+/// [`nori_ios_cover_release`], so the app draws from them without a copy; `stand_in`: a picture that
+/// shows while the cover's own comes, which comes after it.
+pub type CoverFn = unsafe extern "C" fn(u64, u32, u32, *const u8, usize, *mut std::ffi::c_void, bool);
 
 /// What keeps a handed-out picture's pixels alive.
 type Keep = Box<dyn std::any::Any + Send>;
 
-/// Hands `keep`'s pixels (`pixels` of it) to the cover callback; without a callback they are dropped.
-fn hand<T: Send + 'static>(token: u64, width: u32, height: u32, keep: T, pixels: fn(&T) -> &[u8]) {
+/// Hands `keep`'s pixels (`pixels` of it) to the cover callback, as a stand-in with `stand_in`; without a
+/// callback they are dropped.
+fn hand<T: Send + 'static>(token: u64, width: u32, height: u32, keep: T, pixels: fn(&T) -> &[u8], stand_in: bool) {
     let Some(cb) = *lock(&COVER_HOOK) else { return };
     let (at, len) = {
         let p = pixels(&keep);
@@ -79,7 +81,7 @@ fn hand<T: Send + 'static>(token: u64, width: u32, height: u32, keep: T, pixels:
     };
     // Moving `keep` into the box does not move the heap buffer `at` points into.
     let owner = Box::into_raw(Box::new(Box::new(keep) as Keep)).cast::<std::ffi::c_void>();
-    unsafe { cb(token, width, height, at, len, owner) };
+    unsafe { cb(token, width, height, at, len, owner, stand_in) };
 }
 
 /// Lets go of a picture the cover callback was handed.
@@ -1333,27 +1335,26 @@ pub unsafe extern "C" fn nori_ios_on_cover(cb: Option<CoverFn>) {
 }
 
 /// Asks for cover `id` at `px` square; the answer comes to the cover callback with `token`, from the
-/// memory cache, disk, or server. A failure has zero dimensions and no owner; cancellation has no answer.
+/// memory cache, disk, or server. Before it, the picture the core picks to stand in while it comes (the
+/// cover kept at another size or rendition) may come, marked `stand_in`; one in memory comes at once, on
+/// the caller's thread. A failure has zero dimensions and no owner; cancellation has no answer.
 ///
 /// # Safety
 /// `id` is NUL-terminated UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_cover(token: u64, id: *const c_char, px: u32) {
-    request(token, c_text(id), px, move |image| {
-        // The decoded image's own buffer, shared with the loader's memory cache.
-        if let Some(image) = image {
-            let (w, h) = (image.width, image.height);
-            hand(token, w, h, image, |i| &i.pixels);
-        } else {
-            hand_none(token);
-        }
+    // The decoded image's own buffer, shared with the loader's memory cache.
+    let stand_in = move |image: Arc<nori_covers::Image>| hand(token, image.width, image.height, image, |i| &i.pixels, true);
+    request(token, c_text(id), px, stand_in, move |image| match image {
+        Some(image) => hand(token, image.width, image.height, image, |i| &i.pixels, false),
+        None => hand_none(token),
     });
 }
 
 /// Tells the cover callback the picture for `token` will not come.
 fn hand_none(token: u64) {
     if let Some(cb) = *lock(&COVER_HOOK) {
-        unsafe { cb(token, 0, 0, std::ptr::null(), 0, std::ptr::null_mut()) };
+        unsafe { cb(token, 0, 0, std::ptr::null(), 0, std::ptr::null_mut(), false) };
     }
 }
 
@@ -1371,14 +1372,15 @@ pub extern "C" fn nori_ios_setup_cover(token: u64, index: u32, px: u32) {
         let side = px as usize;
         let decoded = setup_covers().get(index as usize).and_then(|bytes| nori_covers::Decoder::new().decode(bytes, side, side, nori_covers::Alpha::Straight).ok());
         match decoded {
-            Some(pixels) => hand(token, px, px, pixels, Vec::as_slice),
+            Some(pixels) => hand(token, px, px, pixels, Vec::as_slice, false),
             None => hand_none(token),
         }
     });
 }
 
-/// Asks for cover `id` at `px`, kept under `token` until it comes or is let go.
-pub(crate) fn request(token: u64, id: String, px: u32, deliver: impl FnOnce(Option<Arc<nori_covers::Image>>) + Send + 'static) {
+/// Asks for cover `id` at `px`, kept under `token` until it comes or is let go; `stand_in` gets what stands
+/// in while it comes.
+pub(crate) fn request(token: u64, id: String, px: u32, mut stand_in: impl FnMut(Arc<nori_covers::Image>) + Send + 'static, deliver: impl FnOnce(Option<Arc<nori_covers::Image>>) + Send + 'static) {
     if id.is_empty() || px == 0 {
         return;
     }
@@ -1387,9 +1389,10 @@ pub(crate) fn request(token: u64, id: String, px: u32, deliver: impl FnOnce(Opti
     let mut deliver = Some(deliver);
     let ticket = with_session(|s| {
         s.cover(id, px, false, move |image, _, shown| {
-            // A smaller picture stands in from the app's own cache (Covers.swift), which keeps the callback
-            // for one picture: only the cover's own goes.
             if shown == nori_covers::Shown::StandIn {
+                if let Ok(image) = image {
+                    stand_in(image);
+                }
                 return;
             }
             finished.store(true, Ordering::Release);
@@ -1916,7 +1919,7 @@ mod tests {
         /// A picture handed: its token, width, height and bytes.
         type Handed = (u64, u32, u32, usize);
         static GOT: Mutex<Option<Sender<Handed>>> = Mutex::new(None);
-        unsafe extern "C" fn got(token: u64, w: u32, h: u32, _: *const u8, len: usize, owner: *mut std::ffi::c_void) {
+        unsafe extern "C" fn got(token: u64, w: u32, h: u32, _: *const u8, len: usize, owner: *mut std::ffi::c_void, _: bool) {
             if let Some(sent) = &*lock(&GOT) {
                 let _ = sent.send((token, w, h, len));
             }
@@ -1938,13 +1941,13 @@ mod tests {
     fn a_handed_picture_lives_until_the_app_lets_go() {
         let _turn = lock(&ABI_IN_USE);
         static HELD: Mutex<Vec<usize>> = Mutex::new(Vec::new());
-        unsafe extern "C" fn keep(_: u64, _: u32, _: u32, _: *const u8, _: usize, owner: *mut std::ffi::c_void) {
+        unsafe extern "C" fn keep(_: u64, _: u32, _: u32, _: *const u8, _: usize, owner: *mut std::ffi::c_void, _: bool) {
             lock(&HELD).push(owner as usize);
         }
         let hook = *lock(&COVER_HOOK);
         *lock(&COVER_HOOK) = Some(keep);
         let image = Arc::new(vec![1u8; 4]);
-        hand(9, 1, 1, image.clone(), |v| v.as_slice());
+        hand(9, 1, 1, image.clone(), |v| v.as_slice(), false);
         *lock(&COVER_HOOK) = hook;
         assert_eq!(Arc::strong_count(&image), 2, "held while the app has it");
         let owner = lock(&HELD).pop().unwrap();

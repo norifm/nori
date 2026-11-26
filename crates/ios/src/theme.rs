@@ -156,7 +156,7 @@ const MEASURED_PX: u32 = 128;
 pub unsafe extern "C" fn nori_ios_cover_look(token: u64, id: *const c_char, light: *const NoriPalette, dark: *const NoriPalette, dark_theme: i32) {
     // SAFETY: the caller's.
     let (light, dark) = unsafe { (Palette::from(&*light), Palette::from(&*dark)) };
-    crate::pages::request(token, c_text(id), MEASURED_PX, move |image| {
+    crate::pages::request(token, c_text(id), MEASURED_PX, |_| {}, move |image| {
         let Some(image) = image else { return };
         let t = cover_page(&image.pixels, image.width as usize, image.height as usize, light, dark, dark_theme != 0);
         crate::pages::send(

@@ -11,7 +11,7 @@ import org.junit.Test
 class CoverFetchTest {
     /** A loader whose answers the test gives, in any order, on a clock the test moves. */
     private class Fake : CoverFetch.Source<String> {
-        class Load(val url: String, val width: Int, val height: Int, val done: (String?, Int) -> Unit) {
+        class Load(val url: String, val width: Int, val height: Int, val standing: Boolean, val done: (String?, Int) -> Unit) {
             var cancelled = false
             var answered = false
         }
@@ -24,8 +24,8 @@ class CoverFetchTest {
 
         override fun kept(url: String, width: Int, height: Int): Pair<String, Boolean>? = kept[url]?.let { it to true }
 
-        override fun load(url: String, width: Int, height: Int, done: (String?, Int) -> Unit): CoverFetch.Handle {
-            val l = Load(url, width, height, done)
+        override fun load(url: String, width: Int, height: Int, standing: Boolean, done: (String?, Int) -> Unit): CoverFetch.Handle {
+            val l = Load(url, width, height, standing, done)
             loads += l
             return CoverFetch.Handle { l.cancelled = true }
         }
@@ -246,5 +246,21 @@ class CoverFetchTest {
     @Test fun `only the ways of not reaching the server at all count as offline`() {
         for (kind in 0..3) assertTrue(CoverFetch.unreachable(CoverPixels.NETWORK + kind))
         for (status in listOf(CoverPixels.NETWORK + 4, CoverPixels.CLOSED, CoverPixels.HTTP + 404, CoverPixels.UNKNOWN)) assertFalse(CoverFetch.unreachable(status))
+    }
+
+    /** A stand-in the loader finds on the disk shows while nothing else does, and the cover's own replaces it. */
+    @Test
+    fun aStandInFromTheDiskShowsUntilTheCoverComes() {
+        val f = Fake()
+        val shown = mutableListOf<String>()
+        val fetch = CoverFetch("u", f, null, { shown += it }, {})
+        fetch.want(100, 100)
+        assertTrue("nothing shows: a stand-in is wanted", f.loads.last().standing)
+        f.loads.last().done("tile", CoverPixels.STAND_IN)
+        assertTrue("its own is still on its way", fetch.asking)
+        f.answer("u", "head")
+        assertEquals(listOf("tile", "head"), shown)
+        CoverFetch("v", f, "kept", { shown += it }, {}).want(100, 100)
+        assertFalse("something shows: no stand-in", f.loads.last().standing)
     }
 }

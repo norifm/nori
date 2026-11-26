@@ -29,6 +29,14 @@ pub struct MemoryCache<P = Arc<Image>> {
     kept: Mutex<Lru<Sized, P>>,
 }
 
+/// Of the pictures kept of a cover's addresses, the one a view shows while its own comes: `kept[i]` is the
+/// pixels kept of address `i` (the cover's own first, then its stand-ins, best first), 0 for none. The
+/// largest, the earlier of two as large; None when none is kept. Every client picks by it: those that
+/// keep their pictures in the loader through [`MemoryCache::largest`], Android over its own Bitmaps.
+pub fn stand_in(kept: &[u64]) -> Option<usize> {
+    kept.iter().enumerate().filter(|(_, a)| **a > 0).max_by(|(i, a), (j, b)| a.cmp(b).then(j.cmp(i))).map(|(i, _)| i)
+}
+
 impl<P: Clone> MemoryCache<P> {
     pub fn new(limit: usize) -> MemoryCache<P> {
         MemoryCache { limit, kept: Mutex::new(Lru::default()) }
@@ -53,11 +61,14 @@ impl<P: Clone> MemoryCache<P> {
         k.fit(self.limit as u64, |_| {});
     }
 
-    /// The largest picture kept of any of `keys`, at whatever size, marked most recently used.
+    /// The picture of `keys` that stands in ([`stand_in`]), the largest kept of each key, marked most
+    /// recently used.
     pub fn largest(&self, keys: &[Key]) -> Option<P> {
         let mut k = self.kept.lock();
-        let best = k.sizes().filter(|(s, _)| keys.contains(&s.key)).max_by_key(|(s, _)| s.width as u64 * s.height as u64).map(|(s, _)| *s)?;
-        k.touch(best).cloned()
+        let area = |s: &Sized| s.width as u64 * s.height as u64;
+        let best: Vec<Option<Sized>> = keys.iter().map(|key| k.sizes().filter(|(s, _)| s.key == *key).map(|(s, _)| *s).max_by_key(area)).collect();
+        let at = stand_in(&best.iter().map(|s| s.as_ref().map_or(0, area)).collect::<Vec<_>>())?;
+        k.touch(best[at]?).cloned()
     }
 
     /// Drops everything (low-memory signal).
@@ -120,7 +131,12 @@ mod tests {
         put(&m, "c", 2);
         let key = |url| at(url, 0).key;
         assert_eq!(m.largest(&[key("a"), key("c")]).map(|i| i.width), Some(6));
+        assert_eq!(m.largest(&[key("c"), key("b")]).map(|i| i.width), Some(8), "a larger stand-in over the cover's own");
         assert!(m.largest(&[key("d")]).is_none());
+
+        for (kept, at) in [(&[0, 0][..], None), (&[4, 9, 9], Some(1)), (&[16, 9], Some(0)), (&[0, 4], Some(1)), (&[], None)] {
+            assert_eq!(stand_in(kept), at, "{kept:?}");
+        }
 
         // Zero limit keeps nothing.
         let m = MemoryCache::new(0);

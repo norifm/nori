@@ -108,6 +108,16 @@ class CoverLoader private constructor(context: Context) {
     /** What is kept for [url], at whatever size. */
     fun kept(url: String): Kept? = memory.get(key(url))
 
+    /**
+     * Of [urls] (a cover's own address first, then its stand-ins'), the one whose picture kept here stands
+     * in while the cover's own comes, as the core picks (`CoverPixels.standIn`); null for none.
+     */
+    fun standIn(urls: List<String?>): Kept? {
+        val kept = urls.map { u -> u?.let(::kept) }
+        val at = CoverPixels.standIn(LongArray(kept.size) { i -> kept[i]?.bitmap?.let { it.width.toLong() * it.height } ?: 0L })
+        return kept.getOrNull(at)
+    }
+
     /** What the cover at [url] is kept under: the same through either of its server's addresses and any token. */
     fun key(url: String): Long = CoverPixels.key(loader, url)
 
@@ -129,10 +139,11 @@ class CoverLoader private constructor(context: Context) {
     /**
      * [load], told why there is no picture: [done] gets the Bitmap and [CoverPixels.OK], or null and what
      * stopped it ([CoverPixels.UNKNOWN], [CoverPixels.CLOSED], [CoverPixels.NETWORK] plus the failure's
-     * kind, [CoverPixels.HTTP] plus the status, ...).
+     * kind, [CoverPixels.HTTP] plus the status, ...). Before it, the first of [standIns] kept on disk may
+     * come with [CoverPixels.STAND_IN].
      */
-    fun request(url: String, width: Int, height: Int, done: (Bitmap?, Int) -> Unit): Request =
-        Request(url, width, height, false, done).also { it.start() }
+    fun request(url: String, width: Int, height: Int, standIns: List<String> = emptyList(), done: (Bitmap?, Int) -> Unit): Request =
+        Request(url, width, height, false, standIns, done).also { it.start() }
 
     /**
      * Decodes [urls] into memory from what the device keeps (memory, disk), each to fit [side] pixels square,
@@ -243,6 +254,7 @@ class CoverLoader private constructor(context: Context) {
         private val width: Int,
         private val height: Int,
         private val kept: Boolean,
+        private val standIns: List<String> = emptyList(),
         private val then: (Bitmap?, Int) -> Unit,
     ) : CoverPixels.Waiter, Runnable {
         private val ticket = java.util.concurrent.atomic.AtomicLong(0L)
@@ -251,14 +263,18 @@ class CoverLoader private constructor(context: Context) {
         @Volatile private var status = CoverPixels.OK
 
         internal fun start() {
-            val t = CoverPixels.request(loader, url, width, height, kept, this)
+            val t = CoverPixels.request(loader, url, standIns.takeIf { it.isNotEmpty() }?.toTypedArray(), width, height, kept, this)
             if (t == 0L) { over.set(true); then(null, CoverPixels.UNREADABLE); return }
             ticket.set(t)
             if (over.get()) CoverPixels.cancel(ticket.getAndSet(0L))
         }
 
-        /** On a loader thread. */
+        /** On a loader thread. A stand-in is handed on by itself; the cover's own comes after it. */
         override fun done(bitmap: Bitmap?, status: Int) {
+            if (status == CoverPixels.STAND_IN) {
+                if (bitmap != null) main.post { if (!over.get()) then(bitmap, CoverPixels.STAND_IN) }
+                return
+            }
             got = bitmap
             this.status = status
             main.post(this)

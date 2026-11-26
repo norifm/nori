@@ -11,7 +11,7 @@ import dalvik.annotation.optimization.FastNative
  * should need to call it.
  *
  * A request's [Waiter] is called back once, on a loader thread, with the Bitmap or with null and [OK]'s
- * opposite; the handle [request] answers is the request's, and [cancel] takes it back, once, whether the
+ * opposite, and before that with [STAND_IN] for a stand-in kept on disk; the handle [request] answers is the request's, and [cancel] takes it back, once, whether the
  * cover came or not. After [cancel] the waiter is not called for a cover finished later, but one finished
  * as it was cancelled may still be handed over, once: the caller drops it (the native side does not wait
  * for a call back under way, which would make the `@FastNative` [cancel] wait on Java code).
@@ -29,6 +29,8 @@ object CoverPixels {
     const val CLOSED = 5
     /** Asked from what the device keeps only ([request]'s `kept`), and the cover is not kept. */
     const val NOT_KEPT = 6
+    /** A stand-in's picture, kept on disk: the cover's own comes after it. */
+    const val STAND_IN = 7
     /** The request did not come back: this plus the transport's `FailureKind` ordinal. */
     const val NETWORK = 100
     /** The server answered with an error: this plus the HTTP status. */
@@ -36,7 +38,7 @@ object CoverPixels {
 
     /** Who waits for a cover. Called from native code by name: see consumer-rules.pro. */
     interface Waiter {
-        /** On a loader thread: [bitmap] with [status] [OK], or null. */
+        /** On a loader thread: [bitmap] with [status] [OK] or [STAND_IN], or null. */
         fun done(bitmap: Bitmap?, status: Int)
     }
 
@@ -60,10 +62,18 @@ object CoverPixels {
 
     /**
      * The cover at [url] to fill [width] x [height] (0 x 0: at its own size, at most 2048 a side), for
-     * [waiter]; with [kept], from what the device keeps only ([NOT_KEPT] rather than a fetch). 0 when there
-     * is no loader.
+     * [waiter]; with [kept], from what the device keeps only ([NOT_KEPT] rather than a fetch). Meanwhile the
+     * first of [standIns] (the same cover at other addresses, best first) kept on disk comes as [STAND_IN].
+     * 0 when there is no loader.
      */
-    @JvmStatic external fun request(loader: Long, url: String, width: Int, height: Int, kept: Boolean, waiter: Waiter): Long
+    @JvmStatic external fun request(loader: Long, url: String, standIns: Array<String>?, width: Int, height: Int, kept: Boolean, waiter: Waiter): Long
+
+    /**
+     * Which of a cover's pictures kept in memory stands in while its own comes (the core's `stand_in`):
+     * [kept] holds the pixels kept of each address, the cover's own first, 0 for none. -1 for none.
+     * Reads the array and returns: `@FastNative`.
+     */
+    @JvmStatic @FastNative external fun standIn(kept: LongArray): Int
 
     /** Lets the request [ticket] go. A lock and a free: `@FastNative`. */
     @JvmStatic @FastNative external fun cancel(ticket: Long)

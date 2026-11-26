@@ -4,7 +4,8 @@ import dev.nori.music.look.CoverPixels
 
 /**
  * One view's asking for one cover, decided without Android (CoverFetchTest): what is kept in memory is
- * shown at once, anything else is asked of the loader, and a load that fails is asked again once, a
+ * shown at once, anything else is asked of the loader (which hands over a stand-in kept on disk first,
+ * while nothing shows), and a load that fails is asked again once, a
  * moment later, before the view gives up on the picture. [CoverImage] is this over the app's loader.
  *
  * A failure the next try can mend (a fetch that timed out, the server, a file cut short) waits
@@ -29,8 +30,11 @@ internal class CoverFetch<P : Any>(
         /** The picture kept in memory for [url], and whether it is enough for a view [width] x [height]; null for none. */
         fun kept(url: String, width: Int, height: Int): Pair<P, Boolean>?
 
-        /** Asks for the picture; [done] with it and [CoverPixels.OK], or null and why not, unless cancelled first. */
-        fun load(url: String, width: Int, height: Int, done: (P?, Int) -> Unit): Handle
+        /**
+         * Asks for the picture; [done] with it and [CoverPixels.OK], or null and why not, unless cancelled
+         * first. With [standing], a stand-in kept on disk may come first, with [CoverPixels.STAND_IN].
+         */
+        fun load(url: String, width: Int, height: Int, standing: Boolean, done: (P?, Int) -> Unit): Handle
 
         /** Runs [run] after [ms] on the same thread, unless cancelled first. */
         fun later(ms: Long, run: () -> Unit): Handle
@@ -78,7 +82,8 @@ internal class CoverFetch<P : Any>(
             return
         }
         request?.cancel()
-        request = source.load(url, width, height) { p, status -> answered(url, p, status) }
+        // A stand-in only while nothing shows.
+        request = source.load(url, width, height, picture == null) { p, status -> answered(url, p, status) }
     }
 
     /** The view has gone, or wants another size: whatever is on its way is let go, a try to come too. */
@@ -95,6 +100,10 @@ internal class CoverFetch<P : Any>(
     val asking: Boolean get() = request != null || retry != null
 
     private fun answered(url: String, p: P?, status: Int) {
+        if (status == CoverPixels.STAND_IN) {
+            if (p != null && picture == null) show(p)
+            return
+        }
         request = null
         if (p != null) {
             failures = 0

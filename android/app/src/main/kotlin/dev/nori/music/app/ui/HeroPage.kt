@@ -135,7 +135,7 @@ fun HeroPage(
     // provider's too, whose file the core keeps in memory): the full one is a download away, and the
     // page wore the theme's colours until it came.
     val context = androidx.compose.ui.platform.LocalContext.current
-    val pick = { coverStandIns.firstOrNull { it != null && dev.nori.music.data.CoverLoader.get(context).kept(it) != null } ?: lead }
+    val pick = { lead?.let { dev.nori.music.data.CoverLoader.get(context).standIn(listOf(it) + coverStandIns)?.url } ?: lead }
     val measured = if (item != null) remember(item, lead != null, pick) else remember(lead, coverStandIns, pick)
     val palette = if (tinted) rememberCoverPalette(measured) else null
     // Shuffle stays labelled Shuffle (never Pause); it lights while this page's queue is shuffling.

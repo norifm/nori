@@ -171,7 +171,8 @@ wholly in its client. What it shows still comes from the core.
   given the core's `cover_addresses`, answers with the smaller rendition first, from memory or the disk,
   then with the larger one. On `nori-host`, `Handle::cover` does this and sends page colors with each
   picture. When the larger picture's colors are alike the smaller one's (`CoverColours::alike`), it
-  sends the smaller one's again, so the page changes color once.
+  sends the smaller one's again, so the page changes color once. A client that keeps the pictures
+  itself, as Android keeps Bitmaps, asks `nori_covers::stand_in` which of them stands in.
 - Page colors come from `nori_look::cover::derive` (`nori_host::derive` on `nori-host`). Draw them and
   never compute them again.
 - nori does not decode HEIF or AVIF. The view keeps its placeholder.

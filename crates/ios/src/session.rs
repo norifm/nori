@@ -991,7 +991,7 @@ mod tests {
         use crate::pages::{nori_ios_on_page, nori_ios_read, nori_ios_tap_song, PAGE_DOWNLOADS, PAGE_DOWNLOADED_ALBUM, nori_ios_cover, nori_ios_on_cover, nori_ios_cover_release};
         use serde_json::Value;
         struct PageReply { token: u64, value: Value }
-        struct Picture { token: u64, width: u32, height: u32, pixels: Vec<u8> }
+        struct Picture { token: u64, width: u32, height: u32, pixels: Vec<u8>, stand_in: bool }
         static PAGES: OnceLock<(Mutex<Vec<PageReply>>, Condvar)> = OnceLock::new();
         unsafe extern "C" fn page(token: u64, text: *const std::ffi::c_char) {
             let value = serde_json::from_str(&copy_c(text)).unwrap();
@@ -1011,9 +1011,9 @@ mod tests {
             }
         }
         static COVERS: Mutex<Option<std::sync::mpsc::Sender<Picture>>> = Mutex::new(None);
-        unsafe extern "C" fn cover(token: u64, width: u32, height: u32, pixels: *const u8, len: usize, owner: *mut std::ffi::c_void) {
+        unsafe extern "C" fn cover(token: u64, width: u32, height: u32, pixels: *const u8, len: usize, owner: *mut std::ffi::c_void, stand_in: bool) {
             let pixels = if len == 0 { Vec::new() } else { unsafe { std::slice::from_raw_parts(pixels, len) }.to_vec() };
-            if let Some(sent) = &*COVERS.lock().unwrap() { let _ = sent.send(Picture { token, width, height, pixels }); }
+            if let Some(sent) = &*COVERS.lock().unwrap() { let _ = sent.send(Picture { token, width, height, pixels, stand_in }); }
             unsafe { nori_ios_cover_release(owner) };
         }
         let _one = one_session();
@@ -1053,13 +1053,19 @@ mod tests {
         *COVERS.lock().unwrap() = Some(sent);
         let cover_id = CString::new("cover").unwrap();
         unsafe { nori_ios_on_cover(Some(cover)); nori_ios_cover(79, cover_id.as_ptr(), 8); }
-        let Picture { token, width, height, pixels } = received.recv_timeout(Duration::from_secs(10)).expect("a cached cover without a connection");
-        assert_eq!((token, width, height), (79, 8, 8));
+        let Picture { token, width, height, pixels, stand_in } = received.recv_timeout(Duration::from_secs(10)).expect("a cached cover without a connection");
+        assert_eq!((token, width, height, stand_in), (79, 8, 8, false));
         assert_eq!(pixels.len(), (width * height * 4) as usize);
         assert!(pixels.as_chunks::<4>().0.iter().any(|rgba| rgba[..3] != pixels[..3]), "the cached artwork has image content");
+        // A page's head of the same cover: the tile's picture in memory stands in, then its own comes.
+        unsafe { nori_ios_cover(81, cover_id.as_ptr(), 900); }
+        let next = || received.recv_timeout(Duration::from_secs(10)).expect("the head's pictures");
+        let (first, own) = (next(), next());
+        assert_eq!((first.token, first.width, first.stand_in), (81, 8, true), "the tile's picture first");
+        assert!(own.token == 81 && own.width > 8 && !own.stand_in, "then the head's own");
         let missing = CString::new("missing").unwrap();
         unsafe { nori_ios_cover(80, missing.as_ptr(), 8); }
-        let Picture { token, width, height, pixels } = received.recv_timeout(Duration::from_secs(10)).expect("an unavailable cover finishes its request");
+        let Picture { token, width, height, pixels, .. } = received.recv_timeout(Duration::from_secs(10)).expect("an unavailable cover finishes its request");
         assert_eq!((token, width, height), (80, 0, 0));
         assert!(pixels.is_empty());
         unsafe { nori_ios_on_cover(None); }

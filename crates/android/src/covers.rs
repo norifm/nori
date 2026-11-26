@@ -1,7 +1,8 @@
 //! Covers: nori-covers' loader over the core's `CoverNet` (the app's OkHttp), with a disk cache,
-//! decoding straight into Bitmaps sized for their view. One `CoverPixels.Waiter.done` callback per
-//! request, on a loader thread; cancelling drops the ticket. Kotlin keeps the memory cache (Bitmaps are
-//! Java objects).
+//! decoding straight into Bitmaps sized for their view. `CoverPixels.Waiter.done` is called back on a
+//! loader thread, once with the cover, after a stand-in where one is kept on disk; cancelling drops the
+//! ticket. Kotlin keeps the memory cache (Bitmaps are Java objects) and asks [`stand_in`] which of the
+//! pictures it keeps stands in.
 //!
 //! Bitmaps are software ARGB_8888, or RGB_565 for opaque pictures when allowed. With `hardware`, the
 //! picture is drawn into a reused software Bitmap and copied to the GPU here, off the UI thread. Reused
@@ -15,12 +16,12 @@ use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use jni::objects::{GlobalRef, JClass, JIntArray, JMethodID, JObject, JStaticMethodID, JString, JValue};
+use jni::objects::{GlobalRef, JClass, JIntArray, JLongArray, JMethodID, JObject, JObjectArray, JStaticMethodID, JString, JValue};
 use jni::signature::{Primitive, ReturnType};
 use jni::sys::{jboolean, jint, jlong};
 use jni::{JNIEnv, JavaVM};
 use nori_core::covers::CoverNet;
-use nori_covers::{Alpha, Config, DecodeError, Decoder, Loader, Paint, Target, Ticket};
+use nori_covers::{Alpha, Config, DecodeError, Decoder, Loader, Paint, Shown, Target, Ticket};
 use parking_lot::Mutex;
 
 use crate::{cleared, native, with_str, Class};
@@ -30,7 +31,8 @@ pub(crate) static CLASS: Class = Class {
     methods: &[
         native!(c"open", c"(JLjava/lang/String;JZZ)J", open),
         native!(c"close", c"(J)V", close),
-        native!(c"request", c"(JLjava/lang/String;IIZLdev/nori/music/look/CoverPixels$Waiter;)J", request),
+        native!(c"request", c"(JLjava/lang/String;[Ljava/lang/String;IIZLdev/nori/music/look/CoverPixels$Waiter;)J", request),
+        native!(c"standIn", c"([J)I", stand_in),
         native!(c"cancel", c"(J)V", cancel),
         native!(c"warm", c"(JLjava/lang/String;)V", warm),
         native!(c"clear", c"(J)V", clear),
@@ -57,6 +59,8 @@ const BROKEN: jint = 4;
 const CLOSED: jint = 5;
 /// Asked from what is kept only, and the file is not.
 const NOT_KEPT: jint = 6;
+/// A stand-in's picture: the cover's own comes after it.
+const STAND_IN: jint = 7;
 /// Plus the transport's `FailureKind` ordinal.
 const NETWORK: jint = 100;
 /// Plus the HTTP status.
@@ -322,13 +326,14 @@ fn code(e: &nori_covers::Error) -> jint {
 }
 
 /// Calls the waiter's `done`, on the loader thread.
-fn deliver(waiter: &GlobalRef, r: Result<Drawn, nori_covers::Error>) {
+fn deliver(waiter: &GlobalRef, r: Result<Drawn, nori_covers::Error>, shown: Shown) {
     let Some(java) = JAVA.get() else { return };
     let Some(mut env) = crate::attached(&java.vm) else { return };
     let null = JObject::null();
-    let (bitmap, status) = match &r {
-        Ok(d) => (d.bitmap.as_obj(), OK),
-        Err(e) => (&null, code(e)),
+    let (bitmap, status) = match (&r, shown) {
+        (Ok(d), Shown::StandIn) => (d.bitmap.as_obj(), STAND_IN),
+        (Ok(d), Shown::Own) => (d.bitmap.as_obj(), OK),
+        (Err(e), _) => (&null, code(e)),
     };
     let args = [JValue::Object(bitmap).as_jni(), JValue::Int(status).as_jni()];
     // SAFETY: `done` is `CoverPixels.Waiter`'s `(Bitmap, int) -> void`, and `waiter` implements it.
@@ -381,18 +386,54 @@ extern "system" fn close(_: JNIEnv, _: JClass, h: jlong) {
 }
 
 /// Requests the cover at `url` filling `width` x `height` (0 x 0: natural size, at most 2048 a side), with
-/// `kept` from what is kept only (`NOT_KEPT` rather than a fetch); `waiter.done` is called once with the
-/// Bitmap or null and a status. Returns a ticket handle that [`cancel`] must take back exactly once; 0 when
-/// there is no loader.
-extern "system" fn request(env: JNIEnv, _: JClass, h: jlong, url: JString, width: jint, height: jint, kept: jboolean, waiter: JObject) -> jlong {
+/// `kept` from what is kept only (`NOT_KEPT` rather than a fetch). `waiter.done` is called with the Bitmap
+/// or null and a status, once; before it, with `STAND_IN`, the first of `stand_ins` (the same cover's other
+/// addresses, best first) that is kept on disk, while the cover's own comes
+/// ([`Loader::request_standing_in`]). Returns a ticket handle that [`cancel`] must take back exactly once;
+/// 0 when there is no loader.
+#[allow(clippy::too_many_arguments)]
+extern "system" fn request(mut env: JNIEnv, _: JClass, h: jlong, url: JString, stand_ins: JObjectArray, width: jint, height: jint, kept: jboolean, waiter: JObject) -> jlong {
     let Some(loader) = loader(h) else { return 0 };
     let Ok(waiter) = env.new_global_ref(&waiter) else { return 0 };
     let (w, h) = (width.max(0) as u32, height.max(0) as u32);
+    let stand_ins = strings(&mut env, &stand_ins);
     let ticket = with_str(&env, &url, |url| {
-        let done = move |r| deliver(&waiter, r);
-        if kept != 0 { loader.request_kept(url, w, h, done) } else { loader.request(url, w, h, done) }
+        if kept != 0 {
+            loader.request_kept(url, w, h, move |r| deliver(&waiter, r, Shown::Own))
+        } else {
+            loader.request_standing_in(url, &stand_ins, w, h, move |r, shown| deliver(&waiter, r, shown))
+        }
     });
     ticket.map_or(0, |t| Box::into_raw(Box::new(t)) as jlong)
+}
+
+/// The strings of `array`, none for null.
+fn strings(env: &mut JNIEnv, array: &JObjectArray) -> Vec<String> {
+    if array.is_null() {
+        return Vec::new();
+    }
+    let n = env.get_array_length(array).unwrap_or(0);
+    (0..n)
+        .filter_map(|i| {
+            let s = JString::from(env.get_object_array_element(array, i).ok()?);
+            let out = with_str(env, &s, str::to_string);
+            let _ = env.delete_local_ref(s);
+            out
+        })
+        .collect()
+}
+
+/// Which of the pictures Kotlin keeps of a cover's addresses stands in while its own comes: `kept[i]` the
+/// pixels kept of address `i` (the cover's own first), 0 for none ([`nori_covers::stand_in`]); -1 for
+/// none. `@FastNative`: reads the array and returns.
+extern "system" fn stand_in(env: JNIEnv, _: JClass, kept: JLongArray) -> jint {
+    let n = env.get_array_length(&kept).unwrap_or(0).max(0) as usize;
+    let mut areas = vec![0i64; n];
+    if env.get_long_array_region(&kept, 0, &mut areas).is_err() {
+        return -1;
+    }
+    let areas: Vec<u64> = areas.into_iter().map(|a| a.max(0) as u64).collect();
+    nori_covers::stand_in(&areas).map_or(-1, |i| i as jint)
 }
 
 /// Releases a request's ticket. A callback already in flight may still arrive; Kotlin ignores it

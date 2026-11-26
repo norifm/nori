@@ -10,24 +10,9 @@ enum CoverCache {
 
     static func key(_ id: String, _ px: Int) -> NSString { "\(id)@\(px)" as NSString }
 
-    /// The pixel sizes decoded so far, largest first: the app draws covers at a handful of them.
-    private static var sizes: [Int] = []
-
     static func put(_ image: UIImage, _ id: String, _ px: Int) {
         let cost = Int(image.size.width * image.scale * image.size.height * image.scale * 4)
         images.setObject(image, forKey: key(id, px), cost: cost)
-        if !sizes.contains(px) {
-            sizes.append(px)
-            sizes.sort(by: >)
-        }
-    }
-
-    /// The sharpest picture of `id` decoded at any size, to show while the size asked for comes.
-    static func any(_ id: String) -> UIImage? {
-        for px in sizes {
-            if let image = images.object(forKey: key(id, px)) { return image }
-        }
-        return nil
     }
 
     static func trim() {
@@ -35,8 +20,9 @@ enum CoverCache {
     }
 }
 
-/// A square cover on a soft two-tone plate. A picture of it already decoded at another size stands in at
-/// once and the sharp one replaces it; with none, a sheen crosses the plate and the picture fades in over
+/// A square cover on a soft two-tone plate. The picture the core picks to stand in (the cover kept at
+/// another size or rendition) shows while its own comes, at once when it is in memory, and the sharp one
+/// replaces it; with none, a sheen crosses the plate and the picture fades in over
 /// 260 ms, the sheen going away underneath it. One that never comes settles into the disc mark. Both are
 /// layer animations the render server runs, and a picture cached at its own size shows at once with
 /// neither. Without `plate` it draws nothing of its own: the picture fades in over what is behind it.
@@ -125,15 +111,20 @@ final class CoverView: UIView {
             picture.image = cached
             return
         }
-        let standIn = CoverCache.any(id)
-        if let standIn {
-            picture.image = standIn
-        } else {
-            waiting(plated)
-        }
-        token = Core.shared.cover(id, px: px) { [weak self] image in
-            if let image { CoverCache.put(image, id, px) }
+        // A picture in memory comes while the request is made: drawn at once, without a fade.
+        var asking = true, standing = false, came = false
+        let t = Core.shared.cover(id, px: px) { [weak self] image, standIn in
+            if !standIn, let image { CoverCache.put(image, id, px) }
             guard let self, self.shown == key else { return }
+            let still = asking || UIAccessibility.isReduceMotionEnabled
+            if standIn {
+                guard let image, !standing else { return }
+                standing = true
+                self.waiting(false)
+                UIView.transition(with: self.picture, duration: still ? 0 : 0.26, options: .transitionCrossDissolve, animations: { self.picture.image = image })
+                return
+            }
+            came = true
             self.token = nil
             guard let image else {
                 self.waiting(false)
@@ -142,10 +133,15 @@ final class CoverView: UIView {
                 return
             }
             // Sharpening a stand-in is a short cross-fade; a first picture fades in.
-            let fade = UIAccessibility.isReduceMotionEnabled ? 0 : standIn == nil ? 0.26 : 0.15
+            let fade = still ? 0 : standing ? 0.15 : 0.26
             UIView.transition(with: self.picture, duration: fade, options: .transitionCrossDissolve, animations: { self.picture.image = image }, completion: { [weak self] _ in
                 if self?.shown == key { self?.waiting(false) }
             })
+        }
+        asking = false
+        if !came {
+            token = t
+            if !standing { waiting(plated) }
         }
     }
 

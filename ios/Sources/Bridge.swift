@@ -254,7 +254,7 @@ final class Core {
     private(set) var now = Now()
     private var nextToken: UInt64 = 1
     private var pages: [UInt64: (PageAnswer) -> Void] = [:]
-    private var covers: [UInt64: (UIImage?) -> Void] = [:]
+    private var covers: [UInt64: (UIImage?, Bool) -> Void] = [:]
     private let lock = NSLock()
     private var systemVolume: SystemVolume?
 
@@ -311,9 +311,14 @@ final class Core {
             let answer = PageAnswer(json(text))
             DispatchQueue.main.async { Core.shared.answered(token, answer) }
         }
-        nori_ios_on_cover { token, width, height, rgba, len, owner in
+        nori_ios_on_cover { token, width, height, rgba, len, owner, standIn in
             let image = Core.image(width: Int(width), height: Int(height), rgba: rgba, len: len, owner: owner)
-            DispatchQueue.main.async { Core.shared.painted(token, image) }
+            // A picture kept in memory comes at once, on the main thread that asked: drawn in the same pass.
+            if Thread.isMainThread {
+                Core.shared.painted(token, image, standIn: standIn)
+            } else {
+                DispatchQueue.main.async { Core.shared.painted(token, image, standIn: standIn) }
+            }
         }
     }
 
@@ -362,7 +367,9 @@ final class Core {
         pages[token] = nil
     }
 
-    func cover(_ id: String, px: Int, done: @escaping (UIImage?) -> Void) -> UInt64? {
+    /// Cover `id` at `px`: `done` gets the picture the core picks to stand in while it comes (`standIn`),
+    /// then the cover's own, or nil; one kept in memory comes before this returns.
+    func cover(_ id: String, px: Int, done: @escaping (UIImage?, _ standIn: Bool) -> Void) -> UInt64? {
         guard !id.isEmpty else { return nil }
         let t = token()
         covers[t] = done
@@ -373,7 +380,7 @@ final class Core {
     /// Cover `index` of the first run's AutoMix question (`nori_ios_setup_covers`) at `px`.
     func setupCover(_ index: Int, px: Int, done: @escaping (UIImage?) -> Void) {
         let t = token()
-        covers[t] = done
+        covers[t] = { image, _ in done(image) }
         nori_ios_setup_cover(t, UInt32(index), UInt32(px))
     }
 
@@ -519,9 +526,13 @@ final class Core {
         pages[token]?(answer)
     }
 
-    private func painted(_ token: UInt64, _ image: UIImage?) {
+    private func painted(_ token: UInt64, _ image: UIImage?, standIn: Bool) {
+        if standIn {
+            covers[token]?(image, true)
+            return
+        }
         guard let done = covers.removeValue(forKey: token) else { return }
-        done(image)
+        done(image, false)
     }
 
     /// A picture drawn straight from the library's pixels; `owner` is let go when the picture is.

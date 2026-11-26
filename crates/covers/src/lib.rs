@@ -13,7 +13,7 @@ pub mod scale;
 pub use decode::{format, header, Decoder, Error as DecodeError, Format, Header};
 pub use disk::{DiskCache, Key};
 pub use loader::{Config, Error, Loader, Paint, Rgba, Shown, Ticket};
-pub use memory::{Image, MemoryCache, Sized};
+pub use memory::{stand_in, Image, MemoryCache, Sized};
 pub use scale::{Alpha, Target};
 
 /// The GPU driver family a device draws with, as far as hardware bitmaps care.

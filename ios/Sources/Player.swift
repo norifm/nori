@@ -990,10 +990,11 @@ final class LyricsCard: UITableViewController {
     }
 }
 
-/// The lock screen's picture: the cover asked for, then its artwork once it came.
+/// The lock screen's picture: the cover asked for, with what the core picked to stand in meanwhile, then its
+/// artwork once it came.
 private enum Art {
     case none
-    case asked(String)
+    case asked(String, MPMediaItemArtwork?)
     case shown(String, MPMediaItemArtwork)
 }
 
@@ -1043,25 +1044,34 @@ final class NowPlaying: NSObject {
         switch art {
         case .shown(song.cover, let artwork):
             info[MPMediaItemPropertyArtwork] = artwork
-        case .asked(song.cover):
-            if let image = CoverCache.any(song.cover) {
-                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-                art = .shown(song.cover, artwork)
-                info[MPMediaItemPropertyArtwork] = artwork
-            }
+        case .asked(song.cover, let standIn):
+            if let standIn { info[MPMediaItemPropertyArtwork] = standIn }
         case _ where song.cover.isEmpty:
             break
         default:
             let id = song.cover
-            art = .asked(id)
-            // At the player card's own size, kept in the cache: the card then opens on its picture.
+            art = .asked(id, nil)
+            // At the player card's own size, kept in the cache: the card then opens on its picture. One in
+            // memory comes during the request, and goes into `info` below.
             let px = PlayerCard.coverPx
-            _ = Core.shared.cover(id, px: px) { [weak self] image in
+            var asking = true
+            _ = Core.shared.cover(id, px: px) { [weak self] image, standIn in
                 guard let image else { return }
-                CoverCache.put(image, id, px)
-                guard let self, case .asked(id) = self.art else { return }
-                self.art = .shown(id, MPMediaItemArtwork(boundsSize: image.size) { _ in image })
-                self.changed()
+                if !standIn { CoverCache.put(image, id, px) }
+                guard let self, case .asked(id, let shown) = self.art else { return }
+                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                if standIn {
+                    guard shown == nil else { return }
+                    self.art = .asked(id, artwork)
+                } else {
+                    self.art = .shown(id, artwork)
+                }
+                if !asking { self.changed() }
+            }
+            asking = false
+            switch art {
+            case .asked(_, let artwork?), .shown(_, let artwork): info[MPMediaItemPropertyArtwork] = artwork
+            default: break
             }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
