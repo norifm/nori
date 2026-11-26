@@ -110,13 +110,19 @@
 {:else if name === "Servers" && route.sub}
   <ProfileEdit id={route.sub} />
 {:else if ui.wide}
-  <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
-    <nav class="tabs" aria-label={W.settings}>
-      {#each tabs as [n, label] (n)}
-        <a class="tab" class:on={n === name} aria-current={n === name ? "page" : undefined} href={href("settings", n)} data-page={n}>{label}</a>
-      {/each}
-    </nav>
-    {#if name === "Servers"}{@render serversPage()}{:else if name === "Plugins"}<Plugins tabbed />{:else}{@render settingsPage()}{/if}
+  <!-- The library pages' frame: the title at the gutter, the categories as a rail at the left on a wide
+       window and as chips under the title otherwise, the column beside or under them. -->
+  <Page title={W.settings} ready={!!page.data} error={page.error}>
+    <div class="framed">
+      <nav class="tabs" aria-label={W.settings}>
+        {#each tabs as [n, label] (n)}
+          <a class="tab" class:on={n === name} aria-current={n === name ? "page" : undefined} href={href("settings", n)} data-page={n}>{label}</a>
+        {/each}
+      </nav>
+      <div class="column">
+        {#if name === "Servers"}{@render serversPage()}{:else if name === "Plugins"}<Plugins tabbed />{:else}{@render settingsPage()}{/if}
+      </div>
+    </div>
   </Page>
 {:else if !name}
   <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
@@ -247,9 +253,31 @@
   .tabs {
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
     gap: 4px;
-    margin: -4px 0 6px;
+    margin: -4px 0 6px -14px;
+  }
+  .column {
+    max-width: 720px;
+  }
+  @media (min-width: 1280px) {
+    .framed {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 720px);
+      column-gap: 40px;
+      align-items: start;
+    }
+    .tabs {
+      position: sticky;
+      top: var(--top-h);
+      flex-direction: column;
+      flex-wrap: nowrap;
+      gap: 2px;
+      margin: 0 0 0 -14px;
+    }
+    .tab {
+      height: 36px;
+      border-radius: 18px;
+    }
   }
   .tab {
     display: flex;

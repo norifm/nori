@@ -6982,8 +6982,8 @@ mod tests {
             did.borrow_mut().clear();
             // The row's "…" at the column's end, then each entry of the menu under it, opened again before each.
             for at in 0..labels.len() {
-                click(970.0, 262.0);
-                click(880.0, 304.0 + 32.0 * at as f32);
+                click(990.0, 216.0);
+                click(900.0, 258.0 + 32.0 * at as f32);
             }
             assert_eq!(*did.borrow(), values, "kind {kind}");
         }
@@ -7105,8 +7105,8 @@ mod tests {
             let el = ElementHandle::find_by_accessible_label(&ui, label).next().expect(label);
             let pos = el.absolute_position();
             let size = el.size();
-            // The Toggle sits at the right end of the 720px centered column (x = 190 + (900-720)/2 + 720 - 14 - 19 = 967).
-            (967.0, pos.y + size.height / 2.0)
+            // The Toggle sits at the right end of the 720px column beside the rail (x = 40 + 220 + 40 + 720 - 14 - 19 = 987).
+            (987.0, pos.y + size.height / 2.0)
         };
         let click = |(x, y): (f32, f32)| {
             let position = slint::LogicalPosition::new(x, y);
@@ -9039,7 +9039,8 @@ mod tests {
         ui.set_login_form(LoginKind { asks_address: true, ..Default::default() });
         ui.set_login_choosing(false);
         ui.set_login_adding(true);
-        click(32.0, 60.0);
+        // The back disc at the gutter, where the pages have theirs.
+        click(60.0, 107.0);
         assert_eq!(*did.borrow(), ["provider-again"]);
         did.borrow_mut().clear();
         ui.set_login_form(LoginKind { sign_in: "Sign in".into(), guest: "Continue as guest".into(), ..Default::default() });

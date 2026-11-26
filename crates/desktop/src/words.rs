@@ -12,7 +12,8 @@ use nori_core::Song;
 pub struct ProviderWords {
     /// The kind's name, and what a profile of it is called without a name of its own.
     pub name: String,
-    /// What adding one does, under the login page's choice.
+    /// Under the sign-in form's title, where a plugin kind has no words of its own; nori's own kind has none:
+    /// its title stands alone.
     pub note: &'static str,
     /// The login page's button.
     pub add: String,
@@ -23,7 +24,7 @@ pub struct ProviderWords {
 /// The words of `kind`; `plugin_name` is a plugin kind's name in its own words.
 pub fn provider(kind: &ServerKind, plugin_name: Option<String>) -> ProviderWords {
     match kind {
-        ServerKind::Subsonic => ProviderWords { name: "OpenSubsonic".into(), note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In".into(), no_user: "API key" },
+        ServerKind::Subsonic => ProviderWords { name: "OpenSubsonic".into(), note: "", add: "Sign In".into(), no_user: "API key" },
         ServerKind::Plugin { id } => {
             let name = plugin_name.unwrap_or_else(|| id.clone());
             ProviderWords { add: format!("Add {name}"), name, note: "From a plugin.", no_user: "No account" }

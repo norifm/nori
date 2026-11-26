@@ -6298,23 +6298,35 @@ component EqualizerPage inherits Flickable {
     property <string> autoeq-query;
     property <string> profile-name;
     content-height: page.preferred-height;
-    // Settings' column, as wide as the top pill, and its title; each part on a plate as settings' groups are.
+    // The library pages' frame: the back disc and the title at the gutter, the switch at the column's end; the
+    // parts under them from the gutter, each on a plate as settings' groups are, at most as wide as the curve
+    // reads well.
+    property <length> gutter: Frame.gutter(self.width);
     page := VerticalLayout {
         width: parent.width;
-        padding-left: Chrome.top-x;
-        padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
+        padding-left: root.gutter;
+        padding-right: max(root.gutter, root.width - root.gutter - 1040px);
         padding-bottom: 110px;
         spacing: 12px;
         HorizontalLayout {
-            height: Chrome.top-room + 52px;
-            padding-bottom: 12px;
-            spacing: 10px;
-            IconButton {
-                y: parent.height - self.height - 16px;
-                glyph: Icons.arrow-left;
-                size: 30px;
-                icon: 16px;
-                clicked => { root.back(); }
+            padding-top: Frame.title-y;
+            padding-bottom: 10px;
+            spacing: 12px;
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 20px;
+                    background: Theme.ground.with-alpha(0.7);
+                    border-width: 1px;
+                    border-color: Theme.outline;
+                    IconButton {
+                        glyph: Icons.arrow-left;
+                        size: 40px;
+                        clicked => { root.back(); }
+                    }
+                }
             }
             Text {
                 text: "Equalizer";
@@ -6323,14 +6335,15 @@ component EqualizerPage inherits Flickable {
                 font-size: 34px;
                 font-weight: 700;
                 letter-spacing: -0.5px;
-                horizontal-alignment: center;
-                vertical-alignment: bottom;
+                vertical-alignment: center;
                 horizontal-stretch: 1;
             }
-            Toggle {
-                y: parent.height - self.height - 18px;
-                on: root.on;
-                toggled(v) => { root.set("eq", v ? "true" : "false"); }
+            VerticalLayout {
+                alignment: center;
+                Toggle {
+                    on: root.on;
+                    toggled(v) => { root.set("eq", v ? "true" : "false"); }
+                }
             }
         }
         if root.bypass != "": Rectangle {
@@ -9055,19 +9068,34 @@ export component AppWindow inherits Window {
                                 color: Theme.danger;
                                 horizontal-alignment: center;
                             }
-                            Rectangle {
-                                height: 8px;
-                            }
-                            HorizontalLayout {
+                            // The buttons across the column, as the first run's Continue: the one that signs in
+                            // first, the others under it on the paper's fill.
+                            VerticalLayout {
+                                padding-top: 6px;
                                 spacing: 10px;
-                                alignment: center;
-                                if root.can-cancel-login && !root.login-editing: Capsule {
-                                    text: "Cancel";
-                                    ink: Theme.fill;
-                                    label: Theme.text;
-                                    clicked => { root.cancel-login(); }
+                                if root.login-form.guest != "": Capsule {
+                                    width: form-column.width;
+                                    size: 44px;
+                                    text: root.login-busy ? "Signing in…" : root.login-form.sign-in;
+                                    clicked => {
+                                        if !root.login-busy {
+                                            root.setting-action("provider-sign-in");
+                                        }
+                                    }
+                                }
+                                if root.login-form.guest == "" && root.login-form.add != "": Capsule {
+                                    width: form-column.width;
+                                    size: 44px;
+                                    text: root.login-busy ? "Signing in…" : root.login-form.add;
+                                    clicked => {
+                                        if !root.login-busy {
+                                            root.login();
+                                        }
+                                    }
                                 }
                                 if root.login-form.guest != "": Capsule {
+                                    width: form-column.width;
+                                    size: 44px;
                                     text: root.login-form.guest;
                                     ink: Theme.fill;
                                     label: Theme.text;
@@ -9077,21 +9105,13 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
-                                if root.login-form.guest != "": Capsule {
-                                    text: root.login-busy ? "Signing in…" : root.login-form.sign-in;
-                                    clicked => {
-                                        if !root.login-busy {
-                                            root.setting-action("provider-sign-in");
-                                        }
-                                    }
-                                }
-                                if root.login-form.guest == "" && root.login-form.add != "": Capsule {
-                                    text: root.login-busy ? "Signing in…" : root.login-form.add;
-                                    clicked => {
-                                        if !root.login-busy {
-                                            root.login();
-                                        }
-                                    }
+                                if root.can-cancel-login && !root.login-editing: Capsule {
+                                    width: form-column.width;
+                                    size: 44px;
+                                    text: "Cancel";
+                                    ink: Theme.fill;
+                                    label: Theme.text;
+                                    clicked => { root.cancel-login(); }
                                 }
                             }
                             if root.login-editing: VerticalLayout {
@@ -9110,16 +9130,26 @@ export component AppWindow inherits Window {
                 drag => { root.drag-window(); }
                 zoom => { root.zoom-window(); }
             }
-            // Back: to the kinds of profile while adding one, to Settings from a profile's Edit page.
-            if (root.login-adding || root.login-editing) && !root.login-busy: IconButton {
-                x: 16px;
-                y: 44px;
-                glyph: Icons.nav-arrow-left;
-                clicked => {
-                    if root.login-editing {
-                        root.cancel-login();
-                    } else {
-                        root.setting-action("provider-again");
+            // Back: to the kinds of profile while adding one, to Settings from a profile's Edit page; the
+            // pages' back disc, where theirs stands.
+            if (root.login-adding || root.login-editing) && !root.login-busy: Rectangle {
+                x: root.page-gutter;
+                y: Frame.back-y;
+                width: 40px;
+                height: 40px;
+                border-radius: 20px;
+                background: Theme.ground.with-alpha(0.7);
+                border-width: 1px;
+                border-color: Theme.outline;
+                IconButton {
+                    glyph: Icons.arrow-left;
+                    size: 40px;
+                    clicked => {
+                        if root.login-editing {
+                            root.cancel-login();
+                        } else {
+                            root.setting-action("provider-again");
+                        }
                     }
                 }
             }
@@ -10525,8 +10555,16 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.view == View.settings: Fade {
-                    Flickable {
+                // Settings in the library pages' frame: the title at the gutter, then the categories, a rail
+                // at the left on a wide window (as a Mac's settings list them) and chips under the title
+                // otherwise; the column beside or under them at one reading width.
+                if root.view == View.settings: settings-page := Fade {
+                    property <bool> whole: root.plugins-tab && root.plugin-top.back;
+                    property <bool> rail: self.width >= 1280px && !self.whole;
+                    property <length> rail-w: 220px;
+                    property <length> column-x: root.page-gutter + (self.rail ? self.rail-w + 40px : 0px);
+                    property <length> column-w: min(720px, self.width - self.column-x - root.page-gutter);
+                    settings-flick := Flickable {
                         // A mouse's press and drag is the lyrics services' handles'; the wheel and touch still scroll.
                         mouse-drag-pan-enabled: false;
                         content-width: self.width;
@@ -10537,29 +10575,23 @@ export component AppWindow inherits Window {
                             width: parent.width;
                             padding-bottom: 100px;
                             // A plugin page takes the whole page: its own head, no tabs.
-                            if root.plugins-tab && root.plugin-top.back: Rectangle {
+                            if settings-page.whole: Rectangle {
                                 height: Chrome.top-room + 16px;
                             }
-                            // The title, then the tabs and the column at one reading width under the top pill.
-                            if !(root.plugins-tab && root.plugin-top.back): Text {
-                                text: "Settings";
-                                color: Theme.text;
-                                font-family: Type.title;
-                                font-size: 34px;
-                                font-weight: 700;
-                                letter-spacing: -0.5px;
-                                horizontal-alignment: center;
-                                height: Chrome.top-room + 52px;
-                                vertical-alignment: bottom;
+                            if !settings-page.whole: Heading {
+                                title: "Settings";
+                                padding-left: root.page-gutter;
+                                padding-right: root.page-gutter;
+                                padding-bottom: 0px;
                             }
-                            if !(root.plugins-tab && root.plugin-top.back): HorizontalLayout {
-                                padding-left: Chrome.top-x + max(0px, Chrome.top-w - 720px) / 2;
-                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w) + max(0px, Chrome.top-w - 720px) / 2;
-                                padding-top: 16px;
+                            if !settings-page.whole && !settings-page.rail: HorizontalLayout {
+                                padding-left: root.page-gutter - 14px;
+                                padding-right: root.page-gutter;
+                                padding-top: 14px;
                                 padding-bottom: 12px;
                                 // The categories in Android's order and words, as chips; the one shown raised.
                                 HorizontalLayout {
-                                    alignment: center;
+                                    alignment: start;
                                     spacing: 4px;
                                     for t[i] in root.settings-tabs: Chip {
                                         text: t;
@@ -10568,10 +10600,14 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                            if settings-page.rail: Rectangle {
+                                height: 18px;
+                            }
                             HorizontalLayout {
-                                padding-left: Chrome.top-x + max(0px, Chrome.top-w - 720px) / 2;
-                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w) + max(0px, Chrome.top-w - 720px) / 2;
+                                padding-left: settings-page.column-x;
+                                alignment: start;
                                 VerticalLayout {
+                                    width: settings-page.column-w;
                                     if root.plugins-tab: PluginHead {
                                         top: root.plugin-top;
                                         action(name) => { root.setting-action(name); }
@@ -10597,6 +10633,36 @@ export component AppWindow inherits Window {
                                         source(id, on) => { root.setting-toggled("lyricsService:" + id, on); }
                                     }
                                 }
+                            }
+                        }
+                    }
+                    // The rail: the categories one under another, the one shown raised; it stays as the column
+                    // scrolls.
+                    if self.rail: VerticalLayout {
+                        x: root.page-gutter - 14px;
+                        y: Frame.under-title + 16px;
+                        width: parent.rail-w;
+                        height: self.preferred-height;
+                        spacing: 2px;
+                        for t[i] in root.settings-tabs: Rectangle {
+                            height: 36px;
+                            border-radius: 18px;
+                            background: i == root.settings-tab ? Theme.panel : rail-touch.has-hover ? Theme.hover : transparent;
+                            border-width: i == root.settings-tab ? 1px : 0px;
+                            border-color: Theme.hairline;
+                            Text {
+                                x: 14px;
+                                width: parent.width - 28px;
+                                text: t;
+                                color: i == root.settings-tab ? Theme.text : Theme.dim;
+                                font-size: 14px;
+                                font-weight: 500;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            rail-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.settings-tab-chosen(i); }
                             }
                         }
                     }
