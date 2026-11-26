@@ -266,6 +266,7 @@ export struct SettingRow {
     enabled: bool,
     options: [string],
     chosen: int,
+    // A button's words; a slider's value, at the row's end.
     button: string,
     value: float,
     min: float,
@@ -1247,6 +1248,8 @@ component Bar inherits Rectangle {
     in property <color> track: Theme.chosen;
     // The song's place: an accent dot at the end of the fill, larger under the pointer.
     in property <bool> playhead;
+    // A setting's value: a white knob at the end of the fill, as Android's slider.
+    in property <bool> knob;
     out property <bool> hot: touch.has-hover || root.held >= 0;
     callback moved(float);
     callback done(float);
@@ -1279,6 +1282,16 @@ component Bar inherits Rectangle {
         height: self.d;
         border-radius: self.d / 2;
         background: Theme.accent;
+    }
+    if root.knob: Rectangle {
+        x: root.width * root.shown - self.width / 2;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: #ffffff;
+        border-width: 1px;
+        border-color: Theme.outline;
     }
     touch := TouchArea {
         pointer-event(e) => {
@@ -5561,17 +5574,24 @@ component SettingLine inherits VerticalLayout {
                     font-size: 13px;
                     vertical-alignment: center;
                 }
-                if root.item.kind == 11: Text {
-                    text: root.item.detail;
-                    color: Theme.dim;
-                    vertical-alignment: center;
-                }
-                if root.item.kind == 11 || root.item.kind == 25: Icon {
-                    y: (parent.height - self.height) / 2;
-                    glyph: Icons.nav-arrow-right;
-                    colour: Theme.dim;
-                    width: 12px;
-                    height: 12px;
+                // A link's value and chevron as a choice row's (Chooser), and a slider's value at the end.
+                if root.item.kind == 11 || root.item.kind == 25 || root.item.kind == 5: HorizontalLayout {
+                    horizontal-stretch: 0;
+                    spacing: 4px;
+                    padding-right: 4px;
+                    if root.item.kind != 25: Text {
+                        text: root.item.kind == 5 ? root.item.button : root.item.detail;
+                        color: Theme.dim;
+                        font-size: 13.5px;
+                        vertical-alignment: center;
+                    }
+                    if root.item.kind != 5: Icon {
+                        y: (parent.height - self.height) / 2;
+                        glyph: Icons.nav-arrow-right;
+                        colour: Theme.dim;
+                        width: 20px;
+                        height: 20px;
+                    }
                 }
             }
             // The four modes, as chips under their title, the same room above and below them.
@@ -5630,6 +5650,7 @@ component SettingLine inherits VerticalLayout {
             if root.item.kind == 5: Bar {
                 thin: 4px;
                 thick: 6px;
+                knob: true;
                 fill: Theme.text;
                 value: (root.item.value - root.item.min) / max(0.0001, root.item.max - root.item.min);
                 moved(v) => { root.slid(root.item.name, root.item.min + v * (root.item.max - root.item.min), false); }

@@ -241,6 +241,7 @@ struct Row {
     on: bool,
     enabled: bool,
     options: Vec<(String, String)>,
+    /// A button's words; a slider's value.
     button: String,
     value: f32,
     min: f32,
@@ -498,8 +499,8 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
                 }
                 SettingKind::Level => {
                     let v: f32 = value.parse().unwrap_or(spec.min);
-                    let title = format!("{title}: {}", if v <= 0.0 { "Off".to_string() } else { format!("{} dB", crate::eq::signed(v)) });
-                    Row { kind: SLIDER, name: spec.name, title, value: v.clamp(spec.min, spec.max), min: spec.min, max: spec.max, enabled: true, ..Default::default() }
+                    let shown = if v <= 0.0 { "Off".to_string() } else { format!("{} dB", crate::eq::signed(v)) };
+                    Row { kind: SLIDER, name: spec.name, title, button: shown, value: v.clamp(spec.min, spec.max), min: spec.min, max: spec.max, enabled: true, ..Default::default() }
                 }
                 // Drawn by `flag_rows`.
                 SettingKind::Flags => return None,
@@ -1729,7 +1730,7 @@ fn plugin_row(plugin: &str, r: &PluginRow, off: bool, opens: Opens) -> Row {
                 Some(Value::Level(v)) => v,
                 _ => min,
             };
-            Row { kind: SLIDER, title: format!("{}: {}", r.label, words::plugin_level(value, r.decimals, r.unit.as_deref())), value: value as f32, min: min as f32, max: max as f32, ..base }
+            Row { kind: SLIDER, button: words::plugin_level(value, r.decimals, r.unit.as_deref()), value: value as f32, min: min as f32, max: max as f32, ..base }
         }
         RowKind::Text | RowKind::Secret => {
             let typed = match &r.value {
@@ -2502,7 +2503,7 @@ mod tests {
             glyph: None,
         };
         let level = plugin_row("p", &row(RowKind::Level, Some(Value::Level(1.5)), Some("Before the limiter"), Some("dB"), None), false, Opens::Settings);
-        assert_eq!((level.title.as_str(), level.detail.as_str()), ("Gain: 1.50 dB", "Before the limiter"));
+        assert_eq!((level.title.as_str(), level.button.as_str(), level.detail.as_str()), ("Gain", "1.50 dB", "Before the limiter"));
         let status = plugin_row("p", &row(RowKind::Status, Some(Value::Text("Fine".into())), Some("Checked hourly"), None, None), false, Opens::Settings);
         assert_eq!(status.detail, "Fine · Checked hourly");
         let meter = plugin_row("p", &row(RowKind::Meter, Some(Value::Level(8.0)), None, Some("%"), None), false, Opens::Settings);

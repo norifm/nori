@@ -6562,7 +6562,8 @@ mod tests {
         assert_eq!(labels, [vec![], vec![], vec![], vec!["Count letters".to_string()]]);
         let rows = crate::settings::device_rows(&host.device_cards("en".into()), &[], &Default::default(), &Default::default(), &Default::default(), crate::look::Today { month: 10, day: 19, southern: false });
         let titles: Vec<String> = rows.iter().map(|r| r.title.to_string()).collect();
-        assert_eq!(titles, ["TEST", "Gain: 0.5"]);
+        assert_eq!(titles, ["TEST", "Gain"]);
+        assert_eq!(rows.iter().map(|r| r.button.to_string()).collect::<Vec<_>>(), ["", "0.5"], "the slider's value at its end");
     }
 
     fn dressed() -> crate::look::Look {
