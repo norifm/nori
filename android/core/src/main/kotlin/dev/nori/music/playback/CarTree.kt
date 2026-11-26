@@ -76,9 +76,10 @@ internal class CarTree(private val context: Context) {
 
     /** A folder of the tree, named from the resources, or by its own name. */
     fun folder(f: BrowseFolder): MediaItem {
-        // A run of a long A to Z list is named by its first and last rows.
+        // A run of a long A to Z list is named by its first and last rows, a run of a long folder by their places.
         val run = f.media == CarMedia.PART && f.subtitle != null
         val title = f.kind?.let { context.getString(folderName(it)) } ?: f.mix?.let { CarWords.mix(it) }
+            ?: f.span?.let { context.getString(R.string.car_rows, it.first.toInt(), it.last.toInt()) }
             ?: if (run) context.getString(R.string.car_run, f.title, f.subtitle) else f.title
         val art = when {
             f.mix != null && f.art.isNotEmpty() -> CarArt.mosaic(context, f.id.substringAfter(':'), f.art)

@@ -52,22 +52,30 @@ impl Client {
         page_of(&BrowsePage { folders, ..Default::default() }, page, page_size)
     }
 
-    /// Page `page` of `page_size` rows of folder `parent`: nothing for one that is not known, `failed`
-    /// for one that cannot be read now. Pages after the first come from the first's read, and a
-    /// search's results from [`Client::car_search`].
+    /// Page `page` of `page_size` rows of folder `parent`, a long one in runs (nori-library's `in_runs`):
+    /// nothing for one that is not known, `failed` for one that cannot be read now. Pages after the
+    /// first come from the first's read, a run from its folder's, and a search's results from
+    /// [`Client::car_search`].
     pub async fn browse_children(&self, parent: String, page: u32, page_size: u32) -> BrowsePage {
-        let kept = if page > 0 || parent.starts_with("search:") { self.car.lock().get(&parent) } else { None };
-        let all = match kept {
-            Some(all) => all,
-            None => self.listed(&parent).await,
+        let shown = match run_part(&parent) {
+            Some((n, whole)) => run_of(&self.whole(whole, true).await, n),
+            None => in_runs(&parent, self.whole(&parent, page > 0 || parent.starts_with("search:")).await),
         };
-        page_of(&all, page, page_size)
+        page_of(&shown, page, page_size)
     }
 
     /// What a picked row plays: a song of a folder plays the folder from it, Play and Shuffle the whole
     /// of it. None for an id that is not one of the tree's rows.
     pub async fn car_queue(&self, row: String) -> Option<CarQueue> {
-        let row = car_row(row)?;
+        let mut row = car_row(row)?;
+        // A song of a run plays its whole folder from it.
+        if let Some((n, whole)) = run_part(&row.parent) {
+            let whole = whole.to_string();
+            let all = self.whole(&whole, true).await;
+            let from = library_songs(all.songs[..songs_before_run(&all, n)].to_vec()).len();
+            row.parent = whole;
+            return Some(queue_for(&row, library_songs(all.songs), from));
+        }
         let (kind, arg) = row.parent.split_once(':').unwrap_or((row.parent.as_str(), ""));
         // Played whole, an artist is all their songs and a genre its songs, not the albums listed.
         let songs = match kind {
@@ -82,12 +90,13 @@ impl Client {
                 }
             }
         };
-        Some(queue_for(&row, library_songs(songs)))
+        Some(queue_for(&row, library_songs(songs), 0))
     }
 
     /// The car's search: the artists, albums and songs the server finds for `query`, under their headings.
     pub async fn car_search(&self, query: String) -> BrowsePage {
-        self.listed(&format!("search:{query}")).await
+        let parent = format!("search:{query}");
+        in_runs(&parent, self.listed(&parent).await)
     }
 
     /// What a spoken request plays (nori-library's `voice_pick`): an artist's songs and a genre's shuffled,
@@ -143,6 +152,15 @@ fn whole() -> Vec<CarAction> {
 }
 
 impl Client {
+    /// Everything folder `parent` holds: as it was listed last when `kept` and it was, else read now.
+    async fn whole(&self, parent: &str, kept: bool) -> BrowsePage {
+        let shown = if kept { self.car.lock().get(parent) } else { None };
+        match shown {
+            Some(all) => all,
+            None => self.listed(parent).await,
+        }
+    }
+
     /// Everything folder `parent` holds, kept for its later pages and picks unless it could not be read.
     async fn listed(&self, parent: &str) -> BrowsePage {
         let (kind, arg) = parent.split_once(':').unwrap_or((parent, ""));
@@ -469,29 +487,83 @@ pub(crate) mod tests {
         assert_eq!((rows.len(), fake.asked().len()), (500, 2));
     }
 
-    /// Every row a car can reach from folder `parent`, asked whole as a car asks; each list it is sent
-    /// fits what media3 passes on, and goes by initial.
-    fn reach(c: &Client, parent: &str, rows: &mut Vec<String>, initials: &mut Vec<String>) {
+    /// Every row a car can reach from folder `parent`, asked whole as a car asks, in the order it lists
+    /// them: folders, then songs as the rows that play them. Each list it is sent fits what media3 passes
+    /// on; `seen` sees each.
+    fn walk(c: &Client, parent: &str, rows: &mut Vec<String>, seen: &mut dyn FnMut(&str, &BrowsePage)) {
         let page = block(c.browse_children(parent.into(), 0, u32::MAX));
-        assert!(page.folders.len() <= CAR_LIST_ROWS, "{parent} lists {} rows", page.folders.len());
+        assert!(page.folders.len() + page.songs.len() <= CAR_LIST_ROWS, "{parent} lists {} rows", page.folders.len() + page.songs.len());
+        seen(parent, &page);
+        for f in page.folders {
+            if f.media == CarMedia::Part {
+                walk(c, &f.id, rows, seen);
+            } else {
+                rows.push(f.id);
+            }
+        }
+        rows.extend(page.songs.iter().map(|s| car_song_row(parent.into(), s.id.clone())));
+    }
+
+    /// [`walk`] over an A to Z list: each list goes by initial; `initials` are its initials' folders.
+    fn reach(c: &Client, parent: &str, rows: &mut Vec<String>, initials: &mut Vec<String>) {
         let letter = |t: &str| match t.chars().next() {
             Some('é') => 'E',
             Some('Ø') => 'O',
             Some(c) if c.is_ascii_alphabetic() => c.to_ascii_uppercase(),
             _ => '#',
         };
-        let letters: Vec<char> = page.folders.iter().filter(|f| f.media != CarMedia::Part).map(|f| letter(&f.title)).collect();
-        assert!(letters.is_sorted(), "{parent} goes by initial: {letters:?}");
-        for f in page.folders {
-            if f.media != CarMedia::Part {
-                rows.push(f.id);
-            } else {
-                if f.subtitle.is_none() {
-                    initials.push(f.title.clone());
-                }
-                reach(c, &f.id, rows, initials);
-            }
+        walk(c, parent, rows, &mut |parent, page| {
+            let letters: Vec<char> = page.folders.iter().filter(|f| f.media != CarMedia::Part).map(|f| letter(&f.title)).collect();
+            assert!(letters.is_sorted(), "{parent} goes by initial: {letters:?}");
+            initials.extend(page.folders.iter().filter(|f| f.media == CarMedia::Part && f.subtitle.is_none()).map(|f| f.title.clone()));
+        });
+    }
+
+    #[test]
+    fn a_long_folder_reaches_the_car_in_order() {
+        let songs = |n: usize| (0..n).map(|i| format!(r#"{{"id":"s{}","title":"Song {i}"}}"#, if i == 450 { 10 } else { i })).collect::<Vec<_>>().join(",");
+        let playlist = format!(r#"{{"subsonic-response":{{"status":"ok","playlist":{{"id":"p1","name":"Long","entry":[{}]}}}}}}"#, songs(520));
+        let albums: Vec<String> = (0..12).map(|i| format!(r#"{{"id":"l{i}","name":"Album {i}"}}"#)).collect();
+        let artists: Vec<String> = (0..3).map(|i| format!(r#"{{"id":"r{i}","name":"Artist {i}"}}"#)).collect();
+        let starred = format!(r#"{{"subsonic-response":{{"status":"ok","starred2":{{"song":[{}],"album":[{}],"artist":[{}]}}}}}}"#, songs(450), albums.join(","), artists.join(","));
+        let many: Vec<String> = (0..260).map(|i| format!(r#"{{"id":"l{i}","name":"Album {i}"}}"#)).collect();
+        let artist = format!(r#"{{"subsonic-response":{{"status":"ok","artist":{{"id":"r1","name":"Prolific","album":[{}]}}}}}}"#, many.join(","));
+        let in_order = |parent: &str, n: usize| (0..n).map(|i| car_song_row(parent.into(), format!("s{}", if i == 450 { 10 } else { i }))).collect::<Vec<_>>();
+        let folders = |prefix: &str, n: usize| (0..n).map(move |i| format!("{prefix}{i}")).collect::<Vec<_>>();
+        let starred_rows: Vec<String> = folders("album:l", 12).into_iter().chain(folders("artist:r", 3)).chain(in_order("starred", 450)).collect();
+        for (parent, answer, want) in [
+            ("playlist:p1", playlist, in_order("playlist:p1", 520)),
+            ("starred", starred, starred_rows),
+            ("artist:r1", artist, folders("album:l", 260)),
+        ] {
+            let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+            fake.answer(&answer);
+            let mut rows = Vec::new();
+            walk(&c, parent, &mut rows, &mut |_, _| {});
+            // A song's row names the run it was picked in; the run is part of the folder it plays.
+            let whole: Vec<String> = rows.iter().map(|r| match car_row(r.clone()) {
+                Some(CarRow { parent: p, song: Some(s), .. }) => car_song_row(run_part(&p).map_or(p.as_str(), |(_, w)| w).into(), s),
+                _ => r.clone(),
+            }).collect();
+            assert_eq!(whole, want, "{parent}: every row once, in order");
+            assert_eq!(fake.asked().len(), 1, "{parent}: its runs are of the one read");
         }
+
+        // A song picked in a run plays the whole playlist from where it was picked.
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        fake.answer(&format!(r#"{{"subsonic-response":{{"status":"ok","playlist":{{"id":"p1","name":"Long","entry":[{}]}}}}}}"#, songs(520)));
+        let top = block(c.browse_children("playlist:p1".into(), 0, u32::MAX));
+        assert_eq!(top.actions, [CarAction::Play, CarAction::Shuffle]);
+        let run = &top.folders[2].id;
+        block(c.browse_children(run.clone(), 0, u32::MAX));
+        for (song, index) in [("s10", 450), ("s519", 519)] {
+            let q = block(c.car_queue(car_song_row(run.clone(), song.into()))).unwrap();
+            assert_eq!((q.songs.len(), q.index), (520, index), "{song}");
+            assert_eq!(q.origin, Some(nori_model::PageOrigin::new(nori_model::OriginKind::Playlist, "p1")));
+        }
+        let q = block(c.car_queue(car_action_row("playlist:p1".into(), CarAction::Play))).unwrap();
+        assert_eq!((q.songs.len(), q.index), (520, 0));
+        assert_eq!(fake.asked().len(), 1);
     }
 
     #[test]

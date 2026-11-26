@@ -1,6 +1,8 @@
 //! The browse tree of a car (Android Auto) or other remote browser: its folders, how their rows read and
 //! page, what a picked row plays and what a spoken request asks for.
 
+use std::ops::Range;
+
 use nori_model::{Album, Artist, Genre, OriginKind, PageOrigin, Playlist, SearchResult, Song};
 
 use crate::mixes::board::{MixName, MixTile};
@@ -41,8 +43,8 @@ pub enum CarMedia {
     /// A playlist or a mix.
     Playlist,
     Genre,
-    /// Part of a long A to Z list: an initial's rows, titled by the initial, or a run of them from `title`
-    /// to `subtitle`.
+    /// Part of a long list: an A to Z list's initial, titled by the initial, or a run of its rows from
+    /// `title` to `subtitle`; or rows `span` of a folder that keeps its order.
     Part,
 }
 
@@ -99,6 +101,16 @@ pub struct BrowseFolder {
     pub style: CarStyle,
     /// Whether it can be played whole from where it is listed (an album, a playlist, a mix...).
     pub playable: bool,
+    /// The rows of its folder a run of it holds.
+    pub span: Option<CarSpan>,
+}
+
+/// Rows `first` to `last` of a folder, counted from one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct CarSpan {
+    pub first: u32,
+    pub last: u32,
 }
 
 /// What a folder holds: the rows that play it whole, more folders, and songs.
@@ -147,6 +159,7 @@ pub fn folder(id: &str, kind: CarFolder) -> BrowseFolder {
         group: None,
         style: CarStyle::List,
         playable: false,
+        span: None,
     }
 }
 
@@ -203,6 +216,7 @@ pub fn album_folder(a: &Album, group: Option<CarGroup>) -> BrowseFolder {
         group,
         style: CarStyle::List,
         playable: true,
+        span: None,
     }
 }
 
@@ -219,6 +233,7 @@ pub fn artist_folder(a: &Artist, group: Option<CarGroup>) -> BrowseFolder {
         group,
         style: CarStyle::Grid,
         playable: true,
+        span: None,
     }
 }
 
@@ -235,6 +250,7 @@ pub fn playlist_folder(p: &Playlist) -> BrowseFolder {
         group: None,
         style: CarStyle::List,
         playable: true,
+        span: None,
     }
 }
 
@@ -251,6 +267,7 @@ pub fn genre_folder(g: &Genre) -> BrowseFolder {
         group: None,
         style: CarStyle::Grid,
         playable: true,
+        span: None,
     }
 }
 
@@ -269,6 +286,7 @@ pub fn mix_folder(t: &MixTile) -> BrowseFolder {
         group: Some(CarGroup::Mixes),
         style: CarStyle::List,
         playable: true,
+        span: None,
     }
 }
 
@@ -281,6 +299,66 @@ pub fn album_folders(albums: &[Album], group: Option<CarGroup>, max: usize) -> V
 /// The most rows a car is sent in one folder. A car asks for a folder whole, and media3 sends it only
 /// the rows that fit in 256 KiB (`MediaUtils.truncateListBySize`), a row being about 1.1 kB.
 pub const CAR_LIST_ROWS: usize = 200;
+
+/// The rows of run `n` of a list of `len` rows split into runs of [`CAR_LIST_ROWS`].
+fn run(n: usize, len: usize) -> Range<usize> {
+    (n * CAR_LIST_ROWS).min(len)..((n + 1) * CAR_LIST_ROWS).min(len)
+}
+
+/// A folder for each run of a list of `len` rows, made by `part` from the run's number and rows.
+fn runs(len: usize, part: impl Fn(usize, Range<usize>) -> BrowseFolder) -> Vec<BrowseFolder> {
+    (0..len.div_ceil(CAR_LIST_ROWS)).map(|n| part(n, run(n, len))).collect()
+}
+
+/// Folder `id`, part of a longer list.
+fn part_folder(id: String, style: CarStyle) -> BrowseFolder {
+    BrowseFolder {
+        id,
+        kind: None,
+        media: CarMedia::Part,
+        mix: None,
+        title: String::new(),
+        subtitle: None,
+        songs: None,
+        art: Vec::new(),
+        group: None,
+        style,
+        playable: false,
+        span: None,
+    }
+}
+
+/// Folder `parent`'s page `all` as a car is sent it: whole when its rows fit one car list, else its Play
+/// and Shuffle over a folder per run of its rows, in their order.
+pub fn in_runs(parent: &str, all: BrowsePage) -> BrowsePage {
+    let len = all.folders.len() + all.songs.len();
+    if len <= CAR_LIST_ROWS {
+        return all;
+    }
+    let folders = runs(len, |n, rows| BrowseFolder {
+        span: Some(CarSpan { first: rows.start as u32 + 1, last: rows.end as u32 }),
+        ..part_folder(format!("run:{n}:{parent}"), CarStyle::List)
+    });
+    BrowsePage { folders, actions: all.actions, ..Default::default() }
+}
+
+/// The run and the folder that run folder `id` is part of; none for any other id.
+pub fn run_part(id: &str) -> Option<(usize, &str)> {
+    let (n, parent) = id.strip_prefix("run:")?.split_once(':')?;
+    Some((n.parse().ok()?, parent))
+}
+
+/// Run `n` of folder page `all`: its rows in order, without Play and Shuffle.
+pub fn run_of(all: &BrowsePage, n: usize) -> BrowsePage {
+    let rows = run(n, all.folders.len() + all.songs.len());
+    let skip = all.actions.len();
+    rows_of(all, skip + rows.start..skip + rows.end)
+}
+
+/// How many of folder page `all`'s songs come before its run `n`.
+pub fn songs_before_run(all: &BrowsePage, n: usize) -> usize {
+    run(n, all.folders.len() + all.songs.len()).start.saturating_sub(all.folders.len())
+}
 
 /// Which folder of an A to Z list: all of it, the rows of one initial, or the `n`th [`CAR_LIST_ROWS`]
 /// of an initial that has more.
@@ -308,17 +386,9 @@ pub fn az_part(arg: &str) -> Option<(&str, AzPart)> {
 pub fn a_to_z(list: &str, mut rows: Vec<BrowseFolder>, part: AzPart) -> BrowsePage {
     rows.sort_by_cached_key(|f| (initial(&f.title), f.title.chars().map(fold).collect::<String>()));
     let part_folder = |at: String, title: String, last: Option<String>| BrowseFolder {
-        id: format!("az:{at}:{list}"),
-        kind: None,
-        media: CarMedia::Part,
-        mix: None,
         title,
         subtitle: last,
-        songs: None,
-        art: Vec::new(),
-        group: None,
-        style: CarStyle::Grid,
-        playable: false,
+        ..part_folder(format!("az:{at}:{list}"), CarStyle::Grid)
     };
     let of = |c: char, rows: Vec<BrowseFolder>| rows.into_iter().filter(move |f| initial(&f.title) == c);
     let folders = match part {
@@ -333,11 +403,14 @@ pub fn a_to_z(list: &str, mut rows: Vec<BrowseFolder>, part: AzPart) -> BrowsePa
             if mine.len() <= CAR_LIST_ROWS {
                 mine
             } else {
-                let runs = mine.chunks(CAR_LIST_ROWS).enumerate();
-                runs.map(|(n, run)| part_folder(format!("{c}{n}"), run[0].title.clone(), run.last().map(|f| f.title.clone()))).collect()
+                runs(mine.len(), |n, run| part_folder(format!("{c}{n}"), mine[run.start].title.clone(), Some(mine[run.end - 1].title.clone())))
             }
         }
-        AzPart::Run(c, n) => of(c, rows).skip(n * CAR_LIST_ROWS).take(CAR_LIST_ROWS).collect(),
+        AzPart::Run(c, n) => {
+            let mut mine: Vec<BrowseFolder> = of(c, rows).collect();
+            let run = run(n, mine.len());
+            mine.drain(run).collect()
+        }
     };
     BrowsePage { folders, ..Default::default() }
 }
@@ -445,17 +518,22 @@ pub fn car_row(id: String) -> Option<CarRow> {
     }
 }
 
-/// The queue a picked `row` plays out of `songs`, the folder's: from the song picked, or from the start,
-/// shuffled for Shuffle.
-pub fn queue_for(row: &CarRow, songs: Vec<Song>) -> CarQueue {
-    let index = row.song.as_ref().and_then(|id| songs.iter().position(|s| &s.id == id)).unwrap_or(0) as u32;
+/// The queue a picked `row` plays out of `songs`, the folder's: from the song picked, the first of its
+/// id from song `from` on, or from the start, shuffled for Shuffle.
+pub fn queue_for(row: &CarRow, songs: Vec<Song>, from: usize) -> CarQueue {
+    let index = row.song.as_ref().and_then(|id| songs.iter().skip(from).position(|s| &s.id == id)).map_or(0, |i| from + i) as u32;
     CarQueue { songs, index, origin: origin_of(&row.parent), shuffle: row.action == Some(CarAction::Shuffle) }
 }
 
 /// Page `page` of `size` rows of `all`, in the order a car lists them: Play and Shuffle, folders, songs.
 pub fn page_of(all: &BrowsePage, page: u32, size: u32) -> BrowsePage {
     let start = (page as usize).saturating_mul(size as usize);
-    let end = start.saturating_add(size as usize);
+    rows_of(all, start..start.saturating_add(size as usize))
+}
+
+/// Rows `rows` of `all`, counted as a car lists them: Play and Shuffle, folders, songs.
+fn rows_of(all: &BrowsePage, rows: Range<usize>) -> BrowsePage {
+    let Range { start, end } = rows;
     // The rows of a list of `len` that starts `skip` rows in.
     let part = |len: usize, skip: usize| start.saturating_sub(skip).min(len)..end.saturating_sub(skip).min(len);
     let (actions, folders) = (all.actions.len(), all.folders.len());
@@ -636,13 +714,15 @@ mod tests {
     #[test]
     fn car_plays() {
         let songs = vec![song("a", "A"), song("b", "B"), song("c", "C")];
-        let q = queue_for(&car_row("in|album:x|b".into()).unwrap(), songs.clone());
+        let q = queue_for(&car_row("in|album:x|b".into()).unwrap(), songs.clone(), 0);
         assert_eq!((q.index, q.shuffle), (1, false));
         assert_eq!(q.origin, Some(PageOrigin { kind: OriginKind::Album, id: "x".into() }));
-        let q = queue_for(&car_row("shuffle|mix:discover".into()).unwrap(), songs.clone());
+        let q = queue_for(&car_row("shuffle|mix:discover".into()).unwrap(), songs.clone(), 0);
         assert_eq!((q.index, q.shuffle), (0, true));
         assert_eq!(q.origin.unwrap().kind, OriginKind::Mix);
-        assert_eq!(queue_for(&car_row("in|starred|zz".into()).unwrap(), songs).origin, None, "the favourites are no page's queue");
+        assert_eq!(queue_for(&car_row("in|starred|zz".into()).unwrap(), songs.clone(), 0).origin, None, "the favourites are no page's queue");
+        let twice = [songs.clone(), songs].concat();
+        assert_eq!(queue_for(&car_row("in|album:x|b".into()).unwrap(), twice, 3).index, 4, "a song listed twice plays from where it was picked");
         assert!(car_plays_whole("album:x".into()) && car_plays_whole("genre:Jazz".into()));
         assert!(!car_plays_whole("albums:newest".into()) && !car_plays_whole("starred".into()), "a list of folders is not played whole");
 
@@ -691,6 +771,37 @@ mod tests {
         assert_eq!(az_part(&runs[1].id["az:".len()..]), Some(("albums:alphabeticalByName", AzPart::Run('S', 1))));
         assert_eq!(titles(a_to_z("x", rows, AzPart::Run('S', 1))), ["S200", "S201", "S202", "S203", "S204"]);
         assert_eq!(az_part("Sx:artists"), None);
+    }
+
+    #[test]
+    fn a_long_folder_goes_in_runs_of_its_rows() {
+        let all = BrowsePage {
+            actions: vec![CarAction::Play, CarAction::Shuffle],
+            folders: (0..30).map(|i| folder(&format!("f{i}"), CarFolder::Albums)).collect(),
+            songs: (0..420).map(|i| song(&format!("s{i}"), "")).collect(),
+            downloaded: (0..420).map(|i| i % 2 == 0).collect(),
+            songs_group: Some(CarGroup::Songs),
+            ..Default::default()
+        };
+        let top = in_runs("starred", all.clone());
+        assert_eq!(top.actions, all.actions, "Play and Shuffle play the whole folder");
+        assert!(top.songs.is_empty());
+        let spans: Vec<(&str, Option<CarSpan>)> = top.folders.iter().map(|f| (f.id.as_str(), f.span)).collect();
+        let span = |first, last| Some(CarSpan { first, last });
+        assert_eq!(spans, [("run:0:starred", span(1, 200)), ("run:1:starred", span(201, 400)), ("run:2:starred", span(401, 450))]);
+        assert_eq!(run_part(&top.folders[2].id), Some((2, "starred")));
+        assert_eq!(run_part("run:x:starred"), None);
+
+        let ids = |p: &BrowsePage| p.folders.iter().map(|f| f.id.clone()).chain(p.songs.iter().map(|s| s.id.clone())).collect::<Vec<_>>();
+        let runs: Vec<BrowsePage> = (0..3).map(|n| run_of(&all, n)).collect();
+        assert!(runs.iter().all(|r| r.actions.is_empty() && r.folders.len() + r.songs.len() <= CAR_LIST_ROWS));
+        assert_eq!(runs.iter().flat_map(ids).collect::<Vec<_>>(), ids(&all), "every row once, in order");
+        assert_eq!(runs[1].downloaded, all.downloaded[170..370], "each song keeps its mark");
+        assert_eq!(runs[2].songs_group, Some(CarGroup::Songs));
+        assert_eq!((0..3).map(|n| songs_before_run(&all, n)).collect::<Vec<_>>(), [0, 170, 370]);
+
+        let fits = BrowsePage { songs: all.songs[..CAR_LIST_ROWS].to_vec(), ..Default::default() };
+        assert_eq!(in_runs("playlist:p", fits.clone()), fits, "a folder that fits is sent whole");
     }
 
     fn found() -> SearchResult {

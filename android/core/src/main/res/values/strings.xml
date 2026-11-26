@@ -108,6 +108,8 @@
     <string name="car_songs">Songs</string>
     <!-- A run of a long A to Z list in the car: its first and last names. -->
     <string name="car_run">%1$s – %2$s</string>
+    <!-- A run of a long folder in the car (a playlist, the favorites): the places of its first and last rows. -->
+    <string name="car_rows">%1$d–%2$d</string>
     <string name="car_for_you">For you</string>
     <string name="car_play">Play</string>
     <string name="car_shuffle">Shuffle</string>
