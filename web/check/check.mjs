@@ -521,6 +521,11 @@ if (!only || only.includes("queue")) {
   await playAlbum(album("Second Wind", "Alpha Waves"));
   await pane("queue");
   await page.waitForSelector("#queue .row.current");
+  // Over the rows, the album what plays next comes from; the song heard's cover under the playing bars;
+  // each row's second line its artist, then its album.
+  const from = await page.$eval(".from", (e) => e.textContent.trim());
+  const bars = await page.$$eval("#queue .row .now .bars", (b) => b.map((x) => x.closest(".row").classList.contains("current")));
+  const line = await page.$eval("#queue .row.current .sub", (e) => e.textContent.replace(/\s+/g, " ").trim());
   const before = (await now()).queue;
   const heardHasNone = !(await page.$("#queue .row.current button[aria-label='Remove']"));
   const later = "#queue .row:not(.current):not(.past)";
@@ -533,7 +538,10 @@ if (!only || only.includes("queue")) {
   await page.click(`${later} button[aria-label='Remove']`);
   await page.waitForFunction(async (n) => JSON.parse(await window.ask("now")).queue.length === n, { timeout: 10000, polling: 100 }, before.length - 1).catch(() => {});
   const after = (await now()).queue;
-  report.queue = { heardHasNone, lines, title, before: before.length, after: after.length };
+  report.queue = { from, bars, line, heardHasNone, lines, title, before: before.length, after: after.length };
+  expect(from === "From Second Wind", "the queue says the album what plays next comes from");
+  expect(bars.length === 1 && bars[0], "the playing bars are over the song heard's cover alone");
+  expect(line === `${before[0].artist} — Second Wind`, "a row's second line is its artist, then its album");
   expect(heardHasNone, "the song heard has no Remove button");
   expect(lines.length > 0 && !lines.some((l) => ["Remove", "Move up", "Move down"].includes(l)), "a queue row's menu is the song's own");
   expect(after.length === before.length - 1 && after.filter((s) => s.title === title).length === before.filter((s) => s.title === title).length - 1, "a row's Remove button takes its song out");

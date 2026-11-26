@@ -11,6 +11,7 @@
   import { W } from "../words";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
+  import PlayingBars from "./PlayingBars.svelte";
   import { sortable } from "./sortable";
 
   let {
@@ -45,7 +46,7 @@
     <li oncontextmenu={(e) => (e.preventDefault(), void songMenu(s, pointer(e), { play: () => play(i), extra: extra(s, i) }))} class:now={s.id === playingId} data-row={moved ? "" : undefined} data-at={i}>
       <button class="play" onclick={() => void play(i)}>
         {#if numbered}
-          <span class="n">{#if s.id === playingId}<span class="bars" class:still={!player.playing}><i></i><i></i><i></i></span>{:else}{s.track || i + 1}{/if}</span>
+          <span class="n">{#if s.id === playingId}<span class="now-bars"><PlayingBars moving={player.advancing} w={14} h={13} /></span>{:else}{s.track || i + 1}{/if}</span>
         {:else}
           <span class="art"><Cover src={s.cover} radius="var(--row-art)" /></span>
         {/if}
@@ -276,33 +277,9 @@
       display: none;
     }
   }
-  /* The song playing: three bars in the accent, moving while it plays. */
-  .bars {
+  /* The song playing: its bars in the accent. */
+  .now-bars {
     display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    height: 14px;
-  }
-  .bars i {
-    width: 3px;
-    height: 100%;
-    border-radius: 1px;
-    background: var(--accent);
-    transform-origin: bottom;
-    animation: bar 900ms ease-in-out infinite alternate;
-  }
-  .bars i:nth-child(2) {
-    animation-delay: -300ms;
-  }
-  .bars i:nth-child(3) {
-    animation-delay: -600ms;
-  }
-  .bars.still i {
-    animation-play-state: paused;
-  }
-  @keyframes bar {
-    from {
-      transform: scaleY(0.25);
-    }
+    color: var(--accent);
   }
 </style>

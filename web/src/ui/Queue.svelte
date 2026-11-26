@@ -7,11 +7,13 @@
   import { remote } from "../state/remote.svelte";
   import { ask } from "../rpc";
   import { addToPlaylist, songMenu } from "../state/menus";
+  import { href } from "../state/route.svelte";
   import { beside, pointer, ui } from "../state/ui.svelte";
   import { W } from "../words";
   import type { QueueSong, Song } from "../state/types";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
+  import PlayingBars from "./PlayingBars.svelte";
   import JamQueue from "./JamQueue.svelte";
   import { sortable } from "./sortable";
   import { flip } from "svelte/animate";
@@ -122,14 +124,21 @@
       data-at={q ? at : undefined}
     >
       {#if q}
-        <button class="play" onclick={() => jump(q)}>
-          <span class="art"><Cover src={q.cover} /></span>
-          <span class="text">
-            <span class="title clip">{q.title ?? q.id ?? ""}</span>
-            <span class="sub clip">{q.by ? W.jamAddedBy(q.by) : (q.artist ?? "")}</span>
+        <span class="art">
+          <Cover src={q.cover} />
+          <!-- The song playing: its cover darkened under the playing bars, as the desktop's. -->
+          {#if at === current}<span class="now"><PlayingBars moving={player.advancing} /></span>{/if}
+        </span>
+        <span class="text">
+          <button class="play title clip" onclick={() => jump(q)}>{q.title ?? q.id ?? ""}</button>
+          <!-- The artists, then the album, which is cut first; each opens its page. -->
+          <span class="sub">
+            {#if q.artistId}<a class="artist clip" data-still href={href("artist", q.artistId)}>{q.artist ?? ""}</a>{:else}<span class="artist clip">{q.artist ?? ""}</span>{/if}
+            {#if q.album}<span class="dash">&nbsp;—&nbsp;</span>{#if q.albumId}<a class="album clip" data-still href={href("album", q.albumId)}>{q.album}</a>{:else}<span class="album clip">{q.album}</span>{/if}{/if}
           </span>
-          {#if at === current}<Icon name={player.playing ? "play-solid" : "pause-solid"} />{/if}
-        </button>
+        </span>
+        <!-- Who asked for it in the jam. -->
+        {#if q.by}<span class="by clip" title={W.jamAddedBy(q.by)}>{q.by}</span>{/if}
         {#if q.id}
           <button class="tool" data-still aria-label={W.more} title={W.more} onclick={(e) => void songMenu(q as Song, beside(e), { play: () => jump(q) })}><Icon name="more-horiz" /></button>
         {/if}
@@ -241,9 +250,13 @@
     color: var(--ink2);
     padding: 18px 8px 8px;
   }
+  /* A row: its cover, its words and its buttons; a click anywhere but on a link or button plays it. */
   .row {
+    position: relative;
     display: flex;
     align-items: center;
+    gap: 10px;
+    padding: 6px 4px 6px 8px;
     border-radius: 12px;
   }
   .row:hover {
@@ -257,7 +270,6 @@
     opacity: 0.5;
   }
   .row:global(.held) {
-    position: relative;
     z-index: 1;
     background: var(--surface);
     box-shadow: 0 0 0 var(--hairline) var(--hair);
@@ -269,22 +281,35 @@
     -webkit-touch-callout: none;
   }
   .play {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 8px;
+    display: block;
+    width: 100%;
     text-align: left;
   }
-  .play > :global(.icon) {
-    color: var(--accent);
-    width: 16px;
-    height: 16px;
+  .play::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+  }
+  .sub a,
+  .row .tool,
+  .by {
+    position: relative;
+    z-index: 1;
   }
   .art {
+    position: relative;
     width: 40px;
     flex: none;
+  }
+  .now {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    border-radius: var(--r-cover);
+    background: #0006;
+    color: #fff;
   }
   .text {
     flex: 1;
@@ -294,6 +319,36 @@
   }
   .title {
     font-size: 15px;
+  }
+  .sub {
+    display: flex;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--ink2);
+  }
+  .sub .artist {
+    flex: 0 1 auto;
+  }
+  .sub .album {
+    flex: 1 1 0;
+  }
+  .dash {
+    flex: none;
+  }
+  .sub a:hover {
+    color: var(--ink);
+    text-decoration: underline;
+  }
+  /* Who asked for it in the jam, on a small plate. */
+  .by {
+    flex: none;
+    max-width: 86px;
+    padding: 2px 7px;
+    border-radius: 9px;
+    background: var(--line);
+    color: var(--ink2);
+    font-size: 10px;
+    font-weight: 600;
   }
   .tool {
     display: grid;
@@ -340,20 +395,18 @@
       mask-image: linear-gradient(#000 calc(100% - 64px), transparent);
     }
     .row {
+      gap: 12px;
+      padding: 7px 4px 7px 7px;
       border-radius: 15px;
     }
     .row.past {
       opacity: 0.45;
     }
-    .play {
-      gap: 12px;
-      padding: 7px 4px 7px 7px;
-    }
     .title {
       font-size: 14px;
       line-height: 18px;
     }
-    .text :global(.sub) {
+    .sub {
       font-size: 12px;
       line-height: 16px;
     }

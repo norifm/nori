@@ -31,6 +31,8 @@ class Player {
 
   song = $derived(this.now?.song ?? null);
   playing = $derived(this.now?.playing ?? false);
+  /** The music moves now (playing, not waiting for bytes): the playing bars move only then. */
+  advancing = $derived(this.playing && !this.now?.buffering);
   /** Another device plays: the controls reach it, nothing plays here. */
   elsewhere = $derived(!!this.now?.device);
 
