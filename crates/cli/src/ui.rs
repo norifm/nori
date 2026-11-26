@@ -272,6 +272,7 @@ fn item_line(item: &Item, w: usize, t: &Theme, starred: bool, playing: bool) -> 
         Item::Song(songs, at) => (songs[*at].title.as_str(), songs[*at].artist.clone(), clock(songs[*at].duration as i64 * 1000)),
         Item::Playlist(p) => (p.name.as_str(), p.owner.clone().unwrap_or_default(), crate::text::playlist_line(p)),
         Item::Mix(m) => (crate::text::mix_name(m.name), String::new(), String::new()),
+        Item::Genre(g) => (g.name.as_str(), String::new(), crate::text::count(g.song_count as u64, "song", "songs")),
         Item::Artist(a) => (a.name.as_str(), String::new(), a.album_count.map(crate::text::albums).unwrap_or_default()),
     };
     let name_w = (w * 11 / 20).max(12);
@@ -449,7 +450,7 @@ fn page_view(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     match app.view {
         View::Home => home(f, inner, app, t, focused),
         View::Search => search(f, inner, app, t, focused),
-        View::Albums | View::Artists | View::Songs | View::Playlists => {
+        View::Albums | View::Artists | View::Songs | View::Playlists | View::Genres => {
             let body = sections(f, inner, app, t);
             library_section(f, body, app, t, focused);
         }
@@ -558,7 +559,7 @@ fn starred(item: &Item, marks: &StarMarks, stars: bool) -> bool {
             Item::Album(a) | Item::DownloadedAlbum(a) => marks.starred(Starrable::Album, &a.id, a.starred),
             Item::Artist(a) => marks.starred(Starrable::Artist, &a.id, a.starred),
             Item::Song(songs, at) => marks.starred(Starrable::Song, &songs[*at].id, songs[*at].starred),
-            Item::Playlist(_) | Item::Mix(_) => false,
+            Item::Playlist(_) | Item::Mix(_) | Item::Genre(_) => false,
         }
 }
 
@@ -589,6 +590,7 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
         View::Albums => (state(&l.albums), l.album_pages.more(), "album", "albums"),
         View::Artists => (state(&l.artists), false, "artist", "artists"),
         View::Songs => (state(&l.songs), l.song_pages.more(), "song", "songs"),
+        View::Genres => (state(&l.genres), false, "genre", "genres"),
         _ => (state(&l.playlists), false, "playlist", "playlists"),
     };
     let (order, favorites) = match view {
@@ -638,6 +640,7 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
                 let item = match view {
                     View::Albums => Item::Album(albums[k].clone()),
                     View::Artists => Item::Artist(l.artists.ready().map(|v| v[k].clone()).unwrap_or_default()),
+                    View::Genres => Item::Genre(l.genres.ready().map(|v| v[k].clone()).unwrap_or_else(|| nori_core::browse::GenreTile { name: String::new(), song_count: 0, cover_art: None })),
                     _ => Item::Playlist(l.playlists.ready().map(|v| v[k].clone()).unwrap_or_default()),
                 };
                 item_line(&item, w, t, starred(&item, seals, stars), false)
@@ -648,6 +651,7 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
         View::Albums => (l.albums_sel, ListRef::Albums),
         View::Artists => (l.artists_sel, ListRef::Artists),
         View::Songs => (l.songs_sel, ListRef::Songs),
+        View::Genres => (l.genres_sel, ListRef::Genres),
         _ => (l.playlists_sel, ListRef::Playlists),
     };
     list(f, body, &mut sel, lines.len(), lref, hits, t, focused, &row);
@@ -655,6 +659,7 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
         View::Albums => &mut l.albums_sel,
         View::Artists => &mut l.artists_sel,
         View::Songs => &mut l.songs_sel,
+        View::Genres => &mut l.genres_sel,
         _ => &mut l.playlists_sel,
     } = sel;
 }
@@ -837,6 +842,8 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Page::Row { title, items, .. } => (title.clone(), String::new(), crate::text::count(items.len() as u64, "entry", "entries"), None),
         Page::Mix { detail: Load::Ready(m), .. } => (crate::text::mix_name(m.name).to_string(), String::new(), crate::text::songs_caption(m.songs.len() as u32, m.seconds), None),
         Page::Mix { detail: Load::Failed(e), .. } => return failed(f, area, t, e),
+        Page::Genre { name, songs: Load::Ready(v), .. } => (name.clone(), String::new(), crate::text::songs_caption(v.len() as u32, v.iter().map(|s| s.duration as u64).sum()), None),
+        Page::Genre { songs: Load::Failed(e), .. } => return failed(f, area, t, e),
         Page::Album { detail: Load::Failed(e), .. } | Page::DownloadedAlbum { detail: Load::Failed(e), .. } | Page::Artist { detail: Load::Failed(e), .. } | Page::Playlist { detail: Load::Failed(e), .. } => {
             return failed(f, area, t, e);
         }
@@ -899,6 +906,9 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
                     spread(vec![Span::raw("  "), Span::styled(format!("{}{seal}", a.name), Style::default().fg(t.ink))], Span::styled(if a.year > 0 { format!("{} ", a.year) } else { String::new() }, t.dim()), w)
                 }
             });
+        }
+        Page::Genre { songs: Load::Ready(songs), sel, .. } => {
+            list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
         }
         Page::Mix { detail: Load::Ready(m), sel, .. } => {
             let songs = &m.songs;

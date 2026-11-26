@@ -123,6 +123,7 @@ impl App {
             Page::Playlist { detail: Load::Ready(d), .. } => d.playlist.name.clone(),
             Page::Artist { detail: Load::Ready(d), .. } => d.artist.name.clone(),
             Page::Mix { detail: Load::Ready(m), .. } => crate::text::mix_name(m.name).into(),
+            Page::Genre { name, songs: Load::Ready(_), .. } => name.clone(),
             _ => return Vec::new(),
         };
         let mut lines = vec![MenuLine::Heading(title), MenuLine::Act(MenuAct::PlayPage), MenuLine::Act(MenuAct::ShufflePage)];

@@ -194,6 +194,9 @@ pub enum Req {
     Songs { sort: String, starred: bool, offset: u32 },
     /// This device's listening history from where a page left off.
     History(Option<nori_core::browse::HistoryAfter>),
+    /// The genres with songs, and a genre's songs by its name.
+    Genres,
+    Genre(String),
     /// What the downloads weigh.
     DownloadsSize,
     Album(String),
@@ -228,6 +231,8 @@ pub enum Data {
     Playlists(Vec<nori_core::Playlist>),
     Songs(Vec<Song>, bool),
     History(nori_core::browse::HistoryPage),
+    Genres(Vec<nori_core::browse::GenreTile>),
+    Genre(Vec<Song>),
     DownloadsSize(i64),
     /// The starred songs.
     Favorites(Vec<Song>),
@@ -346,6 +351,8 @@ impl Session {
             Req::Songs { sort, starred, offset } => Some(PageAsk::Songs { sort, reversed: false, favorites: starred, offset }),
             Req::History(after) => Some(PageAsk::History(after)),
             Req::Downloads => Some(PageAsk::Downloads),
+            Req::Genres => Some(PageAsk::Genres),
+            Req::Genre(name) => Some(PageAsk::Genre(name)),
             Req::Row { .. } | Req::Home | Req::DownloadsSize | Req::DownloadProgress | Req::Work | Req::Facts | Req::PlaylistChoices(_) => None,
         };
         if let Some(ask) = ask {
@@ -519,8 +526,8 @@ fn data_of(got: PageGot) -> Data {
         PageGot::Artist(d) => Data::Artist(d),
         PageGot::Playlist(d) => Data::Playlist(d),
         PageGot::Mix(m) => Data::Mix(m),
-        // Read by the desktop alone.
-        PageGot::Genres(_) | PageGot::Genre { .. } => unreachable!("no genre is read here"),
+        PageGot::Genres(v) => Data::Genres(v),
+        PageGot::Genre { songs, .. } => Data::Genre(songs),
         PageGot::History(page) => Data::History(page),
         PageGot::Downloads(d) => {
             let nori_host::pages::Downloads { sections, stored } = *d;

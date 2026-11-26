@@ -375,13 +375,15 @@ fn album_list_keys_and_clicks() {
     key(&mut a, KeyCode::Char(']'));
     assert_eq!(a.view, View::Playlists);
     key(&mut a, KeyCode::Char(']'));
-    assert_eq!(a.view, View::Playlists, "the last stays");
+    assert_eq!(a.view, View::Genres);
+    key(&mut a, KeyCode::Char(']'));
+    assert_eq!(a.view, View::Genres, "the last stays");
     // The library's tab opens the section last open.
     a.go(View::Home);
     draw(&mut a, 160, 40);
-    let r = hit_rect(&a, Hit::Tab(View::Playlists));
+    let r = hit_rect(&a, Hit::Tab(View::Genres));
     click(&mut a, r.x + 1, r.y);
-    assert_eq!(a.view, View::Playlists);
+    assert_eq!(a.view, View::Genres);
 }
 
 /// The library's places head each section, as the phone's card does: Favorites, Downloads with what
@@ -3855,4 +3857,34 @@ fn the_look_is_taken_as_it_is_picked() {
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
     assert!(a.setup.is_none(), "Start listening ends the run");
+}
+
+/// Genres is a library section beside Playlists: each genre with its songs counted, the empty list said;
+/// Enter opens a genre's songs, which play from the genre.
+#[test]
+fn genres_list_and_open_their_songs() {
+    let mut a = app();
+    a.go(View::Genres);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Genres)));
+    a.handle(Msg::Data(Req::Genres, Ok(Data::Genres(Vec::new()))));
+    let s = draw(&mut a, 120, 36);
+    assert!(s.contains("0 genres"), "{s}");
+    dump("genres-empty", &s);
+    let tile = |name: &str, song_count| nori_core::browse::GenreTile { name: name.into(), song_count, cover_art: None };
+    a.handle(Msg::Data(Req::Genres, Ok(Data::Genres(vec![tile("Jazz Fusion", 22), tile("Rock", 4)]))));
+    let s = draw(&mut a, 120, 36);
+    let tabs = s.lines().find(|l| l.contains("Playlists")).unwrap_or_default();
+    assert!(tabs.contains("Genres"), "a section beside Playlists:\n{s}");
+    assert!(s.lines().any(|l| l.contains("Jazz Fusion") && l.contains("22 songs")), "{s}");
+    dump("genres", &s);
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Genre("Rock".into()))));
+    a.handle(Msg::Data(Req::Genre("Rock".into()), Ok(Data::Genre(vec![song("r1", "Paper Moon", 200), song("r2", "Glass Harbour", 180)]))));
+    let s = draw(&mut a, 120, 36);
+    assert!(s.contains("Rock") && s.contains("Paper Moon") && s.contains("2 songs"), "{s}");
+    dump("genre", &s);
+    key(&mut a, KeyCode::Enter);
+    let Some(Cmd::Play { songs, start: 0, from: Some(from), .. }) = a.cmds.last() else { panic!("{:?}", a.cmds.last()) };
+    assert_eq!((songs.len(), from.kind, from.id.as_str()), (2, nori_core::OriginKind::Genre, "Rock"));
 }

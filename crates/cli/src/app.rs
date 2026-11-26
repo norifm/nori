@@ -47,6 +47,7 @@ pub enum View {
     Artists,
     Songs,
     Playlists,
+    Genres,
     Favorites,
     Downloads,
     History,
@@ -70,6 +71,7 @@ impl View {
             View::Artists => "Artists",
             View::Songs => "Songs",
             View::Playlists => "Playlists",
+            View::Genres => "Genres",
             View::Favorites => "Favorites",
             View::History => "History",
             View::Downloads => "Downloads",
@@ -455,6 +457,8 @@ pub enum Page {
     Playlist { id: String, detail: Load<Box<PlaylistDetail>>, sel: Sel },
     /// One of the core's mixes, or the favorites.
     Mix { id: String, detail: Load<Box<MixSheet>>, sel: Sel },
+    /// A genre's songs, by its name.
+    Genre { name: String, songs: Load<Vec<Song>>, sel: Sel },
     /// All of a Home shelf's entries: a library row's read a page at a time from an offset, a feed's or For
     /// you's as Home has them.
     Row { title: String, items: Vec<Item>, row: Option<HomeRow>, pages: Paged<u32>, sel: Sel },
@@ -469,13 +473,14 @@ impl Page {
             Page::Artist { id, .. } => Req::Artist(id.clone()),
             Page::Playlist { id, .. } => Req::Playlist(id.clone()),
             Page::Mix { id, .. } => Req::Mix(id.clone()),
+            Page::Genre { name, .. } => Req::Genre(name.clone()),
             Page::Row { row, .. } => Req::Row { row: (*row)?, offset: 0 },
         })
     }
 
     fn sel(&mut self) -> &mut Sel {
         match self {
-            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } | Page::Row { sel, .. } => sel,
+            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } | Page::Genre { sel, .. } | Page::Row { sel, .. } => sel,
         }
     }
 
@@ -485,6 +490,7 @@ impl Page {
             Page::Artist { detail, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { artist_lines(d).len() }),
             Page::Playlist { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
             Page::Mix { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
+            Page::Genre { songs, .. } => songs.ready().map_or(0, Vec::len),
             Page::Row { items, .. } => items.len(),
         }
     }
@@ -496,6 +502,7 @@ impl Page {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Playlist { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Mix { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
+            Page::Genre { songs, .. } => songs.ready().map(Vec::as_slice),
             Page::Artist { detail, .. } => detail.ready().filter(|d| d.albums.is_empty()).map(|d| d.songs.as_slice()),
             Page::Row { .. } => None,
         }
@@ -527,6 +534,7 @@ pub enum Item {
     Artist(Artist),
     Playlist(Playlist),
     Mix(MixTile),
+    Genre(nori_core::browse::GenreTile),
 }
 
 /// One of Home's shelves: its title, its entries, and the library's row it is (none for a source's own).
@@ -641,6 +649,8 @@ pub struct Library {
     pub artists: Load<Vec<Artist>>,
     pub artists_sel: Sel,
     pub playlists: Load<Vec<Playlist>>,
+    pub genres: Load<Vec<nori_core::browse::GenreTile>>,
+    pub genres_sel: Sel,
     pub songs: Load<Vec<Song>>,
     pub song_pages: Paged<u32>,
     pub songs_sel: Sel,
@@ -671,6 +681,8 @@ impl Default for Library {
             artists: Load::Idle,
             artists_sel: Sel::default(),
             playlists: Load::Idle,
+            genres: Load::Idle,
+            genres_sel: Sel::default(),
             songs: Load::Idle,
             song_pages: Paged::new(0),
             songs_sel: Sel::default(),
@@ -1334,6 +1346,7 @@ pub enum ListRef {
     Artists,
     Songs,
     Playlists,
+    Genres,
     Favorites,
     History,
     Search,
@@ -1364,7 +1377,7 @@ impl ListRef {
 
     /// Whether a single click opens: lists of things with pages, not of songs.
     fn opens_on_click(self) -> bool {
-        matches!(self, ListRef::Albums | ListRef::Artists | ListRef::Playlists)
+        matches!(self, ListRef::Albums | ListRef::Artists | ListRef::Playlists | ListRef::Genres)
     }
 }
 
@@ -1618,6 +1631,7 @@ impl App {
                 LibrarySection::Artists => Some(View::Artists),
                 LibrarySection::Songs => Some(View::Songs),
                 LibrarySection::Playlists => Some(View::Playlists),
+                LibrarySection::Genres => Some(View::Genres),
                 _ => None,
             })
             .collect()
@@ -1651,6 +1665,7 @@ impl App {
             View::Artists => l.artists.ready().map_or(0, Vec::len),
             View::Songs => l.songs.ready().map_or(0, Vec::len),
             View::Playlists => l.playlists.ready().map_or(0, Vec::len),
+            View::Genres => l.genres.ready().map_or(0, Vec::len),
             _ => 0,
         };
         let mut out: Vec<LibLine> = self.places(self.view).into_iter().map(LibLine::Place).collect();
@@ -1680,6 +1695,7 @@ impl App {
             View::Artists => (&mut l.artists_sel, l.artists.ready().is_some_and(|v| !v.is_empty())),
             View::Songs => (&mut l.songs_sel, l.songs.ready().is_some_and(|v| !v.is_empty())),
             View::Playlists => (&mut l.playlists_sel, l.playlists.ready().is_some_and(|v| !v.is_empty())),
+            View::Genres => (&mut l.genres_sel, l.genres.ready().is_some_and(|v| !v.is_empty())),
             _ => return,
         };
         if has && first > 1 && sel.at < first {
@@ -1695,6 +1711,7 @@ impl App {
             View::Artists => l.artists_sel,
             View::Songs => l.songs_sel,
             View::Playlists => l.playlists_sel,
+            View::Genres => l.genres_sel,
             _ => return None,
         };
         self.library_lines().get(sel.at).copied()
@@ -1781,6 +1798,10 @@ impl App {
             View::Playlists if matches!(l.playlists, Load::Idle) => {
                 l.playlists = Load::Loading;
                 self.cmds.push(Cmd::Load(Req::Playlists));
+            }
+            View::Genres if matches!(l.genres, Load::Idle) => {
+                l.genres = Load::Loading;
+                self.cmds.push(Cmd::Load(Req::Genres));
             }
             View::Favorites if matches!(l.favorites, Load::Idle) => {
                 l.favorites = Load::Loading;
@@ -2239,6 +2260,11 @@ impl App {
                 self.onto_entries(View::Playlists);
             }
             (Req::Playlists, Err(e)) => self.library.playlists = Load::Failed(e),
+            (Req::Genres, Ok(Data::Genres(v))) => {
+                self.library.genres = Load::Ready(v);
+                self.onto_entries(View::Genres);
+            }
+            (Req::Genres, Err(e)) => self.library.genres = Load::Failed(e),
             (Req::PlaylistChoices(asked), Ok(Data::PlaylistChoices(choices))) => match &mut self.overlay {
                 Some(Overlay::Picker { options, target: Target::Playlist { songs, choices: offered }, .. }) if *songs == asked => {
                     options.truncate(1);
@@ -2349,6 +2375,8 @@ impl App {
                         (Page::Playlist { detail, .. }, Ok(Data::Playlist(d))) => *detail = Load::Ready(d),
                         (Page::Mix { detail, .. }, Ok(Data::Mix(d))) => *detail = Load::Ready(d),
                         (Page::Mix { detail, .. }, Err(e)) => *detail = Load::Failed(e),
+                        (Page::Genre { songs, .. }, Ok(Data::Genre(v))) => *songs = Load::Ready(v),
+                        (Page::Genre { songs, .. }, Err(e)) => *songs = Load::Failed(e),
                         (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Artist { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Playlist { detail, .. }, Err(e)) => *detail = Load::Failed(e),
@@ -3484,6 +3512,7 @@ impl App {
             View::Artists => l.artists = Load::Idle,
             View::Songs => l.songs = Load::Idle,
             View::Playlists => l.playlists = Load::Idle,
+            View::Genres => l.genres = Load::Idle,
             View::Favorites => l.favorites = Load::Idle,
             View::History => l.history = Load::Idle,
             View::Settings => self.settings.facts_asked = false,
@@ -3522,6 +3551,7 @@ impl App {
             View::Artists => (&mut self.library.artists_sel, lines),
             View::Songs => (&mut self.library.songs_sel, lines),
             View::Playlists => (&mut self.library.playlists_sel, lines),
+            View::Genres => (&mut self.library.genres_sel, lines),
             View::Favorites => (&mut self.library.favorites_sel, favorites),
             View::History => (&mut self.library.history_sel, history),
             View::Search => {
@@ -3586,7 +3616,7 @@ impl App {
                 View::Settings => self.settings.skip_titles(down),
                 View::Search => self.search.settle(down),
                 View::Home => self.home.settle(down),
-                View::Albums | View::Artists | View::Songs | View::Playlists if self.library_line() == Some(LibLine::Gap) => {
+                View::Albums | View::Artists | View::Songs | View::Playlists | View::Genres if self.library_line() == Some(LibLine::Gap) => {
                     let len = self.library_lines().len();
                     if let Some((sel, _)) = self.list() {
                         sel.by(if down { 1 } else { -1 }, len);
@@ -3649,7 +3679,7 @@ impl App {
         }
         if let Some(p) = self.page() {
             return match p {
-                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
+                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } | Page::Genre { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { sel, .. } if p.songs().is_some() => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { detail, sel, .. } => match artist_lines(detail.ready()?).get(sel.at)? {
                     ArtistLine::Album(i) => detail.ready()?.albums.get(*i).cloned().map(Item::Album),
@@ -3666,12 +3696,13 @@ impl App {
         };
         match self.view {
             View::Home => self.home.item(),
-            View::Albums | View::Artists | View::Songs | View::Playlists => match self.library_line()? {
+            View::Albums | View::Artists | View::Songs | View::Playlists | View::Genres => match self.library_line()? {
                 LibLine::Shelf(start) => shelf(start),
                 LibLine::Entry(i) => match self.view {
                     View::Albums => l.albums.ready()?.get(i).cloned().map(Item::Album),
                     View::Artists => l.artists.ready()?.get(i).cloned().map(Item::Artist),
                     View::Songs => l.songs.ready().filter(|s| i < s.len()).map(|s| Item::Song(s.clone(), i)),
+                    View::Genres => l.genres.ready()?.get(i).cloned().map(Item::Genre),
                     _ => l.playlists.ready()?.get(i).cloned().map(Item::Playlist),
                 },
                 LibLine::Place(_) | LibLine::Gap => None,
@@ -3776,6 +3807,7 @@ impl App {
             (Action::Open, Item::Artist(ar)) => self.open_artist(ar.id),
             (Action::Open, Item::Playlist(p)) => self.open_playlist(p.id),
             (Action::Open, Item::Mix(m)) => self.open_page(Page::Mix { id: m.id, detail: Load::Loading, sel: Sel::default() }),
+            (Action::Open, Item::Genre(g)) => self.open_page(Page::Genre { name: g.name, songs: Load::Loading, sel: Sel::default() }),
             (Action::Enqueue | Action::PlayNext, item) => {
                 let next = a == Action::PlayNext;
                 match item {
@@ -3785,6 +3817,7 @@ impl App {
                     Item::Artist(ar) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Artist(ar.id), next)),
                     Item::Playlist(p) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Playlist(p.id), next)),
                     Item::Mix(m) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Mix(m.id), next)),
+                    Item::Genre(g) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Genre(g.name), next)),
                 }
             }
             // Seals are where songs carry them, downloads the account's.
@@ -3797,6 +3830,7 @@ impl App {
                 Item::Artist(ar) => self.cmds.push(Cmd::DownloadFetch(Fetch::Artist(ar.id))),
                 Item::Playlist(p) => self.cmds.push(Cmd::DownloadFetch(Fetch::Playlist(p.id))),
                 Item::Mix(m) => self.cmds.push(Cmd::DownloadFetch(Fetch::Mix(m.id))),
+                Item::Genre(g) => self.cmds.push(Cmd::DownloadFetch(Fetch::Genre(g.name))),
             },
             (Action::Star, item) => {
                 let (kind, id, listed) = match item {
@@ -3804,7 +3838,7 @@ impl App {
                     Item::Album(al) => (Starrable::Album, al.id, al.starred),
                     Item::DownloadedAlbum(a) => (Starrable::Album, a.id, a.starred),
                     Item::Artist(ar) => (Starrable::Artist, ar.id, ar.starred),
-                    Item::Playlist(_) | Item::Mix(_) => return,
+                    Item::Playlist(_) | Item::Mix(_) | Item::Genre(_) => return,
                 };
                 self.star(kind, id, listed);
             }
@@ -3926,6 +3960,7 @@ impl App {
                 Page::Artist { id, .. } => PageOrigin::new(OriginKind::Artist, id.as_str()),
                 Page::Playlist { id, .. } => PageOrigin::new(OriginKind::Playlist, id.as_str()),
                 Page::Mix { id, .. } => PageOrigin::new(OriginKind::Mix, id.as_str()),
+                Page::Genre { name, .. } => PageOrigin::new(OriginKind::Genre, name.as_str()),
                 Page::Row { .. } => return None,
             });
         }
@@ -3979,6 +4014,7 @@ impl App {
             Some(Item::Artist(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Artist(a.id), shuffle)),
             Some(Item::Playlist(p)) => self.cmds.push(Cmd::PlayFetch(Fetch::Playlist(p.id), shuffle)),
             Some(Item::Mix(m)) => self.cmds.push(Cmd::PlayFetch(Fetch::Mix(m.id), shuffle)),
+            Some(Item::Genre(g)) => self.cmds.push(Cmd::PlayFetch(Fetch::Genre(g.name), shuffle)),
             Some(Item::Song(songs, _)) => {
                 let from = self.origin_here();
                 self.cmds.push(Cmd::Play { songs, start: 0, shuffle, from })
@@ -4020,7 +4056,7 @@ impl App {
         let kind = match page {
             Page::Album { .. } | Page::DownloadedAlbum { .. } => PageKind::Album,
             Page::Artist { .. } => PageKind::Artist,
-            Page::Playlist { .. } => PageKind::Playlist,
+            Page::Playlist { .. } | Page::Genre { .. } => PageKind::Playlist,
             Page::Mix { detail, .. } => PageKind::Mix { refreshable: detail.ready().is_some_and(|m| m.refreshable) },
             Page::Row { .. } => return Vec::new(),
         };
@@ -4048,6 +4084,7 @@ impl App {
             Page::Artist { id, .. } => Some(Fetch::Artist(id.clone())),
             Page::Playlist { id, .. } => Some(Fetch::Playlist(id.clone())),
             Page::Mix { id, .. } => Some(Fetch::Mix(id.clone())),
+            Page::Genre { name, .. } => Some(Fetch::Genre(name.clone())),
             Page::Row { .. } => None,
         };
         match a {
@@ -4348,6 +4385,7 @@ impl App {
             Some(Item::Artist(a)) => Some(Cmd::PlayFetch(Fetch::Artist(a.id), false)),
             Some(Item::Playlist(p)) => Some(Cmd::PlayFetch(Fetch::Playlist(p.id), false)),
             Some(Item::Mix(m)) => Some(Cmd::PlayFetch(Fetch::Mix(m.id), false)),
+            Some(Item::Genre(g)) => Some(Cmd::PlayFetch(Fetch::Genre(g.name), false)),
             None => None,
         };
         if self.devices.jam.is_none() && self.devices.jam_start == Some(JamStart::Offered) {
