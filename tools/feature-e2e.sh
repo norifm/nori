@@ -823,18 +823,32 @@ fi
 
 if want foryou; then section "for you: favourites and mixes open as pages"
   # What a mix page shows, read from the screen: "<count>|<title>@<x>,<y>|..." for the song count in its
-  # caption and every fully visible row title (rows sit below the Play pill and above the mini player).
-  # Which songs a mix holds, and that it stays the same when opened again, is mixes.rs.
+  # caption and every fully visible row title (rows sit below the caption and above the mini player or the
+  # tabs, their title over their artists). Which songs a mix holds, and that it stays the same when opened
+  # again, is mixes.rs.
   page() {
     ui | python3 -c "
 import sys,re
 nodes=[(t,d,*map(int,b)) for t,d,b in ((m.group(1),m.group(2),re.findall(r'\d+',m.group(3))) for m in re.finditer(r'text=\"([^\"]*)\"[^>]*content-desc=\"([^\"]*)\"[^>]*bounds=\"([^\"]*)\"',sys.stdin.read()))]
-count=next((int(m.group(1)) for t,*_ in nodes for m in [re.match(r'(\d+) songs? ',t)] if m),0)
-bar=next((y1 for t,d,x1,y1,x2,y2 in nodes if d=='Now playing bar'),10**6)
-play=next((y2 for t,d,x1,y1,x2,y2 in nodes if t=='Play'),0)
-rows=[n for n in nodes if n[0] and n[3]>=play and n[5]<=bar and 150<n[2]<260]
+caption=next((n for n in nodes if re.match(r'\d+ songs? ',n[0])),None)
+count=int(caption[0].split()[0]) if caption else 0
+top=caption[5] if caption else 0
+bar=min([y1 for t,d,x1,y1,x2,y2 in nodes if d in ('Now playing bar','Home')],default=10**6)
+rows=[n for n in nodes if n[0] and n[3]>=top and n[5]<=bar]
 titles=[n for i,n in enumerate(rows) if i%2==0]
 print('|'.join([str(count)]+['%s@%d,%d'%(t,(x1+x2)//2,(y1+y2)//2) for t,d,x1,y1,x2,y2 in titles]))"
+  }
+  # The caption dragged slowly (no fling) up to a quarter of the screen's height, for three rows under it on
+  # a short screen.
+  caption_up() {
+    local size w h y
+    size=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); w=${size%x*}; h=${size#*x}
+    y=$(ui | python3 -c "
+import sys,re
+m=re.search(r'text=\"\d+ songs? [^\"]*\"[^>]*bounds=\"\[\d+,(\d+)\]',sys.stdin.read())
+print(m[1] if m else '')")
+    [ -n "$y" ] || return 1
+    [ "$y" -le $((h / 4)) ] || adb shell input swipe $((w / 2)) "$y" $((w / 2)) $((h / 4)) 1500
   }
   count_is() { [ "$(page | cut -d'|' -f1)" = "$1" ]; }
   starred_count() { api getStarred2 | python3 -c "
@@ -857,11 +871,12 @@ print(sum(1 for s in d.get('song',[]) if not s.get('isExternal') and not s['id']
   fi
   "$app" open mix/discover >/dev/null
   wait_until 8 bash -c "'$app' state | grep -q 'mix/{id}'"
+  wait_until 15 caption_up
   first=""
-  page_ready() { first=$(page) || return 1; [ -n "$(echo "$first" | cut -d'|' -f4)" ]; }
+  page_ready() { first=$(page) || return 1; [ -n "$(echo "$first" | cut -s -d'|' -f4)" ]; }
   wait_until 15 page_ready
   # What you see is what plays: a tap on the third row starts the whole mix at that row.
-  n=$(echo "$first" | cut -d'|' -f1); third=$(echo "$first" | cut -d'|' -f4)
+  n=$(echo "$first" | cut -d'|' -f1); third=$(echo "$first" | cut -s -d'|' -f4)
   if [ -n "$third" ]; then
     xy=${third##*@}; adb shell input tap "${xy%,*}" "${xy#*,}"
     tapped_queue() {
@@ -1044,26 +1059,36 @@ PY
     check "a long queue plays" wait_for playing True 10
     "$app" open queue >/dev/null
     check "its queue opens" wait_until 10 on_screen 'content-desc="Shuffle"'
-    # The queue's rows on screen, top first: "caption" or a song's title, and its top.
-    queue_rows() {
+    # The queue's panel, the node that holds the heading "Queue" (the player's own title, behind it, is
+    # outside). rows: its rows on screen, top first, "caption" or a song's title, and its top. drag: where a
+    # push of half a row starts and ends, in the middle of the list.
+    queue_panel() {
       ui | python3 -c '
-import re, sys
-tree = sys.stdin.read()
-rows = [(int(t), "caption" if s.lower() == "playing next" else s) for s, t in re.findall(r"text=\"(Playing next|PLAYING NEXT|Long Track \d\d)\"[^>]*?bounds=\"\[(?:68|216),(\d+)\]", tree)]
-for t, s in sorted(rows): print(s, t)'
+import re, sys, xml.etree.ElementTree as ET
+panel = next(n for n in ET.fromstring(sys.stdin.read()).iter() for c in n if c.get("text") == "Queue")
+box = lambda n: list(map(int, re.findall(r"\d+", n.get("bounds"))))
+rows = sorted((box(n)[1], "caption" if n.get("text").lower() == "playing next" else n.get("text"))
+              for n in panel.iter() if re.fullmatch(r"(?i)playing next|Long Track \d\d", n.get("text", "")))
+if sys.argv[1] == "rows":
+    for t, s in rows: print(s, t)
+else:
+    l, t, r, b = box(panel)
+    songs = [t for t, s in rows if s != "caption"]
+    print((l + r) // 2, (t + b) // 2, (songs[2] - songs[1]) // 2)' "$1"
     }
     # Up a little at a time, without a fling, until the caption's words are above where the song playing's
     # were as the list opened: by then nothing of that row is left in sight.
-    first=$(queue_rows | head -1 | awk '{print $NF}')
-    on_top() { local top; top=$(queue_rows | head -1); [ "${top%% *}" = caption ] && [ "${top##* }" -lt "$first" ]; }
+    first=$(queue_panel rows | head -1 | awk '{print $NF}')
+    on_top() { local top; top=$(queue_panel rows | head -1); [ "${top%% *}" = caption ] && [ "${top##* }" -lt "$first" ]; }
+    read -r x y step <<<"$(queue_panel drag)"
     for _ in $(seq 12); do
       on_top && break
-      adb shell input swipe 540 1300 540 1240 1500
+      adb shell input swipe "$x" "$((y + step))" "$x" "$y" 1500
     done
     check "the caption is the list's first row" on_top
     # The second song under it: still to come after the next song starts.
-    kept=$(queue_rows | sed -n 3p); kept_name=${kept% *}; kept_top=${kept##* }
-    stays() { local now; now=$(queue_rows | grep "^$kept_name " | head -1 | awk '{print $NF}'); [ -n "$now" ] && [ $((now - kept_top)) -le 6 ] && [ $((kept_top - now)) -le 6 ]; }
+    kept=$(queue_panel rows | sed -n 3p); kept_name=${kept% *}; kept_top=${kept##* }
+    stays() { local now; now=$(queue_panel rows | grep "^$kept_name " | head -1 | awk '{print $NF}'); [ -n "$now" ] && [ $((now - kept_top)) -le 6 ] && [ $((kept_top - now)) -le 6 ]; }
     was=$(field title); moved_on() { [ "$(field title)" != "$was" ]; }
     "$app" do next >/dev/null
     check "the next song starts" wait_until 10 moved_on
