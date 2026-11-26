@@ -231,7 +231,7 @@ enum Seen {
     Fine,
     /// Back by no more than jitter (this many frames): the count holds.
     Jitter(u64),
-    /// Back where the next song may have started: the count restarted at the join.
+    /// Restarted where the next song started (back, or on from a reading made before the join).
     Joined,
     /// Back, away from a join: set aside until the next reading.
     Dip,
@@ -241,13 +241,18 @@ enum Seen {
 }
 
 impl Head {
-    /// Takes `raw`. `join`: where the next song starts, if the clock allows reaching it; `restart`: the
-    /// platform may have restarted its count away from a join; `jitter`: frames a reading may step back;
-    /// `most`: the furthest the clock allows. A reading past `most` changes nothing: Err with where it
-    /// would have put the count.
-    fn read(&mut self, raw: u64, join: Option<u64>, restart: bool, jitter: u64, most: u64) -> Result<(u64, Seen), u64> {
+    /// Takes `raw`. `join`: where a song starts that the clock allows reaching since the last reading;
+    /// `restart`: the platform may have restarted its count away from a join; `jitter`: frames a reading
+    /// may step back; `clock`: where the clock puts the count; `most`: the furthest the clock allows. A
+    /// reading past `most` changes nothing: Err with where it would have put the count.
+    fn read(&mut self, raw: u64, join: Option<u64>, restart: bool, jitter: u64, clock: u64, most: u64) -> Result<(u64, Seen), u64> {
         let (base, last, seen) = if raw >= self.last {
-            (self.base, raw, Seen::Fine)
+            // Read seldom (the CPU asleep through a song), a count restarted at a join can be past the
+            // last reading: it restarted there when counting it from the join puts it nearer the clock.
+            match join.filter(|&j| j + raw <= most && (j + raw).abs_diff(clock) < (self.base + raw).abs_diff(clock)) {
+                Some(j) => (j, raw, Seen::Joined),
+                None => (self.base, raw, Seen::Fine),
+            }
         } else if self.last - raw <= jitter {
             self.lower = None;
             return Ok((self.base + self.last, Seen::Jitter(self.last - raw)));
@@ -682,6 +687,13 @@ impl Offload {
         self.open.map_or(48_000, |t| t.coded.rate).max(1)
     }
 
+    /// Where the count is by the clock: the last sensible reading, or playing again if later, moved on at
+    /// real time since.
+    fn by_clock(&self) -> u64 {
+        let anchor = [self.t.clock, self.t.play_clock].into_iter().flatten().max_by_key(|&(t, _)| t);
+        anchor.map_or(self.t.heard_at, |(t, at)| at + ((self.now_ms - t).max(0) as u128 * self.rate() as u128 / 1000) as u64)
+    }
+
     /// The furthest the count can be by the clock: the last sensible reading moved on by the time since.
     fn most(&self) -> u64 {
         let rate = self.rate() as f64 * self.out.pace();
@@ -718,13 +730,15 @@ impl Offload {
         let jitter = (JITTER_MS * rate / 1000) as u64;
         let mut count = if by == Count::Stamp { self.t.stamp } else { self.t.head };
         let counted = count.base + count.last;
-        // A join the clock says may have been reached.
-        let join = self.t.placed.iter().map(|p| p.start).find(|&s| s > counted).filter(|&s| s <= most);
+        // A join the clock says may have been reached; of several, the one a count restarted there puts
+        // nearest the clock.
+        let clock = self.by_clock();
+        let join = self.t.placed.iter().map(|p| p.start).filter(|&s| s > counted && s <= most).min_by_key(|&s| (s + raw).abs_diff(clock));
         // Away from a join, a restart is plausible only after an end of stream or a pause.
         let restart = self.t.eos_at.is_some() || self.t.resumed;
         let was = self.t.heard_at;
         let last = count.last;
-        let read = count.read(raw, join, restart, jitter, most);
+        let read = count.read(raw, join, restart, jitter, clock, most);
         match by {
             Count::Stamp => self.t.stamp = count,
             Count::Head => self.t.head = count,
@@ -1563,63 +1577,76 @@ mod tests {
 
     #[test]
     fn head_readings() {
+        // The clock (0 here) matters only with a join in reach and a reading on from the last.
         let mut h = Head::default();
         let far = u64::MAX;
-        assert_eq!(h.read(1_000, None, false, JITTER, far), Ok((1_000, Seen::Fine)));
-        assert_eq!(h.read(10_990, None, false, JITTER, far), Ok((10_990, Seen::Fine)));
+        assert_eq!(h.read(1_000, None, false, JITTER, 0, far), Ok((1_000, Seen::Fine)));
+        assert_eq!(h.read(10_990, None, false, JITTER, 0, far), Ok((10_990, Seen::Fine)));
         // Restarted at the join at 11 000.
-        assert_eq!(h.read(20, Some(11_000), false, JITTER, far), Ok((11_020, Seen::Joined)));
-        assert_eq!(h.read(500, None, false, JITTER, far), Ok((11_500, Seen::Fine)));
+        assert_eq!(h.read(20, Some(11_000), false, JITTER, 0, far), Ok((11_020, Seen::Joined)));
+        assert_eq!(h.read(500, None, false, JITTER, 0, far), Ok((11_500, Seen::Fine)));
+
+        // Read again only after the join at 11 000: on from the last reading, the count restarted there
+        // (the clock at 14 000), or ran on (the clock at 3 100).
+        for (clock, read) in [(14_000, Ok((14_000, Seen::Joined))), (3_100, Ok((3_000, Seen::Fine)))] {
+            let mut h = Head::default();
+            assert_eq!(h.read(100, None, false, JITTER, 100, far), Ok((100, Seen::Fine)));
+            assert_eq!(h.read(3_000, Some(11_000), false, JITTER, clock, far), read, "clock {clock}");
+        }
+        // Counted from the join it would pass the furthest the clock allows: run on.
+        let mut h = Head::default();
+        assert_eq!(h.read(100, None, false, JITTER, 100, far), Ok((100, Seen::Fine)));
+        assert_eq!(h.read(3_000, Some(11_000), false, JITTER, 13_500, 13_900), Ok((3_000, Seen::Fine)));
 
         // Head dip away from join holds.
         let mut h = Head::default();
         let far = u64::MAX;
-        assert_eq!(h.read(44_100, None, true, JITTER, far), Ok((44_100, Seen::Fine)));
+        assert_eq!(h.read(44_100, None, true, JITTER, 0, far), Ok((44_100, Seen::Fine)));
         // One zero reading: held, and the count continues when the next is back.
-        assert_eq!(h.read(0, None, true, JITTER, far), Ok((44_100, Seen::Dip)));
-        assert_eq!(h.read(46_000, None, true, JITTER, far), Ok((46_000, Seen::Fine)));
+        assert_eq!(h.read(0, None, true, JITTER, 0, far), Ok((44_100, Seen::Dip)));
+        assert_eq!(h.read(46_000, None, true, JITTER, 0, far), Ok((46_000, Seen::Fine)));
         // A real restart (standby, end of stream): taken at the second low reading.
-        assert_eq!(h.read(10, None, true, JITTER, far), Ok((46_000, Seen::Dip)));
-        assert_eq!(h.read(900, None, true, JITTER, far), Ok((46_900, Seen::Restarted)));
-        assert_eq!(h.read(1_900, None, true, JITTER, far), Ok((47_900, Seen::Fine)));
+        assert_eq!(h.read(10, None, true, JITTER, 0, far), Ok((46_000, Seen::Dip)));
+        assert_eq!(h.read(900, None, true, JITTER, 0, far), Ok((46_900, Seen::Restarted)));
+        assert_eq!(h.read(1_900, None, true, JITTER, 0, far), Ok((47_900, Seen::Fine)));
 
         // Head restart only where plausible.
         let mut h = Head::default();
         let far = u64::MAX;
-        assert_eq!(h.read(441_000, None, false, JITTER, far), Ok((441_000, Seen::Fine)));
+        assert_eq!(h.read(441_000, None, false, JITTER, 0, far), Ok((441_000, Seen::Fine)));
         // No end of stream or pause: low readings hold.
-        assert_eq!(h.read(10, None, false, JITTER, far), Ok((441_000, Seen::Dip)));
-        assert_eq!(h.read(900, None, false, JITTER, far), Ok((441_000, Seen::Dip)));
+        assert_eq!(h.read(10, None, false, JITTER, 0, far), Ok((441_000, Seen::Dip)));
+        assert_eq!(h.read(900, None, false, JITTER, 0, far), Ok((441_000, Seen::Dip)));
         // A drop to half way is never a restart.
-        assert_eq!(h.read(300_000, None, true, JITTER, far), Ok((441_000, Seen::Dip)));
-        assert_eq!(h.read(300_100, None, true, JITTER, far), Ok((441_000, Seen::Dip)));
-        assert_eq!(h.read(441_500, None, true, JITTER, far), Ok((441_500, Seen::Fine)));
+        assert_eq!(h.read(300_000, None, true, JITTER, 0, far), Ok((441_000, Seen::Dip)));
+        assert_eq!(h.read(300_100, None, true, JITTER, 0, far), Ok((441_000, Seen::Dip)));
+        assert_eq!(h.read(441_500, None, true, JITTER, 0, far), Ok((441_500, Seen::Fine)));
 
         // Head jitter holds count.
         let mut h = Head::default();
         let far = u64::MAX;
         // A Galaxy S22's timestamp as its track starts (once misread as restarts).
-        assert_eq!(h.read(10, None, true, JITTER, far), Ok((10, Seen::Fine)));
+        assert_eq!(h.read(10, None, true, JITTER, 0, far), Ok((10, Seen::Fine)));
         for (raw, back) in [(6, 4), (5, 5), (4, 6), (4, 6), (6, 4)] {
-            assert_eq!(h.read(raw, None, true, JITTER, far), Ok((10, Seen::Jitter(back))));
+            assert_eq!(h.read(raw, None, true, JITTER, 0, far), Ok((10, Seen::Jitter(back))));
         }
-        assert_eq!(h.read(7_074, None, true, JITTER, far), Ok((7_074, Seen::Fine)));
+        assert_eq!(h.read(7_074, None, true, JITTER, 0, far), Ok((7_074, Seen::Fine)));
         for raw in [7_066, 7_065, 7_067, 7_065, 7_066, 7_064] {
-            assert_eq!(h.read(raw, None, true, JITTER, far).map(|r| r.0), Ok(7_074), "{raw}");
+            assert_eq!(h.read(raw, None, true, JITTER, 0, far).map(|r| r.0), Ok(7_074), "{raw}");
         }
         // Steps back up to 80 ms are never a join, even with one in reach.
-        assert_eq!(h.read(3_021_762, None, true, JITTER, far), Ok((3_021_762, Seen::Fine)));
-        assert_eq!(h.read(3_021_759, Some(3_022_000), true, JITTER, far), Ok((3_021_762, Seen::Jitter(3))));
-        assert_eq!(h.read(3_018_234, Some(3_022_000), true, JITTER, far), Ok((3_021_762, Seen::Jitter(3_528))));
-        assert_eq!(h.read(3_021_800, None, true, JITTER, far), Ok((3_021_800, Seen::Fine)));
+        assert_eq!(h.read(3_021_762, None, true, JITTER, 0, far), Ok((3_021_762, Seen::Fine)));
+        assert_eq!(h.read(3_021_759, Some(3_022_000), true, JITTER, 0, far), Ok((3_021_762, Seen::Jitter(3))));
+        assert_eq!(h.read(3_018_234, Some(3_022_000), true, JITTER, 0, far), Ok((3_021_762, Seen::Jitter(3_528))));
+        assert_eq!(h.read(3_021_800, None, true, JITTER, 0, far), Ok((3_021_800, Seen::Fine)));
 
         // Head ahead of clock rejected.
         let mut h = Head::default();
-        assert_eq!(h.read(1_000, None, false, JITTER, 50_000), Ok((1_000, Seen::Fine)));
-        assert_eq!(h.read(4_000_000, None, false, JITTER, 50_000), Err(4_000_000));
-        assert_eq!(h.read(12_000, None, false, JITTER, 50_000), Ok((12_000, Seen::Fine)), "the count as it was");
+        assert_eq!(h.read(1_000, None, false, JITTER, 0, 50_000), Ok((1_000, Seen::Fine)));
+        assert_eq!(h.read(4_000_000, None, false, JITTER, 0, 50_000), Err(4_000_000));
+        assert_eq!(h.read(12_000, None, false, JITTER, 0, 50_000), Ok((12_000, Seen::Fine)), "the count as it was");
         // A join the clock says cannot be reached is not one.
-        assert_eq!(h.read(10, None, false, JITTER, 50_000), Ok((12_000, Seen::Dip)));
+        assert_eq!(h.read(10, None, false, JITTER, 0, 50_000), Ok((12_000, Seen::Dip)));
     }
 
 }

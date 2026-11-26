@@ -303,6 +303,9 @@ struct Chip {
     holds_back: u64,
     /// The play head frozen at this value.
     frozen_head: Option<u64>,
+    /// Where its count started from nought again: at each end of stream, on a track that restarts it at
+    /// gapless joins as Android's offloaded AudioTrack does (None: one count from the open).
+    joins: Option<Vec<u64>>,
 }
 
 #[derive(Clone, Default)]
@@ -351,7 +354,7 @@ impl Chip {
 
     /// A jittery timestamp reading.
     fn jittery_stamp(&mut self) -> u64 {
-        let truth = self.head - self.offset;
+        let truth = self.counted();
         // Start glitches last 300 ms.
         if truth > 13_230 {
             self.stamp_script.clear();
@@ -378,6 +381,12 @@ impl Chip {
         };
         self.last_stamp = stamp;
         stamp
+    }
+
+    /// The platform's count: frames played since the count last started from nought.
+    fn counted(&self) -> u64 {
+        let join = self.joins.iter().flatten().copied().filter(|&j| j < self.head).max().unwrap_or(0);
+        self.head - self.offset.max(join)
     }
 
     fn held_bytes(&self) -> usize {
@@ -500,6 +509,11 @@ impl Fake {
         c.wake();
     }
 
+    /// Counts from nought again at every gapless join, as Android's offloaded AudioTrack does.
+    fn restarts_at_joins(&self) {
+        self.0.lock().joins = Some(Vec::new());
+    }
+
     /// Restarts the count from zero here.
     fn count_again(&self) {
         let mut c = self.0.lock();
@@ -576,6 +590,10 @@ impl OffloadOutput for Fake {
         }
         c.calls.push(Call::EndOfStream);
         c.ended_at = Some(c.written);
+        let written = c.written;
+        if let Some(joins) = c.joins.as_mut() {
+            joins.push(written);
+        }
         c.stale_presented = false;
         true
     }
@@ -618,7 +636,7 @@ impl OffloadOutput for Fake {
             Some(r) => r,
             None if c.frozen_head.is_some() => c.frozen_head,
             None if c.head_stuck => Some(0),
-            None => Some(c.head - c.offset),
+            None => Some(c.counted()),
         }
     }
 
@@ -631,7 +649,7 @@ impl OffloadOutput for Fake {
         if c.jittery {
             return Some(c.jittery_stamp());
         }
-        c.stamps.then(|| c.head - c.offset)
+        c.stamps.then(|| c.counted())
     }
 
     fn data_requested(&mut self) -> bool {
@@ -1960,6 +1978,43 @@ fn plays_through_on_the_phone(rig: &Rig, fake: &Fake, secs: u32) {
     assert!(!notes.iter().any(|n| n.contains("given up")), "{notes:?}");
     // The grant note for the perf report.
     assert!(notes.iter().any(|n| n.contains("granted a track of 64 KB of the") && n.contains("topped up when the platform asks")), "{notes:?}");
+}
+
+/// Android's offloaded track counts from nought again at every gapless join. Holding both songs, it
+/// lets the CPU sleep through the first, so the engine reads the count again only once the second plays:
+/// that count is the second song's place, not the first's. A count that runs on is read as before.
+#[test]
+fn count_read_after_a_join_is_the_next_songs() {
+    if !ffmpeg() {
+        return;
+    }
+    let secs = 20;
+    let join = secs as u64 * 44_100;
+    for (stamps, restarts) in [(true, true), (false, true), (true, false), (false, false)] {
+        let what = format!("timestamps {stamps}, count restarts at joins {restarts}");
+        let d = dir();
+        let (a, b) = (mp3(&d, "a", secs, 440), mp3(&d, "b", secs, 660));
+        let server = Arc::new(Server::default());
+        serve(&server, &[("a", &a), ("b", &b)]);
+        let fake = Fake::new(MP3_ONLY);
+        fake.phone(stamps, false);
+        fake.0.lock().grant = None;
+        if restarts {
+            fake.restarts_at_joins();
+        }
+        let ms = secs as i64 * 1000;
+        let rig = Rig::new(server, vec![("a".into(), "mp3".into(), ms), ("b".into(), "mp3".into(), ms)], app(), Some(fake.clone()), offload());
+        rig.engine.play_at(0, 0);
+        assert!(rig.time.until(Duration::from_secs(30), || fake.0.lock().head >= join - 44_100), "{what}");
+        assert!(rig.engine.status().position_ms < 1_000, "{what}: the engine slept through a: {:?}", rig.engine.status());
+        assert!(rig.time.until(Duration::from_secs(30), || fake.0.lock().head >= join + 3 * 44_100), "{what}");
+        assert!(rig.heard_song("b"), "{what}: b is said: {:?}", rig.events.lock());
+        rig.engine.look();
+        rig.run(10);
+        let s = rig.engine.status();
+        assert!(s.offloaded() && s.index == Some(1) && (2_800..=3_300).contains(&s.position_ms), "{what}: three seconds into b: {s:?}");
+        rig.engine.stop();
+    }
 }
 
 #[test]
