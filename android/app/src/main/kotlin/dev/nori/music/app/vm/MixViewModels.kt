@@ -136,7 +136,7 @@ class MixViewModel(app: Application) : NoriViewModel(app) {
         changes.map { withContext(Dispatchers.IO) { nori.core.mixPage(id) } }
             .transform { found ->
                 when (found) {
-                    MixLookup.Unknown -> throw IllegalArgumentException(dev.nori.music.app.ui.say.mixUnknown(id))
+                    MixLookup.Unknown -> throw IllegalArgumentException(dev.nori.music.app.ui.say.mixUnknown)
                     is MixLookup.Ready -> emit(page(found.sheet))
                     MixLookup.NotDrawn -> {}
                 }

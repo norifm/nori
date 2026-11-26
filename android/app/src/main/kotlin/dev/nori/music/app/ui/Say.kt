@@ -931,7 +931,7 @@ class Say(private val r: Resources) {
         MixName.TOP -> r.getString(R.string.mix_top)
     }
 
-    fun mixUnknown(id: String): String = r.getString(R.string.mix_unknown, id)
+    val mixUnknown: String get() = r.getString(R.string.mix_unknown)
 
     /** A ready-made smart playlist's name. */
     fun smartBuiltin(b: SmartBuiltin): String = r.getString(
