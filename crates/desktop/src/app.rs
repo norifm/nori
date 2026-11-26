@@ -144,12 +144,13 @@ enum BackTo {
 }
 
 /// Where Back leads from `view`, with a plugin's page open on Settings: the one before it; from a page of
-/// Settings' (the equalizer, support), Settings, as its own back arrow; from a page, back along the trail; from a
-/// tab or a page of Home's, Home.
-fn back_from(view: View, plugin_page: bool) -> BackTo {
+/// Settings' (the equalizer, support), Settings, as its own back arrow; from Downloads or History, `place_from`,
+/// the tab they were opened on; from a page, back along the trail; from a tab or a page of Home's, Home.
+fn back_from(view: View, plugin_page: bool, place_from: View) -> BackTo {
     match view {
         View::Settings if plugin_page => BackTo::PluginPage,
         View::Equalizer | View::Support => BackTo::View(View::Settings),
+        View::Downloads | View::History => BackTo::View(place_from),
         View::Page => BackTo::Trail,
         _ => BackTo::View(View::Home),
     }
@@ -197,6 +198,7 @@ struct Lists {
     albums: Vec<nori_core::Album>,
     artists: Vec<Card>,
     playlists: Vec<nori_core::Playlist>,
+    genres: Vec<Card>,
 }
 
 /// Decoded covers, looked up by the `art` callback while drawing. A missing cover is requested once;
@@ -475,6 +477,7 @@ enum PageShown {
     Playlist(Option<nori_core::Playlist>),
     /// The mix's id and name, once read: it can be drawn again and kept as a playlist.
     Mix(Option<(String, String)>),
+    Genre,
 }
 
 /// What the queue's undo would put back.
@@ -558,8 +561,16 @@ pub struct App {
     album_pages: Paged<u32>,
     album_sort: AlbumSort,
     albums_favorites: bool,
-    /// The songs list's pages.
+    /// The songs list's pages, its order (a `browse::song_sorts` name, turned around or not), and whether
+    /// only the favorites.
     song_pages: Paged<u32>,
+    song_sort: String,
+    song_reversed: bool,
+    songs_favorites: bool,
+    /// The history's pages: where each starts.
+    history_pages: Paged<Option<nori_core::browse::HistoryAfter>>,
+    /// The tab Downloads or History was opened from, which Back returns to.
+    place_from: View,
     /// The player pill and the top pill: windows of their own, laid over the blurred page.
     player: Option<PlayerBar>,
     top: Option<TopBar>,
@@ -748,7 +759,7 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
 fn library_tabs(rules: &nori_core::browse::ProfileRules) -> LibraryTabs {
     use nori_core::settings::LibrarySection::*;
     let has = |s| rules.sections.contains(&s);
-    LibraryTabs { albums: has(Albums), artists: has(Artists), songs: has(Songs), playlists: has(Playlists), favorites: has(Favourites) }
+    LibraryTabs { albums: has(Albums), artists: has(Artists), songs: has(Songs), playlists: has(Playlists), genres: has(Genres), favorites: has(Favourites), downloads: has(Downloads), history: has(History) }
 }
 
 fn top(ui: &AppWindow) -> Option<TopBar> {
@@ -934,6 +945,11 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             editing: None,
             album_pages: Paged::new(0),
             song_pages: Paged::new(0),
+            song_sort: String::new(),
+            song_reversed: false,
+            songs_favorites: false,
+            history_pages: Paged::new(None),
+            place_from: View::Home,
             album_sort: AlbumSort::ByName,
             albums_favorites: false,
             backdrop: None,
@@ -1425,6 +1441,17 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_play_chosen_artist, h, |a, shuffle| a.play_chosen_artist(shuffle));
     on!(ui.on_album_sort_chosen, h, |a, at| a.sort_albums(at as usize));
     on!(ui.on_albums_favorites_toggled, h, |a| a.toggle_album_favorites());
+    on!(ui.on_song_sort_chosen, h, |a, at| a.sort_songs(at as usize));
+    on!(ui.on_songs_favorites_toggled, h, |a| {
+        a.songs_favorites = !a.songs_favorites;
+        a.reload_songs();
+    });
+    on!(ui.on_shuffle_library, h, |a, albums| a.shuffle_library(albums));
+    on!(ui.on_open_place, h, |a, view| a.open_place(view));
+    on!(ui.on_open_genre, h, |a, name| a.open_page(PageAsk::Genre(name.into())));
+    on!(ui.on_play_genre, h, |a, name| a.play_fetch(Fetch::Genre(name.into())));
+    on!(ui.on_open_downloaded_album, h, |a, id| a.open_page(PageAsk::DownloadedAlbum(id.into())));
+    on!(ui.on_clear_history, h, |a| a.clear_history());
     on!(ui.on_open_accounts, h, |a| {
         let accounts = crate::settings::tabs(&a.facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers);
         a.ui().set_settings_tab(accounts.unwrap_or(0) as i32);
@@ -1642,6 +1669,7 @@ impl App {
                 ui.set_page_can_star(s.rules().stars);
                 ui.set_favorites_offered(s.rules().stars);
                 ui.set_library_tabs(library_tabs(&s.rules()));
+                ui.set_can_shuffle(s.rules().account);
                 self.session = Some(s);
                 self.update_plugins();
                 // The last profile's song leaves the screen; the new one's, if it has one, comes with follow.
@@ -1829,9 +1857,23 @@ impl App {
                 Some(Req::Page(PageAsk::Favorites))
             }
             View::Songs => {
+                let lists = self.root.app.settings.current().unwrap_or_default().list_prefs;
+                self.song_sort = nori_core::browse::song_sort_saved(lists.clone());
+                self.song_reversed = nori_core::browse::sort_reversed_saved(lists, nori_core::browse::SortedList::Songs);
+                self.reload_songs();
+                None
+            }
+            View::Genres => Some(Req::Page(PageAsk::Genres)),
+            View::History => {
                 self.songs.clear();
-                self.song_pages.reset();
-                self.song_pages.ask().map(|offset| Req::Page(PageAsk::Songs { offset }))
+                self.show_songs();
+                self.history_pages.reset();
+                self.history_pages.ask().map(|after| Req::Page(PageAsk::History(after)))
+            }
+            View::Downloads => {
+                self.songs.clear();
+                self.show_songs();
+                Some(Req::Page(PageAsk::Downloads))
             }
             View::Settings => {
                 self.settings_shown();
@@ -1923,20 +1965,23 @@ impl App {
             PageAsk::Artist(id) => (Fetch::Artist(id.clone()), PageShown::Artist),
             PageAsk::Playlist(id) => (Fetch::Playlist(id.clone()), PageShown::Playlist(None)),
             PageAsk::Mix(id) => (Fetch::Mix(id.clone()), PageShown::Mix(None)),
+            PageAsk::Genre(name) => (Fetch::Genre(name.clone()), PageShown::Genre),
+            PageAsk::DownloadedAlbum(id) => (Fetch::DownloadedAlbum(id.clone()), PageShown::Album),
             _ => return,
         };
         (self.page_fetch, self.page) = (Some(fetch), Some(page));
         self.want.clear();
         ui.set_page_id(match &ask {
-            PageAsk::Album(id) | PageAsk::Artist(id) | PageAsk::Playlist(id) | PageAsk::Mix(id) => id.as_str().into(),
+            PageAsk::Album(id) | PageAsk::Artist(id) | PageAsk::Playlist(id) | PageAsk::Mix(id) | PageAsk::Genre(id) | PageAsk::DownloadedAlbum(id) => id.as_str().into(),
             _ => "".into(),
         });
         ui.set_page_kind(match &ask {
-            PageAsk::Album(_) => PageLayout::Album,
+            PageAsk::Album(_) | PageAsk::DownloadedAlbum(_) => PageLayout::Album,
             PageAsk::Artist(_) => PageLayout::Artist,
             _ => PageLayout::List,
         });
         ui.set_page_mix(matches!(ask, PageAsk::Mix(_)));
+        ui.set_page_genre(matches!(ask, PageAsk::Genre(_)));
         // A pin is kept here beside the account's playlists, as on Android.
         ui.set_page_pinnable(matches!(ask, PageAsk::Playlist(_)) && self.account());
         ui.set_page_title("".into());
@@ -2197,7 +2242,10 @@ impl App {
                 self.show_songs();
             }
             Data::Page(PageGot::Songs { songs: v, exhausted }) => {
-                let Req::Page(PageAsk::Songs { offset }) = req else { return };
+                let Req::Page(PageAsk::Songs { sort, reversed, favorites, offset }) = req else { return };
+                if (sort, reversed, favorites) != (self.song_sort.clone(), self.song_reversed, self.songs_favorites) {
+                    return;
+                }
                 if !self.song_pages.answered(&offset, (!exhausted).then_some(offset + v.len() as u32)) {
                     return;
                 }
@@ -2268,7 +2316,40 @@ impl App {
                 self.page_actions(PageKind::Mix { refreshable: m.refreshable });
                 self.show_page_songs();
             }
-            Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::Playlist(_) | PageGot::Mix(_)) => {}
+            Data::Page(PageGot::Genres(v)) => {
+                self.lists.genres = v.iter().map(genre_card).collect();
+                self.narrowed();
+            }
+            Data::Page(PageGot::History(page)) => {
+                let Req::Page(PageAsk::History(after)) = req else { return };
+                if ui.get_view() != View::History || !self.history_pages.answered(&after, page.next.map(Some)) {
+                    return;
+                }
+                if after.is_none() {
+                    self.songs.clear();
+                }
+                self.songs.extend(page.entries.into_iter().map(|e| e.song));
+                ui.set_more_songs(self.history_pages.more());
+                self.show_songs();
+            }
+            Data::Page(PageGot::Downloads(d)) if ui.get_view() == View::Downloads => {
+                let s = &d.sections;
+                ui.set_downloads_line(words::download_queue(s.active.len() + s.queued.len(), s.failed.len()).into());
+                ui.set_downloaded_albums(cards(d.stored.albums.iter().map(album_card)));
+                self.songs = d.stored.songs;
+                ui.set_more_songs(false);
+                self.show_songs();
+            }
+            Data::Page(PageGot::Genre { songs, cover }) if shown => {
+                let Req::Page(PageAsk::Genre(name)) = req else { return };
+                ui.set_page_title(name.as_str().into());
+                ui.set_page_caption(if songs.is_empty() { String::new() } else { words::songs_caption(songs.len(), songs.iter().map(|s| s.duration as u64).sum()) }.into());
+                self.set_page_art(cover);
+                self.page_songs = songs;
+                self.page_actions(PageKind::Playlist);
+                self.show_page_songs();
+            }
+            Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::Playlist(_) | PageGot::Mix(_) | PageGot::Genre { .. } | PageGot::Downloads(_)) => {}
         }
     }
 
@@ -2335,7 +2416,7 @@ impl App {
             Some(PageShown::Album) => PageKind::Album,
             Some(PageShown::Artist) => PageKind::Artist,
             Some(PageShown::Mix(Some(_))) => PageKind::Mix { refreshable: true },
-            Some(PageShown::Mix(None) | PageShown::Playlist(_)) | None => PageKind::Playlist,
+            Some(PageShown::Mix(None) | PageShown::Playlist(_) | PageShown::Genre) | None => PageKind::Playlist,
         });
     }
 
@@ -2460,6 +2541,7 @@ impl App {
         let n = nori_core::browse::songs_shown(self.page_songs.len() as u32, all) as usize;
         show_in(ui.get_page_songs(), self.rows(&self.page_songs[..n], ui.get_page_kind() != PageLayout::Artist), |m| ui.set_page_songs(m));
         ui.set_page_songs_more(n < self.page_songs.len());
+        ui.set_page_filter_offered(ui.get_page_kind() == PageLayout::List && nori_core::pages::filter_offered(self.page_songs.len() as u32, !self.find.is_empty()));
     }
 
     /// Search's songs as listed.
@@ -2515,6 +2597,7 @@ impl App {
         ui.set_albums(cards(albums.iter().map(album_card)));
         ui.set_artists(pick(&self.lists.artists));
         ui.set_playlists(pick(&self.lists.playlists.iter().map(playlist_card).collect::<Vec<_>>()));
+        ui.set_genres(pick(&self.lists.genres));
         self.show_songs();
         self.show_page_songs();
     }
@@ -2567,6 +2650,77 @@ impl App {
         }
     }
 
+    /// The Songs tab's order menu, the order in use marked with the way it runs, and its Favorites chip.
+    fn show_song_sorts(&self) {
+        use nori_core::browse::{song_sort_direction, song_sorts, sort_way, SortDirection};
+        let ui = self.ui();
+        ui.set_songs_favorites(self.songs_favorites);
+        let sorts = song_sorts();
+        ui.set_song_sorts(ModelRc::new(VecModel::from(sorts.iter().map(|s| SharedString::from(words::song_sort(&s.name))).collect::<Vec<_>>())));
+        let way = |name: &str, reversed| match sort_way(song_sort_direction(name.into()), reversed) {
+            SortDirection::Ascending => 1,
+            SortDirection::Descending => -1,
+            SortDirection::Shuffled => 0,
+        };
+        ui.set_song_sort_ways(ModelRc::new(VecModel::from(sorts.iter().map(|s| way(&s.name, s.name == self.song_sort && self.song_reversed)).collect::<Vec<i32>>())));
+        ui.set_song_sort(sorts.iter().position(|s| s.name == self.song_sort).unwrap_or(0) as i32);
+    }
+
+    /// Order `at` of the menu chosen: another order in its own way, the same one turned around (the core's
+    /// `sort_picked`); kept, and the songs read again in it.
+    fn sort_songs(&mut self, at: usize) {
+        use nori_core::browse::{song_sort_kept, sort_reversed_kept, SortedList};
+        let Some((sort, reversed)) = song_order_picked(&self.song_sort, self.song_reversed, at) else { return };
+        (self.song_sort, self.song_reversed) = (sort, reversed);
+        let settings = &self.root.app.settings;
+        let mut prefs = settings.current().unwrap_or_default();
+        for kept in [song_sort_kept(self.song_sort.clone()), sort_reversed_kept(SortedList::Songs, self.song_reversed)] {
+            prefs.list_prefs.insert(kept.key, kept.value);
+        }
+        settings.put(prefs);
+        self.reload_songs();
+    }
+
+    /// Reads the songs list again from the top, in its order and filter.
+    fn reload_songs(&mut self) {
+        self.songs.clear();
+        self.show_songs();
+        self.show_song_sorts();
+        self.song_pages.reset();
+        if let Some(offset) = self.song_pages.ask() {
+            self.load(Req::Page(PageAsk::Songs { sort: self.song_sort.clone(), reversed: self.song_reversed, favorites: self.songs_favorites, offset }));
+        }
+    }
+
+    /// The library's Shuffle: random albums, each whole (`albums`), or random songs.
+    fn shuffle_library(&self, albums: bool) {
+        let Some(s) = &self.session else { return };
+        let (h, tx) = (nori_host::session::Handle::clone(s), self.tx.clone());
+        nori_host::spawn("nori-shuffle", move || {
+            if let Err(text) = play_shuffled(&h, albums) {
+                tx.send(Msg::Note { text, error: true });
+            }
+        });
+    }
+
+    /// Opens Downloads or History, a place the library keeps, from the tab shown; Back returns to it.
+    fn open_place(&mut self, view: View) {
+        let from = self.ui().get_view();
+        if !matches!(from, View::Downloads | View::History) {
+            self.place_from = from;
+        }
+        self.go(view);
+    }
+
+    /// Forgets what was played here, and shows the history empty.
+    fn clear_history(&mut self) {
+        let Some(s) = &self.session else { return };
+        if let Err(e) = s.core.history_clear() {
+            return self.say(&e.to_string(), true);
+        }
+        self.go(View::History);
+    }
+
     /// Page `req` could not be read. A paged list's later page is asked for again as the list goes on
     /// (scrolled, or opened again) and keeps what it lists; true when the failure is to be shown.
     fn page_failed(&mut self, req: &Req) -> bool {
@@ -2575,7 +2729,7 @@ impl App {
                 self.album_pages.failed(offset);
                 *offset == 0
             }
-            Req::Page(PageAsk::Songs { offset }) => {
+            Req::Page(PageAsk::Songs { offset, .. }) => {
                 self.song_pages.failed(offset);
                 *offset == 0
             }
@@ -2607,8 +2761,12 @@ impl App {
     }
 
     fn more_songs(&mut self) {
-        if let Some(offset) = self.song_pages.ask() {
-            self.load(Req::Page(PageAsk::Songs { offset }));
+        if self.ui().get_view() == View::History {
+            if let Some(after) = self.history_pages.ask() {
+                self.load(Req::Page(PageAsk::History(after)));
+            }
+        } else if let Some(offset) = self.song_pages.ask() {
+            self.load(Req::Page(PageAsk::Songs { sort: self.song_sort.clone(), reversed: self.song_reversed, favorites: self.songs_favorites, offset }));
         }
     }
 
@@ -2929,7 +3087,7 @@ impl App {
         }
         let (songs, origin) = match list {
             0 => (self.page_songs.clone(), self.page_fetch.as_ref().map(Fetch::origin)),
-            1 => (self.songs.clone(), None),
+            1 => (self.songs.clone(), (self.ui().get_view() == View::Downloads).then(|| nori_core::PageOrigin::new(nori_core::OriginKind::Downloads, ""))),
             3 => (self.queue.as_ref().map(|q| q.songs.to_vec()).unwrap_or_default(), None),
             _ => (self.search_songs.clone(), None),
         };
@@ -3474,6 +3632,7 @@ impl App {
         ui.set_page_can_star(rules.stars);
         ui.set_favorites_offered(rules.stars);
         ui.set_library_tabs(library_tabs(&rules));
+        ui.set_can_shuffle(rules.account);
         self.mirror();
         match offer {
             Some(SignInEvent::Close) => {
@@ -4145,6 +4304,10 @@ impl App {
                 self.work.stop();
                 ui.set_working(false);
             }
+        }
+        // The Downloads page follows them, read from this computer's store.
+        if ui.get_view() == View::Downloads {
+            self.on_session(|s| s.load(Req::Page(PageAsk::Downloads)));
         }
     }
 
@@ -5874,7 +6037,7 @@ impl App {
 
     /// Back among the pages ([`back_from`]).
     fn back(&mut self) {
-        match back_from(self.ui().get_view(), !self.plugged.stack.is_empty()) {
+        match back_from(self.ui().get_view(), !self.plugged.stack.is_empty(), self.place_from) {
             BackTo::PluginPage => self.plugin_act(crate::settings::PluginAct::Back),
             BackTo::Trail => match self.trail.back(self.ui().global::<crate::Scroll>().get_at()) {
                 (Back::Page(page), at) => self.show_page(page, at),
@@ -6003,13 +6166,14 @@ fn album_card(a: &nori_core::Album) -> Card {
     Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: nori_core::lines::album_subtitle(&a.artist, a.year).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0, remote: a.is_external, ..Default::default() }
 }
 
-/// The songs card `id` of `Card::kind` (or 4, a mix) stands for, fetched whole; a song card's are at hand.
+/// The songs card `id` of `Card::kind` (or 4, a mix; 6, a genre) stands for, fetched whole; a song card's are at hand.
 fn card_fetch(kind: i32, id: String) -> Option<Fetch> {
     match kind {
         0 => Some(Fetch::Album(id)),
         1 => Some(Fetch::Artist(id)),
         2 => Some(Fetch::Playlist(id)),
         4 => Some(Fetch::Mix(id)),
+        6 => Some(Fetch::Genre(id)),
         _ => None,
     }
 }
@@ -6114,6 +6278,30 @@ fn top_card(found: &nori_core::SearchResult, t: nori_core::search::SearchItem) -
         SearchKind::Artists => artist_card(&found.artists[at]),
         SearchKind::Playlists => playlist_card(&found.playlists[at]),
     }
+}
+
+/// The songs list's order (a `browse::song_sorts` name) and whether it runs turned around, after order `at`
+/// of the menu is chosen while it is in order `now`: another order in its own way, the same one turned
+/// around (the core's `sort_picked`).
+fn song_order_picked(now: &str, reversed: bool, at: usize) -> Option<(String, bool)> {
+    use nori_core::browse::{song_sort_direction, song_sorts, sort_picked, SortDirection, SortPick};
+    let sorts = song_sorts();
+    let chosen = sorts.get(at)?;
+    let now = SortPick { order: sorts.iter().position(|s| s.name == now).unwrap_or(0) as u32, reversed };
+    let picked = sort_picked(now, at as u32, song_sort_direction(chosen.name.clone()) != SortDirection::Shuffled);
+    Some((chosen.name.clone(), picked.reversed))
+}
+
+/// Plays the library shuffled (`Client::shuffle_library`), or says why it could not. Blocks.
+fn play_shuffled(h: &nori_host::session::Handle, albums: bool) -> Result<(), String> {
+    let (songs, from) = nori_core::transport::block_on(h.client.shuffle_library(albums)).map_err(|e| words::net_error(&e))?;
+    h.play(songs, 0, false, Some(from));
+    Ok(())
+}
+
+/// A genre's card: its songs counted, a cover of them.
+fn genre_card(g: &nori_core::browse::GenreTile) -> Card {
+    Card { id: g.name.as_str().into(), title: g.name.as_str().into(), sub: words::songs(g.song_count as usize).into(), art: g.cover_art.clone().unwrap_or_default().into(), kind: 6, ..Default::default() }
 }
 
 fn artist_card(a: &nori_core::Artist) -> Card {
@@ -6385,9 +6573,11 @@ mod tests {
             (View::Shelf, false, BackTo::View(View::Home)),
             (View::ForYou, false, BackTo::View(View::Home)),
             (View::Albums, false, BackTo::View(View::Home)),
+            (View::History, false, BackTo::View(View::Songs)),
+            (View::Downloads, false, BackTo::View(View::Songs)),
         ];
         for (view, plugin_page, to) in steps {
-            assert_eq!(back_from(view, plugin_page), to, "{view:?}");
+            assert_eq!(back_from(view, plugin_page, View::Songs), to, "{view:?}");
         }
     }
 
@@ -8550,7 +8740,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        let all = LibraryTabs { albums: true, artists: true, songs: true, playlists: true, favorites: true };
+        let all = LibraryTabs { albums: true, artists: true, songs: true, playlists: true, genres: true, favorites: true, downloads: true, history: true };
         let mut off = Vec::new();
         // An 800 px window's pill on macOS, up to the widest pill; the current tab is named even while the
         // others are not.
@@ -8636,7 +8826,7 @@ mod tests {
         let tabs = |bar: &TopBar| i_slint_backend_testing::ElementHandle::find_by_element_type_name(bar, "TabButton").count();
         let server = nori_core::browse::profile_rules(false);
         bar.set_tabs(library_tabs(&server));
-        assert_eq!(tabs(&bar), 6, "Home, Albums, Artists, Songs, Playlists and Favorites");
+        assert_eq!(tabs(&bar), 7, "Home, Albums, Artists, Songs, Playlists, Genres and Favorites");
         let provider = nori_core::browse::ProfileRules { sections: vec![Favourites, Playlists, History], ..server };
         bar.set_tabs(library_tabs(&provider));
         assert_eq!(tabs(&bar), 3, "Home, Playlists and Favorites: no empty Albums, Artists or Songs");
@@ -9933,5 +10123,250 @@ mod tests {
         settle();
         tap(780.0, new);
         assert_eq!(*did.borrow(), ["add 1", "new Rain"]);
+    }
+
+
+    /// A testing-backend window `w` by `h` px, as the app paints it, on a mocked clock.
+    fn shown_window(w: f32, h: f32) -> AppWindow {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(w, h));
+        ui
+    }
+
+    /// The middle of the element labelled `label`, if one shows.
+    fn middle(ui: &AppWindow, label: &str) -> Option<(f32, f32)> {
+        let found = i_slint_backend_testing::ElementHandle::find_by_accessible_label(ui, label).next()?;
+        let (p, s) = (found.absolute_position(), found.size());
+        Some((p.x + s.width / 2.0, p.y + s.height / 2.0))
+    }
+
+    fn click(ui: &AppWindow, label: &str) {
+        let (x, y) = middle(ui, label).unwrap_or_else(|| panic!("{label} shows"));
+        press(ui.window(), x, y, slint::platform::PointerEventButton::Left);
+        settled(ui);
+    }
+
+    fn strings(list: &[&str]) -> ModelRc<SharedString> {
+        ModelRc::new(VecModel::from(list.iter().map(|s| SharedString::from(*s)).collect::<Vec<_>>()))
+    }
+
+    fn song_rows(titles: &[&str]) -> ModelRc<SongRow> {
+        ModelRc::new(VecModel::from(titles.iter().enumerate().map(|(i, t)| SongRow { title: (*t).into(), index: i as i32, ..Default::default() }).collect::<Vec<_>>()))
+    }
+
+    #[test]
+    fn songs_are_ordered_as_picked() {
+        assert_eq!(song_order_picked("TITLE", false, 1), Some(("ARTIST".into(), false)), "another order runs its own way");
+        assert_eq!(song_order_picked("ARTIST", false, 1), Some(("ARTIST".into(), true)), "the same order turns around");
+        assert_eq!(song_order_picked("ARTIST", true, 1), Some(("ARTIST".into(), false)), "and back");
+        assert_eq!(song_order_picked("ARTIST", true, 4), Some(("ADDED".into(), false)), "the newest first, as its name says");
+        assert_eq!(song_order_picked("TITLE", false, 99), None);
+    }
+
+    /// The Songs tab's bar, as the Albums page's: the order menu sends the order chosen, the Favorites chip
+    /// its toggle, Shuffle random songs; the Albums page's Shuffle random albums. Without an account's
+    /// library there is no Shuffle.
+    #[test]
+    fn the_songs_bar_orders_filters_and_shuffles() {
+        let ui = shown_window(1280.0, 820.0);
+        ui.set_view(View::Songs);
+        ui.set_favorites_offered(true);
+        ui.set_can_shuffle(true);
+        ui.set_song_sorts(strings(&["Title", "Artist", "Album", "Year", "Added", "Most played", "Longest"]));
+        ui.set_song_sort_ways(ModelRc::new(VecModel::from(vec![1, 1, 1, -1, -1, -1, -1])));
+        ui.set_songs(song_rows(&["Glass Harbour", "Paper Moon"]));
+        let did = Rc::new(RefCell::new(Vec::<String>::new()));
+        let seen = did.clone();
+        ui.on_song_sort_chosen(move |i| seen.borrow_mut().push(format!("order {i}")));
+        let seen = did.clone();
+        ui.on_songs_favorites_toggled(move || seen.borrow_mut().push("favorites".into()));
+        let seen = did.clone();
+        ui.on_shuffle_library(move |albums| seen.borrow_mut().push(format!("shuffle albums={albums}")));
+        ui.show().unwrap();
+        settled(&ui);
+        assert!(middle(&ui, "Glass Harbour").unwrap().1 > middle(&ui, "Title").unwrap().1, "the bar stands over the songs");
+        click(&ui, "Title");
+        // The menu's third line, Album: its 6 px inset, then 32 px lines.
+        let (left, top) = {
+            let inner = i_slint_core::window::WindowInner::from_pub(ui.window());
+            let popups = inner.active_popups();
+            let i_slint_core::window::PopupWindowLocation::ChildWindow(at) = popups[0].location else { panic!("the menu is in the window") };
+            (at.x, at.y)
+        };
+        press(ui.window(), left + 40.0, top + 6.0 + 2.0 * 32.0 + 16.0, slint::platform::PointerEventButton::Left);
+        settled(&ui);
+        click(&ui, "Favorites");
+        click(&ui, "Shuffle");
+        assert_eq!(*did.borrow(), ["order 2", "favorites", "shuffle albums=false"]);
+
+        did.borrow_mut().clear();
+        ui.set_view(View::Albums);
+        ui.set_album_sorts(strings(&["Title"]));
+        ui.set_album_sort_ways(ModelRc::new(VecModel::from(vec![1])));
+        settled(&ui);
+        click(&ui, "Shuffle");
+        assert_eq!(*did.borrow(), ["shuffle albums=true"]);
+        ui.set_can_shuffle(false);
+        settled(&ui);
+        assert_eq!(middle(&ui, "Shuffle"), None, "no Shuffle without the account's library");
+    }
+
+    /// The library's Shuffle plays what the server picks at random, songs or whole albums, as a queue that
+    /// refills the same way. The engine writes to a file: nothing is heard.
+    #[test]
+    fn shuffle_plays_random_songs_or_albums() {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let target = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string();
+                let songs = |ids: &[&str]| ids.iter().map(|i| format!(r#"{{"id":"{i}","title":"{i}","isDir":false}}"#)).collect::<Vec<_>>().join(",");
+                let body = if target.contains("/rest/getRandomSongs") {
+                    format!(r#"{{"subsonic-response":{{"status":"ok","randomSongs":{{"song":[{}]}}}}}}"#, songs(&["r1", "r2", "r3"]))
+                } else if target.contains("/rest/getAlbumList2") {
+                    r#"{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"al","name":"Al"}]}}}"#.to_string()
+                } else if target.contains("/rest/getAlbum") {
+                    format!(r#"{{"subsonic-response":{{"status":"ok","album":{{"id":"al","name":"Al","song":[{}]}}}}}}"#, songs(&["a1", "a2"]))
+                } else {
+                    r#"{"subsonic-response":{"status":"ok"}}"#.to_string()
+                };
+                let _ = stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
+            }
+        });
+        let dir = nori_testdir::TempDir::new("desktop-shuffle");
+        let settings = nori_core::settings_store::Settings::new();
+        settings.open(&nori_host::db_path(dir.path())).unwrap();
+        let profile = SavedServer { id: "p1".into(), url: format!("http://{addr}"), user: "admin".into(), password: "pw".into(), ..Default::default() };
+        settings.put(nori_core::settings::StoredPrefs { servers: vec![profile.clone()], active_server_id: "p1".into(), remote_control: false, ..settings.current().unwrap() });
+        let session = nori_host::session::Session::open(nori_host::session::Open {
+            queue: Arc::new(nori_core::queue::Session::new(settings.clone())),
+            data: dir.path(),
+            http: Http::new(),
+            profile,
+            kinds: nori_core::providers::Kinds::builtin(),
+            output: Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)),
+            volume: nori_host::Level::new(0.0, None),
+            memory_mb: 8,
+            covers: None,
+            offline: false,
+            mpris: None,
+            device: nori_core::remote::RemoteMe { name: "Test".into(), kind: nori_core::remote::wire::DeviceKind::Desktop },
+            discovery: None,
+            tasks: nori_host::tasks(),
+            keeps_music: false,
+            decoders: nori_engine::Platform::default(),
+            out: Arc::new(|_| {}),
+        })
+        .unwrap();
+        let queued = || session.queue_shown(None).songs.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+        for (albums, songs, kind) in [(false, ["r1", "r2", "r3"].as_slice(), nori_core::OriginKind::ShuffleSongs), (true, ["a1", "a2"].as_slice(), nori_core::OriginKind::ShuffleAlbums)] {
+            play_shuffled(&session, albums).unwrap();
+            assert_eq!(queued(), songs, "albums={albums}");
+            assert_eq!(session.core.session.origin().map(|o| o.kind), Some(kind));
+        }
+        session.close();
+    }
+
+    /// Genres, History and Downloads each say they are empty, then show what they hold; a genre opens its
+    /// page and a downloaded album its own.
+    #[test]
+    fn genres_history_and_downloads_show_what_they_hold() {
+        let ui = shown_window(1280.0, 820.0);
+        let did = Rc::new(RefCell::new(Vec::<String>::new()));
+        let seen = did.clone();
+        ui.on_open_genre(move |g| seen.borrow_mut().push(format!("genre {g}")));
+        let seen = did.clone();
+        ui.on_open_downloaded_album(move |id| seen.borrow_mut().push(format!("album {id}")));
+        let seen = did.clone();
+        ui.on_clear_history(move || seen.borrow_mut().push("clear".into()));
+        ui.show().unwrap();
+        for (view, empty) in [(View::Genres, "No genres"), (View::History, "Nothing played yet"), (View::Downloads, "Nothing downloaded yet")] {
+            ui.set_view(view);
+            settled(&ui);
+            assert!(middle(&ui, empty).is_some(), "{view:?} says {empty}");
+        }
+
+        ui.set_view(View::Genres);
+        let genre = |name: &str, n| genre_card(&nori_core::browse::GenreTile { name: name.into(), song_count: n, cover_art: None });
+        ui.set_genres(cards([genre("Jazz Fusion", 22), genre("Rock", 4)].into_iter()));
+        settled(&ui);
+        assert!(middle(&ui, "No genres").is_none());
+        assert!(middle(&ui, "22 songs").is_some(), "each genre counts its songs");
+        let (x, y) = middle(&ui, "Rock").unwrap();
+        press(ui.window(), x, y - 60.0, slint::platform::PointerEventButton::Left);
+        settled(&ui);
+
+        ui.set_view(View::History);
+        ui.set_songs(song_rows(&["Glass Harbour", "Paper Moon"]));
+        settled(&ui);
+        assert!(middle(&ui, "Glass Harbour").unwrap().1 < middle(&ui, "Paper Moon").unwrap().1, "the newest first");
+        click(&ui, "Clear history");
+
+        ui.set_view(View::Downloads);
+        ui.set_downloads_line("4 to go · 1 failed".into());
+        ui.set_downloaded_albums(cards([Card { id: "al".into(), title: "Blue Hour".into(), ..Default::default() }].into_iter()));
+        settled(&ui);
+        let (album, song, line) = (middle(&ui, "Blue Hour").unwrap(), middle(&ui, "Glass Harbour").unwrap(), middle(&ui, "4 to go · 1 failed").unwrap());
+        assert!(line.1 < album.1 && album.1 < song.1, "what is on its way, the albums, then the songs");
+        press(ui.window(), album.0, album.1 - 60.0, slint::platform::PointerEventButton::Left);
+        settled(&ui);
+        assert_eq!(*did.borrow(), ["genre Rock", "clear", "album al"]);
+    }
+
+    /// The library's pages offer Downloads and History beside their title, as Android's Library does, where
+    /// the profile keeps them.
+    #[test]
+    fn the_library_places_open_downloads_and_history() {
+        let ui = shown_window(1280.0, 820.0);
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        let seen = opened.clone();
+        ui.on_open_place(move |v| seen.borrow_mut().push(v));
+        ui.set_library_tabs(LibraryTabs { albums: true, songs: true, downloads: true, history: true, ..Default::default() });
+        ui.show().unwrap();
+        for view in [View::Albums, View::Songs, View::Genres, View::Favorites] {
+            ui.set_view(view);
+            settled(&ui);
+            click(&ui, "Downloads");
+            click(&ui, "History");
+        }
+        assert_eq!(opened.borrow().len(), 8);
+        assert!(opened.borrow().chunks(2).all(|p| p == [View::Downloads, View::History]));
+        ui.set_library_tabs(LibraryTabs { albums: true, ..Default::default() });
+        ui.set_view(View::Albums);
+        settled(&ui);
+        assert_eq!((middle(&ui, "Downloads"), middle(&ui, "History")), (None, None), "a profile that keeps neither");
+    }
+
+    /// A long list's page offers a field that narrows its songs; a short one has none.
+    #[test]
+    fn a_long_playlist_offers_a_filter() {
+        let ui = shown_window(1280.0, 820.0);
+        ui.set_view(View::Page);
+        ui.set_page_kind(PageLayout::List);
+        ui.set_page_title("Nori Bench 1000".into());
+        ui.set_page_songs(song_rows(&["Glass Harbour", "Paper Moon"]));
+        let typed = Rc::new(RefCell::new(Vec::new()));
+        let seen = typed.clone();
+        ui.on_find_edited(move |t| seen.borrow_mut().push(t.to_string()));
+        ui.show().unwrap();
+        settled(&ui);
+        assert_eq!(middle(&ui, "Filter"), None, "a short list has none");
+        ui.set_page_filter_offered(true);
+        settled(&ui);
+        let field = middle(&ui, "Filter").expect("a long list's field");
+        assert!(field.1 < middle(&ui, "Glass Harbour").unwrap().1, "over the songs");
+        press(ui.window(), field.0, field.1, slint::platform::PointerEventButton::Left);
+        settled(&ui);
+        ui.window().dispatch_event(slint::platform::WindowEvent::KeyPressed { text: "m".into() });
+        ui.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: "m".into() });
+        settled(&ui);
+        assert_eq!(*typed.borrow(), ["m"]);
     }
 }

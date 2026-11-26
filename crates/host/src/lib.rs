@@ -240,6 +240,8 @@ pub enum Fetch {
     Radio(String),
     /// One of the core's mixes (or the favourites), as its page lists it.
     Mix(String),
+    /// A genre's songs, by its name.
+    Genre(String),
 }
 
 impl Fetch {
@@ -252,6 +254,7 @@ impl Fetch {
             Fetch::Artist(id) => PageOrigin::new(OriginKind::Artist, id.as_str()),
             Fetch::Radio(id) => PageOrigin::new(OriginKind::Songs, id.as_str()),
             Fetch::Mix(id) => PageOrigin::new(OriginKind::Mix, id.as_str()),
+            Fetch::Genre(name) => PageOrigin::new(OriginKind::Genre, name.as_str()),
         }
     }
 
@@ -267,6 +270,7 @@ impl Fetch {
             },
             Fetch::Mix(id) => client.mix_songs(id).await?,
             Fetch::Radio(id) => client.radio(id).await?,
+            Fetch::Genre(name) => client.genre_songs(name).await?,
         })
     }
 }

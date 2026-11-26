@@ -558,7 +558,7 @@ pub struct HistoryPage {
 
 /// A place in the history, newest first: listens after it are older. Listens recorded meanwhile come
 /// before it, so later pages neither repeat nor skip any.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct HistoryAfter {
     pub started_ms: i64,

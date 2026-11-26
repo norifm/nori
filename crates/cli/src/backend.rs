@@ -342,7 +342,11 @@ impl Session {
             Req::Playlist(id) => Some(PageAsk::Playlist(id)),
             Req::Mix(id) => Some(PageAsk::Mix(id)),
             Req::Favorites => Some(PageAsk::Favorites),
-            Req::Row { .. } | Req::Home | Req::Songs { .. } | Req::History(_) | Req::DownloadsSize | Req::Downloads | Req::DownloadProgress | Req::Work | Req::Facts | Req::PlaylistChoices(_) => None,
+            // The index's songs in the order asked for (the server's own for a profile that keeps none).
+            Req::Songs { sort, starred, offset } => Some(PageAsk::Songs { sort, reversed: false, favorites: starred, offset }),
+            Req::History(after) => Some(PageAsk::History(after)),
+            Req::Downloads => Some(PageAsk::Downloads),
+            Req::Row { .. } | Req::Home | Req::DownloadsSize | Req::DownloadProgress | Req::Work | Req::Facts | Req::PlaylistChoices(_) => None,
         };
         if let Some(ask) = ask {
             return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
@@ -388,22 +392,6 @@ impl Session {
                     Ok(HomePart::Mixes(tiles)) => send(Ok(Data::Mixes(tiles))),
                     Err(e) => send(Err(unreachable(&e))),
                 });
-            }
-            Req::Downloads => {
-                let core = self.core.clone();
-                nori_host::spawn("nori-read", move || {
-                    let stored = core.downloaded_library();
-                    send(stored.and_then(|stored| core.download_sections().map(|s| Data::Downloads(Box::new(Downloads { finished: s.finished.len(), active: s.active, queued: s.queued, failed: s.failed, stored })))).map_err(|e| e.to_string()));
-                });
-            }
-            // The index's songs in the order asked for (the server's own for a profile that keeps none).
-            Req::Songs { sort, starred, offset } => {
-                let client = self.client.clone();
-                nori_host::spawn("nori-read", move || send(block_on(client.songs_listed(sort, false, starred, 0, 0, offset)).map(|p| Data::Songs(p.songs, p.exhausted)).map_err(|e| unreachable(&e))));
-            }
-            Req::History(after) => {
-                let core = self.core.clone();
-                nori_host::spawn("nori-read", move || send(core.history_page(after).map(Data::History).map_err(|e| e.to_string())));
             }
             Req::PlaylistChoices(songs) => {
                 let client = self.client.clone();
@@ -531,6 +519,13 @@ fn data_of(got: PageGot) -> Data {
         PageGot::Artist(d) => Data::Artist(d),
         PageGot::Playlist(d) => Data::Playlist(d),
         PageGot::Mix(m) => Data::Mix(m),
+        // Read by the desktop alone.
+        PageGot::Genres(_) | PageGot::Genre { .. } => unreachable!("no genre is read here"),
+        PageGot::History(page) => Data::History(page),
+        PageGot::Downloads(d) => {
+            let nori_host::pages::Downloads { sections, stored } = *d;
+            Data::Downloads(Box::new(Downloads { finished: sections.finished.len(), active: sections.active, queued: sections.queued, failed: sections.failed, stored }))
+        }
     }
 }
 

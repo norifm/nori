@@ -6,7 +6,9 @@ use nori_core::browse::{favorites_in_order, home_pinned, home_row_more, home_row
 pub use nori_core::home::ShelfItems;
 use nori_core::home::{shelf_items, shelf_read};
 use nori_core::cache_policy::{Page, Read};
-use nori_core::library::QueueOffer;
+use nori_core::browse::{GenreTile, HistoryAfter, HistoryPage};
+use nori_core::library::{DownloadedLibrary, QueueOffer};
+use nori_core::transfers::DownloadSections;
 use nori_core::mixes::board::{MixLookup, MixSheet, MixTile};
 use nori_core::settings::HomeRow;
 use nori_core::transport::{block_on, NetError};
@@ -24,8 +26,17 @@ pub enum PageAsk {
     Playlists,
     /// What the account has starred.
     Favorites,
-    /// The offline index's songs by title, a page from `offset`.
-    Songs { offset: u32 },
+    /// The songs list in order `sort` (a `browse::song_sorts` name), turned around when `reversed`, only the
+    /// favorites with `favorites`, a page from `offset` (`Client::songs_listed`).
+    Songs { sort: String, reversed: bool, favorites: bool, offset: u32 },
+    /// The genres with songs (`Core::genres_listed`).
+    Genres,
+    /// A genre's songs, by name.
+    Genre(String),
+    /// The listening history, a page from `after` (None: the newest).
+    History(Option<HistoryAfter>),
+    /// What is downloaded, and what is on its way.
+    Downloads,
     Album(String),
     DownloadedAlbum(String),
     Artist(String),
@@ -42,10 +53,21 @@ pub enum PageGot {
     Playlists(Vec<Playlist>),
     Favorites(Box<Starred>),
     Songs { songs: Vec<Song>, exhausted: bool },
+    Genres(Vec<GenreTile>),
+    /// A genre's songs and a cover of them.
+    Genre { songs: Vec<Song>, cover: Option<String> },
+    History(HistoryPage),
+    Downloads(Box<Downloads>),
     Album(Box<AlbumDetail>),
     Artist(Box<ArtistDetail>),
     Playlist(Box<PlaylistDetail>),
     Mix(Box<MixSheet>),
+}
+
+/// The Downloads page: the songs on their way, by section, and what is kept.
+pub struct Downloads {
+    pub sections: DownloadSections,
+    pub stored: DownloadedLibrary,
 }
 
 /// Why a page has nothing to show.
@@ -141,10 +163,23 @@ impl Handle {
                 Ok(None) => Err(PageFailed::NotDownloaded),
                 Err(e) => Err(PageFailed::Stored(e)),
             }),
-            PageAsk::Songs { offset } => each(match block_on(self.client.songs_listed("title".into(), false, false, 0, 0, offset)) {
+            PageAsk::Songs { sort, reversed, favorites, offset } => each(match block_on(self.client.songs_listed(sort, reversed, favorites, 0, 0, offset)) {
                 Ok(p) => Ok(PageGot::Songs { songs: p.songs, exhausted: p.exhausted }),
                 Err(e) => Err(PageFailed::Net(e)),
             }),
+            PageAsk::Genres => pages(Read::GenreList, &|p| if let Page::Genres { v } = p { Some(PageGot::Genres(self.core.genres_listed(v))) } else { None }),
+            PageAsk::Genre(name) => each(match block_on(self.client.genre_songs(name.clone())) {
+                Ok(songs) => Ok(PageGot::Genre { songs, cover: self.core.genre_cover(name).ok().flatten() }),
+                Err(e) => Err(PageFailed::Net(e)),
+            }),
+            PageAsk::History(after) => each(self.core.history_page(after).map(PageGot::History).map_err(PageFailed::Stored)),
+            PageAsk::Downloads => each(
+                self.core
+                    .downloaded_library()
+                    .and_then(|stored| Ok(Downloads { sections: self.core.download_sections()?, stored }))
+                    .map(|d| PageGot::Downloads(Box::new(d)))
+                    .map_err(PageFailed::Stored),
+            ),
             PageAsk::HomeRow { row, offset } => match home_row_page(row, offset).map(|s| (s.clone(), s)) {
                 // Nothing past `offset`: the row is all here.
                 None => each(Err(PageFailed::Nothing)),

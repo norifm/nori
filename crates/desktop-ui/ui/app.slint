@@ -11,7 +11,7 @@ import "../../../android/app/src/main/res/font/inter.ttf";
 import "../../../android/app/src/main/res/font/literata.ttf";
 
 // The main window's views. `shelf` is one of Home's shelves shown whole, `for-you` Home's picks.
-export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites, support }
+export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites, support, genres, history, downloads }
 // A panel beside the player: the inspector on the right, or Now Playing's beside the artwork.
 export enum Panel { none, queue, lyrics, devices }
 // How the page view lays out what it shows: an album's, an artist's, or a list's (a playlist or a mix).
@@ -24,13 +24,16 @@ export enum SongPlace { main, names, rest, title, note, glyphs }
 export enum MarkGlyph { none, server, sing, surprise, talking, look-up, satisfied, think }
 
 // A profile's circle: its plugin's icon in ink, else a letter, else a glyph.
-// The library's tabs a profile has (its rules' sections).
+// The library's tabs a profile has (its rules' sections), and the places it keeps (Downloads, History).
 export struct LibraryTabs {
     albums: bool,
     artists: bool,
     songs: bool,
     playlists: bool,
+    genres: bool,
     favorites: bool,
+    downloads: bool,
+    history: bool,
 }
 
 // A kind of scrobbling account to add: its service, and what it costs where it does.
@@ -1933,6 +1936,7 @@ component Chip inherits Rectangle {
 component BarPill inherits Rectangle {
     in property <bool> raised;
     callback clicked;
+    horizontal-stretch: 0;
     height: 34px;
     border-radius: self.height / 2;
     background: root.raised ? Theme.panel : bt.has-hover ? Theme.hover : transparent;
@@ -1951,8 +1955,8 @@ component BarPill inherits Rectangle {
 }
 
 // A long list's bar, as Android's: the order it is in and which way that runs (`ways`, each order's: 1 up,
-// -1 down, 0 shuffled), which opens the others; and a filter (none: "") apart from the orders, its seal lit
-// while it is on.
+// -1 down, 0 shuffled), which opens the others; a filter (none: "") apart from the orders, its seal lit
+// while it is on; and with `shuffle`, Shuffle at its end.
 component ListBar inherits HorizontalLayout {
     in property <[string]> orders;
     in property <[int]> ways;
@@ -1961,9 +1965,12 @@ component ListBar inherits HorizontalLayout {
     in property <string> filter;
     in property <bool> filtered;
     callback filter-toggled();
+    in property <bool> shuffle;
+    callback shuffled();
     height: 34px;
     spacing: 8px;
-    alignment: start;
+    // The pills keep their own width; the room left goes before Shuffle.
+    alignment: root.shuffle ? stretch : start;
     order-pill := BarPill {
         raised: true;
         clicked => { orders-menu.show(); }
@@ -2026,6 +2033,18 @@ component ListBar inherits HorizontalLayout {
             vertical-alignment: center;
         }
     }
+    if root.shuffle: Rectangle {
+        horizontal-stretch: 1;
+    }
+    if root.shuffle: IconButton {
+        horizontal-stretch: 0;
+        glyph: Icons.shuffle;
+        size: 34px;
+        icon: 22px;
+        accessible-role: button;
+        accessible-label: "Shuffle";
+        clicked => { root.shuffled(); }
+    }
 }
 
 // Cards in rows filling the page width; only nearby rows keep components and images.
@@ -2084,6 +2103,8 @@ component Grid inherits Remembered {
     in property <string> filter;
     in property <bool> filtered;
     callback filter-toggled();
+    in property <bool> shuffle;
+    callback shuffled();
     property <length> head: root.title == "" ? 0 : root.orders.length > 0 ? Frame.under-bar : Frame.under-title;
     pure callback art(string, int, int) -> image;
     callback open(Card);
@@ -2111,6 +2132,7 @@ component Grid inherits Remembered {
     if root.orders.length > 0: ListBar {
         x: root.pad;
         y: Frame.bar-y;
+        width: root.width - 2 * root.pad;
         orders: root.orders;
         ways: root.ways;
         order: root.order;
@@ -2118,6 +2140,8 @@ component Grid inherits Remembered {
         filter: root.filter;
         filtered: root.filtered;
         filter-toggled => { root.filter-toggled(); }
+        shuffle: root.shuffle;
+        shuffled => { root.shuffled(); }
     }
     // The cards drawn. A repeater over a count makes its cards anew whenever the count is worked out
     // again, a card under a press with them; held here, they are made anew only when the count changes.
@@ -7479,6 +7503,14 @@ component TopContent inherits Rectangle {
             current: root.tab == View.playlists;
             clicked => { root.go(View.playlists); }
         }
+        if root.tabs.genres: TabButton {
+            y: (parent.height - self.height) / 2;
+            text: "Genres";
+            icon: Icons.view-grid;
+            named: root.named;
+            current: root.tab == View.genres;
+            clicked => { root.go(View.genres); }
+        }
         if root.tabs.favorites: TabButton {
             y: (parent.height - self.height) / 2;
             text: "Favorites";
@@ -7647,8 +7679,9 @@ export component AppWindow inherits Window {
     in property <string> offer-art;
     callback take-offer();
     callback dismiss-offer();
-    // The page is one of the mixes, laid out as a playlist.
+    // The page is one of the mixes, or a genre's songs, laid out as a playlist.
     in property <bool> page-mix;
+    in property <bool> page-genre;
     in property <bool> picks-loaded;
     callback open-mix(string);
     in property <[Card]> albums;
@@ -7666,6 +7699,29 @@ export component AppWindow inherits Window {
     // The top pill's library tabs: the sections the profile has.
     in property <LibraryTabs> library-tabs;
     callback albums-favorites-toggled();
+    // The Songs tab's orders, the way each runs (as `album-sort-ways`), the one in use, and whether it lists
+    // only the favorites.
+    in property <[string]> song-sorts;
+    in property <[int]> song-sort-ways;
+    in property <int> song-sort;
+    callback song-sort-chosen(int);
+    in property <bool> songs-favorites;
+    callback songs-favorites-toggled();
+    // The library's Shuffle, where the account's library is: random albums each whole, or random songs.
+    in property <bool> can-shuffle;
+    callback shuffle-library(/* albums */ bool);
+    // Downloads or History, opened from the tab shown.
+    callback open-place(View);
+    in property <[Card]> genres;
+    callback open-genre(string);
+    callback play-genre(string);
+    // Downloads: what is on its way ("4 to go · 1 failed"), the albums kept (the songs are `songs`).
+    in property <string> downloads-line;
+    in property <[Card]> downloaded-albums;
+    callback open-downloaded-album(string);
+    callback clear-history();
+    // A long list's page offers a field that narrows its songs (the core's `filter_offered`).
+    in property <bool> page-filter-offered;
     in property <[Card]> artists;
     in property <[Card]> playlists;
     in property <[SongRow]> songs;
@@ -7883,8 +7939,8 @@ export component AppWindow inherits Window {
     // The library pages' margins (the page is the window's width).
     property <length> page-gutter: Frame.gutter(self.width);
     // The library list shown has nothing in it.
-    property <bool> list-empty: (root.view == View.albums && root.albums.length == 0) || (root.view == View.artists && root.artists.length == 0) || (root.view == View.playlists && root.playlists.length == 0) || (root.view == View.songs && root.songs.length == 0) || (root.view == View.favorites && root.songs.length == 0 && root.favorite-albums.length == 0 && root.favorite-artists.length == 0);
-    property <string> list-name: root.view == View.shelf ? root.shelves[root.shown-shelf].title : root.view == View.for-you ? "For you" : root.view == View.albums ? "Albums" : root.view == View.artists ? "Artists" : root.view == View.playlists ? "Playlists" : root.view == View.songs ? "Songs" : root.view == View.favorites ? "Favorites" : root.view == View.page && root.page-kind == PageLayout.album ? "Album" : root.view == View.page && root.page-kind == PageLayout.list ? (root.page-mix ? "Mix" : "Playlist") : "";
+    property <bool> list-empty: (root.view == View.albums && root.albums.length == 0) || (root.view == View.artists && root.artists.length == 0) || (root.view == View.playlists && root.playlists.length == 0) || (root.view == View.songs && root.songs.length == 0) || (root.view == View.favorites && root.songs.length == 0 && root.favorite-albums.length == 0 && root.favorite-artists.length == 0) || (root.view == View.genres && root.genres.length == 0) || (root.view == View.history && root.songs.length == 0) || (root.view == View.downloads && root.songs.length == 0 && root.downloaded-albums.length == 0);
+    property <string> list-name: root.view == View.shelf ? root.shelves[root.shown-shelf].title : root.view == View.for-you ? "For you" : root.view == View.albums ? "Albums" : root.view == View.artists ? "Artists" : root.view == View.playlists ? "Playlists" : root.view == View.songs ? "Songs" : root.view == View.genres ? "Genres" : root.view == View.favorites ? "Favorites" : root.view == View.page && root.page-kind == PageLayout.album ? "Album" : root.view == View.page && root.page-kind == PageLayout.list ? (root.page-mix ? "Mix" : "Playlist") : "";
     callback find-edited(string);
     // The artist chosen on the Artists page, and what its pane shows of it: its name, its line of counts and
     // its releases; Play and Shuffle play it.
@@ -9241,6 +9297,9 @@ export component AppWindow inherits Window {
                             filter: root.favorites-offered ? "Favorites" : "";
                             filtered: root.albums-favorites;
                             filter-toggled => { root.albums-favorites-toggled(); }
+                            width: rows-scroll.width - 2 * root.page-gutter;
+                            shuffle: root.can-shuffle;
+                            shuffled => { root.shuffle-library(true); }
                         }
                         for slot in self.slots: artist-row := ShelfView {
                             property <int> index: rows-scroll.first + slot;
@@ -9278,6 +9337,8 @@ export component AppWindow inherits Window {
                         filter: root.view == View.albums && root.favorites-offered ? "Favorites" : "";
                         filtered: root.albums-favorites;
                         filter-toggled => { root.albums-favorites-toggled(); }
+                        shuffle: root.view == View.albums && root.can-shuffle;
+                        shuffled => { root.shuffle-library(true); }
                         cards: root.view == View.shelf ? root.shelves[root.shown-shelf].cards : root.view == View.albums ? root.albums : root.playlists;
                         rev: root.covers-rev;
                         art(a, s, r) => { return root.art(a, s, r); }
@@ -9491,6 +9552,23 @@ export component AppWindow inherits Window {
                             padding-left: root.page-gutter;
                             padding-right: root.page-gutter;
                         }
+                        // The order, the favorites alone, and Shuffle, as the Albums page's bar.
+                        if root.song-sorts.length > 0: HorizontalLayout {
+                            padding-left: root.page-gutter;
+                            padding-right: root.page-gutter;
+                            padding-bottom: 14px;
+                            ListBar {
+                                orders: root.song-sorts;
+                                ways: root.song-sort-ways;
+                                order: root.song-sort;
+                                ordered(i) => { root.song-sort-chosen(i); }
+                                filter: root.favorites-offered ? "Favorites" : "";
+                                filtered: root.songs-favorites;
+                                filter-toggled => { root.songs-favorites-toggled(); }
+                                shuffle: root.can-shuffle;
+                                shuffled => { root.shuffle-library(false); }
+                            }
+                        }
                         // The rows' words start at the margin; their hover reaches 8 px past it.
                         HorizontalLayout {
                             padding-left: root.page-gutter - 8px;
@@ -9605,6 +9683,167 @@ export component AppWindow inherits Window {
                                     y: liked-songs.head + i * 56px;
                                     height: 56px;
                                     if (i + 1) * 56px > liked-songs.seen-from && i * 56px < liked-songs.seen-to: SongLine {
+                                        x: root.page-gutter - 8px;
+                                        width: parent.width - 2 * self.x;
+                                        song: s;
+                                        number: i + 1;
+                                        table: true;
+                                        thumb: true;
+                                        picture: root.art(s.art, 0, root.covers-rev);
+                                        play => { root.song(1, i, -1); }
+                                        menu => { return root.song-menu(1, i); }
+                                        act(kind, id) => { root.song(1, i, kind); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // The genres with songs, by name: a card each with a cover of its songs, on the Albums page's grid.
+                if root.view == View.genres: Fade {
+                    Grid {
+                        title: "Genres";
+                        pad: root.page-gutter;
+                        cards: root.genres;
+                        rev: root.covers-rev;
+                        art(a, s, r) => { return root.art(a, s, r); }
+                        open(c) => { root.open-genre(c.id); }
+                        play(c) => { root.play-genre(c.id); }
+                    }
+                }
+
+                // What was played here, the newest first, a page at a time; and a way to forget it.
+                if root.view == View.history: Fade {
+                    push: true;
+                    VerticalLayout {
+                        HorizontalLayout {
+                            padding-left: root.page-gutter + Frame.back-room;
+                            padding-right: root.page-gutter;
+                            padding-top: Chrome.top-room + 8px;
+                            padding-bottom: 16px;
+                            Text {
+                                text: "History";
+                                color: Theme.text;
+                                font-family: Type.title;
+                                font-size: 34px;
+                                font-weight: 700;
+                                letter-spacing: -0.5px;
+                                horizontal-stretch: 1;
+                            }
+                            if root.songs.length > 0: TextButton {
+                                y: (parent.height - self.height) / 2;
+                                text: "Clear history";
+                                clicked => { root.clear-history(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: root.page-gutter - 8px;
+                            padding-right: root.page-gutter - 8px;
+                            SongHeads {
+                                height: 28px;
+                                opacity: root.songs.length > 0 ? 1 : 0;
+                            }
+                        }
+                        HorizontalLayout {
+                            vertical-stretch: 1;
+                            ListView {
+                                // The next page is asked for as the end comes within a screen.
+                                function near-end() {
+                                    if root.more-songs && self.content-height + self.content-y < self.visible-height * 2 {
+                                        root.more();
+                                    }
+                                }
+                                changed content-y => { self.near-end(); }
+                                changed content-height => { self.near-end(); }
+                                for s[i] in root.songs: Rectangle {
+                                    height: 56px;
+                                    SongLine {
+                                        x: root.page-gutter - 8px;
+                                        width: parent.width - 2 * self.x;
+                                        song: s;
+                                        number: i + 1;
+                                        table: true;
+                                        thumb: true;
+                                        picture: root.art(s.art, 0, root.covers-rev);
+                                        play => { root.song(1, i, -1); }
+                                        menu => { return root.song-menu(1, i); }
+                                        act(kind, id) => { root.song(1, i, kind); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // What is kept on this computer, as Android's page: what is on its way, the albums, then the songs.
+                if root.view == View.downloads: Fade {
+                    push: true;
+                    downloads-flick := Remembered {
+                        content-height: kept.preferred-height;
+                        kept := VerticalLayout {
+                            width: parent.width;
+                            padding-bottom: 100px;
+                            VerticalLayout {
+                                padding-left: root.page-gutter + Frame.back-room;
+                                padding-right: root.page-gutter;
+                                padding-top: Chrome.top-room + 8px;
+                                padding-bottom: 22px;
+                                spacing: 2px;
+                                Text {
+                                    text: "Downloads";
+                                    color: Theme.text;
+                                    font-family: Type.title;
+                                    font-size: 34px;
+                                    font-weight: 700;
+                                    letter-spacing: -0.5px;
+                                }
+                                Text {
+                                    text: root.downloads-line;
+                                    color: Theme.dim;
+                                    font-size: 13px;
+                                }
+                            }
+                            if root.downloaded-albums.length > 0: kept-albums := ShelfView {
+                                pad: root.page-gutter;
+                                least: Frame.least;
+                                title: "Albums";
+                                count: root.downloaded-albums.length;
+                                for slot in kept-albums.slots: CardView {
+                                    property <int> i: kept-albums.first + slot;
+                                    property <Card> c: root.downloaded-albums[self.i];
+                                    x: kept-albums.gap + self.i * kept-albums.step;
+                                    side: kept-albums.side;
+                                    card: self.c;
+                                    picture: root.art(self.c.art, 0, root.covers-rev);
+                                    open => { root.open-downloaded-album(self.c.id); }
+                                    play => { root.play-album(self.c.id); }
+                                }
+                            }
+                            if root.songs.length > 0 && root.downloaded-albums.length > 0: HorizontalLayout {
+                                padding-left: root.page-gutter;
+                                padding-right: root.page-gutter;
+                                padding-bottom: 6px;
+                                SectionTitle {
+                                    text: "Songs";
+                                }
+                            }
+                            // Only the rows on screen (and a few either side) are made, as a page's.
+                            kept-songs := Rectangle {
+                                property <length> head: root.songs.length > 0 ? 28px : 0;
+                                property <length> seen-from: -downloads-flick.content-y - self.y - self.head - 400px;
+                                property <length> seen-to: -downloads-flick.content-y - self.y - self.head + downloads-flick.height + 400px;
+                                height: self.head + root.songs.length * 56px;
+                                if kept-songs.head > 0: SongHeads {
+                                    x: root.page-gutter - 8px;
+                                    width: parent.width - 2 * self.x;
+                                    y: 0;
+                                    height: kept-songs.head;
+                                }
+                                for s[i] in root.songs: Rectangle {
+                                    y: kept-songs.head + i * 56px;
+                                    height: 56px;
+                                    if (i + 1) * 56px > kept-songs.seen-from && i * 56px < kept-songs.seen-to: SongLine {
                                         x: root.page-gutter - 8px;
                                         width: parent.width - 2 * self.x;
                                         song: s;
@@ -9830,6 +10069,25 @@ export component AppWindow inherits Window {
                                 if root.page-kind == PageLayout.artist && root.page-songs.length > 0: SectionTitle {
                                     text: "Songs";
                                 }
+                                // A long list's field that narrows its songs, as Android's.
+                                if root.page-filter-offered: HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 16px;
+                                    Field {
+                                        width: 260px;
+                                        height: 36px;
+                                        border-radius: 18px;
+                                        icon: Icons.search;
+                                        placeholder: "Filter";
+                                        text <=> root.find-text;
+                                        edited(t) => { root.find-edited(t); }
+                                    }
+                                    if root.page-songs.length == 0: Text {
+                                        text: "Nothing here has “" + root.find-text + "” in its name.";
+                                        color: Theme.dim;
+                                        vertical-alignment: center;
+                                    }
+                                }
                                 // Only the rows on screen (and a few either side) are made: a playlist of thousands
                                 // opens as fast as one of ten.
                                 song-rows := Rectangle {
@@ -10046,9 +10304,9 @@ export component AppWindow inherits Window {
                 if !root.loading && root.failed == "" && root.list-empty: EmptyNote {
                     x: root.view == View.artists ? 300px + (parent.width - 300px) * 0.15 : parent.width * 0.2;
                     width: root.view == View.artists ? (parent.width - 300px) * 0.7 : parent.width * 0.6;
-                    icon: root.find-text != "" ? Icons.search : root.view == View.albums ? Icons.compact-disc : root.view == View.artists ? Icons.user : root.view == View.playlists ? Icons.playlist : root.view == View.favorites ? Icons.seal-outline : Icons.music-note;
-                    title: root.find-text != "" ? "Nothing matches" : root.view == View.albums ? "No albums" : root.view == View.artists ? "No artists" : root.view == View.playlists ? "No playlists" : root.view == View.favorites ? "No favorites" : "No songs";
-                    line: root.find-text != "" ? "Nothing here has “" + root.find-text + "” in its name." : root.view == View.favorites ? "Songs you mark with the seal gather here." : root.view == View.playlists ? "Playlists you make or save gather here." : "Your library has none yet.";
+                    icon: root.find-text != "" ? Icons.search : root.view == View.albums ? Icons.compact-disc : root.view == View.artists ? Icons.user : root.view == View.playlists ? Icons.playlist : root.view == View.favorites ? Icons.seal-outline : root.view == View.genres ? Icons.view-grid : root.view == View.history ? Icons.clock-rotate-right : root.view == View.downloads ? Icons.download : Icons.music-note;
+                    title: root.find-text != "" ? "Nothing matches" : root.view == View.albums ? "No albums" : root.view == View.artists ? "No artists" : root.view == View.playlists ? "No playlists" : root.view == View.favorites ? "No favorites" : root.view == View.genres ? "No genres" : root.view == View.history ? "Nothing played yet" : root.view == View.downloads ? "Nothing downloaded yet" : "No songs";
+                    line: root.find-text != "" ? "Nothing here has “" + root.find-text + "” in its name." : root.view == View.favorites ? "Songs you mark with the seal gather here." : root.view == View.playlists ? "Playlists you make or save gather here." : root.view == View.history ? "Or listening history is off in Settings, under Library." : root.view == View.downloads ? "Albums, playlists and songs you download gather here." : "Your library has none yet.";
                 }
                 if root.failed != "" && !root.loading: Text {
                     width: 60%;
@@ -10067,7 +10325,7 @@ export component AppWindow inherits Window {
 
                 // Back, on a page that was opened from another: a disc under the top pill's left, where Android
                 // has its arrow.
-                if root.view == View.page || root.view == View.shelf || root.view == View.for-you: Rectangle {
+                if root.view == View.page || root.view == View.shelf || root.view == View.for-you || root.view == View.history || root.view == View.downloads: Rectangle {
                     x: root.page-gutter;
                     y: Frame.back-y;
                     width: 40px;
@@ -10082,8 +10340,35 @@ export component AppWindow inherits Window {
                         clicked => { root.back(); }
                     }
                 }
+                // The places the library keeps, as Android's glyphs beside its title: Downloads and History, each
+                // opening its page; left of the find field where the page has one.
+                if root.view == View.albums || root.view == View.artists || root.view == View.playlists || root.view == View.songs || root.view == View.genres || root.view == View.favorites: HorizontalLayout {
+                    property <bool> beside-field: root.view != View.favorites;
+                    x: 0;
+                    width: parent.width - (root.view == View.artists ? 32px : root.page-gutter) - (self.beside-field ? 226px + 8px : 0);
+                    y: Chrome.top-room + 13px;
+                    height: 36px;
+                    spacing: 2px;
+                    alignment: end;
+                    if root.library-tabs.downloads: IconButton {
+                        glyph: Icons.download;
+                        size: 36px;
+                        icon: 21px;
+                        accessible-role: button;
+                        accessible-label: "Downloads";
+                        clicked => { root.open-place(View.downloads); }
+                    }
+                    if root.library-tabs.history: IconButton {
+                        glyph: Icons.clock-rotate-right;
+                        size: 36px;
+                        icon: 21px;
+                        accessible-role: button;
+                        accessible-label: "History";
+                        clicked => { root.open-place(View.history); }
+                    }
+                }
                 // A field that narrows what the page lists.
-                if root.list-name != "" && (root.view == View.albums || root.view == View.artists || root.view == View.playlists || root.view == View.songs): Field {
+                if root.list-name != "" && (root.view == View.albums || root.view == View.artists || root.view == View.playlists || root.view == View.songs || root.view == View.genres): Field {
                     // At the frame's edge; beside the artists list, the window's.
                     x: parent.width - self.width - (root.view == View.artists ? 32px : root.page-gutter);
                     y: Chrome.top-room + 13px;
@@ -10522,6 +10807,8 @@ export component AppWindow inherits Window {
                     root.play-artist(root.menu-card.id);
                 } else if root.menu-card.kind == 4 {
                     root.play-mix(root.menu-card.id);
+                } else if root.menu-card.kind == 6 {
+                    root.play-genre(root.menu-card.id);
                 } else {
                     root.play-playlist(root.menu-card.id);
                 }

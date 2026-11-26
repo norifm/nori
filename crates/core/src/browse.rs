@@ -41,6 +41,18 @@ impl Core {
         Ok(songs)
     }
 
+    /// What a Genres page lists of the server's `genres`: those with songs, by name, each with a cover of
+    /// its songs where the index has one.
+    pub fn genres_listed(&self, genres: Vec<crate::Genre>) -> Vec<GenreTile> {
+        let mut out: Vec<GenreTile> = genres
+            .into_iter()
+            .filter(|g| g.song_count > 0)
+            .map(|g| GenreTile { cover_art: self.genre_cover(g.name.clone()).ok().flatten(), name: g.name, song_count: g.song_count })
+            .collect();
+        out.sort_by(|a, b| db::natural_cmp(&a.name, &b.name));
+        out
+    }
+
     /// Sets what the app offers over this profile; its songs are measured only where the rules say.
     pub(crate) fn set_rules(&self, rules: ProfileRules) {
         self.session.planner.set_measures(rules.measures);
@@ -341,6 +353,18 @@ pub(crate) mod tests {
         assert_eq!(core.genre_cover("JAZZ".into()).unwrap().as_deref(), Some("jazz-cover"), "a genre's page has its tile's cover");
         assert_eq!(core.genre_cover("Rock".into()).unwrap(), tiles[0].cover_art);
         assert_eq!(core.genre_cover("Polka".into()).unwrap(), None);
+    }
+
+    #[test]
+    fn genres_list_those_with_songs_by_name_with_covers() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        let mut jazz = song("d", "T", "A", "B", "Jazz", 1990);
+        jazz.cover_art = Some("jazz-cover".into());
+        db::index(&mut core.db.lock(), &[], &[], &[jazz]).unwrap();
+        let genre = |name: &str, song_count| crate::Genre { name: name.into(), song_count, album_count: 1 };
+        let listed = core.genres_listed(vec![genre("Rock 10", 3), genre("Polka", 0), genre("rock 9", 2), genre("Jazz", 1)]);
+        let got: Vec<(&str, u32, Option<&str>)> = listed.iter().map(|t| (t.name.as_str(), t.song_count, t.cover_art.as_deref())).collect();
+        assert_eq!(got, [("Jazz", 1, Some("jazz-cover")), ("rock 9", 2, None), ("Rock 10", 3, None)]);
     }
 
     #[test]

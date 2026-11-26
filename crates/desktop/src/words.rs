@@ -609,6 +609,25 @@ pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
 }
 
 /// One of the album grid's orders (`browse::album_sorts`).
+/// One of the songs list's orders, by the name the core keeps it under (`browse::song_sorts`).
+pub fn song_sort(name: &str) -> &'static str {
+    match name {
+        "ARTIST" => "Artist",
+        "ALBUM" => "Album",
+        "YEAR" => "Year",
+        "ADDED" => "Added",
+        "PLAYS" => "Most played",
+        "LONGEST" => "Longest",
+        _ => "Title",
+    }
+}
+
+/// The download queue on the Downloads page: "4 to go · 1 failed", or that nothing is downloading.
+pub fn download_queue(waiting: usize, failed: usize) -> String {
+    let parts: Vec<String> = [(waiting > 0).then(|| format!("{waiting} to go")), (failed > 0).then(|| format!("{failed} failed"))].into_iter().flatten().collect();
+    if parts.is_empty() { "Nothing downloading".into() } else { parts.join(" · ") }
+}
+
 pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
     use nori_core::browse::AlbumSort;
     match sort {
