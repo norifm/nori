@@ -653,6 +653,7 @@ impl Nori {
             "ink2": hex(r.on_surface_variant), "hair": hex(r.outline_variant), "outline": hex(r.outline),
             "accent": hex(palette.accent), "on": hex(palette.on), "onAccent": hex(r.on_primary),
             "still": prefs.motion != nori_core::settings::Motion::Full, "tiles": tiles,
+            "usage": nori_look::theme::usage_accents(nori_core::settings::season_of(prefs.season), month, day, southern(&zone), dark).into_iter().map(hex).collect::<Vec<_>>(),
         })
         .to_string()
     }
@@ -973,12 +974,30 @@ impl Nori {
             beat_model: nori_core::settings_model::BeatModel::Unavailable,
             beat_model_mb: 0,
         };
-        let facts = settings_pages::PageFacts { parts: self.rules().settings, ..Default::default() };
+        let client = self.client();
+        let core = client.as_ref().map(|c| c.core());
+        let lyrics_bytes = core.map_or(0, |c| c.lyrics_cache_bytes().max(0));
+        let unsent = client.as_ref().and_then(|c| c.unsent().ok());
+        let facts = settings_pages::PageFacts {
+            parts: self.rules().settings,
+            lyrics_bytes,
+            unsent_waiting: unsent.as_ref().map_or(0, |u| u.waiting),
+            unsent_dropped: unsent.as_ref().map_or(0, |u| u.dropped),
+            ..Default::default()
+        };
+        let stored = Stored { lyrics: lyrics_bytes, index: core.map_or(0, |c| c.database_bytes()) };
         let sections: Vec<Value> = settings_pages::page(page, SettingsClient::Web, &prefs, &state, &facts)
             .into_iter()
-            .map(|sec| json!({ "id": format!("{:?}", sec.id), "rows": sec.rows.iter().filter_map(settings_row).collect::<Vec<_>>() }))
+            .map(|sec| json!({ "id": format!("{:?}", sec.id), "rows": sec.rows.iter().filter_map(|r| settings_row(r, &stored)).collect::<Vec<_>>() }))
             .collect();
         Ok(Value::from(sections).to_string())
+    }
+
+    /// Clears the lyrics found online (`Core::lyrics_cache_clear`).
+    pub fn clear_lyrics(&self) {
+        if let Some(c) = self.client() {
+            c.core().lyrics_cache_clear();
+        }
     }
 
     /// Song `song`'s menu (JSON, as a page read it), most used first (`menus::song_menu`): `{ items: [{ action,
@@ -1025,13 +1044,30 @@ impl Nori {
     }
 }
 
-/// A settings row as the page draws it; None for a kind a browser never has.
-fn settings_row(r: &settings_pages::SettingsRow) -> Option<Value> {
-    use settings_pages::RowItem;
+/// What this browser keeps, bytes: the lyrics found online, and the database holding them and the
+/// library index.
+struct Stored {
+    lyrics: i64,
+    index: i64,
+}
+
+/// A settings row as the page draws it; None for a kind a browser never has. `stored` fills the row of what
+/// is kept (`{ kind: "stored", total, parts: [{ part, share, size }] }`, `part` "lyrics" or "index", `share`
+/// its part of the bar); an action's `size` is what it clears. Sizes are worded by `numbers::bytes`.
+fn settings_row(r: &settings_pages::SettingsRow, stored: &Stored) -> Option<Value> {
+    use settings_pages::{RowItem, SettingsAction};
+    let size = |b: i64| nori_core::numbers::bytes(b, nori_core::numbers::POINT);
     let item = match &r.item {
         RowItem::Setting { spec, value, chips } => json!({ "kind": "setting", "name": spec.name, "type": format!("{:?}", spec.kind), "options": spec.options, "min": spec.min, "max": spec.max, "value": value, "chips": chips }),
         RowItem::Note { note } => json!({ "kind": "note", "note": format!("{note:?}") }),
         RowItem::Link { to: settings_pages::SettingsLink::Equalizer } => json!({ "kind": "link", "to": "equalizer" }),
+        RowItem::Stored => {
+            let total = stored.lyrics + stored.index;
+            let part = |part: &str, b: i64| json!({ "part": part, "share": b as f64 / total.max(1) as f64, "size": size(b) });
+            json!({ "kind": "stored", "total": size(total), "parts": [part("lyrics", stored.lyrics), part("index", stored.index)] })
+        }
+        RowItem::Unsent { waiting, dropped } => json!({ "kind": "unsent", "waiting": waiting, "dropped": dropped }),
+        RowItem::Action { action: SettingsAction::ClearLyrics } => json!({ "kind": "action", "action": "ClearLyrics", "size": size(stored.lyrics) }),
         _ => return None,
     };
     Some(json!({ "item": item, "shown": r.shown, "enabled": r.enabled, "depth": r.depth }))

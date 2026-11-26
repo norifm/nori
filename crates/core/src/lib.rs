@@ -532,6 +532,13 @@ impl Core {
     }
 }
 
+impl Core {
+    /// The database's size, bytes: every page it holds, whatever file system keeps it (a browser's too).
+    pub fn database_bytes(&self) -> i64 {
+        self.db.lock().query_row("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()", [], |r| r.get(0)).unwrap_or(0)
+    }
+}
+
 #[cfg(test)]
 impl Core {
     /// Marks one queued download finished.

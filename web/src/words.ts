@@ -379,6 +379,7 @@ export const W = {
     Look: ["Appearance", "Theme, colors, size"],
     Lyrics: ["Lyrics", "Display and sources"],
     Library: ["Library", "Lists, search, history"],
+    Data: ["Downloads and storage", "Quality, space"],
   } as Record<string, [string, string]>,
   sections: {
     Between: "Between songs",
@@ -392,8 +393,20 @@ export const W = {
     Devices: "Other devices",
     Theme: "Theme",
     Motion: "Motion",
+    Streaming: "Streaming",
+    Storage: "Storage",
   } as Record<string, string>,
+  /** What this browser keeps, by part, and what clears it. */
+  storedHere: "Stored in this browser",
+  storedParts: { lyrics: "Lyrics", index: "Library index" } as Record<string, string>,
+  clearLyrics: "Lyrics",
+  clearLyricsLine: (size: string) => `${size} found online. Looked up again when needed.`,
+  clearedLyrics: "Cleared the lyrics found online",
+  unsent: "Changes not sent",
+  unsentLine: (waiting: number, dropped: number) =>
+    [waiting ? `${waiting} waiting for the server` : "", dropped ? `${dropped} the server would not take` : ""].filter(Boolean).join(" · "),
   settingNames: {
+    wifi: "Streaming quality",
     crossfadeSec: "Crossfade",
     autoMix: "AutoMix",
     crossfadeKeepAlbums: "Keep albums gapless",
@@ -430,6 +443,11 @@ export const W = {
   } as Record<string, Record<string, string>>,
   choice: (name: string, v: string) => {
     if (name === "crossfadeSec") return v === "0" ? "Off" : `${v} s`;
+    if (name === "wifi") {
+      // A bit rate and format ("320:mp3"), none for the original.
+      const [rate, format = ""] = v.split(":");
+      return !format ? "Original" : format === "mp3" ? `MP3 ${rate}` : format === "opus" ? `Opus ${rate}` : `${rate} ${format}`;
+    }
     return W.choices[name]?.[v.toUpperCase()] ?? v;
   },
   level: (name: string, v: number) => (name === "volumeBoostDb" ? (v === 0 ? "Off" : `+${v.toFixed(1)} dB`) : String(v)),

@@ -11,7 +11,7 @@
   import { reading } from "../state/library.svelte";
   import { remote } from "../state/remote.svelte";
   import { route, href } from "../state/route.svelte";
-  import { refreshTheme } from "../state/theme.svelte";
+  import { refreshTheme, worn } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
   import type { MusicFolderSwitch, Profile, ProfileIcon, Profiles, SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
@@ -24,7 +24,7 @@
   import ProfileIconPicker from "../ui/ProfileIconPicker.svelte";
   import ProfileMark from "../ui/ProfileMark.svelte";
 
-  const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "quote-message", Library: "album-list", Servers: "server", Plugins: "view-grid", About: "info-circle" };
+  const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "quote-message", Library: "album-list", Data: "cloud-download", Servers: "server", Plugins: "view-grid", About: "info-circle" };
   let rev = $state(0);
   const page = reading("settings", async () => {
     void rev;
@@ -100,6 +100,13 @@
   function signedOut() {
     location.hash = "";
     location.reload();
+  }
+
+  /** A chore that frees space: done, the page reads itself again. */
+  async function clearLyrics() {
+    await ask("clear_lyrics");
+    ui.say(W.clearedLyrics);
+    rev++;
   }
 
   const shownRows = (s: SettingsSection) => s.rows.filter((r) => r.shown);
@@ -202,6 +209,21 @@
 {#snippet row(r: SettingRow)}
   {#if r.item.kind === "note"}
     <p class="note">{W.notes[r.item.note] ?? ""}</p>
+  {:else if r.item.kind === "stored"}
+    <!-- What is kept, by part: one bar in the parts' colors, then a line each, as the desktop's. -->
+    {@const it = r.item}
+    <div class="group-row stored" data-row="stored">
+      <span class="words"><span>{W.storedHere}</span><span class="sub">{it.total}</span></span>
+      <span class="bar">{#each it.parts as p, i (p.part)}<i style:width="{p.share * 100}%" style:background={worn.usage[i] ?? "var(--ink2)"}></i>{/each}</span>
+      <span class="parts">{#each it.parts as p, i (p.part)}<span class="part"><i style:background={worn.usage[i] ?? "var(--ink2)"}></i>{W.storedParts[p.part] ?? p.part} · {p.size}</span>{/each}</span>
+    </div>
+  {:else if r.item.kind === "unsent"}
+    <div class="group-row" data-row="unsent"><span class="words"><span>{W.unsent}</span><span class="sub">{W.unsentLine(r.item.waiting, r.item.dropped)}</span></span></div>
+  {:else if r.item.kind === "action"}
+    <div class="group-row" class:off={!r.enabled} data-action={r.item.action}>
+      <span class="words"><span>{W.clearLyrics}</span><span class="sub">{W.clearLyricsLine(r.item.size)}</span></span>
+      <button class="pill quiet small" disabled={!r.enabled} onclick={() => void clearLyrics()}>{W.clear}</button>
+    </div>
   {:else if r.item.kind === "link"}
     <a class="group-row" href={href(r.item.to)} data-link={r.item.to}><span class="words">{W.equalizer}</span><Icon name="nav-arrow-right" /></a>
   {:else}
@@ -316,10 +338,14 @@
   .root {
     margin: 10px -4px 0;
   }
-  /* As chips, the desktop's: 16 px under the title, 12 over what the page shows. */
+  /* As chips, the desktop's: 16 px under the title, 12 over what the page shows, its names at 13 px on one
+     line wider than the column, centered over it. */
   @media (min-width: 720px) and (max-width: 1279px) {
     .tabs {
-      margin: 0 0 12px;
+      margin: 0 -120px 12px;
+    }
+    .tab {
+      font-size: 13px;
     }
   }
   .group {
@@ -384,6 +410,42 @@
   }
   .level {
     flex-wrap: wrap;
+  }
+  .stored {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .stored .words {
+    flex-basis: 100%;
+  }
+  .bar {
+    display: flex;
+    gap: 2px;
+    width: 100%;
+    height: 10px;
+    border-radius: 5px;
+    overflow: hidden;
+    background: var(--line);
+  }
+  .bar i {
+    min-width: 0;
+  }
+  .parts {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+    color: var(--ink2);
+  }
+  .part {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .part i {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
   }
   .level .range {
     width: 100%;

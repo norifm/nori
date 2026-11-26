@@ -4,7 +4,7 @@
 import { ask } from "../rpc";
 
 /** What the core hands over (`Nori::theme`): `#rrggbb` colors. */
-type Colors = { season: string; next: string; nextMonth: number; nextDay: number; dark: boolean; page: string; surface: string; ink: string; ink2: string; hair: string; outline: string; accent: string; on: string; onAccent: string; still?: boolean; tiles?: Tile[] };
+type Colors = { season: string; next: string; nextMonth: number; nextDay: number; dark: boolean; page: string; surface: string; ink: string; ink2: string; hair: string; outline: string; accent: string; on: string; onAccent: string; still?: boolean; tiles?: Tile[]; usage?: string[] };
 /** A season's tile: its paper and accent in the appearance worn. */
 export type Tile = { season: string; page: string; accent: string };
 
@@ -27,7 +27,7 @@ export const RECOLOR_MS = 340;
 
 /** The calendar's season now (SPRING ... WINTER) and the next one with its first day, the seasons' tiles,
  * as the core last said, and its colors as CSS custom properties, for what wears them itself. */
-export const worn = $state({ season: "AUTUMN", next: "WINTER", nextMonth: 11, nextDay: 7, tiles: [] as Tile[], vars: "" });
+export const worn = $state({ season: "AUTUMN", next: "WINTER", nextMonth: 11, nextDay: 7, tiles: [] as Tile[], usage: [] as string[], vars: "" });
 
 /** What the core works a theme out from: the browser's date and zone, and its color scheme. */
 export function today(): [number, number, string, boolean] {
@@ -37,7 +37,7 @@ export function today(): [number, number, string, boolean] {
 
 function apply(c: Colors) {
   // Colors remembered by an older page have no next season.
-  Object.assign(worn, c.next ? { season: c.season, next: c.next, nextMonth: c.nextMonth, nextDay: c.nextDay } : { season: c.season }, c.tiles ? { tiles: c.tiles } : {});
+  Object.assign(worn, c.next ? { season: c.season, next: c.next, nextMonth: c.nextMonth, nextDay: c.nextDay } : { season: c.season }, c.tiles ? { tiles: c.tiles } : {}, c.usage ? { usage: c.usage } : {});
   const root = document.documentElement;
   for (const [k, v] of VARS) root.style.setProperty(v, c[k] as string);
   worn.vars = VARS.map(([k, v]) => `${v}:${c[k]}`).join(";");

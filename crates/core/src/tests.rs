@@ -33,6 +33,17 @@ fn search_indexes_skip_external() {
 }
 
 #[test]
+fn the_database_size_grows_with_what_it_holds() {
+    let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+    let empty = core.database_bytes();
+    assert!(empty > 0);
+    for i in 0..200 {
+        core.ingest_search(SEARCH.replace("Dogs", &format!("Dogs {i} {}", "x".repeat(200))).replace("\"id\":\"s1\"", &format!("\"id\":\"s1-{i}\"")).into()).unwrap();
+    }
+    assert!(core.database_bytes() > empty, "{} after {empty}", core.database_bytes());
+}
+
+#[test]
 fn queue_and_cache_round_trip() {
     let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
     let songs = crate::providers::subsonic::wire::found(SEARCH.as_bytes()).unwrap().songs;

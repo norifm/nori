@@ -110,7 +110,15 @@ export type Jam = {
 export type Devices = { on: boolean; me?: string; here: boolean; active: string | null; list: { id: string; name: string; kind: string; playing: boolean; nearby: boolean; refused: string | null }[] };
 
 export type SettingRow = {
-  item: { kind: "setting"; name: string; type: "Switch" | "Choice" | "Level" | "Text" | "Colour"; options: string[]; min: number; max: number; value: string; chips: boolean } | { kind: "note"; note: string } | { kind: "link"; to: string };
+  item:
+    | { kind: "setting"; name: string; type: "Switch" | "Choice" | "Level" | "Text" | "Colour"; options: string[]; min: number; max: number; value: string; chips: boolean }
+    | { kind: "note"; note: string }
+    | { kind: "link"; to: string }
+    /** What this browser keeps: the total, then each part's share of the bar and its size. */
+    | { kind: "stored"; total: string; parts: { part: string; share: number; size: string }[] }
+    | { kind: "unsent"; waiting: number; dropped: number }
+    /** A chore, `size` what it clears. */
+    | { kind: "action"; action: "ClearLyrics"; size: string };
   shown: boolean;
   enabled: boolean;
   depth: number;

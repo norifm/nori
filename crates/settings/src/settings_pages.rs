@@ -211,7 +211,7 @@ pub fn pages(client: SettingsClient, parts: &[SettingsPart]) -> Vec<SettingsPage
     let offered = |p: SettingsPage| match client {
         SettingsClient::Phone => true,
         SettingsClient::Desktop | SettingsClient::Terminal => p != SettingsPage::LyricsSources,
-        SettingsClient::Web => matches!(p, SettingsPage::Playing | SettingsPage::Sound | SettingsPage::Look | SettingsPage::Lyrics | SettingsPage::Library),
+        SettingsClient::Web => matches!(p, SettingsPage::Playing | SettingsPage::Sound | SettingsPage::Look | SettingsPage::Lyrics | SettingsPage::Library | SettingsPage::Data),
     };
     SettingsPage::ALL.into_iter().filter(|p| !page_parts(*p).iter().all(|part| !parts.contains(part)) && offered(*p)).collect()
 }
@@ -457,6 +457,14 @@ impl Page<'_> {
 
     fn data(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let f = self.f;
+        let clear = |action, bytes: i64| row(RowItem::Action { action }).enabled(!f.storage_busy && bytes > 0);
+        let unsent = row(RowItem::Unsent { waiting: f.unsent_waiting, dropped: f.unsent_dropped }).shown(f.unsent_waiting > 0 || f.unsent_dropped > 0);
+        if self.web() {
+            // A browser keeps no songs (no downloads, no stream cache to size or fill ahead), its covers are
+            // the browser's own cache, and a backup holds plugins a browser runs apart from the core.
+            let storage = vec![row(RowItem::Stored), unsent, clear(SettingsAction::ClearLyrics, f.lyrics_bytes)];
+            return vec![(SectionId::Streaming, vec![self.setting("wifi")]), (SectionId::Storage, storage)];
+        }
         let mut streaming = vec![self.setting("wifi")];
         if self.phone() {
             streaming.push(self.setting("mobile"));
@@ -470,11 +478,10 @@ impl Page<'_> {
         if self.client == SettingsClient::Terminal {
             downloads.push(row(RowItem::Link { to: SettingsLink::Downloads }));
         }
-        let clear = |action, bytes: i64| row(RowItem::Action { action }).enabled(!f.storage_busy && bytes > 0);
         // What is kept and what clears it, no settings: the cache's size is streaming's.
         let mut storage = vec![
             row(RowItem::Stored),
-            row(RowItem::Unsent { waiting: f.unsent_waiting, dropped: f.unsent_dropped }).shown(f.unsent_waiting > 0 || f.unsent_dropped > 0),
+            unsent,
             clear(SettingsAction::ClearStream, f.stream_bytes),
             clear(SettingsAction::ClearCovers, f.cover_bytes),
             clear(SettingsAction::ClearLyrics, f.lyrics_bytes),
@@ -654,13 +661,13 @@ mod tests {
     #[test]
     fn a_browser_offers_what_applies_there() {
         let d = StoredPrefs::default();
-        assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Look, SettingsPage::Lyrics, SettingsPage::Library]);
+        assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Look, SettingsPage::Lyrics, SettingsPage::Library, SettingsPage::Data]);
         let rows = every_row(SettingsClient::Web, &d, &facts());
         let has = names(&rows, false);
-        for kept in ["autoMix", "crossfadeSec", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season"] {
+        for kept in ["autoMix", "crossfadeSec", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season", "wifi"] {
             assert!(has.iter().any(|n| n == kept), "{kept} is on the web's pages");
         }
-        for left in ["theme", "bridgeOffline", "playOnBluetooth", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
+        for left in ["theme", "bridgeOffline", "playOnBluetooth", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "songsAheadWifi", "accent", "lyricsSize"] {
             assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
         }
         let links: Vec<_> = rows.iter().filter_map(|r| match r.item {
@@ -668,7 +675,14 @@ mod tests {
             _ => None,
         }).collect();
         assert_eq!(links, [SettingsLink::Equalizer], "the equalizer is the web's one page within Settings");
-        assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");
+        let actions: Vec<_> = rows.iter().filter_map(|r| match r.item {
+            RowItem::Action { action } => Some(action),
+            _ => None,
+        }).collect();
+        assert_eq!(actions, [SettingsAction::ClearLyrics], "a browser keeps no songs, covers or backups of its own");
+        assert!(!rows.iter().any(|r| matches!(r.item, RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");
+        let data = page(SettingsPage::Data, SettingsClient::Web, &d, &state(&d, Output::default(), &model()), &facts());
+        assert_eq!(data.iter().map(|s| s.id).collect::<Vec<_>>(), [SectionId::Streaming, SectionId::Storage]);
         assert!(!live(SettingsClient::Web, &StoredPrefs { auto_mix: crate::settings::AutoMixMode::Smooth, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
     }
 

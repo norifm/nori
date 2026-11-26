@@ -588,6 +588,19 @@ if (!only || only.includes("topmark")) {
   expect(lines.at(-1).text === "Manage profiles", "the profiles end with Manage profiles");
 }
 
+if (!only || only.includes("storage")) {
+  // Downloads and storage: the streaming quality, what this browser keeps and clearing the lyrics found online.
+  await hash("#/settings/Data", "settings");
+  await page.waitForSelector("[data-row=stored]");
+  const has = await page.evaluate(() => ({
+    quality: !!document.querySelector("[data-setting=wifi]"),
+    parts: document.querySelectorAll("[data-row=stored] .part").length,
+    clear: !!document.querySelector("[data-action=ClearLyrics]"),
+  }));
+  report.storage = has;
+  expect(has.quality && has.parts === 2 && has.clear, "Downloads and storage has the quality, what is kept and Clear");
+}
+
 if (!only || only.includes("back")) {
   // Back takes one step: out of Now Playing to the page under it, then to the page before.
   await hash("#/albums/alphabeticalByName", "albums");
