@@ -178,6 +178,16 @@ export const W = {
   loadingPlayer: "Starting the player",
   searchHint: "Artists, albums and songs",
   noResults: "Nothing found",
+  searchAll: "All",
+  topResult: "Top result",
+  /** What the search's top result is, over its name. */
+  topKind: { songs: "Song", albums: "Album", artists: "Artist", playlists: "Playlist" } as Record<string, string>,
+  /** A scope's chip on the search page, as Android's. */
+  searchScope: { everything: "Everything", library: "In library", providers: "Not in library yet" } as Record<string, string>,
+  notInLibraryYet: "Not in library yet",
+  searchFallback: (reason: string) => (reason ? `Server search failed: ${reason} — showing offline results` : "Server search failed — showing offline results"),
+  recentSearches: "Recent searches",
+  clearSearches: "Clear",
   noAlbums: "No albums yet",
   noPlaylists: "No playlists yet",
   noFavoriteSongs: "No favorite songs yet. Tap the seal on a song and it will be here.",

@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="plugins lyrics status-bar notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
+SECTIONS="plugins lyrics status-bar notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel search remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -931,6 +931,32 @@ if want sheets; then section "a sheet over the sideways player, the shade pulled
   check "back closes the sheet" wait_until 10 off_screen 'text="Playing on"'
   adb shell settings put system user_rotation 0; adb shell settings put system accelerometer_rotation 1
   "$app" set remoteControl false >/dev/null
+fi
+
+if want search; then section "search: the keyboard's Search key, the kind chips and Back"
+  # What the page holds and in what order is the core's, tested in Rust; the field's keyboard action,
+  # the chips' taps and Back through the activity's dispatcher are Compose's.
+  "$app" open search >/dev/null
+  check "the search page opens" wait_for route search 10
+  # The field's words are drawn over it, not its own: it is tapped where it is.
+  read -r x1 y1 x2 y2 <<<"$(ui | grep -oE '<node [^>]*class="android.widget.EditText"[^>]*>' | head -1 | grep -oE 'bounds="[^"]*"' | grep -oE '[0-9]+' | tr '\n' ' ')"
+  adb shell input tap $(((x1 + x2) / 2)) $(((y1 + y2) / 2))
+  check "the field takes the keyboard" wait_until 10 field_focused
+  fill_field "long track"
+  check "the answer comes with its top result" wait_until 20 on_screen 'text="Top result"'
+  "$here/ui-dump.sh" --ime-enter >/dev/null
+  keyboard_away() { adb shell dumpsys input_method | grep -q "mInputShown=false"; }
+  check "the keyboard's Search key puts the keyboard away" wait_until 10 keyboard_away
+  tapnode text "Albums"
+  check "a kind picked shows that kind alone" wait_until 10 off_screen 'text="Top result"'
+  check "with its albums" on_screen 'text="Long Album"'
+  adb shell input keyevent KEYCODE_BACK
+  check "Back goes to All" wait_until 10 on_screen 'text="Top result"'
+  adb shell input keyevent KEYCODE_BACK
+  check "Back again clears the search" wait_until 10 off_screen 'text="Top result"'
+  check "and the query sent is a recent search" wait_until 10 on_screen 'text="Recent searches"'
+  check "named as it was sent" on_screen 'text="long track"'
+  "$app" open home >/dev/null
 fi
 
 if want queue-panel; then section "the song playing, tapped in the queue"

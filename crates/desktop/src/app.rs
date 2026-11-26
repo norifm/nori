@@ -515,12 +515,16 @@ pub struct App {
     /// Home's mixes, whose cards take their first cover's colors once known.
     mixes: Vec<nori_core::mixes::board::MixTile>,
     songs: Vec<Song>,
+    /// The search's songs listed: beside the top result, or every one with Songs picked.
     search_songs: Vec<Song>,
+    /// The search's answer shown, as the core laid it out, and its kind chips after All.
+    search_found: nori_core::SearchResult,
+    search_layout: nori_core::search::SearchLayout,
+    search_kinds: Vec<nori_core::search::SearchKind>,
     /// The search field's preview of the answer shown, line by line as the main window lists it.
     search_preview: Vec<nori_core::search::PreviewLine>,
-    /// Search's Show all pressed, for the query in `search_query`.
-    search_songs_all: bool,
-    search_query: String,
+    /// The tab the search page was opened from: Escape in an empty field goes back to it.
+    search_from: View,
     /// The equalizer page's AutoEQ search and what it found, and the saved sound profiles shown.
     autoeq_query: String,
     autoeq_hits: Vec<nori_core::AutoEqEntry>,
@@ -736,7 +740,8 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
     bar.on_search_edited(to_main_with(ui, |m, text| m.invoke_search_edited(text)));
     bar.on_search_step(to_main_with(ui, |m, by| m.invoke_search_step(by)));
     bar.on_search_accepted(to_main(ui, |m| m.invoke_search_accepted()));
-    bar.on_search_escaped(to_main(ui, |m| m.set_search_preview_open(false)));
+    bar.on_search_escaped(to_main(ui, |m| m.invoke_search_escaped()));
+    bar.on_search_chip_step(to_main_with(ui, |m, by| m.invoke_search_chip_step(by)));
     bar.on_drag_window(to_main(ui, |m| m.invoke_drag_window()));
     bar.on_zoom_window(to_main(ui, |m| m.invoke_zoom_window()));
     let (pill, main) = (bar.as_weak(), ui.as_weak());
@@ -889,9 +894,11 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             mixes: Vec::new(),
             songs: Vec::new(),
             search_songs: Vec::new(),
+            search_found: Default::default(),
+            search_layout: Default::default(),
+            search_kinds: Vec::new(),
             search_preview: Vec::new(),
-            search_songs_all: false,
-            search_query: String::new(),
+            search_from: View::Home,
             autoeq_query: String::new(),
             autoeq_hits: Vec::new(),
             output: String::new(),
@@ -1217,6 +1224,12 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_search_preview_pick, h, |a, i| a.search_pick(i as usize));
     on!(ui.on_search_preview_changed, h, |a| a.mirror());
     on!(ui.on_search_again, h, |a, t| a.search_again(&t));
+    on!(ui.on_search_escaped, h, |a| a.search_escaped());
+    on!(ui.on_search_chip_step, h, |a, by| a.search_chip_step(by));
+    on!(ui.on_search_chip_picked, h, |a, i| a.search_chip(i as usize));
+    on!(ui.on_search_scope_tapped, h, |a, i| a.search_scope(i as usize));
+    on!(ui.on_search_top_open, h, |a| a.search_top(false));
+    on!(ui.on_search_top_play, h, |a| a.search_top(true));
     on!(ui.on_forget_searches, h, |a| a.forget_searches());
     on!(ui.on_toggle, h, |a| a.on_session(|s| s.toggle()));
     on!(ui.on_noise_next, h, |a| a.noise_next());
@@ -1254,7 +1267,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_drag_window, h, |a| a.compositor.drag_window());
     on!(ui.on_all_songs, h, |a, list| {
-        if list == 0 { a.page_songs_all = true; a.show_page_songs(); } else { a.search_songs_all = true; a.show_search_songs(); }
+        if list == 0 {
+            a.page_songs_all = true;
+            a.show_page_songs();
+        }
     });
     on!(ui.on_zoom_window, h, |a| a.compositor.zoom_window());
     on!(ui.on_page_moved, h, |a| a.place_player());
@@ -1762,6 +1778,13 @@ impl App {
             ui.set_can_cancel_login(self.session.is_some());
             ui.set_view(View::Login);
             return;
+        }
+        if view == View::Search && ui.get_view() != View::Search {
+            // A tab to go back to: a page or the sign-in is left for Home.
+            self.search_from = match ui.get_view() {
+                View::Page | View::Login => View::Home,
+                tab => tab,
+            };
         }
         ui.set_view(view);
         // The search page's field is the top pill's.
@@ -2425,12 +2448,10 @@ impl App {
         ui.set_page_songs_more(n < self.page_songs.len());
     }
 
-    /// Search's songs as listed: the best few until Show all.
+    /// Search's songs as listed.
     fn show_search_songs(&self) {
         let ui = self.ui();
-        let n = nori_core::browse::songs_shown(self.search_songs.len() as u32, self.search_songs_all) as usize;
-        show_in(ui.get_search_songs(), self.rows(&self.search_songs[..n], false), |m| ui.set_search_songs(m));
-        ui.set_search_songs_more(n < self.search_songs.len());
+        show_in(ui.get_search_songs(), self.rows(&self.search_songs, false), |m| ui.set_search_songs(m));
     }
 
     /// The Songs tab's or Favorites' songs.
@@ -2611,35 +2632,99 @@ impl App {
 
     fn show_search(&mut self, v: SearchView) {
         let ui = self.ui();
-        // Nothing typed: the searches made before, newest first.
-        let blank = v.query.trim().is_empty();
-        ui.set_search_blank(blank);
-        ui.set_search_nothing(matches!(v.answer, SearchShown::NothingFound));
-        ui.set_search_query(v.query.trim().into());
-        if blank {
+        if v.query.trim().is_empty() {
             let recent = self.session.as_ref().and_then(|s| s.core.search_history().ok()).unwrap_or_default();
             ui.set_recent_searches(ModelRc::new(VecModel::from(recent.into_iter().map(SharedString::from).collect::<Vec<_>>())));
         }
-        let busy = matches!(v.answer, SearchShown::Asking { .. });
-        let note = match &v.answer {
-            SearchShown::Failed { fallback, .. } => format!("The server could not be searched ({}); these are from the offline index", fallback.reason.clone().unwrap_or_default()),
-            _ => String::new(),
-        };
-        let found = v.answer.into_result().unwrap_or_default();
-        self.search_preview = nori_core::search::search_preview(&found);
-        ui.set_search_preview(ModelRc::new(VecModel::from(preview_cards(&self.search_preview, &found))));
-        ui.set_search_preview_at(-1);
-        ui.set_search_artists(cards(found.artists.iter().map(artist_card)));
-        ui.set_search_albums(cards(found.albums.iter().map(album_card)));
-        ui.set_search_playlists(cards(found.playlists.iter().map(playlist_card)));
-        self.search_songs = found.songs;
-        if self.search_query != v.query.trim() {
-            self.search_query = v.query.trim().to_string();
-            self.search_songs_all = false;
-        }
+        let page = search_shown(&ui, v);
+        self.search_songs = page.songs;
+        self.search_found = page.found;
+        self.search_layout = page.layout;
+        self.search_kinds = page.kinds;
+        self.search_preview = page.preview;
         self.show_search_songs();
-        ui.set_search_busy(busy);
-        ui.set_search_note(note.into());
+    }
+
+    /// Kind chip `i` picked (0 All): its results shown whole, in place.
+    fn search_chip(&mut self, i: usize) {
+        let kind = i.checked_sub(1).and_then(|k| self.search_kinds.get(k).copied());
+        let Some(s) = &self.session else { return };
+        let v = s.search_pick(kind);
+        self.start_at(0.0);
+        self.show_search(v);
+    }
+
+    /// Tab (`by` 1) or Shift+Tab (-1) in the field on the search page: the next or the previous chip, round
+    /// the ends.
+    fn search_chip_step(&mut self, by: i32) {
+        let n = self.search_kinds.len() as i32 + 1;
+        if n > 1 {
+            self.search_chip((self.ui().get_search_chip() + by).rem_euclid(n) as usize);
+        }
+    }
+
+    /// Scope chip `i` tapped: the answer narrowed to it, or to everything again.
+    fn search_scope(&mut self, i: usize) {
+        let Some(&scope) = nori_core::search::search_scopes().get(i) else { return };
+        let Some(s) = &self.session else { return };
+        let v = s.search_narrow(scope);
+        self.show_search(v);
+    }
+
+    /// The top result opened (a song plays), or played.
+    fn search_top(&mut self, play: bool) {
+        use nori_core::search::SearchKind;
+        let Some(top) = self.search_layout.top else { return };
+        self.search_used();
+        let at = top.at as usize;
+        let found = &self.search_found;
+        match top.kind {
+            SearchKind::Songs => {
+                let Some(song) = found.songs.get(at).cloned() else { return };
+                self.play_found(song);
+            }
+            SearchKind::Albums => {
+                let id = found.albums[at].id.clone();
+                if play { self.play_fetch(Fetch::Album(id)) } else { self.open_page(PageAsk::Album(id)) }
+            }
+            SearchKind::Artists => {
+                let id = found.artists[at].id.clone();
+                if play { self.play_fetch(Fetch::Artist(id)) } else { self.open_page(PageAsk::Artist(id)) }
+            }
+            SearchKind::Playlists => {
+                let id = found.playlists[at].id.clone();
+                if play { self.play_fetch(Fetch::Playlist(id)) } else { self.open_page(PageAsk::Playlist(id)) }
+            }
+        }
+    }
+
+    /// A song found, played alone: a search's results are not an album, and queueing the rest would have a
+    /// provider fetch every one of them.
+    fn play_found(&self, song: Song) {
+        let query = self.ui().get_search_query().to_string();
+        self.on_session(|s| s.play(vec![song], 0, false, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Search, query))));
+    }
+
+    /// Escape in the field: the preview shut; on the search page, the field cleared, then the search left
+    /// for the tab it was opened from.
+    fn search_escaped(&mut self) {
+        let ui = self.ui();
+        let typed = self.top.as_ref().is_some_and(|t| !t.get_search_text().is_empty());
+        if ui.get_search_preview_open() || ui.get_view() != View::Search {
+            ui.set_search_preview_open(false);
+        } else if typed {
+            if let Some(top) = &self.top {
+                top.set_search_text("".into());
+            }
+            self.search_edited("");
+            return;
+        } else {
+            self.trail.left();
+            self.go(self.search_from);
+        }
+        if let Some(top) = &self.top {
+            top.invoke_end_search();
+        }
     }
 
     /// The arrows in the search field: the preview's line `by` lines on, past the groups' heads.
@@ -2693,7 +2778,7 @@ impl App {
                 self.trail.left();
                 self.go(View::Search);
             }
-            Some(PreviewLine::Head { .. }) | None => {}
+            Some(PreviewLine::Top | PreviewLine::Head { .. }) | None => {}
         }
     }
 
@@ -2720,7 +2805,7 @@ impl App {
             0 => self.page_songs.get(i),
             1 => self.songs.get(i),
             3 => self.queue.as_ref().and_then(|q| q.songs.get(i)),
-            4 => self.preview_song(i).and_then(|at| self.search_songs.get(at)),
+            4 => self.preview_song(i).and_then(|at| self.search_found.songs.get(at)),
             _ => self.search_songs.get(i),
         }
         .cloned()
@@ -2816,21 +2901,16 @@ impl App {
 
     /// Plays song `i` of `list` (`how` -1), or does its menu's line `how` (`SongGo::kind`).
     fn song(&mut self, list: i32, i: usize, how: i32) {
-        if list == 4 {
-            if let Some(at) = self.preview_song(i) {
-                self.song(2, at, how);
-            }
-            return;
-        }
         let Some(one) = self.list_song(list, i) else { return };
-        if list == 2 && how == -1 {
+        if (list == 2 || list == 4) && how == -1 {
             self.search_used();
+            return self.play_found(one);
         }
         let (songs, origin) = match list {
             0 => (self.page_songs.clone(), self.page_fetch.as_ref().map(Fetch::origin)),
             1 => (self.songs.clone(), None),
             3 => (self.queue.as_ref().map(|q| q.songs.to_vec()).unwrap_or_default(), None),
-            _ => (self.search_songs.clone(), Some(nori_core::PageOrigin::new(nori_core::OriginKind::Search, self.search_query.as_str()))),
+            _ => (self.search_songs.clone(), None),
         };
         match how {
             -1 if list == 3 => self.on_session(|s| s.jump(i)),
@@ -5894,7 +5974,7 @@ fn cards(it: impl Iterator<Item = Card>) -> ModelRc<Card> {
 
 fn album_card(a: &nori_core::Album) -> Card {
     let sub_artist = a.artist_id.clone().unwrap_or_default().into();
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: nori_core::lines::album_subtitle(&a.artist, a.year).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0, ..Default::default() }
+    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: nori_core::lines::album_subtitle(&a.artist, a.year).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0, remote: a.is_external, ..Default::default() }
 }
 
 /// The songs card `id` of `Card::kind` (or 4, a mix) stands for, fetched whole; a song card's are at hand.
@@ -5908,6 +5988,55 @@ fn card_fetch(kind: i32, id: String) -> Option<Fetch> {
     }
 }
 
+/// The search's answer as the page and the field's preview hold it.
+struct SearchPage {
+    found: nori_core::SearchResult,
+    layout: nori_core::search::SearchLayout,
+    kinds: Vec<nori_core::search::SearchKind>,
+    /// The songs listed (rows the caller draws, with their marks).
+    songs: Vec<Song>,
+    preview: Vec<nori_core::search::PreviewLine>,
+}
+
+/// Shows the search's view `v` on the page and in the field's preview, but for the songs' rows and the
+/// recent searches.
+fn search_shown(ui: &AppWindow, v: SearchView) -> SearchPage {
+    use nori_core::search::SearchKind;
+    ui.set_search_blank(v.query.trim().is_empty());
+    ui.set_search_nothing(matches!(v.answer, SearchShown::NothingFound));
+    ui.set_search_query(v.query.trim().into());
+    ui.set_search_busy(matches!(v.answer, SearchShown::Asking { .. }));
+    let note = match &v.answer {
+        SearchShown::Failed { fallback, .. } => words::search_fallback(fallback.reason.as_deref()),
+        _ => String::new(),
+    };
+    ui.set_search_note(note.into());
+    let found = v.answer.into_result().unwrap_or_default();
+    let preview = nori_core::search::search_preview(&v.layout);
+    ui.set_search_preview(ModelRc::new(VecModel::from(preview_cards(&preview, &found))));
+    ui.set_search_preview_at(-1);
+    // The chips: All and the kinds found; the scopes where providers' results are mixed in.
+    let chips: Vec<SharedString> = if v.kinds.is_empty() { Vec::new() } else { std::iter::once(words::ALL).chain(v.kinds.iter().map(|&k| words::search_kind(k))).map(SharedString::from).collect() };
+    ui.set_search_chips(ModelRc::new(VecModel::from(chips)));
+    ui.set_search_chip(v.kind.and_then(|k| v.kinds.iter().position(|&c| c == k)).map_or(0, |i| i as i32 + 1));
+    let scopes = nori_core::search::search_scopes();
+    let offered: Vec<SharedString> = if v.scopes_offered { scopes.iter().map(|&s| SharedString::from(words::search_scope(s))).collect() } else { Vec::new() };
+    ui.set_search_scopes(ModelRc::new(VecModel::from(offered)));
+    ui.set_search_scope(scopes.iter().position(|&s| s == v.scope).map_or(-1, |i| i as i32));
+    ui.set_search_picked(v.kind.map_or(-1, kind_number));
+    ui.set_search_has_top(v.layout.top.is_some());
+    if let Some(t) = v.layout.top {
+        ui.set_search_top(top_card(&found, t));
+        ui.set_search_top_kind(words::top_kind(t.kind).into());
+    }
+    let items = |kind| v.layout.sections.iter().find(|s| s.kind == kind).map(|s| s.items.clone()).unwrap_or_default();
+    ui.set_search_albums(cards(items(SearchKind::Albums).iter().map(|&i| album_card(&found.albums[i as usize]))));
+    ui.set_search_artists(cards(items(SearchKind::Artists).iter().map(|&i| artist_card(&found.artists[i as usize]))));
+    ui.set_search_playlists(cards(items(SearchKind::Playlists).iter().map(|&i| playlist_card(&found.playlists[i as usize]))));
+    let songs = items(SearchKind::Songs).iter().map(|&i| found.songs[i as usize].clone()).collect();
+    SearchPage { found, layout: v.layout, kinds: v.kinds, songs, preview }
+}
+
 /// The search field's preview `lines` of `found` as the main window draws them: a group's head as kind -1,
 /// every result as kind 5, the rest as their cards.
 fn preview_cards(lines: &[nori_core::search::PreviewLine], found: &nori_core::SearchResult) -> Vec<Card> {
@@ -5916,6 +6045,7 @@ fn preview_cards(lines: &[nori_core::search::PreviewLine], found: &nori_core::Se
     lines
         .iter()
         .map(|l| match *l {
+            PreviewLine::Top => words_card(-1, words::TOP_RESULT_GROUP),
             PreviewLine::Head { kind } => words_card(-1, words::preview_group(kind)),
             PreviewLine::Artist { at } => artist_card(&found.artists[at as usize]),
             PreviewLine::Album { at } => album_card(&found.albums[at as usize]),
@@ -5928,7 +6058,7 @@ fn preview_cards(lines: &[nori_core::search::PreviewLine], found: &nori_core::Se
 
 /// The preview's line `by` lines on from `at` (-1 for none), past the groups' heads and round its ends.
 fn preview_step(lines: &[nori_core::search::PreviewLine], at: i32, by: i32) -> i32 {
-    let stops: Vec<i32> = lines.iter().enumerate().filter(|(_, l)| !matches!(l, nori_core::search::PreviewLine::Head { .. })).map(|(i, _)| i as i32).collect();
+    let stops: Vec<i32> = lines.iter().enumerate().filter(|(_, l)| !matches!(l, nori_core::search::PreviewLine::Top | nori_core::search::PreviewLine::Head { .. })).map(|(i, _)| i as i32).collect();
     if stops.is_empty() {
         return -1;
     }
@@ -5937,8 +6067,31 @@ fn preview_step(lines: &[nori_core::search::PreviewLine], at: i32, by: i32) -> i
     stops[(from + by).rem_euclid(n) as usize]
 }
 
+/// A kind as the search page's Slint names it (`search-picked`).
+fn kind_number(kind: nori_core::search::SearchKind) -> i32 {
+    use nori_core::search::SearchKind;
+    match kind {
+        SearchKind::Songs => 0,
+        SearchKind::Albums => 1,
+        SearchKind::Artists => 2,
+        SearchKind::Playlists => 3,
+    }
+}
+
+/// The search's top result `t` of `found` as its card: its name, and its line led by its maker.
+fn top_card(found: &nori_core::SearchResult, t: nori_core::search::SearchItem) -> Card {
+    use nori_core::search::SearchKind;
+    let at = t.at as usize;
+    match t.kind {
+        SearchKind::Songs => song_card(&found.songs[at]),
+        SearchKind::Albums => album_card(&found.albums[at]),
+        SearchKind::Artists => artist_card(&found.artists[at]),
+        SearchKind::Playlists => playlist_card(&found.playlists[at]),
+    }
+}
+
 fn artist_card(a: &nori_core::Artist) -> Card {
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.filter(|&n| n > 0).map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 1, ..Default::default() }
+    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.filter(|&n| n > 0).map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 1, remote: a.is_external, ..Default::default() }
 }
 
 /// A playlist's card: its song count, or its own line (a provider's, who made it) when not counted.
@@ -5947,13 +6100,13 @@ fn playlist_card(p: &nori_core::Playlist) -> Card {
         Some(line) if p.song_count == 0 => line.clone(),
         _ => words::songs(p.song_count as usize),
     };
-    Card { id: p.id.as_str().into(), title: p.name.as_str().into(), sub: sub.into(), art: p.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 2, ..Default::default() }
+    Card { id: p.id.as_str().into(), title: p.name.as_str().into(), sub: sub.into(), art: p.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 2, remote: nori_core::is_provider_id(&p.id), ..Default::default() }
 }
 
 /// A song's card on a Home section: played from it, with the section's songs after.
 fn song_card(s: &Song) -> Card {
     let sub_artist = s.artist_id.clone().unwrap_or_default().into();
-    Card { id: s.id.as_str().into(), title: s.title.as_str().into(), sub: s.artist.as_str().into(), art: s.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 3, ..Default::default() }
+    Card { id: s.id.as_str().into(), title: s.title.as_str().into(), sub: s.artist.as_str().into(), art: s.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 3, remote: s.is_external, ..Default::default() }
 }
 
 fn row(s: &Song, index: usize, playing: bool) -> SongRow {
@@ -5974,6 +6127,7 @@ fn row(s: &Song, index: usize, playing: bool) -> SongRow {
         by: SharedString::default(),
         mark: 0,
         sealed: false,
+        remote: s.is_external,
     }
 }
 
@@ -6099,6 +6253,10 @@ fn dialog_drawn(ui: &AppWindow, p: &mut crate::settings::Plugged, prefs: &nori_c
         }
     }
 }
+
+#[cfg(test)]
+#[path = "search_tests.rs"]
+mod search_tests;
 
 #[cfg(test)]
 mod tests {
@@ -8212,7 +8370,19 @@ mod tests {
         key(&SharedString::from(slint::platform::Key::Escape));
         settle();
         assert_eq!(*said.borrow(), ["step 1", "step -1", "enter", "escape"]);
-        assert!(!typing.get(), "Escape gives the keys back to the page");
+        assert!(typing.get(), "the app decides what Escape does (`search_escaped`)");
+        // On the search page, Tab and Shift+Tab step through the chips, and the field keeps the keys.
+        let chips = said.clone();
+        bar.on_search_chip_step(move |by| chips.borrow_mut().push(format!("chip {by}")));
+        key(&SharedString::from(slint::platform::Key::Tab));
+        bar.set_view(View::Search);
+        key(&SharedString::from(slint::platform::Key::Tab));
+        key(&SharedString::from(slint::platform::Key::Backtab));
+        settle();
+        assert_eq!(said.borrow()[4..], ["chip 1", "chip -1"], "Tab away from the search page moves the focus, not a chip");
+        bar.invoke_end_search();
+        settle();
+        assert!(!typing.get(), "ending the search gives the keys back to the page");
     }
 
     /// While the search field is open, it takes the room the pill has: the settings and the profile's mark stay
@@ -8317,8 +8487,8 @@ mod tests {
 
     #[test]
     fn the_search_preview_steps_past_its_heads_and_round_its_ends() {
-        use nori_core::search::{PreviewKind, PreviewLine as L};
-        let lines = [L::Head { kind: PreviewKind::Artists }, L::Artist { at: 0 }, L::Head { kind: PreviewKind::Songs }, L::Song { at: 0 }, L::Song { at: 1 }, L::All];
+        use nori_core::search::{SearchKind, PreviewLine as L};
+        let lines = [L::Top, L::Artist { at: 0 }, L::Head { kind: SearchKind::Songs }, L::Song { at: 0 }, L::Song { at: 1 }, L::All];
         for (at, by, to) in [(-1, 1, 1), (-1, -1, 5), (1, 1, 3), (3, -1, 1), (5, 1, 1), (1, -1, 5)] {
             assert_eq!(preview_step(&lines, at, by), to, "from {at} by {by}");
         }

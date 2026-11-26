@@ -1,61 +1,42 @@
 <script lang="ts">
   // The top bar's search: a field that widens when focused and, as you type, a preview under it of the
-  // best few artists, albums, playlists and songs (the core's `search_preview` of its ranked answer), then
-  // a way to every result. Arrows walk the preview, Enter opens the line walked to or the search page.
-  // Read a moment after the typing stops; the last answer stays until the next comes. Not on the search
-  // page, which shows the answer itself.
+  // results page in small (the core's `search_preview`: the top result, the best few of each kind), then
+  // a way to every result. Arrows walk the preview, Enter opens the line walked to or the search page,
+  // Escape shuts the preview, then on the search page clears the field, then leaves. The answers are the
+  // shared search's (state/search.svelte.ts). Not on the search page, which shows the answer itself.
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
-  import { ask } from "../rpc";
   import { go, route, searchFor } from "../state/route.svelte";
   import { player } from "../state/player.svelte";
-  import type { Album, Artist, Playlist, Song } from "../state/types";
+  import { remember, search, typed, type Kind, type Line } from "../state/search.svelte";
   import { W } from "../words";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
 
-  type Kind = "artists" | "albums" | "playlists" | "songs";
-  type Line = { line: "head"; kind: Kind } | { line: "artist" | "album" | "playlist" | "song"; at: number } | { line: "all" };
-  type Found = { state: "blank" | "asking" | "failed" | "found" | "nothing"; artists: Artist[]; albums: Album[]; playlists: Playlist[]; songs: Song[]; preview: Line[] };
   let query = $state("");
   // The search page's query, however it was reached (typed, a link, Back).
   $effect(() => {
     if (route.top === "search") query = route.arg;
   });
-  let found = $state.raw<Found | null>(null);
+  const found = $derived(search.view && search.view.state !== "blank" ? search.view : null);
   let open = $state(false);
   let focused = $state(false);
   /** The line the arrows are on, by its place in the preview; -1 for none. */
   let at = $state(-1);
   let box = $state<HTMLDivElement>();
-  let timer: ReturnType<typeof setTimeout> | undefined;
   const still = () => document.documentElement.classList.contains("still");
 
-  /** What the core's search session shows now; null (stale) changes nothing. */
-  function show(v: Found | null) {
-    if (!v) return;
-    found = v.state === "blank" ? null : v;
+  function edited() {
+    open = !!query.trim();
     at = -1;
-  }
-
-  // The offline index at once, then the server's answer once the typing pauses. Which answer still
-  // stands is the core's search session's.
-  async function typed() {
-    clearTimeout(timer);
-    const q = query.trim();
-    open = !!q;
-    show(JSON.parse(await ask<string>("search_typed", query).catch(() => "null")));
-    if (!q) return;
-    const ms = await ask<number>("search_delay", q);
-    if (query.trim() !== q) return;
-    clearTimeout(timer);
-    timer = setTimeout(async () => show(JSON.parse(await ask<string>("search_ask", q).catch(() => "null"))), ms);
+    if (route.top === "search") searchFor(query);
+    void typed(query);
   }
 
   const shown = $derived(open && !!found && route.top !== "search");
   const lines = $derived(found?.preview ?? []);
   /** The lines the arrows stop on: all but the groups' heads. */
-  const stops = $derived(lines.flatMap((l, i) => (l.line === "head" ? [] : [i])));
+  const stops = $derived(lines.flatMap((l, i) => (l.line === "head" || l.line === "top" ? [] : [i])));
 
   const close = () => {
     open = false;
@@ -65,6 +46,7 @@
     const f = found;
     close();
     if (!f) return;
+    remember();
     switch (l.line) {
       case "artist":
         return go("artist", f.artists[l.at].id);
@@ -82,8 +64,15 @@
   function keys(e: KeyboardEvent & { currentTarget: HTMLInputElement }) {
     if (e.key === "Escape") {
       e.preventDefault();
+      // The preview shut; on the search page, the field cleared, then the search left.
       if (shown) close();
-      else e.currentTarget.blur();
+      else if (route.top === "search" && query) {
+        query = "";
+        edited();
+      } else if (route.top === "search") {
+        e.currentTarget.blur();
+        history.back();
+      } else e.currentTarget.blur();
     } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && shown && stops.length) {
       e.preventDefault();
       const k = stops.indexOf(at);
@@ -96,7 +85,10 @@
     e.preventDefault();
     if (shown && at >= 0) return choose(lines[at]);
     close();
-    if (query.trim()) searchFor(query);
+    if (query.trim()) {
+      remember();
+      searchFor(query);
+    }
   }
 
   const heads: Record<Kind, string> = { artists: W.artists, albums: W.albums, playlists: W.playlists, songs: W.songs };
@@ -117,7 +109,7 @@
       role="combobox"
       autocomplete="off"
       bind:value={query}
-      oninput={typed}
+      oninput={edited}
       onfocus={() => ((focused = true), query.trim() && (open = true))}
       onblur={() => (focused = false)}
       onkeydown={keys}
@@ -127,7 +119,9 @@
     <div class="popover results" id="search-preview" role="listbox" aria-label={W.search} transition:fly={{ y: -6, duration: still() ? 0 : 160, easing: cubicOut }}>
       {#if !lines.length}<p class="empty">{W.noResults}</p>{/if}
       {#each lines as l, i (i)}
-        {#if l.line === "head"}
+        {#if l.line === "top"}
+          <div class="cap" class:first={i === 0}>{W.topResult}</div>
+        {:else if l.line === "head"}
           <div class="cap" class:first={i === 0}>{heads[l.kind]}</div>
         {:else}
           <!-- svelte-ignore a11y_click_events_have_key_events -->

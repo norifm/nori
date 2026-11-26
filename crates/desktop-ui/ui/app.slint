@@ -79,6 +79,8 @@ export struct Card {
     // is new (it fades in).
     shift: int,
     new: bool,
+    // A provider's, not in the library yet: the cloud leads its line, as Android's.
+    remote: bool,
 }
 
 // A piece of the line being sung (sung.rs): a word, a syllable or what lies between, where it was laid
@@ -223,6 +225,8 @@ export struct SongRow {
     mark: int,
     // A favorite, where the profile keeps them.
     sealed: bool,
+    // A provider's, not in the library yet: the cloud leads its artist, as Android's.
+    remote: bool,
 }
 
 // A row of the settings page: 0 a group's heading, 1 a switch, 2 a choice, 3 a button, 4 a fact, 5 a slider,
@@ -1853,10 +1857,18 @@ component CardView inherits Moving {
             }
         }
     }
-    Link {
-        x: root.words-x;
+    if root.card.remote: Icon {
+        x: root.round ? (root.width - min(root.words-w, sub-line.preferred-width) - 18px) / 2 : root.words-x;
+        y: root.tile ? 33px : root.side + 27px;
+        glyph: Icons.cloud-download;
+        colour: Theme.dim;
+        width: 14px;
+        height: 14px;
+    }
+    sub-line := Link {
+        x: root.words-x + (root.card.remote && !root.round ? 18px : 0);
         y: root.tile ? 32px : root.side + 26px;
-        width: root.words-w;
+        width: root.words-w - (root.card.remote && !root.round ? 18px : 0);
         text: root.card.sub;
         artist: root.card.sub-artist;
         color: Theme.dim;
@@ -2854,11 +2866,118 @@ component SongLine inherits Rectangle {
     }
 }
 
+// A search's top result, as Home's Continue card: raised paper, the artwork running into it at its start,
+// what it is in small capitals, its name in Literata, its line and Play. A click opens it (a song plays).
+component TopResult inherits Rectangle {
+    in property <Card> card;
+    in property <string> kind;
+    in property <image> picture;
+    callback open;
+    callback play;
+    border-radius: 18px;
+    clip: true;
+    background: Theme.raised;
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.open(); }
+    }
+    Image {
+        x: 0;
+        width: parent.height;
+        height: parent.height;
+        source: root.picture;
+        image-fit: cover;
+    }
+    Rectangle {
+        x: 0;
+        width: parent.height;
+        background: @linear-gradient(90deg, Theme.raised.with-alpha(0) 55%, Theme.raised 100%);
+    }
+    VerticalLayout {
+        x: parent.height + 6px;
+        width: parent.width - self.x - 18px;
+        padding-top: 18px;
+        padding-bottom: 16px;
+        spacing: 2px;
+        Text {
+            text: root.kind;
+            color: Theme.text.with-alpha(0.65);
+            font-size: 11.5px;
+            font-weight: 600;
+            letter-spacing: 0.7px;
+        }
+        Text {
+            text: root.card.title;
+            color: Theme.text;
+            font-family: Type.title;
+            font-size: 26px;
+            font-weight: 600;
+            wrap: word-wrap;
+            overflow: elide;
+            max-lines: 2;
+        }
+        HorizontalLayout {
+            spacing: 4px;
+            alignment: start;
+            if root.card.remote: Icon {
+                y: (parent.height - self.height) / 2;
+                glyph: Icons.cloud-download;
+                colour: Theme.dim;
+                width: 14px;
+                height: 14px;
+            }
+            Text {
+                text: root.card.sub;
+                color: Theme.text.with-alpha(0.7);
+                font-size: 13px;
+                overflow: elide;
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+        }
+        HorizontalLayout {
+            alignment: start;
+            Rectangle {
+                height: 38px;
+                width: play-words.preferred-width + 28px;
+                border-radius: 19px;
+                background: play-touch.has-hover ? Theme.text.with-alpha(0.85) : Theme.text;
+                play-words := HorizontalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    Icon {
+                        y: (parent.height - self.height) / 2;
+                        glyph: Icons.play-solid;
+                        colour: Theme.raised;
+                        width: 18px;
+                        height: 18px;
+                    }
+                    Text {
+                        text: "Play";
+                        color: Theme.raised;
+                        font-size: 14px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+                play-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.play(); }
+                }
+            }
+        }
+    }
+}
+
 // A song in one of Home's columns, as YouTube Music's quick picks: its artwork, title and artist. A click plays
 // it with the section's songs after it; the pointer over it raises the row and brings a play glyph onto the
 // artwork; a right press opens the song's menu.
 component ShelfSong inherits Moving {
     in property <image> picture;
+    // Its length at the row's end (none: ""), and that it is the song playing (its title in the accent).
+    in property <string> time;
+    in property <bool> playing;
     callback play;
     callback menu() -> [SongGo];
     callback act(int, string);
@@ -2906,25 +3025,44 @@ component ShelfSong inherits Moving {
             }
         }
     }
+    property <length> words-end: root.time == "" ? root.width : root.width - 52px;
     Text {
         x: 56px;
         y: 9px;
-        width: root.width - self.x;
+        width: root.words-end - self.x;
         text: root.card.title;
-        color: Theme.text;
+        color: root.playing ? Theme.accent : Theme.text;
         font-size: 14px;
         font-weight: 500;
         overflow: elide;
     }
-    Link {
+    if root.card.remote: Icon {
         x: 56px;
+        y: 30px;
+        glyph: Icons.cloud-download;
+        colour: Theme.dim;
+        width: 14px;
+        height: 14px;
+    }
+    Link {
+        x: root.card.remote ? 74px : 56px;
         y: 29px;
-        width: min(self.preferred-width, root.width - self.x);
+        width: min(self.preferred-width, root.words-end - self.x);
         text: root.card.sub;
         artist: root.card.sub-artist;
         color: Theme.dim;
         font-size: 12.5px;
         overflow: elide;
+    }
+    if root.time != "": Text {
+        x: root.width - self.width;
+        width: 44px;
+        height: root.height;
+        text: root.time;
+        color: Theme.dim;
+        font-size: 13px;
+        vertical-alignment: center;
+        horizontal-alignment: right;
     }
     property <length> menu-x;
     property <length> menu-y;
@@ -7309,10 +7447,12 @@ component TopContent inherits Rectangle {
     // The search field took or gave up the keys.
     callback typing(bool);
     // In the field: the arrows walk the preview under it (by a line up or down), Enter opens the line walked
-    // to or the search page, Escape shuts the preview and gives the keys back.
+    // to or the search page, Tab and Shift+Tab step through the search page's chips, Escape steps back
+    // (app.rs: the preview shut, the field cleared, then the search left).
     callback search-step(int);
     callback search-accepted();
     callback search-escaped();
+    callback search-chip-step(int);
     // The pill's width (the window's), which decides whether the tabs are named.
     in property <length> room;
     property <bool> named: root.room >= 880px;
@@ -7425,12 +7565,15 @@ component TopContent inherits Rectangle {
                                 root.search-step(e.text == Key.UpArrow ? -1 : 1);
                                 return accept;
                             }
+                            if root.view == View.search && (e.text == Key.Tab || e.text == Key.Backtab) {
+                                root.search-chip-step(e.text == Key.Backtab || e.modifiers.shift ? -1 : 1);
+                                return accept;
+                            }
                             reject
                         }
                         key-pressed(e) => {
                             if e.text == Key.Escape {
                                 root.search-escaped();
-                                input.clear-focus();
                                 return accept;
                             }
                             reject
@@ -7571,6 +7714,23 @@ export component AppWindow inherits Window {
     in property <[Card]> favorite-albums;
     in property <[Card]> favorite-artists;
 
+    // The search's results page (the core's `search_layout`): the kind chips (All first) and the one lit,
+    // the scope chips offered (none: empty) and the one lit (-1 none), the top result, the songs listed and a
+    // row (or with a kind picked, the whole) of each other kind. `search-picked`: the kind picked, 0 songs,
+    // 1 albums, 2 artists, 3 playlists, -1 All.
+    in property <[string]> search-chips;
+    in property <int> search-chip;
+    in property <[string]> search-scopes;
+    in property <int> search-scope: -1;
+    in property <int> search-picked: -1;
+    in property <bool> search-has-top;
+    in property <Card> search-top;
+    // The top result's kind as its card names it.
+    in property <string> search-top-kind;
+    callback search-chip-picked(int);
+    callback search-scope-tapped(int);
+    callback search-top-open();
+    callback search-top-play();
     in property <[Card]> search-artists;
     in property <[Card]> search-albums;
     in property <[Card]> search-playlists;
@@ -7589,9 +7749,8 @@ export component AppWindow inherits Window {
     in property <string> page-caption;
     in property <string> page-art;
     in property <[SongRow]> page-songs;
-    // More songs wait behind Show all: an artist's, search's (callback all-songs: 0 the page, 2 search).
+    // More songs wait behind Show all: an artist's (callback all-songs: 0 the page).
     in property <bool> page-songs-more;
-    in property <bool> search-songs-more;
     callback all-songs(int);
     // An artist's releases, a shelf per kind (pages.rs's `release_groups`).
     in property <[Shelf]> page-shelves;
@@ -8248,9 +8407,12 @@ export component AppWindow inherits Window {
     out property <bool> search-preview-shown: root.search-preview-open && root.view != View.search && (root.search-preview.length > 0 || root.search-nothing);
     callback search-preview-changed();
     changed search-preview-shown => { root.search-preview-changed(); }
-    // From the top pill's field: the arrows' step through the preview, and Enter.
+    // From the top pill's field: the arrows' step through the preview, Enter, Escape and Tab's step through
+    // the chips.
     callback search-step(int);
     callback search-accepted();
+    callback search-escaped();
+    callback search-chip-step(int);
     // Nothing is typed in the search field: the page lists the searches made before.
     in property <bool> search-blank: true;
     // The search found nothing for `search-query`.
@@ -8849,40 +9011,20 @@ export component AppWindow inherits Window {
                             background: Theme.accent;
                         }
                     }
-                    // Nothing to list (no searches yet, or nothing found): a word in the middle of the page.
-                    if (root.search-blank && root.recent-searches.length == 0) || root.search-nothing: VerticalLayout {
-                        alignment: center;
-                        spacing: 10px;
+                    // Nothing to list (no searches yet, or nothing found): a word in the middle of the page, as Android's.
+                    if (root.search-blank && root.recent-searches.length == 0) || root.search-nothing: EmptyNote {
                         padding-top: Chrome.top-room;
                         padding-bottom: Chrome.bottom-room;
-                        Icon {
-                            x: (parent.width - self.width) / 2;
-                            glyph: Icons.search;
-                            colour: Theme.dim;
-                            width: 44px;
-                            height: 44px;
-                        }
-                        Text {
-                            text: root.search-nothing ? "No results" : "Search";
-                            color: Theme.text;
-                            font-family: Type.title;
-                            font-size: 24px;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: root.search-nothing ? "Nothing matches “" + root.search-query + "”. Check the spelling or try other words." : "Your library and your server, by artist, album or song";
-                            color: Theme.dim;
-                            font-size: 14px;
-                            horizontal-alignment: center;
-                            wrap: word-wrap;
-                        }
+                        icon: Icons.search;
+                        title: root.search-nothing ? "Nothing found" : "Search";
                     }
                     VerticalLayout {
                         Remembered {
                             vertical-stretch: 1;
                             content-height: found.preferred-height;
                             found := VerticalLayout {
+                                // Beside the top result while there is room for both, else under it.
+                                property <bool> side-by-side: self.width - 2 * root.page-gutter >= 820px;
                                 width: parent.width;
                                 padding-top: Chrome.top-room + 8px;
                                 padding-bottom: 100px;
@@ -8931,17 +9073,112 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
+                                // The kind chips, All first, then the scope chips after a gap: picking one shows it in place.
+                                if root.search-chips.length > 0: HorizontalLayout {
+                                    padding-left: root.page-gutter;
+                                    padding-right: root.page-gutter;
+                                    padding-bottom: 24px;
+                                    spacing: 8px;
+                                    alignment: start;
+                                    for c[i] in root.search-chips: Chip {
+                                        text: c;
+                                        lit: i == root.search-chip;
+                                        clicked => { root.search-chip-picked(i); }
+                                    }
+                                    if root.search-scopes.length > 0: Rectangle {
+                                        width: 17px;
+                                        Rectangle {
+                                            x: 8px;
+                                            y: 8px;
+                                            width: 1px;
+                                            height: parent.height - 16px;
+                                            background: Theme.hairline;
+                                        }
+                                    }
+                                    for c[i] in root.search-scopes: Chip {
+                                        text: c;
+                                        lit: i == root.search-scope;
+                                        clicked => { root.search-scope-tapped(i); }
+                                    }
+                                }
                                 if root.search-note != "": HorizontalLayout {
                                     padding-left: root.page-gutter;
-                                    padding-bottom: 8px;
+                                    padding-bottom: 16px;
                                     Text {
                                         text: root.search-note;
                                         color: Theme.dim;
-                                        height: 24px;
+                                        font-size: 13px;
+                                        height: 20px;
                                         vertical-alignment: center;
                                     }
                                 }
-                                if root.search-artists.length > 0: artists-found := ShelfView {
+                                // All: the top result with the best songs beside it (or under it), then a row of each kind.
+                                if root.search-picked < 0 && (root.search-has-top || root.search-songs.length > 0): best := Rectangle {
+                                    property <length> room: self.width - 2 * root.page-gutter;
+                                    property <length> top-w: found.side-by-side ? min(520px, (self.room - 32px) * 0.45) : self.room;
+                                    property <length> songs-x: found.side-by-side && root.search-has-top ? root.page-gutter + self.top-w + 32px : root.page-gutter;
+                                    property <length> songs-y: found.side-by-side || !root.search-has-top ? 0 : 46px + 224px + 36px;
+                                    height: (root.search-has-top ? 46px + 224px : 0) + (found.side-by-side || !root.search-has-top ? max(0px, 46px + root.search-songs.length * 56px - (root.search-has-top ? 46px + 224px : 0)) : 36px + 46px + root.search-songs.length * 56px) + 52px;
+                                    if root.search-has-top: Rectangle {
+                                        x: root.page-gutter;
+                                        width: best.top-w;
+                                        height: 46px + 224px;
+                                        y: 0;
+                                        SectionTitle {
+                                            y: 0;
+                                            width: parent.width;
+                                            text: "Top result";
+                                        }
+                                        TopResult {
+                                            y: 46px;
+                                            height: 224px;
+                                            card: root.search-top;
+                                            kind: root.search-top-kind;
+                                            picture: root.art(root.search-top.art, 0, root.covers-rev);
+                                            open => { root.search-top-open(); }
+                                            play => { root.search-top-play(); }
+                                        }
+                                    }
+                                    if root.search-songs.length > 0: Rectangle {
+                                        x: best.songs-x;
+                                        y: best.songs-y;
+                                        width: best.width - self.x - root.page-gutter;
+                                        height: 46px + root.search-songs.length * 56px;
+                                        SectionTitle {
+                                            y: 0;
+                                            width: parent.width;
+                                            text: "Songs";
+                                        }
+                                        for s[i] in root.search-songs: ShelfSong {
+                                            y: 46px + i * 56px;
+                                            width: parent.width;
+                                            card: { id: s.art, title: s.title, sub: s.artist, art: s.art, sub-artist: s.artist-id, kind: 3, remote: s.remote };
+                                            time: s.time;
+                                            playing: s.playing;
+                                            picture: root.art(s.art, 0, root.covers-rev);
+                                            play => { root.song(2, i, -1); }
+                                            menu => { return root.song-menu(2, i); }
+                                            act(kind, id) => { root.song(2, i, kind); }
+                                        }
+                                    }
+                                }
+                                if root.search-picked < 0 && root.search-albums.length > 0: albums-found := ShelfView {
+                                    pad: root.page-gutter;
+                                    least: Frame.least;
+                                    title: "Albums";
+                                    count: root.search-albums.length;
+                                    for c[i] in root.search-albums: CardView {
+                                        x: albums-found.gap + i * albums-found.step;
+                                        side: albums-found.side;
+                                        card: c;
+                                        picture: root.art(c.art, 0, root.covers-rev);
+                                        open => { root.open-album(c.id); }
+                                        play => { root.play-album(c.id); }
+                                        queue(next) => { root.queue-card(0, c.id, next); }
+                                        jam => { root.jam-play(0, c.id); }
+                                    }
+                                }
+                                if root.search-picked < 0 && root.search-artists.length > 0: artists-found := ShelfView {
                                     pad: root.page-gutter;
                                     least: Frame.least;
                                     title: "Artists";
@@ -8959,23 +9196,7 @@ export component AppWindow inherits Window {
                                         jam => { root.jam-play(1, c.id); }
                                     }
                                 }
-                                if root.search-albums.length > 0: albums-found := ShelfView {
-                                    pad: root.page-gutter;
-                                    least: Frame.least;
-                                    title: "Albums";
-                                    count: root.search-albums.length;
-                                    for c[i] in root.search-albums: CardView {
-                                        x: albums-found.gap + i * albums-found.step;
-                                        side: albums-found.side;
-                                        card: c;
-                                        picture: root.art(c.art, 0, root.covers-rev);
-                                        open => { root.open-album(c.id); }
-                                        play => { root.play-album(c.id); }
-                                        queue(next) => { root.queue-card(0, c.id, next); }
-                                        jam => { root.jam-play(0, c.id); }
-                                    }
-                                }
-                                if root.search-playlists.length > 0: playlists-found := ShelfView {
+                                if root.search-picked < 0 && root.search-playlists.length > 0: playlists-found := ShelfView {
                                     pad: root.page-gutter;
                                     least: Frame.least;
                                     title: "Playlists";
@@ -8991,34 +9212,54 @@ export component AppWindow inherits Window {
                                         jam => { root.jam-play(2, c.id); }
                                     }
                                 }
-                                if root.search-songs.length > 0: HorizontalLayout {
-                                    padding-left: root.page-gutter;
-                                    padding-bottom: 6px;
-                                    SectionTitle {
-                                        text: "Songs";
-                                    }
-                                }
-                                VerticalLayout {
+                                // Songs picked: every song, as the library's lists have them.
+                                if root.search-picked == 0: VerticalLayout {
                                     padding-left: root.page-gutter - 8px;
                                     padding-right: root.page-gutter - 8px;
                                     for s[i] in root.search-songs: SongLine {
                                         song: s;
                                         number: i + 1;
                                         thumb: true;
-                                        show-album: false;
                                         picture: root.art(s.art, 0, root.covers-rev);
                                         play => { root.song(2, i, -1); }
                                         menu => { return root.song-menu(2, i); }
                                         act(kind, id) => { root.song(2, i, kind); }
                                     }
                                 }
-                                if root.search-songs-more: HorizontalLayout {
+                                // Albums, artists or playlists picked: all of them, as a grid.
+                                if root.search-picked > 0: HorizontalLayout {
                                     padding-left: root.page-gutter;
-                                    padding-top: 6px;
-                                    alignment: start;
-                                    ShowAllButton {
-                                        text: root.show-all-text;
-                                        clicked => { root.all-songs(2); }
+                                    padding-right: root.page-gutter;
+                                    Grid {
+                                        height: self.content-height;
+                                        pad: 0;
+                                        bottom: 0;
+                                        interactive: false;
+                                        remember: false;
+                                        round: root.search-picked == 2;
+                                        cards: root.search-picked == 1 ? root.search-albums : root.search-picked == 2 ? root.search-artists : root.search-playlists;
+                                        rev: root.covers-rev;
+                                        art(a, size, r) => { return root.art(a, size, r); }
+                                        open(c) => {
+                                            if c.kind == 1 {
+                                                root.open-artist(c.id);
+                                            } else if c.kind == 2 {
+                                                root.open-playlist(c.id);
+                                            } else {
+                                                root.open-album(c.id);
+                                            }
+                                        }
+                                        play(c) => {
+                                            if c.kind == 1 {
+                                                root.play-artist(c.id);
+                                            } else if c.kind == 2 {
+                                                root.play-playlist(c.id);
+                                            } else {
+                                                root.play-album(c.id);
+                                            }
+                                        }
+                                        queue(c, next) => { root.queue-card(c.kind, c.id, next); }
+                                        jam(c) => { root.jam-play(c.kind, c.id); }
                                     }
                                 }
                             }
@@ -12554,6 +12795,7 @@ export component TopBar inherits Window {
     callback search-step(int);
     callback search-accepted();
     callback search-escaped();
+    callback search-chip-step(int);
     callback drag-window();
     callback zoom-window();
     // The search field moved or changed its width (`search-end`, `search-width`): its preview follows it.
@@ -12597,5 +12839,6 @@ export component TopBar inherits Window {
         search-step(by) => { root.search-step(by); }
         search-accepted => { root.search-accepted(); }
         search-escaped => { root.search-escaped(); }
+        search-chip-step(by) => { root.search-chip-step(by); }
     }
 }

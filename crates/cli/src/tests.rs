@@ -263,6 +263,8 @@ fn keys_and_focus() {
     let due = a.search.ask_at.expect("the server is asked later");
     a.tick(due + Duration::from_millis(1));
     assert_eq!(a.cmds.last(), Some(&Cmd::SearchServer("n q".into())));
+    // Escape clears the field, then gives the keys back.
+    key(&mut a, KeyCode::Esc);
     key(&mut a, KeyCode::Esc);
     key(&mut a, KeyCode::Char('?'));
     assert!(matches!(a.overlay, Some(Overlay::Help { .. })));
@@ -1277,23 +1279,55 @@ fn search_results_list() {
         artists: vec![nori_core::Artist { id: "ar-1".into(), name: "The Ones".into(), ..Default::default() }],
         playlists: vec![nori_core::Playlist { id: "yt-VLone".into(), name: "One Mix".into(), comment: Some("Ann • 17 views".into()), ..Default::default() }],
     };
-    a.search.view = Some(nori_core::search::SearchView { query: "one".into(), answer: nori_core::search::SearchShown::Found { result: found }, ..Default::default() });
+    a.search.view = Some(answered("one", found.clone(), None));
     let due = a.search.ask_at.expect("the server is asked later");
     a.tick(due + Duration::from_millis(1));
     assert!(!a.cmds.contains(&Cmd::SearchUsed), "a typing pause keeps nothing");
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.last(), Some(&Cmd::SearchUsed), "a query sent is kept");
     let s = draw(&mut a, 160, 40);
-    assert!(s.contains("Songs") && s.contains("One Album") && s.contains("The Ones") && s.contains("From the server"), "{s}");
-    assert!(s.contains("One Mix") && s.contains("Ann • 17 views"), "an uncounted playlist shows its own line: {s}");
+    let at = |w: &str| s.find(w).unwrap_or_else(|| panic!("{w} in {s}"));
+    assert!(at(" All ") < at("Top result") && at("Top result") < at("One Album") && at("One Album") < at("The Ones") && at("The Ones") < at("One Mix"), "the chips, the top result, then the core's sections in order: {s}");
+    assert!(s.contains("Ann • 17 views"), "an uncounted playlist shows its own line: {s}");
     dump("search", &s);
-    assert!(matches!(a.selected(), Some(crate::app::Item::Song(..))), "the first song, not its title");
+    assert!(matches!(a.selected(), Some(crate::app::Item::Song(..))), "the top result, not its title");
     key(&mut a, KeyCode::Down);
     assert!(matches!(a.selected(), Some(crate::app::Item::Album(_))), "over the albums' title");
+    // ] picks the next kind's chip; with Albums picked, every album and nothing else; [ steps back.
+    a.cmds.clear();
+    key(&mut a, KeyCode::Char(']'));
+    assert_eq!(a.cmds, [Cmd::SearchPick(Some(nori_core::search::SearchKind::Songs))]);
+    a.search.view = Some(answered("one", found, Some(nori_core::search::SearchKind::Albums)));
+    a.search.settle(true);
+    let s = draw(&mut a, 160, 40);
+    assert!(s.contains("One Album") && !s.contains("Top result") && !s.contains("The Ones"), "{s}");
+    key(&mut a, KeyCode::Char('['));
+    assert_eq!(a.cmds.last(), Some(&Cmd::SearchPick(Some(nori_core::search::SearchKind::Songs))));
+    // The runner shows the view the pick answers with; here the albums stay.
+    a.search.settle(true);
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.contains(&Cmd::Load(Req::Album("al-1".into()))));
+    assert!(a.cmds.contains(&Cmd::Load(Req::Album("al-1".into()))), "{:?}", a.cmds);
     assert!(a.cmds.contains(&Cmd::SearchUsed), "and one whose result is opened");
+}
+
+/// The search's view of `found` for `query`, as the core gives it, with `kind` picked.
+fn answered(query: &str, found: nori_core::SearchResult, kind: Option<nori_core::search::SearchKind>) -> nori_core::search::SearchView {
+    use nori_core::search::{search_split, Answer, Session};
+    let mut s = Session { text: query.into(), answer: Answer::Server(search_split(found, query)), ..Default::default() };
+    s.pick(kind);
+    s.view()
+}
+
+#[test]
+fn escape_clears_the_search_field_then_leaves_it() {
+    let mut a = app();
+    key(&mut a, KeyCode::Char('/'));
+    chars(&mut a, "blue");
+    key(&mut a, KeyCode::Esc);
+    assert_eq!((a.search.text.as_str(), a.search.editing), ("", true));
+    key(&mut a, KeyCode::Esc);
+    assert!(!a.search.editing);
 }
 
 #[test]
@@ -1908,7 +1942,7 @@ fn the_main_screens() {
         a.go(View::Search);
         chars(a, "blue");
         let found = nori_core::SearchResult { songs: tracks[..2].to_vec(), albums: albums[..2].to_vec(), artists: vec![nori_core::Artist { id: "ar-1".into(), name: "John Coltrane".into(), album_count: Some(12), ..Default::default() }], playlists: vec![] };
-        a.search.view = Some(nori_core::search::SearchView { query: "blue".into(), answer: nori_core::search::SearchShown::Found { result: found }, ..Default::default() });
+        a.search.view = Some(answered("blue", found, None));
         out.push(shot(a, "search"));
         out
     };

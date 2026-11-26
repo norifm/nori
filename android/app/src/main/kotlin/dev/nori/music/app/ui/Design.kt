@@ -907,6 +907,8 @@ fun SystemBarIcons(look: Look, overCover: () -> Boolean = { false }) {
 fun SearchField(
     value: String, onValue: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier,
     testTag: String? = null, autofocus: Boolean = false, focusKey: Any = Unit,
+    /** The keyboard's Search key: what was typed is sent; the keyboard goes. */
+    onSearch: (() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
@@ -931,6 +933,8 @@ fun SearchField(
                     value, onValue, singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
+                    keyboardOptions = if (onSearch != null) androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search) else androidx.compose.foundation.text.KeyboardOptions.Default,
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = onSearch?.let { { it(); focusManager.clearFocus() } }),
                     modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
                         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
                         // Asked for by hand: opening search focuses the field so the keyboard is already there.

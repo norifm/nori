@@ -1004,12 +1004,33 @@ class Say(private val r: Resources) {
         LibrarySection.DOWNLOADS -> downloads
     }
 
-    /** A search scope's chip. */
+    /** A search scope's chip, after the kinds'. */
     fun searchScope(s: SearchScope): String = when (s) {
         SearchScope.EVERYTHING -> r.getString(R.string.scope_everything)
         SearchScope.LIBRARY -> r.getString(R.string.scope_in_library)
         SearchScope.PROVIDERS -> notInLibraryYet
     }
+
+    val searchAll: String get() = r.getString(R.string.search_all)
+    val topResult: String get() = r.getString(R.string.top_result)
+
+    /** A kind's chip on the search page. */
+    fun searchKind(k: dev.nori.music.ffi.library.SearchKind): String = when (k) {
+        dev.nori.music.ffi.library.SearchKind.SONGS -> songs
+        dev.nori.music.ffi.library.SearchKind.ALBUMS -> albums
+        dev.nori.music.ffi.library.SearchKind.ARTISTS -> artists
+        dev.nori.music.ffi.library.SearchKind.PLAYLISTS -> playlists
+    }
+
+    /** What the search's top result is, over its name. */
+    fun topKind(k: dev.nori.music.ffi.library.SearchKind): String = r.getString(
+        when (k) {
+            dev.nori.music.ffi.library.SearchKind.SONGS -> R.string.top_kind_song
+            dev.nori.music.ffi.library.SearchKind.ALBUMS -> R.string.top_kind_album
+            dev.nori.music.ffi.library.SearchKind.ARTISTS -> R.string.top_kind_artist
+            dev.nori.music.ffi.library.SearchKind.PLAYLISTS -> R.string.top_kind_playlist
+        },
+    )
 
     /** The server search failed and the offline answer stays; [reason] is what the failure said. */
     fun searchFallback(reason: String?): String = r.getString(R.string.search_fallback, reason ?: "null")

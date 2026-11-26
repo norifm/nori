@@ -102,6 +102,17 @@ public final class UiDump {
                 System.out.println("clicked");
                 return;
             }
+            if (args.length == 1 && args[0].equals("ime-enter")) {
+                // The keyboard's action key (Search, Done) on the focused field: `input keyevent` sends a
+                // hardware Enter, which a Compose field does not take as its action.
+                AccessibilityNodeInfo field = focusedField(root);
+                if (field == null || !field.performAction(android.R.id.accessibilityActionImeEnter)) {
+                    System.err.println("no focused text field takes the keyboard's action");
+                    System.exit(1);
+                }
+                System.out.println("entered");
+                return;
+            }
             if (args.length == 2 && args[0].equals("set-text")) {
                 // The field's own SetText, as a test framework's replaceText: nori's Compose text fields
                 // drop some of the keys `input keyevent` sends in one burst.

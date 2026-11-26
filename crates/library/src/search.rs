@@ -124,10 +124,10 @@ pub enum SearchScope {
     Providers,
 }
 
-/// The scope chips, in their order; the client names each.
+/// The scope chips, in their order after the kinds' (everything is none of them lit); the client names each.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn search_scopes() -> Vec<SearchScope> {
-    vec![SearchScope::Everything, SearchScope::Library, SearchScope::Providers]
+    vec![SearchScope::Library, SearchScope::Providers]
 }
 
 /// The server could not be asked and the offline answer stays; `reason` as `SearchSession::failed` gave it.
@@ -160,6 +160,12 @@ pub struct SearchView {
     pub scope: SearchScope,
     /// The scope chips are offered: there are provider items, or a scope other than everything is on.
     pub scopes_offered: bool,
+    /// The kind chips after All, in their order: the kinds the answer shown has.
+    pub kinds: Vec<SearchKind>,
+    /// The kind chip lit; None for All.
+    pub kind: Option<SearchKind>,
+    /// How the results page lays out the answer shown ([`search_layout`]); empty while there is none.
+    pub layout: SearchLayout,
 }
 
 /// Where the answer on the search screen stands, narrowed to the scope.
@@ -238,9 +244,21 @@ pub struct Session {
     pub text: String,
     pub answer: Answer,
     pub scope: SearchScope,
+    /// The kind picked for the query; None for all of them.
+    pub kind: Option<SearchKind>,
 }
 
 impl Session {
+    /// The kind chip `kind` picked (None: All); the chip lit picked again is All.
+    pub fn pick(&mut self, kind: Option<SearchKind>) {
+        self.kind = if kind == self.kind { None } else { kind };
+    }
+
+    /// The scope chip `scope` tapped: it narrows the answer to it, or back to everything if it already did.
+    pub fn narrow(&mut self, scope: SearchScope) {
+        self.scope = if scope == self.scope { SearchScope::Everything } else { scope };
+    }
+
     /// The query the field holds: its text without the spaces around it.
     pub fn query(&self) -> &str {
         self.text.trim()
@@ -264,14 +282,136 @@ impl Session {
                 }
             }
         };
+        let kinds = answer.result().map(kinds_found).unwrap_or_default();
+        // A kind picked that the answer lacks (a scope narrowed it away) shows all.
+        let kind = self.kind.filter(|k| kinds.contains(k));
+        let layout = answer.result().map(|r| kind.map_or_else(|| search_layout(r, self.query()), |k| whole_kind(r, k))).unwrap_or_default();
         SearchView {
             text: self.text.clone(),
             query: self.query().to_string(),
             answer,
             scope: self.scope,
             scopes_offered: has_providers || self.scope != SearchScope::Everything,
+            kinds,
+            kind,
+            layout,
         }
     }
+}
+
+/// A kind of result: a section of the results page, a group of the field's preview. The client names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+#[serde(rename_all = "camelCase")]
+pub enum SearchKind {
+    Songs,
+    Artists,
+    Albums,
+    Playlists,
+}
+
+/// The kinds in the order of their chips and of the results page's sections.
+pub const SEARCH_KINDS: [SearchKind; 4] = [SearchKind::Songs, SearchKind::Albums, SearchKind::Artists, SearchKind::Playlists];
+
+/// How many of `kind` answer `r` has.
+fn count_of(r: &SearchResult, kind: SearchKind) -> usize {
+    match kind {
+        SearchKind::Songs => r.songs.len(),
+        SearchKind::Albums => r.albums.len(),
+        SearchKind::Artists => r.artists.len(),
+        SearchKind::Playlists => r.playlists.len(),
+    }
+}
+
+/// The kinds `r` has, in their chips' order.
+pub fn kinds_found(r: &SearchResult) -> Vec<SearchKind> {
+    SEARCH_KINDS.into_iter().filter(|&k| count_of(r, k) > 0).collect()
+}
+
+/// `kind`'s results in `r` whole: the page with that chip picked.
+fn whole_kind(r: &SearchResult, kind: SearchKind) -> SearchLayout {
+    SearchLayout { top: None, sections: vec![SearchSection { kind, items: (0..count_of(r, kind) as u32).collect() }] }
+}
+
+/// One result by its kind and its place in that kind's list of the answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SearchItem {
+    pub kind: SearchKind,
+    pub at: u32,
+}
+
+/// A section of the results page: its kind's items as the page shows them, by their places in the answer.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SearchSection {
+    pub kind: SearchKind,
+    pub items: Vec<u32>,
+}
+
+/// The results page of an answer. On All: the one result that answers the query best, first and largest,
+/// then a section per kind in [`SEARCH_KINDS`]' order, the top result left out of its own: the best few
+/// songs beside it, then a row of each other kind. With a kind picked: that kind's results whole, alone.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SearchLayout {
+    pub top: Option<SearchItem>,
+    pub sections: Vec<SearchSection>,
+}
+
+/// How many songs stand beside the top result, as Spotify's: the Songs chip shows them all.
+pub const SONGS_BESIDE_TOP: usize = 4;
+
+/// The most cards a row of All holds: its kind's chip shows them all.
+pub const SHELF_MOST: usize = 10;
+
+/// How well `name` answers the query's words `q`: 3 the same words, 2 every word of the query starts
+/// one of its words, 0 neither.
+fn answering(name: &str, q: &[String]) -> u8 {
+    let w = words(name);
+    if !q.is_empty() && w == q {
+        3
+    } else if !q.is_empty() && q.iter().all(|q| w.iter().any(|w| w.starts_with(q.as_str()))) {
+        2
+    } else {
+        0
+    }
+}
+
+/// The results page of `r` (ranked already, [`ranked`]) for `query`. The top result is the top song,
+/// unless an artist, album or playlist answers the query better by its name than the song does by its
+/// title (a song that answers only with its artist's name counts 1): then the first that answers best,
+/// artists before albums before playlists. With nothing answering it is still the top song, or the first
+/// of the other kinds.
+pub fn search_layout(r: &SearchResult, query: &str) -> SearchLayout {
+    let q = words(query);
+    let best = |names: &mut dyn Iterator<Item = &str>| names.enumerate().map(|(i, n)| (answering(n, &q), i)).max_by_key(|&(score, i)| (score, Reverse(i)));
+    let song = r.songs.first().map(|s| {
+        let by_title = answering(&s.title, &q);
+        let score = if by_title > 0 { by_title } else if answering(&format!("{} {}", s.title, s.artist), &q) > 0 { 1 } else { 0 };
+        (score, SearchItem { kind: SearchKind::Songs, at: 0 })
+    });
+    let others = [
+        (SearchKind::Artists, best(&mut r.artists.iter().map(|a| a.name.as_str()))),
+        (SearchKind::Albums, best(&mut r.albums.iter().map(|a| a.name.as_str()))),
+        (SearchKind::Playlists, best(&mut r.playlists.iter().map(|p| p.name.as_str()))),
+    ];
+    let better = others
+        .iter()
+        .filter_map(|&(kind, found)| found.map(|(score, at)| (score, SearchItem { kind, at: at as u32 })))
+        .filter(|&(score, _)| score > song.map_or(0, |(s, _)| s))
+        .fold(None::<(u8, SearchItem)>, |held, next| if held.is_some_and(|h| h.0 >= next.0) { held } else { Some(next) });
+    let first_of = || others.iter().find_map(|&(kind, found)| found.map(|_| SearchItem { kind, at: 0 }));
+    let top = better.or(song).map(|(_, item)| item).or_else(first_of);
+    let sections = SEARCH_KINDS
+        .iter()
+        .filter_map(|&kind| {
+            let most = if kind == SearchKind::Songs { SONGS_BESIDE_TOP } else { SHELF_MOST };
+            let items: Vec<u32> = (0..count_of(r, kind) as u32).filter(|&at| top != Some(SearchItem { kind, at })).take(most).collect();
+            (!items.is_empty()).then_some(SearchSection { kind, items })
+        })
+        .collect();
+    SearchLayout { top, sections }
 }
 
 /// A line of the search field's preview, the list under the field as it is typed in: a group's head, a
@@ -279,7 +419,9 @@ impl Session {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "line", rename_all = "camelCase")]
 pub enum PreviewLine {
-    Head { kind: PreviewKind },
+    /// The top result's head; its line follows.
+    Top,
+    Head { kind: SearchKind },
     Artist { at: u32 },
     Album { at: u32 },
     Playlist { at: u32 },
@@ -287,30 +429,24 @@ pub enum PreviewLine {
     All,
 }
 
-/// A group of the preview; the client names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum PreviewKind {
-    Artists,
-    Albums,
-    Playlists,
-    Songs,
-}
-
-/// The preview of answer `r` (ranked already): the best few of each kind, grouped in the search screen's
-/// order, then the way to everything; nothing when it found nothing.
-pub fn search_preview(r: &SearchResult) -> Vec<PreviewLine> {
-    let mut lines = Vec::new();
-    let mut group = |kind, found: usize, most: usize, line: fn(u32) -> PreviewLine| {
-        if found > 0 {
-            lines.push(PreviewLine::Head { kind });
-            lines.extend((0..found.min(most) as u32).map(line));
-        }
+/// The preview of the results page `layout`: the top result, then the first few of each section in the
+/// page's order, then the way to everything; nothing when it found nothing.
+pub fn search_preview(layout: &SearchLayout) -> Vec<PreviewLine> {
+    let line = |item: SearchItem| match item.kind {
+        SearchKind::Songs => PreviewLine::Song { at: item.at },
+        SearchKind::Artists => PreviewLine::Artist { at: item.at },
+        SearchKind::Albums => PreviewLine::Album { at: item.at },
+        SearchKind::Playlists => PreviewLine::Playlist { at: item.at },
     };
-    group(PreviewKind::Artists, r.artists.len(), 2, |at| PreviewLine::Artist { at });
-    group(PreviewKind::Albums, r.albums.len(), 3, |at| PreviewLine::Album { at });
-    group(PreviewKind::Playlists, r.playlists.len(), 2, |at| PreviewLine::Playlist { at });
-    group(PreviewKind::Songs, r.songs.len(), 3, |at| PreviewLine::Song { at });
+    let mut lines = Vec::new();
+    if let Some(top) = layout.top {
+        lines.extend([PreviewLine::Top, line(top)]);
+    }
+    for s in &layout.sections {
+        let most = if s.kind == SearchKind::Songs { 3 } else { 2 };
+        lines.push(PreviewLine::Head { kind: s.kind });
+        lines.extend(s.items.iter().take(most).map(|&at| line(SearchItem { kind: s.kind, at })));
+    }
     if !lines.is_empty() {
         lines.push(PreviewLine::All);
     }
@@ -351,25 +487,91 @@ mod tests {
     use super::*;
     use nori_model::{Artist, Playlist};
 
+    fn named<T>(names: &[&str], make: impl Fn(String, String) -> T) -> Vec<T> {
+        names.iter().enumerate().map(|(i, n)| make(format!("{i}"), n.to_string())).collect()
+    }
+
+    fn answer(songs: &[(&str, &str)], artists: &[&str], albums: &[&str], playlists: &[&str]) -> SearchResult {
+        SearchResult {
+            songs: songs.iter().enumerate().map(|(i, (t, a))| Song { id: format!("s{i}"), title: t.to_string(), artist: a.to_string(), ..Default::default() }).collect(),
+            artists: named(artists, |id, name| Artist { id, name, ..Default::default() }),
+            albums: named(albums, |id, name| Album { id, name, ..Default::default() }),
+            playlists: named(playlists, |id, name| Playlist { id, name, ..Default::default() }),
+        }
+    }
+
     #[test]
-    fn preview_takes_the_best_few_of_each_kind_in_order() {
-        let r = SearchResult {
-            artists: (0..5).map(|i| Artist { id: format!("ar{i}"), ..Default::default() }).collect(),
-            albums: vec![Album::default()],
-            songs: (0..9).map(|i| Song { id: format!("s{i}"), ..Default::default() }).collect(),
-            playlists: Vec::new(),
-        };
+    fn the_top_result_answers_the_query_best() {
+        use SearchKind::*;
+        let top = |r: &SearchResult, q: &str| search_layout(r, q).top.map(|t| (t.kind, t.at));
+        let eminem = answer(&[("Rap God", "Eminem"), ("Lose Yourself", "Eminem")], &["Eminem", "Eminem Tribute"], &["Recovery"], &[]);
+        assert_eq!(top(&eminem, "eminem"), Some((Artists, 0)), "the artist's name, where the songs answer only by their artist");
+        assert_eq!(top(&eminem, "rap god"), Some((Songs, 0)), "the song's title");
+        let rap = answer(&[("Rap God", "Eminem")], &["Rap God"], &["Rap God"], &[]);
+        assert_eq!(top(&rap, "rap god"), Some((Songs, 0)), "a title as good as a name: the song");
+        let side = answer(&[("Far Song One", "Nori")], &[], &["Near", "Far Side"], &["Far Side Mix"]);
+        assert_eq!(top(&side, "far side"), Some((Albums, 1)), "the album named so, wherever it is in its list");
+        let mix = answer(&[("Chill", "x")], &[], &[], &["Morning Chill", "Chill Mix"]);
+        assert_eq!(top(&mix, "chill mix"), Some((Playlists, 1)));
+        let fuzzy = answer(&[], &["Somebody"], &["Something"], &[]);
+        assert_eq!(top(&fuzzy, "zq"), Some((Artists, 0)), "nothing answers: the first there is");
+        assert_eq!(top(&SearchResult::default(), "x"), None);
+    }
+
+    #[test]
+    fn all_lays_out_the_top_result_then_a_row_of_each_kind() {
+        use SearchKind::*;
+        let songs: Vec<(String, String)> = (0..7).map(|i| (format!("Alpha {i}"), "Alpha Waves".to_string())).collect();
+        let songs: Vec<(&str, &str)> = songs.iter().map(|(t, a)| (t.as_str(), a.as_str())).collect();
+        let albums: Vec<String> = (0..12).map(|i| format!("Album {i}")).collect();
+        let albums: Vec<&str> = albums.iter().map(String::as_str).collect();
+        let r = answer(&songs, &["Alpha Waves"], &albums, &["Alphas"]);
+        let l = search_layout(&r, "alpha waves");
+        assert_eq!(l.top, Some(SearchItem { kind: Artists, at: 0 }));
+        let shown: Vec<(SearchKind, Vec<u32>)> = l.sections.iter().map(|s| (s.kind, s.items.clone())).collect();
+        assert_eq!(
+            shown,
+            [(Songs, vec![0, 1, 2, 3]), (Albums, (0..SHELF_MOST as u32).collect()), (Playlists, vec![0])],
+            "the best few songs, a row of albums; the artist, alone in its kind, leaves no artists' row"
+        );
+        // A top song is not listed again beside itself.
+        let l = search_layout(&answer(&songs[..5], &[], &[], &[]), "alpha 0");
+        assert_eq!(l.top, Some(SearchItem { kind: Songs, at: 0 }));
+        assert_eq!(l.sections, [SearchSection { kind: Songs, items: vec![1, 2, 3, 4] }]);
+    }
+
+    #[test]
+    fn a_kind_picked_shows_that_kind_whole() {
+        use SearchKind::*;
+        let r = answer(&[("One", "A"), ("Two", "A")], &[], &(0..14).map(|_| "Album").collect::<Vec<_>>(), &[]);
+        let mut s = Session { text: "a".into(), answer: Answer::Server(search_split(r, "a")), ..Default::default() };
+        let v = s.view();
+        assert_eq!((v.kinds.as_slice(), v.kind), ([Songs, Albums].as_slice(), None));
+        s.pick(Some(Albums));
+        let v = s.view();
+        assert_eq!(v.kind, Some(Albums));
+        assert_eq!(v.layout, SearchLayout { top: None, sections: vec![SearchSection { kind: Albums, items: (0..14).collect() }] });
+        s.pick(Some(Albums));
+        assert_eq!(s.view().kind, None, "the chip lit, picked again, is All");
+        s.pick(Some(Artists));
+        assert_eq!((s.view().kind, s.view().layout.top.is_some()), (None, true), "a kind the answer lacks shows all");
+    }
+
+    #[test]
+    fn the_preview_is_the_page_in_small() {
+        let r = answer(&[("Alpha", "A"), ("Alpha 2", "A"), ("Beta", "A"), ("Gamma", "A"), ("Delta", "A")], &["Alphaville", "Alphas", "Alpha Band"], &["Alpha"], &[]);
         use PreviewLine as L;
         assert_eq!(
-            search_preview(&r),
+            search_preview(&search_layout(&r, "alpha")),
             [
-                L::Head { kind: PreviewKind::Artists }, L::Artist { at: 0 }, L::Artist { at: 1 },
-                L::Head { kind: PreviewKind::Albums }, L::Album { at: 0 },
-                L::Head { kind: PreviewKind::Songs }, L::Song { at: 0 }, L::Song { at: 1 }, L::Song { at: 2 },
+                L::Top, L::Song { at: 0 },
+                L::Head { kind: SearchKind::Songs }, L::Song { at: 1 }, L::Song { at: 2 }, L::Song { at: 3 },
+                L::Head { kind: SearchKind::Albums }, L::Album { at: 0 },
+                L::Head { kind: SearchKind::Artists }, L::Artist { at: 0 }, L::Artist { at: 1 },
                 L::All,
             ]
         );
-        assert!(search_preview(&SearchResult::default()).is_empty());
+        assert!(search_preview(&search_layout(&SearchResult::default(), "x")).is_empty());
     }
 
     fn result() -> SearchResult {

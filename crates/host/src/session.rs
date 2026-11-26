@@ -1344,6 +1344,16 @@ impl Handle {
         let _ = self.core.search_remember_recent(self.search.query());
     }
 
+    /// The search's kind chip `kind` picked (None: All).
+    pub fn search_pick(&self, kind: Option<nori_core::search::SearchKind>) -> SearchView {
+        self.search.pick(kind)
+    }
+
+    /// The search's scope chip `scope` tapped.
+    pub fn search_narrow(&self, scope: nori_core::search::SearchScope) -> SearchView {
+        self.search.narrow(scope)
+    }
+
     /// Searches the server in the background. `error` words a failure for the results.
     pub fn search_server(&self, query: String, error: fn(&NetError) -> String) {
         if self.offline || query.trim().is_empty() {

@@ -501,6 +501,8 @@ char *nori_ios_sleep_choices(void);
 void nori_ios_sleep_set(uint32_t minutes, int32_t end_of_track, uint32_t songs);
 
 void nori_ios_remember(const char *query);
+/// The search's kind chip picked: -1 All, 0 songs, 1 albums, 2 artists, 3 playlists.
+void nori_ios_search_pick(int32_t kind);
 void nori_ios_sync(void);
 /// A headed page's Play and Shuffle (album 8, artist 9, playlist 10, mix 15, smart 17) against the queue
 /// now, packed as the core's HeroButtons::pack: bit 0 Shuffle lit, 2 pausing, bits 4-5 Shuffle's press

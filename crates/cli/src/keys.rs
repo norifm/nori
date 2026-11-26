@@ -200,7 +200,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(List, "i", Action::Jam, "Start a jam with it: it plays, and friends with the link ask for songs", [(Char('i'), N)]),
     b!(List, "S", Action::Sort, "The albums' or the songs' next order", [(Char('S'), S), (Char('S'), N)]),
     b!(List, "*", Action::Favorites, "The albums or songs: only the favorites, or all", [(Char('*'), S), (Char('*'), N)]),
-    b!(List, "[ ]", Action::GroupBack, "The library's section, or the settings' group, before or after", [(Char('['), N)]),
+    b!(List, "[ ]", Action::GroupBack, "The library's section, the settings' group, or the search's kind, before or after", [(Char('['), N)]),
     b!(List, "", Action::GroupOn, "", [(Char(']'), N)]),
     b!(Edit, "d / delete", Action::Remove, "Take it out (of the queue, or off this computer); forget a paired device; refuse a jam request (enter accepts)", [(Char('d'), N), (Delete, N)]),
     b!(Edit, "u", Action::Undo, "Put back what was just taken out of the queue", [(Char('u'), N)]),

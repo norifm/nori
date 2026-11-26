@@ -22,13 +22,17 @@ impl SearchSession {
         std::sync::Arc::new(Self::default())
     }
 
-    /// The field now holds `text`; blank shows the recent searches. The same query keeps its answer.
+    /// The field now holds `text`; blank shows the recent searches. The same query keeps its answer and its
+    /// kind chip; another starts on All.
     pub fn typed(&self, text: String) -> SearchView {
         let mut s = self.session.lock();
         let same = s.query() == text.trim();
         s.text = text;
         if !same {
             self.asking.lock().drain(..).for_each(std::task::Waker::wake);
+        }
+        if !same {
+            s.kind = None;
         }
         if s.query().is_empty() {
             s.answer = Answer::Blank;
@@ -97,9 +101,17 @@ impl SearchSession {
         Some(s.view())
     }
 
-    pub fn scope(&self, scope: SearchScope) -> SearchView {
+    /// The scope chip `scope` tapped: the answer narrowed to it, or to everything again.
+    pub fn narrow(&self, scope: SearchScope) -> SearchView {
         let mut s = self.session.lock();
-        s.scope = scope;
+        s.narrow(scope);
+        s.view()
+    }
+
+    /// The kind chip `kind` picked, None for All: that kind's results whole, in place.
+    pub fn pick(&self, kind: Option<SearchKind>) -> SearchView {
+        let mut s = self.session.lock();
+        s.pick(kind);
         s.view()
     }
 }
@@ -195,8 +207,10 @@ pub(crate) mod tests {
         let SearchShown::Found { result: found } = &v.answer else { panic!("{:?}", v.answer) };
         assert_eq!(found.songs.len(), 3);
         assert!(s.local(core, "dogs".into(), 30).unwrap().is_none(), "server answer stands");
-        assert_eq!(s.scope(SearchScope::Providers).answer.result().unwrap().songs.len(), 1);
-        assert_eq!(s.scope(SearchScope::Library).answer.result().unwrap().songs.len(), 2);
+        assert_eq!(s.narrow(SearchScope::Providers).answer.result().unwrap().songs.len(), 1);
+        assert_eq!(s.narrow(SearchScope::Library).answer.result().unwrap().songs.len(), 2);
+        assert_eq!(s.narrow(SearchScope::Library).scope, SearchScope::Everything, "the chip lit, tapped again, is everything");
+        s.narrow(SearchScope::Library);
         assert!(s.server("cats".into(), result()).is_none());
         s.typed("cats".into());
         let failed = s.failed("cats".into(), Some("timeout".into())).unwrap();
@@ -205,16 +219,16 @@ pub(crate) mod tests {
         assert!(index.is_some(), "the last answer stays");
         let v = s.typed("  ".into());
         assert!(matches!(v.answer, SearchShown::Blank));
-        assert!(!s.scope(SearchScope::Everything).scopes_offered);
+        assert!(!s.narrow(SearchScope::Library).scopes_offered, "back to everything, with nothing to narrow");
         let none = s.typed("x".into());
         assert!(matches!(none.answer, SearchShown::Asking { .. }));
         let v = s.server("x".into(), SearchResult::default()).unwrap();
         assert!(matches!(v.answer, SearchShown::NothingFound));
         let only_playlists = SearchResult { playlists: vec![crate::Playlist { id: "yt-VLa".into(), ..Default::default() }], ..Default::default() };
         assert!(matches!(s.server("x".into(), only_playlists).unwrap().answer, SearchShown::Found { .. }));
-        assert_eq!(s.scope(SearchScope::Library).answer.result().map_or(0, |r| r.songs.len()), 0);
+        assert_eq!(s.narrow(SearchScope::Library).answer.result().map_or(0, |r| r.songs.len()), 0);
         // The index found something the server did not search for: its answer stays.
-        s.scope(SearchScope::Everything);
+        s.narrow(SearchScope::Library);
         let indexed = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         crate::db::index(&mut indexed.db.lock(), &[], &[], &[crate::Song { id: "1".into(), title: "Dogs".into(), ..Default::default() }]).unwrap();
         assert!(matches!(s.typed_with_index(indexed.clone(), "d".into()).answer, SearchShown::Asking { index: Some(_) }));
@@ -239,7 +253,7 @@ pub(crate) mod tests {
         s.typed("dogs".into());
         s.server("dogs".into(), result()).unwrap();
         assert!(s.failed("dogs".into(), Some("timeout".into())).is_none());
-        let v = s.scope(SearchScope::Everything);
+        let v = s.pick(None);
         assert!(matches!(&v.answer, SearchShown::Found { result } if result.songs.len() == 3));
     }
 
@@ -271,6 +285,18 @@ pub(crate) mod tests {
         assert!(woken.0.load(Ordering::Relaxed) > before, "typing over wakes it");
         assert!(matches!(ask.as_mut().poll(&mut cx), Poll::Ready(Ok(None))));
         assert_eq!(net.answers.lock().len(), 1, "its answer was never waited for");
+    }
+
+    #[test]
+    fn a_kind_picked_holds_for_its_query_and_another_starts_on_all() {
+        let s = SearchSession::new();
+        s.typed("dogs".into());
+        s.server("dogs".into(), result()).unwrap();
+        assert_eq!(s.pick(Some(SearchKind::Albums)).kind, Some(SearchKind::Albums));
+        assert_eq!(s.typed("dogs ".into()).kind, Some(SearchKind::Albums), "the same query");
+        let v = s.typed("dogs and cats".into());
+        assert_eq!(v.kind, None);
+        assert_eq!(s.server("dogs and cats".into(), result()).unwrap().kind, None);
     }
 
     #[test]

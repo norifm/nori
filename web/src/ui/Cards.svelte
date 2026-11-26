@@ -17,13 +17,13 @@
   <div class={row ? "row" : "grid"}>
     {#each artists as a (a.id)}
       <!-- How many albums: two artists of one name are told apart. -->
-      <div class="cell" animate:settle transition:come><Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" /></div>
+      <div class="cell" animate:settle transition:come><Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" remote={a.isExternal} /></div>
     {/each}
     {#each albums as a (a.id)}
-      <div class="cell" animate:settle transition:come><Card href={href("album", a.id)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} /></div>
+      <div class="cell" animate:settle transition:come><Card href={href("album", a.id)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} remote={a.isExternal} /></div>
     {/each}
     {#each playlists as p (p.id)}
-      <div class="cell" animate:settle transition:come><Card href={href("playlist", p.id)} kind="playlist" id={p.id} cover={p.cover} title={p.name} sub={p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")} fallback="playlist" editable={!!p.editable} /></div>
+      <div class="cell" animate:settle transition:come><Card href={href("playlist", p.id)} kind="playlist" id={p.id} cover={p.cover} title={p.name} sub={p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")} fallback="playlist" editable={!!p.editable} remote={p.remote} /></div>
     {/each}
   </div>
 {/if}

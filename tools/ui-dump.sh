@@ -26,6 +26,9 @@ if [ "${1:-}" = --click ] || [ "${1:-}" = --long-click ]; then
   action=${1#--}
   exec adb shell -n "CLASSPATH=/data/local/tmp/nori-ui-dump.dex app_process /system/bin dev.nori.tools.UiDump $action $2 '$encoded' ${4:-1}"
 fi
+if [ "${1:-}" = --ime-enter ]; then
+  exec adb shell -n "CLASSPATH=/data/local/tmp/nori-ui-dump.dex app_process /system/bin dev.nori.tools.UiDump ime-enter"
+fi
 if [ "${1:-}" = --set-text ]; then
   encoded=$(printf '%s' "${2:-}" | base64 | tr -d '\n')
   exec adb shell -n "CLASSPATH=/data/local/tmp/nori-ui-dump.dex app_process /system/bin dev.nori.tools.UiDump set-text '$encoded'"

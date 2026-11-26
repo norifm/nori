@@ -70,3 +70,5 @@ naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
 nori-plugins = { path = "../plugins", features = ["testing"] }
 nori-testdir = { path = "../testdir" }
 i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-skia"] }
+# The search page's states saved as pictures (search_tests.rs).
+png = "0.18"

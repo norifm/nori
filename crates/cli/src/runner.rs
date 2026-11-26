@@ -1265,6 +1265,10 @@ impl Runner {
                 s.search_server(q);
             }
             Cmd::SearchUsed => s.search_used(),
+            Cmd::SearchPick(kind) => {
+                app.search.view = Some(s.search_pick(kind));
+                app.search.settle(true);
+            }
             Cmd::LyricsRefresh => s.lyrics_refresh(),
             Cmd::Cover(art) => {
                 if let Some(t) = s.cover(art, COVER_PX) {

@@ -699,6 +699,12 @@
     <string name="scope_everything">Everything</string>
     <string name="scope_in_library">In library</string>
     <string name="search_fallback">Server search failed: %1$s — showing offline results</string>
+    <string name="search_all">All</string>
+    <string name="top_result">Top result</string>
+    <string name="top_kind_song">Song</string>
+    <string name="top_kind_album">Album</string>
+    <string name="top_kind_artist">Artist</string>
+    <string name="top_kind_playlist">Playlist</string>
     <!-- The home page's shelves. -->
     <string name="home_row_pinned">Favorite playlists</string>
     <string name="home_row_recent">Recently played</string>

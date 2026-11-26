@@ -42,6 +42,7 @@ enum Say {
     static func shelf(_ key: String) -> String {
         switch key {
         case "mixes": return "For you"
+        case "top": return "Top result"
         case "newest": return "Recently added"
         case "recent": return "Recently played"
         case "frequent": return "Most played albums"
@@ -268,6 +269,8 @@ enum Say {
     static func offerPlace(_ artist: String, _ at: Int, _ of: Int) -> String { "\(artist) · \(at) of \(of)" }
     static let downloadsRun = "Downloads run while nori is open or playing."
     static let searchHint = "Songs, albums, artists"
+    /// The search's first chip: every kind.
+    static let searchAll = "All"
     static let nothingPlaying = "Nothing playing"
     static let lookingForLyrics = "Looking for lyrics…"
     static let noLyrics = "No lyrics for this song"

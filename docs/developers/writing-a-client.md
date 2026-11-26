@@ -223,6 +223,7 @@ session does all of this. Android calls the same functions from Kotlin.
 | An artist page's top songs | `library::artist_top_songs` | Android only |
 | A keystroke in search | `SearchSession`, whose `SearchView` holds a `SearchShown` | `search_typed`, `search_server` |
 | A search sent (Enter) or a result of it used | `Core::search_remember_recent` | `Handle::search_used` |
+| The search's results page | `SearchView::layout` (`search_layout`), `kinds` and `kind` for the chips | `search_pick`, `search_narrow` |
 | Home's queue offer | `Client::queue_offer_kept` at once, then `Client::queue_offer`, kept by `offer::Offered` | `Handle::queue_offer_kept`, `Handle::queue_offer` |
 | Lyrics for the song heard | `Client::lyrics_for`, `lyrics_follow::LyricsHeard` | `Handle::lyrics_heard`, `Said::Lyrics` |
 | Adding a profile, signing in | `providers::flow`: `AddFlow`, `SignInFlow` | `Account::signed_in` |
@@ -242,6 +243,9 @@ These rules hold behind the answers:
   one of its results. A typing pause is neither.
 - **A song found by search plays alone.** The search's results are no album. `Handle::play` with a
   `Search` origin queues only that song.
+- **The core lays out a search's results.** On All: the top result, the best few songs beside it, then
+  a row of albums, artists and playlists. A kind chip shows that kind whole, in place; a new query starts
+  on All. A client draws the layout and keeps no order of its own.
 - **An undo lasts `UNDO_MS`.** A client that offers the undo shows it for that long. After that,
   `playlist_restore` refuses.
 - **A favorite marks at once.** `Client::star` puts the old mark back if the server refuses. Where the

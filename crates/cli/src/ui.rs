@@ -715,10 +715,23 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Some(SearchShown::Failed { fallback, .. }) => (crate::text::search_fallback(fallback.reason.as_deref()), Style::default().fg(Color::LightRed)),
         Some(SearchShown::Asking { .. }) => ("Asking the server…".to_string(), t.dim()),
         Some(SearchShown::NothingFound) => ("Nothing found".to_string(), t.dim()),
-        Some(SearchShown::Found { .. }) => ("From the server".to_string(), t.dim()),
+        Some(SearchShown::Found { .. }) => (String::new(), t.dim()),
         Some(SearchShown::Blank) | None => ("Songs, albums and artists, from the library".to_string(), t.dim()),
     };
-    text(f, row_of(area, 1), &words, style);
+    // The kind chips, All first, the one lit as the current tab is ([ and ] step through them), then what
+    // the search is doing.
+    let mut line: Vec<Span> = Vec::new();
+    if let Some(v) = view.filter(|v| !v.kinds.is_empty()) {
+        let chips = std::iter::once((crate::text::SEARCH_ALL, v.kind.is_none())).chain(v.kinds.iter().map(|&k| (crate::text::search_title(crate::app::SearchTitle::Kind(k)), v.kind == Some(k))));
+        for (name, lit) in chips {
+            line.push(Span::styled(format!(" {name} "), if lit { t.current() } else { t.dim() }));
+            line.push(Span::raw(" "));
+        }
+    }
+    if !words.is_empty() {
+        line.push(Span::styled(words, style));
+    }
+    put(f, Paragraph::new(Line::from(line)), row_of(area, 1));
     let body = below(area, 3);
     let playing = app.song.as_ref().map(|s| s.id.clone());
     let App { search: s, hits, marks, rules, devices, .. } = app;
@@ -739,7 +752,7 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
             line
         };
         match &rows[i] {
-            SearchRow::Title(title, n) => spread(vec![Span::styled(title.to_string(), bold().fg(t.ink))], Span::styled(format!("{n} "), t.dim()), w),
+            SearchRow::Title(title, n) => spread(vec![Span::styled(crate::text::search_title(*title).to_string(), bold().fg(t.ink))], Span::styled(format!("{n} "), t.dim()), w),
             SearchRow::Song(song) => song_line(song, &marks, 0, w, t, playing.as_deref() == Some(song.id.as_str()), true),
             SearchRow::Album(a) => entry(Item::Album((*a).clone())),
             SearchRow::Artist(a) => entry(Item::Artist((*a).clone())),

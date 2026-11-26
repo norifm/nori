@@ -29,6 +29,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -45,6 +47,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
     val nav = LocalNav.current
     val menu = LocalSongMenu.current
     val scopes = remember { dev.nori.music.ffi.library.searchScopes().map { it to say.searchScope(it) } }
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
     // Opening the page shows what an empty search offers; Search tapped again, or the field, brings the keyboard.
     val taps = searchFocusKey()
     val opened = remember { taps }
@@ -53,7 +56,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         SearchField(
             ui.query, vm::setQuery, say.searchHint,
             Modifier.padding(start = Space.gutter, end = Space.gutter, top = 8.dp), testTag = "search", autofocus = taps != opened,
-            focusKey = taps,
+            focusKey = taps, onSearch = { vm.remember() },
         )
         // Its room is kept whether or not it shows, so the results do not move as the server answers.
         androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(2.dp)) {
@@ -64,16 +67,24 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
             Text(said, Modifier.padding(horizontal = Space.gutter), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
 
-        // As far below the field as the library's chips are below its title, the progress line's room counted.
-        if (ui.scopesOffered) LazyRow(Modifier.bleedsToEdges().padding(top = 8.dp), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(scopes) { (scope, label) -> Chip(label, ui.scope == scope) { vm.setScope(scope) } }
+        // The kind chips, All first, then the scope chips where providers' results are mixed in: picking one
+        // shows it in place. As far below the field as the library's chips are below its title, the progress
+        // line's room counted.
+        if (ui.answer.results != null && ui.kinds.isNotEmpty()) LazyRow(
+            Modifier.bleedsToEdges().padding(top = 8.dp).testTag("search-kinds"), contentPadding = edgePadding(horizontal = Space.gutter),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            item(key = "all") { Chip(say.searchAll, ui.kind == null) { vm.pick(null) } }
+            items(ui.kinds, key = { it.name }) { k -> Chip(say.searchKind(k), ui.kind == k) { vm.pick(k) } }
+            if (ui.scopesOffered) {
+                item(key = "gap") { Box(Modifier.padding(horizontal = 4.dp).width(HAIRLINE).height(20.dp).background(MaterialTheme.colorScheme.outlineVariant)) }
+                items(scopes, key = { it.first.name }) { (scope, label) -> Chip(label, ui.scope == scope) { vm.narrow(scope) } }
+            }
         }
-        // Back from a search comes back to this page's start, not to the tab before it.
-        val focus = androidx.compose.ui.platform.LocalFocusManager.current
-        androidx.activity.compose.BackHandler(ui.query.isNotEmpty()) { vm.setQuery(""); focus.clearFocus() }
+        // Back from a kind picked comes back to All; from a search, to this page's start, not to the tab before it.
+        androidx.activity.compose.BackHandler(ui.kind != null) { vm.pick(null) }
+        androidx.activity.compose.BackHandler(ui.query.isNotEmpty() && ui.kind == null) { vm.setQuery(""); focus.clearFocus() }
         val r = ui.answer.results
-        // A new search starts with its best few songs again.
-        var allSongs by androidx.compose.runtime.remember(ui.query) { androidx.compose.runtime.mutableStateOf(false) }
         if (r == null) {
             // Before a search: the recent searches, then ways in that need no words, the library's biggest
             // genres and its decades.
@@ -106,89 +117,143 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
             }
             return@Column
         }
-        // A fuller answer puts artists and albums above the songs: the list stays at its top for them, as a
-        // shelf does, and a new search or scope starts there.
-        val first = when {
-            r.artists.isNotEmpty() -> "artists"
-            r.albums.isNotEmpty() -> "albums"
-            r.playlists.isNotEmpty() -> "playlists"
-            else -> "songs"
+        if (ui.answer is dev.nori.music.ffi.library.SearchShown.NothingFound) return@Column EmptyNote(Note.NOTHING_FOUND)
+        val play = { song: dev.nori.music.ffi.model.Song ->
+            // One tap plays one song: a search result list is not an album, and with octo-fiesta queueing
+            // the rest would make the server download every provider track in it.
+            vm.remember(); actions.play(listOf(song), from = dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SEARCH, ui.query))
         }
-        // A shelf's › opens it whole, as a grid in its place, until Back; a new search or scope closes it.
-        var whole by remember(ui.query, ui.scope) { androidx.compose.runtime.mutableStateOf<Whole?>(null) }
-        androidx.activity.compose.BackHandler(whole != null) { whole = null }
-        whole?.let { return@Column WholeShelf(it, r, vm) }
-        val list = rememberShelfState(first)
-        androidx.compose.runtime.LaunchedEffect(ui.query, ui.scope) { list.requestScrollToItem(0) }
+        val (onRight, onLeft) = actions.swipes
+        // The same two swipes every other list of songs has: a result is a song like any other.
+        val songRow: @Composable (dev.nori.music.ffi.model.Song) -> Unit = { s ->
+            SongRow(
+                s, vm.cover(s.coverArt, CoverSize.ROW), onClick = { play(s) }, onMenu = { menu(s) },
+                downloaded = s.id in downloads.doneIds,
+                swipeRight = rowSwipe(onRight, s, actions), swipeLeft = rowSwipe(onLeft, s, actions),
+            )
+        }
+        val picked = ui.kind
+        if (picked != null && picked != dev.nori.music.ffi.library.SearchKind.SONGS) return@Column WholeKind(picked, r, vm)
+        val list = rememberLazyListState()
+        androidx.compose.runtime.LaunchedEffect(ui.query, ui.scope, ui.kind) { list.requestScrollToItem(0) }
         LazyColumn(Modifier.pageToEdges().fadesUnderTitle(list), list, contentPadding = pagePadding(LocalChromeInset.current)) {
-            if (r.artists.isNotEmpty()) item(key = "artists") {
-                SectionTitle(say.artists, onMore = { whole = Whole.ARTISTS }.takeIf { r.artists.size > SHELF_SEEN })
-                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.artists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(r.artists, key = { it.id }) { a -> FoundArtist(a, vm, 96.dp, itemMotion()) }
+            if (picked == dev.nori.music.ffi.library.SearchKind.SONGS) {
+                items(r.songs, key = { "s-" + it.id }, contentType = { "song" }) { s -> songRow(s) }
+                return@LazyColumn
+            }
+            val layout = ui.layout
+            fun items(kind: dev.nori.music.ffi.library.SearchKind) = layout.sections.firstOrNull { it.kind == kind }?.items.orEmpty().map { it.toInt() }
+            layout.top?.let { t -> item(key = "top") { SectionTitle(say.topResult); TopResultCard(t, r, vm, actions, play) } }
+            val songs = items(dev.nori.music.ffi.library.SearchKind.SONGS)
+            if (songs.isNotEmpty()) item(key = "songs") { SectionTitle(say.songs) }
+            items(songs.map { r.songs[it] }, key = { "s-" + it.id }, contentType = { "song" }) { s -> songRow(s) }
+            val albums = items(dev.nori.music.ffi.library.SearchKind.ALBUMS).map { r.albums[it] }
+            if (albums.isNotEmpty()) item(key = "albums") {
+                SectionTitle(say.albums)
+                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(albums.first().id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.album(a.id, a) }, itemMotion()) }
                 }
             }
-            if (r.albums.isNotEmpty()) item(key = "albums") {
-                SectionTitle(say.albums, onMore = { whole = Whole.ALBUMS }.takeIf { r.albums.size > SHELF_SEEN })
-                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(r.albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.album(a.id, a) }, itemMotion()) }
+            val artists = items(dev.nori.music.ffi.library.SearchKind.ARTISTS).map { r.artists[it] }
+            if (artists.isNotEmpty()) item(key = "artists") {
+                SectionTitle(say.artists)
+                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(artists.first().id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(artists, key = { it.id }) { a -> FoundArtist(a, vm, 96.dp, itemMotion()) }
                 }
             }
-            if (r.playlists.isNotEmpty()) item(key = "playlists") {
-                SectionTitle(say.playlists, onMore = { whole = Whole.PLAYLISTS }.takeIf { r.playlists.size > SHELF_SEEN })
-                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.playlists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(r.playlists, key = { it.id }) { p -> FoundPlaylist(p, vm, itemMotion().width(120.dp)) }
+            val playlists = items(dev.nori.music.ffi.library.SearchKind.PLAYLISTS).map { r.playlists[it] }
+            if (playlists.isNotEmpty()) item(key = "playlists") {
+                SectionTitle(say.playlists)
+                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(playlists.first().id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(playlists, key = { it.id }) { p -> FoundPlaylist(p, vm, itemMotion().width(120.dp)) }
                 }
             }
-            if (r.songs.isNotEmpty()) item(key = "songs") { SectionTitle(say.songs) }
-            val shown = dev.nori.music.ffi.library.songsShown(r.songs.size.toUInt(), allSongs).toInt()
-            itemsIndexed(r.songs.take(shown), key = { _, s -> s.id }, contentType = { _, _ -> "song" }) { _, s ->
-                // One tap plays one song: a search result list is not an album, and with octo-fiesta
-                // queueing the rest would make the server download every provider track in it.
-                // The same two swipes every other list of songs has: a result is a song like any other,
-                // and reaching for the menu to queue one was the odd thing out here.
-                val (onRight, onLeft) = actions.swipes
-                SongRow(
-                    s, vm.cover(s.coverArt, CoverSize.ROW), onClick = { vm.remember(); actions.play(listOf(s), from = dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SEARCH, ui.query)) }, onMenu = { menu(s) },
-                    downloaded = s.id in downloads.doneIds,
-                    swipeRight = rowSwipe(onRight, s, actions), swipeLeft = rowSwipe(onLeft, s, actions),
-                )
-            }
-            if (shown < r.songs.size) item(key = "songs-all") { TextAction(say.showAll, { allSongs = true }, Modifier.padding(horizontal = 8.dp)) }
-            if (ui.answer is dev.nori.music.ffi.library.SearchShown.NothingFound) item { EmptyNote(Note.NOTHING_FOUND) }
         }
     }
 }
 
-/** How many cards of a shelf a phone shows across: a shelf longer than that can be opened whole. */
-private const val SHELF_SEEN = 3
-
-/** A shelf of the answer that can be opened whole. */
-private enum class Whole { ARTISTS, ALBUMS, PLAYLISTS }
-
-/** One of the answer's shelves whole, as a grid under its name: artists three across, the rest two. */
+/** A kind picked whole, as a grid under the chips: artists three across, the rest two. */
 @Composable
-private fun WholeShelf(whole: Whole, r: dev.nori.music.ffi.model.SearchResult, vm: SearchViewModel) {
+private fun WholeKind(kind: dev.nori.music.ffi.library.SearchKind, r: dev.nori.music.ffi.model.SearchResult, vm: SearchViewModel) {
     val nav = LocalNav.current
     val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
-    val columns = if (whole == Whole.ARTISTS) 3 else 2
-    SectionTitle(when (whole) { Whole.ARTISTS -> say.artists; Whole.ALBUMS -> say.albums; Whole.PLAYLISTS -> say.playlists })
+    val artists = kind == dev.nori.music.ffi.library.SearchKind.ARTISTS
     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-        androidx.compose.foundation.lazy.grid.GridCells.Fixed(columns), Modifier.fadesUnderTitle(grid), grid,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = Space.gutter, end = Space.gutter, bottom = Space.gutter + LocalChromeInset.current),
+        androidx.compose.foundation.lazy.grid.GridCells.Fixed(if (artists) 3 else 2), Modifier.fadesUnderTitle(grid), grid,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = Space.gutter, end = Space.gutter, top = 12.dp, bottom = Space.gutter + LocalChromeInset.current),
         horizontalArrangement = Arrangement.spacedBy(GRID_GAP), verticalArrangement = Arrangement.spacedBy(GRID_GAP),
     ) {
-        when (whole) {
-            Whole.ARTISTS -> items(r.artists.size, key = { r.artists[it].id }) { i ->
+        when (kind) {
+            dev.nori.music.ffi.library.SearchKind.ARTISTS -> items(r.artists.size, key = { r.artists[it].id }) { i ->
                 androidx.compose.foundation.layout.BoxWithConstraints { FoundArtist(r.artists[i], vm, maxWidth) }
             }
-            Whole.ALBUMS -> items(r.albums.size, key = { r.albums[it].id }) { i ->
+            dev.nori.music.ffi.library.SearchKind.ALBUMS -> items(r.albums.size, key = { r.albums[it].id }) { i ->
                 val a = r.albums[i]
                 AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 0.dp, { vm.remember(); nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
             }
-            Whole.PLAYLISTS -> items(r.playlists.size, key = { r.playlists[it].id }) { i -> FoundPlaylist(r.playlists[i], vm, Modifier.fillMaxWidth(), fill = true) }
+            else -> items(r.playlists.size, key = { r.playlists[it].id }) { i -> FoundPlaylist(r.playlists[i], vm, Modifier.fillMaxWidth(), fill = true) }
         }
     }
 }
+
+/**
+ * The search's top result, as Home's Continue card: raised paper, the cover running into it, what it is in
+ * small capitals, its name in Literata, its line and Play. A tap opens it (a song plays).
+ */
+@Composable
+private fun TopResultCard(t: dev.nori.music.ffi.library.SearchItem, r: dev.nori.music.ffi.model.SearchResult, vm: SearchViewModel, actions: ActionsViewModel, play: (dev.nori.music.ffi.model.Song) -> Unit) {
+    val nav = LocalNav.current
+    val at = t.at.toInt()
+    data class Top(val name: String, val line: String, val cover: String?, val remote: Boolean, val open: () -> Unit, val playIt: () -> Unit)
+    val top = when (t.kind) {
+        dev.nori.music.ffi.library.SearchKind.SONGS -> r.songs[at].let { s -> Top(say.title(s.title), s.artist, s.coverArt, s.isExternal, { play(s) }, { play(s) }) }
+        dev.nori.music.ffi.library.SearchKind.ALBUMS -> r.albums[at].let { a -> Top(a.name, a.subtitle, a.coverArt, a.isExternal, { vm.remember(); nav.album(a.id, a) }, { vm.remember(); actions.play(dev.nori.music.app.vm.CardItem.OfAlbum(a)) }) }
+        dev.nori.music.ffi.library.SearchKind.ARTISTS -> r.artists[at].let { a ->
+            Top(a.name, a.albumCount?.takeIf { it > 0u }?.let { say.albums(it.toInt()) }.orEmpty(), a.coverArt, a.isExternal, { vm.remember(); nav.artist(a.id, a) }, { vm.remember(); actions.play(dev.nori.music.app.vm.CardItem.OfArtist(a)) })
+        }
+        dev.nori.music.ffi.library.SearchKind.PLAYLISTS -> r.playlists[at].let { p ->
+            Top(p.name, if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty(), p.coverArt, false, { vm.remember(); nav.playlist(p.id, p) }, { vm.remember(); actions.play(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) })
+        }
+    }
+    val scheme = MaterialTheme.colorScheme
+    val page = scheme.surfaceContainerHigh
+    val ink = scheme.onSurface
+    val url = vm.cover(top.cover, CoverSize.CARD)
+    Box(
+        Modifier.fillMaxWidth().padding(horizontal = Space.gutter).height(TOP_HEIGHT).clip(TileShape).background(page)
+            .clickable(onClick = top.open).testTag("search-top"),
+    ) {
+        Row {
+            Box(Modifier.size(TOP_HEIGHT)) {
+                Cover(url, TOP_HEIGHT, radius = 0.dp, plate = false)
+                Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.horizontalGradient(0.55f to androidx.compose.ui.graphics.Color.Transparent, 1f to page)))
+            }
+            Column(Modifier.weight(1f).fillMaxHeight().padding(start = 6.dp, top = 16.dp, end = 16.dp, bottom = 14.dp), Arrangement.SpaceBetween) {
+                Column {
+                    Text(
+                        remember(t.kind) { say.topKind(t.kind).uppercase() }, style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp, letterSpacing = 0.7.sp),
+                        color = ink.copy(alpha = 0.65f),
+                    )
+                    Text(
+                        top.name, Modifier.padding(top = 6.dp),
+                        style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 21.sp, lineHeight = 24.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)),
+                        color = ink, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                    RemoteLine(top.line, top.remote, MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), Modifier.padding(top = 2.dp), color = ink.copy(alpha = 0.7f))
+                }
+                Row(
+                    Modifier.height(38.dp).clip(PillShape).background(ink).clickable(onClick = top.playIt).padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    androidx.compose.material3.Icon(Iconoir.PlaySolid, null, Modifier.size(18.dp), tint = page)
+                    Text(say.play, Modifier.padding(start = 6.dp), style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp), color = page)
+                }
+            }
+        }
+    }
+}
+
+private val TOP_HEIGHT = 178.dp
 
 /** An artist found: how many albums, and the cloud for a provider's, so two of one name are told apart. */
 @Composable

@@ -16,7 +16,7 @@ use nori_core::menus::{download_entries, page_actions, playlist_edit_write, play
 use nori_core::pages::release_groups;
 use nori_core::mixes::board::{MixLookup, MixTile, FAVOURITES_MIX};
 use nori_core::stage::QueueRows;
-use nori_core::{Album, Artist, Genre, Lyrics, OriginKind, PageOrigin, Playlist, SearchResult, Song};
+use nori_core::{Album, Artist, Genre, Lyrics, OriginKind, PageOrigin, Playlist, Song};
 use nori_core::lyrics_follow::LyricsNow;
 use nori_core::search::SearchShown;
 use nori_covers::loader::Ticket;
@@ -369,18 +369,40 @@ fn songs_section(key: &str, songs: &[Song], from: usize) -> Value {
     )
 }
 
-/// A search answer to `query` as four sections, its songs kept for `token` as the search's: a tap plays
-/// the one tapped alone.
-fn found(token: u64, r: &SearchResult, query: &str, server: bool) -> Value {
-    keep_list(token, r.songs.clone(), Some(PageOrigin::new(OriginKind::Search, query)));
+/// The search's kinds as the page names its sections and chips.
+fn kind_key(kind: nori_core::search::SearchKind) -> &'static str {
+    use nori_core::search::SearchKind;
+    match kind {
+        SearchKind::Songs => "songs",
+        SearchKind::Albums => "albums",
+        SearchKind::Artists => "artists",
+        SearchKind::Playlists => "playlists",
+    }
+}
+
+/// A search's view as the page draws it: the core's layout as sections (the top result's keyed `top`,
+/// then a kind's each), the kind chips after All (`kinds`) and the one lit (`kind`, null for All). Its
+/// songs are kept for `token` as the search's, so a tap plays the one tapped alone.
+fn found(token: u64, v: &nori_core::search::SearchView, server: bool) -> Value {
+    use nori_core::search::SearchKind;
+    let r = v.answer.result().cloned().unwrap_or_default();
+    keep_list(token, r.songs.clone(), Some(PageOrigin::new(OriginKind::Search, v.query.as_str())));
+    let item = |kind: SearchKind, at: u32| {
+        let at = at as usize;
+        match kind {
+            SearchKind::Songs => song_json(&r.songs[at], at),
+            SearchKind::Albums => album_json(&r.albums[at]),
+            SearchKind::Artists => artist_json(&r.artists[at]),
+            SearchKind::Playlists => playlist_json(&r.playlists[at]),
+        }
+    };
+    let top = v.layout.top.map(|t| section("top", false, vec![item(t.kind, t.at)]));
+    let sections: Vec<Value> = top.into_iter().chain(v.layout.sections.iter().map(|s| section(kind_key(s.kind), false, s.items.iter().map(|&at| item(s.kind, at)).collect()))).collect();
     json!({
         "server": server,
-        "sections": [
-            section("artists", false, r.artists.iter().map(artist_json).collect()),
-            section("albums", false, r.albums.iter().map(album_json).collect()),
-            section("playlists", false, r.playlists.iter().map(playlist_json).collect()),
-            songs_section("songs", &r.songs, 0),
-        ],
+        "sections": sections,
+        "kinds": v.kinds.iter().map(|&k| kind_key(k)).collect::<Vec<_>>(),
+        "kind": v.kind.map(kind_key),
     })
 }
 
@@ -875,13 +897,16 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                 let recent = core.search_history().unwrap_or_default();
                 return send(token, &json!({ "recent": recent, "sections": [] }));
             }
-            if let Some(r) = view.answer.result() {
-                send(token, &found(token, r, &view.query, false));
+            if view.answer.result().is_some() {
+                send(token, &found(token, &view, false));
+            }
+            // The server already answered this query (a chip picked asks it again): its answer stands.
+            if matches!(view.answer, SearchShown::Found { .. } | SearchShown::NothingFound) {
+                return send(token, &found(token, &view, true));
             }
             let Some(answered) = with_session(|s| s.search_server_now(view.query.clone(), search_failure)).flatten() else { return };
             match answered.answer {
-                SearchShown::Found { result } => send(token, &found(token, &result, &answered.query, true)),
-                SearchShown::NothingFound => send(token, &found(token, &SearchResult::default(), &answered.query, true)),
+                SearchShown::Found { .. } | SearchShown::NothingFound => send(token, &found(token, &answered, true)),
                 // The index found nothing either: the page says why, as `send_error` would.
                 SearchShown::Failed { index: None, fallback } => send(token, &serde_json::from_str(&fallback.reason.unwrap_or_default()).unwrap_or(Value::Null)),
                 SearchShown::Failed { .. } | SearchShown::Asking { .. } | SearchShown::Blank => {}
@@ -1016,8 +1041,24 @@ pub extern "C" fn nori_ios_play_list(token: u64, index: i32, shuffle: i32) {
 /// the queue around it and the song goes on. 1 when it went on (the app opens the player).
 #[no_mangle]
 pub extern "C" fn nori_ios_tap_song(token: u64, index: i32) -> i32 {
-    let Some((songs, origin)) = list(token) else { return 0 };
-    with_session(|s| s.keep_playing(songs, index.max(0) as usize, origin) as i32).unwrap_or(0)
+    let Some((mut songs, origin)) = list(token) else { return 0 };
+    let mut index = index.max(0) as usize;
+    // A search's song plays alone: its results are not an album, and queueing the rest would have a
+    // provider fetch every one of them.
+    if origin.as_ref().is_some_and(|o| o.kind == OriginKind::Search) {
+        let Some(one) = songs.get(index).cloned() else { return 0 };
+        (songs, index) = (vec![one], 0);
+    }
+    with_session(|s| s.keep_playing(songs, index, origin) as i32).unwrap_or(0)
+}
+
+/// The search's kind chip picked: -1 All, 0 songs, 1 albums, 2 artists, 3 playlists. The page reads the
+/// search again to show it.
+#[no_mangle]
+pub extern "C" fn nori_ios_search_pick(kind: i32) {
+    use nori_core::search::SearchKind;
+    let kind = usize::try_from(kind).ok().and_then(|k| [SearchKind::Songs, SearchKind::Albums, SearchKind::Artists, SearchKind::Playlists].get(k).copied());
+    with_session(|s| s.search_pick(kind));
 }
 
 /// Adds song `index` of list `token` (or all of them for -1) next or at the end.
@@ -2037,14 +2078,16 @@ mod tests {
     fn a_search_answer_keeps_its_songs_for_a_tap() {
         let _turn = lock(&ABI_IN_USE);
         forget_lists();
-        let r = SearchResult {
-            songs: vec![song("a"), song("b")],
-            ..SearchResult::default()
+        let r = nori_core::SearchResult {
+            songs: vec![song("a"), song("b"), song("c")],
+            ..nori_core::SearchResult::default()
         };
-        let v = found(77, &r, "x", true);
-        assert_eq!(v["sections"][3]["items"][1]["i"], 1);
+        let session = nori_core::search::Session { text: "x".into(), answer: nori_core::search::Answer::Server(nori_core::search::search_split(r, "x")), ..Default::default() };
+        let v = found(77, &session.view(), true);
+        assert_eq!((v["sections"][0]["key"].as_str(), v["sections"][1]["key"].as_str()), (Some("top"), Some("songs")));
+        assert_eq!(v["sections"][1]["items"][1]["i"], 2, "a song's place in the kept list");
         let (kept, origin) = list(77).unwrap();
-        assert_eq!(kept.into_iter().map(|s| s.id).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(kept.into_iter().map(|s| s.id).collect::<Vec<_>>(), ["a", "b", "c"]);
         assert_eq!(origin.map(|o| o.kind), Some(OriginKind::Search), "a tap plays the song alone");
     }
 

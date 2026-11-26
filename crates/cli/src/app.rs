@@ -191,6 +191,8 @@ pub enum Cmd {
     SearchServer(String),
     /// The search's query was sent or a result of it used: it becomes a recent search.
     SearchUsed,
+    /// A kind chip picked (None: All).
+    SearchPick(Option<nori_core::search::SearchKind>),
     /// The song heard's lyrics looked up again.
     LyricsRefresh,
     /// The playing song cover by id, and the colors the player wears from it.
@@ -716,41 +718,62 @@ pub struct Search {
     pub ask_at: Option<Instant>,
 }
 
-/// A search result row: a section title (with its count) or an item.
+/// A search result row: a section's title (with its count) or an item.
 pub enum SearchRow<'a> {
-    Title(&'static str, usize),
+    Title(SearchTitle, usize),
     Song(&'a Song),
     Album(&'a Album),
     Artist(&'a Artist),
     Playlist(&'a Playlist),
 }
 
+/// A section of the search's results: the top result, or a kind's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchTitle {
+    Top,
+    Kind(nori_core::search::SearchKind),
+}
+
 impl Search {
-    /// The results as one list: songs, albums, artists, playlists, each under a title.
+    /// The results as one list, as the core laid them out: on All the top result, then the songs beside
+    /// it and a row of each other kind, each under its title; with a kind picked, all of that kind.
     pub fn rows(&self) -> Vec<SearchRow<'_>> {
+        use nori_core::search::SearchKind;
         let mut out = Vec::new();
-        let Some(r) = self.view.as_ref().and_then(|v| v.answer.result()) else { return out };
-        if !r.songs.is_empty() {
-            out.push(SearchRow::Title("Songs", r.songs.len()));
-            out.extend(r.songs.iter().map(SearchRow::Song));
+        let Some(v) = self.view.as_ref() else { return out };
+        let Some(r) = v.answer.result() else { return out };
+        let item = |kind: SearchKind, at: u32| {
+            let at = at as usize;
+            match kind {
+                SearchKind::Songs => SearchRow::Song(&r.songs[at]),
+                SearchKind::Albums => SearchRow::Album(&r.albums[at]),
+                SearchKind::Artists => SearchRow::Artist(&r.artists[at]),
+                SearchKind::Playlists => SearchRow::Playlist(&r.playlists[at]),
+            }
+        };
+        if let Some(t) = v.layout.top {
+            out.push(SearchRow::Title(SearchTitle::Top, 1));
+            out.push(item(t.kind, t.at));
         }
-        if !r.albums.is_empty() {
-            out.push(SearchRow::Title("Albums", r.albums.len()));
-            out.extend(r.albums.iter().map(SearchRow::Album));
-        }
-        if !r.artists.is_empty() {
-            out.push(SearchRow::Title("Artists", r.artists.len()));
-            out.extend(r.artists.iter().map(SearchRow::Artist));
-        }
-        if !r.playlists.is_empty() {
-            out.push(SearchRow::Title("Playlists", r.playlists.len()));
-            out.extend(r.playlists.iter().map(SearchRow::Playlist));
+        for s in &v.layout.sections {
+            out.push(SearchRow::Title(SearchTitle::Kind(s.kind), s.items.len()));
+            out.extend(s.items.iter().map(|&at| item(s.kind, at)));
         }
         out
     }
 
+    /// The kind chip `by` chips on from the one lit (All first), clamped at the ends; None when there is
+    /// no other.
+    pub fn chip_step(&self, by: isize) -> Option<Option<nori_core::search::SearchKind>> {
+        let v = self.view.as_ref()?;
+        let chips: Vec<Option<nori_core::search::SearchKind>> = std::iter::once(None).chain(v.kinds.iter().copied().map(Some)).collect();
+        let at = chips.iter().position(|c| *c == v.kind)? as isize;
+        let to = (at + by).clamp(0, chips.len() as isize - 1) as usize;
+        (to != at as usize).then_some(chips[to])
+    }
+
     /// Moves the selection off a title in direction `down`.
-    fn settle(&mut self, down: bool) {
+    pub(crate) fn settle(&mut self, down: bool) {
         let rows = self.rows();
         let title = |i: usize| matches!(rows.get(i), Some(SearchRow::Title(..)));
         let mut at = self.sel.at;
@@ -2493,6 +2516,11 @@ impl App {
 
     fn search_key(&mut self, k: KeyEvent) {
         match k.code {
+            // Escape clears the field, then gives the keys back.
+            KeyCode::Esc if !self.search.text.is_empty() => {
+                self.search.text.clear();
+                self.typed();
+            }
             KeyCode::Esc => self.search.editing = false,
             KeyCode::Enter | KeyCode::Down | KeyCode::Tab => {
                 self.search.editing = false;
@@ -3234,6 +3262,13 @@ impl App {
                 let last = crate::settings_view::GROUPS.len() as isize - 1;
                 self.settings.jump(g.clamp(0, last) as usize);
             }
+            Action::GroupBack | Action::GroupOn if self.view == View::Search && !self.full => match self.search.chip_step(if a == Action::GroupOn { 1 } else { -1 }) {
+                Some(kind) => {
+                    self.cmds.push(Cmd::SearchPick(kind));
+                    self.search.sel = Sel::default();
+                }
+                None => self.dirty = false,
+            },
             Action::GroupBack | Action::GroupOn => {
                 // The library's section before or after, from one of them.
                 let sections = self.sections();

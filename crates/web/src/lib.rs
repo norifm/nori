@@ -528,6 +528,39 @@ impl Nori {
         })
     }
 
+    /// The kind chip `kind` picked (`songs`, `albums`, `artists`, `playlists`; null for All): the view as
+    /// `search_typed` gives it.
+    pub fn search_pick(&self, kind: Option<String>) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let kind = kind.map(|k| serde_json::from_value(serde_json::Value::String(k))).transpose().map_err(|e| error(e.to_string()))?;
+        Ok(pages::search_view(client.core(), self.search.pick(kind), self.user().as_deref()))
+    }
+
+    /// The scope chip `scope` (`library`, `providers`) tapped: the view as `search_typed` gives it.
+    pub fn search_narrow(&self, scope: String) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let scope = pages::search_scope(&scope).ok_or_else(|| error(format!("no scope {scope}")))?;
+        Ok(pages::search_view(client.core(), self.search.narrow(scope), self.user().as_deref()))
+    }
+
+    /// Keeps `query` in the recent searches: it was sent, or a result of it was acted on.
+    pub fn search_remember(&self, query: String) -> Result<(), JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        client.core().search_remember_recent(query.trim().to_string()).map(drop).map_err(error)
+    }
+
+    /// The recent searches, newest first.
+    pub fn search_history(&self) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        Ok(json!(client.core().search_history().map_err(error)?).to_string())
+    }
+
+    /// The recent searches forgotten.
+    pub fn search_forget(&self) -> Result<(), JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        client.core().search_forget().map_err(error)
+    }
+
     /// How long live search waits for `query` before asking the server, ms.
     pub fn search_delay(&self, query: &str) -> f64 {
         nori_core::search::live_delay_ms(query, nori_core::search::LIVE_SEARCH_DELAY_MS) as f64

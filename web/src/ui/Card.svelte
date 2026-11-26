@@ -1,19 +1,21 @@
 <script lang="ts">
   // An album's, artist's or playlist's card: its cover with the card's corners (an artist's round, its
   // name under it in the middle), its name and a quiet line under it. A right click opens its menu (with
-  // Delete for a playlist the account may change, `editable`).
+  // Delete for a playlist the account may change, `editable`). A provider's (`remote`, not in the library
+  // yet) has the cloud before its line, as Android's.
   import { wholeMenu } from "../state/menus";
   import type { Whole } from "../state/types";
   import { pointer } from "../state/ui.svelte";
   import Cover from "./Cover.svelte";
+  import Icon from "./Icon.svelte";
 
-  let { href, kind, id, cover, title, sub = "", round = false, fallback = "music-note", editable = false }: { href: string; kind: Whole; id: string; cover?: string; title: string; sub?: string; round?: boolean; fallback?: string; editable?: boolean } = $props();
+  let { href, kind, id, cover, title, sub = "", round = false, fallback = "music-note", editable = false, remote = false }: { href: string; kind: Whole; id: string; cover?: string; title: string; sub?: string; round?: boolean; fallback?: string; editable?: boolean; remote?: boolean } = $props();
 </script>
 
 <a class="card" class:round {href} oncontextmenu={(e) => (e.preventDefault(), wholeMenu(kind, id, { title, line: sub, cover }, pointer(e), editable))}>
   <Cover src={cover} {round} radius="var(--r-card)" {fallback} />
   <span class="title" class:clip={!round}>{title}</span>
-  {#if sub}<span class="sub clip">{sub}</span>{/if}
+  {#if sub || remote}<span class="sub clip">{#if remote}<Icon name="cloud-download" />{/if}{sub}</span>{/if}
 </a>
 
 <style>
@@ -31,6 +33,12 @@
   .sub {
     font-size: 12.5px;
     line-height: 16px;
+  }
+  .sub :global(.icon) {
+    width: 13px;
+    height: 13px;
+    margin-right: 4px;
+    vertical-align: -2px;
   }
   .round {
     text-align: center;

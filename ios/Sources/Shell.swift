@@ -608,9 +608,13 @@ final class DownloadsPage: PageController {
     }
 }
 
-/// The index at every key, the server after a typing pause.
+/// The index at every key, the server after a typing pause. Under the field, the kind chips (All, then
+/// the kinds found): one picked shows that kind whole (the core's layout, as every client's).
 final class SearchPage: PageController, UISearchBarDelegate {
     private let search = UISearchBar()
+    private let chips = UISegmentedControl()
+    /// The kinds the chips after All stand for, as the page names them.
+    private var kinds: [String] = []
     private var pending: DispatchWorkItem?
     private var typed = ""
     /// The pause before the server is asked (the core's), seconds.
@@ -630,7 +634,37 @@ final class SearchPage: PageController, UISearchBarDelegate {
         search.searchBarStyle = .minimal
         search.delegate = self
         search.sizeToFit()
-        underName = search
+        chips.tintColor = Theme.accent
+        chips.isHidden = true
+        chips.addTarget(self, action: #selector(picked), for: .valueChanged)
+        let chipsRow = UIStackView(arrangedSubviews: [chips])
+        chipsRow.isLayoutMarginsRelativeArrangement = true
+        chipsRow.layoutMargins = UIEdgeInsets(top: 0, left: Space.gutter, bottom: 8, right: Space.gutter)
+        let head = UIStackView(arrangedSubviews: [search, chipsRow])
+        head.axis = .vertical
+        underName = head
+    }
+
+    /// A chip picked: the search read again shows that kind (-1 All).
+    @objc private func picked() {
+        nori_ios_search_pick(Int32(chips.selectedSegmentIndex - 1))
+        query(typed)
+    }
+
+    /// The chips as the answer has them: shown with two kinds or more to choose between.
+    private func showChips(_ a: PageAnswer) {
+        let found = a.raw["kinds"] as? [String] ?? []
+        if found != kinds {
+            kinds = found
+            chips.removeAllSegments()
+            for (i, k) in ([Say.searchAll] + found.map { Say.shelf($0) }).enumerated() { chips.insertSegment(withTitle: k, at: i, animated: false) }
+        }
+        chips.selectedSegmentIndex = (a.raw["kind"] as? String).flatMap { found.firstIndex(of: $0) }.map { $0 + 1 } ?? 0
+        let hidden = found.isEmpty || typed.isEmpty
+        if chips.isHidden != hidden {
+            chips.isHidden = hidden
+            writeHead()
+        }
     }
 
     /// Opened with nothing typed (the tab tapped): the field takes the keyboard at once.
@@ -653,6 +687,7 @@ final class SearchPage: PageController, UISearchBarDelegate {
     }
 
     override func took(_ a: PageAnswer, appending: Bool) {
+        showChips(a)
         if let recent = a.raw["recent"] as? [String], typed.isEmpty {
             let items = recent.map { ["k": "recent", "id": $0, "t": $0] }
             super.took(PageAnswer(["sections": items.isEmpty ? [] : [["key": "", "items": items]]]), appending: false)

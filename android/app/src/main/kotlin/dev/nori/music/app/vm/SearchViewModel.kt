@@ -3,6 +3,8 @@ package dev.nori.music.app.vm
 import android.app.Application
 import androidx.lifecycle.viewModelScope
 import dev.nori.music.ffi.model.SearchResult
+import dev.nori.music.ffi.library.SearchKind
+import dev.nori.music.ffi.library.SearchLayout
 import dev.nori.music.ffi.library.SearchScope
 import dev.nori.music.ffi.SearchSession
 import dev.nori.music.ffi.library.SearchShown
@@ -27,11 +29,16 @@ data class SearchUi(
     val answer: SearchShown = SearchShown.Blank,
     val scope: SearchScope = SearchScope.EVERYTHING,
     val scopesOffered: Boolean = false,
+    /** The kind chips after All, and the one lit (null: All). */
+    val kinds: List<SearchKind> = emptyList(),
+    val kind: SearchKind? = null,
+    /** The results page the core laid out over the answer shown. */
+    val layout: SearchLayout = SearchLayout(null, emptyList()),
     val history: List<String> = emptyList(),
 ) {
     // Not the view's text: the field is set only as typed ([SearchViewModel.setQuery]), and a view answering
     // an earlier keystroke would put that keystroke's text back over newer typing.
-    internal fun with(v: SearchView) = copy(answer = v.answer, scope = v.scope, scopesOffered = v.scopesOffered)
+    internal fun with(v: SearchView) = copy(answer = v.answer, scope = v.scope, scopesOffered = v.scopesOffered, kinds = v.kinds, kind = v.kind, layout = v.layout)
 }
 
 /** The results the answer puts on screen: none before there are any (the recent searches show), none at all when the server found nothing. */
@@ -119,7 +126,11 @@ class SearchViewModel(app: Application) : NoriViewModel(app) {
         _ui.update { it.copy(history = history) }
     }
 
-    fun setScope(s: SearchScope) { val v = session.scope(s); _ui.update { it.with(v) } }
+    /** A scope chip tapped: the answer narrowed to it, or to everything again. */
+    fun narrow(s: SearchScope) { val v = session.narrow(s); _ui.update { it.with(v) } }
+
+    /** A kind chip picked (null: All). */
+    fun pick(kind: SearchKind?) { val v = session.pick(kind); _ui.update { it.with(v) } }
 
     fun clearHistory() = viewModelScope.launch {
         nori.library.forgetSearches()

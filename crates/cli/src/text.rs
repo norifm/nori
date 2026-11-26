@@ -942,6 +942,20 @@ pub fn net_error(e: &NetError) -> String {
     said.to_string()
 }
 
+/// A section of the search's results, and the chip of its kind.
+pub fn search_title(t: crate::app::SearchTitle) -> &'static str {
+    use nori_core::search::SearchKind;
+    match t {
+        crate::app::SearchTitle::Top => "Top result",
+        crate::app::SearchTitle::Kind(SearchKind::Songs) => "Songs",
+        crate::app::SearchTitle::Kind(SearchKind::Albums) => "Albums",
+        crate::app::SearchTitle::Kind(SearchKind::Artists) => "Artists",
+        crate::app::SearchTitle::Kind(SearchKind::Playlists) => "Playlists",
+    }
+}
+
+pub const SEARCH_ALL: &str = "All";
+
 /// The server search failed; the offline results stay.
 pub fn search_fallback(reason: Option<&str>) -> String {
     match reason {

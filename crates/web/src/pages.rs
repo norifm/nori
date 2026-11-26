@@ -29,7 +29,6 @@ pub enum Ask {
     Genre { name: String },
     Songs { offset: i32, count: i32 },
     Starred,
-    Search { query: String },
 }
 
 fn album_sort(name: &str) -> Result<AlbumSort, String> {
@@ -50,7 +49,6 @@ impl Ask {
             Ask::Genre { .. } => return Err("a genre is read whole, by genre_songs".into()),
             Ask::Songs { offset, count } => Read::SongPage { offset, count },
             Ask::Starred => Read::StarredItems,
-            Ask::Search { query } => Read::Search { query, songs: 40, albums: 20, artists: 20 },
         })
     }
 }
@@ -104,13 +102,26 @@ pub async fn change(client: &Client, change: Change) -> Result<(), String> {
     client.write(w).await.map_err(|e| e.to_string())
 }
 
-/// A search's answer `result`, ranked as every client's is, with the field's preview of it.
-fn found_page(core: &nori_core::Core, result: nori_core::SearchResult, query: &str, user: Option<&str>) -> Value {
-    shown_page(core, nori_core::search::search_split(result, query).everything, user)
+/// A scope's name in the page's words to the worker: `everything`, `library`, `providers`.
+pub fn search_scope(name: &str) -> Option<nori_core::search::SearchScope> {
+    use nori_core::search::SearchScope;
+    [("everything", SearchScope::Everything), ("library", SearchScope::Library), ("providers", SearchScope::Providers)].into_iter().find(|(n, _)| *n == name).map(|(_, s)| s)
 }
 
-/// What the search box shows of the search session's `view`: `{ state, artists, albums, playlists, songs,
-/// preview }` for the results on screen, `state` one of `blank`, `asking`, `failed`, `found`, `nothing`.
+fn scope_name(scope: nori_core::search::SearchScope) -> &'static str {
+    use nori_core::search::SearchScope;
+    match scope {
+        SearchScope::Everything => "everything",
+        SearchScope::Library => "library",
+        SearchScope::Providers => "providers",
+    }
+}
+
+/// What the search box and page show of the search session's `view`: `{ state, query, artists, albums,
+/// playlists, songs, preview, layout, kinds, kind, scope, scopes, fallback }`, the results on screen as
+/// pages read them; `state` one of `blank`, `asking`, `failed`, `found`, `nothing`; `layout` the core's
+/// results page over them, `kinds` the kind chips after All and `kind` the one lit (null for All), `scopes`
+/// the scope chips offered (none: empty) and `scope` the one lit.
 pub fn search_view(core: &nori_core::Core, view: nori_core::search::SearchView, user: Option<&str>) -> String {
     use nori_core::search::SearchShown;
     let state = match &view.answer {
@@ -120,21 +131,26 @@ pub fn search_view(core: &nori_core::Core, view: nori_core::search::SearchView, 
         SearchShown::Found { .. } => "found",
         SearchShown::NothingFound => "nothing",
     };
-    let mut v = shown_page(core, view.answer.into_result().unwrap_or_default(), user);
-    if let Value::Object(m) = &mut v {
-        m.insert("state".into(), json!(state));
-    }
-    v.to_string()
-}
-
-/// Results already ranked and split, as a page reads them, with the field's preview of them.
-fn shown_page(core: &nori_core::Core, found: nori_core::SearchResult, user: Option<&str>) -> Value {
+    let fallback = match &view.answer {
+        SearchShown::Failed { fallback, .. } => Some(fallback.reason.clone().unwrap_or_default()),
+        _ => None,
+    };
+    let found = view.answer.into_result().unwrap_or_default();
     let mut v = page(core, Page::Found { v: found.clone() }, user);
     if let Value::Object(m) = &mut v {
         m.insert("playlists".into(), found.playlists.iter().map(|p| playlist(core, p, user)).collect());
-        m.insert("preview".into(), json!(nori_core::search::search_preview(&found)));
+        m.insert("preview".into(), json!(nori_core::search::search_preview(&view.layout)));
+        m.insert("state".into(), json!(state));
+        m.insert("query".into(), json!(view.query));
+        m.insert("layout".into(), json!(view.layout));
+        m.insert("kinds".into(), json!(view.kinds));
+        m.insert("kind".into(), json!(view.kind));
+        m.insert("scope".into(), json!(scope_name(view.scope)));
+        let scopes: Vec<&str> = if view.scopes_offered { nori_core::search::search_scopes().into_iter().map(scope_name).collect() } else { Vec::new() };
+        m.insert("scopes".into(), json!(scopes));
+        m.insert("fallback".into(), json!(fallback));
     }
-    v
+    v.to_string()
 }
 
 /// Reads what `ask` (JSON) names: the stored copy, then the server's if it differs; the last as JSON. An
@@ -167,10 +183,6 @@ async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Val
         Ask::Albums { sort, size, offset, favorites } => Some((album_sort(sort)?, *favorites, *offset as u32, *size as u32)),
         _ => None,
     };
-    let query = match &ask {
-        Ask::Search { query } => Some(query.clone()),
-        _ => None,
-    };
     let mut last = None;
     client.read_each(ask.read()?, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
     let core = client.core();
@@ -179,10 +191,6 @@ async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Val
         (Some(Page::StarredPage { v }), Some((sort, true, ..))) => Page::Albums { v: nori_core::browse::favorites_in_order(v.albums, sort, false) },
         (Some(p), _) => p,
     };
-    // A search's answer ranked as every client's is, with the field's preview of it.
-    if let (Some(query), Page::Found { v }) = (query, &p) {
-        return Ok(found_page(core, v.clone(), &query, user));
-    }
     let got = match &p {
         Page::Albums { v } => v.len() as u32,
         _ => 0,
@@ -300,6 +308,7 @@ pub(crate) fn playlist(core: &Core, p: &nori_core::Playlist, user: Option<&str>)
         }
         m.insert("editable".into(), Value::Bool(user.is_some_and(|u| nori_core::menus::playlist_editable(p, u, true))));
         m.insert("pinned".into(), Value::Bool(nori_core::browse::playlist_pinned(&core.session.settings, &p.id)));
+        m.insert("remote".into(), Value::Bool(nori_core::is_provider_id(&p.id)));
     }
     v
 }

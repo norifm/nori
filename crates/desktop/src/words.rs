@@ -503,13 +503,56 @@ pub fn repo_failed(f: &nori_plugins::RepoFailure) -> String {
 }
 
 /// A group's head in the search field's preview.
-pub fn preview_group(kind: nori_core::search::PreviewKind) -> &'static str {
-    use nori_core::search::PreviewKind;
+pub fn preview_group(kind: nori_core::search::SearchKind) -> &'static str {
+    use nori_core::search::SearchKind;
     match kind {
-        PreviewKind::Artists => "ARTISTS",
-        PreviewKind::Albums => "ALBUMS",
-        PreviewKind::Playlists => "PLAYLISTS",
-        PreviewKind::Songs => "SONGS",
+        SearchKind::Songs => "SONGS",
+        SearchKind::Albums => "ALBUMS",
+        SearchKind::Artists => "ARTISTS",
+        SearchKind::Playlists => "PLAYLISTS",
+    }
+}
+
+/// The top result's head in the search field's preview.
+pub const TOP_RESULT_GROUP: &str = "TOP RESULT";
+
+/// A kind's chip on the search page.
+pub fn search_kind(kind: nori_core::search::SearchKind) -> &'static str {
+    use nori_core::search::SearchKind;
+    match kind {
+        SearchKind::Songs => "Songs",
+        SearchKind::Albums => "Albums",
+        SearchKind::Artists => "Artists",
+        SearchKind::Playlists => "Playlists",
+    }
+}
+
+/// What the top result is, over its name.
+pub fn top_kind(kind: nori_core::search::SearchKind) -> &'static str {
+    use nori_core::search::SearchKind;
+    match kind {
+        SearchKind::Songs => "SONG",
+        SearchKind::Albums => "ALBUM",
+        SearchKind::Artists => "ARTIST",
+        SearchKind::Playlists => "PLAYLIST",
+    }
+}
+
+/// A scope's chip on the search page, as Android's.
+pub fn search_scope(scope: nori_core::search::SearchScope) -> &'static str {
+    use nori_core::search::SearchScope;
+    match scope {
+        SearchScope::Everything => "Everything",
+        SearchScope::Library => "In library",
+        SearchScope::Providers => "Not in library yet",
+    }
+}
+
+/// The server search failed and the offline answer stays, as Android says it.
+pub fn search_fallback(reason: Option<&str>) -> String {
+    match reason {
+        Some(r) => format!("Server search failed: {r} — showing offline results"),
+        None => "Server search failed — showing offline results".into(),
     }
 }
 
