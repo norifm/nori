@@ -469,6 +469,8 @@ pub enum Page {
     Mix { id: String, detail: Load<Box<MixSheet>>, sel: Sel },
     /// A genre's songs, by its name.
     Genre { name: String, songs: Load<Vec<Song>>, sel: Sel },
+    /// A decade's songs, by its first year.
+    Decade { start: u32, songs: Load<Vec<Song>>, sel: Sel },
     /// All of a Home shelf's entries: a library row's read a page at a time from an offset, a feed's or For
     /// you's as Home has them.
     Row { title: String, items: Vec<Item>, row: Option<HomeRow>, pages: Paged<u32>, sel: Sel },
@@ -484,13 +486,14 @@ impl Page {
             Page::Playlist { id, .. } => Req::Playlist(id.clone()),
             Page::Mix { id, .. } => Req::Mix(id.clone()),
             Page::Genre { name, .. } => Req::Genre(name.clone()),
+            Page::Decade { start, .. } => Req::Decade(*start),
             Page::Row { row, .. } => Req::Row { row: (*row)?, offset: 0 },
         })
     }
 
     fn sel(&mut self) -> &mut Sel {
         match self {
-            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } | Page::Genre { sel, .. } | Page::Row { sel, .. } => sel,
+            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } | Page::Genre { sel, .. } | Page::Decade { sel, .. } | Page::Row { sel, .. } => sel,
         }
     }
 
@@ -500,7 +503,7 @@ impl Page {
             Page::Artist { detail, about, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { artist_lines(d, about.as_deref()).len() }),
             Page::Playlist { detail, filter, .. } => detail.ready().map_or(0, |d| filter.songs(&d.songs).len()),
             Page::Mix { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
-            Page::Genre { songs, .. } => songs.ready().map_or(0, Vec::len),
+            Page::Genre { songs, .. } | Page::Decade { songs, .. } => songs.ready().map_or(0, Vec::len),
             Page::Row { items, .. } => items.len(),
         }
     }
@@ -512,7 +515,7 @@ impl Page {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Playlist { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Mix { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
-            Page::Genre { songs, .. } => songs.ready().map(Vec::as_slice),
+            Page::Genre { songs, .. } | Page::Decade { songs, .. } => songs.ready().map(Vec::as_slice),
             Page::Artist { detail, .. } => detail.ready().filter(|d| d.albums.is_empty()).map(|d| d.songs.as_slice()),
             Page::Row { .. } => None,
         }
@@ -804,6 +807,17 @@ pub struct Search {
     pub sel: Sel,
     /// When to query the server, once typing pauses.
     pub ask_at: Option<Instant>,
+    /// What the field offers before anything is typed.
+    pub browse: SearchBrowse,
+}
+
+/// What an empty search offers, as Android's: the recent searches, then ways in that need no words, the
+/// library's biggest genres and its decades.
+#[derive(Default)]
+pub struct SearchBrowse {
+    pub recent: Vec<String>,
+    pub genres: Vec<nori_core::browse::GenreTile>,
+    pub decades: Vec<nori_core::browse::Decade>,
 }
 
 /// A search result row: a section's title (with its count) or an item.
@@ -813,21 +827,49 @@ pub enum SearchRow<'a> {
     Album(&'a Album),
     Artist(&'a Artist),
     Playlist(&'a Playlist),
+    /// A search made before, searched again.
+    Recent(&'a str),
+    Genre(&'a nori_core::browse::GenreTile),
+    /// The way to every genre.
+    AllGenres,
+    Decade(&'a nori_core::browse::Decade),
 }
 
-/// A section of the search's results: the top result, or a kind's.
+/// A section of the search's results (the top result, or a kind's), or of what an empty search offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchTitle {
     Top,
     Kind(nori_core::search::SearchKind),
+    Recent,
+    Genres,
+    Decades,
 }
 
 impl Search {
     /// The results as one list, as the core laid them out: on All the top result, then the songs beside
     /// it and a row of each other kind, each under its title; with a kind picked, all of that kind.
+    /// Before anything is typed: the recent searches, the biggest genres and a way to all of them, the
+    /// decades.
     pub fn rows(&self) -> Vec<SearchRow<'_>> {
         use nori_core::search::SearchKind;
         let mut out = Vec::new();
+        if self.text.trim().is_empty() {
+            let b = &self.browse;
+            if !b.recent.is_empty() {
+                out.push(SearchRow::Title(SearchTitle::Recent, b.recent.len()));
+                out.extend(b.recent.iter().map(|q| SearchRow::Recent(q)));
+            }
+            if !b.genres.is_empty() {
+                out.push(SearchRow::Title(SearchTitle::Genres, b.genres.len()));
+                out.extend(b.genres.iter().map(SearchRow::Genre));
+                out.push(SearchRow::AllGenres);
+            }
+            if !b.decades.is_empty() {
+                out.push(SearchRow::Title(SearchTitle::Decades, b.decades.len()));
+                out.extend(b.decades.iter().map(SearchRow::Decade));
+            }
+            return out;
+        }
         let Some(v) = self.view.as_ref() else { return out };
         let Some(r) = v.answer.result() else { return out };
         let item = |kind: SearchKind, at: u32| {
@@ -1913,7 +1955,10 @@ impl App {
                     self.cmds.push(Cmd::Plugin(PluginCmd::Look));
                 }
             }
-            View::Search if self.search.view.is_none() => self.search.editing = true,
+            View::Search => {
+                self.search.editing |= self.search.view.is_none();
+                self.cmds.push(Cmd::Load(Req::Browse));
+            }
             // Each time it opens, what was paid elsewhere (a monthly payment, another device).
             View::Support => {
                 self.support.opened(self.prefs.support.paid.len());
@@ -2373,6 +2418,12 @@ impl App {
                 self.onto_entries(View::Genres);
             }
             (Req::Genres, Err(e)) => self.library.genres = Load::Failed(e),
+            (Req::Browse, Ok(Data::Browse(b))) => {
+                self.search.browse = b;
+                self.search.settle(true);
+            }
+            // An index that cannot be read offers nothing to browse; the field still searches.
+            (Req::Browse, Err(_)) => self.search.browse = SearchBrowse::default(),
             (Req::PlaylistChoices(asked), Ok(Data::PlaylistChoices(choices))) => match &mut self.overlay {
                 Some(Overlay::Picker { options, target: Target::Playlist { songs, choices: offered }, .. }) if *songs == asked => {
                     options.truncate(1);
@@ -2504,7 +2555,8 @@ impl App {
                         (Page::Mix { detail, .. }, Ok(Data::Mix(d))) => *detail = Load::Ready(d),
                         (Page::Mix { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Genre { songs, .. }, Ok(Data::Genre(v))) => *songs = Load::Ready(v),
-                        (Page::Genre { songs, .. }, Err(e)) => *songs = Load::Failed(e),
+                        (Page::Decade { songs, .. }, Ok(Data::Decade(v))) => *songs = Load::Ready(v),
+                        (Page::Genre { songs, .. } | Page::Decade { songs, .. }, Err(e)) => *songs = Load::Failed(e),
                         (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Artist { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Playlist { detail, .. }, Err(e)) => *detail = Load::Failed(e),
@@ -3900,7 +3952,7 @@ impl App {
         if let Some(p) = self.page() {
             return match p {
                 Page::Playlist { sel, filter, .. } => p.songs().and_then(|s| filter.songs(s).get(sel.at).map(|&i| Item::Song(s.to_vec(), i))),
-                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Mix { sel, .. } | Page::Genre { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
+                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Mix { sel, .. } | Page::Genre { sel, .. } | Page::Decade { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { sel, .. } if p.songs().is_some() => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { detail, about, sel, .. } => match artist_lines(detail.ready()?, about.as_deref()).get(sel.at)? {
                     ArtistLine::Album(i) => detail.ready()?.albums.get(*i).cloned().map(Item::Album),
@@ -3937,7 +3989,8 @@ impl App {
                 SearchRow::Album(a) => Some(Item::Album((*a).clone())),
                 SearchRow::Artist(a) => Some(Item::Artist((*a).clone())),
                 SearchRow::Playlist(p) => Some(Item::Playlist((*p).clone())),
-                SearchRow::Title(..) => None,
+                SearchRow::Genre(g) => Some(Item::Genre((*g).clone())),
+                SearchRow::Title(..) | SearchRow::Recent(_) | SearchRow::AllGenres | SearchRow::Decade(_) => None,
             },
             View::Downloads => {
                 let rows = self.downloads.ready()?.rows();
@@ -4017,6 +4070,9 @@ impl App {
                 Place::History => self.go(View::History),
                 Place::Shuffle => self.cmds.push(Cmd::ShuffleLibrary { albums: self.view == View::Albums }),
             };
+        }
+        if a == Action::Open && self.search_browsed() {
+            return;
         }
         let Some(item) = self.selected() else { return };
         if a == Action::Open {
@@ -4182,6 +4238,7 @@ impl App {
                 Page::Playlist { id, .. } => PageOrigin::new(OriginKind::Playlist, id.as_str()),
                 Page::Mix { id, .. } => PageOrigin::new(OriginKind::Mix, id.as_str()),
                 Page::Genre { name, .. } => PageOrigin::new(OriginKind::Genre, name.as_str()),
+                Page::Decade { .. } => PageOrigin::new(OriginKind::Songs, ""),
                 Page::Row { .. } => return None,
             });
         }
@@ -4191,6 +4248,34 @@ impl App {
             View::Downloads => Some(PageOrigin::new(OriginKind::Downloads, "")),
             _ => None,
         }
+    }
+
+    /// Opens the line of an empty search's browse that is no item: a recent search searched again, every
+    /// genre, a decade's songs. False on any other line.
+    fn search_browsed(&mut self) -> bool {
+        enum Browsed {
+            Again(String),
+            Genres,
+            Decade(u32),
+        }
+        if self.focus != Focus::Main || self.page().is_some() || self.view != View::Search {
+            return false;
+        }
+        let browsed = match self.search.rows().get(self.search.sel.at) {
+            Some(SearchRow::Recent(q)) => Browsed::Again(q.to_string()),
+            Some(SearchRow::AllGenres) => Browsed::Genres,
+            Some(SearchRow::Decade(d)) => Browsed::Decade(d.start),
+            _ => return false,
+        };
+        match browsed {
+            Browsed::Again(q) => {
+                self.search.text = q;
+                self.typed();
+            }
+            Browsed::Genres => self.go(View::Genres),
+            Browsed::Decade(start) => self.open_page(Page::Decade { start, songs: Load::Loading, sel: Sel::default() }),
+        }
+        true
     }
 
     /// The item selected was acted on: on the search's results, its query becomes a recent search.
@@ -4277,7 +4362,7 @@ impl App {
         let kind = match page {
             Page::Album { .. } | Page::DownloadedAlbum { .. } => PageKind::Album,
             Page::Artist { .. } => PageKind::Artist,
-            Page::Playlist { .. } | Page::Genre { .. } => PageKind::Playlist,
+            Page::Playlist { .. } | Page::Genre { .. } | Page::Decade { .. } => PageKind::Playlist,
             Page::Mix { detail, .. } => PageKind::Mix { refreshable: detail.ready().is_some_and(|m| m.refreshable) },
             Page::Row { .. } => return Vec::new(),
         };
@@ -4306,6 +4391,7 @@ impl App {
             Page::Playlist { id, .. } => Some(Fetch::Playlist(id.clone())),
             Page::Mix { id, .. } => Some(Fetch::Mix(id.clone())),
             Page::Genre { name, .. } => Some(Fetch::Genre(name.clone())),
+            Page::Decade { start, .. } => Some(Fetch::Decade(*start)),
             Page::Row { .. } => None,
         };
         match a {

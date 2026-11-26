@@ -11,7 +11,7 @@ import "../../../android/app/src/main/res/font/inter.ttf";
 import "../../../android/app/src/main/res/font/literata.ttf";
 
 // The main window's views. `shelf` is one of Home's shelves shown whole, `for-you` Home's picks.
-export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites, support, genres, history, downloads, stats }
+export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites, support, genres, history, downloads, stats, decades }
 // A panel beside the player: the inspector on the right, or Now Playing's beside the artwork.
 export enum Panel { none, queue, lyrics, devices }
 // How the page view lays out what it shows: an album's, an artist's, or a list's (a playlist or a mix).
@@ -30,10 +30,16 @@ export struct LibraryTabs {
     artists: bool,
     songs: bool,
     playlists: bool,
-    genres: bool,
     favorites: bool,
     downloads: bool,
     history: bool,
+}
+
+// A decade with songs in the index: its first year, its name ("1990s") and how many songs it has.
+export struct DecadeLine {
+    start: int,
+    name: string,
+    count: string,
 }
 
 // A kind of scrobbling account to add: its service, and what it costs where it does.
@@ -2217,6 +2223,55 @@ component Grid inherits Remembered {
 
 // A section's heading, as Android's: Inter, and with `more` a quiet arrow at the row's end; the whole heading
 // then opens the section in full.
+// A genre's tile in the search's browse, as Android's: its name in Literata on the surface with its songs
+// counted, and a cover of its songs at the end running into the paper.
+component GenreTile inherits Rectangle {
+    in property <Card> card;
+    in property <image> picture;
+    callback open;
+    height: 72px;
+    border-radius: 18px;
+    clip: true;
+    background: touch.has-hover ? Theme.raised : Theme.panel;
+    border-width: 1px;
+    border-color: Theme.hairline;
+    Image {
+        x: parent.width - self.width;
+        width: parent.height;
+        height: parent.height;
+        source: root.picture;
+        image-fit: cover;
+    }
+    Rectangle {
+        x: parent.width - self.width;
+        width: parent.height;
+        background: @linear-gradient(90deg, root.background 0%, root.background.transparentize(1) 75%);
+    }
+    VerticalLayout {
+        x: 14px;
+        width: parent.width - 14px - parent.height / 2;
+        alignment: center;
+        Text {
+            text: root.card.title;
+            color: Theme.text;
+            font-family: Type.title;
+            font-size: 17px;
+            font-weight: 600;
+            overflow: elide;
+        }
+        Text {
+            text: root.card.sub;
+            color: Theme.dim;
+            font-size: 12px;
+            overflow: elide;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.open(); }
+    }
+}
+
 component SectionTitle inherits Rectangle {
     in property <string> text;
     in property <bool> more;
@@ -7883,14 +7938,6 @@ component TopContent inherits Rectangle {
             current: root.tab == View.playlists;
             clicked => { root.go(View.playlists); }
         }
-        if root.tabs.genres: TabButton {
-            y: (parent.height - self.height) / 2;
-            text: "Genres";
-            icon: Icons.view-grid;
-            named: root.named;
-            current: root.tab == View.genres;
-            clicked => { root.go(View.genres); }
-        }
         if root.tabs.favorites: TabButton {
             y: (parent.height - self.height) / 2;
             text: "Favorites";
@@ -7975,9 +8022,10 @@ component TopContent inherits Rectangle {
             touch-search := TouchArea {
                 enabled: !input.has-focus;
                 mouse-cursor: text;
+                // One click opens the search page, which shows what to browse until something is typed.
                 clicked => {
                     input.focus();
-                    if root.search-text != "" && root.view != View.search { root.search-edited(root.search-text); }
+                    if root.view != View.search { root.go(View.search); }
                 }
             }
         }
@@ -8095,6 +8143,11 @@ export component AppWindow inherits Window {
     in property <[Card]> genres;
     callback open-genre(string);
     callback play-genre(string);
+    // What an empty search offers to browse, as Android's: the biggest genres and the decades (which the
+    // Decades page lists too); a decade opened by its first year.
+    in property <[Card]> search-genres;
+    in property <[DecadeLine]> decades;
+    callback open-decade(int);
     // Downloads: what is on its way ("4 to go · 1 failed"), the albums kept (the songs are `songs`).
     in property <string> downloads-line;
     in property <[Card]> downloaded-albums;
@@ -9444,7 +9497,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     // Nothing to list (no searches yet, or nothing found): a word in the middle of the page, as Android's.
-                    if (root.search-blank && root.recent-searches.length == 0) || root.search-nothing: EmptyNote {
+                    if (root.search-blank && root.recent-searches.length == 0 && root.search-genres.length == 0 && root.decades.length == 0) || root.search-nothing: EmptyNote {
                         padding-top: Chrome.top-room;
                         padding-bottom: Chrome.bottom-room;
                         icon: Icons.search;
@@ -9460,47 +9513,101 @@ export component AppWindow inherits Window {
                                 width: parent.width;
                                 padding-top: Chrome.top-room + 8px;
                                 padding-bottom: 100px;
-                                // The searches made before: a plain list under the top pill, newest first.
-                                if root.search-blank && root.recent-searches.length > 0: HorizontalLayout {
-                                    // Under the top pill, edge to edge with it (the page is the window's width).
+                                // Before a search, as Android's: the searches made before, newest first, then ways in
+                                // that need no words, the library's biggest genres and its decades. Under the top pill,
+                                // edge to edge with it (the page is the window's width).
+                                if root.search-blank && (root.recent-searches.length > 0 || root.search-genres.length > 0 || root.decades.length > 0): HorizontalLayout {
                                     padding-left: Chrome.top-x;
                                     padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
-                                    VerticalLayout {
-                                        HorizontalLayout {
-                                            padding-left: 8px;
-                                            padding-bottom: 6px;
-                                            SectionTitle {
-                                                text: "Recent searches";
+                                    browse := VerticalLayout {
+                                        spacing: 28px;
+                                        if root.recent-searches.length > 0: VerticalLayout {
+                                            HorizontalLayout {
+                                                padding-left: 8px;
+                                                padding-bottom: 6px;
+                                                SectionTitle {
+                                                    text: "Recent searches";
+                                                }
+                                                Rectangle { horizontal-stretch: 1; }
+                                                ShowAllLink {
+                                                    text: "Clear";
+                                                    clicked => { root.forget-searches(); }
+                                                }
                                             }
-                                            Rectangle { horizontal-stretch: 1; }
-                                            ShowAllLink {
-                                                text: "Clear";
-                                                clicked => { root.forget-searches(); }
+                                            for q in root.recent-searches: Rectangle {
+                                                height: 40px;
+                                                border-radius: 10px;
+                                                background: recent-touch.has-hover ? Theme.chosen : transparent;
+                                                Icon {
+                                                    x: 10px;
+                                                    glyph: Icons.clock-rotate-right;
+                                                    colour: Theme.dim;
+                                                    width: 18px;
+                                                    height: 18px;
+                                                }
+                                                Text {
+                                                    x: 40px;
+                                                    width: parent.width - 52px;
+                                                    text: q;
+                                                    color: Theme.text;
+                                                    font-size: 15px;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                }
+                                                recent-touch := TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => { root.search-again(q); }
+                                                }
                                             }
                                         }
-                                        for q in root.recent-searches: Rectangle {
-                                            height: 40px;
-                                            border-radius: 10px;
-                                            background: recent-touch.has-hover ? Theme.chosen : transparent;
-                                            Icon {
-                                                x: 10px;
-                                                glyph: Icons.clock-rotate-right;
-                                                colour: Theme.dim;
-                                                width: 18px;
-                                                height: 18px;
+                                        // The genres as tiles, in as many columns as the pill's width holds; the arrow
+                                        // opens them all.
+                                        if root.search-genres.length > 0: VerticalLayout {
+                                            spacing: 10px;
+                                            HorizontalLayout {
+                                                padding-left: 8px;
+                                                alignment: start;
+                                                SectionTitle {
+                                                    text: "Genres";
+                                                    more: true;
+                                                    clicked => { root.go(View.genres); }
+                                                }
                                             }
-                                            Text {
-                                                x: 40px;
-                                                width: parent.width - 52px;
-                                                text: q;
-                                                color: Theme.text;
-                                                font-size: 15px;
-                                                vertical-alignment: center;
-                                                overflow: elide;
+                                            tiles := Rectangle {
+                                                property <length> gap: 12px;
+                                                property <int> columns: max(1, floor((self.width + self.gap) / (220px + self.gap)));
+                                                property <length> tile-w: (self.width - (self.columns - 1) * self.gap) / self.columns;
+                                                height: ceil(root.search-genres.length / self.columns) * (72px + self.gap) - self.gap;
+                                                for g[i] in root.search-genres: GenreTile {
+                                                    x: mod(i, tiles.columns) * (tiles.tile-w + tiles.gap);
+                                                    y: floor(i / tiles.columns) * (72px + tiles.gap);
+                                                    width: tiles.tile-w;
+                                                    card: g;
+                                                    picture: root.art(g.art, 0, root.covers-rev);
+                                                    open => { root.open-genre(g.id); }
+                                                }
                                             }
-                                            recent-touch := TouchArea {
-                                                mouse-cursor: pointer;
-                                                clicked => { root.search-again(q); }
+                                        }
+                                        // The decades as chips; the arrow lists them all.
+                                        if root.decades.length > 0: VerticalLayout {
+                                            spacing: 10px;
+                                            HorizontalLayout {
+                                                padding-left: 8px;
+                                                alignment: start;
+                                                SectionTitle {
+                                                    text: "Decades";
+                                                    more: true;
+                                                    clicked => { root.go(View.decades); }
+                                                }
+                                            }
+                                            HorizontalLayout {
+                                                spacing: 8px;
+                                                alignment: start;
+                                                for d in root.decades: Chip {
+                                                    text: d.name;
+                                                    lit: true;
+                                                    clicked => { root.open-decade(d.start); }
+                                                }
                                             }
                                         }
                                     }
@@ -10127,16 +10234,96 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // The genres with songs, by name: a card each with a cover of its songs, on the Albums page's grid.
+                // The genres with songs, by name: a card each with a cover of its songs, on the Albums page's grid;
+                // opened from the search's browse, beside the back disc.
                 if root.view == View.genres: Fade {
                     Grid {
                         title: "Genres";
+                        beside-back: true;
                         pad: root.page-gutter;
                         cards: root.genres;
                         rev: root.covers-rev;
                         art(a, s, r) => { return root.art(a, s, r); }
                         open(c) => { root.open-genre(c.id); }
                         play(c) => { root.play-genre(c.id); }
+                    }
+                }
+
+                // The decades with songs, newest first, as Android's list: each its songs counted, opening its page.
+                if root.view == View.decades: Fade {
+                    push: true;
+                    Remembered {
+                        content-height: decade-list.preferred-height;
+                        // A narrow list: in the top pill's column, edge to edge with it.
+                        decade-list := VerticalLayout {
+                            width: parent.width;
+                            padding-left: Chrome.top-x;
+                            padding-right: max(0px, self.width - Chrome.top-x - Chrome.top-w);
+                            padding-top: Chrome.top-room + 8px;
+                            padding-bottom: 100px;
+                            HorizontalLayout {
+                                padding-left: Frame.back-room;
+                                padding-bottom: 16px;
+                                Text {
+                                    text: "Decades";
+                                    color: Theme.text;
+                                    font-family: Type.title;
+                                    font-size: 34px;
+                                    font-weight: 700;
+                                    letter-spacing: -0.5px;
+                                }
+                            }
+                            // One raised plate, as Android's group: a hairline between rows.
+                            Rectangle {
+                                background: Theme.panel;
+                                border-radius: 18px;
+                                border-width: 1px;
+                                border-color: Theme.hairline;
+                                clip: true;
+                                VerticalLayout {
+                                    for d[i] in root.decades: Rectangle {
+                                        height: 52px;
+                                        background: decade-touch.has-hover ? Theme.hover : transparent;
+                                        HorizontalLayout {
+                                            padding-left: 16px;
+                                            padding-right: 12px;
+                                            spacing: 12px;
+                                            Text {
+                                                horizontal-stretch: 1;
+                                                text: d.name;
+                                                color: Theme.text;
+                                                font-size: 15px;
+                                                vertical-alignment: center;
+                                            }
+                                            Text {
+                                                text: d.count;
+                                                color: Theme.dim;
+                                                font-size: 13px;
+                                                vertical-alignment: center;
+                                            }
+                                            Icon {
+                                                y: (parent.height - self.height) / 2;
+                                                glyph: Icons.nav-arrow-right;
+                                                colour: Theme.dim;
+                                                width: 18px;
+                                                height: 18px;
+                                            }
+                                        }
+                                        if i < root.decades.length - 1: Rectangle {
+                                            x: 16px;
+                                            y: parent.height - 1px;
+                                            width: parent.width - 32px;
+                                            height: 1px;
+                                            background: Theme.hairline;
+                                        }
+                                        decade-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.open-decade(d.start); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -10902,7 +11089,7 @@ export component AppWindow inherits Window {
 
                 // Back, on a page that was opened from another: a disc under the top pill's left, where Android
                 // has its arrow.
-                if root.view == View.page || root.view == View.shelf || root.view == View.for-you || root.view == View.history || root.view == View.downloads || root.view == View.stats: Rectangle {
+                if root.view == View.page || root.view == View.shelf || root.view == View.for-you || root.view == View.history || root.view == View.downloads || root.view == View.stats || root.view == View.genres || root.view == View.decades: Rectangle {
                     x: root.page-gutter;
                     y: Frame.back-y;
                     width: 40px;
@@ -10917,31 +11104,54 @@ export component AppWindow inherits Window {
                         clicked => { root.back(); }
                     }
                 }
-                // The places the library keeps, as Android's glyphs beside its title: Downloads and History, each
-                // opening its page; left of the find field where the page has one.
-                if root.view == View.albums || root.view == View.artists || root.view == View.playlists || root.view == View.songs || root.view == View.genres || root.view == View.favorites: HorizontalLayout {
+                // The places the library keeps, as Android's: a pill each with its glyph and its name, opening its
+                // page. In the title's line, which has the room on a wide window; left of the find field where the
+                // page has one.
+                if root.view == View.albums || root.view == View.artists || root.view == View.playlists || root.view == View.songs || root.view == View.favorites: HorizontalLayout {
                     property <bool> beside-field: root.view != View.favorites;
                     x: 0;
                     width: parent.width - (root.view == View.artists ? 32px : root.page-gutter) - (self.beside-field ? 226px + 8px : 0);
-                    y: Chrome.top-room + 13px;
-                    height: 36px;
-                    spacing: 2px;
+                    y: Chrome.top-room + 14px;
+                    height: 34px;
+                    spacing: 8px;
                     alignment: end;
-                    if root.library-tabs.downloads: IconButton {
-                        glyph: Icons.download;
-                        size: 36px;
-                        icon: 21px;
+                    if root.library-tabs.downloads: BarPill {
                         accessible-role: button;
                         accessible-label: "Downloads";
                         clicked => { root.open-place(View.downloads); }
+                        Icon {
+                            y: (parent.height - self.height) / 2;
+                            glyph: Icons.download;
+                            colour: Theme.text;
+                            width: 16px;
+                            height: 16px;
+                        }
+                        Text {
+                            text: "Downloads";
+                            color: Theme.text;
+                            font-size: 13px;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                        }
                     }
-                    if root.library-tabs.history: IconButton {
-                        glyph: Icons.clock-rotate-right;
-                        size: 36px;
-                        icon: 21px;
+                    if root.library-tabs.history: BarPill {
                         accessible-role: button;
                         accessible-label: "History";
                         clicked => { root.open-place(View.history); }
+                        Icon {
+                            y: (parent.height - self.height) / 2;
+                            glyph: Icons.clock-rotate-right;
+                            colour: Theme.text;
+                            width: 16px;
+                            height: 16px;
+                        }
+                        Text {
+                            text: "History";
+                            color: Theme.text;
+                            font-size: 13px;
+                            font-weight: 500;
+                            vertical-alignment: center;
+                        }
                     }
                 }
                 // A field that narrows what the page lists.

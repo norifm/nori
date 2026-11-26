@@ -3,9 +3,9 @@
 import { ui } from "./ui.svelte";
 
 /** Pages under the Library tab on a phone. */
-const LIBRARY = ["library", "albums", "artists", "playlists", "genres", "songs", "favorites", "history", "stats"];
+const LIBRARY = ["library", "albums", "artists", "playlists", "genres", "decades", "songs", "favorites", "history", "stats"];
 /** Pages opened from a tab's page, each with the one it sits under when its address is opened alone. */
-const OPENED: Record<string, string> = { album: "albums", artist: "artists", playlist: "playlists", genre: "genres", mix: "home" };
+const OPENED: Record<string, string> = { album: "albums", artist: "artists", playlist: "playlists", genre: "genres", decade: "decades", mix: "home" };
 
 /** `a` unescaped; as typed when it holds a malformed escape. */
 function decoded(a: string): string {

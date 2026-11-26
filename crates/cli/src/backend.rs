@@ -199,6 +199,10 @@ pub enum Req {
     /// The genres with songs, and a genre's songs by its name.
     Genres,
     Genre(String),
+    /// What an empty search offers to browse: the recent searches, the biggest genres and the decades.
+    Browse,
+    /// A decade's songs, by its first year.
+    Decade(u32),
     /// What the downloads weigh.
     DownloadsSize,
     Album(String),
@@ -239,6 +243,8 @@ pub enum Data {
     Stats(Box<nori_core::browse::StatsPage>, Option<nori_core::browse::ServerHistory>),
     Genres(Vec<nori_core::browse::GenreTile>),
     Genre(Vec<Song>),
+    Browse(crate::app::SearchBrowse),
+    Decade(Vec<Song>),
     DownloadsSize(i64),
     /// The starred songs.
     Favorites(Vec<Song>),
@@ -362,7 +368,8 @@ impl Session {
             Req::Downloads => Some(PageAsk::Downloads),
             Req::Genres => Some(PageAsk::Genres),
             Req::Genre(name) => Some(PageAsk::Genre(name)),
-            Req::Row { .. } | Req::Home | Req::DownloadsSize | Req::DownloadProgress | Req::Work | Req::Facts | Req::PlaylistChoices(_) => None,
+            Req::Decade(start) => Some(PageAsk::Decade(start)),
+            Req::Row { .. } | Req::Home | Req::Browse | Req::DownloadsSize | Req::DownloadProgress | Req::Work | Req::Facts | Req::PlaylistChoices(_) => None,
         };
         if let Some(ask) = ask {
             return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
@@ -407,6 +414,16 @@ impl Session {
                     }
                     Ok(HomePart::Mixes(tiles)) => send(Ok(Data::Mixes(tiles))),
                     Err(e) => send(Err(unreachable(&e))),
+                });
+            }
+            Req::Browse => {
+                let recent = self.core.search_history().unwrap_or_default();
+                self.host.read_page(PageAsk::Browse, move |r| {
+                    send(match r {
+                        Ok(PageGot::Browse { genres, decades }) => Ok(Data::Browse(crate::app::SearchBrowse { recent: recent.clone(), genres, decades })),
+                        Ok(_) => Ok(Data::Browse(crate::app::SearchBrowse { recent: recent.clone(), ..Default::default() })),
+                        Err(e) => Err(page_failed(&e)),
+                    })
                 });
             }
             Req::PlaylistChoices(songs) => {
@@ -538,6 +555,9 @@ fn data_of(got: PageGot) -> Data {
         PageGot::Mix(m) => Data::Mix(m),
         PageGot::Genres(v) => Data::Genres(v),
         PageGot::Genre { songs, .. } => Data::Genre(songs),
+        PageGot::Decade(songs) => Data::Decade(songs),
+        // Asked for by `Req::Browse` alone, which reads the recent searches with them.
+        PageGot::Browse { .. } | PageGot::Decades(_) => unreachable!("an empty search's browse is read whole by Req::Browse"),
         PageGot::History(page) => Data::History(page),
         PageGot::Stats { page, server } => Data::Stats(page, server),
         PageGot::Downloads(d) => {

@@ -141,7 +141,7 @@
       autocomplete="off"
       bind:value={query}
       oninput={edited}
-      onfocus={() => ((focused = true), query.trim() && (open = true))}
+      onfocus={() => ((focused = true), route.top === "search" || go("search", query.trim()))}
       onblur={() => (focused = false)}
       onkeydown={keys}
     />

@@ -8,6 +8,7 @@
     Songs: [href("songs"), "music-note"],
     Playlists: [href("playlists"), "playlist"],
     Genres: [href("genres"), "view-grid"],
+    Decades: [href("decades"), "calendar"],
     Favourites: [href("favorites"), "seal"],
     History: [href("history"), "clock-rotate-right"],
   };
@@ -28,7 +29,7 @@
   import SearchBox from "./SearchBox.svelte";
 
   /** The page each section's tab is lit on, and stays lit on for the pages opened from it. */
-  const tops: Record<string, string[]> = { Albums: ["albums"], Artists: ["artists"], Songs: ["songs"], Playlists: ["playlists"], Genres: ["genres"], Favourites: ["favorites"] };
+  const tops: Record<string, string[]> = { Albums: ["albums"], Artists: ["artists"], Songs: ["songs"], Playlists: ["playlists"], Favourites: ["favorites"] };
   let sections = $state<string[]>([]);
   $effect(() => {
     void remote.jam?.guest;

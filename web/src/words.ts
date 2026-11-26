@@ -69,7 +69,11 @@ export const W = {
     Starred: "Favorite albums",
   } as Record<string, string>,
   /** The Library's sections, by the core's `LibrarySection`. */
-  librarySections: { Albums: "Albums", Artists: "Artists", Songs: "Songs", Playlists: "Playlists", Genres: "Genres", Favourites: "Favorites", History: "History" } as Record<string, string>,
+  librarySections: { Albums: "Albums", Artists: "Artists", Songs: "Songs", Playlists: "Playlists", Genres: "Genres", Decades: "Decades", Favourites: "Favorites", History: "History" } as Record<string, string>,
+  /** No decades: the offline index is empty. */
+  noIndex: "No songs on this device yet. Settings, then Library and lists, then Update.",
+  /** A decade by its first year: "1990s". */
+  decade: (start: number) => `${start}s`,
   /** The songs list's orders, by the core's names (`song_sorts`). */
   songSorts: { TITLE: "Title", ARTIST: "Artist", ALBUM: "Album", YEAR: "Year", ADDED: "Added", PLAYS: "Most played", LONGEST: "Longest" } as Record<string, string>,
   noLibrarySongs: "Your library has no songs yet",

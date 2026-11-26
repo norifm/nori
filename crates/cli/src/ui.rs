@@ -924,6 +924,10 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
             SearchRow::Album(a) => entry(Item::Album((*a).clone())),
             SearchRow::Artist(a) => entry(Item::Artist((*a).clone())),
             SearchRow::Playlist(p) => entry(Item::Playlist((*p).clone())),
+            SearchRow::Genre(g) => entry(Item::Genre((*g).clone())),
+            SearchRow::Recent(q) => Line::from(vec![Span::styled("  ↺ ", t.dim()), Span::styled(q.to_string(), Style::default().fg(t.ink))]),
+            SearchRow::AllGenres => Line::from(vec![Span::raw("  "), Span::styled(format!("{} →", crate::text::ALL_GENRES), t.dim())]),
+            SearchRow::Decade(d) => spread(vec![Span::raw("  "), Span::styled(crate::text::decade(d.start), Style::default().fg(t.ink))], Span::styled(format!("{} ", crate::text::count(d.song_count as u64, "song", "songs")), t.dim()), w),
         }
     };
     list(f, body, &mut sel, len, ListRef::Search, hits, t, lit, &row);
@@ -1005,7 +1009,8 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Page::Mix { detail: Load::Ready(m), .. } => (crate::text::mix_name(m.name).to_string(), String::new(), crate::text::songs_caption(m.songs.len() as u32, m.seconds), None),
         Page::Mix { detail: Load::Failed(e), .. } => return failed(f, area, t, e),
         Page::Genre { name, songs: Load::Ready(v), .. } => (name.clone(), String::new(), crate::text::songs_caption(v.len() as u32, v.iter().map(|s| s.duration as u64).sum()), None),
-        Page::Genre { songs: Load::Failed(e), .. } => return failed(f, area, t, e),
+        Page::Decade { start, songs: Load::Ready(v), .. } => (crate::text::decade(*start), String::new(), crate::text::songs_caption(v.len() as u32, v.iter().map(|s| s.duration as u64).sum()), None),
+        Page::Genre { songs: Load::Failed(e), .. } | Page::Decade { songs: Load::Failed(e), .. } => return failed(f, area, t, e),
         Page::Album { detail: Load::Failed(e), .. } | Page::DownloadedAlbum { detail: Load::Failed(e), .. } | Page::Artist { detail: Load::Failed(e), .. } | Page::Playlist { detail: Load::Failed(e), .. } => {
             return failed(f, area, t, e);
         }
@@ -1091,7 +1096,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
                 }
             });
         }
-        Page::Genre { songs: Load::Ready(songs), sel, .. } => {
+        Page::Genre { songs: Load::Ready(songs), sel, .. } | Page::Decade { songs: Load::Ready(songs), sel, .. } => {
             list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
         }
         Page::Mix { detail: Load::Ready(m), sel, .. } => {

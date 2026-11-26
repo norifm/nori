@@ -11,7 +11,7 @@
   const page = reading("genres", () => read<{ genres: Genre[] }>({ kind: "genres" }).then((p) => p.genres ?? []));
 </script>
 
-<Page title={W.librarySections.Genres} back places ready={!!page.data} error={page.error}>
+<Page title={W.librarySections.Genres} back ready={!!page.data} error={page.error}>
   <ul class="genres">
     {#each page.data ?? [] as g (g.name)}
       <li><a href={href("genre", g.name)}><span class="art"><Cover src={g.cover} radius="calc(var(--r-tile) - 12px)" /></span><span class="name">{g.name}</span><span class="sub">{W.songCount(g.songCount)}</span></a></li>

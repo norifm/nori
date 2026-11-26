@@ -6,7 +6,7 @@ use nori_core::browse::{favorites_in_order, home_pinned, home_row_more, home_row
 pub use nori_core::home::ShelfItems;
 use nori_core::home::{shelf_items, shelf_read};
 use nori_core::cache_policy::{Page, Read};
-use nori_core::browse::{GenreTile, HistoryAfter, HistoryPage, ServerHistory, StatsPage, StatsPeriod, StatsSource};
+use nori_core::browse::{Decade, GenreTile, HistoryAfter, HistoryPage, ServerHistory, StatsPage, StatsPeriod, StatsSource};
 use nori_core::library::{DownloadedLibrary, QueueOffer};
 use nori_core::transfers::DownloadSections;
 use nori_core::mixes::board::{MixLookup, MixSheet, MixTile};
@@ -33,6 +33,12 @@ pub enum PageAsk {
     Genres,
     /// A genre's songs, by name.
     Genre(String),
+    /// What an empty search offers to browse: the biggest genres and the decades, from the offline index.
+    Browse,
+    /// The decades with songs (`Core::browse_decades`).
+    Decades,
+    /// A decade's songs, by its first year (`Core::decade_songs`).
+    Decade(u32),
     /// The listening history, a page from `after` (None: the newest).
     History(Option<HistoryAfter>),
     /// The listening stats of `source`'s plays in `period`; with `sync`, the server account's new plays are
@@ -62,6 +68,11 @@ pub enum PageGot {
     Genres(Vec<GenreTile>),
     /// A genre's songs and a cover of them.
     Genre { songs: Vec<Song>, cover: Option<String> },
+    /// The biggest genres (`search_genres_shown` of them) and the decades.
+    Browse { genres: Vec<GenreTile>, decades: Vec<Decade> },
+    Decades(Vec<Decade>),
+    /// A decade's songs.
+    Decade(Vec<Song>),
     History(HistoryPage),
     /// The stats, and how the server account's plays stood when asked for (with `sync`).
     Stats { page: Box<StatsPage>, server: Option<ServerHistory> },
@@ -182,6 +193,14 @@ impl Handle {
                 Ok(songs) => Ok(PageGot::Genre { songs, cover: self.core.genre_cover(name).ok().flatten() }),
                 Err(e) => Err(PageFailed::Net(e)),
             }),
+            PageAsk::Browse => each(
+                self.core
+                    .genre_tiles(nori_core::browse::search_genres_shown())
+                    .and_then(|genres| Ok(PageGot::Browse { genres, decades: self.core.browse_decades()? }))
+                    .map_err(PageFailed::Stored),
+            ),
+            PageAsk::Decades => each(self.core.browse_decades().map(PageGot::Decades).map_err(PageFailed::Stored)),
+            PageAsk::Decade(start) => each(self.core.decade_songs(start).map(PageGot::Decade).map_err(PageFailed::Stored)),
             PageAsk::History(after) => each(self.core.history_page(after).map(PageGot::History).map_err(PageFailed::Stored)),
             PageAsk::Stats { period, source, sync } => {
                 let server = sync.then(|| block_on(self.client.server_history_sync()));

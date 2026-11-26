@@ -174,14 +174,15 @@ enum BackTo {
 
 /// Where Back leads from `view`, with a plugin's page open on Settings: the one before it; from a page of
 /// Settings' (the equalizer, support), Settings, as its own back arrow; from Downloads or History, `place_from`,
-/// the tab they were opened on; from the listening stats, History; from a page, back along the trail; from a
-/// tab or a page of Home's, Home.
+/// the tab they were opened on; from the listening stats, History; from the genres or the decades, which the
+/// search's browse opens, Search; from a page, back along the trail; from a tab or a page of Home's, Home.
 fn back_from(view: View, plugin_page: bool, place_from: View) -> BackTo {
     match view {
         View::Settings if plugin_page => BackTo::PluginPage,
         View::Equalizer | View::Support => BackTo::View(View::Settings),
         View::Downloads | View::History => BackTo::View(place_from),
         View::Stats => BackTo::View(View::History),
+        View::Genres | View::Decades => BackTo::View(View::Search),
         View::Page => BackTo::Trail,
         _ => BackTo::View(View::Home),
     }
@@ -508,7 +509,8 @@ enum PageShown {
     Playlist(Option<nori_core::Playlist>),
     /// The mix's id and name, once read: it can be drawn again and kept as a playlist.
     Mix(Option<(String, String)>),
-    Genre,
+    /// A genre's or a decade's songs.
+    Songs,
 }
 
 /// What the queue's undo would put back.
@@ -797,7 +799,7 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
 fn library_tabs(rules: &nori_core::browse::ProfileRules) -> LibraryTabs {
     use nori_core::settings::LibrarySection::*;
     let has = |s| rules.sections.contains(&s);
-    LibraryTabs { albums: has(Albums), artists: has(Artists), songs: has(Songs), playlists: has(Playlists), genres: has(Genres), favorites: has(Favourites), downloads: has(Downloads), history: has(History) }
+    LibraryTabs { albums: has(Albums), artists: has(Artists), songs: has(Songs), playlists: has(Playlists), favorites: has(Favourites), downloads: has(Downloads), history: has(History) }
 }
 
 fn top(ui: &AppWindow) -> Option<TopBar> {
@@ -1493,6 +1495,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_open_place, h, |a, view| a.open_place(view));
     on!(ui.on_open_genre, h, |a, name| a.open_page(PageAsk::Genre(name.into())));
     on!(ui.on_play_genre, h, |a, name| a.play_fetch(Fetch::Genre(name.into())));
+    on!(ui.on_open_decade, h, |a, start| a.open_page(PageAsk::Decade(start as u32)));
     on!(ui.on_open_downloaded_album, h, |a, id| a.open_page(PageAsk::DownloadedAlbum(id.into())));
     on!(ui.on_clear_history, h, |a| a.clear_history());
     on!(ui.on_open_stats, h, |a| a.go(View::Stats));
@@ -1916,6 +1919,8 @@ impl App {
                 None
             }
             View::Genres => Some(Req::Page(PageAsk::Genres)),
+            View::Decades => Some(Req::Page(PageAsk::Decades)),
+            View::Search => Some(Req::Page(PageAsk::Browse)),
             View::History => {
                 self.songs.clear();
                 self.show_songs();
@@ -2036,7 +2041,8 @@ impl App {
             PageAsk::Artist(id) => (Fetch::Artist(id.clone()), PageShown::Artist),
             PageAsk::Playlist(id) => (Fetch::Playlist(id.clone()), PageShown::Playlist(None)),
             PageAsk::Mix(id) => (Fetch::Mix(id.clone()), PageShown::Mix(None)),
-            PageAsk::Genre(name) => (Fetch::Genre(name.clone()), PageShown::Genre),
+            PageAsk::Genre(name) => (Fetch::Genre(name.clone()), PageShown::Songs),
+            PageAsk::Decade(start) => (Fetch::Decade(*start), PageShown::Songs),
             PageAsk::DownloadedAlbum(id) => (Fetch::DownloadedAlbum(id.clone()), PageShown::Album),
             _ => return,
         };
@@ -2411,6 +2417,20 @@ impl App {
                 self.lists.genres = v.iter().map(genre_card).collect();
                 self.narrowed();
             }
+            Data::Page(PageGot::Browse { genres, decades }) if shown => {
+                ui.set_search_genres(cards(genres.iter().map(genre_card)));
+                ui.set_decades(decade_lines(&decades));
+            }
+            Data::Page(PageGot::Decades(v)) if shown => ui.set_decades(decade_lines(&v)),
+            Data::Page(PageGot::Decade(songs)) if shown => {
+                let Req::Page(PageAsk::Decade(start)) = req else { return };
+                ui.set_page_title(words::decade(start).into());
+                ui.set_page_caption(if songs.is_empty() { String::new() } else { words::songs_caption(songs.len(), songs.iter().map(|s| s.duration as u64).sum()) }.into());
+                self.set_page_art(songs.iter().find_map(|s| s.cover_art.clone()));
+                self.page_songs = songs;
+                self.page_actions(PageKind::Playlist);
+                self.show_page_songs();
+            }
             Data::Page(PageGot::History(page)) => {
                 let Req::Page(PageAsk::History(after)) = req else { return };
                 if ui.get_view() != View::History || !self.history_pages.answered(&after, page.next.map(Some)) {
@@ -2445,7 +2465,7 @@ impl App {
                 self.show_page_songs();
             }
             Data::Page(PageGot::ArtistAbout(a)) if shown => show_about(&ui, &a),
-            Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::ArtistAbout(_) | PageGot::Playlist(_) | PageGot::Mix(_) | PageGot::Genre { .. } | PageGot::Downloads(_) | PageGot::Stats { .. }) => {}
+            Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::ArtistAbout(_) | PageGot::Playlist(_) | PageGot::Mix(_) | PageGot::Genre { .. } | PageGot::Browse { .. } | PageGot::Decades(_) | PageGot::Decade(_) | PageGot::Downloads(_) | PageGot::Stats { .. }) => {}
         }
     }
 
@@ -2512,7 +2532,7 @@ impl App {
             Some(PageShown::Album) => PageKind::Album,
             Some(PageShown::Artist) => PageKind::Artist,
             Some(PageShown::Mix(Some(_))) => PageKind::Mix { refreshable: true },
-            Some(PageShown::Mix(None) | PageShown::Playlist(_) | PageShown::Genre) | None => PageKind::Playlist,
+            Some(PageShown::Mix(None) | PageShown::Playlist(_) | PageShown::Songs) | None => PageKind::Playlist,
         });
     }
 
@@ -6450,6 +6470,12 @@ fn play_shuffled(h: &nori_host::session::Handle, albums: bool) -> Result<(), Str
     Ok(())
 }
 
+/// The decades as their lines: a decade's name, its first year, how many songs it has.
+fn decade_lines(decades: &[nori_core::browse::Decade]) -> ModelRc<crate::DecadeLine> {
+    let lines = decades.iter().map(|d| crate::DecadeLine { start: d.start as i32, name: words::decade(d.start).into(), count: d.song_count.to_string().into() });
+    ModelRc::new(VecModel::from(lines.collect::<Vec<_>>()))
+}
+
 /// A genre's card: its songs counted, a cover of them.
 fn genre_card(g: &nori_core::browse::GenreTile) -> Card {
     Card { id: g.name.as_str().into(), title: g.name.as_str().into(), sub: words::songs(g.song_count as usize).into(), art: g.cover_art.clone().unwrap_or_default().into(), kind: 6, ..Default::default() }
@@ -8897,7 +8923,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        let all = LibraryTabs { albums: true, artists: true, songs: true, playlists: true, genres: true, favorites: true, downloads: true, history: true };
+        let all = LibraryTabs { albums: true, artists: true, songs: true, playlists: true, favorites: true, downloads: true, history: true };
         let mut off = Vec::new();
         // An 800 px window's pill on macOS, up to the widest pill; the current tab is named even while the
         // others are not.
@@ -8983,7 +9009,7 @@ mod tests {
         let tabs = |bar: &TopBar| i_slint_backend_testing::ElementHandle::find_by_element_type_name(bar, "TabButton").count();
         let server = nori_core::browse::profile_rules(false);
         bar.set_tabs(library_tabs(&server));
-        assert_eq!(tabs(&bar), 7, "Home, Albums, Artists, Songs, Playlists, Genres and Favorites");
+        assert_eq!(tabs(&bar), 6, "Home, Albums, Artists, Songs, Playlists and Favorites; genres are browsed from Search");
         let provider = nori_core::browse::ProfileRules { sections: vec![Favourites, Playlists, History], ..server };
         bar.set_tabs(library_tabs(&provider));
         assert_eq!(tabs(&bar), 3, "Home, Playlists and Favorites: no empty Albums, Artists or Songs");
@@ -10792,18 +10818,49 @@ mod tests {
         ui.on_open_place(move |v| seen.borrow_mut().push(v));
         ui.set_library_tabs(LibraryTabs { albums: true, songs: true, downloads: true, history: true, ..Default::default() });
         ui.show().unwrap();
-        for view in [View::Albums, View::Songs, View::Genres, View::Favorites] {
+        for view in [View::Albums, View::Songs, View::Favorites] {
             ui.set_view(view);
             settled(&ui);
             click(&ui, "Downloads");
             click(&ui, "History");
         }
-        assert_eq!(opened.borrow().len(), 8);
+        assert_eq!(opened.borrow().len(), 6);
         assert!(opened.borrow().chunks(2).all(|p| p == [View::Downloads, View::History]));
         ui.set_library_tabs(LibraryTabs { albums: true, ..Default::default() });
         ui.set_view(View::Albums);
         settled(&ui);
         assert_eq!((middle(&ui, "Downloads"), middle(&ui, "History")), (None, None), "a profile that keeps neither");
+    }
+
+    /// An empty search offers what Android's does: the recent searches, the biggest genres as tiles in as many
+    /// columns as fit, and the decades; each opens its page, and the arrows open the whole lists.
+    #[test]
+    fn an_empty_search_browses_genres_and_decades() {
+        let ui = shown_window(1600.0, 1000.0);
+        ui.global::<crate::Chrome>().set_top_x(280.0);
+        ui.global::<crate::Chrome>().set_top_w(1040.0);
+        ui.set_view(View::Search);
+        ui.set_search_blank(true);
+        let genre = |name: &str| Card { id: name.into(), title: name.into(), sub: "4 songs".into(), kind: 6, ..Default::default() };
+        ui.set_search_genres(cards(["Jazz", "Rock", "Pop", "Folk", "Ambient"].map(genre).into_iter()));
+        ui.set_decades(decade_lines(&[nori_core::browse::Decade { start: 2020, song_count: 3 }, nori_core::browse::Decade { start: 1990, song_count: 12 }]));
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let seen = did.clone();
+        ui.on_open_genre(move |g| seen.borrow_mut().push(format!("genre {g}")));
+        let seen = did.clone();
+        ui.on_open_decade(move |d| seen.borrow_mut().push(format!("decade {d}")));
+        let seen = did.clone();
+        ui.on_go(move |v| seen.borrow_mut().push(format!("{v:?}")));
+        ui.show().unwrap();
+        settled(&ui);
+        assert!(middle(&ui, "Search").is_none(), "no empty note while there is something to browse");
+        let (jazz, folk, ambient) = (middle(&ui, "Jazz").unwrap(), middle(&ui, "Folk").unwrap(), middle(&ui, "Ambient").unwrap());
+        assert!(folk.1 == jazz.1 && ambient.1 > jazz.1 && (ambient.0 - jazz.0).abs() < 1.0, "four tiles to a row in the pill's 1040 px: {jazz:?} {folk:?} {ambient:?}");
+        click(&ui, "Rock");
+        click(&ui, "1990s");
+        click(&ui, "Genres");
+        click(&ui, "Decades");
+        assert_eq!(*did.borrow(), ["genre Rock", "decade 1990", "Genres", "Decades"]);
     }
 
     /// A long list's page offers a field that narrows its songs; a short one has none.

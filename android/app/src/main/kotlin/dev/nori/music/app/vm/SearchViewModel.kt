@@ -59,9 +59,6 @@ private val NO_RESULTS = SearchResult(artists = emptyList(), albums = emptyList(
  * in the library yet. A newer keystroke cancels the request in flight, socket included. Which answer is
  * still worth showing, and what the screen then says, is the core's [SearchSession].
  */
-/** How many genres an empty search shows as tiles: four rows of two. */
-private const val GENRES_SHOWN = 8
-
 /** What an empty search offers to browse. */
 data class Browse(val genres: List<dev.nori.music.ffi.library.GenreTile> = emptyList(), val decades: List<dev.nori.music.ffi.library.Decade> = emptyList())
 
@@ -77,7 +74,7 @@ class SearchViewModel(app: Application) : NoriViewModel(app) {
 
     /** What an empty search offers to browse, from the offline index: its biggest genres and its decades. */
     val browse: StateFlow<Browse> = kotlinx.coroutines.flow.flow {
-        emit(Browse(runCatching { nori.library.genreTiles(GENRES_SHOWN) }.getOrDefault(emptyList()), runCatching { nori.library.decades() }.getOrDefault(emptyList())))
+        emit(Browse(runCatching { nori.library.genreTiles(dev.nori.music.ffi.library.searchGenresShown().toInt()) }.getOrDefault(emptyList()), runCatching { nori.library.decades() }.getOrDefault(emptyList())))
     }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), Browse())
 
     init {

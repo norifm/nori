@@ -132,6 +132,21 @@ impl Core {
         Ok(cover)
     }
 
+    /// Every indexed song of the decade from `start` (`decade_years`), by year, artist, album and track.
+    pub fn decade_songs(&self, start: u32) -> Result<Vec<crate::Song>> {
+        let years = decade_years(start);
+        let c = self.db.lock();
+        let sql = format!(
+            "SELECT {} FROM items i WHERE server=sid() AND kind={} AND year BETWEEN ?1 AND ?2
+             ORDER BY year, artist COLLATE NOCASE, album COLLATE NOCASE, disc_number, track",
+            db::items::SONG,
+            db::ItemKind::Song as i64
+        );
+        let mut st = c.prepare_cached(&sql)?;
+        let songs = st.query_map([years.from, years.to], |r| db::items::song(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(songs)
+    }
+
     /// Decades with indexed songs, newest first, with song counts; none for a profile that keeps no index.
     pub fn browse_decades(&self) -> Result<Vec<Decade>> {
         if !self.rules().indexed {
@@ -399,6 +414,15 @@ pub(crate) mod tests {
         assert_eq!(got.len(), GENRE_PAGE as usize + 3);
         let asked = fake.asked();
         assert!(asked.iter().any(|u| u.contains("offset=0")) && asked.iter().any(|u| u.contains(&format!("offset={GENRE_PAGE}"))), "{asked:?}");
+    }
+
+    #[test]
+    fn a_decades_page_lists_its_years_songs_oldest_first() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        let songs: Vec<Song> = [("a", 1989), ("b", 1999), ("c", 1990), ("d", 2000), ("e", 1995)].iter().map(|(id, year)| song(id, "T", "A", "B", "", *year)).collect();
+        db::index(&mut core.db.lock(), &[], &[], &songs).unwrap();
+        let ids: Vec<String> = core.decade_songs(1990).unwrap().into_iter().map(|s| s.id).collect();
+        assert_eq!(ids, ["c", "e", "b"]);
     }
 
     #[test]

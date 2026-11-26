@@ -451,6 +451,12 @@ pub fn profile_rules(guest: bool) -> ProfileRules {
     ProfileRules { asks: guest, account: !guest, playlists: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, stars_here: false, scrobbles: !guest, feed: false, mixes: !guest }
 }
 
+/// How many genres an empty search offers as tiles, the biggest first.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn search_genres_shown() -> u32 {
+    8
+}
+
 /// A decade's years, first and last, from its first year.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]

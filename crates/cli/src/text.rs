@@ -972,8 +972,18 @@ pub fn search_title(t: crate::app::SearchTitle) -> &'static str {
         crate::app::SearchTitle::Kind(SearchKind::Albums) => "Albums",
         crate::app::SearchTitle::Kind(SearchKind::Artists) => "Artists",
         crate::app::SearchTitle::Kind(SearchKind::Playlists) => "Playlists",
+        crate::app::SearchTitle::Recent => "Recent searches",
+        crate::app::SearchTitle::Genres => "Genres",
+        crate::app::SearchTitle::Decades => "Decades",
     }
 }
+
+/// A decade by its first year: "1990s".
+pub fn decade(start: u32) -> String {
+    format!("{start}s")
+}
+
+pub const ALL_GENRES: &str = "All genres";
 
 pub const SEARCH_ALL: &str = "All";
 

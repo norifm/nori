@@ -3,14 +3,14 @@
   // found) and, where providers' results are mixed in, the scope chips; on All the top result with the best
   // songs beside it (under it on a phone), then a row of albums, artists and playlists; with a kind picked,
   // all of it in place. A click on a song plays that song alone (a search's results are not an album).
-  import { facts } from "../rpc";
+  import { facts, read } from "../rpc";
   import { reading } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
   import { href, route, searchFor } from "../state/route.svelte";
   import { forgetSearches, narrow, pick, remember, search, typed, type Item, type Kind, type View } from "../state/search.svelte";
   import { pointer, ui } from "../state/ui.svelte";
-  import type { Song } from "../state/types";
+  import type { Decade, Genre, Song } from "../state/types";
   import { W } from "../words";
   import Cards from "../ui/Cards.svelte";
   import Cover from "../ui/Cover.svelte";
@@ -27,6 +27,16 @@
     if (v && v.state !== "asking") facts.searched = { query: v.query, artists: v.artists.length, albums: v.albums.length, songs: v.songs.length };
   });
   const busy = $derived(v?.state === "asking");
+  // Before a search, ways in that need no words, as Android's: the library's biggest genres and its decades
+  // (the core's `genre_tiles` and `browse_decades`).
+  let browse = $state.raw<{ genres: Genre[]; decades: Decade[] }>();
+  $effect(() => {
+    void route.visit;
+    void read<{ genres: Genre[]; decades: Decade[] }>({ kind: "browse" }).then(
+      (b) => (browse = b),
+      () => {},
+    );
+  });
   const items = (view: View, kind: Kind) => view.layout.sections.find((s) => s.kind === kind)?.items ?? [];
   $effect(() => {
     if (!ui.wide) field?.focus();
@@ -78,8 +88,25 @@
     {#if search.recent.length}
       <div class="recent-head"><SectionTitle title={W.recentSearches} /><button class="text-action" onclick={() => void forgetSearches()}>{W.clearSearches}</button></div>
       <ul class="recent">
-        {#each search.recent as q (q)}<li><button onclick={() => searchFor(q)}><Icon name="refresh" /><span class="clip">{q}</span></button></li>{/each}
+        {#each search.recent as q (q)}<li><button onclick={() => searchFor(q)}><Icon name="clock-rotate-right" /><span class="clip">{q}</span></button></li>{/each}
       </ul>
+    {/if}
+    {#if browse?.genres.length}
+      <SectionTitle title={W.librarySections.Genres} href={href("genres")} />
+      <div class="genres">
+        {#each browse.genres as g (g.name)}
+          <a class="genre" href={href("genre", g.name)}>
+            <span class="art"><Cover src={g.cover} radius="0" /></span>
+            <span class="words"><span class="name clip">{g.name}</span><span class="sub clip">{W.songCount(g.songCount)}</span></span>
+          </a>
+        {/each}
+      </div>
+    {/if}
+    {#if browse?.decades.length}
+      <SectionTitle title={W.librarySections.Decades} href={href("decades")} />
+      <div class="chips decades">
+        {#each browse.decades as d (d.start)}<a class="chip on" href={href("decade", String(d.start))}>{W.decade(d.start)}</a>{/each}
+      </div>
     {/if}
   {:else if v}
     {#if v.kinds.length}
@@ -382,6 +409,51 @@
   }
   .artists :global(.row) {
     grid-auto-columns: 176px;
+  }
+  /* A genre as Android's tile: its name in Literata on the surface, a cover of its songs at the end running
+     into the paper; as many columns as the page holds. */
+  .genres {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .genre {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 72px;
+    border-radius: var(--r-tile);
+    overflow: hidden;
+    background: var(--surface);
+    border: var(--hairline) solid var(--hair);
+  }
+  .genre:hover {
+    background: color-mix(in srgb, var(--ink) 5%, var(--surface));
+  }
+  .genre .art {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 72px;
+    height: 72px;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 75%);
+    mask-image: linear-gradient(to right, transparent, #000 75%);
+  }
+  .genre .art :global(.cover) {
+    height: 100%;
+  }
+  .genre .words {
+    position: relative;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 0 36px 0 14px;
+  }
+  .genre .name {
+    font: 600 17px/22px var(--display);
+  }
+  .decades {
+    flex-wrap: wrap;
   }
   .recent-head {
     display: flex;

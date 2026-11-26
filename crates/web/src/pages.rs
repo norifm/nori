@@ -29,6 +29,11 @@ pub enum Ask {
     Playlist { id: String },
     Genres,
     Genre { name: String },
+    /// What an empty search offers to browse: the biggest genres and the decades, from the offline index.
+    Browse,
+    Decades,
+    /// A decade's songs, by its first year.
+    Decade { start: u32 },
     /// The songs list in order `sort` (a `browse::song_sorts` name), turned around when `reversed`, only the
     /// favorites with `favorites`, a page from `offset` (`Client::songs_listed`).
     Songs {
@@ -69,7 +74,7 @@ impl Ask {
             Ask::Playlists => Read::PlaylistList,
             Ask::Playlist { id } => Read::PlaylistById { id },
             Ask::Genres => Read::GenreList,
-            Ask::Genre { .. } | Ask::Songs { .. } | Ask::History { .. } => return Err("read by the core, not the cache".into()),
+            Ask::Genre { .. } | Ask::Songs { .. } | Ask::History { .. } | Ask::Browse | Ask::Decades | Ask::Decade { .. } => return Err("read by the core, not the cache".into()),
             Ask::Starred => Read::StarredItems,
         })
     }
@@ -196,6 +201,11 @@ pub async fn album_page(client: &Client, sort: String, favorites: bool, offset: 
     Ok((v, next))
 }
 
+/// The decades with indexed songs, newest first: `[{ start, songCount }]`.
+fn decades(core: &nori_core::Core) -> Result<Vec<Value>, String> {
+    Ok(core.browse_decades().map_err(|e| e.to_string())?.iter().map(|d| json!({ "start": d.start, "songCount": d.song_count })).collect())
+}
+
 async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Value, String> {
     let core = client.core();
     match ask {
@@ -213,6 +223,16 @@ async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Val
             let next = p.next.map(|n| HistoryPlace { started_ms: n.started_ms, row: n.row });
             let played: Vec<Song> = p.entries.into_iter().map(|e| e.song).collect();
             return Ok(json!({ "songs": songs(core, &played), "next": next }));
+        }
+        Ask::Browse => {
+            let tiles = core.genre_tiles(nori_core::browse::search_genres_shown()).map_err(|e| e.to_string())?;
+            let tiles: Vec<Value> = tiles.iter().map(|g| json!({ "name": g.name, "songCount": g.song_count, "cover": g.cover_art.as_deref().map(|c| cover(core, c, 300)) })).collect();
+            return Ok(json!({ "genres": tiles, "decades": decades(core)? }));
+        }
+        Ask::Decades => return Ok(json!({ "decades": decades(core)? })),
+        Ask::Decade { start } => {
+            let v = core.decade_songs(start).map_err(|e| e.to_string())?;
+            return Ok(page(core, Page::Songs { v }, user));
         }
         Ask::Genres => {
             let mut last = None;

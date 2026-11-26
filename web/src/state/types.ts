@@ -41,6 +41,8 @@ export type PlaylistChoice = { playlist: Playlist; adds: string[]; holds: number
 /** As the server names it: the name is `value`. */
 /** A genre with songs, as the core lists them (`genres_listed`): a cover of its songs where it has one. */
 export type Genre = { name: string; songCount: number; cover?: string };
+/** A decade with songs in the index: its first year. */
+export type Decade = { start: number; songCount: number };
 
 /** A song of the queue the player shows, in play order: its list `index`, who asked for it in a jam. */
 export type QueueSong = Partial<Song> & { index: number; by?: string };

@@ -37,6 +37,8 @@
     mix: () => import("../pages/Mix.svelte"),
     genres: () => import("../pages/Genres.svelte"),
     genre: () => import("../pages/Genre.svelte"),
+    decades: () => import("../pages/Decades.svelte"),
+    decade: () => import("../pages/Decade.svelte"),
     songs: () => import("../pages/Songs.svelte"),
     history: () => import("../pages/History.svelte"),
     stats: () => import("../pages/Stats.svelte"),
@@ -69,6 +71,8 @@
         return { sort: a };
       case "genre":
         return { name: a };
+      case "decade":
+        return { start: Number(a) };
       default:
         return { id: a };
     }

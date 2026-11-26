@@ -9,7 +9,8 @@
   import { PLACES, sectionPage } from "./TopPill.svelte";
 
   let { title = "", back = false, narrow = false, places = false, error, ready = true, head, children }: { title?: string; back?: boolean; narrow?: boolean; places?: boolean; error?: string; ready?: boolean; head?: Snippet; children: Snippet } = $props();
-  /** `places`: a library page, with the places the profile keeps (History) beside its title. */
+  /** `places`: a library page, with the places the profile keeps (History) beside its title, a pill each
+   *  with its glyph and its name, as Android's. */
   let kept = $state<string[]>([]);
   $effect(() => {
     if (places) void ask<string>("library_sections").then((s) => (kept = (JSON.parse(s) as string[]).filter((x) => PLACES.includes(x))));
@@ -23,7 +24,7 @@
       <h1>{title}</h1>
       {#if kept.length}
         <span class="places">
-          {#each kept as p (p)}<a class="glyph quiet" href={sectionPage[p][0]} aria-label={W.librarySections[p]} title={W.librarySections[p]}><Icon name={sectionPage[p][1]} /></a>{/each}
+          {#each kept as p (p)}<a class="chip edged place" href={sectionPage[p][0]}><Icon name={sectionPage[p][1]} />{W.librarySections[p]}</a>{/each}
         </span>
       {/if}
       {@render head?.()}
@@ -60,7 +61,20 @@
   }
   .places {
     display: flex;
+    gap: 8px;
     margin-left: auto;
+  }
+  .place {
+    gap: 6px;
+    color: var(--ink);
+    font-size: 13px;
+  }
+  .place:hover {
+    background: var(--hover);
+  }
+  .place :global(.icon) {
+    width: 16px;
+    height: 16px;
   }
   @media (min-width: 720px) {
     .narrow {

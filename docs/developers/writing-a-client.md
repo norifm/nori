@@ -226,6 +226,7 @@ session does all of this. Android calls the same functions from Kotlin.
 | An artist page's top songs | `library::artist_top_songs` | Android only |
 | A keystroke in search | `SearchSession`, whose `SearchView` holds a `SearchShown` | `search_typed`, `search_server` |
 | A search sent (Enter) or a result of it used | `Core::search_remember_recent` | `Handle::search_used` |
+| What an empty search offers | `Core::genre_tiles(search_genres_shown())`, `Core::browse_decades`; a decade's songs, `Core::decade_songs` | `PageAsk::Browse`, `PageAsk::Decades`, `PageAsk::Decade` |
 | The search's results page | `SearchView::layout` (`search_layout`), `kinds` and `kind` for the chips | `search_pick`, `search_narrow` |
 | Home's queue offer | `Client::queue_offer_kept` at once, then `Client::queue_offer`, kept by `offer::Offered` | `Handle::queue_offer_kept`, `Handle::queue_offer` |
 | Lyrics for the song heard | `Client::lyrics_for`, `lyrics_follow::LyricsHeard` | `Handle::lyrics_heard`, `Said::Lyrics` |

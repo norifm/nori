@@ -242,6 +242,8 @@ pub enum Fetch {
     Mix(String),
     /// A genre's songs, by its name.
     Genre(String),
+    /// A decade's songs, by its first year, as the library's song list plays them.
+    Decade(u32),
 }
 
 impl Fetch {
@@ -255,6 +257,7 @@ impl Fetch {
             Fetch::Radio(id) => PageOrigin::new(OriginKind::Songs, id.as_str()),
             Fetch::Mix(id) => PageOrigin::new(OriginKind::Mix, id.as_str()),
             Fetch::Genre(name) => PageOrigin::new(OriginKind::Genre, name.as_str()),
+            Fetch::Decade(_) => PageOrigin::new(OriginKind::Songs, ""),
         }
     }
 
@@ -271,6 +274,7 @@ impl Fetch {
             Fetch::Mix(id) => client.mix_songs(id).await?,
             Fetch::Radio(id) => client.radio(id).await?,
             Fetch::Genre(name) => client.genre_songs(name).await?,
+            Fetch::Decade(start) => client.core().decade_songs(start)?,
         })
     }
 }

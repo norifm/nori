@@ -714,6 +714,11 @@ pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
     }
 }
 
+/// A decade by its first year: "1990s".
+pub fn decade(start: u32) -> String {
+    format!("{start}s")
+}
+
 pub fn songs(n: usize) -> String {
     count(n as u64, "song", "songs")
 }

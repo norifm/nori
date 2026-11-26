@@ -3950,6 +3950,40 @@ fn genres_list_and_open_their_songs() {
     assert_eq!((songs.len(), from.kind, from.id.as_str()), (2, nori_core::OriginKind::Genre, "Rock"));
 }
 
+/// An empty search offers what Android's does: the recent searches, the biggest genres and a way to all of
+/// them, the decades; each opens what it names.
+#[test]
+fn an_empty_search_browses_genres_and_decades() {
+    let mut a = app();
+    key(&mut a, KeyCode::Char('/'));
+    assert!(a.cmds.contains(&Cmd::Load(Req::Browse)), "{:?}", a.cmds);
+    let tile = |name: &str, n| nori_core::browse::GenreTile { name: name.into(), song_count: n, cover_art: None };
+    let browse = crate::app::SearchBrowse { recent: vec!["blue".into()], genres: vec![tile("Jazz", 22)], decades: vec![nori_core::browse::Decade { start: 1990, song_count: 12 }] };
+    a.handle(Msg::Data(Req::Browse, Ok(Data::Browse(browse))));
+    key(&mut a, KeyCode::Esc);
+    let s = draw(&mut a, 120, 36);
+    dump("search-browse", &s);
+    let at = |w: &str| s.find(w).unwrap_or_else(|| panic!("{w} in {s}"));
+    assert!(at("Recent searches") < at("blue") && at("blue") < at("Jazz") && at("Jazz") < at("All genres") && at("All genres") < at("1990s"), "{s}");
+    assert!(s.lines().any(|l| l.contains("1990s") && l.contains("12 songs")), "{s}");
+    let line = |a: &mut App, n: usize| {
+        (a.focus, a.search.editing) = (crate::app::Focus::Main, false);
+        a.search.sel.at = n;
+        key(a, KeyCode::Enter);
+    };
+    line(&mut a, 3);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Genre("Jazz".into()))));
+    a.pages.clear();
+    line(&mut a, 6);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Decade(1990))));
+    a.pages.clear();
+    line(&mut a, 4);
+    assert_eq!(a.view, View::Genres);
+    a.go(View::Search);
+    line(&mut a, 1);
+    assert_eq!((a.search.text.as_str(), a.cmds.last()), ("blue", Some(&Cmd::SearchTyped("blue".into()))), "a recent search searched again");
+}
+
 /// A long playlist filters as `/` and the words typed narrow it, as Android's filter field; a song played
 /// from the narrowed list plays the playlist from that song. Esc clears it; a short playlist has none, so
 /// `/` searches there.
