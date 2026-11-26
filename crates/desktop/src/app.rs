@@ -6472,13 +6472,13 @@ fn play_shuffled(h: &nori_host::session::Handle, albums: bool) -> Result<(), Str
 
 /// The decades as their lines: a decade's name, its first year, how many songs it has.
 fn decade_lines(decades: &[nori_core::browse::Decade]) -> ModelRc<crate::DecadeLine> {
-    let lines = decades.iter().map(|d| crate::DecadeLine { start: d.start as i32, name: words::decade(d.start).into(), count: d.song_count.to_string().into() });
+    let lines = decades.iter().map(|d| crate::DecadeLine { start: d.start as i32, name: words::decade(d.start).into(), count: d.song_count as i32 });
     ModelRc::new(VecModel::from(lines.collect::<Vec<_>>()))
 }
 
 /// A genre's card: its songs counted, a cover of them.
 fn genre_card(g: &nori_core::browse::GenreTile) -> Card {
-    Card { id: g.name.as_str().into(), title: g.name.as_str().into(), sub: words::songs(g.song_count as usize).into(), art: g.cover_art.clone().unwrap_or_default().into(), kind: 6, ..Default::default() }
+    Card { id: g.name.as_str().into(), title: g.name.as_str().into(), sub: words::songs(g.song_count as usize).into(), art: g.cover_art.clone().unwrap_or_default().into(), kind: 6, count: g.song_count as i32, ..Default::default() }
 }
 
 fn artist_card(a: &nori_core::Artist) -> Card {
@@ -10719,10 +10719,9 @@ mod tests {
         ui.set_genres(cards([genre("Jazz Fusion", 22), genre("Rock", 4)].into_iter()));
         settled(&ui);
         assert!(middle(&ui, "No genres").is_none());
-        assert!(middle(&ui, "22 songs").is_some(), "each genre counts its songs");
-        let (x, y) = middle(&ui, "Rock").unwrap();
-        press(ui.window(), x, y - 60.0, slint::platform::PointerEventButton::Left);
-        settled(&ui);
+        let (jazz, count) = (middle(&ui, "Jazz Fusion").unwrap(), middle(&ui, "22").unwrap());
+        assert!((jazz.1 - count.1).abs() < 1.0 && count.0 > jazz.0, "each genre counts its songs at its row's end");
+        click(&ui, "Rock");
 
         ui.set_view(View::History);
         ui.set_songs(song_rows(&["Glass Harbour", "Paper Moon"]));

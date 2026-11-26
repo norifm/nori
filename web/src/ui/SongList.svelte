@@ -1,9 +1,9 @@
 <script lang="ts">
-  // Songs as rows on one plate: a click plays them from there, as the page's list (`kind`, `id`); each has
-  // its menu (`extra`: the page's own entries). `numbered` shows track numbers instead of covers (an
-  // album's); `rows` the positions shown (a disc's); `shown` only the first few, with Show all under them;
-  // `moved`, each row's handle drags it to another place (a playlist's); `one`, a click plays that song
-  // alone (a search's results).
+  // Songs as rows on the page's paper, under their columns' heads as the desktop's: a click plays them from
+  // there, as the page's list (`kind`, `id`); each has its menu (`extra`: the page's own entries).
+  // `numbered` shows track numbers instead of covers (an album's); `rows` the positions shown (a disc's);
+  // `shown` only the first few, with Show all under them; `moved`, each row's handle drags it to another
+  // place (a playlist's); `one`, a click plays that song alone (a search's results).
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
   import { beside, pointer, type Item } from "../state/ui.svelte";
@@ -32,6 +32,12 @@
   const play = (i: number) => (one ? player.play([songs[i]], 0, false, kind, id) : player.play(songs, i, false, kind, id));
 </script>
 
+{#if !numbered}
+  <div class="heads" aria-hidden="true">
+    <span class="cols"><span></span><span>{W.songHeads.song}</span><span>{W.songHeads.artist}</span><span>{W.songHeads.album}</span></span>
+    <span class="seal"></span><span class="len">{W.songHeads.time}</span><span class="room"></span>{#if moved}<span class="room grip"></span>{/if}
+  </div>
+{/if}
 <ol class="songs" class:numbered use:sortable={{ moved: (from, to) => moved?.(from, to) }}>
   {#each drawn as i (`${i}:${songs[i].id}`)}
     {@const s = songs[i]}
@@ -47,7 +53,7 @@
         <span class="artist clip">{s.artist}</span>
         {#if !numbered}<span class="album clip">{s.album}</span>{/if}
       </button>
-      {#if s.starred}<span class="starred" aria-label={W.favorite}><Icon name="sealed" /></span>{/if}
+      <span class="seal">{#if s.starred}<span class="starred" aria-label={W.favorite}><Icon name="sealed" /></span>{/if}</span>
       <span class="len">{W.time(s.duration * 1000)}</span>
       <button class="more" aria-label={W.more} title={W.more} onclick={(e) => void songMenu(s, beside(e), { play: () => play(i), extra: extra(s, i) })}><Icon name="more-horiz" /></button>
       {#if moved}<span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="menu" /></span>{/if}
@@ -60,21 +66,44 @@
   .all {
     margin-top: 8px;
   }
+  /* The rows' words start at the page's edge; their hover reaches 8 px past it. */
   .songs {
     list-style: none;
-    margin: 0;
+    margin: 0 -8px;
     padding: 0;
-    background: var(--surface);
-    border: var(--hairline) solid var(--hair);
-    border-radius: var(--r-tile);
-    overflow: hidden;
   }
-  li {
+  li,
+  .heads {
     position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
     padding-right: 8px;
+  }
+  li {
+    border-radius: 10px;
+  }
+  .heads {
+    margin: 0 -8px 2px;
+    height: 28px;
+    color: var(--ink2);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .heads .cols {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 44px 2fr 1.4fr 1.4fr;
+    column-gap: 14px;
+    padding: 0 8px;
+  }
+  .heads .room {
+    width: 40px;
+    flex: none;
+  }
+  .heads .grip {
+    width: 32px;
   }
   li:hover {
     background: var(--hover);
@@ -104,7 +133,7 @@
     grid-template-columns: 44px 2fr 1.4fr 1.4fr;
     align-items: center;
     column-gap: 14px;
-    padding: 9px 8px 9px 16px;
+    padding: 9px 8px;
     text-align: left;
   }
   .numbered .play {
@@ -129,6 +158,12 @@
   .artist,
   .album {
     color: var(--ink2);
+  }
+  /* A column of its own, so the times stand under their head whether a row is sealed or not. */
+  .seal {
+    display: flex;
+    width: 20px;
+    flex: none;
   }
   .starred {
     color: var(--accent);
@@ -171,10 +206,16 @@
     }
   }
   @media (max-width: 719px) {
+    .heads {
+      display: none;
+    }
+    .seal:empty {
+      display: none;
+    }
     .play {
       grid-template-columns: 44px 1fr;
       row-gap: 1px;
-      padding-left: 12px;
+      padding-left: 8px;
     }
     .numbered .play {
       grid-template-columns: 30px 1fr;

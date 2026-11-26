@@ -241,6 +241,8 @@ export const W = {
   /** A list's head: "8 songs · 36:28". */
   listCaption: (n: number, seconds: number) => `${plural(n, "song", "songs")} · ${clock(seconds * 1000)}`,
   time: clock,
+  /** The heads over a list of songs in columns. */
+  songHeads: { song: "Song", artist: "Artist", album: "Album", time: "Time" },
   servers: "Servers",
   profiles: "Profiles",
   thisProfile: "This profile",

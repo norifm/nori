@@ -75,7 +75,7 @@ const album = (name, artist) => albums.find((a) => a.name === name && (!artist |
 if (!only || only.includes("browse")) {
   const counts = {};
   const firstArtist = (await read({ kind: "artists" })).artists[0]?.id;
-  for (const [h, top, sel] of [["#/library", "library", ".sections a"], ["#/albums/alphabeticalByName", "albums", ".grid .card"], ["#/artists", "artists", ".names .name, .grid .card"], ["#/genres", "genres", ".genres li"], ["#/songs", "songs", ".songs li"], [`#/artist/${firstArtist}`, "artist", ".card, .songs li"], ["#/settings", "settings", "[data-page]"], ["#/settings/Playing", "settings", "[data-setting]"]]) {
+  for (const [h, top, sel] of [["#/library", "library", ".sections a"], ["#/albums/alphabeticalByName", "albums", ".grid .card"], ["#/artists", "artists", ".names .name, .grid .card"], ["#/genres", "genres", ".lines li"], ["#/songs", "songs", ".songs li"], [`#/artist/${firstArtist}`, "artist", ".card, .songs li"], ["#/settings", "settings", "[data-page]"], ["#/settings/Playing", "settings", "[data-setting]"]]) {
     await hash(h, top);
     counts[h] = await page.$$eval(sel, (e) => e.length);
     expect(counts[h] > 0 && !(await facts()).pageError, `${h} lists something`);
@@ -141,7 +141,7 @@ if (!only || only.includes("lists")) {
   const starred = await page.$$eval(".songs li", (l) => l.map((x) => !!x.querySelector(".starred")));
   await page.click(".bar .chip.filter");
   await hash("#/genres", "genres");
-  const genres = await page.$$eval(".genres li", (l) => l.map((x) => ({ name: x.querySelector(".name").textContent, sub: x.querySelector(".sub").textContent })));
+  const genres = await page.$$eval(".lines li", (l) => l.map((x) => ({ name: x.querySelector(".name").textContent, count: Number(x.querySelector(".count").textContent) })));
   const lists = (await read({ kind: "playlists" })).playlists;
   const long = lists.reduce((a, b) => (b.songCount > (a?.songCount ?? 0) ? b : a), undefined);
   await hash(`#/playlist/${long.id}`, "playlist");
@@ -157,7 +157,7 @@ if (!only || only.includes("lists")) {
   expect(sorted(byArtist, 1) && kept.name === "ARTIST" && !kept.reversed, "the songs by artist, kept");
   expect(sorted(reversed, -1) && turned.reversed && turned.way === "down", "Artist again turns the order around");
   expect(starred.length > 0 && starred.every(Boolean), "Favorites lists the starred songs alone");
-  expect(genres.length > 0 && genres.every((g) => /songs?$/.test(g.sub)) && sorted(genres.map((g) => g.name), 1), "the genres with songs, by name");
+  expect(genres.length > 0 && genres.every((g) => g.count > 0) && sorted(genres.map((g) => g.name), 1), "the genres with songs, by name");
   expect(all > 12 && narrowed.length > 0 && narrowed.every((t) => t.includes("Second Wind")), "a long playlist's filter narrows it");
   expect(!(await facts()).pageError, "History reads");
 }

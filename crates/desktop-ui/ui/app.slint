@@ -39,7 +39,7 @@ export struct LibraryTabs {
 export struct DecadeLine {
     start: int,
     name: string,
-    count: string,
+    count: int,
 }
 
 // A kind of scrobbling account to add: its service, and what it costs where it does.
@@ -2225,6 +2225,76 @@ component Grid inherits Remembered {
         picture: root.art(self.c.art, 0, root.rev);
         open => { root.open(self.c); }
         play => { root.play(self.c); }
+    }
+}
+
+// A name on the page's paper that opens what it names, as Android's row: its count and an arrow at its end,
+// raised under the pointer; a right press opens its menu where it has one.
+component PlainLine inherits Rectangle {
+    in property <string> text;
+    in property <int> count;
+    callback clicked();
+    callback menu(length, length);
+    height: 48px;
+    border-radius: 10px;
+    background: touch.has-hover ? Theme.hover : transparent;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 12px;
+        Text {
+            horizontal-stretch: 1;
+            text: root.text;
+            color: Theme.text;
+            font-size: 15px;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.count;
+            color: Theme.dim;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+        Icon {
+            y: (parent.height - self.height) / 2;
+            glyph: Icons.nav-arrow-right;
+            colour: Theme.dim;
+            width: 18px;
+            height: 18px;
+        }
+    }
+    touch := RightPress {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        menu(x, y) => { root.menu(x, y); }
+    }
+}
+
+// A page of [PlainLine]s in the page's column, its title beside the back disc; the rows' words start at the
+// column's edge, their hover reaching 8 px past it.
+component LineList inherits Remembered {
+    in property <string> title;
+    content-height: lines.preferred-height;
+    lines := VerticalLayout {
+        width: parent.width;
+        padding-left: Frame.column-x(self.width) - 8px;
+        padding-right: self.width - Frame.column-x(self.width) - Frame.column-w(self.width) - 8px;
+        padding-top: Chrome.top-room + 8px;
+        padding-bottom: 100px;
+        HorizontalLayout {
+            padding-left: 8px + Frame.back-room;
+            padding-bottom: 16px;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-family: Type.title;
+                font-size: 34px;
+                font-weight: 700;
+                letter-spacing: -0.5px;
+            }
+        }
+        @children
     }
 }
 
@@ -8401,9 +8471,9 @@ export component AppWindow inherits Window {
     in-out property <string> find-text;
     // The library pages' margins (the page is the window's width).
     property <length> page-gutter: Frame.gutter(self.width);
-    // Where the page shown starts, and its back disc with it: an album's narrow column, the decades', or the
-    // gutter.
-    property <length> page-x: (root.view == View.page && root.page-kind == PageLayout.album) || root.view == View.decades ? Frame.column-x(self.width) : root.page-gutter;
+    // Where the page shown starts, and its back disc with it: an album's narrow column, the genres' and the
+    // decades', or the gutter.
+    property <length> page-x: (root.view == View.page && root.page-kind == PageLayout.album) || root.view == View.genres || root.view == View.decades ? Frame.column-x(self.width) : root.page-gutter;
     // An artist's picture: at most 40 % of the window's height, so the releases under it show.
     property <length> artist-hero: max(280px, root.height * 0.4);
     // The library list shown has nothing in it.
@@ -10243,95 +10313,29 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // The genres with songs, by name: a card each with a cover of its songs, on the Albums page's grid;
-                // opened from the search's browse, beside the back disc.
+                // The genres with songs, by name, as Android's list: each its songs counted, opening its page.
                 if root.view == View.genres: Fade {
-                    Grid {
+                    push: true;
+                    LineList {
                         title: "Genres";
-                        beside-back: true;
-                        pad: root.page-gutter;
-                        cards: root.genres;
-                        rev: root.covers-rev;
-                        art(a, s, r) => { return root.art(a, s, r); }
-                        open(c) => { root.open-genre(c.id); }
-                        play(c) => { root.play-genre(c.id); }
+                        for g in root.genres: PlainLine {
+                            text: g.title;
+                            count: g.count;
+                            clicked => { root.open-genre(g.id); }
+                            menu(x, y) => { Go.card-menu(g, @image-url(""), x, y); }
+                        }
                     }
                 }
 
                 // The decades with songs, newest first, as Android's list: each its songs counted, opening its page.
                 if root.view == View.decades: Fade {
                     push: true;
-                    Remembered {
-                        content-height: decade-list.preferred-height;
-                        // A narrow list, in the page's column.
-                        decade-list := VerticalLayout {
-                            width: parent.width;
-                            padding-left: Frame.column-x(self.width);
-                            padding-right: self.width - Frame.column-x(self.width) - Frame.column-w(self.width);
-                            padding-top: Chrome.top-room + 8px;
-                            padding-bottom: 100px;
-                            HorizontalLayout {
-                                padding-left: Frame.back-room;
-                                padding-bottom: 16px;
-                                Text {
-                                    text: "Decades";
-                                    color: Theme.text;
-                                    font-family: Type.title;
-                                    font-size: 34px;
-                                    font-weight: 700;
-                                    letter-spacing: -0.5px;
-                                }
-                            }
-                            // One raised plate, as Android's group: a hairline between rows.
-                            Rectangle {
-                                background: Theme.panel;
-                                border-radius: 18px;
-                                border-width: 1px;
-                                border-color: Theme.hairline;
-                                clip: true;
-                                VerticalLayout {
-                                    for d[i] in root.decades: Rectangle {
-                                        height: 52px;
-                                        background: decade-touch.has-hover ? Theme.hover : transparent;
-                                        HorizontalLayout {
-                                            padding-left: 16px;
-                                            padding-right: 12px;
-                                            spacing: 12px;
-                                            Text {
-                                                horizontal-stretch: 1;
-                                                text: d.name;
-                                                color: Theme.text;
-                                                font-size: 15px;
-                                                vertical-alignment: center;
-                                            }
-                                            Text {
-                                                text: d.count;
-                                                color: Theme.dim;
-                                                font-size: 13px;
-                                                vertical-alignment: center;
-                                            }
-                                            Icon {
-                                                y: (parent.height - self.height) / 2;
-                                                glyph: Icons.nav-arrow-right;
-                                                colour: Theme.dim;
-                                                width: 18px;
-                                                height: 18px;
-                                            }
-                                        }
-                                        if i < root.decades.length - 1: Rectangle {
-                                            x: 16px;
-                                            y: parent.height - 1px;
-                                            width: parent.width - 32px;
-                                            height: 1px;
-                                            background: Theme.hairline;
-                                        }
-                                        decade-touch := TouchArea {
-                                            mouse-cursor: pointer;
-                                            clicked => { root.open-decade(d.start); }
-                                        }
-                                    }
-                                }
-                            }
+                    LineList {
+                        title: "Decades";
+                        for d in root.decades: PlainLine {
+                            text: d.name;
+                            count: d.count;
+                            clicked => { root.open-decade(d.start); }
                         }
                     }
                 }

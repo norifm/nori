@@ -7,6 +7,7 @@
   import type { Decade } from "../state/types";
   import { W } from "../words";
   import Icon from "../ui/Icon.svelte";
+  import Lines from "../ui/Lines.svelte";
   import Page from "../ui/Page.svelte";
 
   const page = reading("decades", () => read<{ decades: Decade[] }>({ kind: "decades" }).then((p) => p.decades ?? []));
@@ -14,10 +15,6 @@
 
 <Page title={W.librarySections.Decades} back narrow ready={!!page.data} error={page.error}>
   {#if page.data?.length}
-    <div class="group">
-      {#each page.data as d (d.start)}
-        <a class="group-row" href={href("decade", String(d.start))}><span class="words">{W.decade(d.start)}</span><span class="value">{d.songCount}</span><Icon name="nav-arrow-right" /></a>
-      {/each}
-    </div>
+    <Lines lines={page.data.map((d) => ({ key: String(d.start), href: href("decade", String(d.start)), name: W.decade(d.start), count: d.songCount }))} />
   {:else if page.data}<p class="empty"><Icon name="music-note" />{W.noIndex}</p>{/if}
 </Page>
