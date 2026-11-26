@@ -20,11 +20,11 @@
 
 <Page back ready={page.data !== undefined} error={page.error}>
   {#if mix}
-    <Hero cover={mix.covers[0]} title={W.mixNames[mix.name] ?? mix.name} fallback="sparks" item={itemMark("mix", id, { title: W.mixNames[mix.name] ?? mix.name, cover: mix.covers[0] })} label={songs.length ? W.listCaption(songs.length, mix.seconds) : ""} onplay={(s) => void player.play(songs, 0, s, "Mix", id)}>
+    <Hero cover={mix.covers[0]} title={W.mixNames[mix.name] ?? mix.name} fallback="sparks" item={itemMark("mix", id, { title: W.mixNames[mix.name] ?? mix.name, cover: mix.covers[0] })} label={songs.length ? W.listCaption(songs.length, mix.seconds) : ""} playable={songs.length > 0} onplay={(s) => void player.play(songs, 0, s, "Mix", id)}>
       {#snippet actions()}
         {#if songs.length}<button class="glyph" aria-label={W.more} title={W.more} onclick={() => void addToPlaylist(songs)}><Icon name="more-horiz" /></button>{/if}
       {/snippet}
     </Hero>
-    <SongList {songs} kind="Mix" {id} />
+    {#if songs.length}<SongList {songs} kind="Mix" {id} />{:else}<p class="empty"><Icon name="music-note" />{W.noSongs}</p>{/if}
   {:else}<p class="empty">{W.empty}</p>{/if}
 </Page>

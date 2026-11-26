@@ -75,7 +75,7 @@
 
 <Page back ready={!!pl} error={page.error}>
   {#if pl}
-    <Hero cover={pl.cover} title={pl.name} fallback="playlist" item={itemMark("playlist", id, { title: pl.name, line: pl.owner ?? "", cover: pl.cover }, !!pl.editable)} label={songs.length ? W.listCaption(songs.length, page.data?.seconds ?? 0) : ""} onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}>
+    <Hero cover={pl.cover} title={pl.name} fallback="playlist" item={itemMark("playlist", id, { title: pl.name, line: pl.owner ?? "", cover: pl.cover }, !!pl.editable)} label={songs.length ? W.listCaption(songs.length, page.data?.seconds ?? 0) : ""} playable={songs.length > 0} onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}>
       {#snippet by()}{#if pl.comment}<span class="comment">{pl.comment}</span>{/if}{/snippet}
       {#snippet actions()}
         {#if !remote.jam?.guest}<Seal what="playlist" id={pl.id} on={!!pl.pinned} />{/if}
@@ -85,7 +85,8 @@
     </Hero>
     {#if offered}<label class="field search-field filter"><Icon name="search" /><input type="search" placeholder={W.filter} aria-label={W.filter} bind:value={filter} /></label>{/if}
     {#if rows?.length === 0}<p class="empty">{W.nothingMatches(filter)}</p>{/if}
-    <SongList {songs} {rows} kind="Playlist" {id} extra={edits} moved={pl.editable && !rows ? moved : undefined} />
+    {#if songs.length}<SongList {songs} {rows} kind="Playlist" {id} extra={edits} moved={pl.editable && !rows ? moved : undefined} />
+    {:else}<p class="empty"><Icon name="music-note" />{W.noSongs}</p>{/if}
   {/if}
 </Page>
 

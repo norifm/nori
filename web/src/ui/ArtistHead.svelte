@@ -1,8 +1,9 @@
 <script lang="ts">
   // An artist page's head, as the desktop's (after iOS's artist pages): the artist's picture across the
-  // page's whole width, on the cover's own wash, dissolving into the page's paper; it drifts up slower than
-  // the page as the page scrolls and fades as it goes. Over its foot, centered, the name and, as Android's
-  // and the desktop's pages, Shuffle as a bare glyph, Play as the ink pill, then the page's own buttons. The page and the chrome wear the picture's colors while it is open.
+  // page's whole width, at most 40 % of the window's height, on the cover's own wash, dissolving into the
+  // page's paper; it drifts up slower than the page as the page scrolls and fades as it goes. Over its foot,
+  // at the gutter (centered on a phone), the name and, as Android's and the desktop's pages, Shuffle as a
+  // bare glyph, Play as the ink pill, then the page's own buttons. The page and the chrome wear the picture's colors while it is open.
   import { itemMark } from "../state/menus";
   import type { Snippet } from "svelte";
   import { fade } from "svelte/transition";
@@ -66,7 +67,7 @@
 <style>
   /* Across the top of the page that scrolls (main), behind the head. */
   .banner {
-    --tall: max(420px, 64vh);
+    --tall: max(280px, 40vh);
     position: absolute;
     top: 0;
     left: 0;
@@ -108,14 +109,13 @@
     background: linear-gradient(transparent 45%, color-mix(in srgb, var(--page) 70%, transparent) 78%, var(--page));
   }
   .head {
-    min-height: calc(max(420px, 64vh) - var(--top-h) - 26px);
+    min-height: calc(max(280px, 40vh) - var(--top-h) - 26px);
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
-    align-items: center;
-    gap: 16px;
+    align-items: flex-start;
+    gap: 12px;
     padding-bottom: 8px;
-    text-align: center;
   }
   h1 {
     font-family: var(--display);
@@ -149,6 +149,8 @@
     }
     .head {
       min-height: calc(max(340px, 52vh) - var(--top-h) - 26px);
+      align-items: center;
+      text-align: center;
     }
     /* Play fills the row between the glyphs, as on Android. */
     .actions {

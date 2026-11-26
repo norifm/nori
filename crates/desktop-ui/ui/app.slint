@@ -513,6 +513,8 @@ export global Frame {
     // The back disc, level with a title's middle, and what a title beside it moves over by.
     out property <length> back-y: Chrome.top-room + 11px;
     out property <length> back-room: 52px;
+    // A list of a title and a time (an album's) at most this wide.
+    out property <length> reading: 960px;
     public pure function gutter(width: length) -> length {
         return max(clamp(width * 0.032, 32px, 40px), (width - root.widest) / 2);
     }
@@ -2716,8 +2718,8 @@ component SongLine inherits Rectangle {
     in property <bool> thumb;
     // A playlist's row: the artist in a column of its own, under its head.
     in property <bool> table;
-    // A table's columns: what is left beside the artwork and the marks and time (90px), split a half, a
-    // quarter, a quarter (the playlist's heads use the same sums).
+    // A table's columns: what is left beside the artwork and the marks and time (90px), split 40, 30 and 30 %
+    // (the playlist's heads use the same sums).
     property <length> cols: root.width - 8px - 12px - 44px - 90px - 4 * 12px;
     in property <image> picture;
     // The cover at the head of its menu: the row's own, or its album's where the row shows none.
@@ -2819,7 +2821,7 @@ component SongLine inherits Rectangle {
         // would share the width out.
         if root.table: Rectangle {
             preferred-width: 0;
-            horizontal-stretch: 2;
+            horizontal-stretch: 3;
         }
         // "Asked": a guest's request, until the host takes it.
         if root.song.by != "": Rectangle {
@@ -2870,8 +2872,8 @@ component SongLine inherits Rectangle {
         }
     }
     if root.table: ArtistLine {
-        x: 8px + 44px + 12px + root.cols * 0.5 + 12px;
-        width: root.cols * 0.25;
+        x: 8px + 44px + 12px + root.cols * 0.4 + 12px;
+        width: root.cols * 0.3;
         text: root.song.artist;
         artist: root.song.artist-id;
         credits: root.song.credits;
@@ -2879,8 +2881,8 @@ component SongLine inherits Rectangle {
         height: root.height;
     }
     if root.table: Link {
-        x: 8px + 44px + 12px + root.cols * 0.75 + 24px;
-        width: root.cols * 0.25;
+        x: 8px + 44px + 12px + root.cols * 0.7 + 24px;
+        width: root.cols * 0.3;
         text: root.song.album;
         album: root.song.album-id;
         art: root.song.art;
@@ -3109,7 +3111,7 @@ component ShelfSong inherits Moving {
 // The column heads over a table of SongLines: the same sums as its columns.
 component SongHeads inherits Rectangle {
     property <length> cols: self.width - 8px - 12px - 44px - 90px - 4 * 12px;
-    for h in [{ t: "Song", x: 0, w: 0.5, g: 0 }, { t: "Artist", x: 0.5, w: 0.25, g: 1 }, { t: "Album", x: 0.75, w: 0.25, g: 2 }]: Text {
+    for h in [{ t: "Song", x: 0, w: 0.4, g: 0 }, { t: "Artist", x: 0.4, w: 0.3, g: 1 }, { t: "Album", x: 0.7, w: 0.3, g: 2 }]: Text {
         x: 8px + 44px + 12px + root.cols * h.x + h.g * 12px;
         width: root.cols * h.w;
         text: h.t;
@@ -3187,7 +3189,7 @@ component EmptyNote inherits VerticalLayout {
         font-weight: 700;
         horizontal-alignment: center;
     }
-    Text {
+    if root.line != "": Text {
         text: root.line;
         color: Theme.dim;
         font-size: 14px;
@@ -7415,6 +7417,8 @@ component ShowAllButton inherits Rectangle {
 // paper. Shuffle lights and Play is Pause while the queue this page started plays (the core's `hero_buttons`). A
 // mix keeps itself as a playlist with Save as playlist after Play.
 component PageActions inherits HorizontalLayout {
+    // Off, Shuffle and Play are dimmed and do nothing: the list has no songs.
+    in property <bool> on: true;
     in property <bool> seal;
     in property <bool> liked;
     in property <bool> shuffle-lit;
@@ -7431,6 +7435,7 @@ component PageActions inherits HorizontalLayout {
         lit: root.shuffle-lit;
         size: 48px;
         icon: 24px;
+        enabled: root.on;
         clicked => { root.play(true); }
     }
     Rectangle {
@@ -7439,7 +7444,7 @@ component PageActions inherits HorizontalLayout {
         width: max(180px, pl.preferred-width + 48px);
         border-radius: self.height / 2;
         background: Theme.pill;
-        opacity: pt.pressed ? 0.75 : 1;
+        opacity: !root.on ? 0.3 : pt.pressed ? 0.75 : 1;
         pl := HorizontalLayout {
             alignment: center;
             spacing: 7px;
@@ -7459,6 +7464,7 @@ component PageActions inherits HorizontalLayout {
             }
         }
         pt := TouchArea {
+            enabled: root.on;
             mouse-cursor: pointer;
             clicked => { root.play(false); }
         }
@@ -8318,6 +8324,8 @@ export component AppWindow inherits Window {
     in-out property <string> find-text;
     // The library pages' margins (the page is the window's width).
     property <length> page-gutter: Frame.gutter(self.width);
+    // An artist's picture: at most 40 % of the window's height, so the releases under it show.
+    property <length> artist-hero: max(280px, root.height * 0.4);
     // The library list shown has nothing in it.
     property <bool> list-empty: (root.view == View.albums && root.albums.length == 0) || (root.view == View.artists && root.artists.length == 0) || (root.view == View.playlists && root.playlists.length == 0) || (root.view == View.songs && root.songs.length == 0) || (root.view == View.favorites && root.songs.length == 0 && root.favorite-albums.length == 0 && root.favorite-artists.length == 0) || (root.view == View.genres && root.genres.length == 0) || (root.view == View.history && root.songs.length == 0) || (root.view == View.downloads && root.songs.length == 0 && root.downloaded-albums.length == 0);
     property <string> list-name: root.view == View.shelf ? root.shelves[root.shown-shelf].title : root.view == View.for-you ? "For you" : root.view == View.albums ? "Albums" : root.view == View.artists ? "Artists" : root.view == View.playlists ? "Playlists" : root.view == View.songs ? "Songs" : root.view == View.genres ? "Genres" : root.view == View.favorites ? "Favorites" : root.view == View.page && root.page-kind == PageLayout.album ? "Album" : root.view == View.page && root.page-kind == PageLayout.list ? (root.page-mix ? "Mix" : "Playlist") : "";
@@ -10314,7 +10322,7 @@ export component AppWindow inherits Window {
                         if root.page-kind == PageLayout.artist: Rectangle {
                             y: max(-self.height, page-flick.content-y * 0.45);
                             width: parent.width;
-                            height: max(420px, root.height * 0.64);
+                            height: root.artist-hero;
                             opacity: 1 + max(-0.8, page-flick.content-y / self.height);
                             clip: true;
                             Image {
@@ -10335,17 +10343,20 @@ export component AppWindow inherits Window {
                             detail := VerticalLayout {
                                 width: parent.width;
                                 padding-left: root.page-gutter;
-                                padding-right: root.page-gutter;
-                                // Under the back disc, but for an artist's name, low over the picture.
-                                padding-top: root.page-kind == PageLayout.artist ? Chrome.top-room + 8px : Frame.bar-y;
+                                // An album's list holds a number, a title and a time: it keeps a reading width, as
+                                // its head does, where a wide window would set them a screen apart.
+                                padding-right: root.page-kind == PageLayout.album ? max(root.page-gutter, self.width - root.page-gutter - Frame.reading) : root.page-gutter;
+                                // Level with the back disc, but for an artist's name, low over the picture.
+                                padding-top: root.page-kind == PageLayout.artist ? Chrome.top-room + 8px : Frame.back-y;
                                 padding-bottom: 100px;
                                 spacing: 26px;
-                                // An artist: the name and the play button over the bottom of the picture.
+                                // An artist: the name and the play button over the bottom of the picture, at the
+                                // page's gutter.
                                 if root.page-kind == PageLayout.artist: VerticalLayout {
-                                    spacing: 16px;
+                                    spacing: 12px;
                                     // The picture behind, and the name: a right press opens the artist's menu.
                                     Rectangle {
-                                        height: max(420px, root.height * 0.64) - Chrome.top-room - 8px - 170px;
+                                        height: max(0px, root.artist-hero - Chrome.top-room - 8px - 140px);
                                         RightPress {
                                             menu(x, y) => { Go.card-menu(root.page-card, @image-url(""), x, y); }
                                         }
@@ -10357,13 +10368,13 @@ export component AppWindow inherits Window {
                                         font-size: 44px;
                                         font-weight: 800;
                                         letter-spacing: -1px;
-                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
                                         RightPress {
                                             menu(x, y) => { Go.card-menu(root.page-card, @image-url(""), x, y); }
                                         }
                                     }
                                     HorizontalLayout {
-                                        alignment: center;
+                                        alignment: start;
                                         PageActions {
                                             seal: root.page-can-star;
                                             liked: root.page-starred;
@@ -10376,65 +10387,118 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
-                                // An album, a playlist or a mix: the artwork beside its title, as the Mac lays them out;
-                                // a mix's four covers two by two.
-                                if root.page-kind != PageLayout.artist: HorizontalLayout {
-                                    spacing: 28px;
-                                    alignment: start;
-                                    // A right press on the artwork or the title opens the page's own menu, as its card's.
-                                    head-art := Art {
-                                        width: 270px;
-                                        height: 270px;
-                                        border-radius: 8px;
-                                        source: root.page-covers.length >= 4 ? root.pick-art(root.page-covers, root.covers-rev) : root.art(root.page-art, 1, root.covers-rev);
-                                        RightPress {
-                                            menu(x, y) => { Go.card-menu(root.page-card, head-art.source, x, y); }
-                                        }
-                                    }
-                                    VerticalLayout {
-                                        spacing: 2px;
-                                        Rectangle {
-                                            height: 64px;
-                                        }
-                                        Text {
-                                            text: root.page-title;
-                                            color: Theme.text;
-                                            font-family: Type.title;
-                                            font-size: 30px;
-                                            font-weight: 700;
-                                            letter-spacing: -0.3px;
-                                            wrap: word-wrap;
+                                // An album, a playlist or a mix: beside the back disc, the artwork with its title block
+                                // standing on the artwork's foot, as Android's head reads: the title, who, what the list
+                                // holds, then the buttons, the core's glyphs for its songs (`page_actions`) at the end.
+                                // A mix's four covers two by two.
+                                if root.page-kind != PageLayout.artist: VerticalLayout {
+                                    spacing: 24px;
+                                    HorizontalLayout {
+                                        padding-left: Frame.back-room;
+                                        spacing: 28px;
+                                        // A right press on the artwork or the title opens the page's own menu, as its card's.
+                                        head-art := Art {
+                                            width: 240px;
+                                            height: 240px;
+                                            border-radius: 8px;
+                                            source: root.page-covers.length >= 4 ? root.pick-art(root.page-covers, root.covers-rev) : root.art(root.page-art, 1, root.covers-rev);
                                             RightPress {
                                                 menu(x, y) => { Go.card-menu(root.page-card, head-art.source, x, y); }
                                             }
                                         }
-                                        if root.page-sub != "": Link {
-                                            text: root.page-sub;
-                                            artist: root.page-sub-artist;
-                                            color: Theme.text;
-                                            font-size: 20px;
-                                            font-weight: 500;
-                                            wrap: word-wrap;
-                                        }
-                                        Rectangle {
-                                            vertical-stretch: 1;
-                                        }
-                                        PageActions {
-                                            alignment: start;
-                                            seal: root.page-can-star && (root.page-kind == PageLayout.album || root.page-pinnable);
-                                            liked: root.page-starred;
-                                            shuffle-lit: root.page-shuffle-lit;
-                                            pausing: root.page-pausing;
-                                            can-save: root.page-can-save;
-                                            play(shuffle) => { root.play-page(shuffle); }
-                                            star => { root.page-star(); }
-                                            save => { root.page-save(); }
+                                        VerticalLayout {
+                                            alignment: end;
+                                            spacing: 2px;
+                                            Text {
+                                                text: root.page-title;
+                                                color: Theme.text;
+                                                font-family: Type.title;
+                                                font-size: 34px;
+                                                font-weight: 700;
+                                                letter-spacing: -0.5px;
+                                                wrap: word-wrap;
+                                                RightPress {
+                                                    menu(x, y) => { Go.card-menu(root.page-card, head-art.source, x, y); }
+                                                }
+                                            }
+                                            if root.page-sub != "": Link {
+                                                text: root.page-sub;
+                                                artist: root.page-sub-artist;
+                                                color: Theme.text;
+                                                font-size: 20px;
+                                                font-weight: 500;
+                                                wrap: word-wrap;
+                                            }
+                                            if root.page-caption != "": Text {
+                                                text: root.page-caption;
+                                                color: Theme.dim;
+                                                font-size: 13px;
+                                                overflow: elide;
+                                            }
+                                            Rectangle {
+                                                height: 14px;
+                                            }
+                                            HorizontalLayout {
+                                                spacing: 2px;
+                                                PageActions {
+                                                    alignment: start;
+                                                    on: root.page-songs.length > 0;
+                                                    seal: root.page-can-star && (root.page-kind == PageLayout.album || root.page-pinnable);
+                                                    liked: root.page-starred;
+                                                    shuffle-lit: root.page-shuffle-lit;
+                                                    pausing: root.page-pausing;
+                                                    can-save: root.page-can-save;
+                                                    play(shuffle) => { root.play-page(shuffle); }
+                                                    star => { root.page-star(); }
+                                                    save => { root.page-save(); }
+                                                }
+                                                Rectangle {
+                                                    horizontal-stretch: 1;
+                                                }
+                                                for a in root.page-acts: IconButton {
+                                                    y: (parent.height - self.height) / 2;
+                                                    glyph: a == 2 ? Icons.check-circle : a == 4 ? Icons.playlist : a == 5 ? Icons.refresh : Icons.download;
+                                                    quiet: true;
+                                                    size: 44px;
+                                                    icon: 24px;
+                                                    clicked => { root.page-act(a); }
+                                                }
+                                                if root.page-editable: IconButton {
+                                                    y: (parent.height - self.height) / 2;
+                                                    glyph: Icons.edit-pencil;
+                                                    quiet: true;
+                                                    size: 44px;
+                                                    icon: 24px;
+                                                    clicked => {
+                                                        root.asked-playlist-id = root.page-id;
+                                                        root.asked-playlist-name = root.page-title;
+                                                        root.rename-name = root.page-title;
+                                                        root.rename-open = true;
+                                                    }
+                                                }
+                                                if root.page-editable: IconButton {
+                                                    y: (parent.height - self.height) / 2;
+                                                    glyph: Icons.trash;
+                                                    quiet: true;
+                                                    size: 44px;
+                                                    icon: 24px;
+                                                    clicked => {
+                                                        root.asked-playlist-id = root.page-id;
+                                                        root.asked-playlist-name = root.page-title;
+                                                        root.delete-open = true;
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
+                                    Rectangle {
+                                        height: 1px;
+                                        background: Theme.hairline;
+                                    }
                                 }
-                                // The list's head: what it is ("2019 · 8 songs · 36:28 · FLAC") and the core's glyphs for
-                                // its songs (`page_actions`), a hairline under.
-                                VerticalLayout {
+                                // An artist's list head: what it holds ("4 releases · 16 songs") and the core's glyphs
+                                // for its songs (`page_actions`), a hairline under.
+                                if root.page-kind == PageLayout.artist: VerticalLayout {
                                     HorizontalLayout {
                                         height: 48px;
                                         spacing: 2px;
@@ -10453,31 +10517,6 @@ export component AppWindow inherits Window {
                                             size: 44px;
                                             icon: 24px;
                                             clicked => { root.page-act(a); }
-                                        }
-                                        if root.page-editable: IconButton {
-                                            y: (parent.height - self.height) / 2;
-                                            glyph: Icons.edit-pencil;
-                                            quiet: true;
-                                            size: 44px;
-                                            icon: 24px;
-                                            clicked => {
-                                                root.asked-playlist-id = root.page-id;
-                                                root.asked-playlist-name = root.page-title;
-                                                root.rename-name = root.page-title;
-                                                root.rename-open = true;
-                                            }
-                                        }
-                                        if root.page-editable: IconButton {
-                                            y: (parent.height - self.height) / 2;
-                                            glyph: Icons.trash;
-                                            quiet: true;
-                                            size: 44px;
-                                            icon: 24px;
-                                            clicked => {
-                                                root.asked-playlist-id = root.page-id;
-                                                root.asked-playlist-name = root.page-title;
-                                                root.delete-open = true;
-                                            }
                                         }
                                     }
                                     Rectangle {
@@ -10554,6 +10593,12 @@ export component AppWindow inherits Window {
                                         text: root.show-all-text;
                                         clicked => { root.all-songs(0); }
                                     }
+                                }
+                                // A playlist or mix that holds nothing says so under its head.
+                                if root.page-kind == PageLayout.list && root.page-songs.length == 0 && !root.loading: EmptyNote {
+                                    padding-top: 48px;
+                                    icon: Icons.music-note;
+                                    title: "No songs yet";
                                 }
                             }
                         }

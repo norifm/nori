@@ -7524,7 +7524,7 @@ mod tests {
             slint::platform::update_timers_and_animations();
             let shot = ui.window().take_snapshot().unwrap();
             // The first row, under the back disc and the page's head.
-            let (w, rows) = (shot.width() as usize, 511..551);
+            let (w, rows) = (shot.width() as usize, 380..420);
             rows.flat_map(|y| shot.as_slice()[y * w..(y + 1) * w].to_vec()).collect::<Vec<_>>()
         };
         let song = SongRow { title: "Glass Harbour".into(), time: "3:21".into(), index: 0, ..Default::default() };
@@ -7587,7 +7587,7 @@ mod tests {
         use slint::platform::PointerEventButton::{Left, Right};
         // The menu opens where the row is pressed: the song at its head with its two glyphs at the end, then
         // Play, and the album's line a group below.
-        let row = (400.0, 526.0);
+        let row = (400.0, 400.0);
         // Its 6 px inset, the song's head (46 px, the glyphs 32 px at its end), its hairline, 32 px rows, and
         // 7 px between groups.
         let glyph = |n: f32| (row.0 + 260.0 - 6.0 - (2.0 - n) * 32.0 + 16.0, row.1 + 6.0 + 23.0);
@@ -7633,6 +7633,8 @@ mod tests {
             let ui = window();
             ui.window().set_size(slint::PhysicalSize::new(1280, height));
             ui.set_view(View::Page);
+            // A playlist's rows, which run to the frame's edge (an album's keep a reading width).
+            ui.set_page_kind(PageLayout::List);
             let glyphs = lines.iter().filter(|m| m.place == SongPlace::Title).count();
             ui.on_song_menu(move |_, _| ModelRc::new(VecModel::from(lines.clone())));
             let row = SongRow { title: title.into(), artist: by.into(), album: on.into(), ..Default::default() };
@@ -7646,8 +7648,9 @@ mod tests {
             settle();
             let point = |x: f32, y: f32| slint::LogicalPosition::new(x, y);
             let button = slint::platform::PointerEventButton::Right;
-            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: point(x, 526.0), button });
-            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: point(x, 526.0), button });
+            // The first row, under the head and the columns' heads.
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: point(x, 434.0), button });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: point(x, 434.0), button });
             settle();
             let (left, top) = {
                 let inner = i_slint_core::window::WindowInner::from_pub(ui.window());
@@ -9372,10 +9375,10 @@ mod tests {
         };
         for (width, gutter) in [(1728, 144.0), (760, 32.0)] {
             settle(View::Page, width);
-            let cover = i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "Art").find(|a| a.size().width.round() == 270.0).expect("the page's cover");
+            let cover = i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "Art").find(|a| a.size().width.round() == 240.0).expect("the page's cover");
             let p = cover.absolute_position();
-            // The disc is 40 px tall from 87 px (Frame.back-y).
-            assert_eq!((p.x.round(), p.y.round()), (gutter, 140.0), "the cover at the margin under the disc at {width}");
+            // The disc is 40 px wide at the margin from 87 px (Frame.back-y); the cover stands beside it, level.
+            assert_eq!((p.x.round(), p.y.round()), (gutter + 52.0, 87.0), "the cover beside the disc at {width}");
             settle(View::Shelf, width);
             assert_eq!(at("Recently played").0, gutter + 52.0, "the shelf's title after the disc at {width}");
         }
@@ -10041,6 +10044,83 @@ mod tests {
         assert_eq!(model.row_data(0), Some(here));
     }
 
+    /// A playlist with no songs says so under its head, and its Play does nothing; once it has a song, Play
+    /// plays it and the note goes.
+    #[test]
+    fn an_empty_playlist_says_so_and_does_not_play() {
+        use i_slint_backend_testing::ElementHandle;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_view(View::Page);
+        ui.set_page_kind(PageLayout::List);
+        ui.set_page_title("Road trip".into());
+        let played = Rc::new(std::cell::Cell::new(0));
+        let plays = played.clone();
+        ui.on_play_page(move |_| plays.set(plays.get() + 1));
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        let noted = || ElementHandle::find_by_accessible_label(&ui, "No songs yet").next().is_some();
+        let play = || {
+            let words = ElementHandle::find_by_accessible_label(&ui, "Play").next().expect("Play");
+            let (p, size) = (words.absolute_position(), words.size());
+            press(ui.window(), p.x + size.width / 2.0, p.y + size.height / 2.0, slint::platform::PointerEventButton::Left);
+            settle();
+        };
+        settle();
+        assert!(noted(), "the empty list says so");
+        play();
+        assert_eq!(played.get(), 0, "an empty list does not play");
+        ui.set_page_songs(ModelRc::new(VecModel::from(vec![SongRow { title: "Glass Harbour".into(), ..Default::default() }])));
+        settle();
+        assert!(!noted(), "a list with a song says nothing of none");
+        play();
+        assert_eq!(played.get(), 1, "a list with a song plays");
+    }
+
+    /// Settings' categories: a rail at the left on a window 1280 px wide or more, one under another, and
+    /// chips in a line under the title on a narrower one; either chooses the one pressed.
+    #[test]
+    fn settings_categories_are_a_rail_on_a_wide_window_and_chips_otherwise() {
+        use i_slint_backend_testing::ElementHandle;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.set_settings_tabs(ModelRc::new(VecModel::from(["Profiles", "Playback", "Sound"].map(SharedString::from).to_vec())));
+        ui.set_view(View::Settings);
+        let chosen = Rc::new(std::cell::Cell::new(-1));
+        let seen = chosen.clone();
+        ui.on_settings_tab_chosen(move |t| seen.set(t));
+        ui.show().unwrap();
+        for (width, rail) in [(1280, true), (1100, false)] {
+            ui.window().set_size(slint::PhysicalSize::new(width, 820));
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+            let at = |label: &str| {
+                let e = ElementHandle::find_by_accessible_label(&ui, label).next().expect(label);
+                let (p, size) = (e.absolute_position(), e.size());
+                (p.x + size.width / 2.0, p.y + size.height / 2.0)
+            };
+            let (first, third) = (at("Profiles"), at("Sound"));
+            if rail {
+                assert!(third.1 > first.1 + 60.0, "one under another at {width}: {first:?} {third:?}");
+            } else {
+                assert!((third.1 - first.1).abs() < 1.0 && third.0 > first.0, "in a line at {width}: {first:?} {third:?}");
+            }
+            chosen.set(-1);
+            press(ui.window(), third.0, third.1, slint::platform::PointerEventButton::Left);
+            assert_eq!(chosen.get(), 2, "Sound chosen at {width}");
+        }
+    }
+
     /// A playlist page the profile may change: its list head renames it with its name filled in, and
     /// deletes it only once the sheet that asks is answered; each dialog acts on the playlist it was
     /// opened for, whatever page is shown by then, and Escape closes it.
@@ -10079,13 +10159,15 @@ mod tests {
         };
         let titled = |title: &str| i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, title).next().is_some();
         tap(0.0, 0.0);
-        // The list head's pencil and trash, at its right end; the sheets' buttons at their foot.
-        let (rename, delete) = ((1180.0, 461.0), (1225.0, 461.0));
+        // The head's pencil and trash, at its right end level with Play; the sheets' buttons at their foot,
+        // placed from the sheet's top (it stands in the middle of the window).
+        let (rename, delete) = ((1174.0, 303.0), (1218.0, 303.0));
+        let below = || i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "Dialog").next().map(|d| d.query_descendants().match_inherits("MenuSheet").find_first().unwrap().absolute_position().y).expect("a sheet") - 80.0;
         let (cancel, confirm) = ((675.0, 170.0), (765.0, 170.0));
         tap(rename.0, rename.1);
         assert_eq!(ui.get_rename_name(), "Road trip", "the field starts with the playlist's name");
         ui.set_rename_name("Rain".into());
-        tap(confirm.0, 189.0);
+        tap(confirm.0, 189.0 + below());
         assert_eq!(*did.borrow(), ["rename road Rain"]);
         // The app closes it once the name is sent.
         ui.set_rename_open(false);
@@ -10094,7 +10176,7 @@ mod tests {
         assert!(!ui.get_rename_open(), "Escape closes the rename dialog, its field holding the keys");
         tap(delete.0, delete.1);
         assert!(ui.get_delete_open());
-        tap(cancel.0, cancel.1);
+        tap(cancel.0, cancel.1 + below());
         assert!(!ui.get_delete_open(), "Cancel closes the sheet");
         tap(delete.0, delete.1);
         tap(100.0, 600.0);
@@ -10109,7 +10191,7 @@ mod tests {
         ui.set_page_title("The Rainbow Goblins".into());
         settle();
         assert!(titled("Delete “Road trip”?") && !titled("Delete “The Rainbow Goblins”?"));
-        tap(confirm.0, confirm.1);
+        tap(confirm.0, confirm.1 + below());
         assert_eq!(*did.borrow(), ["rename road Rain", "delete road Road trip"]);
     }
 

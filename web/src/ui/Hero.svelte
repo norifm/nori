@@ -24,9 +24,10 @@
     by,
     label = "",
     onplay,
+    playable = true,
     actions,
     item,
-  }: { cover?: string; title: string; round?: boolean; fallback?: string; by?: Snippet; label?: string; onplay: (shuffle: boolean) => void; actions?: Snippet; item?: ReturnType<typeof itemMark> } = $props();
+  }: { cover?: string; title: string; round?: boolean; fallback?: string; by?: Snippet; label?: string; onplay: (shuffle: boolean) => void; playable?: boolean; actions?: Snippet; item?: ReturnType<typeof itemMark> } = $props();
 
   // The cover's colors, lent to the page and the chrome while it is open; the season's until they come.
   const me = {};
@@ -70,8 +71,9 @@
     {#if by}<div class="by">{@render by()}</div>{/if}
     {#if label}<div class="label">{label}</div>{/if}
     <div class="hero-actions">
-      <button class="pill" onclick={() => onplay(false)}><Icon name="play-solid" />{W.play}</button>
-      <button class="pill quiet" onclick={() => onplay(true)}><Icon name="shuffle" />{W.shuffle}</button>
+      <!-- A list with no songs: Play and Shuffle dimmed. -->
+      <button class="pill" disabled={!playable} onclick={() => onplay(false)}><Icon name="play-solid" />{W.play}</button>
+      <button class="pill quiet" disabled={!playable} onclick={() => onplay(true)}><Icon name="shuffle" />{W.shuffle}</button>
       <span class="grow"></span>
       {@render actions?.()}
     </div>

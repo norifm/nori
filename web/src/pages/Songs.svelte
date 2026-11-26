@@ -55,7 +55,7 @@
       </button>
     </div>
   {/if}
-  {#if page.data?.length}<SongList songs={page.data} kind="Songs" />{:else}<p class="empty">{favorites ? W.noFavoriteSongs : W.noSongs}</p>{/if}
+  {#if page.data?.length}<SongList songs={page.data} kind="Songs" />{:else}<p class="empty">{favorites ? W.noFavoriteSongs : W.noLibrarySongs}</p>{/if}
 </Page>
 
 <style>

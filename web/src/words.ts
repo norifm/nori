@@ -72,7 +72,7 @@ export const W = {
   librarySections: { Albums: "Albums", Artists: "Artists", Songs: "Songs", Playlists: "Playlists", Genres: "Genres", Favourites: "Favorites", History: "History" } as Record<string, string>,
   /** The songs list's orders, by the core's names (`song_sorts`). */
   songSorts: { TITLE: "Title", ARTIST: "Artist", ALBUM: "Album", YEAR: "Year", ADDED: "Added", PLAYS: "Most played", LONGEST: "Longest" } as Record<string, string>,
-  noSongs: "Your library has no songs yet",
+  noLibrarySongs: "Your library has no songs yet",
   nothingPlayed: "Nothing played yet, or listening history is off in Settings, under Library",
   clearHistory: "Clear history",
   listeningStats: "Listening stats",
@@ -223,6 +223,7 @@ export const W = {
   clearSearches: "Clear",
   noAlbums: "No albums yet",
   noPlaylists: "No playlists yet",
+  noSongs: "No songs yet",
   noFavoriteSongs: "No favorite songs yet. Tap the seal on a song and it will be here.",
   noFavoriteAlbums: "No favorite albums yet. Tap the seal on an album and it will be here.",
   loading: "Loading",
