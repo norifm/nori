@@ -76,7 +76,10 @@ internal class CarTree(private val context: Context) {
 
     /** A folder of the tree, named from the resources, or by its own name. */
     fun folder(f: BrowseFolder): MediaItem {
-        val title = f.kind?.let { context.getString(folderName(it)) } ?: f.mix?.let { CarWords.mix(it) } ?: f.title
+        // A run of a long A to Z list is named by its first and last rows.
+        val run = f.media == CarMedia.PART && f.subtitle != null
+        val title = f.kind?.let { context.getString(folderName(it)) } ?: f.mix?.let { CarWords.mix(it) }
+            ?: if (run) context.getString(R.string.car_run, f.title, f.subtitle) else f.title
         val art = when {
             f.mix != null && f.art.isNotEmpty() -> CarArt.mosaic(context, f.id.substringAfter(':'), f.art)
             f.art.isNotEmpty() -> CarArt.cover(context, f.art.first())
@@ -95,9 +98,9 @@ internal class CarTree(private val context: Context) {
             CarMedia.ARTIST -> MediaMetadata.MEDIA_TYPE_ARTIST
             CarMedia.PLAYLIST -> MediaMetadata.MEDIA_TYPE_PLAYLIST
             CarMedia.GENRE -> MediaMetadata.MEDIA_TYPE_GENRE
-            CarMedia.FOLDER -> MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
+            CarMedia.FOLDER, CarMedia.PART -> MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
         }
-        val subtitle = f.subtitle ?: f.songs?.let { context.resources.getQuantityString(R.plurals.car_song_count, it.toInt(), it.toInt()) }
+        val subtitle = if (run) null else f.subtitle ?: f.songs?.let { context.resources.getQuantityString(R.plurals.car_song_count, it.toInt(), it.toInt()) }
         return MediaItem.Builder().setMediaId(f.id).setMediaMetadata(
             MediaMetadata.Builder().setTitle(title).setArtist(subtitle).setArtworkUri(art)
                 .setIsBrowsable(true).setIsPlayable(f.playable).setMediaType(type).setExtras(extras)
@@ -161,6 +164,7 @@ internal class CarTree(private val context: Context) {
         null -> when (f.media) {
             CarMedia.GENRE -> R.drawable.car_genres
             CarMedia.ARTIST -> R.drawable.car_artists
+            CarMedia.PART -> R.drawable.car_library
             else -> null
         }
         else -> null

@@ -272,6 +272,26 @@ object TestActions {
         emit(FoundLyrics(dev.nori.music.ffi.model.Lyrics(true, true, lines(true), dev.nori.music.ffi.model.LyricsTiming.NotChecked), dev.nori.music.ffi.settings.LyricsOrigin.BetterLyrics))
     }
 
+    /** Folder [parent]'s rows as a car's browser receives them: the platform's MediaBrowser, subscribed without pages. */
+    private suspend fun legacyRows(context: Context, parent: String): List<android.media.browse.MediaBrowser.MediaItem> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            kotlinx.coroutines.suspendCancellableCoroutine { done ->
+                var browser: android.media.browse.MediaBrowser? = null
+                browser = android.media.browse.MediaBrowser(context, android.content.ComponentName(context, dev.nori.music.playback.PlaybackService::class.java), object : android.media.browse.MediaBrowser.ConnectionCallback() {
+                    override fun onConnected() {
+                        browser!!.subscribe(parent, object : android.media.browse.MediaBrowser.SubscriptionCallback() {
+                            override fun onChildrenLoaded(id: String, children: MutableList<android.media.browse.MediaBrowser.MediaItem>) {
+                                browser!!.disconnect(); if (done.isActive) done.resumeWith(Result.success(children))
+                            }
+                            override fun onError(id: String) { browser!!.disconnect(); if (done.isActive) done.resumeWith(Result.success(emptyList())) }
+                        })
+                    }
+                    override fun onConnectionFailed() { if (done.isActive) done.resumeWith(Result.success(emptyList())) }
+                }, null)
+                browser.connect()
+            }
+        }
+
     /** See "car" in [act]. */
     private suspend fun carCheck(context: Context, what: String) {
         val log = { line: String -> android.util.Log.i("noricar", line) }
@@ -318,6 +338,10 @@ object TestActions {
                 }
                 "root" -> wait(browser.getLibraryRoot(params)).let { r -> log("root: code=${r.resultCode} error=${r.sessionError?.message}"); r.value?.let(::row) }
                 "tree" -> wait(browser.getChildren(arg, 0, 500, params)).let { r -> log("tree $arg: code=${r.resultCode} error=${r.sessionError?.message} rows=${r.value?.size}"); r.value?.forEach(::row) }
+                "legacy" -> legacyRows(context, arg).let { rows ->
+                    val bytes = rows.map { item -> android.os.Parcel.obtain().run { writeParcelable(item, 0); dataSize().also { recycle() } } }
+                    log("legacy $arg: rows=${rows.size} bytes=${bytes.sum()} max=${bytes.maxOrNull()} first=${rows.firstOrNull()?.description?.title} last=${rows.lastOrNull()?.description?.title}")
+                }
                 "search" -> {
                     wait(browser.search(arg, params))
                     wait(browser.getSearchResult(arg, 0, 100, params)).value?.forEach(::row)

@@ -161,19 +161,17 @@ impl Client {
                 BrowsePage { folders, ..Default::default() }
             },
             "albums" => match crate::browse::AlbumSort::of_name(arg) {
-                Some(crate::browse::AlbumSort::ByName) => match self.every_album(crate::browse::AlbumSort::ByName, None).await {
-                    Some(v) => BrowsePage { folders: album_folders(&v, None, usize::MAX), ..Default::default() },
-                    None => failed(),
-                },
+                Some(crate::browse::AlbumSort::ByName) => self.a_to_z(parent, AzPart::Whole).await,
                 Some(sort) => match self.cached_or_fetched(Read::AlbumList { kind: sort, size: 100, offset: 0, genre: None }).await {
                     Ok(Some(Page::Albums { v })) => BrowsePage { folders: album_folders(&v, None, 100), ..Default::default() },
                     _ => failed(),
                 },
                 None => BrowsePage::default(),
             },
-            "artists" => match self.cached_or_fetched(Read::ArtistIndex).await {
-                Ok(Some(Page::Artists { v })) => BrowsePage { folders: v.iter().filter(|a| !a.is_external).map(|a| artist_folder(a, None)).collect(), ..Default::default() },
-                _ => failed(),
+            "artists" => self.a_to_z(parent, AzPart::Whole).await,
+            "az" => match az_part(arg) {
+                Some((list, part)) => self.a_to_z(list, part).await,
+                None => BrowsePage::default(),
             },
             "artist" => match self.cached_or_fetched(Read::ArtistById { id: arg.into() }).await {
                 Ok(Some(Page::ArtistPage { v })) => BrowsePage { folders: album_folders(&v.albums, None, usize::MAX), actions: whole(), ..Default::default() },
@@ -187,9 +185,9 @@ impl Client {
                 Ok(Some(Page::Genres { v })) => BrowsePage { folders: v.iter().filter(|g| g.song_count > 0).map(genre_folder).collect(), ..Default::default() },
                 _ => failed(),
             },
-            "genre" => match self.every_album(crate::browse::AlbumSort::ByGenre, Some(arg)).await {
-                Some(v) => BrowsePage { folders: album_folders(&v, None, usize::MAX), actions: whole(), ..Default::default() },
-                None => failed(),
+            "genre" => match self.a_to_z(parent, AzPart::Whole).await {
+                p if p.failed => p,
+                p => BrowsePage { actions: whole(), ..p },
             },
             "starred" => match self.cached_or_fetched(Read::StarredItems).await {
                 Ok(Some(Page::StarredPage { v })) => {
@@ -229,6 +227,27 @@ impl Client {
             self.car.lock().keep(parent, &page);
         }
         page
+    }
+
+    /// Part `part` of A to Z list `list`: the artists, the albums by name, or a genre's albums.
+    async fn a_to_z(&self, list: &str, part: AzPart) -> BrowsePage {
+        let albums = match list.split_once(':') {
+            Some(("genre", genre)) => Some((crate::browse::AlbumSort::ByGenre, Some(genre))),
+            _ if list == "albums:alphabeticalByName" => Some((crate::browse::AlbumSort::ByName, None)),
+            _ => None,
+        };
+        let rows = match albums {
+            Some((sort, genre)) => match self.every_album(sort, genre).await {
+                Some(v) => album_folders(&v, None, usize::MAX),
+                None => return failed(),
+            },
+            None if list == "artists" => match self.cached_or_fetched(Read::ArtistIndex).await {
+                Ok(Some(Page::Artists { v })) => v.iter().filter(|a| !a.is_external).map(|a| artist_folder(a, None)).collect(),
+                _ => return failed(),
+            },
+            None => return BrowsePage::default(),
+        };
+        a_to_z(list, rows, part)
     }
 
     /// Every album in `kind`'s order (of `genre`, if given), a server's longest list at a time; what
@@ -439,26 +458,76 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn every_album_listed() {
-        let albums = |from: usize, n: usize| {
-            let v: Vec<String> = (from..from + n).map(|i| format!(r#"{{"id":"a{i}","name":"A{i}"}}"#)).collect();
-            format!(r#"{{"subsonic-response":{{"status":"ok","albumList2":{{"album":[{}]}}}}}}"#, v.join(","))
-        };
-        for parent in ["albums:alphabeticalByName", "genre:Rock"] {
-            let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
-            fake.answer(&albums(1, 500));
-            fake.answer(&albums(501, 20));
-            let p = block(c.browse_children(parent.into(), 10, 50));
-            assert_eq!(p.folders.last().map(|f| f.id.as_str()), Some("album:a520"), "{parent}");
-            assert_eq!(fake.asked().len(), 2, "{parent}");
-        }
-        // A server that ignores the offset sends its first page again: the list ends there.
+    fn a_server_ignoring_the_offset_ends_the_list() {
+        let page = (1..=500).map(|i| format!(r#"{{"id":"a{i}","name":"A{i}"}}"#)).collect::<Vec<_>>().join(",");
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
         for _ in 0..3 {
-            fake.answer(&albums(1, 500));
+            fake.answer(&format!(r#"{{"subsonic-response":{{"status":"ok","albumList2":{{"album":[{page}]}}}}}}"#));
         }
-        let p = block(c.browse_children("albums:alphabeticalByName".into(), 0, 1000));
-        assert_eq!((p.folders.len(), fake.asked().len()), (500, 2));
+        let (mut rows, mut initials) = (Vec::new(), Vec::new());
+        reach(&c, "genre:Rock", &mut rows, &mut initials);
+        assert_eq!((rows.len(), fake.asked().len()), (500, 2));
+    }
+
+    /// Every row a car can reach from folder `parent`, asked whole as a car asks; each list it is sent
+    /// fits what media3 passes on, and goes by initial.
+    fn reach(c: &Client, parent: &str, rows: &mut Vec<String>, initials: &mut Vec<String>) {
+        let page = block(c.browse_children(parent.into(), 0, u32::MAX));
+        assert!(page.folders.len() <= CAR_LIST_ROWS, "{parent} lists {} rows", page.folders.len());
+        let letter = |t: &str| match t.chars().next() {
+            Some('é') => 'E',
+            Some('Ø') => 'O',
+            Some(c) if c.is_ascii_alphabetic() => c.to_ascii_uppercase(),
+            _ => '#',
+        };
+        let letters: Vec<char> = page.folders.iter().filter(|f| f.media != CarMedia::Part).map(|f| letter(&f.title)).collect();
+        assert!(letters.is_sorted(), "{parent} goes by initial: {letters:?}");
+        for f in page.folders {
+            if f.media != CarMedia::Part {
+                rows.push(f.id);
+            } else {
+                if f.subtitle.is_none() {
+                    initials.push(f.title.clone());
+                }
+                reach(c, &f.id, rows, initials);
+            }
+        }
+    }
+
+    #[test]
+    fn every_initial_reaches_the_car() {
+        // 520 names in the server's order, not the car's: "The" and accents where a server's sort name
+        // puts them, more under S than one car list holds.
+        let names: Vec<String> = (0..520).map(|i| match i % 13 {
+            0 => format!("The Band {i}"),
+            1 => format!("émile {i}"),
+            2 => format!("{i} Degrees"),
+            3..=8 => format!("Sound {i}"),
+            9 => format!("Øystein {i}"),
+            10 => format!("Ana {i}"),
+            11 => format!("zeal {i}"),
+            _ => format!("Kai {i}"),
+        }).rev().collect();
+        let artists: Vec<String> = names.iter().enumerate().map(|(i, n)| format!(r#"{{"id":"r{i}","name":"{n}"}}"#)).collect();
+        let albums = |from: usize, to: usize| {
+            let v: Vec<String> = (from..to).map(|i| format!(r#"{{"id":"l{i}","name":"{}"}}"#, names[i])).collect();
+            format!(r#"{{"subsonic-response":{{"status":"ok","albumList2":{{"album":[{}]}}}}}}"#, v.join(","))
+        };
+        let artists = format!(r#"{{"subsonic-response":{{"status":"ok","artists":{{"index":[{{"name":"A","artist":[{}]}}]}}}}}}"#, artists.join(","));
+        let lists = [("artists", "artist:r", vec![artists]), ("albums:alphabeticalByName", "album:l", vec![albums(0, 500), albums(500, 520)]), ("genre:Rock", "album:l", vec![albums(0, 500), albums(500, 520)])];
+        for (list, prefix, answers) in lists {
+            let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+            answers.iter().for_each(|a| fake.answer(a));
+            let (mut rows, mut initials) = (Vec::new(), Vec::new());
+            reach(&c, list, &mut rows, &mut initials);
+            let mut want: Vec<String> = (0..520).map(|i| format!("{prefix}{i}")).collect();
+            rows.sort();
+            want.sort();
+            assert_eq!(rows, want, "{list}: every row once");
+            assert_eq!(initials, ["#", "A", "E", "K", "O", "S", "T", "Z"], "{list}");
+            let top = block(c.browse_children(list.into(), 0, u32::MAX));
+            assert_eq!(top.actions.is_empty(), !list.starts_with("genre:"), "{list}: a genre plays whole");
+        }
     }
 
     #[test]

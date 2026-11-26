@@ -106,6 +106,8 @@
     <string name="car_artists">Artists</string>
     <string name="car_genres">Genres</string>
     <string name="car_songs">Songs</string>
+    <!-- A run of a long A to Z list in the car: its first and last names. -->
+    <string name="car_run">%1$s – %2$s</string>
     <string name="car_for_you">For you</string>
     <string name="car_play">Play</string>
     <string name="car_shuffle">Shuffle</string>

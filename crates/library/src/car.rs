@@ -41,6 +41,9 @@ pub enum CarMedia {
     /// A playlist or a mix.
     Playlist,
     Genre,
+    /// Part of a long A to Z list: an initial's rows, titled by the initial, or a run of them from `title`
+    /// to `subtitle`.
+    Part,
 }
 
 /// A heading a folder's rows are listed under, which the client words.
@@ -84,7 +87,7 @@ pub struct BrowseFolder {
     pub mix: Option<MixName>,
     /// The album's, artist's, playlist's or genre's name; empty for the tree's own folders and the mixes.
     pub title: String,
-    /// An album's artist.
+    /// An album's artist; the last row of a run of an A to Z list.
     pub subtitle: Option<String>,
     /// A playlist's or a genre's number of songs, for the client to say.
     pub songs: Option<u32>,
@@ -273,6 +276,110 @@ pub fn mix_folder(t: &MixTile) -> BrowseFolder {
 /// could start them.
 pub fn album_folders(albums: &[Album], group: Option<CarGroup>, max: usize) -> Vec<BrowseFolder> {
     albums.iter().filter(|a| !a.is_external).take(max).map(|a| album_folder(a, group)).collect()
+}
+
+/// The most rows a car is sent in one folder. A car asks for a folder whole, and media3 sends it only
+/// the rows that fit in 256 KiB (`MediaUtils.truncateListBySize`), a row being about 1.1 kB.
+pub const CAR_LIST_ROWS: usize = 200;
+
+/// Which folder of an A to Z list: all of it, the rows of one initial, or the `n`th [`CAR_LIST_ROWS`]
+/// of an initial that has more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AzPart {
+    Whole,
+    Initial(char),
+    Run(char, usize),
+}
+
+/// The A to Z list and part folder `az:<arg>` is; none for an argument that names none.
+pub fn az_part(arg: &str) -> Option<(&str, AzPart)> {
+    let (at, list) = arg.split_once(':')?;
+    let mut chars = at.chars();
+    let initial = chars.next()?;
+    let run = chars.as_str();
+    let part = if run.is_empty() { AzPart::Initial(initial) } else { AzPart::Run(initial, run.parse().ok()?) };
+    Some((list, part))
+}
+
+/// Part `part` of A to Z list `list` (the folder listing it whole), out of all its `rows`, which are covers.
+/// The rows go by title, as a car's letter picker files them and jumps to them: '#' first, then A to Z. Where
+/// a car could not be sent them all, the list holds a folder per initial, and an initial with more rows
+/// than that a folder per run of them.
+pub fn a_to_z(list: &str, mut rows: Vec<BrowseFolder>, part: AzPart) -> BrowsePage {
+    rows.sort_by_cached_key(|f| (initial(&f.title), f.title.chars().map(fold).collect::<String>()));
+    let part_folder = |at: String, title: String, last: Option<String>| BrowseFolder {
+        id: format!("az:{at}:{list}"),
+        kind: None,
+        media: CarMedia::Part,
+        mix: None,
+        title,
+        subtitle: last,
+        songs: None,
+        art: Vec::new(),
+        group: None,
+        style: CarStyle::Grid,
+        playable: false,
+    };
+    let of = |c: char, rows: Vec<BrowseFolder>| rows.into_iter().filter(move |f| initial(&f.title) == c);
+    let folders = match part {
+        AzPart::Whole if rows.len() > CAR_LIST_ROWS => {
+            let mut initials: Vec<char> = rows.iter().map(|f| initial(&f.title)).collect();
+            initials.dedup();
+            initials.into_iter().map(|c| part_folder(c.to_string(), c.to_string(), None)).collect()
+        }
+        AzPart::Whole => rows,
+        AzPart::Initial(c) => {
+            let mine: Vec<BrowseFolder> = of(c, rows).collect();
+            if mine.len() <= CAR_LIST_ROWS {
+                mine
+            } else {
+                let runs = mine.chunks(CAR_LIST_ROWS).enumerate();
+                runs.map(|(n, run)| part_folder(format!("{c}{n}"), run[0].title.clone(), run.last().map(|f| f.title.clone()))).collect()
+            }
+        }
+        AzPart::Run(c, n) => of(c, rows).skip(n * CAR_LIST_ROWS).take(CAR_LIST_ROWS).collect(),
+    };
+    BrowsePage { folders, ..Default::default() }
+}
+
+/// The letter a car files `title` under: its first, without an accent; '#' for anything but A to Z.
+fn initial(title: &str) -> char {
+    match title.trim_start().chars().next().map(fold) {
+        Some(c) if c.is_ascii_lowercase() => c.to_ascii_uppercase(),
+        _ => '#',
+    }
+}
+
+/// `c` in lower case, a Latin letter without its accent.
+fn fold(c: char) -> char {
+    match c {
+        'À'..='Æ' | 'à'..='æ' | 'Ā'..='ą' => 'a',
+        'Ç' | 'ç' | 'Ć'..='č' => 'c',
+        'Ð' | 'ð' | 'Ď'..='đ' => 'd',
+        'È'..='Ë' | 'è'..='ë' | 'Ē'..='ě' => 'e',
+        'Ĝ'..='ģ' => 'g',
+        'Ĥ'..='ħ' => 'h',
+        'Ì'..='Ï' | 'ì'..='ï' | 'Ĩ'..='ĳ' => 'i',
+        'Ĵ' | 'ĵ' => 'j',
+        'Ķ'..='ĸ' => 'k',
+        'Ĺ'..='ł' => 'l',
+        'Ñ' | 'ñ' | 'Ń'..='ŋ' => 'n',
+        'Ò'..='Ö' | 'Ø' | 'ò'..='ö' | 'ø' | 'Ō'..='œ' => 'o',
+        'Ŕ'..='ř' => 'r',
+        'ß' | 'Ś'..='š' | 'ſ' => 's',
+        'Þ' | 'þ' | 'Ţ'..='ŧ' => 't',
+        'Ù'..='Ü' | 'ù'..='ü' | 'Ũ'..='ų' => 'u',
+        'Ŵ' | 'ŵ' => 'w',
+        'Ý' | 'ý' | 'ÿ' | 'Ŷ'..='Ÿ' => 'y',
+        'Ź'..='ž' => 'z',
+        c => {
+            let mut lower = c.to_lowercase();
+            match (lower.next(), lower.next()) {
+                (Some(l), None) => l,
+                _ => c,
+            }
+        }
+    }
 }
 
 /// Songs for the car, a provider's left out: playing one makes the server fetch its whole album.
@@ -558,6 +665,32 @@ mod tests {
         assert_eq!(library_songs(vec![song("a", "A"), ext]).len(), 1);
         let albums = [Album { id: "1".into(), ..Default::default() }, Album { id: "2".into(), is_external: true, ..Default::default() }];
         assert_eq!(album_folders(&albums, None, 10).len(), 1);
+    }
+
+    #[test]
+    fn a_to_z_goes_by_the_cars_letters() {
+        let named = |names: &[&str]| names.iter().map(|n| BrowseFolder { title: n.to_string(), ..folder(n, CarFolder::Albums) }).collect::<Vec<_>>();
+        let titles = |p: BrowsePage| p.folders.into_iter().map(|f| f.title).collect::<Vec<_>>();
+        // The server's order (sort names: "The" and accents away) becomes the car's: by the title's letter.
+        let served = named(&["Ænima", "Beck", "The Cure", "Émilie Simon", "elbow", "Ólafur Arnalds", "Zola", "ßtill", "10cc", "Сплин"]);
+        assert_eq!(
+            titles(a_to_z("artists", served, AzPart::Whole)),
+            ["10cc", "Сплин", "Ænima", "Beck", "elbow", "Émilie Simon", "Ólafur Arnalds", "ßtill", "The Cure", "Zola"]
+        );
+
+        // Longer than a car list: a folder per initial, and runs of an initial that has more.
+        let many: Vec<String> = (0..CAR_LIST_ROWS + 5).map(|i| format!("S{i:03}")).chain(["a", "b"].map(String::from)).collect();
+        let rows = named(&many.iter().map(String::as_str).collect::<Vec<_>>());
+        let top = a_to_z("albums:alphabeticalByName", rows.clone(), AzPart::Whole);
+        let ids: Vec<String> = top.folders.iter().map(|f| f.id.clone()).collect();
+        assert_eq!(ids, ["az:A:albums:alphabeticalByName", "az:B:albums:alphabeticalByName", "az:S:albums:alphabeticalByName"]);
+        assert_eq!(az_part(&ids[2]["az:".len()..]), Some(("albums:alphabeticalByName", AzPart::Initial('S'))));
+        let runs = a_to_z("albums:alphabeticalByName", rows.clone(), AzPart::Initial('S')).folders;
+        let spans: Vec<(&str, Option<&str>)> = runs.iter().map(|f| (f.title.as_str(), f.subtitle.as_deref())).collect();
+        assert_eq!(spans, [("S000", Some("S199")), ("S200", Some("S204"))]);
+        assert_eq!(az_part(&runs[1].id["az:".len()..]), Some(("albums:alphabeticalByName", AzPart::Run('S', 1))));
+        assert_eq!(titles(a_to_z("x", rows, AzPart::Run('S', 1))), ["S200", "S201", "S202", "S203", "S204"]);
+        assert_eq!(az_part("Sx:artists"), None);
     }
 
     fn found() -> SearchResult {

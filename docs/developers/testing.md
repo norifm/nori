@@ -355,6 +355,8 @@ app's listener, then restores adb's previous state.
 - **The car.** The core builds the tree, search and voice answers (`car.rs`). A debug build walks them
   with `tools/app.sh do "car root"`, `"car tree <id>"`, `"car search <words>"`, `"car play <id>"` and
   `"car voice <words>[|artist|album|playlist|genre|song]"`, and logs each row under the tag `noricar`.
+  `"car legacy <id>"` asks for a folder as a car asks, whole through the platform's browser, and logs
+  how many rows came and their size: media3 sends a car at most 256 KiB of rows.
   Check Android Auto itself on a phone with the Desktop Head Unit.
 - **A TV.** Use an Android TV emulator (a `tv` system image, 1080p). The key events 19 to 23 (up,
   down, left, right, center) walk the remote's focus: `adb shell input keyevent 19`. Leaving a text field
