@@ -645,6 +645,9 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         _account.value = AccountUi(account = dev.nori.music.ffi.AccountState.SIGNED_OUT)
     }
 
+    /** The proxy the sign-in page goes through: the account's profile's. */
+    fun signInProxy() = nori.accountProxy()
+
     /** Opens the provider's sign-in page, from the account's row. */
     fun openSignInPage() { signInOn(dev.nori.music.ffi.SignInEvent.Open(null)) }
 
@@ -766,12 +769,14 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun renameProfile(profile: SavedServer, name: String) = nori.renameProfile(profile, name)
     fun removeServer(id: String) = nori.removeServer(id)
 
-    /** Copies a picked PKCS#12 file into the app and returns the profile that uses it. */
+    /**
+     * [profile] with the picked PKCS#12 file as its client certificate, opened with [password]: checked and kept by
+     * the core (`cert::import_client_cert`). Throws its CertException when it is not taken.
+     */
     fun importClientCert(profile: SavedServer, uri: android.net.Uri, password: String): SavedServer {
-        val name = "${profile.id}.p12"
-        val dir = java.io.File(getApplication<Application>().filesDir, "certs").apply { mkdirs() }
-        getApplication<Application>().contentResolver.openInputStream(uri)?.use { input -> java.io.File(dir, name).outputStream().use { input.copyTo(it) } }
-        return profile.copy(clientCert = name, clientCertPassword = password)
+        val app = getApplication<Application>()
+        val p12 = app.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw dev.nori.music.ffi.cert.CertException.File()
+        return dev.nori.music.ffi.cert.importClientCert(app.filesDir.path, profile, p12, password)
     }
 
     private val _folders = MutableStateFlow<List<MusicFolder>>(emptyList())

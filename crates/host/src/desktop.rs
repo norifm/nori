@@ -77,16 +77,35 @@ impl Root {
         &self.data
     }
 
-    /// `profile`'s account apart from the session open on `open` (its core and profile), with a core and
-    /// client of its own, so editing it opens nothing else; `pictured` hears its picture change.
-    pub fn account(&self, http: Arc<Http>, profile: &SavedServer, open: Option<(Arc<nori_core::Core>, SavedServer)>, pictured: Box<dyn Fn() + Send + Sync>) -> Result<crate::account::Account, String> {
+    /// Opens the settings kept under the data directory as the live ones. The client certificates no
+    /// profile uses go now, before a form can import one.
+    pub fn open_settings(&self) -> Result<nori_core::settings::StoredPrefs, nori_core::CoreError> {
+        let prefs = self.app.settings.open(&crate::db_path(&self.data))?;
+        nori_core::cert::forget_unused_client_certs(&self.data.to_string_lossy(), prefs.servers.clone());
+        Ok(prefs)
+    }
+
+    /// The active profile's connections (its proxy, its server's headers and TLS), or plain ones while no
+    /// profile is saved: for what reaches the web outside a session, a jam joined or plugins before one
+    /// opens.
+    pub fn http(&self) -> Arc<Http> {
+        match self.app.settings.current().and_then(|p| p.active_server().cloned()) {
+            Some(profile) => Http::for_profile(&profile, &self.data),
+            None => Http::new(),
+        }
+    }
+
+    /// `profile`'s account apart from the session open on `open` (its client and profile), with a core and
+    /// client of its own over the profile's own connections, so editing it opens nothing else; `pictured`
+    /// hears its picture change.
+    pub fn account(&self, profile: &SavedServer, open: Option<(Arc<nori_core::client::Client>, SavedServer)>, pictured: Box<dyn Fn() + Send + Sync>) -> Result<crate::account::Account, String> {
         let core = nori_core::Core::new(crate::db_path(&self.data), nori_core::settings::server_db_id(&profile.id), self.app.clone()).map_err(|e| format!("the database: {e}"))?;
         core.use_kinds(self.plugins().kinds.clone());
         core.configure_profile(profile.clone()).map_err(|e| format!("the server: {e}"))?;
+        let http = Http::for_profile(profile, &self.data);
         let client = nori_core::client::Client::new(core, http.clone(), nori_core::covers::CoverNet::over(http));
         client.set_profile(crate::net(profile));
-        let give_back = open.filter(|(_, p)| p.kind == profile.kind);
-        Ok(crate::account::Account::new(client, self.app.settings.clone(), profile.id.clone(), pictured, give_back))
+        Ok(crate::account::Account::new(client, self.app.settings.clone(), profile.id.clone(), pictured, open))
     }
 
     /// Removes saved profile `id` and, off this thread (a library is many rows), its rows in the database.
@@ -184,9 +203,10 @@ impl Root {
         Some((safe, names))
     }
 
-    /// Logs `draft` in and keeps it as the active profile, blocking ([`nori_core::providers::log_in`]).
-    pub fn log_in(&self, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, NetError> {
-        block_on(nori_core::providers::log_in(&self.plugins().kinds, http, &self.app.settings, draft))
+    /// Logs `draft` in, over its own connections, and keeps it as the active profile, blocking
+    /// ([`nori_core::providers::log_in`]).
+    pub fn log_in(&self, draft: SavedServer) -> Result<SavedServer, NetError> {
+        block_on(nori_core::providers::log_in(&self.plugins().kinds, Http::for_profile(&draft, &self.data), &self.app.settings, draft))
     }
 }
 
@@ -487,7 +507,6 @@ fn card(to: &Output, volume: Volume) -> Box<dyn nori_engine::AudioOutput> {
 /// A desktop session's opening.
 pub struct DesktopOpen<'a> {
     pub root: &'a Root,
-    pub http: Arc<Http>,
     pub profile: SavedServer,
     pub output: Output,
     /// 0 to 1.
@@ -501,7 +520,8 @@ pub struct DesktopOpen<'a> {
     pub out: Out,
 }
 
-/// Opens the profile on the sound card, without touching the network ([`Session::open`]).
+/// Opens the profile on the sound card, over its own connections, without touching the network
+/// ([`Session::open`]).
 pub fn open(o: DesktopOpen) -> Result<Session, String> {
     if o.output == Output::Silent {
         nori_core::alog::info("output: silent, no sound card");
@@ -515,7 +535,7 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
     let session = Session::open(Open {
         queue: o.root.app.clone(),
         data: o.root.data(),
-        http: o.http,
+        http: Http::for_profile(&o.profile, o.root.data()),
         profile: o.profile,
         output,
         volume,

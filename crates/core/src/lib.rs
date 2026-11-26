@@ -47,6 +47,8 @@ pub use nori_db::{self as db, background};
 pub use nori_model::{alog, deciders, heap, lines, model, numbers, CoreError, SmartProblem};
 #[cfg(feature = "plugins")]
 pub use nori_backup as backup;
+#[cfg(feature = "cert")]
+pub use nori_cert as cert;
 pub use nori_automix::beat_model;
 pub use nori_devices::{autoeq, outputs};
 pub use nori_library::{menus, offer, paged, pages, rows, stars};
@@ -55,7 +57,7 @@ pub use nori_net::{api, transport};
 pub use nori_perf::perf_log;
 pub use nori_queue::{heard, rules, scrobble, sleep, tuning, undo};
 pub use nori_queue::deciders::button_act;
-pub use nori_settings::{credits, dsp, lyrics_sources, overrides, settings, settings_model, settings_pages, settings_store, setup};
+pub use nori_settings::{credits, dsp, lyrics_sources, overrides, proxy, settings, settings_model, settings_pages, settings_store, setup};
 pub use nori_settings::settings::parse_eq_preset;
 pub use nori_model::model::*;
 pub use nori_library::pages::{AlbumDetail, ArtistDetail, PlaylistDetail, Starred};

@@ -144,6 +144,8 @@ dependencies {
     implementation(libs.compose.material3)
     // The Support page's payment sheet (cards, Google Pay, BLIK, Przelewy24, Revolut Pay, PayPal).
     implementation(libs.stripe.paymentsheet)
+    // The sign-in page through the profile's proxy (ProxyController).
+    implementation(libs.androidx.webkit)
     // The perf build's self test: its plain logic is tested on the JVM (src/testPerf).
     testImplementation("junit:junit:4.13.2")
 }

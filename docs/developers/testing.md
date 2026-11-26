@@ -415,13 +415,14 @@ python3 tools/desktop-app.py do pause
 | `profiles` | Nothing, and opens the profiles menu |
 | `welcome_pick` | The index of a row on the welcome page shown, and picks that source or opens its sign-in |
 | `welcome_continue` | Nothing, and presses the welcome's Continue |
-| `login` | A server URL, user and password, and fills the sign-in form shown and sends it |
+| `login` | A server URL, user and password, and optionally a proxy, its user and its password |
 | `setup_answer` | The index of an answer to the first-run question shown, and picks it |
 | `setup_back` | Nothing, and goes to the first-run question before |
 | `appearance` | 0 System, 1 Day, 2 Night or 3 Midnight |
 | `click` | An x and y in the window's logical pixels, and presses and releases the left button there |
 | `state` | Nothing, and prints the UI's state |
 
+- `login` fills the sign-in form shown and sends it.
 - Each instance needs its own socket and data folder. The app never replaces an existing socket.
 - Playback requests finish after the reply, so wait for the state to change before you assert.
 - Run unattended checks in Xvfb, with a private audio sink, so the owner's desktop and audio stay free.

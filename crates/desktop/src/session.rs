@@ -16,7 +16,6 @@ use nori_engine::Event;
 use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot};
 use nori_host::session::{Chore, Note, Said, UpdateFound};
 pub use nori_host::Fetch;
-use nori_http::Http;
 use nori_look::cover::CoverColours;
 use nori_output_cpal::CpalOutput;
 
@@ -215,8 +214,8 @@ pub mod own {
 }
 
 /// Logs `draft` in and keeps it as the active profile (blocking).
-pub fn check_login(root: &nori_host::desktop::Root, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
-    root.log_in(http, draft).map_err(|e| net_error(&e))
+pub fn check_login(root: &nori_host::desktop::Root, draft: SavedServer) -> Result<SavedServer, String> {
+    root.log_in(draft).map_err(|e| net_error(&e))
 }
 
 /// One open server profile; its messages come tagged with its id.
@@ -237,7 +236,7 @@ impl std::ops::Deref for Session {
 impl Session {
     /// Opens the profile without touching the network, so an unreachable server still opens.
     /// `mpris`: the process's media controls, driven by this session while it is open.
-    pub fn open(root: &nori_host::desktop::Root, http: Arc<Http>, profile: SavedServer, tx: Tx, mpris: Option<Arc<nori_mpris::Mpris>>) -> Result<Session, String> {
+    pub fn open(root: &nori_host::desktop::Root, profile: SavedServer, tx: Tx, mpris: Option<Arc<nori_mpris::Mpris>>) -> Result<Session, String> {
         static IDS: AtomicU64 = AtomicU64::new(0);
         let id = IDS.fetch_add(1, Ordering::Relaxed);
         let to = tx.clone();
@@ -245,7 +244,6 @@ impl Session {
         let settings = &root.app.settings;
         let o = nori_host::desktop::DesktopOpen {
             root,
-            http,
             profile,
             output: nori_host::desktop::Output::Card(own::text(settings, own::DEVICE)),
             volume: own::number(settings, own::VOLUME, 1.0),

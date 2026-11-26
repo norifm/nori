@@ -1,13 +1,16 @@
 //! A plugin's moving cover, a muted loop in the player's sleeve: fetched once, its H.264 frames decoded on
 //! a thread of its own while the sleeve shows and sent to the UI at their own pace. An HLS playlist in
 //! fragmented MP4 (a master's lightest H.264 variant that is sharp enough, whole files or byte ranges), or
-//! one such MP4 file. What isn't that keeps the poster. Nothing touches the audio.
+//! one such MP4 file, fetched over the profile's own connections. What isn't that keeps the poster.
+//! Nothing touches the audio.
 
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use nori_covers::Image;
+use nori_engine::{ByteSource, Cancel, OpenError};
 use openh264::decoder::{Decoder, DecoderConfig, Flush};
 use openh264::formats::YUVSource;
 use openh264::OpenH264API;
@@ -291,32 +294,38 @@ pub struct Video {
     samples: Vec<Sample>,
 }
 
-fn fetch(part: &Part) -> Result<Vec<u8>, Failed> {
-    let mut ask = ureq::get(&part.url);
-    if let Some((at, length)) = part.range {
-        ask = ask.header("Range", format!("bytes={at}-{}", at + length - 1));
-    }
-    let mut got = ask.call().map_err(|e| match e {
-        ureq::Error::StatusCode(status) => Failed::Status(status),
+fn fetch(net: &dyn ByteSource, part: &Part) -> Result<Vec<u8>, Failed> {
+    let cancel = Cancel::new();
+    let got = match part.range {
+        Some((at, length)) => net.open_part(&part.url, None, at, at + length, &cancel),
+        None => net.open_plain(&part.url, 0, &cancel),
+    };
+    let body = got.map_err(|e| match e {
+        OpenError::Status(status) => Failed::Status(status),
         e => Failed::Unplayable(e.to_string()),
     })?;
-    got.body_mut().with_config().limit(MOST_BYTES).read_to_vec().map_err(|e| Failed::Unplayable(e.to_string()))
+    let mut file = Vec::new();
+    body.reader.take(MOST_BYTES + 1).read_to_end(&mut file).map_err(|e| Failed::Unplayable(e.to_string()))?;
+    if file.len() as u64 > MOST_BYTES {
+        return Err(Failed::Unplayable("too long".into()));
+    }
+    Ok(file)
 }
 
-fn load(url: &str) -> Result<Video, Failed> {
+fn load(net: &dyn ByteSource, url: &str) -> Result<Video, Failed> {
     let plain = |url: &str| Part { url: url.to_string(), range: None };
-    let first = fetch(&plain(url))?;
+    let first = fetch(net, &plain(url))?;
     let file = if first.starts_with(b"#EXTM3U") {
         let text = String::from_utf8_lossy(&first).into_owned();
         let (text, base) = match variant(&text, url) {
             Variant::Itself => (text, url.to_string()),
-            Variant::At(at) => (String::from_utf8_lossy(&fetch(&plain(&at))?).into_owned(), at),
+            Variant::At(at) => (String::from_utf8_lossy(&fetch(net, &plain(&at))?).into_owned(), at),
             Variant::NoneToPlay => return Err(Failed::Unplayable("no H.264 variant".into())),
         };
         let list = media(&text, &base)?;
         let mut file = Vec::new();
         for part in list.init.iter().chain(&list.segments) {
-            file.extend(fetch(part)?);
+            file.extend(fetch(net, part)?);
             if file.len() as u64 > MOST_BYTES {
                 return Err(Failed::Unplayable("too long".into()));
             }
@@ -393,14 +402,15 @@ impl Drop for Playing {
 /// The video once fetched, kept for the song.
 pub type Kept = Arc<Mutex<Option<Arc<Video>>>>;
 
-/// Plays the loop at `url`: `show` once a frame is in [`Playing::shown`], a failure to `failed`.
-pub fn play(url: String, kept: Kept, show: impl Fn() + Send + Sync + 'static, failed: impl Fn(Failed) + Send + 'static) -> Playing {
+/// Plays the loop at `url`, fetched through `net`: `show` once a frame is in [`Playing::shown`], a failure
+/// to `failed`.
+pub fn play(net: Arc<dyn ByteSource>, url: String, kept: Kept, show: impl Fn() + Send + Sync + 'static, failed: impl Fn(Failed) + Send + 'static) -> Playing {
     let (stop, busy) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
     let shown = Arc::new(Mutex::new(Image { width: 0, height: 0, pixels: Box::default() }));
     let (halt, wait, frame) = (stop.clone(), busy.clone(), shown.clone());
     nori_host::spawn("nori-motion", move || {
         let have = kept.lock().expect("not poisoned").clone();
-        let video = match have.map_or_else(|| load(&url).map(Arc::new), Ok) {
+        let video = match have.map_or_else(|| load(&*net, &url).map(Arc::new), Ok) {
             Ok(v) => v,
             Err(e) => return failed(e),
         };
@@ -449,6 +459,41 @@ mod tests {
         let at: Vec<_> = m.segments.iter().map(|p| (p.url.as_str(), p.range)).collect();
         assert_eq!(at, [("https://h/a/v.mp4", Some((800, 100))), ("https://h/a/v.mp4", Some((900, 50))), ("https://h/a/w.m4s", None)]);
         assert!(matches!(media("#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"k\"\n", "https://h/p"), Err(Failed::Unplayable(_))), "encrypted");
+    }
+
+    /// Serves the playlists it holds, each by its URL; anything else answers 410. Each ask, with its range.
+    struct Served {
+        files: Vec<(&'static str, &'static str)>,
+        asked: Mutex<Vec<Part>>,
+    }
+
+    impl ByteSource for Served {
+        fn open(&self, url: &str, from: u64) -> Result<nori_engine::Body, OpenError> {
+            self.open_plain(url, from, &Cancel::new())
+        }
+
+        fn open_plain(&self, url: &str, _from: u64, _: &Cancel) -> Result<nori_engine::Body, OpenError> {
+            self.asked.lock().unwrap().push(Part { url: url.to_string(), range: None });
+            let (_, text) = self.files.iter().find(|(at, _)| *at == url).ok_or(OpenError::Status(410))?;
+            Ok(nori_engine::Body { start: 0, len: Some(text.len() as u64), reader: Box::new(std::io::Cursor::new(text.as_bytes())) })
+        }
+
+        fn open_part(&self, url: &str, _: Option<&str>, from: u64, end: u64, _: &Cancel) -> Result<nori_engine::Body, OpenError> {
+            self.asked.lock().unwrap().push(Part { url: url.to_string(), range: Some((from, end - from)) });
+            Err(OpenError::Status(410))
+        }
+    }
+
+    /// Every part of a loop comes through the byte source it is handed (the profile's connections, its
+    /// proxy), a part in a file as its range; the server's refusal is the plugin's to hear.
+    #[test]
+    fn a_loop_comes_through_the_profiles_connections() {
+        let master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=900,RESOLUTION=720x720,CODECS=\"avc1.640020\"\nv/low.m3u8\n";
+        let low = "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\",BYTERANGE=\"800@0\"\n#EXTINF:6,\n#EXT-X-BYTERANGE:100@800\nv.mp4\n";
+        let net = Served { files: vec![("https://h/m.m3u8", master), ("https://h/v/low.m3u8", low)], asked: Mutex::default() };
+        assert!(matches!(load(&net, "https://h/m.m3u8"), Err(Failed::Status(410))));
+        let part = |url: &str, range| Part { url: url.into(), range };
+        assert_eq!(net.asked.into_inner().unwrap(), [part("https://h/m.m3u8", None), part("https://h/v/low.m3u8", None), part("https://h/v/init.mp4", Some((0, 800)))]);
     }
 
     #[test]

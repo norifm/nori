@@ -17,7 +17,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 png = { version = "0.18", optional = true }
 # The providers this client offers: a Subsonic server's and its plugins'.
-nori-core = { path = "../core", default-features = false, features = ["plugins"] }
+nori-core = { path = "../core", default-features = false, features = ["plugins", "cert"] }
 nori-engine = { path = "../engine", features = ["core"] }
 # Settings › Plugins: the plugin host's cards, rows and repos.
 nori-plugins = { path = "../plugins" }
@@ -43,9 +43,8 @@ pollster = "0.4"
 # Slint's Skia version, for measuring lyric text in sung.rs.
 skia-safe = "0.153.3"
 arboard = { version = "3", default-features = false }
-# A plugin's moving cover (motion.rs): H.264 in software, built from source, and its bytes over HTTP.
+# A plugin's moving cover (motion.rs): H.264 in software, built from source.
 openh264 = "0.9"
-ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", default-features = false }

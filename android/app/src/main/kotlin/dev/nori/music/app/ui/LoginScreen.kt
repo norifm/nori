@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -163,9 +164,6 @@ private fun Check(title: String, detail: String, value: Boolean, divider: Boolea
     GroupRow(title, { onChange(!value) }, subtitle = detail, divider = divider) { Spacer(Modifier.width(12.dp)); NoriSwitch(value, onChange) }
 }
 
-/** The form's switches: drawn together on a card rather than one by one among the fields. */
-private val SWITCHES = setOf(Field.LEGACY_AUTH, Field.SELF_SIGNED, Field.WIFI_ONLY)
-
 /**
  * "Add / edit server" from settings ([initial] and [onClose] set), and a profile of [kind] the welcome chose. A
  * profile being added picks its kind first (the core's `providers`) unless [kind] is given; the form then has
@@ -179,10 +177,14 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
     val providers by vm.providers.collectAsStateWithLifecycle()
     val info = providers.firstOrNull { it.kind == p.kind }
     val words = providerWords(vm, p.kind)
-    var advanced by remember { mutableStateOf(false) }
+    // The fields the form shows, the core's: an API key typed takes the user and password away, and a saved
+    // profile is renamed from its menu.
+    val shown = remember(info, p.apiKey, adding) { info?.let { dev.nori.music.ffi.formFields(it, dev.nori.music.ffi.Platform.PHONE, p, adding) }.orEmpty() }
+    // A saved profile with a value under Advanced opens with it shown.
+    var advanced by remember(info != null) { mutableStateOf(!adding && dev.nori.music.ffi.advancedShown(shown, p)) }
+    var proxySheet by remember { mutableStateOf(false) }
+    var certSheet by remember { mutableStateOf(false) }
     var headers by remember { mutableStateOf(dev.nori.music.ffi.settings.serverHeadersText(p.headers)) }
-    var certPassword by remember { mutableStateOf("") }
-    val pickCert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) p = vm.importClientCert(p, uri, certPassword) }
     LaunchedEffect(vm) { vm.added.collect { onClose?.invoke() } }
     LaunchedEffect(kind) { if (kind != null) vm.chooseKind(kind) { dev.nori.music.ffi.settings.serverFromForm(p, headers) } }
     // Gone, the next form starts afresh (the core's `AddFlow`).
@@ -194,33 +196,9 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
     val ready by androidx.compose.runtime.produceState(false, p.kind, p.url, p.user, p.apiKey) { value = vm.serverReady(p) }
     val schemes = remember(p.url) { dev.nori.music.ffi.settings.serverUrlSchemes(p.url) }
 
-    /** The switch for one of [SWITCHES]. */
+    /** One of the form's options, a row of its card: typed, a switch, or an entry opening its sheet. */
     @Composable
-    fun Switch(what: Field, divider: Boolean) {
-        when (what) {
-            Field.LEGACY_AUTH -> Check(say.legacyAuth, say.legacyAuthHint, p.legacyAuth, divider) { p = p.copy(legacyAuth = it) }
-            Field.SELF_SIGNED -> Check(say.selfSigned, say.selfSignedHint, p.allowSelfSigned, divider) { p = p.copy(allowSelfSigned = it) }
-            Field.WIFI_ONLY -> Check(say.wifiOnly, say.wifiOnlyHint, p.wifiOnly, divider) { p = p.copy(wifiOnly = it) }
-            else -> {}
-        }
-    }
-
-    /** The switches among [fields], on a card of their own. */
-    @Composable
-    fun Switches(fields: List<Field>) {
-        val switches = fields.filter { it in SWITCHES }
-        if (switches.isNotEmpty()) GroupCard(Modifier.padding(top = 12.dp)) { switches.forEachIndexed { i, f -> Switch(f, i < switches.lastIndex) } }
-    }
-
-    /** The text fields among [fields] the form asks now: user and password step aside for an API key, and a
-     *  saved profile is renamed from its menu. */
-    fun asked(fields: List<Field>) = fields.filter {
-        it !in SWITCHES && !(p.apiKey.isNotEmpty() && (it == Field.USER || it == Field.PASSWORD)) && !(it == Field.NAME && !adding)
-    }
-
-    /** One field of the form, a row of its card. */
-    @Composable
-    fun Ask(what: Field, divider: Boolean) {
+    fun Option(what: Field, divider: Boolean) {
         when (what) {
             Field.NAME -> GroupField(p.name, { p = p.copy(name = it) }, label = say.nameOptional, stacked = true, divider = divider)
             Field.ADDRESS -> {
@@ -243,26 +221,24 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
             Field.SECOND_ADDRESS -> GroupField(p.altUrl, { p = p.copy(altUrl = it) }, label = say.secondAddress, stacked = true, supporting = say.secondAddressHint, divider = divider)
             Field.API_KEY -> GroupField(p.apiKey, { p = p.copy(apiKey = it) }, label = say.apiKey, stacked = true, divider = divider)
             Field.HEADERS -> GroupField(headers, { headers = it }, label = say.extraHeaders, stacked = true, supporting = say.extraHeadersHint, minLines = 2, divider = divider)
-            Field.LEGACY_AUTH, Field.SELF_SIGNED, Field.WIFI_ONLY -> {}
-            Field.CLIENT_CERT -> {
-                GroupField(
-                    certPassword, { certPassword = it }, label = say.clientCertPassword, stacked = true, divider = false,
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-                Row(Modifier.padding(start = GROUP_INSET - 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TextAction(if (p.clientCert.isEmpty()) say.importClientCert else say.replaceClientCert, { pickCert.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) })
-                    if (p.clientCert.isNotEmpty()) TextAction(say.remove, { p = p.copy(clientCert = "", clientCertPassword = "") }, destructive = true)
-                }
-                if (divider) Hairline(startIndent = GROUP_INSET)
-            }
+            Field.LEGACY_AUTH -> Check(say.legacyAuth, say.legacyAuthHint, p.legacyAuth, divider) { p = p.copy(legacyAuth = it) }
+            Field.SELF_SIGNED -> Check(say.selfSigned, say.selfSignedHint, p.allowSelfSigned, divider) { p = p.copy(allowSelfSigned = it) }
+            Field.WIFI_ONLY -> Check(say.wifiOnly, say.wifiOnlyHint, p.wifiOnly, divider) { p = p.copy(wifiOnly = it) }
+            Field.CLIENT_CERT -> GroupRow(
+                say.clientCert, { certSheet = true }, Modifier.testTag("client-cert"),
+                value = if (p.clientCert.isEmpty()) say.proxyNone else say.clientCertImported, chevron = true, divider = divider,
+            )
+            Field.PROXY -> GroupRow(
+                say.proxy, { proxySheet = true }, Modifier.testTag("proxy"),
+                value = p.proxy?.let { dev.nori.music.ffi.settings.proxyAddress(it) } ?: say.proxyNone, chevron = true, divider = divider,
+            )
         }
     }
 
-    /** The text fields among [fields], on a card of their own. */
+    /** The options among [fields], in the core's order, on one card. */
     @Composable
-    fun Fields(fields: List<Field>) {
-        val shown = asked(fields)
-        if (shown.isNotEmpty()) GroupCard(Modifier.padding(top = 8.dp)) { shown.forEachIndexed { i, f -> Ask(f, i < shown.lastIndex) } }
+    fun Options(fields: List<Field>) {
+        if (fields.isNotEmpty()) GroupCard(Modifier.padding(top = 8.dp)) { fields.forEachIndexed { i, f -> Option(f, i < fields.lastIndex) } }
     }
 
     // A new profile starts by choosing what it plays from; back from its form chooses again. One with
@@ -288,25 +264,19 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
                 trailing = onClose?.let { close -> { GlyphButton(Iconoir.Xmark, say.cancel, Modifier.testTag("close"), onClick = close) } },
             )
             if (adding && words.hint.isNotEmpty()) Text(words.hint, Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            val main = info?.fields?.filter { !it.advanced }.orEmpty().map { it.what }
-            val folded = info?.fields?.filter { it.advanced }.orEmpty().map { it.what }
-            if (!asksNothing) {
-                Fields(main)
-                Switches(main)
-            }
+            val main = shown.filter { !it.advanced }.map { it.what }
+            val folded = shown.filter { it.advanced }.map { it.what }
+            if (!asksNothing) Options(main)
             if (folded.isNotEmpty()) {
                 GroupCard(Modifier.padding(top = 8.dp)) {
                     GroupRow(say.advanced, { advanced = !advanced }, Modifier.testTag("advanced"), divider = false) {
                         Icon(if (advanced) Iconoir.NavArrowUp else Iconoir.NavArrowDown, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                if (advanced) {
-                    Fields(folded)
-                    Switches(folded)
-                }
+                if (advanced) Options(folded)
             }
             // A saved profile with nothing to edit here has no button: it is renamed from its menu.
-            val saves = adding || (main + folded).any { it != Field.NAME }
+            val saves = adding || shown.isNotEmpty()
             val failed = (add.send as? dev.nori.music.ffi.AddSend.Failed)?.why
             if (signsIn || saves || failed != null) Column(Modifier.padding(horizontal = GROUP_MARGIN, vertical = 12.dp), Arrangement.spacedBy(12.dp)) {
                 failed?.let { Text(say.addFailure(it), color = MaterialTheme.colorScheme.error) }
@@ -331,6 +301,94 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
             val saved = vm.prefs.collectAsStateWithLifecycle().value.servers.firstOrNull { it.id == p.id }?.takeIf { !adding }
             if (saved != null) ScrobblingPart(vm, saved)
             Spacer(Modifier.height(24.dp))
+        }
+    }
+    NoriSheet(proxySheet, { proxySheet = false }) {
+        ProxySheet(p.proxy, close = { proxySheet = false }) { p = p.copy(proxy = it) }
+    }
+    NoriSheet(certSheet, { certSheet = false }) {
+        CertSheet(
+            set = p.clientCert.isNotEmpty(), close = { certSheet = false },
+            import = { uri, password -> runCatching { vm.importClientCert(p, uri, password) }.fold({ p = it; null }, { it as? dev.nori.music.ffi.cert.CertException ?: dev.nori.music.ffi.cert.CertException.File() }) },
+        ) {
+            p = p.copy(clientCert = "", clientCertPassword = "")
+        }
+    }
+}
+
+/**
+ * A profile's client certificate: its password, then the .p12 file picked, which [import] keeps, or says why
+ * it can't; Remove, offered while one is [set], takes it off. Cancel keeps what is set.
+ */
+@Composable
+private fun CertSheet(set: Boolean, close: () -> Unit, import: (android.net.Uri, String) -> dev.nori.music.ffi.cert.CertException?, removed: () -> Unit) {
+    var password by remember { mutableStateOf("") }
+    var failed by remember { mutableStateOf<dev.nori.music.ffi.cert.CertException?>(null) }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            failed = import(uri, password)
+            if (failed == null) close()
+        }
+    }
+    Column(Modifier.windowInsetsPadding(gestureBarRoom)) {
+        SheetTitle(say.clientCert)
+        GroupCard {
+            GroupField(
+                password, { password = it; failed = null }, Modifier.testTag("cert-password"), label = say.clientCertPassword, stacked = true, divider = false,
+                visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), autofocus = true,
+            )
+        }
+        failed?.let { Text(say.certError(it), Modifier.padding(horizontal = Space.gutter).padding(top = 10.dp).testTag("cert-failed"), color = MaterialTheme.colorScheme.error) }
+        Row(Modifier.fillMaxWidth().padding(start = Space.gutter - 12.dp, end = Space.gutter - 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (set) TextAction(say.remove, { removed(); close() }, Modifier.testTag("cert-remove"), destructive = true)
+            Spacer(Modifier.weight(1f))
+            TextAction(say.cancel, close, Modifier.testTag("cert-cancel"))
+            TextAction(
+                if (set) say.replaceClientCert else say.importClientCert,
+                { pick.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) }, Modifier.testTag("cert-import"),
+            )
+        }
+    }
+}
+
+/**
+ * A profile's proxy, [proxy] as saved: its address, user and password, read by the core on Save
+ * (`proxy_from_form`), which says here what is wrong with them; an empty address is no proxy. Cancel keeps
+ * [proxy]; Remove, offered while one is set, saves none.
+ */
+@Composable
+private fun ProxySheet(proxy: dev.nori.music.ffi.settings.SavedProxy?, close: () -> Unit, saved: (dev.nori.music.ffi.settings.SavedProxy?) -> Unit) {
+    var address by remember { mutableStateOf(proxy?.let { dev.nori.music.ffi.settings.proxyAddress(it) }.orEmpty()) }
+    var user by remember { mutableStateOf(proxy?.login?.user.orEmpty()) }
+    var password by remember { mutableStateOf(proxy?.login?.password.orEmpty()) }
+    var failed by remember { mutableStateOf<dev.nori.music.ffi.settings.ProxyException?>(null) }
+    val save = {
+        try {
+            saved(dev.nori.music.ffi.settings.proxyFromForm(address, user, password))
+            close()
+        } catch (e: dev.nori.music.ffi.settings.ProxyException) {
+            failed = e
+        }
+    }
+    Column(Modifier.windowInsetsPadding(gestureBarRoom)) {
+        SheetTitle(say.proxy)
+        GroupCard {
+            GroupField(
+                address, { address = it; failed = null }, Modifier.testTag("proxy-address"), label = say.proxyAddress, stacked = true,
+                placeholder = say.proxyHint, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), autofocus = true,
+            )
+            GroupField(user, { user = it; failed = null }, Modifier.testTag("proxy-user"), label = say.user, stacked = true)
+            GroupField(
+                password, { password = it; failed = null }, Modifier.testTag("proxy-password"), label = say.password, stacked = true, divider = false,
+                visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), onDone = save,
+            )
+        }
+        failed?.let { Text(say.proxyError(it), Modifier.padding(horizontal = Space.gutter).padding(top = 10.dp).testTag("proxy-failed"), color = MaterialTheme.colorScheme.error) }
+        Row(Modifier.fillMaxWidth().padding(start = Space.gutter - 12.dp, end = Space.gutter - 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (proxy != null) TextAction(say.proxyRemove, { saved(null); close() }, Modifier.testTag("proxy-remove"), destructive = true)
+            Spacer(Modifier.weight(1f))
+            TextAction(say.cancel, close, Modifier.testTag("proxy-cancel"))
+            TextAction(say.save, save, Modifier.testTag("proxy-save"))
         }
     }
 }

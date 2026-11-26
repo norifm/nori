@@ -37,7 +37,7 @@ val EqKind.slope: Boolean get() = EQ.bandKinds[ordinal].slope
 /** A new server profile: only its id, everything else empty. */
 fun newServer(id: String) = SavedServer(
     id = id, kind = ServerKind.Subsonic, name = "", url = "", altUrl = "", user = "", password = "", apiKey = "", legacyAuth = false, headers = emptyMap(),
-    allowSelfSigned = false, clientCert = "", clientCertPassword = "", wifiOnly = false, musicFolderIds = emptyList(), altMaxBitRate = 0,
+    allowSelfSigned = false, clientCert = "", clientCertPassword = "", proxy = null, wifiOnly = false, musicFolderIds = emptyList(), altMaxBitRate = 0,
     icon = dev.nori.music.ffi.settings.ProfileIcon.LETTER, picture = null, scrobbleOff = false, scrobblers = emptyList(),
 )
 
@@ -234,5 +234,8 @@ class Settings(private val context: Context) {
         if (effect != 0u) _effects.tryEmit(effect.toInt())
     }
 
-    private fun load(): StoredPrefs = core.open(java.io.File(context.filesDir, dbFileName()).path)
+    /** The settings as kept. The client certificates no profile uses go now, before a form can import one. */
+    private fun load(): StoredPrefs = core.open(java.io.File(context.filesDir, dbFileName()).path).also {
+        dev.nori.music.ffi.cert.forgetUnusedClientCerts(context.filesDir.path, it.servers)
+    }
 }

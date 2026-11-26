@@ -85,7 +85,7 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let joined = block_on(remote::jam_join(nori_http::Http::new(), guest_settings.clone(), None, link.clone(), "Guest".into())).unwrap();
     let JamJoin::Joined { pass } = joined else { panic!("guest joined: {joined:?}") };
     assert_eq!(pass.url, here);
-    let guest_profile = remote::jam_profile(pass, "guest".into(), "Jam".into());
+    let guest_profile = remote::jam_profile(pass, None, "guest".into(), "Jam".into());
     assert_eq!(guest_profile.kind, music_plugin(), "the songs are the host's provider's");
     assert!(guest_profile.user.is_empty() && guest_profile.password.is_empty());
     let guest_client = client_with(nori_core::providers::Kinds::builtin(), guest_path, guest_profile, guest_settings.clone());

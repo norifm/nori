@@ -435,6 +435,19 @@ export struct LoginKind {
     asks-password: bool,
 }
 
+// One option of the sign-in form beside its boxed fields, as app.rs lists the core's (form.rs): `field` names
+// it back, `kind` is 0 a text, 1 lines of text, 2 a switch, 3 an entry that opens its sheet. `hint` says what
+// its title doesn't; `text` is a text's value, what an empty one shows (`placeholder`), or an entry's value.
+export struct FormLine {
+    field: int,
+    kind: int,
+    title: string,
+    hint: string,
+    text: string,
+    placeholder: string,
+    on: bool,
+}
+
 // A band of the equalizer page: its label, its gain, and what its value reads.
 // A band as the curve draws it: `x` its place across (0..1), `db` its point's height; `freq` and `shape`
 // (its Q or slope) are the editor's words, `kind` and `channel` ordinals.
@@ -988,9 +1001,11 @@ component Caption inherits Text {
     letter-spacing: 0.5px;
 }
 
-// A word that does something (Clear, Undo): the ink, and a faint plate under the pointer.
+// A word that does something (Clear, Undo): the ink, or `ink` (rose for removing), and a faint plate under
+// the pointer.
 component TextButton inherits Rectangle {
     in property <string> text;
+    in property <color> ink: Theme.text;
     callback clicked;
     height: 28px;
     width: label.preferred-width + 20px;
@@ -998,7 +1013,7 @@ component TextButton inherits Rectangle {
     background: touch.has-hover ? Theme.hover : transparent;
     label := Text {
         text: root.text;
-        color: Theme.text;
+        color: root.ink;
         font-size: 13px;
         font-weight: 600;
     }
@@ -1592,10 +1607,12 @@ component ChoiceLine inherits Rectangle {
     }
 }
 
-// A line on a dialog's group that goes somewhere: its glyph, title and a quiet line under it.
+// A line on a dialog's group that goes somewhere: its glyph, title and a quiet line under it, or what it
+// has set (`value`) quiet before the glyph.
 component GoLine inherits Rectangle {
     in property <string> title;
     in property <string> line;
+    in property <string> value;
     in property <Glyph> glyph;
     in property <bool> divider: true;
     callback clicked;
@@ -1621,6 +1638,14 @@ component GoLine inherits Rectangle {
                 font-size: 12px;
                 overflow: elide;
             }
+        }
+        if root.value != "": Text {
+            max-width: root.width * 0.6;
+            text: root.value;
+            color: Theme.dim;
+            font-size: 13px;
+            overflow: elide;
+            vertical-alignment: center;
         }
         VerticalLayout {
             alignment: center;
@@ -3380,7 +3405,10 @@ component Field inherits Rectangle {
             width: 15px;
             height: 15px;
         }
+        // A long text stays in the box, which its width doesn't widen.
         Rectangle {
+            min-width: 0px;
+            clip: true;
             input := TextInput {
                 width: 100%;
                 text <=> root.text;
@@ -3928,6 +3956,157 @@ component Toggle inherits Rectangle {
     TouchArea {
         enabled: root.enabled;
         clicked => { root.toggled(!root.on); }
+    }
+}
+
+// What an option line's text is typed into: the line's own ink, its placeholder faint, and an accent rule
+// under it while it has the keys. `end` sets it at the line's end; `lines` takes more than one.
+component OptionInput inherits Rectangle {
+    in property <string> placeholder;
+    in property <bool> end;
+    in property <bool> lines;
+    in-out property <string> text;
+    callback typed(string);
+    min-height: 20px;
+    min-width: 40px;
+    preferred-height: max(20px, input.preferred-height + 4px);
+    clip: true;
+    input := TextInput {
+        y: 0;
+        height: parent.height - 3px;
+        text <=> root.text;
+        color: Theme.text;
+        font-size: 13px;
+        horizontal-alignment: root.end ? right : left;
+        vertical-alignment: center;
+        single-line: !root.lines;
+        wrap: root.lines ? word-wrap : no-wrap;
+        selection-background-color: Theme.accent.with-alpha(0.4);
+        edited => { root.typed(self.text); }
+    }
+    if root.text == "": Text {
+        y: 0;
+        width: parent.width;
+        height: parent.height - 3px;
+        text: root.placeholder;
+        color: Theme.faint;
+        font-size: 13px;
+        horizontal-alignment: root.end ? right : left;
+        vertical-alignment: center;
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: input.has-focus ? Theme.accent : transparent;
+    }
+}
+
+// A line of the sign-in form's options, in a dialog's group as its other lines are: its title, and at its end
+// what it holds: a text typed there (lines of text under the title), its switch, or what is set and the
+// chevron to its sheet. A line under it says what the title doesn't; a hairline parts it from the next.
+component OptionLine inherits Rectangle {
+    in property <FormLine> line;
+    in property <bool> divider: true;
+    callback typed(string);
+    callback toggled(bool);
+    callback opened;
+    min-height: 40px;
+    border-radius: MenuShape.inner;
+    background: hover ? Theme.hover : transparent;
+    property <bool> hover;
+    accessible-role: list-item;
+    accessible-label: root.line.title;
+    // An entry opens its sheet from anywhere on its line.
+    if root.line.kind == 3: Rectangle {
+        accessible-role: button;
+        accessible-label: root.line.title;
+        accessible-value: root.line.text;
+        accessible-action-default => { root.opened(); }
+        go := TouchArea {
+            mouse-cursor: pointer;
+            changed has-hover => { root.hover = self.has-hover; }
+            clicked => { root.opened(); }
+        }
+    }
+    VerticalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 12px;
+            Text {
+                horizontal-stretch: root.line.kind == 0 ? 0 : 1;
+                text: root.line.title;
+                color: Theme.text;
+                font-size: 13px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if root.line.kind == 0: OptionInput {
+                horizontal-stretch: 1;
+                text: root.line.text;
+                placeholder: root.line.placeholder;
+                end: true;
+                typed(t) => { root.typed(t); }
+            }
+            if root.line.kind == 2: Toggle {
+                y: (parent.height - self.height) / 2;
+                on: root.line.on;
+                toggled(v) => { root.toggled(v); }
+            }
+            if root.line.kind == 3: Text {
+                max-width: root.width * 0.55;
+                text: root.line.text;
+                color: Theme.dim;
+                font-size: 13px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if root.line.kind == 3: VerticalLayout {
+                alignment: center;
+                Icon {
+                    glyph: Icons.nav-arrow-right;
+                    colour: Theme.dim;
+                    width: 16px;
+                    height: 16px;
+                }
+            }
+        }
+        if root.line.kind == 1: OptionInput {
+            text: root.line.text;
+            placeholder: root.line.placeholder;
+            lines: true;
+            typed(t) => { root.typed(t); }
+        }
+        if root.line.hint != "": Wrapped {
+            text: root.line.hint;
+            color: Theme.dim;
+            font-size: 11.5px;
+        }
+    }
+    if root.divider: Rectangle {
+        x: 8px;
+        y: parent.height - 1px;
+        width: parent.width - 16px;
+        height: 1px;
+        background: Theme.hairline;
+    }
+}
+
+// The sign-in form's options as one group of lines, in the core's order.
+component OptionGroup inherits DialogGroup {
+    in property <[FormLine]> lines;
+    callback typed(int, string);
+    callback toggled(int, bool);
+    callback opened(int);
+    for line[i] in root.lines: OptionLine {
+        line: line;
+        divider: i < root.lines.length - 1;
+        typed(t) => { root.typed(line.field, t); }
+        toggled(on) => { root.toggled(line.field, on); }
+        opened => { root.opened(line.field); }
     }
 }
 
@@ -8684,7 +8863,7 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open;
+    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open || root.login-proxy-open || root.login-cert-open;
     // Closes every dialog but the two app.rs keeps state for (a device's, the sign-in), which it closes itself.
     public function close-dialogs() {
         root.ask-open = false;
@@ -8700,6 +8879,8 @@ export component AppWindow inherits Window {
         root.join-open = false;
         root.pairing-open = false;
         root.forget-open = false;
+        root.login-proxy-open = false;
+        root.login-cert-open = false;
     }
     // A dialog closed: the page's keys come back.
     changed dialog-open => {
@@ -8834,6 +9015,31 @@ export component AppWindow inherits Window {
     in-out property <string> login-url: "https://";
     in-out property <string> login-user;
     in-out property <string> login-password;
+    // The form's proxy (app.rs keeps it): its address, empty for none, and its login, which its sheet opens on.
+    in property <string> login-proxy;
+    in property <string> login-proxy-user;
+    in property <string> login-proxy-password;
+    // The form's options beside its boxed fields (form.rs): those it shows plainly, and those under
+    // Advanced settings; what is done to one, by its `field`.
+    in property <[FormLine]> login-plain;
+    in property <[FormLine]> login-advanced;
+    callback option-typed(int, string);
+    callback option-toggled(int, bool);
+    callback option-opened(int);
+    // The form's Advanced settings are unfolded: pressed open, or a saved profile has one set.
+    in-out property <bool> login-advanced-open;
+    // The proxy's sheet is over the form, and what its words are wrong with, after a Save.
+    in-out property <bool> login-proxy-open;
+    in-out property <string> login-proxy-error;
+    // The proxy's sheet saved: its address, user and password, for app.rs to read; an empty address is none.
+    callback proxy-saved(string, string, string);
+    // The client certificate's sheet is over the form, whether the form has one, and what went wrong with
+    // a Save; its Save hands the file's path and password to form.rs, its Remove takes the one set off.
+    in-out property <bool> login-cert-open;
+    in property <bool> login-cert-set;
+    in-out property <string> login-cert-error;
+    callback cert-saved(string, string);
+    callback cert-removed();
     in property <string> login-error;
     in property <bool> login-busy;
     in property <bool> can-cancel-login;
@@ -9242,6 +9448,53 @@ export component AppWindow inherits Window {
                                         root.login();
                                     }
                                 }
+                            }
+                            if root.login-plain.length > 0: OptionGroup {
+                                lines: root.login-plain;
+                                typed(field, text) => { root.option-typed(field, text); }
+                                toggled(field, on) => { root.option-toggled(field, on); }
+                                opened(field) => { root.option-opened(field); }
+                            }
+                            // What few profiles set, folded under Advanced settings as Android's Advanced is: its
+                            // head opens and closes it, and its options are one group of lines in the core's
+                            // order. The head's words and chevron stand where the lines' words and glyphs do.
+                            if root.login-advanced.length > 0: Rectangle {
+                                height: 30px;
+                                border-radius: MenuShape.radius;
+                                background: fold.has-hover ? Theme.hover : transparent;
+                                accessible-role: button;
+                                accessible-label: "Advanced settings";
+                                accessible-expandable: true;
+                                accessible-expanded: root.login-advanced-open;
+                                accessible-action-default => { root.login-advanced-open = !root.login-advanced-open; }
+                                HorizontalLayout {
+                                    padding-left: MenuShape.inset + 8px;
+                                    padding-right: MenuShape.inset + 8px;
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "Advanced settings";
+                                        color: Theme.dim;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                    Icon {
+                                        y: (parent.height - self.height) / 2;
+                                        glyph: root.login-advanced-open ? Icons.nav-arrow-up : Icons.nav-arrow-down;
+                                        colour: Theme.dim;
+                                        width: 16px;
+                                        height: 16px;
+                                    }
+                                }
+                                fold := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.login-advanced-open = !root.login-advanced-open; }
+                                }
+                            }
+                            if root.login-advanced.length > 0 && root.login-advanced-open: OptionGroup {
+                                lines: root.login-advanced;
+                                typed(field, text) => { root.option-typed(field, text); }
+                                toggled(field, on) => { root.option-toggled(field, on); }
+                                opened(field) => { root.option-opened(field); }
                             }
                             if root.login-error != "": Wrapped {
                                 text: root.login-error;
@@ -12982,6 +13235,124 @@ export component AppWindow inherits Window {
                 Capsule {
                     text: "Rename";
                     clicked => { root.rename-playlist(root.asked-playlist-id, root.rename-name); }
+                }
+            }
+        }
+
+        // The form's proxy in a sheet of its own, opened on what the form has: Save hands what is typed to
+        // app.rs, which closes it or says here what is wrong; Cancel keeps the form's; Remove, while one is
+        // set, saves none.
+        if root.login-proxy-open: proxy-sheet := Dialog {
+            property <string> address: root.login-proxy;
+            property <string> user: root.login-proxy-user;
+            property <string> password: root.login-proxy-password;
+            function save() {
+                root.proxy-saved(self.address, self.user, self.password);
+            }
+            title: "Proxy";
+            dismissed => { root.login-proxy-open = false; }
+            Field {
+                icon: Icons.antenna-signal;
+                placeholder: "SOCKS5 address (host:port)";
+                text <=> proxy-sheet.address;
+                init => { self.take-focus(); }
+                edited => { root.login-proxy-error = ""; }
+                accepted => { proxy-sheet.save(); }
+            }
+            Field {
+                icon: Icons.user;
+                placeholder: "User (optional)";
+                text <=> proxy-sheet.user;
+                edited => { root.login-proxy-error = ""; }
+                accepted => { proxy-sheet.save(); }
+            }
+            Field {
+                icon: Icons.key;
+                placeholder: "Password";
+                secret: true;
+                text <=> proxy-sheet.password;
+                edited => { root.login-proxy-error = ""; }
+                accepted => { proxy-sheet.save(); }
+            }
+            if root.login-proxy-error != "": Wrapped {
+                text: root.login-proxy-error;
+                color: Theme.danger;
+                font-size: 12px;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                if root.login-proxy != "": TextButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Remove proxy";
+                    ink: Theme.danger;
+                    clicked => { root.proxy-saved("", "", ""); }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Cancel";
+                    clicked => { root.login-proxy-open = false; }
+                }
+                Capsule {
+                    text: "Save";
+                    clicked => { proxy-sheet.save(); }
+                }
+            }
+        }
+
+        // The form's client certificate in a sheet of its own: a .p12 file by its path and its password. Save
+        // hands them to form.rs, which keeps the file or says here what is wrong; Cancel keeps the form's;
+        // Remove, while one is set, takes it off.
+        if root.login-cert-open: cert-sheet := Dialog {
+            property <string> path;
+            property <string> password;
+            function save() {
+                root.cert-saved(self.path, self.password);
+            }
+            title: "Client certificate";
+            dismissed => { root.login-cert-open = false; }
+            Field {
+                icon: Icons.folder;
+                placeholder: "Path of the .p12 file";
+                text <=> cert-sheet.path;
+                init => { self.take-focus(); }
+                edited => { root.login-cert-error = ""; }
+                accepted => { cert-sheet.save(); }
+            }
+            Field {
+                icon: Icons.key;
+                placeholder: "Its password";
+                secret: true;
+                text <=> cert-sheet.password;
+                edited => { root.login-cert-error = ""; }
+                accepted => { cert-sheet.save(); }
+            }
+            if root.login-cert-error != "": Wrapped {
+                text: root.login-cert-error;
+                color: Theme.danger;
+                font-size: 12px;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                if root.login-cert-set: TextButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Remove certificate";
+                    ink: Theme.danger;
+                    clicked => { root.cert-removed(); }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Cancel";
+                    clicked => { root.login-cert-open = false; }
+                }
+                Capsule {
+                    text: "Save";
+                    clicked => { cert-sheet.save(); }
                 }
             }
         }

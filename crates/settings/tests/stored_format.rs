@@ -28,6 +28,11 @@ fn sample() -> StoredPrefs {
             allow_self_signed: true,
             client_cert: "c.p12".into(),
             client_cert_password: "cp".into(),
+            proxy: Some(nori_settings::proxy::SavedProxy {
+                host: "proxy.lan".into(),
+                port: 1081,
+                login: Some(nori_settings::proxy::ProxyLogin { user: "me".into(), password: "p@ss".into() }),
+            }),
             wifi_only: true,
             music_folder_ids: vec!["3".into(), "5".into()],
             alt_max_bit_rate: 192,

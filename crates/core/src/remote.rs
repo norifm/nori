@@ -545,10 +545,19 @@ pub struct JamPass {
     pub kind: crate::settings::ServerKind,
 }
 
-/// The temporary guest profile contains only a scoped room credential.
+/// The temporary guest profile: a scoped room credential, over the connections of `joining`, the profile
+/// the jam was joined from, as the join was: its proxy, and its server's headers and TLS exceptions when
+/// the jam is on that server.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn jam_profile(pass: JamPass, id: String, name: String) -> crate::settings::SavedServer {
-    crate::settings::SavedServer { id, name, kind: pass.kind, url: pass.url, api_key: pass.api_key, ..Default::default() }
+pub fn jam_profile(pass: JamPass, joining: Option<crate::settings::SavedServer>, id: String, name: String) -> crate::settings::SavedServer {
+    let mut guest = crate::settings::SavedServer { id, name, kind: pass.kind, url: pass.url, api_key: pass.api_key, ..Default::default() };
+    let Some(joining) = joining else { return guest };
+    if crate::transport::ServerHosts::new(Some(joining.url), Some(joining.alt_url), false).policy(&guest.url).server {
+        (guest.headers, guest.allow_self_signed) = (joining.headers, joining.allow_self_signed);
+        (guest.client_cert, guest.client_cert_password) = (joining.client_cert, joining.client_cert_password);
+    }
+    guest.proxy = joining.proxy;
+    guest
 }
 
 /// The profile open before a jam was joined, opened again on leaving it (an app value).
@@ -4406,6 +4415,30 @@ mod tests {
         fn jam_ended(&self, _: Option<String>) {}
     }
 
+    /// A guest profile keeps the joining profile's proxy, and its headers and TLS exceptions only for a jam
+    /// on that profile's server: another server never gets them.
+    #[test]
+    fn a_jam_guest_connects_as_the_join_did() {
+        use crate::settings::SavedServer;
+        let proxy = crate::proxy::SavedProxy { host: "203.0.113.9".into(), port: 1080, login: None };
+        let joining = SavedServer {
+            url: "https://music.example".into(),
+            headers: [("X-Token".to_string(), "t0ken".to_string())].into(),
+            allow_self_signed: true,
+            client_cert: "p-0011.p12".into(),
+            client_cert_password: "pw".into(),
+            proxy: Some(proxy.clone()),
+            ..Default::default()
+        };
+        for (url, own_server) in [("https://music.example/", true), ("https://friend.example", false)] {
+            let pass = JamPass { url: url.into(), api_key: nori_remote::guest_key("k"), kind: crate::settings::ServerKind::Subsonic };
+            let guest = jam_profile(pass, Some(joining.clone()), "guest".into(), "Jam".into());
+            assert_eq!(guest.proxy.as_ref(), Some(&proxy), "{url}");
+            let kept = (!guest.headers.is_empty(), guest.allow_self_signed, !guest.client_cert.is_empty(), !guest.client_cert_password.is_empty());
+            assert_eq!(kept, (own_server, own_server, own_server, own_server), "{url}");
+        }
+    }
+
     /// Leaving a jam opens the profile in use before it, not whichever was added last, and drops only
     /// guest profiles.
     #[test]
@@ -4415,7 +4448,7 @@ mod tests {
         let settings = crate::settings_store::Settings::new();
         let mut prefs = settings.open(&dir.path().join(crate::db::DB_FILE).to_string_lossy()).unwrap();
         let own = |id: &str| SavedServer { id: id.into(), url: format!("http://{id}"), ..Default::default() };
-        let guest = jam_profile(JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key("k"), kind: crate::settings::ServerKind::Subsonic }, "guest".into(), "Jam".into());
+        let guest = jam_profile(JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key("k"), kind: crate::settings::ServerKind::Subsonic }, None, "guest".into(), "Jam".into());
         prefs.servers = vec![own("navidrome"), own("youtube")];
         prefs.active_server_id = "navidrome".into();
         settings.put(prefs);

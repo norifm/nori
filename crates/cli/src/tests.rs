@@ -11,7 +11,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, Mo
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use crate::app::{App, Button, Cmd, Focus, Hit, Item, ListRef, Overlay, Panel, Target, View};
+use crate::app::{App, Button, Cmd, Focus, Hit, Item, ListRef, LoginLine, Overlay, Panel, Target, View};
 use crate::backend::{block_on, Data, Msg, Req};
 use crate::settings_view::{Facts, Line, Row, SettingsView, Switch, GROUPS};
 
@@ -1039,7 +1039,7 @@ fn a_signed_out_provider_seals_on_this_device() {
 fn account(user: &str, ended: bool) -> Overlay {
     let mut flow = nori_core::providers::flow::SignInFlow::default();
     flow.on(nori_core::providers::flow::SignInEvent::Offer { ended });
-    Overlay::Account { kind: nori_core::settings::ServerKind::Plugin { id: "dev.example.music".into() }, ways: Vec::new(), user: user.into(), pasting: false, text: String::new(), flow, window_failed: false }
+    Overlay::Account { kind: nori_core::settings::ServerKind::Plugin { id: "dev.example.music".into() }, ways: Vec::new(), user: user.into(), pasting: false, text: String::new(), flow, no_window: None }
 }
 
 /// The account sheet signs in with the provider's page, or with cookies pasted; an ended session's can
@@ -1086,8 +1086,8 @@ fn the_account_sheet_signs_in_with_a_code() {
     use nori_core::providers::flow::SignInEvent;
     use nori_core::providers::SignIn;
     let mut a = app();
-    let Overlay::Account { kind, user, pasting, text, flow, window_failed, .. } = account("", false) else { unreachable!() };
-    a.overlay = Some(Overlay::Account { kind, ways: vec![SignIn::Code, SignIn::WebPage { start_url: "https://a.example".into() }, SignIn::Paste], user, pasting, text, flow, window_failed });
+    let Overlay::Account { kind, user, pasting, text, flow, no_window, .. } = account("", false) else { unreachable!() };
+    a.overlay = Some(Overlay::Account { kind, ways: vec![SignIn::Code, SignIn::WebPage { start_url: "https://a.example".into() }, SignIn::Paste], user, pasting, text, flow, no_window });
     assert!(draw(&mut a, 100, 30).contains("enter get a code · w sign-in window"));
     key(&mut a, KeyCode::Enter);
     assert!(matches!(a.cmds.last(), Some(Cmd::SignInCode)) && a.checks_code());
@@ -3256,18 +3256,150 @@ fn the_kind_chosen_reaches_its_form() {
     key(&mut a, KeyCode::Esc);
     assert_eq!((a.login.flow.clone(), a.quit), (Default::default(), false), "back chooses again");
     key(&mut a, KeyCode::Up);
-    a.login.focus = 3;
+    a.login.focus = LoginLine::Field(nori_core::providers::FormField::Password);
     key(&mut a, KeyCode::Enter);
     let s = draw(&mut a, 100, 40);
     assert!(s.contains("Server address") && s.contains("esc choose again"), "{s}");
-    assert_eq!(a.login.focus, 0, "on the first field it asks");
-    key(&mut a, KeyCode::Tab);
+    assert_eq!(a.login.focus, LoginLine::Field(nori_core::providers::FormField::Address), "on the first field it asks");
     chars(&mut a, "music.example");
     key(&mut a, KeyCode::Tab);
     chars(&mut a, "ann");
     key(&mut a, KeyCode::Tab);
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.kind == ServerKind::Subsonic && p.url == "https://music.example" && p.user == "ann"), "{:?}", a.cmds);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.kind == ServerKind::Subsonic && p.url == "https://music.example" && p.user == "ann" && p.proxy.is_none()), "{:?}", a.cmds);
+}
+
+/// Advanced settings fold away every option a computer honors, in the core's order: texts typed, switches
+/// turned with Enter or space, lines of headers, and the client certificate's and the proxy's popups. What
+/// is set stays through folding and goes out with Connect.
+#[test]
+fn the_forms_advanced_settings_hold_every_option() {
+    use nori_core::providers::FormField::{self, *};
+    use nori_core::settings::ServerKind;
+    let dir = nori_testdir::TempDir::new("cli-login-advanced");
+    let mut a = app();
+    a.view = View::Login;
+    a.provider_chosen(ServerKind::Subsonic);
+    let id = a.login.typed.id.clone();
+    let ctrl = |a: &mut App, c: char| a.handle(Msg::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)));
+    let on = |a: &mut App, what: FormField| a.login.focus = LoginLine::Field(what);
+    chars(&mut a, "music.example");
+    key(&mut a, KeyCode::Tab);
+    chars(&mut a, "ann");
+    for _ in 0..2 {
+        key(&mut a, KeyCode::Tab);
+    }
+    let s = draw(&mut a, 100, 48);
+    dump("login-advanced-folded", &s);
+    assert!(a.login.focus == LoginLine::Advanced && s.contains("Advanced settings ▸") && !s.contains("Proxy"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    let shown: Vec<LoginLine> = a.login_lines().into_iter().skip(4).collect();
+    let all = [Name, SecondAddress, ApiKey, Headers, LegacyAuth, SelfSigned, ClientCert, Proxy];
+    assert_eq!(shown, all.map(LoginLine::Field), "no Wi-Fi only on a computer");
+    let s = draw(&mut a, 100, 48);
+    dump("login-advanced-open", &s);
+    assert!(s.contains("Advanced settings ▾") && s.contains("Second address") && s.contains("Accept self-signed") && s.contains("Client certificate") && s.contains("Proxy"), "{s}");
+    on(&mut a, SecondAddress);
+    chars(&mut a, "http://10.0.0.2:4533");
+    assert!(draw(&mut a, 100, 48).contains("Used when the first one does not answer"), "its hint while it has the keys");
+    on(&mut a, Headers);
+    chars(&mut a, "X-Token: t0ken");
+    key(&mut a, KeyCode::Enter);
+    chars(&mut a, "X-Other: 1");
+    on(&mut a, SelfSigned);
+    key(&mut a, KeyCode::Char(' '));
+    on(&mut a, LegacyAuth);
+    key(&mut a, KeyCode::Enter);
+    key(&mut a, KeyCode::Enter);
+    let s = draw(&mut a, 100, 48);
+    dump("login-advanced-set", &s);
+    assert!(s.contains("X-Token: t0ken ⏎ X-Other: 1") && s.contains("Accept self-signed  On") && s.contains("Legacy auth         Off"), "{s}");
+
+    // The certificate's popup: a file that won't open says why and stays; one that does is kept.
+    on(&mut a, ClientCert);
+    key(&mut a, KeyCode::Enter);
+    key(&mut a, KeyCode::Tab);
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(&a.overlay, Some(Overlay::Cert(d)) if d.error == Some(crate::app::CertWrong::NoFile)));
+    let p12 = format!("{}/../cert/tests/data/client-aes.p12", env!("CARGO_MANIFEST_DIR"));
+    key(&mut a, KeyCode::Tab);
+    chars(&mut a, &p12);
+    key(&mut a, KeyCode::Tab);
+    chars(&mut a, "secret");
+    let s = draw(&mut a, 100, 48);
+    dump("login-cert-popup", &s);
+    assert!(s.contains("File (.p12)") && s.contains("••••••") && !s.contains("secret"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    let Some(Cmd::ImportCert { profile, path, password }) = a.cmds.pop() else { panic!("the file read: {:?}", a.cmds) };
+    assert_eq!((profile.id.as_str(), path.as_str(), password.as_str()), (id.as_str(), p12.as_str(), "secret"));
+    a.cert_imported(Err(nori_core::cert::CertError::Password));
+    let s = draw(&mut a, 100, 48);
+    assert!(s.contains(crate::text::cert_wrong(crate::app::CertWrong::Refused(nori_core::cert::CertError::Password))), "the popup says why: {s}");
+    key(&mut a, KeyCode::Enter);
+    let Some(Cmd::ImportCert { profile, path, password }) = a.cmds.pop() else { panic!("read again") };
+    a.cert_imported(nori_core::cert::import_client_cert_file(dir.path(), *profile, std::path::Path::new(&path), password));
+    assert!(a.overlay.is_none() && a.login.typed.client_cert.starts_with(&format!("{id}-")), "kept by the profile's id");
+
+    // The proxy's popup: Enter saves what the core reads (or says what is wrong), Esc keeps the form's,
+    // ctrl+d removes it.
+    on(&mut a, Proxy);
+    key(&mut a, KeyCode::Enter);
+    chars(&mut a, "http://proxy.lan");
+    for _ in 0..3 {
+        key(&mut a, KeyCode::Enter);
+    }
+    let s = draw(&mut a, 100, 48);
+    assert!(matches!(a.overlay, Some(Overlay::Proxy(_))) && s.contains(crate::text::proxy_error(nori_core::proxy::ProxyError::NotSocks5)), "the popup stays and says why: {s}");
+    key(&mut a, KeyCode::Tab);
+    ctrl(&mut a, 'u');
+    chars(&mut a, "proxy.lan:1081");
+    key(&mut a, KeyCode::Tab);
+    chars(&mut a, "me");
+    key(&mut a, KeyCode::Tab);
+    chars(&mut a, "s3cret");
+    let s = draw(&mut a, 100, 48);
+    dump("login-proxy-popup", &s);
+    assert!(s.contains("SOCKS5 address") && s.contains("••••••") && !s.contains("s3cret") && !s.contains("ctrl+d"), "the password hidden, nothing to remove: {s}");
+    key(&mut a, KeyCode::Enter);
+    let login = nori_core::proxy::ProxyLogin { user: "me".into(), password: "s3cret".into() };
+    let proxy = Some(nori_core::proxy::SavedProxy { host: "proxy.lan".into(), port: 1081, login: Some(login) });
+    assert!(a.overlay.is_none() && a.login.typed.proxy == proxy);
+    key(&mut a, KeyCode::Enter);
+    chars(&mut a, "9");
+    key(&mut a, KeyCode::Esc);
+    assert!(a.overlay.is_none() && a.login.typed.proxy == proxy, "Esc keeps the form's");
+
+    a.login.focus = LoginLine::Advanced;
+    key(&mut a, KeyCode::Enter);
+    key(&mut a, KeyCode::Enter);
+    let s = draw(&mut a, 100, 48);
+    dump("login-advanced-proxy", &s);
+    assert!(s.contains("proxy.lan:1081") && s.contains("http://10.0.0.2:4533") && s.contains("Client certificate  imported"), "folding loses nothing: {s}");
+    on(&mut a, Password);
+    chars(&mut a, "pw");
+    key(&mut a, KeyCode::Enter);
+    let Some(Cmd::Login(p)) = a.cmds.last() else { panic!("sent: {:?}", a.cmds) };
+    let headers = std::collections::HashMap::from([("X-Token".to_string(), "t0ken".to_string()), ("X-Other".to_string(), "1".to_string())]);
+    assert_eq!((p.id.as_str(), p.url.as_str(), p.user.as_str(), p.password.as_str(), p.alt_url.as_str()), (id.as_str(), "https://music.example", "ann", "pw", "http://10.0.0.2:4533"));
+    assert_eq!((&p.headers, p.allow_self_signed, p.legacy_auth, &p.proxy, p.client_cert_password.as_str()), (&headers, true, false, &proxy, "secret"));
+}
+
+/// An API key takes the place of the user and password: their lines go while one is typed.
+#[test]
+fn an_api_key_stands_in_for_the_user_and_password() {
+    use nori_core::providers::FormField::*;
+    let mut a = app();
+    a.view = View::Login;
+    a.provider_chosen(nori_core::settings::ServerKind::Subsonic);
+    a.login.advanced = true;
+    a.login.focus = LoginLine::Field(ApiKey);
+    chars(&mut a, "k3y");
+    let lines = a.login_lines();
+    assert!(!lines.contains(&LoginLine::Field(User)) && !lines.contains(&LoginLine::Field(Password)) && a.login.focus == LoginLine::Field(ApiKey), "{lines:?}");
+    key(&mut a, KeyCode::Backspace);
+    key(&mut a, KeyCode::Backspace);
+    key(&mut a, KeyCode::Backspace);
+    assert!(a.login_lines().contains(&LoginLine::Field(User)));
 }
 
 /// A provider with nothing to ask is added from the first screen, which stays until that's answered.
@@ -3293,7 +3425,7 @@ fn nothing_to_ask_adds_at_once() {
     // A name is nothing to ask there.
     let name = vec![nori_core::providers::FieldSpec { what: nori_core::providers::FormField::Name, advanced: false }];
     a.provider_opened(&ProviderInfo { kind, fields: name, sign_in: web, identities: None });
-    assert!(a.login_account() && a.login_fields().is_empty());
+    assert!(a.login_account() && !a.login_lines().iter().any(|l| matches!(l, LoginLine::Field(_))), "nothing to fill on its page, its options folded");
 }
 
 /// On the account page Enter signs in and g goes on as a guest.

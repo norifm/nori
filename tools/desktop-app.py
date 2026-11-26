@@ -13,11 +13,11 @@ args = parser.parse_args()
 if not args.socket:
     parser.error("set NORI_DESKTOP_SOCKET or pass --socket")
 bare = ("state", "profiles", "setup_back", "welcome_continue")
-if len(args.arg) != (0 if args.command in bare else 3 if args.command == "login" else 2 if args.command == "click" else 1):
-    parser.error("state, profiles, setup_back and welcome_continue take no argument; login takes a URL, a user and a password; click x and y; the others one")
+if args.command == "login" and not 3 <= len(args.arg) <= 6 or args.command != "login" and len(args.arg) != (0 if args.command in bare else 2 if args.command == "click" else 1):
+    parser.error("state, profiles, setup_back and welcome_continue take no argument; login takes a URL, a user and a password, then optionally a proxy, its user and its password; click x and y; the others one")
 request = {"command": args.command}
 if args.command == "login":
-    request["arg"] = dict(zip(("url", "user", "password"), args.arg))
+    request["arg"] = dict(zip(("url", "user", "password", "proxy", "proxy_user", "proxy_password"), args.arg))
 elif args.command == "click":
     request["arg"] = [float(a) for a in args.arg]
 elif args.arg:

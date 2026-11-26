@@ -23,6 +23,12 @@ pub enum FailureKind {
     Tls,
     /// Cleartext HTTP refused by the platform.
     Cleartext,
+    /// The profile's proxy cannot be reached, or does not answer as a SOCKS5 proxy.
+    ProxyUnreachable,
+    /// The profile's proxy refused its login, or asked for one it was not given.
+    ProxyLogin,
+    /// The profile's proxy could not connect to the server.
+    ProxyNoRoute,
     /// Any other I/O failure, including an error status with an empty body.
     Io,
     /// Not an I/O failure (e.g. an unbuildable URL): never queued or retried at the other address.
@@ -45,7 +51,14 @@ pub struct Failure {
 pub fn failure_networkish(status: bool, causes: Vec<Failure>) -> bool {
     status
         || causes.iter().any(|c| match c.kind {
-            FailureKind::UnknownHost | FailureKind::Connect | FailureKind::NoRoute | FailureKind::Timeout | FailureKind::Interrupted => true,
+            FailureKind::UnknownHost
+            | FailureKind::Connect
+            | FailureKind::NoRoute
+            | FailureKind::Timeout
+            | FailureKind::Interrupted
+            | FailureKind::ProxyUnreachable
+            | FailureKind::ProxyLogin
+            | FailureKind::ProxyNoRoute => true,
             FailureKind::Other => false,
             _ => c.detail.as_deref().is_some_and(|d| d.to_lowercase().contains("offline")),
         })
@@ -234,7 +247,7 @@ impl NetError {
     /// The request never left: the next try cannot be a repeat.
     pub fn nothing_sent(&self) -> bool {
         use FailureKind::*;
-        matches!(self, NetError::Transport { kind: UnknownHost | Connect | NoRoute | Metered | Cleartext | Tls, .. })
+        matches!(self, NetError::Transport { kind: UnknownHost | Connect | NoRoute | Metered | Cleartext | Tls | ProxyUnreachable | ProxyLogin | ProxyNoRoute, .. })
     }
 }
 
@@ -467,7 +480,7 @@ mod tests {
         let f = |kind, detail: Option<&str>| Failure { kind, detail: detail.map(str::to_string) };
         assert!(failure_networkish(true, vec![]));
         assert!(!failure_networkish(false, vec![]));
-        for k in [FailureKind::UnknownHost, FailureKind::Connect, FailureKind::NoRoute, FailureKind::Timeout, FailureKind::Interrupted] {
+        for k in [FailureKind::UnknownHost, FailureKind::Connect, FailureKind::NoRoute, FailureKind::Timeout, FailureKind::Interrupted, FailureKind::ProxyUnreachable, FailureKind::ProxyLogin, FailureKind::ProxyNoRoute] {
             assert!(failure_networkish(false, vec![f(FailureKind::Io, None), f(k, None)]), "{k:?} anywhere in the chain");
         }
         assert!(failure_networkish(false, vec![f(FailureKind::Io, Some("Device is OFFLINE"))]));

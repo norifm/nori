@@ -11,11 +11,12 @@ use std::io::Write;
 
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use nori_core::proxy::{proxy_host, SavedProxy};
 use tao::window::WindowBuilder;
-use wry::{NewWindowResponse, PageLoadEvent, WebViewBuilder};
+use wry::{NewWindowResponse, PageLoadEvent, ProxyConfig, ProxyEndpoint, WebViewBuilder};
 
-/// Runs the window for `title`, starting at `start`, until it is closed or the app ends it.
-pub(crate) fn run(title: String, start: String) -> ! {
+/// Runs the window for `title`, starting at `start`, through `proxy`, until it is closed or the app ends it.
+pub(crate) fn run(title: String, start: String, proxy: Option<SavedProxy>) -> ! {
     let event_loop = EventLoopBuilder::<String>::with_user_event().build();
     let window = match WindowBuilder::new().with_title(title).with_inner_size(tao::dpi::LogicalSize::new(480.0, 720.0)).build(&event_loop) {
         Ok(w) => w,
@@ -43,6 +44,11 @@ pub(crate) fn run(title: String, start: String) -> ! {
                 let _ = loaded.send_event(address);
             }
         });
+    // The proxy looks the page's names up (WebKitGTK and WebView2 both send them).
+    let builder = match proxy {
+        Some(p) => builder.with_proxy_config(ProxyConfig::Socks5(ProxyEndpoint { host: proxy_host(&p), port: p.port.to_string() })),
+        None => builder,
+    };
     #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly")))]
     let webview = builder.build(&window);
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]

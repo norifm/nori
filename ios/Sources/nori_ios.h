@@ -544,9 +544,32 @@ char *nori_ios_facts(void);
 /// call it by its kind), and its kind as the settings store it. {} when none are saved. NULL for an
 /// unreadable path. Free with `nori_ios_free`.
 char *nori_ios_active(const char *data_dir);
-/// The kinds of profile the login page offers, as JSON to free: [{kind, fields: [{what, advanced}]}],
-/// `what` the login form's key it fills (name, url, user, password, alt, key).
+/// The kinds of profile the login page offers, as JSON to free: [{kind}].
 char *nori_ios_providers(void);
+/// The fields the login form shows for `form` as typed (nori_ios_login's JSON), in order, as JSON to
+/// free: [{what, advanced}], `what` the form's key it fills (name, url, user, password, alt, key, headers,
+/// legacyAuth, selfSigned; clientCert, the certificate's entry, which nori_ios_import_cert fills; proxy,
+/// the proxy's entry, whose sheet fills proxy, proxyUser and proxyPassword). An API key typed takes the
+/// user and password away.
+char *nori_ios_form_fields(const char *form);
+/// A fresh profile id for a login page's form, to free with `nori_ios_free`.
+char *nori_ios_new_id(void);
+/// The .p12 file at `path`, opened with `password`, kept under `data_dir` as profile `id`'s client
+/// certificate: the name the form's clientCert takes, to free; NULL when it isn't taken, with a
+/// NORI_CERT_ code in `error`.
+char *nori_ios_import_cert(const char *data_dir, const char *id, const char *path, const char *password, int32_t *error);
+#define NORI_CERT_FILE 1
+#define NORI_CERT_PASSWORD 2
+#define NORI_CERT_NOT_PKCS12 3
+#define NORI_CERT_UNSUPPORTED 4
+/// The proxy the sheet's address, user and password give, as the page shows it: host:port, or "" for
+/// none (an empty address). NULL when they are not a proxy, with a NORI_PROXY_ code in `error`. Free
+/// with `nori_ios_free`.
+char *nori_ios_proxy(const char *address, const char *user, const char *password, int32_t *error);
+#define NORI_PROXY_NOT_SOCKS5 1
+#define NORI_PROXY_HOST 2
+#define NORI_PROXY_PORT 3
+#define NORI_PROXY_LOGIN 4
 
 /// Login result. `NORI_LOGIN_HTTP` and `NORI_LOGIN_OTHER` and `NORI_LOGIN_DATABASE` may set `detail`.
 #define NORI_LOGIN_OK 0
@@ -563,6 +586,10 @@ char *nori_ios_providers(void);
 #define NORI_LOGIN_OTHER 11
 #define NORI_LOGIN_CLEARTEXT 12
 #define NORI_LOGIN_METERED 13
+#define NORI_LOGIN_PROXY 14
+#define NORI_LOGIN_PROXY_UNREACHABLE 15
+#define NORI_LOGIN_PROXY_LOGIN 16
+#define NORI_LOGIN_PROXY_NO_ROUTE 17
 
 /// What the open profile offers, as JSON to free, NULL with none: {asks, account, sections: [the library's
 /// sections, as the core's LibrarySection numbers, in order]}. A jam guest's asks the host for what it
@@ -589,8 +616,10 @@ void nori_ios_jam_listen(int32_t on);
 
 /// Pings the server and, when it answers, saves that profile as the active one. Does not open
 /// playback. `detail`, when not NULL, receives a string to free with `nori_ios_free`, or is set NULL.
-/// `form` is JSON {url, user, password, name, alt, key}: `alt` the second address, `key` an API key that
-/// stands in for the password; the last three may be empty.
+/// `form` is JSON {id, kind, url, user, password, name, alt, key, headers, legacyAuth, selfSigned,
+/// clientCert, clientCertPassword, proxy, proxyUser, proxyPassword}: `id` from nori_ios_new_id, `alt` the
+/// second address, `key` an API key that stands in for the password, `headers` one per line, the
+/// switches booleans; any may be missing.
 int32_t nori_ios_login(const char *data_dir, const char *form, char **detail);
 
 #ifdef __cplusplus

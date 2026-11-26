@@ -9,12 +9,19 @@ description = "nori's HTTP for the desktop: the core's Transport and the engine'
 name = "nori_http"
 
 [dependencies]
-nori-core = { path = "../core", default-features = false }
+nori-core = { path = "../core", default-features = false, features = ["cert"] }
 nori-engine = { path = "../engine" }
 async-trait = "0.1"
+# A proxy's login in its address.
+percent-encoding = "2"
+# A redirect's Location against the URL it answered.
+url = "2"
+# Its key in PEM, as ureq takes one.
+base64 = "0.22"
 # rustls, no OpenSSL: one small TLS stack that builds the same everywhere.
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 
 [dev-dependencies]
+nori-testdir = { path = "../testdir" }
 # The HTTPS proxy a test goes through.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

@@ -793,6 +793,9 @@ pub fn net_error(e: &NetError) -> String {
             FailureKind::Timeout => "The server did not answer in time.",
             FailureKind::Tls => "The server's certificate was not accepted.",
             FailureKind::Cleartext => "Cleartext HTTP was refused; use https://",
+            FailureKind::ProxyUnreachable => "The proxy is not answering. Check its address, and that it is running.",
+            FailureKind::ProxyLogin => "The proxy did not accept the login. Check its user and password.",
+            FailureKind::ProxyNoRoute => "The proxy could not reach the server. Check the server's address.",
             _ => "",
         },
         NetError::Http { status } => return format!("HTTP {status}"),
@@ -1219,6 +1222,55 @@ pub fn add_failure(f: &nori_core::providers::flow::AddFailure) -> &str {
     }
 }
 
+/// A sign-in form option's title, the line under it where its name doesn't say enough, and what an
+/// empty text shows.
+pub fn form_option(what: nori_core::providers::FormField) -> [&'static str; 3] {
+    use nori_core::providers::FormField::*;
+    match what {
+        Name => ["Name", "", "Optional"],
+        Address => ["Server address", "", ""],
+        User => ["User name", "", ""],
+        Password => ["Password", "", ""],
+        SecondAddress => ["Second address", "Used when the first one does not answer, for example away from home.", "https://"],
+        ApiKey => ["API key", "Instead of a password (OpenSubsonic).", "Optional"],
+        Headers => ["Extra HTTP headers", "One per line, Name: value. For reverse proxies, basic auth, Cloudflare Access.", "Name: value"],
+        LegacyAuth => ["Legacy authentication", "For old servers without token auth. Detected automatically when the server says so.", ""],
+        SelfSigned => ["Accept self-signed certificate", "Only for your own server.", ""],
+        WifiOnly => ["Wi-Fi only", "Never contact this server over mobile data.", ""],
+        ClientCert => ["Client certificate", "", ""],
+        Proxy => ["Proxy", "", ""],
+    }
+}
+
+/// What an entry of the sign-in form says when nothing is set, and a client certificate when one is.
+pub const NOTHING_SET: &str = "None";
+pub const CERT_SET: &str = "Imported";
+
+/// Why a client certificate was not taken.
+pub fn cert_error(e: nori_core::cert::CertError) -> &'static str {
+    use nori_core::cert::CertError;
+    match e {
+        CertError::File => "The file can’t be read.",
+        CertError::Password => "The password doesn’t open this certificate.",
+        CertError::NotPkcs12 => "This isn’t a .p12 certificate with its key.",
+        CertError::Unsupported => "This certificate is encrypted in a way nori doesn’t read.",
+    }
+}
+
+/// What the certificate's sheet asks for before Save.
+pub const CERT_FILE_MISSING: &str = "Type the path of a .p12 file.";
+
+/// Why the proxy's fields are not a proxy.
+pub fn proxy_error(e: nori_core::proxy::ProxyError) -> &'static str {
+    use nori_core::proxy::ProxyError;
+    match e {
+        ProxyError::NotSocks5 => "Only SOCKS5 proxies work here.",
+        ProxyError::Host => "The proxy needs a host: a name or an IP address.",
+        ProxyError::Port => "The proxy’s port is a number from 1 to 65535.",
+        ProxyError::Login => "The proxy’s login goes in its user and password fields, and a password needs a user.",
+    }
+}
+
 /// Why a code did not sign the account in.
 pub fn code_failed(r: &nori_core::providers::SignInResult) -> String {
     use nori_core::providers::SignInResult as R;
@@ -1245,7 +1297,13 @@ pub fn code_words(service: &str) -> crate::CodeWords {
 
 pub const CODE_COPIED: &str = "Code copied";
 
-pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window could not open here. Paste cookies from a browser instead.";
+/// Why the sign-in window did not open, over the pasting it falls back to.
+pub fn no_sign_in_window(why: nori_sign_in_window::NoWindow) -> &'static str {
+    match why {
+        nori_sign_in_window::NoWindow::Unavailable => "The sign-in window could not open here. Paste cookies from a browser instead.",
+        nori_sign_in_window::NoWindow::ProxyUnsupported => "On macOS, a profile with a proxy signs in by pasting. Paste cookies from a browser instead.",
+    }
+}
 
 /// A song's title as shown: "Untitled" for one that has none (some uploads have a blank one).
 pub fn title(t: &str) -> &str {

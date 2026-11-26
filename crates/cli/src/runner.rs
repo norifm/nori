@@ -14,7 +14,6 @@ use nori_core::remote::JamStart;
 use nori_core::settings::SavedServer;
 use nori_host::player::{Playback, QueueShown};
 use nori_host::remote::Elsewhere;
-use nori_http::Http;
 use nori_plugins::ItemKind;
 use ratatui::crossterm::event::{self, Event as TermEvent};
 use ratatui_image::picker::Picker;
@@ -123,7 +122,6 @@ fn query_picker() -> (Picker, bool) {
 struct Runner {
     o: Options,
     root: Arc<Root>,
-    http: Arc<Http>,
     tx: Sender<Msg>,
     session: Option<Session>,
     /// The profile in use while its plugin doesn't run here, opened once it does.
@@ -159,15 +157,14 @@ struct Runner {
 pub fn run(o: Options) -> Result<(), String> {
     crate::term::stderr_to(&o.data.join("nori.log"));
     crate::term::hook_panics();
-    let db = crate::backend::db_path(&o.data);
     let root = Arc::new(Root::new(&o.data));
-    let ran = run_with(o, &root, &db);
+    let ran = run_with(o, &root);
     root.app.settings.writer.flush();
     ran
 }
 
-fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
-    let mut prefs = root.app.settings.open(db).map_err(|e| format!("the settings: {e}"))?;
+fn run_with(o: Options, root: &Arc<Root>) -> Result<(), String> {
+    let mut prefs = root.open_settings().map_err(|e| format!("the settings: {e}"))?;
     // A server given on the command line is added (or found) and made active.
     if let Some((url, user, password)) = o.login.clone() {
         let found = prefs.servers.iter().find(|s| s.url == url && s.user == user).map(|s| s.id.clone());
@@ -225,9 +222,9 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start("").ok().map(Arc::new)).flatten();
     app.shared = root.app.clone();
     app.settings.own.shared = root.app.clone();
-    let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, code: None, codes: 0, o };
+    let mut r = Runner { root: root.clone(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, code: None, codes: 0, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
-    app.settings.own.kinds.set_transport(r.http.clone());
+    app.settings.own.kinds.set_transport(r.root.http());
     let notices = r.tx.clone();
     r.root.plugins().watched.hear(move |n| {
         let _ = notices.send(Msg::Note { text: n.words, error: n.problem });
@@ -285,7 +282,6 @@ impl Runner {
         let name = nori_core::settings::label(&profile.name, &profile.url);
         let o = Open {
             root: &self.root,
-            http: self.http.clone(),
             profile,
             output: self.o.output.clone().unwrap_or_else(|| Output::Card(own::text(&self.root.app.settings, own::DEVICE))),
             images: app.images,
@@ -414,7 +410,7 @@ impl Runner {
         flow.on(offer);
         let ended = flow.shown == (nori_core::providers::flow::SignInShown::Offered { ended: true });
         let user = if ended { String::new() } else { profile.user };
-        app.overlay = Some(crate::app::Overlay::Account { kind: profile.kind, ways, user, pasting: false, text: String::new(), flow, window_failed: false });
+        app.overlay = Some(crate::app::Overlay::Account { kind: profile.kind, ways, user, pasting: false, text: String::new(), flow, no_window: None });
         app.dirty = true;
     }
 
@@ -664,9 +660,11 @@ impl Runner {
                     let kind = nori_core::settings::ServerKind::Plugin { id: plugin.clone() };
                     let (h, tx) = ((**s).clone(), self.tx.clone());
                     let title = format!("Sign in to {}", crate::text::provider_of(&app.settings.own.kinds, &kind).name);
-                    self.sign_in_window = nori_sign_in_window::SignInWindow::open_at(app.settings.own.kinds.clone(), kind, title, url.clone(), move |_, cookies| {
+                    let proxy = app.prefs.active_server().and_then(|p| p.proxy.clone());
+                    self.sign_in_window = nori_sign_in_window::SignInWindow::open_at(app.settings.own.kinds.clone(), kind, title, url.clone(), proxy, move |_, cookies| {
                         let _ = tx.send(Msg::SignedIn(h.account().sign_in(cookies)));
-                    });
+                    })
+                    .ok();
                 }
                 let _ = (plugin, url);
                 return;
@@ -926,7 +924,7 @@ impl Runner {
                 });
             }
             Cmd::SignInWindow => {
-                let (Some(s), Some(crate::app::Overlay::Account { kind, pasting, flow, window_failed, .. })) = (&self.session, &mut app.overlay) else { return };
+                let (Some(s), Some(crate::app::Overlay::Account { kind, pasting, flow, no_window, .. })) = (&self.session, &mut app.overlay) else { return };
                 #[cfg(feature = "sign-in-window")]
                 {
                     if self.sign_in_window.as_mut().is_some_and(|w| w.open_now()) {
@@ -934,19 +932,27 @@ impl Runner {
                     }
                     let (h, tx) = ((**s).clone(), self.tx.clone());
                     let title = format!("Sign in to {}", crate::text::provider_of(&app.settings.own.kinds, kind).name);
-                    self.sign_in_window = nori_sign_in_window::SignInWindow::open(app.settings.own.kinds.clone(), kind.clone(), title, move |_, cookies| {
+                    let proxy = app.prefs.active_server().and_then(|p| p.proxy.clone());
+                    let opened = nori_sign_in_window::SignInWindow::open(app.settings.own.kinds.clone(), kind.clone(), title, proxy, move |_, cookies| {
                         let _ = tx.send(Msg::SignedIn(h.account().sign_in(cookies)));
                     });
-                    if self.sign_in_window.is_some() {
-                        // Its cookies are the answer: one is on its way (already so when a key opened it).
-                        flow.on(SignInEvent::Sent);
-                        return;
+                    match opened {
+                        Ok(window) => {
+                            self.sign_in_window = Some(window);
+                            // Its cookies are the answer: one is on its way (already so when a key opened it).
+                            flow.on(SignInEvent::Sent);
+                            return;
+                        }
+                        Err(why) => *no_window = Some(why),
                     }
+                }
+                #[cfg(not(feature = "sign-in-window"))]
+                {
+                    *no_window = Some(crate::app::NoWindow::Unavailable);
                 }
                 let _ = (s, kind);
                 *pasting = true;
                 flow.on(SignInEvent::Unsent);
-                *window_failed = true;
                 return;
             }
             Cmd::SignInCode => {
@@ -977,17 +983,21 @@ impl Runner {
                 return;
             }
             Cmd::JoinJam(link) => {
-                let (http, tx, remote, settings) = (self.http.clone(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()), self.root.app.settings.clone());
+                let (http, tx, remote, settings) = (self.root.http(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()), self.root.app.settings.clone());
                 nori_host::spawn("nori-jam-join", move || {
                     let joined = nori_host::jam_join(http, &settings, link, &nori_host::device_name(), remote);
                     let _ = tx.send(Msg::Joined(joined.map_err(|e| crate::text::jam_join_failed(&e))));
                 });
                 return;
             }
+            Cmd::ImportCert { profile, path, password } => {
+                app.cert_imported(nori_core::cert::import_client_cert_file(self.root.data(), *profile, std::path::Path::new(&path), password));
+                return;
+            }
             Cmd::Login(draft) => {
-                let (root, http, tx) = (self.root.clone(), self.http.clone(), self.tx.clone());
+                let (root, tx) = (self.root.clone(), self.tx.clone());
                 std::thread::spawn(move || {
-                    let _ = tx.send(Msg::LoggedIn(crate::backend::check_login(&root, http, *draft)));
+                    let _ = tx.send(Msg::LoggedIn(crate::backend::check_login(&root, *draft)));
                 });
                 return;
             }
@@ -1288,7 +1298,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::Scrobbler { .. } | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::ImportCert { .. } | Cmd::SwitchServer(_) | Cmd::RenameProfile(..) | Cmd::Scrobbler { .. } | Cmd::ChooseIdentity(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
         }
     }
 

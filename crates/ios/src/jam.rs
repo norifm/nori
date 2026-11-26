@@ -100,13 +100,13 @@ pub unsafe extern "C" fn nori_ios_jam_join(link: *const c_char, name: *const c_c
     if !nori_core::remote::is_invite(&link) {
         return JOIN_NOT_AN_INVITE;
     }
-    let Some((app, remote)) = with_session(|s| (s.core.session.clone(), s.remote())) else { return JOIN_CLOSED };
+    let Some((app, remote, transport)) = with_session(|s| (s.core.session.clone(), s.remote(), s.client.transport())) else { return JOIN_CLOSED };
     match nori_core::remote::own_invite(app.settings.clone(), remote.clone(), link.clone()) {
         Some(nori_core::remote::JamJoin::Own) => return JOIN_OWN,
         Some(_) => return JOIN_ENDED,
         None => {}
     }
-    nori_host::spawn("nori-ios-jam-join", move || match nori_host::jam_join(nori_http::Http::new(), &app.settings, link, DEVICE_NAME, remote) {
+    nori_host::spawn("nori-ios-jam-join", move || match nori_host::jam_join(transport, &app.settings, link, DEVICE_NAME, remote) {
         Ok(pass) => {
             nori_host::jam_joined(&app.settings, pass, &name);
             report(REPORT_JAM_JOINED, 1, 0, "");

@@ -643,9 +643,34 @@ class Say(private val r: Resources) {
     val selfSignedHint: String = r.getString(R.string.self_signed_hint)
     val wifiOnly: String = r.getString(R.string.wifi_only)
     val wifiOnlyHint: String = r.getString(R.string.wifi_only_hint)
+    val proxy: String = r.getString(R.string.proxy)
+    val proxyNone: String = r.getString(R.string.proxy_none)
+    val proxyAddress: String = r.getString(R.string.proxy_address)
+    val proxyHint: String = r.getString(R.string.proxy_hint)
+    val proxyRemove: String = r.getString(R.string.proxy_remove)
+    /** Why the proxy's fields are not a proxy. */
+    fun proxyError(e: dev.nori.music.ffi.settings.ProxyException): String = r.getString(
+        when (e) {
+            is dev.nori.music.ffi.settings.ProxyException.NotSocks5 -> R.string.proxy_not_socks5
+            is dev.nori.music.ffi.settings.ProxyException.Host -> R.string.proxy_host
+            is dev.nori.music.ffi.settings.ProxyException.Port -> R.string.proxy_port
+            is dev.nori.music.ffi.settings.ProxyException.Login -> R.string.proxy_login
+        },
+    )
+    val clientCert: String = r.getString(R.string.client_cert)
+    val clientCertImported: String = r.getString(R.string.client_cert_imported)
     val clientCertPassword: String = r.getString(R.string.client_cert_password)
     val importClientCert: String = r.getString(R.string.import_client_cert)
     val replaceClientCert: String = r.getString(R.string.replace_client_cert)
+    /** Why a client certificate was not taken. */
+    fun certError(e: dev.nori.music.ffi.cert.CertException): String = r.getString(
+        when (e) {
+            is dev.nori.music.ffi.cert.CertException.File -> R.string.cert_file
+            is dev.nori.music.ffi.cert.CertException.Password -> R.string.cert_password
+            is dev.nori.music.ffi.cert.CertException.NotPkcs12 -> R.string.cert_not_pkcs12
+            is dev.nori.music.ffi.cert.CertException.Unsupported -> R.string.cert_unsupported
+        },
+    )
     val scrobbling: String = r.getString(R.string.scrobbling)
     val scrobblingHint: String = r.getString(R.string.scrobbling_hint)
     fun scrobbler(k: dev.nori.music.ffi.settings.ScrobblerKind): String = r.getString(
