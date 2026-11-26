@@ -1840,7 +1840,11 @@ impl App {
 
     fn open_page(&mut self, ask: PageAsk) {
         let at = self.ui().global::<crate::Scroll>().get_at();
-        self.trail.opened(ask.clone(), opened_from(self.ui().get_view()), at);
+        let from = self.ui().get_view();
+        if from == View::Search {
+            self.search_used();
+        }
+        self.trail.opened(ask.clone(), opened_from(from), at);
         self.show_page(ask, 0.0);
     }
 
@@ -2655,9 +2659,15 @@ impl App {
             self.search_pick(at as usize);
         } else {
             ui.set_search_preview_open(false);
+            self.search_used();
             self.trail.left();
             self.go(View::Search);
         }
+    }
+
+    /// The query searched for was sent or a result of it used: it becomes a recent search.
+    fn search_used(&self) {
+        self.on_session(|s| s.search_used());
     }
 
     /// Line `i` of the search field's preview picked: its page, its song played, or every result.
@@ -2669,7 +2679,12 @@ impl App {
             top.invoke_end_search();
         }
         let id = |m: &ModelRc<Card>| m.row_data(i).map(|c| c.id.to_string()).unwrap_or_default();
-        match self.search_preview.get(i).copied() {
+        let line = self.search_preview.get(i).copied();
+        // A song played keeps the query itself.
+        if !matches!(line, Some(PreviewLine::Song { .. })) {
+            self.search_used();
+        }
+        match line {
             Some(PreviewLine::Artist { .. }) => self.open_page(PageAsk::Artist(id(&ui.get_search_preview()))),
             Some(PreviewLine::Album { .. }) => self.open_page(PageAsk::Album(id(&ui.get_search_preview()))),
             Some(PreviewLine::Playlist { .. }) => self.open_page(PageAsk::Playlist(id(&ui.get_search_preview()))),
@@ -2808,6 +2823,9 @@ impl App {
             return;
         }
         let Some(one) = self.list_song(list, i) else { return };
+        if list == 2 && how == -1 {
+            self.search_used();
+        }
         let (songs, origin) = match list {
             0 => (self.page_songs.clone(), self.page_fetch.as_ref().map(Fetch::origin)),
             1 => (self.songs.clone(), None),

@@ -105,6 +105,11 @@ impl SearchSession {
 }
 
 impl SearchSession {
+    /// The query the field holds.
+    pub fn query(&self) -> String {
+        self.session.lock().query().to_string()
+    }
+
     /// Ready once the field holds a query other than `query`.
     fn typed_over<'a>(&'a self, query: &'a str) -> impl std::future::Future<Output = ()> + 'a {
         std::future::poll_fn(move |cx| {

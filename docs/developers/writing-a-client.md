@@ -219,6 +219,7 @@ session does all of this. Android calls the same functions from Kotlin.
 | A screen's read | `Client::read_cached(read, PageShown)` | `crates/host/src/pages.rs` |
 | A list read a page at a time | `paged::Paged` | The same |
 | A keystroke in search | `SearchSession`, whose `SearchView` holds a `SearchShown` | `search_typed`, `search_server` |
+| A search sent (Enter) or a result of it used | `Core::search_remember_recent` | `Handle::search_used` |
 | Home's queue offer | `Client::queue_offer_kept` at once, then `Client::queue_offer`, kept by `offer::Offered` | `Handle::queue_offer_kept`, `Handle::queue_offer` |
 | Lyrics for the song heard | `Client::lyrics_for`, `lyrics_follow::LyricsHeard` | `Handle::lyrics_heard`, `Said::Lyrics` |
 | Adding a profile, signing in | `providers::flow`: `AddFlow`, `SignInFlow` | `Account::signed_in` |
@@ -234,6 +235,8 @@ These rules hold behind the answers:
   so the list does not end.
 - **A search asks the server once typing pauses.** Each keystroke is answered from the offline index,
   and an ask that newer typing replaced drops its request.
+- **A search becomes a recent search only when it is used.** Enter sends it, or the user opens or plays
+  one of its results. A typing pause is neither.
 - **A song found by search plays alone.** The search's results are no album. `Handle::play` with a
   `Search` origin queues only that song.
 - **An undo lasts `UNDO_MS`.** A client that offers the undo shows it for that long. After that,

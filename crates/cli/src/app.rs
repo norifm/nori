@@ -189,6 +189,8 @@ pub enum Cmd {
     SoundPage(SoundPage, bool),
     SearchTyped(String),
     SearchServer(String),
+    /// The search's query was sent or a result of it used: it becomes a recent search.
+    SearchUsed,
     /// The song heard's lyrics looked up again.
     LyricsRefresh,
     /// The playing song cover by id, and the colors the player wears from it.
@@ -2495,10 +2497,11 @@ impl App {
             KeyCode::Enter | KeyCode::Down | KeyCode::Tab => {
                 self.search.editing = false;
                 self.focus = Focus::Main;
-                // Enter queries the server now.
+                // Enter queries the server now, and keeps the query.
                 if k.code == KeyCode::Enter && !self.search.text.trim().is_empty() {
                     self.search.ask_at = None;
                     self.cmds.push(Cmd::SearchServer(self.search.text.trim().to_string()));
+                    self.cmds.push(Cmd::SearchUsed);
                 }
                 self.search.sel = Sel::default();
                 self.search.settle(true);
@@ -3728,6 +3731,9 @@ impl App {
             };
         }
         let Some(item) = self.selected() else { return };
+        if a == Action::Open {
+            self.search_result_used();
+        }
         match (a, item) {
             (Action::Open, Item::Song(songs, i)) => self.tap(songs, i),
             (Action::Open, Item::Album(al)) => self.open_album(al.id),
@@ -3896,6 +3902,13 @@ impl App {
         }
     }
 
+    /// The item selected was acted on: on the search's results, its query becomes a recent search.
+    fn search_result_used(&mut self) {
+        if self.focus == Focus::Main && self.page().is_none() && self.view == View::Search {
+            self.cmds.push(Cmd::SearchUsed);
+        }
+    }
+
     /// Plays the page, or shuffled.
     pub(crate) fn play_page(&mut self, shuffle: bool) {
         self.focus = Focus::Main;
@@ -3921,7 +3934,11 @@ impl App {
             }
             return;
         }
-        match self.selected() {
+        let item = self.selected();
+        if item.is_some() {
+            self.search_result_used();
+        }
+        match item {
             Some(Item::Album(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Album(a.id), shuffle)),
             Some(Item::DownloadedAlbum(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::DownloadedAlbum(a.id), shuffle)),
             Some(Item::Artist(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Artist(a.id), shuffle)),

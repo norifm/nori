@@ -1278,7 +1278,11 @@ fn search_results_list() {
         playlists: vec![nori_core::Playlist { id: "yt-VLone".into(), name: "One Mix".into(), comment: Some("Ann • 17 views".into()), ..Default::default() }],
     };
     a.search.view = Some(nori_core::search::SearchView { query: "one".into(), answer: nori_core::search::SearchShown::Found { result: found }, ..Default::default() });
+    let due = a.search.ask_at.expect("the server is asked later");
+    a.tick(due + Duration::from_millis(1));
+    assert!(!a.cmds.contains(&Cmd::SearchUsed), "a typing pause keeps nothing");
     key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::SearchUsed), "a query sent is kept");
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Songs") && s.contains("One Album") && s.contains("The Ones") && s.contains("From the server"), "{s}");
     assert!(s.contains("One Mix") && s.contains("Ann • 17 views"), "an uncounted playlist shows its own line: {s}");
@@ -1289,6 +1293,7 @@ fn search_results_list() {
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert!(a.cmds.contains(&Cmd::Load(Req::Album("al-1".into()))));
+    assert!(a.cmds.contains(&Cmd::SearchUsed), "and one whose result is opened");
 }
 
 #[test]

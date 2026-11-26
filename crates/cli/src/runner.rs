@@ -1264,6 +1264,7 @@ impl Runner {
             Cmd::SearchServer(q) => {
                 s.search_server(q);
             }
+            Cmd::SearchUsed => s.search_used(),
             Cmd::LyricsRefresh => s.lyrics_refresh(),
             Cmd::Cover(art) => {
                 if let Some(t) = s.cover(art, COVER_PX) {

@@ -1338,12 +1338,17 @@ impl Handle {
         self.search.typed_with_index(self.core.clone(), text.to_string())
     }
 
+    /// The search's query was sent or a result of it used: it becomes a recent search. A typing pause is
+    /// neither.
+    pub fn search_used(&self) {
+        let _ = self.core.search_remember_recent(self.search.query());
+    }
+
     /// Searches the server in the background. `error` words a failure for the results.
     pub fn search_server(&self, query: String, error: fn(&NetError) -> String) {
         if self.offline || query.trim().is_empty() {
             return;
         }
-        let _ = self.core.search_remember_recent(query.clone());
         let (search, client, out) = (self.search.clone(), self.client.clone(), self.out.clone());
         self.run(async move {
             if let Some(v) = search.answer(client, query, error).await {
@@ -2120,6 +2125,28 @@ mod tests {
         assert_eq!(ids(), (vec!["b".to_string()], Some(0)));
         s.keep_playing(found, 2, search());
         assert_eq!(ids(), (vec!["c".to_string()], Some(0)));
+        s.close();
+    }
+
+    /// Typing pauses ask the server but keep nothing; a query sent, or one whose result is used, becomes a
+    /// recent search.
+    #[test]
+    fn a_search_is_kept_once_it_is_used() {
+        let dir = nori_testdir::TempDir::new("host-search-kept");
+        let settings = nori_core::settings_store::Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        prefs.remote_control = false;
+        settings.put(prefs);
+        let queue = Arc::new(nori_core::queue::Session::new(settings));
+        let profile = SavedServer { id: "own".into(), url: "http://127.0.0.1:9".into(), user: "ann".into(), ..Default::default() };
+        let s = Session::open(test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)))).unwrap();
+        for typed in ["do", "dogs"] {
+            s.search_typed(typed);
+            s.search_server(typed.into(), |_| String::new());
+        }
+        assert!(s.core.search_history().unwrap().is_empty());
+        s.search_used();
+        assert_eq!(s.core.search_history().unwrap(), ["dogs"]);
         s.close();
     }
 
