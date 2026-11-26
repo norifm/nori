@@ -23,6 +23,8 @@ pub enum Ask {
     Album { id: String },
     Artists,
     Artist { id: String },
+    /// An artist page's about part (`pages::ArtistAbout`), read after its page.
+    ArtistAbout { id: String },
     Playlists,
     Playlist { id: String },
     Genres,
@@ -63,6 +65,7 @@ impl Ask {
             Ask::Album { id } => Read::AlbumById { id },
             Ask::Artists => Read::ArtistIndex,
             Ask::Artist { id } => Read::ArtistById { id },
+            Ask::ArtistAbout { id } => Read::ArtistAbout { id },
             Ask::Playlists => Read::PlaylistList,
             Ask::Playlist { id } => Read::PlaylistById { id },
             Ask::Genres => Read::GenreList,
@@ -387,6 +390,10 @@ fn page(core: &Core, p: Page, user: Option<&str>) -> Value {
         Page::StarredPage { v } => json!({ "artists": artists(core, &v.artists), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs) }),
         Page::Genres { v } => json!({ "genres": v }),
         Page::Found { v } => json!({ "artists": artists(core, &v.artists), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs), "few": few(&v.songs) }),
+        Page::About { v } => {
+            let a = nori_core::pages::ArtistAbout::of(v);
+            json!({ "biography": a.biography, "lastFm": a.last_fm, "musicbrainz": a.musicbrainz, "similar": artists(core, &a.similar) })
+        }
         _ => Value::Null,
     }
 }

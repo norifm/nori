@@ -98,6 +98,9 @@ pub const ALL: &str = "All";
 pub const SEARCH_PLUGINS: &str = "Search plugins";
 pub const NONE_FOUND: &str = "No plugins found";
 pub const ABOUT: &str = "About";
+/// The pages an artist's about part links to, by their own names.
+pub const LAST_FM: &str = "last.fm";
+pub const MUSICBRAINZ: &str = "MusicBrainz";
 pub const PLUGIN_MAY: &str = "What it may do";
 pub const PLUGIN_ON: &str = "On";
 pub const RESTART: &str = "Restart";

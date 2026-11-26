@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use nori_core::pages::ArtistAbout;
 use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
 use nori_core::paged::Paged;
 use nori_core::library::QueueOffer;
@@ -112,6 +113,8 @@ pub const PANELS: [(Panel, &str); 4] = [(Panel::Playing, "Playing"), (Panel::Que
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cmd {
     Load(Req),
+    /// Opens a page outside nori in the browser.
+    OpenLink(String),
     /// Saves a backup to `path`, or restores the one there, with `password`.
     Backup { restore: bool, path: String, password: String },
     /// `from`: the page the songs are the list of (`playlist_set`'s origin).
@@ -459,7 +462,8 @@ pub enum Page {
     /// `known`: what the entry that opened it knew, its head until it is read.
     Album { id: String, known: Option<Box<nori_core::Album>>, detail: Load<Box<AlbumDetail>>, sel: Sel },
     DownloadedAlbum { id: String, detail: Load<Box<AlbumDetail>>, sel: Sel },
-    Artist { id: String, known: Option<Box<nori_core::Artist>>, detail: Load<Box<ArtistDetail>>, sel: Sel },
+    /// `about`: its about part once read, and whether its biography shows whole.
+    Artist { id: String, known: Option<Box<nori_core::Artist>>, detail: Load<Box<ArtistDetail>>, about: Option<Box<ArtistAbout>>, whole: bool, sel: Sel },
     Playlist { id: String, known: Option<Box<nori_core::Playlist>>, detail: Load<Box<PlaylistDetail>>, sel: Sel, filter: Filter },
     /// One of the core's mixes, or the favorites.
     Mix { id: String, detail: Load<Box<MixSheet>>, sel: Sel },
@@ -493,7 +497,7 @@ impl Page {
     fn len(&self) -> usize {
         match self {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
-            Page::Artist { detail, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { artist_lines(d).len() }),
+            Page::Artist { detail, about, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { artist_lines(d, about.as_deref()).len() }),
             Page::Playlist { detail, filter, .. } => detail.ready().map_or(0, |d| filter.songs(&d.songs).len()),
             Page::Mix { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
             Page::Genre { songs, .. } => songs.ready().map_or(0, Vec::len),
@@ -569,19 +573,30 @@ impl Stats {
 }
 
 /// A line of an artist's page that lists albums: a shelf's name (index into its release groups), or an
-/// album under it.
+/// album under it; then the similar artists' heading and each of them (index into `ArtistAbout::similar`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtistLine {
     Shelf(usize),
     Album(usize),
+    Similar,
+    SimilarArtist(usize),
 }
 
-/// An artist's albums under their shelves (`pages::release_groups`); none for an artist listing songs.
-pub fn artist_lines(d: &ArtistDetail) -> Vec<ArtistLine> {
+/// An artist's albums under their shelves (`pages::release_groups`), then the similar artists of its about
+/// part; none for an artist listing songs.
+pub fn artist_lines(d: &ArtistDetail, about: Option<&ArtistAbout>) -> Vec<ArtistLine> {
     if d.albums.is_empty() {
         return Vec::new();
     }
-    d.groups.iter().enumerate().flat_map(|(k, g)| std::iter::once(ArtistLine::Shelf(k)).chain(g.albums.iter().map(|i| ArtistLine::Album(*i as usize)))).collect()
+    let similar = about.map_or(0, |a| a.similar.len());
+    let shelves = d.groups.iter().enumerate().flat_map(|(k, g)| std::iter::once(ArtistLine::Shelf(k)).chain(g.albums.iter().map(|i| ArtistLine::Album(*i as usize))));
+    let similar = (similar > 0).then_some(ArtistLine::Similar).into_iter().chain((0..similar).map(ArtistLine::SimilarArtist));
+    shelves.chain(similar).collect()
+}
+
+/// The pages an artist's about part links to, with their names.
+pub fn about_links(a: &ArtistAbout) -> Vec<(&'static str, &str)> {
+    [(crate::text::LAST_FM, &a.last_fm), (crate::text::MUSICBRAINZ, &a.musicbrainz)].into_iter().filter_map(|(name, url)| Some((name, url.as_deref()?))).collect()
 }
 
 /// The selected thing that item actions (open, enqueue, star...) apply to.
@@ -1461,6 +1476,10 @@ pub enum Button {
     Page(PageAction),
     /// The mix shown, kept as a playlist.
     SaveMix,
+    /// The artist's biography whole, or four lines again.
+    Biography,
+    /// One of the pages the artist's about part links to, by its place in `about_links`.
+    AboutLink(usize),
     /// Star the playing song.
     StarSong,
     Help,
@@ -1906,6 +1925,10 @@ impl App {
 
     pub(crate) fn open_page(&mut self, page: Page) {
         self.cmds.extend(page.req().map(Cmd::Load));
+        // After the page: a provider answers both from one read of the artist.
+        if let Page::Artist { id, .. } = &page {
+            self.cmds.push(Cmd::Load(Req::ArtistAbout(id.clone())));
+        }
         self.pages.push(page);
         self.focus = Focus::Main;
         self.full = false;
@@ -1917,7 +1940,7 @@ impl App {
     }
 
     pub fn open_artist(&mut self, id: String) {
-        self.open_page(Page::Artist { id, known: None, detail: Load::Loading, sel: Sel::default() });
+        self.open_page(Page::Artist { id, known: None, detail: Load::Loading, about: None, whole: false, sel: Sel::default() });
     }
 
     /// Opens the page of entry `item` (an album, artist or playlist), which shows what the entry knew until it
@@ -1926,7 +1949,7 @@ impl App {
         let sel = Sel::default();
         match item {
             Item::Album(a) => self.open_page(Page::Album { id: a.id.clone(), known: Some(Box::new(a)), detail: Load::Loading, sel }),
-            Item::Artist(a) => self.open_page(Page::Artist { id: a.id.clone(), known: Some(Box::new(a)), detail: Load::Loading, sel }),
+            Item::Artist(a) => self.open_page(Page::Artist { id: a.id.clone(), known: Some(Box::new(a)), detail: Load::Loading, about: None, whole: false, sel }),
             Item::Playlist(p) => self.open_page(Page::Playlist { id: p.id.clone(), known: Some(Box::new(p)), detail: Load::Loading, sel, filter: Filter::default() }),
             _ => {}
         }
@@ -2440,6 +2463,17 @@ impl App {
                         items.extend(v);
                     }
                     _ => pages.failed(&offset),
+                }
+            }
+            // A page without its about part is still the page.
+            (Req::ArtistAbout(id), r) => {
+                let Ok(Data::ArtistAbout(a)) = r else { return };
+                for page in self.pages.iter_mut() {
+                    if let Page::Artist { id: of, about, .. } = page {
+                        if *of == id {
+                            *about = Some(a.clone());
+                        }
+                    }
                 }
             }
             (req, r) => {
@@ -3868,9 +3902,10 @@ impl App {
                 Page::Playlist { sel, filter, .. } => p.songs().and_then(|s| filter.songs(s).get(sel.at).map(|&i| Item::Song(s.to_vec(), i))),
                 Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Mix { sel, .. } | Page::Genre { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { sel, .. } if p.songs().is_some() => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
-                Page::Artist { detail, sel, .. } => match artist_lines(detail.ready()?).get(sel.at)? {
+                Page::Artist { detail, about, sel, .. } => match artist_lines(detail.ready()?, about.as_deref()).get(sel.at)? {
                     ArtistLine::Album(i) => detail.ready()?.albums.get(*i).cloned().map(Item::Album),
-                    ArtistLine::Shelf(_) => None,
+                    ArtistLine::SimilarArtist(i) => about.as_ref()?.similar.get(*i).cloned().map(Item::Artist),
+                    ArtistLine::Shelf(_) | ArtistLine::Similar => None,
                 },
                 Page::Row { items, sel, .. } => items.get(sel.at).cloned(),
             };
@@ -4913,6 +4948,18 @@ impl App {
             Button::ClearHistory => self.do_action(Action::ClearHistory),
             Button::StatsSource(i) => self.stats_choose(self.stats.period, nori_core::browse::StatsSource::ALL[i as usize]),
             Button::StatsPeriod(i) => self.stats_choose(nori_core::browse::StatsPeriod::ALL[i as usize], self.stats.source),
+            Button::Biography => {
+                if let Some(Page::Artist { whole, .. }) = self.page_mut() {
+                    *whole = !*whole;
+                }
+            }
+            Button::AboutLink(i) => {
+                let url = match self.page() {
+                    Some(Page::Artist { about: Some(a), .. }) => about_links(a).get(i).map(|(_, u)| u.to_string()),
+                    _ => None,
+                };
+                self.cmds.extend(url.map(Cmd::OpenLink));
+            }
             Button::StarSong => {
                 if let Some(s) = self.song.as_ref().filter(|_| self.rules.stars) {
                     let (id, listed) = (s.id.clone(), s.starred);

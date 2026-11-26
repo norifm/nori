@@ -1,5 +1,45 @@
 import UIKit
 
+/// An artist's biography: four lines until a tap shows it whole, with More (Less) under it where it is
+/// longer than that.
+final class BioCell: UITableViewCell {
+    static let id = "bio"
+    static let lines = 4
+    private let text = label(Fonts.font(15), Theme.label, lines: BioCell.lines)
+    private let more = label(Fonts.font(13, .semibold, .footnote), Theme.secondary)
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = .clear
+        selectionStyle = .none
+        let column = UIStackView(arrangedSubviews: [text, more])
+        column.axis = .vertical
+        column.spacing = 4
+        column.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: Space.gutter),
+            column.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -Space.gutter),
+            column.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            column.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// `width`: the table's, which the text is measured against for More.
+    func show(_ words: String, whole: Bool, width: CGFloat, look: PageLook) {
+        text.text = words
+        text.numberOfLines = whole ? 0 : BioCell.lines
+        text.textColor = look.ink
+        more.textColor = look.quiet
+        more.text = whole ? Say.less : Say.more
+        let full = (words as NSString).boundingRect(with: CGSize(width: width - 2 * Space.gutter, height: .greatestFiniteMagnitude),
+                                                     options: .usesLineFragmentOrigin, attributes: [.font: text.font as Any], context: nil).height
+        more.isHidden = full <= text.font.lineHeight * CGFloat(BioCell.lines) + 1
+    }
+}
+
 /// A list row: the cover (or the track number on an album), title and a quiet line; the hairline under
 /// it starts at the title, except under a song. The song playing has its title in the accent. A song's marks
 /// sit in columns of their own, as Android's rows: its download, then its seal at the edge, each in its
@@ -92,6 +132,7 @@ final class ItemCell: UITableViewCell {
         // With no second line (an album's own tracks) the cloud leads the title instead.
         let name: String = {
             if item.kind == "smart", item.title.isEmpty { return Say.smart(item.count) }
+            if item.kind == "link" { return Say.link(item.title) }
             return item.title.isEmpty ? item.id : item.title
         }()
         title.attributedText = remoteText(name, remote: item.external && line.isEmpty, font: title.font,
@@ -114,7 +155,7 @@ final class ItemCell: UITableViewCell {
         bar.isHidden = (item.progress?.percent ?? -1) < 0
         bar.progress = Float(max(0, item.progress?.percent ?? 0)) / 100
         detail.isHidden = line.isEmpty
-        let bare = numbered || item.kind == "genre" || item.kind == "recent"
+        let bare = numbered || item.kind == "genre" || item.kind == "recent" || item.kind == "link"
         cover.isHidden = bare
         number.isHidden = !numbered
         number.text = item.track > 0 ? "\(item.track)" : ""

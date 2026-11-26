@@ -1254,6 +1254,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_open_artist, h, |a, card| a.open_card(card));
     on!(ui.on_open_playlist, h, |a, card| a.open_card(card));
     on!(ui.on_open_mix, h, |a, id| a.open_page(PageAsk::Mix(id.into())));
+    ui.on_open_link(|url| nori_host::desktop::open_in_browser(&url));
     on!(ui.on_play_album, h, |a, id| a.play_fetch(Fetch::Album(id.into())));
     on!(ui.on_play_artist, h, |a, id| a.play_fetch(Fetch::Artist(id.into())));
     on!(ui.on_play_playlist, h, |a, id| a.play_fetch(Fetch::Playlist(id.into())));
@@ -2065,6 +2066,9 @@ impl App {
         ui.set_page_editable(false);
         ui.set_page_songs(ModelRc::default());
         ui.set_page_shelves(ModelRc::default());
+        ui.set_page_bio("".into());
+        ui.set_page_links(ModelRc::default());
+        ui.set_page_similar(ModelRc::default());
         self.page_colours(None);
         if let Some(c) = self.known.iter().rev().find(|c| card_page(c).as_ref() == Some(&ask)).cloned() {
             self.show_known(&c);
@@ -2079,7 +2083,15 @@ impl App {
         ui.set_view(View::Page);
         ui.set_failed("".into());
         self.mirror();
+        let about = match &ask {
+            PageAsk::Artist(id) => Some(PageAsk::ArtistAbout(id.clone())),
+            _ => None,
+        };
         self.load(Req::Page(ask));
+        // After the page: a provider answers both from one read of the artist.
+        if let Some(about) = about {
+            self.load(Req::Page(about));
+        }
     }
 
     /// The page's head as card `c` knew it ([`known_head`]), in its cover's colors.
@@ -2432,7 +2444,8 @@ impl App {
                 self.page_actions(PageKind::Playlist);
                 self.show_page_songs();
             }
-            Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::Playlist(_) | PageGot::Mix(_) | PageGot::Genre { .. } | PageGot::Downloads(_) | PageGot::Stats { .. }) => {}
+            Data::Page(PageGot::ArtistAbout(a)) if shown => show_about(&ui, &a),
+            Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::ArtistAbout(_) | PageGot::Playlist(_) | PageGot::Mix(_) | PageGot::Genre { .. } | PageGot::Downloads(_) | PageGot::Stats { .. }) => {}
         }
     }
 
@@ -2832,6 +2845,8 @@ impl App {
                 self.song_pages.failed(offset);
                 *offset == 0
             }
+            // A page without its about part is still the page.
+            Req::Page(PageAsk::ArtistAbout(_)) => false,
             _ => true,
         }
     }
@@ -6280,6 +6295,14 @@ fn known_head(ui: &AppWindow, c: &Card) {
     ui.set_page_caption(words::known_caption(c.kind, c.year, c.count, c.seconds).into());
 }
 
+/// An artist page's about part: its biography, the pages to read more on, and the similar artists.
+fn show_about(ui: &AppWindow, a: &nori_core::pages::ArtistAbout) {
+    ui.set_page_bio(a.biography.clone().unwrap_or_default().into());
+    let links = [(words::LAST_FM, &a.last_fm), (words::MUSICBRAINZ, &a.musicbrainz)].into_iter().filter_map(|(name, url)| Some(crate::PageLink { name: name.into(), url: url.as_deref()?.into() }));
+    ui.set_page_links(ModelRc::new(VecModel::from(links.collect::<Vec<_>>())));
+    ui.set_page_similar(cards(a.similar.iter().map(artist_card)));
+}
+
 /// The last cards opened that [`App::known`] keeps.
 const KNOWN_CARDS: usize = 8;
 
@@ -9475,6 +9498,71 @@ mod tests {
             let shown = |text: &str| i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, text).next().is_some();
             assert!(shown("Glass Harbour") && shown("Mira Vale") && shown("2019 · 12 songs · 48:10"), "{theme}");
             assert_eq!(ui.get_page_sub_artist(), "ar", "the artist links to their page");
+        }
+    }
+
+    /// An artist page shows its about part, as Android's does: the biography four lines long until More, the
+    /// pages to read more on, and the similar artists as a shelf at its foot, each opening its page.
+    /// `NORI_DESKTOP_SHOTS` keeps it, in Day and Night.
+    #[test]
+    fn an_artist_page_shows_its_biography_and_similar_artists() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let bio = "Mira Vale is a songwriter and producer from the northern coast, known for slow, tidal records built from \
+                   field recordings of harbours, ferries and rain. Her first album, Glass Harbour, was made over two winters in a \
+                   converted net loft, with a borrowed upright piano and a tape machine. Critics called it a quiet record that \
+                   rewards a long listen. She has since toured with a string quartet and scored two films, and her live shows \
+                   are known for their long, unhurried sets. <a href=\"https://www.last.fm/music/Mira+Vale\">Read more on Last.fm</a>";
+        let info = nori_core::ArtistInfo {
+            biography: Some(bio.into()),
+            last_fm_url: Some("https://www.last.fm/music/Mira+Vale".into()),
+            music_brainz_id: Some("5b11f4ce-a62d-471e-81fc-a69a8278c7da".into()),
+            similar: ["Harbour Lights", "Ferry Songs", "North Coast", "Rain Choir", "Net Loft", "Tidal"].iter().enumerate().map(|(i, n)| nori_core::Artist { id: format!("ar{i}"), name: n.to_string(), cover_art: Some(format!("ar{i}")), ..Default::default() }).collect(),
+            ..Default::default()
+        };
+        let about = nori_core::pages::ArtistAbout::of(info);
+        let releases = ModelRc::new(VecModel::from(vec![Shelf { title: "Albums".into(), cards: cards((0..4).map(|i| Card { id: format!("al{i}").into(), title: ["Glass Harbour", "Low Tide", "Net Loft", "Winter Ferry"][i].into(), sub: (2019 + i).to_string().into(), art: format!("al{i}").into(), ..Default::default() })), loaded: true, ..Default::default() }]));
+        for (dark, theme) in [(false, "day"), (true, "night")] {
+            let ui = AppWindow::new().unwrap();
+            crate::look::plain(&Default::default(), &nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 10, day: 19, southern: false }).paint(&ui);
+            ui.window().set_size(slint::PhysicalSize::new(1280, 1000));
+            ui.on_art(|id, _, _| if id.is_empty() { Image::default() } else { Image::from_rgba8(cover_pixels()) });
+            let opened = Rc::new(RefCell::new(Vec::new()));
+            let seen = opened.clone();
+            ui.on_open_artist(move |c| seen.borrow_mut().push(c.id.to_string()));
+            let links = Rc::new(RefCell::new(Vec::new()));
+            let seen = links.clone();
+            ui.on_open_link(move |u| seen.borrow_mut().push(u.to_string()));
+            ui.set_page_kind(PageLayout::Artist);
+            ui.set_page_title("Mira Vale".into());
+            ui.set_page_art("ar".into());
+            ui.set_page_caption("4 releases · 41 songs".into());
+            ui.set_page_shelves(releases.clone());
+            show_about(&ui, &about);
+            ui.set_view(View::Page);
+            ui.show().unwrap();
+            settled(&ui);
+            keep_shot(&ui.window().take_snapshot().unwrap(), &format!("artist-about-top-{theme}"));
+            // Down past the head to the about part and the shelves.
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled { position: slint::LogicalPosition::new(640.0, 500.0), delta_x: 0.0, delta_y: -640.0 });
+            settled(&ui);
+            keep_shot(&ui.window().take_snapshot().unwrap(), &format!("artist-about-{theme}"));
+            let find = |label: &str| i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, label).next();
+            assert!(find("Similar artists").is_some() && find("Harbour Lights").is_some(), "{theme}: the similar artists' shelf");
+            let text = find(about.biography.as_deref().unwrap()).expect("the biography");
+            let under = text.absolute_position().y + text.size().height;
+            let more = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "More").find(|m| (under..under + 60.0).contains(&m.absolute_position().y));
+            let closed = text.size().height;
+            click_middle(&ui, &more.expect("More, under a long biography"));
+            assert!(text.size().height > closed + 10.0 && find("Less").is_some(), "{theme}: More shows it whole: {closed} then {}", text.size().height);
+            click_middle(&ui, &find("MusicBrainz").unwrap());
+            assert_eq!(*links.borrow(), ["https://musicbrainz.org/artist/5b11f4ce-a62d-471e-81fc-a69a8278c7da"]);
+            let card = find("Ferry Songs").unwrap();
+            let (p, size) = (card.absolute_position(), card.size());
+            press(ui.window(), p.x + size.width / 2.0, p.y - 60.0, slint::platform::PointerEventButton::Left);
+            settled(&ui);
+            assert_eq!(*opened.borrow(), ["ar1"], "{theme}: a similar artist opens");
         }
     }
 

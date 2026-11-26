@@ -43,6 +43,9 @@ pub enum PageAsk {
     Album(String),
     DownloadedAlbum(String),
     Artist(String),
+    /// An artist page's about part (`pages::ArtistAbout`), read after its page: a provider answers both
+    /// from one read of the artist.
+    ArtistAbout(String),
     Playlist(String),
     Mix(String),
     /// A Home row in full ("see all"): its page from `offset` (`browse::home_row_page`).
@@ -65,6 +68,7 @@ pub enum PageGot {
     Downloads(Box<Downloads>),
     Album(Box<AlbumDetail>),
     Artist(Box<ArtistDetail>),
+    ArtistAbout(Box<nori_core::pages::ArtistAbout>),
     Playlist(Box<PlaylistDetail>),
     Mix(Box<MixSheet>),
 }
@@ -162,6 +166,7 @@ impl Handle {
             PageAsk::Playlists => pages(Read::PlaylistList, &|p| if let Page::Playlists { v } = p { Some(PageGot::Playlists(v)) } else { None }),
             PageAsk::Album(id) => pages(Read::AlbumById { id }, &|p| if let Page::AlbumPage { v } = p { Some(PageGot::Album(Box::new(v))) } else { None }),
             PageAsk::Artist(id) => pages(Read::ArtistById { id }, &|p| if let Page::ArtistPage { v } = p { Some(PageGot::Artist(Box::new(v))) } else { None }),
+            PageAsk::ArtistAbout(id) => pages(Read::ArtistAbout { id }, &|p| if let Page::About { v } = p { Some(PageGot::ArtistAbout(Box::new(nori_core::pages::ArtistAbout::of(v)))) } else { None }),
             PageAsk::Playlist(id) => pages(Read::PlaylistById { id }, &|p| if let Page::PlaylistPage { v } = p { Some(PageGot::Playlist(Box::new(v))) } else { None }),
             PageAsk::DownloadedAlbum(id) => each(match self.core.downloaded_album(id) {
                 Ok(Some(a)) => Ok(PageGot::Album(Box::new(a))),

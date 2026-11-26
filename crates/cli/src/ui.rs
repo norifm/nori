@@ -1044,7 +1044,10 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     line(row_of(area, 1), &by, plays);
     let head: Vec<(Span<'static>, Button)> = actions.iter().map(|a| (Span::styled(crate::text::page_action(*a, missing), t.dim()), Button::Page(*a))).collect();
     line(row_of(area, 2), &caption, head);
-    let body = below(area, 4);
+    let mut body = below(area, 4);
+    if let Page::Artist { about: Some(a), whole, detail: Load::Ready(_), .. } = p {
+        body = about(f, body, a, *whole, hits, t);
+    }
     match p {
         Page::Album { detail: Load::Ready(d), sel, .. } | Page::DownloadedAlbum { detail: Load::Ready(d), sel, .. } => {
             let multi = d.discs.len() > 1;
@@ -1074,9 +1077,12 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
             let songs = &d.songs;
             list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
         }
-        Page::Artist { detail: Load::Ready(d), sel, .. } => {
-            let lines = crate::app::artist_lines(d);
+        Page::Artist { detail: Load::Ready(d), about, sel, .. } => {
+            let lines = crate::app::artist_lines(d, about.as_deref());
+            let similar = about.as_ref().map(|a| a.similar.as_slice()).unwrap_or_default();
             list(f, body, sel, lines.len(), ListRef::Page, hits, t, focused, &|i, w| match lines[i] {
+                crate::app::ArtistLine::Similar => Line::from(Span::styled(crate::text::SIMILAR_ARTISTS, bold().fg(t.ink))),
+                crate::app::ArtistLine::SimilarArtist(k) => Line::from(vec![Span::raw("  "), Span::styled(similar[k].name.clone(), Style::default().fg(t.ink))]),
                 crate::app::ArtistLine::Shelf(k) => spread(vec![Span::styled(crate::text::release_shelf(&d.groups[k]), bold().fg(t.ink))], Span::styled(format!("{} ", d.groups[k].albums.len()), t.dim()), w),
                 crate::app::ArtistLine::Album(k) => {
                     let a = &d.albums[k];
@@ -1097,6 +1103,40 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         }
         _ => loading(f, body, t),
     }
+}
+
+/// Lines of an artist's biography shown until More.
+const BIOGRAPHY_LINES: usize = 4;
+
+/// An artist's about part over its list, in `area`: the biography at a reading width, four lines until
+/// More (`whole`: all of it, up to half the area), then More or Less and the pages to read on. The area
+/// left under it.
+fn about(f: &mut Frame, area: Rect, a: &nori_core::pages::ArtistAbout, whole: bool, hits: &mut Vec<(Rect, Hit)>, t: &Theme) -> Rect {
+    let width = area.width.min(100) as usize;
+    let lines = a.biography.as_deref().map(|b| wrap(&b.replace('\n', " "), width)).unwrap_or_default();
+    let cap = if whole { (area.height as usize / 2).max(BIOGRAPHY_LINES) } else { BIOGRAPHY_LINES };
+    let shown = lines.len().min(cap);
+    for (i, l) in lines.iter().take(shown).enumerate() {
+        let cut = i + 1 == shown && shown < lines.len();
+        let words = if cut { format!("{}…", fit(l, width.saturating_sub(1)).trim_end_matches('…')) } else { l.clone() };
+        text(f, Rect { y: area.y + i as u16, height: 1, ..area }, &words, Style::default().fg(t.ink));
+    }
+    let mut words: Vec<(Span<'static>, Button)> = Vec::new();
+    if lines.len() > BIOGRAPHY_LINES {
+        words.push((Span::styled(if whole { crate::text::LESS } else { crate::text::MORE }, bold().fg(t.ink)), Button::Biography));
+    }
+    for (i, (name, _)) in crate::app::about_links(a).into_iter().enumerate() {
+        words.push((Span::styled(name, Style::default().fg(t.ink)), Button::AboutLink(i)));
+    }
+    let mut used = shown as u16;
+    if !words.is_empty() {
+        buttons(f, hits, Rect { y: area.y + used + u16::from(shown > 0), height: 1, ..area }, &words);
+        used += 1 + u16::from(shown > 0);
+    }
+    if used == 0 {
+        return area;
+    }
+    below(area, used + 1)
 }
 
 fn downloads(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {

@@ -395,6 +395,34 @@ pub fn musicbrainz_artist_url(id: String) -> String {
     format!("https://musicbrainz.org/artist/{id}")
 }
 
+/// An artist page's about part as every client shows it, under the releases: the biography, the pages
+/// to read more on, and the similar artists the source can open.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ArtistAbout {
+    /// Without the link the server appends ([`biography`]); none when empty.
+    pub biography: Option<String>,
+    pub last_fm: Option<String>,
+    pub musicbrainz: Option<String>,
+    /// [`similar_artists`].
+    pub similar: Vec<Artist>,
+}
+
+impl ArtistAbout {
+    pub fn of(info: nori_model::model::ArtistInfo) -> ArtistAbout {
+        ArtistAbout {
+            biography: info.biography.map(biography).map(|b| b.trim().to_string()).filter(|b| !b.is_empty()),
+            last_fm: info.last_fm_url.filter(|u| !u.is_empty()),
+            musicbrainz: info.music_brainz_id.filter(|m| !m.is_empty()).map(musicbrainz_artist_url),
+            similar: similar_artists(info.similar),
+        }
+    }
+
+    /// Whether there is anything to show.
+    pub fn is_empty(&self) -> bool {
+        self.biography.is_none() && self.last_fm.is_none() && self.musicbrainz.is_none() && self.similar.is_empty()
+    }
+}
+
 // ---- the detail pages, laid out once when read ----
 
 /// The summed length of `songs`, in seconds.
@@ -575,6 +603,18 @@ mod tests {
         assert_eq!(idx.view("BJÖ".into()).rows, [1]);
         assert_eq!(idx.view("X".into()).rows, [3]);
         assert_eq!(biography("Hello <a href=x>more</a>".into()), "Hello ");
+        let info = |bio: &str, mbid: &str| nori_model::model::ArtistInfo {
+            biography: Some(bio.into()),
+            music_brainz_id: Some(mbid.into()),
+            last_fm_url: Some(String::new()),
+            similar: vec![Artist { id: "ar2".into(), ..Default::default() }, Artist { name: "Not here".into(), ..Default::default() }],
+            ..Default::default()
+        };
+        let about = ArtistAbout::of(info(" Hello <a href=x>Read more on Last.fm</a>", "mb1"));
+        assert_eq!((about.biography.as_deref(), about.last_fm, about.musicbrainz.as_deref()), (Some("Hello"), None, Some("https://musicbrainz.org/artist/mb1")));
+        assert_eq!(about.similar.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["ar2"], "only those the source can open");
+        let bare = ArtistAbout::of(nori_model::model::ArtistInfo { biography: Some("<a href=x>more</a>".into()), ..Default::default() });
+        assert!(bare.is_empty(), "a biography that is only the server's link is none");
 
         // Filter.
         assert_eq!((filter_offered(12, false), filter_offered(13, false), filter_offered(3, true)), (false, true, true));

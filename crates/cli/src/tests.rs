@@ -338,6 +338,43 @@ fn keys_and_focus() {
     assert!(a.dirty);
 }
 
+/// An artist's page shows its about part, as Android's does: the biography four lines long until More, the
+/// pages to read on, and the similar artists after the releases, each opening its page.
+#[test]
+fn an_artist_page_shows_its_biography_and_similar_artists() {
+    let mut a = app();
+    a.open_artist("ar".into());
+    assert!(a.cmds.contains(&Cmd::Load(Req::ArtistAbout("ar".into()))), "its about part is read with it");
+    let artist = Artist { id: "ar".into(), name: "Mira Vale".into(), ..Default::default() };
+    let detail = nori_core::ArtistDetail::new(artist, vec![album("al-1", "Glass Harbour"), album("al-2", "Low Tide")], vec![]);
+    a.handle(Msg::Data(Req::Artist("ar".into()), Ok(Data::Artist(Box::new(detail)))));
+    let bio = "Mira Vale is a songwriter and producer from the northern coast, known for slow, tidal records built from field recordings of harbours, ferries and rain. Her first album, Glass Harbour, was made over two winters in a converted net loft, with a borrowed upright piano and a tape machine. Critics called it a quiet record that rewards a long listen. She has since toured with a string quartet and scored two films, and her live shows are known for their long, unhurried sets.";
+    let about = nori_core::pages::ArtistAbout {
+        biography: Some(bio.into()),
+        last_fm: Some("https://www.last.fm/music/Mira+Vale".into()),
+        musicbrainz: Some("https://musicbrainz.org/artist/mb".into()),
+        similar: ["Harbour Lights", "Ferry Songs"].iter().enumerate().map(|(i, n)| Artist { id: format!("ar{i}"), name: n.to_string(), ..Default::default() }).collect(),
+    };
+    a.handle(Msg::Data(Req::ArtistAbout("ar".into()), Ok(Data::ArtistAbout(Box::new(about)))));
+    let s = draw(&mut a, 120, 40);
+    dump("artist-about", &s);
+    assert!(s.contains("Mira Vale is a songwriter") && s.contains("…") && !s.contains("unhurried sets"), "four lines until More:\n{s}");
+    assert!(s.contains("More") && s.contains("last.fm") && s.contains("MusicBrainz") && s.contains("Similar artists") && s.contains("Ferry Songs"), "{s}");
+    let r = hit_rect(&a, Hit::Button(crate::app::Button::Biography));
+    click(&mut a, r.x, r.y);
+    let s = draw(&mut a, 120, 40);
+    assert!(s.contains("unhurried sets.") && s.contains("Less"), "More shows it whole:\n{s}");
+    let r = hit_rect(&a, Hit::Button(crate::app::Button::AboutLink(1)));
+    click(&mut a, r.x, r.y);
+    assert!(a.cmds.contains(&Cmd::OpenLink("https://musicbrainz.org/artist/mb".into())));
+    // The last line: the second similar artist.
+    for _ in 0..10 {
+        key(&mut a, KeyCode::Down);
+    }
+    key(&mut a, KeyCode::Enter);
+    assert!(a.cmds.contains(&Cmd::Load(Req::Artist("ar1".into()))), "a similar artist opens");
+}
+
 /// An album opened from its row shows what the row knew (its name, who made it, its counts) while it is read,
 /// as Android's pages do; its answer takes over.
 #[test]
@@ -3967,7 +4004,7 @@ fn artists_filter_as_typed() {
     assert!(s.contains("Alpha Waves") && s.contains("Waveform") && !s.contains("Kestrel") && !s.contains("Lumen"), "{s}");
     key(&mut a, KeyCode::Enter);
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::Load(Req::Artist(id))) if id == "1"), "{:?}", a.cmds.last());
+    assert!(a.cmds.contains(&Cmd::Load(Req::Artist("1".into()))), "{:?}", a.cmds);
     a.pages.clear();
     key(&mut a, KeyCode::Esc);
     let s = draw(&mut a, 120, 36);

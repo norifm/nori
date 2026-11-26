@@ -155,6 +155,11 @@ pub fn category(c: nori_plugins::Category) -> &'static str {
     }
 }
 pub const ABOUT: &str = "About";
+pub const SIMILAR_ARTISTS: &str = "Similar artists";
+pub const LESS: &str = "Less";
+/// The pages an artist's about part links to, by their own names.
+pub const LAST_FM: &str = "last.fm";
+pub const MUSICBRAINZ: &str = "MusicBrainz";
 pub const PLUGIN_MAY: &str = "What it may do";
 pub const PLUGIN_ON: &str = "On";
 pub const RESTART: &str = "Restart";

@@ -204,6 +204,8 @@ pub enum Req {
     Album(String),
     DownloadedAlbum(String),
     Artist(String),
+    /// An artist page's about part, read after its page.
+    ArtistAbout(String),
     Playlist(String),
     Mix(String),
     /// A Home row in full, a page from `offset`.
@@ -242,6 +244,7 @@ pub enum Data {
     Favorites(Vec<Song>),
     Album(Box<AlbumDetail>),
     Artist(Box<ArtistDetail>),
+    ArtistAbout(Box<nori_core::pages::ArtistAbout>),
     Playlist(Box<PlaylistDetail>),
     Downloads(Box<Downloads>),
     DownloadProgress(Box<nori_core::transfers::DownloadSections>),
@@ -348,6 +351,7 @@ impl Session {
             Req::Album(id) => Some(PageAsk::Album(id)),
             Req::DownloadedAlbum(id) => Some(PageAsk::DownloadedAlbum(id)),
             Req::Artist(id) => Some(PageAsk::Artist(id)),
+            Req::ArtistAbout(id) => Some(PageAsk::ArtistAbout(id)),
             Req::Playlist(id) => Some(PageAsk::Playlist(id)),
             Req::Mix(id) => Some(PageAsk::Mix(id)),
             Req::Favorites => Some(PageAsk::Favorites),
@@ -529,6 +533,7 @@ fn data_of(got: PageGot) -> Data {
         PageGot::Songs { songs, exhausted } => Data::Songs(songs, exhausted),
         PageGot::Album(d) => Data::Album(d),
         PageGot::Artist(d) => Data::Artist(d),
+        PageGot::ArtistAbout(a) => Data::ArtistAbout(a),
         PageGot::Playlist(d) => Data::Playlist(d),
         PageGot::Mix(m) => Data::Mix(m),
         PageGot::Genres(v) => Data::Genres(v),

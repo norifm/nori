@@ -1224,6 +1224,7 @@ impl Runner {
             }
             Cmd::Action(c) => s.action(c),
             Cmd::Curve => s.curve_answer(),
+            Cmd::OpenLink(url) => nori_host::desktop::open_in_browser(&url),
             Cmd::CheckUpdate => s.update_check(true),
             Cmd::SupportGive(choice) => {
                 let (client, tx) = (s.account().client().clone(), self.tx.clone());

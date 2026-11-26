@@ -222,6 +222,7 @@ session does all of this. Android calls the same functions from Kotlin.
 | The queue's own actions | `menus::queue_actions` | The same |
 | A screen's read | `Client::read_cached(read, PageShown)` | `crates/host/src/pages.rs` |
 | A list read a page at a time | `paged::Paged` | The same |
+| An artist page's about part, read after the page | `Read::ArtistAbout`, then `pages::ArtistAbout::of` | `PageAsk::ArtistAbout` |
 | An artist page's top songs | `library::artist_top_songs` | Android only |
 | A keystroke in search | `SearchSession`, whose `SearchView` holds a `SearchShown` | `search_typed`, `search_server` |
 | A search sent (Enter) or a result of it used | `Core::search_remember_recent` | `Handle::search_used` |

@@ -60,6 +60,7 @@ enum Say {
         case "failed": return "Failed"
         case "stored": return "Downloaded"
         case "queue": return "Up next"
+        case "similar": return "Similar artists"
         default: return ""
         }
     }
@@ -481,6 +482,9 @@ enum Say {
     static let previous = "Previous"
     static let close = "Close"
     static let more = "More"
+    static let less = "Less"
+    /// A page an artist's about part links to, by its own name (the core's `lastFm`, `musicBrainz`).
+    static func link(_ page: String) -> String { page == "lastFm" ? "last.fm" : "MusicBrainz" }
     static let lyrics = "Lyrics"
     static let repeatMode = "Repeat"
     static let sort = "Sort"

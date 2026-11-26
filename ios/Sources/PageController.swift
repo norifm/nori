@@ -52,6 +52,7 @@ class PageController: TablePage {
         tableView.backgroundColor = look.page
         tableView.separatorStyle = .none
         tableView.register(ItemCell.self, forCellReuseIdentifier: ItemCell.id)
+        tableView.register(BioCell.self, forCellReuseIdentifier: BioCell.id)
         tableView.register(ShelfCell.self, forCellReuseIdentifier: ShelfCell.id)
         tableView.register(PairCell.self, forCellReuseIdentifier: PairCell.id)
         tableView.estimatedRowHeight = 60
@@ -561,6 +562,10 @@ class PageController: TablePage {
             cell.picked = { [weak self] in self?.open($0) }
             cell.held = { [weak self] in self?.menu(for: $0) }
             return cell
+        case .list where r.section.items[indexPath.row].kind == "bio":
+            let cell = tableView.dequeueReusableCell(withIdentifier: BioCell.id, for: indexPath) as! BioCell
+            cell.show(r.section.items[indexPath.row].title, whole: biographyWhole, width: tableView.bounds.width, look: look)
+            return cell
         case .list:
             let cell = tableView.dequeueReusableCell(withIdentifier: ItemCell.id, for: indexPath) as! ItemCell
             let item = r.section.items[indexPath.row]
@@ -578,8 +583,16 @@ class PageController: TablePage {
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         let item = rows[indexPath.section].section.items[indexPath.row]
+        if item.kind == "bio" {
+            biographyWhole.toggle()
+            tableView.reloadRows(at: [indexPath], with: .automatic)
+            return
+        }
         open(item)
     }
+
+    /// An artist's biography shows whole (`BioCell`).
+    private var biographyWhole = false
 
     func open(_ item: Item) {
         let push = { (page: UIViewController) in self.navigationController?.pushViewController(page, animated: true) }
@@ -597,6 +610,8 @@ class PageController: TablePage {
         case "smart":
             let name = item.title.isEmpty ? Say.smart(item.count) : item.title
             push(PageController(kind: NORI_PAGE_SMART, arg: item.id, title: name))
+        case "link":
+            if let url = URL(string: item.id) { UIApplication.shared.open(url) }
         default:
             break
         }

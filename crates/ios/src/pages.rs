@@ -250,20 +250,31 @@ fn album_json(a: &Album) -> Value {
 /// An artist's page: a shelf per kind of release (`pages::release_groups`; `kind` its `ReleaseKind` and
 /// `tag` the server's for a tagged one, for the app to word), then the songs its provider lists, kept for
 /// `token` to play from a tap.
-fn artist_page(token: u64, v: &nori_core::ArtistDetail) -> Value {
+/// An artist's page, with its about part once read: the biography and the pages to read on first (key
+/// `about`: a `bio` item, then a `link` item each, its address the id and which page its `t`), the similar
+/// artists last (key `similar`).
+fn artist_page(token: u64, v: &nori_core::ArtistDetail, about: Option<&nori_core::pages::ArtistAbout>) -> Value {
     let a = &v.artist;
     keep_list(token, v.songs.clone(), Some(Fetch::Artist(a.id.clone()).origin()));
-    let mut sections: Vec<Value> = release_groups(&v.albums)
+    let mut sections: Vec<Value> = Vec::new();
+    if let Some(about) = about {
+        let bio = about.biography.iter().map(|b| json!({ "k": "bio", "id": "", "t": b }));
+        let links = [("lastFm", &about.last_fm), ("musicBrainz", &about.musicbrainz)].into_iter().filter_map(|(n, url)| Some(json!({ "k": "link", "id": url.as_deref()?, "t": n })));
+        sections.push(section("about", false, bio.chain(links).collect()));
+    }
+    sections.extend(release_groups(&v.albums)
         .into_iter()
         .map(|g| {
             let mut s = section("release", true, g.albums.iter().filter_map(|&i| v.albums.get(i as usize)).map(album_json).collect());
             s["kind"] = json!(g.kind as u8);
             s["tag"] = json!(g.tag);
             s
-        })
-        .collect();
+        }));
     if !v.songs.is_empty() {
         sections.push(songs_section("songs", &v.songs, 0));
+    }
+    if let Some(about) = about.filter(|a| !a.similar.is_empty()) {
+        sections.push(section("similar", true, about.similar.iter().map(artist_json).collect()));
     }
     json!({
         "head": {
@@ -950,10 +961,29 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
             Err(e) => send_error(token, &e.into()),
         },
         PAGE_ALBUM => album(&client, token, arg.clone()),
-        PAGE_ARTIST => pages(&client, token, Read::ArtistById { id: arg.clone() }, &|p| match p {
-            Page::ArtistPage { v } => Some(artist_page(token, &v)),
-            _ => None,
-        }),
+        PAGE_ARTIST => {
+            let last = Mutex::new(None);
+            pages(&client, token, Read::ArtistById { id: arg.clone() }, &|p| match p {
+                Page::ArtistPage { v } => {
+                    let page = artist_page(token, &v, None);
+                    *lock(&last) = Some(v);
+                    Some(page)
+                }
+                _ => None,
+            });
+            // After the page, which comes again with it: a provider answers both from one read of the
+            // artist. A page without it is still the page.
+            let Some(v) = last.into_inner().unwrap_or_else(|e| e.into_inner()) else { return };
+            let mut about = None;
+            let _ = read_pages(&client, Read::ArtistAbout { id: arg.clone() }, |p| {
+                if let Page::About { v } = p {
+                    about = Some(nori_core::pages::ArtistAbout::of(v));
+                }
+            });
+            if let Some(a) = about.filter(|a| !a.is_empty()) {
+                send(token, &artist_page(token, &v, Some(&a)));
+            }
+        }
         PAGE_PLAYLIST => pages(&client, token, Read::PlaylistById { id: arg.clone() }, &|p| match p {
             Page::PlaylistPage { v } => {
                 let pl = &v.playlist;
@@ -2195,14 +2225,35 @@ mod tests {
         let _turn = lock(&ABI_IN_USE);
         forget_lists();
         let artist = Artist { id: "yt-UC1".into(), ..Artist::default() };
-        let v = artist_page(78, &nori_core::ArtistDetail::new(artist.clone(), vec![], vec![song("v1"), song("v2")]));
+        let v = artist_page(78, &nori_core::ArtistDetail::new(artist.clone(), vec![], vec![song("v1"), song("v2")]), None);
         assert_eq!((v["head"]["n"].as_u64(), v["head"]["ns"].as_u64()), (Some(0), Some(2)));
         assert_eq!(v["sections"][0]["key"], "songs");
         assert_eq!(v["sections"][0]["items"][1]["i"], 1);
         let (kept, origin) = list(78).unwrap();
         assert_eq!((kept.len(), origin), (2, Some(PageOrigin::new(OriginKind::Artist, "yt-UC1"))));
-        let server = artist_page(79, &nori_core::ArtistDetail::new(artist, vec![], vec![]));
+        let server = artist_page(79, &nori_core::ArtistDetail::new(artist, vec![], vec![]), None);
         assert_eq!(server["sections"].as_array().map(Vec::len), Some(0), "no songs, no section");
+    }
+
+    /// An artist page's about part: the biography and the pages to read on over its releases, the similar
+    /// artists after them.
+    #[test]
+    fn an_artists_about_part_frames_its_releases() {
+        let _turn = lock(&ABI_IN_USE);
+        let about = nori_core::pages::ArtistAbout {
+            biography: Some("Mira Vale writes slow records.".into()),
+            last_fm: None,
+            musicbrainz: Some("https://musicbrainz.org/artist/mb".into()),
+            similar: vec![Artist { id: "ar2".into(), name: "Ferry Songs".into(), ..Artist::default() }],
+        };
+        let albums = vec![Album { id: "a".into(), ..Album::default() }];
+        let v = artist_page(81, &nori_core::ArtistDetail::new(Artist { id: "ar".into(), ..Artist::default() }, albums, vec![]), Some(&about));
+        let keys: Vec<&str> = v["sections"].as_array().unwrap().iter().map(|s| s["key"].as_str().unwrap()).collect();
+        assert_eq!(keys, ["about", "release", "similar"]);
+        let items = &v["sections"][0]["items"];
+        assert_eq!((items[0]["k"].as_str(), items[0]["t"].as_str()), (Some("bio"), Some("Mira Vale writes slow records.")));
+        assert_eq!((items[1]["k"].as_str(), items[1]["id"].as_str(), items[1]["t"].as_str()), (Some("link"), Some("https://musicbrainz.org/artist/mb"), Some("musicBrainz")));
+        assert_eq!(v["sections"][2]["items"][0]["id"], "ar2");
     }
 
     #[test]
@@ -2216,7 +2267,7 @@ mod tests {
             ..Album::default()
         };
         let albums = vec![album("a", 2001, &[], 10), album("s", 2003, &["Single"], 1), album("b", 2005, &[], 12)];
-        let v = artist_page(80, &nori_core::ArtistDetail::new(Artist { id: "ar".into(), ..Artist::default() }, albums, vec![]));
+        let v = artist_page(80, &nori_core::ArtistDetail::new(Artist { id: "ar".into(), ..Artist::default() }, albums, vec![]), None);
         let shelf = |n: usize| {
             let s = &v["sections"][n];
             let ids: Vec<&str> = s["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();

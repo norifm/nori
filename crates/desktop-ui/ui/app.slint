@@ -461,6 +461,12 @@ export struct Pick {
 // rows in columns.
 export enum ShelfShape { cards, tiles, songs }
 
+// A page to read more on, outside nori.
+export struct PageLink {
+    name: string,
+    url: string,
+}
+
 export struct Shelf {
     title: string,
     cards: [Card],
@@ -8162,6 +8168,12 @@ export component AppWindow inherits Window {
     callback all-songs(int);
     // An artist's releases, a shelf per kind (pages.rs's `release_groups`).
     in property <[Shelf]> page-shelves;
+    // An artist's about part (pages.rs's `ArtistAbout`): its biography, the pages to read more on (each
+    // opened by `open-link`), and the similar artists, a shelf at the page's foot.
+    in property <string> page-bio;
+    in property <[PageLink]> page-links;
+    in property <[Card]> page-similar;
+    callback open-link(string);
     // The page wears its cover's colours: the blurred cover (nori-look's wash, dyed as the page is) runs out
     // into the page's own colour, so there is no line where the picture stops.
     in property <image> page-wash;
@@ -10531,6 +10543,36 @@ export component AppWindow inherits Window {
                                         background: Theme.hairline;
                                     }
                                 }
+                                // The biography, four lines until More, at a reading width, then where to read on.
+                                if root.page-kind == PageLayout.artist && (root.page-bio != "" || root.page-links.length > 0): about := VerticalLayout {
+                                    property <bool> open;
+                                    property <length> closed: 4 * (bio.font-metrics.ascent - bio.font-metrics.descent);
+                                    spacing: 6px;
+                                    HorizontalLayout {
+                                        alignment: start;
+                                        bio := Text {
+                                            width: min(parent.width, 760px);
+                                            height: root.page-bio == "" ? 0 : about.open ? self.preferred-height : min(self.preferred-height, about.closed);
+                                            text: root.page-bio;
+                                            wrap: word-wrap;
+                                            overflow: elide;
+                                            color: Theme.text;
+                                            font-size: 14px;
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        alignment: start;
+                                        spacing: 2px;
+                                        if root.page-bio != "" && (about.open || bio.preferred-height > about.closed): TextButton {
+                                            text: about.open ? "Less" : "More";
+                                            clicked => { about.open = !about.open; }
+                                        }
+                                        for l in root.page-links: TextButton {
+                                            text: l.name;
+                                            clicked => { root.open-link(l.url); }
+                                        }
+                                    }
+                                }
                                 if root.page-kind == PageLayout.artist: ReleaseShelves {
                                     shelves: root.page-shelves;
                                     titled: true;
@@ -10606,6 +10648,26 @@ export component AppWindow inherits Window {
                                     padding-top: 48px;
                                     icon: Icons.music-note;
                                     title: "No songs yet";
+                                }
+                                // The similar artists, a shelf that scrolls sideways as Home's do.
+                                if root.page-kind == PageLayout.artist && root.page-similar.length > 0: similar := ShelfView {
+                                    pad: 0;
+                                    least: Frame.least;
+                                    title: "Similar artists";
+                                    count: root.page-similar.length;
+                                    round: true;
+                                    Rectangle {
+                                        for slot in similar.slots: CardView {
+                                            at: similar.first + slot;
+                                            x: floor((similar.gap + self.at * similar.step) / 1phx) * 1phx;
+                                            side: similar.side;
+                                            card: root.page-similar[self.at];
+                                            round: true;
+                                            picture: root.art(self.card.art, 0, root.covers-rev);
+                                            open => { root.open-artist(self.card); }
+                                            play => { root.play-artist(self.card.id); }
+                                        }
+                                    }
                                 }
                             }
                         }
