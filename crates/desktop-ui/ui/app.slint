@@ -4564,7 +4564,10 @@ component QueueView inherits Rectangle {
                     height: 54px;
                     // Concentric with the cover: its 8 px corner and the 7 px around it.
                     border-radius: 15px;
-                    background: i == root.drag-from && (root.dragging || root.dropping) ? Theme.chosen : qt.has-hover ? Theme.hover : transparent;
+                    // The row held is raised over the rows it passes.
+                    background: i == root.drag-from && (root.dragging || root.dropping) ? Theme.raised : qt.has-hover ? Theme.hover : transparent;
+                    border-width: i == root.drag-from && (root.dragging || root.dropping) ? 1px : 0;
+                    border-color: Theme.hairline;
                     // Already played: quieter.
                     opacity: (s.played ? 0.45 : 1) * root.edge(qrow.top + self.y, self.height);
                     // The row's content inside it, so the row stays hovered over its links and buttons.
@@ -5062,7 +5065,7 @@ component RankPlate inherits Rectangle {
             y: parent.top ? 0 : -20px;
             height: parent.height + (parent.top ? 0 : 20px) + (parent.foot ? 0 : 20px);
             border-radius: 18px;
-            background: root.held ? Theme.chosen : Theme.panel;
+            background: root.held ? Theme.raised : Theme.panel;
             border-width: 1px;
             border-color: Theme.hairline;
         }
@@ -10038,9 +10041,12 @@ export component AppWindow inherits Window {
                             HorizontalLayout {
                                 padding-left: 12px;
                                 padding-right: 12px;
+                                // The one chosen is raised, a step of paper and a hairline, never filled.
                                 Rectangle {
                                     border-radius: 9px;
-                                    background: root.artist-chosen == a.id ? Theme.chosen : (ar.has-hover ? Theme.hover : transparent);
+                                    background: root.artist-chosen == a.id ? Theme.panel : (ar.has-hover ? Theme.hover : transparent);
+                                    border-width: root.artist-chosen == a.id ? 1px : 0;
+                                    border-color: Theme.hairline;
                                     HorizontalLayout {
                                         padding-left: 10px;
                                         padding-right: 10px;
