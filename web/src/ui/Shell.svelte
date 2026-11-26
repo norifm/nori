@@ -6,6 +6,7 @@
   // so the first paint carries only what it shows.
   import { untrack, type Component } from "svelte";
   import { drawn } from "../state/library.svelte";
+  import { itemMenu } from "../state/menus";
   import { player } from "../state/player.svelte";
   import { route } from "../state/route.svelte";
   import { worn } from "../state/theme.svelte";
@@ -71,6 +72,9 @@
     }
   });
 </script>
+
+<!-- Every item's right click opens its menu, wherever it is drawn. -->
+<svelte:window oncontextmenucapture={itemMenu} />
 
 <div class="shell tinted recolors" style={ui.tint?.vars ?? worn.vars} style:--bar-h={ui.wide ? null : playing ? "132px" : "76px"}>
   <main id="main">

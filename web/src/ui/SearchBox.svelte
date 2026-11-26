@@ -6,7 +6,9 @@
   // shared search's (state/search.svelte.ts). Not on the search page, which shows the answer itself.
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
+  import { itemMark, songMenu } from "../state/menus";
   import { go, route, searchFor } from "../state/route.svelte";
+  import { pointer } from "../state/ui.svelte";
   import { player } from "../state/player.svelte";
   import { remember, search, typed, type Kind, type Line } from "../state/search.svelte";
   import { W } from "../words";
@@ -42,6 +44,35 @@
     open = false;
     at = -1;
   };
+  /** Line `l` as the item it is, for its menu on a right click: an artist's, album's or playlist's. */
+  function lineItem(l: Line) {
+    const f = found;
+    if (!f) return {};
+    switch (l.line) {
+      case "artist": {
+        const a = f.artists[l.at];
+        return itemMark("artist", a.id, { title: a.name, cover: a.cover });
+      }
+      case "album": {
+        const a = f.albums[l.at];
+        return itemMark("album", a.id, { title: a.name, line: a.artist, cover: a.cover });
+      }
+      case "playlist": {
+        const p = f.playlists[l.at];
+        return itemMark("playlist", p.id, { title: p.name, line: p.songCount ? W.songCount(p.songCount) : (p.comment ?? ""), cover: p.cover }, !!p.editable);
+      }
+      default:
+        return {};
+    }
+  }
+
+  /** A song line's right click: the song's menu, its Play as choosing the line. */
+  function lineMenu(e: MouseEvent, l: Line) {
+    if (l.line !== "song" || !found) return;
+    e.preventDefault();
+    void songMenu(found.songs[l.at], pointer(e), { play: () => choose(l) });
+  }
+
   function choose(l: Line) {
     const f = found;
     close();
@@ -125,7 +156,7 @@
           <div class="cap" class:first={i === 0}>{heads[l.kind]}</div>
         {:else}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <div class="res" class:all={l.line === "all"} class:lit={i === at} id="search-line-{i}" data-line={i} role="option" tabindex="-1" aria-selected={i === at} onpointerenter={() => (at = i)} onclick={() => choose(l)}>
+          <div class="res" class:all={l.line === "all"} class:lit={i === at} id="search-line-{i}" data-line={i} role="option" tabindex="-1" aria-selected={i === at} onpointerenter={() => (at = i)} onclick={() => choose(l)} oncontextmenu={(e) => lineMenu(e, l)} {...lineItem(l)}>
             {#if l.line === "artist"}
               {@const a = found.artists[l.at]}
               <span class="art"><Cover src={a.cover} round fallback="user" /></span><span class="words"><span class="clip">{a.name}</span></span>

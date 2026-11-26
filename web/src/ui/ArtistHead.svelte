@@ -3,6 +3,7 @@
   // page's whole width, on the cover's own wash, dissolving into the page's paper; it drifts up slower than
   // the page as the page scrolls and fades as it goes. Over its foot, centered, the name and, as Android's
   // and the desktop's pages, Shuffle as a bare glyph, Play as the ink pill, then the page's own buttons. The page and the chrome wear the picture's colors while it is open.
+  import { itemMark } from "../state/menus";
   import type { Snippet } from "svelte";
   import { fade } from "svelte/transition";
   import { lendCover } from "../state/lend.svelte";
@@ -11,7 +12,8 @@
   import Icon from "./Icon.svelte";
   import { still } from "./motion";
 
-  let { name, cover, picture, onplay, actions }: { name: string; cover?: string; picture?: string; onplay: (shuffle: boolean) => void; actions?: Snippet } = $props();
+  // A right click on the name opens the artist's menu.
+  let { id, name, cover, picture, onplay, actions }: { id: string; name: string; cover?: string; picture?: string; onplay: (shuffle: boolean) => void; actions?: Snippet } = $props();
 
   const lent = lendCover(() => cover);
   let loaded = $state(false);
@@ -53,7 +55,7 @@
   {#if picture}<img src={picture} alt="" class:loaded onload={() => (loaded = true)} />{/if}
 </div>
 <header class="head">
-  <h1>{name}</h1>
+  <h1 {...itemMark("artist", id, { title: name, cover })}>{name}</h1>
   <div class="actions">
     <button class="glyph shuffle" aria-label={W.shuffle} title={W.shuffle} onclick={() => onplay(true)}><Icon name="shuffle" /></button>
     <button class="pill play" onclick={() => onplay(false)}><Icon name="play-solid" />{W.play}</button>

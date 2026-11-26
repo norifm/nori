@@ -1,6 +1,7 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.Surface
@@ -144,7 +145,8 @@ private fun MixCardBody(card: MixCard, papers: Papers, width: androidx.compose.u
     val page = tint?.background ?: androidx.compose.ui.graphics.Color(dyed.page.toInt())
     val ink = tint?.let { androidx.compose.ui.graphics.Color(it.look[dev.nori.music.look.CoverLook.ON]) } ?: androidx.compose.ui.graphics.Color(dyed.ink.toInt())
     val seed = remember(card.id) { tileColours(card.id)[0] }
-    Box(modifier.size(width, width * (MIX_CARD_HEIGHT / MIX_CARD_WIDTH)).clip(TileShape).background(page).clickable(onClick = onClick)) {
+    val cardMenu = LocalCardMenu.current
+    Box(modifier.size(width, width * (MIX_CARD_HEIGHT / MIX_CARD_WIDTH)).clip(TileShape).background(page).combinedClickable(onClick = onClick, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfMix(card)) })) {
         // The art is rubbed out into the card's paper rather than painted over with it: a painted edge
         // let the covers show through as a light line wherever it fell between pixels (an overscroll stretch).
         Box(
@@ -184,9 +186,11 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
     val list = rememberSongListState(actions)
     LoadBox(load) { m ->
         val whole = rememberPageWhole(m.songs, list.downloaded)
+        val cardMenu = LocalCardMenu.current
         HeroPage(
             coverUrl = null,
             title = m.title,
+            onLongPress = { cardMenu(dev.nori.music.app.vm.CardItem.OfMix(MixCard(m.id, m.title, m.covers, m.favourites))) },
             onPlay = { if (m.songs.isNotEmpty()) actions.play(m.songs, from = m.origin) },
             onShuffle = { if (m.songs.isNotEmpty()) actions.shuffle(m.songs, m.origin) },
             queue = m.queue,

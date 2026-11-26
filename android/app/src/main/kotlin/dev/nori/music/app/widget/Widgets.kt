@@ -23,7 +23,6 @@ import dev.nori.music.ffi.model.PageOrigin
 import dev.nori.music.playback.MediaButtons
 import dev.nori.music.playback.PlaybackService
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -230,12 +229,7 @@ object Widgets {
         val songs = when (origin.kind) {
             OriginKind.ALBUM -> nori.library.album(origin.id).first().songs
             OriginKind.PLAYLIST -> nori.library.playlist(origin.id).first().songs
-            OriginKind.MIX -> withContext(Dispatchers.IO) {
-                // As the mix's page: favourites once the starred songs are handed over, a mix once drawn for today.
-                if (origin.id == dev.nori.music.app.vm.FAVOURITES_MIX) runCatching { nori.library.handFavourites().firstOrNull() }
-                else dev.nori.music.app.vm.MixStore.ensure(nori, origin.id)
-                (nori.core.mixPage(origin.id) as? dev.nori.music.ffi.library.MixLookup.Ready)?.sheet?.songs.orEmpty()
-            }
+            OriginKind.MIX -> dev.nori.music.app.vm.MixStore.songs(nori, origin.id)
             else -> emptyList()
         }
         if (songs.isNotEmpty()) nori.player.play(songs, 0, from = origin)

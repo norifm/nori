@@ -35,7 +35,7 @@
 
 <Page back ready={!!a} error={page.error}>
   {#if a}
-    <ArtistHead name={a.name} cover={a.cover} picture={page.data?.picture} onplay={(s) => void player.playWhole("artist", id, s)}>
+    <ArtistHead id={a.id} name={a.name} cover={a.cover} picture={page.data?.picture} onplay={(s) => void player.playWhole("artist", id, s)}>
       {#snippet actions()}
         {#if !remote.jam?.guest}<Seal what="artist" id={a.id} on={!!a.starred} />{/if}
       {/snippet}

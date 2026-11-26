@@ -212,7 +212,7 @@ private fun SongNames(song: Song, names: List<dev.nori.music.ffi.library.SongAct
 }
 
 /**
- * An album's, playlist's or artist's card menu: play it, play it next, add it to the queue, and rename or
+ * An album's, playlist's, artist's or mix's card menu: play it, play it next, add it to the queue, and rename or
  * delete a playlist of the account's own. A jam guest only asks.
  */
 @Composable
@@ -226,9 +226,10 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
             is CardItem.OfAlbum -> Triple(card.album.name, card.album.subtitle, card.album.coverArt)
             is CardItem.OfPlaylist -> Triple(card.playlist.name, card.playlist.owner.orEmpty(), card.playlist.coverArt)
             is CardItem.OfArtist -> Triple(card.artist.name, card.artist.albumCount?.takeIf { it > 0u }?.let { say.albums(it.toInt()) }.orEmpty(), card.artist.coverArt)
+            is CardItem.OfMix -> Triple(card.mix.title, "", null)
         }
         Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
-            SheetHead(actions.cover(art, CoverSize.ROW), title, line, round = card is CardItem.OfArtist)
+            SheetHead(if (card is CardItem.OfMix) card.mix.covers.firstOrNull() else actions.cover(art, CoverSize.ROW), title, line, round = card is CardItem.OfArtist)
             SheetGroup {
                 if (!LocalRules.current.asks) Item(say.play, Iconoir.Play) { actions.play(card); onDismiss() }
                 Item(say.menuPlayNext, Iconoir.PlaylistPlay) { actions.queue(card, next = true); onDismiss() }
@@ -242,6 +243,7 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
                 is CardItem.OfAlbum -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.ALBUM, dev.nori.music.ffi.plugins.Items.Albums(listOf(card.album)), onDismiss)
                 is CardItem.OfPlaylist -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.PLAYLIST, dev.nori.music.ffi.plugins.Items.Playlists(listOf(card.playlist)), onDismiss)
                 is CardItem.OfArtist -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.ARTIST, dev.nori.music.ffi.plugins.Items.Artists(listOf(card.artist)), onDismiss)
+                is CardItem.OfMix -> {}
             }
         }
     }

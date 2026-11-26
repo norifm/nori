@@ -7,7 +7,7 @@ import { library } from "./library.svelte";
 import { player } from "./player.svelte";
 import { remote } from "./remote.svelte";
 import { go, route } from "./route.svelte";
-import { ui, type Anchor, type Head, type Item } from "./ui.svelte";
+import { pointer, ui, type Anchor, type Head, type Item } from "./ui.svelte";
 import type { MenuAction, PlaylistChoice, Song, Whole } from "./types";
 
 /** Picks a playlist for `songs`, or makes a new one with them there. */
@@ -34,6 +34,32 @@ export function wholeMenu(kind: Whole, id: string, head: Head, at: Anchor, edita
     ]],
     at,
   );
+}
+
+const WHOLES: readonly string[] = ["album", "artist", "playlist", "mix"] satisfies Whole[];
+
+/** What makes an element album, artist, playlist or mix `id`: a right click on it opens its menu
+ * ([`itemMenu`]), with `head` at the menu's head. Spread on the element. */
+export const itemMark = (kind: Whole, id: string, head: Head, editable = false) => ({
+  "data-item": `${kind}/${encodeURIComponent(id)}`,
+  "data-title": head.title,
+  "data-line": head.line ?? "",
+  "data-cover": head.cover ?? "",
+  "data-editable": editable ? "" : undefined,
+});
+
+/** Every item's right click, wherever it is drawn: an element marked by [`itemMark`], or a link to an item's page
+ * (titled by its words), opens that item's menu at the pointer. Listened for on the window, before the
+ * element's own handlers: a link inside a song's row opens the linked item's menu, not the song's. */
+export function itemMenu(e: MouseEvent) {
+  const t = (e.target as Element | null)?.closest?.("[data-item], a[href^='#/']");
+  if (!(t instanceof HTMLElement)) return;
+  const [kind = "", id = ""] = (t.dataset.item ?? t.getAttribute("href")!.replace(/^#\//, "")).split("/");
+  if (!WHOLES.includes(kind) || !id) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const head = { title: t.dataset.title ?? t.textContent?.trim() ?? "", line: t.dataset.line || undefined, cover: t.dataset.cover || undefined };
+  wholeMenu(kind as Whole, decodeURIComponent(id), head, pointer(e), t.dataset.editable !== undefined);
 }
 
 /** Plays album, playlist, artist or mix `id` and opens a jam around it, as a song's Start jam does. */

@@ -634,8 +634,10 @@ export global Jam {
 export global Go {
     callback artist(string);
     callback album(string);
-    // An artist's menu, for artist `id` named `name`, opened by a right press at `x`, `y` in its window.
-    callback artist-menu(string, string, length, length);
+    // The menu of what `card` stands for (an album, artist, playlist or mix; a song card's is its song's),
+    // opened by a right press at `x`, `y` in its window, with `picture` at its head (none: the card's art).
+    // Every item's right press comes here, wherever it is drawn.
+    callback card-menu(Card, image, length, length);
 }
 
 // An artist's or album's name that opens its page: a pointer and an underline under it while hovered.
@@ -652,8 +654,8 @@ component RightPress inherits TouchArea {
 component Link inherits Text {
     in property <string> artist;
     in property <string> album;
-    // A right press on an album's name, where in the window it was; an artist's opens the artist's menu.
-    callback menu(length, length);
+    // The album's cover, for the head of its menu.
+    in property <string> art;
     property <length> size: root.font-size > 0 ? root.font-size : 13px;
     lt := TouchArea {
         enabled: root.artist != "" || root.album != "";
@@ -665,13 +667,10 @@ component Link inherits Text {
                 Go.album(root.album);
             }
         }
+        // A right press opens the menu of the artist or album it names.
         pointer-event(e) => {
             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
-                if root.artist != "" {
-                    Go.artist-menu(root.artist, root.text, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                } else {
-                    root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                }
+                Go.card-menu({ kind: root.artist != "" ? 1 : 0, id: root.artist != "" ? root.artist : root.album, title: root.text, art: root.artist != "" ? "" : root.art }, @image-url(""), self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
         }
     }
@@ -756,6 +755,12 @@ component ArtistLine inherits HorizontalLayout {
                             clicked => {
                                 Go.artist(c.id);
                                 list.close();
+                            }
+                            pointer-event(e) => {
+                                if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                                    list.close();
+                                    Go.card-menu({ kind: 1, id: c.id, title: c.text }, @image-url(""), self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                }
                             }
                         }
                     }
@@ -1806,9 +1811,6 @@ component CardView inherits Moving {
     in property <bool> tile;
     callback open;
     callback play;
-    // Its menu's lines: next (true) or at the end of the queue, and play it with a jam.
-    callback queue(bool);
-    callback jam;
     // The artwork's side, and where the words start.
     property <length> cover: root.tile ? root.height - 12px : root.side;
     property <length> words-x: root.tile ? root.cover + 18px : 0;
@@ -1850,10 +1852,7 @@ component CardView inherits Moving {
         clicked => { root.open(); }
         pointer-event(e) => {
             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
-                root.menu-x = self.mouse-x + Chrome.menu-flip(self.absolute-position.x + self.mouse-x, MenuShape.width);
-                root.menu-y = self.mouse-y;
-                root.menu-at = self.absolute-position.y + self.mouse-y;
-                card-menu.show();
+                Go.card-menu(root.card, root.picture, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
         }
     }
@@ -1875,23 +1874,6 @@ component CardView inherits Moving {
         font-size: 12.5px;
         overflow: elide;
         horizontal-alignment: root.round ? center : left;
-    }
-    property <length> menu-x;
-    property <length> menu-y;
-    // Where in the window it was pressed: the menu opens there, moved up by its own height as far as it must.
-    property <length> menu-at;
-    card-menu := CollectionMenu {
-        x: root.menu-x;
-        y: root.menu-y - Chrome.menu-lift(root.menu-at, self.height);
-        kind: root.card.kind;
-        id: root.card.id;
-        picture: root.picture;
-        round: root.round;
-        title: root.card.title;
-        line: root.card.sub;
-        play => { root.play(); }
-        queue(next) => { root.queue(next); }
-        jam => { root.jam(); }
     }
     if root.playable: Rectangle {
         x: root.tile ? root.width - self.width - 15px : 10px;
@@ -2106,8 +2088,6 @@ component Grid inherits Remembered {
     pure callback art(string, int, int) -> image;
     callback open(Card);
     callback play(Card);
-    callback queue(Card, bool);
-    callback jam(Card);
     property <length> gap: Frame.gap;
     property <int> columns: Frame.columns(self.width - root.pad * 2, Frame.least);
     // The cards grow a little so the rows reach both edges.
@@ -2155,8 +2135,6 @@ component Grid inherits Remembered {
         picture: root.art(self.c.art, 0, root.rev);
         open => { root.open(self.c); }
         play => { root.play(self.c); }
-        queue(next) => { root.queue(self.c, next); }
-        jam => { root.jam(self.c); }
     }
 }
 
@@ -2203,8 +2181,6 @@ component ReleaseShelves inherits VerticalLayout {
     pure callback art(string, int, int) -> image;
     callback open(Card);
     callback play(Card);
-    callback queue(Card, bool);
-    callback jam(Card);
     spacing: 12px;
     for shelf[i] in root.shelves: VerticalLayout {
         spacing: 12px;
@@ -2222,8 +2198,6 @@ component ReleaseShelves inherits VerticalLayout {
             art(a, s, r) => { return root.art(a, s, r); }
             open(c) => { root.open(c); }
             play(c) => { root.play(c); }
-            queue(c, next) => { root.queue(c, next); }
-            jam(c) => { root.jam(c); }
         }
     }
 }
@@ -2412,8 +2386,6 @@ component PickCard inherits Rectangle {
     in property <length> side;
     in property <image> picture;
     callback open;
-    callback play;
-    callback queue(bool);
     width: floor(root.side / 1phx) * 1phx;
     height: floor(root.side * 186 / 150 / 1phx) * 1phx;
     border-radius: 18px;
@@ -2483,26 +2455,12 @@ component PickCard inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.open(); }
+        // A right press opens the mix's menu where it was pressed.
         pointer-event(e) => {
             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
-                root.menu-x = self.mouse-x + Chrome.menu-flip(self.absolute-position.x + self.mouse-x, MenuShape.width);
-                root.menu-y = self.mouse-y;
-                root.menu-at = self.absolute-position.y + self.mouse-y;
-                pick-menu.show();
+                Go.card-menu({ kind: 4, id: root.pick.id, title: root.pick.title }, root.picture, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
         }
-    }
-    property <length> menu-x;
-    property <length> menu-y;
-    // Where in the window it was pressed: the menu opens there, moved up by its own height as far as it must.
-    property <length> menu-at;
-    pick-menu := CollectionMenu {
-        x: root.menu-x;
-        y: root.menu-y - Chrome.menu-lift(root.menu-at, self.height);
-        picture: root.picture;
-        title: root.pick.title;
-        play => { root.play(); }
-        queue(next) => { root.queue(next); }
     }
 }
 
@@ -2786,6 +2744,7 @@ component SongLine inherits Rectangle {
             preferred-width: 0;
             text: root.song.album;
             album: root.song.album-id;
+            art: root.song.art;
             color: Theme.dim;
             font-size: 13px;
             vertical-alignment: center;
@@ -2859,6 +2818,7 @@ component SongLine inherits Rectangle {
         width: root.cols * 0.25;
         text: root.song.album;
         album: root.song.album-id;
+        art: root.song.art;
         color: Theme.dim;
         font-size: 13px;
         vertical-alignment: center;
@@ -3333,9 +3293,8 @@ component PlayerControls inherits Rectangle {
     callback cycle-repeat();
     callback set-inspector(Panel);
     callback open-full();
-    // The song playing's menu and its album's, which open in the main window, at `x` in the pill.
+    // The song playing's menu, which opens in the main window, at `x` in the pill.
     callback song-menu(length);
-    callback album-menu(length);
 
     // The pill's width, which decides what it can show.
     in property <length> room;
@@ -3437,7 +3396,7 @@ component PlayerControls inherits Rectangle {
                         horizontal-stretch: 1;
                         text: root.now-album;
                         album: root.now-album-id;
-                        menu(x, y) => { root.album-menu(x); }
+                        art: root.now-art;
                         color: Theme.dim;
                         font-size: 12px;
                         overflow: elide;
@@ -4493,6 +4452,7 @@ component QueueView inherits Rectangle {
                                     horizontal-stretch: 1;
                                     text: s.album;
                                     album: s.album-id;
+                                    art: s.art;
                                     color: Theme.dim;
                                     font-size: 12px;
                                     overflow: elide;
@@ -8054,8 +8014,8 @@ export component AppWindow inherits Window {
     callback player-menu() -> [SongGo];
     callback player-act(int, string);
     property <[SongGo]> player-lines;
-    // The song playing's menu, its album's, and an artist's, opened by a right press at `x`, `y` in the
-    // window (the player pill's at its top edge).
+    // The song playing's menu, opened by a right press at `x`, `y` in the window (the player pill's at its
+    // top edge).
     property <length> pop-x;
     property <length> pop-y;
     function pop-from(x: length, y: length) {
@@ -8069,27 +8029,15 @@ export component AppWindow inherits Window {
             player-pop.show();
         }
     }
-    public function album-menu-at(x: length, y: length) {
-        root.pop-from(x, y);
-        album-pop.show();
-    }
-    property <string> menu-artist;
-    property <string> menu-artist-name;
-    public function artist-menu-at(id: string, name: string, x: length, y: length) {
-        root.menu-artist = id;
-        root.menu-artist-name = name;
-        root.pop-from(x, y);
-        artist-pop.show();
-    }
-    // A song row's menu where it has none of its own (the queue's, the search preview's): song `i` of
-    // `list` (as `song` takes it), its title, line and artwork, opened by a right press at `x`, `y`.
+    // A song row's menu where it has none of its own (the queue's, the search preview's, a song card's): song
+    // `i` of `list` (as `song` takes it), its title, line and artwork, opened by a right press at `x`, `y`.
     property <int> row-list;
     property <int> row-index;
     property <string> row-title;
     property <string> row-line;
     property <string> row-art;
     property <[SongGo]> row-lines;
-    function row-menu-at(list: int, i: int, title: string, line: string, art: string, x: length, y: length) {
+    public function row-menu-at(list: int, i: int, title: string, line: string, art: string, x: length, y: length) {
         root.row-list = list;
         root.row-index = i;
         root.row-title = title;
@@ -8099,14 +8047,18 @@ export component AppWindow inherits Window {
         root.pop-from(x, y);
         row-pop.show();
     }
-    // An album's, artist's or playlist's menu where it has none of its own (the search preview, the
-    // artists list), opened by a right press at `x`, `y`.
-    property <Card> menu-card;
-    function card-menu-at(c: Card, x: length, y: length) {
+    // An album's, artist's, playlist's or mix's menu (`Go.card-menu`), opened at `x`, `y` with `picture` at
+    // its head, else the card's art.
+    out property <Card> menu-card;
+    property <image> menu-picture;
+    public function card-menu-at(c: Card, picture: image, x: length, y: length) {
         root.menu-card = c;
+        root.menu-picture = picture.width > 0 ? picture : root.art(c.art, 0, root.covers-rev);
         root.pop-from(x, y);
         card-pop.show();
     }
+    // The page shown as a card, for its head's menu.
+    property <Card> page-card: { id: root.page-id, title: root.page-title, sub: root.page-sub, art: root.page-art, kind: root.page-kind == PageLayout.album ? 0 : root.page-kind == PageLayout.artist ? 1 : root.page-mix ? 4 : 2 };
     // The sleep timer's choices, "Off" first while one runs, and one chosen.
     in property <[string]> sleep-choices;
     callback sleep(int);
@@ -8377,7 +8329,8 @@ export component AppWindow inherits Window {
     callback play-album(string);
     callback play-playlist(string);
     // A song of a list: 0 the page, 1 the songs, 2 search, 3 the queue (by list index), 4 a line of the
-    // search's preview. `how`: -1 play, else a line of its menu (`SongGo::kind`), whose lines `song-menu` gives.
+    // search's preview, 5 the song card whose menu is open. `how`: -1 play, else a line of its menu
+    // (`SongGo::kind`), whose lines `song-menu` gives.
     callback song(int, int, int);
     callback song-menu(int, int) -> [SongGo];
     callback play-page(bool);
@@ -8890,8 +8843,6 @@ export component AppWindow inherits Window {
                                     pick: self.m;
                                     picture: root.pick-art(self.m.covers, root.covers-rev);
                                     open => { root.open-mix(self.m.id); }
-                                    play => { root.play-mix(self.m.id); }
-                                    queue(next) => { root.queue-card(4, self.m.id, next); }
                                 }
                             }
                             for shelf[index] in root.shelves: home-row := VerticalLayout {
@@ -8954,8 +8905,6 @@ export component AppWindow inherits Window {
                                                         root.play-album(self.card.id);
                                                     }
                                                 }
-                                                queue(next) => { root.queue-card(self.card.kind, self.card.id, next); }
-                                                jam => { root.jam-play(self.card.kind, self.card.id); }
                                             }
                                         }
                                     }
@@ -9174,8 +9123,6 @@ export component AppWindow inherits Window {
                                         picture: root.art(c.art, 0, root.covers-rev);
                                         open => { root.open-album(c.id); }
                                         play => { root.play-album(c.id); }
-                                        queue(next) => { root.queue-card(0, c.id, next); }
-                                        jam => { root.jam-play(0, c.id); }
                                     }
                                 }
                                 if root.search-picked < 0 && root.search-artists.length > 0: artists-found := ShelfView {
@@ -9192,8 +9139,6 @@ export component AppWindow inherits Window {
                                         picture: root.art(c.art, 0, root.covers-rev);
                                         open => { root.open-artist(c.id); }
                                         play => { root.play-artist(c.id); }
-                                        queue(next) => { root.queue-card(1, c.id, next); }
-                                        jam => { root.jam-play(1, c.id); }
                                     }
                                 }
                                 if root.search-picked < 0 && root.search-playlists.length > 0: playlists-found := ShelfView {
@@ -9208,8 +9153,6 @@ export component AppWindow inherits Window {
                                         picture: root.art(c.art, 0, root.covers-rev);
                                         open => { root.open-playlist(c.id); }
                                         play => { root.play-playlist(c.id); }
-                                        queue(next) => { root.queue-card(2, c.id, next); }
-                                        jam => { root.jam-play(2, c.id); }
                                     }
                                 }
                                 // Songs picked: every song, as the library's lists have them.
@@ -9258,8 +9201,6 @@ export component AppWindow inherits Window {
                                                 root.play-album(c.id);
                                             }
                                         }
-                                        queue(c, next) => { root.queue-card(c.kind, c.id, next); }
-                                        jam(c) => { root.jam-play(c.kind, c.id); }
                                     }
                                 }
                             }
@@ -9319,8 +9260,6 @@ export component AppWindow inherits Window {
                                 picture: root.art(self.c.art, 0, root.covers-rev);
                                 open => { root.open-album(self.c.id); }
                                 play => { root.play-album(self.c.id); }
-                                queue(next) => { root.queue-card(0, self.c.id, next); }
-                                jam => { root.jam-play(0, self.c.id); }
                             }
                         }
                     }
@@ -9365,8 +9304,6 @@ export component AppWindow inherits Window {
                                 root.play-playlist(c.id);
                             }
                         }
-                        queue(c, next) => { root.queue-card(c.kind, c.id, next); }
-                        jam(c) => { root.jam-play(c.kind, c.id); }
                     }
                 }
 
@@ -9401,8 +9338,6 @@ export component AppWindow inherits Window {
                             pick: self.item;
                             picture: root.pick-art(self.item.covers, root.covers-rev);
                             open => { root.open-mix(self.item.id); }
-                            play => { root.play-mix(self.item.id); }
-                            queue(next) => { root.queue-card(4, self.item.id, next); }
                         }
                     }
                 }
@@ -9466,7 +9401,7 @@ export component AppWindow inherits Window {
                                         double-clicked => { root.open-artist(a.id); }
                                         pointer-event(e) => {
                                             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
-                                                root.card-menu-at(a, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                                Go.card-menu(a, @image-url(""), self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                                             }
                                         }
                                     }
@@ -9505,6 +9440,9 @@ export component AppWindow inherits Window {
                                     font-weight: 700;
                                     horizontal-stretch: 1;
                                     overflow: elide;
+                                    RightPress {
+                                        menu(x, y) => { Go.card-menu({ kind: 1, id: root.artist-chosen, title: root.page-title, art: root.page-art }, @image-url(""), x, y); }
+                                    }
                                 }
                                 IconButton {
                                     y: (parent.height - self.height) / 2;
@@ -9541,8 +9479,6 @@ export component AppWindow inherits Window {
                                 art(a, s, r) => { return root.art(a, s, r); }
                                 open(c) => { root.open-album(c.id); }
                                 play(c) => { root.play-album(c.id); }
-                                queue(c, next) => { root.queue-card(0, c.id, next); }
-                                jam(c) => { root.jam-play(0, c.id); }
                             }
                         }
                     }
@@ -9624,8 +9560,6 @@ export component AppWindow inherits Window {
                                     picture: root.art(self.c.art, 0, root.covers-rev);
                                     open => { root.open-album(self.c.id); }
                                     play => { root.play-album(self.c.id); }
-                                    queue(next) => { root.queue-card(0, self.c.id, next); }
-                                    jam => { root.jam-play(0, self.c.id); }
                                 }
                             }
                             if root.favorite-artists.length > 0: liked-artists := ShelfView {
@@ -9644,8 +9578,6 @@ export component AppWindow inherits Window {
                                     picture: root.art(self.c.art, 0, root.covers-rev);
                                     open => { root.open-artist(self.c.id); }
                                     play => { root.play-artist(self.c.id); }
-                                    queue(next) => { root.queue-card(1, self.c.id, next); }
-                                    jam => { root.jam-play(1, self.c.id); }
                                 }
                             }
                             // Headed only under the shelves; alone, the page's title heads them.
@@ -9745,10 +9677,14 @@ export component AppWindow inherits Window {
                                 // An artist: the name and the play button over the bottom of the picture.
                                 if root.page-kind == PageLayout.artist: VerticalLayout {
                                     spacing: 16px;
+                                    // The picture behind, and the name: a right press opens the artist's menu.
                                     Rectangle {
                                         height: max(420px, root.height * 0.64) - Chrome.top-room - 8px - 170px;
+                                        RightPress {
+                                            menu(x, y) => { Go.card-menu(root.page-card, @image-url(""), x, y); }
+                                        }
                                     }
-                                    Text {
+                                    artist-name := Text {
                                         text: root.page-title;
                                         color: Theme.text;
                                         font-family: Type.title;
@@ -9756,6 +9692,9 @@ export component AppWindow inherits Window {
                                         font-weight: 800;
                                         letter-spacing: -1px;
                                         horizontal-alignment: center;
+                                        RightPress {
+                                            menu(x, y) => { Go.card-menu(root.page-card, @image-url(""), x, y); }
+                                        }
                                     }
                                     HorizontalLayout {
                                         alignment: center;
@@ -9776,11 +9715,15 @@ export component AppWindow inherits Window {
                                 if root.page-kind != PageLayout.artist: HorizontalLayout {
                                     spacing: 28px;
                                     alignment: start;
-                                    Art {
+                                    // A right press on the artwork or the title opens the page's own menu, as its card's.
+                                    head-art := Art {
                                         width: 270px;
                                         height: 270px;
                                         border-radius: 8px;
                                         source: root.page-covers.length >= 4 ? root.pick-art(root.page-covers, root.covers-rev) : root.art(root.page-art, 1, root.covers-rev);
+                                        RightPress {
+                                            menu(x, y) => { Go.card-menu(root.page-card, head-art.source, x, y); }
+                                        }
                                     }
                                     VerticalLayout {
                                         spacing: 2px;
@@ -9795,6 +9738,9 @@ export component AppWindow inherits Window {
                                             font-weight: 700;
                                             letter-spacing: -0.3px;
                                             wrap: word-wrap;
+                                            RightPress {
+                                                menu(x, y) => { Go.card-menu(root.page-card, head-art.source, x, y); }
+                                            }
                                         }
                                         if root.page-sub != "": Link {
                                             text: root.page-sub;
@@ -9880,8 +9826,6 @@ export component AppWindow inherits Window {
                                     art(a, s, r) => { return root.art(a, s, r); }
                                     open(c) => { root.open-album(c.id); }
                                     play(c) => { root.play-album(c.id); }
-                                    queue(c, next) => { root.queue-card(0, c.id, next); }
-                                    jam(c) => { root.jam-play(0, c.id); }
                                 }
                                 if root.page-kind == PageLayout.artist && root.page-songs.length > 0: SectionTitle {
                                     text: "Songs";
@@ -10496,7 +10440,7 @@ export component AppWindow inherits Window {
 
         }
 
-        // The song playing's menu, its album's and an artist's, where they were asked for; and the sleep
+        // The song playing's menu, a song row's and a card's, where they were asked for; and the sleep
         // timer's, over the pill.
         player-pop := PopupWindow {
             x: root.pop-x;
@@ -10524,29 +10468,6 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-        }
-        album-pop := CollectionMenu {
-            kind: 0;
-            id: root.now-album-id;
-            x: root.pop-x;
-            y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
-            picture: root.art(root.now-art, 0, root.covers-rev);
-            title: root.now-album;
-            line: root.now-artist;
-            play => { root.play-album(root.now-album-id); }
-            queue(next) => { root.queue-card(0, root.now-album-id, next); }
-            jam => { root.jam-play(0, root.now-album-id); }
-        }
-        artist-pop := CollectionMenu {
-            kind: 1;
-            id: root.menu-artist;
-            x: root.pop-x;
-            y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
-            pictured: false;
-            title: root.menu-artist-name;
-            play => { root.play-artist(root.menu-artist); }
-            queue(next) => { root.queue-card(1, root.menu-artist, next); }
-            jam => { root.jam-play(1, root.menu-artist); }
         }
         row-pop := PopupWindow {
             x: root.pop-x;
@@ -10587,7 +10508,9 @@ export component AppWindow inherits Window {
             id: root.menu-card.id;
             x: root.pop-x;
             y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
-            picture: root.art(root.menu-card.art, 0, root.covers-rev);
+            picture: root.menu-picture;
+            // An artist named by a link has no picture to show.
+            pictured: root.menu-card.kind != 1 || root.menu-card.art != "";
             round: root.menu-card.kind == 1;
             title: root.menu-card.title;
             line: root.menu-card.sub;
@@ -10597,6 +10520,8 @@ export component AppWindow inherits Window {
                     root.play-album(root.menu-card.id);
                 } else if root.menu-card.kind == 1 {
                     root.play-artist(root.menu-card.id);
+                } else if root.menu-card.kind == 4 {
+                    root.play-mix(root.menu-card.id);
                 } else {
                     root.play-playlist(root.menu-card.id);
                 }
@@ -10804,7 +10729,7 @@ export component AppWindow inherits Window {
                                 horizontal-stretch: 1;
                                 text: root.now-album;
                                 album: root.now-album-id;
-                                menu(x, y) => { root.album-menu-at(x, y); }
+                                art: root.now-art;
                                 color: Theme.text.with-alpha(0.45);
                                 font-size: 14px;
                                 overflow: elide;
@@ -12514,7 +12439,7 @@ export component AppWindow inherits Window {
                                         if c.kind == 3 {
                                             root.row-menu-at(4, i, c.title, c.sub, c.art, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                                         } else if c.kind <= 2 {
-                                            root.card-menu-at(c, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                            Go.card-menu(c, @image-url(""), self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                                         }
                                     }
                                 }
@@ -12711,9 +12636,8 @@ export component PlayerBar inherits Window {
     callback cycle-repeat();
     callback set-inspector(Panel);
     callback open-full();
-    // The song playing's menu and its album's, which open in the main window, at `x` in the pill.
+    // The song playing's menu, which opens in the main window, at `x` in the pill.
     callback song-menu(length);
-    callback album-menu(length);
     // The pill: the page's colour over the blur the compositor draws behind (55 %), and the chrome's outline.
     Rectangle {
         border-radius: Chrome.player-radius;
@@ -12767,7 +12691,6 @@ export component PlayerBar inherits Window {
         set-inspector(i) => { root.set-inspector(i); }
         open-full => { root.open-full(); }
         song-menu(x) => { root.song-menu(x); }
-        album-menu(x) => { root.album-menu(x); }
     }
 }
 

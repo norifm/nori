@@ -3,6 +3,7 @@
   // a wide window as the desktop's: the names down the left, the one chosen (the first, until another is)
   // on the right with Play, Shuffle and its releases, a double click or its name opening its page. On a
   // phone as Android's: a row each, its picture round, opening its page.
+  import { itemMark } from "../state/menus";
   import { ask, read } from "../rpc";
   import { reading } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
@@ -75,7 +76,7 @@
       <ul class="names" role="listbox" aria-label={W.artists}>
         {#each shown as a (a.id)}
           <li>
-            <button class="name" class:chosen={a.id === chosen?.id} role="option" aria-selected={a.id === chosen?.id} onclick={() => (picked = a.id)} ondblclick={() => go("artist", a.id)}>
+            <button class="name" class:chosen={a.id === chosen?.id} role="option" aria-selected={a.id === chosen?.id} onclick={() => (picked = a.id)} ondblclick={() => go("artist", a.id)} {...itemMark("artist", a.id, { title: a.name, line: a.albumCount ? W.albumCount(a.albumCount) : "", cover: a.cover })}>
               <span class="art"><Cover src={a.cover} round fallback="user" /></span><span class="clip">{a.name}</span>
             </button>
           </li>

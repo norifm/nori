@@ -263,10 +263,12 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     val from = remember(detail?.queue, album.id) { detail?.queue?.origin() ?: PageOrigin(OriginKind.ALBUM, album.id) }
     val queue = rememberPageQueue(from, detail?.queue)
     val whole = rememberPageWhole(detail?.songs.orEmpty(), list.downloaded)
+    val cardMenu = LocalCardMenu.current
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
         coverStandIns = vm.coverStandIns(album.coverArt, CoverSize.FULL),
         item = album.id,
+        onLongPress = { cardMenu(dev.nori.music.app.vm.CardItem.OfAlbum(album)) },
         title = album.name,
         subtitle = album.artist,
         onSubtitle = album.artistId?.let { a ->
@@ -367,10 +369,12 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
         ).joinToString(" · ").ifEmpty { ui.detail.songs.size.takeIf { it > 0 }?.let(say::songs).orEmpty() }
         else artist.albumCount?.takeIf { it > 0u }?.let { say.releases(it.toInt()) }.orEmpty()
     }
+    val cardMenu = LocalCardMenu.current
     HeroPage(
         coverUrl = vm.cover(artist.coverArt, CoverSize.FULL),
         coverStandIns = vm.coverStandIns(artist.coverArt, CoverSize.FULL),
         item = artist.id,
+        onLongPress = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(artist)) },
         title = artist.name,
         titleSize = 32.sp,
         onPlay = ui?.let { ready -> { actions.playArtist(ready.detail.artist.id) } },
@@ -484,10 +488,12 @@ private fun PlaylistPage(
     val shown = rememberMatching(detail?.songs.orEmpty(), filter)
     val from = rememberOrigin(OriginKind.PLAYLIST, id)
     val whole = rememberPageWhole(detail?.songs.orEmpty(), list.downloaded)
+    val cardMenu = LocalCardMenu.current
     HeroPage(
         coverUrl = vm.cover(playlist.coverArt, CoverSize.FULL),
         coverStandIns = vm.coverStandIns(playlist.coverArt, CoverSize.FULL),
         item = playlist.id,
+        onLongPress = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(playlist)) },
         title = playlist.name,
         subtitle = remember(playlist.comment, prefs.playlistNotes) { dev.nori.music.ffi.library.playlistDescription(playlist.comment, prefs.playlistNotes) },
         onPlay = detail?.let { d -> { actions.play(d.songs, from = from) } },

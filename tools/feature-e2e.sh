@@ -25,6 +25,14 @@ tapnode_now() { # $1 = text|content-desc, $2 = that value, $3 = which of several
   "$here/ui-dump.sh" --click "$1" "$2" "${3:-1}" >/dev/null 2>&1
 }
 tapnode() { wait_until 10 tapnode_now "$@"; }
+# A finger held on the node whose text is $1, for what a long press opens where no long-click action is exposed.
+holdtext() {
+  local b; b=$(ui | python3 -c "
+import sys,re
+m=re.search(r'text=\"'+re.escape(sys.argv[1])+r'\"[^>]*bounds=\"\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]',sys.stdin.read())
+print('%d %d'%((int(m[1])+int(m[3]))//2,(int(m[2])+int(m[4]))//2) if m else '')" "$1")
+  [ -n "$b" ] && adb shell input swipe $b $b 1000
+}
 on_screen() { ui | grep -q -- "$1"; }
 # A field is filled once it has the focus, with its own SetText (ui-dump.sh --set-text): nori's text
 # fields drop some of the keys `input keyevent` sends in one burst.
@@ -612,6 +620,10 @@ print(0 if any(x.get('title')==t or x['id'].startswith('ext-') or x.get('suffix'
     track=$(api getAlbum "&id=$aid" | python3 -c "import json,sys; print(json.load(sys.stdin)['subsonic-response']['album']['song'][0]['title'])")
     check "holding a track opens its song menu" "$here/ui-dump.sh" --long-click text "$track"
     check "the hold menu offers Play next" wait_until 8 on_screen 'text="Play next"'
+    adb shell input keyevent 4
+    name=$(api getAlbum "&id=$aid" | python3 -c "import json,sys; print(json.load(sys.stdin)['subsonic-response']['album']['name'])")
+    check "holding the album's own title opens the album's menu" holdtext "$name"
+    check "the album's menu offers Add to queue" wait_until 8 on_screen 'text="Add to queue"'
     adb shell input keyevent 4
     "$app" play "album:$aid" >/dev/null; sounds 20
     check "the pill reads Pause while this album is what sounds" wait_until 8 pill_is Pause

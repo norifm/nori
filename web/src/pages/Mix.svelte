@@ -2,7 +2,7 @@
   // A mix from "For you": its songs as they play (the core's `mix_page`, drawn for this day or week if it
   // was not yet), under its name and what it is made from, with Play and Shuffle.
   import { ask } from "../rpc";
-  import { addToPlaylist } from "../state/menus";
+  import { addToPlaylist, itemMark } from "../state/menus";
   import { reading } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
   import type { MixPage } from "../state/types";
@@ -20,7 +20,7 @@
 
 <Page back ready={page.data !== undefined} error={page.error}>
   {#if mix}
-    <Hero cover={mix.covers[0]} title={W.mixNames[mix.name] ?? mix.name} fallback="sparks" label={songs.length ? W.listCaption(songs.length, mix.seconds) : ""} onplay={(s) => void player.play(songs, 0, s, "Mix", id)}>
+    <Hero cover={mix.covers[0]} title={W.mixNames[mix.name] ?? mix.name} fallback="sparks" item={itemMark("mix", id, { title: W.mixNames[mix.name] ?? mix.name, cover: mix.covers[0] })} label={songs.length ? W.listCaption(songs.length, mix.seconds) : ""} onplay={(s) => void player.play(songs, 0, s, "Mix", id)}>
       {#snippet actions()}
         {#if songs.length}<button class="glyph" aria-label={W.more} title={W.more} onclick={() => void addToPlaylist(songs)}><Icon name="more-horiz" /></button>{/if}
       {/snippet}

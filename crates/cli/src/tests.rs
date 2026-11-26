@@ -2143,6 +2143,30 @@ fn the_players_menu_sets_the_sleep_timer() {
     assert_eq!(options[0].0, "Off", "a timer runs");
 }
 
+/// A mix on For you has its menu, as an album's: Play, Play next and Add to queue, which queues it whole.
+#[test]
+fn a_mixs_menu_plays_it_next() {
+    use crate::menu::{MenuAct, MenuLine};
+    use nori_core::mixes::board::{MixName, MixTile};
+    let mut a = app();
+    a.rules = nori_core::browse::profile_rules(false);
+    a.go(View::Home);
+    a.handle(Msg::Data(Req::Home, Ok(Data::Mixes(vec![MixTile { id: "quick".into(), name: MixName::QuickPicks, covers: vec![], favourites: false }]))));
+    while a.home.line() != Some(crate::app::HomeLine::Shelf(crate::app::ShelfAt::ForYou)) {
+        key(&mut a, KeyCode::Down);
+    }
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Char('m'));
+    let Some(Overlay::Menu { title, lines, .. }) = &a.overlay else { panic!("no menu: {}", draw(&mut a, 120, 30)) };
+    assert_eq!((title.as_str(), &lines[..]), ("Quick picks", &[MenuLine::Act(MenuAct::Play), MenuLine::Act(MenuAct::PlayNext), MenuLine::Act(MenuAct::AddToQueue)][..]));
+    if let Some(Overlay::Menu { sel, .. }) = &mut a.overlay {
+        sel.at = 1;
+    }
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds, [Cmd::EnqueueFetch(crate::backend::Fetch::Mix("quick".into()), true)]);
+}
+
 /// m opens the menu of what is selected: a song's lines as the core lists them, the less used under More,
 /// then on a page the page's own; an album's Play, Play next and Add to queue. Enter does the line.
 #[test]

@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -118,12 +119,15 @@ fun HeroPage(
      * side - and the page's colours taken from the first. Used only when [coverUrl] is null.
      */
     mosaic: List<String> = emptyList(),
+    /** A long press on the picture or the title: the menu of what the page is of, as its card's. */
+    onLongPress: (() -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.effective.collectAsStateWithLifecycle()
     // Pages wear their cover's colours except in Midnight (the core's rule).
     val tinted = LocalPapers.current.coversTint
+    val held = if (onLongPress != null) Modifier.pointerInput(onLongPress) { detectTapGestures(onLongPress = { onLongPress() }) } else Modifier
     // The picture that stands at the top of the page: the cover, or the mosaic of a page of several records.
     val lead = coverUrl ?: mosaic.firstOrNull()
     val picture: (@Composable (Modifier) -> Unit)? = when {
@@ -175,7 +179,8 @@ fun HeroPage(
                     layout(placeable.width, placeable.height) { placeable.place(0, 0) }
                 }
                     // Fade, read in the draw phase: scrolling never recomposes the hero.
-                    .graphicsLayer { alpha = 1f - (heroScroll(size.height) / size.height).coerceIn(0f, 1f) * 0.5f },
+                    .graphicsLayer { alpha = 1f - (heroScroll(size.height) / size.height).coerceIn(0f, 1f) * 0.5f }
+                    .then(held),
             ) {
                 // The parallax, also in the draw phase: the picture lags the page, clipped to its box.
                 val lag = Modifier.fillMaxSize().clipToBounds().graphicsLayer { translationY = heroScroll(size.height) * 0.4f }
@@ -196,7 +201,7 @@ fun HeroPage(
             } else if (art != null) Box(
                 Modifier.fillMaxWidth().windowInsetsPadding(statusBarRoom).padding(top = 64.dp, bottom = 18.dp),
                 Alignment.Center,
-            ) { art() }
+            ) { Box(held) { art() } }
             else Spacer(Modifier.windowInsetsPadding(statusBarRoom).height(72.dp))
         }
         // Upright over a picture the title block rises into the melt, overlapping the picture's last rows.
@@ -210,7 +215,7 @@ fun HeroPage(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    title, style = titled(MaterialTheme.typography.headlineSmall.copy(fontSize = titleSize)), textAlign = TextAlign.Center,
+                    title, held, style = titled(MaterialTheme.typography.headlineSmall.copy(fontSize = titleSize)), textAlign = TextAlign.Center,
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
                 if (!subtitle.isNullOrEmpty()) Text(
@@ -288,7 +293,7 @@ fun HeroPage(
                         Box(
                             // Takes up the room up to the words and draws on past it, under them, to [half]; and out
                             // over the strip the page is kept off (the camera's), to the screen's edge.
-                            Modifier.width(textAt).fillMaxHeight().layout { measurable, constraints ->
+                            Modifier.width(textAt).fillMaxHeight().then(held).layout { measurable, constraints ->
                                 val extra = cutout.roundToPx()
                                 val w = constraints.maxWidth + extra + under.roundToPx()
                                 val placeable = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))

@@ -3,10 +3,9 @@
   // with the mix (the core's `mix_card_colours`), its covers a square on top (four as a mosaic) running
   // into that paper, its name in Literata and a line under it in the card's ink. A right click opens its
   // menu.
-  import { wholeMenu } from "../state/menus";
+  import { itemMark } from "../state/menus";
   import { href } from "../state/route.svelte";
   import type { MixTile } from "../state/types";
-  import { pointer } from "../state/ui.svelte";
   import { W } from "../words";
 
   let { mix }: { mix: MixTile } = $props();
@@ -19,7 +18,7 @@
   href={href("mix", mix.id)}
   style:--card={mix.page}
   style:--card-ink={mix.ink}
-  oncontextmenu={(e) => (e.preventDefault(), wholeMenu("mix", mix.id, { title, line: "", cover: mix.covers[0] }, pointer(e)))}
+  {...itemMark("mix", mix.id, { title, cover: mix.covers[0] })}
 >
   <span class="art" class:mosaic={covers.length === 4}>
     {#each covers as c (c)}<img src={c} alt="" loading="lazy" decoding="async" />{/each}

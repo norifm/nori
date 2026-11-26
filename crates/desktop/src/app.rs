@@ -534,6 +534,8 @@ pub struct App {
     scrobbler_approved: Option<String>,
     /// The songs of Home's sections, by section (none for a section of albums or playlists).
     shelf_songs: Vec<Vec<Song>>,
+    /// The song card whose menu is open, by its section and place there (list 5).
+    card_song: Option<(usize, usize)>,
     profiles: Vec<nori_core::SoundProfile>,
     /// The sign-in window's process while it is open (nori-sign-in).
     sign_in_window: Option<nori_sign_in_window::SignInWindow>,
@@ -681,6 +683,26 @@ fn over_pill(m: &AppWindow, x: f32) -> (f32, f32) {
     (chrome.get_player_x() + x, chrome.get_window_height() - chrome.get_bottom_room())
 }
 
+/// Every item's right press (`Go.card-menu`): a song card opens its song's menu, as a row's (list 5), any
+/// other card its own.
+fn card_menus(ui: &AppWindow, h: &AppHandle) {
+    let (main, app) = (ui.as_weak(), h.clone());
+    ui.global::<crate::Go>().on_card_menu(move |card, picture, x, y| {
+        let Some(m) = main.upgrade() else { return };
+        if card.kind != 3 {
+            return m.invoke_card_menu_at(card, picture, x, y);
+        }
+        let mut found = false;
+        app.with(|a| {
+            a.card_song = a.shelf_song_at(&card.id);
+            found = a.card_song.is_some();
+        });
+        if found {
+            m.invoke_row_menu_at(5, 0, card.title, card.sub, card.art, x, y);
+        }
+    });
+}
+
 /// The player pill's window; its buttons forward to the main window.
 fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) -> Option<PlayerBar> {
     let bar = PlayerBar::new().map_err(|e| nori_core::alog::info(&format!("no player window: {e}"))).ok()?;
@@ -704,18 +726,14 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
         let (x, y) = over_pill(m, x);
         m.invoke_song_menu_at(x, y);
     }));
-    bar.on_album_menu(to_main_with(ui, |m, x| {
-        let (x, y) = over_pill(m, x);
-        m.invoke_album_menu_at(x, y);
-    }));
     let go = bar.global::<crate::Go>();
     go.on_artist(to_main_with(ui, |m, id| m.global::<crate::Go>().invoke_artist(id)));
     go.on_album(to_main_with(ui, |m, id| m.global::<crate::Go>().invoke_album(id)));
     let main = ui.as_weak();
-    go.on_artist_menu(move |id, name, x, _| {
+    go.on_card_menu(move |card, picture, x, _| {
         if let Some(m) = main.upgrade() {
             let (x, y) = over_pill(&m, x);
-            m.invoke_artist_menu_at(id, name, x, y);
+            m.global::<crate::Go>().invoke_card_menu(card, picture, x, y);
         }
     });
     bar.on_set_inspector(to_main_with(ui, |m, i| {
@@ -904,6 +922,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             output: String::new(),
             scrobbler_approved: None,
             shelf_songs: Vec::new(),
+            card_song: None,
             profiles: Vec::new(),
             sign_in_window: None,
             apart: None,
@@ -1162,6 +1181,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
             a.home_song(shelf.max(0) as usize, at, -1);
         }
     });
+    card_menus(ui, h);
     on!(ui.on_home_song, h, |a, shelf, i, how| a.home_song(shelf.max(0) as usize, i.max(0) as usize, how));
     let menu = h.clone();
     ui.on_home_song_menu(move |shelf, i| {
@@ -1295,12 +1315,6 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     let go = ui.global::<crate::Go>();
     on!(go.on_artist, h, |a, id| a.go_to(PageAsk::Artist(id.into())));
     on!(go.on_album, h, |a, id| a.go_to(PageAsk::Album(id.into())));
-    let main = ui.as_weak();
-    go.on_artist_menu(move |id, name, x, y| {
-        if let Some(m) = main.upgrade() {
-            m.invoke_artist_menu_at(id, name, x, y);
-        }
-    });
     on!(ui.on_jam_play, h, |a, kind, id| {
         let Some(what) = card_fetch(kind, id.into()) else { return };
         a.on_session(|s| {
@@ -2806,6 +2820,7 @@ impl App {
             1 => self.songs.get(i),
             3 => self.queue.as_ref().and_then(|q| q.songs.get(i)),
             4 => self.preview_song(i).and_then(|at| self.search_found.songs.get(at)),
+            5 => self.card_song.and_then(|(shelf, at)| self.shelf_songs.get(shelf)?.get(at)),
             _ => self.search_songs.get(i),
         }
         .cloned()
@@ -2901,6 +2916,12 @@ impl App {
 
     /// Plays song `i` of `list` (`how` -1), or does its menu's line `how` (`SongGo::kind`).
     fn song(&mut self, list: i32, i: usize, how: i32) {
+        if list == 5 {
+            if let Some((shelf, at)) = self.card_song {
+                self.home_song(shelf, at, how);
+            }
+            return;
+        }
         let Some(one) = self.list_song(list, i) else { return };
         if (list == 2 || list == 4) && how == -1 {
             self.search_used();
@@ -2933,6 +2954,11 @@ impl App {
             }
             _ => self.song_act(songs[i].clone(), how),
         }
+    }
+
+    /// Song card `id`'s section and place there.
+    fn shelf_song_at(&self, id: &str) -> Option<(usize, usize)> {
+        self.shelf_songs.iter().enumerate().find_map(|(shelf, songs)| Some((shelf, songs.iter().position(|s| s.id == id)?)))
     }
 
     fn home_song_menu(&self, shelf: usize, i: usize) -> ModelRc<SongGo> {
@@ -6280,10 +6306,11 @@ mod tests {
         crate::look::plain(&Default::default(), &nori_core::settings::StoredPrefs::default(), true, crate::look::Today { month: 10, day: 19, southern: false })
     }
 
-    /// A window in the theme's colors, as the app paints it.
+    /// A window in the theme's colors, as the app paints it, its items' menus wired as the app's.
     fn window() -> AppWindow {
         let ui = AppWindow::new().unwrap();
         dressed().paint(&ui);
+        card_menus(&ui, &AppHandle(Weak::new()));
         ui
     }
 
@@ -6361,6 +6388,136 @@ mod tests {
         ];
         for (view, plugin_page, to) in steps {
             assert_eq!(back_from(view, plugin_page), to, "{view:?}");
+        }
+    }
+
+    /// A right press on every kind of place an album, artist, playlist or mix is drawn opens its menu, the same
+    /// one (`Go.card-menu`) wherever it is: its cards, a page's own head, a link naming it.
+    #[test]
+    fn a_right_press_on_any_item_opens_its_menu() {
+        use i_slint_backend_testing::ElementHandle;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let card = |kind: i32, id: &str| Card { id: id.into(), title: format!("Title {id}").into(), kind, ..Default::default() };
+        let shelf = |c: Card| Shelf { loaded: true, cards: cards([c].into_iter()), ..Default::default() };
+        let row = |album: &str, artist: &str| SongRow { title: "Song".into(), album: format!("Album {album}").into(), album_id: album.into(), artist: format!("Artist {artist}").into(), artist_id: artist.into(), ..Default::default() };
+        let rows = |r: SongRow| ModelRc::new(VecModel::from(vec![r]));
+        type Find = fn(&AppWindow) -> Vec<ElementHandle>;
+        type Show = Box<dyn Fn(&AppWindow)>;
+        let cards_drawn: Find = |ui| ElementHandle::find_by_element_type_name(ui, "CardView").collect();
+        let places: Vec<(&str, Show, Find, (i32, &str))> = vec![
+            ("a Home shelf", Box::new(move |ui| {
+                ui.set_view(View::Home);
+                ui.set_picks_loaded(true);
+                ui.set_shelves(ModelRc::new(VecModel::from(vec![shelf(card(0, "a1"))])));
+            }), cards_drawn, (0, "a1")),
+            ("For you on Home", Box::new(|ui| {
+                ui.set_view(View::Home);
+                ui.set_picks_loaded(true);
+                ui.set_picks(ModelRc::new(VecModel::from(vec![crate::Pick { id: "m1".into(), title: "Mix".into(), ..Default::default() }])));
+            }), |ui| ElementHandle::find_by_element_type_name(ui, "PickCard").collect(), (4, "m1")),
+            ("the albums' grid", Box::new(move |ui| {
+                ui.set_view(View::Albums);
+                ui.set_albums(cards([card(0, "a2")].into_iter()));
+            }), cards_drawn, (0, "a2")),
+            ("an artist page's releases", Box::new(move |ui| {
+                ui.set_view(View::Page);
+                ui.set_page_kind(PageLayout::Artist);
+                ui.set_page_shelves(ModelRc::new(VecModel::from(vec![shelf(card(0, "a3"))])));
+            }), cards_drawn, (0, "a3")),
+            ("an album page's cover", Box::new(|ui| {
+                ui.set_view(View::Page);
+                ui.set_page_kind(PageLayout::Album);
+                ui.set_page_id("a4".into());
+                ui.set_page_title("Title a4".into());
+            }), |ui| ElementHandle::find_by_element_id(ui, "AppWindow::head-art").collect(), (0, "a4")),
+            ("a playlist page's cover", Box::new(|ui| {
+                ui.set_view(View::Page);
+                ui.set_page_kind(PageLayout::List);
+                ui.set_page_id("p1".into());
+            }), |ui| ElementHandle::find_by_element_id(ui, "AppWindow::head-art").collect(), (2, "p1")),
+            ("a mix page's cover", Box::new(|ui| {
+                ui.set_view(View::Page);
+                ui.set_page_kind(PageLayout::List);
+                ui.set_page_mix(true);
+                ui.set_page_id("m2".into());
+            }), |ui| ElementHandle::find_by_element_id(ui, "AppWindow::head-art").collect(), (4, "m2")),
+            ("an artist page's name", Box::new(|ui| {
+                ui.set_view(View::Page);
+                ui.set_page_kind(PageLayout::Artist);
+                ui.set_page_id("ar1".into());
+                ui.set_page_title("Artist".into());
+            }), |ui| ElementHandle::find_by_element_id(ui, "AppWindow::artist-name").collect(), (1, "ar1")),
+            ("the artists' list", Box::new(move |ui| {
+                ui.set_view(View::Artists);
+                ui.set_artists(cards([card(1, "ar2")].into_iter()));
+            }), |ui| ElementHandle::find_by_accessible_label(ui, "Title ar2").collect(), (1, "ar2")),
+            ("a search's albums", Box::new(move |ui| {
+                ui.set_view(View::Search);
+                ui.set_search_albums(cards([card(0, "a5")].into_iter()));
+            }), cards_drawn, (0, "a5")),
+            ("the favorites' albums", Box::new(move |ui| {
+                ui.set_view(View::Favorites);
+                ui.set_favorite_albums(cards([card(0, "a6")].into_iter()));
+            }), cards_drawn, (0, "a6")),
+            ("a song row's album", Box::new(move |ui| {
+                ui.set_view(View::Songs);
+                ui.set_songs(rows(row("a7", "ar3")));
+            }), |ui| ElementHandle::find_by_accessible_label(ui, "Album a7").collect(), (0, "a7")),
+            ("a song row's artist", Box::new(move |ui| {
+                ui.set_view(View::Songs);
+                ui.set_songs(rows(row("a8", "ar4")));
+            }), |ui| ElementHandle::find_by_accessible_label(ui, "Artist ar4").collect(), (1, "ar4")),
+            ("a queue row's album", Box::new(move |ui| {
+                ui.set_has_song(true);
+                ui.set_inspector(Panel::Queue);
+                ui.set_queue(rows(row("a9", "ar5")));
+            }), |ui| ElementHandle::find_by_accessible_label(ui, "Album a9").collect(), (0, "a9")),
+            ("Now Playing's album", Box::new(|ui| {
+                ui.set_has_song(true);
+                ui.set_full_player(true);
+                ui.set_now_album("Album a10".into());
+                ui.set_now_album_id("a10".into());
+            }), |ui| ElementHandle::find_by_accessible_label(ui, "Album a10").collect(), (0, "a10")),
+        ];
+        for (place, show, find, (kind, id)) in places {
+            let ui = window();
+            ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+            show(&ui);
+            let asked = Rc::new(RefCell::new(Vec::new()));
+            let (seen, main) = (asked.clone(), ui.as_weak());
+            ui.global::<crate::Go>().on_card_menu(move |c, picture, x, y| {
+                seen.borrow_mut().push((c.kind, c.id.to_string()));
+                main.unwrap().invoke_card_menu_at(c, picture, x, y);
+            });
+            ui.show().unwrap();
+            let settle = || {
+                for _ in 0..2 {
+                    i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+                    slint::platform::update_timers_and_animations();
+                    ui.window().take_snapshot().unwrap();
+                }
+            };
+            settle();
+            let drawn: Vec<ElementHandle> = find(&ui).into_iter().filter(|e| e.size().width > 0.0 && e.computed_opacity() > 0.0).collect();
+            let at = drawn.first().unwrap_or_else(|| panic!("{place}: not drawn"));
+            let (p, size) = (at.absolute_position(), at.size());
+            press(ui.window(), p.x + size.width.min(40.0) / 2.0, p.y + size.height.min(40.0) / 2.0, slint::platform::PointerEventButton::Right);
+            assert_eq!(*asked.borrow(), [(kind, id.to_string())], "{place}");
+            assert_eq!((ui.get_menu_card().kind, ui.get_menu_card().id.as_str()), (kind, id), "{place}: the menu open");
+            if let Some(dir) = std::env::var_os("NORI_DESKTOP_SHOTS").filter(|_| ["the albums' grid", "an album page's cover"].contains(&place)) {
+                for (name, dark) in [("day", false), ("night", true)] {
+                    crate::look::plain(&Default::default(), &nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 11, day: 26, southern: false }).paint(&ui);
+                    settle();
+                    let shot = ui.window().take_snapshot().unwrap();
+                    let mut ppm = format!("P6 {} {} 255\n", shot.width(), shot.height()).into_bytes();
+                    ppm.extend(shot.as_bytes().chunks(4).flat_map(|p| [p[0], p[1], p[2]]));
+                    let file = format!("{}-{name}.ppm", if place.contains("grid") { "grid" } else { "album-head" });
+                    let _ = std::fs::write(std::path::Path::new(&dir).join(file), ppm);
+                }
+            }
+            ui.hide().unwrap();
         }
     }
 

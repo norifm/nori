@@ -1,6 +1,7 @@
 // The web client in headless Chrome against the local Navidrome (tools/dev-server.sh) through
 // web/serve.py: sign-in, browsing, search, a profile's icon picked, a song streamed and played, next and
-// previous, a song taken out of the queue, Back one step out of Now Playing, synced lyrics,
+// previous, a song taken out of the queue, a right click's menu on each kind of item, Back one step out
+// of Now Playing, synced lyrics,
 // a crossfade and an AutoMix transition heard as continuous samples, the seek bar
 // running and holding, a click on a lyric line, how soon a pause is heard, a page reopened where it
 // left. Exits non-zero when something is off, and prints what it saw.
@@ -458,6 +459,29 @@ if (!only || only.includes("queue")) {
   expect(heardHasNone, "the song heard has no Remove button");
   expect(lines.length > 0 && !lines.some((l) => ["Remove", "Move up", "Move down"].includes(l)), "a queue row's menu is the song's own");
   expect(after.length === before.length - 1 && after.filter((s) => s.title === title).length === before.filter((s) => s.title === title).length - 1, "a row's Remove button takes its song out");
+}
+
+if (!only || only.includes("menus")) {
+  // A right click on an item opens its menu wherever it is drawn: a card in a grid, an album page's own cover
+  // and title, a link naming an artist.
+  const opened = async (sel) => {
+    await page.click(sel, { button: "right" });
+    await page.waitForSelector(".popover.drop .head .title", { timeout: 5000 }).catch(() => {});
+    const m = await page.$eval(".popover.drop", (p) => ({ title: p.querySelector(".head .title")?.textContent ?? "", lines: [...p.querySelectorAll(".popover-item")].map((b) => b.textContent.trim()) })).catch(() => null);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector(".popover.drop"), { timeout: 5000 }).catch(() => {});
+    return m;
+  };
+  await hash("#/albums/alphabeticalByName", "albums");
+  const card = await page.$eval(".grid .card .title", (e) => e.textContent);
+  const grid = await opened(".grid .card");
+  await hash(`#/album/${album("Second Wind", "Alpha Waves")}`, "album");
+  const cover = await opened(".hero .art");
+  const title = await opened(".hero h1");
+  const artist = await opened(".hero .by a");
+  report.menus = { card, grid, cover, title, artist };
+  for (const [what, m, want] of [["a grid's card", grid, card], ["an album page's cover", cover, "Second Wind"], ["an album page's title", title, "Second Wind"], ["an artist's link", artist, "Alpha Waves"]])
+    expect(m?.title === want && m.lines.includes("Play next"), `${what} opens its menu on a right click`);
 }
 
 if (!only || only.includes("back")) {

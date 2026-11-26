@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -77,6 +78,13 @@ internal object MixStore {
     /** Draws mix [id] unless this period's draw is already there; [again] asks for a different one. */
     suspend fun ensure(nori: Nori, id: String, again: Boolean = false) = lock.withLock {
         if (nori.library.mixEnsure(id, again)) version.update { it + 1 }
+    }
+
+    /** Mix [id]'s songs, as its page has them: favourites once the starred songs are handed over, a mix once drawn for today. */
+    suspend fun songs(nori: Nori, id: String): List<Song> = withContext(Dispatchers.IO) {
+        if (id == FAVOURITES_MIX) runCatching { nori.library.handFavourites().firstOrNull() }
+        else ensure(nori, id)
+        (nori.core.mixPage(id) as? MixLookup.Ready)?.sheet?.songs.orEmpty()
     }
 
     /** Draws whichever mixes are missing or from the last period; a few milliseconds each, off the main thread. */

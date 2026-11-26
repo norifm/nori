@@ -64,16 +64,17 @@ impl App {
                 }
                 Some(Overlay::Menu { title: song.title.clone(), item: Box::new(Item::Song(songs, at)), lines, folded, sel: Sel::default() })
             }
-            Some(item @ (Item::Album(_) | Item::Playlist(_) | Item::Artist(_))) => {
+            Some(item @ (Item::Album(_) | Item::Playlist(_) | Item::Artist(_) | Item::Mix(_))) => {
                 let (title, kind) = match &item {
-                    Item::Album(a) => (a.name.clone(), ItemKind::Album),
-                    Item::Playlist(p) => (p.name.clone(), ItemKind::Playlist),
-                    Item::Artist(a) => (a.name.clone(), ItemKind::Artist),
-                    _ => unreachable!("an album, playlist or artist"),
+                    Item::Album(a) => (a.name.clone(), Some(ItemKind::Album)),
+                    Item::Playlist(p) => (p.name.clone(), Some(ItemKind::Playlist)),
+                    Item::Artist(a) => (a.name.clone(), Some(ItemKind::Artist)),
+                    Item::Mix(m) => (crate::text::mix_name(m.name).to_string(), None),
+                    _ => unreachable!("an album, playlist, artist or mix"),
                 };
                 // A jam guest only asks for songs.
                 let play = (!self.guest()).then_some(MenuLine::Act(MenuAct::Play));
-                let lines = play.into_iter().chain([MenuLine::Act(MenuAct::PlayNext), MenuLine::Act(MenuAct::AddToQueue)]).chain(self.plugin_lines(kind)).collect();
+                let lines = play.into_iter().chain([MenuLine::Act(MenuAct::PlayNext), MenuLine::Act(MenuAct::AddToQueue)]).chain(kind.into_iter().flat_map(|k| self.plugin_lines(k))).collect();
                 Some(Overlay::Menu { title, item: Box::new(item), lines, folded: Vec::new(), sel: Sel::default() })
             }
             _ => None,
@@ -146,6 +147,7 @@ impl App {
             Item::Album(a) => Some(Fetch::Album(a.id.clone())),
             Item::Playlist(p) => Some(Fetch::Playlist(p.id.clone())),
             Item::Artist(a) => Some(Fetch::Artist(a.id.clone())),
+            Item::Mix(m) => Some(Fetch::Mix(m.id.clone())),
             _ => None,
         };
         match (act, song) {

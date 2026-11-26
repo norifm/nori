@@ -4,7 +4,7 @@
   // it (the core's `playlist_editable`). Deleting asks first.
   import { ask, read } from "../rpc";
   import { library, reading } from "../state/library.svelte";
-  import { deletePlaylist } from "../state/menus";
+  import { deletePlaylist, itemMark } from "../state/menus";
   import { player } from "../state/player.svelte";
   import { remote } from "../state/remote.svelte";
   import { go } from "../state/route.svelte";
@@ -58,7 +58,7 @@
 
 <Page back ready={!!pl} error={page.error}>
   {#if pl}
-    <Hero cover={pl.cover} title={pl.name} fallback="playlist" label={songs.length ? W.listCaption(songs.length, page.data?.seconds ?? 0) : ""} onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}>
+    <Hero cover={pl.cover} title={pl.name} fallback="playlist" item={itemMark("playlist", id, { title: pl.name, line: pl.owner ?? "", cover: pl.cover }, !!pl.editable)} label={songs.length ? W.listCaption(songs.length, page.data?.seconds ?? 0) : ""} onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}>
       {#snippet by()}{#if pl.comment}<span class="comment">{pl.comment}</span>{/if}{/snippet}
       {#snippet actions()}
         {#if !remote.jam?.guest}<Seal what="playlist" id={pl.id} on={!!pl.pinned} />{/if}

@@ -3,7 +3,7 @@
   // songs by number, a disc at a time as the core laid them out.
   import { ask, read } from "../rpc";
   import { reading } from "../state/library.svelte";
-  import { addToPlaylist } from "../state/menus";
+  import { addToPlaylist, itemMark } from "../state/menus";
   import { player } from "../state/player.svelte";
   import { remote } from "../state/remote.svelte";
   import { href } from "../state/route.svelte";
@@ -29,7 +29,7 @@
 
 <Page back ready={!!a} error={page.error}>
   {#if a}
-    <Hero cover={a.cover} title={a.name} {label} onplay={(shuffle) => void player.play(songs, 0, shuffle, "Album", a.id)}>
+    <Hero cover={a.cover} title={a.name} {label} item={itemMark("album", a.id, { title: a.name, line: a.artist, cover: a.cover })} onplay={(shuffle) => void player.play(songs, 0, shuffle, "Album", a.id)}>
       {#snippet by()}{#if a.artistId}<a href={href("artist", a.artistId)}>{a.artist}</a>{:else}{a.artist}{/if}{/snippet}
       {#snippet actions()}
         {#if !remote.jam?.guest}<Seal what="album" id={a.id} on={!!a.starred} />{/if}

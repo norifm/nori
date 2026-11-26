@@ -1,11 +1,13 @@
 <script lang="ts">
   // An album's, playlist's or artist's head: the cover, the title, who, what the list holds ("2026 · 4 songs ·
   // 8:00 · MP3 128 kbps"), Play and Shuffle, and the page's own buttons (the seal, what the core offers for
-  // its songs, a menu). The page and the chrome wear the season's paper dyed with the cover while it is open,
+  // its songs, a menu). A right click on the cover or the title opens the menu of the page's `item` (its
+  // `itemMark`). The page and the chrome wear the season's paper dyed with the cover while it is open,
   // and the cover's own wash runs across the page's top into it, scrolling with the head, as the desktop's
   // page (not in Midnight).
   import type { Snippet } from "svelte";
   import { coverLook } from "../state/coverLook";
+  import type { itemMark } from "../state/menus";
   import { fade } from "svelte/transition";
   import { looks, RECOLOR_MS } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
@@ -23,7 +25,8 @@
     label = "",
     onplay,
     actions,
-  }: { cover?: string; title: string; round?: boolean; fallback?: string; by?: Snippet; label?: string; onplay: (shuffle: boolean) => void; actions?: Snippet } = $props();
+    item,
+  }: { cover?: string; title: string; round?: boolean; fallback?: string; by?: Snippet; label?: string; onplay: (shuffle: boolean) => void; actions?: Snippet; item?: ReturnType<typeof itemMark> } = $props();
 
   // The cover's colors, lent to the page and the chrome while it is open; the season's until they come.
   const me = {};
@@ -61,9 +64,9 @@
 <!-- Midnight wears none: it goes as the colors do. -->
 {#if own}<div class="head-wash" aria-hidden="true" out:fade={{ duration: still() ? 0 : RECOLOR_MS }}><canvas bind:this={washed}></canvas></div>{/if}
 <div class="hero" class:circle={round}>
-  <div class="art"><Cover src={cover} {round} radius="var(--r-card)" {fallback} /></div>
+  <div class="art" {...item}><Cover src={cover} {round} radius="var(--r-card)" {fallback} /></div>
   <div class="text">
-    <h1>{title}</h1>
+    <h1 {...item}>{title}</h1>
     {#if by}<div class="by">{@render by()}</div>{/if}
     {#if label}<div class="label">{label}</div>{/if}
     <div class="hero-actions">
