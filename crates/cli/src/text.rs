@@ -313,6 +313,10 @@ pub const BACKUP_PASSWORD: &str = "The backup's password";
 // About's license, as Android's.
 pub const FREE_SOFTWARE: &str = "nori is free software";
 pub const LICENCE_LINE: &str = "AGPL-3.0 license · Copyright (c) 2026 norifm";
+// About's credits, by what they are part of.
+pub const CORE_CREDITS: &str = "The core";
+pub const TERMINAL_CREDITS: &str = "The terminal client";
+pub const DATA_CREDITS: &str = "Data";
 
 // The Support page.
 pub const SUPPORT_TITLE: &str = "Support nori";

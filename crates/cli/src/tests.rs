@@ -668,6 +668,28 @@ fn the_seasons_show_their_kanji_in_their_accent() {
     }
 }
 
+/// About credits the core, the terminal's own libraries and the data it fetches, but no typeface or icons:
+/// the terminal draws in its own font.
+#[test]
+fn about_credits_the_libraries_and_data() {
+    let mut a = app();
+    a.go(View::Settings);
+    draw(&mut a, 160, 40);
+    let about = GROUPS.iter().position(|g| g.id == crate::settings_view::Gid::About).expect("about");
+    a.settings.jump(about);
+    let s = draw(&mut a, 160, 200);
+    dump("about", &s);
+    for heading in ["THE CORE", "THE TERMINAL CLIENT", "DATA"] {
+        assert!(s.lines().any(|l| l.trim_start().starts_with(heading)), "{heading} missing:\n{s}");
+    }
+    for credit in ["rusqlite", "ratatui and crossterm", "cpal", "Wasmtime and Cranelift", "AutoEQ", "LRCLIB", "Beat This!"] {
+        assert!(s.contains(credit), "{credit} not credited:\n{s}");
+    }
+    for drawn in ["Literata", "Shippori Mincho", "Iconoir"] {
+        assert!(!s.contains(drawn), "{drawn} credited in a terminal:\n{s}");
+    }
+}
+
 #[test]
 fn settings_page() {
     let mut a = app();

@@ -1564,13 +1564,10 @@ fn about(own: &Own) -> Vec<Section> {
     };
     // A build with a support service offers its page here.
     let support = nori_core::support::support_service().map(|_| section("", vec![Row::Link { title: text::SUPPORT_TITLE.into(), status: String::new(), action: Act::Support }]));
-    let credits = nori_core::credits::core_credits().into_iter().map(|c| info(&c.name, format!("{} · {} · {}", c.what, c.copyright, c.licence))).collect();
-    let tui = vec![
-        info("ratatui, crossterm", "The screen and the keys · The Ratatui developers, Timon Post · MIT".into()),
-        info("ratatui-image", "Covers in the terminal: kitty, sixel, iTerm2, half blocks · Benjamin Große · MIT".into()),
-        info("image, icy_sixel", "Pictures handed to the terminal · The image-rs developers, Mike Krüger · MIT or Apache-2.0".into()),
-    ];
-    [Some(version), support, Some(section("The core", credits)), Some(section("The terminal client", tui))].into_iter().flatten().collect()
+    use nori_core::credits::{core_credits, terminal_credits, terminal_data_credits, Credit};
+    let credits = |list: Vec<Credit>| list.into_iter().map(|c| info(&c.name, format!("{} · {} · {}", c.what, c.copyright, c.licence))).collect();
+    let groups = [(text::CORE_CREDITS, core_credits()), (text::TERMINAL_CREDITS, terminal_credits()), (text::DATA_CREDITS, terminal_data_credits())];
+    [version].into_iter().chain(support).chain(groups.into_iter().map(|(title, list)| section(title, credits(list)))).collect()
 }
 
 /// The value shown at a row's end (toggles are drawn by the ui).

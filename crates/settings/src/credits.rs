@@ -114,6 +114,25 @@ const DESKTOP_CREDITS: [(&str, &str, &str, &str, Option<&str>); 7] = [
     ("wry and tao", "A provider's sign-in page, in the system's web view", "Copyright (c) 2020-2023 Ngo Iok Ui & Tauri Programme within The Commons Conservancy", "Apache-2.0", Some("Apache-2.0")),
 ];
 
+/// The terminal client's own libraries; add a line (and to NOTICE) with each new dependency.
+const TERMINAL_CREDITS: [(&str, &str, &str, &str, Option<&str>); 3] = [
+    (
+        "ratatui and crossterm",
+        "The screen and the keys",
+        "Copyright (c) 2016-2022 Florian Dehau; Copyright (c) 2023-2025 The Ratatui Developers; Copyright (c) 2019 Timon",
+        "MIT",
+        Some("MIT"),
+    ),
+    (
+        "ratatui-image",
+        "Covers in the terminal: kitty, sixel, iTerm2 or half blocks",
+        "Copyright (c) 2022 Atanas Yankov; Copyright (c) 2022 wooster0; Copyright (c) 2023 Benjamin Große",
+        "MIT",
+        Some("MIT"),
+    ),
+    ("image and icy_sixel", "Pictures handed to the terminal", "Copyright the image-rs developers and Mike Krüger", "MIT or Apache-2.0", Some("MIT")),
+];
+
 /// The web client's libraries, Rust's and the page's.
 const WEB_CREDITS: [(&str, &str, &str, &str, Option<&str>); 5] = [
     ("Svelte", "The user interface", "Copyright (c) 2016-2025 Svelte Contributors", "MIT", Some("MIT")),
@@ -123,12 +142,16 @@ const WEB_CREDITS: [(&str, &str, &str, &str, Option<&str>); 5] = [
     ("hls.js", "A plugin's moving cover where the browser can't play its stream itself", "Copyright (c) 2017 Dailymotion", "Apache-2.0", Some("Apache-2.0")),
 ];
 
-/// The typeface and the third-party data services.
-const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 17] = [
+/// The typefaces and icons a client with a window draws with.
+const FONT_CREDITS: [(&str, &str, &str, &str, Option<&str>); 4] = [
     ("Inter", "The typeface", "Copyright (c) 2016 The Inter Project Authors (Rasmus Andersson)", "OFL-1.1", Some("OFL-1.1")),
     ("Literata", "The typeface of page titles", "Copyright 2017 The Literata Project Authors (https://github.com/googlefonts/literata)", "OFL-1.1", Some("OFL-1.1")),
     ("Shippori Mincho", "The seal and the seasons' kanji, drawn from its outlines", "Copyright 2020 The Shippori Mincho Project Authors (https://github.com/fontdasu/ShipporiMincho)", "OFL-1.1", Some("OFL-1.1")),
     ("Iconoir", "The icons", "Copyright (c) 2021 Luca Burgio", "MIT", Some("MIT")),
+];
+
+/// The third-party data and services.
+const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 13] = [
     ("AutoEQ", "Headphone correction curves: the list kept on Wi-Fi, a curve fetched when it is chosen", "Copyright (c) 2018 Jaakko Pasanen", "MIT", Some("MIT")),
     ("LRCLIB", "Timed lyrics for songs your server has none for, asked only when switched on", "lrclib.net; lyrics belong to their authors and contributors", "Service", None),
     (
@@ -186,8 +209,18 @@ pub fn desktop_credits() -> Vec<Credit> {
     [credits(&DESKTOP_CREDITS), credits(&NATIVE_CREDITS), credits(&PLUGIN_HOST_CREDITS)].concat()
 }
 
+pub fn terminal_credits() -> Vec<Credit> {
+    [credits(&TERMINAL_CREDITS), credits(&NATIVE_CREDITS), credits(&PLUGIN_HOST_CREDITS)].concat()
+}
+
+/// The typefaces, icons and data, for a client with a window.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn data_credits() -> Vec<Credit> {
+    [credits(&FONT_CREDITS), credits(&DATA_CREDITS)].concat()
+}
+
+/// The data alone, for the terminal: it draws in the terminal's own font.
+pub fn terminal_data_credits() -> Vec<Credit> {
     credits(&DATA_CREDITS)
 }
 
@@ -203,6 +236,7 @@ mod tests {
             ("android", [core_credits(), android_credits(), data_credits()].concat()),
             ("web", [core_credits(), web_credits(), data_credits()].concat()),
             ("desktop", [core_credits(), desktop_credits(), data_credits()].concat()),
+            ("terminal", [core_credits(), terminal_credits(), terminal_data_credits()].concat()),
         ];
         for (client, all) in &pages {
             let missing: Vec<&String> = all.iter().filter_map(|c| c.file.as_ref()).filter(|f| !std::path::Path::new(texts).join(format!("{f}.txt")).is_file()).collect();
