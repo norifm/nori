@@ -601,6 +601,26 @@ if (!only || only.includes("storage")) {
   expect(has.quality && has.parts === 2 && has.clear, "Downloads and storage has the quality, what is kept and Clear");
 }
 
+if (!only || only.includes("eq")) {
+  // The equalizer's headphones (the AutoEQ list, fetched when asked) and sound profiles: one saved under a
+  // name is listed, and removed is gone.
+  // The equalizer reads no library page: it is drawn once its part is.
+  await page.evaluate(() => (location.hash = "#/equalizer"));
+  await page.waitForSelector("#headphones");
+  await page.type("#sound-profiles .save .field", "Check sound");
+  await page.click("#sound-profiles .save .chip");
+  const listed = (on) => page.waitForFunction((o) => [...document.querySelectorAll("#sound-profiles .profile .line")].some((x) => x.textContent.includes("Check sound")) === o, { timeout: 10000 }, on);
+  await listed(true);
+  const saved = await page.$$eval("#sound-profiles .profile .line", (b) => b.map((x) => x.textContent.trim()));
+  const at = saved.findIndex((x) => x.includes("Check sound"));
+  await (await page.$$("#sound-profiles .profile .glyph"))[at].click();
+  await listed(false);
+  const headphones = await page.$eval("#headphones", (e) => ({ download: !!e.querySelector(".chip"), search: !!e.querySelector("input[type=search]") }));
+  report.eq = { saved, headphones };
+  expect(at >= 0, "a sound saved under a name is listed and removed");
+  expect(headphones.download || headphones.search, "the headphones part offers the AutoEQ list or its search");
+}
+
 if (!only || only.includes("back")) {
   // Back takes one step: out of Now Playing to the page under it, then to the page before.
   await hash("#/albums/alphabeticalByName", "albums");

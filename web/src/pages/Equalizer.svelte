@@ -1,8 +1,9 @@
 <script lang="ts">
   // The equalizer, as the desktop's: the curve it plays with a point for each band (drag one, or click it
   // to edit it below: its values typed, or slid; clicking elsewhere adds a parametric band), then presets,
-  // pre-amp and the output's balance, mono and limiter. What it draws comes from the core (crates/web/src/eq.rs); every edit
-  // answers with the page as it is then.
+  // pre-amp, the headphones' AutoEQ curves (the list fetched once, then searched here), the sound profiles
+  // (saved, used, removed) and the output's balance, mono and limiter. What it draws comes from the core
+  // (crates/web/src/eq.rs); every edit answers with the page as it is then.
   import { ask } from "../rpc";
   import { route } from "../state/route.svelte";
   import { ui } from "../state/ui.svelte";
@@ -20,12 +21,69 @@
   /** Room left and right of the curve, so the end points are whole. */
   const inset = 14;
 
+  type Hit = { name: string; source: string; form: string; target: string };
+  let extras = $state.raw<{ headphones: number; profiles: { name: string; outputs: string[] }[] }>({ headphones: 0, profiles: [] });
+  let query = $state("");
+  let hits = $state.raw<Hit[]>([]);
+  /** The AutoEQ list on its way, a curve being fetched, and the last one's word or failure. */
+  let fetching = $state(false);
+  let note = $state("");
+  let profileName = $state("");
+
   async function load() {
     try {
       eq = JSON.parse(await ask<string>("equalizer"));
+      extras = JSON.parse(await ask<string>("eq_extras"));
     } catch (e) {
       failed = String(e);
     }
+  }
+  $effect(() => {
+    const q = query;
+    let gone = false;
+    void ask<string>("autoeq_search", q).then((h) => !gone && (hits = JSON.parse(h)));
+    return () => {
+      gone = true;
+    };
+  });
+  async function download() {
+    fetching = true;
+    note = "";
+    try {
+      await ask("autoeq_download");
+      extras = JSON.parse(await ask<string>("eq_extras"));
+    } catch (e) {
+      note = String((e as Error)?.message ?? e);
+    }
+    fetching = false;
+  }
+  async function pick(i: number) {
+    const name = hits[i].name;
+    fetching = true;
+    note = "";
+    try {
+      const page = await ask<string>("autoeq_pick", query, i);
+      if (page === "null") note = W.eq.autoeqNoCurve;
+      else {
+        eq = JSON.parse(page);
+        chosen = -1;
+        note = W.eq.autoeqApplied(name);
+      }
+    } catch (e) {
+      note = String((e as Error)?.message ?? e);
+    }
+    fetching = false;
+  }
+  async function saveProfile() {
+    const name = profileName.trim();
+    if (!name) return;
+    profileName = "";
+    await ask("sound_profile_save", name);
+    extras = JSON.parse(await ask<string>("eq_extras"));
+  }
+  async function removeProfile(name: string) {
+    await ask("sound_profile_delete", name);
+    extras = JSON.parse(await ask<string>("eq_extras"));
   }
   $effect(() => {
     void route.visit;
@@ -212,6 +270,37 @@
       </label>
       {#if eq.auto}<p class="hint">{W.eq.preamp} {W.eq.db(eq.preamp.toFixed(1))}</p>
       {:else}{@render level(W.eq.preamp, W.eq.db(eq.preamp.toFixed(1)), eq.preamp, eq.ranges.preamp, 0.5, (v) => void set("eqPreampDb", String(v)))}{/if}
+    </div>
+
+    <!-- AutoEQ's measured curves, as Android's headphone presets: search the list, pick one, and it is the curve. -->
+    <div class="group-label">{W.eq.headphones}</div>
+    <div class="group plate" id="headphones">
+      {#if !extras.headphones}
+        <p class="hint">{W.eq.autoeqAbout}</p>
+        <div class="chips-line"><button class="chip" disabled={fetching} onclick={() => void download()}>{fetching ? W.eq.autoeqDownloading : W.eq.autoeqDownload}</button></div>
+      {:else}
+        <label class="field search-field"><Icon name="search" /><input type="search" placeholder={W.eq.autoeqSearch(extras.headphones)} aria-label={W.eq.autoeqSearch(extras.headphones)} bind:value={query} /></label>
+      {/if}
+      {#if note}<p class="note">{note}</p>{/if}
+      {#each hits as h, i (h.name + h.source + i)}
+        <button class="line" disabled={fetching} onclick={() => void pick(i)}><span>{h.name}</span><span class="sub">{W.eq.autoeqCaption(h)}</span></button>
+      {/each}
+      {#if extras.headphones}<p class="credit">{W.eq.autoeqCredit}</p>{/if}
+    </div>
+
+    <!-- The sound saved under a name, to use again or give a device (Remember sound per device). -->
+    <div class="group-label">{W.eq.profiles}</div>
+    <div class="group plate" id="sound-profiles">
+      {#each extras.profiles as p (p.name)}
+        <div class="profile">
+          <button class="line" onclick={async () => (eq = JSON.parse(await ask<string>("sound_profile_apply", p.name)))}><span>{p.name}</span>{#if p.outputs.length}<span class="sub">{W.eq.profileUse(p.outputs)}</span>{/if}</button>
+          <button class="glyph quiet" aria-label={W.eq.removeProfile} title={W.eq.removeProfile} onclick={() => void removeProfile(p.name)}><Icon name="xmark" /></button>
+        </div>
+      {/each}
+      <form class="save" onsubmit={(e) => (e.preventDefault(), void saveProfile())}>
+        <input class="field" placeholder={W.eq.saveAs} aria-label={W.eq.saveAs} bind:value={profileName} />
+        <button class="chip" disabled={!profileName.trim()}>{W.eq.save}</button>
+      </form>
     </div>
 
     <div class="group-label">{W.eq.output}</div>
@@ -448,6 +537,56 @@
   }
   .level .range {
     width: 100%;
+  }
+  /* A curve found or a profile: its name over a quiet line; hovered, a step of ink. */
+  .line {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 8px;
+    text-align: left;
+    font-size: 13px;
+  }
+  .line:hover:enabled {
+    background: var(--hover);
+  }
+  .line .sub {
+    font-size: 11px;
+  }
+  .note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--accent);
+  }
+  .credit {
+    margin: 0;
+    font-size: 11px;
+    color: color-mix(in srgb, var(--ink) 45%, transparent);
+  }
+  .profile {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .profile .glyph {
+    width: 26px;
+    height: 26px;
+    flex: none;
+  }
+  .profile .glyph :global(.icon) {
+    width: 12px;
+    height: 12px;
+  }
+  .save {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .save .field {
+    flex: 1;
+    min-width: 0;
   }
   .column {
     display: contents;

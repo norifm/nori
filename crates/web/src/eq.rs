@@ -1,5 +1,6 @@
 //! The equalizer page, as the desktop's: its curve and band points (`dsp::eq_drawing`), the band chosen's
-//! editor, presets, pre-amp, balance, mono and limiter. Every edit answers with the page as it is now.
+//! editor, presets, pre-amp, AutoEQ's headphone curves, the sound profiles, balance, mono and limiter.
+//! Every edit answers with the page as it is now.
 
 use nori_core::dsp::{eq_drawing, eq_presets, graphic_bands, graphic_layouts, CURVE_DB};
 use nori_core::numbers::{self, POINT};
@@ -114,6 +115,65 @@ impl Nori {
             Some(tool) => self.eq_sound_tool(tool),
             None => self.equalizer(),
         }
+    }
+
+    /// The headphones and profiles parts: `{ headphones, profiles: [{ name, outputs }] }`, `headphones` how
+    /// many the AutoEQ list kept here has (0: it was never fetched), each profile's `outputs` the devices it
+    /// is used on by itself.
+    pub fn eq_extras(&self) -> String {
+        let core = self.client().map(|c| c.core().clone());
+        let headphones = core.as_ref().and_then(|c| c.autoeq_count().ok()).unwrap_or(0);
+        let profiles: Vec<Value> = core.and_then(|c| c.profiles().ok()).unwrap_or_default().into_iter().map(|p| json!({ "name": p.name, "outputs": p.outputs })).collect();
+        json!({ "headphones": headphones, "profiles": profiles }).to_string()
+    }
+
+    /// The AutoEQ list's headphones `query` finds (`Core::autoeq_browse`): `[{ name, source, form, target }]`,
+    /// none for a query too short. A browser can't name the headphones it plays on, so nothing is suggested
+    /// before a search.
+    pub fn autoeq_search(&self, query: String) -> String {
+        Value::from(self.autoeq_hits(query).iter().map(|e| json!({ "name": e.name, "source": e.source, "form": e.form, "target": e.target })).collect::<Vec<_>>()).to_string()
+    }
+
+    fn autoeq_hits(&self, query: String) -> Vec<nori_core::AutoEqEntry> {
+        self.client().map(|c| c.core().autoeq_browse(query).hits).unwrap_or_default()
+    }
+
+    /// Fetches hit `i` of `query`'s curve and makes it the equalizer: the page as it is then, or null when
+    /// AutoEQ has no curve for those headphones.
+    pub async fn autoeq_pick(&self, query: String, i: u32) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| crate::error("not signed in"))?;
+        let entry = self.autoeq_hits(query).into_iter().nth(i as usize).ok_or_else(|| crate::error("no such headphones"))?;
+        let Some(text) = client.autoeq_curve(entry).await.map_err(crate::error)? else { return Ok("null".into()) };
+        Ok(self.eq_sound_tool(SoundTool::Import { text }))
+    }
+
+    /// Fetches the AutoEQ list, asked for.
+    pub async fn autoeq_download(&self) -> Result<(), JsValue> {
+        let client = self.client().ok_or_else(|| crate::error("not signed in"))?;
+        client.autoeq_update(true, false).await.map(drop).map_err(crate::error)
+    }
+
+    /// Makes saved profile `name`'s sound the one in use: the page as it is then.
+    pub fn sound_profile_apply(&self, name: String) -> String {
+        let core = self.client().map(|c| c.core().clone());
+        let profile = core.and_then(|c| c.profiles().ok()).unwrap_or_default().into_iter().find(|p| p.name == name);
+        let store = &self.app.settings;
+        if let (Some(sound), Some(prefs)) = (profile.and_then(|p| nori_core::settings::sound_from_json(p.json)), store.current()) {
+            self.sound_applied(store.put(prefs.with_sound(sound)));
+        }
+        self.equalizer()
+    }
+
+    /// Saves the sound in use as profile `name`, keeping the devices one by that name was used on.
+    pub fn sound_profile_save(&self, name: String) -> Result<(), JsValue> {
+        let client = self.client().ok_or_else(|| crate::error("not signed in"))?;
+        let sound = self.app.settings.current().unwrap_or_default().sound();
+        client.core().profile_save_sound(name, sound).map_err(|e| crate::error(format!("{e:?}")))
+    }
+
+    pub fn sound_profile_delete(&self, name: String) -> Result<(), JsValue> {
+        let client = self.client().ok_or_else(|| crate::error("not signed in"))?;
+        client.core().profile_delete(name).map_err(crate::error)
     }
 
     fn eq_sound_tool(&self, tool: SoundTool) -> String {
