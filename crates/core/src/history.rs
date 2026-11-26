@@ -297,7 +297,7 @@ pub(crate) mod tests {
 
     mod server {
         use super::*;
-        use crate::browse::StatsSource;
+        use crate::browse::{StatsPeriod, StatsSource};
         use crate::client::tests::{block, client, Fake};
         use crate::client::NetProfile;
         use crate::transport::FailureKind;
@@ -319,7 +319,7 @@ pub(crate) mod tests {
         }
 
         fn server_plays(c: &Client) -> u32 {
-            c.core.stats_page(0, StatsSource::ServerAccount, 0).unwrap().stats.plays
+            c.core.stats_page(StatsPeriod::AllTime, StatsSource::ServerAccount, 0).unwrap().stats.plays
         }
 
         #[test]
@@ -394,9 +394,9 @@ pub(crate) mod tests {
             // Plays 1 to 3: Monday 01:00 to 03:00 UTC; s1, s0, s1.
             assert_eq!(sync(&c, &fake, &[TOKEN, &page(&[3, 2]), &page(&[1])]), ServerHistory::Current);
 
-            let device = c.core.stats_page(0, StatsSource::Device, 0).unwrap();
+            let device = c.core.stats_page(StatsPeriod::AllTime, StatsSource::Device, 0).unwrap();
             assert_eq!((device.source, device.stats.plays, device.stats.skips, device.stats.listened_ms), (StatsSource::Device, 1, 1, 205_000));
-            let server = c.core.stats_page(0, StatsSource::ServerAccount, 0).unwrap();
+            let server = c.core.stats_page(StatsPeriod::AllTime, StatsSource::ServerAccount, 0).unwrap();
             let st = &server.stats;
             assert_eq!((server.source, st.plays, st.skips, st.listened_ms, st.distinct_songs), (StatsSource::ServerAccount, 3, 0, 0, 2));
             assert_eq!((st.top_songs[0].song.id.as_str(), st.top_songs[0].plays), ("s1", 2));
@@ -405,11 +405,11 @@ pub(crate) mod tests {
             assert_eq!(st.first_play.as_ref().unwrap().started_ms, 1_780_275_600_000);
 
             // Charted at the offset asked: Monday 01:00 to 03:00 UTC is Sunday 22:00 to Monday 00:00 at UTC-3.
-            let west = c.core.stats_page(0, StatsSource::ServerAccount, -3 * 3_600_000).unwrap().stats;
+            let west = c.core.stats_page(StatsPeriod::AllTime, StatsSource::ServerAccount, -3 * 3_600_000).unwrap().stats;
             assert_eq!((west.plays_per_hour[22], west.plays_per_hour[0], west.plays_per_hour[1]), (1, 1, 0));
             assert_eq!((west.plays_per_weekday[6], west.plays_per_weekday[0]), (2, 1));
             assert_eq!((west.active_days, west.longest_streak_days), (2, 2));
-            assert_eq!(c.core.stats_page(7, StatsSource::ServerAccount, 0).unwrap().stats.plays, 0, "older than a week");
+            assert_eq!(c.core.stats_page(StatsPeriod::Week, StatsSource::ServerAccount, 0).unwrap().stats.plays, 0, "older than a week");
         }
     }
 

@@ -99,11 +99,11 @@ impl Core {
         Ok(HistoryPage { entries, next })
     }
 
-    /// The listening stats page of `source`'s plays in the last `days` days (0: all). The server's plays
-    /// are charted at `tz_offset_ms`; this device's at the offset each was played at.
-    pub fn stats_page(&self, days: u32, source: StatsSource, tz_offset_ms: i32) -> Result<StatsPage> {
+    /// The listening stats page of `source`'s plays in `period`. The server's plays are charted at
+    /// `tz_offset_ms`; this device's at the offset each was played at.
+    pub fn stats_page(&self, period: StatsPeriod, source: StatsSource, tz_offset_ms: i32) -> Result<StatsPage> {
         let now = db::now_ms();
-        let from = if days == 0 { 0 } else { now - days as i64 * DAY_MS };
+        let from = period.days().map_or(0, |days| now - days as i64 * DAY_MS);
         let c = self.db.lock();
         let stats = match source {
             StatsSource::Device => history::summary(&c, from, now, STATS_TOP)?,
@@ -463,8 +463,8 @@ pub(crate) mod tests {
         crate::history::record(&mut core.db.lock(), &s, now - DAY_MS, 200_000, 0, now).unwrap();
         let page = core.history_page(None).unwrap();
         assert_eq!((page.entries.len(), page.next), (2, None));
-        assert_eq!(core.stats_page(7, StatsSource::Device, 0).unwrap().stats.plays, 1);
-        assert_eq!(core.stats_page(0, StatsSource::Device, 0).unwrap().stats.plays, 2);
+        assert_eq!(core.stats_page(StatsPeriod::Week, StatsSource::Device, 0).unwrap().stats.plays, 1);
+        assert_eq!(core.stats_page(StatsPeriod::AllTime, StatsSource::Device, 0).unwrap().stats.plays, 2);
 
         // A listen recorded while paging repeats nothing.
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();

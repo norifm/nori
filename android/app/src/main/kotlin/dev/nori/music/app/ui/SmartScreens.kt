@@ -52,6 +52,7 @@ import dev.nori.music.app.vm.MixCard
 import androidx.compose.foundation.layout.fillMaxSize
 
 import dev.nori.music.ffi.library.SmartEditRule
+import dev.nori.music.ffi.library.StatsPeriod
 import dev.nori.music.ffi.library.StatsSource
 import dev.nori.music.app.vm.SmartViewModel
 
@@ -364,21 +365,18 @@ fun HistoryList(actions: ActionsViewModel, vm: HistoryViewModel = viewModel()) {
 /** The year in review, any time of year: everything comes from one query in the core. */
 @Composable
 fun StatsScreen(vm: HistoryViewModel = viewModel()) {
-    val periods = remember { say.statsPeriods }
-    // A year opens.
-    var days by remember { mutableStateOf(365) }
-    val sources = remember { say.statsSources }
+    var period by remember { mutableStateOf(dev.nori.music.ffi.library.statsPeriodOpened()) }
     var source by remember { mutableStateOf(StatsSource.DEVICE) }
-    LaunchedEffect(days, source) { vm.loadStats(days, source) }
+    LaunchedEffect(period, source) { vm.loadStats(period, source) }
     val s by vm.stats.collectAsStateWithLifecycle()
     val server by vm.server.collectAsStateWithLifecycle()
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
         LargeTitle(say.listening)
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(sources) { (from, label) -> Chip(label, source == from) { source = from } }
+            items(StatsSource.entries) { from -> Chip(say.statsSource(from), source == from) { source = from } }
         }
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(periods) { (d, label) -> Chip(label, days == d) { days = d } }
+            items(StatsPeriod.entries) { p -> Chip(say.statsPeriod(p), period == p) { period = p } }
         }
         val page = s ?: return@Column
         val st = page.stats

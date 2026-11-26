@@ -576,6 +576,11 @@ pub enum StatsSource {
     ServerAccount,
 }
 
+impl StatsSource {
+    /// In the order a client offers them.
+    pub const ALL: [StatsSource; 2] = [StatsSource::Device, StatsSource::ServerAccount];
+}
+
 /// How the server account's play history stands after asking the server for what is new.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -589,12 +594,66 @@ pub enum ServerHistory {
     Unavailable,
 }
 
+/// How far back the listening stats count, in the order a client offers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum StatsPeriod {
+    Week,
+    Month,
+    Year,
+    AllTime,
+}
+
+impl StatsPeriod {
+    pub const ALL: [StatsPeriod; 4] = [StatsPeriod::Week, StatsPeriod::Month, StatsPeriod::Year, StatsPeriod::AllTime];
+    /// The period the stats open on.
+    pub const OPENED: StatsPeriod = StatsPeriod::Year;
+
+    /// The days it counts back from now; none for all time.
+    pub fn days(self) -> Option<u32> {
+        match self {
+            StatsPeriod::Week => Some(7),
+            StatsPeriod::Month => Some(30),
+            StatsPeriod::Year => Some(365),
+            StatsPeriod::AllTime => None,
+        }
+    }
+}
+
+/// [`StatsPeriod::OPENED`], for the clients that cannot read the constant.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn stats_period_opened() -> StatsPeriod {
+    StatsPeriod::OPENED
+}
+
+/// What a number under the listening stats' headline counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum StatKind {
+    Songs,
+    Artists,
+    Albums,
+    Skips,
+    ActiveDays,
+    DayStreak,
+}
+
+/// A number under the listening stats' headline, and what it counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct StatTile {
+    pub kind: StatKind,
+    pub value: u32,
+}
+
 /// The listening stats page.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct StatsPage {
     pub source: StatsSource,
     pub stats: ListeningStats,
+    /// The numbers under the headline, in rows of three; skips only where they are known (this device's).
+    pub tiles: Vec<StatTile>,
     /// The busiest hour, 0-23 (the first of equals); none when nothing was played.
     pub busiest_hour: Option<u32>,
     /// The busiest weekday, 0 Monday to 6 Sunday; only with a busiest hour.
@@ -621,7 +680,17 @@ impl StatsPage {
         let busiest_weekday = busiest_hour.and(busiest(&stats.plays_per_weekday)).filter(|&d| d < 7);
         let peak = stats.plays_per_hour.iter().copied().max().unwrap_or(0).max(1) as f32;
         let hours = stats.plays_per_hour.iter().map(|&p| p as f32 / peak).collect();
-        StatsPage { source, busiest_hour: busiest_hour.map(|h| h as u32), busiest_weekday: busiest_weekday.map(|d| d as u32), hours, stats }
+        let st = &stats;
+        let tiles = [
+            Some((StatKind::Songs, st.distinct_songs)),
+            Some((StatKind::Artists, st.distinct_artists)),
+            Some((StatKind::Albums, st.distinct_albums)),
+            (source == StatsSource::Device).then_some((StatKind::Skips, st.skips)),
+            Some((StatKind::ActiveDays, st.active_days)),
+            Some((StatKind::DayStreak, st.longest_streak_days)),
+        ];
+        let tiles = tiles.into_iter().flatten().map(|(kind, value)| StatTile { kind, value }).collect();
+        StatsPage { source, tiles, busiest_hour: busiest_hour.map(|h| h as u32), busiest_weekday: busiest_weekday.map(|d| d as u32), hours, stats }
     }
 }
 
@@ -737,6 +806,15 @@ mod tests {
         // Nothing played: no chart and nothing to say about it, and no dividing by nothing.
         let none = StatsPage::new(StatsSource::Device, ListeningStats { plays_per_hour: vec![0; 24], plays_per_weekday: vec![0; 7], ..Default::default() });
         assert_eq!((none.busiest_hour, none.busiest_weekday, none.hours[3]), (None, None, 0.0));
+    }
+
+    #[test]
+    fn skips_are_counted_only_on_this_device() {
+        let stats = ListeningStats { distinct_songs: 3, skips: 2, longest_streak_days: 4, plays_per_hour: vec![0; 24], plays_per_weekday: vec![0; 7], ..Default::default() };
+        let kinds = |source| StatsPage::new(source, stats.clone()).tiles.iter().map(|t| (t.kind, t.value)).collect::<Vec<_>>();
+        use StatKind::*;
+        assert_eq!(kinds(StatsSource::Device), [(Songs, 3), (Artists, 0), (Albums, 0), (Skips, 2), (ActiveDays, 0), (DayStreak, 4)]);
+        assert_eq!(kinds(StatsSource::ServerAccount), [(Songs, 3), (Artists, 0), (Albums, 0), (ActiveDays, 0), (DayStreak, 4)]);
     }
 
     #[test]

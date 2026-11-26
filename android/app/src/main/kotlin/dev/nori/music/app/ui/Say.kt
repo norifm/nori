@@ -6,6 +6,8 @@ import dev.nori.music.ffi.library.AlbumDetail
 import dev.nori.music.ffi.library.DiscGroup
 import dev.nori.music.ffi.library.ServerHistory
 import dev.nori.music.ffi.library.StatsPage
+import dev.nori.music.ffi.library.StatKind
+import dev.nori.music.ffi.library.StatsPeriod
 import dev.nori.music.ffi.library.StatsSource
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.devices.OutputPort
@@ -1275,14 +1277,21 @@ class Say(private val r: Resources) {
 
     // ---- listening stats ----
 
-    /** The periods the stats can cover, in the order the chips run: days back from now (0 for all time) and a name. */
-    val statsPeriods: List<Pair<Int, String>> get() = listOf(
-        7 to r.getString(R.string.stats_week), 30 to r.getString(R.string.stats_month),
-        365 to r.getString(R.string.stats_year), 0 to r.getString(R.string.stats_all_time),
+    /** A period the stats can cover, as its chip names it. */
+    fun statsPeriod(p: StatsPeriod): String = r.getString(
+        when (p) {
+            StatsPeriod.WEEK -> R.string.stats_week
+            StatsPeriod.MONTH -> R.string.stats_month
+            StatsPeriod.YEAR -> R.string.stats_year
+            StatsPeriod.ALL_TIME -> R.string.stats_all_time
+        },
     )
-    /** Whose plays the stats can count, in the order the chips run. */
-    val statsSources: List<Pair<StatsSource, String>> get() = listOf(
-        StatsSource.DEVICE to r.getString(R.string.stats_this_device), StatsSource.SERVER_ACCOUNT to r.getString(R.string.stats_all_devices),
+    /** Whose plays the stats can count, as its chip names it. */
+    fun statsSource(s: StatsSource): String = r.getString(
+        when (s) {
+            StatsSource.DEVICE -> R.string.stats_this_device
+            StatsSource.SERVER_ACCOUNT -> R.string.stats_all_devices
+        },
     )
     /** Under the play count: "plays · 12:34:56 listened"; the server knows no time listened. */
     fun statsHeadline(p: StatsPage): String = when (p.source) {
@@ -1303,15 +1312,17 @@ class Say(private val r: Resources) {
         val day = p.busiestWeekday?.toInt() ?: return r.getString(R.string.stats_habit, hour)
         return r.getString(R.string.stats_habit_day, hour, r.getStringArray(R.array.stats_weekdays)[day])
     }
-    /** The tiles under the headline, in rows of three: a number and what it counts. Skips are this device's only. */
-    fun statsTiles(p: StatsPage): List<Pair<String, String>> = with(p.stats) {
-        listOfNotNull(
-            distinctSongs.toString() to r.getString(R.string.stat_songs),
-            distinctArtists.toString() to r.getString(R.string.stat_artists),
-            distinctAlbums.toString() to r.getString(R.string.stat_albums),
-            (skips.toString() to r.getString(R.string.stat_skips)).takeIf { p.source == StatsSource.DEVICE },
-            activeDays.toString() to r.getString(R.string.stat_active_days),
-            longestStreakDays.toString() to r.getString(R.string.stat_day_streak),
+    /** The tiles under the headline, in the core's rows of three: a number and what it counts. */
+    fun statsTiles(p: StatsPage): List<Pair<String, String>> = p.tiles.map { t ->
+        t.value.toString() to r.getString(
+            when (t.kind) {
+                StatKind.SONGS -> R.string.stat_songs
+                StatKind.ARTISTS -> R.string.stat_artists
+                StatKind.ALBUMS -> R.string.stat_albums
+                StatKind.SKIPS -> R.string.stat_skips
+                StatKind.ACTIVE_DAYS -> R.string.stat_active_days
+                StatKind.DAY_STREAK -> R.string.stat_day_streak
+            },
         )
     }
 
