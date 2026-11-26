@@ -80,11 +80,11 @@
 </Page>
 
 <style>
-  /* One row of mix cards that scrolls sideways, as the shelves of prints. */
+  /* One row of mix cards that scrolls sideways, on the shelves' columns. */
   .mixes {
     display: grid;
     grid-auto-flow: column;
-    grid-auto-columns: 168px;
+    grid-auto-columns: 176px;
     gap: var(--grid-gap);
     overflow-x: auto;
     scroll-snap-type: x mandatory;

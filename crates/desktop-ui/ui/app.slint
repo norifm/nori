@@ -2266,8 +2266,8 @@ component ReleaseShelves inherits VerticalLayout {
 }
 
 // A shelf of cards that scrolls sideways, under its title, as Music's: as many whole cards as fit across
-// the page (grown a little to reach both edges), paged by the arrows over its sides while the pointer is on
-// it. Until its cards are read it holds its place with plates, so the page does not shift as rows arrive.
+// the page (grown a little to reach both edges), paged by the arrows in the gutters beside it while the
+// pointer is on it. Until its cards are read it holds its place with plates, so the page does not shift as rows arrive.
 // Its `shape` lays the items in columns: one card each, two tiles, or four songs as rows; the children are
 // the columns (or the cards), placed at `gap + i * step` and `side` wide, their items `drop` apart.
 component ShelfView inherits VerticalLayout {
@@ -2409,11 +2409,12 @@ component ShelfView inherits VerticalLayout {
         }
         for b[i] in [{ by: -1, glyph: Icons.nav-arrow-left }, { by: 1, glyph: Icons.nav-arrow-right }]: Rectangle {
             property <bool> shown: hover.has-hover && (b.by < 0 ? flick.content-x < 0 : flick.content-x > root.end);
-            x: b.by < 0 ? root.pad - self.width / 2 : root.width - root.pad - self.width / 2;
+            // In the gutter beside the row, clear of its first and last cards.
+            x: b.by < 0 ? (root.pad - self.width) / 2 : root.width - (root.pad + self.width) / 2;
             y: ((root.shape == ShelfShape.cards ? root.side : root.band) - self.height) / 2;
-            width: 34px;
-            height: 34px;
-            border-radius: 17px;
+            width: min(34px, root.pad - 6px);
+            height: self.width;
+            border-radius: self.width / 2;
             background: arrow.has-hover ? Theme.panel : Theme.ground.with-alpha(0.85);
             border-width: 1px;
             border-color: Theme.outline;
@@ -2450,7 +2451,8 @@ component PickCard inherits Rectangle {
     in property <image> picture;
     callback open;
     width: floor(root.side / 1phx) * 1phx;
-    height: floor(root.side * 186 / 150 / 1phx) * 1phx;
+    // A card's square and the room its words take under it, so it stands on the shelves' grid.
+    height: floor((root.side + 46px) / 1phx) * 1phx;
     border-radius: 18px;
     clip: true;
     // Its paper and ink change together, as long as the page's own colors take (app.rs's FADE): a new
@@ -9185,9 +9187,13 @@ export component AppWindow inherits Window {
                                 padding-right: home.gutter;
                                 padding-bottom: 36px;
                                 alignment: start;
+                                // Three of the shelves' columns wide, on their grid.
+                                property <length> room: parent.width - 2 * home.gutter;
+                                property <int> columns: Frame.columns(self.room, Frame.least);
+                                property <length> side: (self.room - (self.columns - 1) * Frame.gap) / self.columns;
                                 Rectangle {
-                                    width: min(560px, parent.width - 2 * home.gutter);
-                                    height: 178px;
+                                    width: min(3 * parent.side + 2 * Frame.gap, parent.room);
+                                    height: 160px;
                                     border-radius: 18px;
                                     clip: true;
                                     background: Theme.raised;
@@ -9284,8 +9290,7 @@ export component AppWindow inherits Window {
                                 show-all => { root.go(View.for-you); }
                                 count: root.picks.length;
                                 loading: !root.picks-loaded;
-                                least: 175px;
-                                below: self.side * 56 / 150;
+                                least: Frame.least;
                                 for slot in picks-shelf.slots: PickCard {
                                     property <int> i: picks-shelf.first + slot;
                                     property <Pick> m: root.picks[self.i];
@@ -9768,7 +9773,7 @@ export component AppWindow inherits Window {
                     picks-grid := Remembered {
                         property <int> columns: Frame.columns(self.width - 2 * root.page-gutter, Frame.least);
                         property <length> side: (self.width - 2 * root.page-gutter - (self.columns - 1) * Frame.gap) / self.columns;
-                        property <length> row-step: self.side * 186 / 150 + Frame.gap;
+                        property <length> row-step: self.side + 46px + Frame.gap;
                         content-height: Frame.under-title + ceil(root.picks.length / self.columns) * self.row-step + 100px;
                         property <int> first: max(0, floor((-self.content-y - Frame.under-title) / self.row-step) - 1) * self.columns;
                         property <int> visible-count: max(0, min(root.picks.length - self.first, (ceil(self.height / self.row-step) + 2) * self.columns));

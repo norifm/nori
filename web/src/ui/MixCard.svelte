@@ -1,8 +1,8 @@
 <script lang="ts">
-  // A mix on Home's "For you", as the desktop's and Android's: a portrait card on the season's paper dyed
-  // with the mix (the core's `mix_card_colours`), its covers a square on top (four as a mosaic) running
-  // into that paper, its name in Literata and a line under it in the card's ink. A right click opens its
-  // menu.
+  // A mix on Home's "For you", as the desktop's and Android's: a card on the season's paper dyed with the
+  // mix (the core's `mix_card_colours`), as tall as a shelf's card with its words, its covers a square on top
+  // (four as a mosaic) running into that paper, its name in Literata in the card's ink. A right click opens
+  // its menu.
   import { itemMark } from "../state/menus";
   import { href } from "../state/route.svelte";
   import type { MixTile } from "../state/types";
@@ -33,7 +33,7 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    aspect-ratio: 150 / 186;
+    padding-bottom: 46px;
     border-radius: 18px;
     overflow: hidden;
     background: var(--card);

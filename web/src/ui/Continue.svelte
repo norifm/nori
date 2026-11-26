@@ -76,9 +76,10 @@
   .continue {
     position: relative;
     display: flex;
-    height: 178px;
+    height: 160px;
     margin-top: 16px;
-    max-width: 560px;
+    /* Three of the shelves' columns wide, on their grid. */
+    max-width: calc(3 * 176px + 2 * var(--grid-gap));
     border-radius: var(--r-tile);
     overflow: hidden;
     background: var(--page);
@@ -88,7 +89,7 @@
   /* The cover, going into the card over its right half. */
   .art {
     position: relative;
-    width: 178px;
+    width: 160px;
     flex: none;
   }
   .art::after {

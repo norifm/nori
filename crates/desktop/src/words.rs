@@ -602,7 +602,7 @@ pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
         HomeRow::Newest => "Recently added",
         HomeRow::Frequent => "Most played",
         HomeRow::Starred => "Favorites",
-        HomeRow::Random => "Something random",
+        HomeRow::Random => "Random",
         HomeRow::Playlists => "Playlists",
         HomeRow::Pinned => "Pinned",
         HomeRow::TopSongs => "Top songs",
