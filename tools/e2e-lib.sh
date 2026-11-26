@@ -116,6 +116,9 @@ local_server_up() {
     nohup python3 "$here/lying-proxy.py" "$proxy_port" http://localhost:4533 >/dev/null 2>&1 &
     wait_until 10 curl -sf -m 1 "$URL/ping" >/dev/null || return 1
   fi
+  # Only the proxy answers /_hang. Another server on its port (a tunnel to another machine's) has other song
+  # ids, which the app's stored pages and downloads would then mix with this one's.
+  curl -s -m 2 "$URL/_hang" | grep -q '"mode"' || { echo "port $proxy_port answers but is not tools/lying-proxy.py: free it or set NORI_E2E_PROXY_PORT" >&2; exit 1; }
 }
 
 # ---- the app ---------------------------------------------------------------------------------------------

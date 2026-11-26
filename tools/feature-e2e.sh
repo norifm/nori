@@ -792,7 +792,10 @@ CAR
   check "the album uses its downloaded page" wait_for route "downloaded/{id}" 8
   check "its saved tracks appear on the phone" wait_until 10 on_screen 'text="Long Track 01"'
   # The song an earlier section left playing is named in the now playing bar; only a row of the page counts.
+  # A row under the now playing bar is not in the tree, so the saved track after the unsaved one is
+  # scrolled clear of it first.
   unsaved_absent() {
+    scrolled_to 'text="Long Track 03"' || return 1
     local rows; rows=$(ui | grep -o 'text="Long Track 02"' | wc -l)
     [ "$(field title)" = "Long Track 02" ] && rows=$((rows - 1))
     [ "$rows" -le 0 ]
@@ -814,7 +817,7 @@ CAR
   check "removing the saved tracks removes the album folder" wait_until 20 removed_album
   check "emptying the open downloaded album does not crash the app" test "$(adb shell pidof "$pkg" | tr -d '\r')" = "$app_pid"
   check "the emptied album's page stays open" wait_for route "downloaded/{id}" 8
-  check "it shows the album's unsaved tracks" wait_until 20 on_screen 'text="Long Track 02"'
+  check "it shows the album's unsaved tracks" scrolled_to 'text="Long Track 02"'
   rm -f "$car_log"
 fi
 

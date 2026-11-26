@@ -203,6 +203,9 @@ tools/device-check.sh audio --only tuning,restart
   The music library is shared.
 - `emulator-5554` uses proxy port 4534 and `emulator-5556` uses 4536. For other serials,
   `NORI_E2E_PROXY_PORT` sets the port.
+- A check stops when something other than the proxy answers on its port, such as an SSH tunnel to
+  another computer's server. That server has other song ids, which mix with the stored ones. Free the
+  port, or set `NORI_E2E_PROXY_PORT` to a free port.
 
 ### Helpers for device checks
 
@@ -221,7 +224,8 @@ tools/device-check.sh audio --only tuning,restart
 - Inside a time limit, such as the 5 s of an Undo, act first and check after. One reading of the
   accessibility tree takes about a second.
 - `tools/ui-dump.sh` reads the visible accessibility tree. It does not wait for an animating player to
-  go idle.
+  go idle. A row under the now playing bar is not in it: scroll to a row with `scrolled_to`
+  (`tools/feature-e2e.sh`) before you look for it.
 - The jam checks need an octo-fiesta relay on `localhost:5274`. `tools/jam-server.sh` starts one from the
   octo-fiesta checkout beside this one, or the one `NORI_OCTO_ROOT` names.
 - The `remote` and `youtube-music` sections run the terminal app as the other device, in tmux.
