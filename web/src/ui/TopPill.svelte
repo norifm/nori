@@ -23,15 +23,15 @@
   import Icon from "./Icon.svelte";
   import SearchBox from "./SearchBox.svelte";
 
-  /** The page each section's tab is lit on. */
-  const tops: Record<string, string[]> = { Albums: ["albums", "album"], Artists: ["artists", "artist"], Songs: ["songs"], Playlists: ["playlists", "playlist"], Favourites: ["favorites"] };
+  /** The page each section's tab is lit on, and stays lit on for the pages opened from it. */
+  const tops: Record<string, string[]> = { Albums: ["albums"], Artists: ["artists"], Songs: ["songs"], Playlists: ["playlists"], Favourites: ["favorites"] };
   let sections = $state<string[]>([]);
   $effect(() => {
     void remote.jam?.guest;
     // Favorites last, as the desktop's top pill has it.
     void ask<string>("library_sections").then((s) => (sections = (JSON.parse(s) as string[]).filter((x) => x in tops).sort((a, b) => +(a === "Favourites") - +(b === "Favourites"))));
   });
-  const on = (...t: string[]) => t.includes(route.top);
+  const on = (...t: string[]) => t.includes(route.from);
 </script>
 
 <header class="top chrome" id="nav">

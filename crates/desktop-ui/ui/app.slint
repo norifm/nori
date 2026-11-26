@@ -7297,7 +7297,8 @@ component TitleStrip inherits TouchArea {
 // The top pill's content: Home, then the library's sections; the search on the right, then the settings.
 component TopContent inherits Rectangle {
     in property <View> view;
-    in property <PageLayout> page-kind;
+    // The tab lit: the view shown, or for a page the tab it was opened from (app.rs `PageTrail::lit`).
+    in property <View> tab;
     in property <LibraryTabs> tabs;
     in-out property <string> search-text;
     // The profile in use's mark, which opens the profiles.
@@ -7335,7 +7336,7 @@ component TopContent inherits Rectangle {
             text: "Home";
             icon: Icons.home-simple;
             named: root.named;
-            current: root.view == View.home || root.view == View.shelf || root.view == View.for-you;
+            current: root.tab == View.home || root.tab == View.shelf || root.tab == View.for-you;
             clicked => { root.go(View.home); }
         }
         Rectangle {
@@ -7351,7 +7352,7 @@ component TopContent inherits Rectangle {
             text: "Albums";
             icon: Icons.compact-disc;
             named: root.named;
-            current: root.view == View.albums || (root.view == View.page && root.page-kind == PageLayout.album);
+            current: root.tab == View.albums;
             clicked => { root.go(View.albums); }
         }
         if root.tabs.artists: TabButton {
@@ -7359,7 +7360,7 @@ component TopContent inherits Rectangle {
             text: "Artists";
             icon: Icons.user;
             named: root.named;
-            current: root.view == View.artists || (root.view == View.page && root.page-kind == PageLayout.artist);
+            current: root.tab == View.artists;
             clicked => { root.go(View.artists); }
         }
         if root.tabs.songs: TabButton {
@@ -7367,7 +7368,7 @@ component TopContent inherits Rectangle {
             text: "Songs";
             icon: Icons.music-note;
             named: root.named;
-            current: root.view == View.songs;
+            current: root.tab == View.songs;
             clicked => { root.go(View.songs); }
         }
         if root.tabs.playlists: TabButton {
@@ -7375,7 +7376,7 @@ component TopContent inherits Rectangle {
             text: "Playlists";
             icon: Icons.playlist;
             named: root.named;
-            current: root.view == View.playlists || (root.view == View.page && root.page-kind == PageLayout.list);
+            current: root.tab == View.playlists;
             clicked => { root.go(View.playlists); }
         }
         if root.tabs.favorites: TabButton {
@@ -7383,7 +7384,7 @@ component TopContent inherits Rectangle {
             text: "Favorites";
             icon: Icons.seal-outline;
             named: root.named;
-            current: root.view == View.favorites;
+            current: root.tab == View.favorites;
             clicked => { root.go(View.favorites); }
         }
         Rectangle {
@@ -12506,7 +12507,7 @@ export component TopBar inherits Window {
     // The pill's width (app.rs keeps it from the compositor's), which the tabs' names depend on.
     in property <length> room;
     in property <View> view;
-    in property <PageLayout> page-kind;
+    in property <View> tab;
     in property <LibraryTabs> tabs;
     in property <bool> previewing;
     in-out property <string> search-text;
@@ -12549,7 +12550,7 @@ export component TopBar inherits Window {
         height: parent.height;
         room: root.room;
         view: root.view;
-        page-kind: root.page-kind;
+        tab: root.tab;
         tabs: root.tabs;
         previewing: root.previewing;
         search-text <=> root.search-text;

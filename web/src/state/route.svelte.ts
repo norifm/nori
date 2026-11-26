@@ -1,7 +1,9 @@
 // The page shown, by its address (`#/album/<id>`): read from the hash whenever it changes.
 
 /** Pages under the Library tab on a phone. */
-const LIBRARY = ["library", "albums", "album", "artists", "artist", "playlists", "playlist", "genres", "genre", "songs", "favorites"];
+const LIBRARY = ["library", "albums", "artists", "playlists", "genres", "songs", "favorites"];
+/** Pages opened from a tab's page, each with the one it sits under when its address is opened alone. */
+const OPENED: Record<string, string> = { album: "albums", artist: "artists", playlist: "playlists", genre: "genres", mix: "home" };
 
 /** `a` unescaped; as typed when it holds a malformed escape. */
 function decoded(a: string): string {
@@ -22,12 +24,18 @@ class Route {
   /** Bumped by every visit, the same address again too: a page reads itself again. */
   visit = $state(0);
 
+  /** The tab's page the page shown was opened from (an album opened from Home: "home"); a tab's page is its
+   * own. Kept in the history entry, so Back and Forward find it again. */
+  from = $state("");
   /** The tab the page sits under on a phone. */
-  tab = $derived(LIBRARY.includes(this.top) ? "library" : this.top === "row" || this.top === "mix" ? "home" : this.top === "equalizer" || this.top === "support" ? "settings" : this.top);
+  tab = $derived(LIBRARY.includes(this.from) ? "library" : this.from === "row" ? "home" : this.from === "equalizer" || this.from === "support" ? "settings" : this.from);
 
   read() {
     const [, top = "", a = "", b = "", c = ""] = location.hash.replace(/^#\/?/, "/").split("/");
     this.top = top || "home";
+    const kept = (history.state as { from?: string } | null)?.from;
+    this.from = !(this.top in OPENED) ? this.top : (kept ?? (this.from || OPENED[this.top]));
+    history.replaceState({ ...(history.state as object | null), from: this.from }, "");
     this.arg = decoded(a);
     this.sub = decoded(b);
     this.page = decoded(c);

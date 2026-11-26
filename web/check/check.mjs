@@ -85,6 +85,26 @@ if (!only || only.includes("browse")) {
   expect(report.browse.search.songs > 0, "a search finds songs");
 }
 
+if (!only || only.includes("lit")) {
+  // A page lights the top bar's tab it was opened from, an album opened from Home keeps Home, and Back
+  // and Forward find the tab each page was opened from.
+  const id = album("Second Wind", "Alpha Waves") ?? albums[0].id;
+  const lit = () => page.$$eval("#nav .tab.on", (t) => t.map((x) => x.getAttribute("href")));
+  await hash("#/home", "home");
+  await hash(`#/album/${id}`, "album");
+  const fromHome = await lit();
+  await hash("#/albums", "albums");
+  await hash(`#/album/${id}`, "album");
+  const fromAlbums = await lit();
+  await page.goBack();
+  await page.goBack();
+  await page.waitForFunction(() => window.nori.page === "album", { timeout: 30000 });
+  const back = await lit();
+  report.lit = { fromHome, fromAlbums, back };
+  expect(fromHome.join() === "#/home" && back.join() === "#/home", "an album opened from Home keeps Home lit, after Back too");
+  expect(fromAlbums.join() === "#/albums", "an album opened from Albums lights Albums");
+}
+
 if (!only || only.includes("profile")) {
   // The saved profiles as Android lists them, each entry clicked: a profile's icon picked from its mark (the
   // picker draws every icon, the one shown checked), a profile added, opened from its row, renamed, edited

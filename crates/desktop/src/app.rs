@@ -109,6 +109,12 @@ impl PageTrail {
         Some((page, was))
     }
 
+    /// The tab lit while `view` is shown: a page's is the tab it was opened from, as Android keeps the tab
+    /// a page was opened under.
+    fn lit(&self, view: View) -> View {
+        if view == View::Page { self.tab } else { view }
+    }
+
     /// A tab is chosen: Forward has nothing left to return to.
     fn left(&mut self) {
         self.ahead.clear();
@@ -4672,7 +4678,7 @@ impl App {
         }
         if let Some(t) = &self.top {
             t.set_view(ui.get_view());
-            t.set_page_kind(ui.get_page_kind());
+            t.set_tab(self.trail.lit(ui.get_view()));
             t.set_tabs(ui.get_library_tabs());
             t.set_previewing(ui.get_search_preview_shown());
         }
@@ -6067,6 +6073,19 @@ mod tests {
         assert_eq!(trail.forward(0.0), None, "a tab chosen forgets the pages ahead");
         trail.opened(PageAsk::Artist("ar".into()), opened_from(View::Search), 0.0);
         assert_eq!(trail.back(0.0).0, Back::Tab(View::Search), "an artist found by search goes back to the search");
+    }
+
+    /// A page lights the tab it was opened from, however deep: a mix or an album opened from Home keeps Home.
+    #[test]
+    fn a_page_lights_the_tab_it_was_opened_from() {
+        let mut trail = PageTrail::default();
+        trail.opened(PageAsk::Mix("quick".into()), View::Home, 0.0);
+        assert_eq!(trail.lit(View::Page), View::Home);
+        trail.opened(PageAsk::Album("al".into()), View::Page, 0.0);
+        assert_eq!(trail.lit(View::Page), View::Home, "an album opened from the mix");
+        trail.opened(PageAsk::Playlist("pl".into()), View::Favorites, 0.0);
+        assert_eq!(trail.lit(View::Page), View::Favorites);
+        assert_eq!(trail.lit(View::Albums), View::Albums, "a tab lights itself");
     }
 
     #[test]
