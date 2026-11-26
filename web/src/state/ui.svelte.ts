@@ -140,6 +140,15 @@ class Ui {
     });
   }
 
+  /** The page changed: no menu or dialog opened over the last one stays open over this one. */
+  closeAll() {
+    this.open = null;
+    this.prompt?.done(null);
+    this.confirming?.done(false);
+    this.joining = false;
+    this.picking = null;
+  }
+
   /** Shows `pane`: on a wide screen in the full player when it is open, else in the side sheet (closed
    * by asking for it again); on a phone in the full player, and asked again it goes back to the cover. */
   show(pane: Pane) {

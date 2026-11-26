@@ -1332,7 +1332,7 @@ export global DialogPane {
 }
 
 // A dialog over the dimmed page: its title, then what it holds (groups, a field, its buttons at the end).
-// A press beside it dismisses it.
+// A press beside it or Escape dismisses it.
 component Dialog inherits Rectangle {
     in property <string> title;
     // A page before the one it shows, which the arrow beside the title goes back to.
@@ -1346,36 +1346,47 @@ component Dialog inherits Rectangle {
     init => { DialogPane.at = self.pane; }
     changed pane => { DialogPane.at = self.pane; }
     background: Theme.ground.with-alpha(0.6);
-    TouchArea {
-        clicked => { root.dismissed(); }
-    }
-    sheet := MenuSheet {
-        x: root.middle < 0 ? (parent.width - self.width) / 2 : clamp(root.middle - root.absolute-position.x - self.width / 2, 16px, parent.width - self.width - 16px);
-        y: 80px;
-        width: min(root.sheet-width, parent.width - 32px);
-        height: min(body.preferred-height, parent.height - 120px);
-        TouchArea {}
-        body := VerticalLayout {
-            padding: 16px;
-            spacing: 12px;
-            if root.title != "" || root.back: HorizontalLayout {
-                spacing: 8px;
-                if root.back: IconButton {
-                    y: (parent.height - self.height) / 2;
-                    glyph: Icons.nav-arrow-left;
-                    clicked => { root.went-back(); }
-                }
-                Text {
-                    horizontal-stretch: 1;
-                    vertical-alignment: center;
-                    text: root.title;
-                    color: Theme.text;
-                    font-size: 17px;
-                    font-weight: 600;
-                    wrap: word-wrap;
-                }
+    // It takes the keys as it opens; a field in it takes them after and passes Escape up to here.
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(e) => {
+            if e.text == Key.Escape {
+                root.dismissed();
+                return accept;
             }
-            @children
+            reject
+        }
+        TouchArea {
+            clicked => { root.dismissed(); }
+        }
+        sheet := MenuSheet {
+            x: root.middle < 0 ? (parent.width - self.width) / 2 : clamp(root.middle - root.absolute-position.x - self.width / 2, 16px, parent.width - self.width - 16px);
+            y: 80px;
+            width: min(root.sheet-width, parent.width - 32px);
+            height: min(body.preferred-height, parent.height - 120px);
+            TouchArea {}
+            body := VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                if root.title != "" || root.back: HorizontalLayout {
+                    spacing: 8px;
+                    if root.back: IconButton {
+                        y: (parent.height - self.height) / 2;
+                        glyph: Icons.nav-arrow-left;
+                        clicked => { root.went-back(); }
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                        text: root.title;
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+                }
+                @children
+            }
         }
     }
 }
@@ -7948,6 +7959,28 @@ export component AppWindow inherits Window {
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
     out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open;
+    // Closes every dialog but the two app.rs keeps state for (a device's, the sign-in), which it closes itself.
+    public function close-dialogs() {
+        root.ask-open = false;
+        root.analysis-open = false;
+        root.key-open = false;
+        root.lyrics-sheet-open = false;
+        root.details-open = false;
+        root.picker-open = false;
+        root.rename-open = false;
+        root.profile-renaming = "";
+        root.scrobbler-step = 0;
+        root.delete-open = false;
+        root.join-open = false;
+        root.pairing-open = false;
+        root.forget-open = false;
+    }
+    // A dialog closed: the page's keys come back.
+    changed dialog-open => {
+        if !self.dialog-open {
+            keys.focus();
+        }
+    }
     // What plugins say under the player's output, and a plugin's still drawn as Now Playing's cover.
     in property <[string]> plugin-status;
     in property <image> sleeve;
@@ -7976,7 +8009,10 @@ export component AppWindow inherits Window {
     in property <bool> page-editable;
     in-out property <bool> rename-open;
     in-out property <string> rename-name;
-    callback rename-playlist(string);
+    // The playlist the rename or delete dialog was opened for: its id and name.
+    in-out property <string> asked-playlist-id;
+    in-out property <string> asked-playlist-name;
+    callback rename-playlist(/* id */ string, /* name */ string);
     // The profile being renamed (its id; empty while none is), its name as typed, and the name it has when
     // left blank (its provider's).
     in-out property <string> profile-renaming;
@@ -8011,9 +8047,9 @@ export component AppWindow inherits Window {
     callback scrobbler-add(int);
     callback scrobbler-help-opened();
     callback scrobbler-sign-in();
-    // Deleting the playlist shown, asked first.
+    // Deleting a playlist, asked first.
     in-out property <bool> delete-open;
-    callback delete-playlist();
+    callback delete-playlist(/* id */ string, /* name */ string);
     // "Join a Jam": the sheet open, its link, why it failed, and joining under way.
     in-out property <bool> join-open;
     // Signing the profile's account in with cookies pasted from a browser.
@@ -8220,7 +8256,7 @@ export component AppWindow inherits Window {
 
     // The keys Music answers to without a menu: space plays and pauses, the arrows seek, escape leaves
     // Now Playing. A text field that has the keys keeps them.
-    FocusScope {
+    keys := FocusScope {
         init => { self.focus(); }
         key-pressed(e) => {
             if e.text == " " {
@@ -9531,6 +9567,8 @@ export component AppWindow inherits Window {
                                             size: 44px;
                                             icon: 24px;
                                             clicked => {
+                                                root.asked-playlist-id = root.page-id;
+                                                root.asked-playlist-name = root.page-title;
                                                 root.rename-name = root.page-title;
                                                 root.rename-open = true;
                                             }
@@ -9541,7 +9579,11 @@ export component AppWindow inherits Window {
                                             quiet: true;
                                             size: 44px;
                                             icon: 24px;
-                                            clicked => { root.delete-open = true; }
+                                            clicked => {
+                                                root.asked-playlist-id = root.page-id;
+                                                root.asked-playlist-name = root.page-title;
+                                                root.delete-open = true;
+                                            }
                                         }
                                     }
                                     Rectangle {
@@ -11588,7 +11630,7 @@ export component AppWindow inherits Window {
                 placeholder: "Name";
                 text <=> root.rename-name;
                 init => { self.take-focus(); }
-                accepted => { root.rename-playlist(root.rename-name); }
+                accepted => { root.rename-playlist(root.asked-playlist-id, root.rename-name); }
             }
             HorizontalLayout {
                 alignment: end;
@@ -11600,7 +11642,7 @@ export component AppWindow inherits Window {
                 }
                 Capsule {
                     text: "Rename";
-                    clicked => { root.rename-playlist(root.rename-name); }
+                    clicked => { root.rename-playlist(root.asked-playlist-id, root.rename-name); }
                 }
             }
         }
@@ -11743,7 +11785,7 @@ export component AppWindow inherits Window {
         }
 
         if root.delete-open: Dialog {
-            title: "Delete “" + root.page-title + "”?";
+            title: "Delete “" + root.asked-playlist-name + "”?";
             dismissed => { root.delete-open = false; }
             Text {
                 text: "This can’t be undone.";
@@ -11764,7 +11806,7 @@ export component AppWindow inherits Window {
                     icon: Icons.trash;
                     ink: Theme.danger;
                     label: Theme.ground;
-                    clicked => { root.delete-playlist(); }
+                    clicked => { root.delete-playlist(root.asked-playlist-id, root.asked-playlist-name); }
                 }
             }
         }

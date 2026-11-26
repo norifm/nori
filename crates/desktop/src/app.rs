@@ -1137,8 +1137,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_lyrics_nudge, h, |a, dir| a.lyrics_nudge(dir));
     on!(ui.on_add_to_playlist, h, |a, i| a.add_to_playlist(Ok(i as usize)));
     on!(ui.on_add_to_new_playlist, h, |a, name| a.add_to_playlist(Err(name.into())));
-    on!(ui.on_rename_playlist, h, |a, name| a.rename_playlist(name.as_str()));
-    on!(ui.on_delete_playlist, h, |a| a.delete_playlist());
+    on!(ui.on_rename_playlist, h, |a, id, name| a.rename_playlist(id.into(), name.as_str()));
+    on!(ui.on_delete_playlist, h, |a, id, name| a.delete_playlist(id.into(), name.into()));
     on!(ui.on_play_page, h, |a, shuffle| a.play_page(shuffle));
     on!(ui.on_page_star, h, |a| a.star_page());
     on!(ui.on_page_act, h, |a, act| a.page_act(act));
@@ -1675,6 +1675,9 @@ impl App {
 
     /// Shows tab `view` scrolled to `at`.
     fn go_at(&mut self, view: View, at: f32) {
+        if view != self.ui().get_view() {
+            self.page_left();
+        }
         self.start_at(at);
         // A new page starts unfiltered.
         if !self.find.is_empty() {
@@ -1775,6 +1778,18 @@ impl App {
         self.show_page(ask, 0.0);
     }
 
+    /// The page shown is left: no dialog or menu opened over it stays open over the next.
+    fn page_left(&mut self) {
+        self.ui().invoke_close_dialogs();
+        self.compositor.close_menus();
+        if self.plugged.dialog.is_some() {
+            self.plugin_act(crate::settings::PluginAct::DeviceClose);
+        }
+        if self.sign_in.shown != SignInShown::Closed {
+            self.sign_in_on(SignInEvent::Close);
+        }
+    }
+
     /// The next page or tab shown starts scrolled to `at` ([`crate::Scroll`]).
     fn start_at(&self, at: f32) {
         let ui = self.ui();
@@ -1786,6 +1801,7 @@ impl App {
 
     /// Shows page `ask` scrolled to `at`, the way back already kept ([`PageTrail`]).
     fn show_page(&mut self, ask: PageAsk, at: f32) {
+        self.page_left();
         self.start_at(at);
         if !self.find.is_empty() {
             self.find.clear();
@@ -2972,22 +2988,21 @@ impl App {
         self.playlist_write(write, done, PlaylistChange::Changed(p.id.clone()));
     }
 
-    /// Names the playlist shown `name`.
-    fn rename_playlist(&self, name: &str) {
-        let (Some(p), name) = (self.page_playlist(), name.trim()) else { return };
+    /// Names playlist `id` `name`, as the dialog opened for it asked.
+    fn rename_playlist(&self, id: String, name: &str) {
+        let name = name.trim();
         if name.is_empty() {
             return;
         }
         self.ui().set_rename_open(false);
-        let write = nori_core::client::Write::RenamePlaylist { id: p.id.clone(), name: name.to_string() };
-        self.playlist_write(write, words::playlist_renamed(name), PlaylistChange::Changed(p.id.clone()));
+        let write = nori_core::client::Write::RenamePlaylist { id: id.clone(), name: name.to_string() };
+        self.playlist_write(write, words::playlist_renamed(name), PlaylistChange::Changed(id));
     }
 
-    /// Deletes the playlist shown, once its sheet asked.
-    fn delete_playlist(&self) {
+    /// Deletes playlist `id`, called `name`, once the dialog opened for it asked.
+    fn delete_playlist(&self, id: String, name: String) {
         self.ui().set_delete_open(false);
-        let Some(p) = self.page_playlist() else { return };
-        self.playlist_write(nori_core::client::Write::DeletePlaylist { id: p.id.clone() }, words::playlist_deleted(&p.name), PlaylistChange::Deleted(p.id.clone()));
+        self.playlist_write(nori_core::client::Write::DeletePlaylist { id: id.clone() }, words::playlist_deleted(&name), PlaylistChange::Deleted(id));
     }
 
     /// Sends `write` to the server; `done` is said once it took it.
@@ -9218,7 +9233,8 @@ mod tests {
     }
 
     /// A playlist page the profile may change: its list head renames it with its name filled in, and
-    /// deletes it only once the sheet that asks is answered.
+    /// deletes it only once the sheet that asks is answered; each dialog acts on the playlist it was
+    /// opened for, whatever page is shown by then, and Escape closes it.
     #[test]
     fn a_playlist_is_renamed_and_deleted_only_once_asked() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -9228,20 +9244,31 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_view(View::Page);
         ui.set_page_kind(PageLayout::List);
+        ui.set_page_id("road".into());
         ui.set_page_title("Road trip".into());
         ui.set_page_editable(true);
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
-        ui.on_rename_playlist(move |name| seen.borrow_mut().push(format!("rename {name}")));
+        ui.on_rename_playlist(move |id, name| seen.borrow_mut().push(format!("rename {id} {name}")));
         let seen = did.clone();
-        ui.on_delete_playlist(move || seen.borrow_mut().push("delete".to_string()));
+        ui.on_delete_playlist(move |id, name| seen.borrow_mut().push(format!("delete {id} {name}")));
         ui.show().unwrap();
-        let tap = |x: f32, y: f32| {
-            press(ui.window(), x, y, slint::platform::PointerEventButton::Left);
+        let settle = || {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             ui.window().take_snapshot().unwrap();
         };
+        let tap = |x: f32, y: f32| {
+            press(ui.window(), x, y, slint::platform::PointerEventButton::Left);
+            settle();
+        };
+        let escape = || {
+            let key: SharedString = slint::platform::Key::Escape.into();
+            ui.window().dispatch_event(slint::platform::WindowEvent::KeyPressed { text: key.clone() });
+            ui.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: key });
+            settle();
+        };
+        let titled = |title: &str| i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, title).next().is_some();
         tap(0.0, 0.0);
         // The list head's pencil and trash, at its right end; the sheets' buttons at their foot.
         let (rename, delete) = ((1180.0, 461.0), (1225.0, 461.0));
@@ -9250,9 +9277,12 @@ mod tests {
         assert_eq!(ui.get_rename_name(), "Road trip", "the field starts with the playlist's name");
         ui.set_rename_name("Rain".into());
         tap(confirm.0, 189.0);
-        assert_eq!(*did.borrow(), ["rename Rain"]);
+        assert_eq!(*did.borrow(), ["rename road Rain"]);
         // The app closes it once the name is sent.
         ui.set_rename_open(false);
+        tap(rename.0, rename.1);
+        escape();
+        assert!(!ui.get_rename_open(), "Escape closes the rename dialog, its field holding the keys");
         tap(delete.0, delete.1);
         assert!(ui.get_delete_open());
         tap(cancel.0, cancel.1);
@@ -9260,10 +9290,40 @@ mod tests {
         tap(delete.0, delete.1);
         tap(100.0, 600.0);
         assert!(!ui.get_delete_open(), "a press beside the sheet closes it");
-        assert_eq!(*did.borrow(), ["rename Rain"], "nothing is deleted before the sheet is answered");
         tap(delete.0, delete.1);
+        escape();
+        assert!(!ui.get_delete_open(), "Escape closes it");
+        assert_eq!(*did.borrow(), ["rename road Rain"], "nothing is deleted before the sheet is answered");
+        tap(delete.0, delete.1);
+        // Another page under it: the dialog still names and deletes the playlist it was opened for.
+        ui.set_page_id("goblins".into());
+        ui.set_page_title("The Rainbow Goblins".into());
+        settle();
+        assert!(titled("Delete “Road trip”?") && !titled("Delete “The Rainbow Goblins”?"));
         tap(confirm.0, confirm.1);
-        assert_eq!(*did.borrow(), ["rename Rain", "delete"]);
+        assert_eq!(*did.borrow(), ["rename road Rain", "delete road Road trip"]);
+    }
+
+    /// A page left closes every dialog the window draws but the two app.rs closes itself.
+    #[test]
+    fn closing_the_dialogs_leaves_none_open() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.set_ask_open(true);
+        ui.set_analysis_open(true);
+        ui.set_key_open(true);
+        ui.set_lyrics_sheet_open(true);
+        ui.set_details_open(true);
+        ui.set_picker_open(true);
+        ui.set_rename_open(true);
+        ui.set_profile_renaming("p".into());
+        ui.set_scrobbler_step(1);
+        ui.set_delete_open(true);
+        ui.set_join_open(true);
+        ui.set_pairing_open(true);
+        ui.set_forget_open(true);
+        ui.invoke_close_dialogs();
+        assert!(!ui.get_dialog_open());
     }
 
     /// Add to playlist: a playlist picked takes the song, one that has it already takes nothing, and New

@@ -4,7 +4,7 @@
   // outlined bar along the top and the player's along the bottom. The full player is a layer over them.
   // Home comes with the shell; the other pages and the full player load once the first page has drawn,
   // so the first paint carries only what it shows.
-  import type { Component } from "svelte";
+  import { untrack, type Component } from "svelte";
   import { drawn } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
   import { route } from "../state/route.svelte";
@@ -50,6 +50,11 @@
     const all = () => [...Object.values(pages), nowPlaying, lyricsInfo].forEach((f) => void f());
     if ("requestIdleCallback" in window) requestIdleCallback(all, { timeout: 3000 });
     else setTimeout(all, 300);
+  });
+
+  $effect(() => {
+    void route.visit;
+    untrack(() => ui.closeAll());
   });
 
   const playing = $derived(!!player.song);
