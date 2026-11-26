@@ -1690,7 +1690,8 @@ fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     if let Some(q) = &app.queue {
         let secs: u64 = q.songs.iter().map(|s| s.duration as u64).sum();
         let head = row_of(area, 0);
-        let left = vec![Span::styled(crate::text::UP_NEXT, bold().fg(t.ink)), Span::styled(format!("  {}", crate::text::songs_caption(q.len, secs)), t.dim())];
+        let from = app.queue_from.as_deref().map(|album| Span::styled(format!("  {}", crate::text::queue_from(album)), t.dim()));
+        let left: Vec<_> = [Span::styled(crate::text::UP_NEXT, bold().fg(t.ink))].into_iter().chain(from).chain([Span::styled(format!("  {}", crate::text::songs_caption(q.len, secs)), t.dim())]).collect();
         put(f, Paragraph::new(Line::from(left)), head);
         // Shuffle and repeat are the queue's, the host's in a jam; before them, what the whole queue offers.
         if !app.guest() {

@@ -694,6 +694,11 @@ pub fn count(n: u64, one: &str, many: &str) -> String {
 }
 
 /// A list's caption: "12 songs · 48:10".
+/// Where what plays next comes from.
+pub fn queue_from(album: &str) -> String {
+    format!("From {album}")
+}
+
 pub fn songs_caption(count: u32, seconds: u64) -> String {
     format!("{} · {}", self::count(count as u64, "song", "songs"), numbers::clock(seconds as i64, false))
 }

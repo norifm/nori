@@ -1074,7 +1074,7 @@ fn queue_sections(songs: &[Song], rows: &QueueRows, repeat: u8, shuffle: bool, s
     json!({
         "head": {
             "cur": shown, "repeat": repeat, "shuffle": shuffle, "reorderable": rows.reorderable,
-            "kept": rows.kept,
+            "kept": rows.kept, "from": rows.from,
         },
         "sections": [
             section("history", false, items(history)),
@@ -2148,7 +2148,7 @@ mod tests {
     #[test]
     fn the_queue_runs_in_play_order_split_at_the_song_playing() {
         let songs: Vec<Song> = ["a", "b", "c", "d"].map(song).to_vec();
-        let rows = QueueRows { order: vec![2, 0, 3, 1], reorderable: false, kept: vec![0], now: 1 };
+        let rows = QueueRows { order: vec![2, 0, 3, 1], reorderable: false, kept: vec![0], now: 1, from: None };
         let v = queue_sections(&songs, &rows, 0, true, 0);
         let ids = |s: usize| -> Vec<String> {
             v["sections"][s]["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap().to_string()).collect()

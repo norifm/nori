@@ -552,10 +552,10 @@ impl Nori {
 
     /// What the player shows playing (`nori_host::player`): this browser's playback, the account's
     /// device playing while it is another one, or a jam guest's host: `{ state, playing, index, id,
-    /// positionMs, pace, mixing, buffering, song, queue, current, reorderable, shuffle, repeat, device,
+    /// positionMs, pace, mixing, buffering, song, queue, current, from, reorderable, shuffle, repeat, device,
     /// deviceKind, jam, system, asks, underruns, transition }` (`asks`: a jam guest's picks are asked of the host,
     /// and its lyric taps reach nothing). `queue` is in play order, each song with its list `index`;
-    /// `current` the place in it of the song heard; `device` the name of the device playing elsewhere
+    /// `current` the place in it of the song heard; `from` the album what plays next comes from (`QueueRows::from`); `device` the name of the device playing elsewhere
     /// and `deviceKind` its kind (`Phone`, `Desktop`, ...); `system` whether the browser's media session
     /// shows it (`Playback::shown_to_system`);
     /// `transition` the plan out of the song here, `{ kind, into, reason }`.
@@ -595,6 +595,7 @@ impl Nori {
                 "song": n.song.as_ref().map(|s| crate::pages::song(core, s)),
                 "queue": queue,
                 "current": shown.rows.now,
+                "from": shown.rows.from,
                 "reorderable": shown.rows.reorderable && here,
                 "shuffle": n.shuffle,
                 "repeat": n.repeat,

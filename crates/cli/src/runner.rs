@@ -808,6 +808,7 @@ impl Runner {
         if s.queue_stale(self.queue.as_ref()) {
             let q = s.queue_shown(self.queue.as_ref());
             app.queue = Some(nori_core::playlist::PlaylistView { songs: q.songs.to_vec(), ..q.view.clone() });
+            app.queue_from = q.rows.from.clone();
             self.queue = Some(q);
         }
         let here = matches!(self.playback, Playback::Here);

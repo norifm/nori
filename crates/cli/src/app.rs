@@ -1596,6 +1596,8 @@ pub struct App {
     device_under: Option<(View, Vec<Page>, usize)>,
     pub shown: Shown,
     pub queue: Option<PlaylistView>,
+    /// Where what plays next comes from (`QueueRows::from`).
+    pub queue_from: Option<String>,
     pub queue_sel: Sel,
     pub downloads: Load<Box<Downloads>>,
     pub downloads_sel: Sel,
@@ -3618,7 +3620,7 @@ impl App {
             }
             Action::Remove if self.queue_in_focus() => match self.queue_rows().get(self.queue_sel.at).copied() {
                 // The song playing stays: the rows a remove leaves are the core's (`stage::QueueRows::kept`).
-                Some(QueueRow::Song(i)) if self.queue.as_ref().is_some_and(|q| nori_core::stage::mirrored_queue_rows(q.len, false, q.index).kept.contains(&(i as u32))) => {
+                Some(QueueRow::Song(i)) if self.queue.as_ref().is_some_and(|q| nori_core::stage::mirrored_queue_rows(q.songs.clone(), false, q.index).kept.contains(&(i as u32))) => {
                     self.dirty = false
                 }
                 Some(QueueRow::Song(i)) => self.cmds.push(Cmd::Remove(i)),

@@ -528,6 +528,7 @@ enum Say {
     static let queue = "Queue"
     static let history = "History"
     static let upNext = "Playing next"
+    static func queueFrom(_ album: String) -> String { "From \(album)" }
     static let clear = "Clear"
     static let remove = "Remove"
     static let undo = "Undo"

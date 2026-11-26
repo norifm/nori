@@ -3,7 +3,7 @@
 
 use nori_look::sleeve;
 
-use crate::Core;
+use crate::{Core, Song};
 
 /// UI constants, read once.
 #[derive(Debug, Clone, PartialEq)]
@@ -174,6 +174,29 @@ pub struct QueueRows {
     pub kept: Vec<u32>,
     /// Position in `order` of the shown current song, -1 for none; rows before it have played.
     pub now: i32,
+    /// Where what plays next comes from: the album every song after the current one shares, if they do.
+    pub from: Option<String>,
+}
+
+impl QueueRows {
+    /// List indexes of the songs after the current one, in play order.
+    pub fn upcoming(&self) -> &[u32] {
+        let from = usize::try_from(self.now).map_or(0, |n| n + 1);
+        self.order.get(from..).unwrap_or_default()
+    }
+
+    /// These rows with [`QueueRows::from`] read from `song`, the song at each list index.
+    pub fn from_songs<'a>(self, song: impl Fn(u32) -> Option<&'a Song>) -> QueueRows {
+        let from = shared_album(self.upcoming().iter().map(|&i| song(i)));
+        QueueRows { from, ..self }
+    }
+}
+
+/// The album all of `songs` come from (an unknown song shares none), if there are any.
+fn shared_album<'a>(mut songs: impl Iterator<Item = Option<&'a Song>>) -> Option<String> {
+    let first = songs.next()??;
+    let same = |s: &Song| s.album == first.album && s.album_id == first.album_id;
+    (!first.album.is_empty() && songs.all(|s| s.is_some_and(same))).then(|| first.album.clone())
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -181,19 +204,20 @@ impl Core {
     /// Rows for the page's `len`-song queue with `shown` current (-1: none). Uses the queue's play order
     /// when it has the same length, else list order.
     pub fn queue_rows(&self, len: u32, shuffle: bool, shown: i32) -> QueueRows {
-        let (order, current) = self.session.playlist(|p| {
+        // The playlist's lock, then the store's, as the queue takes them.
+        self.session.playlist(|p| {
             let here = p.len() == len as usize;
-            (here.then(|| p.play_order().map(|i| i as u32).collect()), p.current().filter(|_| here))
-        });
-        rows(order, len, shuffle, shown, current)
+            let r = rows(here.then(|| p.play_order().map(|i| i as u32).collect()), len, shuffle, shown, p.current().filter(|_| here));
+            self.session.store(|s| r.from_songs(|i| p.ids().get(i as usize).and_then(|id| s.songs.get(id)).map(|(song, _)| song)))
+        })
     }
 }
 
-/// Rows for a mirrored queue of `len` songs, listed in play order already (`remote::Mirror::rows`), with
-/// row `shown` playing.
+/// Rows for a mirrored queue of `songs`, listed in play order already (`remote::Mirror::rows`), with row
+/// `shown` playing.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn mirrored_queue_rows(len: u32, shuffle: bool, shown: i32) -> QueueRows {
-    rows(None, len, shuffle, shown, None)
+pub fn mirrored_queue_rows(songs: Vec<Song>, shuffle: bool, shown: i32) -> QueueRows {
+    rows(None, songs.len() as u32, shuffle, shown, None).from_songs(|i| songs.get(i as usize))
 }
 
 fn rows(order: Option<Vec<u32>>, len: u32, shuffle: bool, shown: i32, current: Option<usize>) -> QueueRows {
@@ -201,7 +225,7 @@ fn rows(order: Option<Vec<u32>>, len: u32, shuffle: bool, shown: i32, current: O
     let mut kept: Vec<u32> = u32::try_from(shown).ok().into_iter().chain(current.map(|c| c as u32)).filter(|&i| i < len).collect();
     kept.dedup();
     let now = u32::try_from(shown).ok().and_then(|s| order.iter().position(|&i| i == s)).map_or(-1, |p| p as i32);
-    QueueRows { order, reorderable: !shuffle, kept, now }
+    QueueRows { order, reorderable: !shuffle, kept, now, from: None }
 }
 
 #[cfg(test)]
@@ -224,8 +248,8 @@ mod tests {
 
     #[test]
     fn queue_rows() {
-        assert_eq!(rows(Some(vec![2, 0, 1]), 3, true, 2, Some(2)), QueueRows { order: vec![2, 0, 1], reorderable: false, kept: vec![2], now: 0 });
-        assert_eq!(rows(None, 3, false, -1, None), QueueRows { order: vec![0, 1, 2], reorderable: true, kept: vec![], now: -1 });
+        assert_eq!(rows(Some(vec![2, 0, 1]), 3, true, 2, Some(2)), QueueRows { order: vec![2, 0, 1], reorderable: false, kept: vec![2], now: 0, from: None });
+        assert_eq!(rows(None, 3, false, -1, None), QueueRows { order: vec![0, 1, 2], reorderable: true, kept: vec![], now: -1, from: None });
 
         // Now is position in play order.
         assert_eq!(rows(None, 5, false, 2, Some(2)).now, 2);
@@ -239,6 +263,46 @@ mod tests {
         assert_eq!(rows(None, 4, false, 1, Some(2)).kept, [1, 2]);
         assert_eq!(rows(None, 4, false, 3, None).kept, [3]);
         assert_eq!(rows(None, 2, false, 5, Some(7)).kept, Vec::<u32>::new(), "out of range");
+    }
+
+    #[test]
+    fn queue_from_is_the_album_all_upcoming_songs_share() {
+        let song = |album: &str, album_id: &str| Song { album: album.into(), album_id: Some(album_id.into()).filter(|a: &String| !a.is_empty()), ..Default::default() };
+        let (a, b) = (song("Blue", "al-1"), song("Red", "al-2"));
+        let from = |songs: &[&Song], order: Option<Vec<u32>>, shown: i32| {
+            let len = songs.len() as u32;
+            rows(order, len, false, shown, None).from_songs(|i| songs.get(i as usize).copied()).from
+        };
+        let blue = Some("Blue".to_string());
+        for (songs, order, shown, want) in [
+            // What played and the song playing don't count.
+            (vec![&b, &a, &a], None, 0, blue.clone()),
+            (vec![&a, &a, &b], None, 0, None),
+            // In play order: shuffled, list index 2 has played.
+            (vec![&a, &a, &b], Some(vec![1, 2, 0]), 2, blue.clone()),
+            // Nothing playing: every song.
+            (vec![&a, &a], None, -1, blue.clone()),
+            // Nothing after the song playing.
+            (vec![&b, &a], None, 1, None),
+            // A namesake album is another album.
+            (vec![&a, &song("Blue", "al-9")], None, -1, None),
+            (vec![&song("", ""), &song("", "")], None, -1, None),
+        ] {
+            assert_eq!(from(&songs, order, shown), want, "{songs:?} playing {shown}");
+        }
+        // A song not known shares nothing.
+        assert_eq!(rows(None, 2, false, -1, None).from_songs(|i| (i == 0).then_some(&a)).from, None);
+        assert_eq!(mirrored_queue_rows(vec![b.clone(), a.clone(), a.clone()], false, 0).from, blue);
+    }
+
+    #[test]
+    fn queue_from_reads_the_songs_queued() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        let song = |id: &str, album: &str| Song { id: id.into(), album: album.into(), ..Default::default() };
+        core.session.register(vec![song("1", "Red"), song("2", "Blue"), song("3", "Blue")]);
+        core.session.set(vec!["1".into(), "2".into(), "3".into()], Some(0), false, None);
+        assert_eq!(core.queue_rows(3, false, 0).from.as_deref(), Some("Blue"));
+        assert_eq!(core.queue_rows(3, false, -1).from, None);
     }
 
 }

@@ -63,6 +63,8 @@ export type Now = {
   queue: QueueSong[];
   /** The place in `queue` of the song heard; -1 for none. */
   current: number;
+  /** Where what plays next comes from: the album every song after the one heard shares, if they do. */
+  from: string | null;
   reorderable: boolean;
   shuffle: boolean;
   repeat: number;

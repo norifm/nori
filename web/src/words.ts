@@ -184,6 +184,7 @@ export const W = {
   queue: "Queue",
   playingNext: "Playing next",
   history: "History",
+  queueFrom: (album: string) => `From ${album}`,
   noLyrics: "No lyrics",
   lyricsLoading: "Looking for lyrics",
   lyricsInfo: "Lyrics",

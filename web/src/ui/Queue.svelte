@@ -98,8 +98,10 @@
 
 <JamQueue />
 <div class="box">
-{#if offers.length > 0}
+{#if offers.length > 0 || n?.from}
   <div class="top">
+    <!-- Where what plays next comes from (the core's `QueueRows::from`). -->
+    <span class="from clip">{n?.from ? W.queueFrom(n.from) : ""}</span>
     {#if offers.includes("Clear")}<button class="clear" onclick={() => void player.clear(after)}>{W.clear}</button>{/if}
     {#if offers.includes("AddToPlaylist")}<button class="keep" aria-label={W.addToPlaylist} title={W.addToPlaylist} onclick={() => void addToPlaylist(rows as Song[])}><Icon name="plus-circle" /></button>{/if}
   </div>
@@ -157,10 +159,18 @@
     flex: 1;
     min-height: 0;
   }
-  /* The queue's head: Clear and the glyph that keeps it as a playlist, in the quiet ink, as the desktop's. */
+  /* The queue's head: where what plays next comes from, Clear and the glyph that keeps it as a playlist, in
+     the quiet ink, as the desktop's. */
   .top {
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+  }
+  .from {
+    flex: 1;
+    min-width: 0;
+    padding-left: 8px;
+    font-size: 12px;
+    color: var(--ink2);
   }
   .clear {
     min-height: 32px;

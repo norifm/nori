@@ -6234,7 +6234,7 @@ impl App {
             let offers = nori_core::menus::queue_actions(q.rows.order.len() as u32, q.upcoming().count() as u32, self.session.as_ref().is_some_and(|s| s.rules().playlists), ui.global::<crate::Jam>().get_guest());
             ui.set_queue_clearable(offers.contains(&nori_core::menus::QueueAction::Clear));
             ui.set_queue_keepable(offers.contains(&nori_core::menus::QueueAction::AddToPlaylist));
-            ui.set_queue_from(queue_from(q.upcoming().map(|(_, s)| s)).into());
+            ui.set_queue_from(q.rows.from.clone().unwrap_or_default().into());
             self.queue = Some(q);
         }
         // The seek bar steps only while playing.
@@ -6580,15 +6580,6 @@ fn settle(m: &VecModel<SongRow>, rows: Vec<SongRow>) {
                 m.insert(j, r);
             }
         }
-    }
-}
-
-/// The album of all `upcoming` songs, if they share one.
-fn queue_from<'a>(upcoming: impl Iterator<Item = &'a Song>) -> String {
-    let mut albums = upcoming.map(|s| s.album.as_str());
-    match albums.next() {
-        Some(first) if !first.is_empty() && albums.all(|a| a == first) => first.to_string(),
-        _ => String::new(),
     }
 }
 

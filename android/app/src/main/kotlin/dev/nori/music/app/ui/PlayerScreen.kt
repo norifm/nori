@@ -2966,8 +2966,8 @@ private fun Queue(vm: PlayerViewModel, actions: ActionsViewModel, showPlayer: ()
     // moves a song within the list, so reordering is offered only when the two are the same.
     // Which order, whether a drag may reorder it, which rows a swipe leaves and which have played are the
     // core's (`queue_rows`).
-    val rows = remember(state.order, state.queue.size, state.shuffle, state.index) {
-        vm.queueRows(state.queue.size, state.shuffle, state.index)
+    val rows = remember(state.order, state.queue, state.shuffle, state.index) {
+        vm.queueRows(state.queue, state.shuffle, state.index)
     }
     val order = remember(rows) { rows.order.map { it.toInt() } }
     val kept = remember(rows) { rows.kept.map { it.toInt() }.toSet() }
@@ -3024,10 +3024,16 @@ private fun Queue(vm: PlayerViewModel, actions: ActionsViewModel, showPlayer: ()
         var keeping by remember { mutableStateOf<List<Song>?>(null) }
         NoriSheet(keeping, { keeping = null }) { songs -> PlaylistPicker(songs, actions) { keeping = null } }
         Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-            LookText(
-                remember { say.queue }, ink, Modifier.padding(top = 4.dp, bottom = 8.dp),
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
-            )
+            // Where what plays next comes from (the core's `QueueRows::from`), under the title.
+            Column(Modifier.weight(1f).padding(top = 4.dp, bottom = 8.dp)) {
+                LookText(
+                    remember { say.queue }, ink,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                )
+                rows.from?.let { album ->
+                    LookText(remember(album) { say.queueFrom(album) }, quiet, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+            }
             Row(Modifier, Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
                 // What the whole queue takes (the core's `queue_actions`). Clear, as Apple Music's and
                 // Spotify's queues have it: what plays after the song playing goes at once, and the undo

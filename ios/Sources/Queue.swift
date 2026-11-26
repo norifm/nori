@@ -33,6 +33,8 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
     private var mirrored = false
     /// What the head offers for the whole queue, by name (the core's `queue_actions`).
     private var offers: [String] = []
+    /// Where what plays next comes from (the core's `QueueRows::from`).
+    private var from: String?
     /// The jam this iPod is a guest in, over its host's queue.
     private var jam: Jam?
     private var opened = false
@@ -197,6 +199,7 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
         kept = Set(a.head["kept"] as? [Int] ?? [])
         mirrored = a.head["remote"] as? Bool ?? false
         offers = a.head["offers"] as? [String] ?? []
+        from = a.head["from"] as? String
         jam = a.head["jam"] as? Bool == true ? Core.shared.jam : nil
         table.reloadData()
         // Opens on the song playing, what has played above it out of sight.
@@ -270,6 +273,20 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
             label.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: Space.gutter),
             label.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -6),
         ])
+        if part == .next, let from {
+            let source = UILabel()
+            source.text = Say.queueFrom(from)
+            source.font = Fonts.font(12, .regular, .caption1)
+            source.textColor = Theme.Card.secondary
+            source.lineBreakMode = .byTruncatingTail
+            source.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(source)
+            NSLayoutConstraint.activate([
+                source.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 8),
+                source.firstBaselineAnchor.constraint(equalTo: label.firstBaselineAnchor),
+                source.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -Space.gutter - 96),
+            ])
+        }
         if part == .next && !mirrored && offers.contains("Clear") {
             let clear = UIButton(type: .system)
             clear.setTitle(Say.clear, for: .normal)

@@ -163,15 +163,14 @@ impl QueueShown {
 
     /// The songs after the one heard, in play order, with their list indexes.
     pub fn upcoming(&self) -> impl Iterator<Item = (u32, &Song)> {
-        let from = usize::try_from(self.rows.now).map_or(0, |n| n + 1);
-        self.rows.order.get(from..).unwrap_or_default().iter().filter_map(|&i| Some((i, self.songs.get(i as usize)?)))
+        self.rows.upcoming().iter().filter_map(|&i| Some((i, self.songs.get(i as usize)?)))
     }
 
     /// A mirrored queue: its rows are its play order already.
     fn mirrored(e: &Elsewhere, jam: bool, by: HashMap<String, String>) -> QueueShown {
         let mut view = e.view();
         let now = e.mirror.at.map_or(-1, |a| a as i32);
-        let rows = QueueRows { order: view.order.clone(), reorderable: false, kept: view.order.clone(), now };
+        let rows = QueueRows { order: view.order.clone(), reorderable: false, kept: view.order.clone(), now, from: None }.from_songs(|i| view.songs.get(i as usize));
         let songs = std::mem::take(&mut view.songs).into();
         QueueShown { view, songs, rows, by, mirrored: true, jam }
     }
@@ -240,7 +239,7 @@ impl Handle {
             Playback::Jam(Some(e)) => QueueShown::mirrored(&e, true, by),
             Playback::Jam(None) => {
                 let view = PlaylistView { songs: Vec::new(), len: 0, list_rev: 0, order: Vec::new(), queued: Vec::new(), index: -1, shuffle: false, repeat: 0, bridging: false, rev: 0 };
-                QueueShown { view, songs: Arc::default(), rows: nori_core::stage::mirrored_queue_rows(0, false, -1), by, mirrored: true, jam: true }
+                QueueShown { view, songs: Arc::default(), rows: nori_core::stage::mirrored_queue_rows(Vec::new(), false, -1), by, mirrored: true, jam: true }
             }
             Playback::Here => {
                 let mut view = self.core.session.view(before.map_or(u64::MAX, |q| q.view.list_rev));

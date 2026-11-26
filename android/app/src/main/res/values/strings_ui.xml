@@ -16,6 +16,7 @@
     <string name="shuffle">Shuffle</string>
     <string name="repeat">Repeat</string>
     <string name="queue">Queue</string>
+    <string name="queue_from">From %1$s</string>
     <string name="lyrics">Lyrics</string>
     <string name="favourite">Favorite</string>
     <string name="add_to_favourites">Add to favorites</string>

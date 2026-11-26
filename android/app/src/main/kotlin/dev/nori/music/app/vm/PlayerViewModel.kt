@@ -53,9 +53,9 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     fun previousRestarts(positionMs: Long, hasPrevious: Boolean): Boolean = nori.session.queuePreviousRestarts(positionMs, hasPrevious)
 
     /** The queue's rows as the core orders them (`Core::queue_rows`); a mirrored device's are in play order already. */
-    fun queueRows(len: Int, shuffle: Boolean, shown: Int): dev.nori.music.ffi.QueueRows =
-        if (state.value.playingOn != null) dev.nori.music.ffi.mirroredQueueRows(len.toUInt(), shuffle, shown)
-        else nori.core.queueRows(len.toUInt(), shuffle, shown)
+    fun queueRows(queue: List<dev.nori.music.ffi.model.Song>, shuffle: Boolean, shown: Int): dev.nori.music.ffi.QueueRows =
+        if (state.value.playingOn != null) dev.nori.music.ffi.mirroredQueueRows(queue, shuffle, shown)
+        else nori.core.queueRows(queue.size.toUInt(), shuffle, shown)
 
     /** A jam as the player's strip says it: who hosts it ([host] null: this phone) and how many listen. */
     data class JamStripState(val host: String?, val listening: Int, val watching: Boolean)

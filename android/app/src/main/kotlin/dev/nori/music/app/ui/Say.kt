@@ -98,6 +98,8 @@ class Say(private val r: Resources) {
     val shuffle: String = r.getString(R.string.shuffle)
     val repeat: String = r.getString(R.string.repeat)
     val queue: String = r.getString(R.string.queue)
+    /** Where what plays next comes from: its album. */
+    fun queueFrom(album: String): String = r.getString(R.string.queue_from, album)
     val lyrics: String = r.getString(R.string.lyrics)
     val jamPausedHere: String = r.getString(R.string.jam_paused_here)
     val favourite: String = r.getString(R.string.favourite)

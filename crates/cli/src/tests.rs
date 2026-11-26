@@ -768,6 +768,9 @@ fn queue_panel_editing() {
     let s = draw(&mut a, 160, 30);
     assert!(s.contains("▶ Song 1") && s.contains("Playing next  5 songs") && s.contains("Clear   Save   Shuffle   Repeat") && s.contains("c clear") && s.contains("w save"), "{s}");
     dump("queue", &s);
+    a.queue_from = Some("Blue".into());
+    let s = draw(&mut a, 160, 30);
+    assert!(s.contains("Playing next  From Blue  5 songs"), "the album what plays next comes from: {s}");
     assert_eq!(a.queue_sel.at, 1, "the queue opens on the song playing");
     let sent = a.cmds.len();
     key(&mut a, KeyCode::Char('d'));
