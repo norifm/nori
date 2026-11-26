@@ -38,6 +38,21 @@ pub struct CoverColours {
     pub wash_edge: u32,
 }
 
+/// How far apart two pages' colours may be, in RGB distance, and still look the same.
+const ALIKE: i32 = 24;
+
+impl CoverColours {
+    /// Whether a page wearing these looks the same wearing `other`: the same text colour, and the page,
+    /// the fade's edge and the accent each within [`ALIKE`]. The same cover at two sizes is alike.
+    pub fn alike(&self, other: &CoverColours) -> bool {
+        let close = |a: u32, b: u32| {
+            let (dr, dg, db) = (red(a) - red(b), green(a) - green(b), blue(a) - blue(b));
+            dr * dr + dg * dg + db * db < ALIKE * ALIKE
+        };
+        self.on == other.on && [(self.background, other.background), (self.edge, other.edge), (self.wash_edge, other.wash_edge), (self.accent, other.accent)].into_iter().all(|(a, b)| close(a, b))
+    }
+}
+
 /// Dark page for white text: the colour at its own lightness (at most [`PAGE_LIGHTEST`]), darkened only
 /// until its luminance allows white text at about 8:1, and never more colourful than `chroma`, its
 /// source's (keeping HSL saturation while darkening Lover's pink F3BBD7 made a wine 8C2157).
@@ -1126,6 +1141,16 @@ mod tests {
         let (a, b) = (derive(&big, S * 6, S * 6, false), derive(&small, S, S, false));
         assert!(calculate_contrast(a.background, b.background) < 1.05, "{:08x} vs {:08x}", a.background, b.background);
         assert_eq!(a.on, b.on);
+    }
+
+    #[test]
+    fn the_same_cover_at_another_size_is_alike_and_another_cover_is_not() {
+        let big = gridded(S * 6);
+        let (a, b) = (derive(&big, S * 6, S * 6, false), derive(&shrunk(&big, S * 6, 6), S, S, false));
+        assert!(a.alike(&b), "{a:x?} vs {b:x?}");
+        assert!(!a.alike(&derive(&graded(), S, S, false)));
+        let darker = CoverColours { background: blend_argb(a.background, 0xFF00_0000, 0.15), ..a.clone() };
+        assert!(!a.alike(&darker), "a page a step darker");
     }
 
     /// Blue down to orange, every band of rows its own colour.

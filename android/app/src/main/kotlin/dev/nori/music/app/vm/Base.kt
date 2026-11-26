@@ -77,6 +77,9 @@ abstract class NoriViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), Load.Loading)
 
     fun cover(id: String?, size: Int): String? = nori.library.coverUrl(id, size)
+
+    /** Cover [id]'s addresses that stand in while the one for a view of [size] comes (the core's `cover_stand_ins`). */
+    fun coverStandIns(id: String?, size: Int): List<String?> = dev.nori.music.ffi.coverStandIns(size.toUInt()).map { cover(id, it.toInt()) }
 }
 
 /**

@@ -1383,11 +1383,19 @@ pub(crate) fn request(token: u64, id: String, px: u32, deliver: impl FnOnce(Opti
     }
     let done = Arc::new(AtomicBool::new(false));
     let finished = done.clone();
+    let mut deliver = Some(deliver);
     let ticket = with_session(|s| {
-        s.cover(id, px, false, move |image, _| {
+        s.cover(id, px, false, move |image, _, shown| {
+            // A smaller picture stands in from the app's own cache (Covers.swift), which keeps the callback
+            // for one picture: only the cover's own goes.
+            if shown == nori_covers::Shown::StandIn {
+                return;
+            }
             finished.store(true, Ordering::Release);
             lock(&TICKETS).retain(|(t, _)| *t != token);
-            deliver(image.ok());
+            if let Some(deliver) = deliver.take() {
+                deliver(image.ok());
+            }
         })
     })
     .flatten();

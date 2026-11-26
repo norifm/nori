@@ -7,6 +7,9 @@
 //!   past.
 //! - Workers start on demand up to the limit and sleep on a condvar; the disk cache is opened by the
 //!   first worker, so the requesting (UI) thread never touches the disk.
+//! - Workers only read what is kept and decode. A cover to fetch goes to a fetch thread of its own (up
+//!   to [`Config::fetches`] at once), then back to a worker: a server that makes each size on demand
+//!   never keeps a kept cover waiting.
 //! - Workers exit and free their buffers when the loader rests: after [`Config::idle`] with no work,
 //!   when hidden ([`Loader::show`]) or on low memory ([`Loader::trim`]). While hidden no worker waits.
 //!
@@ -43,6 +46,8 @@ pub struct Config {
     pub memory_bytes: usize,
     /// Maximum worker threads.
     pub workers: usize,
+    /// Most covers fetched at once, each on a thread of its own.
+    pub fetches: usize,
     /// Alpha encoding for [`Rgba`].
     pub alpha: Alpha,
     /// Fetch timeout; 0 uses the transport's default.
@@ -60,6 +65,7 @@ impl Config {
             disk_bytes: nori_core::covers::cover_rules().disk_bytes,
             memory_bytes: 64 << 20,
             workers: thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4)),
+            fetches: FETCHES,
             alpha: Alpha::Straight,
             timeout_ms: 0,
             idle: IDLE,
@@ -161,6 +167,9 @@ impl Job {
     }
 }
 
+/// Default [`Config::fetches`]: a screen of covers asked of a server that makes each one on demand.
+const FETCHES: usize = 8;
+
 /// Default [`Config::idle`]: well above the gaps between covers while scrolling.
 const IDLE: Duration = Duration::from_secs(20);
 
@@ -183,9 +192,30 @@ impl<P> Flight<P> {
 }
 
 enum FlightState {
+    /// For a worker to read what is kept.
     Queued { url: String },
     /// A worker took it.
     Running,
+    /// Not kept: for a fetch thread.
+    ToFetch { url: String },
+    /// A fetch thread took it.
+    Fetching,
+    /// Fetched: for a worker to decode.
+    Fetched { bytes: Vec<u8> },
+}
+
+impl FlightState {
+    /// Waiting for a thread: a flight every waiter left is dropped then.
+    fn waiting(&self) -> bool {
+        matches!(self, FlightState::Queued { .. } | FlightState::ToFetch { .. } | FlightState::Fetched { .. })
+    }
+}
+
+/// What a worker does with a flight it took.
+enum Work {
+    /// Reads the kept file at `url`, or hands the flight to a fetch thread.
+    Look(String),
+    Decode(Vec<u8>),
 }
 
 /// Whether workers wait for more covers.
@@ -213,11 +243,14 @@ struct Jobs<P> {
     current: usize,
     pool: Pool,
     next_id: u64,
+    /// Flights to fetch, newest last, and the fetch threads running.
+    to_fetch: Vec<Job>,
+    fetchers: usize,
 }
 
 impl<P> Default for Jobs<P> {
     fn default() -> Jobs<P> {
-        Jobs { flights: HashMap::new(), queue: Vec::new(), workers: 0, idle: 0, delivering: 0, generation: 0, current: 0, pool: Pool::Shown, next_id: 0 }
+        Jobs { flights: HashMap::new(), queue: Vec::new(), workers: 0, idle: 0, delivering: 0, generation: 0, current: 0, pool: Pool::Shown, next_id: 0, to_fetch: Vec::new(), fetchers: 0 }
     }
 }
 
@@ -245,6 +278,7 @@ struct Inner<P: Paint> {
     jobs: Mutex<Jobs<P::Picture>>,
     work: Condvar,
     workers: usize,
+    fetches: usize,
     paint: P,
     timeout_ms: u32,
     idle: Duration,
@@ -264,7 +298,7 @@ impl<P: Paint> Leave for Inner<P> {
         let mut jobs = self.jobs.lock();
         let Some(f) = jobs.flights.get_mut(job) else { return };
         f.waiters.retain(|(i, _)| *i != id);
-        if f.waiters.is_empty() && matches!(f.state, FlightState::Queued { .. }) {
+        if f.waiters.is_empty() && f.state.waiting() {
             jobs.flights.remove(job);
         }
     }
@@ -279,6 +313,8 @@ pub struct Ticket {
     inner: Option<Arc<dyn Leave>>,
     job: Job,
     id: u64,
+    /// A stand-in's request beside it ([`Loader::request_standing_in`]).
+    stand_in: Option<Box<Ticket>>,
 }
 
 impl Ticket {
@@ -286,7 +322,23 @@ impl Ticket {
 
     pub fn detach(mut self) {
         self.inner = None;
+        if let Some(t) = self.stand_in.take() {
+            t.detach();
+        }
     }
+
+    fn answered(job: Job) -> Ticket {
+        Ticket { inner: None, job, id: 0, stand_in: None }
+    }
+}
+
+/// What a view is given of its cover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shown {
+    /// The same cover kept at another size or rendition, while its own comes.
+    StandIn,
+    /// The picture asked for, or why there is none.
+    Own,
 }
 
 impl Drop for Ticket {
@@ -318,6 +370,7 @@ impl<P: Paint> Loader<P> {
             jobs: Mutex::new(Jobs::default()),
             work: Condvar::new(),
             workers: config.workers.max(1),
+            fetches: config.fetches.max(1),
             paint,
             timeout_ms: config.timeout_ms,
             idle: config.idle,
@@ -340,16 +393,55 @@ impl<P: Paint> Loader<P> {
         self.ask(Job::Kept(key), url, Box::new(done))
     }
 
+    /// [`Loader::request`] of a cover whose other renditions are at `stand_ins`, best first: while its
+    /// own picture comes, `done` is given the largest one of the cover kept in memory at any size, at
+    /// once, else the first stand-in kept on disk ([`Shown::StandIn`]); then its own ([`Shown::Own`]). A
+    /// stand-in never comes after the cover's own picture, nor when that is in memory.
+    pub fn request_standing_in(&self, url: &str, stand_ins: &[String], width: u32, height: u32, done: impl FnMut(Result<P::Picture, Error>, Shown) + Send + 'static) -> Ticket {
+        let own = Sized { key: self.key(url), width, height };
+        let mut done = done;
+        if let Some(picture) = self.inner.memory.get(&own) {
+            done(Ok(picture), Shown::Own);
+            return Ticket::answered(Job::Picture(own));
+        }
+        // The callback, and whether the cover's own picture came.
+        let shared = Arc::new(Mutex::new((done, false)));
+        let keys: Vec<Key> = std::iter::once(own.key).chain(stand_ins.iter().map(|u| self.key(u))).collect();
+        let stand_in = match (self.inner.memory.largest(&keys), stand_ins.first()) {
+            (Some(picture), _) => {
+                (shared.lock().0)(Ok(picture), Shown::StandIn);
+                None
+            }
+            (None, Some(first)) => {
+                let shown = shared.clone();
+                Some(Box::new(self.request_kept(first, width, height, move |r| {
+                    let mut s = shown.lock();
+                    if let (Ok(picture), false) = (r, s.1) {
+                        (s.0)(Ok(picture), Shown::StandIn);
+                    }
+                })))
+            }
+            (None, None) => None,
+        };
+        let mut ticket = self.request(url, width, height, move |r| {
+            let mut s = shared.lock();
+            s.1 = true;
+            (s.0)(r, Shown::Own);
+        });
+        ticket.stand_in = stand_in;
+        ticket
+    }
+
     fn ask(&self, job: Job, url: &str, done: Done<P::Picture>) -> Ticket {
         let (Job::Picture(key) | Job::Kept(key)) = job else { unreachable!("a view asks for a picture") };
         let inner = &self.inner;
         if let Some(picture) = inner.memory.get(&key) {
             done(Ok(picture));
-            return Ticket { inner: None, job, id: 0 };
+            return Ticket::answered(job);
         }
         if let Some(e) = inner.failed(key.key) {
             done(Err(e));
-            return Ticket { inner: None, job, id: 0 };
+            return Ticket::answered(job);
         }
         let mut jobs = inner.jobs.lock();
         jobs.next_id += 1;
@@ -361,13 +453,13 @@ impl<P: Paint> Loader<P> {
                 if let Some(picture) = inner.memory.get(&key) {
                     drop(jobs);
                     done(Ok(picture));
-                    return Ticket { inner: None, job, id: 0 };
+                    return Ticket::answered(job);
                 }
                 v.insert(Flight::queued(url, vec![(id, done)]));
                 inner.enqueue(&mut jobs, job, true);
             }
         }
-        Ticket { inner: Some(inner.clone()), job, id }
+        Ticket { inner: Some(inner.clone()), job, id, stand_in: None }
     }
 
     /// What the cover at `url` is kept under: the same through either of its server's addresses and under
@@ -551,13 +643,17 @@ impl<P: Paint> Inner<P> {
             jobs.queue.insert(0, job);
         }
         if jobs.idle == 0 && jobs.delivering == 0 && jobs.current < self.workers {
-            jobs.workers += 1;
-            jobs.current += 1;
-            let (inner, generation) = (self.clone(), jobs.generation);
-            thread::Builder::new().name("nori-covers".into()).spawn(move || inner.work(generation)).expect("a thread for covers");
+            self.hire(jobs);
         } else {
             self.work.notify_one();
         }
+    }
+
+    fn hire(self: &Arc<Self>, jobs: &mut Jobs<P::Picture>) {
+        jobs.workers += 1;
+        jobs.current += 1;
+        let (inner, generation) = (self.clone(), jobs.generation);
+        thread::Builder::new().name("nori-covers".into()).spawn(move || inner.work(generation)).expect("a thread for covers");
     }
 
     fn work(self: Arc<Self>, generation: u64) {
@@ -565,7 +661,7 @@ impl<P: Paint> Inner<P> {
         let mut w = Worker::new();
         let mut delivered = false;
         loop {
-            let (job, url) = {
+            let (job, work) = {
                 let mut jobs = self.jobs.lock();
                 if std::mem::take(&mut delivered) {
                     jobs.delivering -= 1;
@@ -583,9 +679,15 @@ impl<P: Paint> Inner<P> {
                         return;
                     }
                     if let Some(job) = jobs.queue.pop() {
+                        // Two covers queued while one worker waited woke only it: the other gets a worker too.
+                        if !jobs.queue.is_empty() && jobs.idle == 0 && jobs.current < self.workers && jobs.generation == generation {
+                            self.hire(&mut jobs);
+                        }
                         if let Some(f) = jobs.flights.get_mut(&job) {
-                            if let FlightState::Queued { url } = std::mem::replace(&mut f.state, FlightState::Running) {
-                                break (job, url);
+                            match std::mem::replace(&mut f.state, FlightState::Running) {
+                                FlightState::Queued { url } => break (job, Work::Look(url)),
+                                FlightState::Fetched { bytes } => break (job, Work::Decode(bytes)),
+                                other => f.state = other,
                             }
                         }
                         continue;
@@ -612,12 +714,17 @@ impl<P: Paint> Inner<P> {
                 }
             };
             // A panic fails only this cover.
-            let made = panic::catch_unwind(AssertUnwindSafe(|| match job {
-                Job::Disk(key) => {
-                    self.warm(key, &url, &mut w);
+            let made = panic::catch_unwind(AssertUnwindSafe(|| match (job, work) {
+                (Job::Disk(key), Work::Look(url)) => {
+                    self.warm(key, url, &mut w);
                     None
                 }
-                Job::Picture(sized) | Job::Kept(sized) => self.fetch(job, &sized, &url, &mut w),
+                (Job::Disk(_), Work::Decode(_)) => None,
+                (Job::Picture(sized) | Job::Kept(sized), Work::Look(url)) => self.look(job, &sized, url, &mut w),
+                (Job::Picture(sized) | Job::Kept(sized), Work::Decode(bytes)) => {
+                    w.bytes = bytes;
+                    self.decode(job, &sized, &mut w)
+                }
             }));
             let result = match made {
                 Ok(Some(result)) => result,
@@ -632,37 +739,131 @@ impl<P: Paint> Inner<P> {
                     Err(Error::Panicked(panic_message(&*p)))
                 }
             };
-            if let Err(e @ (Error::Status(_) | Error::Decode(decode::Error::Unknown | decode::Error::TooLarge))) = &result {
-                self.failures.lock().insert(job.key(), (Instant::now(), e.clone()));
+            {
+                self.jobs.lock().delivering += 1;
             }
-            let waiters = {
-                let mut jobs = self.jobs.lock();
-                jobs.delivering += 1;
-                jobs.flights.remove(&job).map(|f| f.waiters).unwrap_or_default()
-            };
             delivered = true;
-            for (_, done) in waiters {
-                let r = result.clone();
-                // A panicking callback loses its own cover, not the worker.
-                let _ = panic::catch_unwind(AssertUnwindSafe(move || done(r)));
+            self.deliver(job, result);
+        }
+    }
+
+    /// Ends flight `job` with `result`, called back to each of its waiters; a failure the server gave is
+    /// remembered.
+    fn deliver(&self, job: Job, result: Result<P::Picture, Error>) {
+        if let Err(e @ (Error::Status(_) | Error::Decode(decode::Error::Unknown | decode::Error::TooLarge))) = &result {
+            self.failures.lock().insert(job.key(), (Instant::now(), e.clone()));
+        }
+        let waiters = self.jobs.lock().flights.remove(&job).map(|f| f.waiters).unwrap_or_default();
+        for (_, done) in waiters {
+            let r = result.clone();
+            // A panicking callback loses its own cover, not the thread.
+            let _ = panic::catch_unwind(AssertUnwindSafe(move || done(r)));
+        }
+    }
+
+    /// Hands flight `job` to a fetch thread, starting one below the limit. A view's cover goes before the
+    /// warm-ups, as on the workers' queue.
+    fn to_fetch(self: &Arc<Self>, job: Job, url: String) {
+        let mut jobs = self.jobs.lock();
+        let Some(f) = jobs.flights.get_mut(&job) else { return };
+        // Every view left while it was looked for (a warm-up has none).
+        if f.waiters.is_empty() && !matches!(job, Job::Disk(_)) {
+            jobs.flights.remove(&job);
+            return;
+        }
+        f.state = FlightState::ToFetch { url };
+        if matches!(job, Job::Disk(_)) {
+            jobs.to_fetch.insert(0, job);
+        } else {
+            jobs.to_fetch.push(job);
+        }
+        if jobs.fetchers < self.fetches {
+            jobs.fetchers += 1;
+            let inner = self.clone();
+            thread::Builder::new().name("nori-covers-fetch".into()).spawn(move || inner.fetching()).expect("a thread for covers");
+        }
+    }
+
+    /// A fetch thread: fetches the newest flight to fetch until none is left, keeping each file, and hands
+    /// each still awaited to a worker to decode.
+    fn fetching(self: Arc<Self>) {
+        let waker = Waker::from(Arc::new(Unpark(thread::current())));
+        loop {
+            let (job, url) = {
+                let mut jobs = self.jobs.lock();
+                let taken = loop {
+                    if jobs.pool == Pool::Closed {
+                        break None;
+                    }
+                    let Some(job) = jobs.to_fetch.pop() else { break None };
+                    if let Some(f) = jobs.flights.get_mut(&job) {
+                        if let FlightState::ToFetch { url } = std::mem::replace(&mut f.state, FlightState::Fetching) {
+                            break Some((job, url));
+                        }
+                    }
+                };
+                match taken {
+                    Some(t) => t,
+                    None => {
+                        jobs.fetchers -= 1;
+                        return;
+                    }
+                }
+            };
+            let fetched = panic::catch_unwind(AssertUnwindSafe(|| self.fetch(job.key(), &url, &waker))).unwrap_or_else(|p| Err(Error::Panicked(panic_message(&*p))));
+            let mut jobs = self.jobs.lock();
+            let Some(f) = jobs.flights.get_mut(&job) else { continue };
+            match (job, fetched) {
+                (Job::Disk(_), _) => {
+                    jobs.flights.remove(&job);
+                }
+                // Kept for later: nobody waits for it now.
+                _ if f.waiters.is_empty() => {
+                    jobs.flights.remove(&job);
+                }
+                (_, Ok(bytes)) => {
+                    f.state = FlightState::Fetched { bytes };
+                    self.enqueue(&mut jobs, job, true);
+                }
+                (_, Err(e)) => {
+                    drop(jobs);
+                    self.deliver(job, Err(e));
+                }
             }
         }
     }
 
-    /// Fetches the file to disk if missing, then ends the (waiter-less) flight.
-    fn warm(&self, key: Key, url: &str, w: &mut Worker) {
+    /// Has the file fetched to disk if missing, else ends the (waiter-less) flight.
+    fn warm(self: &Arc<Self>, key: Key, url: String, _: &mut Worker) {
         if self.disk().is_some_and(|d| !d.contains(key)) {
-            let _ = self.bytes(key, url, &mut w.bytes, &w.waker, true);
+            return self.to_fetch(Job::Disk(key), url);
         }
         self.jobs.lock().flights.remove(&Job::Disk(key));
     }
 
-    /// Fetches (a [`Job::Kept`] only reads what is kept) and decodes; None when every waiter left, in which
-    /// case the flight is already ended.
-    fn fetch(&self, job: Job, key: &Sized, url: &str, w: &mut Worker) -> Option<Result<P::Picture, Error>> {
-        if let Err(e) = self.bytes(key.key, url, &mut w.bytes, &w.waker, matches!(job, Job::Picture(_))) {
-            return Some(Err(e));
+    /// Reads the kept file and decodes it; a file not kept is handed to a fetch thread for a
+    /// [`Job::Picture`] (None: the flight goes on there) and is [`Error::NotKept`] for a [`Job::Kept`].
+    fn look(self: &Arc<Self>, job: Job, key: &Sized, url: String, w: &mut Worker) -> Option<Result<P::Picture, Error>> {
+        match self.bytes(key.key, &url, &mut w.bytes, &w.waker, false) {
+            Ok(()) => self.decode(job, key, w),
+            Err(Error::NotKept) if matches!(job, Job::Picture(_)) => {
+                self.to_fetch(job, url);
+                None
+            }
+            Err(e) => Some(Err(e)),
         }
+    }
+
+    /// The file at `url`, fetched and kept (provider covers: in memory).
+    fn fetch(&self, key: Key, url: &str, waker: &Waker) -> Result<Vec<u8>, Error> {
+        let mut bytes = Vec::new();
+        self.fetched(key, url, &mut bytes, waker)?;
+        Ok(bytes)
+    }
+
+    /// Decodes `w.bytes` for `key`; None when every waiter left, in which case the flight is already
+    /// ended.
+    fn decode(&self, job: Job, key: &Sized, w: &mut Worker) -> Option<Result<P::Picture, Error>> {
         {
             let mut jobs = self.jobs.lock();
             if jobs.flights.get(&job).is_none_or(|f| f.waiters.is_empty()) {
@@ -713,6 +914,12 @@ impl<P: Paint> Inner<P> {
         if !fetch {
             return Err(Error::NotKept);
         }
+        self.fetched(key, url, out, waker)
+    }
+
+    /// Fetches the file at `url` into `out` and keeps it.
+    fn fetched(&self, key: Key, url: &str, out: &mut Vec<u8>, waker: &Waker) -> Result<(), Error> {
+        let provider = is_provider_cover(url);
         let r = block_on(self.net.get(url.to_owned(), self.timeout_ms), waker)?;
         if !(200..300).contains(&r.status) || r.body.is_empty() {
             return Err(Error::Status(r.status));
@@ -754,6 +961,7 @@ mod tests {
                 disk_bytes: 0,
                 memory_bytes: 1 << 20,
                 workers: 1,
+                fetches: 1,
                 alpha: Alpha::Straight,
                 timeout_ms: 0,
                 idle: std::time::Duration::from_secs(60),

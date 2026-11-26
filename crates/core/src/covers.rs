@@ -23,6 +23,15 @@ pub fn cover_rendition(px: u32) -> u32 {
     }
 }
 
+/// The smaller renditions of a cover, the larger first, which stand in while the one for a view of `px`
+/// comes: a list's tile for the head of the page it opens. A tile has none: a larger one waits on no
+/// more than it does.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn cover_stand_ins(px: u32) -> Vec<u32> {
+    let own = cover_rendition(px);
+    SIZES.into_iter().rev().filter(|&s| s < own).collect()
+}
+
 /// Whether cover id `id` (up to the next `&`) is an octo-fiesta provider's: `ext-...` or
 /// `pl-<provider>-<id>`. Navidrome's own playlist covers (`pl-<id>_<timestamp>`) are not.
 fn provider_cover_id(id: &str) -> bool {
@@ -134,6 +143,17 @@ impl Core {
     /// makes it.
     pub fn cover_address(&self, id: String, size: u32) -> String {
         own_address(&id, size).unwrap_or_else(|| self.provider().cover_address(self, &id, size))
+    }
+}
+
+impl Core {
+    /// Cover `id`'s address for a view of `px` ([`cover_rendition`]), and the addresses of the renditions
+    /// that stand in while it comes ([`cover_stand_ins`]), but not its own again (a provider's picture
+    /// of one size only).
+    pub fn cover_addresses(&self, id: &str, px: u32) -> (String, Vec<String>) {
+        let own = self.cover_address(id.to_string(), cover_rendition(px));
+        let stand_ins = cover_stand_ins(px).into_iter().map(|s| self.cover_address(id.to_string(), s)).filter(|a| *a != own).collect();
+        (own, stand_ins)
     }
 }
 
@@ -383,6 +403,16 @@ mod tests {
         // Images named by their path, not a query.
         assert_ne!(key("https://yt3.googleusercontent.com/abc=w320-h320-l90-rj"), key("https://yt3.googleusercontent.com/def=w320-h320-l90-rj"));
         assert_ne!(key("https://yt3.googleusercontent.com/abc=w320-h320-l90-rj"), key("https://yt3.googleusercontent.com/abc=w800-h800-l90-rj"));
+    }
+
+    #[test]
+    fn a_cover_stands_in_at_its_other_rendition() {
+        let core = crate::Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        core.configure(crate::ServerConfig { url: "http://m".into(), user: "u".into(), password: "p".into(), ..Default::default() }).unwrap();
+        let at = |size| core.cover_address("al 1".into(), size);
+        assert_eq!(core.cover_addresses("al 1", 1080), (at(FULL), vec![at(ROW)]), "a page's head: its tile's");
+        assert_eq!(core.cover_addresses("al 1", 160), (at(ROW), Vec::new()), "a tile: none");
+        assert_eq!(core.cover_addresses("https://yt.example/plain.jpg", 1080).1, Vec::<String>::new(), "one size only: nothing stands in");
     }
 
     #[test]

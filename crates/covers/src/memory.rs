@@ -53,6 +53,13 @@ impl<P: Clone> MemoryCache<P> {
         k.fit(self.limit as u64, |_| {});
     }
 
+    /// The largest picture kept of any of `keys`, at whatever size, marked most recently used.
+    pub fn largest(&self, keys: &[Key]) -> Option<P> {
+        let mut k = self.kept.lock();
+        let best = k.sizes().filter(|(s, _)| keys.contains(&s.key)).max_by_key(|(s, _)| s.width as u64 * s.height as u64).map(|(s, _)| *s)?;
+        k.touch(best).cloned()
+    }
+
     /// Drops everything (low-memory signal).
     pub fn clear(&self) {
         *self.kept.lock() = Lru::default();
@@ -104,6 +111,16 @@ mod tests {
         assert!(m.get(&at("f", 8)).is_none() && m.get(&at("e", 6)).is_some());
         m.clear();
         assert_eq!(m.bytes(), 0);
+
+        // Any size of any of the keys asked: the largest.
+        let m = MemoryCache::new(1000);
+        put(&m, "a", 4);
+        put(&m, "a", 6);
+        put(&m, "b", 8);
+        put(&m, "c", 2);
+        let key = |url| at(url, 0).key;
+        assert_eq!(m.largest(&[key("a"), key("c")]).map(|i| i.width), Some(6));
+        assert!(m.largest(&[key("d")]).is_none());
 
         // Zero limit keeps nothing.
         let m = MemoryCache::new(0);

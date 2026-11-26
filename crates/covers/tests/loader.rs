@@ -6,7 +6,7 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
-use nori_covers::{header, Alpha, Config, DecodeError, Decoder, Error, Image, Key, Loader, Paint};
+use nori_covers::{header, Alpha, Config, DecodeError, Decoder, Error, Image, Key, Loader, Paint, Shown};
 use nori_core::covers::CoverNet;
 use nori_core::transport::{Exchange, FailureKind, Transport, TransportError, TransportResponse};
 use parking_lot::{Condvar, Mutex};
@@ -79,7 +79,7 @@ fn dir(name: &str) -> nori_testdir::TempDir {
 }
 
 fn config(dir: Option<PathBuf>, workers: usize) -> Config {
-    Config { dir, disk_bytes: 1 << 20, memory_bytes: 1 << 20, workers, alpha: Alpha::Straight, timeout_ms: 0, idle: Duration::from_secs(20) }
+    Config { dir, disk_bytes: 1 << 20, memory_bytes: 1 << 20, workers, fetches: workers, alpha: Alpha::Straight, timeout_ms: 0, idle: Duration::from_secs(20) }
 }
 
 /// Receives `n` answers (10 s max each).
@@ -392,34 +392,58 @@ impl Paint for Counted {
     }
 }
 
+/// Painter counting its paints, each waiting while `shut`.
+struct Gated {
+    painted: Arc<Count>,
+    shut: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl Paint for Gated {
+    type Picture = ();
+
+    fn paint(&self, _: &mut Decoder, _: &[u8], _: u32, _: u32) -> Result<(), DecodeError> {
+        self.painted.add(1);
+        let mut shut = self.shut.0.lock();
+        while *shut {
+            self.shut.1.wait(&mut shut);
+        }
+        Ok(())
+    }
+
+    fn bytes(_: &()) -> usize {
+        0
+    }
+}
+
 #[test]
 fn warm_fetches_without_decoding() {
     let d = dir("warm");
     let server = Server::new(200);
-    let painted = Arc::new(AtomicUsize::new(0));
-    let loader = Loader::with_paint(Config { memory_bytes: 0, ..config(Some(d.to_path_buf()), 1) }, CoverNet::over(server.clone()), Counted(painted.clone()));
-    server.hold();
-    // Worker busy; warm-ups and a later view queue behind it.
+    let (painted, shut) = (Arc::new(Count::default()), Arc::new((Mutex::new(true), Condvar::new())));
+    let loader = Loader::with_paint(Config { memory_bytes: 0, ..config(Some(d.to_path_buf()), 1) }, CoverNet::over(server.clone()), Gated { painted: painted.clone(), shut: shut.clone() });
+    // The one worker is decoding; warm-ups and a later view queue behind it.
     let busy = loader.request("http://s/busy", 8, 8, |_| {});
-    server.wait_calls(1);
+    painted.until(|n| n == 1);
     loader.warm(PHOTO);
     loader.warm("http://s/rest/getCoverArt.view?u=a&id=ext-deezer-1&size=320");
     let late = loader.request("http://s/late", 8, 8, |_| {});
-    // Warm-ups run in order on the one worker: once `next` is asked for, the photo is on the disk.
     let next = "http://s/rest/getCoverArt.view?u=a&id=al-2&size=320";
     loader.warm(next);
-    server.release();
+    *shut.0.lock() = false;
+    shut.1.notify_all();
     server.wait_calls(4);
+    assert!(painted.within(Duration::from_secs(2), |n| n == 2), "the view decoded");
+    // Warm-ups are fetched in order: once `next` is asked for, the photo is on the disk.
     assert!(loader.disk().unwrap().contains(Key::of(&CoverNet::default(), PHOTO)), "warmed");
     // The view went before the warm-ups, the provider cover was skipped, nothing warmed was decoded.
     assert_eq!(*server.asked.lock(), ["http://s/busy", "http://s/late", PHOTO, next]);
-    assert_eq!(painted.load(Ordering::SeqCst), 2);
     // Warming a cached cover does not refetch: once `then` is asked for, the repeated warm was processed.
     loader.warm(PHOTO);
     let then = "http://s/rest/getCoverArt.view?u=a&id=al-3&size=320";
     loader.warm(then);
     server.wait_calls(5);
     assert_eq!(*server.asked.lock(), ["http://s/busy", "http://s/late", PHOTO, next, then], "the warmed cover not fetched again");
+    assert_eq!(painted.get(), 2);
     // `read` serves the raw bytes from disk.
     let mut bytes = Vec::new();
     loader.read(PHOTO, &mut bytes).unwrap();
@@ -486,10 +510,23 @@ fn panic_fails_only_that_cover() {
     drop(loader);
 }
 
-/// Painter counting live worker threads (via a thread-local guard) and `rest` calls.
+/// Painter counting live worker threads (via a thread-local guard) and `rest` calls; each paint waits
+/// while `held`.
 struct Threads {
     alive: Arc<Count>,
     rests: Arc<AtomicUsize>,
+    held: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl Threads {
+    fn new(alive: Arc<Count>, rests: Arc<AtomicUsize>) -> Threads {
+        Threads { alive, rests, held: Arc::default() }
+    }
+
+    fn hold(&self, on: bool) {
+        *self.held.0.lock() = on;
+        self.held.1.notify_all();
+    }
 }
 
 struct Alive(Arc<Count>);
@@ -514,6 +551,10 @@ impl Paint for Threads {
                 *a = Some(Alive(self.alive.clone()));
             }
         });
+        let mut held = self.held.0.lock();
+        while *held {
+            self.held.1.wait(&mut held);
+        }
         Ok(())
     }
 
@@ -541,6 +582,18 @@ impl Count {
         *self.0.lock()
     }
 
+    /// Waits up to `limit` for `done` to hold of the count; whether it did.
+    fn within(&self, limit: Duration, done: impl Fn(usize) -> bool) -> bool {
+        let mut c = self.0.lock();
+        let deadline = std::time::Instant::now() + limit;
+        while !done(*c) {
+            if self.1.wait_until(&mut c, deadline).timed_out() {
+                return done(*c);
+            }
+        }
+        true
+    }
+
     /// Waits until `done` holds of the count.
     fn until(&self, done: impl Fn(usize) -> bool) {
         let mut c = self.0.lock();
@@ -554,10 +607,9 @@ fn until(count: &Count, n: usize) {
     count.until(|c| c == n);
 }
 
-/// Starts three workers by holding three requests at the server at once.
-fn three_at_once(loader: &Loader<Threads>, server: &Server) {
-    server.hold();
-    let calls = server.calls();
+/// Starts three workers by holding three covers' decoding at once.
+fn three_at_once(loader: &Loader<Threads>, alive: &Count) {
+    loader.paint().hold(true);
     let (tx, rx) = mpsc::channel();
     let tickets: Vec<_> = (0..3u32)
         .map(|i| {
@@ -565,8 +617,8 @@ fn three_at_once(loader: &Loader<Threads>, server: &Server) {
             loader.request(&format!("http://s/{i}"), 8, 8, move |r| tx.send(r).unwrap())
         })
         .collect();
-    server.wait_calls(calls + 3);
-    server.release();
+    alive.until(|n| n == 3);
+    loader.paint().hold(false);
     for _ in 0..3 {
         rx.recv_timeout(Duration::from_secs(10)).expect("an answer").unwrap();
     }
@@ -576,7 +628,7 @@ fn three_at_once(loader: &Loader<Threads>, server: &Server) {
 #[test]
 fn a_worker_handing_over_a_cover_takes_the_next_one() {
     let server = Server::new(200);
-    let loader = Loader::with_paint(Config { memory_bytes: 0, ..config(None, 3) }, CoverNet::over(server.clone()), Threads { alive: Arc::default(), rests: Arc::default() });
+    let loader = Loader::with_paint(Config { memory_bytes: 0, ..config(None, 3) }, CoverNet::over(server.clone()), Threads::new(Arc::default(), Arc::default()));
     let (handing, handed) = (mpsc::channel(), mpsc::channel::<()>());
     let (in_callback, release) = (handing.0, handed.1);
     let _first = loader.request("http://s/first", 8, 8, move |_| {
@@ -598,8 +650,8 @@ fn resting() {
     {
         let server = Server::new(200);
         let (alive, rests) = (Arc::new(Count::default()), Arc::new(AtomicUsize::new(0)));
-        let loader = Loader::with_paint(Config { memory_bytes: 0, ..config(None, 3) }, CoverNet::over(server.clone()), Threads { alive: alive.clone(), rests: rests.clone() });
-        three_at_once(&loader, &server);
+        let loader = Loader::with_paint(Config { memory_bytes: 0, ..config(None, 3) }, CoverNet::over(server.clone()), Threads::new(alive.clone(), rests.clone()));
+        three_at_once(&loader, &alive);
         assert_eq!(alive.get(), 3);
         loader.rest();
         until(&alive, 0);
@@ -616,8 +668,8 @@ fn resting() {
         let server = Server::new(200);
         let (alive, rests) = (Arc::new(Count::default()), Arc::new(AtomicUsize::new(0)));
         let config = Config { memory_bytes: 0, idle: Duration::from_millis(500), ..config(None, 3) };
-        let loader = Loader::with_paint(config, CoverNet::over(server.clone()), Threads { alive: alive.clone(), rests: rests.clone() });
-        three_at_once(&loader, &server);
+        let loader = Loader::with_paint(config, CoverNet::over(server.clone()), Threads::new(alive.clone(), rests.clone()));
+        three_at_once(&loader, &alive);
         // Requests closer together than `idle` keep the threads.
         for i in 0..5 {
             loader.load(&format!("http://s/soon-{i}"), 8, 8).unwrap();
@@ -633,8 +685,8 @@ fn resting() {
     {
         let server = Server::new(200);
         let (alive, rests) = (Arc::new(Count::default()), Arc::new(AtomicUsize::new(0)));
-        let loader = Loader::with_paint(Config { memory_bytes: 0, ..config(None, 3) }, CoverNet::over(server.clone()), Threads { alive: alive.clone(), rests: rests.clone() });
-        three_at_once(&loader, &server);
+        let loader = Loader::with_paint(Config { memory_bytes: 0, ..config(None, 3) }, CoverNet::over(server.clone()), Threads::new(alive.clone(), rests.clone()));
+        three_at_once(&loader, &alive);
         loader.show(false);
         until(&alive, 0);
         assert_eq!(rests.load(Ordering::SeqCst), 1);
@@ -667,4 +719,54 @@ fn a_kept_only_request_never_asks_the_server() {
     loader.trim();
     assert_eq!(kept(16).unwrap().width, 16, "decoded from the disk");
     assert_eq!(server.calls(), 1);
+}
+
+/// A page's head asks for the larger rendition of a cover its tile drew: the tile's picture stands in,
+/// read from the disk, or at once from memory at whatever size it is there, until the cover's own comes.
+#[test]
+fn a_kept_rendition_stands_in_until_the_cover_comes() {
+    const HEAD: &str = "http://s/rest/getCoverArt.view?u=a&t=b&s=c&id=al-1&size=800";
+    let d = dir("stand-in");
+    let server = Server::new(200);
+    let loader = Loader::new(config(Some(d.to_path_buf()), 2), CoverNet::over(server.clone()));
+    let (tx, rx) = mpsc::channel();
+    let ask = |px: u32| {
+        let tx = tx.clone();
+        loader.request_standing_in(HEAD, &[PHOTO.to_string()], px, px, move |r, shown| tx.send((shown, r.map(|i| i.width))).unwrap())
+    };
+    let next = || rx.recv_timeout(Duration::from_secs(10)).expect("an answer");
+    loader.load(PHOTO, 16, 16).unwrap();
+    loader.trim();
+    server.hold();
+    let head = ask(40);
+    assert_eq!(next(), (Shown::StandIn, Ok(40)), "the tile's file, from the disk");
+    server.release();
+    assert_eq!(next(), (Shown::Own, Ok(40)));
+    drop(head);
+    let _again = ask(40);
+    assert_eq!(rx.try_recv(), Ok((Shown::Own, Ok(40))), "its own in memory: nothing stands in");
+    let _larger = ask(50);
+    assert_eq!(rx.try_recv(), Ok((Shown::StandIn, Ok(40))), "at once, from memory, at another size");
+    assert_eq!(next(), (Shown::Own, Ok(50)));
+    assert!(rx.recv_timeout(Duration::from_millis(100)).is_err(), "nothing after its own");
+}
+
+/// A cover kept on the disk is not held up by covers the server is still answering: a slow server (one
+/// that makes each size on demand) never keeps the workers from what this device already has.
+#[test]
+fn a_kept_cover_does_not_wait_behind_fetches() {
+    let d = dir("kept-first");
+    let server = Server::new(200);
+    let loader = Loader::new(Config { fetches: 8, ..config(Some(d.to_path_buf()), 2) }, CoverNet::over(server.clone()));
+    loader.load(PHOTO, 8, 8).unwrap();
+    server.hold();
+    let asked: Vec<_> = (0..4).map(|i| loader.request(&format!("http://s/rest/getCoverArt.view?id=al-held-{i}&size=320"), 8, 8, |_| {})).collect();
+    let at_once = server.calls.within(Duration::from_secs(2), |c| c == 5);
+    let (tx, rx) = mpsc::channel();
+    let _kept = loader.request(PHOTO, 16, 16, move |r| tx.send(r.map(|i| i.width)).unwrap());
+    let got = rx.recv_timeout(Duration::from_secs(2));
+    server.release();
+    assert!(at_once, "the four asked at once, not two at a time");
+    assert_eq!(got, Ok(Ok(16)), "answered while the server still holds the others");
+    drop(asked);
 }

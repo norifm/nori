@@ -17,7 +17,7 @@ use nori_core::search::{SearchShown, SearchView};
 use nori_core::settings::SavedServer;
 use nori_core::Song;
 use nori_core::providers::flow::{WelcomeDo, WelcomeEvent, WelcomeFlow, WelcomePage, WelcomeSource};
-use nori_covers::loader::Ticket;
+use nori_covers::loader::{Shown, Ticket};
 use nori_covers::memory::Image as Picture;
 use nori_engine::{Event, State};
 use nori_host::remote::Elsewhere;
@@ -192,6 +192,8 @@ struct Art {
     tickets: VecDeque<(CoverKey, Ticket)>,
     /// When a pending cover was last looked up; stale ones are off screen.
     missing: HashMap<CoverKey, Instant>,
+    /// Covers drawn from a stand-in while their own picture comes.
+    standing: HashSet<CoverKey>,
 }
 
 enum Mosaic {
@@ -237,11 +239,23 @@ impl Art {
         }
     }
 
+    /// Keeps `image`, the cover's own picture, for `key`.
     fn insert(&mut self, key: CoverKey, image: Image, colours: Option<Box<CoverColours>>, now: Instant) {
-        let id = key.id.clone();
-        let large = key.size != CoverSize::Card;
+        self.standing.remove(&key);
         self.missing.remove(&key);
         self.tickets.retain(|(k, _)| *k != key);
+        self.keep(key, image, colours, now);
+    }
+
+    /// Draws `image` for `key` while the cover's own picture is still on its way.
+    fn stand_in(&mut self, key: CoverKey, image: Image, colours: Option<Box<CoverColours>>, now: Instant) {
+        self.standing.insert(key.clone());
+        self.keep(key, image, colours, now);
+    }
+
+    fn keep(&mut self, key: CoverKey, image: Image, colours: Option<Box<CoverColours>>, now: Instant) {
+        let id = key.id.clone();
+        let large = key.size != CoverSize::Card;
         if !large {
             for (covers, mosaic) in &mut self.mosaics {
                 if covers.contains(&id) {
@@ -301,7 +315,12 @@ fn cover_image(art: &RefCell<Art>, app: &AppHandle, id: SharedString, size: i32)
     let mut a = art.borrow_mut();
     if let Some((i, drawn)) = a.images.get_mut(&k) {
         *drawn = Instant::now();
-        return i.clone();
+        let i = i.clone();
+        // Still on screen: its own picture stays asked for.
+        if a.standing.contains(&k) {
+            a.missing.insert(k, Instant::now());
+        }
+        return i;
     }
     a.missing.insert(k.clone(), Instant::now());
     if a.asked.insert(k.clone()) {
@@ -1863,6 +1882,12 @@ impl App {
         ui.set_page_songs(ModelRc::default());
         ui.set_page_shelves(ModelRc::default());
         self.page_colours(None);
+        // A mix opens on its tile's name, covers and colors until its songs are read, as on Android.
+        if let Some(t) = self.mixes.iter().find(|t| matches!(&ask, PageAsk::Mix(id) if *id == t.id)).cloned() {
+            ui.set_page_title(words::mix_name(t.name).into());
+            ui.set_page_covers(ModelRc::new(VecModel::from(t.covers.iter().map(SharedString::from).collect::<Vec<_>>())));
+            self.set_page_art(t.covers.first().cloned());
+        }
         self.follow_sound_page(View::Page);
         ui.set_view(View::Page);
         ui.set_failed("".into());
@@ -4223,7 +4248,7 @@ impl App {
                 self.mirror();
                 self.account_changed();
             }
-            Msg::Cover { key, image, colours } => self.cover(key, &image, colours),
+            Msg::Cover { key, image, colours, shown } => self.cover(key, &image, colours, shown),
             // The search page and the top pill's preview both show it; the core already dropped a stale one.
             Msg::Search(v) => self.show_search(v),
             Msg::Lyrics(now) => self.lyrics_now(now),
@@ -4611,12 +4636,15 @@ impl App {
         });
     }
 
-    fn cover(&mut self, key: CoverKey, image: &Picture, colours: Option<Box<CoverColours>>) {
+    fn cover(&mut self, key: CoverKey, image: &Picture, colours: Option<Box<CoverColours>>, shown: Shown) {
         let id = key.id.clone();
         let large = key.size != CoverSize::Card;
         let picture = self.compositor.picture(&image.pixels, image.width, image.height);
         let small = key.size == CoverSize::Card;
-        self.art.borrow_mut().insert(key, picture.clone(), colours, Instant::now());
+        match shown {
+            Shown::Own => self.art.borrow_mut().insert(key, picture.clone(), colours, Instant::now()),
+            Shown::StandIn => self.art.borrow_mut().stand_in(key, picture.clone(), colours, Instant::now()),
+        }
         if small && self.is_picture(&id) {
             self.plugged.pictures.insert(id.clone(), picture);
             self.profiles_shown();
@@ -6558,6 +6586,26 @@ mod tests {
         assert!(!art.images.contains_key(&key("shared", CoverSize::Hero)));
         assert!(!art.colours.contains_key("shared"));
         assert!(art.images.contains_key(&key("shared", CoverSize::Card)));
+    }
+
+    /// A page's head drawn from its tile's picture keeps asking for its own, and wears the stand-in's
+    /// colours until it comes.
+    #[test]
+    fn a_stand_in_is_drawn_until_the_cover_comes() {
+        let art = RefCell::new(Art::default());
+        let app = AppHandle(Weak::new());
+        let head = CoverKey { id: "al".into(), size: CoverSize::Hero };
+        let small = Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::new(SMALL_PX, SMALL_PX));
+        let colours = nori_look::cover::derive(&[0xff406080], 1, 1, false);
+        cover_image(&art, &app, "al".into(), 2);
+        art.borrow_mut().stand_in(head.clone(), small, Some(Box::new(colours)), Instant::now());
+        assert_eq!(cover_image(&art, &app, "al".into(), 2).size().width, SMALL_PX, "the stand-in drawn");
+        let a = art.borrow();
+        assert!(a.colours.contains_key("al") && a.missing.contains_key(&head) && a.asked.contains(&head), "its own still asked for");
+        drop(a);
+        art.borrow_mut().insert(head.clone(), Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::new(HERO_PX, HERO_PX)), None, Instant::now());
+        assert_eq!(cover_image(&art, &app, "al".into(), 2).size().width, HERO_PX);
+        assert!(!art.borrow().missing.contains_key(&head) && art.borrow().standing.is_empty());
     }
 
     fn image_pixels(image: &Image) -> SharedPixelBuffer<Rgba8Pixel> {

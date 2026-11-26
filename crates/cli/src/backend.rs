@@ -427,12 +427,12 @@ impl Session {
         }
     }
 
-    /// Requests cover `art` at `size` px, deriving colours on the loader thread when `colours`.
+    /// Requests cover `art` at `size` px with its colours; its smaller rendition, when kept, comes first.
     pub fn cover(&self, art: String, size: u32) -> Option<nori_covers::loader::Ticket> {
         let (tx, me) = (self.tx.clone(), self.id);
-        self.host.cover(art.clone(), size, true, move |image, colours| {
+        self.host.cover(art.clone(), size, true, move |image, colours, _| {
             if let Ok(image) = image {
-                let _ = tx.send(Msg::From(me, Box::new(Msg::Cover { art, image, colours })));
+                let _ = tx.send(Msg::From(me, Box::new(Msg::Cover { art: art.clone(), image, colours })));
             }
         })
     }

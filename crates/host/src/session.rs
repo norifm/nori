@@ -23,7 +23,7 @@ use nori_core::settings_store::{APPLY_AUDIO, APPLY_GAIN, CACHE_LIMIT, PLAYER, RE
 use nori_core::transport::{block_on, Exchange, FailureKind, NetError, Transport, TransportError, TransportResponse};
 use nori_tasks::Tasks;
 use nori_core::{Core, CoreError, IngestStats, PageOrigin, Song};
-use nori_covers::loader::{Config as CoverConfig, Loader, Ticket};
+use nori_covers::loader::{Config as CoverConfig, Loader, Shown, Ticket};
 use nori_covers::memory::Image;
 use nori_engine::core::{resolving, settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer};
 use nori_engine::{AudioOutput, Body, ByteSource, Cancel, Config, Engine, Event, Filling, OpenError, State, Store};
@@ -1309,17 +1309,27 @@ impl Handle {
     }
 
     /// Requests cover `id` at `px` square: the core's rendition for that size is fetched
-    /// ([`nori_core::covers::cover_rendition`]) and decoded to `px`. `done` gets the image or failure and,
-    /// when `colours`, its page colors, derived off the caller's thread (a memory hit answers at once). None
+    /// ([`nori_core::covers::cover_rendition`]) and decoded to `px`, and meanwhile its other rendition, when
+    /// kept, stands in ([`Loader::request_standing_in`]). `done` gets each picture or the failure, and its
+    /// [`Shown`]; when `colours`, with its page colors, derived off the caller's thread in the pictures'
+    /// order (a memory hit answers at once). The cover's own colors alike the stand-in's
+    /// ([`CoverColours::alike`]) come as the stand-in's, so a page wearing them does not change. None
     /// without a cover loader.
-    pub fn cover(&self, id: String, px: u32, colours: bool, done: impl FnOnce(Result<Arc<Image>, nori_covers::Error>, Option<Box<CoverColours>>) + Send + 'static) -> Option<Ticket> {
-        let url = self.core.cover_address(id, nori_core::covers::cover_rendition(px));
-        Some(self.covers.as_ref()?.request(&url, px, px, move |r| match r {
-            Ok(image) if colours => crate::spawn("nori-colours", move || {
-                let colours = Box::new(derive(&image));
-                done(Ok(image), Some(colours));
-            }),
-            r => done(r, None),
+    pub fn cover(&self, id: String, px: u32, colours: bool, done: impl FnMut(Result<Arc<Image>, nori_covers::Error>, Option<Box<CoverColours>>, Shown) + Send + 'static) -> Option<Ticket> {
+        let covers = self.covers.as_ref()?;
+        let (own, stand_ins) = self.core.cover_addresses(&id, px);
+        if !colours {
+            let mut done = done;
+            return Some(covers.request_standing_in(&own, &stand_ins, px, px, move |r, shown| done(r, None, shown)));
+        }
+        // The colors are worked out on a thread started by the first picture, which takes the rest in order.
+        let (tx, rx) = std::sync::mpsc::channel::<(Result<Arc<Image>, nori_covers::Error>, Shown)>();
+        let mut waiting = Some((rx, done));
+        Some(covers.request_standing_in(&own, &stand_ins, px, px, move |r, shown| {
+            let _ = tx.send((r, shown));
+            if let Some((rx, done)) = waiting.take() {
+                crate::spawn("nori-colours", move || colours_in_order(rx, done));
+            }
         }))
     }
 
@@ -1875,6 +1885,25 @@ pub fn read_pages(client: &Client, read: Read, each: impl FnMut(Page)) -> Result
     block_on(client.read_each(read, each))
 }
 
+/// Each picture `pictures` brings with its page colors, in order; colors alike the ones before come as
+/// those ([`Handle::cover`]).
+fn colours_in_order(pictures: std::sync::mpsc::Receiver<(Result<Arc<Image>, nori_covers::Error>, Shown)>, mut done: impl FnMut(Result<Arc<Image>, nori_covers::Error>, Option<Box<CoverColours>>, Shown)) {
+    let mut worn: Option<CoverColours> = None;
+    for (r, shown) in pictures {
+        let Ok(image) = r else {
+            done(r, None, shown);
+            continue;
+        };
+        let derived = derive(&image);
+        let c = match worn.take() {
+            Some(before) if before.alike(&derived) => before,
+            _ => derived,
+        };
+        worn = Some(c.clone());
+        done(Ok(image), Some(Box::new(c)), shown);
+    }
+}
+
 /// The same monotonic clock remote handoffs use to close a listen.
 fn monotonic_ms() -> i64 {
     nori_remote::clock::now_us() / 1_000
@@ -2189,5 +2218,47 @@ mod tests {
         asked.1.recv_timeout(Duration::from_secs(10)).expect("the request came");
         drop(loader);
         assert_eq!(closed.1.recv_timeout(Duration::from_secs(5)), Ok(Some(0)), "the client hung up");
+    }
+}
+
+#[cfg(test)]
+mod cover_colours {
+    use super::*;
+
+    /// `side` square, dark blue at the top to `foot` at the bottom, RGBA.
+    fn sleeve(side: u32, foot: [u8; 3]) -> Arc<Image> {
+        let pixels = (0..side * side)
+            .flat_map(|i| {
+                let t = (i / side) as f32 / (side - 1) as f32;
+                let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t) as u8;
+                [mix(20, foot[0]), mix(30, foot[1]), mix(120, foot[2]), 255]
+            })
+            .collect();
+        Arc::new(Image { width: side, height: side, pixels })
+    }
+
+    fn worn(pictures: Vec<(Arc<Image>, Shown)>) -> Vec<(Shown, CoverColours)> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        for (image, shown) in pictures {
+            tx.send((Ok(image), shown)).unwrap();
+        }
+        drop(tx);
+        let mut got = Vec::new();
+        colours_in_order(rx, |r, c, shown| {
+            assert!(r.is_ok());
+            got.push((shown, *c.unwrap()));
+        });
+        got
+    }
+
+    #[test]
+    fn the_cover_wears_its_stand_ins_colours_when_they_are_alike() {
+        let (small, large) = (sleeve(40, [230, 120, 40]), sleeve(160, [230, 120, 40]));
+        let got = worn(vec![(small, Shown::StandIn), (large.clone(), Shown::Own)]);
+        assert_eq!(got[1].1, got[0].1, "the stand-in's, not a second change");
+        assert_eq!(got.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [Shown::StandIn, Shown::Own]);
+        let other = worn(vec![(sleeve(40, [230, 120, 40]), Shown::StandIn), (sleeve(160, [240, 240, 240]), Shown::Own)]);
+        assert_eq!(other[1].1, derive(&sleeve(160, [240, 240, 240])), "another picture: its own");
+        assert_ne!(derive(&large), got[0].1, "the two sizes do differ");
     }
 }

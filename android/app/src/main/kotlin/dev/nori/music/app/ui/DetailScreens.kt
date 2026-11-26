@@ -265,7 +265,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     val whole = rememberPageWhole(detail?.songs.orEmpty(), list.downloaded)
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
-        coverStandIns = listOf(vm.cover(album.coverArt, CoverSize.CARD), vm.cover(album.coverArt, CoverSize.ROW)),
+        coverStandIns = vm.coverStandIns(album.coverArt, CoverSize.FULL),
         item = album.id,
         title = album.name,
         subtitle = album.artist,
@@ -369,7 +369,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
     }
     HeroPage(
         coverUrl = vm.cover(artist.coverArt, CoverSize.FULL),
-        coverStandIns = listOf(vm.cover(artist.coverArt, CoverSize.CARD), vm.cover(artist.coverArt, CoverSize.ROW)),
+        coverStandIns = vm.coverStandIns(artist.coverArt, CoverSize.FULL),
         item = artist.id,
         title = artist.name,
         titleSize = 32.sp,
@@ -486,7 +486,7 @@ private fun PlaylistPage(
     val whole = rememberPageWhole(detail?.songs.orEmpty(), list.downloaded)
     HeroPage(
         coverUrl = vm.cover(playlist.coverArt, CoverSize.FULL),
-        coverStandIns = listOf(vm.cover(playlist.coverArt, CoverSize.CARD), vm.cover(playlist.coverArt, CoverSize.ROW)),
+        coverStandIns = vm.coverStandIns(playlist.coverArt, CoverSize.FULL),
         item = playlist.id,
         title = playlist.name,
         subtitle = remember(playlist.comment, prefs.playlistNotes) { dev.nori.music.ffi.library.playlistDescription(playlist.comment, prefs.playlistNotes) },
@@ -531,7 +531,7 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
         val whole = rememberPageWhole(page.songs, list.downloaded)
         SongListPage(
             name, page.songs, list.downloaded, from, actions,
-            coverUrl = vm.cover(page.coverArt, CoverSize.FULL), coverStandIns = listOf(vm.cover(page.coverArt, CoverSize.ROW)),
+            coverUrl = vm.cover(page.coverArt, CoverSize.FULL), coverStandIns = vm.coverStandIns(page.coverArt, CoverSize.FULL),
             // As a mix's page has it: keep the genre's songs on the account as a playlist.
             afterPlay = { if (LocalRules.current.playlists && page.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(name, page.songs) } },
         ) {

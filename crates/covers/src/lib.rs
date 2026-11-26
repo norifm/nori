@@ -12,7 +12,7 @@ pub mod scale;
 
 pub use decode::{format, header, Decoder, Error as DecodeError, Format, Header};
 pub use disk::{DiskCache, Key};
-pub use loader::{Config, Error, Loader, Paint, Rgba, Ticket};
+pub use loader::{Config, Error, Loader, Paint, Rgba, Shown, Ticket};
 pub use memory::{Image, MemoryCache, Sized};
 pub use scale::{Alpha, Target};
 

@@ -10,7 +10,7 @@ use nori_core::lyrics_follow::LyricsNow;
 use nori_core::remote::wire::DeviceKind;
 use nori_core::search::SearchView;
 use nori_core::settings::{HomeRow, SavedServer};
-use nori_covers::loader::Ticket;
+use nori_covers::loader::{Shown, Ticket};
 use nori_covers::memory::Image;
 use nori_engine::Event;
 use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot};
@@ -47,7 +47,8 @@ pub enum Msg {
     Engine(Event),
     Data(Req, Result<Data, String>),
     /// A decoded cover, with page colours for large sizes.
-    Cover { key: CoverKey, image: Arc<Image>, colours: Option<Box<CoverColours>> },
+    /// A cover's picture, or one standing in for it while it comes.
+    Cover { key: CoverKey, image: Arc<Image>, colours: Option<Box<CoverColours>>, shown: Shown },
     Search(SearchView),
     Lyrics(LyricsNow),
     Facts(Box<crate::settings::Facts>),
@@ -271,11 +272,12 @@ impl Session {
         }
     }
 
-    /// Requests a cover at `px` square, with its page colours where `colours`, derived off this thread.
+    /// Requests a cover at `px` square, with its page colours where `colours`, derived off this thread; its
+    /// other rendition, when kept, stands in until it comes.
     pub fn cover(&self, key: CoverKey, px: u32, colours: bool) -> Option<Ticket> {
         let send = self.sender();
-        self.host.cover(key.id.clone(), px, colours, move |image, colours| {
-            if let Ok(image) = image { send(Msg::Cover { key, image, colours }); }
+        self.host.cover(key.id.clone(), px, colours, move |image, colours, shown| {
+            if let Ok(image) = image { send(Msg::Cover { key: key.clone(), image, colours, shown }); }
         })
     }
 
