@@ -5,6 +5,16 @@ here="$(cd "$(dirname "$0")" && pwd)"
 cd "$here/.."
 case "${1:-}" in
   rust) shift; exec python3 "$here/with-resource.py" build cargo nextest run --build-jobs 4 --test-threads 4 "$@" ;;
+  # Tests and clippy of the crates this worktree's change reaches (tools/affected.py), against where it
+  # left master; the whole workspace when the change reaches every crate.
+  changed)
+    base=$(git merge-base origin/master HEAD)
+    crates=$( { git diff --name-only "$base"; git ls-files --others --exclude-standard; } | python3 "$here/affected.py")
+    # shellcheck disable=SC2086 # one word per flag
+    python3 "$here/with-resource.py" build cargo nextest run --build-jobs 4 --test-threads 4 ${crates:---workspace}
+    # shellcheck disable=SC2086
+    exec python3 "$here/with-resource.py" build cargo clippy -j4 ${crates:---workspace} --all-targets -- -D warnings ;;
+  clippy) shift; exec python3 "$here/with-resource.py" build cargo clippy -j4 --all-targets "$@" -- -D warnings ;;
   rust-doc) shift; exec python3 "$here/with-resource.py" build cargo test -j4 --doc "$@" ;;
   web)
     # CI's wasm clippy, both modules; the NDK's clang builds the wasm C parts.
@@ -18,5 +28,5 @@ case "${1:-}" in
   ipod) exec python3 "$here/with-resource.py" build cargo clippy -j4 -p nori-ios --all-targets -- -D warnings ;;
   android) shift; exec python3 "$here/with-resource.py" build ./gradlew :app:assembleDebug "$@" ;;
   bazel) shift; exec python3 "$here/with-resource.py" build bazel "$@" ;;
-  *) echo "usage: check.sh rust [--workspace|-p CRATE ...]|rust-doc [...]|web|ipod|android [GRADLE OPTIONS]|bazel COMMAND [...]" >&2; exit 2 ;;
+  *) echo "usage: check.sh changed|rust [--workspace|-p CRATE ...]|clippy [--workspace|-p CRATE ...]|rust-doc [...]|web|ipod|android [GRADLE OPTIONS]|bazel COMMAND [...]" >&2; exit 2 ;;
 esac

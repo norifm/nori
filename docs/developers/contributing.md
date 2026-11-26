@@ -20,14 +20,22 @@ Two rules shape most changes:
 
 ## Before you commit
 
-Run the checks that your change reaches:
+Before each commit, run the tests and clippy of the crates that your change reaches:
 
-| Your change | Run |
+```sh
+tools/check.sh changed
+```
+
+Before a batch of commits goes to master, or before you mark a pull request ready, run the checks that
+the batch reaches:
+
+| The batch changes | Run |
 |---|---|
-| Any change | `cargo test -j4 --workspace` and a build |
-| Rust code | `cargo clippy -j4 --workspace --all-targets -- -D warnings` |
+| Anything | `tools/check.sh rust --workspace` and `tools/check.sh clippy --workspace` |
 | A crate the web or iPod clients use (core, host, engine, remote) | `tools/check.sh web` and `tools/check.sh ipod` |
-| Code that reaches Android | `tools/smoke.sh`, and the `--only` sections of `tools/audio-e2e.sh` and `tools/feature-e2e.sh` that it touches |
+| Code that reaches Android | `tools/check.sh android`, `tools/smoke.sh`, and the `--only` sections of `tools/audio-e2e.sh` and `tools/feature-e2e.sh` that it touches |
+
+`tools/check.sh` runs one heavy build at a time across worktrees. Two at once make the machine swap.
 
 CI fails on any clippy warning. `tools/audio-e2e.sh --list` and `tools/feature-e2e.sh --list` name the
 sections. [Testing](testing.md) explains the device checks and the emulator they need.

@@ -13,12 +13,13 @@ Run the tiers that match your change:
 
 | Tier | Covers | Command | When to run |
 | --- | --- | --- | --- |
-| Rust tests | Every Rust test, doctests included | `cargo test -j4 --workspace` | Every change |
-| Clippy | Every warning, as CI's errors | `cargo clippy -j4 --workspace --all-targets -- -D warnings` | Every Rust change |
-| Web and iPod clippy | What a workspace build misses | `tools/check.sh web`, `tools/check.sh ipod` | Changes to core, host, engine or remote |
+| Changed crates | The tests and clippy of the crates a change reaches | `tools/check.sh changed` | Every commit |
+| Rust tests | Every Rust test | `tools/check.sh rust --workspace` | Once per batch of changes |
+| Clippy | Every warning, as CI's errors | `tools/check.sh clippy --workspace` | Once per batch of changes |
+| Web and iPod clippy | What a workspace build misses | `tools/check.sh web`, `tools/check.sh ipod` | Once per batch that changes core, host, engine or remote |
 | Kotlin unit tests | The Kotlin logic, with no device | `./gradlew :core:testDebugUnitTest :app:testDebugUnitTest` | Kotlin changes |
-| Smoke check | The Android glue, in about two minutes | `tools/smoke.sh` | Every change that reaches Android |
-| Touched sections | The device sections a change touches | `tools/audio-e2e.sh --only …`, `tools/feature-e2e.sh --only …` | Before you commit an Android change |
+| Smoke check | The Android glue, in about two minutes | `tools/smoke.sh` | Once per batch that reaches Android |
+| Touched sections | The device sections a change touches | `tools/audio-e2e.sh --only …`, `tools/feature-e2e.sh --only …` | Once per batch that reaches Android |
 | Full device suites | Every device check | `tools/audio-e2e.sh`, `tools/feature-e2e.sh` | Once per batch of changes |
 | Web browser checks | The worker, the AudioWorklet, the pages | `node web/check/check.mjs` | Web client changes |
 

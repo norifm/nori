@@ -6,9 +6,11 @@ performance come first; the UI speaks nori's own design language, Nori Seasons (
 ## Commands
 
 ```sh
-cargo test -j4 --workspace                          # all Rust tests; never -j above 4 (the machine runs out of memory)
-cargo test -j4 -p <crate>                           # one crate while iterating
-tools/check.sh rust --workspace                     # nextest, queued across worktrees; doctests separately
+cargo test -j4 -p <crate>                           # one crate while iterating; never -j above 4 (the machine runs out of memory)
+tools/check.sh changed                              # tests and clippy of the crates the change reaches; each commit
+tools/check.sh rust --workspace                     # every Rust test (nextest), queued across worktrees; once per batch
+tools/check.sh clippy --workspace                   # none; CI fails on any; once per batch
+tools/check.sh rust-doc --workspace                 # doctests
 tools/check.sh web                                  # CI's wasm clippy of both web modules
 tools/check.sh ipod                                 # the iPod crate alone: its host without the desktop parts
 tools/check.sh android                              # queued debug APK with incremental optimized Rust
@@ -18,7 +20,6 @@ python3 tools/rust.py test -p nori-player            # Bazel tests for one crate
 python3 tools/rust.py build -p nori-desktop          # optional Bazel native desktop build
 python3 tools/rust.py run -p nori-cli                # optional Bazel terminal client
 cargo test -p nori-player --test pipeline    # player end to end on a virtual clock
-cargo clippy -j4 --workspace --all-targets -- -D warnings  # none; CI fails on any
 cargo +nightly check -p nori-player -p nori-model -p nori-remote -p nori-sink-protocol --no-default-features --target riscv32imafc-unknown-none-elf  # still no_std
 ./gradlew :app:compileDebugKotlin -PrustTargets=arm64-v8a    # Kotlin compiles (this Mac's emulator is arm64)
 ./gradlew :app:assembleDebug -PrustTargets=arm64-v8a         # debug APK for the emulator
@@ -34,11 +35,15 @@ tools/ipod.sh [build install run]                   # the iPod app's .ipa, built
 tools/ipod-bench.sh nori|music                      # iPod battery/CPU for 30 min, unplugged, SSH over Wi-Fi (NORI_IPOD_HOST)
 ```
 
-Before committing: `cargo test -j4 --workspace` and a build; `tools/check.sh web` and `tools/check.sh ipod`
-when it touches a crate those clients use (core, host, engine, remote): natively nori-web is empty, and
-a workspace build gives the host the desktop parts the iPod leaves out. If the change reaches Android, also
-`tools/smoke.sh` plus the `--only` sections it touches. The full e2e suites run once per batch.
-Use `tools/check.sh` or `tools/with-resource.py build <command>` for heavy commands across agents.
+Each commit: `tools/check.sh changed` (the tests and clippy of the crates it reaches), and for Kotlin
+`tools/with-resource.py build ./gradlew :app:compileDebugKotlin`. Once per batch, before it goes to
+master or a PR is marked ready: `tools/check.sh rust --workspace` and `tools/check.sh clippy --workspace`;
+`tools/check.sh web` and `tools/check.sh ipod` when the batch touches a crate those clients use (core,
+host, engine, remote): natively nori-web is empty, and a workspace build gives the host the desktop
+parts the iPod leaves out; if it reaches Android, `tools/check.sh android`, `tools/smoke.sh` and the
+`--only` sections it touches. The full e2e suites run once per batch. Heavy commands (a workspace cargo
+run, Gradle, a wasm build) go through `tools/check.sh` or `tools/with-resource.py build <command>`,
+never straight to cargo: two at once make the machine swap.
 Device scripts lease their emulator; `tools/device-check.sh` allocates from `NORI_E2E_DEVICES`.
 Multiple emulators are supported, with isolated fixture accounts and ports. See docs/developers/building.md.
 
