@@ -80,7 +80,7 @@ debugger's variables, set `CARGO_PROFILE_DEV_DEBUG=true` for that session.
 ### Build the debug APK and install it on the emulator
 
 You need the Android prerequisites and an Android Virtual Device (AVD). `tools/test-avd.sh` makes
-`nori-test`: an Automated Test Device image with no Play services, a 720 × 1280 screen, 2 GB and 2 cores.
+`nori-test`: the plain AOSP image with no Play services, a 720 × 1280 screen, 2 GB and 2 cores.
 
 1. Start the emulator headless: `tools/emulator.sh nori-test 5554`.
 
