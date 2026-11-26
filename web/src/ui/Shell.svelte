@@ -117,6 +117,13 @@
     background: var(--page);
     color: var(--ink);
   }
+  /* The desktop's gutter: 3.2 % of the page between 32 and 40 px, wider past a page 1520 px wide so what
+     it holds is 1440 px at most. */
+  @media (min-width: 720px) {
+    .shell {
+      --gutter: max(clamp(32px, 100vw * 0.032, 40px), (100vw - 1440px) / 2);
+    }
+  }
   /* The page scrolls under the chrome, which floats over it. */
   main {
     position: fixed;

@@ -315,6 +315,12 @@
   .root {
     margin: 10px -4px 0;
   }
+  /* As chips, the desktop's: 16 px under the title, 12 over what the page shows. */
+  @media (min-width: 720px) and (max-width: 1279px) {
+    .tabs {
+      margin: 0 0 12px;
+    }
+  }
   .group {
     margin: 0 -4px;
   }

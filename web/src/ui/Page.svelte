@@ -17,7 +17,7 @@
   });
 </script>
 
-<div class="page" class:narrow>
+<div class="page" class:narrow class:has-back={back} class:titled={!!title}>
   {#if back}<button class="glyph back" aria-label={W.back} title={W.back} onclick={() => history.back()}><Icon name="arrow-left" /></button>{/if}
   {#if title}
     <header class="page-head">
@@ -97,5 +97,51 @@
     line-height: 24px;
     letter-spacing: -0.2px;
     margin: 30px 0 14px;
+  }
+  /* The desktop's frame on a wide window: the title 84 px down, the way back a disc beside it (or alone
+     above what the page shows, which starts 140 px down). */
+  @media (min-width: 720px) {
+    .page {
+      position: relative;
+    }
+    .page.has-back:not(.titled) {
+      padding-top: 140px;
+    }
+    .back {
+      position: absolute;
+      top: 87px;
+      left: var(--gutter);
+      width: 40px;
+      height: 40px;
+      margin: 0;
+      border: 1px solid var(--outline);
+      background: color-mix(in srgb, var(--page) 70%, transparent);
+    }
+    .narrow .back {
+      left: 0;
+    }
+    .back :global(.icon) {
+      width: 20px;
+      height: 20px;
+    }
+    .page-head {
+      margin: -1px 0 17px;
+    }
+    .has-back .page-head {
+      padding-left: 52px;
+    }
+    /* A page of one column (Settings) stands its title 8 px higher, as the desktop's. */
+    .narrow:not(.has-back) .page-head {
+      margin-top: -9px;
+    }
+    h1 {
+      line-height: 52px;
+      letter-spacing: -0.5px;
+    }
+    .page :global(h2.section) {
+      font-size: 21px;
+      line-height: 32px;
+      margin: 26px 0 14px;
+    }
   }
 </style>

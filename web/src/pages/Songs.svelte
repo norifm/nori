@@ -32,7 +32,7 @@
   }
 </script>
 
-<Page title={W.songs} back places ready={!!page.data} error={page.error}>
+<Page title={W.songs} back={!ui.wide} places ready={!!page.data} error={page.error}>
   {#snippet head()}
     <div class="actions">
       <button class="pill small" onclick={() => void player.play(page.data ?? [], 0, false, "Songs", "")}><Icon name="play-solid" />{W.play}</button>

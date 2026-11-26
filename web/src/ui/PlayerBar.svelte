@@ -84,7 +84,7 @@
   .song {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     min-width: 0;
   }
   .art {
@@ -131,6 +131,9 @@
     flex-direction: column;
     align-items: stretch;
   }
+  .middle :global(.inline) {
+    gap: 8px;
+  }
   .middle :global(.time) {
     font-size: 11px;
     min-width: 34px;
@@ -139,11 +142,20 @@
   .middle :global(.track) {
     height: 3px;
   }
+  /* As the desktop's: a 3 px track that grows to 5 under the pointer, its playhead a 4 px dot grown to 12. */
+  .middle :global(.bar:hover .track),
+  .middle :global(.bar:active .track) {
+    height: 5px;
+  }
   .middle :global(.run::after) {
-    width: 8px;
-    height: 8px;
-    right: -4px;
-    top: -2.5px;
+    width: 4px;
+    height: 4px;
+    right: -2px;
+    top: calc(50% - 2px);
+  }
+  .middle :global(.bar:hover .run::after),
+  .middle :global(.bar:active .run::after) {
+    transform: scale(3);
   }
   .right {
     display: flex;
@@ -173,7 +185,19 @@
   .right :global(.vol) {
     margin-left: 4px;
   }
-  @media (max-width: 899px) {
+  /* The volume as the desktop's: a bar in a tenth of the ink, filled with the ink, no knob. */
+  .right :global(.vol .range) {
+    background: linear-gradient(to right, var(--ink) var(--v, 0%), color-mix(in srgb, var(--ink) 10%, transparent) var(--v, 0%)) center / 100% 3px no-repeat;
+  }
+  .right :global(.vol .range::-webkit-slider-thumb) {
+    background: transparent;
+    box-shadow: none;
+  }
+  .right :global(.vol .range::-moz-range-thumb) {
+    background: transparent;
+  }
+  /* No volume slider in a bar under 900 px (the window under 932). */
+  @media (max-width: 931px) {
     .right :global(.vol) {
       display: none;
     }

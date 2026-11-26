@@ -52,4 +52,17 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+  /* The desktop's caption: the title 8 px under the cover, the line 18 px under it, 46 px in all. */
+  @media (min-width: 720px) {
+    .card {
+      padding-bottom: 4px;
+    }
+    .title {
+      line-height: 18px;
+    }
+    .round .title {
+      margin-top: 8px;
+      font-weight: 500;
+    }
+  }
 </style>

@@ -1,5 +1,6 @@
 <script lang="ts">
   // What carries the seal: artists, albums and songs.
+  import { ui } from "../state/ui.svelte";
   import { read } from "../rpc";
   import { reading } from "../state/library.svelte";
   import type { Album, Artist, Song } from "../state/types";
@@ -13,7 +14,7 @@
   const d = $derived(page.data);
 </script>
 
-<Page title={W.favorites} back places ready={!!d} error={page.error}>
+<Page title={W.favorites} back={!ui.wide} places ready={!!d} error={page.error}>
   {#if d}
     {#if d.artists?.length}<h2 class="section">{W.artists}</h2><Cards artists={d.artists} row />{/if}
     {#if d.albums?.length}<h2 class="section">{W.albums}</h2><Cards albums={d.albums} />{/if}

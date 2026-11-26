@@ -66,19 +66,21 @@
 <!-- Midnight wears none: it goes as the colors do. -->
 {#if own}<div class="head-wash" aria-hidden="true" out:fade={{ duration: still() ? 0 : RECOLOR_MS }}><canvas bind:this={washed}></canvas></div>{/if}
 <div class="hero" class:circle={round}>
-  <div class="art" {...item}><Cover src={cover} {round} radius="var(--r-card)" {fallback} /></div>
+  <div class="art" {...item}><Cover src={cover} {round} radius="var(--hero-art)" {fallback} /></div>
   <div class="text">
     <h1 {...item}>{title}</h1>
     {#if by}<div class="by">{@render by()}</div>{/if}
-    {#if label}<div class="label">{label}</div>{/if}
+    {#if label && !ui.wide}<div class="label">{label}</div>{/if}
     <div class="hero-actions">
       <button class="pill" disabled={!playable} onclick={() => onplay(false)}><Icon name="play-solid" />{W.play}</button>
-      <button class="pill quiet" disabled={!playable} onclick={() => onplay(true)}><Icon name="shuffle" />{W.shuffle}</button>
+      <button class="pill quiet shuffle" disabled={!playable} aria-label={W.shuffle} title={W.shuffle} onclick={() => onplay(true)}><Icon name="shuffle" /><span>{W.shuffle}</span></button>
       <span class="grow"></span>
       {@render actions?.()}
     </div>
   </div>
 </div>
+<!-- On a wide window what the list holds stands on a line of its own over it, as the desktop's. -->
+{#if ui.wide}<div class="info clip">{label}</div>{/if}
 
 <style>
   /* Across the top of the page that scrolls (main), behind its head: drawn small and stretched, as it is
@@ -110,6 +112,7 @@
     background: linear-gradient(color-mix(in srgb, var(--page) 15%, transparent), color-mix(in srgb, var(--page) 55%, transparent) 55%, var(--page));
   }
   .hero {
+    --hero-art: var(--r-card);
     display: flex;
     align-items: flex-end;
     gap: 32px;
@@ -153,6 +156,66 @@
   }
   .grow {
     flex: 1;
+  }
+  /* The desktop's head on a wide window: the cover 270 px, the name 70 px down its side, the buttons at its
+     foot: Shuffle a bare glyph before Play, as on Android. */
+  @media (min-width: 720px) {
+    .hero {
+      --hero-art: 8px;
+      align-items: stretch;
+      gap: 28px;
+      margin-bottom: 26px;
+    }
+    .art {
+      width: 270px;
+    }
+    .text {
+      gap: 2px;
+      padding-top: 70px;
+    }
+    h1 {
+      font-size: 30px;
+      letter-spacing: -0.3px;
+    }
+    .by {
+      color: var(--ink);
+    }
+    .hero-actions {
+      gap: 6px;
+      margin-top: auto;
+      padding-top: 16px;
+    }
+    .hero-actions .pill {
+      min-width: 180px;
+      padding: 0 24px;
+    }
+    .hero-actions .shuffle {
+      order: -1;
+      min-width: 48px;
+      width: 48px;
+      height: 48px;
+      padding: 0;
+      background: none;
+    }
+    .shuffle :global(.icon) {
+      width: 24px;
+      height: 24px;
+    }
+    .shuffle span {
+      display: none;
+    }
+    .hero-actions :global(.glyph .icon) {
+      width: 24px;
+      height: 24px;
+    }
+    .info {
+      height: 49px;
+      line-height: 48px;
+      margin-bottom: 26px;
+      border-bottom: 1px solid var(--hair);
+      font-size: 13px;
+      color: var(--ink2);
+    }
   }
   @media (max-width: 719px) {
     .hero {

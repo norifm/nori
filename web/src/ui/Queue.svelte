@@ -311,4 +311,49 @@
     color: var(--ink2);
     padding: 24px 8px;
   }
+  /* The desktop's measures on a wide window: rows 54 px high, the cover 7 px in, the captions small. */
+  @media (min-width: 720px) {
+    .top {
+      padding: 0 0 4px 8px;
+    }
+    .clear {
+      min-height: 28px;
+      padding: 0 10px;
+    }
+    .head {
+      padding: 10px 8px 4px;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
+    .queue {
+      padding-top: 0;
+      mask-image: linear-gradient(#000 calc(100% - 64px), transparent);
+    }
+    .row {
+      border-radius: 15px;
+    }
+    .row.past {
+      opacity: 0.45;
+    }
+    .play {
+      gap: 12px;
+      padding: 7px 4px 7px 7px;
+    }
+    .title {
+      font-size: 14px;
+      line-height: 18px;
+    }
+    .text :global(.sub) {
+      font-size: 12px;
+      line-height: 16px;
+    }
+    .tool {
+      width: 26px;
+      height: 26px;
+    }
+    .tool :global(.icon) {
+      width: 13px;
+      height: 13px;
+    }
+  }
 </style>

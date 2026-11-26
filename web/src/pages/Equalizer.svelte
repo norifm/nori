@@ -121,6 +121,8 @@
   }
 </script>
 
+<!-- As wide as the top bar, as the desktop's. -->
+<div class="column">
 <Page title={W.equalizer} back narrow ready={!!eq} error={failed}>
   {#snippet head()}
     {#if eq}<input type="checkbox" class="switch" aria-label={W.equalizer} checked={eq.on} onchange={(e) => void set("eq", e.currentTarget.checked ? "true" : "false")} />{/if}
@@ -221,6 +223,7 @@
     </div>
   {/if}
 </Page>
+</div>
 
 <!-- A band's value at its row's end, typed: Enter or leaving it hands it to the core, Escape puts it back. -->
 {#snippet number(name: string, shown: string, key: "freq" | "gain" | "q")}
@@ -445,5 +448,9 @@
   }
   .level .range {
     width: 100%;
+  }
+  .column {
+    display: contents;
+    --column: 1040px;
   }
 </style>
