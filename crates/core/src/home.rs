@@ -142,6 +142,26 @@ mod tests {
     }
 
     #[test]
+    fn a_rows_full_view_opens_on_what_its_shelf_shows() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        let list = |ids: &[&str]| {
+            let albums: Vec<String> = ids.iter().map(|id| format!(r#"{{"id":"{id}","name":"{id}"}}"#)).collect();
+            format!(r#"{{"subsonic-response":{{"status":"ok","albumList2":{{"album":[{}]}}}}}}"#, albums.join(","))
+        };
+        let first_page = shelf_read(&crate::browse::home_row_page(HomeRow::Newest, 0).unwrap()).unwrap();
+        // The full view opened once, then albums were added and Home showed them.
+        fake.answer(&list(&["a", "b"]));
+        block(c.read_fetch(first_page.clone(), None)).unwrap();
+        fake.answer(&list(&["c", "a", "b"]));
+        block(c.read_fetch(shelf_read(&home_shelves(vec![HomeRow::Newest])[0]).unwrap(), None)).unwrap();
+
+        let shelf = albums(&c.home_kept(vec![HomeRow::Newest], false).unwrap().shelves[0]);
+        let opened = c.read_stored(first_page).unwrap().page.map(|p| p.albums().into_iter().map(|a| a.id).collect::<Vec<_>>());
+        assert_eq!(shelf, ["c", "a", "b"]);
+        assert_eq!(opened, Some(shelf), "the full view's first page is the shelf's own");
+    }
+
+    #[test]
     fn a_refresh_brings_only_what_changed() {
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
         let queue = |at: u32| format!(r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"current":"a","position":{at},"changedBy":"x","entry":[{{"id":"a","title":"A","isDir":false}}]}}}}}}"#);

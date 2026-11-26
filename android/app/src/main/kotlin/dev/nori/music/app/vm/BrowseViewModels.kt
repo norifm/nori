@@ -334,10 +334,14 @@ class HomeRowViewModel(app: Application) : NoriViewModel(app) {
             }
             when (val shelf = dev.nori.music.ffi.library.homeRowPage(row, offset.toUInt())) {
                 null -> false
+                // The stored page, then the server's when that one is stale.
                 is HomeShelf.Albums -> {
-                    val got = nori.library.shelfAlbums(shelf, offset).first()
-                    albums = albums.from(offset, got)
-                    _entries.value = RowEntries.Albums(albums)
+                    var got = emptyList<Album>()
+                    nori.library.shelfAlbums(shelf, offset).collect { page ->
+                        got = page
+                        albums = albums.from(offset, page)
+                        _entries.value = RowEntries.Albums(albums)
+                    }
                     dev.nori.music.ffi.library.homeRowMore(shelf, got.size.toUInt())
                 }
                 is HomeShelf.Songs -> {
