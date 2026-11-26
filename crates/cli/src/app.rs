@@ -51,6 +51,8 @@ pub enum View {
     Favorites,
     Downloads,
     History,
+    /// The listening stats, from History.
+    Stats,
     Equalizer,
     Settings,
     /// Supporting nori, from About.
@@ -74,6 +76,7 @@ impl View {
             View::Genres => "Genres",
             View::Favorites => "Favorites",
             View::History => "History",
+            View::Stats => "Listening",
             View::Downloads => "Downloads",
             View::Equalizer => "Equalizer",
             View::Settings => "Settings",
@@ -195,6 +198,8 @@ pub enum Cmd {
     SearchUsed,
     /// A kind chip picked (None: All).
     SearchPick(Option<nori_core::search::SearchKind>),
+    /// Forgets what this device played (`Core::history_clear`); the history is read again after it.
+    ClearHistory,
     /// The song heard's lyrics looked up again.
     LyricsRefresh,
     /// The playing song cover by id, and the colors the player wears from it.
@@ -454,7 +459,7 @@ pub enum Page {
     Album { id: String, detail: Load<Box<AlbumDetail>>, sel: Sel },
     DownloadedAlbum { id: String, detail: Load<Box<AlbumDetail>>, sel: Sel },
     Artist { id: String, detail: Load<Box<ArtistDetail>>, sel: Sel },
-    Playlist { id: String, detail: Load<Box<PlaylistDetail>>, sel: Sel },
+    Playlist { id: String, detail: Load<Box<PlaylistDetail>>, sel: Sel, filter: Filter },
     /// One of the core's mixes, or the favorites.
     Mix { id: String, detail: Load<Box<MixSheet>>, sel: Sel },
     /// A genre's songs, by its name.
@@ -488,7 +493,7 @@ impl Page {
         match self {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
             Page::Artist { detail, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { artist_lines(d).len() }),
-            Page::Playlist { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
+            Page::Playlist { detail, filter, .. } => detail.ready().map_or(0, |d| filter.songs(&d.songs).len()),
             Page::Mix { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
             Page::Genre { songs, .. } => songs.ready().map_or(0, Vec::len),
             Page::Row { items, .. } => items.len(),
@@ -506,6 +511,59 @@ impl Page {
             Page::Artist { detail, .. } => detail.ready().filter(|d| d.albums.is_empty()).map(|d| d.songs.as_slice()),
             Page::Row { .. } => None,
         }
+    }
+}
+
+/// A list's filter, typed after `/`: its text, and whether keys go to it. A row stays when the core's `Find`
+/// keeps it; a long playlist offers one (`pages::filter_offered`), the artists always, as Android's.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Filter {
+    pub text: String,
+    pub typing: bool,
+}
+
+impl Filter {
+    /// Typed into, or holding words.
+    pub fn shown(&self) -> bool {
+        self.typing || !self.text.is_empty()
+    }
+
+    /// The places in `songs` it keeps.
+    pub fn songs(&self, songs: &[Song]) -> Vec<usize> {
+        let find = nori_core::pages::Find::new(&self.text);
+        (0..songs.len()).filter(|&i| find.keeps_song(&songs[i])).collect()
+    }
+
+    /// The places in `artists` it keeps, by name.
+    pub fn artists(&self, artists: &[Artist]) -> Vec<usize> {
+        let find = nori_core::pages::Find::new(&self.text);
+        (0..artists.len()).filter(|&i| find.keeps(&[&artists[i].name])).collect()
+    }
+}
+
+/// The listening stats (from History): how far back and whose plays they count, how the server account's
+/// plays stood once asked for (once a visit), what was read, and the line the page is scrolled to.
+pub struct Stats {
+    pub period: nori_core::browse::StatsPeriod,
+    pub source: nori_core::browse::StatsSource,
+    pub server: Option<nori_core::browse::ServerHistory>,
+    pub page: Load<Box<nori_core::browse::StatsPage>>,
+    pub sel: Sel,
+    /// The lines it scrolls through, from the last frame.
+    pub room: usize,
+}
+
+impl Default for Stats {
+    fn default() -> Self {
+        Stats { period: nori_core::browse::StatsPeriod::OPENED, source: nori_core::browse::StatsSource::Device, server: None, page: Load::Idle, sel: Sel::default(), room: 1 }
+    }
+}
+
+impl Stats {
+    /// The read of what is chosen; the server account's new plays are asked for the first time they show.
+    fn req(&self) -> Req {
+        let sync = self.source == nori_core::browse::StatsSource::ServerAccount && self.server.is_none();
+        Req::Stats { period: self.period, source: self.source, sync }
     }
 }
 
@@ -648,6 +706,7 @@ pub struct Library {
     pub album_shelves: Vec<u32>,
     pub artists: Load<Vec<Artist>>,
     pub artists_sel: Sel,
+    pub artists_filter: Filter,
     pub playlists: Load<Vec<Playlist>>,
     pub genres: Load<Vec<nori_core::browse::GenreTile>>,
     pub genres_sel: Sel,
@@ -680,6 +739,7 @@ impl Default for Library {
             album_shelves: Vec::new(),
             artists: Load::Idle,
             artists_sel: Sel::default(),
+            artists_filter: Filter::default(),
             playlists: Load::Idle,
             genres: Load::Idle,
             genres_sel: Sel::default(),
@@ -1418,6 +1478,12 @@ pub enum Button {
     /// Plays the queue offered on Home, or turns it down.
     Resume,
     Dismiss,
+    /// History's listening stats, and forgetting what it lists.
+    Stats,
+    ClearHistory,
+    /// The listening stats' choices: whose plays, how far back (by index into their `ALL`).
+    StatsSource(u8),
+    StatsPeriod(u8),
 }
 
 /// Layout facts from the last frame: the full player's panel width, and whether a clock shows.
@@ -1471,6 +1537,7 @@ pub struct App {
     pub queue_sel: Sel,
     pub downloads: Load<Box<Downloads>>,
     pub downloads_sel: Sel,
+    pub stats: Stats,
     pub downloads_at: Option<Instant>,
     /// What the downloads are doing, for the line along the bottom, and when to read it again.
     pub work: Option<Box<nori_core::transfers::Progress>>,
@@ -1660,9 +1727,10 @@ impl App {
     /// albums under a line for each artist.
     pub fn library_lines(&self) -> Vec<LibLine> {
         let l = &self.library;
+        let kept = (self.view == View::Artists).then(|| l.artists.ready().map(|v| l.artists_filter.artists(v)).unwrap_or_default());
         let entries = match self.view {
             View::Albums => l.albums.ready().map_or(0, Vec::len),
-            View::Artists => l.artists.ready().map_or(0, Vec::len),
+            View::Artists => kept.as_ref().map_or(0, Vec::len),
             View::Songs => l.songs.ready().map_or(0, Vec::len),
             View::Playlists => l.playlists.ready().map_or(0, Vec::len),
             View::Genres => l.genres.ready().map_or(0, Vec::len),
@@ -1679,6 +1747,8 @@ impl App {
                 out.push(LibLine::Shelf(start));
                 out.extend((start..end).map(LibLine::Entry));
             }
+        } else if let Some(kept) = kept {
+            out.extend(kept.into_iter().map(LibLine::Entry));
         } else {
             out.extend((0..entries).map(LibLine::Entry));
         }
@@ -1721,7 +1791,7 @@ impl App {
     pub fn reaches(&self, view: View) -> bool {
         match view {
             View::Downloads => self.rules.sections.contains(&LibrarySection::Downloads),
-            View::History => self.rules.sections.contains(&LibrarySection::History),
+            View::History | View::Stats => self.rules.sections.contains(&LibrarySection::History),
             View::Favorites => self.rules.stars,
             View::Home | View::Search | View::Equalizer | View::Settings | View::Support | View::Login => true,
             v => self.sections().contains(&v),
@@ -1757,6 +1827,8 @@ impl App {
         self.focus = Focus::Main;
         self.follow_sound_page();
         self.dirty = true;
+        // A list opens unfiltered.
+        self.library.artists_filter = Filter::default();
         // What the downloads weigh, beside their place.
         if self.sections().contains(&view) && self.places(view).contains(&Place::Downloads) {
             self.cmds.push(Cmd::Load(Req::DownloadsSize));
@@ -1808,6 +1880,10 @@ impl App {
                 self.cmds.push(Cmd::Load(Req::Favorites));
             }
             View::Downloads => self.cmds.push(Cmd::Load(Req::Downloads)),
+            View::Stats => {
+                self.stats = Stats { page: Load::Loading, ..Stats::default() };
+                self.cmds.push(Cmd::Load(self.stats.req()));
+            }
             View::Settings if !self.settings.facts_asked => {
                 self.settings.facts_asked = true;
                 self.cmds.push(Cmd::Load(Req::Facts));
@@ -1844,7 +1920,7 @@ impl App {
     }
 
     pub(crate) fn open_playlist(&mut self, id: String) {
-        self.open_page(Page::Playlist { id, detail: Load::Loading, sel: Sel::default() });
+        self.open_page(Page::Playlist { id, detail: Load::Loading, sel: Sel::default(), filter: Filter::default() });
     }
 
     /// The topmost opened page.
@@ -2314,6 +2390,15 @@ impl App {
                     l.history = Load::Failed(e);
                 }
             }
+            (Req::Stats { period, source, .. }, r) if (period, source) != (self.stats.period, self.stats.source) || self.view != View::Stats => {
+                drop(r);
+                self.dirty = false;
+            }
+            (Req::Stats { .. }, Ok(Data::Stats(page, server))) => {
+                self.stats.server = server.or(self.stats.server);
+                self.stats.page = Load::Ready(page);
+            }
+            (Req::Stats { .. }, Err(e)) => self.stats.page = Load::Failed(e),
             (Req::DownloadsSize, Ok(Data::DownloadsSize(bytes))) => self.library.downloads_bytes = Some(bytes),
             (Req::DownloadsSize, Err(_)) => self.dirty = false,
             (Req::Downloads, Ok(Data::Downloads(d))) => {
@@ -2503,6 +2588,10 @@ impl App {
             self.search_key(k);
             return;
         }
+        if self.filter_mut().is_some_and(|f| f.typing) {
+            self.filter_key(k);
+            return;
+        }
         if let Some(a) = action(&k, self.scopes()) {
             self.do_action(a);
         } else {
@@ -2576,6 +2665,67 @@ impl App {
             }
             _ => self.dirty = false,
         }
+    }
+
+    /// The filter of the list in front, where it has one: a long playlist's (or one being filtered), or the
+    /// artists'.
+    pub fn filter_mut(&mut self) -> Option<&mut Filter> {
+        if self.full || self.focus != Focus::Main || self.overlay.is_some() {
+            return None;
+        }
+        if !self.pages.is_empty() {
+            return match self.pages.last_mut()? {
+                Page::Playlist { detail: Load::Ready(d), filter, .. } if nori_core::pages::filter_offered(d.songs.len() as u32, filter.shown()) => Some(filter),
+                _ => None,
+            };
+        }
+        (self.view == View::Artists && self.library.artists.ready().is_some()).then_some(&mut self.library.artists_filter)
+    }
+
+    /// Typing into a list's filter: the list narrows with each key; enter keeps it, esc clears it, and `/` in
+    /// an empty one goes on to Search.
+    fn filter_key(&mut self, k: KeyEvent) {
+        let control = k.modifiers.contains(KeyModifiers::CONTROL);
+        let Some(f) = self.filter_mut() else { return };
+        match k.code {
+            KeyCode::Esc => *f = Filter::default(),
+            KeyCode::Enter | KeyCode::Down | KeyCode::Tab => f.typing = false,
+            KeyCode::Char('/') if f.text.is_empty() => {
+                *f = Filter::default();
+                self.go(View::Search);
+                self.search.editing = true;
+                return;
+            }
+            KeyCode::Backspace => {
+                f.text.pop();
+            }
+            KeyCode::Char('u') if control => f.text.clear(),
+            KeyCode::Char(c) if !control => f.text.push(c),
+            _ => return self.dirty = false,
+        }
+        // The narrowed list starts at its top.
+        match self.pages.last_mut() {
+            Some(p) => *p.sel() = Sel::default(),
+            None => {
+                self.library.artists_sel = Sel::default();
+                self.onto_entries(View::Artists);
+            }
+        }
+    }
+
+    /// The listening stats of `source`'s plays in `period`, read.
+    fn stats_choose(&mut self, period: nori_core::browse::StatsPeriod, source: nori_core::browse::StatsSource) {
+        (self.stats.period, self.stats.source) = (period, source);
+        self.cmds.push(Cmd::Load(self.stats.req()));
+    }
+
+    /// Forgets what this device played, and lists the history again.
+    fn clear_history(&mut self) {
+        self.cmds.push(Cmd::ClearHistory);
+        self.library.history = Load::Loading;
+        self.library.history_sel = Sel::default();
+        self.library.history_pages.reset();
+        self.cmds.extend(self.library.history_pages.ask().map(|after| Cmd::Load(Req::History(after))));
     }
 
     /// What the first screen lists: the kinds a profile can be of, then what the repos offer that isn't on.
@@ -3230,10 +3380,16 @@ impl App {
             Action::SeekForwardLong => self.seek_by(30_000, now),
             Action::VolumeUp => self.set_volume(self.volume + 0.05),
             Action::VolumeDown => self.set_volume(self.volume - 0.05),
-            Action::Search => {
-                self.go(View::Search);
-                self.search.editing = true;
-            }
+            Action::Search => match self.filter_mut() {
+                Some(f) => f.typing = true,
+                None => {
+                    self.go(View::Search);
+                    self.search.editing = true;
+                }
+            },
+            Action::Stats if self.view == View::History && self.pages.is_empty() => self.go(View::Stats),
+            Action::ClearHistory if self.view == View::History && self.pages.is_empty() => self.clear_history(),
+            Action::Stats | Action::ClearHistory => self.dirty = false,
             Action::Curve => self.cmds.push(Cmd::Curve),
             Action::Mouse => {
                 self.mouse = !self.mouse;
@@ -3264,6 +3420,11 @@ impl App {
             Action::Noise => self.noise_next(),
             Action::Full => self.toggle_full(),
             Action::Sort => self.sort_next(),
+            Action::Favorites if self.view == View::Stats && self.pages.is_empty() && !self.full => {
+                let all = nori_core::browse::StatsSource::ALL;
+                let at = all.iter().position(|s| *s == self.stats.source).unwrap_or(0);
+                self.stats_choose(self.stats.period, all[(at + 1) % all.len()]);
+            }
             Action::Favorites => self.favorites_toggle(),
             Action::Radio => {
                 if let Some(s) = self.song.as_ref().filter(|_| self.rules.radio) {
@@ -3297,6 +3458,12 @@ impl App {
                 }
                 None => self.dirty = false,
             },
+            Action::GroupBack | Action::GroupOn if self.view == View::Stats && self.pages.is_empty() && !self.full => {
+                let all = nori_core::browse::StatsPeriod::ALL;
+                let at = all.iter().position(|p| *p == self.stats.period).unwrap_or(0);
+                let to = if a == Action::GroupOn { (at + 1).min(all.len() - 1) } else { at.saturating_sub(1) };
+                self.stats_choose(all[to], self.stats.source);
+            }
             Action::GroupBack | Action::GroupOn => {
                 // The library's section before or after, from one of them.
                 let sections = self.sections();
@@ -3465,6 +3632,14 @@ impl App {
         if self.view == View::Support && self.pages.is_empty() {
             return self.go(View::Settings);
         }
+        // A filter kept goes before the list does.
+        if let Some(f) = self.filter_mut().filter(|f| f.shown()) {
+            *f = Filter::default();
+            return;
+        }
+        if self.view == View::Stats && self.pages.is_empty() {
+            return self.go(View::History);
+        }
         if self.pages.pop().is_none() {
             self.dirty = false;
         }
@@ -3516,6 +3691,7 @@ impl App {
             View::Favorites => l.favorites = Load::Idle,
             View::History => l.history = Load::Idle,
             View::Settings => self.settings.facts_asked = false,
+            View::Stats => self.stats.server = None,
             _ => {}
         }
         self.go(self.view);
@@ -3554,6 +3730,7 @@ impl App {
             View::Genres => (&mut self.library.genres_sel, lines),
             View::Favorites => (&mut self.library.favorites_sel, favorites),
             View::History => (&mut self.library.history_sel, history),
+            View::Stats => (&mut self.stats.sel, self.stats.room),
             View::Search => {
                 let len = self.search.rows().len();
                 (&mut self.search.sel, len)
@@ -3679,7 +3856,8 @@ impl App {
         }
         if let Some(p) = self.page() {
             return match p {
-                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } | Page::Genre { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
+                Page::Playlist { sel, filter, .. } => p.songs().and_then(|s| filter.songs(s).get(sel.at).map(|&i| Item::Song(s.to_vec(), i))),
+                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Mix { sel, .. } | Page::Genre { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { sel, .. } if p.songs().is_some() => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { detail, sel, .. } => match artist_lines(detail.ready()?).get(sel.at)? {
                     ArtistLine::Album(i) => detail.ready()?.albums.get(*i).cloned().map(Item::Album),
@@ -4723,6 +4901,10 @@ impl App {
             Button::Star => self.star_page(),
             Button::Page(a) => self.page_act(a),
             Button::SaveMix => self.save_mix(),
+            Button::Stats => self.do_action(Action::Stats),
+            Button::ClearHistory => self.do_action(Action::ClearHistory),
+            Button::StatsSource(i) => self.stats_choose(self.stats.period, nori_core::browse::StatsSource::ALL[i as usize]),
+            Button::StatsPeriod(i) => self.stats_choose(nori_core::browse::StatsPeriod::ALL[i as usize], self.stats.source),
             Button::StarSong => {
                 if let Some(s) = self.song.as_ref().filter(|_| self.rules.stars) {
                     let (id, listed) = (s.id.clone(), s.starred);

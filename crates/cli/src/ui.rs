@@ -414,8 +414,14 @@ fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
             Panel::Playing => h::PLAYING,
         };
     }
-    if app.page().is_some() {
-        return h::PAGE;
+    let filtering = app.page().is_none() && app.view == View::Artists && app.library.artists_filter.typing
+        || matches!(app.page(), Some(Page::Playlist { filter, .. }) if filter.typing);
+    if filtering {
+        return h::FILTERING;
+    }
+    if let Some(p) = app.page() {
+        let offered = matches!(p, Page::Playlist { detail: Load::Ready(d), filter, .. } if nori_core::pages::filter_offered(d.songs.len() as u32, filter.shown()));
+        return if offered { h::FILTERED_PAGE } else { h::PAGE };
     }
     match app.view {
         View::Home if app.home.line() == Some(crate::app::HomeLine::Offer) => h::OFFER,
@@ -427,6 +433,8 @@ fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
         View::Search => h::RESULTS,
         View::Albums | View::Songs => h::SORTED,
         View::History => h::HISTORY,
+        View::Stats => h::STATS,
+        View::Artists => h::ARTISTS,
         _ => h::LIBRARY,
     }
 }
@@ -455,6 +463,7 @@ fn page_view(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             library_section(f, body, app, t, focused);
         }
         View::History => history(f, inner, app, t, focused),
+        View::Stats => stats(f, inner, app, t),
         View::Favorites => favorites(f, inner, app, t, focused),
         View::Downloads => downloads(f, inner, app, t, focused),
         View::Equalizer => equalizer(f, inner, app, t, focused),
@@ -605,10 +614,15 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
     let only = if favorites { format!("{}   ", crate::text::FAVORITES_ONLY) } else { String::new() };
     let sort = order.map_or_else(String::new, |o| format!("{only}{}  {o} ", crate::text::SORT_BY));
     put(f, Paragraph::new(spread(vec![Span::styled(caption, t.dim())], Span::styled(sort, t.dim()), area.width as usize)), row_of(area, 0));
-    let body = below(area, 1);
+    let mut body = below(area, 1);
+    if view == View::Artists && l.artists_filter.shown() {
+        filter_line(f, row_of(body, 0), &l.artists_filter, t);
+        body = below(body, 2);
+    }
     match loaded {
         Err(e) => return failed(f, body, t, &e),
         Ok(None) => return loading(f, body, t),
+        Ok(Some(_)) if lines.is_empty() && l.artists_filter.shown() && view == View::Artists => return empty(f, body, t, "Nothing matches"),
         Ok(Some(_)) if lines.is_empty() => return empty(f, body, t, "Nothing here yet"),
         Ok(Some(_)) => {}
     }
@@ -670,6 +684,9 @@ fn history(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let App { library: l, hits, marks, rules, devices, .. } = app;
     let marks = Marks::of(marks, rules, devices);
     let body = heading(f, area, View::History.name(), "", t);
+    let words = [(Span::styled(crate::text::LISTENING_STATS, Style::default().fg(t.ink)), Button::Stats), (Span::styled(crate::text::CLEAR_HISTORY, t.dim()), Button::ClearHistory)];
+    let w: u16 = words.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>() - 3;
+    buttons(f, hits, Rect { x: area.x + area.width.saturating_sub(w + 1), width: w, ..row_of(area, 0) }, &words);
     match &l.history {
         Load::Ready(v) if v.is_empty() => empty(f, body, t, "Nothing played yet"),
         Load::Ready(v) => {
@@ -679,6 +696,151 @@ fn history(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Load::Failed(e) => failed(f, body, t, e),
         _ => loading(f, body, t),
     }
+}
+
+/// A list's filter: the slash, the words typed, and the cursor while typing.
+fn filter_line(f: &mut Frame, r: Rect, filter: &crate::app::Filter, t: &Theme) {
+    let mut spans = vec![Span::styled("/ ", t.dim()), Span::styled(filter.text.clone(), Style::default().fg(t.ink))];
+    if filter.typing {
+        spans.push(Span::styled("▏", Style::default().fg(t.accent)));
+    }
+    put(f, Paragraph::new(Line::from(spans)), r);
+}
+
+/// The listening stats, as Android's: whose plays and how far back (the one chosen bold and underlined, as
+/// the library's sections), then the plays and what else they count, the listening day as 24 bars and when
+/// it peaks, and the top lists, two across where the window is wide. All under the choices scrolls.
+fn stats(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    use nori_core::browse::{StatsPeriod, StatsSource};
+    let body = heading(f, area, View::Stats.name(), "", t);
+    let App { stats: st, hits, .. } = app;
+    // The choices, one line.
+    let mut x = body.x;
+    let chosen = |on: bool| if on { bold().fg(t.ink).add_modifier(Modifier::UNDERLINED) } else { t.dim() };
+    let sources = StatsSource::ALL.iter().enumerate().map(|(i, s)| (crate::text::stats_source(*s), *s == st.source, Button::StatsSource(i as u8)));
+    let periods = StatsPeriod::ALL.iter().enumerate().map(|(i, p)| (crate::text::stats_period(*p), *p == st.period, Button::StatsPeriod(i as u8)));
+    for (k, (name, on, b)) in sources.chain(periods).enumerate() {
+        let w = name.width() as u16;
+        if x + w > body.x + body.width {
+            break;
+        }
+        let r = Rect { x, width: w, ..row_of(body, 0) };
+        put(f, Paragraph::new(Span::styled(name, chosen(on))), r);
+        hits.push((r, Hit::Button(b)));
+        x += w + if k == StatsSource::ALL.len() - 1 { 6 } else { 3 };
+    }
+    let body = below(body, 2);
+    let page = match &st.page {
+        Load::Ready(p) => p,
+        Load::Failed(e) => return failed(f, body, t, e),
+        _ => return loading(f, body, t),
+    };
+    let w = body.width as usize;
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(Line::from(vec![Span::styled(page.stats.plays.to_string(), bold().fg(t.ink)), Span::styled(format!(" {}", crate::text::stats_headline(page)), t.dim())]));
+    let mut tiles: Vec<Span<'static>> = Vec::new();
+    for (i, tile) in page.tiles.iter().enumerate() {
+        if i > 0 {
+            tiles.push(Span::styled("  ·  ", t.dim()));
+        }
+        tiles.push(Span::styled(tile.value.to_string(), Style::default().fg(t.ink)));
+        tiles.push(Span::styled(format!(" {}", crate::text::stat_kind(tile.kind)), t.dim()));
+    }
+    lines.push(Line::from(tiles));
+    if page.source == StatsSource::ServerAccount {
+        lines.extend(wrapped(crate::text::stats_server_note(st.server), w).into_iter().map(|l| Line::from(Span::styled(l, t.dim()))));
+    }
+    if let Some(habit) = crate::text::stats_habit(page) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(crate::text::WHEN_YOU_LISTEN, bold().fg(t.ink))));
+        lines.extend(hour_bars(&page.hours, w, t));
+        lines.push(Line::from(Span::styled(habit, t.dim())));
+    }
+    let st_ = &page.stats;
+    let server = page.source == StatsSource::ServerAccount;
+    let entries = |v: &[nori_core::TopEntry], timed: bool| v.iter().map(|e| (e.name.clone(), if timed { clock(e.listened_ms) } else { String::new() }, e.plays)).collect::<Vec<_>>();
+    let tops = [
+        (crate::text::TOP_SONGS, st_.top_songs.iter().map(|s| (s.song.title.clone(), s.song.artist.clone(), s.plays)).collect::<Vec<_>>()),
+        (crate::text::TOP_ARTISTS, entries(&st_.top_artists, !server)),
+        (crate::text::TOP_ALBUMS, entries(&st_.top_albums, false)),
+        (crate::text::TOP_GENRES, entries(&st_.top_genres, false)),
+    ];
+    let tops: Vec<Vec<Line<'static>>> = tops.into_iter().filter(|(_, rows)| !rows.is_empty()).map(|(title, rows)| top_list(title, &rows, if w >= 90 { (w - 4) / 2 } else { w }, t)).collect();
+    for pair in tops.chunks(if w >= 90 { 2 } else { 1 }) {
+        lines.push(Line::from(""));
+        let height = pair.iter().map(Vec::len).max().unwrap_or(0);
+        for k in 0..height {
+            let mut spans = Vec::new();
+            for (c, column) in pair.iter().enumerate() {
+                let line = column.get(k).cloned().unwrap_or_default();
+                let pad = if c + 1 < pair.len() { ((w - 4) / 2 + 4).saturating_sub(line.width()) } else { 0 };
+                spans.extend(line.spans);
+                spans.push(Span::raw(" ".repeat(pad)));
+            }
+            lines.push(Line::from(spans));
+        }
+    }
+    st.room = lines.len().saturating_sub(body.height as usize) + 1;
+    st.sel.at = st.sel.at.min(st.room - 1);
+    put(f, Paragraph::new(lines).scroll((st.sel.at as u16, 0)), body);
+}
+
+/// `words` in lines at most `w` wide, broken between words.
+fn wrapped(words: &str, w: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for word in words.split(' ') {
+        match out.last_mut() {
+            Some(line) if line.width() + 1 + word.width() <= w => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => out.push(word.to_string()),
+        }
+    }
+    out
+}
+
+/// The listening day: a bar an hour, four lines tall in eighths, the hours marked under them.
+fn hour_bars(hours: &[f32], w: usize, t: &Theme) -> Vec<Line<'static>> {
+    const EIGHTHS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    const TALL: usize = 4;
+    let step = (w / 24).clamp(2, 4);
+    let bar = step - 1;
+    let mut out: Vec<Line<'static>> = (0..TALL)
+        .map(|row| {
+            let from_top = TALL - 1 - row;
+            let cells: String = hours
+                .iter()
+                .map(|share| {
+                    let eighths = (share * (TALL * 8) as f32).round() as usize;
+                    let here = eighths.saturating_sub(from_top * 8).min(8);
+                    // A play at all shows.
+                    let here = if row == TALL - 1 && *share > 0.0 { here.max(1) } else { here };
+                    format!("{}{}", EIGHTHS[here].to_string().repeat(bar), " ".repeat(step - bar))
+                })
+                .collect();
+            Line::from(Span::styled(cells, Style::default().fg(t.ink)))
+        })
+        .collect();
+    let mut ticks = String::new();
+    for h in [0, 6, 12, 18, 23] {
+        let at = h * step;
+        ticks.push_str(&" ".repeat(at.saturating_sub(ticks.width())));
+        ticks.push_str(&format!("{h:02}"));
+    }
+    out.push(Line::from(Span::styled(ticks, t.dim())));
+    out
+}
+
+/// A top list of the listening stats `w` wide: its name, then a line per place, its rank, name, what is
+/// under it and how often it played.
+fn top_list(title: &str, rows: &[(String, String, u32)], w: usize, t: &Theme) -> Vec<Line<'static>> {
+    let mut out = vec![Line::from(Span::styled(title.to_string(), bold().fg(t.ink)))];
+    for (i, (name, sub, plays)) in rows.iter().enumerate() {
+        let left = vec![Span::styled(format!("{:>2}  ", i + 1), t.dim()), Span::styled(name.clone(), Style::default().fg(t.ink)), Span::styled(if sub.is_empty() { String::new() } else { format!("  {sub}") }, t.dim())];
+        out.push(spread(left, Span::styled(plays.to_string(), t.dim()), w));
+    }
+    out
 }
 
 fn favorites(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
@@ -888,9 +1050,21 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
                 song_line(&songs[i], &marks, if n > 0 { n } else { i + 1 }, w, t, playing.as_deref() == Some(songs[i].id.as_str()), false)
             });
         }
-        Page::Playlist { detail: Load::Ready(d), sel, .. } => {
+        Page::Playlist { detail: Load::Ready(d), sel, filter, .. } => {
             let songs = &d.songs;
-            list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
+            let mut body = body;
+            if filter.shown() {
+                filter_line(f, row_of(body, 0), filter, t);
+                body = below(body, 2);
+            }
+            let kept = filter.songs(songs);
+            if kept.is_empty() && !songs.is_empty() {
+                return empty(f, body, t, "Nothing matches");
+            }
+            list(f, body, sel, kept.len(), ListRef::Page, hits, t, focused, &|i, w| {
+                let s = &songs[kept[i]];
+                song_line(s, &marks, kept[i] + 1, w, t, playing.as_deref() == Some(s.id.as_str()), true)
+            });
         }
         Page::Artist { detail: Load::Ready(d), sel, .. } if d.albums.is_empty() && !d.songs.is_empty() => {
             let songs = &d.songs;

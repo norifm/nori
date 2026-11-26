@@ -6,7 +6,7 @@ use nori_core::browse::{favorites_in_order, home_pinned, home_row_more, home_row
 pub use nori_core::home::ShelfItems;
 use nori_core::home::{shelf_items, shelf_read};
 use nori_core::cache_policy::{Page, Read};
-use nori_core::browse::{GenreTile, HistoryAfter, HistoryPage};
+use nori_core::browse::{GenreTile, HistoryAfter, HistoryPage, ServerHistory, StatsPage, StatsPeriod, StatsSource};
 use nori_core::library::{DownloadedLibrary, QueueOffer};
 use nori_core::transfers::DownloadSections;
 use nori_core::mixes::board::{MixLookup, MixSheet, MixTile};
@@ -35,6 +35,9 @@ pub enum PageAsk {
     Genre(String),
     /// The listening history, a page from `after` (None: the newest).
     History(Option<HistoryAfter>),
+    /// The listening stats of `source`'s plays in `period`; with `sync`, the server account's new plays are
+    /// asked for first (`Client::server_history_sync`).
+    Stats { period: StatsPeriod, source: StatsSource, sync: bool },
     /// What is downloaded, and what is on its way.
     Downloads,
     Album(String),
@@ -57,6 +60,8 @@ pub enum PageGot {
     /// A genre's songs and a cover of them.
     Genre { songs: Vec<Song>, cover: Option<String> },
     History(HistoryPage),
+    /// The stats, and how the server account's plays stood when asked for (with `sync`).
+    Stats { page: Box<StatsPage>, server: Option<ServerHistory> },
     Downloads(Box<Downloads>),
     Album(Box<AlbumDetail>),
     Artist(Box<ArtistDetail>),
@@ -173,6 +178,12 @@ impl Handle {
                 Err(e) => Err(PageFailed::Net(e)),
             }),
             PageAsk::History(after) => each(self.core.history_page(after).map(PageGot::History).map_err(PageFailed::Stored)),
+            PageAsk::Stats { period, source, sync } => {
+                let server = sync.then(|| block_on(self.client.server_history_sync()));
+                let now = nori_core::db::now_ms();
+                let tz = (nori_core::library::local_offset_s(now / 1000) * 1000) as i32;
+                each(self.core.stats_page(period, source, tz).map(|page| PageGot::Stats { page: Box::new(page), server }).map_err(PageFailed::Stored));
+            }
             PageAsk::Downloads => each(
                 self.core
                     .downloaded_library()

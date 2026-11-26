@@ -973,8 +973,12 @@ pub mod hints {
     pub const LIBRARY: Hints = &[("enter", "open"), ("m", "menu"), ("x", "play"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
     pub const SORTED: Hints = &[("enter", "open"), ("m", "menu"), ("S", "sort"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
     pub const OFFER: Hints = &[("enter", "resume"), ("d", "close"), ("/", "search"), ("1-9", "go"), ("?", "keys")];
-    pub const HISTORY: Hints = &[("enter", "play"), ("m", "menu"), ("esc", "back"), ("?", "keys")];
+    pub const HISTORY: Hints = &[("enter", "play"), ("m", "menu"), ("#", "listening stats"), ("c", "clear"), ("?", "keys")];
+    pub const STATS: Hints = &[("[ ]", "period"), ("*", "this device, all devices"), ("↑ ↓", "scroll"), ("esc", "back"), ("?", "keys")];
     pub const PAGE: Hints = &[("enter", "play"), ("m", "menu"), ("x", "play all"), ("X", "shuffle"), ("f", "favorite"), ("esc", "back"), ("?", "keys")];
+    pub const FILTERED_PAGE: Hints = &[("enter", "play"), ("m", "menu"), ("x", "play all"), ("/", "filter"), ("esc", "back"), ("?", "keys")];
+    pub const ARTISTS: Hints = &[("enter", "open"), ("m", "menu"), ("x", "play"), ("[ ]", "section"), ("/", "filter"), ("?", "keys")];
+    pub const FILTERING: Hints = &[("enter", "keep"), ("esc", "clear"), ("ctrl u", "clear text"), ("/", "search, when empty")];
     pub const RESULTS: Hints = &[("enter", "open"), ("m", "menu"), ("/", "type"), ("esc", "back"), ("?", "keys")];
     pub const TYPING: Hints = &[("enter", "results"), ("esc", "stop typing"), ("ctrl u", "clear")];
     pub const PLUGIN_ROW: Hints = &[("enter", "open"), ("← →", "off, on"), ("m", "menu"), ("K J", "move"), ("d", "remove"), ("?", "keys")];
@@ -1189,6 +1193,75 @@ pub fn song_sort(name: &str) -> &'static str {
         "PLAYS" => "Most played",
         "LONGEST" => "Longest",
         _ => "Title",
+    }
+}
+
+pub const LISTENING_STATS: &str = "Listening stats";
+pub const CLEAR_HISTORY: &str = "Clear history";
+pub const WHEN_YOU_LISTEN: &str = "When you listen";
+pub const TOP_SONGS: &str = "Top songs";
+pub const TOP_ARTISTS: &str = "Top artists";
+pub const TOP_ALBUMS: &str = "Top albums";
+pub const TOP_GENRES: &str = "Top genres";
+
+/// Whose plays the listening stats count, as their choice names it.
+pub fn stats_source(s: nori_core::browse::StatsSource) -> &'static str {
+    match s {
+        nori_core::browse::StatsSource::Device => "This device",
+        nori_core::browse::StatsSource::ServerAccount => "All devices",
+    }
+}
+
+/// How far back the listening stats count.
+pub fn stats_period(p: nori_core::browse::StatsPeriod) -> &'static str {
+    use nori_core::browse::StatsPeriod;
+    match p {
+        StatsPeriod::Week => "Week",
+        StatsPeriod::Month => "Month",
+        StatsPeriod::Year => "Year",
+        StatsPeriod::AllTime => "All time",
+    }
+}
+
+/// After the play count: the time listened; the server knows none.
+pub fn stats_headline(p: &nori_core::browse::StatsPage) -> String {
+    match p.source {
+        nori_core::browse::StatsSource::Device => format!("plays · {} listened", clock(p.stats.listened_ms)),
+        nori_core::browse::StatsSource::ServerAccount => "plays on your server account".into(),
+    }
+}
+
+/// What the server account's figures are, or why they are missing or old.
+pub fn stats_server_note(h: Option<nori_core::browse::ServerHistory>) -> &'static str {
+    use nori_core::browse::ServerHistory;
+    match h {
+        Some(ServerHistory::Unreached) => "Your server didn’t answer. Showing the plays fetched before.",
+        Some(ServerHistory::Unavailable) => "Your server doesn’t share listening history. It needs Navidrome 0.59 or later and a password login.",
+        Some(ServerHistory::Current) | None => "Navidrome counts plays from when it was updated to 0.59, without skips or time listened.",
+    }
+}
+
+const WEEKDAYS: [&str; 7] = ["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"];
+
+/// "Most around 21:00, mostly on Fridays"; none when nothing was played.
+pub fn stats_habit(p: &nori_core::browse::StatsPage) -> Option<String> {
+    let hour = p.busiest_hour?;
+    Some(match p.busiest_weekday.and_then(|d| WEEKDAYS.get(d as usize)) {
+        Some(day) => format!("Most around {hour}:00, mostly on {day}"),
+        None => format!("Most around {hour}:00"),
+    })
+}
+
+/// What a number of the listening stats counts.
+pub fn stat_kind(k: nori_core::browse::StatKind) -> &'static str {
+    use nori_core::browse::StatKind;
+    match k {
+        StatKind::Songs => "songs",
+        StatKind::Artists => "artists",
+        StatKind::Albums => "albums",
+        StatKind::Skips => "skips",
+        StatKind::ActiveDays => "active days",
+        StatKind::DayStreak => "day streak",
     }
 }
 

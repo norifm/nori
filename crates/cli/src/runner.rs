@@ -1267,6 +1267,11 @@ impl Runner {
                 app.search.view = Some(s.search_pick(kind));
                 app.search.settle(true);
             }
+            Cmd::ClearHistory => {
+                if let Err(e) = s.core.history_clear() {
+                    app.say(e.to_string(), true);
+                }
+            }
             Cmd::LyricsRefresh => s.lyrics_refresh(),
             Cmd::Cover(art) => {
                 if let Some(t) = s.cover(art, COVER_PX) {

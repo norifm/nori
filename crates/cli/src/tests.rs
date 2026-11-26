@@ -3888,3 +3888,137 @@ fn genres_list_and_open_their_songs() {
     let Some(Cmd::Play { songs, start: 0, from: Some(from), .. }) = a.cmds.last() else { panic!("{:?}", a.cmds.last()) };
     assert_eq!((songs.len(), from.kind, from.id.as_str()), (2, nori_core::OriginKind::Genre, "Rock"));
 }
+
+/// A long playlist filters as `/` and the words typed narrow it, as Android's filter field; a song played
+/// from the narrowed list plays the playlist from that song. Esc clears it; a short playlist has none, so
+/// `/` searches there.
+#[test]
+fn a_long_playlist_filters_as_typed() {
+    let mut a = app();
+    a.open_playlist("pl".into());
+    let titles = ["Paper Moon", "Glass Harbour", "Moonrise", "Second Wind", "Low Tide", "Copper", "Salt", "Fen", "Kestrel", "Night Swim", "Blue Hour", "Northern Lights", "Half Moon Bay", "Marrow"];
+    let songs: Vec<Song> = titles.iter().enumerate().map(|(i, t)| song(&format!("s{i}"), t, 200)).collect();
+    let pl = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "pl".into(), name: "Long one".into(), ..Default::default() }, songs);
+    a.handle(Msg::Data(Req::Playlist("pl".into()), Ok(Data::Playlist(Box::new(pl)))));
+    let s = draw(&mut a, 120, 36);
+    assert!(s.contains("/ filter") && s.contains("Marrow"), "offered on a long playlist:\n{s}");
+    key(&mut a, KeyCode::Char('/'));
+    chars(&mut a, "moon");
+    let s = draw(&mut a, 120, 36);
+    dump("playlist-filter-typing", &s);
+    assert!(s.contains("/ moon▏") && s.contains("Paper Moon") && s.contains("Moonrise") && s.contains("Half Moon Bay"), "{s}");
+    assert!(!s.contains("Glass Harbour") && !s.contains("Marrow"), "narrowed:\n{s}");
+    assert!(s.contains("13  Half Moon Bay") || s.lines().any(|l| l.contains("13") && l.contains("Half Moon Bay")), "each row keeps its place in the playlist:\n{s}");
+    key(&mut a, KeyCode::Enter);
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    let Some(Cmd::Play { songs, start, .. }) = a.cmds.last() else { panic!("{:?}", a.cmds.last()) };
+    assert_eq!((songs.len(), *start), (titles.len(), 2), "the playlist, from Moonrise");
+    let s = draw(&mut a, 120, 36);
+    dump("playlist-filter-kept", &s);
+    assert!(s.contains("/ moon") && !s.contains("moon▏"), "kept, with the keys back on the list:\n{s}");
+    key(&mut a, KeyCode::Esc);
+    let s = draw(&mut a, 120, 36);
+    assert!(s.contains("Marrow") && !s.contains("/ moon"), "esc clears it first:\n{s}");
+    assert_eq!(a.pages.len(), 1);
+
+    a.open_playlist("short".into());
+    let pl = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "short".into(), ..Default::default() }, vec![song("1", "One", 200)]);
+    a.handle(Msg::Data(Req::Playlist("short".into()), Ok(Data::Playlist(Box::new(pl)))));
+    key(&mut a, KeyCode::Char('/'));
+    assert_eq!(a.view, View::Search, "a short playlist has no filter");
+}
+
+/// The artists filter as typed, as Android's field over them; `/` in an empty filter goes on to Search.
+#[test]
+fn artists_filter_as_typed() {
+    let mut a = app();
+    a.go(View::Artists);
+    let artist = |id: &str, name: &str| Artist { id: id.into(), name: name.into(), ..Default::default() };
+    a.handle(Msg::Data(Req::Artists, Ok(Data::Artists(vec![artist("1", "Alpha Waves"), artist("2", "Kestrel"), artist("3", "Lumen"), artist("4", "Waveform")]))));
+    key(&mut a, KeyCode::Char('/'));
+    chars(&mut a, "wave");
+    let s = draw(&mut a, 120, 36);
+    dump("artists-filter", &s);
+    assert!(s.contains("Alpha Waves") && s.contains("Waveform") && !s.contains("Kestrel") && !s.contains("Lumen"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Load(Req::Artist(id))) if id == "1"), "{:?}", a.cmds.last());
+    a.pages.clear();
+    key(&mut a, KeyCode::Esc);
+    let s = draw(&mut a, 120, 36);
+    assert!(s.contains("Kestrel"), "cleared:\n{s}");
+    key(&mut a, KeyCode::Char('/'));
+    key(&mut a, KeyCode::Char('/'));
+    assert_eq!(a.view, View::Search);
+}
+
+/// A year of listening, as the core counts it.
+fn stats_page(source: nori_core::browse::StatsSource) -> nori_core::browse::StatsPage {
+    use nori_core::{ListeningStats, TopEntry, TopSong};
+    let top = |name: &str, plays, ms| TopEntry { name: name.into(), plays, listened_ms: ms, ..Default::default() };
+    let mut hours = vec![0u32; 24];
+    for (h, n) in [(8, 42), (9, 30), (12, 25), (18, 51), (19, 64), (20, 88), (21, 97), (22, 70)] {
+        hours[h] = n;
+    }
+    let stats = ListeningStats {
+        plays: 1284,
+        skips: 211,
+        listened_ms: 279_480_000,
+        distinct_songs: 642,
+        distinct_artists: 118,
+        distinct_albums: 203,
+        top_songs: vec![TopSong { song: song("1", "Glass Harbour", 200), plays: 41, listened_ms: 0 }, TopSong { song: song("2", "Paper Moon", 200), plays: 33, listened_ms: 0 }],
+        top_artists: vec![top("Alpha Waves", 188, 39_480_000), top("Lumen", 121, 25_410_000)],
+        top_albums: vec![top("Second Wind", 97, 0)],
+        top_genres: vec![top("Electronic", 402, 0), top("Jazz", 164, 0)],
+        plays_per_hour: hours,
+        plays_per_weekday: vec![160, 150, 171, 188, 240, 220, 155],
+        active_days: 214,
+        longest_streak_days: 19,
+        first_play: None,
+    };
+    nori_core::browse::StatsPage::new(source, stats)
+}
+
+/// History opens the listening stats (`#`, as Android's Listening stats under History): this device's year
+/// first; `[ ]` choose how far back and `*` whose plays, the server's new plays asked for once; esc goes
+/// back to History.
+#[test]
+fn history_opens_the_listening_stats() {
+    use nori_core::browse::{ServerHistory, StatsPeriod, StatsSource};
+    let mut a = app();
+    a.rules.sections.push(nori_core::browse::LibrarySection::History);
+    a.go(View::History);
+    a.handle(Msg::Data(Req::History(None), Ok(Data::History(nori_core::browse::HistoryPage { entries: Vec::new(), next: None }))));
+    let s = draw(&mut a, 120, 36);
+    assert!(s.contains("Listening stats") && s.contains("Clear history"), "{s}");
+    key(&mut a, KeyCode::Char('#'));
+    assert_eq!(a.view, View::Stats);
+    let asked = |period, source, sync| Some(Cmd::Load(Req::Stats { period, source, sync }));
+    assert_eq!(a.cmds.last().cloned(), asked(StatsPeriod::Year, StatsSource::Device, false));
+    a.handle(Msg::Data(Req::Stats { period: StatsPeriod::Year, source: StatsSource::Device, sync: false }, Ok(Data::Stats(Box::new(stats_page(StatsSource::Device)), None))));
+    let s = draw(&mut a, 120, 40);
+    dump("stats", &s);
+    for want in ["Listening", "1284 plays · 77:38:00 listened", "211 skips", "When you listen", "Most around 21:00, mostly on Fridays", "Top songs", "Top artists", "10:58:00"] {
+        assert!(s.contains(want), "{want}:\n{s}");
+    }
+    assert!(s.lines().any(|l| l.contains("Top songs") && l.contains("Top artists")), "two across in a wide window:\n{s}");
+    let s = draw(&mut a, 70, 60);
+    dump("stats-narrow", &s);
+    assert!(!s.lines().any(|l| l.contains("Top songs") && l.contains("Top artists")), "one under another:\n{s}");
+
+    key(&mut a, KeyCode::Char('*'));
+    assert_eq!(a.cmds.last().cloned(), asked(StatsPeriod::Year, StatsSource::ServerAccount, true), "the server's plays asked for the first time");
+    a.handle(Msg::Data(Req::Stats { period: StatsPeriod::Year, source: StatsSource::ServerAccount, sync: true }, Ok(Data::Stats(Box::new(stats_page(StatsSource::ServerAccount)), Some(ServerHistory::Unavailable)))));
+    let s = draw(&mut a, 120, 40);
+    dump("stats-server", &s);
+    assert!(s.contains("plays on your server account") && s.contains("Navidrome 0.59") && !s.contains("skips") && !s.contains("10:58:00"), "{s}");
+    key(&mut a, KeyCode::Char(']'));
+    assert_eq!(a.cmds.last().cloned(), asked(StatsPeriod::AllTime, StatsSource::ServerAccount, false), "asked once");
+    // An answer to an earlier choice is not shown.
+    a.handle(Msg::Data(Req::Stats { period: StatsPeriod::Year, source: StatsSource::Device, sync: false }, Ok(Data::Stats(Box::new(stats_page(StatsSource::Device)), None))));
+    assert!(draw(&mut a, 120, 40).contains("plays on your server account"));
+    key(&mut a, KeyCode::Esc);
+    assert_eq!(a.view, View::History);
+}

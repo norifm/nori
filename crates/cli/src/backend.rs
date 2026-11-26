@@ -194,6 +194,8 @@ pub enum Req {
     Songs { sort: String, starred: bool, offset: u32 },
     /// This device's listening history from where a page left off.
     History(Option<nori_core::browse::HistoryAfter>),
+    /// The listening stats of `source`'s plays in `period`; `sync` asks the server account's new plays first.
+    Stats { period: nori_core::browse::StatsPeriod, source: nori_core::browse::StatsSource, sync: bool },
     /// The genres with songs, and a genre's songs by its name.
     Genres,
     Genre(String),
@@ -231,6 +233,8 @@ pub enum Data {
     Playlists(Vec<nori_core::Playlist>),
     Songs(Vec<Song>, bool),
     History(nori_core::browse::HistoryPage),
+    /// The listening stats, and how the server account's plays stood when asked for.
+    Stats(Box<nori_core::browse::StatsPage>, Option<nori_core::browse::ServerHistory>),
     Genres(Vec<nori_core::browse::GenreTile>),
     Genre(Vec<Song>),
     DownloadsSize(i64),
@@ -350,6 +354,7 @@ impl Session {
             // The index's songs in the order asked for (the server's own for a profile that keeps none).
             Req::Songs { sort, starred, offset } => Some(PageAsk::Songs { sort, reversed: false, favorites: starred, offset }),
             Req::History(after) => Some(PageAsk::History(after)),
+            Req::Stats { period, source, sync } => Some(PageAsk::Stats { period, source, sync }),
             Req::Downloads => Some(PageAsk::Downloads),
             Req::Genres => Some(PageAsk::Genres),
             Req::Genre(name) => Some(PageAsk::Genre(name)),
@@ -529,6 +534,7 @@ fn data_of(got: PageGot) -> Data {
         PageGot::Genres(v) => Data::Genres(v),
         PageGot::Genre { songs, .. } => Data::Genre(songs),
         PageGot::History(page) => Data::History(page),
+        PageGot::Stats { page, server } => Data::Stats(page, server),
         PageGot::Downloads(d) => {
             let nori_host::pages::Downloads { sections, stored } = *d;
             Data::Downloads(Box::new(Downloads { finished: sections.finished.len(), active: sections.active, queued: sections.queued, failed: sections.failed, stored }))

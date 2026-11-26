@@ -61,6 +61,10 @@ pub enum Action {
     Menu,
     /// Starts a jam around the selected item.
     Jam,
+    /// History's listening stats.
+    Stats,
+    /// Forgets what History lists.
+    ClearHistory,
     /// Joins someone's jam with its invite link.
     Join,
     // Card grids
@@ -156,7 +160,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(Global, "", Action::VolumeDown, "", [(Char('-'), N)]),
     b!(Global, "s", Action::Shuffle, "Shuffle the queue on or off", [(Char('s'), N)]),
     b!(Global, "r", Action::Repeat, "Repeat: off, all, one", [(Char('r'), N)]),
-    b!(Global, "/", Action::Search, "Search", [(Char('/'), N)]),
+    b!(Global, "/", Action::Search, "Search; on the artists or a long playlist, filter it (/ again: search)", [(Char('/'), N)]),
     b!(Global, "1 … 9", Action::Go(0), "Home, Albums, Artists, Songs, Playlists, Favorites, Downloads, Equalizer, Settings", [(Char('1'), N)]),
     b!(Global, "", Action::Go(1), "", [(Char('2'), N)]),
     b!(Global, "", Action::Go(2), "", [(Char('3'), N)]),
@@ -199,8 +203,10 @@ pub const BINDINGS: &[Binding] = &[
     b!(List, "f", Action::Star, "Favorite or not", [(Char('f'), N)]),
     b!(List, "i", Action::Jam, "Start a jam with it: it plays, and friends with the link ask for songs", [(Char('i'), N)]),
     b!(List, "S", Action::Sort, "The albums' or the songs' next order", [(Char('S'), S), (Char('S'), N)]),
-    b!(List, "*", Action::Favorites, "The albums or songs: only the favorites, or all", [(Char('*'), S), (Char('*'), N)]),
-    b!(List, "[ ]", Action::GroupBack, "The library's section, the settings' group, or the search's kind, before or after", [(Char('['), N)]),
+    b!(List, "*", Action::Favorites, "The albums or songs: only the favorites, or all; the stats: this device or all devices", [(Char('*'), S), (Char('*'), N)]),
+    b!(List, "#", Action::Stats, "In History: the listening stats", [(Char('#'), N), (Char('#'), S)]),
+    b!(List, "c", Action::ClearHistory, "In History: clear it", [(Char('c'), N)]),
+    b!(List, "[ ]", Action::GroupBack, "The library's section, the settings' group, the search's kind or the stats' period, before or after", [(Char('['), N)]),
     b!(List, "", Action::GroupOn, "", [(Char(']'), N)]),
     b!(Edit, "d / delete", Action::Remove, "Take it out (of the queue, or off this computer); forget a paired device; refuse a jam request (enter accepts)", [(Char('d'), N), (Delete, N)]),
     b!(Edit, "u", Action::Undo, "Put back what was just taken out of the queue", [(Char('u'), N)]),
