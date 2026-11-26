@@ -1421,9 +1421,9 @@ pub fn icon_picker(p: &Plugged, sv: &SavedServer, label: &str, provider: &str) -
 
 /// Updates waiting, and the installed plugins in their order, grey while every plugin is off.
 fn plugin_list(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
+    // None installed: the head says so (`plugin_top`).
     if p.cards.is_empty() {
-        let get = Row { kind: BUTTON, name: PluginAct::Browser.name(), title: words::GET_PLUGINS.into(), enabled: true, ..Default::default() };
-        return vec![(String::new(), vec![note(words::NO_PLUGINS), get])];
+        return Vec::new();
     }
     let mut groups = Vec::new();
     let updates: Vec<Row> = nori_plugins::updates_waiting(p.offers(), &p.cards)
@@ -1623,7 +1623,9 @@ fn category_chips(p: &Plugged) -> (ModelRc<SharedString>, i32) {
 pub fn plugin_top(p: &Plugged, all_off: bool) -> PluginTop {
     let back = !p.stack.is_empty();
     match p.stack.last() {
-        None => PluginTop { title: words::PLUGINS.into(), back, tools: tools(&[(TOOL_PLUS, words::GET_PLUGINS, PluginAct::Browser)]), every: !p.cards.is_empty(), all_on: !all_off, ..Default::default() },
+        // Under its tab, which names it: no title. With none installed, what to do instead of the list.
+        None if p.cards.is_empty() => PluginTop { back, about: words::NO_PLUGINS.into(), action: words::GET_PLUGINS.into(), action_name: PluginAct::Browser.name().into(), ..Default::default() },
+        None => PluginTop { back, tools: tools(&[(TOOL_PLUS, words::GET_PLUGINS, PluginAct::Browser)]), every: true, all_on: !all_off, ..Default::default() },
         Some(PluginPage::Repos) => PluginTop { title: words::REPOS.into(), back, tools: tools(&[(TOOL_PLUS, words::ADD_REPO, PluginAct::AddRepo)]), ..Default::default() },
         Some(PluginPage::Browser) => {
             let shown = p.repos.iter().position(|r| p.repo_shown.as_ref() == Some(&r.url)).map_or(0, |i| i as i32 + 1);

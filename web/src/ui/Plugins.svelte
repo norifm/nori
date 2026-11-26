@@ -165,11 +165,14 @@
   </a>
 {/snippet}
 
-{#snippet tools()}
+<!-- Under Settings' Plugins tab (`named`), Get plugins is named beside its glyph, and only over a list: with
+     none installed, the list's own button says it. -->
+{#snippet tools(named?: boolean)}
   {#if host && host.installed.length > 0}
     <input type="checkbox" class="switch" aria-label={W.pluginsEvery} title={W.pluginsEvery} data-plugins-every checked={!host.allOff} onchange={(e) => void host!.setAllOff(!e.currentTarget.checked)} />
   {/if}
-  <a class="glyph" href={sub(GET)} aria-label={W.pluginsGet} title={W.pluginsGet} data-plugins-get><Icon name="plus" /></a>
+  {#if !named}<a class="glyph" href={sub(GET)} aria-label={W.pluginsGet} title={W.pluginsGet} data-plugins-get><Icon name="plus" /></a>
+  {:else if host && host.installed.length > 0}<a class="chip edged" href={sub(GET)} data-plugins-get><Icon name="plus" />{W.pluginsGet}</a>{/if}
 {/snippet}
 
 {#snippet list()}
@@ -405,7 +408,7 @@
 {:else if shown}
   <Page back narrow ready={!!host && (!!card || !!offer || !!offers || failed)}>{@render pluginPage()}</Page>
 {:else if tabbed}
-  <div class="tools">{@render tools()}</div>
+  <div class="tools">{@render tools(true)}</div>
   {@render list()}
 {:else}
   <Page title={W.plugins} back narrow head={tools}>{@render list()}</Page>
@@ -431,6 +434,14 @@
     gap: 8px;
     margin-top: 8px;
     margin-bottom: -14px;
+  }
+  .tools .chip {
+    gap: 6px;
+    color: var(--ink);
+  }
+  .tools .chip :global(.icon) {
+    width: 16px;
+    height: 16px;
   }
   .plugin {
     gap: 12px;

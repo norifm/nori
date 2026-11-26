@@ -5945,7 +5945,7 @@ component PluginHead inherits VerticalLayout {
             horizontal-stretch: 1;
             alignment: center;
             spacing: 2px;
-            Text {
+            if root.top.title != "": Text {
                 text: root.top.title;
                 color: Theme.text;
                 font-family: Type.title;
@@ -5964,10 +5964,24 @@ component PluginHead inherits VerticalLayout {
             on: root.top.all-on;
             toggled(v) => { root.toggled("plugins-off", !v); }
         }
-        for t in root.top.tools: IconButton {
+        // Each tool named beside its glyph: the desktop has the room.
+        for t in root.top.tools: BarPill {
             y: (parent.height - self.height) / 2;
-            glyph: t.glyph == 1 ? Icons.folder-plus : t.glyph == 2 ? Icons.server : Icons.plus;
             clicked => { root.action(t.name); }
+            Icon {
+                y: (parent.height - self.height) / 2;
+                glyph: t.glyph == 1 ? Icons.folder-plus : t.glyph == 2 ? Icons.server : Icons.plus;
+                colour: Theme.text;
+                width: 16px;
+                height: 16px;
+            }
+            Text {
+                text: t.label;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
         }
         if root.top.menu.length > 0: IconButton {
             y: (parent.height - self.height) / 2;
