@@ -51,7 +51,7 @@ pub use nori_backup as backup;
 pub use nori_cert as cert;
 pub use nori_automix::beat_model;
 pub use nori_devices::{autoeq, outputs};
-pub use nori_library::{menus, offer, paged, pages, rows, stars};
+pub use nori_library::{menus, offer, paged, pages, rows, sketch, stars};
 pub use nori_lyrics::{follow as lyrics_follow, formats, look, lrclib, lyrics, services};
 pub use nori_net::{api, transport};
 pub use nori_perf::perf_log;

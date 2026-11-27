@@ -70,6 +70,9 @@ pub const CHROME_CONTENT_75: usize = 36;
 pub const CHROME_FILL: usize = 37;
 /// The see-through chrome's outline: text at 20 %.
 pub const CHROME_OUTLINE: usize = 48;
+/// A loading page's placeholders, and the band of their shimmer: text at 8 % and 13 % over the page.
+pub const SKETCH: usize = 49;
+pub const SKETCH_SHEEN: usize = 50;
 
 /// 1 for dark status bar icons (dark text), else 0.
 pub const STATUS_LIGHT: usize = 38;
@@ -88,7 +91,7 @@ pub const FLOOR_0: usize = 45;
 pub const FLOOR_22: usize = 46;
 pub const FLOOR_75: usize = 47;
 
-pub const LEN: usize = 49;
+pub const LEN: usize = 51;
 
 /// Entries that are not colours (mixed as numbers).
 pub(crate) const NOT_COLOURS: [usize; 6] = [PAPER, STATUS_LIGHT, BAND_TINT, BAND_KR, BAND_KG, BAND_KB];
@@ -172,6 +175,8 @@ fn dress(s: &Scheme, edge: Option<u32>, out: &mut [u32; LEN]) {
     out[VEIL_13] = veil(on, 0.13, bg);
     out[VEIL_6] = veil(on, 0.06, bg);
     out[VEIL_10] = veil(on, 0.10, bg);
+    out[SKETCH] = veil(on, 0.08, bg);
+    out[SKETCH_SHEEN] = veil(on, 0.13, bg);
 
     for (i, a) in [(ON_60, 0.6), (ON_45, 0.45), (ON_55, 0.55), (ON_22, 0.22), (ON_85, 0.85), (ON_35, 0.35), (ON_80, 0.8)] {
         out[i] = with_alpha(on, a);
@@ -326,6 +331,17 @@ mod tests {
         // Midnight's black page keeps the band's light and dark, grey.
         let black = page(0xFF00_0000, 0xFF00_0000, WHITE, 0xFFE0_4040, 0xFF00_0000);
         assert_eq!([black[BAND_KR], black[BAND_KG], black[BAND_KB]].map(f32::from_bits), [1.0; 3]);
+    }
+
+    #[test]
+    fn placeholders_stand_off_the_page_and_their_sheen_further() {
+        let dark = page(0xFF20_1010, 0xFF20_1010, WHITE, 0xFFE0_4040, 0xFF20_1010);
+        let white = page(WHITE, WHITE, 0xFF11_1111, 0xFFE0_4040, WHITE);
+        let black = page(0xFF00_0000, 0xFF00_0000, WHITE, 0xFFE0_4040, 0xFF00_0000);
+        for t in [dark, black] {
+            assert!(luminance(t[BACKGROUND]) < luminance(t[SKETCH]) && luminance(t[SKETCH]) < luminance(t[SKETCH_SHEEN]), "lighter on a dark page");
+        }
+        assert!(luminance(white[BACKGROUND]) > luminance(white[SKETCH]) && luminance(white[SKETCH]) > luminance(white[SKETCH_SHEEN]), "darker on paper");
     }
 
     #[test]

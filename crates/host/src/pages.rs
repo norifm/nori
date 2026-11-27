@@ -11,6 +11,7 @@ use nori_core::library::{DownloadedLibrary, QueueOffer};
 use nori_core::transfers::DownloadSections;
 use nori_core::mixes::board::{MixLookup, MixSheet, MixTile};
 use nori_core::settings::HomeRow;
+use nori_core::sketch::Reading;
 use nori_core::transport::{block_on, NetError};
 use nori_core::{Album, AlbumDetail, Artist, ArtistDetail, CoreError, FeedShelf, Playlist, PlaylistDetail, Song, Starred};
 
@@ -56,6 +57,26 @@ pub enum PageAsk {
     Mix(String),
     /// A Home row in full ("see all"): its page from `offset` (`browse::home_row_page`).
     HomeRow { row: HomeRow, offset: u32 },
+}
+
+impl PageAsk {
+    /// The page this read fills while nothing of it shows yet, for its placeholders (`sketch`): none for
+    /// a list's later pages, nor for a read that adds to a page already shown.
+    pub fn reading(&self) -> Option<Reading> {
+        Some(match self {
+            PageAsk::Albums { offset: 0, .. } | PageAsk::HomeRow { offset: 0, .. } => Reading::Albums,
+            PageAsk::Songs { offset: 0, .. } | PageAsk::Genre(_) | PageAsk::Decade(_) => Reading::Songs,
+            PageAsk::Artists => Reading::Artists,
+            PageAsk::Playlists => Reading::Playlists,
+            PageAsk::Favorites => Reading::Favorites,
+            PageAsk::Genres => Reading::Genres,
+            PageAsk::Album(_) | PageAsk::DownloadedAlbum(_) => Reading::Album,
+            PageAsk::Artist(_) => Reading::Artist,
+            PageAsk::Playlist(_) => Reading::Playlist,
+            PageAsk::Mix(_) => Reading::Mix,
+            _ => return None,
+        })
+    }
 }
 
 /// What a page read brings.
@@ -324,3 +345,27 @@ impl Handle {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_first_read_is_sketched() {
+        let albums = |offset| PageAsk::Albums { sort: AlbumSort::Newest, offset, favorites: false };
+        let songs = |offset| PageAsk::Songs { sort: String::new(), reversed: false, favorites: false, offset };
+        let row = |offset| PageAsk::HomeRow { row: HomeRow::Recent, offset };
+        for (ask, want) in [
+            (albums(0), Some(Reading::Albums)),
+            (albums(40), None),
+            (songs(0), Some(Reading::Songs)),
+            (songs(200), None),
+            (row(0), Some(Reading::Albums)),
+            (row(20), None),
+            (PageAsk::Artist("a".into()), Some(Reading::Artist)),
+            (PageAsk::ArtistAbout("a".into()), None),
+        ] {
+            assert_eq!(ask.reading(), want, "{ask:?}");
+        }
+    }
+}

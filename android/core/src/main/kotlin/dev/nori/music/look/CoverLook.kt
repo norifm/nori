@@ -67,7 +67,9 @@ object CoverLook {
     const val FLOOR_75 = 47
     /** The see-through chrome's outline. */
     const val CHROME_OUTLINE = 48
-    const val LEN = 49
+    const val SKETCH = 49
+    const val SKETCH_SHEEN = 50
+    const val LEN = 51
 
     /**
      * Looks [from] and [to] mixed at [t] into [out], all [LEN] entries (`nori_look::dress::mix`): one frame

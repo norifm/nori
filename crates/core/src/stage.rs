@@ -5,6 +5,9 @@ use nori_look::sleeve;
 
 use crate::{Core, Song};
 
+/// Data arriving this soon after a page opens appears without animation ([`Stage::quick_load_ms`]).
+pub const QUICK_LOAD_MS: i64 = 250;
+
 /// UI constants, read once.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -63,8 +66,11 @@ pub struct Stage {
     pub lyrics_glow_fade_ms: i64,
     /// Brightness of unsung words in the active line.
     pub lyrics_unsung: f32,
-    /// Data arriving this soon after a page opens appears without animation.
+    /// Data arriving this soon after a page opens appears without animation; a page still reading after it
+    /// shows its placeholders (`sketch`).
     pub quick_load_ms: i64,
+    /// One pass of the shimmer over a loading page's placeholders, and of the sheen over a loading cover.
+    pub sheen_ms: i32,
     /// Limiter meter poll interval on the equalizer screen.
     pub meter_ms: i64,
     /// How long the undo of a song taken out of the queue is offered (`nori_queue::undo::UNDO_MS`).
@@ -109,7 +115,8 @@ pub fn stage() -> Stage {
         lyrics_held_ms: nori_look::lyrics::HELD_MS,
         lyrics_glow_fade_ms: nori_look::lyrics::GLOW_FADE_MS,
         lyrics_unsung: nori_look::lyrics::UNSUNG,
-        quick_load_ms: 300,
+        quick_load_ms: QUICK_LOAD_MS,
+        sheen_ms: 1500,
         meter_ms: 120,
         undo_ms: nori_queue::undo::UNDO_MS,
         burn_in_reach_dp: nori_look::burn_in::REACH_DP,
