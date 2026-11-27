@@ -283,6 +283,10 @@ void nori_ios_download_list(uint64_t token, int32_t index);
 char *nori_ios_download_entries(uint64_t token);
 /// Runs a download entry on list `token`: the songs downloaded, or removed for act 2.
 int32_t nori_ios_download_act(uint64_t token, int32_t act);
+/// What page `kind` (NORI_PAGE_*) shows while its first answer comes, JSON to free: {after, pass, ease, parts:
+/// [{p, a}]}, times in ms; p 0 head, 1 shelf, 2 grid, 3 rows; a 0 square, 1 round, 2 number, 3 words alone.
+/// Null for a page with no sketch.
+char *nori_ios_sketch(int32_t kind);
 /// A page's list head (page kind as NORI_PAGE_*; `refreshable` a mix drawn again), JSON to free: [{a, act, n}],
 /// a 0 download (act and n as the entries), 1 everything by the artist, 2 add to queue, 3 new mix, 4 edit.
 char *nori_ios_page_actions(uint64_t token, int32_t kind, int32_t refreshable);

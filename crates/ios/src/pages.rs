@@ -1309,6 +1309,50 @@ pub extern "C" fn nori_ios_history_clear() -> i32 {
     server().is_some_and(|(_, core)| core.history_clear().is_ok()) as i32
 }
 
+/// What page `kind` (as in [`nori_ios_read`]) stands in place of its first answer (`sketch::sketch`, with
+/// its head unknown), as JSON to free: `{after, pass, ease, parts: [{p, a}]}`, the core's quick-load time,
+/// shimmer pass and fade in ms; `p` 0 a head, 1 a shelf, 2 a grid, 3 rows; `a` 0 a square, 1 a round
+/// picture, 2 a song's number, 3 words alone. Null for a page with no sketch.
+#[no_mangle]
+pub extern "C" fn nori_ios_sketch(kind: i32) -> *mut c_char {
+    use nori_core::sketch::{sketch, Art, Reading, Sketch};
+    let reading = match kind {
+        PAGE_HOME => Reading::Home,
+        PAGE_ALBUMS | PAGE_HOME_ROW => Reading::Albums,
+        PAGE_ARTISTS => Reading::Artists,
+        PAGE_PLAYLISTS | PAGE_SMARTS => Reading::Playlists,
+        PAGE_SONGS => Reading::Songs,
+        PAGE_GENRES => Reading::Genres,
+        PAGE_STARRED => Reading::Favorites,
+        PAGE_SEARCH => Reading::Search,
+        PAGE_ALBUM | PAGE_DOWNLOADED_ALBUM => Reading::Album,
+        PAGE_ARTIST => Reading::Artist,
+        PAGE_PLAYLIST => Reading::Playlist,
+        PAGE_MIX | PAGE_SMART | PAGE_GENRE => Reading::Mix,
+        _ => return std::ptr::null_mut(),
+    };
+    let part = |s: Sketch| {
+        let (p, art) = match s {
+            Sketch::Head { art } => (0, art),
+            Sketch::Shelf { art } => (1, art),
+            Sketch::Grid { art } => (2, art),
+            Sketch::Rows { art } => (3, art),
+        };
+        let a = match art {
+            Art::Square => 0,
+            Art::Round => 1,
+            Art::Number => 2,
+            Art::Bare => 3,
+        };
+        json!({ "p": p, "a": a })
+    };
+    let stage = nori_core::stage::stage();
+    owned(&json!({
+        "after": stage.quick_load_ms, "pass": stage.sheen_ms, "ease": stage.fade_ms,
+        "parts": sketch(reading, false).into_iter().map(part).collect::<Vec<_>>(),
+    }))
+}
+
 /// What a page's list head offers for list `token` (`menus::page_actions`), as JSON to free: `[{a, act, n}]`,
 /// `a` 0 download (`act` as [`entries_of`] codes it, `n` the songs it takes), 1 download everything by the
 /// artist, 2 add to the queue, 3 a new draw of the mix, 4 edit. `kind` as in [`nori_ios_read`];

@@ -170,12 +170,57 @@ class PageController: TablePage {
         }
         if token != 0 { Core.shared.forget(token) }
         token = Core.shared.read(kind, arg) { [weak self] a in self?.took(a, appending: false) }
+        if answer == nil && sketch == nil { sketchSoon() }
+    }
+
+    // MARK: while the first answer comes
+
+    /// The page's placeholders while its first answer is on its way.
+    private var sketch: SketchView?
+    /// The sketch was seen: what was read fades in over it.
+    private var sketchShown = false
+
+    /// Past the core's quick-load time with nothing read yet, the sketch fades in where the rows will stand.
+    private func sketchSoon() {
+        guard let s = SketchView(kind: kind, look: look) else { return }
+        sketch = s
+        DispatchQueue.main.asyncAfter(deadline: .now() + s.after) { [weak self] in
+            guard let self, self.sketch === s, self.answer == nil else { return }
+            let top = self.tableView.tableHeaderView?.frame.maxY ?? 0
+            s.frame = CGRect(x: 0, y: top, width: self.tableView.bounds.width, height: self.tableView.bounds.height - top)
+            s.alpha = 0
+            self.tableView.addSubview(s)
+            self.sketchShown = true
+            UIView.animate(withDuration: Motion.plain ? 0 : s.ease) { s.alpha = 1 }
+        }
+    }
+
+    /// No answer will take the sketch's place (a failure says why instead).
+    private func dropSketch() {
+        sketch?.removeFromSuperview()
+        sketch = nil
+    }
+
+    /// The first answer is in: it fades in over the sketch as the sketch fades out; read inside the
+    /// quick-load time, it is simply there.
+    private func sketchDone() {
+        guard let s = sketch else { return }
+        sketch = nil
+        guard sketchShown, !Motion.plain else { return s.removeFromSuperview() }
+        tableView.visibleCells.forEach { $0.alpha = 0 }
+        tableView.tableHeaderView?.alpha = 0
+        UIView.animate(withDuration: s.ease, animations: {
+            s.alpha = 0
+            self.tableView.visibleCells.forEach { $0.alpha = 1 }
+            self.tableView.tableHeaderView?.alpha = 1
+        }, completion: { _ in s.removeFromSuperview() })
     }
 
     func took(_ a: PageAnswer, appending: Bool) {
         finishRefresh()
         if a.raw["closed"] != nil {
             showEmpty(Say.noServer, Say.noServerDetail)
+            dropSketch()
             return
         }
         if let code = a.error {
@@ -183,6 +228,7 @@ class PageController: TablePage {
                 let said = Say.pageFailure(code, a.detail)
                 showEmpty(said.title, said.detail)
             }
+            dropSketch()
             return
         }
         more = a.raw["more"] as? Bool ?? false
@@ -208,6 +254,8 @@ class PageController: TablePage {
         }
         paintedCurrent = Core.shared.now.song?.id
         tableView.reloadData()
+        tableView.layoutIfNeeded()
+        sketchDone()
     }
 
     // MARK: the hero
