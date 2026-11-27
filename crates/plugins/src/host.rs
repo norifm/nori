@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use nori_net::transport::{Exchange, FailureKind, HttpMethod, Transport, TransportError};
 
-use crate::runtime::nori::plugin::{http, log, notices, rows, settings, store};
+use crate::runtime::nori::plugin::{http, log, notices, parts, rows, settings, store};
 use crate::runtime::{types, Host};
 
 /// A value of a plugin's row or one of nori's settings.
@@ -462,6 +462,14 @@ impl rows::Host for Host {
 impl notices::Host for Host {
     fn show(&mut self, tone: notices::Tone, words: String, args: Vec<String>) {
         self.side.notice(&self.id, tone == notices::Tone::Problem, &words, &args);
+    }
+}
+
+impl parts::Host for Host {
+    fn show_playlist(&mut self, page: types::PlaylistPage) {
+        if let Some(shown) = &self.parts {
+            shown(page);
+        }
     }
 }
 

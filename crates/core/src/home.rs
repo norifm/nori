@@ -151,9 +151,9 @@ mod tests {
         let first_page = shelf_read(&crate::browse::home_row_page(HomeRow::Newest, 0).unwrap()).unwrap();
         // The full view opened once, then albums were added and Home showed them.
         fake.answer(&list(&["a", "b"]));
-        block(c.read_fetch(first_page.clone(), None)).unwrap();
+        block(c.read_fetch(first_page.clone(), None, None)).unwrap();
         fake.answer(&list(&["c", "a", "b"]));
-        block(c.read_fetch(shelf_read(&home_shelves(vec![HomeRow::Newest])[0]).unwrap(), None)).unwrap();
+        block(c.read_fetch(shelf_read(&home_shelves(vec![HomeRow::Newest])[0]).unwrap(), None, None)).unwrap();
 
         let shelf = albums(&c.home_kept(vec![HomeRow::Newest], false).unwrap().shelves[0]);
         let opened = c.read_stored(first_page).unwrap().page.map(|p| p.albums().into_iter().map(|a| a.id).collect::<Vec<_>>());

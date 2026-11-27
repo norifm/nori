@@ -69,6 +69,12 @@ pub trait Provider: Send + Sync {
     /// (cache_policy.rs).
     async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>>;
 
+    /// [`Provider::read`], sending `parts` what the source shows of its answer before the whole comes
+    /// (a long playlist's first page). The whole answer follows them.
+    async fn read_in_parts(&self, client: &Client, read: Read, _parts: crate::cache_policy::Parts) -> NetResult<Option<Answer>> {
+        self.read(client, read).await
+    }
+
     /// A raw answer of `read` ([`Answer::Raw`]) as its page.
     fn parse(&self, _client: &Client, read: &Read, _raw: &[u8]) -> NetResult<Page> {
         Err(NetError::Parse { reason: format!("no raw answer to {read:?}") })
