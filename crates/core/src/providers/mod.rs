@@ -903,9 +903,13 @@ impl Client {
         }
     }
 
-    /// Signs the profile's account out here (a browser's session is not ended).
+    /// Signs the profile's account out here (a browser's session is not ended); the account's pages saved
+    /// on disk go.
     pub fn sign_out(&self) {
-        self.core.provider().sign_out(self)
+        self.core.provider().sign_out(self);
+        if let Err(e) = self.core.saved_drop(self.home_saved_key()) {
+            crate::alog::info(&format!("sign out: the saved pages could not be dropped: {e}"));
+        }
     }
 
     /// Where the profile's account stands.

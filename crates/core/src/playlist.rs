@@ -32,6 +32,22 @@ impl Client {
             None => Ok(()),
         }
     }
+
+    /// The rest of the songs of the page the queue was started from while they were still coming
+    /// ([`nori_queue::Session::follows`]), joined to the queue once the page is whole, and the change for
+    /// the player to make the same. A read of the page on its way is waited for, not asked again; one
+    /// that ended before the whole came is asked again. None when the queue follows no page, another
+    /// queue started meanwhile, or the page could not be read.
+    pub async fn queue_follow(&self) -> Option<crate::follow::Followed> {
+        let follow = self.core.session.follows()?;
+        match self.read_whole(crate::cache_policy::Read::PlaylistById { id: follow.origin.id.clone() }).await {
+            Ok(page) => self.core.session.follow_landed(&follow, page.songs()),
+            Err(_) => {
+                self.core.session.follow_dropped(&follow);
+                None
+            }
+        }
+    }
 }
 
 #[cfg(test)]

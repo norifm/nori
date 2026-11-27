@@ -42,6 +42,24 @@ pub(crate) fn shuffle_around(n: usize, cur: usize, hand: impl Fn(usize) -> Hand,
     order
 }
 
+/// `order` with list indexes `n..n + count`, songs that joined the list's end, each at a random place
+/// among the songs not played yet: after `cur` and the hand-added run that follows it, ahead of the queue's
+/// own songs (autofill). Each place is drawn among all the places left, so the late songs mix evenly with
+/// the waiting ones and keep no order of their own.
+pub(crate) fn shuffle_in(order: &mut Vec<usize>, cur: Option<usize>, n: usize, count: usize, hand: impl Fn(usize) -> Hand, seed: u64) {
+    let from = cur.and_then(|c| order.iter().position(|&o| o == c)).map_or(0, |p| p + 1);
+    let from = from + order[from..].iter().take_while(|&&i| hand(i).by_user()).count();
+    let mut to = from + order[from..].iter().take_while(|&&i| hand(i) != Hand::Auto).count();
+    let mut s = seed | 1;
+    for i in n..n + count {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        order.insert(from + (s % (to - from + 1) as u64) as usize, i);
+        to += 1;
+    }
+}
+
 /// `order` holds each index below `n` exactly once.
 pub(crate) fn is_permutation(order: &[usize], n: usize) -> bool {
     if order.len() != n {
@@ -299,6 +317,23 @@ pub fn next_repeat(mode: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn late_songs_shuffle_in_among_those_waiting() {
+        // 0..6 listed, 2 playing after 4 and 0; 5 added by hand next; 6 and 7 the queue's own.
+        let hands = [Hand::No, Hand::No, Hand::No, Hand::No, Hand::No, Hand::Next, Hand::Auto, Hand::Auto];
+        let hand = |i: usize| hands.get(i).copied().unwrap_or(Hand::No);
+        let mut seen = std::collections::HashSet::new();
+        for seed in 1..200 {
+            let mut order = vec![4, 0, 2, 5, 1, 3, 6, 7];
+            shuffle_in(&mut order, Some(2), 8, 3, hand, seed);
+            assert!(is_permutation(&order, 11), "{order:?}");
+            assert_eq!(order[..4], [4, 0, 2, 5], "played, playing and the hand-added next stay: {order:?}");
+            assert_eq!(order[order.len() - 2..], [6, 7], "the queue's own stay last: {order:?}");
+            seen.insert(order[4..9].to_vec());
+        }
+        assert!(seen.len() > 20, "the late songs mix with the waiting ones in many ways: {}", seen.len());
+    }
 
     #[test]
     fn hand_added_placement() {

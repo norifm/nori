@@ -2,9 +2,10 @@
 //! [`Client::read_stored`] returns the kept page at once (and whether it is fresh enough not to ask the
 //! source); [`Client::read_fetch`] asks the source and returns a page only if it changed. A page is kept
 //! under nori's own key for its read, on disk when the source answers raw ([`Answer::Raw`], parsed again
-//! on every read) and in memory for the session otherwise. The session's marks lay over every page as it
-//! is read; a write makes the pages of its kind stale ([`stale`]); Home stays put for the session and a
-//! refresh merges into what was shown.
+//! on every read) and in memory for the session otherwise. A provider's album, artist and playlist pages
+//! are also saved on disk for the next session ([`Saved`]): shown at once there, and asked anew. The
+//! session's marks lay over every page as it is read; a write makes the pages of its kind stale
+//! ([`stale`]); Home stays put for the session and a refresh merges into what was shown.
 
 use std::hash::{Hash, Hasher};
 
@@ -28,6 +29,12 @@ const DAY: i64 = 24 * HOUR;
 const BROWSE: i64 = 2 * MINUTE;
 /// A random draw stays as first shown, so a list opened from it shows the same, until a refresh drops it.
 const UNTIL_REFRESH: i64 = i64::MAX;
+/// Provider pages saved on disk per profile, the latest kept.
+const SAVED_PAGES: u32 = 200;
+/// How long a saved provider page is shown before its source answers again.
+const SAVED_FOR: i64 = 30 * DAY;
+/// The keys of the saved provider pages: this, then the page's kept key.
+const SAVED: &str = "saved:";
 
 /// A read of the profile's source. Variants up to `FolderById`, and `HomeFeed`, are kept; the rest
 /// always ask.
@@ -186,6 +193,44 @@ pub(crate) fn kept_as(read: &Read) -> Option<(String, i64)> {
         | Read::NowPlaying { .. }
         | Read::ShareLink { .. } => return None,
     })
+}
+
+/// A provider's page as saved on disk for a later session, and the digest its read gave it. Only ever
+/// shown as the page's last answer: nothing in it is indexed.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Saved {
+    digest: u64,
+    page: SavedPage,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+enum SavedPage {
+    Album { album: Album, songs: Vec<Song>, disc_titles: Vec<crate::DiscTitle> },
+    Artist { artist: Artist, albums: Vec<Album>, songs: Vec<Song> },
+    About(ArtistInfo),
+    Playlist { playlist: Playlist, songs: Vec<Song> },
+}
+
+impl SavedPage {
+    /// What of `page`, `read`'s answer, is saved: an album, an artist (and its about part) or a playlist.
+    fn of(read: &Read, page: &Page) -> Option<SavedPage> {
+        Some(match (read, page) {
+            (Read::AlbumById { .. }, Page::AlbumPage { v }) => SavedPage::Album { album: v.album.clone(), songs: v.songs.clone(), disc_titles: v.disc_titles.clone() },
+            (Read::ArtistById { .. }, Page::ArtistPage { v }) => SavedPage::Artist { artist: v.artist.clone(), albums: v.albums.clone(), songs: v.songs.clone() },
+            (Read::ArtistAbout { .. }, Page::About { v }) => SavedPage::About(v.clone()),
+            (Read::PlaylistById { .. }, Page::PlaylistPage { v }) => SavedPage::Playlist { playlist: v.playlist.clone(), songs: v.songs.clone() },
+            _ => return None,
+        })
+    }
+
+    fn page(self) -> Page {
+        match self {
+            SavedPage::Album { album, songs, disc_titles } => Page::AlbumPage { v: AlbumDetail::new(album, songs, disc_titles) },
+            SavedPage::Artist { artist, albums, songs } => Page::ArtistPage { v: ArtistDetail::new(artist, albums, songs) },
+            SavedPage::About(v) => Page::About { v },
+            SavedPage::Playlist { playlist, songs } => Page::PlaylistPage { v: PlaylistDetail::new(playlist, songs) },
+        }
+    }
 }
 
 /// The pages a write makes stale, as key prefixes, for every provider.
@@ -480,14 +525,27 @@ impl Client {
                 let row: Option<(Vec<u8>, i64)> = {
                     let c = self.core.db.lock();
                     let mut st = c.prepare_cached("SELECT body, ts FROM cache WHERE server=sid() AND key=?1")?;
-                    st.query_row([k], |r| Ok((r.get(0)?, r.get(1)?))).optional()?
+                    st.query_row([&k], |r| Ok((r.get(0)?, r.get(1)?))).optional()?
                 };
-                let Some((body, ts)) = row else { return Ok(Stored { page: None, digest: None, fresh: false }) };
+                let Some((body, ts)) = row else { return Ok(self.saved(&read, &k)) };
                 (self.core.provider().parse(self, &read, &body).ok(), digest(&body), ts)
             }
         };
         let fresh = page.as_ref().is_some_and(|p| !lists_provider_items(p)) && crate::db::now_ms() - at < window;
         Ok(Stored { page: page.map(|p| self.overlaid(&read, p)), digest: Some(digest), fresh })
+    }
+
+    /// The page saved on disk under kept key `key` in an earlier session, not fresh: the source is asked
+    /// again. Nothing when none was saved, or it is older than [`SAVED_FOR`].
+    fn saved(&self, read: &Read, key: &str) -> Stored {
+        let row: Option<(Vec<u8>, i64)> = {
+            let c = self.core.db.lock();
+            c.prepare_cached("SELECT body, ts FROM cache WHERE server=sid() AND key=?1").and_then(|mut st| st.query_row([format!("{SAVED}{key}")], |r| Ok((r.get(0)?, r.get(1)?))).optional()).ok().flatten()
+        };
+        match row.filter(|(_, ts)| crate::db::now_ms() - ts < SAVED_FOR).and_then(|(body, _)| serde_json::from_slice::<Saved>(&body).ok()) {
+            Some(saved) => Stored { page: Some(self.overlaid(read, saved.page.page())), digest: Some(saved.digest), fresh: false },
+            None => Stored { page: None, digest: None, fresh: false },
+        }
     }
 
     /// Home stays as first shown for the whole session; after a refresh dropped it, the last one shows
@@ -516,7 +574,7 @@ impl Client {
     }
 
     /// Where the session's Home is kept on disk for the next one's first moments.
-    fn home_saved_key(&self) -> Option<String> {
+    pub(crate) fn home_saved_key(&self) -> Option<String> {
         self.kept_key(&Read::HomeFeed).map(|(key, _)| key + ":last")
     }
 
@@ -594,6 +652,9 @@ impl Client {
                 };
                 self.index(&page, folders)?;
                 let digest = page_digest(&page);
+                if let Some(saved) = SavedPage::of(&read, &page) {
+                    self.core.save_checked(&k, Saved { digest, page: saved }, revision)?;
+                }
                 self.core.keep_checked(k, Kept { page: page.clone(), at: crate::db::now_ms(), digest }, revision);
                 (Some(digest) != stored_digest).then_some(page)
             }
@@ -603,6 +664,29 @@ impl Client {
 }
 
 impl crate::Core {
+    /// Saves `saved` on disk for kept key `key`, unless a write since `revision` made it stale; the oldest
+    /// saved pages beyond [`SAVED_PAGES`], and those older than [`SAVED_FOR`], go.
+    fn save_checked(&self, key: &str, saved: Saved, revision: u64) -> crate::Result<()> {
+        let body = serde_json::to_vec(&saved).map_err(|e| crate::CoreError::Parse { reason: e.to_string() })?;
+        self.cache_put_checked(format!("{SAVED}{key}"), body, Some(revision))?;
+        let c = self.db.lock();
+        c.prepare_cached(
+            "DELETE FROM cache WHERE server=sid() AND key >= ?1 AND key < ?1 || x'ff' AND (ts < ?2 OR key NOT IN
+             (SELECT key FROM cache WHERE server=sid() AND key >= ?1 AND key < ?1 || x'ff' ORDER BY ts DESC LIMIT ?3))",
+        )?
+        .execute(rusqlite::params![SAVED, crate::db::now_ms() - SAVED_FOR, SAVED_PAGES])?;
+        Ok(())
+    }
+
+    /// Drops the provider pages saved on disk and Home's, which were the account's.
+    pub(crate) fn saved_drop(&self, home: Option<String>) -> crate::Result<()> {
+        self.cache_evict(SAVED.into())?;
+        if let Some(home) = home {
+            self.cache_drop(&home)?;
+        }
+        Ok(())
+    }
+
     /// Keeps `kept` under `key` unless a write since `revision` made what it shows stale.
     fn keep_checked(&self, key: String, kept: Kept, revision: u64) {
         let mut pages = self.kept.lock();
@@ -799,6 +883,28 @@ mod tests {
         assert!(!c.core.rules().asks);
         assert!(block(c.songs_listed("title".into(), false, false, 0, 0, 0)).unwrap().songs.is_empty(), "nothing indexed");
         assert_eq!(fake.asked().len(), 1, "the index, not the server");
+    }
+
+    /// Saved provider pages keep only the latest few, and one too old shows no more.
+    #[test]
+    fn saved_pages_are_held_to_a_count_and_an_age() {
+        let (c, _) = setup();
+        let revision = c.core.cache_revision.load(std::sync::atomic::Ordering::Relaxed);
+        for i in 0..SAVED_PAGES + 5 {
+            c.core.save_checked(&format!("page:about/{i}"), Saved { digest: i as u64, page: SavedPage::About(ArtistInfo::default()) }, revision).unwrap();
+        }
+        let count = |c: &Client| -> u32 { c.core.db.lock().query_row("SELECT count(*) FROM cache WHERE key >= 'saved:' AND key < 'saved;'", [], |r| r.get(0)).unwrap() };
+        assert_eq!(count(&c), SAVED_PAGES);
+        let read = Read::ArtistAbout { id: "x".into() };
+        let key = format!("page:about/{}", SAVED_PAGES + 4);
+        assert_eq!(c.saved(&read, &key).digest, Some(SAVED_PAGES as u64 + 4), "the latest stays");
+        c.core.db.lock().execute("UPDATE cache SET ts = ?1 WHERE key = ?2", rusqlite::params![crate::db::now_ms() - SAVED_FOR, format!("{SAVED}{key}")]).unwrap();
+        assert!(c.saved(&read, &key).page.is_none(), "too old to show");
+        c.core.save_checked("page:about/new", Saved { digest: 0, page: SavedPage::About(ArtistInfo::default()) }, revision).unwrap();
+        assert_eq!(count(&c), SAVED_PAGES, "the old one went with the next save");
+        c.core.cache_stale("page:").unwrap();
+        c.core.save_checked("page:about/late", Saved { digest: 0, page: SavedPage::About(ArtistInfo::default()) }, revision).unwrap();
+        assert!(c.saved(&read, "page:about/late").page.is_none(), "a write since the read began: not saved");
     }
 
     #[test]

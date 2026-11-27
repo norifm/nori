@@ -1,7 +1,7 @@
 //! The queue: songs in list order, play order under shuffle, hand-added marks, current song, repeat,
 //! and the offline bridge. Every change is made here first and mirrored to the platform's player.
 
-use crate::queue::{is_permutation, place, shuffle, shuffle_around};
+use crate::queue::{is_permutation, place, shuffle, shuffle_around, shuffle_in};
 
 /// How a song came into the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -338,6 +338,20 @@ impl Playlist {
         self.lit = on;
     }
 
+    /// The rest of the list's own songs, joining its end: in list order after the others, or, shuffling,
+    /// each at a random place among the songs not played yet ([`shuffle_in`]). Returns where they went in
+    /// the list.
+    pub fn extend(&mut self, ids: Vec<String>, seed: u64) -> usize {
+        let (at, count) = (self.ids.len(), ids.len());
+        self.splice(at, ids, Hand::No);
+        if let Some(mut order) = self.order.take() {
+            shuffle_in(&mut order, self.cur, at, count, |i| self.hand[i], seed);
+            self.order = Some(order);
+        }
+        self.rev += 1;
+        at
+    }
+
     /// A plain insert at `at`; under shuffle the songs play after the rest.
     pub fn insert(&mut self, at: usize, ids: Vec<String>, hand: Hand) {
         let at = at.min(self.ids.len());
@@ -651,6 +665,24 @@ mod tests {
 
     fn played(p: &Playlist) -> Vec<&str> {
         p.play_order().map(|i| p.ids()[i].as_str()).collect()
+    }
+
+    #[test]
+    fn the_rest_of_a_list_joins_its_end() {
+        let mut p = Playlist::default();
+        p.set(ids(&["a", "b"]), Some(1), false, 0);
+        assert_eq!(p.extend(ids(&["c", "d"]), 3), 2);
+        assert_eq!(list(&p), ["a", "b", "c", "d"]);
+        assert_eq!((p.current(), p.next()), (Some(1), Some(2)), "they play after the song playing, in order");
+        assert_eq!(p.by_hand().count(), 0, "the list's own songs");
+
+        p.set(ids(&["a", "b", "c"]), None, true, 5);
+        let cur = p.current().unwrap();
+        p.extend(ids(&["d", "e"]), 9);
+        assert_eq!(p.play_order().next(), Some(cur), "the song playing stays first");
+        let mut order: Vec<usize> = p.play_order().collect();
+        order.sort();
+        assert_eq!(order, [0, 1, 2, 3, 4], "each song once in the play order");
     }
 
     #[test]

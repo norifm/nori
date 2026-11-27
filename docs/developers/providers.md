@@ -129,17 +129,47 @@ the same way for every provider:
 
 - The store keeps each page under nori's own key for its read. Most reads stay fresh for two minutes.
 - A raw answer (`Answer::Raw`, a Subsonic server's) is kept on disk and parsed again on every read. A
-  `Page` answer is kept in memory for the session.
+  `Page` answer is kept in memory for the session. An album, artist, artist about or playlist `Page` is
+  also saved on disk for later sessions (see [Saved pages](#saved-pages)).
 - `Client::read_stored` returns the kept page at once. `Client::read_fetch` asks the source and returns
   a page only when it changed.
 - `Client::read_each` shows the kept page, then the source's. With no kept page, it also shows each part
-  the source shows before its whole answer comes. A part is never kept.
+  the source shows before its whole answer comes (see [A playlist shown in parts](#a-playlist-shown-in-parts)).
+  A part is never kept.
 - The session's favorite marks are laid over every page as it is read. An item unmarked this session
   leaves the favorites. An item marked this session joins them before the source lists it.
 - A write makes the pages of its kind stale (`cache_policy::stale`). Stale pages still show, offline
   too, until the source answers again.
 - Home stays as first shown for the whole session. A refresh merges the new feed into it, so nothing
   that shows moves.
+
+### Saved pages
+
+The core saves a `Page` answer of an album, an artist, its about part or a playlist on disk
+(`Saved` in `cache_policy.rs`). The `cache` table holds it under `saved:` and its kept key, with the
+page's digest. The next session
+shows the saved copy at once and asks the source again, once, as the page opens. The same answer shows
+nothing more. A changed one replaces the copy, and the clients move its items with the core's
+`pages::row_keys` and `pages::newer_places`. Home has its own saved copy (`home_saved_key`).
+
+- A saved copy is only a page's last answer. It is never indexed, so it never reaches search, the library
+  or autofill.
+- A profile keeps its 200 latest saved pages, each for 30 days. A write made while the read was on its
+  way stops the save, as it stops the memory copy.
+- Signing out drops the saved pages and Home's. Removing the profile drops its rows with the rest.
+
+### A playlist shown in parts
+
+A provider that reads a long playlist page by page sends each part to `Provider::read_in_parts`
+(a plugin's `parts.show-playlist`). `Client::read_each` shows each part with `PlaylistDetail::filling`
+set, and tells the queue how far the page came (`queue::Session::page_listed`).
+
+A queue started from a part follows the page (`nori_queue::follow`): `QueueChange::follows` is set, and
+autofill waits. The platform then calls `Client::queue_follow`, as it calls autofill. The core waits for
+the page's read on its way (`Client::turn`), or reads it again if that read ended first. The songs after
+those the queue had join its end: in order, or shuffled among the songs not played yet. The host and
+Android's `PlaybackService` make the same change to the player (`Followed::edit`). A queue started since
+takes nothing.
 
 ### Favorites kept on this device
 

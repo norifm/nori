@@ -1,5 +1,5 @@
 //! A page a plugin provider reads in many requests, one after another (a long playlist's pages), shows
-//! what the first brought while the rest are asked.
+//! what came while the rest are asked, and its saved copy in the next session.
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -39,20 +39,20 @@ impl Transport for Held {
     }
 }
 
-/// The songs of each playlist page shown.
-struct Shown(Mutex<Sender<Vec<String>>>);
+/// The songs of each playlist page shown, and whether more were on their way.
+struct Shown(Mutex<Sender<(Vec<String>, bool)>>);
 
 impl PageShown for Shown {
     fn show(&self, page: Page) {
         if let Page::PlaylistPage { v } = page {
-            self.0.lock().unwrap().send(v.songs.into_iter().map(|s| s.title).collect()).unwrap();
+            self.0.lock().unwrap().send((v.songs.into_iter().map(|s| s.title).collect(), v.filling)).unwrap();
         }
     }
 }
 
-#[test]
-fn a_long_playlist_shows_its_first_page_while_the_rest_is_asked() {
-    let dir = nori_testdir::TempDir::new("plugin-parts");
+/// A client of a profile played from the fixture plugin, its database in `dir`, over connections the test
+/// lets go one by one: the URLs asked, and where to let each go.
+fn open(dir: &nori_testdir::TempDir) -> (Arc<Client>, Receiver<String>, Sender<()>) {
     let settings = Settings::new();
     let path = nori_host::db_path(dir.path());
     settings.open(&path).unwrap();
@@ -67,7 +67,21 @@ fn a_long_playlist_shows_its_first_page_while_the_rest_is_asked() {
     let ((asked, requests), (go, held)) = (channel(), channel());
     let net = Arc::new(Held { asked: Mutex::new(asked), go: Mutex::new(held) });
     kinds.set_transport(net.clone());
-    let client = Client::new(core, net, Default::default());
+    (Client::new(core, net, Default::default()), requests, go)
+}
+
+const WAIT: Duration = Duration::from_secs(10);
+
+fn titles(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+/// A long playlist shows what came before each next page is asked, marked as filling, then whole; a queue
+/// started from its first page takes the rest from that read, which is not asked again.
+#[test]
+fn a_long_playlist_fills_in_and_its_queue_takes_the_rest() {
+    let dir = nori_testdir::TempDir::new("plugin-parts");
+    let (client, requests, go) = open(&dir);
     let (shown, pages) = channel();
     let shown = Arc::new(Shown(Mutex::new(shown)));
     let read = Read::PlaylistById { id: "test-long".into() };
@@ -75,13 +89,57 @@ fn a_long_playlist_shows_its_first_page_while_the_rest_is_asked() {
         let (client, read, shown) = (client.clone(), read.clone(), shown.clone());
         std::thread::spawn(move || block_on(client.read_cached(read, shown)))
     };
-    let wait = Duration::from_secs(10);
-    assert_eq!(pages.recv_timeout(wait).expect("the first page, shown before the second came"), ["first"]);
-    assert_eq!(requests.recv_timeout(wait).unwrap(), "https://allowed.example/second");
+    assert_eq!(pages.recv_timeout(WAIT).expect("the first page, shown before the second came"), (titles(&["first"]), true));
+    assert_eq!(requests.recv_timeout(WAIT).unwrap(), "https://allowed.example/second");
+
+    let ids = vec!["test-first".to_string()];
+    let started = client.session().set(ids, Some(0), false, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Playlist, "test-long")));
+    assert!(started.follows, "played from the first page");
+    let following = {
+        let client = client.clone();
+        std::thread::spawn(move || block_on(client.queue_follow()))
+    };
+
+    go.send(()).unwrap();
+    assert_eq!(pages.recv_timeout(WAIT).unwrap(), (titles(&["first", "second"]), true));
+    assert_eq!(requests.recv_timeout(WAIT).unwrap(), "https://allowed.example/third");
     go.send(()).unwrap();
     reading.join().unwrap().unwrap();
-    assert_eq!(pages.recv_timeout(wait).unwrap(), ["first", "second"]);
+    assert_eq!(pages.recv_timeout(WAIT).unwrap(), (titles(&["first", "second", "third"]), false));
+    let followed = following.join().unwrap().expect("the rest joined the queue");
+    assert_eq!(followed.edit.songs.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(), ["second", "third"]);
+    assert_eq!(client.session().playlist(|p| p.ids().len()), 3);
+    assert!(requests.try_recv().is_err(), "the page was not asked again for the queue");
 
     block_on(client.read_cached(read, shown)).unwrap();
-    assert_eq!(pages.try_iter().collect::<Vec<_>>(), [["first", "second"]], "kept whole: no part shows over it");
+    assert_eq!(pages.try_iter().collect::<Vec<_>>(), [(titles(&["first", "second", "third"]), false)], "kept whole: no part shows over it");
+}
+
+/// After a restart the playlist's saved copy shows before anything is asked; the same answer shows
+/// nothing more.
+#[test]
+fn a_long_playlist_shows_its_saved_copy_after_a_restart() {
+    let dir = nori_testdir::TempDir::new("plugin-saved");
+    let read = Read::PlaylistById { id: "test-long".into() };
+    let whole = (titles(&["first", "second", "third"]), false);
+    {
+        let (client, _requests, go) = open(&dir);
+        go.send(()).unwrap();
+        go.send(()).unwrap();
+        let (shown, pages) = channel();
+        block_on(client.read_cached(read.clone(), Arc::new(Shown(Mutex::new(shown))))).unwrap();
+        assert_eq!(pages.try_iter().last(), Some(whole.clone()));
+    }
+    let (client, requests, go) = open(&dir);
+    let (shown, pages) = channel();
+    let reading = {
+        let (client, read, shown) = (client.clone(), read.clone(), Arc::new(Shown(Mutex::new(shown))));
+        std::thread::spawn(move || block_on(client.read_cached(read, shown)))
+    };
+    assert_eq!(pages.recv_timeout(WAIT).expect("the saved copy, before the source answered"), whole);
+    assert_eq!(requests.recv_timeout(WAIT).unwrap(), "https://allowed.example/second", "asked anew");
+    go.send(()).unwrap();
+    go.send(()).unwrap();
+    reading.join().unwrap().unwrap();
+    assert!(pages.try_iter().next().is_none(), "the same answer: nothing moves");
 }

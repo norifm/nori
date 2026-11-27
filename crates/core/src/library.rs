@@ -7,6 +7,7 @@ use crate::mixes::board::{MixDraw, MixLookup, FAVOURITES_MIX};
 use crate::Song;
 use futures_util::future::Either;
 use futures_util::StreamExt;
+use nori_queue::follow::Listed;
 use std::sync::Arc;
 
 pub use nori_library::library::*;
@@ -193,6 +194,14 @@ pub trait PageShown: Send + Sync {
     fn show(&self, page: Page);
 }
 
+/// The page a queue started from `read`'s songs comes from, while they may still be coming.
+fn listed_origin(read: &Read) -> Option<crate::PageOrigin> {
+    match read {
+        Read::PlaylistById { id } => Some(crate::PageOrigin::new(crate::OriginKind::Playlist, id.clone())),
+        _ => None,
+    }
+}
+
 /// Receives the session's star marks whenever [`Client::star`] changes them.
 #[cfg_attr(feature = "ffi", uniffi::export(with_foreign))]
 pub trait StarsShown: Send + Sync {
@@ -223,6 +232,18 @@ impl Client {
         }
     }
 
+    /// `read`'s whole page, once any read of it on its way has ended: the kept one while fresh, else the
+    /// source's.
+    pub(crate) async fn read_whole(&self, read: Read) -> NetResult<Page> {
+        let _turn = self.turn(&read).await;
+        let stored = self.read_stored(read.clone())?;
+        if let (true, Some(page)) = (stored.fresh, stored.page) {
+            return Ok(page);
+        }
+        // Asked with nothing kept, the source's answer always comes back.
+        self.read_fetch(read, None, None).await?.ok_or_else(|| crate::transport::NetError::Parse { reason: "no answer".into() })
+    }
+
     /// [`Client::read_cached`] with a closure.
     pub async fn read_each(&self, read: Read, mut each: impl FnMut(Page)) -> NetResult<()> {
         let stored = self.read_stored(read.clone())?;
@@ -234,16 +255,28 @@ impl Client {
         if stored.fresh {
             return Ok(());
         }
-        // With nothing shown yet, what the source shows of its answer before the whole comes is shown.
+        // With nothing shown yet, what the source shows of its answer before the whole comes is shown,
+        // marked as such, and the queue learns how far the page has come (`nori_queue::follow`).
         let (parts, mut came) = futures_channel::mpsc::unbounded();
         let mut refresh = std::pin::pin!(self.refresh(read.clone(), digest, (!shown).then_some(parts)));
+        let mut parted = false;
         let answer = loop {
             match futures_util::future::select(refresh.as_mut(), came.next()).await {
                 Either::Left((answer, _)) => break answer,
-                Either::Right((Some(part), _)) => each(self.overlaid(&read, part)),
+                Either::Right((Some(mut part), _)) => {
+                    if let (Some(origin), Page::PlaylistPage { v }) = (listed_origin(&read), &mut part) {
+                        v.filling = true;
+                        self.core.session.page_listed(origin, Listed::Partly);
+                        parted = true;
+                    }
+                    each(self.overlaid(&read, part))
+                }
                 Either::Right((None, _)) => break refresh.await,
             }
         };
+        if let (true, Some(origin), Ok(Some(Page::PlaylistPage { v }))) = (parted, listed_origin(&read), &answer) {
+            self.core.session.page_listed(origin, Listed::Whole(v.songs.len()));
+        }
         if let Some(p) = answer? {
             each(p);
         }

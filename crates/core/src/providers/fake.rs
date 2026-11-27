@@ -24,6 +24,13 @@ struct Fake {
     ended: Mutex<(bool, bool)>,
     /// Album pages read.
     albums_read: Mutex<u32>,
+    /// Its album lists its songs the other way round, as a newer answer might.
+    turned: Mutex<bool>,
+    /// Nothing reaches it.
+    offline: Mutex<bool>,
+    /// Its long playlist's reads, and what holds each after its first part until the test lets it go.
+    long_reads: Mutex<u32>,
+    long_held: Mutex<Option<futures_channel::oneshot::Receiver<()>>>,
 }
 
 /// Signed out, its favorites are kept on this device.
@@ -31,9 +38,18 @@ fn rules(signed_in: bool) -> ProfileRules {
     ProfileRules { account: false, playlists: signed_in, indexed: false, remote: false, stars: true, stars_here: !signed_in, scrobbles: signed_in, feed: true, mixes: signed_in, ..profile_rules(false) }
 }
 
+fn song(id: &str, title: &str) -> Song {
+    Song { id: id.into(), title: title.into(), album: "Fakes".into(), album_id: Some("f-al".into()), duration: 60, ..Default::default() }.dressed()
+}
+
 fn album() -> AlbumDetail {
-    let song = |id: &str, title: &str| Song { id: id.into(), title: title.into(), album: "Fakes".into(), album_id: Some("f-al".into()), duration: 60, ..Default::default() }.dressed();
     AlbumDetail::new(Album { id: "f-al".into(), name: "Fakes".into(), song_count: 2, ..Default::default() }, vec![song("f-1", "One"), song("f-2", "Two")], Vec::new())
+}
+
+/// Its long playlist as far as `songs` of it.
+fn long(songs: usize) -> Page {
+    let all = [song("f-1", "One"), song("f-2", "Two"), song("f-3", "Three")];
+    Page::PlaylistPage { v: crate::PlaylistDetail::new(crate::Playlist { id: "f-long".into(), song_count: 3, ..Default::default() }, all[..songs].to_vec()) }
 }
 
 #[async_trait::async_trait]
@@ -69,6 +85,9 @@ impl Provider for Fake {
     }
 
     async fn read(&self, _: &Client, read: Read) -> NetResult<Option<Answer>> {
+        if *self.offline.lock() {
+            return Err(crate::transport::NetError::Transport { kind: crate::transport::FailureKind::Connect, detail: None });
+        }
         Ok(match read {
             Read::StarredItems => {
                 let hearts = self.hearts.lock();
@@ -77,7 +96,15 @@ impl Provider for Fake {
             Read::Search { query, .. } => Some(Page::Found { v: SearchResult { songs: album().songs.into_iter().filter(|s| s.title.to_lowercase().contains(&query)).collect(), ..Default::default() } }),
             Read::AlbumById { id } if id == "f-al" => {
                 *self.albums_read.lock() += 1;
-                Some(Page::AlbumPage { v: album() })
+                let mut v = album();
+                if *self.turned.lock() {
+                    v = AlbumDetail::new(v.album, v.songs.into_iter().rev().collect(), Vec::new());
+                }
+                Some(Page::AlbumPage { v })
+            }
+            Read::PlaylistById { id } if id == "f-long" => {
+                *self.long_reads.lock() += 1;
+                Some(long(3))
             }
             // Its own playlist names no owner; one it follows names who made it.
             Read::PlaylistList => {
@@ -97,6 +124,18 @@ impl Provider for Fake {
             _ => None,
         }
         .map(|p| Answer::Page(Box::new(p))))
+    }
+
+    /// Its long playlist shows its first song, then waits for the test before the whole.
+    async fn read_in_parts(&self, client: &Client, read: Read, parts: crate::cache_policy::Parts) -> NetResult<Option<Answer>> {
+        if matches!(&read, Read::PlaylistById { id } if id == "f-long") {
+            let _ = parts.unbounded_send(long(1));
+            let held = self.long_held.lock().take();
+            if let Some(held) = held {
+                let _ = held.await;
+            }
+        }
+        self.read(client, read).await
     }
 
     async fn write(&self, _: &Client, w: Write) -> NetResult<()> {
@@ -274,6 +313,89 @@ mod tests {
         *fake.feeds.lock() = 5;
         assert_eq!(titles(&c), [["feed 1"], ["feed 6"]]);
         assert_eq!(titles(&c), [["feed 6"]], "this session's, kept");
+    }
+
+    fn album_pages(c: &Client) -> Vec<Vec<String>> {
+        let mut pages = Vec::new();
+        let _ = block(c.read_each(Read::AlbumById { id: "f-al".into() }, |p| if let Page::AlbumPage { v } = p { pages.push(v.songs.into_iter().map(|s| s.id).collect()) }));
+        pages
+    }
+
+    /// A provider's page saved in one session shows at once in the next, and its source is asked again:
+    /// the same answer shows nothing new, a changed one replaces it.
+    #[test]
+    fn a_page_saved_in_one_session_shows_at_once_in_the_next() {
+        let dir = nori_testdir::TempDir::new("fake-saved");
+        let db = dir.join("nori.db").to_str().unwrap().to_string();
+        let (c, _) = fake_at(db.clone());
+        assert_eq!(album_pages(&c), [["f-1", "f-2"]]);
+        drop(c);
+
+        let (c, fake) = fake_at(db.clone());
+        assert_eq!(album_pages(&c), [["f-1", "f-2"]], "the saved copy; the same answer shows nothing more");
+        assert_eq!(*fake.albums_read.lock(), 1, "asked again");
+        assert_eq!(album_pages(&c), [["f-1", "f-2"]]);
+        assert_eq!(*fake.albums_read.lock(), 1, "then kept for the session as before");
+        drop(c);
+
+        let (c, fake) = fake_at(db);
+        *fake.turned.lock() = true;
+        assert_eq!(album_pages(&c), [["f-1", "f-2"], ["f-2", "f-1"]], "the saved copy, then the newer answer");
+    }
+
+    /// A saved page is only ever a page's last answer: shown offline, it adds nothing to the index; and
+    /// signing out drops it.
+    #[test]
+    fn a_saved_page_is_never_indexed_and_goes_on_sign_out() {
+        let dir = nori_testdir::TempDir::new("fake-saved-index");
+        let db = dir.join("nori.db").to_str().unwrap().to_string();
+        let (c, _) = fake_at(db.clone());
+        album_pages(&c);
+        c.core.db.lock().execute_batch("DELETE FROM fts; DELETE FROM items;").unwrap();
+        drop(c);
+
+        let (c, fake) = fake_at(db.clone());
+        *fake.offline.lock() = true;
+        assert_eq!(album_pages(&c), [["f-1", "f-2"]], "offline, the saved copy shows");
+        assert!(c.core.local_search("one".into(), 10).unwrap().songs.is_empty(), "nothing of it indexed");
+        c.sign_out();
+        drop(c);
+
+        let (c, fake) = fake_at(db);
+        *fake.offline.lock() = true;
+        assert!(album_pages(&c).is_empty(), "signed out, nothing saved shows");
+    }
+
+    /// A playlist shown in part is marked as filling; a queue started from that part takes the rest once
+    /// the read ends, waiting for it rather than asking again.
+    #[test]
+    fn a_queue_from_a_page_shown_in_part_takes_the_rest_from_its_read() {
+        let (c, fake) = fake();
+        let (go, held) = futures_channel::oneshot::channel();
+        *fake.long_held.lock() = Some(held);
+        let (shown, pages) = std::sync::mpsc::channel();
+        let reading = {
+            let c = c.clone();
+            std::thread::spawn(move || block(c.read_each(Read::PlaylistById { id: "f-long".into() }, |p| if let Page::PlaylistPage { v } = p { shown.send(v).unwrap() })))
+        };
+        let wait = std::time::Duration::from_secs(10);
+        let part = pages.recv_timeout(wait).unwrap();
+        assert!(part.filling && part.songs.len() == 1, "the first part, marked");
+        c.session().register(part.songs.clone());
+        let started = c.session().set(part.songs.iter().map(|s| s.id.clone()).collect(), Some(0), false, Some(part.queue.origin()));
+        assert!(started.follows);
+        let following = {
+            let c = c.clone();
+            std::thread::spawn(move || block(c.queue_follow()))
+        };
+        go.send(()).unwrap();
+        reading.join().unwrap().unwrap();
+        let whole = pages.recv_timeout(wait).unwrap();
+        assert!(!whole.filling && whole.songs.len() == 3);
+        let followed = following.join().unwrap().expect("the rest joined");
+        assert_eq!(followed.edit.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["f-2", "f-3"]);
+        assert_eq!(c.session().playlist(|p| p.ids().to_vec()), ["f-1", "f-2", "f-3"]);
+        assert_eq!(*fake.long_reads.lock(), 1, "the page's own read, not another");
     }
 
     /// Home and the widget's shelves asked at once ask the source once, and all show its feed.

@@ -486,14 +486,41 @@ pub struct PlaylistDetail {
     /// The songs' summed length in seconds.
     pub seconds: u64,
     pub queue: std::sync::Arc<PageQueue>,
+    /// More of its songs are on their way: the source showed its first pages before the whole. A queue
+    /// started from it takes the rest when they come.
+    pub filling: bool,
 }
 
 impl PlaylistDetail {
     pub fn new(playlist: Playlist, songs: Vec<Song>) -> Self {
         let seconds = total_seconds(&songs);
         let queue = PageQueue::of(OriginKind::Playlist, &playlist.id);
-        PlaylistDetail { playlist, songs, seconds, queue }
+        PlaylistDetail { playlist, songs, seconds, queue, filling: false }
     }
+}
+
+// ---- a page's newer answer replacing what it showed ----
+
+/// A key for each of a page's items, `ids`, that a newer answer of the page gives the same item: its id,
+/// and from its second time on the page, which time (`a`, `b`, `a#2`). Rows keyed so move to their new
+/// places, come and go.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn row_keys(ids: Vec<String>) -> Vec<String> {
+    let mut seen: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    ids.into_iter()
+        .map(|id| {
+            let n = seen.entry(id.clone()).or_default();
+            *n += 1;
+            if *n == 1 { id } else { format!("{id}#{n}") }
+        })
+        .collect()
+}
+
+/// Where each of `fresh`, a page's newer answer, stood in `shown`, the answer it replaces (matched by
+/// [`row_keys`]); None for an item new to the page.
+pub fn newer_places(shown: Vec<String>, fresh: Vec<String>) -> Vec<Option<u32>> {
+    let was: std::collections::HashMap<String, u32> = row_keys(shown).into_iter().zip(0..).collect();
+    row_keys(fresh).into_iter().map(|k| was.get(&k).copied()).collect()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -631,6 +658,15 @@ mod tests {
         assert_eq!(idx.ranked("gapless".into()), [0, 3, 2]);
         assert_eq!(idx.ranked("OLED".into()), [1]);
         assert!(idx.ranked(" ".into()).is_empty());
+    }
+
+    #[test]
+    fn a_newer_answer_keeps_each_items_key() {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(row_keys(ids(&["a", "b", "a", "a"])), ["a", "b", "a#2", "a#3"]);
+        // `b` moved up, the second `a` went, `c` came.
+        assert_eq!(newer_places(ids(&["a", "x", "a", "b"]), ids(&["b", "a", "x", "c"])), [Some(3), Some(0), Some(1), None]);
+        assert_eq!(newer_places(ids(&["a", "b"]), ids(&["a", "b", "c"])), [Some(0), Some(1), None], "a filled-in page adds at its end");
     }
 
     #[test]
