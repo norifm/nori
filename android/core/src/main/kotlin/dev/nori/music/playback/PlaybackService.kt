@@ -215,8 +215,8 @@ class PlaybackService : MediaLibraryService() {
         offlineBridge = OfflineBridge(this, player, { nori.core }, { nori.client }, nori.session, scope, ::applyEdit, ::skipAfterError)
         player.onBridge = ::bridge
         // Paused a long while: the session goes idle, so nothing holds the service in the foreground and its
-        // notification can be swiped away. The queue and the place are saved first; play, a media button or
-        // onPlaybackResumption (once the service is gone) picks them up.
+        // notification goes. The queue and the place are saved first; play, a media button, the system's
+        // resume card or onPlaybackResumption (once the service is gone) picks them up.
         player.onLongPause = {
             persistQueue(push = false)
             player.stop()
@@ -271,6 +271,14 @@ class PlaybackService : MediaLibraryService() {
         // The notification and the lock screen carry the app's own mark, not media3's stock play circle.
         // Its id stays media3's default (1001): the download notification lives on 2001 so the two never replace each other.
         setMediaNotificationProvider(JamNotification(this).apply { setSmallIcon(dev.nori.music.core.R.drawable.ic_notification) })
+        // An idle player (stopped after a long pause, or failed) shows no notification, so the system's resume
+        // card stands for nori alone. With one up, SystemUI's resume browse (at unlock) adds that card beside
+        // it: the session's controls under the title of that moment. If Android restarted the service after the
+        // process died, it may still hold the dead process's foreground (or detached) notification; clear it.
+        setShowNotificationForIdlePlayer(SHOW_NOTIFICATION_FOR_IDLE_PLAYER_NEVER)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        getSystemService(android.app.NotificationManager::class.java)
+            .cancel(androidx.media3.session.DefaultMediaNotificationProvider.DEFAULT_NOTIFICATION_ID)
         // A heart changed anywhere in the app (or by the notification itself) redraws the notification's heart.
         // A StateFlow: it emits only on a change, so this is idle while music plays untouched.
         scope.launch { nori.library.starMarks.collect { refreshButtons() } }
@@ -1140,6 +1148,12 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onPlaybackResumption(session: MediaSession, controller: MediaSession.ControllerInfo, isForPlayback: Boolean): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future {
+            if (!isForPlayback) {
+                player.currentMediaItem?.let { current ->
+                    dev.nori.music.NoriLog.i("session: ${controller.packageName} asks what resumes: live song ${player.currentMediaItemIndex} (${current.mediaId}) of ${player.mediaItemCount}")
+                    return@future MediaSession.MediaItemsWithStartPosition(listOf(current), 0, player.currentPosition.coerceAtLeast(0))
+                }
+            }
             val q = withContext(Dispatchers.IO) { nori.core.loadQueue() }
             dev.nori.music.NoriLog.i("session: ${controller.packageName} asks what resumes${if (isForPlayback) ", to play it" else ""}: saved song ${q.index} (${q.songs.getOrNull(q.index.toInt())?.id}) of ${q.songs.size}")
             // Asked only to show what would play (the system's media controls), the player is left as it is.

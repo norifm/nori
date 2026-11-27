@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="plugins lyrics status-bar notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel search remote jam"
+SECTIONS="plugins lyrics status-bar notification media-card album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel search remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -567,6 +567,66 @@ if want notification; then section "the notification's seal and shuffle"
   kept_bytes=$(adb shell "content read --uri '$art' | wc -c" | tr -d '\r ')
   drawn_still() { [ "${kept_bytes:-0}" -gt 1000 ] && [ "$(field coversDrawn)" = "$drawn" ]; }
   check "the cover opened again is read from the disk, not drawn again ($kept_bytes bytes)" drawn_still
+fi
+
+if want media-card; then section "one card for nori in the system's media controls after a long pause"
+  # At unlock SystemUI adds a resume card for each app it resumes (MediaResumeListener) from the app's
+  # recent root, even if the app already has a live card. media3 answers with a song only while the player
+  # is idle. If the idle player kept its notification, the resume card would sit beside it with the
+  # session's controls and the title of that moment. The stop is the long pause's (onLongPause) without
+  # its five minutes; the unlock broadcast needs root.
+  root_before=$(adb shell id -u | tr -d '\r')
+  [ "$root_before" = 0 ] || { adb root >/dev/null; adb wait-for-device; }
+  # One line per card of this app: "<resume|live> <song>", and "session" after a resume card the
+  # browse has given the session's token (a card made resumable when its notification went has none).
+  sysui_cards() { adb shell dumpsys activity service com.android.systemui/.SystemUIService MediaCarouselController | python3 -c "
+import re,sys
+line=next((l for l in sys.stdin if 'visiblePlayerSortKeys:' in l),'')
+for c in line.split('MediaSortKey(')[1:]:
+    if 'packageName=$pkg,' not in c: continue
+    resume='resumption=true' in c
+    print('resume' if resume else 'live', re.search(r'\bsong=([^,]*)',c)[1] + (' session' if resume and 'token=null' not in c else ''))"; }
+  cards_are() { [ "$(sysui_cards)" = "$1" ]; }
+  "$app" play "album:$(mix_album)" >/dev/null; sounds 20
+  "$app" do next >/dev/null; wait_for index 1 10 >/dev/null
+  "$app" do pause >/dev/null; wait_for playing False 10 >/dev/null
+  paused_on=$(field title)
+  adb shell cmd media_session dispatch stop >/dev/null
+  check "the stopped player leaves only a resume card, on $paused_on" wait_until 10 cards_are "resume $paused_on"
+  echo "     cards: $(sysui_cards | tr '\n' ';')"
+  adb shell am broadcast -a android.intent.action.USER_UNLOCKED --ei android.intent.extra.user_handle 0 -p com.android.systemui >/dev/null
+  check "SystemUI's resume browse adds no second card" wait_until 10 cards_are "resume $paused_on session"
+  echo "     cards: $(sysui_cards | tr '\n' ';')"
+  "$app" do resume >/dev/null; sounds 20
+  "$app" do next >/dev/null; wait_for index 2 10 >/dev/null
+  adb shell cmd media_session dispatch pause >/dev/null; wait_for playing False 10 >/dev/null
+  now_on=$(field title)
+  check "played on, one card shows the song paused on, $now_on" wait_until 10 cards_are "live $now_on"
+  echo "     cards: $(sysui_cards | tr '\n' ';')"
+  # The process killed while paused: the system restarts the service, whose player comes back idle with the
+  # saved queue.
+  "$app" do resume >/dev/null; sounds 20
+  adb shell cmd media_session dispatch pause >/dev/null; wait_for playing False 10 >/dev/null
+  killed_on=$(field title)
+  killed=$(adb shell pidof "$pkg" | tr -d '\r')
+  adb shell kill -9 "$killed"
+  restarted() {
+    local now; now=$(adb shell pidof "$pkg" | tr -d '\r')
+    [ -n "$now" ] && [ "$now" != "$killed" ] && adb shell dumpsys media_session | grep -A25 "package=$pkg" | grep -q "description=$killed_on,"
+  }
+  wait_until 15 restarted
+  adb shell am broadcast -a android.intent.action.USER_UNLOCKED --ei android.intent.extra.user_handle 0 -p com.android.systemui >/dev/null
+  check "after the process died, the resume browse leaves one card, on $killed_on" wait_until 15 cards_are "resume $killed_on session"
+  echo "     cards: $(sysui_cards | tr '\n' ';')"
+  # The app's screen up again, so that its state reads the session.
+  "$app" launch >/dev/null
+  "$app" do resume >/dev/null; sounds 20
+  "$app" do next >/dev/null; wait_for title '!'"$killed_on" 10 >/dev/null
+  adb shell cmd media_session dispatch pause >/dev/null; wait_for playing False 10 >/dev/null
+  now_on=$(field title)
+  check "played on from there, one card shows $now_on" wait_until 10 cards_are "live $now_on"
+  echo "     cards: $(sysui_cards | tr '\n' ';')"
+  [ "$root_before" = 0 ] || { adb unroot >/dev/null; adb wait-for-device; }
 fi
 
 if want car-art; then section "the car's mosaic when a cover is unavailable"
