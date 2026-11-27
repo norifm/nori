@@ -5896,8 +5896,7 @@ impl App {
     }
 
     fn copy(&self, text: String, said: &str) {
-        let copied = arboard::Clipboard::new().and_then(|mut c| c.set_text(text));
-        match copied {
+        match self.compositor.copy(text) {
             Ok(()) => self.say(said, false),
             Err(e) => self.say(&e.to_string(), true),
         }

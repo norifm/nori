@@ -207,6 +207,9 @@ struct Shared {
     on_shown: RefCell<Option<ShownChanged>>,
     /// Run on the mouse's back (false) and forward (true) buttons.
     on_history: RefCell<Option<History>>,
+    /// The clipboard, opened at the first copy and kept for the app's life: on X11 the text copied is served
+    /// from this handle, so with no clipboard manager it would go with a handle dropped after the copy.
+    clipboard: RefCell<Option<arboard::Clipboard>>,
 }
 
 type FocusSource = Box<dyn Fn() -> Option<Focus>>;
@@ -256,6 +259,15 @@ pub struct Raised {
 const RAISED_MAX: usize = 4;
 
 impl Shared {
+    fn with_clipboard<R>(&self, f: impl FnOnce(&mut arboard::Clipboard) -> Result<R, arboard::Error>) -> Result<R, arboard::Error> {
+        let mut held = self.clipboard.borrow_mut();
+        let clipboard = match &mut *held {
+            Some(c) => c,
+            None => held.insert(arboard::Clipboard::new()?),
+        };
+        f(clipboard)
+    }
+
     fn shown(&self, role: Role) -> bool {
         match role {
             Role::Page => true,
@@ -319,9 +331,7 @@ impl slint::platform::Platform for Platform {
 
     fn set_clipboard_text(&self, text: &str, clipboard: slint::platform::Clipboard) {
         if clipboard == slint::platform::Clipboard::DefaultClipboard {
-            if let Ok(mut c) = arboard::Clipboard::new() {
-                let _ = c.set_text(text.to_string());
-            }
+            let _ = self.shared.with_clipboard(|c| c.set_text(text));
         }
     }
 
@@ -329,7 +339,7 @@ impl slint::platform::Platform for Platform {
         if clipboard != slint::platform::Clipboard::DefaultClipboard {
             return None;
         }
-        arboard::Clipboard::new().ok()?.get_text().ok()
+        self.shared.with_clipboard(|c| c.get_text()).ok()
     }
 }
 
@@ -381,12 +391,18 @@ pub fn install() -> Result<Compositor, String> {
         on_press_away: RefCell::new(None),
         on_shown: RefCell::new(None),
         on_history: RefCell::new(None),
+        clipboard: RefCell::new(None),
     });
     slint::platform::set_platform(Box::new(Platform { shared: shared.clone(), event_loop: RefCell::new(Some(event_loop)) })).map_err(|e| format!("the platform: {e}"))?;
     Ok(Compositor(shared))
 }
 
 impl Compositor {
+    /// Puts `text` on the system clipboard, where it stays after the call.
+    pub fn copy(&self, text: String) -> Result<(), arboard::Error> {
+        self.0.with_clipboard(|c| c.set_text(text))
+    }
+
     /// Skia owns each uploaded cover texture on the shared OpenGL context.
     #[cfg(target_os = "linux")]
     pub fn picture(&self, pixels: &[u8], width: u32, height: u32) -> slint::Image {
