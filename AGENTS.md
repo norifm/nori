@@ -198,7 +198,9 @@ https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw.
   what is not obvious from their name (a state, a cost), never what the setting does. A page's title
   stands alone: no line of explanation or reassurance under it.
 - Nothing animates unless the user touched it, except a page's newer answer replacing what it showed (its
-  saved copy, a refresh): its items move to their places, come and go (`itemMotion`). nori's Motion setting
+  saved copy, a refresh): its items move to their places, come and go (`itemMotion`); and a page still
+  reading past the core's quick-load time: its placeholders (`sketch`, in quiet ink, shaped as its items)
+  shimmer while they show, with Motion Full only, and its answer fades in over them. nori's Motion setting
   (not the system's) turns flourishes into direct changes.
 
 ## Code
@@ -262,7 +264,8 @@ https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw.
   it is; songs further ahead are never a provider's. Provider items are never indexed.
 - Use raw Material widgets (`Button`, `FilterChip`, `OutlinedTextField`, `Divider`) in screens; use the
   shapes in the app's `ui/Design.kt`. No liquid-glass imitation on Android; nothing animates unless the
-  user touched it or a newer answer moves a page's items; measure before adding blur or per-frame effects.
+  user touched it, a newer answer moves a page's items or a loading page's placeholders shimmer; measure
+  before adding blur or per-frame effects.
 
 ## Builds and releases
 

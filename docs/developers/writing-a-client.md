@@ -309,6 +309,13 @@ wholly in its client. What it shows still comes from the core.
 - **Motion.** The `motion` setting is Full, Reduced or E-ink, and nori's choice wins over the system's.
   The durations and curves of moves, fades and the page stack are the core's `Stage`. A gesture's feel
   is the client's.
+- **A page that is still loading.** `sketch` gives the parts a loading page shows: a head, shelves, a
+  grid or rows, each with the shape of its pictures. The client draws them where the real items will
+  stand, in the look's `SKETCH` color. It shows them only after the read takes longer than the `Stage`'s
+  `quick_load_ms`. With Motion Full, a band in `SKETCH_SHEEN` crosses each placeholder every `sheen_ms`.
+  When the answer comes, it fades in over the placeholders in `fade_ms`. With Reduced or E-ink motion,
+  the placeholders stay still and the answer replaces them directly. A page with a saved copy shows that
+  copy at once, with no placeholders.
 - **Appearance.** The `theme` setting is a `ThemeMode` and the `season` setting a `ThemeSeason`.
   `theme_palette` gives the palette for the date, and `covers_tint_pages` is false only for Midnight.
   The client resolves System from the OS. The iPod has no system scheme, so the iPod app reads System as
