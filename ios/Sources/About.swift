@@ -1,6 +1,6 @@
 import UIKit
 
-/// Settings → Licenses: the core's credits (`credits::core_credits`, `data_credits`), each opening its
+/// Settings → Licenses: the iPod's credits (`credits::core_credits`, `data_credits`), each opening its
 /// licence text from the bundle.
 final class CreditsPage: TablePage {
     private struct Credit {

@@ -682,11 +682,12 @@ fn about_credits_the_libraries_and_data() {
     for heading in ["THE CORE", "THE TERMINAL CLIENT", "DATA"] {
         assert!(s.lines().any(|l| l.trim_start().starts_with(heading)), "{heading} missing:\n{s}");
     }
-    for credit in ["rusqlite", "ratatui and crossterm", "cpal", "Wasmtime and Cranelift", "AutoEQ", "LRCLIB", "Beat This!"] {
+    for credit in ["rusqlite", "ratatui and crossterm", "cpal", "Wasmtime and Cranelift", "AutoEQ", "LRCLIB"] {
         assert!(s.contains(credit), "{credit} not credited:\n{s}");
     }
-    for drawn in ["Literata", "Shippori Mincho", "Iconoir"] {
-        assert!(!s.contains(drawn), "{drawn} credited in a terminal:\n{s}");
+    // Nor what the terminal doesn't ship: the beat model's runtime, a window's toolkit.
+    for absent in ["Literata", "Shippori Mincho", "Iconoir", "Beat This!", "Slint"] {
+        assert!(!s.contains(absent), "{absent} credited in a terminal:\n{s}");
     }
 }
 

@@ -841,8 +841,8 @@ pub enum CreditGroup {
 
 /// Everything the desktop is built from that is not nori's, grouped (`nori_core::credits`).
 fn credits() -> Vec<(CreditGroup, Vec<nori_core::credits::Credit>)> {
-    use nori_core::credits::{core_credits, data_credits, desktop_credits};
-    vec![(CreditGroup::Core, core_credits()), (CreditGroup::Desktop, desktop_credits()), (CreditGroup::Data, data_credits())]
+    use nori_core::credits::{client_credits, core_credits, data_credits, CreditClient::Desktop};
+    vec![(CreditGroup::Core, core_credits(Desktop)), (CreditGroup::Desktop, client_credits(Desktop)), (CreditGroup::Data, data_credits(Desktop))]
 }
 
 /// The licenses page: each group's heading, then its credits, the license at each one's end.

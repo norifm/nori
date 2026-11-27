@@ -1573,9 +1573,9 @@ fn about(own: &Own) -> Vec<Section> {
             info("Data kept in", own.data.clone()),
         ],
     };
-    use nori_core::credits::{core_credits, terminal_credits, terminal_data_credits, Credit};
+    use nori_core::credits::{client_credits, core_credits, data_credits, Credit, CreditClient::Terminal};
     let credits = |list: Vec<Credit>| list.into_iter().map(|c| info(&c.name, format!("{} · {} · {}", c.what, c.copyright, c.licence))).collect();
-    let groups = [(text::CORE_CREDITS, core_credits()), (text::TERMINAL_CREDITS, terminal_credits()), (text::DATA_CREDITS, terminal_data_credits())];
+    let groups = [(text::CORE_CREDITS, core_credits(Terminal)), (text::TERMINAL_CREDITS, client_credits(Terminal)), (text::DATA_CREDITS, data_credits(Terminal))];
     [version].into_iter().chain(groups.into_iter().map(|(title, list)| section(title, credits(list)))).collect()
 }
 

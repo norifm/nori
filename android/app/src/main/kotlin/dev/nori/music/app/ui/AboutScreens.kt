@@ -17,6 +17,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import dev.nori.music.app.BuildConfig
 import dev.nori.music.ffi.settings.Credit
+import dev.nori.music.ffi.settings.CreditClient
 
 /** A row that says something: a title, all of the line under it, and optionally something at its end or a tap. */
 @Composable
@@ -73,14 +74,14 @@ internal fun AboutContent(
 /**
  * Everything the app is built from that is not ours, grouped: the core's crates, Android's libraries,
  * the typeface and the third parties' data. What each is, whose and under which terms is the core's
- * (`credits::core_credits`, `android_credits`, `data_credits`), so every app on it lists them
- * alike; each names the bundled text its terms are (`assets/licences/<file>.txt`; none for a service).
+ * (`credits::core_credits`, `client_credits`, `data_credits`), each listing what this app ships; each
+ * names the bundled text its terms are (`assets/licences/<file>.txt`; none for a service).
  */
 private val CREDITS by lazy {
     listOf(
-        say.rustCore to dev.nori.music.ffi.settings.coreCredits(),
-        "Android" to dev.nori.music.ffi.settings.androidCredits(),
-        say.fontsAndData to dev.nori.music.ffi.settings.dataCredits(),
+        say.rustCore to dev.nori.music.ffi.settings.coreCredits(CreditClient.ANDROID),
+        "Android" to dev.nori.music.ffi.settings.clientCredits(CreditClient.ANDROID),
+        say.fontsAndData to dev.nori.music.ffi.settings.dataCredits(CreditClient.ANDROID),
     )
 }
 

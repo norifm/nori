@@ -9,8 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SYSTEMS = ("macos", "linux", "android", "ios", "windows")
-# Test targets only Cargo runs: they read files from across the whole checkout, which Bazel's sandbox does not hold.
-CARGO_ONLY_TESTS = {"agents_map"}
+# Test targets only Cargo runs: they read files from across the whole checkout, which Bazel's sandbox does not hold,
+# or run Cargo itself.
+CARGO_ONLY_TESTS = {"agents_map", "credits_shipped"}
 
 
 def applies(expression, system):

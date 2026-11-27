@@ -1814,8 +1814,8 @@ pub extern "C" fn nori_ios_credits() -> *mut c_char {
             .collect()
     };
     owned(&json!({
-        "core": list(nori_core::credits::core_credits()),
-        "data": list(nori_core::credits::data_credits()),
+        "core": list(nori_core::credits::core_credits(nori_core::credits::CreditClient::Ipod)),
+        "data": list(nori_core::credits::data_credits(nori_core::credits::CreditClient::Ipod)),
     }))
 }
 

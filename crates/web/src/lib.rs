@@ -885,11 +885,11 @@ impl Nori {
     /// `web`, `data`): `{ version, credits: [{ group, list: [{ name, what, copyright, licence, file }] }] }`,
     /// `file` naming the license text bundled with the page (null for a service).
     pub fn about(&self) -> String {
-        use nori_core::credits::{core_credits, data_credits, web_credits};
+        use nori_core::credits::{client_credits, core_credits, data_credits, CreditClient::Web};
         let list = |credits: Vec<nori_core::credits::Credit>| -> Vec<Value> {
             credits.into_iter().map(|c| json!({ "name": c.name, "what": c.what, "copyright": c.copyright, "licence": c.licence, "file": c.file })).collect()
         };
-        let groups = [("core", core_credits()), ("web", web_credits()), ("data", data_credits())];
+        let groups = [("core", core_credits(Web)), ("web", client_credits(Web)), ("data", data_credits(Web))];
         json!({
             "version": env!("CARGO_PKG_VERSION"),
             "credits": groups.into_iter().map(|(group, credits)| json!({ "group": group, "list": list(credits) })).collect::<Vec<_>>(),

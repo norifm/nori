@@ -2,15 +2,20 @@ nori — Copyright (c) 2026 norifm, GNU Affero General Public License v3.0 or la
 
 Third-party content bundled with nori
 
-Font (android/app/src/main/res/font/inter.ttf)
+Fonts (android/app/src/main/res/font/inter.ttf and literata.ttf; every client but the terminal)
   Inter — Copyright (c) 2016 The Inter Project Authors, SIL Open Font License 1.1
+  Literata — Copyright 2017 The Literata Project Authors, SIL Open Font License 1.1
+  Shippori Mincho (the seal's and the seasons' kanji, drawn from its outlines) — Copyright 2020 The
+    Shippori Mincho Project Authors, SIL Open Font License 1.1
   (full text: android/app/src/main/assets/licences/OFL-1.1.txt)
 
 Icons (android/app/src/main/kotlin/dev/nori/music/app/ui/Iconoir.kt, the widget, shortcut and car drawables,
-  the desktop's crates/desktop-ui/ui/icons.slint)
+  the desktop's crates/desktop-ui/ui/icons.slint, the web's web/src/ui/Icon.svelte, the iPod's
+  ios/Sources/Iconoir.swift)
   Iconoir — Copyright (c) 2021 Luca Burgio, MIT (full text: android/app/src/main/assets/licences/MIT.txt)
 
-Beat model network (built into the Rust core with `neural-beats`, crates/player/models/beat-this-small0.graph.onnx)
+Beat model network (built into the Android app's Rust core with `neural-beats`,
+  crates/player/models/beat-this-small0.graph.onnx)
   Beat This! (Foscarin, Schlüter and Widmer, ISMIR 2024; https://github.com/CPJKU/beat_this) — Copyright (c)
     2024 Institute of Computational Perception, JKU Linz, Austria, MIT (code and weights; full text:
     android/app/src/main/assets/licences/MIT.txt). The small0 model's graph, exported by tools/beat-this/export.py
@@ -18,30 +23,51 @@ Beat model network (built into the Rust core with `neural-beats`, crates/player/
     "Better beat detection" on, the core fetches the authors' small0 checkpoint from their server
     (cloud.cp.jku.at), checks it and converts it on the device.
 
-Linked into the Rust core (crates/core)
-  SQLite — dedicated to the public domain
-  uniffi, with its JNI runtime copied into crates/uniffi-jni-runtime — Mozilla Foundation, Mozilla
-    Public License 2.0
-  rusqlite, RustFFT, serde, jni, simd_cesu8, md-5, parking_lot, thiserror — MIT (dual-licensed MIT or Apache-2.0
+Linked into the Rust core (crates/core and the crates under it; every client unless named)
+  SQLite — dedicated to the public domain (sqlite-wasm-rs builds it for the web)
+  uniffi, with its JNI runtime copied into crates/uniffi-jni-runtime (the Android app) — Mozilla
+    Foundation, Mozilla Public License 2.0
+  symphonia (the format readers and codecs, crates/player and crates/engine) — Philip Deljanov and the
+    Symphonia contributors, Mozilla Public License 2.0
+  opus-rs (Opus, a port of libopus) — Copyright 2026 restsend.com; libopus Copyright 2001-2023 Xiph.Org,
+    Skype Limited, Octasic, Jean-Marc Valin, Timothy B. Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding,
+    Erik de Castro Lopo, Mozilla, Amazon; BSD-3-Clause (full text:
+    android/app/src/main/assets/licences/BSD-3-Clause.txt)
+  rusqlite, RustFFT, serde, md-5, parking_lot, thiserror, qrcode — MIT (dual-licensed MIT or Apache-2.0
     where the crate offers both)
+  jni, simd_cesu8 (the Android app) — MIT or Apache-2.0
   Signalsmith Stretch — Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd., MIT, with Signalsmith
     Linear — Copyright (c) 2025 Signalsmith Audio, MIT; ported to Rust in crates/stretch
+  Media3 Sonic and silence skipping (crates/player) and AndroidX Palette (crates/look) — the Android Open
+    Source Project, Apache-2.0; ported to Rust
   zune-jpeg, jpeg-decoder, png, image-webp, gif (cover art, crates/covers) — MIT (dual-licensed MIT or
     Apache-2.0; zune-jpeg also Zlib)
   yaml-rust2, roxmltree, miniz_oxide, futures-util (lyrics, crates/lyrics) — MIT (dual-licensed MIT or
     Apache-2.0; miniz_oxide also Zlib)
-  tract — Sonos, Inc. and the tract contributors, MIT or Apache-2.0; with the crates it builds on
-    (ndarray, prost, nom, half, num-*, smallvec and others), each MIT, Apache-2.0 or both, some also
-    offered under the Unlicense, BSD-2-Clause or BlueOak-1.0.0. Runs the beat model; in a build with
+  rqrr (a pairing QR code read from the camera; not the web) — WanzenBug and the rqrr contributors, MIT or
+    Apache-2.0; quirc, which it ports, Copyright (C) 2010-2012 Daniel Beer, ISC
+  aes, cbc, des, rc2 (a profile's client certificate, crates/cert; not the web) — RustCrypto Developers,
+    MIT or Apache-2.0
+  rustls, ring, webpki-roots (TLS; not the web) — MIT or Apache-2.0; rustls also ISC; ring Apache-2.0 and
+    ISC; webpki-roots' certificate data CDLA-Permissive-2.0
+  ureq (HTTP, crates/http; the desktop, the terminal and the iPod) — Copyright (c) 2019 Martin Algesten,
+    MIT or Apache-2.0
+  ed25519-dalek (a plugin package's signature, crates/plugin-index; not the iPod) — Copyright (c)
+    2017-2019 isis agora lovecruft, BSD-3-Clause
+  pulldown-cmark (a plugin's readme, crates/plugin-index; not the iPod) — Copyright 2015 Google Inc., MIT
+  tract (the Android app) — Sonos, Inc. and the tract contributors, MIT or Apache-2.0; with the crates it
+    builds on (ndarray, prost, nom, half, num-*, smallvec and others), each MIT, Apache-2.0 or both, some
+    also offered under the Unlicense, BSD-2-Clause or BlueOak-1.0.0. Runs the beat model; in a build with
     the `neural-beats` feature (the Android app's builds have it), and used only with "Better beat
     detection" on.
 
-The plugin host (crates/plugins; every client but the web and the iPod)
+The plugin host and backups (crates/plugins, crates/backup; the Android app, the desktop and the terminal)
   Wasmtime and Cranelift — the Bytecode Alliance and the Wasmtime Project Developers, Apache-2.0 with
     LLVM exception
+  zip (plugin packages and backups) — Copyright (c) 2014 Mathijs van de Nes, MIT
+  argon2, chacha20poly1305 (a backup sealed with its password) — RustCrypto Developers, MIT or Apache-2.0
 
-The desktop client (crates/desktop, crates/desktop-ui, crates/sign-in-window, nori-desktop; not part of
-  the Android app)
+The desktop client (crates/desktop, crates/desktop-ui, nori-desktop; not part of the Android app)
   Slint — Copyright © SixtyFPS GmbH, GNU General Public License v3.0 (GPL-3.0-only, one of the licenses
     Slint is offered under; full text: android/app/src/main/assets/licences/GPL-3.0.txt)
   Skia — Copyright (c) 2011 Google Inc., BSD-3-Clause (full text: android/app/src/main/assets/licences/
@@ -52,8 +78,6 @@ The desktop client (crates/desktop, crates/desktop-ui, crates/sign-in-window, no
   OpenH264 (a plugin's moving cover, built from source) — Copyright (c) 2013, Cisco Systems, BSD-2-Clause
     (full text: android/app/src/main/assets/licences/BSD-2-Clause.txt); the openh264 crate — Ralf Biedert,
     BSD-2-Clause
-  wry, tao (a provider's sign-in page) — Copyright (c) 2020-2023 Ngo Iok Ui & Tauri Programme within The
-    Commons Conservancy; wry Apache-2.0 or MIT, tao Apache-2.0
   x11rb, muda (macOS's menu bar) — MIT or Apache-2.0; objc2 — MIT
 
 The terminal client (crates/cli, nori-cli; not part of the Android app)
@@ -61,13 +85,12 @@ The terminal client (crates/cli, nori-cli; not part of the Android app)
   image, icy_sixel, rand, unicode-width, base64-simd (covers drawn in the terminal) — MIT (dual-licensed
     MIT or Apache-2.0 where the crate offers both)
 
-The desktop and terminal clients' player and network (not part of the Android app)
-  symphonia (the format readers, crates/engine) — Philip Deljanov and the Symphonia
-    contributors, Mozilla Public License 2.0
+The desktop and terminal clients' devices and sign-in (not part of the Android app)
   cpal, alsa (the sound card, crates/output-cpal) — Apache-2.0 (alsa also MIT)
-  ureq, rustls, ring, webpki-roots (HTTP and TLS, crates/http) — MIT or Apache-2.0; rustls also ISC;
-    ring Apache-2.0 and ISC; webpki-roots' certificate data CDLA-Permissive-2.0
   zbus, async-io (the media controls on Linux, crates/mpris) — zbus MIT; async-io MIT or Apache-2.0
+  mdns-sd (nori found on the local network, crates/host) — Copyright (c) 2021-2022 Han Xu, MIT or Apache-2.0
+  wry, tao (a provider's sign-in page, crates/sign-in-window) — Copyright (c) 2020-2023 Ngo Iok Ui &
+    Tauri Programme within The Commons Conservancy; wry Apache-2.0 or MIT, tao Apache-2.0
 
 The web client (crates/web and web/, nori-web; not part of the Android app)
   Svelte — Copyright (c) 2016-2025 Svelte Contributors, MIT
@@ -78,13 +101,15 @@ The web client (crates/web and web/, nori-web; not part of the Android app)
   hls.js (a plugin's moving cover, loaded only for one) — Copyright (c) 2017 Dailymotion, Apache-2.0
 
 Android libraries
-  AndroidX (Media3, Compose, Material 3, Palette, Navigation, Lifecycle, Activity, Core), OkHttp,
-  kotlinx.coroutines — Apache License 2.0
+  AndroidX (Media3, Compose, Material 3, Navigation, Lifecycle, Activity, Core, WebKit), OkHttp,
+  kotlinx.coroutines, Guava — Apache License 2.0
+  Stripe Android (the Support page's payment sheet) — Copyright (c) 2011- Stripe, Inc., MIT
 
 Fetched only when asked for, not bundled
   AutoEQ headphone curves — Copyright (c) 2018 Jaakko Pasanen, MIT
-  Beat This! small0 weights (the checkpoint) — Copyright (c) 2024 Institute of Computational Perception,
-    JKU Linz, Austria, MIT; from the authors' server, only with "Better beat detection" on
+  Beat This! small0 weights (the checkpoint; the Android app) — Copyright (c) 2024 Institute of
+    Computational Perception, JKU Linz, Austria, MIT; from the authors' server, only with "Better beat
+    detection" on
   LRCLIB lyrics — lrclib.net; lyrics belong to their authors
   Unison lyrics — Lyrics from Unison (https://unison.boidu.dev), ODbL-1.0; lyrics belong to their authors
   NetEase Cloud Music lyrics — music.163.com; lyrics belong to their authors
@@ -95,12 +120,7 @@ Fetched only when asked for, not bundled
   PaxSenix lyrics (Apple Music's; Spotify's and Musixmatch's with the user's own key) — paxsenix.org,
     songs found through Apple's iTunes Search API; lyrics belong to their authors
   LyricsPlus lyrics — the YouLy+ project's volunteer servers; lyrics belong to their authors
-  SimpMusic lyrics — simpmusic.org; lyrics belong to their authors
-  YouTube captions and YouTube Music lyrics — Google LLC; lyrics belong to their authors
-  Megalobiz lyrics — megalobiz.com; lyrics belong to their authors
-  Genius lyrics — genius.com; lyrics belong to their authors
-  Moving album covers — Apple Music (the iTunes Search API and Apple's catalogue); the artwork
-    belongs to its artists and labels
+  YouTube Music lyrics — Google LLC; lyrics belong to their authors
 
 Every entry, with its copyright holder and the full licence text, is in the app under
 Settings -> About -> Licences. The texts themselves are in android/app/src/main/assets/licences/.
