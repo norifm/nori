@@ -843,9 +843,10 @@ pub fn artist_caption(d: &nori_core::ArtistDetail) -> String {
     parts.join(" · ")
 }
 
-/// A playlist page's caption: "12 songs · 48:10".
+/// A playlist page's caption: "12 songs · 48:10", and "more on the way" while the rest of its songs come.
 pub fn playlist_caption(d: &PlaylistDetail) -> String {
-    songs_caption(d.songs.len() as u32, d.seconds)
+    let caption = songs_caption(d.songs.len() as u32, d.seconds);
+    if d.filling { format!("{caption} · more on the way") } else { caption }
 }
 
 /// Beside a playlist's name: "12 songs", or its own line (a provider's, who made it) when not counted.

@@ -264,6 +264,9 @@ class Library(
     /** What carries the queue on past the song playing (see the core's autofill.rs); nothing on any failure. */
     suspend fun autofill(): dev.nori.music.ffi.Refill = withContext(Dispatchers.IO) { client.autofill() }
 
+    /** The rest of the songs of the page the queue was started from, joined to it once they came (the core's `queue_follow`); null when none joined. */
+    suspend fun queueFollow(): dev.nori.music.ffi.queue.Followed? = withContext(Dispatchers.IO) { client.queueFollow() }
+
     /** What a plugin plays when the queue ended; empty while none decides. */
     suspend fun queueEnded(): dev.nori.music.ffi.Refill = withContext(Dispatchers.IO) { client.queueEnded() }
 

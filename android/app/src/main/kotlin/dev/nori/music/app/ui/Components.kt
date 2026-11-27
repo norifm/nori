@@ -616,6 +616,12 @@ fun LazyListScope.songRows(
     animated: Boolean = false,
     /** Rows that fade in when they join a list already drawn (an artist's top songs, read after the page), keyed by place. */
     appear: Boolean = false,
+    /**
+     * Each of [songs]' key in a newer answer of the page (the core's `row_keys`): its rows move to their
+     * new places, come and go as the page's saved copy is replaced, and those joining a playlist still
+     * filling in fade in at its end.
+     */
+    keys: List<String>? = null,
     /** The page's arrival ([rememberArrival]), read in each row's draw phase: the rows on screen rise in as one block. */
     arrival: State<Float>? = null,
     /** The page [songs] are the list of: a tap that plays them from the row starts that page's queue. */
@@ -632,13 +638,17 @@ fun LazyListScope.songRows(
         count,
         key = { k ->
             val at = rows?.get(k)?.toInt() ?: k
-            if (animated) keyPrefix + songs[at].id else "$keyPrefix$at-${songs[at].id}"
+            when {
+                keys != null -> keyPrefix + keys[at]
+                animated -> keyPrefix + songs[at].id
+                else -> "$keyPrefix$at-${songs[at].id}"
+            }
         },
         contentType = { "song" },
     ) { k ->
         val at = rows?.get(k)?.toInt() ?: k
         val s = songs[at]
-        val moving = animated || appear
+        val moving = animated || appear || keys != null
         val sheet = LocalPlayerSheet.current
         val modifier = if (moving) itemMotion() else Modifier
         val opened = { edits?.invoke(at)?.let { rowMenu(s, it) } ?: menu(s) }

@@ -264,6 +264,10 @@ export struct SongRow {
     sealed: bool,
     // A provider's, not in the library yet: the cloud leads its artist, as Android's.
     remote: bool,
+    // On a page's newer answer: how many places it moved (it slides there from the old one), or that it is
+    // new to the page (it fades in).
+    shift: int,
+    new: bool,
 }
 
 // A row of the settings page: 0 a group's heading, 1 a switch, 2 a choice, 3 a button, 4 a fact, 5 a slider,
@@ -1889,6 +1893,35 @@ component Moving inherits Rectangle {
         root.seen = root.at;
     }
     init => { root.seen = root.at; }
+}
+
+// A page's song row that the page's newer answer moves (`SongRow::shift`, `SongRow::new`): one it kept
+// slides from its old place, rows `step` apart, to its new one; a new one fades in, as do the rows joining a
+// playlist still filling in. Reduced motion puts them in place at once.
+component SlidingRow inherits Rectangle {
+    in property <SongRow> song;
+    in property <length> step;
+    out property <length> dy: root.song.shift * root.step * (1 - root.moved);
+    property <float> moved: 1;
+    property <bool> jump;
+    animate moved { duration: self.jump || Motion.reduced ? 0ms : 320ms; easing: cubic-bezier(0.2, 0.8, 0.3, 1); }
+    opacity: root.song.new ? root.moved : 1;
+    function arrive() {
+        root.jump = true;
+        root.moved = 0;
+        root.jump = false;
+        root.moved = 1;
+    }
+    changed song => {
+        if root.song.shift != 0 || root.song.new {
+            root.arrive();
+        }
+    }
+    init => {
+        if root.song.new {
+            root.arrive();
+        }
+    }
 }
 
 // An album, artist or playlist in a grid or on a shelf: the artwork, and the title and the artist under
@@ -8488,6 +8521,8 @@ export component AppWindow inherits Window {
     in property <[SongRow]> page-songs;
     // More songs wait behind Show all: an artist's (callback all-songs: 0 the page).
     in property <bool> page-songs-more;
+    // The playlist shown is still filling in: the rest of its songs are on their way.
+    in property <bool> page-filling;
     callback all-songs(int);
     // An artist's releases, a shelf per kind (pages.rs's `release_groups`).
     in property <[Shelf]> page-shelves;
@@ -11107,8 +11142,10 @@ export component AppWindow inherits Window {
                                         y: 0;
                                         height: song-rows.head;
                                     }
-                                    for s[i] in root.page-songs: Rectangle {
-                                        y: song-rows.head + i * song-rows.row-h;
+                                    for s[i] in root.page-songs: SlidingRow {
+                                        song: s;
+                                        step: song-rows.row-h;
+                                        y: song-rows.head + i * song-rows.row-h + self.dy;
                                         height: song-rows.row-h;
                                         if (i + 1) * song-rows.row-h > song-rows.seen-from && i * song-rows.row-h < song-rows.seen-to: SongLine {
                                             width: parent.width;
@@ -11124,6 +11161,13 @@ export component AppWindow inherits Window {
                                             act(kind, id) => { root.song(0, s.index, kind); }
                                         }
                                     }
+                                }
+                                if root.page-filling: Text {
+                                    height: 44px;
+                                    text: "More songs on the way";
+                                    color: Theme.dim;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
                                 }
                                 if root.page-songs-more: HorizontalLayout {
                                     alignment: start;

@@ -26,7 +26,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -215,6 +218,17 @@ private fun rememberPageQueue(from: PageOrigin, read: dev.nori.music.ffi.library
 @Composable
 private fun rememberOrigin(kind: OriginKind, id: String): PageOrigin = remember(kind, id) { PageOrigin(kind, id) }
 
+/** Each of [songs]' key in the page's newer answers (the core's `row_keys`). */
+@Composable
+private fun rememberRowKeys(songs: List<Song>): List<String> = remember(songs) { dev.nori.music.ffi.library.rowKeys(songs.map { it.id }) }
+
+/** Under a playlist still filling in: the rest of its songs are on their way. */
+@Composable
+private fun MoreSongsComing(modifier: Modifier) {
+    val words = say.moreSongsComing
+    Box(modifier.fillMaxWidth().padding(vertical = 20.dp).semantics { contentDescription = words }, contentAlignment = Alignment.Center) { LoadingDots(dot = 5.dp) }
+}
+
 /** Makes a playlist a favourite on this phone, or not (the core's `pins_toggled`). */
 private fun SettingsViewModel.pin(id: String, on: Boolean) =
     update { it.copy(pinnedPlaylists = dev.nori.music.ffi.library.pinsToggled(it.pinnedPlaylists, id, on)) }
@@ -263,6 +277,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     val from = remember(detail?.queue, album.id) { detail?.queue?.origin() ?: PageOrigin(OriginKind.ALBUM, album.id) }
     val queue = rememberPageQueue(from, detail?.queue)
     val whole = rememberPageWhole(detail?.songs.orEmpty(), list.downloaded)
+    val keys = rememberRowKeys(detail?.songs.orEmpty())
     val cardMenu = LocalCardMenu.current
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
@@ -299,7 +314,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
                     if (disc.headed) item(key = "disc-$n", contentType = "disc") { SectionTitle(remember(disc) { say.discHeading(disc) }, Modifier.arriving(arrival), compact = true) }
                     songRows(
                         detail.songs, actions, list,
-                        numbered = true, rows = disc.songs, lines = disc.lines, arrival = arrival, from = from, pageWhole = whole,
+                        numbered = true, rows = disc.songs, lines = disc.lines, arrival = arrival, from = from, pageWhole = whole, keys = keys,
                     )
                 }
             }
@@ -488,6 +503,7 @@ private fun PlaylistPage(
     val shown = rememberMatching(detail?.songs.orEmpty(), filter)
     val from = rememberOrigin(OriginKind.PLAYLIST, id)
     val whole = rememberPageWhole(detail?.songs.orEmpty(), list.downloaded)
+    val keys = rememberRowKeys(detail?.songs.orEmpty())
     val cardMenu = LocalCardMenu.current
     HeroPage(
         coverUrl = vm.cover(playlist.coverArt, CoverSize.FULL),
@@ -518,8 +534,9 @@ private fun PlaylistPage(
                 songRows(
                     detail.songs, actions, list,
                     cover = { vm.cover(it.coverArt, CoverSize.ROW) }, rows = shown, arrival = arrival, from = from,
-                    pageWhole = whole, edits = { at -> actions.rowEdits(playlist, detail.songs, at) },
+                    pageWhole = whole, edits = { at -> actions.rowEdits(playlist, detail.songs, at) }, keys = keys,
                 )
+                if (detail.filling) item(key = "filling", contentType = "filling") { MoreSongsComing(Modifier.animateItem()) }
             }
             failed != null -> item(key = "fail") { LoadFailed(failed) }
             else -> Unit

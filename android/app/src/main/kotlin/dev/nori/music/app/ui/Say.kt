@@ -219,6 +219,7 @@ class Say(private val r: Resources) {
     val downloadEverything: String = r.getString(R.string.download_everything)
     val addToQueue: String = r.getString(R.string.add_to_queue)
     val openInBrowser: String = r.getString(R.string.open_in_browser)
+    val moreSongsComing: String = r.getString(R.string.more_songs_coming)
     val topSongs: String = r.getString(R.string.top_songs)
     val similarArtists: String = r.getString(R.string.similar_artists)
     val sleepTimer: String = r.getString(R.string.sleep_timer)
