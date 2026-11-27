@@ -793,7 +793,8 @@ fun rememberArrival(ready: Boolean): State<Float> {
     LaunchedEffect(ready) {
         if (!ready || progress.value >= 1f) return@LaunchedEffect
         arrived = true
-        progress.animateTo(1f, AppMotion.fadeIn())
+        // Under reduced motion it takes the sketch's place directly.
+        if (AppMotion.reduce) progress.snapTo(1f) else progress.animateTo(1f, AppMotion.fadeIn())
     }
     return progress.asState()
 }
@@ -807,17 +808,27 @@ fun Modifier.arriving(arrival: State<Float>): Modifier = graphicsLayer {
     compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
 }
 
+/**
+ * A page's content once read, faded in over what stood in for it: its [sketch] (a [PageSketch]) or, without
+ * one, the loading dots. Under reduced motion the content takes their place directly.
+ */
 @Composable
-fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, content: @Composable (T) -> Unit) {
+fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, sketch: (@Composable () -> Unit)? = null, content: @Composable (T) -> Unit) {
     // A page's content fades in over its loader instead of replacing it in one frame. Keyed on the kind
     // of state only: fresh data for a page already showing just recomposes it, with no fade.
     //
-    // But only once a loader has really been seen. The dots stay invisible for their first quarter
-    // second (LoadingDots), so data that arrives inside that window replaces nothing anyone saw - and
+    // But only once a loader has really been seen. The sketch and the dots stay invisible for the core's
+    // quick-load time, so data that arrives inside that window replaces nothing anyone saw - and
     // a fade there is not a fade over a loader, it is the page's content fading up out of the page's
     // own background while the page is still sliding in (Pages): a black card arriving, and then
     // the album appearing on it. Quick data snaps in; only a page that was waiting gets the fade.
-    val opened = remember { android.os.SystemClock.uptimeMillis() }
+    // When the wait began: the page opening, or a page already shown reading anew (a new search).
+    val waiting = remember { longArrayOf(android.os.SystemClock.uptimeMillis()) }
+    val seen = remember { arrayOf<Any>(load::class) }
+    if (seen[0] != load::class) {
+        seen[0] = load::class
+        if (load is Load.Loading) waiting[0] = android.os.SystemClock.uptimeMillis()
+    }
     // The transition's target is the kind alone: it keys its maps by the target, and a target holding the
     // page's data hashed all of it (every song of a playlist) on each lookup, every frame. A content is
     // kept from when it first showed, so it reads the newest state through these.
@@ -826,7 +837,7 @@ fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, content: @Composab
     androidx.compose.animation.AnimatedContent(
         load::class,
         transitionSpec = {
-            if (android.os.SystemClock.uptimeMillis() - opened < stage.quickLoadMs) {
+            if (AppMotion.reduce || android.os.SystemClock.uptimeMillis() - waiting[0] < stage.quickLoadMs) {
                 androidx.compose.animation.fadeIn(androidx.compose.animation.core.snap()) togetherWith
                     androidx.compose.animation.fadeOut(androidx.compose.animation.core.snap())
             } else {
@@ -840,7 +851,7 @@ fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, content: @Composab
         latest.value.takeIf { it::class == kind }?.let { last[0] = it }
         when (val state = last[0]) {
             is Load.Ready -> body.value(state.data)
-            is Load.Loading -> Box(modifier.fillMaxSize(), Alignment.Center) { LoadingDots() }
+            is Load.Loading -> if (sketch != null) sketch() else Box(modifier.fillMaxSize(), Alignment.Center) { LoadingDots() }
             is Load.Failed -> Column(modifier.fillMaxSize().padding(Space.gutter), Arrangement.Center, Alignment.CenterHorizontally) {
                 Text(noteText(Note.COULD_NOT_LOAD), style = MaterialTheme.typography.titleLarge)
                 Text(state.message, Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)

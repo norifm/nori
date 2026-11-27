@@ -78,7 +78,12 @@ fun HomeScreen(actions: ActionsViewModel, settings: dev.nori.music.app.vm.Settin
     val shownOffer = remember { arrayOfNulls<dev.nori.music.ffi.library.QueueOffer>(1) }
     // Each time the page comes into sight: back from another app, or the phone unlocked.
     androidx.lifecycle.compose.LifecycleStartEffect(Unit) { vm.lookForOffer(); onStopOrDispose {} }
-    LoadBox(load) { ui ->
+    val sketch: @Composable () -> Unit = {
+        PageSketch(dev.nori.music.ffi.library.Reading.HOME, Modifier.pageToEdges().underStatusBar(), pagePadding(0.dp, LocalStatusRoom.current)) {
+            LargeTitle(say.listenNow, trailing = { ProfileButton(settings) { nav.settingsGroup("servers") } })
+        }
+    }
+    LoadBox(load, sketch = sketch) { ui ->
         val refreshing by vm.refreshing.collectAsStateWithLifecycle()
         val pull = rememberPullToRefreshState()
         PullToRefreshBox(
@@ -141,6 +146,8 @@ fun HomeScreen(actions: ActionsViewModel, settings: dev.nori.music.app.vm.Settin
                 if (f.albums.isNotEmpty()) shelf(f.title, f.albums, vm, "$route-albums", "$key-albums")
                 if (f.playlists.isNotEmpty()) playlistShelf(f.title, f.playlists, vm, "$route-playlists", "$key-playlists")
             }
+            // A first start: the shelves' places until the first of them is answered.
+            if (ui.reading) sketchItem(dev.nori.music.ffi.library.Reading.HOME)
             ui.rows.forEach { shelf ->
                 // The favourite playlists are a selection of something the page fetches once for all of
                 // it, so their shelf is filled from there - but it stands where the user put it in the

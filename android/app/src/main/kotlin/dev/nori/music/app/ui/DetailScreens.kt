@@ -257,7 +257,7 @@ fun AlbumScreen(id: String, actions: ActionsViewModel, vm: AlbumViewModel = view
     val load by vm.ui.collectAsStateWithLifecycle()
     val hint = LocalNav.current.albumHint(id)
     if (hint == null) {
-        LoadBox(load) { d -> AlbumPage(d.album, d, null, actions, vm) }
+        LoadBox(load, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.ALBUM) }) { d -> AlbumPage(d.album, d, null, actions, vm) }
         return
     }
     val detail = (load as? Load.Ready)?.data
@@ -319,9 +319,8 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
                 }
             }
             failed != null -> item(key = "fail") { LoadFailed(failed) }
-            // The hero is already the page; a spinner under it would be a second thing to look at
-            // while the songs are on a short wire. Empty until they land.
-            else -> Unit
+            // The hero is already the page: under it, the songs' places until they land.
+            else -> sketchItem(dev.nori.music.ffi.library.Reading.ALBUM)
         }
     }
 }
@@ -338,7 +337,7 @@ fun ArtistScreen(id: String, actions: ActionsViewModel, vm: ArtistViewModel = vi
     }
     val hint = LocalNav.current.artistHint(id)
     if (hint == null) {
-        LoadBox(load) { ready -> ArtistPage(ready.detail.artist, ready, null, actions, vm) { leaving = it } }
+        LoadBox(load, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.ARTIST) }) { ready -> ArtistPage(ready.detail.artist, ready, null, actions, vm) { leaving = it } }
         return
     }
     val ui = (load as? Load.Ready)?.data
@@ -461,7 +460,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                 }
             }
             failed != null -> item(key = "fail") { LoadFailed(failed) }
-            else -> Unit
+            else -> sketchItem(dev.nori.music.ffi.library.Reading.ARTIST)
         }
     }
 }
@@ -474,7 +473,7 @@ fun PlaylistScreen(id: String, actions: ActionsViewModel, vm: PlaylistViewModel 
     val detail = (load as? Load.Ready)?.data
     val hint = LocalNav.current.playlistHint(id)
     if (hint == null) {
-        LoadBox(load) { d -> PlaylistPage(id, d.playlist, d, null, actions, vm, filter, { filter = it }) }
+        LoadBox(load, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.PLAYLIST) }) { d -> PlaylistPage(id, d.playlist, d, null, actions, vm, filter, { filter = it }) }
         return
     }
     PlaylistPage(id, detail?.playlist ?: hint, detail, (load as? Load.Failed)?.message, actions, vm, filter, { filter = it })
@@ -539,7 +538,7 @@ private fun PlaylistPage(
                 if (detail.filling) item(key = "filling", contentType = "filling") { MoreSongsComing(Modifier.animateItem()) }
             }
             failed != null -> item(key = "fail") { LoadFailed(failed) }
-            else -> Unit
+            else -> sketchItem(dev.nori.music.ffi.library.Reading.PLAYLIST)
         }
     }
 }
@@ -550,7 +549,7 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
     val load by vm.ui.collectAsStateWithLifecycle()
     val list = rememberSongListState(actions)
     val from = rememberOrigin(OriginKind.GENRE, name)
-    LoadBox(load) { page ->
+    LoadBox(load, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.MIX) }) { page ->
         val whole = rememberPageWhole(page.songs, list.downloaded)
         SongListPage(
             name, page.songs, list.downloaded, from, actions,

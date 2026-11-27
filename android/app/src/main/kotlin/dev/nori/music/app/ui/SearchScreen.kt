@@ -84,6 +84,9 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         // Back from a kind picked comes back to All; from a search, to this page's start, not to the tab before it.
         androidx.activity.compose.BackHandler(ui.kind != null) { vm.pick(null) }
         androidx.activity.compose.BackHandler(ui.query.isNotEmpty() && ui.kind == null) { vm.setQuery(""); focus.clearFocus() }
+        // A first answer on its way: its results' places, the answer fading in over them.
+        val reading = ui.answer is dev.nori.music.ffi.library.SearchShown.Asking && ui.answer.results == null
+        LoadBox(if (reading) dev.nori.music.app.vm.Load.Loading else dev.nori.music.app.vm.Load.Ready(Unit), sketch = { PageSketch(dev.nori.music.ffi.library.Reading.SEARCH) }) {
         val r = ui.answer.results
         if (r == null) {
             // Before a search: the recent searches, then ways in that need no words, the library's biggest
@@ -115,9 +118,9 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                     }
                 }
             }
-            return@Column
+            return@LoadBox
         }
-        if (ui.answer is dev.nori.music.ffi.library.SearchShown.NothingFound) return@Column EmptyNote(Note.NOTHING_FOUND)
+        if (ui.answer is dev.nori.music.ffi.library.SearchShown.NothingFound) return@LoadBox EmptyNote(Note.NOTHING_FOUND)
         val play = { song: dev.nori.music.ffi.model.Song ->
             // One tap plays one song: a search result list is not an album, and with octo-fiesta queueing
             // the rest would make the server download every provider track in it.
@@ -133,7 +136,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
             )
         }
         val picked = ui.kind
-        if (picked != null && picked != dev.nori.music.ffi.library.SearchKind.SONGS) return@Column WholeKind(picked, r, vm)
+        if (picked != null && picked != dev.nori.music.ffi.library.SearchKind.SONGS) return@LoadBox WholeKind(picked, r, vm)
         val list = rememberLazyListState()
         androidx.compose.runtime.LaunchedEffect(ui.query, ui.scope, ui.kind) { list.requestScrollToItem(0) }
         LazyColumn(Modifier.pageToEdges().fadesUnderTitle(list), list, contentPadding = pagePadding(LocalChromeInset.current)) {
@@ -168,6 +171,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                     items(playlists, key = { it.id }) { p -> FoundPlaylist(p, vm, itemMotion().width(120.dp)) }
                 }
             }
+        }
         }
     }
 }

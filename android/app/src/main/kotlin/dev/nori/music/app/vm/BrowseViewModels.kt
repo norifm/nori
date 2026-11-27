@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.withIndex
 import kotlinx.coroutines.flow.distinctUntilChanged
 import dev.nori.music.ffi.settings.HomeRow
 import kotlinx.coroutines.flow.map
@@ -81,7 +82,8 @@ sealed interface Shelf {
 }
 
 /** The home page: the library's shelves, or ([feed]) the source's own shelves (`ProfileRules.feed`). */
-data class HomeUi(val rows: List<Shelf> = emptyList(), val pinned: List<Playlist> = emptyList(), val feed: List<dev.nori.music.ffi.model.FeedShelf> = emptyList())
+/** Home's shelves; [reading] while none has anything to show and one is still on its way (a first start). */
+data class HomeUi(val rows: List<Shelf> = emptyList(), val pinned: List<Playlist> = emptyList(), val feed: List<dev.nori.music.ffi.model.FeedShelf> = emptyList(), val reading: Boolean = false)
 
 /** How much of Home its first screen shows: mix tiles, shelves under them, and prints of each shelf. */
 private const val FIRST_TILES = 3
@@ -208,8 +210,13 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
             if (kept != null) dev.nori.music.data.CoverLoader.get(getApplication()).keepFromDevice(firstCovers(tiles, keptShelves, keptPinned, kept.offer), dev.nori.music.data.Covers.rules.card.toInt())
             val pinned = if (HomeShelf.Pinned in shelves && pins.isNotEmpty()) combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }
                 .map { all -> withContext(Dispatchers.Default) { homePinned(all, pins) } }.catch { emit(emptyList()) }.onStart { emit(keptPinned) } else flowOf(emptyList())
-            val live = combine(shown.zip(shelves).mapIndexed { i, (r, shelf) -> source(r, shelf, keptShelves[i]) }) { it.toList() }.onStart { emit(keptShelves) }
-            emitAll(combine(live, pinned) { s, p -> HomeUi(s, p) })
+            // Each shelf with whether it is known: kept on the device with something in it, or answered since (its
+            // first value is the kept one). The pinned shelf is not read here ([pinned] is).
+            val known = keptShelves.mapIndexed { i, k -> !k.isEmpty || shelves[i] == HomeShelf.Pinned }
+            val live = combine(shown.zip(shelves).mapIndexed { i, (r, shelf) -> source(r, shelf, keptShelves[i]).withIndex().map { (n, s) -> s to (n > 0 || known[i]) } }) { it.toList() }
+                .onStart { emit(keptShelves.zip(known)) }
+            // Reading: nothing to show yet, and a shelf still on its way.
+            emitAll(combine(live, pinned) { s, p -> HomeUi(s.map { it.first }, p, reading = s.all { it.first.isEmpty } && !s.all { it.second }) })
         }
     }.distinctUntilChanged().asLoad()
 
@@ -564,6 +571,9 @@ class SongsViewModel(app: Application) : NoriViewModel(app) {
     val starredOnly: StateFlow<Boolean> = _starred
     private val _songs = MutableStateFlow(Grown.empty<Song>())
     val songs: StateFlow<List<Song>> = _songs
+    private val _read = MutableStateFlow(false)
+    /** The first page is in: [songs] empty is a list with none, not one still on its way. */
+    val read: StateFlow<Boolean> = _read
     private var years: IntRange? = null
     private val pages = Pager(viewModelScope)
 
@@ -581,7 +591,7 @@ class SongsViewModel(app: Application) : NoriViewModel(app) {
         reset()
     }
     fun setStarredOnly(on: Boolean) { _starred.value = on; reset() }
-    private fun reset() { pages.reset(); _songs.value = Grown.empty(); loadMore() }
+    private fun reset() { pages.reset(); _songs.value = Grown.empty(); _read.value = false; loadMore() }
 
     fun loadMore() {
         val s = _sort.value
@@ -591,6 +601,7 @@ class SongsViewModel(app: Application) : NoriViewModel(app) {
         pages.next {
             val next = nori.library.songsListed(s.name, turned, st, (y?.first ?: 0).toUInt(), (y?.last ?: 0).toUInt(), _songs.value.size.toUInt())
             _songs.value = _songs.value.plus(next.songs)
+            _read.value = true
             !next.exhausted
         }
     }

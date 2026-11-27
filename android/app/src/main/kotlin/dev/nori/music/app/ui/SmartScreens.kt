@@ -185,7 +185,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
     LaunchedEffect(id) { vm.open(id) }
     val load by vm.ui.collectAsStateWithLifecycle()
     val list = rememberSongListState(actions)
-    LoadBox(load) { m ->
+    LoadBox(load, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.MIX) }) { m ->
         val whole = rememberPageWhole(m.songs, list.downloaded)
         val cardMenu = LocalCardMenu.current
         HeroPage(
@@ -253,7 +253,7 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
     val nav = LocalNav.current
     val list = rememberSongListState(actions)
     val from = remember(id) { dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SMART, id) }
-    LoadBox(load) { page ->
+    LoadBox(load, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.MIX) }) { page ->
         val whole = rememberPageWhole(page.songs, list.downloaded)
         val any = page.songs.isNotEmpty()
         HeroPage(

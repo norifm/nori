@@ -61,6 +61,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import dev.nori.music.app.vm.GenresViewModel
+import dev.nori.music.app.vm.Load
 import dev.nori.music.app.vm.PlaylistsViewModel
 import dev.nori.music.app.vm.RadioViewModel
 import dev.nori.music.app.vm.StarredViewModel
@@ -247,11 +248,19 @@ private fun Albums(vm: AlbumsViewModel, shuffle: () -> Unit) {
     val sort by vm.sort.collectAsStateWithLifecycle()
     val none by vm.none.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
-    val nav = LocalNav.current
     Column {
         // With no albums the bar stays only for the filter that emptied the grid, so it can be turned off.
         if (!none || favorites) AlbumBar(vm, shuffle)
         if (none) return@Column EmptyNote(if (favorites) Note.NO_FAVOURITE_ALBUMS else Note.NO_ALBUMS)
+        // Until the first page is read, the grid's places.
+        LoadBox(if (albums.isEmpty()) Load.Loading else Load.Ready(Unit), sketch = { PageSketch(dev.nori.music.ffi.library.Reading.ALBUMS) }) { AlbumGrid(vm, albums, sort) }
+    }
+}
+
+@Composable
+private fun AlbumGrid(vm: AlbumsViewModel, albums: List<dev.nori.music.ffi.model.Album>, sort: dev.nori.music.ffi.library.AlbumSort) {
+    val nav = LocalNav.current
+    Column {
         if (sort == dev.nori.music.ffi.library.AlbumSort.ARTIST_ROWS) {
             ArtistRows(vm)
             return@Column
@@ -343,14 +352,15 @@ private fun Artists(vm: ArtistsViewModel = viewModel()) {
     val load by vm.artists.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     var filter by remember { mutableStateOf("") }
-    LoadBox(load) { all ->
+    val field: @Composable () -> Unit = { SearchField(filter, { filter = it }, say.filterArtists, Modifier.padding(start = Space.gutter, end = Space.gutter, bottom = LIST_GAP)) }
+    LoadBox(load, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.ARTISTS) { field() } }) { all ->
         // The names go over to nori-core's `TextIndex` once per list, each keystroke sends the filter.
         val index = remember(all) { dev.nori.music.ffi.library.TextIndex(all.map { listOf(it.name) }) }
         val artists = remember(index, filter) { index.view(filter).rows.map { all[it.toInt()] } }
         if (all.isEmpty()) return@LoadBox EmptyNote(Note.NO_ARTISTS)
         val scroll = rememberLazyListState()
         Column {
-            SearchField(filter, { filter = it }, say.filterArtists, Modifier.padding(start = Space.gutter, end = Space.gutter, bottom = LIST_GAP))
+            field()
             LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
                 items(artists, key = { it.id }, contentType = { "artist" }) { a ->
                     val cardMenu = LocalCardMenu.current
@@ -387,15 +397,18 @@ fun SongsScreen(actions: ActionsViewModel, decade: Int?, shuffle: (() -> Unit)? 
     LaunchedEffect(list, songs.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= songs.size - 40 }.collect { if (it) vm.loadMore() } }
     val rules = LocalRules.current
     val indexed = rules.indexed
+    val read by vm.read.collectAsStateWithLifecycle()
     Column {
         if (decade != null) SectionTitle(remember(decade) { say.decade(decade) })
         if (indexed) ListBar(
             remember { SongSort.entries.map { say.songSort(it.name) } }, sort.ordinal, dev.nori.music.ffi.library.sortWay(dev.nori.music.ffi.library.songSortDirection(sort.name), reversed), { vm.pick(SongSort.entries[it]) },
             starred, vm::setStarredOnly, shuffle.takeIf { rules.account },
         )
-        LazyColumn(Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            if (songs.isEmpty() && indexed) item(key = "none") { EmptyNote(Note.NO_INDEX) }
-            songRows(songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = LIBRARY_SONGS)
+        LoadBox(if (read) Load.Ready(Unit) else Load.Loading, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.SONGS) }) {
+            LazyColumn(Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+                if (songs.isEmpty() && indexed) item(key = "none") { EmptyNote(Note.NO_INDEX) }
+                songRows(songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = LIBRARY_SONGS)
+            }
         }
     }
 }
@@ -440,19 +453,20 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
         )
     }
     val smart = LibrarySection.SMART in LocalRules.current.sections
-    LoadBox(load) { playlists ->
+    // Smart playlists are playlists: theirs is a row here, as Apple keeps them among the others.
+    val tools: @Composable () -> Unit = {
+        GroupCard(Modifier.padding(bottom = LIST_GAP)) {
+            if (smart) GroupRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, icon = Iconoir.MagicWand, chevron = true)
+            // A playlist file's songs are looked up in the index, which only a server's library has.
+            val imports = LocalRules.current.indexed
+            GroupRow(say.newPlaylist, { name = ""; creating = true }, icon = Iconoir.Plus, divider = imports)
+            if (imports) GroupRow(say.importPlaylistFile, { pickM3u.launch(arrayOf("*/*")) }, icon = Iconoir.Download, divider = false)
+        }
+    }
+    LoadBox(load, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.PLAYLISTS) { tools() } }) { playlists ->
         val scroll = rememberLazyListState()
         LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            // Smart playlists are playlists: theirs is a row here, as Apple keeps them among the others.
-            item {
-                GroupCard(Modifier.padding(bottom = LIST_GAP)) {
-                    if (smart) GroupRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, icon = Iconoir.MagicWand, chevron = true)
-                    // A playlist file's songs are looked up in the index, which only a server's library has.
-                    val imports = LocalRules.current.indexed
-                    GroupRow(say.newPlaylist, { name = ""; creating = true }, icon = Iconoir.Plus, divider = imports)
-                    if (imports) GroupRow(say.importPlaylistFile, { pickM3u.launch(arrayOf("*/*")) }, icon = Iconoir.Download, divider = false)
-                }
-            }
+            item { tools() }
             if (playlists.isEmpty()) item { EmptyNote(Note.NO_PLAYLISTS) }
             items(playlists, key = { it.id }) { p ->
                 val cardMenu = LocalCardMenu.current
@@ -473,7 +487,7 @@ private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewMod
     val load by vm.starred.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     val list = rememberSongListState(actions)
-    LoadBox(load) { s ->
+    LoadBox(load, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.FAVORITES, Modifier.pageToEdges(), pagePadding(0.dp)) }) { s ->
         val scroll = rememberLazyListState()
         LazyColumn(Modifier.pageToEdges().fadesUnderTitle(scroll), scroll, contentPadding = pagePadding(LocalChromeInset.current)) {
             // The songs as one list to play, the page the "Favourites" tile on Home opens too.
@@ -505,7 +519,7 @@ private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewMod
 private fun Genres(vm: GenresViewModel = viewModel()) {
     val load by vm.genres.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    LoadBox(load) { genres ->
+    LoadBox(load, sketch = { PageSketch(dev.nori.music.ffi.library.Reading.GENRES) }) { genres ->
         val scroll = rememberLazyListState()
         LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             items(genres, key = { it.name }) { g ->

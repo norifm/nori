@@ -738,7 +738,7 @@ fun Caption(text: String, modifier: Modifier = Modifier, align: TextAlign = Text
 }
 
 /** How tall a page's [PillButton] stands. */
-private val ACTION_SIDE = 46.dp
+internal val ACTION_SIDE = 46.dp
 /** How much of a [PillButton] shows while it is not offered. */
 private const val DISABLED_PILL = 0.38f
 
@@ -1418,7 +1418,7 @@ fun Modifier.loadingSheen(active: Boolean, leaving: Boolean = false): Modifier =
     val sweep = if (plain) null else androidx.compose.animation.core.rememberInfiniteTransition(label = "sheen").animateFloat(
         0f, 1f,
         androidx.compose.animation.core.infiniteRepeatable(
-            androidx.compose.animation.core.tween(1500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            androidx.compose.animation.core.tween(stage.sheenMs, easing = androidx.compose.animation.core.FastOutSlowInEasing),
             initialStartOffset = androidx.compose.animation.core.StartOffset(0),
         ),
         label = "sheen",
