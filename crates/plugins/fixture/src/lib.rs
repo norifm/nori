@@ -21,7 +21,7 @@ use nori_plugin_sdk::sound_stage::{Format, Inputs};
 use nori_plugin_sdk::types::Value;
 use nori_plugin_sdk::slots::{InfoLine, Motion, Sleeve};
 use nori_plugin_sdk::provider;
-use nori_plugin_sdk::types::{Artist, Error, Explicit, Found, Item, Playlist, Song};
+use nori_plugin_sdk::types::{Artist, Error, Explicit, Found, Item, Playlist, PlaylistPage, Song};
 use nori_plugin_sdk::{settings, state, store, Glyph, Hooks, ItemKind, Lifecycle, Manifest, MenuAction, Place, Provider, Row, Slot, Slots, SoundStage};
 
 #[derive(Default)]
@@ -233,6 +233,13 @@ impl Provider for Test {
         }
         Ok(match request {
             provider::Request::Song(id) if id == "trap" => panic!("told to"),
+            // A playlist of two pages: the first shown, then the second asked for.
+            provider::Request::Playlist(id) if id == "test-long" => {
+                let list = |songs: Vec<Song>| PlaylistPage { playlist: Playlist { id: id.clone(), name: "Long".into(), comment: None, owner: None, song_count: 2, duration: 0, cover: None }, songs };
+                nori_plugin_sdk::parts::show_playlist(&list(vec![song("first".into())]));
+                fetch("https://allowed.example/second");
+                provider::Page::Playlist(list(vec![song("first".into()), song("second".into())]))
+            }
             provider::Request::Search((query, ..)) => provider::Page::Found(Found { songs: vec![song(query)], albums: Vec::new(), artists: Vec::new(), playlists: Vec::new() }),
             provider::Request::Artists => provider::Page::Artists(["Followed", "Subscribed"].map(|name| Artist { id: format!("test-{name}"), name: name.into(), cover: None, image_url: None, album_count: None, starred: true, external: false }).into()),
             // One playlist, the channel's.

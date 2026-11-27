@@ -27,7 +27,7 @@ pub use exports::nori::plugin as points;
 pub use nori::plugin::types;
 
 /// The host interfaces linked for a plugin; a plugin importing another can't be installed here.
-pub const LINKED: [&str; 20] = ["log", "store", "http", "settings", "rows", "notices", "sockets", "bluetooth", "discovery", "lan-serve", "audio-out", "media", "cast", "session", "subsonic", "timers", "sign-in", "wake", "cache", "assets"];
+pub const LINKED: [&str; 21] = ["log", "store", "http", "settings", "rows", "notices", "sockets", "bluetooth", "discovery", "lan-serve", "audio-out", "media", "cast", "session", "subsonic", "timers", "sign-in", "wake", "cache", "assets", "parts"];
 
 /// Fuel for one call that isn't a sound stage's (about a few seconds of work).
 pub(crate) const CALL_FUEL: u64 = 20_000_000_000;
@@ -105,6 +105,8 @@ pub struct Host {
     pub(crate) transport: crate::Transported,
     /// Its requests on their way.
     pub(crate) started: crate::host::Started,
+    /// Where the call running now shows parts of its answer ([`crate::Worker::call_in_parts`]).
+    pub(crate) parts: Option<crate::worker::Parts>,
     /// Its sockets.
     pub(crate) table: wasmtime::component::ResourceTable,
     /// The platform's Bluetooth, shared with the plugin host.
@@ -158,6 +160,7 @@ pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, shared: Shared, mark: c
         side,
         transport,
         started: Default::default(),
+        parts: None,
         table: Default::default(),
         radio,
         lan,
@@ -257,6 +260,7 @@ pub(crate) fn linker(component: &Component) -> Result<Linker<Host>, Refusal> {
     nori::plugin::wake::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::cache::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::assets::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::parts::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     wasi(&mut l, component).map_err(err)?;
     Ok(l)
 }

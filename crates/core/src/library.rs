@@ -5,6 +5,8 @@ use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
 use crate::mixes::board::{MixDraw, MixLookup, FAVOURITES_MIX};
 use crate::Song;
+use futures_util::future::Either;
+use futures_util::StreamExt;
 use std::sync::Arc;
 
 pub use nori_library::library::*;
@@ -201,6 +203,11 @@ impl Client {
     /// [`Client::read_fetch`] where failing to reach the server is not an error when something was cached
     /// (`stored_digest`); the server's own refusal is.
     pub(crate) async fn read_refresh(&self, read: Read, stored_digest: Option<u64>) -> NetResult<Option<Page>> {
+        self.refresh(read, stored_digest, None).await
+    }
+
+    /// [`Client::read_refresh`], `parts` getting what the source shows of its answer before the whole.
+    async fn refresh(&self, read: Read, stored_digest: Option<u64>, parts: Option<crate::cache_policy::Parts>) -> NetResult<Option<Page>> {
         // Asked while another read of the page is on its way (Home and a widget at a profile's opening), it
         // waits for that answer: a plugin answers one call at a time, so asking again would wait twice.
         let turn = self.turn(&read).await;
@@ -210,7 +217,7 @@ impl Client {
                 return Ok(now.page.filter(|_| now.digest != stored_digest));
             }
         }
-        match self.read_fetch(read, stored_digest).await {
+        match self.read_fetch(read, stored_digest, parts).await {
             Err(e) if stored_digest.is_some() && !matches!(e, crate::transport::NetError::Api { .. }) => Ok(None),
             other => other,
         }
@@ -220,13 +227,24 @@ impl Client {
     pub async fn read_each(&self, read: Read, mut each: impl FnMut(Page)) -> NetResult<()> {
         let stored = self.read_stored(read.clone())?;
         let digest = stored.digest;
+        let shown = stored.page.is_some();
         if let Some(p) = stored.page {
             each(p);
         }
         if stored.fresh {
             return Ok(());
         }
-        if let Some(p) = self.read_refresh(read, digest).await? {
+        // With nothing shown yet, what the source shows of its answer before the whole comes is shown.
+        let (parts, mut came) = futures_channel::mpsc::unbounded();
+        let mut refresh = std::pin::pin!(self.refresh(read.clone(), digest, (!shown).then_some(parts)));
+        let answer = loop {
+            match futures_util::future::select(refresh.as_mut(), came.next()).await {
+                Either::Left((answer, _)) => break answer,
+                Either::Right((Some(part), _)) => each(self.overlaid(&read, part)),
+                Either::Right((None, _)) => break refresh.await,
+            }
+        };
+        if let Some(p) = answer? {
             each(p);
         }
         Ok(())

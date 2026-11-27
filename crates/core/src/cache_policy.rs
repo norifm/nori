@@ -13,6 +13,9 @@ use rusqlite::OptionalExtension;
 use crate::browse::AlbumSort;
 use crate::client::{Client, NetResult, Starrable, Write};
 use crate::providers::Answer;
+
+/// Where a read shows what its source shows of its answer before the whole comes ([`Client::read_each`]).
+pub(crate) type Parts = futures_channel::mpsc::UnboundedSender<Page>;
 use crate::{
     Album, AlbumDetail, Artist, ArtistDetail, ArtistInfo, Directory, FeedShelf, Genre, Lyrics, MusicFolder, PlayQueue, Playlist, PlaylistDetail, RadioStation, SearchResult,
     ServerInfo, Song, Starred,
@@ -362,7 +365,7 @@ impl Client {
     /// `page` as `read` shows it this session: the favourites with this session's marks laid over them.
     /// Every item's heart is this session's mark, and a song without a length takes the one its known
     /// record has (a Home row YouTube lists without one).
-    fn overlaid(&self, read: &Read, page: Page) -> Page {
+    pub(crate) fn overlaid(&self, read: &Read, page: Page) -> Page {
         let mut page = match (read, page) {
             (_, Page::StarredPage { v }) => {
                 *self.core.listed.lock() = crate::stars::Ids::of(&v);
@@ -550,7 +553,9 @@ impl Client {
     /// Asks the source; returns the page only if it differs from the kept one of `stored_digest`, and
     /// keeps it either way (restarting the window). Reads never kept always return their page. A write
     /// meanwhile makes the answer stale: it is not kept then.
-    pub(crate) async fn read_fetch(&self, read: Read, stored_digest: Option<u64>) -> NetResult<Option<Page>> {
+    /// With `parts`, they get what the source shows of its answer before the whole comes; parts are
+    /// never kept.
+    pub(crate) async fn read_fetch(&self, read: Read, stored_digest: Option<u64>, parts: Option<Parts>) -> NetResult<Option<Page>> {
         if matches!(read, Read::HomeFeed) {
             return self.home_fetch(stored_digest).await;
         }
@@ -558,7 +563,11 @@ impl Client {
         let revision = self.core.cache_revision.load(std::sync::atomic::Ordering::Relaxed);
         let provider = self.core.provider();
         let folders = matches!(read, Read::FolderIndex);
-        let page = match provider.read(self, read.clone()).await? {
+        let answer = match parts {
+            Some(parts) => provider.read_in_parts(self, read.clone(), parts).await?,
+            None => provider.read(self, read.clone()).await?,
+        };
+        let page = match answer {
             Some(Answer::Raw(body)) => {
                 let page = if stored_digest != Some(digest(&body)) {
                     match provider.parse(self, &read, &body) {
@@ -621,7 +630,7 @@ mod tests {
         use crate::client::{Starrable, Write};
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
         *fake.pends.lock() = true;
-        let mut old = std::pin::pin!(c.read_fetch(Read::StarredItems, None));
+        let mut old = std::pin::pin!(c.read_fetch(Read::StarredItems, None, None));
         assert!(matches!(old.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Pending));
         fake.answer(crate::client::tests::OK);
         block(c.write(Write::Star { kind: Starrable::Song, id: "s".into(), on: true })).unwrap();
@@ -637,10 +646,10 @@ mod tests {
         let (c, fake) = setup();
         assert!(!c.core.starts_transcodes());
         fake.answer(r#"{"subsonic-response":{"status":"ok","type":"gonic","genres":{"genre":[]}}}"#);
-        block(c.read_fetch(Read::GenreList, None)).unwrap();
+        block(c.read_fetch(Read::GenreList, None, None)).unwrap();
         assert!(!c.core.starts_transcodes(), "another server: transcodes are read from their start");
         fake.answer(r#"{"subsonic-response":{"status":"ok","type":"navidrome","genres":{"genre":[]}}}"#);
-        block(c.read_fetch(Read::GenreList, None)).unwrap();
+        block(c.read_fetch(Read::GenreList, None, None)).unwrap();
         assert!(c.core.starts_transcodes());
     }
 
@@ -661,7 +670,7 @@ mod tests {
         let s = c.read_stored(Read::GenreList).unwrap();
         assert!(s.page.is_none() && s.digest.is_none() && !s.fresh);
         fake.answer(GENRES);
-        assert_eq!(genres(&block(c.read_fetch(Read::GenreList, s.digest)).unwrap()), "Rock");
+        assert_eq!(genres(&block(c.read_fetch(Read::GenreList, s.digest, None)).unwrap()), "Rock");
 
         let s = c.read_stored(Read::GenreList).unwrap();
         assert_eq!(genres(&s.page), "Rock");
@@ -675,18 +684,18 @@ mod tests {
         let s = c.read_stored(Read::GenreList).unwrap();
         assert!(s.page.is_some() && !s.fresh);
         fake.answer(GENRES);
-        assert!(block(c.read_fetch(Read::GenreList, s.digest)).unwrap().is_none());
+        assert!(block(c.read_fetch(Read::GenreList, s.digest, None)).unwrap().is_none());
         assert!(c.read_stored(Read::GenreList).unwrap().fresh);
 
         c.core.db.lock().execute("UPDATE cache SET ts = 0", []).unwrap();
         fake.answer(GENRES2);
-        assert_eq!(genres(&block(c.read_fetch(Read::GenreList, s.digest)).unwrap()), "Jazz");
+        assert_eq!(genres(&block(c.read_fetch(Read::GenreList, s.digest, None)).unwrap()), "Jazz");
 
         // Deleted page is dropped.
         let (c, fake) = setup();
         let read = || Read::AlbumById { id: "al-1".into() };
         fake.answer(r#"{"subsonic-response":{"status":"ok","album":{"id":"al-1","name":"A","song":[{"id":"s1","title":"t"}]}}}"#);
-        block(c.read_fetch(read(), None)).unwrap();
+        block(c.read_fetch(read(), None, None)).unwrap();
         c.core.db.lock().execute("UPDATE cache SET ts = 0", []).unwrap();
         fake.answer(r#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"not found"}}}"#);
         let mut shown = 0;
@@ -695,7 +704,7 @@ mod tests {
         assert!(c.read_stored(read()).unwrap().page.is_none());
         // Offline, the cached page stands.
         fake.answer(r#"{"subsonic-response":{"status":"ok","album":{"id":"al-1","name":"A","song":[]}}}"#);
-        block(c.read_fetch(read(), None)).unwrap();
+        block(c.read_fetch(read(), None, None)).unwrap();
         c.core.db.lock().execute("UPDATE cache SET ts = 0", []).unwrap();
         fake.fail(FailureKind::Connect);
         assert!(block(c.read_each(read(), |_| {})).is_ok());
@@ -746,7 +755,7 @@ mod tests {
             for provider in [true, false] {
                 let item = if songs { song(provider) } else { album(provider) };
                 fake.answer(&format!(r#"{{"subsonic-response":{{"status":"ok",{}}}}}"#, answer.replace("ITEM", &item)));
-                block(c.read_fetch(read.clone(), None)).unwrap();
+                block(c.read_fetch(read.clone(), None, None)).unwrap();
                 let s = c.read_stored(read.clone()).unwrap();
                 assert!(s.page.is_some() && s.fresh != provider, "{read:?}, a provider item: {provider}");
             }
@@ -757,7 +766,7 @@ mod tests {
         let random = Read::AlbumList { kind: crate::browse::AlbumSort::Random, size: 5, offset: 0, genre: Some("Rock".into()) };
         let list = r#"{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"a","name":"A"}]}}}"#;
         fake.answer(list);
-        assert!(block(c.read_fetch(random.clone(), None)).unwrap().is_some());
+        assert!(block(c.read_fetch(random.clone(), None, None)).unwrap().is_some());
         assert!(c.read_stored(random.clone()).unwrap().fresh);
         let (key, window) = kept_as(&random).unwrap();
         assert_eq!(window, i64::MAX, "{key}: never stale by age");
@@ -765,7 +774,7 @@ mod tests {
         assert!(fake.asked()[0].ends_with("&type=random&size=5&offset=0&genre=Rock&musicFolderId=7"));
 
         fake.answer(list);
-        block(c.read_fetch(Read::AlbumList { kind: crate::browse::AlbumSort::ByYear, size: 50, offset: 0, genre: None }, None)).unwrap();
+        block(c.read_fetch(Read::AlbumList { kind: crate::browse::AlbumSort::ByYear, size: 50, offset: 0, genre: None }, None, None)).unwrap();
         let year = this_year();
         assert!(fake.asked()[1].ends_with(&format!("&type=byYear&fromYear={year}&toYear=0&size=50&offset=0&musicFolderId=7")));
 
@@ -796,11 +805,11 @@ mod tests {
     fn keys_hold_params_and_folder() {
         let (c, fake) = setup();
         fake.answer(r#"{"subsonic-response":{"status":"ok","albumList2":{"album":[]}}}"#);
-        block(c.read_fetch(Read::AlbumList { kind: crate::browse::AlbumSort::Starred, size: 20, offset: 0, genre: None }, None)).unwrap();
+        block(c.read_fetch(Read::AlbumList { kind: crate::browse::AlbumSort::Starred, size: 20, offset: 0, genre: None }, None, None)).unwrap();
         assert!(c.core.cache_get("page:albums/starred/20/0&musicFolderId=7".into()).unwrap().is_some());
         assert!(fake.asked()[0].ends_with("&type=starred&size=20&offset=0&musicFolderId=7"));
         fake.answer(r#"{"subsonic-response":{"status":"ok","lyricsList":{}}}"#);
-        block(c.read_fetch(Read::LyricsBySong { song_id: "s 1".into() }, None)).unwrap();
+        block(c.read_fetch(Read::LyricsBySong { song_id: "s 1".into() }, None, None)).unwrap();
         assert!(c.core.cache_get("page:lyrics/s 1".into()).unwrap().is_some());
     }
 
@@ -808,7 +817,7 @@ mod tests {
     fn favourites_apply_session_stars() {
         let (c, fake) = setup();
         fake.answer(r#"{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"fa-1","name":"A"},{"id":"fa-2","name":"B"}]}}}"#);
-        block(c.read_fetch(Read::AlbumList { kind: crate::browse::AlbumSort::Starred, size: 20, offset: 0, genre: None }, None)).unwrap();
+        block(c.read_fetch(Read::AlbumList { kind: crate::browse::AlbumSort::Starred, size: 20, offset: 0, genre: None }, None, None)).unwrap();
         c.core.stars.lock().mark(crate::client::Starrable::Album, "fa-2".into(), false);
         match c.read_stored(Read::FavouriteAlbums { size: 20 }).unwrap().page {
             Some(Page::Albums { v }) => assert_eq!(v.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["fa-1"]),
@@ -838,9 +847,9 @@ mod tests {
     fn an_offline_heart_keeps_its_pages_readable() {
         let (c, fake) = setup();
         fake.answer(r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"s1","title":"One"}]}}}"#);
-        block(c.read_fetch(Read::StarredItems, None)).unwrap();
+        block(c.read_fetch(Read::StarredItems, None, None)).unwrap();
         fake.answer(r#"{"subsonic-response":{"status":"ok","album":{"id":"al1","name":"A","song":[{"id":"s2","title":"Two"}]}}}"#);
-        block(c.read_fetch(Read::AlbumById { id: "al1".into() }, None)).unwrap();
+        block(c.read_fetch(Read::AlbumById { id: "al1".into() }, None, None)).unwrap();
         fake.fail(FailureKind::Connect);
         block(c.star(crate::client::Starrable::Song, "s2".into(), true, Arc::new(crate::providers::harness::Marked))).unwrap();
         assert!(c.core.pending_any().unwrap(), "queued");
@@ -863,7 +872,7 @@ mod tests {
     fn failures_reach_the_caller() {
         let (c, fake) = setup();
         fake.fail(FailureKind::Connect);
-        assert!(block(c.read_fetch(Read::GenreList, None)).is_err());
+        assert!(block(c.read_fetch(Read::GenreList, None, None)).is_err());
         fake.answer(r#"{"subsonic-response":{"status":"ok","song":{"id":"1","title":"t"}}}"#);
         match block(c.read_now(Read::SongById { id: "1".into() })).unwrap() {
             Page::OneSong { v } => assert_eq!(v.unwrap().title, "t"),

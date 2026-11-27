@@ -14,7 +14,7 @@ use parking_lot::RwLock;
 use super::code::{CodeCheck, SignInCode, StartedCode};
 use super::{resolved_song, resolved_stream, sized, AccountState, Answer, FieldSpec, FormField, Identity, IdentityKind, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
 use crate::browse::{AlbumSort, LibrarySection, ProfileRules, SettingsPart};
-use crate::cache_policy::{Page, Read};
+use crate::cache_policy::{Page, Parts, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
 use crate::settings::{SavedServer, ServerKind};
 use crate::stream::{StreamQuality, StreamTarget};
@@ -329,13 +329,12 @@ impl Provider for PluginProvider {
     }
 
     async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>> {
-        if matches!(read, Read::StarredItems) && self.rules.read().as_ref().is_some_and(|(r, _)| r.stars_here) {
-            return Ok(None);
-        }
-        let Some(asked) = request(&read) else { return Ok(None) };
-        let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_read(s, &asked)).await.ok_or_else(stopped)?;
-        let said = self.heard(client, said)?;
-        Ok(page(&read, said, &self.cover_sizes).map(|p| Answer::Page(Box::new(p))))
+        self.answer(client, read, None).await
+    }
+
+    /// A playlist part the plugin shows (`parts.show-playlist`) goes to `parts` as `read`'s page.
+    async fn read_in_parts(&self, client: &Client, read: Read, parts: Parts) -> NetResult<Option<Answer>> {
+        self.answer(client, read, Some(parts)).await
     }
 
     async fn write(&self, client: &Client, c: Write) -> NetResult<()> {
@@ -441,6 +440,29 @@ impl Provider for PluginProvider {
 }
 
 impl PluginProvider {
+    /// What the plugin answers to `read`, the parts it shows before the whole sent to `parts`.
+    async fn answer(&self, client: &Client, read: Read, parts: Option<Parts>) -> NetResult<Option<Answer>> {
+        if matches!(read, Read::StarredItems) && self.rules.read().as_ref().is_some_and(|(r, _)| r.stars_here) {
+            return Ok(None);
+        }
+        let Some(asked) = request(&read) else { return Ok(None) };
+        let call = move |s: &mut Store, x: &nori_plugins::wit::Plugin| x.nori_plugin_provider().call_read(s, &asked);
+        let said = match parts {
+            Some(parts) => {
+                let (shown, sizes) = (read.clone(), self.cover_sizes.clone());
+                let show = move |p: t::PlaylistPage| {
+                    if let Some(page) = page(&shown, w::Page::Playlist(p), &sizes) {
+                        let _ = parts.unbounded_send(page);
+                    }
+                };
+                self.worker.call_in_parts(show, call).await
+            }
+            None => self.worker.call(call).await,
+        };
+        let said = self.heard(client, said.ok_or_else(stopped)?)?;
+        Ok(page(&read, said, &self.cover_sizes).map(|p| Answer::Page(Box::new(p))))
+    }
+
     /// `said`'s answer as nori's; an account the source refused may have ended, so its rules are asked
     /// anew (the library and likes go while signed out).
     /// What a read or write said; the account asked anew when it was refused, or when it went through

@@ -101,6 +101,15 @@ interface notices {
     show: func(tone: tone, words: string, args: list<string>);
 }
 
+/// Part of a provider's answer to the read it is in, shown before the whole comes: a read of many
+/// requests one after another (a long playlist's pages) shows what its first one brought.
+interface parts {
+    use types.{playlist-page};
+
+    /// The playlist read now, as far as it is known. Outside a playlist's read it is not shown.
+    show-playlist: func(page: playlist-page);
+}
+
 /// Nori's settings, read as stored and as in effect, and the plugin's overrides of the keys its
 /// manifest lists. Overrides never change what the user stored; removing the plugin removes them.
 interface settings {

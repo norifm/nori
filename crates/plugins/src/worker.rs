@@ -12,7 +12,7 @@ use wasmtime::Store;
 use crate::host::Caller;
 use crate::manifest::{Manifest, Refusal};
 use crate::runtime::points::provider::ProviderInfo;
-use crate::runtime::{self, Host, Plugin};
+use crate::runtime::{self, types, Host, Plugin};
 use crate::safe::Mark;
 
 /// A running instance: its store and its exports.
@@ -22,6 +22,9 @@ pub struct Running {
 }
 
 type Job = Box<dyn FnOnce(&mut Option<Running>) + Send>;
+
+/// Where a call shows the parts of its answer that come before the whole.
+pub(crate) type Parts = Box<dyn Fn(types::PlaylistPage) + Send>;
 
 /// What an instance is told before its calls ([`Worker::opens`]).
 type Opening = Arc<dyn Fn(&mut Store<Host>, &Plugin) -> wasmtime::Result<()> + Send + Sync>;
@@ -116,6 +119,16 @@ impl Worker {
     /// budget spent). Dropped before its answer, the call is skipped, or, begun, its requests are dropped
     /// ([`crate::host::Caller`]).
     pub async fn call<R: Send + 'static>(&self, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
+        self.answer(None, f).await
+    }
+
+    /// [`Worker::call`], each part of its answer the plugin shows before the whole (`parts`) handed to
+    /// `parts` as it comes, on the plugin's thread.
+    pub async fn call_in_parts<R: Send + 'static>(&self, parts: impl Fn(types::PlaylistPage) + Send + 'static, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
+        self.answer(Some(Box::new(parts)), f).await
+    }
+
+    async fn answer<R: Send + 'static>(&self, parts: Option<Parts>, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
         let (tx, rx) = futures_channel::oneshot::channel();
         let caller = Arc::new(Caller::default());
         let answering = caller.clone();
@@ -124,14 +137,15 @@ impl Worker {
             if tx.is_canceled() {
                 return;
             }
-            let attach = |running: &mut Option<Running>, c: Option<Arc<Caller>>| {
+            let attach = |running: &mut Option<Running>, c: Option<Arc<Caller>>, parts: Option<Parts>| {
                 if let Some(r) = running.as_mut() {
                     r.store.data_mut().started.answering(c);
+                    r.store.data_mut().parts = parts;
                 }
             };
-            attach(running, Some(answering));
+            attach(running, Some(answering), parts);
             let v = attempt(running, f);
-            attach(running, None);
+            attach(running, None, None);
             if let Some(v) = v {
                 let _ = tx.send(v);
             }

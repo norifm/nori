@@ -83,6 +83,7 @@ through. Many methods have defaults, so a provider writes only what it has.
 | `favorites_here` | Whether favorites the account cannot keep stay on this device |
 | `keeps_favorites` | Whether the account keeps favorites of one item kind |
 | `read` | One `Read` asked of the source now, as an `Answer` |
+| `read_in_parts` | `read`, sending what the source shows of its answer before the whole (a plugin's `parts`) |
 | `parse` | A raw answer (`Answer::Raw`) read as its `Page` |
 | `scope` | What else an answer depends on, such as a server's music folders |
 | `gone` | Whether an error means the item is gone |
@@ -131,6 +132,8 @@ the same way for every provider:
   `Page` answer is kept in memory for the session.
 - `Client::read_stored` returns the kept page at once. `Client::read_fetch` asks the source and returns
   a page only when it changed.
+- `Client::read_each` shows the kept page, then the source's. With no kept page, it also shows each part
+  the source shows before its whole answer comes. A part is never kept.
 - The session's favorite marks are laid over every page as it is read. An item unmarked this session
   leaves the favorites. An item marked this session joins them before the source lists it.
 - A write makes the pages of its kind stale (`cache_policy::stale`). Stale pages still show, offline
