@@ -174,6 +174,8 @@ pub fn web_blocks(points: &[String], net: &[String], imports: &[String], proxied
             "sign-in" => add(SignIn),
             "http" if !proxied && net.iter().any(|h| h != "lan") => add(OtherSites),
             "types" => {}
+            // Only a provider's, which the browser stops as one.
+            "parts" => {}
             i if !WEB_IMPORTS.contains(&i) => add(NotYet),
             _ => {}
         }

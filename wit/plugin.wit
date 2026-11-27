@@ -665,6 +665,7 @@ world plugin {
     import media;
     import cast;
     import bluetooth;
+    import parts;
 
     export lifecycle;
     export hooks;

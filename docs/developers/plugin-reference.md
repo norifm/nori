@@ -271,6 +271,7 @@ with `refused`, and nori logs why.
 | `subsonic` | The open profile's Subsonic API, signed by nori | `Permission::Subsonic` |
 | `timers` | Wakes after a time, once or repeating | `Permission::Schedule`, outside an active session |
 | `sign-in` | The client's sign-in page for its provider's profile | `signin` |
+| `parts` | A page shown before its read ends: a long playlist's first page | A `provider.read` running |
 | `wake` | Its wake receivers on or off | `wake` |
 | `sockets` | TCP with optional TLS, and UDP | `net`, and `lan` for private addresses and multicast |
 | `discovery` | mDNS browsing, found services coming to `hooks` | `lan` |
@@ -286,6 +287,10 @@ environment. Files, sockets and standard input and output trap.
 The SDK's `fetching` module runs `http.start` requests from async code: `fetching::send` makes a request
 future, and `fetching::run` waits for it. Requests polled together, as by a `join_all`, are on their way
 at once.
+
+A provider whose read takes many requests one after another calls `parts.show-playlist` with what it
+has so far, and the page shows it while the rest come. nori shows a part only while it has no kept copy
+of the page to show, and never keeps a part. The whole answer of the read follows it.
 
 `settings.override` refuses a key that the manifest does not list. A value outside a key's range is
 held to the range.

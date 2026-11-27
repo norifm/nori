@@ -5,7 +5,7 @@
 use sha2::{Digest, Sha256};
 
 /// The API and its WIT's fingerprint.
-const PINNED: (u32, &str) = (7, "b3272fd93c31bf1a180f8658bf9e36cfc3083ff8760735d023b65af1fc3b0aa4");
+const PINNED: (u32, &str) = (7, "822304673f3ad6f7fa4813cf96768ed87a87a87a2f7d271dffd287fc960f8fe4");
 
 /// `wit/`'s files as the interfaces they declare: comments and blank lines left out, each line trimmed.
 fn fingerprint() -> String {
