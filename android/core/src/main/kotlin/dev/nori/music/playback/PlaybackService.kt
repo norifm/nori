@@ -333,11 +333,15 @@ class PlaybackService : MediaLibraryService() {
             is dev.nori.music.ffi.Destination.Cast -> casting ?: controls
             else -> controls
         }
-        if (session.player !== want) session.player = want
+        if (session.player === want) return
+        dev.nori.music.NoriLog.i("session: shows ${when (want) { elsewhere -> "another device"; controls -> "this phone"; else -> "the cast" }}")
+        session.player = want
     }
 
     /** Whether media3 keeps the service in the foreground: playing, or paused for less than its idle timeout. */
     private var engaged = false
+    /** Whether the notification last drawn was for music wanted playing; for the log. */
+    private var notifiedPlaying = false
 
     /**
      * The mirrored device named in the system's output switcher (RemoteRoute) while the session is engaged:
@@ -355,12 +359,19 @@ class PlaybackService : MediaLibraryService() {
         // Listening along while the jam's host is paused: still in the foreground, so its play is heard here
         // with the screen off (a service in the background could not start again).
         super.onUpdateNotification(session, startInForegroundRequired || player.hostPaused)
+        val playing = session.player.playWhenReady
+        if (startInForegroundRequired != engaged || playing != notifiedPlaying) {
+            val item = session.player.currentMediaItem
+            dev.nori.music.NoriLog.i("notification: ${if (playing) "playing" else "paused"}, ${if (startInForegroundRequired) "in" else "out of"} the foreground, showing ${session.player.currentMediaItemIndex} (${item?.mediaId}) \"${item?.mediaMetadata?.title}\"")
+        }
+        notifiedPlaying = playing
         engaged = startInForegroundRequired
         nori.remotes.notified(engaged)
         showRoute()
     }
 
     override fun onDestroy() {
+        dev.nori.music.NoriLog.i("playback service ends")
         nori.remotes.serve(false)
         nori.remotes.notified(false)
         nori.remotes.service = null
@@ -1058,6 +1069,7 @@ class PlaybackService : MediaLibraryService() {
                 .add(SessionCommand(CMD_CLEAR, Bundle.EMPTY)).add(SessionCommand(CMD_PUT_BACK_CLEARED, Bundle.EMPTY))
                 .add(SessionCommand(CMD_PLUGIN_BUTTON, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_NEXT, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_QUEUE, Bundle.EMPTY))
                 .add(SessionCommand(CarTree.CMD_ITEM_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_DOWNLOAD, Bundle.EMPTY)).build()
+            if (controller.packageName != packageName) dev.nori.music.NoriLog.i("session: ${controller.packageName} connects")
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(commands).build()
         }
 
@@ -1109,6 +1121,7 @@ class PlaybackService : MediaLibraryService() {
 
         // Tuning goes with its controller: the app stopped (it lets go of the service) or its process died.
         override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
+            if (controller.packageName != packageName) dev.nori.music.NoriLog.i("session: ${controller.packageName} disconnects")
             tuning(controller, false)
         }
 
@@ -1128,6 +1141,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun onPlaybackResumption(session: MediaSession, controller: MediaSession.ControllerInfo, isForPlayback: Boolean): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future {
             val q = withContext(Dispatchers.IO) { nori.core.loadQueue() }
+            dev.nori.music.NoriLog.i("session: ${controller.packageName} asks what resumes${if (isForPlayback) ", to play it" else ""}: saved song ${q.index} (${q.songs.getOrNull(q.index.toInt())?.id}) of ${q.songs.size}")
             // Asked only to show what would play (the system's media controls), the player is left as it is.
             val items = if (isForPlayback) resumed(q) else startedFrom(held(q.songs), q.origin)
             MediaSession.MediaItemsWithStartPosition(items, q.index.toInt(), q.positionMs.toLong())
