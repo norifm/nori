@@ -22,20 +22,27 @@ pub(crate) struct Queue {
     origin_gen: u32,
     /// When the song an undo would put back was taken out, ms (`undo.rs`).
     pub(crate) taken_at: Option<i64>,
+    /// The page the queue waits on for the rest of its songs (`follow.rs`).
+    pub(crate) follows: Option<crate::follow::Follow>,
+    /// The pages shown before all their songs came, and how far.
+    pub(crate) pages: crate::follow::Pages,
 }
 
 impl Queue {
-    fn set_origin(&mut self, origin: Option<PageOrigin>) {
-        self.origin = origin;
+    /// A new queue of `given` songs, from page `origin`: it follows the page while the rest of its songs
+    /// are still coming.
+    fn set_origin(&mut self, origin: Option<PageOrigin>, given: usize) {
         self.origin_gen = self.origin_gen.wrapping_add(1);
+        self.follows = self.pages.follow(origin.as_ref(), given, self.origin_gen);
+        self.origin = origin;
     }
 
     pub(crate) fn change(&self, at: Option<usize>) -> QueueChange {
-        QueueChange { at: at.map(|a| a as u32), shuffled: self.list.shuffle_order().is_some() }
+        QueueChange { at: at.map(|a| a as u32), shuffled: self.list.shuffle_order().is_some(), follows: self.follows.is_some() }
     }
 }
 
-fn seed() -> u64 {
+pub(crate) fn seed() -> u64 {
     (nori_time::since_epoch().as_nanos() as u64).max(1)
 }
 
@@ -47,6 +54,8 @@ pub struct QueueChange {
     pub at: Option<u32>,
     /// Shuffling: the player reads the play order with `PlaylistJni.order`.
     pub shuffled: bool,
+    /// The rest of the page's songs are on their way: the player asks `Client::queue_follow` for them.
+    pub follows: bool,
 }
 
 /// A change for the player: remove the flattened (from, to) pairs, last first; insert `songs` at `at`;
@@ -362,7 +371,7 @@ impl Session {
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_set"))]
     pub fn set(&self, ids: Vec<String>, start: Option<u32>, shuffle: bool, origin: Option<PageOrigin>) -> QueueChange {
         let mut q = self.queue.lock();
-        q.set_origin(origin);
+        q.set_origin(origin, ids.len());
         let at = q.list.set(ids, start.map(|s| s as usize), shuffle, seed());
         drop(q);
         self.shuffled(at)
@@ -374,7 +383,7 @@ impl Session {
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_set_shuffled"))]
     pub fn set_shuffled(&self, ids: Vec<String>, order: Vec<u32>, start: Option<u32>, origin: Option<PageOrigin>) -> QueueChange {
         let mut q = self.queue.lock();
-        q.set_origin(origin);
+        q.set_origin(origin, ids.len());
         let start = start.or(order.first().copied()).map_or(0, |i| i as usize);
         let at = q.list.set_in_order(ids, start, order.into_iter().map(|i| i as usize).collect(), seed());
         drop(q);
@@ -386,7 +395,7 @@ impl Session {
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_handed"))]
     pub fn handed(&self, ids: Vec<String>, index: u32, order: Option<Vec<u32>>, shuffle: bool, repeat: u8) -> QueueChange {
         let mut q = self.queue.lock();
-        q.set_origin(None);
+        q.set_origin(None, ids.len());
         let at = match (shuffle, order) {
             (true, Some(order)) => q.list.set_in_order(ids, index as usize, order.into_iter().map(|i| i as usize).collect(), seed()),
             (true, None) => q.list.set(ids, None, true, seed()),
@@ -690,7 +699,7 @@ pub(crate) mod tests {
         let i = order[2];
         let id = s.playlist(|p| p.ids()[i].clone());
         s.remove(i as u32, i as u32 + 1);
-        assert_eq!(s.restore(id), QueueChange { at: Some(i as u32), shuffled: true });
+        assert_eq!(s.restore(id), QueueChange { at: Some(i as u32), shuffled: true, follows: false });
         assert_eq!(s.playlist(|p| p.play_order().collect::<Vec<_>>()), order);
         assert!(s.from_page(&album));
         assert_eq!(s.origin_gen(), gen);
@@ -699,7 +708,7 @@ pub(crate) mod tests {
     #[test]
     fn edits_and_restores() {
         let s = session(&["e1", "e2", "e3"], 0);
-        assert_eq!(s.take(9, ids(&["n"]), vec![Hand::Next]), QueueChange { at: Some(1), shuffled: false });
+        assert_eq!(s.take(9, ids(&["n"]), vec![Hand::Next]), QueueChange { at: Some(1), shuffled: false, follows: false });
         assert_eq!(s.take(9, ids(&["i"]), vec![Hand::No]).at, Some(4), "clamped to the end");
         assert!(s.shuffle(true).shuffled);
         assert_eq!(s.playlist(|p| p.shuffle_order().unwrap()[..2].to_vec()), [0, 1], "current, then the one added by hand");
@@ -713,7 +722,7 @@ pub(crate) mod tests {
         assert_eq!(s.playlist(|p| p.ids().to_vec()), ids(&["u1", "u2", "mine", "u3", "u4"]));
         s.remove(2, 3);
         assert_eq!(s.restore("other".into()).at, None);
-        assert_eq!(s.restore("mine".into()), QueueChange { at: Some(2), shuffled: false });
+        assert_eq!(s.restore("mine".into()), QueueChange { at: Some(2), shuffled: false, follows: false });
         assert_eq!(s.playlist(|p| (p.ids().to_vec(), p.current(), p.hand(2))), (ids(&["u1", "u2", "mine", "u3", "u4"]), Some(1), Hand::Next));
         assert_eq!(s.restore("mine".into()).at, None, "only once");
 

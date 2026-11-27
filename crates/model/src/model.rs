@@ -450,8 +450,9 @@ pub struct Directory {
     pub songs: Vec<Song>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+#[serde(default)]
 pub struct ArtistInfo {
     pub last_fm_url: Option<String>,
     pub music_brainz_id: Option<String>,

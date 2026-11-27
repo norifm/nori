@@ -74,9 +74,10 @@ impl Session {
         refills(self.origin().map(|o| o.kind), self.settings.in_effect(|p| p.auto_fill.is_some()))
     }
 
-    /// (may refill now, songs after the current one, last song).
+    /// (may refill now, songs after the current one, last song). Not while the rest of the page's songs
+    /// are on their way: they come first.
     fn refill_facts(&self) -> (bool, usize, Option<u64>) {
-        let setting = self.refill_on();
+        let setting = self.refill_on() && self.queue.lock().follows.is_none();
         self.playlist(|p| {
             let cur = p.current_id();
             (refillable(cur.is_some(), cur.is_some_and(queue::is_radio), p.repeat(), setting), p.songs_after(), end_of(p).map(|i| p.seqs()[i]))

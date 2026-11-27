@@ -1842,6 +1842,22 @@ impl Handle {
         if !keep {
             self.engine.play_at(change.at.unwrap_or(0) as usize, 0);
         }
+        if change.follows {
+            self.follow();
+        }
+    }
+
+    /// The rest of the songs of the page the queue was started from, once they come, join it
+    /// (`Client::queue_follow`); a queue that played out meanwhile plays on into them.
+    fn follow(&self) {
+        let me = self.clone();
+        self.run(async move {
+            let Some(followed) = me.client.queue_follow().await else { return };
+            me.edited();
+            if let Some(after) = followed.after {
+                me.engine.resume_after_refill(after);
+            }
+        });
     }
 
     /// [`Handle::enqueue_here`] on the device playing: the active device while it is another one.

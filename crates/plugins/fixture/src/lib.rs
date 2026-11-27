@@ -233,12 +233,17 @@ impl Provider for Test {
         }
         Ok(match request {
             provider::Request::Song(id) if id == "trap" => panic!("told to"),
-            // A playlist of two pages: the first shown, then the second asked for.
+            // A playlist of three pages, a request each: what came is shown before each next one is asked.
             provider::Request::Playlist(id) if id == "test-long" => {
-                let list = |songs: Vec<Song>| PlaylistPage { playlist: Playlist { id: id.clone(), name: "Long".into(), comment: None, owner: None, song_count: 2, duration: 0, cover: None }, songs };
-                nori_plugin_sdk::parts::show_playlist(&list(vec![song("first".into())]));
+                let list = |titles: &[&str]| PlaylistPage {
+                    playlist: Playlist { id: id.clone(), name: "Long".into(), comment: None, owner: None, song_count: 3, duration: 0, cover: None },
+                    songs: titles.iter().map(|t| song(t.to_string())).collect(),
+                };
+                nori_plugin_sdk::parts::show_playlist(&list(&["first"]));
                 fetch("https://allowed.example/second");
-                provider::Page::Playlist(list(vec![song("first".into()), song("second".into())]))
+                nori_plugin_sdk::parts::show_playlist(&list(&["first", "second"]));
+                fetch("https://allowed.example/third");
+                provider::Page::Playlist(list(&["first", "second", "third"]))
             }
             provider::Request::Search((query, ..)) => provider::Page::Found(Found { songs: vec![song(query)], albums: Vec::new(), artists: Vec::new(), playlists: Vec::new() }),
             provider::Request::Artists => provider::Page::Artists(["Followed", "Subscribed"].map(|name| Artist { id: format!("test-{name}"), name: name.into(), cover: None, image_url: None, album_count: None, starred: true, external: false }).into()),
