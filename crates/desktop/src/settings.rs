@@ -2114,7 +2114,12 @@ mod tests {
     #[test]
     fn tabs_are_the_pages_the_profile_opens() {
         let names = |guest| tabs(&nori_core::browse::profile_rules(guest).settings).into_iter().map(tab_name).collect::<Vec<_>>();
-        assert_eq!(names(false), ["Profiles", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage", "Plugins", "About"]);
+        let mut expected = vec!["Profiles", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage", "Plugins", "About"];
+        // A build given the support service's address (the nightly, a release) ends with its tab.
+        if nori_core::support::support_service().is_some() {
+            expected.push(words::SUPPORT_TITLE);
+        }
+        assert_eq!(names(false), expected);
         assert!(!names(true).contains(&"Library"), "a jam guest has no library settings to show");
     }
 
