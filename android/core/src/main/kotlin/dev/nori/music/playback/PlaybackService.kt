@@ -785,6 +785,7 @@ class PlaybackService : MediaLibraryService() {
             if (hands.any { it != Hand.NO }) nori.session.playlistMark(hands)
             super.setMediaItems(mediaItems, c.at?.toInt() ?: 0, if (startIndex == C.INDEX_UNSET) C.TIME_UNSET else startPositionMs)
             onQueueSet?.invoke()
+            if (c.follows) follow()
         }
         /**
          * A queue handed over from another device: its songs, place, play order, shuffle and repeat, as
@@ -910,6 +911,18 @@ class PlaybackService : MediaLibraryService() {
         // A next pressed at the end while these were on the way is taken now, if the user is still there
         // and pressed it moments ago; a press the user has long since settled after is not.
         if (nori.session.autofillLanded()) player.seekToNextMediaItem()
+    }
+
+    /**
+     * The queue was started from a page whose songs were still coming (a long playlist of a provider's,
+     * page by page): the rest join it once the page is whole, where the core put them (the core's
+     * `queue_follow`), and the player takes the same change. A queue that played out meanwhile plays on.
+     */
+    private fun follow() = scope.launch {
+        val followed = runCatching { nori.library.queueFollow() }.getOrNull() ?: return@launch
+        val ended = player.playbackState == Player.STATE_ENDED
+        applyEdit(followed.edit)
+        if (ended) { player.seekToNextMediaItem(); player.prepare(); player.play() }
     }
 
     /** The queue played out: a plugin may say what plays now (the core's `Client::queue_ended`). */

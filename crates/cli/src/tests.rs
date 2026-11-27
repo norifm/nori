@@ -1194,6 +1194,25 @@ fn a_playlists_seal_pins_it() {
     assert!(seal_filled(&a, crate::app::Button::Star), "shown at once");
 }
 
+/// A playlist filling in says more songs are on the way, and its rows grow in place as they come.
+#[test]
+fn a_playlist_filling_in_grows_in_place() {
+    let mut a = app();
+    open_playlist(&mut a, "long");
+    let page = |titles: &[&str], filling: bool| {
+        let songs = titles.iter().enumerate().map(|(i, t)| song(&i.to_string(), t, 200)).collect();
+        let mut d = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "long".into(), ..Default::default() }, songs);
+        d.filling = filling;
+        Msg::Data(Req::Playlist("long".into()), Ok(Data::Playlist(Box::new(d))))
+    };
+    a.handle(page(&["One"], true));
+    let s = draw(&mut a, 170, 40);
+    assert!(s.contains("1 song · 3:20 · more on the way") && s.contains("One"), "{s}");
+    a.handle(page(&["One", "Two"], false));
+    let s = draw(&mut a, 170, 40);
+    assert!(s.contains("Two") && !s.contains("more on the way"), "{s}");
+}
+
 /// The account's own playlist: a row's menu moves it or takes it out, the page's renames it; another
 /// user's offers neither.
 #[test]

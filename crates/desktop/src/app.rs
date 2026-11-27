@@ -156,10 +156,27 @@ fn artist_caption(d: &nori_core::ArtistDetail) -> String {
 }
 
 /// An artist's releases, a shelf per kind, each album under its year.
-fn release_shelves(d: &nori_core::ArtistDetail) -> ModelRc<Shelf> {
+fn release_shelves(d: &nori_core::ArtistDetail) -> Vec<Shelf> {
     let card = |a: &nori_core::Album| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) };
-    let shelves = d.groups.iter().map(|g| Shelf { title: words::release_shelf(g).into(), cards: cards(g.albums.iter().filter_map(|&i| d.albums.get(i as usize)).map(card)), loaded: true, ..Default::default() });
-    ModelRc::new(VecModel::from(shelves.collect::<Vec<_>>()))
+    d.groups.iter().map(|g| Shelf { title: words::release_shelf(g).into(), cards: cards(g.albums.iter().filter_map(|&i| d.albums.get(i as usize)).map(card)), loaded: true, ..Default::default() }).collect()
+}
+
+/// `fresh` shelves in `shown`, a page's: as the shelves' newer answer, their cards slide to their places
+/// and the new ones fade in ([`moved`]); `set` takes the page's first.
+fn newer_shelves(shown: ModelRc<Shelf>, fresh: Vec<Shelf>, set: impl FnOnce(ModelRc<Shelf>)) {
+    match shown.as_any().downcast_ref::<VecModel<Shelf>>().filter(|m| m.row_count() > 0) {
+        Some(m) => {
+            let fresh = fresh
+                .into_iter()
+                .map(|s| {
+                    let old = m.iter().find(|o| o.title == s.title);
+                    Shelf { cards: cards(moved(old.as_ref(), s.cards.iter().collect()).into_iter()), ..s }
+                })
+                .collect();
+            put_shelves(m, fresh);
+        }
+        None => set(ModelRc::new(VecModel::from(fresh))),
+    }
 }
 
 /// Where Back leads from what the pages show.
@@ -2128,6 +2145,7 @@ impl App {
         ui.set_page_can_save(false);
         ui.set_page_editable(false);
         ui.set_page_songs(ModelRc::default());
+        ui.set_page_filling(false);
         ui.set_page_shelves(ModelRc::default());
         ui.set_page_bio("".into());
         ui.set_page_links(ModelRc::default());
@@ -2427,15 +2445,15 @@ impl App {
                 }
                 ui.set_page_caption(caption.join(" · ").into());
                 self.set_page_art(d.album.cover_art.clone());
-                self.page_songs = d.songs;
+                let moves = self.newer_songs(d.songs);
                 self.page_actions(PageKind::Album);
-                self.show_page_songs();
+                self.show_page_rows(&moves);
             }
             // The artist chosen beside the Artists list, in its own pane.
             Data::Page(PageGot::Artist(d)) if shown && ui.get_view() == View::Artists => {
                 ui.set_artist_name(d.artist.name.as_str().into());
                 ui.set_artist_caption(artist_caption(&d).into());
-                ui.set_artist_shelves(release_shelves(&d));
+                newer_shelves(ui.get_artist_shelves(), release_shelves(&d), |m| ui.set_artist_shelves(m));
             }
             Data::Page(PageGot::Artist(d)) if shown => {
                 ui.set_page_starred(self.session.as_ref().is_some_and(|s| s.core.starred(nori_core::client::Starrable::Artist, &d.artist.id, d.artist.starred)));
@@ -2443,10 +2461,10 @@ impl App {
                 ui.set_page_sub("".into());
                 ui.set_page_caption(artist_caption(&d).into());
                 self.set_page_art(d.artist.cover_art.clone().or_else(|| d.albums.first().and_then(|a| a.cover_art.clone())));
-                ui.set_page_shelves(release_shelves(&d));
-                self.page_songs = d.songs;
+                newer_shelves(ui.get_page_shelves(), release_shelves(&d), |m| ui.set_page_shelves(m));
+                let moves = self.newer_songs(d.songs);
                 self.page_actions(PageKind::Artist);
-                self.show_page_songs();
+                self.show_page_rows(&moves);
             }
             Data::Page(PageGot::Playlist(d)) if shown => {
                 ui.set_page_starred(nori_core::browse::playlist_pinned(&self.root.app.settings, &d.playlist.id));
@@ -2458,9 +2476,10 @@ impl App {
                 let editable = Some(d.playlist).filter(|p| self.editable(p));
                 ui.set_page_editable(editable.is_some());
                 self.page = Some(PageShown::Playlist(editable));
-                self.page_songs = d.songs;
+                ui.set_page_filling(d.filling);
+                let moves = self.newer_songs(d.songs);
                 self.page_actions(PageKind::Playlist);
-                self.show_page_songs();
+                self.show_page_rows(&moves);
             }
             Data::Page(PageGot::Mix(m)) if shown => {
                 ui.set_page_title(words::mix_name(m.name).into());
@@ -2709,13 +2728,29 @@ impl App {
         ui.set_page_pausing(b.pausing);
     }
 
-    /// Songs as rows filtered by the find text; each row keeps its index in `songs`.
+    /// `songs` as the page's own; where each stood in the songs the page showed, when they are its newer
+    /// answer (`pages::newer_places`); none for the page's first.
+    fn newer_songs(&mut self, songs: Vec<Song>) -> Vec<Option<u32>> {
+        let ids = |v: &[Song]| v.iter().map(|s| s.id.clone()).collect();
+        let places = if self.page_songs.is_empty() { Vec::new() } else { nori_core::pages::newer_places(ids(&self.page_songs), ids(&songs)) };
+        self.page_songs = songs;
+        places
+    }
+
     /// The page's songs as listed: an artist's first few until Show all (`songs_shown`).
     fn show_page_songs(&self) {
+        self.show_page_rows(&[]);
+    }
+
+    /// [`App::show_page_songs`], each row that was listed before sliding from where it stood (`places`, by
+    /// song) and each new one fading in, unless the find text narrows the list.
+    fn show_page_rows(&self, places: &[Option<u32>]) {
         let ui = self.ui();
         let all = self.page_songs_all || ui.get_page_kind() != PageLayout::Artist;
         let n = nori_core::browse::songs_shown(self.page_songs.len() as u32, all) as usize;
-        show_in(ui.get_page_songs(), self.rows(&self.page_songs[..n], ui.get_page_kind() != PageLayout::Artist), |m| ui.set_page_songs(m));
+        let rows = self.rows(&self.page_songs[..n], ui.get_page_kind() != PageLayout::Artist);
+        let rows = if self.find.is_empty() { slid(rows, places) } else { rows };
+        show_in(ui.get_page_songs(), rows, |m| ui.set_page_songs(m));
         ui.set_page_songs_more(n < self.page_songs.len());
         ui.set_page_filter_offered(ui.get_page_kind() == PageLayout::List && nori_core::pages::filter_offered(self.page_songs.len() as u32, !self.find.is_empty()));
     }
@@ -6394,15 +6429,30 @@ fn position_shown(ui: &AppWindow, player: Option<&PlayerBar>, position_ms: i32) 
 /// the cards it kept slide to their places and the others fade in. A first fill moves nothing.
 fn moved(old: Option<&Shelf>, fresh: Vec<Card>) -> Vec<Card> {
     let Some(old) = old.filter(|o| o.loaded && o.cards.row_count() > 0) else { return fresh };
-    let was: HashMap<(i32, SharedString), usize> = old.cards.iter().enumerate().map(|(i, c)| ((c.kind, c.id), i)).collect();
+    let key = |c: &Card| format!("{}:{}", c.kind, c.id);
+    let places = nori_core::pages::newer_places(old.cards.iter().map(|c| key(&c)).collect(), fresh.iter().map(key).collect());
     fresh
         .into_iter()
+        .zip(places)
         .enumerate()
-        .map(|(i, c)| match was.get(&(c.kind, c.id.clone())) {
-            Some(&from) => Card { shift: from as i32 - i as i32, new: false, ..c },
+        .map(|(i, (c, from))| match from {
+            Some(from) => Card { shift: from as i32 - i as i32, new: false, ..c },
             None => Card { shift: 0, new: true, ..c },
         })
         .collect()
+}
+
+/// `rows` as a page's newer answer: each song listed before (`places`, by song) slides from where it stood,
+/// each new one fades in.
+fn slid(mut rows: Vec<SongRow>, places: &[Option<u32>]) -> Vec<SongRow> {
+    for (at, row) in rows.iter_mut().enumerate() {
+        match places.get(row.index as usize) {
+            Some(Some(from)) => row.shift = *from as i32 - at as i32,
+            Some(None) => row.new = true,
+            None => {}
+        }
+    }
+    rows
 }
 
 /// Puts `fresh` in `model` row by row, so the shelves already drawn stay and their cards can move.
@@ -6654,6 +6704,8 @@ fn row(s: &Song, index: usize, playing: bool) -> SongRow {
         mark: 0,
         sealed: false,
         remote: s.is_external,
+        shift: 0,
+        new: false,
     }
 }
 
@@ -10064,6 +10116,16 @@ pub(crate) mod tests {
     }
 
     /// A section's newer answer slides the tiles and songs it kept from their old places, across columns too.
+    #[test]
+    fn a_pages_newer_answer_slides_its_songs_and_fades_in_new_ones() {
+        let row = |index: i32| SongRow { index, ..Default::default() };
+        // "b" moved up, "c" came: places by song in the newer answer.
+        let rows = slid((0..3).map(row).collect(), &nori_core::pages::newer_places(vec!["a".into(), "b".into()], vec!["b".into(), "a".into(), "c".into()]));
+        assert_eq!(rows.iter().map(|r| (r.shift, r.new)).collect::<Vec<_>>(), [(1, false), (-1, false), (0, true)]);
+        let first = slid((0..2).map(row).collect(), &[]);
+        assert!(first.iter().all(|r| r.shift == 0 && !r.new), "a first answer moves nothing");
+    }
+
     #[test]
     fn a_sections_newer_answer_slides_tiles_and_songs_to_their_places() {
         i_slint_backend_testing::init_no_event_loop();
