@@ -1,12 +1,13 @@
 # Providers
 
-A provider is where a profile's music comes from: a Subsonic server (Navidrome, octo-fiesta) or a
-plugin's provider export (YouTube Music and SoundCloud are plugins). Each provider is one
+A provider is where a profile's music comes from. It is a Subsonic server (Navidrome, octo-fiesta), the
+music files on the device, or a plugin's provider export (YouTube Music and SoundCloud are plugins). Each provider is one
 implementation of the `Provider` trait in `crates/core/src/providers/`. Nothing else in the core, the
 engine or a client names a provider. They ask the profile's provider, and they draw what it describes.
 
-Every client opens Subsonic profiles. Android, the desktop app and the terminal app also open plugin
-providers. The web client and the iPod app open only Subsonic profiles.
+Every client opens Subsonic profiles. Android, the desktop app, the terminal app and the iPod app open
+local files ([Local files](#local-files)). Android, the desktop app and the terminal app also open plugin
+providers.
 
 A provider here is not an octo-fiesta provider song (an `ext-` id that a Subsonic server fetches from a
 streaming service). Those are songs of a Subsonic profile.
@@ -18,11 +19,12 @@ streaming service). Those are songs of a Subsonic profile.
 
 ## The providers
 
-The core has three providers:
+The core has four providers:
 
 | Provider | Module | Built by |
 |---|---|---|
 | `Subsonic` | `providers/subsonic/` | Every client |
+| `Local` | `providers/local/` | Every client, offered where the client gives the device's files |
 | `PluginProvider` | `providers/plugin.rs` | The `plugins` feature of `nori-core`: Android, the desktop app, the terminal app |
 | `HostedProvider` | `providers/hosted.rs` | Every native client |
 
@@ -40,6 +42,8 @@ library and its Subsonic API). Every client hands the profile's client over with
 
 A client makes one `Kinds` and hands it to every `Core` it opens. `Kinds::builtin` has only Subsonic.
 `Kinds::with_plugins` adds the providers of the plugins that run, over the plugin host.
+`Kinds::set_files` (or `Kinds::set_device_music` from Kotlin) adds local files. A client that cannot read
+the device's files never calls it, so the core never offers the kind there.
 
 `Kinds::providers` lists the kinds that can be added, in order. Subsonic comes first. Then comes each
 running plugin whose manifest extends `provider`. A plugin kind is named by the plugin's own `name`
@@ -94,6 +98,9 @@ through. Many methods have defaults, so a provider writes only what it has.
 | `cover_prefix` | The start every cover URL shares, if any |
 | `cover_sizes` | The sizes its image server keeps ready, for covers that are URLs already |
 | `resolver` | A `ResolveStream` that turns stream addresses into URLs |
+| `file` | The file on this device a song plays from, whatever its stream says |
+| `sync` | Fills the offline index from the source (`Client::sync_library`) |
+| `sync_progress` | How far a sync running is, where it can say |
 | `sign_in_done` | Whether a sign-in page at an address, with its cookies, is done |
 | `sign_in` | Signs the account in with what the page or the user handed over |
 | `start_code` | A code that the user allows in a browser (`SignIn::Code`) |
@@ -229,6 +236,88 @@ A client's only code for each provider is its words. Each client keeps one entry
 | The desktop app | `words::provider` in `crates/desktop/src/words.rs` |
 | The terminal app | `text::provider` in `crates/cli/src/text.rs` |
 | The iPod app | `Say.provider` in `ios/Sources/Say.swift` |
+
+## Local files
+
+A local profile plays the music files on the device. Its provider answers every read from the offline
+index, and a sync fills the index from the files. The crate `nori-local` finds the files, reads them and
+builds the library. `providers/local/` keeps it in the index and answers the reads.
+
+### Where the files come from
+
+The client gives the core a `nori_local::Files`. It says where the files are (`MusicPlace`), lists them
+and opens them. A song plays through the same opener (`SongFile`, the engine's `Source::Opened`), so a
+browser's file plays as a file on disk does.
+
+| Client | `Files` | `MusicPlace` |
+|---|---|---|
+| Android | `MediaLibrary` (MediaStore, behind the music permission) through `DeviceMusic` | `Device` |
+| The desktop app, the terminal app | `Disk::folders`: the folders the profile names, at first this computer's Music folder (`nori_local::music_folder`) | `Folders` |
+| The iPod app | `Disk::device`: the app's Documents folder, filled through file sharing | `Device` |
+| The web client | `WebFiles` in `crates/web/src/files.rs`: the files of a folder the page picked, read with `FileReaderSync` | `Device` |
+
+Adding a local profile asks nothing, so its kind's first step is `AddNow`. With `Folders`, `check` gives a
+profile that names no folders the platform's own (`Files::default_folders`). Only a saved profile's form
+shows `FormField::Folders`. In its sheet, the desktop app adds a folder through the system's folder picker
+(`rfd`) and takes one off. Android asks for the music permission as the kind is chosen. The web page asks
+for a folder, the only pick a browser forces.
+
+A browser keeps no path. The page walks the folder and hands its `File`s to the worker
+(`Nori::local_files`), each visit. With the File System Access API, the page keeps the folder's handle in
+IndexedDB by the profile's id. At the next visit it reads the folder again if the browser still allows
+it. Otherwise Home shows a row that asks for the folder again (`web/src/state/folder.svelte.ts`).
+
+Sometimes the files can't be read at all: a folder is gone, a drive is unplugged, or the permission is
+not given. Then `Files::list` returns None and the sync changes nothing. The library, its seals and its
+plays stay until the files can be read again.
+
+### A sync
+
+`Client::sync_library` runs the scan in `providers/local/scan.rs`:
+
+1. It lists the files and compares them with the `local_files` table: path, size and time. A file kept
+   with the same size and time is not read again.
+2. It reads each new or changed file with `nori_local::tags::read`. It reads the tags, the audio's
+   length and format, and a fingerprint of the first audio packets. A file without audio that nori
+   decodes is kept as left out. It is not read again until it changes.
+3. When anything changed, `nori_local::group` builds the songs, albums and artists from every kept file.
+   They replace what the index held, and seals carry over.
+
+Nothing changed, nothing is written. A local profile's rules have `rescans`, so the session syncs it each
+time the profile opens and each time the app comes back into sight. The web syncs it as its folder is
+handed over. Nothing watches the files. In a browser, the scan gives the worker's thread back every few
+files, so pages and playback go on.
+
+### A song's identity
+
+A song is its row in `local_files` (`local-<row>`), not its path. A file that moved or was renamed is
+known again by its fingerprint. The fingerprint hashes the audio packets, never the tags, so a file moved
+and retagged at once is still the same song. Its plays, its seal and its AutoMix measurements stay. Two
+copies of one recording are two songs. A file whose audio changed in a new place is a new song.
+
+### Albums, covers and playlists
+
+An album is its songs with one album name and album artist. Songs without an album artist are grouped by
+their folder, and a folder named as a disc ("CD 2") counts as its parent. Songs of one such album by
+different artists make a compilation. A folder's picture (`cover.jpg`, `folder.jpg` and the like) is its
+album's cover, else the picture a file holds. A cover's address comes from `Files::cover_address`.
+Natively it is `file://` and the path, which the cover loader reads in place (`nori_local::cover_bytes`).
+In a browser it is a blob address of the picture. `.m3u` files are playlists, read only.
+
+Android lists only music, as the music permission lets it read nothing else. MediaStore reads the rest
+itself. An album with no picture of its own takes MediaStore's (`Files::album_art`), which comes from its
+folder (`cover.jpg`, `folder.jpg`) where the files hold none. The app keeps it under `local-covers/`.
+MediaStore's playlists are the `.m3u` files in the music folders (`Files::playlists`). Other players ask for
+more to read folder pictures: foobar2000 asks for `READ_MEDIA_IMAGES`, and Auxio reads folders the user
+grants through the system's picker.
+
+### What a local profile does not do
+
+- It has no account, no downloads and no radio. Scrobbling accounts work, and nothing is scrobbled to a
+  server.
+- Remote control works. Songs never go to another device: `Refusal::DeviceFiles` refuses them, either
+  way.
+- A LAN jam's guest cannot listen along: the host resolves no stream for it.
 
 ## Add a provider
 

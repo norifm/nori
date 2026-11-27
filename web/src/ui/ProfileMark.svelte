@@ -1,10 +1,10 @@
 <script lang="ts">
-  // A profile's mark on a circle, as its icon says: its letter, its provider's mark (a server's glyph: every
-  // profile here is an OpenSubsonic server's), or one of Iconoir's faces. `side` its width, px.
+  // A profile's mark on a circle, as its icon says: its letter, its provider's mark (a server's glyph, or a
+  // folder for local files), or one of Iconoir's faces. `side` its width, px.
   import type { ProfileIcon } from "../state/types";
   import Icon from "./Icon.svelte";
 
-  let { icon, letter, side = 40 }: { icon: ProfileIcon; letter: string; side?: number } = $props();
+  let { icon, letter, kind = "subsonic", side = 40 }: { icon: ProfileIcon; letter: string; kind?: string; side?: number } = $props();
   const glyphs: Record<ProfileIcon, string> = {
     Letter: "",
     Provider: "server",
@@ -17,7 +17,7 @@
   };
 </script>
 
-<span class="mark" style:--side="{side}px" data-icon={icon}>{#if icon === "Letter"}{letter}{:else}<Icon name={glyphs[icon]} />{/if}</span>
+<span class="mark" style:--side="{side}px" data-icon={icon}>{#if icon === "Letter"}{letter}{:else}<Icon name={icon === "Provider" && kind === "local" ? "folder" : glyphs[icon]} />{/if}</span>
 
 <style>
   .mark {

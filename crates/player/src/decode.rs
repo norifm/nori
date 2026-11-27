@@ -50,6 +50,20 @@ impl Codec {
         }
     }
 
+    /// The codec of a track symphonia reads as `id`; None for one nori does not decode.
+    pub fn of(id: symphonia::core::codecs::audio::AudioCodecId) -> Option<Codec> {
+        use well_known::*;
+        Some(match id {
+            CODEC_ID_MP3 => Codec::Mp3,
+            CODEC_ID_FLAC => Codec::Flac,
+            CODEC_ID_AAC => Codec::Aac,
+            CODEC_ID_VORBIS => Codec::Vorbis,
+            CODEC_ID_ALAC => Codec::Alac,
+            CODEC_ID_OPUS => Codec::Opus,
+            _ => return None,
+        })
+    }
+
     fn well_known(self) -> symphonia::core::codecs::audio::AudioCodecId {
         match self {
             Codec::Mp3 => well_known::CODEC_ID_MP3,

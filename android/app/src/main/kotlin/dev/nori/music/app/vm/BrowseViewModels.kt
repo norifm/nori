@@ -134,7 +134,9 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
      * a re-query replaces each shelf's contents where they are instead of emptying the page first and
      * filling it again - the difference between a refresh and the page being built a second time.
      */
-    private val refreshes = MutableStateFlow(0)
+    private val refreshed = MutableStateFlow(0)
+    /** A refresh, or a sync that changed the offline index (a library of files first scanned). */
+    private val refreshes = combine(refreshed, nori.library.indexVersion) { a, b -> a to b }
     private val _refreshing = MutableStateFlow(false)
     /** True while a manual refresh is running, so the page can show that it is and then stop. */
     val refreshing: StateFlow<Boolean> = _refreshing
@@ -268,7 +270,7 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
         viewModelScope.launch {
             try {
                 runCatching { nori.library.dropCached(*homeRefreshDrops().toTypedArray()) }
-                refreshes.update { it + 1 }
+                refreshed.update { it + 1 }
                 if (nori.rules.indexed) runCatching { nori.library.sync() }
             } finally {
                 _refreshing.value = false

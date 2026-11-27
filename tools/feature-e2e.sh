@@ -9,7 +9,7 @@
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
 SECTIONS="plugins lyrics status-bar notification media-card album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel search remote jam"
-OPT_IN="lyrics-services scrobble download-albums youtube-music"
+OPT_IN="lyrics-services scrobble download-albums youtube-music local-files"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
   echo "the scrobble and download-albums checks require NORI_E2E_SERVER=local" >&2
@@ -511,6 +511,36 @@ PY
   "$app" play "$SONG" >/dev/null
   check "and its songs play" sounds 20
   "$app" plugin reset >/dev/null
+fi
+
+if want local-files; then section "a local files profile reads the device's music through MediaStore and plays a file"
+  # The core opens the paths MediaStore lists (MediaLibrary.kt) once the music permission is granted, and
+  # takes MediaStore's album picture (here the folder's cover.jpg, as the file holds none) and its .m3u
+  # playlists: only a device can say that its storage and MediaStore give them under the music permission
+  # alone. The scan and the library are Rust's (providers/local tests). Opt-in: it switches the profile in
+  # use. The folder is in Download: adb may not put a picture in Music.
+  dir=/sdcard/Download/nori-e2e
+  adb shell mkdir -p "$dir"
+  adb push "$here/../crates/player/testdata/tone440.mp3" "$dir/nori e2e tone.mp3" >/dev/null
+  adb push "$here/../crates/covers/testdata/photo.jpg" "$dir/cover.jpg" >/dev/null
+  list=$(mktemp)
+  printf '#EXTM3U\nnori e2e tone.mp3\n' > "$list"
+  adb push "$list" "$dir/nori e2e list.m3u" >/dev/null
+  rm "$list"
+  adb shell content call --uri content://media --method scan_volume --arg external_primary >/dev/null
+  adb shell pm grant "$pkg" android.permission.READ_MEDIA_AUDIO
+  "$app" login kind:local >/dev/null
+  check "the local files profile opens" wait_for kind local 20
+  "$app" play "search:nori e2e tone" >/dev/null
+  check "its song from MediaStore is the one playing" wait_for title "nori e2e tone" 20
+  check "and it opens from its file, not the network" wait_until 10 bash -c "adb logcat -d -s nori:I | grep -q 'opens from its file'"
+  folder_cover() { "$app" state | grep -q '"cover":"[^"]*local-covers/'; }
+  check "its cover is the folder's picture MediaStore gave" wait_until 10 folder_cover
+  "$app" open library/PLAYLISTS >/dev/null
+  check "the folder's .m3u is a playlist" wait_until 10 on_screen "nori e2e list"
+  "$app" login "$APP_URL|$USER|$PASS" >/dev/null
+  check "the server's profile opens again" wait_for server "$APP_URL" 30
+  adb shell rm -r "$dir"
 fi
 
 if want status-bar; then section "the status bar's icons after a theme change under a page"

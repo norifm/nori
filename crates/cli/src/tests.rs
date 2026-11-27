@@ -3464,6 +3464,34 @@ fn the_forms_advanced_settings_hold_every_option() {
     assert_eq!((&p.headers, p.allow_self_signed, p.legacy_auth, &p.proxy, p.client_cert_password.as_str()), (&headers, true, false, &proxy, "secret"));
 }
 
+/// Local files ask nothing: chosen, the profile is sent at once, to read this computer's Music folder.
+#[test]
+fn local_files_are_added_with_nothing_to_type() {
+    use nori_core::settings::ServerKind;
+    let mut a = app();
+    a.settings.own.kinds.set_files(std::sync::Arc::new(nori_core::local::Disk::folders()));
+    a.view = View::Login;
+    a.provider_chosen(ServerKind::Local);
+    let Some(Cmd::Login(p)) = a.cmds.last() else { panic!("sent: {:?}", a.cmds) };
+    assert_eq!((&p.kind, p.folders.len()), (&ServerKind::Local, 0), "the core fills in the Music folder");
+}
+
+/// Home and the library, read while a library of files was still being scanned, are read again once the
+/// scan fills the offline index; a list not on screen is read when it next is.
+#[test]
+fn pages_are_read_again_once_the_index_fills() {
+    let mut a = app();
+    a.go(View::Albums);
+    a.handle(Msg::Data(Req::Albums { sort: a.library.album_sort, favorites: false, offset: 0 }, Ok(Data::Albums(Vec::new()))));
+    a.go(View::Home);
+    a.cmds.clear();
+    a.handle(Msg::Indexed("Offline index: 2 songs, 1 albums, 1 artists".into()));
+    assert!(a.cmds.contains(&Cmd::Load(Req::Home)), "{:?}", a.cmds);
+    a.cmds.clear();
+    a.go(View::Albums);
+    assert!(a.cmds.iter().any(|c| matches!(c, Cmd::Load(Req::Albums { .. }))), "{:?}", a.cmds);
+}
+
 /// An API key takes the place of the user and password: their lines go while one is typed.
 #[test]
 fn an_api_key_stands_in_for_the_user_and_password() {

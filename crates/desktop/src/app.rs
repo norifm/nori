@@ -1553,6 +1553,16 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_option_opened, h, |a, field| a.on_form(|f, ui, _| f.opened(ui, field)));
     on!(ui.on_cert_saved, h, |a, path, password| a.on_form(|f, ui, data| f.cert_saved(ui, data, &path, password.into())));
     on!(ui.on_cert_removed, h, |a| a.on_form(|f, ui, _| f.cert_removed(ui)));
+    ui.on_folder_add({
+        let ui = ui.as_weak();
+        move || {
+            if let Some(ui) = ui.upgrade() {
+                crate::form::pick_folder(&ui);
+            }
+        }
+    });
+    on!(ui.on_folder_picked, h, |a, folder| a.on_form(|f, ui, _| f.folder_added(ui, folder.into())));
+    on!(ui.on_folder_removed, h, |a, at| a.on_form(|f, ui, _| f.folder_removed(ui, at.max(0) as usize)));
     // Back from a profile's Edit page goes to Settings, where it was opened.
     on!(ui.on_cancel_login, h, |a| {
         let back = if a.editing.is_some() { View::Settings } else { View::Home };
@@ -4889,6 +4899,14 @@ impl App {
                 self.settings_shown();
             }
             Msg::Note { text, error } => self.say(&text, error),
+            Msg::Indexed(text) => {
+                self.say(&text, false);
+                // What was read before a library of files was first scanned had nothing to show.
+                let view = self.ui().get_view();
+                if matches!(view, View::Home | View::Albums | View::Artists | View::Playlists | View::Songs | View::Genres | View::Decades | View::Favorites) {
+                    self.go(view);
+                }
+            }
             Msg::Playlist { text, change } => self.playlist_changed(&text, change),
             Msg::Shared(Some(link)) => self.copy(link, words::LINK_COPIED),
             Msg::Choices(songs, choices) => {

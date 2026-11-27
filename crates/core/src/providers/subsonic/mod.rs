@@ -91,6 +91,10 @@ impl Provider for Subsonic {
         client.subsonic_write(w).await
     }
 
+    async fn sync(&self, client: &Client) -> NetResult<crate::IngestStats> {
+        client.subsonic_sync().await
+    }
+
     fn stream(&self, client: &Client, id: String, q: StreamQuality) -> StreamTarget {
         let key = crate::stream::stream_cache_key(&id, &q);
         StreamTarget { url: client.core.stream_url(id, q.bit_rate, q.format), key }

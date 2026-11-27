@@ -1307,6 +1307,7 @@ impl PluginAct {
             "device-back" => PluginAct::DialogBack,
             "plugin-mobile" => PluginAct::AllowMobile(id()),
             "provider-own" => PluginAct::Choose(ServerKind::Subsonic),
+            "provider-local" => PluginAct::Choose(ServerKind::Local),
             "provider" => PluginAct::Choose(ServerKind::Plugin { id: id() }),
             "provider-on" => PluginAct::TurnOn(id()),
             "provider-offer" => PluginAct::OfferPage(id()),
@@ -1351,6 +1352,7 @@ impl PluginAct {
             PluginAct::DialogBack => "device-back".into(),
             PluginAct::AllowMobile(id) => format!("plugin-mobile:{id}"),
             PluginAct::Choose(ServerKind::Subsonic) => "provider-own".into(),
+            PluginAct::Choose(ServerKind::Local) => "provider-local".into(),
             PluginAct::Choose(ServerKind::Plugin { id }) => format!("provider:{id}"),
             PluginAct::TurnOn(id) => format!("provider-on:{id}"),
             PluginAct::OfferPage(id) => format!("provider-offer:{id}"),
@@ -1436,6 +1438,10 @@ pub fn source_row(p: &Plugged, kinds: &Kinds, source: &WelcomeSource, mark: Sour
             let title = words::provider_of(kinds, kind).name.into();
             crate::SourceRow { title, detail: words::PROVIDER_SUBSONIC_ABOUT.into(), glyph: MarkGlyph::Server, mark, ..Default::default() }
         }
+        WelcomeSource::Kind { kind: kind @ ServerKind::Local } => {
+            let title = words::provider_of(kinds, kind).name.into();
+            crate::SourceRow { title, detail: words::PROVIDER_LOCAL_ABOUT.into(), glyph: MarkGlyph::Files, mark, ..Default::default() }
+        }
         WelcomeSource::Kind { kind: kind @ ServerKind::Plugin { id } } => plugin_source(p, id, &words::provider_of(kinds, kind).name, mark),
         WelcomeSource::Offered { plugin } => plugin_source(p, plugin, &nori_plugins::plugin_display_name(plugin.clone(), p.cards.clone(), p.offers().to_vec()), mark),
     }
@@ -1458,6 +1464,7 @@ fn provider_choices(p: &Plugged, kinds: &Kinds) -> Vec<Row> {
         let act = PluginAct::Choose(i.kind.clone()).name();
         match &i.kind {
             ServerKind::Subsonic => Row { kind: PLUGIN, name: act, title: name, detail: words::PROVIDER_SUBSONIC_ABOUT.into(), glyph: MarkGlyph::Server, enabled: true, ..Default::default() },
+            ServerKind::Local => Row { kind: PLUGIN, name: act, title: name, detail: words::PROVIDER_LOCAL_ABOUT.into(), glyph: MarkGlyph::Files, enabled: true, ..Default::default() },
             ServerKind::Plugin { id } => Row { name: act, ..plugin_line(p, id, &name, None, String::new()) },
         }
     });
@@ -1499,6 +1506,7 @@ pub fn profile_mark(p: &Plugged, sv: &SavedServer, label: &str) -> Mark {
                 return Mark { icon, letter: letter.into(), ..Default::default() };
             }
             ServerKind::Subsonic => MarkGlyph::Server,
+            ServerKind::Local => MarkGlyph::Files,
         },
         ProfileIcon::Sing => MarkGlyph::Sing,
         ProfileIcon::Surprise => MarkGlyph::Surprise,

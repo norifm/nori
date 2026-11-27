@@ -285,7 +285,7 @@ pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years:
 
 /// [`Core::albums_indexed`]' query: offset ?1, limit ?2. Each order as [`favorites_in_order`] has it, every
 /// key's way turned when `reversed` except the year inside an artist's albums and the name breaking ties.
-fn albums_sql(sort: AlbumSort, reversed: bool) -> String {
+pub(crate) fn albums_sql(sort: AlbumSort, reversed: bool) -> String {
     let (up, down) = if reversed { ("DESC", "ASC") } else { ("ASC", "DESC") };
     let (name, artist) = ("name_key", "artist_key");
     let order = match sort {

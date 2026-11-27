@@ -1007,7 +1007,7 @@ pub fn login_option(what: nori_core::providers::FormField) -> LoginOption {
         Name | Address | User | SecondAddress | ApiKey => LoginOption::Text { hidden: false },
         Headers => LoginOption::Lines,
         LegacyAuth | SelfSigned | WifiOnly => LoginOption::Switch,
-        ClientCert | Proxy => LoginOption::Entry,
+        ClientCert | Proxy | Folders => LoginOption::Entry,
     }
 }
 
@@ -1024,7 +1024,7 @@ impl Login {
             SecondAddress => &p.alt_url,
             ApiKey => &p.api_key,
             Headers => &self.headers,
-            LegacyAuth | SelfSigned | WifiOnly | ClientCert | Proxy => return None,
+            LegacyAuth | SelfSigned | WifiOnly | ClientCert | Proxy | Folders => return None,
         })
     }
 
@@ -1039,7 +1039,7 @@ impl Login {
             SecondAddress => &mut p.alt_url,
             ApiKey => &mut p.api_key,
             Headers => &mut self.headers,
-            LegacyAuth | SelfSigned | WifiOnly | ClientCert | Proxy => return None,
+            LegacyAuth | SelfSigned | WifiOnly | ClientCert | Proxy | Folders => return None,
         })
     }
 
@@ -2299,6 +2299,10 @@ impl App {
                 }
             }
             Msg::Note { text, error } => self.say(text, error),
+            Msg::Indexed(text) => {
+                self.say(text, false);
+                self.index_filled();
+            }
             Msg::Cast(c) => self.devices.cast = c,
             // A page or list on screen, read again.
             Msg::Reload(Req::Work) => self.cmds.push(Cmd::Load(Req::Work)),
@@ -4091,6 +4095,18 @@ impl App {
         self.settings.alone = Alone::No;
         self.settings.invalidate();
         self.view = View::Login;
+    }
+
+    /// The pages read from the offline index, read again now it is filled: those read before a library of
+    /// files was first scanned had nothing to show.
+    fn index_filled(&mut self) {
+        self.home.asked = false;
+        let l = &mut self.library;
+        (l.albums, l.artists, l.songs, l.playlists, l.genres, l.favorites) = (Load::Idle, Load::Idle, Load::Idle, Load::Idle, Load::Idle, Load::Idle);
+        let reads_index = matches!(self.view, View::Home | View::Albums | View::Artists | View::Songs | View::Playlists | View::Genres | View::Favorites);
+        if reads_index && self.pages.is_empty() && !self.full {
+            self.go(self.view);
+        }
     }
 
     fn refresh(&mut self) {

@@ -4,11 +4,13 @@
 </script>
 
 <script lang="ts">
-  // Home: the queue another device left, offered to carry on here; then "For you", the mixes made from
+  // Home: a local profile's folder to allow again, when this visit may not read it yet; the queue another
+  // device left, offered to carry on here; then "For you", the mixes made from
   // what plays here and the favourites (as the desktop's and Android's Home: at once as last drawn, then
   // brought up to date); then the rows kept in their order (the core's, from the Home rows setting), each
   // a shelf of prints whose title opens the whole row. A row with nothing in it is not drawn.
   import { ask, facts, read } from "../rpc";
+  import { folder } from "../state/folder.svelte";
   import { library, reading } from "../state/library.svelte";
   import { looks, today } from "../state/theme.svelte";
   import { href, route } from "../state/route.svelte";
@@ -16,6 +18,7 @@
   import { W } from "../words";
   import Cards from "../ui/Cards.svelte";
   import Continue from "../ui/Continue.svelte";
+  import Icon from "../ui/Icon.svelte";
   import MixCard from "../ui/MixCard.svelte";
   import Page from "../ui/Page.svelte";
   import SectionTitle from "../ui/SectionTitle.svelte";
@@ -61,6 +64,9 @@
 </script>
 
 <Page title={W.listenNow} sketch="Home" ready={!!page.data} error={page.error}>
+  {#if folder.waits}
+    <div class="group again"><button class="group-row" id="folder-again" onclick={() => void folder.allow()}><Icon name="folder" /><span class="words"><span>{W.folderAgain(folder.name)}</span></span><Icon name="nav-arrow-right" /></button></div>
+  {/if}
   {#key route.visit}<Continue />{/key}
   {#if mixes.length}
     <section class="shelf" data-row="ForYou">
@@ -81,6 +87,9 @@
 </Page>
 
 <style>
+  .again {
+    margin-bottom: 24px;
+  }
   .cell {
     display: grid;
     min-width: 0;

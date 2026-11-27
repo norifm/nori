@@ -14,6 +14,7 @@ use nori_player::transitions::WindowSong;
 use crate::arriving::Listening;
 use crate::demux::Demuxed;
 use crate::pieces::Pieces;
+use symphonia::core::io::MediaSource;
 use crate::source::{ByteSource, Fetching, Keep, Loader, Waits};
 use crate::store::Store;
 
@@ -22,6 +23,9 @@ use crate::store::Store;
 pub enum Source {
     /// On disk, in one file or in pieces read in order (media3's cache splits a song into spans).
     File(Vec<PathBuf>),
+    /// A file on this device the library opens itself: a local profile's, which a browser reads through
+    /// the handle it was given.
+    Opened(Arc<dyn Fn() -> std::io::Result<Box<dyn MediaSource>> + Send + Sync>),
     Url { url: String, bytes: Arc<dyn ByteSource> },
     /// A URL cached under `key`: read from disk when whole there, else written there as it loads.
     Cached { url: String, bytes: Arc<dyn ByteSource>, store: Arc<Store>, key: String },
@@ -143,13 +147,13 @@ impl<L: Library> Sources<L> {
     fn open_as(&mut self, id: &str, from_ms: i64, packets: Option<bool>) -> Result<Demuxed, String> {
         let at = self.library.locate(id)?;
         let (encoding, platform, engine) = (self.encoding, self.platform, self.engine.clone());
+        let opened = |source: Box<dyn MediaSource>, hint: Option<String>| match packets {
+            Some(_) => Demuxed::open_packets(source, hint.as_deref(), from_ms, at.duration_ms),
+            None => Demuxed::open(source, hint.as_deref(), from_ms, at.duration_ms, encoding, platform),
+        };
         let file = |paths: &[PathBuf]| {
             let file = Box::new(Pieces::open(paths).map_err(|e| format!("{paths:?}: {e}"))?);
-            let hint = at.hint.clone().or_else(|| paths.first()?.extension().map(|e| e.to_string_lossy().into_owned()));
-            match packets {
-                Some(_) => Demuxed::open_packets(file, hint.as_deref(), from_ms, at.duration_ms),
-                None => Demuxed::open(file, hint.as_deref(), from_ms, at.duration_ms, encoding, platform),
-            }
+            opened(file, at.hint.clone().or_else(|| paths.first()?.extension().map(|e| e.to_string_lossy().into_owned())))
         };
         let load = |loader: Arc<Loader>, from_ms: i64, duration_ms: Option<i64>, estimated: bool| match packets {
             Some(_) => Demuxed::load_packets(loader, engine.clone(), at.hint.as_deref(), from_ms, duration_ms, estimated),
@@ -170,6 +174,7 @@ impl<L: Library> Sources<L> {
         }
         match &at.source {
             Source::File(paths) => file(paths),
+            Source::Opened(open) => opened(open().map_err(|e| e.to_string())?, at.hint.clone()),
             Source::Cached { store, key, .. } if self.loading(id).is_none() && store.cached(key).is_some() => {
                 let d = file(&[store.cached(key).expect("checked")])?;
                 if !d.cut_short() {

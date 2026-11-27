@@ -21,7 +21,7 @@ export enum PageLayout { album, artist, list }
 // (its `title`, not pressed), or a bare glyph on that line. A menu lists its lines in this order.
 export enum SongPlace { main, names, rest, title, note, glyphs }
 // The glyph a tile draws in place of an icon or letter: nori's own provider's server, or a profile's face.
-export enum MarkGlyph { none, server, sing, surprise, talking, look-up, satisfied, think }
+export enum MarkGlyph { none, server, files, sing, surprise, talking, look-up, satisfied, think }
 
 // A profile's circle: its plugin's icon in ink, else a letter, else a glyph.
 // The library's tabs a profile has (its rules' sections), and the places it keeps (Downloads, History).
@@ -228,6 +228,12 @@ export struct Detail {
     label: string,
     value: string,
     link: string,
+}
+
+// A local profile's folder in its sheet: its own name, and the folder it is in.
+export struct FolderLine {
+    name: string,
+    place: string,
 }
 
 // A playlist the picker offers: its name, cover and what it has of the songs; full when it has them all.
@@ -5658,7 +5664,7 @@ component PluginTile inherits Rectangle {
         colorize: Theme.text;
     }
     if root.glyph != MarkGlyph.none: Icon {
-        glyph: root.glyph == MarkGlyph.sing ? Icons.emoji-sing-right : root.glyph == MarkGlyph.surprise ? Icons.emoji-surprise-alt : root.glyph == MarkGlyph.talking ? Icons.emoji-talking-happy : root.glyph == MarkGlyph.look-up ? Icons.emoji-look-up : root.glyph == MarkGlyph.satisfied ? Icons.emoji-satisfied : root.glyph == MarkGlyph.think ? Icons.emoji-think-right : Icons.server;
+        glyph: root.glyph == MarkGlyph.sing ? Icons.emoji-sing-right : root.glyph == MarkGlyph.surprise ? Icons.emoji-surprise-alt : root.glyph == MarkGlyph.talking ? Icons.emoji-talking-happy : root.glyph == MarkGlyph.look-up ? Icons.emoji-look-up : root.glyph == MarkGlyph.satisfied ? Icons.emoji-satisfied : root.glyph == MarkGlyph.think ? Icons.emoji-think-right : root.glyph == MarkGlyph.files ? Icons.folder : Icons.server;
         colour: Theme.text;
         width: root.side * 0.6;
         height: root.side * 0.6;
@@ -9167,7 +9173,7 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open || root.login-proxy-open || root.login-cert-open;
+    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open || root.login-proxy-open || root.login-cert-open || root.login-folders-open;
     // Closes every dialog but the two app.rs keeps state for (a device's, the sign-in), which it closes itself.
     public function close-dialogs() {
         root.ask-open = false;
@@ -9185,6 +9191,7 @@ export component AppWindow inherits Window {
         root.forget-open = false;
         root.login-proxy-open = false;
         root.login-cert-open = false;
+        root.login-folders-open = false;
     }
     // A dialog closed: the page's keys come back.
     changed dialog-open => {
@@ -9344,6 +9351,14 @@ export component AppWindow inherits Window {
     in-out property <string> login-cert-error;
     callback cert-saved(string, string);
     callback cert-removed();
+    // A local profile's folders' sheet is over the form, the folders it reads by path; its Add folder asks
+    // the system's folder picker (form.rs), a folder's cross takes that one off.
+    in-out property <bool> login-folders-open;
+    in property <[FolderLine]> login-folders;
+    callback folder-add();
+    callback folder-removed(int);
+    // The folder the system's picker gave.
+    callback folder-picked(string);
     in property <string> login-error;
     in property <bool> login-busy;
     in property <bool> can-cancel-login;
@@ -13810,6 +13825,69 @@ export component AppWindow inherits Window {
                 Capsule {
                     text: "Save";
                     clicked => { cert-sheet.save(); }
+                }
+            }
+        }
+
+        if root.login-folders-open: Dialog {
+            title: "Music folders";
+            dismissed => { root.login-folders-open = false; }
+            if root.login-folders.length > 0: DialogGroup {
+                for folder[i] in root.login-folders: Rectangle {
+                    height: 48px;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        spacing: 10px;
+                        Icon {
+                            y: (parent.height - self.height) / 2;
+                            glyph: Icons.folder;
+                            colour: Theme.dim;
+                            width: 16px;
+                            height: 16px;
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            Text {
+                                text: folder.name;
+                                color: Theme.text;
+                                font-size: 13px;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: folder.place;
+                                color: Theme.dim;
+                                font-size: 11px;
+                                overflow: elide;
+                            }
+                        }
+                        IconButton {
+                            y: (parent.height - self.height) / 2;
+                            glyph: Icons.xmark;
+                            quiet: true;
+                            size: 28px;
+                            icon: 16px;
+                            accessible-role: button;
+                            accessible-label: "Remove " + folder.name;
+                            accessible-action-default => { root.folder-removed(i); }
+                            clicked => { root.folder-removed(i); }
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                TextButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Add folder";
+                    clicked => { root.folder-add(); }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                Capsule {
+                    text: "Done";
+                    clicked => { root.login-folders-open = false; }
                 }
             }
         }

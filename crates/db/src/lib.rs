@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS kept_playlists(server TEXT NOT NULL, id TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS kept_songs(server TEXT NOT NULL, playlist TEXT NOT NULL, song TEXT NOT NULL, PRIMARY KEY(server, playlist, song)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS kept_songs_song ON kept_songs(server, song);
 CREATE TABLE IF NOT EXISTS kept_brought(server TEXT NOT NULL, song TEXT NOT NULL, PRIMARY KEY(server, song)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS local_files(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL, modified INTEGER NOT NULL, fingerprint INTEGER, added INTEGER NOT NULL, tags TEXT, UNIQUE(server, path));
 CREATE TABLE IF NOT EXISTS scrobbles_waiting(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, account TEXT NOT NULL, artist TEXT NOT NULL, title TEXT NOT NULL, album TEXT NOT NULL, duration INTEGER NOT NULL, track INTEGER NOT NULL, at_ms INTEGER NOT NULL);
 ";
 
@@ -71,9 +72,9 @@ CREATE TABLE IF NOT EXISTS profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, o
 ";
 
 /// Per-server tables, cleared when a profile is removed.
-const SERVER_TABLES: [&str; 19] = [
+const SERVER_TABLES: [&str; 20] = [
     "items", "cache", "kv", "pending", "downloads", "searches", "plays", "song_stats", "server_plays", "mix_excluded", "autofill_picks", "smart_playlists", "track_analysis",
-    "vocal_curve", "favorites_here", "kept_playlists", "kept_songs", "kept_brought", "scrobbles_waiting",
+    "vocal_curve", "favorites_here", "kept_playlists", "kept_songs", "kept_brought", "scrobbles_waiting", "local_files",
 ];
 
 /// Opens the database for `server`'s rows (in memory for an empty `path`).
@@ -373,12 +374,12 @@ pub fn count(c: &Connection, kind: ItemKind) -> rusqlite::Result<u32> {
 }
 
 /// Drops what came from the server account: the index, cached reads, queued writes, the saved queue and
-/// the account's play history.
+/// the account's play history; for local files, what the scans kept of them.
 pub fn clear_library(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch(
         "DELETE FROM fts WHERE rowid IN (SELECT rowid FROM items WHERE server=sid()); DELETE FROM items WHERE server=sid();
          DELETE FROM cache WHERE server=sid(); DELETE FROM pending WHERE server=sid(); DELETE FROM kv WHERE server=sid() AND key IN ('queue', 'mix_draws');
-         DELETE FROM server_plays WHERE server=sid();",
+         DELETE FROM server_plays WHERE server=sid(); DELETE FROM local_files WHERE server=sid();",
     )
 }
 

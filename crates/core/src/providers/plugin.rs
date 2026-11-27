@@ -131,6 +131,7 @@ fn rules(said: Option<w::ProfileRules>, guest: bool) -> ProfileRules {
         downloads: r.downloads && !guest,
         radio: r.radio && !guest,
         indexed: false,
+        rescans: false,
         sections,
         settings: vec![Profiles, ServerOptions, Look, Playback, Sound, Lyrics, Downloads, Storage, About],
         remote: true,

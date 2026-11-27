@@ -23,6 +23,10 @@
     <!-- A plugin's wakes (plugins/PluginReceivers.kt): the device started, a Bluetooth audio device connected. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <!-- Local files profiles: the device's music, as MediaStore lists it (data/MediaLibrary.kt), asked for
+         when one is added. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <!-- What another app must hold to run a plugin's command; the user grants it to that app. -->
     <permission
         android:name="${applicationId}.permission.RUN_COMMAND"
@@ -30,7 +34,8 @@
         android:description="@string/permission_run_command_about"
         android:protectionLevel="dangerous" />
 
-    <application>
+    <!-- Android 10 reads shared files by path only with legacy storage; later versions ignore this. -->
+    <application android:requestLegacyExternalStorage="true">
         <service
             android:name="dev.nori.music.playback.PlaybackService"
             android:exported="true"

@@ -337,6 +337,7 @@ with that reason.
 | `scrobble` (opt-in, local) | A qualifying listen counts once, and an early skip does not | media3's track callbacks |
 | `download-albums` (opt-in, local) | Downloaded albums on the phone and in Android Auto's browser | media3's browser callbacks |
 | `youtube-music` (opt-in) | The YouTube Music plugin's profile, end to end | media3, OkHttp, the WebView |
+| `local-files` (opt-in) | A local files profile plays a song MediaStore lists, from its file, with the folder picture and the `.m3u` playlist MediaStore gives | MediaStore, the music permission, the device's storage |
 | `lyrics-services` (opt-in) | Whether each lyrics service answers | The services' health, not the app's |
 
 Some sections need more than the emulator:
@@ -468,6 +469,11 @@ node web/check/shots.mjs http://localhost:8081/ <folder>      # screenshots of b
 
 `node web/check/plugins.mjs <url>` checks the plugin host in the browser. Its default address is
 `http://localhost:8099/`.
+
+`node web/check/local.mjs <url> [folder]` checks a local files profile in the browser, with no server.
+It makes FLAC files with ffmpeg and puts them in the origin's private file system. That folder stands in for
+the folder picker a headless browser lacks. It checks the albums, their covers, search, a song played
+from its file, and the folder read again at the next visit. With a folder, it saves screenshots there.
 
 ## Test the iPod app
 

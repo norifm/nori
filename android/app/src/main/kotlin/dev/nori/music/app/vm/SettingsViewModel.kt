@@ -676,6 +676,12 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         addOn(if (editing == null) dev.nori.music.ffi.AddEvent.Start else dev.nori.music.ffi.AddEvent.Edit(editing.kind))
     }
 
+    /** The permission local files need, asked for as one is added. */
+    val musicPermission: String get() = dev.nori.music.data.MediaLibrary.permission
+
+    /** Whether the device's music may be read. */
+    fun musicAllowed(): Boolean = dev.nori.music.data.MediaLibrary.granted(getApplication())
+
     /**
      * [kind] chosen on the first screen, once its provider is listed (a plugin just turned on comes a
      * moment later). One that asks nothing is sent at once, as [profile].

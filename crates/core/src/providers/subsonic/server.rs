@@ -230,6 +230,40 @@ impl Core {
 }
 
 impl Client {
+    /// Walks the whole library into the offline index, a search3 page at a time, then drops what the
+    /// server no longer lists; how many of each it listed. A page with nothing new ends the walk.
+    pub(crate) async fn subsonic_sync(&self) -> NetResult<IngestStats> {
+        let page = crate::browse::library_sizes().sync_page;
+        let n = page.to_string();
+        let mut total = IngestStats::default();
+        let mut kept = std::collections::HashSet::new();
+        let mut offset = 0;
+        loop {
+            let o = offset.to_string();
+            let p = pairs(&[
+                ("query", String::new()),
+                ("songCount", n.clone()),
+                ("songOffset", o.clone()),
+                ("albumCount", n.clone()),
+                ("albumOffset", o.clone()),
+                ("artistCount", n.clone()),
+                ("artistOffset", o),
+            ]);
+            let (seen, rows) = self.core.ingest_search(self.fetch("search3", p).await?)?;
+            if seen.songs == 0 && seen.albums == 0 && seen.artists == 0 {
+                self.core.prune_index(&kept)?;
+                return Ok(total);
+            }
+            // Nothing new: the server ignores the offset, so what it no longer lists is unknown.
+            if rows.iter().all(|row| kept.contains(row)) {
+                return Ok(total);
+            }
+            total = IngestStats { artists: total.artists + seen.artists, albums: total.albums + seen.albums, songs: total.songs + seen.songs };
+            kept.extend(rows);
+            offset += page;
+        }
+    }
+
     /// `params` plus the music folders, for endpoints that take them.
     pub(crate) fn scoped(&self, endpoint: &str, mut params: Vec<(String, String)>) -> Vec<(String, String)> {
         if FOLDERED.contains(&endpoint) {
@@ -371,39 +405,6 @@ impl Client {
         }
     }
 
-    /// Walks the whole library into the offline index, a search3 page at a time, then drops what the
-    /// server no longer lists; how many of each it listed. A page with nothing new ends the walk.
-    pub async fn sync_library(&self) -> NetResult<IngestStats> {
-        let page = crate::browse::library_sizes().sync_page;
-        let n = page.to_string();
-        let mut total = IngestStats::default();
-        let mut kept = std::collections::HashSet::new();
-        let mut offset = 0;
-        loop {
-            let o = offset.to_string();
-            let p = pairs(&[
-                ("query", String::new()),
-                ("songCount", n.clone()),
-                ("songOffset", o.clone()),
-                ("albumCount", n.clone()),
-                ("albumOffset", o.clone()),
-                ("artistCount", n.clone()),
-                ("artistOffset", o),
-            ]);
-            let (seen, rows) = self.core.ingest_search(self.fetch("search3", p).await?)?;
-            if seen.songs == 0 && seen.albums == 0 && seen.artists == 0 {
-                self.core.prune_index(&kept)?;
-                return Ok(total);
-            }
-            // Nothing new: the server ignores the offset, so what it no longer lists is unknown.
-            if rows.iter().all(|row| kept.contains(row)) {
-                return Ok(total);
-            }
-            total = IngestStats { artists: total.artists + seen.artists, albums: total.albums + seen.albums, songs: total.songs + seen.songs };
-            kept.extend(rows);
-            offset += page;
-        }
-    }
 }
 
 #[cfg(test)]

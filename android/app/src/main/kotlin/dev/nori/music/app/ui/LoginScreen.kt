@@ -155,6 +155,7 @@ private val IDENTITY_PICTURE = 40.dp
 /** A kind as tests tag it: `subsonic`, or `plugin:<id>`. */
 fun kindTag(kind: dev.nori.music.ffi.settings.ServerKind): String = when (kind) {
     dev.nori.music.ffi.settings.ServerKind.Subsonic -> "subsonic"
+    dev.nori.music.ffi.settings.ServerKind.Local -> "local"
     is dev.nori.music.ffi.settings.ServerKind.Plugin -> "plugin:${kind.id}"
 }
 
@@ -186,7 +187,19 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
     var certSheet by remember { mutableStateOf(false) }
     var headers by remember { mutableStateOf(dev.nori.music.ffi.settings.serverHeadersText(p.headers)) }
     LaunchedEffect(vm) { vm.added.collect { onClose?.invoke() } }
-    LaunchedEffect(kind) { if (kind != null) vm.chooseKind(kind) { dev.nori.music.ffi.settings.serverFromForm(p, headers) } }
+    // Local files read the device's music: its permission is asked as the kind is chosen, and it goes on once granted.
+    var awaitingMusic by remember { mutableStateOf<ServerKind?>(null) }
+    val askMusic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val chosen = awaitingMusic.also { awaitingMusic = null }
+        if (granted && chosen != null) vm.chooseKind(chosen) { dev.nori.music.ffi.settings.serverFromForm(p, headers) }
+    }
+    val choose = { chosen: ServerKind ->
+        if (chosen == ServerKind.Local && !vm.musicAllowed()) {
+            awaitingMusic = chosen
+            askMusic.launch(vm.musicPermission)
+        } else vm.chooseKind(chosen) { dev.nori.music.ffi.settings.serverFromForm(p, headers) }
+    }
+    LaunchedEffect(kind) { if (kind != null) choose(kind) }
     // Gone, the next form starts afresh (the core's `AddFlow`).
     androidx.compose.runtime.DisposableEffect(vm) { onDispose { vm.addOn(dev.nori.music.ffi.AddEvent.Start) } }
     val busy = add.send is dev.nori.music.ffi.AddSend.Sending
@@ -232,6 +245,8 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
                 say.proxy, { proxySheet = true }, Modifier.testTag("proxy"),
                 value = p.proxy?.let { dev.nori.music.ffi.settings.proxyAddress(it) } ?: say.proxyNone, chevron = true, divider = divider,
             )
+            // Not on a phone, whose local files are its music (`formFields`).
+            Field.FOLDERS -> {}
         }
     }
 
@@ -249,7 +264,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
     if (adding && page !is dev.nori.music.ffi.AddPage.Provider) {
         if (kind == null) ProviderChoice(vm, onClose) { chosen ->
             p = p.copy(kind = chosen)
-            vm.chooseKind(chosen) { dev.nori.music.ffi.settings.serverFromForm(p, headers) }
+            choose(chosen)
         } else Surface(Modifier.fillMaxSize()) {}
         return
     }
@@ -444,6 +459,7 @@ private fun ProviderChoice(vm: SettingsViewModel, onClose: (() -> Unit)?, choose
                     when (val kind = k.kind) {
                         is ServerKind.Plugin -> ProviderLine(plugins, kind.id, null, words.name, null, divider, tag) { choose(kind) }
                         ServerKind.Subsonic -> ProviderLine(Iconoir.Server, words.name, say.providerSubsonicAbout, divider, tag) { choose(kind) }
+                        ServerKind.Local -> ProviderLine(Iconoir.Folder, words.name, say.providerLocalAbout, divider, tag) { choose(kind) }
                     }
                 }
                 offers.forEachIndexed { i, o ->

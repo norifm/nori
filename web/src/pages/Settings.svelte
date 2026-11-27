@@ -10,6 +10,7 @@
   // before About, the last, as Android lists them; About draws itself, with its licenses page under it.
   import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
+  import { folder } from "../state/folder.svelte";
   import { remote } from "../state/remote.svelte";
   import { route, href } from "../state/route.svelte";
   import { refreshTheme, worn } from "../state/theme.svelte";
@@ -73,6 +74,7 @@
   function opened() {
     remote.switched();
     ui.profilesRev++;
+    void folder.opened();
   }
   async function open(p: Profile) {
     await ask("profile_open", p.id);
@@ -169,9 +171,9 @@
     {#each profiles?.list ?? [] as p (p.id)}
       <div class="group-row profile" class:on={p.on} data-profile={p.id}>
         {#if profiles?.picks}
-          <button class="mark" aria-label={W.profileIcon} title={W.profileIcon} onclick={() => (picking = p)}><ProfileMark icon={p.icon} letter={p.letter} /></button>
+          <button class="mark" aria-label={W.profileIcon} title={W.profileIcon} onclick={() => (picking = p)}><ProfileMark icon={p.icon} letter={p.letter} kind={p.kind} /></button>
         {:else}
-          <ProfileMark icon={p.icon} letter={p.letter} />
+          <ProfileMark icon={p.icon} letter={p.letter} kind={p.kind} />
         {/if}
         <button class="opens" disabled={p.on} onclick={() => void open(p)}><span class="words"><span>{named(p)}</span><span class="sub">{p.user}</span></span></button>
         {#if p.on}<span class="in-use" title={W.inUse} aria-label={W.inUse}><Icon name="check" /></span>{/if}

@@ -13,7 +13,6 @@ use nori_plugins::{Found, ItemKind, Library, Profile, Repeat};
 use crate::cache_policy::{Page, Read};
 use crate::client::Client;
 use crate::providers::Kinds;
-use crate::settings::ServerKind;
 
 /// The profile's client, held weakly: a plugin never keeps a closed profile open.
 struct Opened(Weak<Client>);
@@ -52,11 +51,7 @@ impl Library for Opened {
         let c = self.0.upgrade()?;
         let p = c.core.session.settings.current()?;
         let s = p.servers.iter().find(|s| s.id == p.active_server_id)?;
-        let kind = match &s.kind {
-            ServerKind::Subsonic => "subsonic".to_string(),
-            ServerKind::Plugin { id } => id.clone(),
-        };
-        Some(Profile { id: s.id.clone(), kind, name: s.name.clone() })
+        Some(Profile { id: s.id.clone(), kind: s.kind.id().to_string(), name: s.name.clone() })
     }
 
     fn queue(&self, start: u32, count: u32) -> Vec<Song> {

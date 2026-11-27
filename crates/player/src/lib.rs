@@ -46,6 +46,8 @@ pub mod silence;
 #[cfg(feature = "std")]
 pub mod sink;
 #[cfg(any(test, feature = "synth"))]
+pub mod files;
+#[cfg(any(test, feature = "synth"))]
 pub mod sim;
 #[cfg(feature = "std")]
 pub mod sonic;

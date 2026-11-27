@@ -44,7 +44,7 @@
     disabled={it.disabled}
     class:profile={!!it.mark}
     onclick={() => ui.choose(it)}
-    >{#if it.mark}<ProfileMark icon={it.mark.icon} letter={it.mark.letter} side={30} /><span class="words"><span class="clip" class:in-use={it.chosen}>{it.label}</span>{#if it.line}<span class="sub clip">{it.line}</span>{/if}</span>{:else}{#if it.icon}<Icon name={it.icon} />{/if}<span class="clip">{it.label}</span>{/if}{#if it.chosen}<Icon name="check" />{/if}</button
+    >{#if it.mark}<ProfileMark icon={it.mark.icon} letter={it.mark.letter} kind={it.mark.kind} side={30} /><span class="words"><span class="clip" class:in-use={it.chosen}>{it.label}</span>{#if it.line}<span class="sub clip">{it.line}</span>{/if}</span>{:else}{#if it.icon}<Icon name={it.icon} />{/if}<span class="clip">{it.label}</span>{/if}{#if it.chosen}<Icon name="check" />{/if}</button
   >
 {/snippet}
 

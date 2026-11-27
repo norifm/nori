@@ -407,6 +407,9 @@ pub struct ProfileRules {
     /// The library is kept in the offline index (synced); without it the songs list reads the server a
     /// page at a time.
     pub indexed: bool,
+    /// The library is synced again whenever the profile opens or the app comes back: only what changed
+    /// is read (local files). Otherwise it is synced while the index is empty, and when asked.
+    pub rescans: bool,
     /// The library's sections, in the order their pills run.
     pub sections: Vec<LibrarySection>,
     /// The parts of the settings it opens: a guest's are this device's own, nothing that acts on the
@@ -448,7 +451,7 @@ pub fn profile_rules(guest: bool) -> ProfileRules {
     let sections = if guest { vec![Albums, Artists, Songs, Genres] } else { vec![Albums, Favourites, Artists, Songs, Playlists, Smart, History, Genres, Decades, Folders, Radio, Downloads] };
     let account_only = [SettingsPart::ServerOptions, SettingsPart::Library, SettingsPart::Downloads];
     let settings = SETTINGS_PARTS.into_iter().filter(|p| !guest || !account_only.contains(p)).collect();
-    ProfileRules { asks: guest, account: !guest, playlists: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, stars_here: false, scrobbles: !guest, feed: false, mixes: !guest }
+    ProfileRules { asks: guest, account: !guest, playlists: !guest, downloads: !guest, radio: !guest, indexed: !guest, rescans: false, sections, settings, remote: true, measures: !guest, stars: !guest, stars_here: false, scrobbles: !guest, feed: false, mixes: !guest }
 }
 
 /// How many genres an empty search offers as tiles, the biggest first.

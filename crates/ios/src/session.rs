@@ -524,7 +524,7 @@ fn start_queue(
         data: dir,
         http: Http::for_profile(&profile, dir),
         profile,
-        kinds: nori_core::providers::Kinds::builtin(),
+        kinds: crate::kinds(),
         output,
         volume,
         memory_mb: MEMORY_MB,

@@ -374,7 +374,18 @@ class Library(
     suspend fun albumsIndexed(sort: AlbumSort, reversed: Boolean, offset: Int, size: Int): List<Album> =
         withContext(Dispatchers.IO) { core.albumsIndexed(sort, reversed, offset.toUInt(), size.toUInt()) }
 
-    suspend fun sync(): IngestStats = withContext(Dispatchers.IO) { lifted { client.syncLibrary() } }
+    suspend fun sync(): IngestStats = withContext(Dispatchers.IO) { lifted { client.syncLibrary() } }.also { stats ->
+        if (stats != indexed) {
+            indexed = stats
+            _indexVersion.update { it + 1 }
+        }
+    }
+
+    /** What the last [sync] counted in the offline index. */
+    private var indexed: IngestStats? = null
+    private val _indexVersion = MutableStateFlow(0)
+    /** Bumped when a sync changes what the offline index holds, so pages read from it (Home's shelves) read again. */
+    val indexVersion: StateFlow<Int> = _indexVersion.asStateFlow()
 
     /** Brings the playlists kept downloaded up to date with the server when [check] is due (the core's `kept_playlists_sync`). */
     suspend fun syncKept(check: dev.nori.music.ffi.transfers.KeptCheck): dev.nori.music.ffi.transfers.KeptChange =

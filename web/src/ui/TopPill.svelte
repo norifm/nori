@@ -30,6 +30,7 @@
   import { ui } from "../state/ui.svelte";
   import type { Profile, Profiles } from "../state/types";
   import { W } from "../words";
+  import { folder } from "../state/folder.svelte";
   import AddProfile from "./AddProfile.svelte";
   import Icon from "./Icon.svelte";
   import ProfileMark from "./ProfileMark.svelte";
@@ -61,13 +62,14 @@
   function opened() {
     remote.switched();
     ui.profilesRev++;
+    void folder.opened();
   }
   function open(e: MouseEvent) {
     const list = profiles?.list ?? [];
     const switches = list.map((p) => ({
       label: named(p),
       line: line(p),
-      mark: { icon: p.icon, letter: p.letter },
+      mark: { icon: p.icon, letter: p.letter, kind: p.kind },
       chosen: p.on,
       run: async () => {
         if (p.on) return;
@@ -94,7 +96,7 @@
   <SearchBox />
   <a class="glyph quiet gear" class:on={on("settings", "equalizer")} aria-label={W.settings} title={W.settings} data-top="settings" href={href("settings")}><Icon name="settings" /></a>
   {#if inUse}
-    <button class="profile" id="profile-mark" aria-label={W.profiles} title={named(inUse)} aria-haspopup="menu" onclick={open}><ProfileMark icon={inUse.icon} letter={inUse.letter} side={28} /></button>
+    <button class="profile" id="profile-mark" aria-label={W.profiles} title={named(inUse)} aria-haspopup="menu" onclick={open}><ProfileMark icon={inUse.icon} letter={inUse.letter} kind={inUse.kind} side={28} /></button>
   {/if}
 </header>
 {#if adding}<AddProfile close={() => (adding = false)} added={() => ((adding = false), opened())} />{/if}

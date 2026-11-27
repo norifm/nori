@@ -1,14 +1,20 @@
+<script lang="ts" module>
+  import { W } from "../words";
+
+  /** A source's glyph and words, by its kind's id. */
+  export const sourceWords: Record<string, { icon: string; name: string; about: string }> = {
+    subsonic: { icon: "server", name: W.subsonic, about: W.subsonicAbout },
+    local: { icon: "folder", name: W.local, about: W.localAbout },
+  };
+</script>
+
 <script lang="ts">
   // The first run, while the install has no profile: where the music is, any number of sources picked, then
-  // Continue (the core's `WelcomeFlow`). A browser plays from its own kind only: a provider plugin can't run
-  // here.
-  import { W } from "../words";
+  // Continue (the core's `WelcomeFlow`). A browser plays from nori's own kinds only, the core's list of them
+  // (`sources`): a provider plugin can't run here.
   import Icon from "./Icon.svelte";
 
-  let { picked, toggle, next }: { picked: string[]; toggle: (source: string) => void; next: () => void } = $props();
-
-  /** What a browser plays from, by its kind's id, with its glyph and words. */
-  const sources = [{ id: "subsonic", icon: "server", name: W.subsonic, about: W.subsonicAbout }];
+  let { sources, picked, toggle, next }: { sources: string[]; picked: string[]; toggle: (source: string) => void; next: () => void } = $props();
 </script>
 
 <div id="welcome" class="welcome">
@@ -16,7 +22,7 @@
     <h1>{W.welcomeTitle}</h1>
     <div class="group-label">{W.welcomeWhere}</div>
     <div class="group">
-      {#each sources as s (s.id)}
+      {#each sources.filter((id) => id in sourceWords).map((id) => ({ id, ...sourceWords[id] })) as s (s.id)}
         {@const on = picked.includes(s.id)}
         <button class="group-row" data-kind={s.id} role="checkbox" aria-checked={on} onclick={() => toggle(s.id)}>
           <Icon name={s.icon} />

@@ -8,6 +8,7 @@
 
 mod eq;
 mod fetch;
+mod files;
 mod pages;
 #[cfg(feature = "engine")]
 mod later;
@@ -77,6 +78,8 @@ pub struct Nori {
     stored: bool,
     /// The search box's: what it holds and the answers it has had.
     search: Arc<nori_core::search::SearchSession>,
+    /// The folder a local profile reads, as the page handed it this visit.
+    files: Arc<files::WebFiles>,
     #[cfg(not(feature = "engine"))]
     client: std::cell::RefCell<Option<Arc<Client>>>,
     #[cfg(feature = "engine")]
@@ -114,6 +117,7 @@ impl Nori {
             app,
             stored: kept.is_ok(),
             search: nori_core::search::SearchSession::new(),
+            files: Arc::default(),
             #[cfg(not(feature = "engine"))]
             client: Default::default(),
             welcome: Default::default(),
@@ -127,8 +131,40 @@ impl Nori {
         self.stored
     }
 
-    /// The saved profiles in their order, as `{ picks, icons, list: [{ id, label, user, host, icon, letter,
-    /// on }] }`: `label` its name, else its address's host (`label`); `icon` what its circle shows (a
+    /// The kinds of profile a browser opens: a server's, and the files of a folder picked.
+    fn kinds(&self) -> Arc<nori_core::providers::Kinds> {
+        let kinds = nori_core::providers::Kinds::builtin();
+        kinds.set_files(self.files.clone());
+        kinds
+    }
+
+    /// The files of the folder local profile `id` reads, as the page walked it: `[{ path, size, modified,
+    /// file }]`, `path` from the folder's name on, `modified` in Unix ms, `file` the `File`.
+    pub fn local_files(&self, id: String, files: js_sys::Array) -> Result<(), JsValue> {
+        self.files.hand(id, &files)
+    }
+
+    /// The open profile's id when it reads a folder whose files the page has not handed this visit (its
+    /// songs play once the folder is allowed or picked again); else null.
+    pub fn local_waits(&self) -> Option<String> {
+        self.active().filter(|p| p.kind == nori_core::settings::ServerKind::Local && !self.files.handed(&p.id)).map(|p| p.id)
+    }
+
+    /// Adds local profile `id` (`new_profile_id`) of a folder called `name`, the active one from now on.
+    /// Its library is read by `sync_index` once its files are handed (`local_files`).
+    pub async fn add_local(&self, id: String, name: String) -> Result<(), JsValue> {
+        let form = SavedServer { id, kind: nori_core::settings::ServerKind::Local, name, ..Default::default() };
+        let profile = nori_core::providers::log_in(&self.kinds(), Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
+        self.enter(profile)
+    }
+
+    /// A new profile's id.
+    pub fn new_profile_id(&self) -> String {
+        nori_core::settings::new_server_id()
+    }
+
+    /// The saved profiles in their order, as `{ picks, icons, list: [{ id, kind, label, user, host, icon,
+    /// letter, on }] }`: `kind` as `ServerKind::id`, `label` its name, else its address's host (`label`); `icon` what its circle shows (a
     /// `ProfileIcon` by name) and `letter` the one `Letter` shows (`profile_letter`); `on` the one open.
     /// `icons` are the picker's in its order (`profile_icons`), and `picks` whether profiles may be
     /// changed here (`changes_profile`).
@@ -141,7 +177,7 @@ impl Nori {
             .map(|p| {
                 let named = label(&p.name, &p.url);
                 let letter = profile_letter(p.clone(), named.clone());
-                json!({ "id": p.id, "label": named, "user": p.user, "host": label("", &p.url), "icon": format!("{:?}", p.icon), "letter": letter, "on": p.id == prefs.active_server_id })
+                json!({ "id": p.id, "kind": p.kind.id(), "label": named, "user": p.user, "host": label("", &p.url), "icon": format!("{:?}", p.icon), "letter": letter, "on": p.id == prefs.active_server_id })
             })
             .collect();
         let icons: Vec<String> = profile_icons().iter().map(|i| format!("{i:?}")).collect();
@@ -201,7 +237,7 @@ impl Nori {
     pub async fn profile_edit(&self, id: String, url: String, user: String, password: String) -> Result<(), JsValue> {
         self.may_change()?;
         let form = SavedServer { url, user, password, ..self.saved(&id)? };
-        let profile = nori_core::providers::log_in(&nori_core::providers::Kinds::builtin(), Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
+        let profile = nori_core::providers::log_in(&self.kinds(), Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
         self.enter(profile)
     }
 
@@ -259,7 +295,7 @@ impl Nori {
     pub fn scrobblers(&self, id: String) -> Result<String, JsValue> {
         let p = self.saved(&id)?;
         // The open profile's rules as its session has them; another's as the core reads the saved profile.
-        let takes = if self.active().is_some_and(|a| a.id == p.id) { self.rules().scrobbles } else { nori_core::providers::Kinds::builtin().rules_of(p.clone(), false).scrobbles };
+        let takes = if self.active().is_some_and(|a| a.id == p.id) { self.rules().scrobbles } else { self.kinds().rules_of(p.clone(), false).scrobbles };
         let list: Vec<Value> =
             p.scrobblers.iter().map(|a| json!({ "id": a.id, "kind": a.kind.id(), "user": a.user, "host": nori_core::settings::label("", &a.url), "on": a.on })).collect();
         Ok(json!({ "itself": takes.then(|| json!({ "on": !p.scrobble_off })), "list": list }).to_string())
@@ -327,7 +363,7 @@ impl Nori {
     /// Signs in to `url` and keeps the profile, the active one from now on (`providers::log_in`).
     pub async fn login(&self, url: String, user: String, password: String) -> Result<(), JsValue> {
         let form = SavedServer { id: nori_core::settings::new_server_id(), name: user.clone(), url, user, password, ..Default::default() };
-        let profile = nori_core::providers::log_in(&nori_core::providers::Kinds::builtin(), Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
+        let profile = nori_core::providers::log_in(&self.kinds(), Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
         self.enter(profile)
     }
 
@@ -339,7 +375,8 @@ impl Nori {
 
     /// Takes the welcome's `ask` (JSON `{ kind, source }`: `read`, `toggled`, `continue`, `added`, `back`; a
     /// source by its kind's id, as `ServerKind::id`; a browser offers only its own kinds) as `WelcomeFlow`
-    /// does: `{ page, picked, then }`, `page` and `then` by name (`WelcomePage`, `WelcomeDo`), `picked`
+    /// does: `{ sources, page, picked, added, then }`, `page` and `then` by name (`WelcomePage`,
+    /// `WelcomeDo`), `sources` what a browser offers in order (`welcome_sources`), `picked` and `added`
     /// the kinds' ids. Once the questions are due the welcome starts over.
     pub fn welcome(&self, ask: String) -> Result<String, JsValue> {
         use nori_core::providers::flow::{WelcomeDo, WelcomeEvent, WelcomePage, WelcomeSource};
@@ -366,8 +403,10 @@ impl Nori {
             WelcomeDo::Install { .. } => "install",
             WelcomeDo::Questions => "questions",
         };
-        let picked: Vec<&str> = flow.picked.iter().filter_map(|s| if let WelcomeSource::Kind { kind } = s { Some(kind.id()) } else { None }).collect();
-        let answer = json!({ "page": page, "picked": picked, "then": then_name }).to_string();
+        let ids = |sources: &[WelcomeSource]| sources.iter().filter_map(|s| if let WelcomeSource::Kind { kind } = s { Some(kind.id().to_string()) } else { None }).collect::<Vec<_>>();
+        let sources = nori_core::providers::flow::welcome_sources(self.kinds().providers().into_iter().map(|p| p.kind).collect(), Vec::new());
+        let added: Vec<&str> = flow.added.iter().map(ServerKind::id).collect();
+        let answer = json!({ "sources": ids(&sources), "page": page, "picked": ids(&flow.picked), "added": added, "then": then_name }).to_string();
         if then == WelcomeDo::Questions {
             *flow = Default::default();
         }
@@ -523,9 +562,11 @@ impl Nori {
         }
     }
 
-    /// Fills the offline index when the profile keeps one and it is empty, as the session does.
+    /// Fills the offline index when the profile keeps one and it is empty, and reads a library of files
+    /// again (`ProfileRules::rescans`), as the session does.
     pub async fn sync_index(&self) -> Result<(), JsValue> {
-        let Some(client) = self.client().filter(|c| self.rules().indexed && c.core().index_size().map_or(true, |s| s.songs == 0)) else { return Ok(()) };
+        let rules = self.rules();
+        let Some(client) = self.client().filter(|c| rules.rescans || rules.indexed && c.core().index_size().map_or(true, |s| s.songs == 0)) else { return Ok(()) };
         client.sync_library().await.map(|_| ()).map_err(|e| error(e.to_string()))
     }
 
@@ -1134,8 +1175,10 @@ fn settings_row(r: &settings_pages::SettingsRow, stored: &Stored) -> Option<Valu
 impl Nori {
     fn enter(&self, profile: SavedServer) -> Result<(), JsValue> {
         self.leave();
+        self.files.opened(&profile.id);
         let core = nori_core::Core::new(db(), nori_core::settings::server_db_id(&profile.id), self.app.clone()).map_err(error)?;
-        core.configure(nori_core::server_config(&profile)).map_err(error)?;
+        core.use_kinds(self.kinds());
+        core.configure_profile(profile.clone()).map_err(error)?;
         let client = Client::new(core, Arc::new(Fetch(())), nori_core::covers::CoverNet::new());
         client.set_profile(nori_core::net_profile(&profile));
         *self.client.borrow_mut() = Some(client);
@@ -1157,9 +1200,9 @@ impl Nori {
         self.leave();
     }
 
-    /// An account's: the core module opens no guest's profile.
+    /// The profile's: the core module opens no guest's profile.
     fn rules(&self) -> ProfileRules {
-        ProfileRules::default()
+        self.client().map_or_else(ProfileRules::default, |c| c.core().rules())
     }
 
     fn guest(&self) -> bool {

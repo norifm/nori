@@ -5,7 +5,7 @@ import type { PlaylistChoice, ProfileIcon } from "./types";
 /** A menu's line, or a bare glyph (`lit`: in the accent, a favorite's seal). One that switches a state (the seal)
  * `turns` into the line that switches it back, and the menu stays open. A profile's line leads with its
  * `mark` and has a second `line` under its name. */
-export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean; lit?: boolean; turns?: () => Item; mark?: { icon: ProfileIcon; letter: string }; line?: string };
+export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean; lit?: boolean; turns?: () => Item; mark?: { icon: ProfileIcon; letter: string; kind: string }; line?: string };
 /** What the full player shows beside the cover (on a phone: in its place). */
 export type Pane = "lyrics" | "queue" | "devices";
 /** A menu's head: what it is about (a song: its cover, title and line), the bare glyphs beside its title, and

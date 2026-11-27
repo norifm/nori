@@ -70,6 +70,7 @@ via nori-core):
 | net | request signing, `Transport` trait, stream cache keys |
 | library | history, mixes, smart playlists, browse/search, page layouts, menus, car tree |
 | automix | analysis store, transition planner, beat model location |
+| local | local files: finding the music on the device, its tags, pictures and fingerprint, a song's identity across moves, albums and artists |
 | stretch | time stretch and pitch shift, a pure Rust port of Signalsmith Stretch (checked against the C++ in its tests) |
 | cert | a profile's client certificate: its PKCS#12 file read, checked and kept, for every client but the web |
 | backup | a backup of the settings, sound profiles and plugins (their stores, order, being on), one file sealed with a password (Argon2id, XChaCha20-Poly1305); restoring reinstalls the plugins from their repos |

@@ -52,6 +52,8 @@ pub enum Msg {
     Lyrics(LyricsNow),
     Facts(Box<crate::settings::Facts>),
     Note { text: String, error: bool },
+    /// The offline index was filled (said in these words): the page on screen read from it is read again.
+    Indexed(String),
     /// A playlist write the server took, and what to say: the playlists are read again.
     Playlist { text: String, change: PlaylistChange },
     /// A note with a button, answered with [`nori_host::session::Handle::curve_answer`].
@@ -375,7 +377,7 @@ fn worded(s: Said) -> Msg {
             Note::DownloadFailed(e) => note(format!("Could not download the library: {e}"), true),
             Note::StarFailed(e) => note(format!("Could not change the favorite: {}", net_error(&e)), true),
             Note::Indexing => note("Filling the offline index…".into(), false),
-            Note::Indexed(t) => note(format!("Offline index: {} songs", t.songs), false),
+            Note::Indexed(t) => Msg::Indexed(format!("Offline index: {} songs", t.songs)),
             Note::IndexStopped(e) => note(format!("The offline index stopped: {}", net_error(&e)), true),
             Note::CurveFailed(e) => note(format!("Could not fetch the AutoEQ curve: {}", net_error(&e)), true),
             Note::Done(chore) => note(

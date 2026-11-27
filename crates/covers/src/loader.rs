@@ -892,6 +892,11 @@ impl<P: Paint> Inner<P> {
     /// Reads the cover file into `out` from disk (provider covers: memory), or, with `fetch`, fetches it and
     /// keeps it; without, a file not kept is [`Error::NotKept`].
     fn bytes(&self, key: Key, url: &str, out: &mut Vec<u8>, waker: &Waker, fetch: bool) -> Result<(), Error> {
+        // A cover on this device is read where it is, never kept again.
+        if let Some(path) = nori_core::local::cover_path(url) {
+            *out = nori_core::local::cover_bytes(path).map_err(|e| Error::Transport { kind: FailureKind::Other, detail: Some(e.to_string()) })?;
+            return Ok(());
+        }
         let provider = is_provider_cover(url);
         if provider {
             if let Some(file) = self.provider_files.lock().touch(key) {

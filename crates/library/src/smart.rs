@@ -314,7 +314,7 @@ pub fn civil_from_ms(ms: i64) -> (i64, i64, i64, i64) {
 }
 
 /// "YYYY-MM-DDTHH:MM:SS", the prefix every ISO-8601 UTC timestamp shares, so it compares against them as text.
-fn iso_from_ms(ms: i64) -> String {
+pub fn iso_from_ms(ms: i64) -> String {
     let (y, m, d, rest) = civil_from_ms(ms);
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}", rest / 3600, rest / 60 % 60, rest % 60)
 }

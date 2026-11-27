@@ -4,7 +4,7 @@ use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 
 use nori_core::providers::flow::{WelcomeDo, WelcomeEvent, WelcomeFlow, WelcomeSource};
-use nori_core::providers::{form_fields, form_taken, log_in, FormField, Kinds, Platform};
+use nori_core::providers::{form_fields, form_taken, log_in, FormField, Platform};
 use nori_core::proxy::{proxy_address, proxy_from_form, ProxyError};
 use nori_core::settings::{profile_icons, profile_letter, servers_removed, ProfileIcon, SavedServer, ServerKind, ServerList, StoredPrefs};
 use nori_core::settings_store::Settings;
@@ -121,7 +121,7 @@ pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
         .map(|s| {
             let active = s.id == prefs.active_server_id;
             // A plugin's profile never opens here: the iPod runs none.
-            let waits = Kinds::builtin().waits(s.clone()).is_some();
+            let waits = crate::kinds().waits(s.clone()).is_some();
             let letter = profile_letter(s.clone(), nori_core::settings::label(&s.name, &s.url));
             serde_json::json!({ "id": s.id, "label": label(s), "name": s.name, "url": s.url, "active": active, "kind": s.kind.id(), "waits": waits,
                 "icon": s.icon.id(), "letter": letter })
@@ -237,7 +237,7 @@ impl Form {
 
 /// The form's kind's provider.
 fn info(form: &Form) -> Option<nori_core::providers::ProviderInfo> {
-    Kinds::builtin().providers().into_iter().find(|p| p.kind == form.kind)
+    crate::kinds().providers().into_iter().find(|p| p.kind == form.kind)
 }
 
 /// The profile as `form` has it typed, its proxy as the core reads it.
@@ -270,7 +270,7 @@ fn draft(form: &Form) -> Result<SavedServer, i32> {
     let id = if form.id.is_empty() { nori_core::settings::new_server_id() } else { form.id.clone() };
     let base = SavedServer { id, kind: form.kind.clone(), ..SavedServer::default() };
     let profile = form_taken(base, &typed, &form_fields(&info, Platform::Ipod, &typed, true));
-    Kinds::builtin().server_ready(profile.clone()).then_some(profile).ok_or(LOGIN_INCOMPLETE)
+    crate::kinds().server_ready(profile.clone()).then_some(profile).ok_or(LOGIN_INCOMPLETE)
 }
 
 /// A field as the login JSON names it.
@@ -288,6 +288,7 @@ fn field_key(what: FormField) -> &'static str {
         FormField::WifiOnly => "wifiOnly",
         FormField::ClientCert => "clientCert",
         FormField::Proxy => "proxy",
+        FormField::Folders => "folders",
     }
 }
 
@@ -295,7 +296,7 @@ fn field_key(what: FormField) -> &'static str {
 /// it.
 #[no_mangle]
 pub extern "C" fn nori_ios_providers() -> *mut c_char {
-    let rows: Vec<serde_json::Value> = Kinds::builtin().providers().into_iter().map(|p| serde_json::json!({ "kind": p.kind.id() })).collect();
+    let rows: Vec<serde_json::Value> = crate::kinds().providers().into_iter().map(|p| serde_json::json!({ "kind": p.kind.id() })).collect();
     owned(&serde_json::Value::from(rows).to_string()).into_raw()
 }
 
@@ -460,7 +461,7 @@ pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
         Ok(v) => v,
         Err(e) => return (LOGIN_DATABASE, Some(e)),
     };
-    match block_on(log_in(&Kinds::builtin(), Http::for_profile(&draft, dir), &settings, draft)) {
+    match block_on(log_in(&crate::kinds(), Http::for_profile(&draft, dir), &settings, draft)) {
         Ok(_) => {
             settings.writer.flush();
             (LOGIN_OK, None)
@@ -606,7 +607,7 @@ pub unsafe extern "C" fn nori_ios_scrobble_itself(data_dir: *const c_char, id: *
     let (prefs, id) = (settings.current().unwrap_or_default(), text(id));
     let Some(profile) = prefs.servers.iter().find(|s| s.id == id) else { return -1 };
     let open = (prefs.active_server_id == id).then(|| crate::session::with_session(|s| s.rules().scrobbles)).flatten();
-    match open.unwrap_or_else(|| Kinds::builtin().rules_of(profile.clone(), false).scrobbles) {
+    match open.unwrap_or_else(|| crate::kinds().rules_of(profile.clone(), false).scrobbles) {
         true => i32::from(!profile.scrobble_off),
         false => -1,
     }

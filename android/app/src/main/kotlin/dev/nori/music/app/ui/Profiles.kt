@@ -76,6 +76,7 @@ fun ProfileMark(profile: SavedServer, label: String, side: Dp, modifier: Modifie
                 remember(profile, label) { profileLetter(profile, label) },
                 style = MaterialTheme.typography.titleMedium.copy(fontSize = (side.value * 0.42f).sp, fontWeight = FontWeight.SemiBold),
             )
+            ProfileIcon.PROVIDER -> Icon(if (kind == ServerKind.Local) Iconoir.Folder else Iconoir.Server, null, Modifier.size(side * 0.6f))
             else -> Icon(faceGlyph(icon), null, Modifier.size(side * 0.6f))
         }
     }

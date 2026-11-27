@@ -41,9 +41,13 @@ fun TestLogin(settings: SettingsViewModel) {
     DisposableEffect(settings) {
         TestHooks.login = { spec ->
             val (url, user, pass) = spec.split("|").let { Triple(it[0], it.getOrElse(1) { "" }, it.getOrElse(2) { "" }) }
-            // "kind:subsonic" or "kind:plugin:<id>" adds a profile of that kind (as [kindTag] says it) with nothing typed in.
+            // "kind:subsonic", "kind:local" or "kind:plugin:<id>" adds a profile of that kind (as [kindTag] says it) with nothing typed in.
             val kind = spec.removePrefix("kind:").takeIf { it != spec }?.let { k ->
-                if (k.startsWith("plugin:")) dev.nori.music.ffi.settings.ServerKind.Plugin(k.removePrefix("plugin:")) else dev.nori.music.ffi.settings.ServerKind.Subsonic
+                when {
+                    k.startsWith("plugin:") -> dev.nori.music.ffi.settings.ServerKind.Plugin(k.removePrefix("plugin:"))
+                    k == "local" -> dev.nori.music.ffi.settings.ServerKind.Local
+                    else -> dev.nori.music.ffi.settings.ServerKind.Subsonic
+                }
             }
             val profile = if (kind != null) settings.newProfile().copy(kind = kind)
                 else settings.newProfile().copy(url = url, user = user, password = pass)

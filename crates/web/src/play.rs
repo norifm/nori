@@ -187,6 +187,7 @@ impl Live {
 impl Nori {
     pub(crate) fn enter(&self, profile: SavedServer) -> Result<(), JsValue> {
         self.leave_for(Some(&profile));
+        self.files.opened(&profile.id);
         let live = &self.live;
         let (said, wake) = (live.said.clone(), live.wake.clone());
         let out: nori_host::session::Out = Arc::new(move |s| {
@@ -198,7 +199,7 @@ impl Nori {
             data: Path::new(""),
             http: Arc::new(Fetch(live.wake.clone())),
             profile,
-            kinds: nori_core::providers::Kinds::builtin(),
+            kinds: self.kinds(),
             output: Box::new(Output(live.card.clone())),
             volume: {
                 let (card, wake) = (live.card.clone(), live.wake.clone());

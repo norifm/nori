@@ -33,7 +33,7 @@ core = ["dep:nori-core"]
 # AutoMix is on. Without it nothing of tract is built or linked.
 neural-beats = ["core", "nori-core/neural-beats"]
 # The virtual clock tests run the engine on (`testing`), for this crate's tests and its clients'.
-testing = []
+testing = ["nori-player/synth"]
 # An output into a plugin's cast (cast.rs).
 plugins = ["dep:nori-plugins"]
 
@@ -48,6 +48,8 @@ nori-core = { path = "../core", default-features = false, optional = true }
 nori-plugins = { path = "../plugins", optional = true }
 
 [dev-dependencies]
+# tests/core.rs: a local profile's tagged music files.
+nori-local = { path = "../local", features = ["testing"] }
 # tests/perf_stage.rs: the test plugin's sound stage.
 nori-plugins = { path = "../plugins", features = ["testing"] }
 nori-engine = { path = ".", features = ["testing", "plugins"] }

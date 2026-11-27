@@ -4023,18 +4023,18 @@ impl Remote {
         self.shown.changed();
     }
 
-    /// Whether device `id` plays from another source than this one (as its last state says): songs
-    /// handed either way would not play, so it is refused here, as the device would.
+    /// Whether songs handed between this device and device `id` would not play on the other (as its last
+    /// state says): they are refused here, as the device would ([`songs_refused`]).
     fn refuse_other_source(&self, id: &str) -> bool {
         let kind = self.client.core.kind();
         let mut i = self.inner.lock();
-        let other = i.state_of(id).and_then(|(s, _)| s.source.as_deref()).is_some_and(|s| s != kind.id());
-        if other {
-            i.refused.insert(id.to_string(), Refusal::OtherSource);
+        let refused = i.state_of(id).and_then(|(s, _)| s.source.as_deref()).and_then(|there| songs_refused(&kind, there));
+        if let Some(r) = refused {
+            i.refused.insert(id.to_string(), r);
             drop(i);
             self.shown.changed();
         }
-        other
+        refused.is_some()
     }
 
     fn pull(self: &Arc<Self>, from: String) {
@@ -4391,6 +4391,20 @@ fn jam_same_but_time(last: &JamState, now: &JamState, ran: impl Fn(Option<f32>) 
     along_same && *remote_songs == now.remote_songs && *members == now.members && *pending == now.pending && *lyrics == now.lyrics
 }
 
+/// Why songs of a device playing from `here` and one playing from `there` (a profile's kind as its
+/// state says) cannot go from one to the other; None when they can. Local files play only on their
+/// device, and another source's songs do not play here.
+pub(crate) fn songs_refused(here: &crate::settings::ServerKind, there: &str) -> Option<Refusal> {
+    let local = crate::settings::ServerKind::Local;
+    if *here == local || there == local.id() {
+        Some(Refusal::DeviceFiles)
+    } else if there != here.id() {
+        Some(Refusal::OtherSource)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -4629,6 +4643,20 @@ mod tests {
         }
         remote.pull("youtube".into());
         assert_eq!(remote.inner.lock().refused.get("youtube").copied(), Some(Refusal::OtherSource), "nor are its songs taken here");
+    }
+
+    #[test]
+    fn local_files_go_to_no_other_device() {
+        use crate::settings::ServerKind::{Local, Subsonic};
+        for (here, there, refused) in [
+            (Subsonic, "subsonic", None),
+            (Subsonic, "fm.nori.youtube-music", Some(Refusal::OtherSource)),
+            (Local, "local", Some(Refusal::DeviceFiles)),
+            (Local, "subsonic", Some(Refusal::DeviceFiles)),
+            (Subsonic, "local", Some(Refusal::DeviceFiles)),
+        ] {
+            assert_eq!(songs_refused(&here, there), refused, "{here:?} and {there}");
+        }
     }
 
     /// A command a nearby device's door does not take goes through the relay instead of being lost;
