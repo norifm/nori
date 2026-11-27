@@ -1687,7 +1687,7 @@ pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_cha
     let lines: Vec<Value> = l
         .lines
         .iter()
-        .map(|line| json!({ "s": line.start_ms, "e": line.end_ms, "t": line.text }))
+        .map(|line| json!({ "s": line.start_ms, "e": line.end_ms, "t": line.text, "b": line.backing }))
         .collect();
     owned(&json!({ "id": song, "synced": l.synced, "offset": l.timing.offset_ms(), "lines": lines }))
 }

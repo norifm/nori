@@ -1813,7 +1813,7 @@ fn lyrics(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         let line = &l.pick.lyrics.lines[i];
         let mut v: Vec<(String, u8)> = wrap(&line.text, w.saturating_sub(2)).into_iter().map(|s| (s, 0)).collect();
         if !line.backing.is_empty() {
-            v.extend(wrap(&format!("({})", line.backing), w.saturating_sub(2)).into_iter().map(|s| (s, 1)));
+            v.extend(wrap(&line.backing, w.saturating_sub(2)).into_iter().map(|s| (s, 1)));
         }
         if translate {
             if let Some(tr) = line.translation.as_ref().filter(|x| !x.is_empty()) {

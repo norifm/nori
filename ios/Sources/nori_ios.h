@@ -354,6 +354,7 @@ char *nori_ios_lyrics_page(const char *song);
 typedef struct NoriLyricStep {
     int32_t active;   // lit line; -1 before the first or unsynced; the line count once over
     float sung;       // fill in the lit line, fractional UTF-16 units
+    float backing_sung; // fill in its backing vocals, likewise
     int32_t glide_ms;
     uint32_t wait;    // next call: display frames while filling (still 0), else ms; 0 never
     int32_t still;

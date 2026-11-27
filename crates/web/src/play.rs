@@ -513,17 +513,17 @@ impl Nori {
         self.with(|h| h.lyrics_view(open));
     }
 
-    /// The lyrics' state at the position now: `{ song, active, glide, swept, sung, wait }` (`swept`: the
-    /// lit line's words light up as they are sung; `sung`: how much of it is sung, in UTF-16 units;
-    /// `wait`: ms until it next changes, a display frame being `frame_ms`; 0 never), or null without
-    /// lyrics.
+    /// The lyrics' state at the position now: `{ song, active, glide, swept, sung, backing, wait }`
+    /// (`swept`: the lit line's words light up as they are sung; `sung`: how much of it is sung, and
+    /// `backing` of its backing vocals, in UTF-16 units; `wait`: ms until it next changes, a display frame
+    /// being `frame_ms`; 0 never), or null without lyrics.
     pub fn lyrics_now(&self, frame_ms: u32) -> String {
         let lyrics = self.live.lyrics.borrow();
         let Some((song, pick, clock)) = lyrics.as_ref() else { return "null".into() };
         let sweep = self.app.settings.in_effect(|p| p.lyrics_sweep);
         let step = clock.advance(self.position_now(), sweep, true, true);
         let wait = clock.wait_ms(&step, sweep, frame_ms as u64).unwrap_or(0);
-        json!({ "song": song, "active": step.frame.active, "glide": step.frame.glide_ms, "swept": sweep && swept(pick, step.frame.active), "sung": step.frame.sung, "wait": wait }).to_string()
+        json!({ "song": song, "active": step.frame.active, "glide": step.frame.glide_ms, "swept": sweep && swept(pick, step.frame.active), "sung": step.frame.sung, "backing": clock.backing_sung(), "wait": wait }).to_string()
     }
 
     /// A tap on lyric line `line`: shows it at once and plays from where it is sung, the lyrics' timing

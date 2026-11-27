@@ -142,6 +142,12 @@
               <!-- The sung edge glides through each word as the core's place moves, softly, as the other clients draw it. -->
               {#each words(l.text) as w}{@const p = part(w.from, w.to, player.sung)}<span class="word" class:lift={p > 0 && p < 1} style:--p={p}>{w.word}</span>{/each}
             {:else}{l.text}{/if}
+            {#if l.backing}
+              <!-- Backing vocals sung over the line: smaller, under it, lit as they are sung. -->
+              <span class="backing">
+                {#if lit && player.sung >= 0}{#each words(l.backing) as w}{@const p = part(w.from, w.to, player.backingSung)}<span class="word" class:lift={p > 0 && p < 1} style:--p={p}>{w.word}</span>{/each}{:else}{l.backing}{/if}
+              </span>
+            {/if}
             {#if l.translation}<span class="tr">{l.translation}</span>{/if}
           </button>
         {:else}
@@ -204,6 +210,12 @@
   }
   .duet {
     text-align: right;
+  }
+  .backing {
+    display: block;
+    font-weight: 400;
+    font-size: 0.72em;
+    margin-top: 2px;
   }
   /* A word as it is sung: the ink up to where the line is sung, softly, then the quiet ink. The soft edge
      runs from before the word to past it, so a word not yet sung is all quiet and one sung all ink. */

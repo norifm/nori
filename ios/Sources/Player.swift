@@ -661,12 +661,15 @@ final class DragToClose: NSObject, UIGestureRecognizerDelegate {
 /// the edge moving smoothly inside a character.
 final class LyricLineView: UIView {
     static let font = Fonts.font(24, .semibold, .title2)
+    /// Backing vocals, under their line, as Android's.
+    static let backingFont = Fonts.font(17, .regular, .body)
+    let font: UIFont
     private var framesetter: CTFramesetter?
     private var drawn: CTFrame?
     var text = "" {
         didSet {
             guard text != oldValue else { return }
-            framesetter = CTFramesetterCreateWithAttributedString(LyricLineView.attributed(text))
+            framesetter = CTFramesetterCreateWithAttributedString(LyricLineView.attributed(text, font))
             drawn = nil
             accessibilityLabel = text
             setNeedsDisplay()
@@ -676,8 +679,9 @@ final class LyricLineView: UIView {
     var strength: CGFloat = 1 { didSet { if strength != oldValue { setNeedsDisplay() } } }
     var rest: CGFloat = 1 { didSet { if rest != oldValue { setNeedsDisplay() } } }
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    init(font: UIFont) {
+        self.font = font
+        super.init(frame: .zero)
         isOpaque = false
         backgroundColor = .clear
         // Drawn, not a label: VoiceOver reads the line from here.
@@ -688,15 +692,15 @@ final class LyricLineView: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// The colour comes from the context, so one frame draws at either strength.
-    private static func attributed(_ text: String) -> NSAttributedString {
+    private static func attributed(_ text: String, _ font: UIFont) -> NSAttributedString {
         NSAttributedString(string: text, attributes: [
             .font: font,
             NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
         ])
     }
 
-    static func height(_ text: String, width: CGFloat) -> CGFloat {
-        let setter = CTFramesetterCreateWithAttributedString(attributed(text))
+    static func height(_ text: String, font: UIFont = LyricLineView.font, width: CGFloat) -> CGFloat {
+        let setter = CTFramesetterCreateWithAttributedString(attributed(text, font))
         let size = CTFramesetterSuggestFrameSizeWithConstraints(setter, CFRange(location: 0, length: 0), nil,
                                                                 CGSize(width: width, height: .greatestFiniteMagnitude), nil)
         return ceil(size.height)
@@ -751,27 +755,38 @@ final class LyricLineView: UIView {
     }
 }
 
+/// A lyric line and the backing vocals sung over it, under it.
 final class LyricCell: UITableViewCell {
     static let id = "lyric"
     static let inset = UIEdgeInsets(top: 6, left: 20, bottom: 6, right: 20)
-    let line = LyricLineView()
+    /// Between a line and its backing vocals.
+    static let backingGap: CGFloat = 2
+    let line = LyricLineView(font: LyricLineView.font)
+    let backing = LyricLineView(font: LyricLineView.backingFont)
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         backgroundColor = .clear
         selectionStyle = .none
-        line.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(line)
-        let i = LyricCell.inset
-        NSLayoutConstraint.activate([
-            line.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: i.left),
-            line.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -i.right),
-            line.topAnchor.constraint(equalTo: contentView.topAnchor, constant: i.top),
-            line.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -i.bottom),
-        ])
+        contentView.addSubview(backing)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// How tall the backing vocals `text` stand under their line at `width`, the gap included; 0 for none.
+    static func backingHeight(_ text: String, width: CGFloat) -> CGFloat {
+        text.isEmpty ? 0 : LyricLineView.height(text, font: LyricLineView.backingFont, width: width) + backingGap
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let r = contentView.bounds.inset(by: LyricCell.inset)
+        let under = LyricCell.backingHeight(backing.text, width: r.width)
+        line.frame = CGRect(x: r.minX, y: r.minY, width: r.width, height: r.height - under)
+        backing.frame = CGRect(x: r.minX, y: line.frame.maxY + LyricCell.backingGap, width: r.width, height: max(0, under - LyricCell.backingGap))
+        backing.isHidden = under == 0
+    }
 }
 
 /// What paces the lyrics: a display link while a word fills, a one-shot timer between.
@@ -787,11 +802,14 @@ private enum Pacer {
 final class LyricsCard: UITableViewController {
     private let song: String
     private var lines: [String] = []
+    /// Each line's backing vocals; empty for none.
+    private var backings: [String] = []
     private var synced = false
     private var clock: OpaquePointer?
     private var sweeps = false
     private var active = -1
     private var sung: CGFloat = 0
+    private var backingSung: CGFloat = 0
     private var pacer = Pacer.still
     private var heights: [CGFloat] = []
     private let unsung = CGFloat(nori_ios_lyric_unsung())
@@ -841,7 +859,10 @@ final class LyricsCard: UITableViewController {
 
     /// The player's colors moved: the lines are drawn again in them.
     func repaint() {
-        for case let cell as LyricCell in tableView.visibleCells { cell.line.setNeedsDisplay() }
+        for case let cell as LyricCell in tableView.visibleCells {
+            cell.line.setNeedsDisplay()
+            cell.backing.setNeedsDisplay()
+        }
     }
 
     @objc private func arrived(_ n: Notification) {
@@ -861,7 +882,9 @@ final class LyricsCard: UITableViewController {
             return
         }
         synced = d["synced"] as? Bool ?? false
-        lines = (d["lines"] as? [[String: Any]] ?? []).map { $0["t"] as? String ?? "" }
+        let rows = d["lines"] as? [[String: Any]] ?? []
+        lines = rows.map { $0["t"] as? String ?? "" }
+        backings = rows.map { $0["b"] as? String ?? "" }
         if lines.isEmpty {
             synced = false
             lines = [Say.noLyrics]
@@ -882,7 +905,9 @@ final class LyricsCard: UITableViewController {
     private func reloadLines() {
         measuredWidth = tableView.bounds.width
         let width = max(1, tableView.bounds.width) - LyricCell.inset.left - LyricCell.inset.right
-        heights = lines.map { LyricLineView.height($0, width: width) + LyricCell.inset.top + LyricCell.inset.bottom }
+        heights = lines.indices.map { i in
+            LyricLineView.height(lines[i], width: width) + LyricCell.backingHeight(backing(i), width: width) + LyricCell.inset.top + LyricCell.inset.bottom
+        }
         tableView.reloadData()
     }
 
@@ -929,17 +954,18 @@ final class LyricsCard: UITableViewController {
         let was = active
         active = Int(step.active)
         sung = CGFloat(step.sung)
+        backingSung = CGFloat(step.backing_sung)
         guard active != was else {
             if active >= 0, active < lines.count, let cell = tableView.cellForRow(at: IndexPath(row: active, section: 0)) as? LyricCell {
-                paint(cell.line, row: active)
+                paint(cell, row: active)
             }
             return
         }
         let glide = UIAccessibility.isReduceMotionEnabled ? 0 : Double(step.glide_ms) / 1000
         for case let cell as LyricCell in tableView.visibleCells {
             guard let row = tableView.indexPath(for: cell)?.row else { continue }
-            UIView.transition(with: cell.line, duration: glide, options: .transitionCrossDissolve, animations: {
-                self.paint(cell.line, row: row)
+            UIView.transition(with: cell.contentView, duration: glide, options: .transitionCrossDissolve, animations: {
+                self.paint(cell, row: row)
             })
         }
         // The first place is taken at once: the lines do not fly in as the panel opens.
@@ -957,15 +983,19 @@ final class LyricsCard: UITableViewController {
         tableView.setContentOffset(CGPoint(x: 0, y: max(-tableView.adjustedContentInset.top, y)), animated: animated)
     }
 
-    private func paint(_ line: LyricLineView, row: Int) {
+    private func backing(_ row: Int) -> String { row < backings.count ? backings[row] : "" }
+
+    private func paint(_ cell: LyricCell, row: Int) {
         let strength = CGFloat(nori_ios_lyric_strength(synced ? 1 : 0, Int32(row), Int32(active)))
-        line.strength = strength
-        if row == active && sweeps {
-            line.sung = sung
-            line.rest = min(unsung, strength)
-        } else {
-            line.sung = .greatestFiniteMagnitude
-            line.rest = strength
+        for (view, fill) in [(cell.line, sung), (cell.backing, backingSung)] {
+            view.strength = strength
+            if row == active && sweeps {
+                view.sung = fill
+                view.rest = min(unsung, strength)
+            } else {
+                view.sung = .greatestFiniteMagnitude
+                view.rest = strength
+            }
         }
     }
 
@@ -978,7 +1008,9 @@ final class LyricsCard: UITableViewController {
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: LyricCell.id, for: indexPath) as! LyricCell
         cell.line.text = lines[indexPath.row]
-        paint(cell.line, row: indexPath.row)
+        cell.backing.text = backing(indexPath.row)
+        cell.setNeedsLayout()
+        paint(cell, row: indexPath.row)
         return cell
     }
 

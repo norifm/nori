@@ -910,6 +910,36 @@ fn lyrics_panel() {
 }
 
 #[test]
+fn backing_vocals_are_drawn_under_their_line() {
+    use nori_core::lyrics_follow::LyricsNow;
+    use nori_core::{LyricLine, LyricWord, Lyrics};
+    let mut a = app();
+    a.heard(Some(song("s1", "First", 200)));
+    key(&mut a, KeyCode::Char('L'));
+    let word = |start_ms, end_ms, start, end| LyricWord { start_ms, end_ms, start, end };
+    let lines = vec![
+        LyricLine {
+            start_ms: 2000,
+            end_ms: 7200,
+            text: "I was walking home".into(),
+            words: vec![word(2000, 2600, 0, 2), word(2600, 3200, 2, 6), word(3200, 5600, 6, 14), word(5600, 6290, 14, 18)],
+            backing: "(walking home)".into(),
+            backing_words: vec![word(4800, 5400, 0, 9), word(5400, 7200, 9, 14)],
+            ..Default::default()
+        },
+        LyricLine { start_ms: 8000, end_ms: 10000, text: "Hey you".into(), ..Default::default() },
+    ];
+    let pick = nori_core::race::LyricsPick { lyrics: Lyrics { synced: true, word_timed: true, lines, ..Default::default() }, origin: nori_core::lyrics_sources::LyricsOrigin::Server };
+    a.handle(Msg::Lyrics(LyricsNow::Shown { song: "s1".into(), pick }));
+    a.lyrics.found().unwrap().advance(5900, true, true);
+    let s = draw(&mut a, 160, 30);
+    let rows: Vec<&str> = s.lines().collect();
+    let at = rows.iter().position(|r| r.contains("I was walking home")).unwrap_or_else(|| panic!("{s}"));
+    assert!(rows[at + 1].contains("(walking home)") && !s.contains("((walking"), "as the source writes them, under their line:\n{s}");
+    dump("lyrics-backing", &s);
+}
+
+#[test]
 fn equalizer_screen() {
     let mut a = app();
     a.prefs.eq_enabled = true;

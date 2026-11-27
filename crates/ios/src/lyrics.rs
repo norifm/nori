@@ -17,6 +17,8 @@ pub struct LyricStep {
     pub active: i32,
     /// How far the lit line is sung, in fractional UTF-16 units of its text.
     pub sung: f32,
+    /// How far its backing vocals are sung, in fractional UTF-16 units of theirs.
+    pub backing_sung: f32,
     /// How long the change into `active` takes.
     pub glide_ms: i32,
     /// Next call: in display frames while words fill (`still` 0), else in ms; 0 never.
@@ -75,6 +77,7 @@ pub unsafe extern "C" fn nori_ios_lyric_advance(
     *out = LyricStep {
         active: s.frame.active,
         sung: s.frame.sung,
+        backing_sung: c.backing_sung(),
         glide_ms: s.frame.glide_ms,
         wait: s.wait,
         still: s.still.into(),
@@ -129,6 +132,8 @@ mod tests {
                     end_ms: 3_000,
                     text: "one two".into(),
                     words: vec![word(1_000, 2_000, 0, 3), word(2_000, 3_000, 4, 7)],
+                    backing: "(two)".into(),
+                    backing_words: vec![word(2_000, 3_000, 0, 5)],
                     ..LyricLine::default()
                 },
                 LyricLine { start_ms: 5_000, end_ms: 6_000, text: "three".into(), ..LyricLine::default() },
@@ -138,7 +143,7 @@ mod tests {
     }
 
     fn step(c: *mut LyricClock, ms: i64) -> LyricStep {
-        let mut s = LyricStep { active: 0, sung: 0.0, glide_ms: 0, wait: 0, still: 0, redraw: 0 };
+        let mut s = LyricStep { active: 0, sung: 0.0, backing_sung: 0.0, glide_ms: 0, wait: 0, still: 0, redraw: 0 };
         unsafe { nori_ios_lyric_advance(c, ms, 1, 1, &mut s) };
         s
     }
@@ -151,6 +156,9 @@ mod tests {
         let mid = step(c, 1_500);
         assert_eq!(mid.active, 0);
         assert!(mid.sung > 0.0 && mid.sung < 3.0, "half way through the first word: {}", mid.sung);
+        assert_eq!(mid.backing_sung, 0.0, "the backing vocals start with the second word");
+        let backing = step(c, 2_500).backing_sung;
+        assert!(backing > 0.0 && backing < 5.0, "half way through the backing vocals: {backing}");
         assert_eq!(step(c, 5_200).active, 1);
         assert_eq!(unsafe { nori_ios_lyric_tap(c, 1) }, 5_000);
         unsafe { nori_ios_lyric_free(c) };

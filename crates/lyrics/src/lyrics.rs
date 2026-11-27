@@ -182,38 +182,80 @@ pub fn build(mut all: Vec<Structured>) -> Lyrics {
     // The server's times are taken as sent, within the day a lyric can run.
     let at = |ms: i64| ms.saturating_sub(offset).clamp(0, LONGEST_MS);
     let starts: Vec<i64> = main.line.iter().map(|l| at(l.start.unwrap_or(0))).collect();
-    let mut lines: Vec<LyricLine> = Vec::with_capacity(main.line.len());
+    // Each line, and whether the source timed its words.
+    let mut lines: Vec<(LyricLine, bool)> = Vec::with_capacity(main.line.len());
     for (i, l) in main.line.iter().enumerate() {
         let start = if synced { starts[i] } else { -1 };
         let next = starts[i + 1..].iter().copied().find(|n| *n > starts[i]).unwrap_or(starts[i] + 5_000);
+        // A word whose end is not given, from `from`, is sung for as long as a word of `units` is, until a
+        // line starting after it at the latest.
+        let guessed = |from: i64, units: u32| {
+            let later = starts[i + 1..].iter().copied().filter(|n| *n > from).min().unwrap_or(LONGEST_MS);
+            (from + nori_look::lyrics::word_ms_estimate(units)).min(later)
+        };
+        let sung_until = |words: &[LyricWord], given: Option<i64>| words.iter().map(|w| w.end_ms).chain(given).max().filter(|e| *e > start).unwrap_or(next);
         let cues = main.cue_line.iter().find(|c| c.index == i && !c.cue.is_empty());
-        let (text, end, words, bg) = if let Some(c) = cues {
+        let (text, end, words, bg, own) = if let Some(c) = cues {
             word_timed = true;
-            let words = c.cue.iter().map(|w| LyricWord { start_ms: at(w.start), end_ms: at(w.end), start: utf16_at(&c.value, w.byte_start), end: utf16_at(&c.value, w.byte_end.saturating_add(1)) }).collect();
-            (c.value.clone(), if c.end > c.start { at(c.end) } else { next }, words, c.agent_id.as_deref().is_some_and(|a| background.contains(&a)))
+            let words: Vec<LyricWord> = c
+                .cue
+                .iter()
+                .map(|w| {
+                    let (start, end) = (utf16_at(&c.value, w.byte_start), utf16_at(&c.value, w.byte_end.saturating_add(1)));
+                    let end_ms = if w.end > w.start { at(w.end) } else { guessed(at(w.start), end.saturating_sub(start)) };
+                    LyricWord { start_ms: at(w.start), end_ms, start, end }
+                })
+                .collect();
+            let end = sung_until(&words, (c.end > c.start).then(|| at(c.end)));
+            (c.value.clone(), end, words, c.agent_id.as_deref().is_some_and(|a| background.contains(&a)), true)
         } else {
-            let (text, marks) = inline_words(&l.value);
+            let (mut text, marks) = inline_words(&l.value);
             if synced && !marks.is_empty() {
                 word_timed = true;
-                // A word runs to the next mark; the last one for as long as such a word is sung, not to
-                // the next line.
-                let words = marks.iter().enumerate().filter_map(|(k, (ms, byte))| {
-                    let to = marks.get(k + 1).map(|m| m.1).unwrap_or(text.len());
-                    let (start, end) = (utf16_at(&text, *byte), utf16_at(&text, to));
-                    let guessed = || (at(*ms) + nori_look::lyrics::word_ms_estimate(end - start)).min(next.max(at(*ms)));
-                    let end_ms = marks.get(k + 1).map(|m| at(m.0)).unwrap_or_else(guessed);
-                    (to > *byte).then(|| LyricWord { start_ms: at(*ms), end_ms, start, end })
+                // A closing mark often follows a space.
+                text.truncate(text.trim_end().len());
+                let len = text.len();
+                // A word runs to the next mark.
+                let words: Vec<LyricWord> = marks.iter().enumerate().filter_map(|(k, (ms, byte))| {
+                    let (byte, to) = ((*byte).min(len), marks.get(k + 1).map_or(len, |m| m.1.min(len)));
+                    let (start, end) = (utf16_at(&text, byte), utf16_at(&text, to));
+                    let end_ms = marks.get(k + 1).map_or_else(|| guessed(at(*ms), end - start), |m| at(m.0));
+                    (to > byte).then_some(LyricWord { start_ms: at(*ms), end_ms, start, end })
                 }).collect();
-                (text, next, words, false)
+                let end = sung_until(&words, None);
+                (text, end, words, false, true)
             } else {
                 let words = if synced { estimate(&text, start, next) } else { Vec::new() };
-                (text, next, words, false)
+                (text, next, words, false, false)
             }
         };
         let translated = translation.as_ref().and_then(|t| t.line.iter().find(|x| synced && x.start == l.start).or_else(|| (!synced).then(|| t.line.get(i)).flatten())).map(|x| x.value.clone()).filter(|v| !v.trim().is_empty());
-        lines.push(LyricLine { start_ms: start, end_ms: if synced { end } else { -1 }, text, words, translation: translated, background: bg, ..Default::default() });
+        lines.push((LyricLine { start_ms: start, end_ms: if synced { end } else { -1 }, text, words, translation: translated, background: bg, ..Default::default() }, synced && own));
     }
-    Lyrics { synced, word_timed, lines, ..Default::default() }
+    Lyrics { synced, word_timed, lines: sung_together(lines), ..Default::default() }
+}
+
+/// Lines overlapping by less than this follow each other: a closing time rounded past the next start.
+const TOGETHER_MS: i64 = 300;
+
+/// A line whose words the source times, starting while the line before is still being sung, is sung over
+/// it: it becomes that line's backing vocals, since the player lights one line with its backing at a
+/// time. A line that has backing already keeps it, and a third voice starts a line of its own.
+fn sung_together(lines: Vec<(LyricLine, bool)>) -> Vec<LyricLine> {
+    let mut out: Vec<(LyricLine, bool)> = Vec::with_capacity(lines.len());
+    for (line, own) in lines {
+        if let Some((prev, prev_own)) = out.last_mut() {
+            let sung_until = prev.words.iter().map(|w| w.end_ms).max();
+            if own && *prev_own && prev.backing.is_empty() && sung_until.is_some_and(|e| line.start_ms + TOGETHER_MS <= e) {
+                prev.end_ms = prev.end_ms.max(line.end_ms);
+                prev.backing = line.text;
+                prev.backing_words = line.words;
+                continue;
+            }
+        }
+        out.push((line, own));
+    }
+    out.into_iter().map(|(l, _)| l).collect()
 }
 
 #[cfg(test)]
@@ -304,6 +346,76 @@ mod tests {
         assert_eq!(early.lines[0].start_ms, 0, "an offset before the start is the start, not untimed");
         let shared = from_lrc("[00:01.00]line\n[00:01.00]translated\n[00:02.00]next");
         assert_eq!(shared.lines[0].end_ms, 2_000, "a line sharing its time runs to the next later one");
+    }
+
+    /// A line as (start, text, backing, end).
+    type Shape<'a> = (i64, &'a str, &'a str, i64);
+
+    fn shapes(l: &Lyrics) -> Vec<Shape<'_>> {
+        l.lines.iter().map(|x| (x.start_ms, x.text.as_str(), x.backing.as_str(), x.end_ms)).collect()
+    }
+
+    #[test]
+    fn enhanced_lrc_lines_sung_together_are_one_lit_line() {
+        let cases: &[(&str, &str, &[Shape])] = &[
+            (
+                "the next line starts before the last word",
+                "[00:12.00]<00:12.00>I <00:12.40>was <00:12.80>walking <00:14.90>home\n[00:14.20]<00:14.20>(walking <00:14.60>home) <00:15.80>\n[00:20.00]<00:20.00>Next\n",
+                &[(12_000, "I was walking home", "(walking home)", 15_800), (20_000, "Next", "", 20_690)],
+            ),
+            (
+                "a closing time past the next line's start",
+                "[00:12.00]<00:12.00>I <00:12.40>was <00:12.80>walking <00:14.00>\n[00:13.50]<00:13.50>(walking) <00:14.20>\n[00:20.00]<00:20.00>Next <00:21.00>\n",
+                &[(12_000, "I was walking", "(walking)", 14_200), (20_000, "Next", "", 21_000)],
+            ),
+            (
+                "two lines at one time",
+                "[00:12.00]<00:12.00>Hey <00:12.50>you <00:13.00>\n[00:12.00]<00:12.00>Oh <00:12.80>yeah <00:13.40>\n[00:20.00]<00:20.00>Next <00:21.00>\n",
+                &[(12_000, "Hey you", "Oh yeah", 13_400), (20_000, "Next", "", 21_000)],
+            ),
+            (
+                "a voice prefix, kept as written",
+                "[00:12.00]v1:<00:12.00>Hey <00:12.50>you <00:14.00>\n[00:13.00]v2:<00:13.00>Oh <00:13.80>yeah <00:14.40>\n[00:20.00]v1:<00:20.00>Next <00:21.00>\n",
+                &[(12_000, "v1:Hey you", "v2:Oh yeah", 14_400), (20_000, "v1:Next", "", 21_000)],
+            ),
+            (
+                "a closing time rounded past the next start is one line after another",
+                "[00:12.00]<00:12.00>Hey <00:12.50>you <00:13.01>\n[00:13.00]<00:13.00>Oh <00:13.80>yeah <00:14.40>\n",
+                &[(12_000, "Hey you", "", 13_010), (13_000, "Oh yeah", "", 14_400)],
+            ),
+            (
+                "a third voice over a pair starts its own line",
+                "[00:12.00]<00:12.00>One <00:14.00>\n[00:13.00]<00:13.00>Two <00:15.00>\n[00:14.50]<00:14.50>Three <00:16.00>\n",
+                &[(12_000, "One", "Two", 15_000), (14_500, "Three", "", 16_000)],
+            ),
+            (
+                "plain lines run to the next",
+                "[00:12.00]Hey you\n[00:12.00]Oh yeah\n[00:14.00]Next\n",
+                &[(12_000, "Hey you", "", 14_000), (12_000, "Oh yeah", "", 14_000), (14_000, "Next", "", 19_000)],
+            ),
+        ];
+        for (name, lrc, want) in cases {
+            assert_eq!(shapes(&from_lrc(lrc)), *want, "{name}");
+        }
+
+        // Both are lit while both are sung: the first line's last word, then the second's.
+        let l = from_lrc(cases[0].1);
+        let w = &l.lines[0].backing_words;
+        assert_eq!((w[0].start_ms, w[0].end_ms, w[1].start_ms, w[1].end_ms), (14_200, 14_600, 14_600, 15_800));
+        let clock = crate::look::clock_on(&l, 0);
+        for at in [14_500, 15_000, 15_500] {
+            assert_eq!(clock.timing().frame(at).active, 0, "at {at}");
+        }
+        assert!(clock.timing().frame(15_000).sung > "I was walking ".len() as f32, "the last word is sung after the second line starts");
+        assert!(clock.timing().backing_sung(0, 15_000) > 0.0);
+
+        // The same file as Navidrome's word cues, the last word's end not given (as long as its start).
+        let served = parse(r#"[{"synced":true,"line":[{"start":2000,"value":"I was walking home"},{"start":4800,"value":"(walking home)"},{"start":8000,"value":"Next"}],
+          "cueLine":[{"index":0,"start":2000,"end":5600,"value":"I was walking home","cue":[{"start":2000,"end":2600,"byteStart":0,"byteEnd":1},
+            {"start":2600,"end":3200,"byteStart":2,"byteEnd":5},{"start":3200,"end":5600,"byteStart":6,"byteEnd":13},{"start":5600,"end":5600,"byteStart":14,"byteEnd":17}]},
+          {"index":1,"start":4800,"end":7200,"value":"(walking home)","cue":[{"start":4800,"end":5400,"byteStart":0,"byteEnd":8},{"start":5400,"end":7200,"byteStart":9,"byteEnd":13}]}]}]"#);
+        assert_eq!(shapes(&served), [(2_000, "I was walking home", "(walking home)", 7_200), (8_000, "Next", "", 13_000)]);
+        assert_eq!(served.lines[0].words[3].end_ms, 5_600 + nori_look::lyrics::word_ms_estimate(4), "an end not given is guessed");
     }
 
 }

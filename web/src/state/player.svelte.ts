@@ -24,6 +24,8 @@ class Player {
   line = $state(-1);
   /** How much of the lit line is sung; -1 when its words do not light up one by one. */
   sung = $state(-1);
+  /** How much of the lit line's backing vocals is sung, while its words light up. */
+  backingSung = $state(0);
   /** The player worker answers (the core worker answers only the library before). */
   up = $state(false);
   /** The session plays here and the browser holds the sound card until the page is clicked. */
@@ -239,10 +241,11 @@ class Player {
 
   /** The lyrics' state now, lit; ms until it changes (0: not until the position jumps). */
   async lyricsStep(frameMs: number): Promise<number> {
-    const s = JSON.parse(await ask<string>("lyrics_now", frameMs)) as { song: string; active: number; swept: boolean; sung: number; wait: number } | null;
+    const s = JSON.parse(await ask<string>("lyrics_now", frameMs)) as { song: string; active: number; swept: boolean; sung: number; backing: number; wait: number } | null;
     if (!s || s.song !== this.shown?.song) return 0;
     this.line = s.active;
     this.sung = s.swept ? s.sung : -1;
+    this.backingSung = s.backing;
     facts.lyricLine = s.active;
     return s.wait;
   }
@@ -254,6 +257,7 @@ class Player {
     facts.tapped = tap;
     this.line = tap.active;
     this.sung = tap.swept ? 0 : -1;
+    this.backingSung = 0;
     facts.lyricLine = tap.active;
     await this.refresh();
   }
