@@ -596,6 +596,23 @@ export global Motion {
     in property <bool> reduced;
 }
 
+// A loading page's placeholders (the core's `sketch`), and their times (the core's `stage`, app.rs fills
+// them): shown once a read outlasts `after`, the shimmer crossing them every `pass`, and what was read
+// fading in over them in `ease`.
+export enum SketchKind { head, shelf, grid, rows }
+export enum SketchArt { square, round, number, bare }
+export struct SketchPart {
+    kind: SketchKind,
+    art: SketchArt,
+}
+export global Sketch {
+    in property <duration> after: 250ms;
+    in property <duration> pass: 1500ms;
+    in property <duration> ease: 180ms;
+    // The shimmer's place in its pass, 0 to 1: one clock for every plate, read only while one is drawn.
+    out property <float> at: mod(animation-tick() / 1ms, root.pass / 1ms) / (root.pass / 1ms);
+}
+
 // Whether the music is moving now (playing, not waiting for bytes): the playing bars move only then. Their
 // clock, in seconds, moves on with each seek bar step, so they move in the frames the seek bar draws.
 export global Playing {
@@ -629,6 +646,9 @@ export global Theme {
     in property <color> hover;
     in property <color> chosen;
     in property <color> fill;
+    // A loading page's placeholders, and the band of their shimmer.
+    in property <color> sketch;
+    in property <color> sheen;
     in property <color> panel;
     in property <color> raised;
     in property <color> accent;
@@ -1236,6 +1256,228 @@ component Fade inherits Rectangle {
     animate opacity { duration: root.span * 0.8; enabled: root.span > 0ms; easing: ease-out; }
     animate x { duration: root.span; enabled: root.span > 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
     init => { self.shown = true; }
+}
+
+// A read on its way (`reading`): once it outlasts the core's quick-load time the sketch shows, fading in;
+// when the read is in, what was read fades in over the sketch as it fades out. An answer inside the
+// quick-load time is simply there; reduced motion makes each change direct. `sketch` and `answer` are the
+// opacities the placeholders and what was read wear.
+component Waiting {
+    in property <bool> reading;
+    property <bool> due;
+    out property <float> sketch: root.reading && root.due ? 1 : 0;
+    out property <float> answer: root.reading && root.due ? 0 : 1;
+    property <duration> ease: Motion.reduced || !root.due ? 0ms : Sketch.ease;
+    animate sketch { duration: root.ease; easing: ease-out; }
+    animate answer { duration: root.ease; easing: ease-out; }
+    changed reading => {
+        if root.reading {
+            root.due = false;
+        }
+        wait.running = root.reading;
+    }
+    wait := Timer {
+        interval: Sketch.after;
+        running: false;
+        triggered => {
+            root.due = root.reading;
+            self.running = false;
+        }
+    }
+}
+
+// A placeholder: the page's quiet ink in the shape of what will stand there. With Motion Full a band of a
+// lighter ink crosses it once a pass; it ticks only while it is drawn.
+component SketchPlate inherits Rectangle {
+    // The band's middle, from half a plate before it to half a plate past it, in plate widths; the band is a
+    // plate wide and fades out to both sides. Drawn as the plate's own fill, so it keeps the plate's corners.
+    property <float> mid: Sketch.at * 2 - 0.5;
+    pure function tint(x: float) -> color {
+        return Theme.sheen.mix(Theme.sketch, max(0, 1 - abs(x - root.mid) * 2));
+    }
+    property <float> from: clamp(root.mid - 0.5, 0, 1);
+    property <float> peak: clamp(root.mid, 0, 1);
+    property <float> to: clamp(root.mid + 0.5, 0, 1);
+    background: Motion.reduced ? Theme.sketch : @linear-gradient(90deg, root.tint(0) 0%, root.tint(root.from) root.from * 100%, root.tint(root.peak) root.peak * 100%, root.tint(root.to) root.to * 100%, root.tint(1) 100%);
+}
+
+// A line of words' placeholder: a bar `share` of the width, as tall as the words' capitals.
+component SketchBar inherits Rectangle {
+    in property <float> share;
+    in property <length> size: 13px;
+    in property <bool> centered;
+    SketchPlate {
+        width: parent.width * root.share;
+        height: root.size * 0.62;
+        x: root.centered ? (parent.width - self.width) / 2 : 0;
+        y: (parent.height - self.height) / 2;
+        border-radius: self.height / 2;
+    }
+}
+
+// A card's placeholder, as [CardView] lays a card: its square (round for an artist's), its name and line.
+component SketchCard inherits Rectangle {
+    in property <length> side;
+    in property <bool> round;
+    in property <int> i;
+    height: root.side + 46px;
+    SketchPlate {
+        y: 0;
+        height: root.side;
+        border-radius: root.round ? self.width / 2 : 8px;
+    }
+    SketchBar {
+        y: root.side + 6px;
+        height: 18px;
+        share: [0.82, 0.66, 0.9, 0.74][mod(root.i, 4)];
+        centered: root.round;
+    }
+    SketchBar {
+        y: root.side + 24px;
+        height: 18px;
+        share: [0.45, 0.32, 0.52, 0.38][mod(root.i, 4)];
+        size: 12px;
+        centered: root.round;
+    }
+}
+
+// A row's placeholder, as [SongLine] (a cover or a song's number) or [PlainLine] (words alone) lays a row.
+component SketchLine inherits Rectangle {
+    in property <SketchArt> art;
+    in property <int> i;
+    property <float> share: [0.62, 0.46, 0.74, 0.54, 0.68, 0.4, 0.58, 0.7][mod(root.i, 8)];
+    height: root.art == SketchArt.number ? 44px : root.art == SketchArt.bare ? 48px : 56px;
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 12px + 90px;
+        spacing: 12px;
+        if root.art == SketchArt.square || root.art == SketchArt.round: SketchPlate {
+            y: (parent.height - self.height) / 2;
+            width: 44px;
+            height: 44px;
+            border-radius: root.art == SketchArt.round ? 22px : 5px;
+        }
+        if root.art == SketchArt.number: Rectangle {
+            width: 24px;
+            SketchPlate {
+                x: parent.width - self.width;
+                y: (parent.height - self.height) / 2;
+                width: 12px;
+                height: 8px;
+                border-radius: 4px;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 2;
+            SketchBar {
+                height: 17px;
+                share: root.share;
+            }
+            if root.art == SketchArt.square || root.art == SketchArt.round: SketchBar {
+                height: 17px;
+                share: root.share * 0.6;
+                size: 12px;
+            }
+        }
+        if root.art == SketchArt.square: SketchBar {
+            horizontal-stretch: 1;
+            share: [0.7, 0.5, 0.8, 0.6][mod(root.i, 4)];
+        }
+    }
+}
+
+// A loading page's placeholders where its items will stand, in the page's frame: the parts the core sketched
+// (app.rs's `sketch`), its rows and grid running to `fill` down the page, `pad` its margins.
+component PageSketch inherits VerticalLayout {
+    in property <[SketchPart]> parts;
+    in property <length> pad;
+    in property <length> fill: 900px;
+    // How far a row's room reaches past the margin, its words starting at it (a page's rows reach none).
+    in property <length> rows-inset: 8px;
+    property <length> room: self.width - 2 * root.pad;
+    property <int> columns: Frame.columns(root.room, Frame.least);
+    property <length> side: (root.room - (root.columns - 1) * Frame.gap) / root.columns;
+    for p in root.parts: VerticalLayout {
+        padding-left: root.pad;
+        padding-right: root.pad;
+        // A page's head: its cover, its name and line, Play.
+        if p.kind == SketchKind.head: HorizontalLayout {
+            spacing: 28px;
+            padding-bottom: 26px;
+            SketchPlate {
+                width: 270px;
+                height: 270px;
+                border-radius: p.art == SketchArt.round ? 135px : 8px;
+            }
+            VerticalLayout {
+                padding-top: 70px;
+                spacing: 6px;
+                SketchBar {
+                    height: 36px;
+                    share: 0.5;
+                    size: 30px;
+                }
+                SketchBar {
+                    height: 26px;
+                    share: 0.28;
+                    size: 20px;
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    alignment: start;
+                    SketchPlate {
+                        width: 180px;
+                        height: 48px;
+                        border-radius: 24px;
+                    }
+                }
+            }
+        }
+        // A shelf: its title, and cards across the page.
+        if p.kind == SketchKind.shelf: VerticalLayout {
+            spacing: 14px;
+            padding-bottom: 52px;
+            SketchBar {
+                height: 30px;
+                share: 0.16;
+                size: 21px;
+            }
+            Rectangle {
+                height: root.side + 46px;
+                for c in root.columns: SketchCard {
+                    x: c * (root.side + Frame.gap);
+                    width: root.side;
+                    side: root.side;
+                    round: p.art == SketchArt.round;
+                    i: c;
+                }
+            }
+        }
+        if p.kind == SketchKind.grid: Rectangle {
+            property <length> step: root.side + 46px + 24px;
+            height: ceil(root.fill / self.step) * self.step;
+            for c in ceil(root.fill / self.step) * root.columns: SketchCard {
+                x: mod(c, root.columns) * (root.side + Frame.gap);
+                y: floor(c / root.columns) * parent.step;
+                width: root.side;
+                side: root.side;
+                round: p.art == SketchArt.round;
+                i: c;
+            }
+        }
+        // Rows: their words start at the margin, as a list's do.
+        if p.kind == SketchKind.rows: Rectangle {
+            height: ceil(root.fill / 56px) * 56px;
+            for r in ceil(root.fill / 56px): SketchLine {
+                x: -root.rows-inset;
+                y: r * self.height;
+                width: parent.width + 2 * root.rows-inset;
+                art: p.art;
+                i: r;
+            }
+        }
+    }
 }
 
 // The button a page is built around (Play): a full pill in the page's colour.
@@ -2233,6 +2475,10 @@ component Grid inherits Remembered {
     // do not fill the grid.
     in property <bool> more;
     callback near-end();
+    // While the cards are read: their places, and how far they and the cards show ([Waiting]). A grid's
+    // sketch is its cards, whatever it lists (the desktop lists playlists as cards too).
+    in property <float> sketch-shown;
+    in property <float> answer: 1;
     function ask-more() {
         if root.more && root.content-height + root.content-y < root.height * 2 {
             root.near-end();
@@ -2242,6 +2488,14 @@ component Grid inherits Remembered {
     changed content-height => { root.ask-more(); }
     changed more => { root.ask-more(); }
     property <length> head: root.title == "" ? 0 : root.orders.length > 0 ? Frame.under-bar : Frame.under-title;
+    if root.sketch-shown > 0: PageSketch {
+        y: root.head;
+        width: root.width;
+        pad: root.pad;
+        parts: [{ kind: SketchKind.grid, art: root.round ? SketchArt.round : SketchArt.square }];
+        fill: root.height - root.head;
+        opacity: root.sketch-shown;
+    }
     pure callback art(string, int, int) -> image;
     callback open(Card);
     callback play(Card);
@@ -2284,17 +2538,20 @@ component Grid inherits Remembered {
     property <int> slots;
     init => { root.slots = root.visible-count; }
     changed visible-count => { root.slots = root.visible-count; }
-    for slot in root.slots: CardView {
-        property <int> i: root.first + slot;
-        property <Card> c: root.cards[self.i];
-        x: root.pad + mod(self.i, root.columns) * (root.side + root.gap);
-        y: root.head + floor(self.i / root.columns) * root.row-step;
-        side: root.side;
-        card: self.c;
-        round: root.round;
-        picture: root.art(self.c.art, 0, root.rev);
-        open => { root.open(self.c); }
-        play => { root.play(self.c); }
+    Rectangle {
+        opacity: root.answer;
+        for slot in root.slots: CardView {
+            property <int> i: root.first + slot;
+            property <Card> c: root.cards[self.i];
+            x: root.pad + mod(self.i, root.columns) * (root.side + root.gap);
+            y: root.head + floor(self.i / root.columns) * root.row-step;
+            side: root.side;
+            card: self.c;
+            round: root.round;
+            picture: root.art(self.c.art, 0, root.rev);
+            open => { root.open(self.c); }
+            play => { root.play(self.c); }
+        }
     }
 }
 
@@ -2493,7 +2750,9 @@ component ShelfView inherits VerticalLayout {
     // Its title opens the whole row.
     in property <bool> more;
     callback show-all;
+    // Until its cards are read, their places ([Waiting]).
     in property <bool> loading;
+    waiting := Waiting { reading: root.loading; }
     in property <bool> round;
     in property <ShelfShape> shape: ShelfShape.cards;
     // A card's narrowest, and the height under its square (its captions).
@@ -2554,32 +2813,30 @@ component ShelfView inherits VerticalLayout {
             width: root.seen;
             content-width: root.gap + root.shown * root.step;
             animate content-x { duration: root.paging && !Motion.reduced ? 420ms : 0ms; enabled: root.paging && !Motion.reduced; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
-            if root.loading: Rectangle {
+            if waiting.sketch > 0: Rectangle {
+                opacity: waiting.sketch;
                 for i in root.columns: Rectangle {
                     x: root.gap + i * root.step;
                     width: root.side;
                     if root.shape == ShelfShape.cards: Rectangle {
-                        Rectangle {
+                        SketchPlate {
                             y: 0;
                             height: root.side;
                             border-radius: root.round ? self.width / 2 : 8px;
-                            background: Theme.fill;
                         }
-                        Rectangle {
+                        SketchPlate {
                             y: root.side + 12px;
                             width: root.side * 0.7;
                             x: 0;
                             height: 9px;
                             border-radius: 4.5px;
-                            background: Theme.fill;
                         }
-                        Rectangle {
+                        SketchPlate {
                             y: root.side + 29px;
                             width: root.side * 0.45;
                             x: 0;
                             height: 9px;
                             border-radius: 4.5px;
-                            background: Theme.hairline;
                         }
                     }
                     // A tile's plate with its artwork's, or a song's artwork and its two lines.
@@ -2589,29 +2846,26 @@ component ShelfView inherits VerticalLayout {
                             height: root.shape == ShelfShape.tiles ? 64px : root.drop;
                             border-radius: 10px;
                             background: root.shape == ShelfShape.tiles ? Theme.panel : transparent;
-                            Rectangle {
+                            SketchPlate {
                                 x: root.shape == ShelfShape.tiles ? 6px : 0;
                                 y: (parent.height - self.height) / 2;
                                 width: self.height;
                                 height: root.shape == ShelfShape.tiles ? 52px : 44px;
                                 border-radius: 4px;
-                                background: Theme.fill;
                             }
-                            Rectangle {
+                            SketchPlate {
                                 x: root.shape == ShelfShape.tiles ? 70px : 56px;
                                 y: parent.height / 2 - 12px;
                                 width: (root.side - self.x) * 0.55;
                                 height: 9px;
                                 border-radius: 4.5px;
-                                background: Theme.fill;
                             }
-                            Rectangle {
+                            SketchPlate {
                                 x: root.shape == ShelfShape.tiles ? 70px : 56px;
                                 y: parent.height / 2 + 4px;
                                 width: (root.side - self.x) * 0.35;
                                 height: 9px;
                                 border-radius: 4.5px;
-                                background: Theme.hairline;
                             }
                         }
                     }
@@ -2619,6 +2873,7 @@ component ShelfView inherits VerticalLayout {
             }
             Rectangle {
                 visible: !root.loading;
+                opacity: waiting.answer;
                 x: floor(flick.content-x / 1phx + 0.5) * 1phx - flick.content-x;
                 @children
             }
@@ -8388,6 +8643,10 @@ export component AppWindow inherits Window {
     in-out property <View> view: View.home;
     in property <string> greeting;
     in property <bool> loading;
+    // What the view shown stands in place of what it reads (the core's `sketch`), and how far its sketch
+    // and its answer show as one fades into the other.
+    in property <[SketchPart]> sketch;
+    waiting := Waiting { reading: root.loading; }
     in property <string> failed;
     in property <string> note;
     in property <bool> note-error;
@@ -10272,6 +10531,8 @@ export component AppWindow inherits Window {
                         shuffle: root.view == View.albums && root.can-shuffle;
                         shuffled => { root.shuffle-library(true); }
                         cards: root.view == View.shelf ? root.shelf-cards : root.view == View.albums ? root.albums : root.playlists;
+                        sketch-shown: waiting.sketch;
+                        answer: waiting.answer;
                         more: root.view == View.shelf && root.shelf-more;
                         near-end => { root.shelf-more-asked(); }
                         rev: root.covers-rev;
@@ -10349,11 +10610,21 @@ export component AppWindow inherits Window {
                         font-weight: 700;
                         letter-spacing: -0.5px;
                     }
+                    if waiting.sketch > 0: PageSketch {
+                        x: 0;
+                        y: Chrome.top-room + 64px;
+                        width: 300px;
+                        pad: 20px;
+                        parts: root.sketch;
+                        fill: parent.height - self.y;
+                        opacity: waiting.sketch;
+                    }
                     ListView {
                         x: 0;
                         y: Chrome.top-room + 64px;
                         width: 300px;
                         height: parent.height - self.y;
+                        opacity: waiting.answer;
                         for a in root.artists: Rectangle {
                             height: 56px;
                             HorizontalLayout {
@@ -10515,9 +10786,20 @@ export component AppWindow inherits Window {
                                 opacity: root.songs.length > 0 ? 1 : 0;
                             }
                         }
-                        HorizontalLayout {
+                        Rectangle {
                             vertical-stretch: 1;
+                            if waiting.sketch > 0: PageSketch {
+                                y: 0;
+                                width: parent.width;
+                                pad: root.page-gutter;
+                                parts: root.sketch;
+                                fill: parent.height;
+                                opacity: waiting.sketch;
+                            }
                             ListView {
+                                width: parent.width;
+                                height: parent.height;
+                                opacity: waiting.answer;
                                 // The next page is asked for as the end comes within a screen, or when the rows
                                 // do not fill the list.
                                 function near-end() {
@@ -10550,6 +10832,14 @@ export component AppWindow inherits Window {
 
                 // The favorites, as Android's page: the albums and the artists, a shelf each, then the songs.
                 if root.view == View.favorites: Fade {
+                    if waiting.sketch > 0: PageSketch {
+                        y: Frame.under-title;
+                        width: parent.width;
+                        pad: root.page-gutter;
+                        parts: root.sketch;
+                        fill: parent.height - self.y;
+                        opacity: waiting.sketch;
+                    }
                     favorites-flick := Remembered {
                         content-height: favorites.preferred-height;
                         favorites := VerticalLayout {
@@ -10562,6 +10852,7 @@ export component AppWindow inherits Window {
                                 padding-bottom: 22px;
                             }
                             if root.favorite-albums.length > 0: liked-albums := ShelfView {
+                                opacity: waiting.answer;
                                 pad: root.page-gutter;
                                 least: Frame.least;
                                 title: "Albums";
@@ -10578,6 +10869,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                             if root.favorite-artists.length > 0: liked-artists := ShelfView {
+                                opacity: waiting.answer;
                                 pad: root.page-gutter;
                                 least: Frame.least;
                                 title: "Artists";
@@ -10606,6 +10898,7 @@ export component AppWindow inherits Window {
                             }
                             // Only the rows on screen (and a few either side) are made, as a page's.
                             liked-songs := Rectangle {
+                                opacity: waiting.answer;
                                 property <length> head: root.songs.length > 0 ? 28px : 0;
                                 property <length> seen-from: -favorites-flick.content-y - self.y - self.head - 400px;
                                 property <length> seen-to: -favorites-flick.content-y - self.y - self.head + favorites-flick.height + 400px;
@@ -10640,9 +10933,18 @@ export component AppWindow inherits Window {
                 // The genres with songs, by name, as Android's list: each its songs counted, opening its page.
                 if root.view == View.genres: Fade {
                     push: true;
+                    if waiting.sketch > 0: PageSketch {
+                        x: Frame.column-x(parent.width);
+                        y: Chrome.top-room + 8px + 58px;
+                        width: Frame.column-w(parent.width);
+                        parts: root.sketch;
+                        fill: parent.height - self.y;
+                        opacity: waiting.sketch;
+                    }
                     LineList {
                         title: "Genres";
                         for g in root.genres: PlainLine {
+                            opacity: waiting.answer;
                             text: g.title;
                             count: g.count;
                             clicked => { root.open-genre(g.id); }
@@ -11097,7 +11399,21 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
+                                // While the page reads, the sketch of its songs (or its shelves), hanging from here
+                                // over where they will stand.
+                                if waiting.sketch > 0: Rectangle {
+                                    height: 0;
+                                    PageSketch {
+                                        y: 0;
+                                        width: parent.width;
+                                        parts: root.sketch;
+                                        rows-inset: 0;
+                                        fill: page-flick.height;
+                                        opacity: waiting.sketch;
+                                    }
+                                }
                                 if root.page-kind == PageLayout.artist: ReleaseShelves {
+                                    opacity: waiting.answer;
                                     shelves: root.page-shelves;
                                     titled: true;
                                     rev: root.covers-rev;
@@ -11130,6 +11446,7 @@ export component AppWindow inherits Window {
                                 // Only the rows on screen (and a few either side) are made: a playlist of thousands
                                 // opens as fast as one of ten.
                                 song-rows := Rectangle {
+                                    opacity: waiting.answer;
                                     // A playlist's and an artist's songs come from many albums: each row shows its cover and album.
                                     property <bool> mixed: root.page-kind != PageLayout.album;
                                     property <length> row-h: self.mixed ? 56px : 44px;
@@ -11450,8 +11767,9 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // Said only when the read takes a moment, then faded in: a page that comes at once never shows it.
-                if root.loading: Text {
+                // A view with no sketch says it reads, only when the read takes a moment, then faded in: a page
+                // that comes at once never shows it.
+                if root.loading && root.sketch.length == 0: Text {
                     property <bool> said;
                     text: "Loading…";
                     color: Theme.dim;

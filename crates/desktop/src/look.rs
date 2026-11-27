@@ -133,6 +133,8 @@ impl Look {
         theme.set_hover(c(with_alpha(t[dress::ON], 0.06)));
         theme.set_chosen(c(with_alpha(t[dress::ON], 0.10)));
         theme.set_fill(c(t[dress::FIELD]));
+        theme.set_sketch(c(t[dress::SKETCH]));
+        theme.set_sheen(c(t[dress::SKETCH_SHEEN]));
         theme.set_raised(c(t[dress::SURFACE_CONTAINER_HIGH]));
         theme.set_accent(c(t[dress::ACCENT]));
         theme.set_on_accent(c(t[dress::ON_PRIMARY]));

@@ -35,7 +35,7 @@ use crate::words;
 use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
 use nori_core::providers::AfterAdding;
 
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, ShelfShape, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, IdentityLine, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, ShelfShape, SketchArt, SketchKind, SketchPart, SongGo, SongPlace, SongRow, TopBar, View, WorkCard};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -879,6 +879,29 @@ fn home_shelves(rows: &[nori_core::settings::HomeRow]) -> Vec<Shelf> {
     rows.iter().zip(shapes).map(|(&r, shape)| Shelf { title: words::home_row(r).into(), cards: ModelRc::default(), loaded: false, shape }).collect()
 }
 
+/// What the view `req` fills stands in place of it while it reads (the core's `sketch`): the parts of its
+/// page, its head known (a page shows what the card that opened it knew).
+fn sketch(req: &Req) -> Vec<SketchPart> {
+    use nori_core::sketch::{Art, Reading, Sketch};
+    let reading = match req {
+        Req::Home(_) => Some(Reading::Home),
+        Req::Page(ask) => ask.reading(),
+    };
+    let art = |a| match a {
+        Art::Square => SketchArt::Square,
+        Art::Round => SketchArt::Round,
+        Art::Number => SketchArt::Number,
+        Art::Bare => SketchArt::Bare,
+    };
+    let part = |s| match s {
+        Sketch::Head { art: a } => SketchPart { kind: SketchKind::Head, art: art(a) },
+        Sketch::Shelf { art: a } => SketchPart { kind: SketchKind::Shelf, art: art(a) },
+        Sketch::Grid { art: a } => SketchPart { kind: SketchKind::Grid, art: art(a) },
+        Sketch::Rows { art: a } => SketchPart { kind: SketchKind::Rows, art: art(a) },
+    };
+    reading.map(|r| nori_core::sketch::sketch(r, true).into_iter().map(part).collect()).unwrap_or_default()
+}
+
 /// What a Home section holds, which decides its shape ([`home_shapes`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Holds {
@@ -939,6 +962,11 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
     ui.set_show_all_text(words::SHOW_ALL.into());
     ui.set_mixing_label(words::MIXING.into());
     ui.set_first_run_words(words::first_run());
+    let stage = nori_core::stage::stage();
+    let sketch = ui.global::<crate::Sketch>();
+    sketch.set_after(stage.quick_load_ms);
+    sketch.set_pass(stage.sheen_ms.into());
+    sketch.set_ease(stage.fade_ms.into());
     let (tx, inbox) = Tx::new(ui.as_weak());
     let art = Rc::new(RefCell::new(Art::default()));
     let app = Rc::new_cyclic(|me: &Weak<RefCell<App>>| {
@@ -2038,6 +2066,7 @@ impl App {
     fn load(&mut self, req: Req) {
         let Some(s) = &self.session else { return };
         self.ui().set_loading(true);
+        self.ui().set_sketch(ModelRc::new(VecModel::from(sketch(&req))));
         if !self.want.contains(&req) {
             self.want.push(req.clone());
         }
@@ -3656,7 +3685,11 @@ impl App {
         let on_page = self.ui().get_view() == View::Page;
         let shown = |id: &str| on_page && self.page_playlist().is_some_and(|p| p.id == id);
         match change {
-            PlaylistChange::Changed(id) if shown(&id) => self.load(Req::Page(PageAsk::Playlist(id))),
+            PlaylistChange::Changed(id) if shown(&id) => {
+                self.load(Req::Page(PageAsk::Playlist(id)));
+                // Read again in place: the page stays while it comes.
+                self.ui().set_loading(false);
+            }
             PlaylistChange::Deleted(id) if shown(&id) => self.back(),
             _ => {}
         }
@@ -8624,6 +8657,8 @@ pub(crate) mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        // Home's For you is read: no placeholder shimmers behind the queue.
+        ui.set_picks_loaded(true);
         ui.set_has_song(true);
         ui.set_inspector(Panel::Queue);
         let row = |i: i32, n: i32| SongRow { title: format!("Song {n}").into(), index: i, playing: i == 0, ..Default::default() };
@@ -9403,6 +9438,43 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_slow_read_shows_placeholders_that_shimmer_until_its_answer() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_picks_loaded(true);
+        ui.set_view(View::Albums);
+        ui.show().unwrap();
+        let step = |ms: u64| {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(ms));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap()
+        };
+        let idle = step(1000);
+        ui.set_loading(true);
+        ui.set_sketch(ModelRc::new(VecModel::from(sketch(&Req::Page(PageAsk::Albums { sort: nori_core::browse::AlbumSort::Newest, offset: 0, favorites: false })))));
+        let blank = step(1);
+        assert!(step(100).as_slice() == blank.as_slice(), "nothing shows inside the quick-load time");
+        step(200);
+        let shown = step(300);
+        assert!(shown.as_slice() != blank.as_slice(), "past it, the albums' places");
+        assert!(ui.window().has_active_animations(), "the shimmer runs while they show");
+        assert!(step(500).as_slice() != shown.as_slice(), "and moves");
+        ui.global::<Motion>().set_reduced(true);
+        let still = step(100);
+        assert!(step(500).as_slice() == still.as_slice() && !ui.window().has_active_animations(), "reduced motion: they stand still");
+        ui.global::<Motion>().set_reduced(false);
+        step(100);
+        ui.set_loading(false);
+        step(1);
+        step(1000);
+        assert!(!ui.window().has_active_animations(), "nothing runs once the answer shows");
+        assert!(step(500).as_slice() == idle.as_slice(), "and the placeholders are gone");
+    }
+
+    #[test]
     fn mixing_is_only_visible_in_fullscreen() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
@@ -9410,6 +9482,8 @@ pub(crate) mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_mixing_label(words::MIXING.into());
+        // Home's For you is read: no placeholder shimmers behind the player.
+        ui.set_picks_loaded(true);
         ui.set_has_song(true);
         ui.set_playing(true);
         ui.set_now_title("Track".into());
