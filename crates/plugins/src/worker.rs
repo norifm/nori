@@ -4,13 +4,14 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use wasmtime::component::Component;
 use wasmtime::Store;
 
 use crate::host::Caller;
 use crate::manifest::{Manifest, Refusal};
+use crate::runtime::points::provider::ProviderInfo;
 use crate::runtime::{self, Host, Plugin};
 use crate::safe::Mark;
 
@@ -30,12 +31,15 @@ type Opening = Arc<dyn Fn(&mut Store<Host>, &Plugin) -> wasmtime::Result<()> + S
 pub struct Worker {
     jobs: mpsc::Sender<Job>,
     opening: Arc<Mutex<Option<Opening>>>,
+    /// A provider's info, set by its first call: None when it didn't answer, or is no provider.
+    info: Arc<OnceLock<Option<Option<ProviderInfo>>>>,
 }
 
 impl Worker {
     /// Each job on its thread is marked as a call of the plugin's (`mark`), for safe mode.
     pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, shared: runtime::Shared, mark: Mark) -> Result<Worker, Refusal> {
         let linker = runtime::linker(&component)?;
+        let provider = manifest.extends("provider");
         let (jobs, rx) = mpsc::channel::<Job>();
         let name = format!("plugin {}", manifest.id);
         let opening: Arc<Mutex<Option<Opening>>> = Arc::default();
@@ -71,7 +75,24 @@ impl Worker {
                 }
             })
             .map_err(|e| Refusal::Unreadable(e.to_string()))?;
-        Ok(Worker { jobs, opening })
+        let info: Arc<OnceLock<Option<Option<ProviderInfo>>>> = Arc::default();
+        if provider {
+            let kept = info.clone();
+            let _ = jobs.send(Box::new(move |running| {
+                let _ = kept.set(attempt(running, |store, plugin| plugin.nori_plugin_provider().call_info(store)));
+            }));
+        } else {
+            let _ = info.set(None);
+        }
+        Ok(Worker { jobs, opening, info })
+    }
+
+    /// The provider's info as it said it (what its add form asks, how its account signs in); None
+    /// when it didn't answer (it can't start, or trapped). It never changes while the plugin runs, so
+    /// it is asked once, as its first call, and asking here never waits behind the plugin's other
+    /// calls (a read on its way over the network).
+    pub fn provider_info(&self) -> Option<Option<ProviderInfo>> {
+        self.info.wait().clone()
     }
 
     /// Tells the instance `f` now, and each fresh one (started after a failed call) before its calls:

@@ -90,6 +90,9 @@ Each running plugin has its own instance on a thread of its own, the `Worker` (`
 call. Its calls may block: its HTTP waits on the core's transport there, so the core's executors never
 wait on a plugin.
 
+- **A provider's info.** A provider's first call asks for its info: its add form and its sign-in. The
+  worker keeps the answer (`Worker::provider_info`), so a screen that shows it never waits behind a
+  read.
 - **Fresh instances.** A call that traps or spends its fuel fails, and the instance is dropped. The
   next job makes a fresh one, which runs `lifecycle.start` again and hears the provider's opening again
   (`Worker::opens`).

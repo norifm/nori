@@ -57,3 +57,32 @@ fn another_channel_chosen_shows_its_own_library() {
     assert_eq!(playlists_shown(&client), ["Ada's covers"], "the kept list was the other channel's");
     assert_eq!(block_on(client.account_picture()).as_deref(), Some("https://pictures.example/covers=s{size}"));
 }
+
+/// The provider's info comes while the plugin is busy with a call (a read on its way): a client's
+/// screen asks it on its own thread, which must never wait for the network.
+#[test]
+fn a_providers_info_never_waits_behind_its_calls() {
+    let dir = nori_testdir::TempDir::new("info-waits");
+    let settings = Settings::new();
+    settings.open(&nori_host::db_path(dir.path())).unwrap();
+    let plugins = nori_plugins::open(dir.join("plugins"), settings, Arc::new(nori_plugins::testing::Quiet));
+    plugins.install(&nori_plugins::testing::fixture("")).unwrap();
+    plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
+    let worker = plugins.worker(nori_plugins::testing::FIXTURE).unwrap();
+    let kinds = nori_core::providers::Kinds::with_plugins(plugins);
+    let (began, busy) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let call = std::thread::spawn(move || {
+        block_on(worker.call(move |_, _| {
+            began.send(()).unwrap();
+            let _ = released.recv_timeout(std::time::Duration::from_secs(30));
+            Ok(())
+        }))
+    });
+    busy.recv().unwrap();
+    let fixture = kinds.providers().into_iter().find(|p| p.kind == ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }).unwrap();
+    assert!(!call.is_finished(), "the info waited for the call");
+    release.send(()).unwrap();
+    call.join().unwrap();
+    assert_eq!(fixture.identities, Some(IdentityKind::Channel));
+}

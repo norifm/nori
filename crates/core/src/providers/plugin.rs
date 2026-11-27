@@ -31,8 +31,6 @@ pub(crate) struct PluginProvider {
     id: String,
     plugins: Arc<Plugins>,
     worker: Worker,
-    /// Its add form and sign-in, asked until it answers, then kept.
-    info: std::sync::OnceLock<ProviderInfo>,
     /// Its rules as it last said, for the profile open, and how far ahead songs may be fetched.
     rules: RwLock<Option<(ProfileRules, Option<usize>)>>,
     /// The profile open, as [`Provider::configure`] was given it.
@@ -49,7 +47,7 @@ impl PluginProvider {
     pub(crate) fn new(id: &str, plugins: Arc<Plugins>) -> Option<PluginProvider> {
         let worker = plugins.worker(id)?;
         let cover_sizes = plugins.running().into_iter().find(|i| i.manifest.id == id).map(|i| i.manifest.cover_sizes.clone()).unwrap_or_default();
-        Some(PluginProvider { id: id.to_string(), plugins, worker, info: std::sync::OnceLock::new(), rules: RwLock::new(None), open: RwLock::default(), account: RwLock::new(AccountState::SignedOut), unkept: RwLock::default(), cover_sizes })
+        Some(PluginProvider { id: id.to_string(), plugins, worker, rules: RwLock::new(None), open: RwLock::default(), account: RwLock::new(AccountState::SignedOut), unkept: RwLock::default(), cover_sizes })
     }
 
     fn kind(&self) -> ServerKind {
@@ -254,15 +252,34 @@ fn change(c: Write) -> Option<w::Change> {
 
 #[async_trait::async_trait]
 impl Provider for PluginProvider {
-    /// A plugin that doesn't answer (it can't start, or trapped) asks nothing for now; it is asked
-    /// again next time rather than kept as a form with no fields.
+    /// As the plugin said when it started ([`Worker::provider_info`]), with nori's proxy field; a provider
+    /// saying nothing asks nothing but the proxy, one that didn't answer (it can't start, or trapped)
+    /// nothing at all.
     fn info(&self) -> ProviderInfo {
-        if let Some(info) = self.info.get() {
-            return info.clone();
-        }
-        match self.ask_info() {
-            Some(info) => self.info.get_or_init(|| info).clone(),
-            None => ProviderInfo { kind: self.kind(), fields: Vec::new(), sign_in: Vec::new(), identities: None },
+        let Some(said) = self.worker.provider_info() else {
+            return ProviderInfo { kind: self.kind(), fields: Vec::new(), sign_in: Vec::new(), identities: None };
+        };
+        let said = said.unwrap_or(w::ProviderInfo { fields: Vec::new(), sign_in: Vec::new(), identities: None });
+        let field = |f: w::Field| match f {
+            w::Field::Name => FormField::Name,
+            w::Field::Address => FormField::Address,
+            w::Field::User => FormField::User,
+            w::Field::Password => FormField::Password,
+            w::Field::SecondAddress => FormField::SecondAddress,
+            w::Field::ApiKey => FormField::ApiKey,
+            w::Field::Headers => FormField::Headers,
+        };
+        ProviderInfo {
+            kind: self.kind(),
+            fields: said.fields.into_iter().map(|f| FieldSpec { what: field(f.field), advanced: f.advanced }).chain([super::PROXY_FIELD]).collect(),
+            sign_in: said.sign_in.into_iter().map(|s| match s {
+                w::SignInWay::WebPage(start_url) => SignIn::WebPage { start_url },
+                w::SignInWay::Paste => SignIn::Paste,
+                w::SignInWay::Code => SignIn::Code,
+            }).collect(),
+            identities: said.identities.map(|k| match k {
+                w::IdentityKind::Channel => IdentityKind::Channel,
+            }),
         }
     }
 
@@ -450,34 +467,6 @@ impl PluginProvider {
         let profile = self.open.read().clone();
         client.core.set_rules(self.ask_rules(&profile, false));
         result
-    }
-
-    /// Its form and sign-in as it says, and nori's proxy fields; None when it didn't answer. A provider
-    /// saying nothing asks nothing but the proxy.
-    fn ask_info(&self) -> Option<ProviderInfo> {
-        let said = self.now(|s, x| x.nori_plugin_provider().call_info(s))?;
-        let said = said.unwrap_or(w::ProviderInfo { fields: Vec::new(), sign_in: Vec::new(), identities: None });
-        let field = |f: w::Field| match f {
-            w::Field::Name => FormField::Name,
-            w::Field::Address => FormField::Address,
-            w::Field::User => FormField::User,
-            w::Field::Password => FormField::Password,
-            w::Field::SecondAddress => FormField::SecondAddress,
-            w::Field::ApiKey => FormField::ApiKey,
-            w::Field::Headers => FormField::Headers,
-        };
-        Some(ProviderInfo {
-            kind: self.kind(),
-            fields: said.fields.into_iter().map(|f| FieldSpec { what: field(f.field), advanced: f.advanced }).chain([super::PROXY_FIELD]).collect(),
-            sign_in: said.sign_in.into_iter().map(|s| match s {
-                w::SignInWay::WebPage(start_url) => SignIn::WebPage { start_url },
-                w::SignInWay::Paste => SignIn::Paste,
-                w::SignInWay::Code => SignIn::Code,
-            }).collect(),
-            identities: said.identities.map(|k| match k {
-                w::IdentityKind::Channel => IdentityKind::Channel,
-            }),
-        })
     }
 }
 
