@@ -184,13 +184,16 @@
     white-space: nowrap;
   }
 
-  /* Wide: the cover and the controls centred in the left half, as tall as they are. */
+  /* Wide: the cover and the controls centred in the left half, as tall as they are. The cover shrinks
+     with the window; the column keeps at least the transport's width (36 + 50 + 76 + 50 + 36), the cover
+     centred over it, so the controls and the seek bar never get narrower than the transport. */
   .left {
     --side: min(460px, 100vh - 330px, 50vw - 120px);
+    --column: max(var(--side), 248px);
     position: absolute;
-    left: calc(25vw - var(--side) / 2);
+    left: calc(25vw - var(--column) / 2);
     top: 50%;
-    width: var(--side);
+    width: var(--column);
     transform: translateY(-50%);
     display: flex;
     flex-direction: column;
@@ -202,7 +205,8 @@
     }
   }
   .wide .art {
-    width: 100%;
+    width: var(--side);
+    align-self: center;
     margin-bottom: 26px;
     cursor: default;
   }

@@ -12095,25 +12095,31 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // The artwork and the controls in the left half; the panel in the right.
+            // The artwork and the controls in the left half; the panel in the right. The cover shrinks with the
+            // window; the column keeps at least the transport's width (36 + 50 + 76 + 50 + 36), the cover centred
+            // over it, so the controls and the seek bar never get narrower than the transport.
             property <length> side: min(460px, root.height - 350px, root.width / 2 - 120px);
+            property <length> column: max(self.side, 248px);
             property <length> art-rise: root.full-player ? 0px : 30px;
             animate art-rise { duration: Motion.reduced ? 0ms : 420ms; enabled: !Motion.reduced; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
             full-art := VerticalLayout {
-                x: root.width / 4 - parent.side / 2;
+                x: root.width / 4 - parent.column / 2;
                 y: (root.height - self.preferred-height) / 2 + parent.art-rise;
-                width: parent.side;
+                width: parent.column;
                 height: self.preferred-height;
                 spacing: 0;
-                Art {
-                    width: parent.width;
-                    height: self.width;
-                    border-radius: 8px;
-                    source: root.sleeved ? root.sleeve : root.art(root.now-art, 1, root.covers-rev);
-                    transform-scale: root.playing ? 1 : 0.9;
-                    animate transform-scale { duration: Motion.reduced ? 0ms : 500ms; enabled: !Motion.reduced; easing: cubic-bezier(0.3, 1.35, 0.6, 1); }
-                    RightPress {
-                        menu(x, y) => { root.song-menu-at(x, y); }
+                HorizontalLayout {
+                    alignment: center;
+                    Art {
+                        width: full-screen.side;
+                        height: self.width;
+                        border-radius: 8px;
+                        source: root.sleeved ? root.sleeve : root.art(root.now-art, 1, root.covers-rev);
+                        transform-scale: root.playing ? 1 : 0.9;
+                        animate transform-scale { duration: Motion.reduced ? 0ms : 500ms; enabled: !Motion.reduced; easing: cubic-bezier(0.3, 1.35, 0.6, 1); }
+                        RightPress {
+                            menu(x, y) => { root.song-menu-at(x, y); }
+                        }
                     }
                 }
                 Rectangle {
