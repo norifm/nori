@@ -16,13 +16,15 @@ use nori_plugins::{AssetLine, AssetState, Category, ControlledDevice, Offer, Off
 use crate::app::{Cmd, Overlay, PluginCmd, Sel, SoundToolCmd, Target, View};
 use crate::art::Day;
 
-/// A group of the page: the terminal's own, one of the core's pages, the plugins, or About.
+/// A group of the page: the terminal's own, one of the core's pages, the plugins, About, or the way to the
+/// Support page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gid {
     Own,
     Core(SettingsPage),
     Plugins,
     About,
+    Support,
 }
 
 /// What opening a row does.
@@ -65,8 +67,9 @@ pub struct Group {
     pub summary: &'static str,
 }
 
-/// The groups in page order: the core's pages in its order, the terminal's own after the look.
-pub const GROUPS: [Group; 10] = [
+/// The groups in page order: the core's pages in its order, the terminal's own after the look, Support last
+/// (only in a build with a support service, `groups`).
+pub const GROUPS: [Group; 11] = [
     Group { id: Gid::Core(SettingsPage::Servers), title: "Profiles", summary: "Accounts and music folder" },
     Group { id: Gid::Core(SettingsPage::Playing), title: "Playback", summary: "Crossfade, AutoMix, queue" },
     Group { id: Gid::Core(SettingsPage::Sound), title: "Sound", summary: "Equalizer, volume, output" },
@@ -77,7 +80,14 @@ pub const GROUPS: [Group; 10] = [
     Group { id: Gid::Core(SettingsPage::Data), title: "Downloads and storage", summary: "Quality, downloads, space" },
     Group { id: Gid::Plugins, title: "Plugins", summary: "Installed plugins and their settings" },
     Group { id: Gid::About, title: "About", summary: "Version, licenses" },
+    Group { id: Gid::Support, title: text::SUPPORT_TITLE, summary: "" },
 ];
+
+/// The groups this build shows: Support only with a support service.
+pub fn groups() -> impl Iterator<Item = &'static Group> {
+    let supported = nori_core::support::support_service().is_some();
+    GROUPS.iter().filter(move |g| supported || g.id != Gid::Support)
+}
 
 /// What a link or button does.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -366,7 +376,7 @@ impl SettingsView {
                 Some((PluginPage::Plugin(id), _)) => vec![plugin_page(&self.own, id)],
                 Some((PluginPage::Device(id), _)) => vec![device_page(&self.own, id)],
                 Some((PluginPage::Sub { plugin, device, page }, _)) => vec![sub_page(&self.own, plugin, device.as_deref(), page)],
-                None => GROUPS.iter().filter(|g| !alone || g.id == Gid::Plugins).map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect(),
+                None => groups().filter(|g| !alone || g.id == Gid::Plugins).map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect(),
             });
         }
         self.pages.as_deref().expect("made above")
@@ -393,7 +403,7 @@ impl SettingsView {
         (&mut self.row, n)
     }
 
-    /// Index in `GROUPS` of the selected line's group.
+    /// Index in `groups()` of the selected line's group.
     pub fn group_at(&self) -> usize {
         let Some(pages) = self.pages.as_deref() else { return 0 };
         Self::lines(pages).iter().take(self.row.at + 1).filter(|l| matches!(l, Line::Group(..))).count().saturating_sub(1)
@@ -693,6 +703,7 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
         Gid::Plugins => plugins_page(own, p.plugins_off),
         Gid::About if !f.rules.settings.contains(&SettingsPart::About) => Vec::new(),
         Gid::About => about(own),
+        Gid::Support => vec![section("", vec![Row::Link { title: text::SUPPORT_TITLE.into(), status: String::new(), action: Act::Support }])],
         Gid::Core(page) => {
             let facts = page_facts(f);
             let mut sections = Vec::new();
@@ -1562,12 +1573,10 @@ fn about(own: &Own) -> Vec<Section> {
             info("Data kept in", own.data.clone()),
         ],
     };
-    // A build with a support service offers its page here.
-    let support = nori_core::support::support_service().map(|_| section("", vec![Row::Link { title: text::SUPPORT_TITLE.into(), status: String::new(), action: Act::Support }]));
     use nori_core::credits::{core_credits, terminal_credits, terminal_data_credits, Credit};
     let credits = |list: Vec<Credit>| list.into_iter().map(|c| info(&c.name, format!("{} · {} · {}", c.what, c.copyright, c.licence))).collect();
     let groups = [(text::CORE_CREDITS, core_credits()), (text::TERMINAL_CREDITS, terminal_credits()), (text::DATA_CREDITS, terminal_data_credits())];
-    [version].into_iter().chain(support).chain(groups.into_iter().map(|(title, list)| section(title, credits(list)))).collect()
+    [version].into_iter().chain(groups.into_iter().map(|(title, list)| section(title, credits(list)))).collect()
 }
 
 /// The value shown at a row's end (toggles are drawn by the ui).

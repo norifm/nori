@@ -1,14 +1,13 @@
 <script lang="ts">
   // About, as Android's: what this is and what it is built out of. Most of a bug report is answered here
-  // (which version, which browser), and a click on the first row copies all of it. Then the Support page in
-  // a build with a support service, what it runs on, and its license with the page of every credit
+  // (which version, which browser), and a click on the first row copies all of it. Then what it runs on, and its license with the page of every credit
   // (`#/settings/About/licenses`).
   import { href } from "../state/route.svelte";
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
 
-  let { version, supported }: { version: string; supported: boolean } = $props();
+  let { version }: { version: string } = $props();
   const title = $derived(W.aboutTitle(version));
   const build = W.aboutBuild(navigator.userAgent);
   const lines: [string, string][] = [
@@ -29,7 +28,6 @@
   <button class="group-row" data-row="version" onclick={() => void copy()}
     ><span class="words"><span>{title}</span><span class="sub">{build}</span></span><span class="value">{W.copyIt}</span></button
   >
-  {#if supported}<a class="group-row" href={href("support")}><span class="words">{W.supportTitle}</span><Icon name="nav-arrow-right" /></a>{/if}
 </div>
 <div class="group-label">{W.underTheHood}</div>
 <div class="group">

@@ -1470,7 +1470,7 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
     // The groups down the left when wide enough.
     let body = if body.width >= 96 && v.alone == settings_view::Alone::No && !v.deep() {
         let at = v.group_at();
-        for (g, group) in settings_view::GROUPS.iter().enumerate() {
+        for (g, group) in settings_view::groups().enumerate() {
             let r = Rect { x: body.x, y: body.y + g as u16, width: 18, height: 1 };
             if r.y >= body.y + body.height {
                 break;

@@ -207,7 +207,7 @@
 
 {#snippet settingsPage()}
   {#if name === "Look"}<Look />{/if}
-  {#if name === "About" && page.data}<About version={page.data.version} supported={page.data.supported} />{/if}
+  {#if name === "About" && page.data}<About version={page.data.version} />{/if}
   {#each drawn as sec (sec.id)}
     {@const rest = shownRows(sec)}
     {#if rest.length}

@@ -1579,9 +1579,13 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.setup_shown();
     });
     on!(ui.on_settings_tab_chosen, h, |a, t| {
+        let tab = crate::settings::tabs(&a.facts.rules.settings).get(t.max(0) as usize).copied();
+        if tab == Some(crate::settings::Tab::Support) {
+            return a.go(View::Support);
+        }
         a.ui().set_settings_tab(t);
         a.plugins_read();
-        if crate::settings::tabs(&a.facts.rules.settings).get(t.max(0) as usize) == Some(&crate::settings::Tab::Plugins) {
+        if tab == Some(crate::settings::Tab::Plugins) {
             a.plugins_look();
         }
         a.follow_sound_page(View::Settings);
@@ -5926,7 +5930,7 @@ impl App {
                 match crate::settings::tabs(&self.facts.rules.settings).get(self.ui().get_settings_tab().max(0) as usize) {
                     Some(crate::settings::Tab::Plugins) => Some(SoundPage::Plugin),
                     Some(crate::settings::Tab::Page(page)) => SoundPage::of_settings(*page),
-                    None => None,
+                    Some(crate::settings::Tab::Support) | None => None,
                 }
             }
             _ => None,
@@ -6181,7 +6185,6 @@ impl App {
     fn setting_action(&mut self, name: &str) {
         match Act::of(name) {
             Some(Act::Equalizer) => self.go(View::Equalizer),
-            Some(Act::Support) => self.go(View::Support),
             Some(Act::CopyReport) => self.copy(crate::settings::about_report(), words::REPORT_COPIED),
             Some(Act::Licences) => self.go(View::Licences),
             Some(Act::Licence(at)) => {

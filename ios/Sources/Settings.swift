@@ -51,6 +51,10 @@ final class SettingsPage: CardsPage {
         } else {
             rows.append(GroupRow(Say.appearance, subtitle: Say.lookSummary, icon: Glyph.draw(Iconoir.palette, 20), chevron: true) { push(AppearancePage()) })
         }
+        // A build with a support service offers the Support page last.
+        if nori_ios_support_offered() != 0 {
+            rows.append(GroupRow(Say.supportTitle, icon: Glyph.draw(Iconoir.seal, 20), chevron: true) { push(SupportPage()) })
+        }
         set([GroupCard(rows)])
     }
 }
@@ -129,10 +133,6 @@ final class SettingsGroupPage: CardsPage {
                 GroupRow(Say.freeSoftware, value: "AGPL-3.0"),
                 GroupRow(Say.licences, chevron: true) { push(CreditsPage()) },
             ]))
-            // A build with a support service offers its page here.
-            if nori_ios_support_offered() != 0 {
-                views.append(GroupCard([GroupRow(Say.supportTitle, chevron: true) { push(SupportPage()) }]))
-            }
         default:
             break
         }

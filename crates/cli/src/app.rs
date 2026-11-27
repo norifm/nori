@@ -56,7 +56,7 @@ pub enum View {
     Stats,
     Equalizer,
     Settings,
-    /// Supporting nori, from About.
+    /// Supporting nori, from the end of Settings.
     Support,
     /// Full-window login form.
     Login,
@@ -1592,7 +1592,7 @@ pub enum Hit {
     Button(Button),
     SearchField,
     LoginLine(LoginLine),
-    /// Index into `settings_view::GROUPS`.
+    /// Index into `settings_view::groups()`.
     Group(usize),
     /// The equalizer's curve, off its points.
     Curve,
@@ -3857,7 +3857,7 @@ impl App {
             }
             Action::GroupBack | Action::GroupOn if self.on_settings() && !self.settings.deep() => {
                 let g = self.settings.group_at() as isize + if a == Action::GroupOn { 1 } else { -1 };
-                let last = crate::settings_view::GROUPS.len() as isize - 1;
+                let last = crate::settings_view::groups().count() as isize - 1;
                 self.settings.jump(g.clamp(0, last) as usize);
             }
             Action::GroupBack | Action::GroupOn if self.view == View::Search && !self.full => match self.search.chip_step(if a == Action::GroupOn { 1 } else { -1 }) {

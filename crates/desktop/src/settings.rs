@@ -146,7 +146,6 @@ impl<'a> Target<'a> {
 }
 
 const EQUALIZER: &str = "equalizer";
-const SUPPORT: &str = "support";
 const COPY_REPORT: &str = "copy-report";
 const LICENCES: &str = "licences";
 /// A credit's row on the licenses page is `licence:<its place in the page>`.
@@ -174,8 +173,6 @@ pub fn toggled(name: &str, on: bool) -> (&str, String) {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Act {
     Equalizer,
-    /// The Support page.
-    Support,
     /// About's facts copied, for a bug report.
     CopyReport,
     /// The licenses page.
@@ -222,7 +219,6 @@ impl Act {
         }
         match name {
             EQUALIZER => Some(Act::Equalizer),
-            SUPPORT => Some(Act::Support),
             COPY_REPORT => Some(Act::CopyReport),
             LICENCES => Some(Act::Licences),
             ADD_SERVER => Some(Act::AddServer),
@@ -308,25 +304,34 @@ fn minus(v: &str) -> String {
     v.replace('-', "−")
 }
 
-/// A category of Settings: one of the core's pages, or the plugins'.
+/// A category of Settings: one of the core's pages, the plugins', or the Support page, which opens over
+/// Settings as Android's row does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Page(SettingsPage),
     Plugins,
+    Support,
 }
 
 /// The desktop's categories: the pages the profile in use opens, in the core's order (`pages`), and
-/// Plugins before About, the last, as Android lists them.
+/// Plugins before About, as Android lists them; a build with a support service ends with Support.
 pub fn tabs(parts: &[nori_core::settings_pages::SettingsPart]) -> Vec<Tab> {
     let mut tabs: Vec<Tab> = settings_pages::pages(SettingsClient::Desktop, parts).into_iter().map(Tab::Page).collect();
     let about = tabs.iter().position(|t| *t == Tab::Page(SettingsPage::About)).unwrap_or(tabs.len());
     tabs.insert(about, Tab::Plugins);
+    if nori_core::support::support_service().is_some() {
+        tabs.push(Tab::Support);
+    }
     tabs
 }
 
 /// A category's name, as Android's settings list them.
 pub fn tab_name(tab: Tab) -> &'static str {
-    let Tab::Page(page) = tab else { return words::PLUGINS };
+    let page = match tab {
+        Tab::Page(page) => page,
+        Tab::Plugins => return words::PLUGINS,
+        Tab::Support => return words::SUPPORT_TITLE,
+    };
     match page {
         SettingsPage::Servers => "Profiles",
         SettingsPage::Playing => "Playback",
@@ -735,7 +740,7 @@ fn service(id: &str) -> Option<(&'static str, &'static str)> {
 }
 
 /// The groups of settings page `page`: each section's title and rows, with the desktop's own: the output
-/// device on Sound, the support page on About.
+/// device on Sound, About's facts.
 fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, plugged: &Plugged, page: SettingsPage, today: Today) -> Vec<(String, Vec<Row>)> {
     let s = settings_model::state(p, settings_model::Output::default(), model);
     let facts = PageFacts {
@@ -799,20 +804,17 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
         }
     }
     if page == SettingsPage::About {
-        return about(groups, nori_core::support::support_service().is_some());
+        return about(groups);
     }
     groups
 }
 
-/// About, as Android's: the version (pressed, it copies the report) and the Support page in a build with a
-/// support service, the core's updates, what nori is built with, and its license with the licenses page.
-fn about(updates: Vec<(String, Vec<Row>)>, support: bool) -> Vec<(String, Vec<Row>)> {
+/// About, as Android's: the version (pressed, it copies the report), the core's updates, what nori is built
+/// with, and its license with the licenses page.
+fn about(updates: Vec<(String, Vec<Row>)>) -> Vec<(String, Vec<Row>)> {
     let f = words::about_facts(env!("CARGO_PKG_VERSION"), cfg!(debug_assertions), std::env::consts::OS, std::env::consts::ARCH);
     let fact = |title: &str, detail: &str, end: &str, name: &str| Row { kind: FACT, name: name.into(), title: title.into(), detail: detail.into(), button: end.into(), enabled: true, ..Default::default() };
-    let mut nori = vec![fact(&f.title, &f.build, words::COPY_IT, COPY_REPORT)];
-    if support {
-        nori.push(Row { kind: LINK, name: SUPPORT.into(), title: words::SUPPORT_TITLE.into(), enabled: true, ..Default::default() });
-    }
+    let nori = vec![fact(&f.title, &f.build, words::COPY_IT, COPY_REPORT)];
     let hood = f.parts.iter().map(|(what, line)| fact(what, line, "", "")).collect();
     let open = vec![
         fact(words::FREE_SOFTWARE, words::LICENCE_LINE, "AGPL-3.0", ""),
