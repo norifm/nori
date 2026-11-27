@@ -101,26 +101,6 @@ pub fn id_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     Ok(opt_id(d)?.unwrap_or_default())
 }
 
-/// Serde for a record with derived display fields (derived as `remote = "Self"`): every deserialized copy
-/// gets them filled in by `dress`; they are never stored.
-macro_rules! dressed {
-    ($t:ty) => {
-        impl Serialize for $t {
-            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-                <$t>::serialize(self, s)
-            }
-        }
-
-        impl<'de> Deserialize<'de> for $t {
-            fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-                let mut v = <$t>::deserialize(d)?;
-                v.dress();
-                Ok(v)
-            }
-        }
-    };
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 #[serde(default, rename_all = "camelCase")]
@@ -267,7 +247,19 @@ impl Song {
     }
 }
 
-dressed!(Song);
+impl Serialize for Song {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        Song::serialize(self, s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Song {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let mut v = Song::deserialize(d)?;
+        v.dress();
+        Ok(v)
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -275,7 +267,6 @@ dressed!(Song);
 pub struct Album {
     #[serde(deserialize_with = "id_string")]
     pub id: String,
-    #[serde(alias = "title", alias = "album")]
     pub name: String,
     pub artist: String,
     #[serde(deserialize_with = "opt_id")]
@@ -334,7 +325,33 @@ impl Album {
     }
 }
 
-dressed!(Album);
+impl Serialize for Album {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        Album::serialize(self, s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Album {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // Servers like Subtidal and Gonic (and OpenSubsonic's getAlbumList2 example) repeat the
+        // name in `title` and `album` alongside `name`; `serde(alias)` rejects that as a duplicate.
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default)]
+            title: Option<String>,
+            #[serde(default, rename = "album")]
+            album_name: Option<String>,
+            #[serde(flatten, with = "Album")]
+            album: Album,
+        }
+        let Wire { title, album_name, mut album } = Wire::deserialize(d)?;
+        if album.name.is_empty() {
+            album.name = title.filter(|s| !s.is_empty()).or(album_name).unwrap_or_default();
+        }
+        album.dress();
+        Ok(album)
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -1041,6 +1058,26 @@ mod tests {
             let album: Album = serde_json::from_str(&format!(r#"{{"id":"1",{wire}}}"#)).unwrap();
             assert_eq!(album.released(), released, "{wire}");
             let kept: Album = serde_json::from_str(&serde_json::to_string(&album).unwrap()).unwrap();
+            assert_eq!(kept, album, "{wire} stored and read back");
+        }
+    }
+
+    #[test]
+    fn album_name_accepts_legacy_aliases_alongside_name() {
+        for (wire, expected) in [
+            (r#""album":"Forget and Remember","title":"Forget and Remember","name":"Forget and Remember""#, "Forget and Remember"),
+            (r#""name":"Primary","title":"Secondary","album":"Tertiary""#, "Primary"),
+            (r#""name":"","title":"From title","album":"From album""#, "From title"),
+            (r#""title":"Only title""#, "Only title"),
+            (r#""album":"Only album""#, "Only album"),
+            (r#""title":"","album":"From album""#, "From album"),
+            (r#""title":null,"album":"From album""#, "From album"),
+        ] {
+            let album: Album = serde_json::from_str(&format!(r#"{{"id":"al1","artist":"Comfort Fit","year":2005,{wire}}}"#)).unwrap();
+            assert_eq!(album.name, expected, "{wire}");
+            assert_eq!(album.subtitle, "Comfort Fit · 2005", "{wire}");
+            let stored = serde_json::to_string(&album).unwrap();
+            let kept: Album = serde_json::from_str(&stored).unwrap();
             assert_eq!(kept, album, "{wire} stored and read back");
         }
     }

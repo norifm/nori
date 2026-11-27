@@ -373,4 +373,25 @@ mod tests {
         assert!(l.synced);
         assert_eq!((l.lines[0].start_ms, l.lines[0].text.as_str(), l.lines[0].words.len()), (1500, "timed", 1));
     }
+
+    #[test]
+    fn albums_with_repeated_name_aliases_parse_across_endpoints() {
+        let item = r#"{"id":"al1","album":"Forget and Remember","title":"Forget and Remember","name":"Forget and Remember","artist":"Comfort Fit","artistId":"ar1","year":2005}"#;
+        let body = format!(
+            r#"{{"subsonic-response":{{"status":"ok","version":"1.16.1","type":"Subtidal","openSubsonic":true,
+            "searchResult3":{{"artist":[],"album":[{item}],"song":[]}},
+            "albumList2":{{"album":[{item}]}},
+            "album":{{"id":"al1","album":"Forget and Remember","title":"Forget and Remember","name":"Forget and Remember","artist":"Comfort Fit","song":[{{"id":"s1","title":"One"}}]}},
+            "artist":{{"id":"ar1","name":"Comfort Fit","album":[{item}]}},
+            "starred2":{{"artist":[],"album":[{item}],"song":[]}}
+            }}}}"#
+        );
+        let r = parse(body.as_bytes()).unwrap();
+        assert_eq!(r.search_result3.as_ref().unwrap().album[0].name, "Forget and Remember");
+        assert_eq!(r.album_list2.as_ref().unwrap().album[0].name, "Forget and Remember");
+        assert_eq!(r.album.as_ref().unwrap().album.name, "Forget and Remember");
+        assert_eq!(r.album.as_ref().unwrap().song.len(), 1);
+        assert_eq!(r.artist.as_ref().unwrap().album[0].name, "Forget and Remember");
+        assert_eq!(r.starred2.as_ref().unwrap().album[0].name, "Forget and Remember");
+    }
 }
