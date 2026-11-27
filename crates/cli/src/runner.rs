@@ -362,6 +362,7 @@ impl Runner {
                 }
                 let art = self.art.as_mut();
                 terminal.draw(|f| crate::ui::draw(f, app, art)).map_err(|e| e.to_string())?;
+                app.drew(Instant::now());
                 // Request card covers drawing found missing.
                 self.carry_out(app);
                 crate::term::debug!("drew {:?}: {:?} {:?} at {} ms, song {:?}", app.view, app.now.state, self.heard, app.now.position_ms, app.song.as_ref().map(|s| &s.title));

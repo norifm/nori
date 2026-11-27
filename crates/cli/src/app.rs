@@ -1696,13 +1696,20 @@ pub struct Shown {
     pub panel_w: u16,
     /// A seek clock is on screen, so playback needs a redraw each second.
     pub clock: bool,
+    /// A page's placeholders stand on screen (a read is on its way), and whether its read has outlasted
+    /// the quick-load time, so they are drawn.
+    pub sketched: bool,
+    pub sketch_due: bool,
 }
 
 impl Default for Shown {
     fn default() -> Self {
-        Shown { panel_w: 37, clock: true }
+        Shown { panel_w: 37, clock: true, sketched: false, sketch_due: false }
     }
 }
+
+/// A read answering this soon shows no placeholders (the core's `stage().quick_load_ms`).
+pub const QUICK_LOAD: Duration = Duration::from_millis(nori_core::stage::QUICK_LOAD_MS as u64);
 
 /// Columns before the note under a provider's song asked for, in the queue panel.
 pub const QUEUE_NOTE_INDENT: usize = 4;
@@ -1736,6 +1743,9 @@ pub struct App {
     /// (a device's, a plugin's), which Back from that page returns to, and the plugin pages open under it.
     device_under: Option<(View, Vec<Page>, usize)>,
     pub shown: Shown,
+    /// When the placeholders on screen first stood there: they show once the read outlasts the quick-load
+    /// time ([`App::drew`]).
+    pub sketch_from: Option<Instant>,
     pub queue: Option<PlaylistView>,
     /// Where what plays next comes from (`QueueRows::from`).
     pub queue_from: Option<String>,
@@ -2733,6 +2743,9 @@ impl App {
         if let Some(t) = self.search.ask_at {
             sooner(t);
         }
+        if let Some(t) = self.sketch_from.map(|from| from + QUICK_LOAD).filter(|&t| t > now) {
+            sooner(t);
+        }
         if let Some((_, _, since)) = &self.note {
             sooner(*since + NOTE_FOR);
         }
@@ -2749,6 +2762,12 @@ impl App {
     }
 
     /// Runs whatever is due at `now`.
+    /// After a frame: when its placeholders first stood, so they show once the read outlasts the
+    /// quick-load time; none once they are gone.
+    pub fn drew(&mut self, now: Instant) {
+        self.sketch_from = if self.shown.sketched { self.sketch_from.or(Some(now)) } else { None };
+    }
+
     pub fn tick(&mut self, now: Instant) {
         self.dirty = true;
         if self.search.ask_at.is_some_and(|t| t <= now) {

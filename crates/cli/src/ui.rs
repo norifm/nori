@@ -9,6 +9,7 @@ use std::time::Instant;
 use nori_core::client::Starrable;
 use nori_core::stars::StarMarks;
 use nori_core::search::SearchShown;
+use nori_core::sketch::{Art as Pictured, Reading, Sketch};
 use nori_core::Song;
 use nori_engine::State;
 use ratatui::layout::{Alignment, Rect};
@@ -288,6 +289,8 @@ fn item_line(item: &Item, w: usize, t: &Theme, starred: bool, playing: bool) -> 
 pub fn draw(f: &mut Frame, app: &mut App, mut art: Option<&mut Art>) {
     app.hits.clear();
     app.shown.clock = false;
+    app.shown.sketched = false;
+    app.shown.sketch_due = app.sketch_from.is_some_and(|at| at.elapsed() >= crate::app::QUICK_LOAD);
     let area = f.area();
     let t = app.look;
     put(f, Block::default().style(t.ground()), area);
@@ -506,6 +509,44 @@ fn loading(f: &mut Frame, area: Rect, t: &Theme) {
     text(f, area, "Loading…", t.dim());
 }
 
+/// A loading page's placeholders, as the core sketches `reading` (`sketch`, `known`: its head shows
+/// already): dim blocks where its lines will stand, still. Shown once the read outlasts the core's
+/// quick-load time (`Shown::sketch_due`); until then the page is blank.
+fn sketch(f: &mut Frame, area: Rect, t: &Theme, shown: &mut crate::app::Shown, reading: Reading, known: bool) {
+    shown.sketched = true;
+    if !shown.sketch_due {
+        return;
+    }
+    let w = area.width.saturating_sub(4) as usize;
+    let bar = |share: f32| "░".repeat(((w as f32 * share) as usize).max(1));
+    // Lines of their own lengths, so rows read as titles.
+    const SHARES: [f32; 8] = [0.32, 0.24, 0.38, 0.28, 0.35, 0.21, 0.3, 0.36];
+    let mut lines: Vec<Line> = Vec::new();
+    let row = |i: usize, art: Pictured| {
+        let lead = if art == Pictured::Number { format!("{:>3}  ", "░") } else { "  ".to_string() };
+        let second = match art {
+            Pictured::Bare => String::new(),
+            _ => format!("   {}", bar(SHARES[(i + 3) % 8] * 0.7)),
+        };
+        Line::from(Span::styled(format!("{lead}{}{second}", bar(SHARES[i % 8])), t.dim()))
+    };
+    for part in nori_core::sketch::sketch(reading, known) {
+        match part {
+            Sketch::Head { .. } => {
+                lines.extend([bar(0.4), bar(0.25), bar(0.3)].map(|b| Line::from(Span::styled(format!("  {b}"), t.dim()))));
+                lines.push(Line::from(""));
+            }
+            Sketch::Shelf { art } => {
+                lines.push(Line::from(Span::styled(format!("  {}", bar(0.18)), t.dim())));
+                lines.extend((0..4).map(|i| row(i, art)));
+                lines.push(Line::from(""));
+            }
+            Sketch::Grid { art } | Sketch::Rows { art } => lines.extend((0..area.height as usize).map(|i| row(i, art))),
+        }
+    }
+    put(f, Paragraph::new(lines), area);
+}
+
 fn empty(f: &mut Frame, area: Rect, t: &Theme, text: &str) {
     put(f, Paragraph::new(Span::styled(text.to_string(), t.dim())).wrap(ratatui::widgets::Wrap { trim: true }), Rect { height: area.height.min(2), ..area });
 }
@@ -516,7 +557,7 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     if lines.is_empty() {
         match &app.home.error {
             Some(e) => failed(f, area, t, e),
-            None => loading(f, area, t),
+            None => sketch(f, area, t, &mut app.shown, Reading::Home, false),
         }
         return;
     }
@@ -591,10 +632,17 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
     let view = app.view;
     let lines = app.library_lines();
     let playing = app.song.as_ref().map(|s| s.id.clone());
-    let App { library: l, hits, marks, rules, devices, .. } = app;
+    let App { library: l, hits, marks, rules, devices, shown, .. } = app;
     let stars = rules.stars;
     let seals = &*marks;
     let marks = Marks::of(marks, rules, devices);
+    let reading = match view {
+        View::Albums => Reading::Albums,
+        View::Artists => Reading::Artists,
+        View::Songs => Reading::Songs,
+        View::Genres => Reading::Genres,
+        _ => Reading::Playlists,
+    };
     let (loaded, more, one, many) = match view {
         View::Albums => (state(&l.albums), l.album_pages.more(), "album", "albums"),
         View::Artists => (state(&l.artists), false, "artist", "artists"),
@@ -621,7 +669,7 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
     }
     match loaded {
         Err(e) => return failed(f, body, t, &e),
-        Ok(None) => return loading(f, body, t),
+        Ok(None) => return sketch(f, body, t, shown, reading, false),
         Ok(Some(_)) if lines.is_empty() && l.artists_filter.shown() && view == View::Artists => return empty(f, body, t, "Nothing matches"),
         Ok(Some(_)) if lines.is_empty() => return empty(f, body, t, "Nothing here yet"),
         Ok(Some(_)) => {}
@@ -845,7 +893,7 @@ fn top_list(title: &str, rows: &[(String, String, u32)], w: usize, t: &Theme) ->
 
 fn favorites(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let playing = app.song.as_ref().map(|s| s.id.clone());
-    let App { library: l, hits, marks, rules, devices, .. } = app;
+    let App { library: l, hits, marks, rules, devices, shown, .. } = app;
     let marks = Marks::of(marks, rules, devices);
     let caption = l.favorites.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "song", "songs"));
     let body = heading(f, area, View::Favorites.name(), &caption, t);
@@ -857,7 +905,8 @@ fn favorites(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
             list(f, body, &mut l.favorites_sel, v.len(), ListRef::Favorites, hits, t, focused, &row);
         }
         Load::Failed(e) => failed(f, body, t, e),
-        _ => loading(f, body, t),
+        // The terminal lists the favorite songs alone.
+        _ => sketch(f, body, t, shown, Reading::Songs, false),
     }
 }
 
@@ -995,10 +1044,17 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let stars = app.rules.stars;
     let actions = app.page_actions();
     let missing = app.page_missing();
-    let App { pages, hits, marks, rules, devices, prefs, .. } = app;
+    let App { pages, hits, marks, rules, devices, prefs, shown, .. } = app;
     let seals = &*marks;
     let marks = Marks::of(marks, rules, devices);
     let Some(p) = pages.last_mut() else { return };
+    let reading = match p {
+        Page::Album { .. } | Page::DownloadedAlbum { .. } => Reading::Album,
+        Page::Artist { .. } => Reading::Artist,
+        Page::Playlist { .. } => Reading::Playlist,
+        Page::Genre { .. } | Page::Decade { .. } => Reading::Songs,
+        _ => Reading::Mix,
+    };
     // star: None when the page has no seal (an album's or artist's where seals are kept, a playlist's
     // pin where the account's are).
     let (title, by, caption, star): (String, String, String, Option<bool>) = match p {
@@ -1018,7 +1074,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Page::Album { known: Some(a), .. } => (a.name.clone(), a.artist.clone(), crate::text::known_caption(a.year, a.song_count, a.duration), stars.then(|| marks.stars.starred(Starrable::Album, &a.id, a.starred))),
         Page::Artist { known: Some(a), .. } => (a.name.clone(), String::new(), a.album_count.filter(|&n| n > 0).map(|n| crate::text::count(n as u64, "release", "releases")).unwrap_or_default(), stars.then(|| marks.stars.starred(Starrable::Artist, &a.id, a.starred))),
         Page::Playlist { known: Some(p), .. } => (p.name.clone(), p.owner.clone().unwrap_or_default(), crate::text::known_caption(0, p.song_count, p.duration), account.then(|| prefs.pinned_playlists.contains(&p.id))),
-        _ => return loading(f, area, t),
+        _ => return sketch(f, area, t, shown, reading, false),
     };
     if area.height < 5 {
         return;
@@ -1106,7 +1162,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Page::Row { items, sel, .. } => {
             list(f, body, sel, items.len(), ListRef::Page, hits, t, focused, &|i, w| item_line(&items[i], w, t, starred(&items[i], seals, stars), is_playing(&items[i], playing.as_deref())));
         }
-        _ => loading(f, body, t),
+        _ => sketch(f, body, t, shown, reading, true),
     }
 }
 

@@ -39,6 +39,7 @@ fn draw(a: &mut App, w: u16, h: u16) -> String {
 fn draw_with(a: &mut App, w: u16, h: u16, art: Option<&mut crate::art::Art>) -> String {
     let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
     t.draw(|f| crate::ui::draw(f, a, art)).unwrap();
+    a.drew(std::time::Instant::now());
     let buf = t.backend().buffer();
     LAST.with(|l| *l.borrow_mut() = Some(buf.clone()));
     let mut out = String::new();
@@ -387,11 +388,15 @@ fn an_album_opens_on_what_its_row_knew() {
     let r = hit_rect(&a, Hit::Row(ListRef::Albums, a.library.albums_sel.at));
     click(&mut a, r.x + 2, r.y);
     let s = draw(&mut a, 160, 40);
-    assert!(s.contains("Glass Harbour") && s.contains("Someone") && s.contains("2001 · 12 songs · 48:10") && s.contains("Loading"), "{s}");
+    assert!(s.contains("Glass Harbour") && s.contains("Someone") && s.contains("2001 · 12 songs · 48:10") && !s.contains('░'), "no placeholders inside the quick-load time: {s}");
+    a.sketch_from = a.sketch_from.map(|at| at - crate::app::QUICK_LOAD);
+    let s = draw(&mut a, 160, 40);
+    assert!(s.contains("Glass Harbour") && s.contains('░'), "past it, the songs' places: {s}");
     let songs = vec![song("s1", "Only Song", 100)];
     a.handle(Msg::Data(Req::Album("al-0".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-0", "Glass Harbour"), songs, vec![]))))));
     let s = draw(&mut a, 160, 40);
-    assert!(s.contains("Only Song") && !s.contains("Loading"), "{s}");
+    assert!(s.contains("Only Song") && !s.contains('░'), "{s}");
+    assert_eq!(a.sketch_from, None, "nothing waits once the answer shows");
 }
 
 #[test]
@@ -1509,12 +1514,15 @@ fn clock_wakes_only_where_drawn() {
     let now = Instant::now();
     a.now = crate::app::Now { state: State::Playing, position_ms: 12_300, at: now, fading_until: None, speed: 1.0, mixing: false, buffering: false };
     a.song = Some(Song { id: "s".into(), title: "Song".into(), duration: 200, ..Default::default() });
+    // Home is still read: past the quick-load time its placeholders are drawn, and nothing more wakes for them.
+    let later = now + crate::app::QUICK_LOAD + Duration::from_millis(1);
     draw(&mut a, 60, 10);
-    assert_eq!(a.next_wake(now), None, "a bar without a clock needs no tick");
+    assert_eq!(a.next_wake(now), a.sketch_from.map(|at| at + crate::app::QUICK_LOAD), "the placeholders wake once, to show");
+    assert_eq!(a.next_wake(later), None, "a bar without a clock needs no tick");
     draw(&mut a, 100, 40);
-    assert!(a.next_wake(now).is_some(), "the bar's clock ticks each second");
+    assert!(a.next_wake(later).is_some(), "the bar's clock ticks each second");
     draw(&mut a, 60, 10);
-    assert_eq!(a.next_wake(now), None, "a resize back drops the tick");
+    assert_eq!(a.next_wake(later), None, "a resize back drops the tick");
 }
 
 #[test]
