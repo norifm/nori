@@ -14,7 +14,7 @@
   const page = reading("decade", () => read<{ songs: Song[] }>({ kind: "decade", start }).then((p) => p.songs ?? []));
 </script>
 
-<Page title={W.decade(start)} back ready={!!page.data} error={page.error}>
+<Page title={W.decade(start)} back sketch="Songs" ready={!!page.data} error={page.error}>
   {#snippet head()}
     <div class="actions">
       <button class="pill small" onclick={() => void player.play(page.data ?? [], 0, false, "Songs", "")}><Icon name="play-solid" />{W.play}</button>

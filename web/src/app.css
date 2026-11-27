@@ -110,6 +110,9 @@
   --veil: color-mix(in srgb, var(--ink) 6%, transparent);
   --plate: linear-gradient(135deg, color-mix(in srgb, var(--ink) 13%, var(--page)), color-mix(in srgb, var(--ink) 6%, var(--page)));
   --switch-off: color-mix(in srgb, var(--ink) 16%, var(--page));
+  /* A loading page's placeholders and the band of their shimmer (the core's dress SKETCH, SKETCH_SHEEN). */
+  --sketch: color-mix(in srgb, var(--ink) 8%, var(--page));
+  --sheen: color-mix(in srgb, var(--ink) 13%, var(--page));
   --glass: color-mix(in srgb, var(--page) 55%, transparent);
   --chrome: color-mix(in srgb, var(--ink) 20%, transparent);
 }

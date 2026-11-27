@@ -862,6 +862,37 @@ impl Nori {
         Ok(Value::from(page_actions(kind, songs, 0, false).iter().map(|a| format!("{a:?}")).collect::<Vec<_>>()).to_string())
     }
 
+    /// What page `page` (a `sketch::Reading` by name) shows while it reads, its head shown already when
+    /// `known` (`sketch::sketch`): `[{ part, art }]`, each by name.
+    pub fn sketch(&self, page: String, known: bool) -> Result<String, JsValue> {
+        use nori_core::sketch::{sketch, Reading, Sketch};
+        let page = match page.as_str() {
+            "Home" => Reading::Home,
+            "Albums" => Reading::Albums,
+            "Artists" => Reading::Artists,
+            "Songs" => Reading::Songs,
+            "Playlists" => Reading::Playlists,
+            "Favorites" => Reading::Favorites,
+            "Genres" => Reading::Genres,
+            "Album" => Reading::Album,
+            "Artist" => Reading::Artist,
+            "Playlist" => Reading::Playlist,
+            "Mix" => Reading::Mix,
+            "Search" => Reading::Search,
+            _ => return Err(error(format!("no page {page}"))),
+        };
+        let part = |s: Sketch| {
+            let (part, art) = match s {
+                Sketch::Head { art } => ("Head", art),
+                Sketch::Shelf { art } => ("Shelf", art),
+                Sketch::Grid { art } => ("Grid", art),
+                Sketch::Rows { art } => ("Rows", art),
+            };
+            json!({ "part": part, "art": format!("{art:?}") })
+        };
+        Ok(Value::from(sketch(page, known).into_iter().map(part).collect::<Vec<_>>()).to_string())
+    }
+
     /// What row `index` of a playlist of `songs` songs offers to change, in order (`menus::playlist_edits`),
     /// by name; nothing unless the account may change it.
     pub fn playlist_edits(&self, index: u32, songs: u32, editable: bool) -> String {

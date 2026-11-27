@@ -11,6 +11,7 @@
   import { W } from "../words";
   import Cards from "./Cards.svelte";
   import Icon from "./Icon.svelte";
+  import Reads from "./Reads.svelte";
 
   let { sort, favorites = false, filter = "", top, head }: { sort: string; favorites?: boolean; filter?: string; top: string; head?: Snippet } = $props();
   /** This grid's pages, as the core reads them (`album_page`): `first` from the top again; null when none is to be read. */
@@ -73,6 +74,7 @@
 </script>
 
 {@render head?.()}
+<Reads ready={first.data !== undefined || !!first.error} reading="Albums" />
 {#if first.error}<p class="empty">{W.failed(first.error)}</p>
 {:else if first.data && !albums.length && filter.trim()}<p class="empty"><Icon name="search" />{W.nothingMatches(filter.trim())}</p>
 {:else if first.data && !albums.length && favorites}<p class="empty"><Icon name="seal" />{W.noFavoriteAlbums}</p>

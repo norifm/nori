@@ -14,6 +14,7 @@
   import ArtistHead from "../ui/ArtistHead.svelte";
   import Cards from "../ui/Cards.svelte";
   import Page from "../ui/Page.svelte";
+  import Reads from "../ui/Reads.svelte";
   import PageTools from "../ui/PageTools.svelte";
   import Seal from "../ui/Seal.svelte";
   import SongList from "../ui/SongList.svelte";
@@ -56,7 +57,7 @@
   });
 </script>
 
-<Page back ready={!!a} error={page.error}>
+<Page back sketch="Artist" ready={!!a} error={page.error}>
   {#if a}
     <ArtistHead id={a.id} name={a.name} cover={a.cover} picture={data?.picture} onplay={(s) => void player.playWhole("artist", id, s)}>
       {#snippet actions()}
@@ -67,6 +68,7 @@
       <span class="caption">{label}</span>
       {#if data}<PageTools tools={data.tools} artist={a.id} />{/if}
     </div>
+    <Reads ready={!!data || !!page.error} reading="Artist" known />
     {#if about?.biography || links.length}
       <div class="about">
         {#if about?.biography}<p class="bio" class:open bind:this={bio}>{about.biography}</p>{/if}

@@ -1,14 +1,16 @@
 <script lang="ts">
   // A page: its big title (with a way back where it is not a top page, and its own controls beside),
-  // then what it shows; while its read is out, a quiet word; if it failed, why. `narrow`: on a wide window,
-  // the page stands in one column centered in it, the top bar's and the player's, edge to edge with them.
+  // then what it shows; while its read is out, its `sketch` (Reads: a `sketch::Reading` by name) or else a
+  // quiet word; if it failed, why. `narrow`: on a wide window, the page stands in one column centered in
+  // it, the top bar's and the player's, edge to edge with them.
   import type { Snippet } from "svelte";
   import { ask } from "../rpc";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
+  import Reads from "./Reads.svelte";
   import { PLACES, sectionPage } from "./TopPill.svelte";
 
-  let { title = "", back = false, narrow = false, places = false, error, ready = true, head, children }: { title?: string; back?: boolean; narrow?: boolean; places?: boolean; error?: string; ready?: boolean; head?: Snippet; children: Snippet } = $props();
+  let { title = "", back = false, narrow = false, places = false, error, ready = true, sketch, head, children }: { title?: string; back?: boolean; narrow?: boolean; places?: boolean; error?: string; ready?: boolean; sketch?: string; head?: Snippet; children: Snippet } = $props();
   /** `places`: a library page, with the places the profile keeps (History) beside its title, a pill each
    *  with its glyph and its name, as Android's. */
   let kept = $state<string[]>([]);
@@ -31,8 +33,10 @@
     </header>
   {/if}
   {#if error}<p class="empty">{W.failed(error)}</p>
-  {:else if !ready}<p class="loading">{W.loading}</p>
-  {:else}{@render children()}{/if}
+  {:else}
+    {#if sketch}<Reads {ready} reading={sketch} />{/if}
+    {#if ready}{@render children()}{:else if !sketch}<p class="loading">{W.loading}</p>{/if}
+  {/if}
 </div>
 
 <style>

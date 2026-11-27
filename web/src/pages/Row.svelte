@@ -38,7 +38,7 @@
   const albums = $derived([...(first.data?.albums ?? []), ...rest]);
 </script>
 
-<Page title={W.homeRows[name] ?? name} back ready={!!first.data || first.data === null} error={first.error}>
+<Page title={W.homeRows[name] ?? name} back sketch="Albums" ready={!!first.data || first.data === null} error={first.error}>
   {#if first.data?.playlists}<Cards playlists={first.data.playlists} />
   {:else if albums.length}<Cards {albums} />
   {:else if first.data !== undefined}<p class="empty"><Icon name="compact-disc" />{W.noAlbums}</p>{/if}

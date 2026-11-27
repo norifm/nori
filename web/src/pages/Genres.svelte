@@ -11,6 +11,6 @@
   const page = reading("genres", () => read<{ genres: Genre[] }>({ kind: "genres" }).then((p) => p.genres ?? []));
 </script>
 
-<Page title={W.librarySections.Genres} back narrow ready={!!page.data} error={page.error}>
+<Page title={W.librarySections.Genres} back narrow sketch="Genres" ready={!!page.data} error={page.error}>
   <Lines lines={(page.data ?? []).map((g) => ({ key: g.name, href: href("genre", g.name), name: g.name, count: g.songCount }))} />
 </Page>

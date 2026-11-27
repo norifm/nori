@@ -7,6 +7,11 @@ import { fade, fly } from "svelte/transition";
 /** nori's Motion setting asks for less. */
 export const still = () => document.documentElement.classList.contains("still");
 
+/** A read answering this soon is shown without placeholders (the core's `stage().quick_load_ms`); what a
+ * page read fades in over its placeholders in `EASE_IN_MS`. */
+export const QUICK_LOAD_MS = 250;
+export const EASE_IN_MS = 180;
+
 /** `animate:settle` on a keyed each block's element. */
 export const settle = (node: Element, places: { from: DOMRect; to: DOMRect }) => flip(node, places, { duration: still() ? 0 : 320, easing: cubicOut });
 

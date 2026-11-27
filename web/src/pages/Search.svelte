@@ -16,6 +16,7 @@
   import Cover from "../ui/Cover.svelte";
   import Icon from "../ui/Icon.svelte";
   import Page from "../ui/Page.svelte";
+  import Reads from "../ui/Reads.svelte";
   import SectionTitle from "../ui/SectionTitle.svelte";
   import SongList from "../ui/SongList.svelte";
 
@@ -85,6 +86,8 @@
     <label class="field search-field box"><Icon name="search" /><input bind:this={field} type="search" placeholder={W.searchHint} aria-label={W.search} value={route.arg} oninput={(e) => searchFor(e.currentTarget.value)} onkeydown={(e) => e.key === "Enter" && (remember(), e.currentTarget.blur())} /></label>
   {/if}
   <div class="busy" class:on={busy} role="progressbar" aria-hidden={!busy} aria-label={W.loading}></div>
+  <!-- A first answer on its way: its results' places. -->
+  <Reads ready={!route.arg.trim() || !!v} reading="Search" />
   {#if !route.arg.trim()}
     {#if search.recent.length}
       <div class="recent-head"><SectionTitle title={W.recentSearches} /><button class="text-action" onclick={() => void forgetSearches()}>{W.clearSearches}</button></div>

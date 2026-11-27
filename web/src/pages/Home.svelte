@@ -60,7 +60,7 @@
   });
 </script>
 
-<Page title={W.listenNow} ready={!!page.data} error={page.error}>
+<Page title={W.listenNow} sketch="Home" ready={!!page.data} error={page.error}>
   {#key route.visit}<Continue />{/key}
   {#if mixes.length}
     <section class="shelf" data-row="ForYou">
@@ -87,7 +87,7 @@
   }
   /* The desktop's Home: the first row 22 px under the title (36 under the card to carry on). */
   @media (min-width: 720px) {
-    :global(.page-head) + .shelf > :global(.section-title) {
+    :global(.page-head) + :global(.reads) + .shelf > :global(.section-title) {
       padding-top: 6px;
     }
     :global(#continue) + .shelf > :global(.section-title) {

@@ -18,7 +18,7 @@
   const songs = $derived(mix?.songs ?? []);
 </script>
 
-<Page back ready={page.data !== undefined} error={page.error}>
+<Page back sketch="Mix" ready={page.data !== undefined} error={page.error}>
   {#if mix}
     <Hero cover={mix.covers[0]} title={W.mixNames[mix.name] ?? mix.name} fallback="sparks" item={itemMark("mix", id, { title: W.mixNames[mix.name] ?? mix.name, cover: mix.covers[0] })} label={songs.length ? W.listCaption(songs.length, mix.seconds) : ""} playable={songs.length > 0} onplay={(s) => void player.play(songs, 0, s, "Mix", id)}>
       {#snippet actions()}

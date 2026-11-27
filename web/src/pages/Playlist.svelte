@@ -16,6 +16,7 @@
   import Hero from "../ui/Hero.svelte";
   import Icon from "../ui/Icon.svelte";
   import Page from "../ui/Page.svelte";
+  import Reads from "../ui/Reads.svelte";
   import Seal from "../ui/Seal.svelte";
   import PageTools from "../ui/PageTools.svelte";
   import SongList from "../ui/SongList.svelte";
@@ -78,7 +79,7 @@
     ]);
 </script>
 
-<Page back ready={!!pl} error={page.error}>
+<Page back sketch="Playlist" ready={!!pl} error={page.error}>
   {#if pl}
     <Hero
       cover={pl.cover}
@@ -98,6 +99,7 @@
     </Hero>
     {#if offered}<label class="field search-field filter"><Icon name="search" /><input type="search" placeholder={W.filter} aria-label={W.filter} bind:value={filter} /></label>{/if}
     {#if rows?.length === 0}<p class="empty">{W.nothingMatches(filter)}</p>{/if}
+    <Reads ready={!!data || !!page.error} reading="Playlist" known />
     {#if data}
       {#if songs.length}<SongList {songs} {rows} kind="Playlist" {id} extra={edits} moved={pl.editable && !rows ? moved : undefined} />
       {:else}<p class="empty"><Icon name="music-note" />{W.noSongs}</p>{/if}

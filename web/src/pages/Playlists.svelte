@@ -13,7 +13,7 @@
   const page = reading("playlists", () => read<{ playlists: Playlist[] }>({ kind: "playlists" }).then((p) => p.playlists ?? []));
 </script>
 
-<Page title={W.playlists} back={!ui.wide} places ready={!!page.data} error={page.error}>
+<Page title={W.playlists} back={!ui.wide} places sketch="Playlists" ready={!!page.data} error={page.error}>
   {#snippet head()}<button class="pill small quiet" id="new-playlist" onclick={() => void newPlaylist()}><Icon name="plus" />{W.newPlaylist}</button>{/snippet}
   {#if page.data?.length}<Cards playlists={page.data} />{:else}<p class="empty"><Icon name="playlist" />{W.noPlaylists}</p>{/if}
 </Page>

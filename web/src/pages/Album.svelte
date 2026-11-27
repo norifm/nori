@@ -14,6 +14,7 @@
   import Hero from "../ui/Hero.svelte";
   import Icon from "../ui/Icon.svelte";
   import Page from "../ui/Page.svelte";
+  import Reads from "../ui/Reads.svelte";
   import PageTools from "../ui/PageTools.svelte";
   import Seal from "../ui/Seal.svelte";
   import SongList from "../ui/SongList.svelte";
@@ -38,7 +39,7 @@
   );
 </script>
 
-<Page back narrow ready={!!a} error={page.error}>
+<Page back narrow sketch="Album" ready={!!a} error={page.error}>
   {#if a}
     <Hero cover={a.cover} title={a.name} {label} item={itemMark("album", a.id, { title: a.name, line: a.artist, cover: a.cover })} playable={!!data} onplay={(shuffle) => void player.play(songs, 0, shuffle, "Album", a.id)}>
       {#snippet by()}{#if a.artistId}<a href={href("artist", a.artistId)}>{a.artist}</a>{:else}{a.artist}{/if}{/snippet}
@@ -50,6 +51,7 @@
         {/if}
       {/snippet}
     </Hero>
+    <Reads ready={!!data || !!page.error} reading="Album" known />
     {#each data?.discs ?? [] as disc (disc.disc)}
       {#if disc.headed}<h2 class="section">{disc.title ? W.discTitled(disc.disc, disc.title) : W.disc(disc.disc)}</h2>{/if}
       <SongList {songs} kind="Album" id={a.id} numbered rows={disc.songs} />
