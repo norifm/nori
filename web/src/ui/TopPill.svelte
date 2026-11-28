@@ -57,7 +57,10 @@
   let adding = $state(false);
   /** Its name, and under it who signs in, or where when that is its name already (the desktop's). */
   const named = (p: Profile) => p.label || W.subsonic;
-  const line = (p: Profile) => (p.user && p.user !== named(p) ? p.user : p.host);
+  const line = (p: Profile) => {
+    const base = p.user && p.user !== named(p) ? p.user : p.host;
+    return [base, p.sources?.length ? `+ ${p.sources.join(", ")}` : ""].filter(Boolean).join(" · ");
+  };
   /** The library and the player are another profile's now. */
   function opened() {
     remote.switched();

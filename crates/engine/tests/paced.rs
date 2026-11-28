@@ -84,13 +84,13 @@ impl AudioOutput for Silent {
 struct Files(Vec<(String, PathBuf)>);
 
 impl Library for Files {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
-        let path = self.0.iter().find(|(i, _)| i == id).map(|(_, p)| p.clone()).ok_or("no such song")?;
+    fn locate(&mut self, id: &nori_player::key::ItemKey) -> Result<Located, String> {
+        let path = self.0.iter().find(|(i, _)| i == &id.id).map(|(_, p)| p.clone()).ok_or("no such song")?;
         Ok(Located { source: Source::File(vec![path]), hint: Some("wav".into()), duration_ms: Some(SECS as i64 * 1000), estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
-        WindowSong { id: id.into(), title: id.into(), duration_ms: SECS as i64 * 1000, ..Default::default() }
+    fn about(&self, id: &nori_player::key::ItemKey) -> WindowSong {
+        WindowSong { id: id.clone(), title: id.id.clone(), duration_ms: SECS as i64 * 1000, ..Default::default() }
     }
 }
 
@@ -108,7 +108,7 @@ fn the_silent_output_plays_songs_at_real_time_to_their_end() {
     let clock = Virtual::default();
     let paced = Arc::new(Mutex::new(Paced { clock: clock.clone(), pacer: None, playing: false, idle_ns: 0 }));
     let queue = SharedQueue::default();
-    queue.0.lock().set(vec!["a".into(), "b".into()], Some(0), false, 0);
+    queue.0.lock().set(vec![nori_player::key::ItemKey::own("a"), nori_player::key::ItemKey::own("b")], Some(0), false, 0);
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = events.clone();
     let mut app = sim::App::new();

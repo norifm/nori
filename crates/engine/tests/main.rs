@@ -38,6 +38,9 @@ mod album;
 #[cfg(feature = "core")]
 #[path = "transcode.rs"]
 mod transcode;
+#[cfg(feature = "core")]
+#[path = "sources.rs"]
+mod sources;
 #[path = "pushed.rs"]
 mod pushed;
 #[path = "on_disk.rs"]

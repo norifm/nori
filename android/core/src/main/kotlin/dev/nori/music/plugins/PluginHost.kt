@@ -290,7 +290,7 @@ class PluginHost(
     }
 
     /** The notification's buttons while queued song [song] plays, given nori's own: the deciding plugin's, its labels in the app's language. */
-    suspend fun notificationButtons(song: String?, own: dev.nori.music.ffi.model.SessionButtons, repeat: dev.nori.music.ffi.plugins.Repeat): List<dev.nori.music.ffi.plugins.NotificationButton> =
+    suspend fun notificationButtons(song: dev.nori.music.ffi.model.ItemKey?, own: dev.nori.music.ffi.model.SessionButtons, repeat: dev.nori.music.ffi.plugins.Repeat): List<dev.nori.music.ffi.plugins.NotificationButton> =
         withContext(Dispatchers.IO) { plugins.notificationButtons(song, own, repeat, lang) }
 
     /** Plugin [plugin]'s own notification button was pressed: its [action] runs. */

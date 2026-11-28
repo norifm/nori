@@ -17,6 +17,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::automix::analysis::Analyzer;
+use crate::key::ItemKey;
 use crate::stage::{no_facts, SongFacts};
 use crate::automix::mixer::Mixer;
 use crate::types::TransitionPlan;
@@ -41,7 +42,7 @@ fn span_us(frames: usize, pace: f64, out: Format) -> i64 {
 /// new plan that only changes log text does not rebuild the ending.
 #[derive(Debug, Clone)]
 pub struct Plan {
-    pub incoming_id: String,
+    pub incoming_id: ItemKey,
     /// What the mixer runs.
     pub mixer: TransitionPlan,
 }
@@ -93,7 +94,7 @@ impl Plan {
 /// is only for the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamId {
-    pub song: String,
+    pub song: ItemKey,
     pub serial: u64,
 }
 
@@ -106,7 +107,7 @@ pub struct StreamFormat {
 
 /// A stream's song for logs.
 fn song(id: &Option<StreamId>) -> &str {
-    id.as_ref().map_or("-", |s| s.song.as_str())
+    id.as_ref().map_or("-", |s| s.song.id.as_str())
 }
 
 /// The real output below. Called only from the engine's thread.
@@ -136,11 +137,11 @@ pub trait Downstream {
 /// What the engine asks of the platform. Called on the engine's thread; must be quick.
 pub trait Host {
     /// The transition out of `outgoing_id`, or `None` for gapless.
-    fn plan_for(&mut self, outgoing_id: &str) -> Option<Plan>;
+    fn plan_for(&mut self, outgoing_id: &ItemKey) -> Option<Plan>;
     /// `Some(length in ms, 0 if unknown)` if `song_id` still needs analysing; sizes the analyser up front.
-    fn wants_analysis(&mut self, song_id: &str) -> Option<u64>;
+    fn wants_analysis(&mut self, song_id: &ItemKey) -> Option<u64>;
     /// The analyser finished `song_id`: `frames` at `rate`, `channels` wide.
-    fn analysed(&mut self, song_id: &str, analyzer: Analyzer, channels: usize, frames: u64, rate: u32);
+    fn analysed(&mut self, song_id: &ItemKey, analyzer: Analyzer, channels: usize, frames: u64, rate: u32);
     /// [`Heard`] started or stopped differing from the player's position, or its mixing flag changed.
     fn heard_changed(&mut self) {}
     fn log(&mut self, _message: &str) {}
@@ -446,12 +447,12 @@ pub struct TransitionEngine {
 pub enum Plans {
     #[default]
     Own,
-    Led(Option<(String, Box<Plan>)>),
+    Led(Option<(ItemKey, Box<Plan>)>),
 }
 
 impl Plans {
     /// The plan out of `outgoing_id`.
-    pub fn plan_for<H: Host>(&self, host: &mut H, outgoing_id: &str) -> Option<Plan> {
+    pub fn plan_for<H: Host>(&self, host: &mut H, outgoing_id: &ItemKey) -> Option<Plan> {
         match self {
             Plans::Own => host.plan_for(outgoing_id),
             Plans::Led(p) => p.as_ref().filter(|(id, _)| id == outgoing_id).map(|(_, p)| (**p).clone()),
@@ -1941,14 +1942,14 @@ mod tests {
     }
 
     impl Host for Host_ {
-        fn plan_for(&mut self, id: &str) -> Option<Plan> {
-            self.plans.get(id).cloned()
+        fn plan_for(&mut self, id: &ItemKey) -> Option<Plan> {
+            self.plans.get(&id.id).cloned()
         }
-        fn wants_analysis(&mut self, _: &str) -> Option<u64> {
+        fn wants_analysis(&mut self, _: &ItemKey) -> Option<u64> {
             Some(0)
         }
-        fn analysed(&mut self, id: &str, _: Analyzer, _: usize, _: u64, _: u32) {
-            self.analysed.push(id.to_string());
+        fn analysed(&mut self, id: &ItemKey, _: Analyzer, _: usize, _: u64, _: u32) {
+            self.analysed.push(id.id.clone());
         }
         fn log(&mut self, m: &str) {
             self.log.push(m.to_string());
@@ -1960,7 +1961,7 @@ mod tests {
 
     /// Song `id`'s stream; its serial is the id's first byte, so each song here is one stream.
     fn stream(id: &str, f: Format) -> StreamFormat {
-        StreamFormat { id: StreamId { song: id.into(), serial: id.as_bytes()[0] as u64 }, format: f }
+        StreamFormat { id: StreamId { song: ItemKey::own(id), serial: id.as_bytes()[0] as u64 }, format: f }
     }
 
     /// `secs` of a constant stereo 16-bit value at 44.1 kHz.
@@ -1996,7 +1997,7 @@ mod tests {
         let mut t = plan::plan(None, None, 60_000, 60_000, &s);
         assert_eq!(t.duration_ms, 2000);
         (t.out_start_ms, t.in_start_ms, t.tempo_ratio, t.keep_pitch, t.tempo_ramp_ms, t.out_loop_ms) = (start_us / 1000, 0, 1.0, true, 0, None);
-        Plan { incoming_id: to.into(), mixer: t }
+        Plan { incoming_id: ItemKey::own(to), mixer: t }
     }
 
     #[test]
@@ -2269,7 +2270,7 @@ mod tests {
     fn same_song_twice_is_two_streams() {
         let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
         h.plans.insert("a".into(), fade("a", 2_500_000));
-        let copy = |serial| StreamFormat { id: StreamId { song: "a".into(), serial }, format: FMT };
+        let copy = |serial| StreamFormat { id: StreamId { song: ItemKey::own("a"), serial }, format: FMT };
         e.configure(&mut d, &mut h, copy(1));
         feed(&mut e, &mut d, &mut h, &tone(8000, 3.0), 0);
         e.configure(&mut d, &mut h, copy(2));

@@ -35,7 +35,7 @@ pub struct LyricStep {
 /// `song` is NUL-terminated UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_lyric_clock(song: *const c_char, position_ms: i64) -> *mut LyricClock {
-    clock_on(held_lyrics(&c_text(song)).as_ref(), position_ms)
+    clock_on(held_lyrics(&nori_core::ItemKey::from_text(&c_text(song))).as_ref(), position_ms)
 }
 
 fn clock_on(lyrics: Option<&Lyrics>, position_ms: i64) -> *mut LyricClock {

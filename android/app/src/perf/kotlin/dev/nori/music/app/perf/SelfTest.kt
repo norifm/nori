@@ -1,6 +1,7 @@
 package dev.nori.music.app.perf
 
-import dev.nori.music.data.songId
+import dev.nori.music.ffi.model.ItemKey
+import dev.nori.music.data.songKey
 import android.app.Application
 import android.content.Intent
 import android.media.AudioFormat
@@ -384,9 +385,10 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
          */
         private suspend fun candidates(): List<Pair<Candidate, Song>> {
             val sources = nori.sources
-            val downloaded = runCatching { nori.core.downloadIds(true).toSet() }.getOrDefault(emptySet())
+            // The profile's own songs: the index lists them.
+            val downloaded = runCatching { nori.core.downloadIds(true).filter { it.source == null }.map { it.id }.toSet() }.getOrDefault(emptySet())
             val cached = runCatching { sources.streamCache.keys.map { it.substringBefore(':') }.toSet() }.getOrDefault(emptySet())
-            fun local(id: String) = id in downloaded || (id in cached && runCatching { MediaSources.isWhole(sources.streamCache, sources.streamKey(id)) }.getOrDefault(false))
+            fun local(id: String) = id in downloaded || (id in cached && runCatching { sources.streamKey(ItemKey(null, id))?.let { MediaSources.isWhole(sources.streamCache, it) } }.getOrNull() == true)
             fun cand(song: Song) = Candidate(
                 song.id, song.suffix, song.duration.toInt(), local(song.id), song.albumId ?: song.album, song.replayGain != null, song.isExternal,
             ) to song
@@ -544,7 +546,7 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
         }
 
         private suspend fun measured(ids: List<String>): Map<String, Boolean> = withContext(Dispatchers.IO) {
-            ids.associateWith { id -> runCatching { nori.core.analysisGet(id) != null }.getOrDefault(false) }
+            ids.associateWith { id -> runCatching { nori.core.analysisGet(ItemKey(null, id)) != null }.getOrDefault(false) }
         }
 
         private suspend fun autoMix(s: Step): Outcome {
@@ -697,7 +699,7 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
                     val shown = now as? dev.nori.music.ffi.lyrics.LyricsNow.Shown
                     val lines = shown?.pick?.lyrics?.lines.orEmpty()
                     seen += LyricsSeen(
-                        SystemClock.elapsedRealtime(), now.songId, st.current?.id, now is dev.nori.music.ffi.lyrics.LyricsNow.Looking,
+                        SystemClock.elapsedRealtime(), now.songKey?.id, st.current?.id, now is dev.nori.music.ffi.lyrics.LyricsNow.Looking,
                         shown?.let { lyricsRank(lines.size, it.pick.lyrics.synced, it.pick.lyrics.wordTimed) } ?: 0, now is dev.nori.music.ffi.lyrics.LyricsNow.Failed,
                         shown?.let { "${it.pick.origin}:${lines.size}:${lines.joinToString("\n") { l -> l.text }.hashCode()}" }.orEmpty(),
                     )
@@ -748,13 +750,13 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
         }
 
         private suspend fun downloads(s: Step): Outcome = withContext(Dispatchers.IO) {
-            val id = runCatching { nori.core.downloadIds(true) }.getOrDefault(emptyList()).firstOrNull { !it.startsWith("ext-") }
+            val id = runCatching { nori.core.downloadIds(true) }.getOrDefault(emptyList()).firstOrNull { it.source == null && !it.id.startsWith("ext-") }
                 ?: return@withContext skip(s, "nothing is downloaded")
             val sources = nori.sources
             val key = sources.downloadKey(id)
             if (!MediaSources.isWhole(sources.downloadCache, key)) return@withContext fail(s, "the download of $id is not whole on the phone")
             val t = SystemClock.elapsedRealtime()
-            val (source, length) = sources.openResolved(sources.downloadUrl(id), key, 0)
+            val (source, length) = sources.openResolved(sources.downloadUrl(id) ?: return@withContext fail(s, "no address for $id"), key, 0)
             val buf = ByteArray(64 * 1024)
             var got = 0
             try {

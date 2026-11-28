@@ -755,10 +755,13 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
 
     private fun words(sv: SavedServer) = providerWords(res, sv.kind, (sv.kind as? dev.nori.music.ffi.settings.ServerKind.Plugin)?.let { f.pluginNames[it.id] })
 
-    /** The line under a profile: who signs in, and what is special about it. */
+    /** The line under a profile: who signs in, any merged sources, and what is special about it. */
     private fun serverDetail(sv: SavedServer): String {
         val who = sv.user.ifEmpty { words(sv).noUser }
-        val parts = mutableListOf(who)
+        val parts = mutableListOf<String>()
+        if (who.isNotEmpty()) parts += who
+        val sources = dev.nori.music.ffi.settings.profileSources(p.servers, sv)
+        if (sources.isNotEmpty()) parts += "+ " + sources.joinToString(", ") { serverLabel(it) }
         if (sv.wifiOnly) parts += str(R.string.settings_server_wifi_only)
         if (sv.altUrl.isNotBlank()) parts += str(R.string.settings_server_second_address)
         return parts.joinToString(str(R.string.settings_server_separator))

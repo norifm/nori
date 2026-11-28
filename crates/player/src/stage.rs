@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use crate::key::ItemKey;
 use crate::outputs::OutputKind;
 
 /// Where in the chain a stage runs.
@@ -51,7 +52,7 @@ impl Around {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SongFacts {
     /// The song's id, for an output that is told where each song starts (`Track::marks_songs`).
-    pub id: Option<String>,
+    pub id: Option<ItemKey>,
     /// The gain nori levels the song by, dB.
     pub gain_db: Option<f32>,
     /// Its measured integrated loudness, LUFS.
@@ -79,9 +80,9 @@ pub fn no_facts() -> Arc<SongFacts> {
 /// and what they made.
 pub trait Preparing: Send + Sync {
     /// Song `id` of `format` is read from frame `from`: where its samples go, while a plugin wants them.
-    fn tap(&self, id: &str, format: crate::pcm::Format, from: u64) -> Option<Box<dyn Tap>>;
+    fn tap(&self, id: &ItemKey, format: crate::pcm::Format, from: u64) -> Option<Box<dyn Tap>>;
     /// Each plugin's prepared data for song `id`, as far as it is in.
-    fn prepared(&self, id: &str) -> Vec<(String, Arc<[u8]>)>;
+    fn prepared(&self, id: &ItemKey) -> Vec<(String, Arc<[u8]>)>;
     /// `wake` is called whenever a song's data comes in, from then on.
     fn on_prepared(&self, wake: Arc<dyn Fn() + Send + Sync>);
 }

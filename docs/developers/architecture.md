@@ -45,7 +45,8 @@ it in full.
 
 `nori-core` (`crates/core`) holds a `Core` per server profile and the `Client` that talks to the
 profile's source. The source is a provider: a Subsonic server, or a plugin's provider (see
-[Providers](providers.md)). `crates/core/src/` keeps one file per domain, each with its `impl Core`
+[Providers](providers.md)). A profile can also play from other sources, browsed as one library
+([A profile of several sources](providers.md#a-profile-of-several-sources)). `crates/core/src/` keeps one file per domain, each with its `impl Core`
 blocks.
 
 `nori-core` re-exports the domain crates, so a client can depend on it alone:

@@ -50,7 +50,7 @@ fn provider_cover_id(id: &str) -> bool {
 }
 
 /// Cover sizes, URL parts and cache budgets, read once by the client, which builds URLs itself from
-/// `Core::url_prefix`.
+/// [`Core::cover_prefixes`].
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct CoverRules {
@@ -69,6 +69,18 @@ pub struct CoverRules {
     /// [`CoverRules::size_hole`] in it takes the size.
     pub address_mark: String,
     pub size_hole: String,
+    /// In a cover id of another source ([`crate::Keyed::of_source`]): what comes before it is the
+    /// cover's id, what comes after names the source whose prefix it takes.
+    pub source_mark: String,
+}
+
+/// What the cover addresses of one of a profile's sources (`source`, None: its own) start with, the
+/// cover's id and size appended; None where the core makes each one ([`Core::cover_address`]).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct CoverPrefix {
+    pub source: Option<String>,
+    pub prefix: Option<String>,
 }
 
 /// Of the sizes an image server keeps ready, `ready`, the smallest at least `size`, so no picture is
@@ -106,6 +118,7 @@ pub fn cover_rules() -> CoverRules {
         hidden_share: 0.25,
         address_mark: ADDRESS_MARK.into(),
         size_hole: SIZE_HOLE.into(),
+        source_mark: crate::ItemKey::SOURCE_MARK.into(),
     }
 }
 
@@ -121,7 +134,7 @@ pub struct CoverWant {
 pub(crate) fn cover_wants(arts: Vec<String>, cap: u32) -> Vec<CoverWant> {
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for art in arts.iter().filter(|a| !provider_cover_id(a)) {
+    for art in arts.iter().filter(|a| !provider_cover_id(&crate::cover_id(a))) {
         if seen.len() == cap as usize {
             break;
         }
@@ -139,7 +152,7 @@ const DOWNLOAD_COVERS: u32 = 500;
 impl Core {
     /// Cover URLs to warm for songs being downloaded, so they have artwork offline ([`cover_wants`]).
     pub fn download_cover_urls(&self, arts: Vec<String>) -> Vec<String> {
-        let mut urls: Vec<String> = cover_wants(arts, DOWNLOAD_COVERS).into_iter().map(|w| self.cover_address(w.id, w.size)).collect();
+        let mut urls: Vec<String> = cover_wants(arts, DOWNLOAD_COVERS).into_iter().filter_map(|w| self.cover_address(w.id, w.size)).collect();
         // An address with no size in it is the same at every size.
         urls.dedup();
         urls
@@ -147,21 +160,37 @@ impl Core {
 
     /// The URL of cover `id` at `size` px: its own when it is an address already (a plugin's song
     /// played elsewhere, in a jam or on a device this one controls), filled with the size the
-    /// provider's image server keeps ready for `size` ([`ready_size`]), else as the profile's provider makes it.
-    pub fn cover_address(&self, id: String, size: u32) -> String {
+    /// provider's image server keeps ready for `size` ([`ready_size`]), else as the provider of the source
+    /// it names ([`crate::Keyed::of_source`]) makes it. None for a source the profile does not have.
+    pub fn cover_address(&self, id: String, size: u32) -> Option<String> {
         let provider = self.provider();
-        own_address(&id, ready_size(provider.cover_sizes(), size)).unwrap_or_else(|| provider.cover_address(self, &id, size))
+        if let Some(address) = own_address(&id, ready_size(provider.cover_sizes(), size)) {
+            return Some(address);
+        }
+        let key = crate::ItemKey::from_text(&id);
+        match key.source {
+            None => Some(provider.cover_address(self, &key.id, size)),
+            Some(source) => self.source(&source)?.core.cover_address(key.id, size),
+        }
+    }
+
+    /// What the cover addresses of each of the profile's sources start with: its own first, then each
+    /// other source's. A client builds a cover's URL from the prefix of the source its id names
+    /// ([`CoverRules::source_mark`]).
+    pub fn cover_prefixes(&self) -> Vec<CoverPrefix> {
+        let own = CoverPrefix { source: None, prefix: self.cover_prefix() };
+        std::iter::once(own).chain(self.others().into_iter().map(|(id, c)| CoverPrefix { source: Some(id), prefix: c.core.cover_prefix() })).collect()
     }
 }
 
 impl Core {
     /// Cover `id`'s address for a view of `px` ([`cover_rendition`]), and the addresses of the renditions
     /// that stand in while it comes ([`cover_stand_ins`]), but not its own again (a provider's picture
-    /// of one size only).
-    pub fn cover_addresses(&self, id: &str, px: u32) -> (String, Vec<String>) {
-        let own = self.cover_address(id.to_string(), cover_rendition(px));
-        let stand_ins = cover_stand_ins(px).into_iter().map(|s| self.cover_address(id.to_string(), s)).filter(|a| *a != own).collect();
-        (own, stand_ins)
+    /// of one size only). None for a source the profile does not have.
+    pub fn cover_addresses(&self, id: &str, px: u32) -> Option<(String, Vec<String>)> {
+        let own = self.cover_address(id.to_string(), cover_rendition(px))?;
+        let stand_ins = cover_stand_ins(px).into_iter().filter_map(|s| self.cover_address(id.to_string(), s)).filter(|a| *a != own).collect();
+        Some((own, stand_ins))
     }
 }
 
@@ -383,22 +412,22 @@ mod tests {
         let urls = core.download_cover_urls(["al 1", "ext-2", "al 1"].map(String::from).to_vec());
         let prefix = core.url_prefix("getCoverArt");
         assert_eq!(urls, [format!("{prefix}&id=al%201&size=320"), format!("{prefix}&id=al%201&size=800")]);
-        assert_eq!(core.cover_address("al 1".into(), 320), urls[0]);
+        assert_eq!(core.cover_address("al 1".into(), 320).unwrap(), urls[0]);
         // A plugin's cover is its own address on any profile (a YouTube song on a device this one controls).
-        assert_eq!(core.cover_address("https://yt.example/c=w{size}-h{size}".into(), 320), "https://yt.example/c=w320-h320");
+        assert_eq!(core.cover_address("https://yt.example/c=w{size}-h{size}".into(), 320).unwrap(), "https://yt.example/c=w320-h320");
         assert_eq!(core.download_cover_urls(vec!["https://yt.example/plain.jpg".into()]), ["https://yt.example/plain.jpg"], "one address, whatever the size");
 
         // Cover key ignores signature and address.
         let core = crate::Core::new(String::new(), "t".into(), Default::default()).unwrap();
         core.configure(crate::ServerConfig { url: "https://keys.example".into(), user: "u".into(), password: "one".into(), ..Default::default() }).unwrap();
-        let before = core.cover_address("pl-6b2d_65f0".into(), 320);
+        let before = core.cover_address("pl-6b2d_65f0".into(), 320).unwrap();
         core.configure(crate::ServerConfig { url: "https://keys.example".into(), user: "u".into(), password: "two".into(), ..Default::default() }).unwrap();
-        let after = core.cover_address("pl-6b2d_65f0".into(), 320);
+        let after = core.cover_address("pl-6b2d_65f0".into(), 320).unwrap();
         assert_ne!(before, after);
         assert_eq!(key(&before), key(&after));
         assert_eq!(key(&before), b"keys.example/rest/getCoverArt&id=pl-6b2d_65f0&size=320");
-        assert_ne!(key(&before), key(&core.cover_address("pl-6b2d_65f0".into(), 800)));
-        assert_ne!(key(&before), key(&core.cover_address("al-1".into(), 320)));
+        assert_ne!(key(&before), key(&core.cover_address("pl-6b2d_65f0".into(), 800).unwrap()));
+        assert_ne!(key(&before), key(&core.cover_address("al-1".into(), 320).unwrap()));
         let net = CoverNet::default();
         let key = |url: &str| {
             let mut out = Vec::new();
@@ -424,10 +453,10 @@ mod tests {
     fn a_cover_stands_in_at_its_other_rendition() {
         let core = crate::Core::new(String::new(), "t".into(), Default::default()).unwrap();
         core.configure(crate::ServerConfig { url: "http://m".into(), user: "u".into(), password: "p".into(), ..Default::default() }).unwrap();
-        let at = |size| core.cover_address("al 1".into(), size);
-        assert_eq!(core.cover_addresses("al 1", 1080), (at(FULL), vec![at(ROW)]), "a page's head: its tile's");
-        assert_eq!(core.cover_addresses("al 1", 160), (at(ROW), Vec::new()), "a tile: none");
-        assert_eq!(core.cover_addresses("https://yt.example/plain.jpg", 1080).1, Vec::<String>::new(), "one size only: nothing stands in");
+        let at = |size| core.cover_address("al 1".into(), size).unwrap();
+        assert_eq!(core.cover_addresses("al 1", 1080), Some((at(FULL), vec![at(ROW)])), "a page's head: its tile's");
+        assert_eq!(core.cover_addresses("al 1", 160), Some((at(ROW), Vec::new())), "a tile: none");
+        assert_eq!(core.cover_addresses("https://yt.example/plain.jpg", 1080).unwrap().1, Vec::<String>::new(), "one size only: nothing stands in");
     }
 
     #[test]

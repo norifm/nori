@@ -3,8 +3,9 @@
 
 use std::cmp::Reverse;
 use std::collections::HashSet;
+use std::hash::Hash;
 
-use nori_model::{is_provider_id, Album, SearchResult, Song};
+use nori_model::{is_provider_id, Album, ItemKey, Keyed, SearchResult, Song};
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchSplit {
@@ -35,10 +36,10 @@ pub fn split(r: SearchResult) -> SearchSplit {
     SearchSplit { everything: r, library: Some(library), providers: Some(providers) }
 }
 
-/// The first of each id.
-pub fn distinct<T>(list: impl IntoIterator<Item = T>, id: impl Fn(&T) -> &str) -> Vec<T> {
+/// The first of each item, told apart by `key`.
+pub fn distinct<T, K: Hash + Eq>(list: impl IntoIterator<Item = T>, key: impl Fn(&T) -> K) -> Vec<T> {
     let mut seen = HashSet::new();
-    list.into_iter().filter(|x| seen.insert(id(x).to_string())).collect()
+    list.into_iter().filter(|x| seen.insert(key(x))).collect()
 }
 
 /// The server's answer to `query` ranked and split, the first of each repeated id kept (merged provider
@@ -46,10 +47,10 @@ pub fn distinct<T>(list: impl IntoIterator<Item = T>, id: impl Fn(&T) -> &str) -
 pub fn search_split(result: SearchResult, query: &str) -> SearchSplit {
     split(ranked(
         SearchResult {
-            artists: distinct(result.artists, |a| &a.id),
-            albums: distinct(result.albums, |a| &a.id),
-            songs: distinct(result.songs, |s| &s.id),
-            playlists: distinct(result.playlists, |p| &p.id),
+            artists: distinct(result.artists, Keyed::key),
+            albums: distinct(result.albums, Keyed::key),
+            songs: distinct(result.songs, Keyed::key),
+            playlists: distinct(result.playlists, Keyed::key),
         },
         query,
     ))
@@ -68,16 +69,17 @@ pub fn ranked(mut r: SearchResult, query: &str) -> SearchResult {
     };
     r.songs.sort_by_cached_key(|s| (!answers(&format!("{} {}", s.title, s.artist)), Reverse(s.play_count)));
     let top = r.songs.first();
-    let top_album = top.and_then(|s| s.album_id.clone());
+    let top_source = top.and_then(|s| s.source.clone());
+    let top_album = top.and_then(|s| Some(ItemKey { source: s.source.clone(), id: s.album_id.clone()? }));
     let top_artists: Vec<String> = top.map(|s| s.artists.iter().map(|a| a.id.clone()).chain(s.artist_id.clone()).filter(|id| !id.is_empty()).collect()).unwrap_or_default();
-    if let Some(album) = top.and_then(album_of).filter(|a| !r.albums.iter().any(|b| b.id == a.id)) {
+    if let Some(album) = top.and_then(album_of).filter(|a| !r.albums.iter().any(|b| b.key() == a.key())) {
         r.albums.insert(0, album);
     }
-    let by_top = |id: &Option<String>| id.as_ref().is_some_and(|id| top_artists.contains(id));
+    let by_top = |source: &Option<String>, id: &Option<String>| *source == top_source && id.as_ref().is_some_and(|id| top_artists.contains(id));
     r.albums.sort_by_cached_key(|a| {
-        let place = if top_album.as_ref() == Some(&a.id) {
+        let place = if top_album == Some(a.key()) {
             0
-        } else if by_top(&a.artist_id) {
+        } else if by_top(&a.source, &a.artist_id) {
             1
         } else if answers(&a.name) {
             2
@@ -86,7 +88,7 @@ pub fn ranked(mut r: SearchResult, query: &str) -> SearchResult {
         };
         (place, Reverse(a.play_count))
     });
-    r.artists.sort_by_cached_key(|a| (!top_artists.contains(&a.id), !answers(&a.name)));
+    r.artists.sort_by_cached_key(|a| (!by_top(&a.source, &Some(a.id.clone())), !answers(&a.name)));
     r.playlists.sort_by_cached_key(|p| !answers(&p.name));
     r
 }
@@ -102,6 +104,7 @@ fn album_of(song: &Song) -> Option<Album> {
         cover_art: song.cover_art.clone(),
         year: song.year,
         is_external: song.is_external,
+        source: song.source.clone(),
         subtitle: nori_model::lines::album_subtitle(&song.artist, song.year),
         ..Default::default()
     })
@@ -651,9 +654,29 @@ mod tests {
         // The top song's album leads even where the answer lacks it.
         let mut real = song("real", "Rap God", eminem, "mmlp2", 0);
         real.album = "The Marshall Mathers LP2".into();
-        let r = ranked(SearchResult { songs: vec![real], albums: vec![album("cover-single", "Rap God", "nobody", 0)], ..Default::default() }, "rap god");
+        let r = ranked(SearchResult { songs: vec![real.clone()], albums: vec![album("cover-single", "Rap God", "nobody", 0)], ..Default::default() }, "rap god");
         assert_eq!(r.albums.iter().map(|a| (a.id.as_str(), a.name.as_str())).collect::<Vec<_>>(), [("mmlp2", "The Marshall Mathers LP2"), ("cover-single", "Rap God")]);
         assert_eq!(r.albums[0].artist_id.as_deref(), Some("em"));
+
+        // The top song's album and artist are those of its own source: another source's of the same id
+        // are two others.
+        let theirs = |mut s: Song| {
+            s.source = Some("yt".into());
+            s
+        };
+        let r = ranked(
+            SearchResult {
+                songs: vec![theirs(real.clone())],
+                albums: vec![album("mmlp2", "Other", "x", 0)],
+                artists: vec![artist("em", "Eminem"), Artist { source: Some("yt".into()), ..artist("em", "Eminem") }],
+                ..Default::default()
+            },
+            "rap god",
+        );
+        assert_eq!(r.albums.iter().map(|a| (a.id.as_str(), a.source.as_deref())).collect::<Vec<_>>(), [("mmlp2", Some("yt")), ("mmlp2", None)]);
+        assert_eq!(r.artists.iter().map(|a| a.source.as_deref()).collect::<Vec<_>>(), [Some("yt"), None]);
+        let one = search_split(SearchResult { songs: vec![real.clone(), theirs(real.clone()), real.clone()], ..Default::default() }, "");
+        assert_eq!(one.everything.songs.len(), 2, "one of each source's");
 
         // A query naming the artist and the song finds it by both.
         let r = ranked(SearchResult { songs: vec![song("cover", "Eminem Rap God karaoke", ("k", "Karaoke"), "k", 0), song("real", "Rap God", eminem, "mmlp2", 0)], ..Default::default() }, "eminem rap god");

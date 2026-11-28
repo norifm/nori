@@ -28,6 +28,7 @@ import dev.nori.music.ffi.remote.Op
 import dev.nori.music.playback.CarArt
 import dev.nori.music.playback.NOTIFICATION_ART
 import dev.nori.music.playback.heldMediaItems
+import dev.nori.music.playback.keys
 import dev.nori.music.playback.queuedAs
 
 /**
@@ -155,14 +156,14 @@ class RemoteDevicePlayer(private val context: Context, private val nori: Nori) :
     /** A queue picked in the car or by a controller of this phone: it plays there. */
     override fun handleSetMediaItems(mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<*> {
         if (mediaItems.isEmpty()) return Futures.immediateVoidFuture()
-        val songs = nori.session.queueSongs(mediaItems.map { it.mediaId })
+        val songs = nori.session.queueSongs(mediaItems.keys())
         val start = if (startIndex == C.INDEX_UNSET) 0 else startIndex
         val position = if (startPositionMs == C.TIME_UNSET) 0 else startPositionMs
         return send(Op.Replace(songs, start.toUInt(), position, true, null, mirror?.shuffle == true, mirror?.repeat ?: 0u, null, null, null))
     }
 
     override fun handleAddMediaItems(index: Int, mediaItems: MutableList<MediaItem>): ListenableFuture<*> =
-        send(Op.Add(nori.session.queueSongs(mediaItems.map { it.mediaId }), mediaItems.firstOrNull()?.queuedAs() == Hand.NEXT))
+        send(Op.Add(nori.session.queueSongs(mediaItems.keys()), mediaItems.firstOrNull()?.queuedAs() == Hand.NEXT))
 
     override fun handleRemoveMediaItems(fromIndex: Int, toIndex: Int): ListenableFuture<*> {
         val m = mirror ?: return Futures.immediateVoidFuture()

@@ -73,6 +73,11 @@
         return { name: a };
       case "decade":
         return { start: Number(a) };
+      case "album":
+      case "artist":
+        return { id: a, source: route.sub || undefined };
+      case "playlist":
+        return { id: a, source: route.sub && route.sub !== "~" ? route.sub : undefined, mixed: route.sub === "~" };
       default:
         return { id: a };
     }

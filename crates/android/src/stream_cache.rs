@@ -6,7 +6,7 @@ use jni::JNIEnv;
 use nori_engine::CacheOrder;
 use parking_lot::Mutex;
 
-use crate::{java_string, native, with_str, Class};
+use crate::{java_string, native, with_key, with_str, Class};
 
 pub(crate) static CLASS: Class = Class {
     name: c"dev/nori/music/playback/StreamCacheJni",
@@ -15,7 +15,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"touch", c"(JLjava/lang/String;)V", touch),
         native!(c"seed", c"(J[Ljava/lang/String;)V", seed),
         native!(c"next", c"(J)Ljava/lang/String;", next),
-        native!(c"copies", c"(JLjava/lang/String;)[Ljava/lang/String;", copies),
+        native!(c"copies", c"(JLjava/lang/String;Ljava/lang/String;)[Ljava/lang/String;", copies),
         native!(c"clear", c"(J)V", clear),
     ],
 };
@@ -57,8 +57,8 @@ extern "system" fn next(env: JNIEnv, _: JClass, h: jlong) -> jstring {
 }
 
 /// Cache keys of song `id`'s streamed copies.
-extern "system" fn copies(mut env: JNIEnv, _: JClass, h: jlong, id: JString) -> jobjectArray {
-    let keys = with_str(&env, &id, |id| order(h).lock().copies(id)).unwrap_or_default();
+extern "system" fn copies(mut env: JNIEnv, _: JClass, h: jlong, source: JString, id: JString) -> jobjectArray {
+    let keys = with_key(&env, &source, &id, |id| order(h).lock().copies(id)).unwrap_or_default();
     let Ok(out) = env.new_object_array(keys.len() as i32, "java/lang/String", JObject::null()) else { return std::ptr::null_mut() };
     for (i, k) in keys.iter().enumerate() {
         let Ok(s) = env.new_string(k) else { return std::ptr::null_mut() };

@@ -327,7 +327,7 @@ impl nori_mpris::Controls for Handle {
         let there = playback.mirrored();
         let Some(song) = there.map_or_else(|| self.now_here().song, |e| e.song().cloned()) else { return };
         let on = !self.starred(&song, there);
-        self.star_song(song.id, on, there);
+        self.star_song(nori_core::Keyed::key(&song), on, there);
     }
     fn now(&self) -> nori_mpris::Now {
         let playback = self.playback();
@@ -336,7 +336,7 @@ impl nori_mpris::Controls for Handle {
         }
         let now = self.now_of(&playback);
         let song = now.song.clone().unwrap_or_default();
-        let lines = now.song.as_ref().and_then(|s| self.core.session.now_playing(s.id.clone())).unwrap_or_else(|| nori_core::deciders::Shown::of(&song));
+        let lines = now.song.as_ref().and_then(|s| self.core.session.now_playing(nori_core::Keyed::key(s))).unwrap_or_else(|| nori_core::deciders::Shown::of(&song));
         let mut shown = nori_mpris::Now {
             playing: now.state == State::Playing,
             loaded: now.state == State::Paused,

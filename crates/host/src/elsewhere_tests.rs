@@ -1,6 +1,7 @@
 //! A session showing the account's device that plays elsewhere: what its player and the system's media
 //! controls show of it.
 
+use nori_core::ItemKey;
 use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -62,7 +63,7 @@ fn phone(dir: &Path) -> (Arc<Remote>, Announcement) {
     let client = Client::new(core, nori_http::Http::new(), Default::default());
     client.set_profile(nori_core::net_profile(&profile));
     client.session().register(vec![Song { id: "a".into(), title: "A".into(), duration: 200, ..Default::default() }]);
-    client.session().set(vec!["a".into()], Some(0), false, None);
+    client.session().set(vec![ItemKey::own("a")], Some(0), false, None);
     let door = Arc::new(Announced::default());
     let phone = Remote::new(client, RemoteMe { name: "Phone".into(), kind: DeviceKind::Phone }, Arc::new(Quiet), Arc::new(Quiet), Some(door.clone()));
     phone.clone().serve(true);

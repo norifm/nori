@@ -122,7 +122,7 @@ fn analysis_kept_only_whole() {
     p.seek(18_000);
     // Thirty seconds on, well into b: had a partial hearing been kept, it would be there by now.
     p.run_for(30_000);
-    assert_eq!(p.current_id().as_deref(), Some("b"), "b plays: {:?}", p.app.log);
+    assert_eq!(p.current_id().map(|k| k.id).as_deref(), Some("b"), "b plays: {:?}", p.app.log);
     assert!(!p.app.analyses.contains_key("b"), "b was heard in part only: {:?}", p.app.log);
 }
 
@@ -136,7 +136,7 @@ fn a_song_measured_elsewhere_is_not_measured_again_as_it_plays() {
     // Measured ahead from its download meanwhile: the planner asks again.
     p.app.analyses.insert("a".into(), measured("a", 118.0));
     p.replan_ending();
-    assert!(p.run_until(70_000, |p| p.current_id().as_deref() == Some("b")), "{:?}", p.app.log);
+    assert!(p.run_until(70_000, |p| p.current_id().map(|k| k.id).as_deref() == Some("b")), "{:?}", p.app.log);
     assert!(!p.app.log.iter().any(|l| l.starts_with("analysed a")), "a measured once: {:?}", p.app.log);
 }
 

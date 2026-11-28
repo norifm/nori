@@ -4,6 +4,7 @@
 //! into the ring, resampling only when the device will not take the stream's rate, and maps ring frames
 //! back to song time for the playhead.
 
+use nori_player::key::ItemKey;
 use std::cell::UnsafeCell;
 use std::collections::VecDeque;
 use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -114,10 +115,10 @@ pub trait AudioOutput: Send {
     }
     /// Song `id` starts at ring frame `frame` (frames written since the ring was made), `at_ms` into it;
     /// told before that frame is in the ring. A flush drops the marks at or past the frames it replaces.
-    fn song_at(&mut self, _frame: u64, _id: &str, _at_ms: i64) {}
+    fn song_at(&mut self, _frame: u64, _id: &ItemKey, _at_ms: i64) {}
     /// Song `id` is loaded, `at_ms` into it, and nothing plays yet (a cast picked while paused): a
     /// device that shows songs shows it now.
-    fn shows(&mut self, _id: &str, _at_ms: i64) {}
+    fn shows(&mut self, _id: &ItemKey, _at_ms: i64) {}
     fn close(&mut self);
 }
 
@@ -681,7 +682,7 @@ pub(crate) struct RingTrack {
     /// As last told to [`AudioOutput::shallow`].
     shallow: bool,
     /// A song starting at the next frame written, and where in it ([`Track::song_starts`]).
-    starts: Option<(String, i64)>,
+    starts: Option<(ItemKey, i64)>,
     /// Music was written since the device was last told ([`AudioOutput::wrote`]).
     wrote: bool,
 }
@@ -788,7 +789,7 @@ impl RingTrack {
 
     /// Takes `output` as the device from now on, the old one released.
     /// What the output shows of the song loaded, playing nothing yet ([`AudioOutput::shows`]).
-    pub(crate) fn output_shows(&mut self, id: &str, at_ms: i64) {
+    pub(crate) fn output_shows(&mut self, id: &ItemKey, at_ms: i64) {
         self.output.shows(id, at_ms);
     }
 
@@ -1355,8 +1356,8 @@ impl Track for RingTrack {
         self.output.marks_songs()
     }
 
-    fn song_starts(&mut self, id: &str, at_ms: i64) {
-        self.starts = Some((id.to_string(), at_ms));
+    fn song_starts(&mut self, id: &ItemKey, at_ms: i64) {
+        self.starts = Some((id.clone(), at_ms));
     }
 
     fn play(&mut self) {

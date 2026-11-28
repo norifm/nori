@@ -57,10 +57,11 @@ class Folder {
     if (picked) await this.read(picked);
   }
 
-  /** Adds a profile of `picked`, the open one from then on. */
-  async add(picked: Picked) {
+  /** Adds a profile of `picked`, open from then on (or attached as a source of `forProfile`). */
+  async add(picked: Picked, forProfile?: string) {
     this.id = await ask<string>("new_profile_id");
-    await ask("add_local", this.id, picked.name);
+    if (forProfile) await ask("add_local_source", forProfile, this.id, picked.name);
+    else await ask("add_local", this.id, picked.name);
     await this.read(picked);
   }
 

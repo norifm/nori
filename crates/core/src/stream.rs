@@ -1,14 +1,16 @@
 //! Stream and download URLs and cache keys, and the prefetch list. Keys and network state are nori-net's.
 
 use crate::client::Client;
+use crate::ItemKey;
 
 pub use nori_net::stream::*;
 
 impl Client {
-    /// Where `id` opens now: the download if finished, else a stream at the network's quality now.
-    pub fn resolve_now(&self, id: &str) -> StreamTarget {
+    /// Where `id` opens now: the download if finished, else a stream at the network's quality now; None
+    /// for a song of a source the profile does not have.
+    pub fn resolve_now(&self, id: &ItemKey) -> Option<StreamTarget> {
         let kept = self.core.transfers().held().state(id) == crate::transfers::HeldState::Done;
-        self.resolve(id.to_string(), kept, !kept && self.metered())
+        self.resolve(id.clone(), kept, !kept && self.metered())
     }
 
     /// [`Client::precache_targets`] on the network now.
@@ -23,20 +25,27 @@ impl Client {
     }
 }
 
-pub(crate) fn stream_cache_key(id: &str, q: &StreamQuality) -> String {
-    format!("{id}:{}{}", q.bit_rate, q.format)
-}
-
 impl Client {
     /// [`Self::precache_targets`] over `ids`; `held` gives each id's download state.
-    fn fetches(&self, ids: Vec<String>, metered: bool, wifi: &StreamQuality, mobile: &StreamQuality, held: impl Fn(&str) -> crate::transfers::HeldState) -> Vec<Fetch> {
+    fn fetches(&self, ids: Vec<ItemKey>, metered: bool, wifi: &StreamQuality, mobile: &StreamQuality, held: impl Fn(&ItemKey) -> crate::transfers::HeldState) -> Vec<Fetch> {
         self.core.session.precache_list(ids, |id| held(id) != crate::transfers::HeldState::Absent)
             .into_iter()
-            .map(|id| {
-                let t = self.stream_target(id.clone(), metered, wifi.clone(), mobile.clone());
-                Fetch { id, url: t.url, key: t.key }
+            .filter_map(|id| {
+                let t = self.stream_target(&id, metered, wifi.clone(), mobile.clone())?;
+                Some(Fetch { id, url: t.url, key: t.key })
             })
             .collect()
+    }
+
+    /// `f` asked of the client of `song`'s source; None for a source the profile does not have.
+    pub(crate) fn in_song_source<R>(&self, song: &ItemKey, f: impl FnOnce(&Client) -> R) -> Option<R> {
+        let other = self.other_source(song).ok()?;
+        Some(f(other.as_deref().unwrap_or(self)))
+    }
+
+    /// The client of `song`'s source when that is another than this client's (None: this one's own).
+    pub(crate) fn other_source(&self, song: &ItemKey) -> crate::client::NetResult<Option<std::sync::Arc<Client>>> {
+        song.source.as_ref().map(|s| self.core.source(s).ok_or_else(|| crate::providers::nowhere("such source"))).transpose()
     }
 
     /// The network's quality, capped on the second address (as opus unless a format is set).
@@ -58,32 +67,37 @@ impl Client {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
-    /// The cache key [`Self::stream_target`] would give.
-    pub fn stream_key(&self, id: String, metered: bool, wifi: StreamQuality, mobile: StreamQuality) -> String {
-        self.stream_target(id, metered, wifi, mobile).key
+    /// The cache key [`Self::stream_target`] would give; None for a song of a source the profile does
+    /// not have.
+    pub fn stream_key(&self, id: ItemKey, metered: bool, wifi: StreamQuality, mobile: StreamQuality) -> Option<String> {
+        self.stream_target(&id, metered, wifi, mobile).map(|t| t.key)
     }
 
-    /// Where `id` opens: the download (`downloaded`) at download quality, else a stream for the network.
-    pub fn resolve(&self, id: String, downloaded: bool, metered: bool) -> StreamTarget {
+    /// Where `id` opens: the download (`downloaded`) at download quality, else a stream for the network;
+    /// None for a song of a source the profile does not have.
+    pub fn resolve(&self, id: ItemKey, downloaded: bool, metered: bool) -> Option<StreamTarget> {
         let (wifi, mobile, download) = self.saved_qualities();
         if downloaded {
             self.download_target(id, download)
         } else {
-            self.stream_target(id, metered, wifi, mobile)
+            self.stream_target(&id, metered, wifi, mobile)
         }
     }
 
-    /// The URL and cache key of `id`'s download.
-    pub fn download_target(&self, id: String, quality: StreamQuality) -> StreamTarget {
-        let key = download_key(id.clone());
-        StreamTarget { url: self.core.provider().stream(self, id, quality).url, key }
+    /// The URL and cache key of `id`'s download, through its source; None for a source the profile does
+    /// not have.
+    pub fn download_target(&self, id: ItemKey, quality: StreamQuality) -> Option<StreamTarget> {
+        let url = self.in_song_source(&id, |c| c.core.provider().stream(c, id.id.clone(), quality).url)?;
+        Some(StreamTarget { url, key: download_key(id) })
     }
 }
 
 impl Client {
-    /// The URL and cache key to stream `id`.
-    pub(crate) fn stream_target(&self, id: String, metered: bool, wifi: StreamQuality, mobile: StreamQuality) -> StreamTarget {
-        self.core.provider().stream(self, id, self.quality(metered, wifi, mobile))
+    /// The URL and cache key to stream `id`, through the source it comes from, at that source's quality
+    /// on this network.
+    pub(crate) fn stream_target(&self, id: &ItemKey, metered: bool, wifi: StreamQuality, mobile: StreamQuality) -> Option<StreamTarget> {
+        let s = self.in_song_source(id, |c| c.core.provider().stream(c, id.id.clone(), c.quality(metered, wifi, mobile)))?;
+        Some(StreamTarget { url: s.url, key: stream_cache_key(id, &s.quality) })
     }
 
     /// The songs to prefetch now ([`nori_queue::Session::precache`], minus downloaded or queued downloads),
@@ -91,14 +105,15 @@ impl Client {
     pub fn precache_targets(&self, metered: bool) -> Vec<Fetch> {
         let (wifi, mobile, _) = self.saved_qualities();
         let ids = self.core.session.precache(metered);
-        // Past the next song (which the player fetches itself), a provider may take fewer than the settings.
-        let ids = match self.core.provider().ahead() {
-            Some(ahead) => {
-                let near = self.core.session.upcoming(1 + ahead as u32);
-                ids.into_iter().filter(|id| near.iter().skip(1).any(|n| n == id)).collect()
-            }
-            None => ids,
-        };
+        // Past the next song (which the player fetches itself), a song's provider may take fewer than the
+        // settings.
+        let ids = ids
+            .into_iter()
+            .filter(|id| match self.in_song_source(id, |c| c.core.provider().ahead()).flatten() {
+                Some(ahead) => self.core.session.upcoming(1 + ahead as u32).iter().skip(1).any(|n| n == id),
+                None => true,
+            })
+            .collect();
         self.fetches(ids, metered, &wifi, &mobile, |id| self.core.transfers().held().state(id))
     }
 }
@@ -106,6 +121,7 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ItemKey;
     use crate::client::tests::{block, client, two_addresses};
     use crate::client::NetProfile;
     use crate::transport::FailureKind;
@@ -117,18 +133,18 @@ mod tests {
     #[test]
     fn stream_quality() {
         let (c, fake) = client(NetProfile { alt_max_bit_rate: 128, ..two_addresses() });
-        let t = c.stream_target("s1".into(), false, q(0, ""), q(192, "opus"));
+        let t = c.stream_target(&ItemKey::own("s1"), false, q(0, ""), q(192, "opus")).unwrap();
         assert_eq!(t.key, "s1:0");
         assert!(t.url.contains("/rest/stream?") && t.url.ends_with("&id=s1"));
-        assert_eq!(c.stream_key("s1".into(), true, q(0, ""), q(192, "opus")), "s1:192opus");
+        assert_eq!(c.stream_key(ItemKey::own("s1"), true, q(0, ""), q(192, "opus")).unwrap(), "s1:192opus");
 
         fake.fail(FailureKind::Connect);
         assert!(block(c.choose_address()));
-        let t = c.stream_target("s1".into(), false, q(0, ""), q(192, "opus"));
+        let t = c.stream_target(&ItemKey::own("s1"), false, q(0, ""), q(192, "opus")).unwrap();
         assert_eq!(t.key, "s1:128opus");
         assert!(t.url.starts_with("https://wan.example/rest/stream?") && t.url.ends_with("&id=s1&maxBitRate=128&format=opus"));
-        assert_eq!(c.stream_key("s1".into(), false, q(96, "mp3"), q(0, "")), "s1:96mp3", "under the cap");
-        assert_eq!(c.stream_key("s1".into(), false, q(320, "mp3"), q(0, "")), "s1:128mp3");
+        assert_eq!(c.stream_key(ItemKey::own("s1"), false, q(96, "mp3"), q(0, "")).unwrap(), "s1:96mp3", "under the cap");
+        assert_eq!(c.stream_key(ItemKey::own("s1"), false, q(320, "mp3"), q(0, "")).unwrap(), "s1:128mp3");
     }
 
     #[test]
@@ -138,38 +154,38 @@ mod tests {
         c.session().settings.open(&dir.join("app.db").to_string_lossy()).unwrap();
         c.session().settings.edit_by_name("mobile", "192:opus");
         *fake.metered.lock() = true;
-        assert_eq!(c.resolve_now("s1").key, "s1:192opus");
+        assert_eq!(c.resolve_now(&ItemKey::own("s1")).unwrap().key, "s1:192opus");
         *fake.metered.lock() = false;
-        assert_eq!(c.resolve_now("s1").key, "s1:0");
+        assert_eq!(c.resolve_now(&ItemKey::own("s1")).unwrap().key, "s1:0");
         c.core.download_queue(vec![crate::Song { id: "s1".into(), ..Default::default() }]).unwrap();
-        c.core.download_settle(vec!["s1".into()], vec![true]).unwrap();
+        c.core.download_settle(vec![ItemKey::own("s1")], vec![true]).unwrap();
         *fake.metered.lock() = true;
-        assert_eq!(c.resolve_now("s1").key, "dl:s1", "a download plays whatever the network");
+        assert_eq!(c.resolve_now(&ItemKey::own("s1")).unwrap().key, "dl:s1", "a download plays whatever the network");
     }
 
     #[test]
     fn prefetch_skips_radio_and_more() {
         let (c, _) = client(NetProfile { url: "h".into(), ..Default::default() });
-        let ids = ["a", "radio:1", "ext-2", "queued", "done", "b"].map(String::from).to_vec();
-        let held = |id: &str| match id {
+        let ids = crate::tests::keys(&["a", "radio:1", "ext-2", "queued", "done", "b"]);
+        let held = |id: &ItemKey| match id.id.as_str() {
             "queued" => crate::transfers::HeldState::Pending,
             "done" => crate::transfers::HeldState::Done,
             _ => crate::transfers::HeldState::Absent,
         };
         let f = c.fetches(ids, true, &q(0, ""), &q(192, "opus"), held);
-        assert_eq!(f.iter().map(|f| (f.id.as_str(), f.key.as_str())).collect::<Vec<_>>(), [("a", "a:192opus"), ("b", "b:192opus")]);
+        assert_eq!(f.iter().map(|f| (f.id.id.as_str(), f.key.as_str())).collect::<Vec<_>>(), [("a", "a:192opus"), ("b", "b:192opus")]);
         assert!(f[0].url.ends_with("&id=a&maxBitRate=192&format=opus"), "{}", f[0].url);
     }
 
     #[test]
     fn downloads() {
         let (c, _) = client(NetProfile { url: "h".into(), ..Default::default() });
-        assert_eq!(c.resolve("s1".into(), true, true).key, "dl:s1");
-        assert_eq!(c.resolve("s1".into(), false, false).key, "s1:0", "not downloaded: streamed");
+        assert_eq!(c.resolve(ItemKey::own("s1"), true, true).unwrap().key, "dl:s1");
+        assert_eq!(c.resolve(ItemKey::own("s1"), false, false).unwrap().key, "s1:0", "not downloaded: streamed");
 
         // Download keys and stream copies.
         let (c, _) = client(NetProfile { url: "h".into(), ..Default::default() });
-        let t = c.download_target("s:1".into(), q(0, ""));
+        let t = c.download_target(ItemKey::own("s:1"), q(0, "")).unwrap();
         assert_eq!(t.key, "dl:s:1");
         assert!(t.url.ends_with("&id=s%3A1"));
     }

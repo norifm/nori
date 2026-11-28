@@ -305,7 +305,9 @@ impl Page<'_> {
 
     fn servers(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let p = self.p;
-        let mut accounts: Vec<SettingsRow> = (0..p.servers.len() as u32).map(|index| row(RowItem::Server { index })).collect();
+        // A profile's source shows inside that profile's Edit, not as a profile of its own.
+        let shown = crate::settings::servers_shown(p.servers.clone());
+        let mut accounts: Vec<SettingsRow> = (0..p.servers.len() as u32).filter(|&i| shown.iter().any(|s| s.id == p.servers[i as usize].id)).map(|index| row(RowItem::Server { index })).collect();
         accounts.push(row(RowItem::Action { action: SettingsAction::AddServer }));
         let shown = p.active_server().map(|s| s.music_folder_ids.clone()).unwrap_or_default();
         let folders = crate::settings::folder_switches(shown, self.f.folders.clone())

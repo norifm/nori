@@ -1,6 +1,6 @@
 //! Mix calls over the index and history. The mixes themselves are nori-library's.
 
-use crate::{db, model::Song, Core, Result};
+use crate::{db, model::Song, Core, ItemKey, Result};
 
 pub mod board;
 
@@ -8,22 +8,22 @@ pub use nori_library::mixes::*;
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
-    /// The songs left out of every mix.
-    pub fn mix_excluded_songs(&self) -> Result<Vec<String>> {
+    /// The songs left out of every mix, of each of the profile's sources.
+    pub fn mix_excluded_songs(&self) -> Result<Vec<ItemKey>> {
         let c = self.db.lock();
-        let mut q = c.prepare_cached("SELECT song_id FROM mix_excluded WHERE server=sid()")?;
-        let ids = q.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-        Ok(ids)
+        let mut q = c.prepare_cached(&format!("SELECT nullif(server, sid()), song_id FROM mix_excluded WHERE server {}", db::IN_PROFILE))?;
+        let keys = q.query_map([], |r| db::key_of(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(keys)
     }
 
-    /// Excludes a song from (or restores it to) every mix.
-    pub fn mix_excluded_set(&self, song_id: String, excluded: bool) -> Result<()> {
+    /// Excludes song `key` from (or restores it to) every mix, in its source's rows.
+    pub fn mix_excluded_set(&self, key: ItemKey, excluded: bool) -> Result<()> {
         let c = self.db.lock();
-        if excluded {
-            c.execute("INSERT OR IGNORE INTO mix_excluded(server, song_id) VALUES(sid(), ?1)", [song_id])?;
-        } else {
-            c.execute("DELETE FROM mix_excluded WHERE server=sid() AND song_id=?1", [song_id])?;
-        }
+        let sql = match excluded {
+            true => "INSERT OR IGNORE INTO mix_excluded(server, song_id) VALUES(coalesce(?1, sid()), ?2)",
+            false => "DELETE FROM mix_excluded WHERE server=coalesce(?1, sid()) AND song_id=?2",
+        };
+        c.execute(sql, db::key_params(&key))?;
         Ok(())
     }
 }
@@ -208,9 +208,9 @@ pub(crate) mod tests {
     #[test]
     fn excluding_a_song_can_be_undone() {
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
-        core.mix_excluded_set("a".into(), true).unwrap();
-        assert_eq!(core.mix_excluded_songs().unwrap(), ["a"]);
-        core.mix_excluded_set("a".into(), false).unwrap();
+        core.mix_excluded_set(ItemKey::own("a"), true).unwrap();
+        assert_eq!(core.mix_excluded_songs().unwrap(), [ItemKey::own("a")]);
+        core.mix_excluded_set(ItemKey::own("a"), false).unwrap();
         assert!(core.mix_excluded_songs().unwrap().is_empty());
     }
 
@@ -221,9 +221,9 @@ pub(crate) mod tests {
         let out: Vec<&Song> = all.iter().filter(|s| s.artist == "Rock Artist 0").collect();
         for s in &out {
             listen(&core, s, NOW - 10 * DAY);
-            core.mix_excluded_set(s.id.clone(), true).unwrap();
+            core.mix_excluded_set(ItemKey::own(&s.id), true).unwrap();
         }
-        core.mix_excluded_set(out[0].id.clone(), true).unwrap();
+        core.mix_excluded_set(ItemKey::own(&out[0].id), true).unwrap();
         assert_eq!(excluded(&core), 10);
         let c = core.db.lock();
         assert!(quick_picks(&c, 50, 1, NOW).unwrap().is_empty());
@@ -231,7 +231,7 @@ pub(crate) mod tests {
         assert!(top(&c, 50, NOW).unwrap().is_empty());
         drop(c);
 
-        core.mix_excluded_set(out[0].id.clone(), false).unwrap();
+        core.mix_excluded_set(ItemKey::own(&out[0].id), false).unwrap();
         assert_eq!(ids(&top(&core.db.lock(), 50, NOW).unwrap()), vec![out[0].id.as_str()]);
         core.db.lock().execute("DELETE FROM mix_excluded", []).unwrap();
         assert_eq!(top(&core.db.lock(), 50, NOW).unwrap().len(), 10);

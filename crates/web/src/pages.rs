@@ -20,13 +20,31 @@ pub enum Ask {
         #[serde(default)]
         favorites: bool,
     },
-    Album { id: String },
+    Album {
+        id: String,
+        #[serde(default)]
+        source: Option<String>,
+    },
     Artists,
-    Artist { id: String },
+    Artist {
+        id: String,
+        #[serde(default)]
+        source: Option<String>,
+    },
     /// An artist page's about part (`pages::ArtistAbout`), read after its page.
-    ArtistAbout { id: String },
+    ArtistAbout {
+        id: String,
+        #[serde(default)]
+        source: Option<String>,
+    },
     Playlists,
-    Playlist { id: String },
+    Playlist {
+        id: String,
+        #[serde(default)]
+        source: Option<String>,
+        #[serde(default)]
+        mixed: bool,
+    },
     Genres,
     Genre { name: String },
     /// What an empty search offers to browse: the biggest genres and the decades, from the offline index.
@@ -67,12 +85,12 @@ impl Ask {
         Ok(match self {
             Ask::Albums { favorites: true, .. } => Read::StarredItems,
             Ask::Albums { sort, size, offset, favorites: false } => Read::AlbumList { kind: album_sort(&sort)?, size, offset, genre: None },
-            Ask::Album { id } => Read::AlbumById { id },
+            Ask::Album { id, .. } => Read::AlbumById { id },
             Ask::Artists => Read::ArtistIndex,
-            Ask::Artist { id } => Read::ArtistById { id },
-            Ask::ArtistAbout { id } => Read::ArtistAbout { id },
+            Ask::Artist { id, .. } => Read::ArtistById { id },
+            Ask::ArtistAbout { id, .. } => Read::ArtistAbout { id },
             Ask::Playlists => Read::PlaylistList,
-            Ask::Playlist { id } => Read::PlaylistById { id },
+            Ask::Playlist { id, .. } => Read::PlaylistById { id },
             Ask::Genres => Read::GenreList,
             Ask::Genre { .. } | Ask::Songs { .. } | Ask::History { .. } | Ask::Browse | Ask::Decades | Ask::Decade { .. } => return Err("read by the core, not the cache".into()),
             Ask::Starred => Read::StarredItems,
@@ -96,7 +114,13 @@ pub enum Change {
     ReorderPlaylist { id: String, song_ids: Vec<String> },
     DeletePlaylist { id: String },
     /// A heart on a song, album or artist (`what`), or off.
-    Star { what: String, id: String, on: bool },
+    Star {
+        what: String,
+        id: String,
+        #[serde(default)]
+        source: Option<String>,
+        on: bool,
+    },
 }
 
 /// The page's hearts need no word when the marks move: it reads its pages again.
@@ -107,7 +131,7 @@ impl nori_core::library::StarsShown for Unshown {
 }
 
 /// Asks the server for `change`; kept for later when offline.
-pub async fn change(client: &Client, change: Change) -> Result<(), String> {
+pub async fn change(client: &std::sync::Arc<Client>, change: Change) -> Result<(), String> {
     use nori_core::client::{Starrable, Write};
     let w = match change {
         Change::CreatePlaylist { name, song_ids } => Write::CreatePlaylist { name, song_ids },
@@ -116,14 +140,14 @@ pub async fn change(client: &Client, change: Change) -> Result<(), String> {
         Change::RenamePlaylist { id, name } => Write::RenamePlaylist { id, name },
         Change::ReorderPlaylist { id, song_ids } => Write::ReplacePlaylist { id, song_ids },
         Change::DeletePlaylist { id } => Write::DeletePlaylist { id },
-        Change::Star { what, id, on } => {
+        Change::Star { what, id, source, on } => {
             let kind = match what.as_str() {
                 "song" => Starrable::Song,
                 "album" => Starrable::Album,
                 "artist" => Starrable::Artist,
                 _ => return Err(format!("no heart for {what}")),
             };
-            return client.star(kind, id, on, std::sync::Arc::new(Unshown)).await.map_err(|e| e.to_string());
+            return client.clone().star_in(source, kind, id, on, std::sync::Arc::new(Unshown)).await.map_err(|e| e.to_string());
         }
     };
     client.write(w).await.map_err(|e| e.to_string())
@@ -184,7 +208,7 @@ pub fn search_view(core: &nori_core::Core, view: nori_core::search::SearchView, 
 /// album list's answer says where its `next` page starts, or null.
 /// `user`: the account signed in, whose own playlists it may change (the core's `playlist_editable`);
 /// None for a profile without an account's things.
-pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<String, String> {
+pub async fn read(client: &std::sync::Arc<Client>, ask: &str, user: Option<&str>) -> Result<String, String> {
     let ask = serde_json::from_str::<Ask>(ask).map_err(|e| e.to_string())?;
     Ok(read_value(client, ask, user).await?.to_string())
 }
@@ -195,7 +219,7 @@ const GRID_PAGE: i32 = 500;
 
 /// A page of the album grid from `offset` in `sort`'s order (with `favorites`, the starred albums whole):
 /// its JSON, and where the page after it starts (`browse::next_album_page`).
-pub async fn album_page(client: &Client, sort: String, favorites: bool, offset: u32, user: Option<&str>) -> Result<(Value, Option<u32>), String> {
+pub async fn album_page(client: &std::sync::Arc<Client>, sort: String, favorites: bool, offset: u32, user: Option<&str>) -> Result<(Value, Option<u32>), String> {
     let mut v = read_value(client, Ask::Albums { sort, size: GRID_PAGE, offset: offset as i32, favorites }, user).await?;
     let next = v.as_object_mut().and_then(|m| m.remove("next")).and_then(|n| n.as_u64()).map(|n| n as u32);
     Ok((v, next))
@@ -233,7 +257,7 @@ pub async fn home_row_page(client: &Client, row: nori_core::settings::HomeRow, o
     Ok(v)
 }
 
-async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Value, String> {
+async fn read_value(client: &std::sync::Arc<Client>, ask: Ask, user: Option<&str>) -> Result<Value, String> {
     let core = client.core();
     match ask {
         Ask::Genre { name } => {
@@ -267,6 +291,27 @@ async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Val
             let Some(Page::Genres { v }) = last else { return Ok(Value::Null) };
             let tiles: Vec<Value> = core.genres_listed(v).iter().map(|g| json!({ "name": g.name, "songCount": g.song_count, "cover": g.cover_art.as_deref().map(|c| cover(core, c, 300)) })).collect();
             return Ok(json!({ "genres": tiles }));
+        }
+        Ask::Album { id, source } => {
+            let mut last = None;
+            client.clone().read_each_in(source, Read::AlbumById { id }, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
+            return Ok(last.map_or(Value::Null, |p| page(core, p, user)));
+        }
+        Ask::Artist { id, source } => {
+            let mut last = None;
+            client.clone().read_each_artist(source, id, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
+            return Ok(last.map_or(Value::Null, |p| page(core, p, user)));
+        }
+        Ask::ArtistAbout { id, source } => {
+            let mut last = None;
+            client.clone().read_each_in(source, Read::ArtistAbout { id }, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
+            return Ok(last.map_or(Value::Null, |p| page(core, p, user)));
+        }
+        Ask::Playlist { id, source, mixed } => {
+            let at = if mixed { nori_core::sources::PlaylistAt::Device } else { nori_core::sources::PlaylistAt::Source { source } };
+            let mut last = None;
+            client.clone().read_each_playlist(id, at, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
+            return Ok(last.map_or(Value::Null, |p| page(core, p, user)));
         }
         _ => {}
     }
@@ -347,29 +392,29 @@ pub async fn mix(client: &Client, id: String) -> Result<String, String> {
     .to_string())
 }
 
-/// A cover's address for `px` square.
+/// A cover's address for `px` square; empty for a source the profile does not have.
 pub fn cover(core: &Core, id: &str, px: u32) -> String {
-    core.cover_address(id.to_string(), nori_core::covers::cover_rendition(px))
+    core.cover_address(id.to_string(), nori_core::covers::cover_rendition(px)).unwrap_or_default()
 }
 
-/// `item` as JSON with its cover's address, and its heart as this session marked it (`starred`).
-fn with_cover<T: serde::Serialize>(core: &Core, item: &T, art: Option<&String>, heart: (Starrable, &str, bool)) -> Value {
+/// `item` as JSON with its cover's address, and its heart as this session marked it (`starred_in`).
+fn with_cover<T: serde::Serialize>(core: &Core, item: &T, art: Option<&String>, source: Option<&str>, heart: (Starrable, &str, bool)) -> Value {
     let mut v = serde_json::to_value(item).unwrap_or(Value::Null);
     if let Value::Object(m) = &mut v {
         if let Some(art) = art {
             m.insert("cover".into(), Value::String(cover(core, art, 300)));
         }
-        m.insert("starred".into(), Value::Bool(core.starred(heart.0, heart.1, heart.2)));
+        m.insert("starred".into(), Value::Bool(core.starred_in(source.map(String::from), heart.0, heart.1, heart.2)));
     }
     v
 }
 
 fn album(core: &Core, a: &Album) -> Value {
-    with_cover(core, a, a.cover_art.as_ref(), (Starrable::Album, &a.id, a.starred))
+    with_cover(core, a, a.cover_art.as_ref(), a.source.as_deref(), (Starrable::Album, &a.id, a.starred))
 }
 
 fn artist(core: &Core, a: &Artist) -> Value {
-    with_cover(core, a, a.cover_art.as_ref(), (Starrable::Artist, &a.id, a.starred))
+    with_cover(core, a, a.cover_art.as_ref(), a.source.as_deref(), (Starrable::Artist, &a.id, a.starred))
 }
 
 fn albums(core: &Core, v: &[Album]) -> Value {
@@ -380,9 +425,11 @@ fn artists(core: &Core, v: &[Artist]) -> Value {
     v.iter().map(|a| artist(core, a)).collect()
 }
 
-/// A song as the web draws it.
+/// A song as the web draws it; `key` tells it apart in the queue and the player ([`nori_core::ItemKey::text`]).
 pub fn song(core: &Core, s: &Song) -> Value {
-    with_cover(core, s, s.cover_art.as_ref(), (Starrable::Song, &s.id, s.starred))
+    let mut v = with_cover(core, s, s.cover_art.as_ref(), s.source.as_deref(), (Starrable::Song, &s.id, s.starred));
+    v["key"] = Value::String(nori_core::Keyed::key(s).text().into_owned());
+    v
 }
 
 fn songs(core: &Core, v: &[Song]) -> Value {
@@ -423,6 +470,8 @@ fn page(core: &Core, p: Page, user: Option<&str>) -> Value {
             // The picture across the page's head, at the full size.
             "picture": v.artist.cover_art.as_ref().map(|art| cover(core, art, 800)),
             "groups": v.groups.iter().map(|g| json!({ "kind": format!("{:?}", g.kind), "tag": g.tag, "albums": g.albums })).collect::<Value>(),
+            // How many songs the releases hold; null when one does not say.
+            "releaseSongs": v.release_songs,
         }),
         Page::Songs { v } => json!({ "songs": songs(core, &v) }),
         Page::Playlists { v } => {

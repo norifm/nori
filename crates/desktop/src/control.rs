@@ -20,8 +20,12 @@ enum Command {
     Open(View),
     Do(Action),
     Panel(Panel),
-    /// Plays the album with this id from its first song.
+    /// Plays the album with this id, of the profile's own source, from its first song.
     PlayAlbum(String),
+    /// Searches for this, as typing it into the search field does.
+    Find(String),
+    /// Makes a new playlist of this name from the playlist picker open, as its Create does.
+    NewPlaylist(String),
     /// Opens Settings at its tab with this index.
     Tab(i32),
     /// Saves the window as a PNG at this path.
@@ -55,11 +59,11 @@ enum Command {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum View { Home, Search, Albums, Artists, Playlists, Songs, Settings, Equalizer, Fullscreen }
+enum View { Home, Search, Albums, Artists, Playlists, Songs, Favorites, Settings, Equalizer, Fullscreen }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Action { Play, Pause, Toggle, Next, Previous, CloseFullscreen }
+enum Action { Play, Pause, Toggle, Next, Previous, Star, CloseFullscreen }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,7 +102,7 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
             ui.set_full_player(false);
             ui.invoke_go(match view {
                 View::Home => crate::View::Home, View::Search => crate::View::Search, View::Albums => crate::View::Albums,
-                View::Artists => crate::View::Artists, View::Playlists => crate::View::Playlists, View::Songs => crate::View::Songs,
+                View::Artists => crate::View::Artists, View::Playlists => crate::View::Playlists, View::Songs => crate::View::Songs, View::Favorites => crate::View::Favorites,
                 View::Settings => crate::View::Settings, View::Equalizer => crate::View::Equalizer,
                 View::Fullscreen => unreachable!(),
             });
@@ -110,7 +114,13 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
             });
             ui.invoke_player_changed();
         }
-        Command::PlayAlbum(id) => ui.invoke_play_album(id.into()),
+        Command::PlayAlbum(id) => ui.invoke_play_album(id.into(), "".into()),
+        Command::NewPlaylist(name) => ui.invoke_add_to_new_playlist(name.into()),
+        Command::Find(text) => {
+            ui.set_full_player(false);
+            ui.invoke_go(crate::View::Search);
+            ui.invoke_search_edited(text.into());
+        }
         Command::Tab(t) => {
             ui.set_full_player(false);
             ui.invoke_go(crate::View::Settings);
@@ -150,6 +160,7 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
             Action::Toggle => ui.invoke_toggle(),
             Action::Next => ui.invoke_next(),
             Action::Previous => ui.invoke_previous(),
+            Action::Star => ui.invoke_star(),
             Action::CloseFullscreen => {
                 ui.set_full_player(false);
                 ui.invoke_player_changed();

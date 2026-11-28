@@ -1,6 +1,7 @@
 //! Screens drawn into a TestBackend with keys and clicks dispatched. `NORI_TUI_DUMP=<dir>` writes the
 //! drawn screens as text.
 
+use nori_core::ItemKey;
 use std::time::{Duration, Instant};
 
 use nori_core::settings::StoredPrefs;
@@ -11,7 +12,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, Mo
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use crate::app::{App, Button, Cmd, Focus, Hit, Item, ListRef, LoginLine, Overlay, Panel, Target, View};
+use crate::app::{App, Button, Cmd, Focus, Hit, Item, ListRef, LoginLine, Overlay, Panel, Shelf, Target, View};
 use crate::backend::{block_on, Data, Msg, Req};
 use crate::settings_view::{Facts, Line, Row, SettingsView, Switch, GROUPS};
 
@@ -29,7 +30,7 @@ fn a_providers_radio_uses_the_playing_song() {
     let screen = draw(&mut a, 120, 36);
     assert!(!screen.contains("Radio"), "no words beside the player's buttons:\n{screen}");
     key(&mut a, KeyCode::Char('t'));
-    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id), false)) if id == "yt-song"));
+    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id, _), false)) if id == "yt-song"));
 }
 
 fn draw(a: &mut App, w: u16, h: u16) -> String {
@@ -167,7 +168,7 @@ fn song(id: &str, title: &str, secs: u32) -> Song {
 
 /// Opens playlist `id`'s page, as its address would.
 fn open_playlist(a: &mut App, id: &str) {
-    a.open_page(crate::app::Page::Playlist { id: id.into(), known: None, detail: crate::app::Load::Loading, sel: Default::default(), filter: Default::default() });
+    a.open_page(crate::app::Page::Playlist { id: id.into(), at: nori_core::sources::PlaylistAt::Source { source: None }, editable: false, known: None, detail: crate::app::Load::Loading, sel: Default::default(), filter: Default::default() });
 }
 
 fn album(id: &str, name: &str) -> Album {
@@ -307,9 +308,9 @@ fn keys_and_focus() {
     assert!(s.contains("Morning"), "{s}");
     a.cmds.clear();
     key(&mut a, KeyCode::Char('a'));
-    assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Playlist(id), false)) if id == "pl-0"), "{:?}", a.cmds);
+    assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Playlist(id, _), false)) if id == "pl-0"), "{:?}", a.cmds);
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.contains(&Cmd::Load(Req::Playlist("pl-0".into()))));
+    assert!(a.cmds.contains(&Cmd::Load(Req::Playlist("pl-0".into(), nori_core::sources::PlaylistAt::Source { source: None }))));
     assert!(a.page().is_some() && a.view == View::Playlists);
     key(&mut a, KeyCode::Esc);
     assert!(a.page().is_none());
@@ -344,11 +345,11 @@ fn keys_and_focus() {
 #[test]
 fn an_artist_page_shows_its_biography_and_similar_artists() {
     let mut a = app();
-    a.open_artist("ar".into());
-    assert!(a.cmds.contains(&Cmd::Load(Req::ArtistAbout("ar".into()))), "its about part is read with it");
+    a.open_artist("ar".into(), None);
+    assert!(a.cmds.contains(&Cmd::Load(Req::ArtistAbout("ar".into(), None))), "its about part is read with it");
     let artist = Artist { id: "ar".into(), name: "Mira Vale".into(), ..Default::default() };
     let detail = nori_core::ArtistDetail::new(artist, vec![album("al-1", "Glass Harbour"), album("al-2", "Low Tide")], vec![]);
-    a.handle(Msg::Data(Req::Artist("ar".into()), Ok(Data::Artist(Box::new(detail)))));
+    a.handle(Msg::Data(Req::Artist("ar".into(), None), Ok(Data::Artist(Box::new(detail)))));
     let bio = "Mira Vale is a songwriter and producer from the northern coast, known for slow, tidal records built from field recordings of harbours, ferries and rain. Her first album, Glass Harbour, was made over two winters in a converted net loft, with a borrowed upright piano and a tape machine. Critics called it a quiet record that rewards a long listen. She has since toured with a string quartet and scored two films, and her live shows are known for their long, unhurried sets.";
     let about = nori_core::pages::ArtistAbout {
         biography: Some(bio.into()),
@@ -356,7 +357,7 @@ fn an_artist_page_shows_its_biography_and_similar_artists() {
         musicbrainz: Some("https://musicbrainz.org/artist/mb".into()),
         similar: ["Harbour Lights", "Ferry Songs"].iter().enumerate().map(|(i, n)| Artist { id: format!("ar{i}"), name: n.to_string(), ..Default::default() }).collect(),
     };
-    a.handle(Msg::Data(Req::ArtistAbout("ar".into()), Ok(Data::ArtistAbout(Box::new(about)))));
+    a.handle(Msg::Data(Req::ArtistAbout("ar".into(), None), Ok(Data::ArtistAbout(Box::new(about)))));
     let s = draw(&mut a, 120, 40);
     dump("artist-about", &s);
     assert!(s.contains("Mira Vale is a songwriter") && s.contains("…") && !s.contains("unhurried sets"), "four lines until More:\n{s}");
@@ -373,7 +374,7 @@ fn an_artist_page_shows_its_biography_and_similar_artists() {
         key(&mut a, KeyCode::Down);
     }
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.contains(&Cmd::Load(Req::Artist("ar1".into()))), "a similar artist opens");
+    assert!(a.cmds.contains(&Cmd::Load(Req::Artist("ar1".into(), None))), "a similar artist opens");
 }
 
 /// An album opened from its row shows what the row knew (its name, who made it, its counts) while it is read,
@@ -393,7 +394,7 @@ fn an_album_opens_on_what_its_row_knew() {
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Glass Harbour") && s.contains('░'), "past it, the songs' places: {s}");
     let songs = vec![song("s1", "Only Song", 100)];
-    a.handle(Msg::Data(Req::Album("al-0".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-0", "Glass Harbour"), songs, vec![]))))));
+    a.handle(Msg::Data(Req::Album("al-0".into(), None), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-0", "Glass Harbour"), songs, vec![]))))));
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Only Song") && !s.contains('░'), "{s}");
     assert_eq!(a.sketch_from, None, "nothing waits once the answer shows");
@@ -424,7 +425,7 @@ fn album_list_keys_and_clicks() {
     let r = hit_rect(&a, Hit::Row(ListRef::Albums, a.library.albums_sel.at + 1));
     a.cmds.clear();
     click(&mut a, r.x + 2, r.y);
-    assert!(a.cmds.contains(&Cmd::Load(Req::Album("al-2".into()))), "{:?}", a.cmds);
+    assert!(a.cmds.contains(&Cmd::Load(Req::Album("al-2".into(), None))), "{:?}", a.cmds);
     key(&mut a, KeyCode::Esc);
     assert!(a.page().is_none());
     // The wheel moves three rows.
@@ -499,7 +500,7 @@ fn the_library_has_its_places_and_orders() {
     a.library.albums_sel.at = a.library_lines().iter().position(|l| *l == crate::app::LibLine::Shelf(2)).unwrap();
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.contains(&Cmd::Load(Req::Artist("ar-b".into()))), "{:?}", a.cmds);
+    assert!(a.cmds.contains(&Cmd::Load(Req::Artist("ar-b".into(), None))), "{:?}", a.cmds);
     // *: only the favorites, in the order chosen; another order keeps them so.
     a.go(View::Albums);
     key(&mut a, KeyCode::Char('*'));
@@ -536,7 +537,7 @@ fn a_feed_shelf_shows_songs_and_playlists_too() {
     let songs = vec![song("s1", "Quick One", 200), song("s2", "Quick Two", 180)];
     let list = nori_core::Playlist { id: "p1".into(), name: "Mixed Bag".into(), ..Default::default() };
     let cards = vec![Item::Song(songs.clone(), 0), Item::Song(songs.clone(), 1), Item::Playlist(list)];
-    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, None, "Quick picks".into(), cards))));
+    a.handle(Msg::Data(Req::Home, Ok(Data::HomeShelves(vec![Some(Shelf { row: None, title: "Quick picks".into(), items: cards })]))));
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Quick Two") && s.contains("Mixed Bag"), "{s}");
     key(&mut a, KeyCode::Down);
@@ -547,7 +548,7 @@ fn a_feed_shelf_shows_songs_and_playlists_too() {
     key(&mut a, KeyCode::Down);
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.contains(&Cmd::Load(Req::Playlist("p1".into()))), "{:?}", a.cmds);
+    assert!(a.cmds.contains(&Cmd::Load(Req::Playlist("p1".into(), nori_core::sources::PlaylistAt::Source { source: None }))), "{:?}", a.cmds);
 }
 
 #[test]
@@ -556,8 +557,9 @@ fn home_shelves() {
     a.go(View::Home);
     let shelf = |n: usize, p: &str| (0..n).map(|i| Item::Album(album(&format!("{p}-{i}"), &format!("{p} {i}")))).collect::<Vec<_>>();
     let id = |a: &App| match a.home.item() { Some(Item::Album(al)) => al.id.clone(), _ => String::new() };
-    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, Some(nori_core::settings::HomeRow::Newest), "Recently added".into(), shelf(12, "New")))));
-    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(2, Some(nori_core::settings::HomeRow::Frequent), "Most played".into(), shelf(3, "Top")))));
+    let newest = Some(Shelf { row: Some(nori_core::settings::HomeRow::Newest), title: "Recently added".into(), items: shelf(12, "New") });
+    let frequent = Some(Shelf { row: Some(nori_core::settings::HomeRow::Frequent), title: "Most played".into(), items: shelf(3, "Top") });
+    a.handle(Msg::Data(Req::Home, Ok(Data::HomeShelves(vec![newest, None, frequent]))));
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Recently added") && s.contains("Most played") && s.contains("New 0") && s.contains("Top 2"), "{s}");
     assert!(s.contains("Listen now") && !s.contains("New 5"), "a shelf lists its first five:\n{s}");
@@ -575,7 +577,7 @@ fn home_shelves() {
     assert_eq!(id(&a), "New-4", "and back over it");
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.contains(&Cmd::Load(Req::Album("New-4".into()))));
+    assert!(a.cmds.contains(&Cmd::Load(Req::Album("New-4".into(), None))));
     // A heading opens its whole shelf.
     key(&mut a, KeyCode::Esc);
     key(&mut a, KeyCode::Char('g'));
@@ -812,7 +814,7 @@ fn queue_panel_editing() {
     assert_eq!(a.cmds.last(), Some(&Cmd::Clear), "c clears what plays after");
     key(&mut a, KeyCode::Char('w'));
     let ids: Vec<String> = (0..5).map(|i| format!("s{i}")).collect();
-    assert!(matches!(&a.overlay, Some(Overlay::Picker { target: Target::Playlist { songs, .. }, .. }) if *songs == ids), "w offers the whole queue to a playlist");
+    assert!(matches!(&a.overlay, Some(Overlay::Picker { target: Target::Playlist { songs, .. }, .. }) if songs.iter().map(|s| s.id.clone()).collect::<Vec<_>>() == ids), "w offers the whole queue to a playlist");
     key(&mut a, KeyCode::Esc);
     key(&mut a, KeyCode::Char('K'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Move(2, 1)));
@@ -849,8 +851,8 @@ fn full_player_shows_the_song_and_the_mix() {
     a.now.state = State::Playing;
     a.now.mixing = true;
     a.transition = Some(nori_core::automix::planner::TransitionNote {
-        outgoing_id: "s1".into(),
-        incoming_id: "s2".into(),
+        outgoing_id: ItemKey::own("s1"),
+        incoming_id: ItemKey::own("s2"),
         kind: nori_core::automix::planner::TransitionKind::BeatMatched,
         start_ms: 190_000,
         duration_ms: 8_000,
@@ -892,7 +894,7 @@ fn lyrics_panel() {
     let mut a = app();
     a.heard(Some(song("s1", "First", 200)));
     key(&mut a, KeyCode::Char('L'));
-    a.handle(Msg::Lyrics(LyricsNow::Looking { song: "s1".into() }));
+    a.handle(Msg::Lyrics(LyricsNow::Looking { song: ItemKey::own("s1") }));
     assert!(draw(&mut a, 160, 30).contains("Looking for lyrics"));
     let words = vec![LyricWord { start_ms: 1000, end_ms: 1500, start: 0, end: 5 }, LyricWord { start_ms: 1500, end_ms: 2000, start: 6, end: 11 }];
     let lines = vec![
@@ -900,9 +902,9 @@ fn lyrics_panel() {
         LyricLine { start_ms: 3000, end_ms: 4000, text: "Second line".into(), ..Default::default() },
     ];
     let pick = nori_core::race::LyricsPick { lyrics: Lyrics { synced: true, word_timed: true, lines, ..Default::default() }, origin: nori_core::lyrics_sources::LyricsOrigin::Server };
-    a.handle(Msg::Lyrics(LyricsNow::Shown { song: "s0".into(), pick: pick.clone() }));
+    a.handle(Msg::Lyrics(LyricsNow::Shown { song: ItemKey::own("s0"), pick: pick.clone() }));
     assert!(a.lyrics.found().is_none(), "another song's words");
-    a.handle(Msg::Lyrics(LyricsNow::Shown { song: "s1".into(), pick }));
+    a.handle(Msg::Lyrics(LyricsNow::Shown { song: ItemKey::own("s1"), pick }));
     let l = a.lyrics.found().unwrap();
     l.advance(1250, true, true);
     let s = draw(&mut a, 160, 30);
@@ -935,7 +937,7 @@ fn backing_vocals_are_drawn_under_their_line() {
         LyricLine { start_ms: 8000, end_ms: 10000, text: "Hey you".into(), ..Default::default() },
     ];
     let pick = nori_core::race::LyricsPick { lyrics: Lyrics { synced: true, word_timed: true, lines, ..Default::default() }, origin: nori_core::lyrics_sources::LyricsOrigin::Server };
-    a.handle(Msg::Lyrics(LyricsNow::Shown { song: "s1".into(), pick }));
+    a.handle(Msg::Lyrics(LyricsNow::Shown { song: ItemKey::own("s1"), pick }));
     a.lyrics.found().unwrap().advance(5900, true, true);
     let s = draw(&mut a, 160, 30);
     let rows: Vec<&str> = s.lines().collect();
@@ -1082,15 +1084,15 @@ fn a_signed_out_provider_seals_on_this_device() {
     let mut a = app();
     a.rules = nori_core::browse::ProfileRules { account: false, stars: true, stars_here: true, ..Default::default() };
     a.go(View::Albums);
-    a.open_album("yt-al".into());
+    a.open_album("yt-al".into(), None);
     let songs = vec![song("yt-1", "One", 200), Song { starred: true, ..song("yt-2", "Two", 200) }];
-    a.handle(Msg::Data(Req::Album("yt-al".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("yt-al", "Three"), songs, vec![]))))));
+    a.handle(Msg::Data(Req::Album("yt-al".into(), None), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("yt-al", "Three"), songs, vec![]))))));
     let s = draw(&mut a, 170, 40);
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
     assert!(s.contains("Three 好") && line("Two").contains('好') && !line("One").contains('好'), "{s}");
     let star = hit_rect(&a, Hit::Button(crate::app::Button::Star));
     click(&mut a, star.x + 1, star.y);
-    assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Album, "yt-al".into(), true)));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Album, ItemKey::own("yt-al"), true)));
     assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::OfferSignIn)));
 }
 
@@ -1169,28 +1171,31 @@ fn the_account_sheet_signs_in_with_a_code() {
 fn star_marks_from_the_core_redraw_the_seals() {
     let mut a = app();
     a.go(View::Songs);
-    a.handle(Msg::Data(songs_req(), Ok(Data::Songs(vec![song("1", "One", 200), Song { starred: true, ..song("2", "Two", 200) }], false))));
+    // "Theirs" is song 1 of the profile's second account.
+    let theirs = Song { source: Some("acct2".into()), ..song("1", "Theirs", 200) };
+    a.handle(Msg::Data(songs_req(), Ok(Data::Songs(vec![song("1", "One", 200), Song { starred: true, ..song("2", "Two", 200) }, theirs], false))));
     a.heard(Some(song("1", "One", 200)));
     let s = draw(&mut a, 170, 40);
     let line = |s: &str, name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
     assert!(!line(&s, "One").contains('好') && line(&s, "Two").contains('好'), "{s}");
     assert!(!seal_filled(&a, crate::app::Button::StarSong), "the player's seal is quiet:\n{s}");
-    // Another device stars the song playing and unstars the other.
+    // Another device stars the song playing and unstars the other; the second account's song 1 is not
+    // the song playing.
     let mut marks = nori_core::stars::StarMarks::default();
-    marks.mark(nori_core::client::Starrable::Song, "1".into(), true);
-    marks.mark(nori_core::client::Starrable::Song, "2".into(), false);
+    marks.mark(nori_core::client::Starrable::Song, nori_core::ItemKey::own("1"), true);
+    marks.mark(nori_core::client::Starrable::Song, nori_core::ItemKey::own("2"), false);
     a.handle(Msg::Starred(marks));
     let s = draw(&mut a, 170, 40);
-    assert!(line(&s, "One").contains('好') && !line(&s, "Two").contains('好'), "the row:\n{s}");
+    assert!(line(&s, "One").contains('好') && !line(&s, "Two").contains('好') && !line(&s, "Theirs").contains('好'), "the row:\n{s}");
     assert!(seal_filled(&a, crate::app::Button::StarSong), "and the player's seal, filled:\n{s}");
 }
 
 #[test]
 fn a_playlists_seal_pins_it() {
     let mut a = app();
-    open_playlist(&mut a, "pl-1");
+    a.open_playlist(&nori_core::Playlist { id: "pl-1".into(), ..Default::default() });
     let pl = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "pl-1".into(), ..Default::default() }, vec![song("1", "One", 200)]);
-    a.handle(Msg::Data(Req::Playlist("pl-1".into()), Ok(Data::Playlist(Box::new(pl)))));
+    a.handle(Msg::Data(Req::Playlist("pl-1".into(), nori_core::sources::PlaylistAt::Source { source: None }), Ok(Data::Playlist(Box::new(pl), false))));
     draw(&mut a, 170, 40);
     let star = hit_rect(&a, Hit::Button(crate::app::Button::Star));
     click(&mut a, star.x + 1, star.y);
@@ -1208,7 +1213,7 @@ fn a_playlist_filling_in_grows_in_place() {
         let songs = titles.iter().enumerate().map(|(i, t)| song(&i.to_string(), t, 200)).collect();
         let mut d = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "long".into(), ..Default::default() }, songs);
         d.filling = filling;
-        Msg::Data(Req::Playlist("long".into()), Ok(Data::Playlist(Box::new(d))))
+        Msg::Data(Req::Playlist("long".into(), nori_core::sources::PlaylistAt::Source { source: None }), Ok(Data::Playlist(Box::new(d), false)))
     };
     a.handle(page(&["One"], true));
     let s = draw(&mut a, 170, 40);
@@ -1223,15 +1228,13 @@ fn a_playlist_filling_in_grows_in_place() {
 #[test]
 fn an_own_playlists_rows_move_and_go() {
     use crate::menu::{MenuAct, MenuLine};
-    use nori_core::client::Write;
     use nori_core::menus::PlaylistEdit;
-    let page = |owner: Option<&str>| {
+    let pl = nori_core::Playlist { id: "own-1".into(), name: "Rain".into(), ..Default::default() };
+    let page = |editable: bool| {
         let mut a = app();
-        a.rules = nori_core::browse::ProfileRules { playlists: true, ..Default::default() };
-        open_playlist(&mut a, "own-1");
-        let pl = nori_core::Playlist { id: "own-1".into(), name: "Rain".into(), owner: owner.map(Into::into), ..Default::default() };
-        let detail = nori_core::PlaylistDetail::new(pl, vec![song("1", "One", 200), song("2", "Two", 200), song("3", "Three", 200)]);
-        a.handle(Msg::Data(Req::Playlist("own-1".into()), Ok(Data::Playlist(Box::new(detail)))));
+        a.open_playlist(&pl);
+        let detail = nori_core::PlaylistDetail::new(pl.clone(), vec![song("1", "One", 200), song("2", "Two", 200), song("3", "Three", 200)]);
+        a.handle(Msg::Data(Req::Playlist("own-1".into(), nori_core::sources::PlaylistAt::Source { source: None }), Ok(Data::Playlist(Box::new(detail), editable))));
         draw(&mut a, 170, 40);
         key(&mut a, KeyCode::Down);
         key(&mut a, KeyCode::Char('m'));
@@ -1241,7 +1244,7 @@ fn an_own_playlists_rows_move_and_go() {
         Some(Overlay::Menu { lines, .. }) => lines.clone(),
         _ => panic!("no menu"),
     };
-    let mut a = page(None);
+    let mut a = page(true);
     let edits: Vec<MenuLine> = [PlaylistEdit::MoveUp, PlaylistEdit::MoveDown, PlaylistEdit::Remove].map(|e| MenuLine::Act(MenuAct::Edit(e))).into();
     assert!(lines(&a).windows(3).any(|w| w == edits.as_slice()), "{:?}", lines(&a));
     assert!(lines(&a).contains(&MenuLine::Act(MenuAct::RenamePlaylist)));
@@ -1250,9 +1253,10 @@ fn an_own_playlists_rows_move_and_go() {
         sel.at = up;
     }
     key(&mut a, KeyCode::Enter);
-    let order = vec!["2".to_string(), "1".into(), "3".into()];
-    assert!(a.cmds.contains(&Cmd::EditPlaylist { id: "own-1".into(), write: Write::ReplacePlaylist { id: "own-1".into(), song_ids: order }, said: "Moved".into() }), "{:?}", a.cmds);
-    let a = page(Some("someone-else"));
+    let songs = vec!["1".to_string(), "2".into(), "3".into()];
+    let change = nori_host::session::PlaylistChange::Edit { songs, index: 1, edit: PlaylistEdit::MoveUp };
+    assert!(a.cmds.contains(&Cmd::EditPlaylist { playlist: pl.clone(), change, said: "Moved".into() }), "{:?}", a.cmds);
+    let a = page(false);
     assert!(!lines(&a).iter().any(|l| matches!(l, MenuLine::Act(MenuAct::Edit(_) | MenuAct::RenamePlaylist))), "{:?}", lines(&a));
 }
 
@@ -1260,25 +1264,25 @@ fn an_own_playlists_rows_move_and_go() {
 fn buttons() {
     let mut a = app();
     a.go(View::Albums);
-    a.open_album("al-3".into());
+    a.open_album("al-3".into(), None);
     let songs = vec![song("1", "One", 200), song("2", "Two", 200)];
-    a.handle(Msg::Data(Req::Album("al-3".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-3", "Three"), songs, vec![]))))));
+    a.handle(Msg::Data(Req::Album("al-3".into(), None), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-3", "Three"), songs, vec![]))))));
     a.heard(Some(song("1", "One", 200)));
     let s = draw(&mut a, 170, 40);
     assert!(s.contains("Three 好") && s.contains("Download"), "{s}");
     a.cmds.clear();
     let star = hit_rect(&a, Hit::Button(crate::app::Button::Star));
     click(&mut a, star.x + 1, star.y);
-    assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Album, "al-3".into(), true)));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Album, ItemKey::own("al-3"), true)));
     draw(&mut a, 170, 40);
     assert!(seal_filled(&a, crate::app::Button::Star), "shown at once");
     let down = hit_rect(&a, Hit::Button(crate::app::Button::Page(nori_core::menus::PageAction::Download { act: nori_core::menus::DownloadAct::All })));
     click(&mut a, down.x + 1, down.y);
-    assert!(matches!(a.cmds.last(), Some(Cmd::DownloadFetch(crate::backend::Fetch::Album(id))) if id == "al-3"));
+    assert!(matches!(a.cmds.last(), Some(Cmd::DownloadFetch(crate::backend::Fetch::Album(id, _))) if id == "al-3"));
     // The seal by the song in the player.
     let seal = hit_rect(&a, Hit::Button(crate::app::Button::StarSong));
     click(&mut a, seal.x, seal.y);
-    assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Song, "1".into(), true)));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Song, ItemKey::own("1"), true)));
     draw(&mut a, 170, 40);
     assert!(seal_filled(&a, crate::app::Button::Star) && seal_filled(&a, crate::app::Button::StarSong), "the album's and the player's seal fill at once");
 
@@ -1362,9 +1366,9 @@ fn queue_origin_is_page() {
     use nori_core::{OriginKind, PageOrigin, Playlist, PlaylistDetail};
     let mut a = app();
     a.go(View::Albums);
-    a.open_album("al-3".into());
+    a.open_album("al-3".into(), None);
     let songs = vec![song("1", "One", 200), song("2", "Two", 200)];
-    a.handle(Msg::Data(Req::Album("al-3".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-3", "Three"), songs.clone(), vec![]))))));
+    a.handle(Msg::Data(Req::Album("al-3".into(), None), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-3", "Three"), songs.clone(), vec![]))))));
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Three") && s.contains("Play   Shuffle") && !s.contains("ALBUM"), "{s}");
     dump("album", &s);
@@ -1381,9 +1385,9 @@ fn queue_origin_is_page() {
     assert_eq!(a.cmds.iter().filter_map(from).collect::<Vec<_>>(), [(album_page.clone(), 1), (album_page, 0)]);
     // A playlist's page is its own, not the album's its songs come from.
     key(&mut a, KeyCode::Esc);
-    open_playlist(&mut a, "pl-1");
+    a.open_playlist(&nori_core::Playlist { id: "pl-1".into(), ..Default::default() });
     let pl = PlaylistDetail::new(Playlist { id: "pl-1".into(), ..Default::default() }, songs);
-    a.handle(Msg::Data(Req::Playlist("pl-1".into()), Ok(Data::Playlist(Box::new(pl)))));
+    a.handle(Msg::Data(Req::Playlist("pl-1".into(), nori_core::sources::PlaylistAt::Source { source: None }), Ok(Data::Playlist(Box::new(pl), false))));
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.iter().filter_map(from).collect::<Vec<_>>(), [(Some(PageOrigin::new(OriginKind::Playlist, "pl-1")), 0)]);
@@ -1395,10 +1399,10 @@ fn queue_origin_is_page() {
 fn an_artist_without_albums_lists_its_songs() {
     use nori_core::{Artist, ArtistDetail, OriginKind, PageOrigin};
     let mut a = app();
-    a.open_artist("ar-1".into());
+    a.open_artist("ar-1".into(), None);
     let songs = vec![song("v1", "First Video", 200), song("v2", "Second Video", 300)];
     let d = ArtistDetail::new(Artist { id: "ar-1".into(), name: "Studio".into(), ..Default::default() }, vec![], songs);
-    a.handle(Msg::Data(Req::Artist("ar-1".into()), Ok(Data::Artist(Box::new(d)))));
+    a.handle(Msg::Data(Req::Artist("ar-1".into(), None), Ok(Data::Artist(Box::new(d)))));
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("2 songs") && s.contains("First Video") && s.contains("Second Video"), "{s}");
     a.cmds.clear();
@@ -1450,7 +1454,7 @@ fn search_results_list() {
     a.search.settle(true);
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.contains(&Cmd::Load(Req::Album("al-1".into()))), "{:?}", a.cmds);
+    assert!(a.cmds.contains(&Cmd::Load(Req::Album("al-1".into(), None))), "{:?}", a.cmds);
     assert!(a.cmds.contains(&Cmd::SearchUsed), "and one whose result is opened");
 }
 
@@ -1701,7 +1705,7 @@ fn another_device_playing_shows_in_the_player_bar() {
     a.now = crate::app::Now { state: State::Playing, position_ms: 61_000, at: Instant::now(), ..Default::default() };
     a.volume = 0.4;
     // The device shows the song unstarred, though this session marked it.
-    a.marks.mark(nori_core::client::Starrable::Song, "s1".into(), true);
+    a.marks.mark(nori_core::client::Starrable::Song, nori_core::ItemKey::own("s1"), true);
     a.devices.hearts.insert("s1".into(), false);
     let s = draw(&mut a, 160, 30);
     dump("playing-on", &s);
@@ -1711,7 +1715,7 @@ fn another_device_playing_shows_in_the_player_bar() {
     // The heart goes to the device, and fills at once.
     let heart = hit_rect(&a, Hit::Button(crate::app::Button::StarSong));
     click(&mut a, heart.x, heart.y);
-    assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Song, "s1".into(), true)));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Song, ItemKey::own("s1"), true)));
     draw(&mut a, 160, 30);
     assert!(seal_filled(&a, crate::app::Button::StarSong));
     // This computer's volume, set from afar, does not show over the device's.
@@ -1928,7 +1932,7 @@ fn a_guest_browses_the_hosts_library_and_asks_for_songs() {
     a.go(View::Songs);
     assert!(!a.cmds.contains(&Cmd::Load(Req::Playlists)), "the host's playlists are not the guest's");
     let songs = vec![song("1", "One", 200), song("2", "Two", 200), song("3", "Three", 200)];
-    a.marks.mark(nori_core::client::Starrable::Song, "3".into(), true);
+    a.marks.mark(nori_core::client::Starrable::Song, nori_core::ItemKey::own("3"), true);
     a.handle(Msg::Data(songs_req(), Ok(Data::Songs(songs.clone(), true))));
     let s = draw(&mut a, 160, 30);
     dump("guest-songs", &s);
@@ -2068,14 +2072,15 @@ fn the_main_screens() {
         };
         let mut out = Vec::new();
         a.go(View::Home);
-        a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, None, "Recently played".into(), albums[..6].iter().cloned().map(Item::Album).collect()))));
-        a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(1, None, "Recently added".into(), albums[6..].iter().cloned().map(Item::Album).collect()))));
+        let played = Some(Shelf { row: None, title: "Recently played".into(), items: albums[..6].iter().cloned().map(Item::Album).collect() });
+        let added = Some(Shelf { row: None, title: "Recently added".into(), items: albums[6..].iter().cloned().map(Item::Album).collect() });
+        a.handle(Msg::Data(Req::Home, Ok(Data::HomeShelves(vec![played, added]))));
         out.push(shot(a, "home"));
         a.go(View::Albums);
         a.handle(Msg::Data(albums_req(), Ok(Data::Albums(albums.clone()))));
         out.push(shot(a, "library"));
-        a.open_album("al-0".into());
-        a.handle(Msg::Data(Req::Album("al-0".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(albums[0].clone(), tracks.clone(), vec![]))))));
+        a.open_album("al-0".into(), None);
+        a.handle(Msg::Data(Req::Album("al-0".into(), None), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(albums[0].clone(), tracks.clone(), vec![]))))));
         out.push(shot(a, "album"));
         a.do_action(crate::keys::Action::Panel(Panel::Queue));
         out.push(shot(a, "player"));
@@ -2140,7 +2145,7 @@ fn home_offers_the_queue_left_and_the_mixes() {
     a.handle(Msg::Offer(Some(offer.clone())));
     let tiles = vec![MixTile { id: "favourites".into(), name: MixName::Favourites, covers: vec![], favourites: true }, MixTile { id: "quick".into(), name: MixName::QuickPicks, covers: vec![], favourites: false }];
     a.handle(Msg::Data(Req::Home, Ok(Data::Mixes(tiles))));
-    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, Some(nori_core::settings::HomeRow::Newest), "Recently added".into(), vec![Item::Album(album("al-1", "One"))]))));
+    a.handle(Msg::Data(Req::Home, Ok(Data::HomeShelves(vec![Some(Shelf { row: Some(nori_core::settings::HomeRow::Newest), title: "Recently added".into(), items: vec![Item::Album(album("al-1", "One"))] })]))));
     let s = draw(&mut a, 120, 30);
     dump("home-offer", &s);
     let lines: Vec<&str> = s.lines().map(str::trim).collect();
@@ -2203,10 +2208,10 @@ fn page_heads_offer_what_the_core_says() {
     use nori_core::menus::{DownloadAct, PageAction, SongDownload};
     let mut a = app();
     a.rules = nori_core::browse::profile_rules(false);
-    a.open_album("al-1".into());
+    a.open_album("al-1".into(), None);
     let songs = vec![song("1", "One", 200), song("2", "Two", 200), song("3", "Three", 200)];
-    a.handle(Msg::Data(Req::Album("al-1".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
-    assert_eq!(a.cmds.last(), Some(&Cmd::ReadDownloads(vec!["1".into(), "2".into(), "3".into()])), "what is downloaded, read");
+    a.handle(Msg::Data(Req::Album("al-1".into(), None), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
+    assert_eq!(a.cmds.last(), Some(&Cmd::ReadDownloads(vec![ItemKey::own("1"), ItemKey::own("2"), ItemKey::own("3")])), "what is downloaded, read");
     let s = draw(&mut a, 120, 30);
     dump("album-head", &s);
     let lines: Vec<&str> = s.lines().map(str::trim).collect();
@@ -2215,19 +2220,19 @@ fn page_heads_offer_what_the_core_says() {
     assert!(lines[at + 2].starts_with("2001 · 3 songs") && lines[at + 2].ends_with("Download   Add to queue"), "{s}");
     assert!(!s.contains("ALBUM"), "no caption over the title:\n{s}");
     // One of three downloaded: the others; all three: their removal.
-    a.knows_downloads(vec!["1".into()], vec![SongDownload::Done]);
+    a.knows_downloads(vec![ItemKey::own("1")], vec![SongDownload::Done]);
     assert!(draw(&mut a, 120, 30).contains("Download the other 2   Add to queue"));
-    a.knows_downloads(vec!["2".into(), "3".into()], vec![SongDownload::Done, SongDownload::Done]);
+    a.knows_downloads(vec![ItemKey::own("2"), ItemKey::own("3")], vec![SongDownload::Done, SongDownload::Done]);
     assert!(draw(&mut a, 120, 30).contains("Remove downloads   Add to queue"));
     let remove = hit_rect(&a, Hit::Button(Button::Page(PageAction::Download { act: DownloadAct::Remove })));
     a.cmds.clear();
     click(&mut a, remove.x, remove.y);
     assert!(a.cmds.is_empty() && draw(&mut a, 120, 30).contains("Remove 3 downloads?"), "a removal asks first");
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds, vec![Cmd::DownloadRemove(songs.iter().map(|s| s.id.clone()).collect())]);
+    assert_eq!(a.cmds, vec![Cmd::DownloadRemove(songs.iter().map(nori_core::Keyed::key).collect())]);
     let add = hit_rect(&a, Hit::Button(Button::Page(PageAction::AddToQueue)));
     click(&mut a, add.x, add.y);
-    assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Album(id), false)) if id == "al-1"));
+    assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Album(id, _), false)) if id == "al-1"));
 
     // A mix: Save as playlist after Play and Shuffle, New mix in its list's head.
     let sheet = nori_core::mixes::board::MixSheet { id: "discover".into(), name: nori_core::mixes::board::MixName::Discover, songs: songs.clone(), covers: vec![], refreshable: true, favourites: false, seconds: 600 };
@@ -2246,9 +2251,9 @@ fn page_heads_offer_what_the_core_says() {
 
     // An artist: the albums under their shelves, the first selected.
     let albums = vec![Album { year: 2001, ..album("a1", "Long Player") }, Album { year: 2003, release_types: vec!["Single".into()], ..album("a2", "Short One") }];
-    a.open_artist("ar-1".into());
+    a.open_artist("ar-1".into(), None);
     let d = nori_core::ArtistDetail::new(nori_core::Artist { id: "ar-1".into(), name: "Band".into(), ..Default::default() }, albums, vec![]);
-    a.handle(Msg::Data(Req::Artist("ar-1".into()), Ok(Data::Artist(Box::new(d)))));
+    a.handle(Msg::Data(Req::Artist("ar-1".into(), None), Ok(Data::Artist(Box::new(d)))));
     let s = draw(&mut a, 120, 30);
     dump("artist", &s);
     let lines: Vec<&str> = s.lines().map(str::trim).collect();
@@ -2321,9 +2326,9 @@ fn the_menu_lists_what_the_core_offers() {
     use nori_core::menus::SongAction;
     let mut a = app();
     a.rules = nori_core::browse::profile_rules(false);
-    a.open_album("al-1".into());
+    a.open_album("al-1".into(), None);
     let songs = vec![Song { album_id: Some("al-1".into()), artist_id: Some("ar-1".into()), ..song("1", "One", 200) }, song("2", "Two", 200)];
-    a.handle(Msg::Data(Req::Album("al-1".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
+    a.handle(Msg::Data(Req::Album("al-1".into(), None), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
     key(&mut a, KeyCode::Char('m'));
     let Some(Overlay::Menu { lines, folded, .. }) = &a.overlay else { panic!("no menu") };
     let core: Vec<MenuLine> = nori_core::menus::song_menu(songs[0].clone(), false, false, nori_core::menus::SongDownload::None, false, false, true, true, true, true, a.rules.radio, false, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, "al-1")))
@@ -2348,7 +2353,7 @@ fn the_menu_lists_what_the_core_offers() {
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert!(a.overlay.is_none());
-    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id), false)) if id == "1"), "{:?}", a.cmds);
+    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id, _), false)) if id == "1"), "{:?}", a.cmds);
     // Add to playlist: the core's choices after a new one, which asks for its name; one that has the song
     // takes nothing.
     key(&mut a, KeyCode::Char('m'));
@@ -2360,12 +2365,15 @@ fn the_menu_lists_what_the_core_offers() {
         sel.at = at;
     }
     key(&mut a, KeyCode::Enter);
-    let asked = Req::PlaylistChoices(vec!["1".into()]);
-    assert!(matches!(a.cmds.last(), Some(Cmd::Load(r)) if *r == asked));
+    let Some(Cmd::Load(Req::PlaylistChoices(songs))) = a.cmds.last().cloned() else { panic!("{:?}", a.cmds) };
+    let asked = Req::PlaylistChoices(songs.clone());
+    assert_eq!(songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["1"], "the song whole");
+    let one = songs[0].clone();
     let choice = |id: &str, name: &str, adds: &[&str], holds| nori_core::menus::PlaylistChoice {
         playlist: nori_core::Playlist { id: id.into(), name: name.into(), song_count: 3, ..Default::default() },
-        adds: adds.iter().map(|s| s.to_string()).collect(),
+        adds: adds.iter().map(|_| one.clone()).collect(),
         holds,
+        refused: None,
     };
     a.handle(Msg::Data(asked, Ok(Data::PlaylistChoices(vec![choice("pl-0", "Road trip", &[], 1), choice("pl-1", "Rain", &["1"], 0)]))));
     assert!(matches!(&a.overlay, Some(Overlay::Picker { options, .. }) if options.iter().map(|o| o.0.as_str()).collect::<Vec<_>>() == ["New playlist", "Road trip · has it ✓", "Rain · 3 songs"]));
@@ -2375,7 +2383,8 @@ fn the_menu_lists_what_the_core_offers() {
     assert!(a.cmds.len() == before && matches!(a.overlay, Some(Overlay::Picker { .. })), "a playlist that has it takes nothing");
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.last(), Some(&Cmd::AddToPlaylist { id: "pl-1".into(), songs: vec!["1".into()] }));
+    let rain = nori_core::Playlist { id: "pl-1".into(), name: "Rain".into(), song_count: 3, ..Default::default() };
+    assert_eq!(a.cmds.last(), Some(&Cmd::AddToPlaylist { playlist: rain, songs: vec![one.clone()] }));
     key(&mut a, KeyCode::Char('m'));
     if let Some(Overlay::Menu { sel, .. }) = &mut a.overlay {
         sel.at = at;
@@ -2384,7 +2393,7 @@ fn the_menu_lists_what_the_core_offers() {
     key(&mut a, KeyCode::Enter);
     chars(&mut a, "Mine");
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.last(), Some(&Cmd::NewPlaylist { name: "Mine".into(), songs: vec!["1".into()] }));
+    assert_eq!(a.cmds.last(), Some(&Cmd::NewPlaylist { name: "Mine".into(), songs: vec![one] }));
 
     // An album's menu, from a list.
     let mut a = app();
@@ -2394,7 +2403,7 @@ fn the_menu_lists_what_the_core_offers() {
     assert!(matches!(&a.overlay, Some(Overlay::Menu { lines, .. }) if *lines == [MenuLine::Act(MenuAct::Play), MenuLine::Act(MenuAct::PlayNext), MenuLine::Act(MenuAct::AddToQueue)]));
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Album(id), true)) if id == "al-9"));
+    assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Album(id, _), true)) if id == "al-9"));
 
     // An artist's, the same.
     let mut a = app();
@@ -2403,7 +2412,7 @@ fn the_menu_lists_what_the_core_offers() {
     key(&mut a, KeyCode::Char('m'));
     assert!(matches!(&a.overlay, Some(Overlay::Menu { title, lines, .. }) if title == "One" && *lines == [MenuLine::Act(MenuAct::Play), MenuLine::Act(MenuAct::PlayNext), MenuLine::Act(MenuAct::AddToQueue)]));
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Artist(id), false)) if id == "ar-1"));
+    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Artist(id, _), false)) if id == "ar-1"));
     // M switches the mouse.
     key(&mut a, KeyCode::Char('M'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Mouse(false)));
@@ -2978,9 +2987,9 @@ fn a_plugins_action_ends_a_songs_menu() {
     let plugins = fixture_host(&dir, heard.clone());
     let mut a = app();
     a.slots.menu = plugins.menu_entries(nori_plugins::ItemKind::Song, "en".into()).into_iter().map(|e| (nori_plugins::ItemKind::Song, e)).collect();
-    a.open_album("al-1".into());
+    a.open_album("al-1".into(), None);
     let songs = vec![song("1", "One", 200), song("2", "Two", 200)];
-    a.handle(Msg::Data(Req::Album("al-1".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
+    a.handle(Msg::Data(Req::Album("al-1".into(), None), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
     key(&mut a, KeyCode::Char('m'));
     let s = draw(&mut a, 120, 40);
     dump("menu-plugin", &s);
@@ -3082,7 +3091,7 @@ fn a_controlled_devices_settings_and_noise_key() {
     let at = a.devices.rows().iter().position(|r| *r == crate::app::DeviceRow::Settings(0)).unwrap();
     a.settings.own.controlled = a.devices.controlled.clone();
     a.go(View::Albums);
-    a.pages.push(crate::app::Page::Album { id: "al".into(), known: None, detail: Default::default(), sel: Default::default() });
+    a.pages.push(crate::app::Page::Album { id: "al".into(), source: None, known: None, detail: Default::default(), sel: Default::default() });
     key(&mut a, KeyCode::Char('C'));
     a.devices.sel.at = at;
     key(&mut a, KeyCode::Enter);
@@ -3711,6 +3720,51 @@ fn a_profile_moves_with_k_and_j() {
     assert!(!draw(&mut a, 140, 40).contains("K J move"));
 }
 
+/// A profile's `a` opens its merged sources menu: moving/removing its sources, adding offered saved
+/// profiles, or opening the provider choice to sign in to a new one; merged sources show in its detail.
+#[test]
+fn a_profiles_sources_are_added_moved_and_removed() {
+    use crate::app::SourceChange;
+    let sv = |id: &str, name: &str, sources: &[&str]| nori_core::settings::SavedServer {
+        id: id.into(),
+        name: name.into(),
+        url: format!("http://{id}"),
+        sources: sources.iter().map(|s| s.to_string()).collect(),
+        ..Default::default()
+    };
+    let mut a = App::new(StoredPrefs { servers: vec![sv("home", "Home", &["s1", "s2"]), sv("s1", "One", &[]), sv("s2", "Two", &[]), sv("extra", "Extra", &[])], active_server_id: "home".into(), ..StoredPrefs::default() });
+    a.go(View::Settings);
+    a.settings.set_facts(crate::settings_view::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() });
+    select_row(&mut a, |r| matches!(r, Row::Server { id, .. } if id == "home"));
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("+ One, Two") && s.contains("a sources"), "merged sources in detail and hint:\n{s}");
+    a.cmds.clear();
+    let pick = |a: &mut App, n: usize| {
+        key(a, KeyCode::Char('a'));
+        for _ in 0..n {
+            key(a, KeyCode::Down);
+        }
+        key(a, KeyCode::Enter);
+    };
+    key(&mut a, KeyCode::Char('a'));
+    let menu = draw(&mut a, 140, 40);
+    assert!(menu.contains("Sources for Home") && menu.contains("Move down One") && menu.contains("Remove One") && menu.contains("Move up Two") && menu.contains("Remove Two") && menu.contains("Add Extra") && menu.contains("Sign in to a new one"), "{menu}");
+    key(&mut a, KeyCode::Esc);
+    // 0: Move down One, 1: Remove One, 2: Move up Two, 3: Remove Two, 4: Add Extra, 5: Sign in to a new one
+    pick(&mut a, 0);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Source { profile: "home".into(), change: SourceChange::Move { id: "s1".into(), by: 1 } }));
+    pick(&mut a, 1);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Source { profile: "home".into(), change: SourceChange::Remove("s1".into()) }));
+    pick(&mut a, 4);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Source { profile: "home".into(), change: SourceChange::Add("extra".into()) }));
+    pick(&mut a, 5);
+    assert_eq!(a.view, View::Login);
+    assert_eq!(a.login.source_for.as_deref(), Some("home"));
+    key(&mut a, KeyCode::Esc);
+    assert_eq!(a.view, View::Settings);
+    assert_eq!(a.login.source_for, None);
+}
+
 /// A profile's m lists its server, then its scrobbling accounts: picking one switches it, another line
 /// removes an account, and adding picks a kind, asks each field it asks in turn, then signs in, Last.fm
 /// after its page allowed nori.
@@ -4237,7 +4291,7 @@ fn a_long_playlist_filters_as_typed() {
     let titles = ["Paper Moon", "Glass Harbour", "Moonrise", "Second Wind", "Low Tide", "Copper", "Salt", "Fen", "Kestrel", "Night Swim", "Blue Hour", "Northern Lights", "Half Moon Bay", "Marrow"];
     let songs: Vec<Song> = titles.iter().enumerate().map(|(i, t)| song(&format!("s{i}"), t, 200)).collect();
     let pl = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "pl".into(), name: "Long one".into(), ..Default::default() }, songs);
-    a.handle(Msg::Data(Req::Playlist("pl".into()), Ok(Data::Playlist(Box::new(pl)))));
+    a.handle(Msg::Data(Req::Playlist("pl".into(), nori_core::sources::PlaylistAt::Source { source: None }), Ok(Data::Playlist(Box::new(pl), false))));
     let s = draw(&mut a, 120, 36);
     assert!(s.contains("/ filter") && s.contains("Marrow"), "offered on a long playlist:\n{s}");
     key(&mut a, KeyCode::Char('/'));
@@ -4262,7 +4316,7 @@ fn a_long_playlist_filters_as_typed() {
 
     open_playlist(&mut a, "short");
     let pl = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "short".into(), ..Default::default() }, vec![song("1", "One", 200)]);
-    a.handle(Msg::Data(Req::Playlist("short".into()), Ok(Data::Playlist(Box::new(pl)))));
+    a.handle(Msg::Data(Req::Playlist("short".into(), nori_core::sources::PlaylistAt::Source { source: None }), Ok(Data::Playlist(Box::new(pl), false))));
     key(&mut a, KeyCode::Char('/'));
     assert_eq!(a.view, View::Search, "a short playlist has no filter");
 }
@@ -4281,7 +4335,7 @@ fn artists_filter_as_typed() {
     assert!(s.contains("Alpha Waves") && s.contains("Waveform") && !s.contains("Kestrel") && !s.contains("Lumen"), "{s}");
     key(&mut a, KeyCode::Enter);
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.contains(&Cmd::Load(Req::Artist("1".into()))), "{:?}", a.cmds);
+    assert!(a.cmds.contains(&Cmd::Load(Req::Artist("1".into(), None))), "{:?}", a.cmds);
     a.pages.clear();
     key(&mut a, KeyCode::Esc);
     let s = draw(&mut a, 120, 36);

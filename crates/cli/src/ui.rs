@@ -10,7 +10,7 @@ use nori_core::client::Starrable;
 use nori_core::stars::StarMarks;
 use nori_core::search::SearchShown;
 use nori_core::sketch::{Art as Pictured, Reading, Sketch};
-use nori_core::Song;
+use nori_core::{Keyed, Song};
 use nori_engine::State;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -213,17 +213,33 @@ struct Marks<'a> {
     stars: &'a StarMarks,
     hearts: bool,
     asked: HashSet<&'a str>,
+    tags: Tags<'a>,
+}
+
+/// What names a profile's sources in rows: an item the core marks (`source_marked`) shows its source's
+/// tag before its name.
+#[derive(Clone, Copy)]
+struct Tags<'a> {
+    prefs: &'a nori_core::settings::StoredPrefs,
+    kinds: &'a nori_core::providers::Kinds,
+}
+
+impl Tags<'_> {
+    /// `name`, after its source's tag when `marked`.
+    fn named(&self, name: &str, marked: bool, source: &Option<String>) -> String {
+        if marked { format!("{} {name}", crate::text::source_tag(self.prefs, self.kinds, source)) } else { name.to_string() }
+    }
 }
 
 impl<'a> Marks<'a> {
-    fn of(stars: &'a StarMarks, rules: &nori_core::browse::ProfileRules, devices: &'a crate::app::Devices) -> Marks<'a> {
-        Marks { stars, hearts: rules.stars, asked: devices.asked() }
+    fn of(stars: &'a StarMarks, rules: &nori_core::browse::ProfileRules, devices: &'a crate::app::Devices, tags: Tags<'a>) -> Marks<'a> {
+        Marks { stars, hearts: rules.stars, asked: devices.asked(), tags }
     }
 
     fn mark(&self, s: &Song) -> (&'static str, bool) {
         if self.asked.contains(s.id.as_str()) {
             (crate::text::ASKED, false)
-        } else if self.hearts && self.stars.starred(Starrable::Song, &s.id, s.starred) {
+        } else if self.hearts && self.stars.starred(Starrable::Song, &s.key(), s.starred) {
             (SEAL, true)
         } else if s.is_provider() {
             (crate::text::REMOTE, false)
@@ -252,7 +268,7 @@ fn song_line(s: &Song, marks: &Marks, number: usize, w: usize, t: &Theme, playin
     let (mark, sealed) = marks.mark(s);
     let title_style = if playing { t.current() } else { Style::default().fg(t.ink) };
     let tw = c[1].saturating_sub(mark.width() + 2);
-    let mut spans = vec![num, Span::styled(pad(&s.title, tw), title_style), Span::styled(pad(mark, mark.width() + 2), if sealed { Style::default().fg(t.accent) } else { t.dim() })];
+    let mut spans = vec![num, Span::styled(pad(&marks.tags.named(&s.title, s.source_marked, &s.source), tw), title_style), Span::styled(pad(mark, mark.width() + 2), if sealed { Style::default().fg(t.accent) } else { t.dim() })];
     if c[2] > 0 {
         spans.push(Span::styled(pad(&s.artist, c[2].saturating_sub(2)), t.dim()));
         spans.push(Span::raw("  "));
@@ -267,15 +283,16 @@ fn song_line(s: &Song, marks: &Marks, number: usize, w: usize, t: &Theme, playin
 
 /// An album, artist, playlist or song as one row: its name, then what it is by, and its year or count at
 /// the end.
-fn item_line(item: &Item, w: usize, t: &Theme, starred: bool, playing: bool) -> Line<'static> {
+fn item_line(item: &Item, w: usize, t: &Theme, starred: bool, playing: bool, tags: Tags) -> Line<'static> {
     let (name, by, end) = match item {
-        Item::Album(a) | Item::DownloadedAlbum(a) => (a.name.as_str(), a.artist.clone(), if a.year > 0 { a.year.to_string() } else { String::new() }),
-        Item::Song(songs, at) => (songs[*at].title.as_str(), songs[*at].artist.clone(), clock(songs[*at].duration as i64 * 1000)),
-        Item::Playlist(p) => (p.name.as_str(), p.owner.clone().unwrap_or_default(), crate::text::playlist_line(p)),
-        Item::Mix(m) => (crate::text::mix_name(m.name), String::new(), String::new()),
-        Item::Genre(g) => (g.name.as_str(), String::new(), crate::text::count(g.song_count as u64, "song", "songs")),
-        Item::Artist(a) => (a.name.as_str(), String::new(), a.album_count.map(crate::text::albums).unwrap_or_default()),
+        Item::Album(a) | Item::DownloadedAlbum(a) => (tags.named(&a.name, a.source_marked, &a.source), a.artist.clone(), if a.year > 0 { a.year.to_string() } else { String::new() }),
+        Item::Song(songs, at) => (tags.named(&songs[*at].title, songs[*at].source_marked, &songs[*at].source), songs[*at].artist.clone(), clock(songs[*at].duration as i64 * 1000)),
+        Item::Playlist(p) => (tags.named(&p.name, p.source_marked, &p.source), p.owner.clone().unwrap_or_default(), crate::text::playlist_line(p)),
+        Item::Mix(m) => (crate::text::mix_name(m.name).to_string(), String::new(), String::new()),
+        Item::Genre(g) => (g.name.clone(), String::new(), crate::text::count(g.song_count as u64, "song", "songs")),
+        Item::Artist(a) => (tags.named(&a.name, a.source_marked, &a.source), String::new(), a.album_count.map(crate::text::albums).unwrap_or_default()),
     };
+    let name = name.as_str();
     let name_w = (w * 11 / 20).max(12);
     let seal = if starred { format!(" {SEAL}") } else { String::new() };
     let name_style = if playing { t.current() } else { Style::default().fg(t.ink) };
@@ -561,8 +578,9 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         }
         return;
     }
-    let playing = app.song.as_ref().map(|s| s.id.clone());
-    let App { home, hits, marks, rules, .. } = app;
+    let playing = app.song.as_ref().map(nori_core::Keyed::key);
+    let App { home, hits, marks, rules, prefs, settings, .. } = app;
+    let tags = Tags { prefs, kinds: &settings.own.kinds };
     let h = &*home;
     let row = |i: usize, w: usize| match lines[i] {
         HomeLine::Offer => offer_line(h.offer.shown(), w, t),
@@ -573,7 +591,7 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         }
         HomeLine::Entry(at, n) => {
             let Some(item) = h.shelf(at).and_then(|(_, v)| v.into_iter().nth(n)) else { return Line::from("") };
-            let mut line = item_line(&item, w.saturating_sub(2), t, starred(&item, marks, rules.stars), is_playing(&item, playing.as_deref()));
+            let mut line = item_line(&item, w.saturating_sub(2), t, starred(&item, marks, rules.stars), is_playing(&item, playing.as_ref()), tags);
             line.spans.insert(0, Span::raw("  "));
             line
         }
@@ -606,15 +624,15 @@ fn offer_line(offer: Option<&nori_core::library::QueueOffer>, w: usize, t: &Them
 fn starred(item: &Item, marks: &StarMarks, stars: bool) -> bool {
     stars
         && match item {
-            Item::Album(a) | Item::DownloadedAlbum(a) => marks.starred(Starrable::Album, &a.id, a.starred),
-            Item::Artist(a) => marks.starred(Starrable::Artist, &a.id, a.starred),
-            Item::Song(songs, at) => marks.starred(Starrable::Song, &songs[*at].id, songs[*at].starred),
+            Item::Album(a) | Item::DownloadedAlbum(a) => marks.starred(Starrable::Album, &a.key(), a.starred),
+            Item::Artist(a) => marks.starred(Starrable::Artist, &a.key(), a.starred),
+            Item::Song(songs, at) => marks.starred(Starrable::Song, &songs[*at].key(), songs[*at].starred),
             Item::Playlist(_) | Item::Mix(_) | Item::Genre(_) => false,
         }
 }
 
-fn is_playing(item: &Item, playing: Option<&str>) -> bool {
-    matches!(item, Item::Song(songs, at) if Some(songs[*at].id.as_str()) == playing)
+fn is_playing(item: &Item, playing: Option<&nori_core::ItemKey>) -> bool {
+    matches!(item, Item::Song(songs, at) if playing.is_some_and(|p| nori_core::Keyed::is(&songs[*at], p)))
 }
 
 /// How far a list has loaded: its length once read, or why it was not.
@@ -631,11 +649,12 @@ fn state<T>(load: &Load<Vec<T>>) -> Result<Option<usize>, String> {
 fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let view = app.view;
     let lines = app.library_lines();
-    let playing = app.song.as_ref().map(|s| s.id.clone());
-    let App { library: l, hits, marks, rules, devices, shown, .. } = app;
+    let playing = app.song.as_ref().map(nori_core::Keyed::key);
+    let App { library: l, hits, marks, rules, devices, prefs, settings, shown, .. } = app;
+    let tags = Tags { prefs, kinds: &settings.own.kinds };
     let stars = rules.stars;
     let seals = &*marks;
-    let marks = Marks::of(marks, rules, devices);
+    let marks = Marks::of(marks, rules, devices, tags);
     let reading = match view {
         View::Albums => Reading::Albums,
         View::Artists => Reading::Artists,
@@ -690,7 +709,7 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
         LibLine::Entry(k) => match view {
             View::Songs => {
                 let v = l.songs.ready().map_or(&[][..], Vec::as_slice);
-                song_line(&v[k], &marks, k + 1, w, t, playing.as_deref() == Some(v[k].id.as_str()), true)
+                song_line(&v[k], &marks, k + 1, w, t, playing.as_ref().is_some_and(|p| nori_core::Keyed::is(&v[k], p)), true)
             }
             View::Albums if l.album_sort == AlbumSort::ArtistRows => {
                 // Under its artist: the album and its year.
@@ -705,7 +724,7 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
                     View::Genres => Item::Genre(l.genres.ready().map(|v| v[k].clone()).unwrap_or_else(|| nori_core::browse::GenreTile { name: String::new(), song_count: 0, cover_art: None })),
                     _ => Item::Playlist(l.playlists.ready().map(|v| v[k].clone()).unwrap_or_default()),
                 };
-                item_line(&item, w, t, starred(&item, seals, stars), false)
+                item_line(&item, w, t, starred(&item, seals, stars), false, tags)
             }
         },
     };
@@ -728,9 +747,10 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
 
 /// What this device played, newest first.
 fn history(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    let playing = app.song.as_ref().map(|s| s.id.clone());
-    let App { library: l, hits, marks, rules, devices, .. } = app;
-    let marks = Marks::of(marks, rules, devices);
+    let playing = app.song.as_ref().map(nori_core::Keyed::key);
+    let App { library: l, hits, marks, rules, devices, prefs, settings, .. } = app;
+    let tags = Tags { prefs, kinds: &settings.own.kinds };
+    let marks = Marks::of(marks, rules, devices, tags);
     let body = heading(f, area, View::History.name(), "", t);
     let words = [(Span::styled(crate::text::LISTENING_STATS, Style::default().fg(t.ink)), Button::Stats), (Span::styled(crate::text::CLEAR_HISTORY, t.dim()), Button::ClearHistory)];
     let w: u16 = words.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>() - 3;
@@ -738,7 +758,7 @@ fn history(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     match &l.history {
         Load::Ready(v) if v.is_empty() => empty(f, body, t, "Nothing played yet"),
         Load::Ready(v) => {
-            let row = |i: usize, w: usize| song_line(&v[i].song, &marks, 0, w, t, playing.as_deref() == Some(v[i].song.id.as_str()), true);
+            let row = |i: usize, w: usize| song_line(&v[i].song, &marks, 0, w, t, playing.as_ref().is_some_and(|p| nori_core::Keyed::is(&v[i].song, p)), true);
             list(f, body, &mut l.history_sel, v.len(), ListRef::History, hits, t, focused, &row);
         }
         Load::Failed(e) => failed(f, body, t, e),
@@ -892,16 +912,17 @@ fn top_list(title: &str, rows: &[(String, String, u32)], w: usize, t: &Theme) ->
 }
 
 fn favorites(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    let playing = app.song.as_ref().map(|s| s.id.clone());
-    let App { library: l, hits, marks, rules, devices, shown, .. } = app;
-    let marks = Marks::of(marks, rules, devices);
+    let playing = app.song.as_ref().map(nori_core::Keyed::key);
+    let App { library: l, hits, marks, rules, devices, prefs, settings, shown, .. } = app;
+    let tags = Tags { prefs, kinds: &settings.own.kinds };
+    let marks = Marks::of(marks, rules, devices, tags);
     let caption = l.favorites.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "song", "songs"));
     let body = heading(f, area, View::Favorites.name(), &caption, t);
     match &l.favorites {
         Load::Ready(v) if v.is_empty() => empty(f, body, t, "No favorites yet · f marks one"),
         Load::Ready(v) => {
             let body = table_head(f, body, t, true);
-            let row = |i: usize, w: usize| song_line(&v[i], &marks, i + 1, w, t, playing.as_deref() == Some(v[i].id.as_str()), true);
+            let row = |i: usize, w: usize| song_line(&v[i], &marks, i + 1, w, t, playing.as_ref().is_some_and(|p| nori_core::Keyed::is(&v[i], p)), true);
             list(f, body, &mut l.favorites_sel, v.len(), ListRef::Favorites, hits, t, focused, &row);
         }
         Load::Failed(e) => failed(f, body, t, e),
@@ -949,11 +970,12 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     }
     put(f, Paragraph::new(Line::from(line)), row_of(area, 1));
     let body = below(area, 3);
-    let playing = app.song.as_ref().map(|s| s.id.clone());
-    let App { search: s, hits, marks, rules, devices, .. } = app;
+    let playing = app.song.as_ref().map(nori_core::Keyed::key);
+    let App { search: s, hits, marks, rules, devices, prefs, settings, .. } = app;
+    let tags = Tags { prefs, kinds: &settings.own.kinds };
     let stars = rules.stars;
     let seals = &*marks;
-    let marks = Marks::of(marks, rules, devices);
+    let marks = Marks::of(marks, rules, devices, tags);
     let lit = focused && !s.editing;
     let mut sel = s.sel;
     let rows = s.rows();
@@ -963,13 +985,13 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let len = rows.len();
     let row = |i: usize, w: usize| {
         let entry = |item: Item| {
-            let mut line = item_line(&item, w.saturating_sub(2), t, starred(&item, seals, stars), false);
+            let mut line = item_line(&item, w.saturating_sub(2), t, starred(&item, seals, stars), false, tags);
             line.spans.insert(0, Span::raw("  "));
             line
         };
         match &rows[i] {
             SearchRow::Title(title, n) => spread(vec![Span::styled(crate::text::search_title(*title).to_string(), bold().fg(t.ink))], Span::styled(format!("{n} "), t.dim()), w),
-            SearchRow::Song(song) => song_line(song, &marks, 0, w, t, playing.as_deref() == Some(song.id.as_str()), true),
+            SearchRow::Song(song) => song_line(song, &marks, 0, w, t, playing.as_ref().is_some_and(|p| nori_core::Keyed::is(*song, p)), true),
             SearchRow::Album(a) => entry(Item::Album((*a).clone())),
             SearchRow::Artist(a) => entry(Item::Artist((*a).clone())),
             SearchRow::Playlist(p) => entry(Item::Playlist((*p).clone())),
@@ -1039,14 +1061,15 @@ fn buttons(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, r: Rect, words: &[(Span<'
 /// Shuffle (and a mix's Save as playlist); the list's head, what it holds and what the core offers to do with
 /// it (`menus::page_actions`); then its songs, or an artist's albums under their shelves.
 fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    let playing = app.song.as_ref().map(|s| s.id.clone());
+    let playing = app.song.as_ref().map(nori_core::Keyed::key);
     let account = app.rules.account;
     let stars = app.rules.stars;
     let actions = app.page_actions();
     let missing = app.page_missing();
-    let App { pages, hits, marks, rules, devices, prefs, shown, .. } = app;
+    let App { pages, hits, marks, rules, devices, prefs, settings, shown, .. } = app;
+    let tags = Tags { prefs, kinds: &settings.own.kinds };
     let seals = &*marks;
-    let marks = Marks::of(marks, rules, devices);
+    let marks = Marks::of(marks, rules, devices, tags);
     let Some(p) = pages.last_mut() else { return };
     let reading = match p {
         Page::Album { .. } | Page::DownloadedAlbum { .. } => Reading::Album,
@@ -1058,8 +1081,8 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     // star: None when the page has no seal (an album's or artist's where seals are kept, a playlist's
     // pin where the account's are).
     let (title, by, caption, star): (String, String, String, Option<bool>) = match p {
-        Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. } => (d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), stars.then(|| marks.stars.starred(Starrable::Album, &d.album.id, d.album.starred))),
-        Page::Artist { detail: Load::Ready(d), .. } => (d.artist.name.clone(), String::new(), crate::text::artist_caption(d), stars.then(|| marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
+        Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. } => (d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), stars.then(|| marks.stars.starred(Starrable::Album, &d.album.key(), d.album.starred))),
+        Page::Artist { detail: Load::Ready(d), .. } => (d.artist.name.clone(), String::new(), crate::text::artist_caption(d), stars.then(|| marks.stars.starred(Starrable::Artist, &d.artist.key(), d.artist.starred))),
         Page::Playlist { detail: Load::Ready(d), .. } => (d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), account.then(|| prefs.pinned_playlists.contains(&d.playlist.id))),
         Page::Row { title, items, .. } => (title.clone(), String::new(), crate::text::count(items.len() as u64, "entry", "entries"), None),
         Page::Mix { detail: Load::Ready(m), .. } => (crate::text::mix_name(m.name).to_string(), String::new(), crate::text::songs_caption(m.songs.len() as u32, m.seconds), None),
@@ -1071,8 +1094,8 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
             return failed(f, area, t, e);
         }
         // Until it is read, what the entry that opened it knew.
-        Page::Album { known: Some(a), .. } => (a.name.clone(), a.artist.clone(), crate::text::known_caption(a.year, a.song_count, a.duration), stars.then(|| marks.stars.starred(Starrable::Album, &a.id, a.starred))),
-        Page::Artist { known: Some(a), .. } => (a.name.clone(), String::new(), a.album_count.filter(|&n| n > 0).map(|n| crate::text::count(n as u64, "release", "releases")).unwrap_or_default(), stars.then(|| marks.stars.starred(Starrable::Artist, &a.id, a.starred))),
+        Page::Album { known: Some(a), .. } => (a.name.clone(), a.artist.clone(), crate::text::known_caption(a.year, a.song_count, a.duration), stars.then(|| marks.stars.starred(Starrable::Album, &a.key(), a.starred))),
+        Page::Artist { known: Some(a), .. } => (a.name.clone(), String::new(), a.album_count.filter(|&n| n > 0).map(|n| crate::text::count(n as u64, "release", "releases")).unwrap_or_default(), stars.then(|| marks.stars.starred(Starrable::Artist, &a.key(), a.starred))),
         Page::Playlist { known: Some(p), .. } => (p.name.clone(), p.owner.clone().unwrap_or_default(), crate::text::known_caption(0, p.song_count, p.duration), account.then(|| prefs.pinned_playlists.contains(&p.id))),
         _ => return sketch(f, area, t, shown, reading, false),
     };
@@ -1115,7 +1138,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
             let songs = &d.songs;
             list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| {
                 let n = if multi { songs[i].disc_number as usize * 100 + songs[i].track as usize } else { songs[i].track as usize };
-                song_line(&songs[i], &marks, if n > 0 { n } else { i + 1 }, w, t, playing.as_deref() == Some(songs[i].id.as_str()), false)
+                song_line(&songs[i], &marks, if n > 0 { n } else { i + 1 }, w, t, playing.as_ref().is_some_and(|p| nori_core::Keyed::is(&songs[i], p)), false)
             });
         }
         Page::Playlist { detail: Load::Ready(d), sel, filter, .. } => {
@@ -1131,12 +1154,12 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
             }
             list(f, body, sel, kept.len(), ListRef::Page, hits, t, focused, &|i, w| {
                 let s = &songs[kept[i]];
-                song_line(s, &marks, kept[i] + 1, w, t, playing.as_deref() == Some(s.id.as_str()), true)
+                song_line(s, &marks, kept[i] + 1, w, t, playing.as_ref().is_some_and(|p| nori_core::Keyed::is(s, p)), true)
             });
         }
         Page::Artist { detail: Load::Ready(d), sel, .. } if d.albums.is_empty() && !d.songs.is_empty() => {
             let songs = &d.songs;
-            list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
+            list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_ref().is_some_and(|p| nori_core::Keyed::is(&songs[i], p)), true));
         }
         Page::Artist { detail: Load::Ready(d), about, sel, .. } => {
             let lines = crate::app::artist_lines(d, about.as_deref());
@@ -1153,14 +1176,14 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
             });
         }
         Page::Genre { songs: Load::Ready(songs), sel, .. } | Page::Decade { songs: Load::Ready(songs), sel, .. } => {
-            list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
+            list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_ref().is_some_and(|p| nori_core::Keyed::is(&songs[i], p)), true));
         }
         Page::Mix { detail: Load::Ready(m), sel, .. } => {
             let songs = &m.songs;
-            list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
+            list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_ref().is_some_and(|p| nori_core::Keyed::is(&songs[i], p)), true));
         }
         Page::Row { items, sel, .. } => {
-            list(f, body, sel, items.len(), ListRef::Page, hits, t, focused, &|i, w| item_line(&items[i], w, t, starred(&items[i], seals, stars), is_playing(&items[i], playing.as_deref())));
+            list(f, body, sel, items.len(), ListRef::Page, hits, t, focused, &|i, w| item_line(&items[i], w, t, starred(&items[i], seals, stars), is_playing(&items[i], playing.as_ref()), tags));
         }
         _ => sketch(f, body, t, shown, reading, true),
     }
@@ -1207,7 +1230,8 @@ fn downloads(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
         Load::Ready(_) => {}
         _ => return loading(f, body, t),
     }
-    let App { downloads, downloads_sel, hits, .. } = app;
+    let App { downloads, downloads_sel, hits, prefs, settings, .. } = app;
+    let tags = Tags { prefs, kinds: &settings.own.kinds };
     let rows = downloads.ready().map(|d| d.rows()).unwrap_or_default();
     if rows.is_empty() {
         return empty(f, body, t, "Nothing downloaded yet");
@@ -1215,12 +1239,12 @@ fn downloads(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
     list(f, body, downloads_sel, rows.len(), ListRef::Downloads, hits, t, focused, &|i, w| match &rows[i] {
         crate::app::DownloadRow::Header(title) => Line::from(Span::styled(title.clone(), bold().fg(t.ink))),
         crate::app::DownloadRow::Album(a) => {
-            let mut line = item_line(&Item::DownloadedAlbum((*a).clone()), w.saturating_sub(2), t, false, false);
+            let mut line = item_line(&Item::DownloadedAlbum((*a).clone()), w.saturating_sub(2), t, false, false, tags);
             line.spans.insert(0, Span::raw("  "));
             line
         }
         crate::app::DownloadRow::Song(list, i) => {
-            let mut line = item_line(&Item::Song(list.to_vec(), *i), w.saturating_sub(2), t, false, false);
+            let mut line = item_line(&Item::Song(list.to_vec(), *i), w.saturating_sub(2), t, false, false, tags);
             line.spans.insert(0, Span::raw("  "));
             line
         }
@@ -1993,7 +2017,7 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
     let sealed = app.rules.stars;
     text(f, Rect { width: w.saturating_sub(if sealed { 4 } else { 0 }), ..row(y) }, &song.title, bold().fg(t.ink));
     if sealed {
-        let liked = app.starred(Starrable::Song, &song.id, song.starred);
+        let liked = app.starred(Starrable::Song, &song.key(), song.starred);
         let r = Rect { x: area.x + w - 2, width: 2, ..row(y) };
         let flash = liked && app.flash.is_some_and(|(b, _)| b == Button::StarSong);
         put(f, Paragraph::new(seal(liked, flash, Style::default().fg(t.ink), t)), r);
@@ -2131,7 +2155,7 @@ fn now_playing(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         marks.push((Span::styled(crate::text::repeat_word(app.repeat()), t.current()), Button::Repeat));
     }
     if let Some(s) = song.as_ref().filter(|_| app.rules.stars) {
-        let liked = app.starred(Starrable::Song, &s.id, s.starred);
+        let liked = app.starred(Starrable::Song, &s.key(), s.starred);
         marks.push((seal(liked, liked && app.flash.is_some_and(|(b, _)| b == Button::StarSong), t.dim(), t), Button::StarSong));
     }
     let w: u16 = marks.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>().saturating_sub(3);
@@ -2348,7 +2372,8 @@ fn welcome(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
 /// The first screen when adding another profile: what it plays from, those not on yet quieter, then the
 /// saved profiles.
 fn provider_choice(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
-    let servers = app.prefs.servers.len() as u16;
+    let shown = nori_core::settings::servers_shown(app.prefs.servers.clone());
+    let servers = if app.login.source_for.is_some() { 0 } else { shown.len() as u16 };
     let lines = provider_rows(app);
     let rows = (lines.len() as u16).min(area.height.saturating_sub(10));
     let r = centred(area, 64, 9 + rows + servers);
@@ -2358,7 +2383,7 @@ fn provider_choice(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let mut y = inner.y + 1;
     let height = rows.min(bottom.saturating_sub(y));
     let msg = add_line(app, crate::text::PROVIDER_SAVED_KEYS, t);
-    let App { login, prefs, hits, .. } = app;
+    let App { login, hits, .. } = app;
     let choosing = !login.on_list;
     list(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height }, &mut login.choice, lines.len(), ListRef::Providers, hits, t, choosing, &|i, w| provider_row(&lines[i], w, t));
     y += height + 1;
@@ -2369,11 +2394,11 @@ fn provider_choice(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     y += 2;
     put(f, Paragraph::new(msg).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x, y, width: inner.width, height: 2.min(bottom.saturating_sub(y)) });
     y += 2;
-    if y + 1 < bottom {
+    if servers > 0 && y + 1 < bottom {
         text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(2), height: 1 }, "Or use a saved server", bold().fg(t.ink));
         y += 1;
         let area = Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: servers.min(bottom - y) };
-        let names: Vec<String> = prefs.servers.iter().map(|s| format!("{}  {}", nori_core::settings::label(&s.name, &s.url), s.user)).collect();
+        let names: Vec<String> = shown.iter().map(|s| format!("{}  {}", nori_core::settings::label(&s.name, &s.url), s.user)).collect();
         let focused = login.on_list;
         list(f, area, &mut login.sel, names.len(), ListRef::Profiles, hits, t, focused, &|i, w| Line::from(fit(&names[i], w).into_owned()));
     }

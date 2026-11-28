@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import dev.nori.music.data.key
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -131,7 +132,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         val songRow: @Composable (dev.nori.music.ffi.model.Song) -> Unit = { s ->
             SongRow(
                 s, vm.cover(s.coverArt, CoverSize.ROW), onClick = { play(s) }, onMenu = { menu(s) },
-                downloaded = s.id in downloads.doneIds,
+                downloaded = s.key in downloads.doneIds,
                 swipeRight = rowSwipe(onRight, s, actions), swipeLeft = rowSwipe(onLeft, s, actions),
             )
         }
@@ -141,7 +142,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         androidx.compose.runtime.LaunchedEffect(ui.query, ui.scope, ui.kind) { list.requestScrollToItem(0) }
         LazyColumn(Modifier.pageToEdges().fadesUnderTitle(list), list, contentPadding = pagePadding(LocalChromeInset.current)) {
             if (picked == dev.nori.music.ffi.library.SearchKind.SONGS) {
-                items(r.songs, key = { "s-" + it.id }, contentType = { "song" }) { s -> songRow(s) }
+                items(r.songs, key = { "s-" + it.rowKey }, contentType = { "song" }) { s -> songRow(s) }
                 return@LazyColumn
             }
             val layout = ui.layout
@@ -149,26 +150,26 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
             layout.top?.let { t -> item(key = "top") { SectionTitle(say.topResult); TopResultCard(t, r, vm, actions, play) } }
             val songs = items(dev.nori.music.ffi.library.SearchKind.SONGS)
             if (songs.isNotEmpty()) item(key = "songs") { SectionTitle(say.songs) }
-            items(songs.map { r.songs[it] }, key = { "s-" + it.id }, contentType = { "song" }) { s -> songRow(s) }
+            items(songs.map { r.songs[it] }, key = { "s-" + it.rowKey }, contentType = { "song" }) { s -> songRow(s) }
             val albums = items(dev.nori.music.ffi.library.SearchKind.ALBUMS).map { r.albums[it] }
             if (albums.isNotEmpty()) item(key = "albums") {
                 SectionTitle(say.albums)
                 LazyRow(Modifier.bleedsToEdges(), rememberShelfState(albums.first().id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.album(a.id, a) }, itemMotion()) }
+                    items(albums, key = { it.rowKey }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.album(a.id, a) }, itemMotion()) }
                 }
             }
             val artists = items(dev.nori.music.ffi.library.SearchKind.ARTISTS).map { r.artists[it] }
             if (artists.isNotEmpty()) item(key = "artists") {
                 SectionTitle(say.artists)
                 LazyRow(Modifier.bleedsToEdges(), rememberShelfState(artists.first().id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(artists, key = { it.id }) { a -> FoundArtist(a, vm, 96.dp, itemMotion()) }
+                    items(artists, key = { it.rowKey }) { a -> FoundArtist(a, vm, 96.dp, itemMotion()) }
                 }
             }
             val playlists = items(dev.nori.music.ffi.library.SearchKind.PLAYLISTS).map { r.playlists[it] }
             if (playlists.isNotEmpty()) item(key = "playlists") {
                 SectionTitle(say.playlists)
                 LazyRow(Modifier.bleedsToEdges(), rememberShelfState(playlists.first().id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(playlists, key = { it.id }) { p -> FoundPlaylist(p, vm, itemMotion().width(120.dp)) }
+                    items(playlists, key = { it.rowKey }) { p -> FoundPlaylist(p, vm, itemMotion().width(120.dp)) }
                 }
             }
         }
@@ -188,14 +189,14 @@ private fun WholeKind(kind: dev.nori.music.ffi.library.SearchKind, r: dev.nori.m
         horizontalArrangement = Arrangement.spacedBy(GRID_GAP), verticalArrangement = Arrangement.spacedBy(GRID_GAP),
     ) {
         when (kind) {
-            dev.nori.music.ffi.library.SearchKind.ARTISTS -> items(r.artists.size, key = { r.artists[it].id }) { i ->
+            dev.nori.music.ffi.library.SearchKind.ARTISTS -> items(r.artists.size, key = { r.artists[it].rowKey }) { i ->
                 androidx.compose.foundation.layout.BoxWithConstraints { FoundArtist(r.artists[i], vm, maxWidth) }
             }
-            dev.nori.music.ffi.library.SearchKind.ALBUMS -> items(r.albums.size, key = { r.albums[it].id }) { i ->
+            dev.nori.music.ffi.library.SearchKind.ALBUMS -> items(r.albums.size, key = { r.albums[it].rowKey }) { i ->
                 val a = r.albums[i]
                 AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 0.dp, { vm.remember(); nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
             }
-            else -> items(r.playlists.size, key = { r.playlists[it].id }) { i -> FoundPlaylist(r.playlists[i], vm, Modifier.fillMaxWidth(), fill = true) }
+            else -> items(r.playlists.size, key = { r.playlists[it].rowKey }) { i -> FoundPlaylist(r.playlists[i], vm, Modifier.fillMaxWidth(), fill = true) }
         }
     }
 }
@@ -267,6 +268,7 @@ private fun FoundArtist(a: dev.nori.music.ffi.model.Artist, vm: SearchViewModel,
     ArtistCard(
         a.name, remember(a.albumCount) { a.albumCount?.takeIf { it > 0u }?.let { say.albums(it.toInt()) }.orEmpty() }, vm.cover(a.coverArt, CoverSize.ROW), size,
         onClick = { vm.remember(); nav.artist(a.id, a) }, modifier = modifier, remote = a.isExternal, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) },
+        mark = marked(a.sourceMarked, a.source),
     )
 }
 
@@ -276,7 +278,7 @@ private fun FoundPlaylist(p: dev.nori.music.ffi.model.Playlist, vm: SearchViewMo
     val nav = LocalNav.current
     val cardMenu = LocalCardMenu.current
     val line = remember(p.songCount, p.comment) { if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty() }
-    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.playlist(p.id, p) }, modifier, fill = fill, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) })
+    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.playlist(p.id, p) }, modifier, fill = fill, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) }, mark = marked(p.sourceMarked, p.source))
 }
 
 /** The tile a genre is browsed from: its name in Literata on the surface, a cover of its songs running into the paper at the end. */

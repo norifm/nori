@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use nori_db as db;
 use nori_model::model::Song;
+use nori_model::Keyed;
 use rusqlite::{types::Value, Connection, OptionalExtension};
 
 use crate::browse::DAY_MS;
@@ -54,8 +55,9 @@ pub(crate) fn shuffled_params(seed: u64) -> [Value; 2] {
     [Value::Integer(1 + (r.next_u64() % (LCG_P as u64 - 1)) as i64), Value::Integer((r.next_u64() % LCG_P as u64) as i64)]
 }
 
-/// This server's songs; `likelihood` keeps the planner (without ANALYZE data) on the expression indexes.
-pub const SONGS: &str = "i.server=sid() AND likelihood(i.kind=2, 0.9)";
+/// The songs of the profile's sources that have mixes ([`db::IN_MIXES`]); `likelihood` keeps the planner
+/// (without ANALYZE data) on the expression indexes.
+pub const SONGS: &str = concat!("i.server ", db::in_mixes!(), " AND likelihood(i.kind=2, 0.9)");
 
 struct Cand {
     song: Song,
@@ -73,7 +75,7 @@ enum Order {
 /// Up to `n` songs matching `cond` (which numbers its own parameters from ?1), never an excluded one.
 /// `played_only` drives the query from `song_stats`, which is small, instead of from the index.
 fn pool(c: &Connection, played_only: bool, cond: &str, mut args: Vec<Value>, order: Order, n: usize, now_ms: i64) -> rusqlite::Result<Vec<Cand>> {
-    let from = if played_only { "song_stats s JOIN items i ON s.server=sid() AND i.server=sid() AND i.kind=2 AND i.id=s.song_id" } else { "items i LEFT JOIN song_stats s ON s.server=i.server AND s.song_id=i.id" };
+    let from = if played_only { concat!("song_stats s JOIN items i ON s.server ", db::in_mixes!(), " AND i.server=s.server AND i.kind=2 AND i.id=s.song_id") } else { "items i LEFT JOIN song_stats s ON s.server=i.server AND s.song_id=i.id" };
     let order = match order {
         Order::Shuffled(seed) => {
             args.extend(shuffled_params(seed));
@@ -118,7 +120,7 @@ fn album_key(s: &Song) -> Option<String> {
 /// `per_artist` songs of one artist so that one discography cannot fill a mix.
 fn sample(cands: Vec<(Song, f64)>, limit: usize, per_artist: usize, rng: &mut Rng) -> Vec<Song> {
     let mut seen = HashSet::new();
-    let mut keyed: Vec<(f64, Song)> = cands.into_iter().filter(|(s, _)| seen.insert(s.id.clone())).map(|(s, w)| (rng.unit().ln() / w.max(1e-6), s)).collect();
+    let mut keyed: Vec<(f64, Song)> = cands.into_iter().filter(|(s, _)| seen.insert(s.key())).map(|(s, w)| (rng.unit().ln() / w.max(1e-6), s)).collect();
     keyed.sort_by(|a, b| b.0.total_cmp(&a.0));
     let mut by_artist: HashMap<String, usize> = HashMap::new();
     let mut out = Vec::with_capacity(limit.min(keyed.len()));

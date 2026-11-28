@@ -14,8 +14,8 @@
 
   let box = $state<HTMLDivElement>();
   let height = $state(0);
-  const shown = $derived(player.shown && player.shown.song === player.song?.id ? player.shown : null);
-  const failed = $derived(player.lyrics?.state === "failed" && player.lyrics.song === player.song?.id);
+  const shown = $derived(player.shown && player.shown.song === player.song?.key ? player.shown : null);
+  const failed = $derived(player.lyrics?.state === "failed" && player.lyrics.song === player.song?.key);
   const synced = $derived(!!shown?.lyrics.synced);
   /** Lines play from where they are sung on a click, unless a jam guest asks the host for all it plays. */
   const taps = $derived(synced && !player.now?.asks);

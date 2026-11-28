@@ -104,8 +104,8 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let song: Song = v.songs.into_iter().next().expect("the host's plugin found it");
     assert_eq!((song.id.as_str(), song.title.as_str()), ("test-blue", "blue"));
     assert!(!song.starred, "the host's favorites are its own");
-    let target = guest_client.resolve_now(&song.id);
-    assert_eq!(target.key, host_client.resolve_now(&song.id).key, "its bytes are kept as the host's source keeps them");
+    let target = guest_client.resolve_now(&nori_core::Keyed::key(&song)).unwrap();
+    assert_eq!(target.key, host_client.resolve_now(&nori_core::Keyed::key(&song)).unwrap().key, "its bytes are kept as the host's source keeps them");
     let resolver = guest_client.stream_resolver().expect("the guest resolves through the host");
     assert!(matches!(resolver.resolve(&target.url), Some(Err(NetError::Http { status: 403 }))), "a song the jam does not play has no source for guests");
     guest.clone().jam_act(Op::Request { song: song.clone() });
@@ -115,7 +115,7 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let Op::Add { songs, .. } = received.recv_timeout(Duration::from_secs(5)).unwrap() else { panic!("the host adds the song") };
     assert_eq!(songs, std::slice::from_ref(&song));
     host_session.register(songs);
-    host_session.set(vec![song.id.clone()], Some(0), false, None);
+    host_session.set(vec![nori_core::Keyed::key(&song)], Some(0), false, None);
     let url = resolver.resolve(&target.url).expect("a song of the host's").unwrap();
     assert_eq!(url, "https://allowed.example/song/test-blue", "the URL the host's plugin gives");
     assert_eq!(resolver.parts(&target.url), Some(StreamParts { len: 1000, most: 100 }));

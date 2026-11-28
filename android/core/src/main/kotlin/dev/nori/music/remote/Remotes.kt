@@ -422,8 +422,8 @@ class Remotes(private val context: Context, private val nori: Nori) {
      * A heart pressed for song [id]: sent to the mirrored device when its queue has the song (the core's
      * `star_where_playing`), so the server hears it once. False when this phone stars it itself.
      */
-    suspend fun starWherePlaying(id: String, on: Boolean): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val starred = remote?.starWherePlaying(id, on) == true
+    suspend fun starWherePlaying(key: dev.nori.music.ffi.model.ItemKey, on: Boolean): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val starred = remote?.starWherePlaying(key, on) == true
         if (starred) mirrorNow()
         starred
     }

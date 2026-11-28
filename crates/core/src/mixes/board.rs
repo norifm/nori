@@ -1,6 +1,7 @@
 //! The "For you" row's draws, held per core. Its contents are nori-library's.
 
 use crate::{db, Core, Song};
+use nori_model::Keyed;
 use nori_library::pages::total_seconds;
 use nori_library::search::distinct;
 
@@ -39,7 +40,7 @@ impl Core {
     /// Stores the favourites mix without provider songs. Session marks are applied when read.
     /// True when the stored songs changed.
     pub fn mix_favourites(&self, starred_songs: Vec<Song>) -> bool {
-        let kept = distinct(starred_songs.into_iter().filter(|s| !s.is_provider()), |s| &s.id);
+        let kept = distinct(starred_songs.into_iter().filter(|s| !s.is_provider()), Keyed::key);
         self.board(|b| {
             let changed = b.favourites.as_ref() != Some(&kept);
             b.favourites = Some(kept);
@@ -116,7 +117,7 @@ impl Core {
                 songs
             }
         };
-        let drawn = Drawn { songs: distinct(songs, |s| &s.id), period, generation };
+        let drawn = Drawn { songs: distinct(songs, Keyed::key), period, generation };
         let stored = self.board(|b| {
             b.drawn.insert(spec.id, drawn);
             b.stored()
@@ -239,7 +240,7 @@ pub(crate) mod tests {
         assert!(core.mix_favourites(starred.clone()));
         assert!(!core.mix_favourites(starred.clone()));
         assert_eq!(ids(&sheet(&core, FAVOURITES_MIX).songs), ["1", "2"]);
-        core.stars.lock().mark(crate::client::Starrable::Song, "1".into(), false);
+        core.stars.lock().insert(crate::client::Starrable::Song, "1".into(), false);
         // A mark changes the page and tile before another favourites read.
         let fav = sheet(&core, FAVOURITES_MIX);
         assert_eq!(ids(&fav.songs), ["2"]);

@@ -13,7 +13,7 @@ pub mod local;
 pub mod flow;
 pub mod code;
 #[cfg(test)]
-mod fake;
+pub(crate) mod fake;
 #[cfg(test)]
 pub(crate) mod harness;
 
@@ -25,7 +25,7 @@ use crate::browse::ProfileRules;
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Write};
 use crate::settings::{SavedServer, ServerKind, ServerList};
-use crate::stream::{StreamQuality, StreamTarget};
+use crate::stream::{Stream, StreamQuality};
 use crate::transport::{NetError, Transport};
 use crate::Core;
 
@@ -94,12 +94,18 @@ pub trait Provider: Send + Sync {
     /// Sends one change.
     async fn write(&self, client: &Client, w: Write) -> NetResult<()>;
 
-    /// Where song `id` streams from at quality `q`, and the key its bytes are kept under.
-    fn stream(&self, client: &Client, id: String, q: StreamQuality) -> StreamTarget;
+    /// Where song `id` streams from at quality `q`.
+    fn stream(&self, client: &Client, id: String, q: StreamQuality) -> Stream;
 
     /// How many songs past the next one may be fetched ahead; None: as many as the settings say.
     fn ahead(&self) -> Option<usize> {
         None
+    }
+
+    /// What it holds: the listener's own files win over a service's catalog where a profile's sources
+    /// have the same song ([`nori_library::merged`]).
+    fn holds(&self) -> nori_library::merged::SourceKind {
+        nori_library::merged::SourceKind::Service
     }
 
     /// The URL of cover `cover` at `size` px.
@@ -763,8 +769,8 @@ fn server_for_login(info: &ProviderInfo, list: ServerList, profile: SavedServer)
 
 /// `form` saved over profile `saved`. What the profile keeps besides its form stays as saved, as other
 /// pages may have changed it while the form was open: its id (and so its library and downloads), music
-/// folders, bitrate cap, icon, account (its user, when the form does not ask it, and picture) and
-/// scrobbling.
+/// folders, bitrate cap, icon, account (its user, when the form does not ask it, and picture),
+/// scrobbling and sources.
 fn over_saved(info: &ProviderInfo, saved: &SavedServer, form: SavedServer) -> SavedServer {
     SavedServer {
         id: saved.id.clone(),
@@ -775,6 +781,7 @@ fn over_saved(info: &ProviderInfo, saved: &SavedServer, form: SavedServer) -> Sa
         picture: saved.picture.clone(),
         scrobble_off: saved.scrobble_off,
         scrobblers: saved.scrobblers.clone(),
+        sources: saved.sources.clone(),
         ..form
     }
 }
@@ -799,9 +806,17 @@ pub fn profile_activated(mut prefs: crate::settings::StoredPrefs, profile: Saved
     prefs
 }
 
+/// The saved profiles `profile` can take as a source: each standing alone (no profile's source, with no
+/// sources of its own), not itself, not a jam's guest profile.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn sources_offered(servers: Vec<SavedServer>, profile: SavedServer) -> Vec<SavedServer> {
+    let alone = crate::settings::servers_shown(servers);
+    alone.into_iter().filter(|s| s.id != profile.id && s.sources.is_empty() && !profile.sources.contains(&s.id) && !nori_remote::is_guest_key(&s.api_key)).collect()
+}
+
 /// Every request a profile's provider has nowhere to send: not an I/O failure, so a write is dropped,
 /// not queued.
-pub(crate) fn nowhere(what: &str) -> NetError {
+pub fn nowhere(what: &str) -> NetError {
     NetError::Api { code: 0, reason: format!("this profile has no {what}") }
 }
 
@@ -812,8 +827,8 @@ pub(crate) fn sized(cover: &str, size: u32) -> String {
 
 /// Where song `id` of a provider whose songs resolve where they open streams from at quality `q`: an
 /// address of `scheme`, its bit rate and the song; the bytes are kept by song and bit rate.
-pub(crate) fn resolved_stream(scheme: &str, id: &str, q: &StreamQuality) -> StreamTarget {
-    StreamTarget { url: format!("{scheme}{}/{id}", q.bit_rate), key: format!("{id}:{}", q.bit_rate) }
+pub(crate) fn resolved_stream(scheme: &str, id: &str, q: &StreamQuality) -> Stream {
+    Stream { url: format!("{scheme}{}/{id}", q.bit_rate), quality: q.bit_rate.to_string() }
 }
 
 /// The bit rate (0: as it is) and song of a [`resolved_stream`] address of `scheme`.
@@ -835,10 +850,17 @@ impl Default for Installed {
 }
 
 impl Core {
-    /// The profile has no Subsonic server ([`Provider::subsonic_api`]): remote control and jams go
-    /// over the LAN.
-    pub(crate) fn serverless(&self) -> bool {
-        !self.provider().subsonic_api()
+    /// What every cover address of this core's source starts with, the cover's id and size appended
+    /// ([`crate::covers::cover_rules`]); None when the core makes each one ([`Core::cover_address`]).
+    pub(crate) fn cover_prefix(&self) -> Option<String> {
+        self.provider().cover_prefix(self)
+    }
+
+    /// Remote control and jams go over the LAN alone, never a server's relay: the profile has no
+    /// Subsonic server ([`Provider::subsonic_api`]), or it plays from several sources, which no one
+    /// server has.
+    pub(crate) fn lan_only(&self) -> bool {
+        !self.provider().subsonic_api() || !self.others().is_empty()
     }
 
     /// The provider of the profile in use.
@@ -898,7 +920,7 @@ impl Core {
         if let Some(p) = &kinds.plugins {
             // What plugins are handed of a song is the profile's record of it.
             let session = Arc::downgrade(&self.session);
-            p.set_songs(Arc::new(move |id: &str| session.upgrade()?.song(id)));
+            p.set_songs(Arc::new(move |id: &nori_model::ItemKey| session.upgrade()?.song(id)));
             self.session.planner.set_mixing(Some(p.mixing()));
         }
         self.session.use_deciders(kinds.deciders());
@@ -906,23 +928,24 @@ impl Core {
         *self.kinds.write() = kinds;
     }
 
-    /// What every cover address of the profile starts with, the cover's id and size appended
-    /// ([`crate::covers::cover_rules`]); None when the core makes each one ([`Core::cover_address`]).
-    pub fn cover_prefix(&self) -> Option<String> {
-        self.provider().cover_prefix(self)
-    }
 }
 
 impl Client {
     /// The file on this device song `id` plays from; None for a song that streams.
-    pub fn file_of(&self, id: &str) -> Option<local::SongFile> {
-        self.core.provider().file(self, id)
+    pub fn file_of(&self, id: &crate::ItemKey) -> Option<local::SongFile> {
+        match &id.source {
+            None => self.core.provider().file(self, &id.id),
+            Some(source) => {
+                let c = self.core.source(source)?;
+                c.core.provider().file(&c, &id.id)
+            }
+        }
     }
 
     /// What opens the profile's stream addresses at the URLs they are served at; None when they are
     /// URLs already.
     pub fn stream_resolver(self: &Arc<Self>) -> Option<Arc<dyn ResolveStream>> {
-        self.core.provider().resolver(self)
+        self.resolvers()
     }
 }
 
@@ -936,15 +959,55 @@ impl Client {
         }
     }
 
-    /// Fills the offline index from the profile's source; what it holds after.
+    /// Fills the offline index from the profile's source (and any other indexed sources it merges); what it holds after.
     pub async fn sync_library(&self) -> NetResult<crate::IngestStats> {
-        self.core.provider().sync(self).await
+        let others = self.core.others();
+        if others.is_empty() {
+            return self.core.provider().sync(self).await;
+        }
+        let mut total = crate::IngestStats { artists: 0, albums: 0, songs: 0 };
+        let mut synced = false;
+        let mut err = None;
+        let add = |total: &mut crate::IngestStats, s: crate::IngestStats| {
+            total.artists += s.artists;
+            total.albums += s.albums;
+            total.songs += s.songs;
+        };
+        let own_rules = self.core.rules();
+        if own_rules.indexed || own_rules.rescans {
+            match self.core.provider().sync(self).await {
+                Ok(s) => {
+                    add(&mut total, s);
+                    synced = true;
+                }
+                Err(e) => err = Some(e),
+            }
+        }
+        for (_, c) in others {
+            let r = c.core.rules();
+            if r.indexed || r.rescans {
+                match c.core.provider().sync(&c).await {
+                    Ok(s) => {
+                        add(&mut total, s);
+                        synced = true;
+                    }
+                    Err(e) => {
+                        err.get_or_insert(e);
+                    }
+                }
+            }
+        }
+        match (synced, err) {
+            (true, _) => Ok(total),
+            (false, Some(e)) => Err(e),
+            (false, None) => self.core.provider().sync(self).await,
+        }
     }
 
     /// How far the library's sync running is ([`Client::sync_library`]); None when none runs, or it
     /// cannot say.
     pub fn sync_progress(&self) -> Option<local::SyncProgress> {
-        self.core.provider().sync_progress()
+        self.core.provider().sync_progress().or_else(|| self.core.others().into_iter().find_map(|(_, c)| c.sync_progress()))
     }
 
     /// Signs the profile's account in with `answer` (a sign-in page's cookies, or what was pasted).
@@ -1201,6 +1264,7 @@ mod tests {
             picture: Some("https://pictures.example.com/ann".into()),
             scrobble_off: true,
             scrobblers,
+            sources: vec!["b2".into()],
             ..saved("a1", ServerKind::Subsonic, "https://music.example.com", "ann")
         };
         let list = ServerList { servers: vec![now.clone()], active_server_id: "a1".into() };
@@ -1259,6 +1323,17 @@ mod tests {
         assert!(!k.server_ready(SavedServer { url: "  ".into(), user: "u".into(), ..p }));
     }
 
+    /// A profile is offered as a source only standing alone: not one already a source, nor one with
+    /// sources of its own, nor itself or a jam's guest.
+    #[test]
+    fn a_source_offered_stands_alone() {
+        let with = |id: &str, sources: &[&str]| SavedServer { id: id.into(), sources: sources.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+        let guest = SavedServer { api_key: nori_remote::guest_key("k"), ..with("guest", &[]) };
+        let servers = vec![with("home", &["a"]), with("a", &[]), with("b", &[]), with("merged", &["c"]), with("c", &[]), guest];
+        let offered: Vec<String> = sources_offered(servers.clone(), servers[0].clone()).into_iter().map(|s| s.id).collect();
+        assert_eq!(offered, ["b"]);
+    }
+
     /// A jam's guest profile lasts only while it is the one open.
     #[test]
     fn activating_another_profile_drops_a_jam_guest() {
@@ -1295,9 +1370,20 @@ mod tests {
             let guest = SavedServer { api_key: nori_remote::guest_key("lan-secret"), ..saved("g", kind.clone(), "http://10.0.0.2:4000", "") };
             core.configure_profile(guest).unwrap();
             assert_eq!(core.kind(), kind);
-            assert!(core.serverless() && core.lan_jam.read().is_some(), "{kind:?} through the host");
+            assert!(core.lan_only() && core.lan_jam.read().is_some(), "{kind:?} through the host");
         }
         core.configure_profile(saved("p", ServerKind::Subsonic, "https://x", "u")).unwrap();
-        assert!(!core.serverless() && core.lan_jam.read().is_none(), "a server's own provider");
+        assert!(!core.lan_only() && core.lan_jam.read().is_none(), "a server's own provider");
+    }
+
+    /// A profile of several sources has no one server to relay remote control and jams: they go over
+    /// the LAN, as for a profile with no server.
+    #[test]
+    fn a_profile_of_several_sources_is_reached_over_the_lan() {
+        let core = Core::new(String::new(), "k".into(), Default::default()).unwrap();
+        core.configure_profile(saved("p", ServerKind::Subsonic, "https://x", "u")).unwrap();
+        assert!(!core.lan_only(), "a server of its own");
+        core.source_added("yt".into(), crate::providers::fake::source(String::new(), "yt")).unwrap();
+        assert!(core.lan_only());
     }
 }

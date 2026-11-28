@@ -2,6 +2,7 @@
 //! bytes pushed as the platform's requests answer, the caller turning it when its timer is due and
 //! pulling the card.
 
+use nori_player::key::ItemKey;
 use crate::common;
 
 use std::sync::Arc;
@@ -37,12 +38,14 @@ struct Songs {
 }
 
 impl Library for Songs {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         Ok(Located { source: Source::Url { url: id.into(), bytes: self.bytes.clone() }, hint: Some("wav".into()), duration_ms: Some((SECS * 1000.0) as i64), estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
-        WindowSong { id: id.into(), title: id.into(), duration_ms: (SECS * 1000.0) as i64, ..Default::default() }
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
+        WindowSong { id: ItemKey::own(id), title: id.into(), duration_ms: (SECS * 1000.0) as i64, ..Default::default() }
     }
 }
 
@@ -72,7 +75,7 @@ fn a_driven_engine_plays_songs_as_their_bytes_come() {
     let (wav_a, wav_b) = (common::wav(RATE, &a), common::wav(RATE, &b));
     let songs: [(&str, &[u8]); 2] = [("a", &wav_a), ("b", &wav_b)];
     let queue = SharedQueue::default();
-    queue.0.lock().set(vec!["a".into(), "b".into()], Some(0), false, 0);
+    queue.0.lock().set(vec![ItemKey::own("a"), ItemKey::own("b")], Some(0), false, 0);
     let (clock, card, bytes) = (Virtual::default(), Card::new(), Arc::new(Pushes::default()));
     let (engine, mut driven) = Engine::driven(Songs { bytes: bytes.clone() }, sim::App::new(), queue, Box::new(card.clone()), Config::default(), clock.clone(), || {}, |_| {});
     engine.play_at(0, 0);
@@ -103,7 +106,7 @@ fn a_driven_engine_plays_songs_as_their_bytes_come() {
 #[test]
 fn a_press_shows_in_the_status_before_the_engine_takes_it() {
     let queue = SharedQueue::default();
-    queue.0.lock().set(vec!["a".into(), "b".into()], Some(0), false, 0);
+    queue.0.lock().set(vec![ItemKey::own("a"), ItemKey::own("b")], Some(0), false, 0);
     let (clock, card, bytes) = (Virtual::default(), Card::new(), Arc::new(Pushes::default()));
     let (engine, mut driven) = Engine::driven(Songs { bytes }, sim::App::new(), queue, Box::new(card), Config::default(), clock, || {}, |_| {});
     let shown = |e: &Engine| e.status_with(|s| (s.state, s.index, s.position_ms));

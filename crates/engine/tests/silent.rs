@@ -5,6 +5,7 @@
 //! On the clock the test moves (`common::Virtual`); the songs are tones, each its own pitch, so what the
 //! card hears says which song it is.
 
+use nori_player::key::ItemKey;
 use crate::common;
 
 use std::collections::HashMap;
@@ -102,7 +103,8 @@ struct Songs {
 }
 
 impl Library for Songs {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         let panics = {
             let mut t = self.trouble.lock();
             match t.panics_on_locate.get_mut(id) {
@@ -120,11 +122,13 @@ impl Library for Songs {
         Ok(Located { source: Source::Url { url: id.to_string(), bytes }, hint: Some("wav".into()), duration_ms: Some(SECS as i64 * 1000), estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
-        WindowSong { id: id.into(), title: id.into(), duration_ms: SECS as i64 * 1000, ..Default::default() }
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
+        WindowSong { id: ItemKey::own(id), title: id.into(), duration_ms: SECS as i64 * 1000, ..Default::default() }
     }
 
-    fn forget(&mut self, id: &str) {
+    fn forget(&mut self, id_key: &ItemKey) {
+        let id = id_key.id.as_str();
         self.trouble.lock().forgotten.push(id.to_string());
     }
 }
@@ -145,7 +149,7 @@ fn rig(songs: usize) -> Rig {
     let trouble = Arc::new(Mutex::new(Trouble::default()));
     let net = Arc::new(Net { files, trouble: trouble.clone() });
     let queue = SharedQueue::default();
-    queue.0.lock().set(ids.clone(), Some(0), false, 0);
+    queue.0.lock().set(ids.iter().map(ItemKey::own).collect(), Some(0), false, 0);
     let card = Card::new();
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = events.clone();
@@ -169,7 +173,7 @@ impl Rig {
     }
 
     fn errors(&self) -> Vec<(String, String)> {
-        self.events.lock().iter().filter_map(|e| if let Event::Error { id, message } = e { Some((id.clone(), message.clone())) } else { None }).collect()
+        self.events.lock().iter().filter_map(|e| if let Event::Error { id, message } = e { Some((id.as_ref().map(|k| k.id.clone()).unwrap_or_default(), message.clone())) } else { None }).collect()
     }
 
     fn state(&self) -> String {
@@ -198,7 +202,7 @@ fn panics_recover() {
     r.trouble.lock().panics_on_locate.insert(r.ids[1].clone(), 2);
     r.engine.play_at(1, 0);
     assert!(r.wait_to_hear(2, Duration::from_secs(5)), "the song after the one that panics plays: {}", r.state());
-    assert!(r.events.lock().iter().any(|e| matches!(e, Event::Song { id, .. } if id == &r.ids[2])), "and is said: {}", r.state());
+    assert!(r.events.lock().iter().any(|e| matches!(e, Event::Song { id, .. } if id.id == r.ids[2])), "and is said: {}", r.state());
 
     // Loader panic fails song.
     let r = rig(3);

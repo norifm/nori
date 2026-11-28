@@ -1,3 +1,4 @@
+use nori_core::ItemKey;
 use super::*;
 use nori_core::remote::RemotePlayer;
 use nori_engine::testing::{sine, wav, Stepper, Virtual};
@@ -61,9 +62,9 @@ fn late_autofill_respects_playback_and_new_queues() {
             id: id.into(), title: id.into(), duration: 1, suffix: "wav".into(), album_id: Some(if i < 2 { "album" } else { id }.into()), ..Default::default()
         }).collect();
         s.core.download_queue(songs.clone()).unwrap();
-        s.core.download_settle(songs.iter().map(|s| s.id.clone()).collect(), vec![true; songs.len()]).unwrap();
+        s.core.download_settle(songs.iter().map(nori_core::Keyed::key).collect(), vec![true; songs.len()]).unwrap();
         for (i, song) in songs.iter().enumerate() {
-            let path = s.store.as_ref().expect("a store").download_path(&song.id);
+            let path = s.store.as_ref().expect("a store").download_path(&nori_core::Keyed::key(song));
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, wav(44_100, &sine(44_100, 220.0 * (i + 1) as f64, 1.0, 16_000.0))).unwrap();
         }
@@ -97,7 +98,7 @@ fn late_autofill_respects_playback_and_new_queues() {
             assert!(time.until(Duration::from_secs(2), || s.engine.status().state == State::Playing));
             assert!(time.until(Duration::from_secs(5), || s.engine.status().state == State::Ended));
             let len = s.core.session.playlist(|p| p.len());
-            s.core.session.take(len as u32, vec!["c".into()], vec![Hand::No]);
+            s.core.session.take(len as u32, vec![ItemKey::own("c")], vec![Hand::No]);
             s.engine.queue_changed();
             s.engine.resume_after_refill(previous_end);
         }
@@ -111,7 +112,7 @@ fn late_autofill_respects_playback_and_new_queues() {
         match action {
             "ended" => assert!(heard >= 88_200, "late autoplay must produce the next song: heard {heard} samples"),
             "paused" => assert_eq!(heard, 0, "autoplay preserves an explicit pause"),
-            "replaced" => assert_eq!(ids, ["d"], "the old album's refill leaves the new queue alone"),
+            "replaced" => assert_eq!(ids, [nori_core::ItemKey::own("d")], "the old album's refill leaves the new queue alone"),
             "stale_resume" => assert_eq!(heard, 0, "the same song in a new queue has a different entry"),
             _ => unreachable!(),
         }
@@ -136,9 +137,9 @@ fn session_opening(dir: &nori_testdir::TempDir, url: &str, card: &Card, clock: V
     let s = Session::open_on(Open { kinds, ..test_open(queue, dir.path(), profile, Box::new(card.clone())) }, clock).unwrap();
     let songs: Vec<Song> = ["a", "b", "c", "d"].into_iter().map(|id| Song { id: id.into(), title: id.into(), duration: 1, suffix: "wav".into(), album_id: Some("album".into()), ..Default::default() }).collect();
     s.core.download_queue(songs.clone()).unwrap();
-    s.core.download_settle(songs.iter().map(|s| s.id.clone()).collect(), vec![true; songs.len()]).unwrap();
+    s.core.download_settle(songs.iter().map(nori_core::Keyed::key).collect(), vec![true; songs.len()]).unwrap();
     for (i, song) in songs.iter().enumerate() {
-        let path = s.store.as_ref().expect("a store").download_path(&song.id);
+        let path = s.store.as_ref().expect("a store").download_path(&nori_core::Keyed::key(song));
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, wav(44_100, &sine(44_100, 220.0 * (i + 1) as f64, 1.0, 16_000.0))).unwrap();
     }
@@ -183,7 +184,7 @@ fn a_restart_keeps_shuffle_repeat_and_marks() {
     let (url, _asked) = holding_server();
     let (s, songs) = session_of_songs(&dir, &url, &Card::new(), Virtual::default());
     s.play(songs[..3].to_vec(), 2, true, None);
-    s.core.session.take(3, vec![songs[3].id.clone()], vec![nori_core::playlist::Hand::Next]);
+    s.core.session.take(3, vec![ItemKey::own(songs[3].id.clone())], vec![nori_core::playlist::Hand::Next]);
     s.repeat(nori_core::rules::REPEAT_ALL);
     let state = |s: &Session| s.core.session.playlist(|p| (p.shuffle_order().map(<[usize]>::to_vec), p.current(), p.repeat(), (0..p.len()).map(|i| p.hand(i).by_user()).collect::<Vec<_>>()));
     let left = state(&s);
@@ -310,17 +311,19 @@ fn a_kept_playlist_deletes_what_left_it() {
     let url = playlist_server(&["b", "c"]);
     let (card, clock) = (Card::new(), Virtual::default());
     let (s, songs) = session_of_songs(&dir, &url, &card, clock);
-    s.download_remove("a");
+    s.download_remove(&ItemKey::own("a"));
     let change = s.core.download_playlist("p".into(), songs[..2].to_vec()).unwrap();
-    assert_eq!(change.queued.fresh, ["a"], "keeping brings a; b was downloaded by itself");
-    let a = s.store.as_ref().expect("a store").download_path("a");
+    assert_eq!(change.queued.fresh, [nori_core::ItemKey::own("a")], "keeping brings a; b was downloaded by itself");
+    let a = s.store.as_ref().expect("a store").download_path(&ItemKey::own("a"));
     std::fs::write(&a, wav(44_100, &sine(44_100, 220.0, 1.0, 16_000.0))).unwrap();
-    s.core.download_settle(vec!["a".into()], vec![true]).unwrap();
+    s.core.download_settle(vec![ItemKey::own("a")], vec![true]).unwrap();
 
-    s.write_playlist(nori_core::client::Write::RemoveFromPlaylist { id: "p".into(), index: 0 }).unwrap();
+    let p = nori_core::Playlist { id: "p".into(), ..Default::default() };
+    let ids = songs[..2].iter().map(|s| s.id.clone()).collect();
+    s.playlist_change(p, crate::session::PlaylistChange::Edit { songs: ids, index: 0, edit: nori_core::menus::PlaylistEdit::Remove }).unwrap();
     assert!(!a.exists(), "a left the playlist");
     let state = |id| s.download_state(id);
-    assert_eq!([state("a"), state("b"), state("c")], { use nori_core::menus::SongDownload::*; [None, Done, Done] });
+    assert_eq!([state(&ItemKey::own("a")), state(&ItemKey::own("b")), state(&ItemKey::own("c"))], { use nori_core::menus::SongDownload::*; [None, Done, Done] });
     s.close();
 }
 
@@ -333,12 +336,12 @@ fn a_radio_from_the_song_playing_keeps_it_playing() {
     let time = Stepper::new(clock.clone(), card.pull.clone());
     let (s, songs) = session_of_songs(&dir, &url, &card, clock);
     let a = Song { duration: 6, ..songs[0].clone() };
-    let path = s.store.as_ref().expect("a store").download_path("a");
+    let path = s.store.as_ref().expect("a store").download_path(&ItemKey::own("a"));
     std::fs::write(path, wav(44_100, &sine(44_100, 220.0, 6.0, 16_000.0))).unwrap();
     s.core.session.register(vec![a.clone()]);
     s.play(vec![a], 0, false, None);
     assert!(time.until(Duration::from_secs(5), || card.secs() >= 2.0), "a plays");
-    s.play_later(Fetch::Radio("a".into()), false);
+    s.play_later(Fetch::Radio("a".into(), None), false);
     // The answer comes on the network's own time, with the card's clock held.
     let core = s.core.clone();
     assert!(!time.clock.hang_while(move || core.session.playlist(|p| p.len()) != 3, Duration::from_secs(10)).held(), "the radio is queued");

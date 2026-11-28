@@ -3,6 +3,7 @@
 //! completes (`arrived`); the files are read directly. Also measures downloads as they are written, and
 //! post-download processing.
 
+use nori_core::ItemKey;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -68,7 +69,7 @@ fn look_up(env: &mut JNIEnv) -> jni::errors::Result<Java> {
     let class = env.find_class("dev/nori/music/playback/MeasureBridge")?;
     Ok(Java {
         vm: env.get_java_vm()?,
-        whole: env.get_method_id(&class, "whole", "(Ljava/lang/String;)[Ljava/lang/String;")?,
+        whole: env.get_method_id(&class, "whole", "(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;")?,
         measured: env.get_method_id(&class, "measured", "()V")?,
     })
 }
@@ -87,12 +88,16 @@ struct Media3 {
 }
 
 impl Shelf for Media3 {
-    fn whole(&self, id: &str) -> Option<Whole> {
+    fn whole(&self, id: &ItemKey) -> Option<Whole> {
         let (java, mut env) = env()?;
         let parts = env.with_local_frame(8, |env| -> jni::errors::Result<Option<Vec<String>>> {
-            let id = env.new_string(id)?;
-            // SAFETY: MeasureBridge.whole(String): String[], looked up with this signature.
-            let found = unsafe { env.call_method_unchecked(self.bridge.as_obj(), java.whole, ReturnType::Object, &[JValue::Object(&id).as_jni()]) }?.l()?;
+            let source = match &id.source {
+                Some(s) => JObject::from(env.new_string(s)?),
+                None => JObject::null(),
+            };
+            let song = env.new_string(&id.id)?;
+            // SAFETY: MeasureBridge.whole(String?, String): String[], looked up with this signature.
+            let found = unsafe { env.call_method_unchecked(self.bridge.as_obj(), java.whole, ReturnType::Object, &[JValue::Object(&source).as_jni(), JValue::Object(&song).as_jni()]) }?.l()?;
             if found.is_null() {
                 return Ok(None);
             }
@@ -114,7 +119,7 @@ impl Shelf for Media3 {
         // The cache key, then the files. A stream's key names its format; a download's does not (it may
         // be transcoded), so its file is sniffed.
         let key = parts.remove(0);
-        let hint = if key == nori_core::stream::download_key(id.to_string()) {
+        let hint = if key == nori_core::stream::download_key(id.clone()) {
             None
         } else {
             key_format(&key).or_else(|| self.session.song(id).map(|s| s.suffix)).filter(|s| !s.is_empty())
@@ -190,9 +195,9 @@ extern "system" fn stop(h: jlong) {
 extern "system" fn download_open(env: JNIEnv, _: JClass, analyses: jlong, key: JString) -> jlong {
     let Some(m) = measuring(analyses) else { return 0 };
     let Some(key) = crate::string(&env, &key) else { return 0 };
-    let Some(id) = key.strip_prefix("dl:") else { return 0 };
-    let hint = m.session.song(id).map(|s| s.suffix).filter(|s| !s.is_empty());
-    match m.analyses.measure_download_as_it_comes(id, hint.as_deref()) {
+    let Some(id) = key.strip_prefix("dl:").map(ItemKey::from_text) else { return 0 };
+    let hint = m.session.song(&id).map(|s| s.suffix).filter(|s| !s.is_empty());
+    match m.analyses.measure_download_as_it_comes(&id, hint.as_deref()) {
         Some(listening) => Box::into_raw(Box::new(Taking { listening, buf: Vec::new() })) as jlong,
         None => 0,
     }
@@ -241,13 +246,14 @@ extern "system" fn process_start(mut env: JNIEnv, _: JClass, bridge: JObject, an
     }
 }
 
-fn ids(env: &mut JNIEnv, array: &JObjectArray) -> Vec<String> {
+/// The keys of the downloads Kotlin names by their ids ([`ItemKey::text`]).
+fn ids(env: &mut JNIEnv, array: &JObjectArray) -> Vec<ItemKey> {
     let n = env.get_array_length(array).unwrap_or(0);
     let mut out = Vec::with_capacity(n.max(0) as usize);
     for i in 0..n {
         let Ok(o) = env.get_object_array_element(array, i) else { break };
         let s = JString::from(o);
-        if let Some(id) = crate::string(env, &s) {
+        if let Some(id) = crate::key_of_text(env, &s) {
             out.push(id);
         }
         let _ = env.delete_local_ref(s);

@@ -7,7 +7,7 @@ use futures_util::future::join_all;
 use crate::cache_policy::{Page, Read};
 use crate::client::Client;
 use crate::settings::{AutoFillBasis, AutoFillKind};
-use crate::Song;
+use crate::{ItemKey, Keyed, Song};
 
 pub use nori_queue::autofill::*;
 
@@ -23,7 +23,7 @@ pub struct Refill {
     /// the album `album` names. None for a shuffle's random fill.
     pub picked: Option<Picked>,
     /// The album the rotation picked.
-    pub album: Option<String>,
+    pub album: Option<ItemKey>,
     /// The queue entry the songs follow: the queue's end when the fetch began.
     pub after: Option<u64>,
 }
@@ -34,11 +34,11 @@ impl Refill {
         Refill { songs, ..Refill::default() }
     }
 
-    /// The ids the rotation picked.
+    /// What the rotation picked, as its rows name them ([`ItemKey::text`]).
     fn picks(&self) -> Vec<String> {
         match self.picked {
-            Some(Picked::Songs) => self.songs.iter().map(|s| s.id.clone()).collect(),
-            Some(Picked::Album) => self.album.iter().cloned().collect(),
+            Some(Picked::Songs) => self.songs.iter().map(|s| s.key().text().into_owned()).collect(),
+            Some(Picked::Album) => self.album.iter().map(|a| a.text().into_owned()).collect(),
             None => Vec::new(),
         }
     }
@@ -61,7 +61,12 @@ impl Client {
 
     async fn artist_albums(&self, seed: &Song) -> Got<Vec<crate::Album>> {
         let Some(id) = seed.artist_id.clone() else { return Ok(Vec::new()) };
-        Ok(self.first(Read::ArtistById { id }).await?.albums())
+        Ok(self.first_in_source(&seed.key(), Read::ArtistById { id }).await?.albums())
+    }
+
+    /// The songs of album `album`, from its source.
+    pub(crate) async fn album_songs_keyed(&self, album: &ItemKey) -> Got<Vec<Song>> {
+        Ok(self.first_in_source(album, Read::AlbumSongs { id: album.id.clone() }).await?.songs())
     }
 
     /// Loose songs following `seed` by `basis`, in the source's order.
@@ -73,8 +78,8 @@ impl Client {
                 if !top.is_empty() {
                     return Ok(top);
                 }
-                let albums = self.artist_albums(seed).await?;
-                let reads = albums.into_iter().take(3).map(|a| self.songs(Read::AlbumSongs { id: a.id }));
+                let albums: Vec<ItemKey> = self.artist_albums(seed).await?.iter().take(3).map(Keyed::key).collect();
+                let reads = albums.iter().map(|a| self.album_songs_keyed(a));
                 let mut all = Vec::new();
                 for songs in join_all(reads).await {
                     all.extend(songs?);
@@ -90,13 +95,13 @@ impl Client {
                 Some((from, to)) => shuffled(self.core.browse_songs("playCount".into(), true, false, from, to, 0, 100).unwrap_or_default()),
                 None => Vec::new(),
             },
-            _ => self.songs(Read::SimilarSongs { id: seed.id.clone(), count: 25 }).await?,
+            _ => self.first_in_source(&seed.key(), Read::SimilarSongs { id: seed.id.clone(), count: 25 }).await?.songs(),
         })
     }
 
-    /// Candidate album ids for `basis`.
-    async fn album_candidates(&self, seed: &Song, basis: AutoFillBasis, remote: bool) -> Got<Vec<String>> {
-        let ids = |v: Vec<crate::Album>| v.into_iter().filter(|a| remote || !a.is_provider()).map(|a| a.id).collect::<Vec<_>>();
+    /// Candidate albums for `basis`.
+    async fn album_candidates(&self, seed: &Song, basis: AutoFillBasis, remote: bool) -> Got<Vec<ItemKey>> {
+        let ids = |v: Vec<crate::Album>| v.into_iter().filter(|a| remote || !a.is_provider()).map(|a| a.key()).collect::<Vec<_>>();
         Ok(match basis {
             AutoFillBasis::Artist => ids(self.artist_albums(seed).await?),
             AutoFillBasis::Genre => match &seed.genre {
@@ -110,11 +115,12 @@ impl Client {
             // Albums of the similar songs.
             _ => {
                 let mut seen = HashSet::new();
-                self.songs(Read::SimilarSongs { id: seed.id.clone(), count: 50 })
+                self.first_in_source(&seed.key(), Read::SimilarSongs { id: seed.id.clone(), count: 50 })
                     .await?
+                    .songs()
                     .into_iter()
                     .filter(|s| allowed(s, remote))
-                    .filter_map(|s| s.album_id)
+                    .filter_map(|s| Some(ItemKey { id: s.album_id?, source: s.source }))
                     .filter(|a| seen.insert(a.clone()))
                     .collect()
             }
@@ -123,15 +129,16 @@ impl Client {
 
     /// One whole album not already queued or played, ranked by [`rank`]: the first with at least
     /// [`ALBUM_MIN`] songs. None when every one is shorter (singles).
-    async fn next_album(&self, seed: &Song, basis: AutoFillBasis, queued: &HashSet<&str>, played: &HashSet<String>, remote: bool) -> Refill {
+    async fn next_album(&self, seed: &Song, basis: AutoFillBasis, queued: &HashSet<ItemKey>, played: &HashSet<ItemKey>, remote: bool) -> Refill {
         let candidates = self.album_candidates(seed, basis, remote).await.unwrap_or_default();
-        let pool: Vec<String> = candidates.into_iter().filter(|a| seed.album_id.as_ref() != Some(a) && !played.contains(a)).collect();
+        let seed_album = seed.album_id.clone().map(|id| ItemKey { source: seed.source.clone(), id });
+        let pool: Vec<ItemKey> = candidates.into_iter().filter(|a| seed_album.as_ref() != Some(a) && !played.contains(a)).collect();
         let ranked = self.turns(Picked::Album, pool);
         // Fetched concurrently, chosen in ranked order.
-        let picks: Vec<String> = ranked.into_iter().take(ALBUM_TRIES).collect();
-        let reads = join_all(picks.iter().map(|pick| self.songs(Read::AlbumSongs { id: pick.clone() }))).await;
+        let picks: Vec<ItemKey> = ranked.into_iter().take(ALBUM_TRIES).collect();
+        let reads = join_all(picks.iter().map(|pick| self.album_songs_keyed(pick))).await;
         for (pick, read) in picks.into_iter().zip(reads) {
-            let songs: Vec<Song> = read.unwrap_or_default().into_iter().filter(|s| !queued.contains(s.id.as_str()) && allowed(s, remote)).collect();
+            let songs: Vec<Song> = read.unwrap_or_default().into_iter().filter(|s| !queued.contains(&s.key()) && allowed(s, remote)).collect();
             if songs.len() >= ALBUM_MIN {
                 return Refill { songs, picked: Some(Picked::Album), album: Some(pick), ..Refill::default() };
             }
@@ -139,23 +146,24 @@ impl Client {
         Refill::default()
     }
 
-    /// `candidates` ranked by recent use ([`rank`]); unchanged if the database read fails.
-    fn turns(&self, kind: Picked, candidates: Vec<String>) -> Vec<String> {
+    /// `candidates` ranked by recent use ([`rank`], over the names the rotation's rows give them,
+    /// [`ItemKey::text`]); unchanged if the database read fails.
+    fn turns(&self, kind: Picked, candidates: Vec<ItemKey>) -> Vec<ItemKey> {
         let c = self.core.db.lock();
         let now = crate::db::now_ms();
         let used = match kind {
             Picked::Album => album_use(&c, now),
             Picked::Songs => song_use(&c, now),
         };
-        match used {
-            Ok(used) => rank(candidates, &used, now, seed_now()),
-            Err(_) => candidates,
-        }
+        let Ok(used) = used else { return candidates };
+        let mut named: HashMap<String, ItemKey> = candidates.into_iter().map(|k| (k.text().into_owned(), k)).collect();
+        let names: Vec<String> = named.keys().cloned().collect();
+        rank(names, &used, now, seed_now()).into_iter().filter_map(|n| named.remove(&n)).collect()
     }
 
     /// A library seed for `last`: itself if in the library, else a library song by the same artist, else
     /// the queue's last library song. Provider seeds would yield provider songs, which the server downloads.
-    fn library_seed(&self, last: Song, ids: &[String]) -> Option<Song> {
+    fn library_seed(&self, last: Song, ids: &[ItemKey]) -> Option<Song> {
         if in_library(&last) {
             return Some(last);
         }
@@ -168,19 +176,19 @@ impl Client {
     }
 
     /// `count` whole random library albums not already queued.
-    async fn random_albums(&self, ids: &[String], count: usize) -> Vec<Song> {
-        let queued: HashSet<String> = self.core.session.albums(ids.to_vec()).into_iter().collect();
+    async fn random_albums(&self, ids: &[ItemKey], count: usize) -> Vec<Song> {
+        let queued: HashSet<ItemKey> = self.core.session.albums(ids.to_vec()).into_iter().collect();
         let read = Read::AlbumList { kind: crate::browse::AlbumSort::Random, size: crate::actions::SHUFFLE_ALBUMS, offset: 0, genre: None };
-        let albums = self.read_now(read).await.map(Page::albums).unwrap_or_default().into_iter().filter(|a| !queued.contains(&a.id)).collect();
+        let albums = self.read_now(read).await.map(Page::albums).unwrap_or_default().into_iter().filter(|a| !queued.contains(&a.key())).collect();
         let fresh = self.library_albums(albums, count).await;
         self.core.session.register(fresh.clone());
         fresh
     }
 
     /// Random library songs not already queued.
-    async fn random_library_songs(&self, queued: &HashSet<&str>, remote: bool) -> Vec<Song> {
+    async fn random_library_songs(&self, queued: &HashSet<ItemKey>, remote: bool) -> Vec<Song> {
         let offered = self.songs(Read::RandomSongs { size: 50, genre: None }).await.unwrap_or_default();
-        let fresh: Vec<Song> = offered.into_iter().filter(|s| !queued.contains(s.id.as_str()) && allowed(s, remote)).take(SONGS).collect();
+        let fresh: Vec<Song> = offered.into_iter().filter(|s| !queued.contains(&s.key()) && allowed(s, remote)).take(SONGS).collect();
         self.core.session.register(fresh.clone());
         fresh
     }
@@ -244,7 +252,7 @@ impl Client {
         // Shuffle queues continue as they began, from the library only, whatever the setting.
         match self.core.session.origin().map(|o| o.kind) {
             Some(crate::OriginKind::ShuffleSongs) => {
-                let queued: HashSet<&str> = ids.iter().map(String::as_str).collect();
+                let queued: HashSet<ItemKey> = ids.iter().cloned().collect();
                 return Refill::random(self.random_library_songs(&queued, false).await);
             }
             Some(crate::OriginKind::ShuffleAlbums) => {
@@ -255,7 +263,7 @@ impl Client {
         let Some(kind) = kind else { return Refill::default() };
         // Seeded by the queue's last song: the fetch starts before the end is reached.
         let Some(last) = self.core.session.autofill_seed().and_then(|id| self.core.session.song(&id)) else { return Refill::default() };
-        let queued: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let queued: HashSet<ItemKey> = ids.iter().cloned().collect();
         if remote && !in_library(&last) {
             let fresh = self.fresh_from(&last, kind, basis, &ids, &queued, remote).await;
             if !fresh.songs.is_empty() {
@@ -281,10 +289,10 @@ impl Client {
     async fn decided_fill(&self, nori: Refill, remote: bool) -> Refill {
         let Some(d) = self.core.session.deciders() else { return nori };
         let (_, ids) = self.core.session.snapshot();
-        let tail: Vec<Song> = ids.iter().rev().take(TAIL).rev().map(|id| self.core.session.song(id).unwrap_or_else(|| Song::only_id(id.clone()))).collect();
+        let tail: Vec<Song> = ids.iter().rev().take(TAIL).rev().map(|id| self.core.session.song(id).unwrap_or_else(|| Song::only_key(id.clone()))).collect();
         let picks: Vec<String> = nori.songs.iter().map(|s| s.id.clone()).collect();
         let Some(named) = d.autofill(&tail, &picks, SONGS as u32).await.filter(|n| *n != picks) else { return nori };
-        let queued: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let queued: HashSet<ItemKey> = ids.iter().cloned().collect();
         let songs = self.resolved(named, &nori.songs, &queued, remote).await;
         if songs.is_empty() {
             return nori;
@@ -293,15 +301,17 @@ impl Client {
         Refill { songs, picked: None, album: None, after: nori.after }
     }
 
-    /// The songs `ids` name, from `known` or the queue's songs or the profile, each once, without those
-    /// `queued` and those autofill may not queue.
-    async fn resolved(&self, ids: Vec<String>, known: &[Song], queued: &HashSet<&str>, remote: bool) -> Vec<Song> {
+    /// The songs a plugin names by `ids`, from `known` or the profile's own source, each once, without
+    /// those `queued` and those autofill may not queue.
+    async fn resolved(&self, ids: Vec<String>, known: &[Song], queued: &HashSet<ItemKey>, remote: bool) -> Vec<Song> {
         let mut out: Vec<Song> = Vec::new();
         for id in ids.into_iter().take(SONGS) {
-            if queued.contains(id.as_str()) || out.iter().any(|s| s.id == id) {
+            let known = known.iter().find(|s| s.id == id).cloned();
+            let key = known.as_ref().map_or_else(|| ItemKey::own(&id), Keyed::key);
+            if queued.contains(&key) || out.iter().any(|s| s.key() == key) {
                 continue;
             }
-            let song = match known.iter().find(|s| s.id == id).cloned().or_else(|| self.core.session.song(&id)) {
+            let song = match known.or_else(|| self.core.session.song(&key)) {
                 Some(s) => Some(s),
                 None => self.songs(Read::SongById { id }).await.ok().and_then(|v| v.into_iter().next()),
             };
@@ -311,15 +321,15 @@ impl Client {
     }
 
     /// The refill following `seed`.
-    async fn fresh_from(&self, seed: &Song, kind: AutoFillKind, basis: AutoFillBasis, ids: &[String], queued: &HashSet<&str>, remote: bool) -> Refill {
+    async fn fresh_from(&self, seed: &Song, kind: AutoFillKind, basis: AutoFillBasis, ids: &[ItemKey], queued: &HashSet<ItemKey>, remote: bool) -> Refill {
         let fresh = if kind == AutoFillKind::Albums {
-            let played: HashSet<String> = self.core.session.albums(ids.to_vec()).into_iter().collect();
+            let played: HashSet<ItemKey> = self.core.session.albums(ids.to_vec()).into_iter().collect();
             self.next_album(seed, basis, queued, &played, remote).await
         } else {
-            let offered: Vec<Song> = self.next_songs(seed, basis).await.unwrap_or_default().into_iter().filter(|s| !queued.contains(s.id.as_str()) && allowed(s, remote)).collect();
-            let order = self.turns(Picked::Songs, offered.iter().map(|s| s.id.clone()).collect());
-            let mut by_id: HashMap<String, Song> = offered.into_iter().map(|s| (s.id.clone(), s)).collect();
-            let fresh: Vec<Song> = order.into_iter().filter_map(|id| by_id.remove(&id)).take(SONGS).collect();
+            let offered: Vec<Song> = self.next_songs(seed, basis).await.unwrap_or_default().into_iter().filter(|s| !queued.contains(&s.key()) && allowed(s, remote)).collect();
+            let order = self.turns(Picked::Songs, offered.iter().map(Keyed::key).collect());
+            let mut by_key: HashMap<ItemKey, Song> = offered.into_iter().map(|s| (s.key(), s)).collect();
+            let fresh: Vec<Song> = order.into_iter().filter_map(|id| by_key.remove(&id)).take(SONGS).collect();
             Refill { songs: fresh, picked: Some(Picked::Songs), ..Refill::default() }
         };
         self.core.session.register(fresh.songs.clone());
@@ -335,7 +345,7 @@ pub(crate) mod tests {
 
     /// Queues `ids` on `c` from `start`.
     fn queued(c: &Client, ids: &[&str], start: u32) {
-        c.core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(start), false, None);
+        c.core.session.set(ids.iter().map(|s| s.to_string()).map(ItemKey::own).collect(), Some(start), false, None);
     }
 
     fn songs_json(ids: &[(&str, &str)]) -> String {
@@ -445,7 +455,7 @@ pub(crate) mod tests {
 
     /// Queues `ids` on `c`, started from `kind`.
     fn shuffled(c: &Client, ids: &[&str], kind: crate::OriginKind) {
-        c.core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(0), false, Some(crate::PageOrigin::new(kind, "")));
+        c.core.session.set(ids.iter().map(|s| s.to_string()).map(ItemKey::own).collect(), Some(0), false, Some(crate::PageOrigin::new(kind, "")));
     }
 
     #[test]

@@ -32,6 +32,11 @@ final class CoverView: UIView {
     private let sheen = CAGradientLayer()
     private let plateLayer = CAGradientLayer()
     private let plated: Bool
+    /// The item's source's circle in the bottom corner (`showSource`).
+    private let source = UIImageView()
+    private var sourceMark: Item.Mark?
+    /// What `source` was drawn for.
+    private var drawnSource: String?
     private var token: UInt64?
     private var shown: String?
 
@@ -57,6 +62,7 @@ final class CoverView: UIView {
         sheen.locations = [0, 0.15, 0.3]
         sheen.isHidden = true
         layer.addSublayer(sheen)
+        source.isHidden = true
         for v in [mark, picture] {
             // The plate's size is set from outside: the picture or the mark arriving never moves it.
             for axis in [NSLayoutConstraint.Axis.horizontal, .vertical] {
@@ -80,6 +86,40 @@ final class CoverView: UIView {
         super.layoutSubviews()
         sheen.frame = bounds
         plateLayer.frame = bounds
+        placeSource()
+    }
+
+    /// The source's circle (`showSource`), drawn for the cover's size and corner: centred on the corner's
+    /// arc, so the plate's edge follows the corner, as far as it fits inside; on a round cover, inside its edge.
+    private func placeSource() {
+        guard let mark = sourceMark, bounds.width > 0 else { return }
+        let r = layer.cornerRadius
+        let round = r * 2 >= bounds.width
+        let plate: CGFloat = round ? 22 : max(r * 2, 18)
+        let key = "\(mark.icon.rawValue) \(mark.letter) \(plate) \(Theme.look.worn.page)"
+        if drawnSource != key {
+            drawnSource = key
+            source.image = UIGraphicsImageRenderer(size: CGSize(width: plate, height: plate)).image { _ in
+                Theme.background.setFill()
+                UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: plate, height: plate)).fill()
+                ProfileMark.image(mark.icon, letter: mark.letter, side: plate - 4).draw(at: CGPoint(x: 2, y: 2))
+            }
+        }
+        let centre = round
+            ? CGPoint(x: bounds.midX + (bounds.width - plate) / 2 * 0.7071, y: bounds.midY + (bounds.height - plate) / 2 * 0.7071)
+            : CGPoint(x: bounds.width - max(r, plate / 2), y: bounds.height - max(r, plate / 2))
+        source.frame = CGRect(x: centre.x - plate / 2, y: centre.y - plate / 2, width: plate, height: plate)
+    }
+
+    /// Shows the circle of the item's source (`Item.mark`) in the bottom corner on a plate of the page's
+    /// paper; nil for none.
+    func showSource(_ mark: Item.Mark?) {
+        sourceMark = mark
+        source.isHidden = mark == nil
+        guard mark != nil else { return }
+        if source.superview == nil { addSubview(source) }
+        bringSubviewToFront(source)
+        setNeedsLayout()
     }
 
     private func waiting(_ on: Bool) {

@@ -9,6 +9,7 @@ import dev.nori.music.ffi.Client
 import dev.nori.music.ffi.Core
 import dev.nori.music.ffi.model.Genre
 import dev.nori.music.ffi.model.IngestStats
+import dev.nori.music.ffi.model.ItemKey
 import dev.nori.music.ffi.lyrics.LyricsPick
 import dev.nori.music.ffi.lyrics.LyricsShown
 import kotlinx.coroutines.channels.Channel
@@ -42,16 +43,16 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 
-/** What can be starred. The marks are kept per kind by the core (`stars.rs`), keyed by id alone. */
+/** What can be starred. The marks are kept per kind by the core (`stars.rs`), each item by its key. */
 enum class StarKind(internal val target: Starrable) {
     SONG(Starrable.SONG), ALBUM(Starrable.ALBUM), ARTIST(Starrable.ARTIST),
 }
 
-/** The mark of [id] of [kind], if this session changed it. */
-fun StarMarks.of(kind: StarKind, id: String): Boolean? = when (kind) {
-    StarKind.SONG -> songs[id]
-    StarKind.ALBUM -> albums[id]
-    StarKind.ARTIST -> artists[id]
+/** The mark of item [key] of [kind], if this session changed it in its source. */
+fun StarMarks.of(kind: StarKind, key: ItemKey): Boolean? = when (kind) {
+    StarKind.SONG -> songs[key]
+    StarKind.ALBUM -> albums[key]
+    StarKind.ARTIST -> artists[key]
 }
 
 /** How the app sizes, names and keeps artwork (the core's `cover_rules`), read once. */
@@ -101,7 +102,7 @@ class Library(
         _starsVersion.update { it + 1 }
     }
 
-    fun isStarred(kind: StarKind, id: String, snapshot: Boolean): Boolean = _starMarks.value.of(kind, id) ?: snapshot
+    fun isStarred(kind: StarKind, key: ItemKey, snapshot: Boolean): Boolean = _starMarks.value.of(kind, key) ?: snapshot
     /** Bumped on every star change, so one-shot reads (the favourites list) can re-query. */
     private val _starsVersion = MutableStateFlow(0)
     val starsVersion: StateFlow<Int> = _starsVersion.asStateFlow()
@@ -114,13 +115,20 @@ class Library(
      * its answer is emitted only when it differs. All of it, and when a failure is an error (offline with
      * something stored is not), is the core's (`Client::read_cached`); this only hands each page on.
      */
-    private inline fun <T> cached(read: Read, crossinline pick: (Page) -> T): Flow<T> = channelFlow {
+    private inline fun <T> cached(read: Read, crossinline pick: (Page) -> T): Flow<T> = shown { c, page -> c.readCached(read, page) }.map { pick(it) }
+
+    /** [cached] of an item's read in the profile's [source] it comes from (null: the profile's own). */
+    private inline fun <T> cachedIn(source: String?, read: Read, crossinline pick: (Page) -> T): Flow<T> =
+        shown { c, page -> c.readCachedIn(source, read, page) }.map { pick(it) }
+
+    /** Each page [read] shows, as it shows it. */
+    private fun shown(read: suspend (Client, PageShown) -> Unit): Flow<Page> = channelFlow {
         val c = client
         val shown = object : PageShown {
             override fun show(page: Page) { trySend(page) }
         }
-        lifted { c.readCached(read, shown) }
-    }.buffer(Channel.UNLIMITED).flowOn(Dispatchers.IO).map { pick(it) }
+        lifted { read(c, shown) }
+    }.buffer(Channel.UNLIMITED).flowOn(Dispatchers.IO)
 
     /**
      * Throws away the stored answers whose key starts with one of [prefixes], so the next read of them
@@ -160,21 +168,26 @@ class Library(
         cached(Read.AlbumList(sort, size, offset, genre)) { (it as Page.Albums).v }
 
     fun artists(): Flow<List<Artist>> = cached(Read.ArtistIndex) { (it as Page.Artists).v }
-    fun album(id: String): Flow<AlbumDetail> = cached(Read.AlbumById(id)) { (it as Page.AlbumPage).v }
+    fun album(id: String, source: String? = null): Flow<AlbumDetail> = cachedIn(source, Read.AlbumById(id)) { (it as Page.AlbumPage).v }
 
     /** Page [offset] of a home album shelf, read as the core says (`shelf_albums_read`). */
     fun shelfAlbums(shelf: dev.nori.music.ffi.library.HomeShelf.Albums, offset: Int = 0): Flow<List<Album>> =
         cached(dev.nori.music.ffi.shelfAlbumsRead(shelf.sort, shelf.size, shelf.followsStars, offset.toUInt())) { (it as Page.Albums).v }
-    fun artist(id: String): Flow<ArtistDetail> = cached(Read.ArtistById(id)) { (it as Page.ArtistPage).v }
-    fun artistInfo(id: String): Flow<ArtistInfo> = cached(Read.ArtistAbout(id)) { (it as Page.About).v }
+    /** Artist [id] of [source] as one artist across the profile's sources (the core's `read_artist`). */
+    fun artist(id: String, source: String? = null): Flow<ArtistDetail> = shown { c, page -> c.readArtist(source, id, page) }.map { (it as Page.ArtistPage).v }
+    fun artistInfo(id: String, source: String? = null): Flow<ArtistInfo> = cachedIn(source, Read.ArtistAbout(id)) { (it as Page.About).v }
     /** An artist page's top songs, by the core's read for them (`artist_top_songs`). */
     fun topSongs(read: Read): Flow<List<Song>> = cached(read) { (it as Page.Songs).v }
     fun playlists(): Flow<List<Playlist>> = cached(Read.PlaylistList) { (it as Page.Playlists).v }
-    /** The source's own home feed (`ProfileRules.feed`), shelf by shelf. */
-    fun homeFeed(): Flow<List<dev.nori.music.ffi.model.FeedShelf>> = cached(Read.HomeFeed) { (it as Page.Feed).v }
+    /** The sources' own Homes (`ProfileRules.feed`) as kept, one after another; null when none is. */
+    suspend fun homeFeedKept(): List<dev.nori.music.ffi.model.FeedShelf>? = withContext(Dispatchers.IO) { lifted { client.homeFeedKept() } }
+
+    /** The sources' own Homes, each asked anew: all of them once one changed; null when none did. */
+    suspend fun homeFeedRefreshed(): List<dev.nori.music.ffi.model.FeedShelf>? = withContext(Dispatchers.IO) { lifted { client.homeFeedRefreshed() } }
     suspend fun featuredAlbums(limit: Int): List<Album> = withContext(Dispatchers.IO) { client.featuredAlbums(limit.coerceAtLeast(0).toUInt()) }
     suspend fun featuredPlaylists(): List<Playlist> = withContext(Dispatchers.IO) { client.featuredPlaylists() }
-    fun playlist(id: String): Flow<PlaylistDetail> = cached(Read.PlaylistById(id)) { (it as Page.PlaylistPage).v }
+    /** Playlist [id]'s page where it is kept (the core's `read_playlist`). */
+    fun playlist(id: String, at: dev.nori.music.ffi.PlaylistAt): Flow<PlaylistDetail> = shown { c, page -> c.readPlaylist(id, at, page) }.map { (it as Page.PlaylistPage).v }
     /** The favourites, with this session's marks laid over them by the core as they are read. */
     fun starred(): Flow<Starred> = cached(Read.StarredItems) { (it as Page.StarredPage).v }
 
@@ -204,34 +217,35 @@ class Library(
         val shown = object : LyricsShown {
             override fun show(pick: LyricsPick) { trySend(FoundLyrics(pick.lyrics, pick.origin)) }
         }
-        lifted { client.lyricsFor(song.id, shown) }
+        lifted { client.lyricsFor(ItemKey(song.source, song.id), shown) }
     }.buffer(Channel.UNLIMITED).flowOn(Dispatchers.IO)
 
     /**
-     * [found], [songId]'s lyrics, a step sooner ([dir] > 0) or later (< 0), or back to the timing the core
+     * [found], [song]'s lyrics, a step sooner ([dir] > 0) or later (< 0), or back to the timing the core
      * checked them to (0); kept by the core for these words (`Core::lyrics_nudge`).
      */
-    suspend fun lyricsNudge(songId: String, found: FoundLyrics, dir: Int): FoundLyrics = withContext(Dispatchers.IO) {
-        core.lyricsNudge(songId, LyricsPick(found.lyrics, found.source), dir).let { FoundLyrics(it.lyrics, it.origin) }
+    suspend fun lyricsNudge(song: ItemKey, found: FoundLyrics, dir: Int): FoundLyrics = withContext(Dispatchers.IO) {
+        core.lyricsNudge(song, LyricsPick(found.lyrics, found.source), dir).let { FoundLyrics(it.lyrics, it.origin) }
     }
 
     // ---- local only: history, mixes, smart playlists (all computed in the Rust core from the index) ----
 
     suspend fun clearHistory() = withContext(Dispatchers.IO) { core.historyClear() }
 
-    suspend fun excludedFromMixes(): List<String> = withContext(Dispatchers.IO) { core.mixExcludedSongs() }
+    suspend fun excludedFromMixes(): List<ItemKey> = withContext(Dispatchers.IO) { core.mixExcludedSongs() }
 
-    suspend fun excludeFromMixes(songId: String, excluded: Boolean) = withContext(Dispatchers.IO) { core.mixExcludedSet(songId, excluded) }
+    suspend fun excludeFromMixes(key: ItemKey, excluded: Boolean) = withContext(Dispatchers.IO) { core.mixExcludedSet(key, excluded) }
 
     // ---- what to play: each list is made in the core (actions.rs), requests included ----
 
     /** A radio from one song: it, then what the server finds similar, or random songs of its genre. */
-    suspend fun radio(song: Song): List<Song> = withContext(Dispatchers.IO) { lifted { client.radio(song.id) } }
+    suspend fun radio(song: Song): List<Song> = withContext(Dispatchers.IO) { lifted { client.radioIn(song.source, song.id) } }
 
     /** Every album of an artist (a provider's left out), in order, as one list of songs. */
-    suspend fun artistSongs(artistId: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.artistSongsOf(artistId) } }
-    suspend fun albumSongs(albumId: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.albumSongsOf(albumId) } }
-    suspend fun playlistSongs(playlistId: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.playlistSongsOf(playlistId) } }
+    /** What an artist, album or playlist plays, from the profile's source it comes from (null: its own; the core's `*_songs_in`). */
+    suspend fun artistSongs(artistId: String, source: String?): List<Song> = withContext(Dispatchers.IO) { lifted { client.artistSongsIn(source, artistId) } }
+    suspend fun albumSongs(albumId: String, source: String?): List<Song> = withContext(Dispatchers.IO) { lifted { client.albumSongsIn(source, albumId) } }
+    suspend fun playlistSongs(playlist: Playlist): List<Song> = withContext(Dispatchers.IO) { lifted { client.playlistSongsAt(playlist.id, dev.nori.music.ffi.playlistAt(playlist)) } }
 
     suspend fun shuffleAll(): List<Song> = withContext(Dispatchers.IO) { lifted { client.shuffleAll() } }
     suspend fun shuffleAlbums(): List<Song> = withContext(Dispatchers.IO) { lifted { client.shuffleAlbums() } }
@@ -286,7 +300,7 @@ class Library(
      * The queue another device or app left on the server, when it is worth offering to this one while it is
      * [playing] or not and shows the song [shown]; whether it is, is the core's (`queue_offer`).
      */
-    suspend fun queueOffer(playing: Boolean, shown: String?): dev.nori.music.ffi.library.QueueOffer? =
+    suspend fun queueOffer(playing: Boolean, shown: ItemKey?): dev.nori.music.ffi.library.QueueOffer? =
         withContext(Dispatchers.IO) { lifted { client.queueOffer(playing, shown) } }
 
     /**
@@ -308,16 +322,15 @@ class Library(
     /** Replays queued writes. Stops at the first network failure; a write the server rejects is dropped. */
     suspend fun flushPending() = withContext(Dispatchers.IO) { lifted { client.flushPending() } }
 
-    suspend fun star(kind: StarKind, id: String, on: Boolean) {
+    /** Stars or unstars an item of the profile's [source] (null: its own) in that source (the core's `star_in`). */
+    suspend fun star(kind: StarKind, id: String, on: Boolean, source: String? = null) {
         // The core puts the mark up before it asks the server, so the heart fills under the finger, and
         // puts the one from before back if the server refuses (offline is not refusing: the core keeps
-        // those and replays them), handing the marks over each time (`Client::star`).
+        // those and replays them), handing the profile's marks over each time (`Client::star_in`).
         val shown = object : StarsShown {
-            override fun marks(marks: StarMarks) {
-                applyMarks(marks)
-            }
+            override fun marks(marks: StarMarks) = applyMarks(marks)
         }
-        withContext(Dispatchers.IO) { lifted { client.star(kind.target, id, on, shown) } }
+        withContext(Dispatchers.IO) { lifted { client.starIn(source, kind.target, id, on, shown) } }
         // Now the server has it, so the lists that come from it can be asked again.
         _starsVersion.update { it + 1 }
     }
@@ -333,31 +346,43 @@ class Library(
         runCatching { withContext(Dispatchers.IO) { lifted { client.keptPlaylistWritten(w) } } }.onSuccess(keptChanged)
     }
 
-    suspend fun createPlaylist(name: String, songIds: List<String>) = writePlaylist(Write.CreatePlaylist(name, songIds))
+    /** A new playlist of the profile's own source of the songs [songIds] (an M3U file's, from its index). */
+    suspend fun createPlaylistOfIds(name: String, songIds: List<String>) = writePlaylist(Write.CreatePlaylist(name, songIds))
 
-    suspend fun addToPlaylist(id: String, songIds: List<String>) = writePlaylist(Write.AddToPlaylist(id, songIds))
+    /** A new playlist named [name] of [songs], kept where the core says (`Client::new_playlist_in`). */
+    suspend fun createPlaylist(name: String, songs: List<Song>) {
+        withContext(Dispatchers.IO) { lifted { client.playlistCreate(name, songs) } }
+        _playlistsVersion.update { it + 1 }
+    }
 
-    /** The playlists [songIds] can go into, each with the ones it lacks (the core's `playlist_choices`). */
-    suspend fun playlistChoices(songIds: List<String>): List<dev.nori.music.ffi.library.PlaylistChoice> =
-        withContext(Dispatchers.IO) { lifted { client.playlistChoices(songIds) } }
+    /**
+     * [change] made to [playlist] where it is kept: nori's own on this device, a source's in that source
+     * (`Client::playlist_change`); what it changed of a playlist kept downloaded follows.
+     */
+    suspend fun playlistChange(playlist: Playlist, change: dev.nori.music.ffi.PlaylistChange): dev.nori.music.ffi.PlaylistChanged {
+        val changed = withContext(Dispatchers.IO) { lifted { client.playlistChange(playlist, change) } }
+        if (changed is dev.nori.music.ffi.PlaylistChanged.Done) {
+            _playlistsVersion.update { it + 1 }
+            keptChanged(changed.kept)
+        }
+        return changed
+    }
 
-    suspend fun deletePlaylist(id: String) = writePlaylist(Write.DeletePlaylist(id))
-
-    suspend fun renamePlaylist(id: String, name: String) = writePlaylist(Write.RenamePlaylist(id, name))
-
-    /** A row's move or removal, as the core words it (`playlist_edit_write`). */
-    suspend fun editPlaylist(w: Write) = writePlaylist(w)
+    /** The playlists [songs] can go into, each with the ones it lacks (the core's `playlist_choices`). */
+    suspend fun playlistChoices(songs: List<Song>): List<dev.nori.music.ffi.library.PlaylistChoice> =
+        withContext(Dispatchers.IO) { lifted { client.playlistChoices(songs) } }
 
     suspend fun createRadio(name: String, streamUrl: String) = write(Write.CreateRadio(name, streamUrl))
     suspend fun deleteRadio(id: String) = write(Write.DeleteRadio(id))
 
     /** A public link to a song or album; the server must have sharing enabled. */
-    suspend fun share(id: String): String = call(Read.ShareLink(id)) { (it as Page.ShareUrl).v }
+    /** The link that shares song [key], made by its source. */
+    suspend fun share(key: ItemKey): String = withContext(Dispatchers.IO) { (lifted { client.readNowIn(key.source, Read.ShareLink(key.id)) } as Page.ShareUrl).v }
 
     // ---- queue hand-off between devices ----
 
     /** The core's queue handed to the server (`Client::playlist_push`); nothing when there is nothing to hand. */
-    suspend fun pushQueue(current: String?, positionMs: Long) = withContext(Dispatchers.IO) { lifted { client.playlistPush(current, positionMs) } }
+    suspend fun pushQueue(current: ItemKey?, positionMs: Long) = withContext(Dispatchers.IO) { lifted { client.playlistPush(current, positionMs) } }
 
 
     // ---- offline index ----
@@ -393,26 +418,29 @@ class Library(
 
     suspend fun indexSize(): IngestStats = withContext(Dispatchers.IO) { core.indexSize() }
 
-    /** The signed prefix the profile's cover addresses start with; null where the core makes each one. */
-    private class CoverForm(val prefix: String?)
+    /** The signed prefixes the profile's cover addresses start with, by source (null: its own); a null prefix where the core makes each one. */
+    private class CoverForm(val prefixes: Map<String?, String?>)
     @Volatile private var coverForm: CoverForm? = null
 
     /**
      * Called for every row a list draws, on the UI thread: plain string work, no FFI. The core signs the
-     * prefix once (per server and address) and says how the rest is put together (`cover_rules`); a row
-     * only appends its id and size, which is cheaper than any crossing into the core would be. A provider
-     * without a prefix (`cover_prefix`) has an address of its own for each cover, sized by the core
-     * (`cover_address`).
+     * prefixes once (per server and address) and says how the rest is put together (`cover_rules`); a row
+     * only appends its id and size, which is cheaper than any crossing into the core would be. A cover of
+     * another source names it after the rules' source mark and takes that source's prefix. A provider
+     * without a prefix has an address of its own for each cover, sized by the core (`cover_address`).
+     * Twin: CoreTwins.kt.
      */
     fun coverUrl(id: String?, size: Int): String? {
         if (id == null) return null
         // A plugin's cover is its own address on any profile (`CoverRules::address_mark`).
         if (Covers.rules.addressMark in id) return id.replace(Covers.rules.sizeHole, size.toString())
         val form = coverForm ?: core.let { c ->
-            CoverForm(c.coverPrefix()?.plus(Covers.rules.idParam))
+            CoverForm(c.coverPrefixes().associate { it.source to it.prefix?.plus(Covers.rules.idParam) })
         }.also { coverForm = it }
-        val prefix = form.prefix ?: return core.coverAddress(id, size.toUInt())
-        return prefix + android.net.Uri.encode(id) + Covers.rules.sizeParam + size
+        val mark = id.indexOf(Covers.rules.sourceMark)
+        val source = if (mark < 0) null else id.substring(mark + Covers.rules.sourceMark.length)
+        val prefix = form.prefixes[source] ?: return core.coverAddress(id, size.toUInt())
+        return prefix + android.net.Uri.encode(if (mark < 0) id else id.substring(0, mark)) + Covers.rules.sizeParam + size
     }
 
     /** The signed prefix changes with the server, the credentials or the address in use. */

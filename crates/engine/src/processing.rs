@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock};
 
 use nori_core::transfers::{self, Needs, Saved, Work};
-use nori_core::Core;
+use nori_core::{Core, ItemKey};
 use parking_lot::{Condvar, Mutex};
 
 use crate::core::{decode, listen, Analyses, Decoded, Model, Shelf};
@@ -20,13 +20,13 @@ use crate::core::{decode, listen, Analyses, Decoded, Model, Shelf};
 /// Saved songs waiting to be read back, and whether a thread works through them.
 #[derive(Debug, Default)]
 struct Line {
-    ids: VecDeque<String>,
+    ids: VecDeque<ItemKey>,
     running: bool,
 }
 
 impl Line {
     /// Appends new `ids`; returns whether a thread should start.
-    fn add(&mut self, ids: impl IntoIterator<Item = String>) -> bool {
+    fn add(&mut self, ids: impl IntoIterator<Item = ItemKey>) -> bool {
         for id in ids {
             if !self.ids.contains(&id) {
                 self.ids.push_back(id);
@@ -46,7 +46,7 @@ impl Line {
 
     /// The first song not `busy` (still measured as it arrives). None ends the thread; [`Analyses::kick`]
     /// restarts it.
-    fn next(&mut self, busy: impl Fn(&str) -> bool) -> Option<String> {
+    fn next(&mut self, busy: impl Fn(&ItemKey) -> bool) -> Option<ItemKey> {
         match self.ids.iter().position(|id| !busy(id)) {
             Some(i) => self.ids.remove(i),
             None => {
@@ -74,9 +74,9 @@ pub(crate) struct ReadBack {
 }
 
 /// What `id` needs once saved; `measuring`: it is being measured as it arrives.
-fn needs_of(core: &Core, id: &str, measuring: bool) -> (Needs, Saved) {
-    let one = vec![id.to_string()];
-    let analysable = nori_core::queue::analysable(id);
+fn needs_of(core: &Core, id: &ItemKey, measuring: bool) -> (Needs, Saved) {
+    let one = vec![id.clone()];
+    let analysable = nori_core::queue::analysable(&id.id);
     let saved = Saved {
         analysable,
         measuring,
@@ -95,9 +95,9 @@ impl Analyses {
 
     /// `ids` just finished downloading: looks up their lyrics, marks what else each needs and queues those
     /// needing a read-back.
-    pub fn saved(self: &Arc<Self>, ids: Vec<String>) {
+    pub fn saved(self: &Arc<Self>, ids: Vec<ItemKey>) {
         if let Some(client) = self.client() {
-            let waiting: Vec<String> = ids.iter().filter(|id| client.core().transfers().with(|t| t.waits(id, Work::Lyrics))).cloned().collect();
+            let waiting: Vec<ItemKey> = ids.iter().filter(|id| client.core().transfers().with(|t| t.waits(id, Work::Lyrics))).cloned().collect();
             if self.read_back.lyrics.lock().add(waiting) {
                 self.spawn_lyrics();
             }
@@ -107,11 +107,11 @@ impl Analyses {
 
     /// "Analyse downloaded songs" (`Core::download_unanalysed`): as [`Analyses::saved`] without lyrics.
     /// Returns how many were queued.
-    pub fn analyse(self: &Arc<Self>, ids: Vec<String>) -> u32 {
+    pub fn analyse(self: &Arc<Self>, ids: Vec<ItemKey>) -> u32 {
         self.plan(ids, false)
     }
 
-    fn plan(self: &Arc<Self>, ids: Vec<String>, download: bool) -> u32 {
+    fn plan(self: &Arc<Self>, ids: Vec<ItemKey>, download: bool) -> u32 {
         // Without a shelf nothing is marked, so nothing waits forever.
         let (Some(_), Some(client)) = (self.read_back.shelf.get(), self.client()) else { return 0 };
         let core = client.core();
@@ -200,7 +200,7 @@ impl Analyses {
     }
 
     /// Reads `id` back for its pending analysis and beat model run.
-    fn process(&self, model: &mut Model, id: &str) {
+    fn process(&self, model: &mut Model, id: &ItemKey) {
         let Some(client) = self.client() else { return };
         let core = client.core();
         let tracker = core.transfers();
@@ -208,7 +208,7 @@ impl Analyses {
         if !analysis && !beats {
             return;
         }
-        let one = vec![id.to_string()];
+        let one = vec![id.clone()];
         // It may have been measured elsewhere since it was saved.
         let classical = analysis && !core.analysis_missing(one.clone()).unwrap_or_default().is_empty();
         if analysis && !classical {
@@ -277,7 +277,7 @@ impl Analyses {
 }
 
 /// Marks `id`'s post-download work done.
-fn finish(core: &Core, id: &str) {
+fn finish(core: &Core, id: &ItemKey) {
     core.transfers().with(|t| {
         t.work_done(id, Work::Analysis);
         t.work_done(id, Work::Beats);
@@ -287,9 +287,10 @@ fn finish(core: &Core, id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nori_core::ItemKey;
 
-    fn ids(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
+    fn ids(v: &[&str]) -> Vec<ItemKey> {
+        v.iter().map(|s| ItemKey::own(*s)).collect()
     }
 
     #[test]
@@ -299,19 +300,19 @@ mod tests {
         assert!(line.add(ids(&["a", "b", "c"])), "the first songs start a thread");
         assert!(!line.add(ids(&["d", "b"])), "one is running: the songs join its line, b keeps its place");
         assert_eq!(line.ids, ids(&["a", "b", "c", "d"]));
-        let arriving = |id: &str| id == "b";
+        let arriving = |id: &ItemKey| id.id == "b";
         let mut order = Vec::new();
         while let Some(id) = line.next(arriving) {
             order.push(id);
             assert!(line.running, "one thread, one song at a time");
         }
-        assert_eq!(order, ["a", "c", "d"], "b is still measured as it comes: left for later");
+        assert_eq!(order, ids(&["a", "c", "d"]), "b is still measured as it comes: left for later");
         assert!(!line.running, "nothing ready: the thread ends");
         assert!(!line.idle(), "b still waits");
         // Its measuring ended: the thread starts again for it.
         assert!(line.start());
         assert!(!line.start(), "not twice");
-        assert_eq!(line.next(|_| false), Some("b".to_string()));
+        assert_eq!(line.next(|_| false), Some(ItemKey::own("b")));
         assert_eq!(line.next(|_| false), None);
         assert!(line.idle(), "nothing lingers");
     }

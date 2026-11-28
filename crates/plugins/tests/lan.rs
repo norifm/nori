@@ -562,7 +562,7 @@ fn a_cast_whose_device_plays_the_songs_lets_the_output_here_go() {
 
     // nori's queue moving, from a press or a plugin's session, as the client says it: the device hears
     // it; what only repeats what it said, it doesn't.
-    let moment = |index, playing, position_ms| Moment { playing, index: Some(index), song: Some(format!("s{index}")), position_ms, ..Default::default() };
+    let moment = |index, playing, position_ms| Moment { playing, index: Some(index), song: Some(nori_model::ItemKey::own(format!("s{index}"))), position_ms, ..Default::default() };
     for (m, heard) in [(moment(2, true, 20_000), Some("jump:2")), (moment(2, true, 20_000), None), (moment(2, true, 61_000), Some("seek:61000")), (moment(2, false, 61_000), Some("pause")), (moment(3, false, 0), Some("jump:3"))] {
         rig.session.notices.lock().unwrap().clear();
         rig.plugins.played(m.clone());

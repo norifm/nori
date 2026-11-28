@@ -6,6 +6,7 @@
 //! The place heard is read off the card: each song's right channel is a sawtooth that says where in
 //! the song it is.
 
+use nori_player::key::ItemKey;
 use crate::common;
 
 use std::collections::VecDeque;
@@ -110,16 +111,18 @@ impl Songs {
 }
 
 impl Library for Songs {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         let (_, path, ms) = self.0.iter().find(|s| s.0 == id).cloned().ok_or("no such song")?;
         let bytes: Arc<dyn ByteSource> = self.1.clone();
         let source = if self.1.downloaded.load(Ordering::Relaxed) { Source::File(vec![path]) } else { Source::Url { url: path.to_string_lossy().into_owned(), bytes } };
         Ok(Located { source, hint: Some("wav".into()), duration_ms: Some(ms), estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
         let ms = self.0.iter().find(|s| s.0 == id).map_or(0, |s| s.2);
-        WindowSong { id: id.into(), title: id.into(), duration_ms: ms, ..Default::default() }
+        WindowSong { id: ItemKey::own(id), title: id.into(), duration_ms: ms, ..Default::default() }
     }
 }
 
@@ -133,7 +136,7 @@ fn mix(at_ms: i64, secs: f64, tempo: f32, ramp_s: f64) -> Plan {
     t.tempo_ramp_ms = (ramp_s * 1000.0) as i64;
     // Varispeed: a stretch keeping the pitch smears the sawtooth.
     t.keep_pitch = false;
-    Plan { incoming_id: "b".into(), mixer: t }
+    Plan { incoming_id: ItemKey::own("b"), mixer: t }
 }
 
 /// The simulated app, planning a fixed mix out of `a` (or none), keeping the engine's log lines, and
@@ -141,14 +144,17 @@ fn mix(at_ms: i64, secs: f64, tempo: f32, ramp_s: f64) -> Plan {
 struct Planned(sim::App, Option<Plan>, Arc<Mutex<Vec<String>>>, Arc<AtomicBool>);
 
 impl Host for Planned {
-    fn plan_for(&mut self, id: &str) -> Option<Plan> {
+    fn plan_for(&mut self, id_key: &ItemKey) -> Option<Plan> {
+        let id = id_key.id.as_str();
         self.1.clone().filter(|_| id == "a")
     }
-    fn wants_analysis(&mut self, id: &str) -> Option<u64> {
-        self.0.wants_analysis(id)
+    fn wants_analysis(&mut self, id_key: &ItemKey) -> Option<u64> {
+        let id = id_key.id.as_str();
+        self.0.wants_analysis(&ItemKey::own(id))
     }
-    fn analysed(&mut self, id: &str, a: Analyzer, channels: usize, frames: u64, rate: u32) {
-        self.0.analysed(id, a, channels, frames, rate)
+    fn analysed(&mut self, id_key: &ItemKey, a: Analyzer, channels: usize, frames: u64, rate: u32) {
+        let id = id_key.id.as_str();
+        self.0.analysed(&ItemKey::own(id), a, channels, frames, rate)
     }
     fn log(&mut self, message: &str) {
         self.2.lock().push(message.to_string());
@@ -166,7 +172,7 @@ impl App for Planned {
     fn auto_mix(&self) -> bool {
         false
     }
-    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[ItemKey], shuffling: bool) {
         self.0.window(songs, ids, shuffling)
     }
     fn transitions_off(&mut self, off: bool) {
@@ -433,7 +439,7 @@ struct Rig {
 impl Rig {
     fn new(songs: &[(&str, &[i16])], plan: Option<Plan>, settings: Settings) -> Rig {
         let queue = SharedQueue::default();
-        queue.0.lock().set(songs.iter().map(|s| s.0.to_string()).collect(), Some(0), false, 0);
+        queue.0.lock().set(songs.iter().map(|s| s.0.to_string()).map(ItemKey::own).collect(), Some(0), false, 0);
         let clock = Virtual::default();
         let card = Card(Arc::default(), clock.clone());
         let mut app = sim::App::new();
@@ -748,7 +754,7 @@ impl Jam {
                     let mix = self.mix.clone().filter(|_| {
                             w.mix_place.map_or(w.index, |p| p.0) == 0
                                 && now >= self.plan_from_ns + g.word_ms * 1_000_000
-                        }).map(|p| ("a".to_string(), p));
+                        }).map(|p| (ItemKey::own("a"), p));
                     let mix_place = mix.as_ref().and(w.mix_place);
                     g.rig.engine.follow(Some(Lead { index: w.index, ms: w.ms, ago_us: here_us - (w.at_us - off), there_us: w.at_us, rate: w.rate, playing: w.playing, speed: w.speed, pitch: 1.0, mix,
                         mix_place}));

@@ -565,7 +565,8 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
                 let cover = covers.map(|c| {
                     Box::new(move |art: &str, size: u32| {
                         let mut file = Vec::new();
-                        c.kept(&core.cover_address(art.to_string(), nori_core::covers::cover_rendition(size)), &mut file).then_some(file)
+                        let address = core.cover_address(art.to_string(), nori_core::covers::cover_rendition(size))?;
+                        c.kept(&address, &mut file).then_some(file)
                     }) as nori_engine::core::CoverFile
                 });
                 let shows = Arc::new(nori_engine::core::QueueShows { queue, cover });

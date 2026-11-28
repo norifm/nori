@@ -38,6 +38,27 @@ where
     (s != "-").then(|| s.parse().unwrap())
 }
 
+/// A cover id of another source takes that source's prefix; one of a source the profile does not have
+/// asks the core (None here).
+#[test]
+fn cover_urls_of_sources() {
+    let mut out = String::new();
+    for r in rows("cover_url_source") {
+        let (own, source, theirs, id) = (text(r[0]).unwrap(), text(r[1]).unwrap(), text(r[2]).unwrap(), text(r[3]).unwrap());
+        let key = nori_core::ItemKey::from_text(&id);
+        let prefix = match key.source.as_deref() {
+            None => Some(&own),
+            Some(s) => (s == source).then_some(&theirs),
+        };
+        let url = prefix.map(|p| {
+            covers::cover_url_into(&mut out, p, &key.id, r[4].parse().unwrap());
+            out.clone()
+        });
+        assert_eq!(url, text(r[5]), "{r:?}");
+    }
+    assert_eq!(covers::cover_rules().source_mark, nori_core::ItemKey::SOURCE_MARK.to_string());
+}
+
 #[test]
 fn cover_urls() {
     let mut out = String::new();

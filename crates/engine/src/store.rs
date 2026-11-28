@@ -5,6 +5,7 @@
 //! `.part` file. The cache is held to a size limit, evicting whole songs in [`CacheOrder`]'s order (unused
 //! this run first, then least recently used).
 
+use nori_player::key::ItemKey;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Seek, SeekFrom, Write};
@@ -53,10 +54,11 @@ impl CacheOrder {
         Some(key)
     }
 
-    /// Every cached copy of song `id` at any quality (`<id>:<quality>`, the quality part never holding a
-    /// colon), forgotten as they are returned (the caller drops them).
-    pub fn copies(&mut self, id: &str) -> Vec<String> {
-        let keys: Vec<String> = self.used.keys().filter(|k| k.rsplit_once(':').is_some_and(|(before, _)| before == id)).cloned().collect();
+    /// Every cached copy of song `id` at any quality (`nori_net::stream_cache_key`: its text, a colon and
+    /// the quality, which never holds a colon), forgotten as they are returned (the caller drops them).
+    pub fn copies(&mut self, id: &ItemKey) -> Vec<String> {
+        let text = id.text();
+        let keys: Vec<String> = self.used.keys().filter(|k| k.rsplit_once(':').is_some_and(|(before, _)| before == text)).cloned().collect();
         for k in &keys {
             self.used.remove(k);
         }
@@ -174,15 +176,15 @@ impl Store {
         self.dir.join(STREAM).join(file_name(key))
     }
 
-    /// A finished download's path.
-    pub fn download_path(&self, id: &str) -> PathBuf {
-        self.dir.join(DOWNLOADS).join(file_name(id))
+    /// Song `id`'s finished download's path, named by its key's text ([`ItemKey::text`]).
+    pub fn download_path(&self, id: &ItemKey) -> PathBuf {
+        self.dir.join(DOWNLOADS).join(file_name(&id.text()))
     }
 
     /// Where a download at `quality` is written while in progress. Its parts at another quality go, so a
     /// download taken up never joins two encodings.
-    pub fn download_part(&self, id: &str, quality: &str) -> PathBuf {
-        let name = file_name(id);
+    pub fn download_part(&self, id: &ItemKey, quality: &str) -> PathBuf {
+        let name = file_name(&id.text());
         let part = format!("{name}.{}{PART}", file_name(quality));
         // Another quality's: `<name>.<quality>.part`, or `<name>.part` from before qualities were kept apart.
         let other = |n: &str| n != part && n.strip_suffix(PART).and_then(|n| n.strip_prefix(name.as_str())).is_some_and(|q| q.is_empty() || q.strip_prefix('.').is_some_and(|q| !q.contains('.')));
@@ -195,7 +197,7 @@ impl Store {
     }
 
     /// The finished download of `id`, if present.
-    pub fn downloaded(&self, id: &str) -> Option<PathBuf> {
+    pub fn downloaded(&self, id: &ItemKey) -> Option<PathBuf> {
         let p = self.download_path(id);
         p.is_file().then_some(p)
     }
@@ -280,7 +282,7 @@ impl Store {
 
     /// Drops every cached copy of song `id`, at any quality (`<id>:<quality>` keys): the order knows them
     /// all once the cache was counted, without listing the folder.
-    pub fn drop_copies(&self, id: &str) {
+    pub fn drop_copies(&self, id: &ItemKey) {
         self.counted();
         let keys = self.order.lock().copies(id);
         for k in keys {
@@ -304,7 +306,7 @@ impl Store {
 
     /// Bytes the finished downloads of songs `ids` hold, counted from disk. Every profile's downloads share
     /// this folder, so a profile's own are its songs'.
-    pub fn download_bytes_of(&self, ids: &[String]) -> u64 {
+    pub fn download_bytes_of(&self, ids: &[ItemKey]) -> u64 {
         ids.iter().filter_map(|id| fs::metadata(self.download_path(id)).ok()).map(|m| m.len()).sum()
     }
 
@@ -512,10 +514,12 @@ mod tests {
         o.touch("xy:0");
         o.touch("x:a:0");
         o.touch("dl:x");
+        o.touch("x\u{1f}acct2:0");
         o.seed(["x:320mp3"]);
-        let mut c = o.copies("x");
+        let mut c = o.copies(&ItemKey::own("x"));
         c.sort();
         assert_eq!(c, ["x:0", "x:192opus", "x:320mp3"]);
+        assert_eq!(o.copies(&ItemKey { source: Some("acct2".into()), id: "x".into() }), ["x\u{1f}acct2:0"], "another source's x is its own");
         assert_eq!(o.pop_oldest().as_deref(), Some("xy:0"), "only the copies were dropped");
     }
 
@@ -591,11 +595,11 @@ mod tests {
     fn download_bytes_count_the_songs_finished_downloads() {
         let d = dir("store-downloads");
         let s = Store::open(d.path(), 1 << 20).unwrap();
-        fs::write(s.download_path("a"), [0u8; 300]).unwrap();
-        fs::write(s.download_path("other"), [0u8; 20]).unwrap();
-        fs::write(s.download_part("b", "0"), [0u8; 50]).unwrap();
+        fs::write(s.download_path(&ItemKey::own("a")), [0u8; 300]).unwrap();
+        fs::write(s.download_path(&ItemKey::own("other")), [0u8; 20]).unwrap();
+        fs::write(s.download_part(&ItemKey::own("b"), "0"), [0u8; 50]).unwrap();
         put(&s, "c:0", 70);
-        assert_eq!(s.download_bytes_of(&["a".into(), "b".into(), "c".into()]), 300);
+        assert_eq!(s.download_bytes_of(&[ItemKey::own("a"), ItemKey::own("b"), ItemKey::own("c")]), 300);
     }
 
     #[test]
@@ -608,7 +612,7 @@ mod tests {
         // Copies from an earlier run, and one this run wrote.
         let s = Store::open(d.path(), 1 << 20).unwrap();
         put(&s, "a:192opus", 30);
-        s.drop_copies("a");
+        s.drop_copies(&ItemKey::own("a"));
         assert!(s.cached("a:0").is_none() && s.cached("a:192opus").is_none(), "every copy of a went");
         assert!(s.cached("b:0").is_some(), "another song's stays");
         assert_eq!(s.cache_bytes(), 50);

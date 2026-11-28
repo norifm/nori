@@ -114,7 +114,7 @@ void nori_ios_clear_upcoming(void);
 /// Puts back what the last clear took out.
 void nori_ios_put_back_cleared(void);
 
-/// Puts back a removed song. `id` is NUL-terminated.
+/// Puts back a removed song, `id` its `key` (a song's source and id as one text). NUL-terminated.
 void nori_ios_put_back(const char *id);
 /// How long the undo of a removed song is offered, ms.
 int64_t nori_ios_undo_ms(void);
@@ -235,7 +235,8 @@ void nori_ios_forget(const char *id);
 #define NORI_NOTE_DONE 14
 #define NORI_NOTE_CURVE_FAILED 16
 
-/// Pages for `nori_ios_read`. `arg`: the id for album/artist/playlist/mix, the name for a genre, the
+/// Pages for `nori_ios_read`. `arg`: an item's `ref` for album/artist/playlist (its id, with where it is
+/// kept when that is not the profile's own source), the id for a mix, the name for a genre, the
 /// query for search, NORI_ALBUMS_FAVORITES for the favorite albums; empty otherwise. A list answers `more`
 /// while pages may follow (`nori_ios_read_more`).
 #define NORI_PAGE_HOME 1
@@ -316,7 +317,7 @@ void nori_ios_enqueue_collection(int32_t kind, const char *id, int32_t next);
 char *nori_ios_collection_download_entries(int32_t kind, const char *id);
 int32_t nori_ios_collection_download_act(int32_t kind, const char *id, int32_t act);
 
-/// Song 1, album 2, artist 3.
+/// Song 1, album 2, artist 3, by its item's `ref`.
 void nori_ios_star(int32_t kind, const char *id, int32_t on);
 
 /// Home's rows as JSON to free: `{shown, hidden}`, each the rows' names, `shown` in their order.
@@ -347,8 +348,8 @@ void nori_ios_cover_cancel(uint64_t token);
 uint32_t nori_ios_setup_covers(void);
 void nori_ios_setup_cover(uint64_t token, uint32_t index, uint32_t px);
 
-/// The lyrics view opened on a song and closed; a lyrics report says what it shows changed, then read
-/// it as JSON (free it).
+/// The lyrics view opened on a song (its `key`) and closed; a lyrics report (its `id` the song's key)
+/// says what it shows changed, then read it as JSON (free it).
 void nori_ios_lyrics(const char *song);
 void nori_ios_lyrics_closed(void);
 char *nori_ios_lyrics_page(const char *song);
@@ -486,7 +487,8 @@ char *nori_ios_song_menu(uint64_t token, int32_t index, int32_t starred, int32_t
 int32_t nori_ios_song_act(uint64_t token, int32_t index, int32_t action, int32_t on);
 /// The server's link to the song, to free; NULL when none. Blocks.
 char *nori_ios_song_share(uint64_t token, int32_t index);
-/// Playlist edits. Block; 1 when done.
+/// Playlist edits; a playlist is named by its item's `ref`. Block; 1 when done, 2 when the playlist is
+/// one source's and takes only that source's songs.
 int32_t nori_ios_playlist_add(uint64_t token, int32_t index, const char *playlist);
 int32_t nori_ios_playlist_create(uint64_t token, int32_t index, const char *name);
 int32_t nori_ios_queue_playlist_add(const char *playlist);

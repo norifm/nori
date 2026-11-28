@@ -190,6 +190,171 @@ Once the account signs in, new seals go to the account. An item kind the account
 (`Provider::keeps_favorites` answers false) stays on this device while signed in too. Favorites kept
 here are not indexed or synced. They go with the profile when it is removed, and a backup holds them.
 
+## A profile of several sources
+
+A profile can play from more sources than its own and browse them as one library. Its
+`SavedServer::sources` lists other saved profiles, in order. A profile listed there is a source, not a
+profile of its own, so `settings::servers_shown` leaves it out of the profile lists. A client adds a
+source on the profile's Edit page: a saved profile from `providers::sources_offered`, or a new one signed
+in to there. `settings::servers_source_added` keeps the edited profile in use.
+
+When a profile opens, the client opens each source with `Core::open_source`. A source gets a `Core` and a
+`Client` of its own. Its provider, account, kept pages, favorite marks and queued writes stay that
+source's. The profile's queue and saved queue stay the profile's.
+
+Each song, album, artist and playlist from another source carries that source's id in `source`. An item
+of the profile's own source has none, so a profile of one source reads, stores and plays as before.
+`crates/core/src/sources.rs` routes on that field:
+
+| What | Where it goes |
+|---|---|
+| A list read (search, artists, playlists, favorites, genres, songs) | Every source, merged into one page |
+| An album list, a page at a time | Every source, each read on from where it stopped (`merged::ListMerge`) |
+| An artist's page | Its source, then the same artist in every other source, as one page |
+| An item's own page (`read_each_in`, `read_now_in`, `PageAsk`, `Fetch`), a song's share link | The item's source |
+| A playlist's page, songs and changes (`PlaylistAt`, `Client::playlist_change`) | Where the playlist is kept |
+| A favorite (`star_in`) | The item's source |
+| A song's stream, its resolver and how far ahead it is fetched | The song's source |
+| A play's scrobble and now playing | The song's source, and the profile's scrobbling accounts |
+| What may be done with an item (`Core::rules_of`) | The item's source's rules |
+
+### Rows kept per source
+
+A source's rows in the database carry its saved id in `server`, which is the value items carry in
+`source`. The profile's connection lists its other sources in a temporary table, and reads that span
+them use `db::IN_PROFILE`. A song, album or artist read from the database takes its `source` from its
+rows. A row of the profile's own reads as before.
+
+- A play is recorded in the rows of its song's source (`Session::source_opened`). The history and the
+  listening statistics read every source's plays.
+- A download goes into the rows of its song's source, where that source's rules keep downloads. The
+  downloads lists read every source's.
+- The mixes draw from the profile's own songs and from the sources whose rules have mixes
+  (`db::IN_MIXES`). A song left out of the mixes is kept in its source's rows
+  (`Core::mix_excluded_set`).
+
+### Home
+
+A profile of several sources has one Home. Its rows read every source, and the Homes of the sources that
+have their own (`ProfileRules::feed`) come after one another as one feed. `home::home_woven` gives the
+order: a row and a feed shelf in turns. A shelf that holds at least half of the shelf before it is left
+out. The host sends that order as `HomePart::Places`.
+
+### Playlists
+
+A source's playlists stay that source's, and take only that source's songs. nori's own playlists hold
+songs of any source and are kept on the device, in the profile's rows (`mixed_playlists.rs`). Each song is
+kept whole, with its source, and is never indexed. They come first in the Playlists list.
+
+- `PlaylistAt` says where a playlist is kept: in a source, or on the device. A client opens and plays a
+  playlist by its id and `PlaylistAt` (`Client::read_playlist`, `Client::playlist_songs_at`).
+- `Client::playlist_change` adds, moves, removes, renames and deletes, where the playlist is kept. A song of
+  another source is not added to a source's playlist: the answer is `PlaylistChanged::Refused` with
+  `PlaylistRefusal::OtherSource`, and nothing is sent. Each client says in words that the playlist is on
+  that source and takes only its songs.
+- `Client::playlist_choices` offers nori's own first, then every source's playlists that the account may
+  change. Those that do not take the songs come last, with the same `refused`.
+- `Client::playlist_create` keeps a new playlist where `Client::new_playlist_in` says: in the songs' one
+  source when it makes playlists, else as nori's own.
+
+### Songs in the queue
+
+A queued song is its key: `ItemKey`, its source and its id (`crates/player/src/key.rs`). The playlist's
+entries, the queue's song store, the engine's streams and plans, the planner's window and the downloads
+all hold keys, so one id in two sources is two songs. A song of the profile's own source has `source`
+None.
+
+Each part goes to the song's source by its key:
+
+- `Client::resolve` asks the source's client for the stream address, at that source's quality.
+- Analyses, vocal curves and plays live in the source's rows. `db::Profile::rows` gives the connection
+  for a source.
+- A download's row is kept in its source's rows. `db::of_key!` and `db::key_params` find a key's row.
+- Lyrics are looked up through the source's client. A scrobble and now playing go to the song's source.
+
+A key becomes one string only where a value must cross as a string. Those are media3's item id, a
+download's id, a cache key, the iPod's and the web's song ids, and a cover id of another source.
+`ItemKey::text` writes it and `ItemKey::from_text` reads it. Only Android's `Library.coverUrl` splits one
+too, and its twin holds it to the Rust. For the profile's own source the text is the id alone. Stream cache keys
+(`stream_cache_key`), download keys (`download_key`), the saved queue and every stored row of a profile
+of one source keep the values they had.
+
+Over FFI the key is a record (`source`, `id`). Kotlin builds it from a song's fields. It turns a list of
+keys into media ids and back with `item_key_texts` and `item_keys_of`, one call per list. The iPod's and
+the web's song rows carry the text as `key`, and the apps compare and send it as it is.
+
+Other devices hear of the profile's own songs alone (`ItemKey::own_id`): the server's play queue, a
+controlled device, a jam's lyrics and transitions.
+
+### Covers
+
+`Keyed::of_source` makes an item another source's. It sets `source`, and its `cover_art` becomes the
+cover's key text (`ItemKey::text` of the source and the cover's id). It runs in `stamped` for a source's
+pages, in `songs_of_source` for its songs, and in `items::song`, `items::album` and `items::artist` for
+rows read from the database. So a cover id that goes on alone still names its source: a mix's tiles, the
+queue's covers, the car's art, a download's notice. The profile's own covers keep their ids.
+
+- `Core::cover_address` makes a cover's URL with the provider of the source the id names. The host's
+  clients (the desktop app, the terminal app, the iPod app, the web) load every cover through it.
+- Android builds URLs itself from `Core::cover_prefixes`, one prefix for each source. It splits the id at
+  `CoverRules::source_mark` (`Library.coverUrl`, twin in `CoreTwins.kt`).
+- A row keeps the cover's own id (`nori_model::cover_id`), and its `server` names the source.
+- The cover cache keys a cover by its URL's host, path and id, so two servers' covers of one id are two
+  covers. Two accounts of one server share their covers, as the server does.
+
+### Favorite marks
+
+Each source's core keeps this session's marks of its own items (`stars::Marks`). A client is handed the
+profile's marks whole, each item by its key (`stars::StarMarks`, made by `Core::star_marks`), and looks a
+seal up there with `StarMarks::starred`. So one id in two sources is two marks.
+
+- `Client::star_in` marks the item in its source's core and hands the client the profile's marks at
+  once. If the source refuses, the mark from before comes back, and the client is handed the marks again.
+- A source's pages are laid over with that source's marks alone. A page kept for offline shows them too.
+- `Core::starred_in` answers for one item. The desktop app and the iPod app ask it for each row.
+- Another device's queue holds the profile's own songs alone. A seal of another source's song is never
+  read from that queue or sent there (`Remote::star_where_playing`).
+
+### Remote control and jams
+
+No one server has every source. So a profile of several sources reaches other devices over the LAN alone
+(`Core::lan_only`), as a profile with no server does. Jams open on the LAN door, and pairing is by
+code or link. A guest reads through its host, across the host's sources. A queue sent to a controlled
+device is refused while it holds another source's song (`Refusal::OtherSource`).
+
+### One copy of an item
+
+`nori_library::merged` decides when two sources' items are one, strictly: a wrong merge hides a song.
+
+- Two songs are one when both have a MusicBrainz id and the ids match. Without an id on both, their title,
+  artist and album must match, case and spaces aside. Their lengths must also be known and at most 2 s
+  apart.
+- Two albums are one on matching MusicBrainz ids. Otherwise their name and artist match, and their year
+  and song count match where both give them.
+- Two artists are one when their names match.
+
+The listener's own library wins: the copy from a source that `Provider::holds` `SourceKind::Library` (a
+Subsonic server) shows over a service's. A server's `ext-` item is a service's. Between two of a kind,
+the first source's copy shows. Items that are not one both show, each with its own `source`.
+
+A client shows an item's source only beside a look-alike from another source in the same list. A
+look-alike has the same name and artist, but is not the same item. The core sets `source_marked` on each
+item that shows its source (`merged::marked`). It does so where it merges a list: `merged`,
+`ListMerge::page`, a playlist of nori's own and the queue's view.
+
+The mark is the source profile's circle, as the profile lists show it: its picture, icon, face or letter.
+A client draws it small, in the bottom corner of the item's cover. It sits on a plate of the page's paper.
+The plate is centred on the corner's arc, so its edge follows the corner. On a round cover, it sits inside
+the edge. It never takes the accent. `settings::source_profile` names the saved profile of an item's
+`source`.
+
+| Client | The mark |
+|---|---|
+| Android | `SourceCorner` in `Cover` (`ui/Components.kt`) |
+| The desktop app | the `Art` component's corner, its mark from the `SourceMarks` global |
+| The iPod app | `CoverView.showSource`, from an item's `mark` |
+| The terminal app | the source profile's letter before the name, as `‹N›` |
+
 ## What a client does
 
 A client asks the core and draws the answer, the same way on every client.
@@ -203,7 +368,7 @@ A client asks the core and draws the answer, the same way on every client.
 - **Logging in** is `providers::log_in`. It runs `Kinds::login_profile`, then `Kinds::check_profile`,
   and keeps the profile as the active one. A login to a saved server's address and user is that saved
   profile again. A login saves only what the form holds. The rest of a saved profile stays as it is saved
-  at that moment: its music folders, bitrate cap, icon, account and scrobbling. Other pages
+  at that moment: its music folders, bitrate cap, icon, account, scrobbling and sources. Other pages
   change these while a profile's Edit form is open.
 - **Opening a profile** asks `Kinds::waits` first, for a plugin's profile. It then calls
   `Core::configure_profile` and wraps the engine's byte source with `nori_engine::core::resolving`.
@@ -211,8 +376,9 @@ A client asks the core and draws the answer, the same way on every client.
   After adding, it is the sign-in offer, and after adding as a guest, nothing. After the provider ended
   the session, it is the offer again, until the user stops the reminder. `providers::flow::SignInFlow`
   holds what shows, one dialog at a time.
-- **Covers.** A client builds cover URLs from `Core::cover_prefix`, with the id and size appended.
-  Without a prefix, it asks `Core::cover_address` for each cover.
+- **Covers.** A client builds cover URLs from `Core::cover_prefixes`, with the id and size appended.
+  A cover id of another source names that source and takes its prefix ([Covers](#covers)). Without a
+  prefix, the client asks `Core::cover_address` for each cover.
 
 ### Signing in
 

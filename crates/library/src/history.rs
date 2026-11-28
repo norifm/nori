@@ -112,18 +112,20 @@ fn ranked(map: HashMap<String, TopEntry>, top: usize) -> (u32, Vec<TopEntry>) {
     (n, l)
 }
 
-/// The plays a summary reads, between ?1 and ?2: an order, the song, skipped, time heard, completed,
-/// local hour and day, and the start.
-const DEVICE_PLAYS: &str = "SELECT rowid row, song_id, skipped, heard_ms, completed, hour, day, started_ms at FROM plays WHERE server=sid() AND started_ms>=?1 AND started_ms<?2";
-/// The server account's plays as [`DEVICE_PLAYS`] reads them, at local offset ?3. The server keeps no
+/// The plays a summary reads, of every source of the profile, between ?1 and ?2: an order, the rows the
+/// song is in, the song, skipped, time heard, completed, local hour and day, and the start.
+fn device_plays() -> String {
+    format!("SELECT rowid row, server, song_id, skipped, heard_ms, completed, hour, day, started_ms at FROM plays WHERE server {} AND started_ms>=?1 AND started_ms<?2", db::IN_PROFILE)
+}
+/// The server account's plays as [`device_plays`] reads them, at local offset ?3. The server keeps no
 /// skips or time heard.
-const SERVER_PLAYS: &str = "SELECT id row, song_id, 0 skipped, 0 heard_ms, 0 completed, ((at_ms+?3) % 86400000 + 86400000) % 86400000 / 3600000 hour,
+const SERVER_PLAYS: &str = "SELECT id row, server, song_id, 0 skipped, 0 heard_ms, 0 completed, ((at_ms+?3) % 86400000 + 86400000) % 86400000 / 3600000 hour,
     (at_ms+?3) / 86400000 day, at_ms at FROM server_plays WHERE server=sid() AND at_ms>=?1 AND at_ms<?2";
 
 /// The listening statistics of this device's plays between `from_ms` and `to_ms`, with the `top` songs,
 /// artists and albums.
 pub fn summary(c: &Connection, from_ms: i64, to_ms: i64, top: u32) -> rusqlite::Result<ListeningStats> {
-    summarize(c, DEVICE_PLAYS, params![from_ms, to_ms], top)
+    summarize(c, &device_plays(), params![from_ms, to_ms], top)
 }
 
 /// [`summary`] of the server account's plays, charted at `tz_offset_ms`. Skips and time heard are zero:
@@ -141,8 +143,8 @@ fn summarize(c: &Connection, plays: &str, p: &[&dyn rusqlite::ToSql], top: u32) 
     {
         let mut st = c.prepare_cached(&format!(
             "WITH p AS ({plays}) SELECT s.plays, s.skips, s.ms, {} FROM
-               (SELECT song_id, sum(skipped=0) plays, sum(skipped) skips, sum(heard_ms) ms FROM p GROUP BY song_id) s
-             LEFT JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=s.song_id ORDER BY s.plays DESC, s.ms DESC, s.song_id",
+               (SELECT server, song_id, sum(skipped=0) plays, sum(skipped) skips, sum(heard_ms) ms FROM p GROUP BY server, song_id) s
+             LEFT JOIN items i ON i.server=s.server AND i.kind=2 AND i.id=s.song_id ORDER BY s.plays DESC, s.ms DESC, s.song_id",
             db::items::SONG
         ))?;
         let mut rows = st.query(p)?;
@@ -204,7 +206,7 @@ fn summarize(c: &Connection, plays: &str, p: &[&dyn rusqlite::ToSql], top: u32) 
 
     out.first_play = c
         .prepare_cached(&format!(
-            "WITH p AS ({plays}) SELECT p.at, p.heard_ms, p.completed, p.skipped, {} FROM p JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=p.song_id
+            "WITH p AS ({plays}) SELECT p.at, p.heard_ms, p.completed, p.skipped, {} FROM p JOIN items i ON i.server=p.server AND i.kind=2 AND i.id=p.song_id
              WHERE p.skipped=0 ORDER BY p.at, p.row LIMIT 1",
             db::items::SONG
         ))?

@@ -77,6 +77,8 @@ export global ProfileIcons {
 
 export struct Card {
     id: string,
+    // The profile's other source it comes from; empty for the profile's own.
+    source: string,
     title: string,
     sub: string,
     art: string,
@@ -90,6 +92,10 @@ export struct Card {
     year: int,
     count: int,
     seconds: int,
+    // A playlist of nori's own, kept on this device, its songs from any source.
+    mixed: bool,
+    // Shown with its source's mark (the core's `source_marked`).
+    marked: bool,
     // On a shelf's newer answer: how many places it moved (it slides there from the old one), or that it
     // is new (it fades in).
     shift: int,
@@ -252,6 +258,10 @@ export struct SongRow {
     // The pages a click on the artist and the album opens; empty for none.
     artist-id: string,
     album-id: string,
+    // The source it comes from; empty for the profile's own.
+    source: string,
+    // Shown with its source's mark (the core's `source_marked`).
+    marked: bool,
     time: string,
     art: string,
     // The list index a click plays or jumps to.
@@ -728,8 +738,9 @@ export global Jam {
 
 // Opens an artist's or an album's page, from wherever its name shows (app.rs answers).
 export global Go {
-    callback artist(string);
-    callback album(string);
+    // An artist's or album's page, by id and the source it comes from (empty: the profile's own).
+    callback artist(string, string);
+    callback album(string, string);
     // The menu of what `card` stands for (an album, artist, playlist or mix; a song card's is its song's),
     // opened by a right press at `x`, `y` in its window, with `picture` at its head (none: the card's art).
     // Every item's right press comes here, wherever it is drawn.
@@ -752,21 +763,23 @@ component Link inherits Text {
     in property <string> album;
     // The album's cover, for the head of its menu.
     in property <string> art;
+    // The source the artist or album comes from; empty for the profile's own.
+    in property <string> source;
     property <length> size: root.font-size > 0 ? root.font-size : 13px;
     lt := TouchArea {
         enabled: root.artist != "" || root.album != "";
         mouse-cursor: self.enabled ? pointer : default;
         clicked => {
             if root.artist != "" {
-                Go.artist(root.artist);
+                Go.artist(root.artist, root.source);
             } else {
-                Go.album(root.album);
+                Go.album(root.album, root.source);
             }
         }
         // A right press opens the menu of the artist or album it names.
         pointer-event(e) => {
             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
-                Go.card-menu({ kind: root.artist != "" ? 1 : 0, id: root.artist != "" ? root.artist : root.album, title: root.text, art: root.artist != "" ? "" : root.art }, @image-url(""), self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                Go.card-menu({ kind: root.artist != "" ? 1 : 0, id: root.artist != "" ? root.artist : root.album, source: root.source, title: root.text, art: root.artist != "" ? "" : root.art }, @image-url(""), self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
         }
     }
@@ -784,6 +797,8 @@ component Link inherits Text {
 component ArtistLine inherits HorizontalLayout {
     in property <string> text;
     in property <string> artist;
+    // The source the song comes from; empty for the profile's own.
+    in property <string> source;
     in property <Credits> credits;
     in property <brush> color;
     in property <length> font-size: 13px;
@@ -791,6 +806,7 @@ component ArtistLine inherits HorizontalLayout {
     for p in root.credits.pieces: Link {
         text: p.text;
         artist: p.id;
+        source: root.source;
         color: root.color;
         font-size: root.font-size;
         vertical-alignment: center;
@@ -801,6 +817,7 @@ component ArtistLine inherits HorizontalLayout {
     if root.credits.pieces.length == 0 && root.credits.choices.length == 0: Link {
         text: root.text;
         artist: root.artist;
+        source: root.source;
         color: root.color;
         font-size: root.font-size;
         vertical-alignment: center;
@@ -849,7 +866,7 @@ component ArtistLine inherits HorizontalLayout {
                         }
                         ca := TouchArea {
                             clicked => {
-                                Go.artist(c.id);
+                                Go.artist(c.id, root.source);
                                 list.close();
                             }
                             pointer-event(e) => {
@@ -1609,8 +1626,62 @@ component Bar inherits Rectangle {
 }
 
 // Artwork: rounded, with a hairline edge so covers keep their shape on a page of their own color.
+// A plugin's mark on a tile: its icon in ink, or its first letter without one, or a glyph.
+component PluginTile inherits Rectangle {
+    in property <length> side: 44px;
+    in property <image> icon;
+    in property <string> letter;
+    // nori's own provider has no plugin behind it, so the server glyph stands for one; a profile may show a face.
+    in property <MarkGlyph> glyph;
+    // A profile's mark is a circle.
+    in property <bool> round;
+    // The account's picture, filling the tile in place of the rest.
+    in property <image> picture;
+    width: root.side;
+    height: root.side;
+    border-radius: root.round ? root.side / 2 : root.side * 0.22;
+    background: Theme.raised;
+    if root.picture.width > 0: Rectangle {
+        border-radius: root.border-radius;
+        clip: true;
+        Image {
+            width: 100%;
+            height: 100%;
+            source: root.picture;
+            image-fit: cover;
+        }
+    }
+    if root.letter != "" && root.picture.width == 0: Text {
+        text: root.letter;
+        color: Theme.text;
+        font-size: root.side * 0.42;
+        font-weight: 600;
+    }
+    Image {
+        width: root.side * 0.6;
+        height: root.side * 0.6;
+        source: root.icon;
+        colorize: Theme.text;
+    }
+    if root.glyph != MarkGlyph.none: Icon {
+        glyph: root.glyph == MarkGlyph.sing ? Icons.emoji-sing-right : root.glyph == MarkGlyph.surprise ? Icons.emoji-surprise-alt : root.glyph == MarkGlyph.talking ? Icons.emoji-talking-happy : root.glyph == MarkGlyph.look-up ? Icons.emoji-look-up : root.glyph == MarkGlyph.satisfied ? Icons.emoji-satisfied : root.glyph == MarkGlyph.think ? Icons.emoji-think-right : root.glyph == MarkGlyph.files ? Icons.folder : Icons.server;
+        colour: Theme.text;
+        width: root.side * 0.6;
+        height: root.side * 0.6;
+    }
+}
+
+// The marks of the profile's sources (app.rs answers): a source's by its id, "" the profile's own, as its
+// circle in the profile lists shows it.
+export global SourceMarks {
+    pure callback mark(string) -> Mark;
+}
+
 component Art inherits Rectangle {
     in property <image> source;
+    // Shown with its source's mark (the core's `source_marked`), of `mark-source` ("" the profile's own).
+    in property <bool> marked;
+    in property <string> mark-source;
     border-radius: 12px;
     background: Theme.fill;
     Icon {
@@ -1637,6 +1708,28 @@ component Art inherits Rectangle {
         border-radius: root.border-radius;
         border-width: 1px;
         border-color: Theme.fill;
+    }
+    // The source's mark in the bottom corner, on a plate of the page's paper centred on the corner's arc, so
+    // its edge follows the corner; on a round cover, inside its edge.
+    if root.marked: Rectangle {
+        property <bool> round: root.border-radius * 2 >= root.width;
+        property <length> plate: self.round ? 24px : max(root.border-radius * 2, 16px);
+        property <length> centre: self.round ? root.width / 2 + (root.width / 2 - self.plate / 2) * 0.7071 : root.width - root.border-radius;
+        property <Mark> mark: SourceMarks.mark(root.mark-source);
+        x: self.centre - self.plate / 2;
+        y: (self.round ? self.centre : root.height - root.border-radius) - self.plate / 2;
+        width: self.plate;
+        height: self.plate;
+        border-radius: self.plate / 2;
+        background: Theme.ground;
+        PluginTile {
+            side: parent.plate - 4px;
+            round: true;
+            icon: parent.mark.icon;
+            letter: parent.mark.letter;
+            glyph: parent.mark.glyph;
+            picture: parent.mark.picture;
+        }
     }
 }
 
@@ -2202,6 +2295,8 @@ component CardView inherits Moving {
         width: root.cover;
         height: root.cover;
         source: root.picture;
+        marked: root.card.marked;
+        mark-source: root.card.source;
         border-radius: root.round ? self.width / 2 : root.tile ? 4px : 12px;
         Rectangle {
             border-radius: parent.border-radius;
@@ -2243,6 +2338,7 @@ component CardView inherits Moving {
         width: root.words-w - (root.card.remote && !root.round ? 18px : 0);
         text: root.card.sub;
         artist: root.card.sub-artist;
+        source: root.card.source;
         color: Theme.dim;
         font-size: 12.5px;
         overflow: elide;
@@ -3152,6 +3248,7 @@ component SongPopup inherits PopupWindow {
     in property <image> picture;
     in property <string> title;
     in property <string> line;
+    in property <string> source;
     in-out property <[SongGo]> lines;
     callback play;
     callback menu() -> [SongGo];
@@ -3171,9 +3268,9 @@ component SongPopup inherits PopupWindow {
         // The menu closes after: closed, it can no longer reach the row.
         chosen(m, i) => {
             if m.kind == 1 {
-                Go.album(m.id);
+                Go.album(m.id, root.source);
             } else if m.kind == 2 {
-                Go.artist(m.id);
+                Go.artist(m.id, root.source);
             } else {
                 root.act(m.kind, m.id);
             }
@@ -3231,6 +3328,7 @@ component SongLine inherits Rectangle {
         picture: root.menu-picture;
         title: root.song.title;
         line: root.song.album != "" ? root.song.artist + " · " + root.song.album : root.song.artist;
+        source: root.song.source;
         lines <=> root.lines;
         play => { root.play(); }
         menu => { return root.menu(); }
@@ -3246,6 +3344,8 @@ component SongLine inherits Rectangle {
             height: 44px;
             border-radius: 5px;
             source: root.picture;
+            marked: root.song.marked;
+            mark-source: root.song.source;
         }
         if !root.thumb: Rectangle {
             width: 24px;
@@ -3277,6 +3377,7 @@ component SongLine inherits Rectangle {
             if (root.thumb || root.show-album) && !root.table: ArtistLine {
                 text: root.song.artist;
                 artist: root.song.artist-id;
+                source: root.song.source;
                 credits: root.song.credits;
                 color: Theme.dim;
             }
@@ -3287,6 +3388,7 @@ component SongLine inherits Rectangle {
             text: root.song.album;
             album: root.song.album-id;
             art: root.song.art;
+            source: root.song.source;
             color: Theme.dim;
             font-size: 13px;
             vertical-alignment: center;
@@ -3351,6 +3453,7 @@ component SongLine inherits Rectangle {
         width: root.cols * 0.3;
         text: root.song.artist;
         artist: root.song.artist-id;
+        source: root.song.source;
         credits: root.song.credits;
         color: Theme.dim;
         height: root.height;
@@ -3361,6 +3464,7 @@ component SongLine inherits Rectangle {
         text: root.song.album;
         album: root.song.album-id;
         art: root.song.art;
+        source: root.song.source;
         color: Theme.dim;
         font-size: 13px;
         vertical-alignment: center;
@@ -3796,6 +3900,8 @@ component PlayerControls inherits Rectangle {
     in property <string> now-album;
     in property <string> now-artist-id;
     in property <string> now-album-id;
+    // The source of the song playing; empty for the profile's own.
+    in property <string> now-source;
     in property <Credits> now-credits;
     in property <bool> now-starred;
     in property <bool> noise-on;
@@ -3928,6 +4034,7 @@ component PlayerControls inherits Rectangle {
                         horizontal-stretch: 0;
                         text: root.now-artist;
                         artist: root.now-artist-id;
+                        source: root.now-source;
                         credits: root.now-credits;
                         color: Theme.dim;
                         font-size: 12px;
@@ -3942,6 +4049,7 @@ component PlayerControls inherits Rectangle {
                         text: root.now-album;
                         album: root.now-album-id;
                         art: root.now-art;
+                        source: root.now-source;
                         color: Theme.dim;
                         font-size: 12px;
                         overflow: elide;
@@ -5106,6 +5214,8 @@ component QueueView inherits Rectangle {
                                 height: 100%;
                                 border-radius: 8px;
                                 source: qrow.on-screen ? root.art(s.art, 0, root.covers-rev) : root.art("", 0, 0);
+                                marked: s.marked;
+                                mark-source: s.source;
                             }
                             // The song playing: its cover darkened under the playing glyph.
                             if s.playing: Rectangle {
@@ -5138,6 +5248,7 @@ component QueueView inherits Rectangle {
                                     horizontal-stretch: 0;
                                     text: s.artist;
                                     artist: s.artist-id;
+                                    source: s.source;
                                     credits: s.credits;
                                     color: Theme.dim;
                                     font-size: 12px;
@@ -5152,6 +5263,7 @@ component QueueView inherits Rectangle {
                                     text: s.album;
                                     album: s.album-id;
                                     art: s.art;
+                                    source: s.source;
                                     color: Theme.dim;
                                     font-size: 12px;
                                     overflow: elide;
@@ -5626,50 +5738,6 @@ component RankPlate inherits Rectangle {
     }
 }
 
-// A plugin's mark on a tile: its icon in ink, or its first letter without one, or a glyph.
-component PluginTile inherits Rectangle {
-    in property <length> side: 44px;
-    in property <image> icon;
-    in property <string> letter;
-    // nori's own provider has no plugin behind it, so the server glyph stands for one; a profile may show a face.
-    in property <MarkGlyph> glyph;
-    // A profile's mark is a circle.
-    in property <bool> round;
-    // The account's picture, filling the tile in place of the rest.
-    in property <image> picture;
-    width: root.side;
-    height: root.side;
-    border-radius: root.round ? root.side / 2 : root.side * 0.22;
-    background: Theme.raised;
-    if root.picture.width > 0: Rectangle {
-        border-radius: root.border-radius;
-        clip: true;
-        Image {
-            width: 100%;
-            height: 100%;
-            source: root.picture;
-            image-fit: cover;
-        }
-    }
-    if root.letter != "" && root.picture.width == 0: Text {
-        text: root.letter;
-        color: Theme.text;
-        font-size: root.side * 0.42;
-        font-weight: 600;
-    }
-    Image {
-        width: root.side * 0.6;
-        height: root.side * 0.6;
-        source: root.icon;
-        colorize: Theme.text;
-    }
-    if root.glyph != MarkGlyph.none: Icon {
-        glyph: root.glyph == MarkGlyph.sing ? Icons.emoji-sing-right : root.glyph == MarkGlyph.surprise ? Icons.emoji-surprise-alt : root.glyph == MarkGlyph.talking ? Icons.emoji-talking-happy : root.glyph == MarkGlyph.look-up ? Icons.emoji-look-up : root.glyph == MarkGlyph.satisfied ? Icons.emoji-satisfied : root.glyph == MarkGlyph.think ? Icons.emoji-think-right : root.glyph == MarkGlyph.files ? Icons.folder : Icons.server;
-        colour: Theme.text;
-        width: root.side * 0.6;
-        height: root.side * 0.6;
-    }
-}
 
 // A pick on the welcome: an empty ring, or the accent filled with a check.
 component PickMark inherits Rectangle {
@@ -6142,6 +6210,12 @@ component SettingLine inherits VerticalLayout {
             spacing: 6px;
             HorizontalLayout {
                 spacing: 12px;
+                if root.item.kind == 4 && root.item.name != "": ProfileCircle {
+                    y: (parent.height - self.height) / 2;
+                    profile: root.item.name;
+                    mark: { icon: root.item.icon, letter: root.item.letter, glyph: root.item.glyph, picture: root.item.picture };
+                    pickable: false;
+                }
                 if root.item.kind == 17: PluginTile {
                     y: (parent.height - self.height) / 2;
                     side: 44px;
@@ -6177,8 +6251,8 @@ component SettingLine inherits VerticalLayout {
                     enabled: root.item.enabled;
                     toggled(v) => { root.toggled(root.item.name, v); }
                 }
-                // A switch's menu (a scrobbling account's Remove).
-                if root.item.kind == 1 && root.item.options.length > 0: RowMenu {
+                // A switch's or a fact's menu (a scrobbling account's Remove, a source's Move and Remove).
+                if (root.item.kind == 1 || root.item.kind == 4) && root.item.options.length > 0: RowMenu {
                     y: (parent.height - self.height) / 2;
                     options: root.item.options;
                     values: root.item.values;
@@ -8781,6 +8855,8 @@ export component AppWindow inherits Window {
     in property <string> page-sub;
     // The artist the page's subtitle names (an album's), whose page a click on it opens.
     in property <string> page-sub-artist;
+    // The source of the album or artist the page shows; empty for the profile's own.
+    in property <string> page-source;
     in property <string> page-caption;
     in property <string> page-art;
     in property <[SongRow]> page-songs;
@@ -8827,6 +8903,8 @@ export component AppWindow inherits Window {
     in property <int> noise-mode;
     in property <string> noise-label;
     in property <string> now-album-id;
+    // The song playing's other source; empty for the profile's own.
+    in property <string> now-source;
     in property <string> now-art;
     in property <bool> playing;
     in property <bool> mixing;
@@ -8980,7 +9058,7 @@ export component AppWindow inherits Window {
     in property <string> artist-name;
     in property <string> artist-caption;
     in property <[Shelf]> artist-shelves;
-    callback choose-artist(string);
+    callback choose-artist(string, string);
     callback play-chosen-artist(/* shuffle */ bool);
     // The equalizer page (view 9), from the settings.
     // The Support page (view support, the last of the settings categories): see SupportPage.
@@ -9134,10 +9212,12 @@ export component AppWindow inherits Window {
     property <string> row-title;
     property <string> row-line;
     property <string> row-art;
+    property <string> row-source;
     property <[SongGo]> row-lines;
-    public function row-menu-at(list: int, i: int, title: string, line: string, art: string, x: length, y: length) {
+    public function row-menu-at(list: int, i: int, title: string, line: string, art: string, source: string, x: length, y: length) {
         root.row-list = list;
         root.row-index = i;
+        root.row-source = source;
         root.row-title = title;
         root.row-line = line;
         root.row-art = art;
@@ -9173,7 +9253,7 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open || root.login-proxy-open || root.login-cert-open || root.login-folders-open;
+    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.source-add-open || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open || root.login-proxy-open || root.login-cert-open || root.login-folders-open;
     // Closes every dialog but the two app.rs keeps state for (a device's, the sign-in), which it closes itself.
     public function close-dialogs() {
         root.ask-open = false;
@@ -9185,6 +9265,7 @@ export component AppWindow inherits Window {
         root.rename-open = false;
         root.profile-renaming = "";
         root.scrobbler-step = 0;
+        root.source-add-open = false;
         root.delete-open = false;
         root.join-open = false;
         root.pairing-open = false;
@@ -9265,6 +9346,9 @@ export component AppWindow inherits Window {
     callback scrobbler-add(int);
     callback scrobbler-help-opened();
     callback scrobbler-sign-in();
+    // Adding a source to the profile the Edit page shows: saved profiles it can take, or signing in to a new one.
+    in-out property <bool> source-add-open;
+    in property <[ProfileItem]> source-offered;
     // Deleting a playlist, asked first.
     in-out property <bool> delete-open;
     callback delete-playlist(/* id */ string, /* name */ string);
@@ -9465,19 +9549,19 @@ export component AppWindow inherits Window {
     // (`SongGo::kind`), whose lines `home-song-menu` gives.
     callback home-song(int, int, int);
     callback home-song-menu(int, int) -> [SongGo];
-    callback play-album(string);
-    callback play-playlist(string);
+    callback play-album(string, string);
+    callback play-playlist(string, string, bool);
     // A song of a list: 0 the page, 1 the songs, 2 search, 3 the queue (by list index), 4 a line of the
     // search's preview, 5 the song card whose menu is open. `how`: -1 play, else a line of its menu
     // (`SongGo::kind`), whose lines `song-menu` gives.
     callback song(int, int, int);
     callback song-menu(int, int) -> [SongGo];
     callback play-page(bool);
-    callback play-artist(string);
+    callback play-artist(string, string);
     // Plays card `id` (`Card::kind`) and starts a jam.
-    callback jam-play(int, string);
+    callback jam-play(int, string, string, bool);
     // Card `id` (`Card::kind`, or 4 a mix) next (true) or at the end of the queue.
-    callback queue-card(int, string, bool);
+    callback queue-card(int, string, string, bool, bool);
     callback play-mix(string);
     // The page's songs added at the end of the queue.
     // The album's or artist's seal: offered where the profile keeps the account's favorites, and its state.
@@ -10104,13 +10188,13 @@ export component AppWindow inherits Window {
                                                 }
                                                 play => {
                                                     if self.card.kind == 2 {
-                                                        root.play-playlist(self.card.id);
+                                                        root.play-playlist(self.card.id, self.card.source, self.card.mixed);
                                                     } else if self.card.kind == 3 {
                                                         root.home-song(index, self.at, -1);
                                                     } else if self.card.kind == 1 {
-                                                        root.play-artist(self.card.id);
+                                                        root.play-artist(self.card.id, self.card.source);
                                                     } else {
-                                                        root.play-album(self.card.id);
+                                                        root.play-album(self.card.id, self.card.source);
                                                     }
                                                 }
                                             }
@@ -10384,7 +10468,7 @@ export component AppWindow inherits Window {
                                         card: c;
                                         picture: root.art(c.art, 0, root.covers-rev);
                                         open => { root.open-album(c); }
-                                        play => { root.play-album(c.id); }
+                                        play => { root.play-album(c.id, c.source); }
                                     }
                                 }
                                 if root.search-picked < 0 && root.search-artists.length > 0: artists-found := ShelfView {
@@ -10400,7 +10484,7 @@ export component AppWindow inherits Window {
                                         round: true;
                                         picture: root.art(c.art, 0, root.covers-rev);
                                         open => { root.open-artist(c); }
-                                        play => { root.play-artist(c.id); }
+                                        play => { root.play-artist(c.id, c.source); }
                                     }
                                 }
                                 if root.search-picked < 0 && root.search-playlists.length > 0: playlists-found := ShelfView {
@@ -10414,7 +10498,7 @@ export component AppWindow inherits Window {
                                         card: c;
                                         picture: root.art(c.art, 0, root.covers-rev);
                                         open => { root.open-playlist(c); }
-                                        play => { root.play-playlist(c.id); }
+                                        play => { root.play-playlist(c.id, c.source, c.mixed); }
                                     }
                                 }
                                 // Songs picked: every song, as the library's lists have them.
@@ -10456,11 +10540,11 @@ export component AppWindow inherits Window {
                                         }
                                         play(c) => {
                                             if c.kind == 1 {
-                                                root.play-artist(c.id);
+                                                root.play-artist(c.id, c.source);
                                             } else if c.kind == 2 {
-                                                root.play-playlist(c.id);
+                                                root.play-playlist(c.id, c.source, c.mixed);
                                             } else {
-                                                root.play-album(c.id);
+                                                root.play-album(c.id, c.source);
                                             }
                                         }
                                     }
@@ -10524,7 +10608,7 @@ export component AppWindow inherits Window {
                                 card: self.c;
                                 picture: root.art(self.c.art, 0, root.covers-rev);
                                 open => { root.open-album(self.c); }
-                                play => { root.play-album(self.c.id); }
+                                play => { root.play-album(self.c.id, self.c.source); }
                             }
                         }
                     }
@@ -10568,11 +10652,11 @@ export component AppWindow inherits Window {
                             if c.kind == 3 {
                                 root.shelf-song(root.shown-shelf, c.id);
                             } else if c.kind == 1 {
-                                root.play-artist(c.id);
+                                root.play-artist(c.id, c.source);
                             } else if (root.view == View.albums || root.view == View.shelf) && c.kind == 0 {
-                                root.play-album(c.id);
+                                root.play-album(c.id, c.source);
                             } else {
-                                root.play-playlist(c.id);
+                                root.play-playlist(c.id, c.source, c.mixed);
                             }
                         }
                     }
@@ -10681,7 +10765,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                     ar := TouchArea {
-                                        clicked => { root.choose-artist(a.id); }
+                                        clicked => { root.choose-artist(a.id, a.source); }
                                         double-clicked => { root.open-artist(a); }
                                         pointer-event(e) => {
                                             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
@@ -10762,7 +10846,7 @@ export component AppWindow inherits Window {
                                 rev: root.covers-rev;
                                 art(a, s, r) => { return root.art(a, s, r); }
                                 open(c) => { root.open-album(c); }
-                                play(c) => { root.play-album(c.id); }
+                                play(c) => { root.play-album(c.id, c.source); }
                             }
                         }
                     }
@@ -10880,7 +10964,7 @@ export component AppWindow inherits Window {
                                     card: self.c;
                                     picture: root.art(self.c.art, 0, root.covers-rev);
                                     open => { root.open-album(self.c); }
-                                    play => { root.play-album(self.c.id); }
+                                    play => { root.play-album(self.c.id, self.c.source); }
                                 }
                             }
                             if root.favorite-artists.length > 0: liked-artists := ShelfView {
@@ -10899,7 +10983,7 @@ export component AppWindow inherits Window {
                                     round: true;
                                     picture: root.art(self.c.art, 0, root.covers-rev);
                                     open => { root.open-artist(self.c); }
-                                    play => { root.play-artist(self.c.id); }
+                                    play => { root.play-artist(self.c.id, self.c.source); }
                                 }
                             }
                             // Headed only under the shelves; alone, the page's title heads them.
@@ -11112,7 +11196,7 @@ export component AppWindow inherits Window {
                                     card: self.c;
                                     picture: root.art(self.c.art, 0, root.covers-rev);
                                     open => { root.open-downloaded-album(self.c.id); }
-                                    play => { root.play-album(self.c.id); }
+                                    play => { root.play-album(self.c.id, self.c.source); }
                                 }
                             }
                             if root.songs.length > 0 && root.downloaded-albums.length > 0: HorizontalLayout {
@@ -11434,7 +11518,7 @@ export component AppWindow inherits Window {
                                     rev: root.covers-rev;
                                     art(a, s, r) => { return root.art(a, s, r); }
                                     open(c) => { root.open-album(c); }
-                                    play(c) => { root.play-album(c.id); }
+                                    play(c) => { root.play-album(c.id, c.source); }
                                 }
                                 if root.page-kind == PageLayout.artist && root.page-songs.length > 0: SectionTitle {
                                     text: "Songs";
@@ -11530,7 +11614,7 @@ export component AppWindow inherits Window {
                                             round: true;
                                             picture: root.art(self.card.art, 0, root.covers-rev);
                                             open => { root.open-artist(self.card); }
-                                            play => { root.play-artist(self.card.id); }
+                                            play => { root.play-artist(self.card.id, self.card.source); }
                                         }
                                     }
                                 }
@@ -12231,7 +12315,7 @@ export component AppWindow inherits Window {
                     undo-text: root.queue-undo;
                     art(a, s, r) => { return root.art(a, s, r); }
                     jump(i) => { root.jump(i); }
-                    menu(s, x, y) => { root.row-menu-at(3, s.index, s.title, s.album != "" ? s.artist + " · " + s.album : s.artist, s.art, x, y); }
+                    menu(s, x, y) => { root.row-menu-at(3, s.index, s.title, s.album != "" ? s.artist + " · " + s.album : s.artist, s.art, s.source, x, y); }
                     clear => { root.clear-queue(); }
                 keep => { root.keep-queue(); }
                 clearable: root.queue-clearable;
@@ -12259,9 +12343,9 @@ export component AppWindow inherits Window {
                 // The menu closes after: closed, it can no longer reach the window.
                 chosen(m, i) => {
                     if m.kind == 1 {
-                        Go.album(m.id);
+                        Go.album(m.id, root.now-source);
                     } else if m.kind == 2 {
-                        Go.artist(m.id);
+                        Go.artist(m.id, root.now-source);
                     } else {
                         root.player-act(m.kind, m.id);
                     }
@@ -12273,6 +12357,7 @@ export component AppWindow inherits Window {
                 }
             }
         }
+
         row-pop := PopupWindow {
             x: root.pop-x;
             y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
@@ -12297,9 +12382,9 @@ export component AppWindow inherits Window {
                     }
                     root.search-preview-open = false;
                     if m.kind == 1 {
-                        Go.album(m.id);
+                        Go.album(m.id, root.row-source);
                     } else if m.kind == 2 {
-                        Go.artist(m.id);
+                        Go.artist(m.id, root.row-source);
                     } else {
                         root.song(root.row-list, root.row-index, m.kind);
                     }
@@ -12321,21 +12406,21 @@ export component AppWindow inherits Window {
             play => {
                 root.search-preview-open = false;
                 if root.menu-card.kind == 0 {
-                    root.play-album(root.menu-card.id);
+                    root.play-album(root.menu-card.id, root.menu-card.source);
                 } else if root.menu-card.kind == 1 {
-                    root.play-artist(root.menu-card.id);
+                    root.play-artist(root.menu-card.id, root.menu-card.source);
                 } else if root.menu-card.kind == 4 {
                     root.play-mix(root.menu-card.id);
                 } else if root.menu-card.kind == 6 {
                     root.play-genre(root.menu-card.id);
                 } else {
-                    root.play-playlist(root.menu-card.id);
+                    root.play-playlist(root.menu-card.id, root.menu-card.source, root.menu-card.mixed);
                 }
             }
-            queue(next) => { root.queue-card(root.menu-card.kind, root.menu-card.id, next); }
+            queue(next) => { root.queue-card(root.menu-card.kind, root.menu-card.id, root.menu-card.source, root.menu-card.mixed, next); }
             jam => {
                 root.search-preview-open = false;
-                root.jam-play(root.menu-card.kind, root.menu-card.id);
+                root.jam-play(root.menu-card.kind, root.menu-card.id, root.menu-card.source, root.menu-card.mixed);
             }
         }
         sleep-pop := PopupWindow {
@@ -12530,6 +12615,7 @@ export component AppWindow inherits Window {
                                 horizontal-stretch: 0;
                                 text: root.now-artist;
                                 artist: root.now-artist-id;
+                                source: root.now-source;
                                 credits: root.now-credits;
                                 color: Theme.text.with-alpha(0.6);
                                 font-size: 15px;
@@ -12544,6 +12630,7 @@ export component AppWindow inherits Window {
                                 text: root.now-album;
                                 album: root.now-album-id;
                                 art: root.now-art;
+                                source: root.now-source;
                                 color: Theme.text.with-alpha(0.45);
                                 font-size: 15px;
                                 overflow: elide;
@@ -12903,7 +12990,7 @@ export component AppWindow inherits Window {
                 undo-text: root.queue-undo;
                 art(a, s, r) => { return root.art(a, s, r); }
                 jump(i) => { root.jump(i); }
-                menu(s, x, y) => { root.row-menu-at(3, s.index, s.title, s.album != "" ? s.artist + " · " + s.album : s.artist, s.art, x, y); }
+                menu(s, x, y) => { root.row-menu-at(3, s.index, s.title, s.album != "" ? s.artist + " · " + s.album : s.artist, s.art, s.source, x, y); }
                 clear => { root.clear-queue(); }
                 keep => { root.keep-queue(); }
                 clearable: root.queue-clearable;
@@ -13920,6 +14007,79 @@ export component AppWindow inherits Window {
             }
         }
 
+        if root.source-add-open: Dialog {
+            title: "Add source";
+            sheet-width: 460px;
+            dismissed => { root.source-add-open = false; }
+            VerticalLayout {
+                spacing: 12px;
+                DialogGroup {
+                    for o in root.source-offered: Rectangle {
+                        height: 52px;
+                        border-radius: MenuShape.inner;
+                        background: offer-ta.has-hover ? Theme.hover : transparent;
+                        offer-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.source-add-open = false;
+                                root.setting-action("source-add:" + o.name);
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 10px;
+                            ProfileCircle {
+                                y: (parent.height - self.height) / 2;
+                                profile: o.name;
+                                mark: o.mark;
+                                pickable: false;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: o.title;
+                                    color: Theme.text;
+                                    font-size: 13px;
+                                    overflow: elide;
+                                }
+                                if o.detail != "": Text {
+                                    text: o.detail;
+                                    color: Theme.dim;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                        Rectangle {
+                            x: 8px;
+                            y: parent.height - 1px;
+                            width: parent.width - 16px;
+                            height: 1px;
+                            background: Theme.hairline;
+                        }
+                    }
+                    GoLine {
+                        title: "Sign in to a new one";
+                        glyph: Icons.plus;
+                        divider: false;
+                        clicked => {
+                            root.source-add-open = false;
+                            root.setting-action("source-new");
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    SmallButton {
+                        text: "Cancel";
+                        clicked => { root.source-add-open = false; }
+                    }
+                }
+            }
+        }
+
         if root.scrobbler-step > 0: Dialog {
             title: root.scrobbler-step == 1 ? "Add a scrobbler" : "Add " + root.scrobbler-kinds[root.scrobbler-adding].name;
             sheet-width: 460px;
@@ -14475,7 +14635,7 @@ export component AppWindow inherits Window {
                                 pointer-event(e) => {
                                     if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
                                         if c.kind == 3 {
-                                            root.row-menu-at(4, i, c.title, c.sub, c.art, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                            root.row-menu-at(4, i, c.title, c.sub, c.art, c.source, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                                         } else if c.kind <= 2 {
                                             Go.card-menu(c, @image-url(""), self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                                         }
@@ -14642,6 +14802,8 @@ export component PlayerBar inherits Window {
     in property <int> noise-mode;
     in property <string> noise-label;
     in property <string> now-album-id;
+    // The source of the song playing; empty for the profile's own.
+    in property <string> now-source;
     in property <string> now-art;
     in property <bool> playing;
     in property <bool> buffering;
@@ -14698,6 +14860,7 @@ export component PlayerBar inherits Window {
         noise-mode: root.noise-mode;
         noise-label: root.noise-label;
         now-album-id: root.now-album-id;
+        now-source: root.now-source;
         now-art: root.now-art;
         playing: root.playing;
         buffering: root.buffering;

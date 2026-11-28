@@ -7,7 +7,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use nori_automix::mixing::{beat_times, proposed_kind, Mixing, Proposal, Proposed, Refined};
-use nori_model::Song;
+use nori_model::{ItemKey, Song};
 use nori_player::types::{TrackAnalysis, TransitionPlan};
 
 use crate::convert::song_out;
@@ -26,9 +26,9 @@ impl Plugins {
         Arc::new(PluginMixing(Arc::downgrade(self)))
     }
 
-    /// Song `id` as the open profile knows it, or by its id alone.
-    fn song(&self, id: &str) -> Song {
-        self.songs.lock().expect("not poisoned").as_ref().and_then(|f| f(id)).unwrap_or_else(|| Song::only_id(id.to_string()))
+    /// Song `id` as the open profile knows it, or by its key alone.
+    fn song(&self, id: &ItemKey) -> Song {
+        self.songs.lock().expect("not poisoned").as_ref().and_then(|f| f(id)).unwrap_or_else(|| Song::only_key(id.clone()))
     }
 }
 
@@ -79,7 +79,7 @@ fn plan_out(t: &TransitionPlan) -> w::Transition {
 }
 
 impl Mixing for PluginMixing {
-    fn mixes(&self, outgoing: &str, incoming: &str, nori: bool) -> Option<bool> {
+    fn mixes(&self, outgoing: &ItemKey, incoming: &ItemKey, nori: bool) -> Option<bool> {
         let plugins = self.0.upgrade()?;
         let deciding = plugins.extending("deciders");
         if deciding.is_empty() {
@@ -97,7 +97,7 @@ impl Mixing for PluginMixing {
         (answer != nori).then_some(answer)
     }
 
-    fn plan(&self, outgoing: &str, incoming: &str, out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, nori: &TransitionPlan) -> Option<Proposal> {
+    fn plan(&self, outgoing: &ItemKey, incoming: &ItemKey, out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, nori: &TransitionPlan) -> Option<Proposal> {
         let plugins = self.0.upgrade()?;
         let planning = plugins.extending("automix");
         if planning.is_empty() {
@@ -122,7 +122,7 @@ impl Mixing for PluginMixing {
         })
     }
 
-    fn refine(&self, song: &str, analysis: &TrackAnalysis) -> Option<Refined> {
+    fn refine(&self, song: &ItemKey, analysis: &TrackAnalysis) -> Option<Refined> {
         let plugins = self.0.upgrade()?;
         let refining = plugins.extending("automix");
         if refining.is_empty() {

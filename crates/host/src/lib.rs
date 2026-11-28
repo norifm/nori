@@ -30,8 +30,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use nori_time::{Duration, Instant};
 
-use nori_core::cache_policy::{Page, Read};
 use nori_core::client::Client;
+pub use nori_core::sources::PlaylistAt;
 use nori_core::remote::JamPass;
 use nori_core::settings::SavedServer;
 use nori_core::settings_store::Settings;
@@ -186,6 +186,30 @@ pub fn scrobbler_removed(settings: &Settings, id: &str, account: &str) {
     profile_look(settings, id, |p| *p = nori_core::settings::profile_scrobbler_removed(std::mem::take(p), account.to_string()));
 }
 
+/// Saved profile `id` taking saved profile `source` as one more source, after its others.
+pub fn source_added(settings: &Settings, id: &str, source: &str) {
+    let mut prefs = settings.current().unwrap_or_default();
+    let Some(saved) = prefs.servers.iter().find(|s| s.id == source).cloned() else { return };
+    let list = nori_core::settings::ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: std::mem::take(&mut prefs.active_server_id) };
+    let list = nori_core::settings::servers_source_added(list, id.to_string(), saved);
+    (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
+    settings.put(prefs);
+}
+
+/// Saved profile `id`'s source `source` moved `by` places among its sources.
+pub fn source_moved(settings: &Settings, id: &str, source: &str, by: i32) {
+    profile_look(settings, id, |p| {
+        let Some(at) = p.sources.iter().position(|s| s == source) else { return };
+        let to = (at as i64 + by as i64).max(0) as u32;
+        *p = nori_core::settings::profile_source_placed(std::mem::take(p), source.to_string(), to);
+    });
+}
+
+/// Saved profile `id` without its source `source`, which is a profile of its own again.
+pub fn source_removed(settings: &Settings, id: &str, source: &str) {
+    profile_look(settings, id, |p| *p = nori_core::settings::profile_source_removed(std::mem::take(p), source.to_string()));
+}
+
 /// Runs `f` on a named thread.
 pub fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
     let _ = std::thread::Builder::new().name(name.into()).spawn(f);
@@ -230,14 +254,16 @@ pub fn derive(image: &Image) -> CoverColours {
     nori_look::cover::derive(&px, image.width as usize, image.height as usize, false)
 }
 
-/// A collection whose songs are fetched on demand.
+/// A collection whose songs are fetched on demand. An album, playlist, artist or song is named by its id
+/// and the profile's source it comes from (its `source`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fetch {
-    Album(String),
+    Album(String, Option<String>),
     DownloadedAlbum(String),
-    Playlist(String),
-    Artist(String),
-    Radio(String),
+    Playlist(String, PlaylistAt),
+    Artist(String, Option<String>),
+    /// The radio of a song.
+    Radio(String, Option<String>),
     /// One of the core's mixes (or the favourites), as its page lists it.
     Mix(String),
     /// A genre's songs, by its name.
@@ -250,29 +276,26 @@ impl Fetch {
     /// The page these songs are the list of.
     pub fn origin(&self) -> PageOrigin {
         match self {
-            Fetch::Album(id) => PageOrigin::new(OriginKind::Album, id.as_str()),
+            Fetch::Album(id, _) => PageOrigin::new(OriginKind::Album, id.as_str()),
             Fetch::DownloadedAlbum(id) => PageOrigin::new(OriginKind::Downloads, id.as_str()),
-            Fetch::Playlist(id) => PageOrigin::new(OriginKind::Playlist, id.as_str()),
-            Fetch::Artist(id) => PageOrigin::new(OriginKind::Artist, id.as_str()),
-            Fetch::Radio(id) => PageOrigin::new(OriginKind::Songs, id.as_str()),
+            Fetch::Playlist(id, _) => PageOrigin::new(OriginKind::Playlist, id.as_str()),
+            Fetch::Artist(id, _) => PageOrigin::new(OriginKind::Artist, id.as_str()),
+            Fetch::Radio(id, _) => PageOrigin::new(OriginKind::Songs, id.as_str()),
             Fetch::Mix(id) => PageOrigin::new(OriginKind::Mix, id.as_str()),
             Fetch::Genre(name) => PageOrigin::new(OriginKind::Genre, name.as_str()),
             Fetch::Decade(_) => PageOrigin::new(OriginKind::Songs, ""),
         }
     }
 
-    /// The collection's songs, from the server.
-    pub async fn songs(self, client: &Client) -> Result<Vec<Song>, NetError> {
+    /// The collection's songs, from the source it comes from.
+    pub async fn songs(self, client: &Arc<Client>) -> Result<Vec<Song>, NetError> {
         Ok(match self {
             Fetch::DownloadedAlbum(id) => client.core().downloaded_album(id)?.map(|a| a.songs).unwrap_or_default(),
-            Fetch::Album(id) => client.album_songs_of(id).await?,
-            Fetch::Playlist(id) => client.playlist_songs_of(id).await?,
-            Fetch::Artist(id) => match client.read_now(Read::ArtistById { id }).await? {
-                Page::ArtistPage { v } => client.artist_page_songs(v).await,
-                _ => Vec::new(),
-            },
+            Fetch::Album(id, source) => client.clone().album_songs_in(source, id).await?,
+            Fetch::Playlist(id, at) => client.clone().playlist_songs_at(id, at).await?,
+            Fetch::Artist(id, source) => client.clone().artist_songs_in(source, id).await?,
             Fetch::Mix(id) => client.mix_songs(id).await?,
-            Fetch::Radio(id) => client.radio(id).await?,
+            Fetch::Radio(id, source) => client.clone().radio_in(source, id).await?,
             Fetch::Genre(name) => client.genre_songs(name).await?,
             Fetch::Decade(start) => client.core().decade_songs(start)?,
         })
@@ -371,7 +394,7 @@ pub(crate) struct PlaceSeen(Option<Seen>);
 #[cfg(feature = "desktop")]
 struct Seen {
     index: usize,
-    id: Option<String>,
+    id: Option<nori_core::ItemKey>,
     ms: i64,
     at: Instant,
     pace: f32,
@@ -444,6 +467,7 @@ mod tests {
     }
 
     use super::*;
+    use nori_core::ItemKey;
     use nori_core::settings::ServerKind;
 
     /// Saves are put off until the last one asked for is due; none after the stop.
@@ -590,7 +614,7 @@ mod tests {
         for (n, (t, index, id, ms, playing, buffering, pace, jumped)) in looks.into_iter().enumerate() {
             let state = if playing { State::Playing } else { State::Paused };
             let at = start + Duration::from_secs_f64(t);
-            let status = Status { state, index, id: index.map(|_| id.to_string()), position_ms: ms, at, buffering, pace, ..Status::default() };
+            let status = Status { state, index, id: index.map(|_| id.to_string()).map(ItemKey::own), position_ms: ms, at, buffering, pace, ..Status::default() };
             assert_eq!(seen.jumped(&status), jumped, "look {n}");
         }
     }

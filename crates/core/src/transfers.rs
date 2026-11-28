@@ -4,17 +4,18 @@ use std::collections::{HashMap, HashSet};
 
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Write};
-use crate::Core;
+use crate::{Core, ItemKey, Keyed};
 
 pub use nori_transfers::kept::{KeptChange, KeptCheck};
 pub use nori_transfers::transfers::*;
 
-/// One profile's finished downloads: the id its rows are kept under (`server_db`) and its songs, newest first.
+/// One profile's finished downloads: the id its rows are kept under (`server_db`) and its songs, newest
+/// first, each as the open profile keys it (a source of its own by its source, any other by its id).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct ProfileDownloads {
     pub profile: String,
-    pub ids: Vec<String>,
+    pub ids: Vec<ItemKey>,
 }
 
 impl Core {
@@ -37,7 +38,7 @@ impl Core {
     pub fn downloaded_album(&self, id: String) -> crate::Result<Option<crate::AlbumDetail>> {
         let songs = {
             let c = self.db.lock();
-            let mut st = c.prepare_cached(&format!("SELECT {} FROM downloads i WHERE server=sid() AND done=1 AND album_id=?1 ORDER BY ts DESC", crate::db::items::SONG))?;
+            let mut st = c.prepare_cached(&format!(concat!("SELECT {} FROM downloads i WHERE server ", crate::db::in_profile!(), " AND done=1 AND album_id=?1 ORDER BY ts DESC"), crate::db::items::SONG))?;
             let rows = st.query_map([id], |r| crate::db::items::song(r, 0))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
         };
@@ -47,8 +48,8 @@ impl Core {
     /// Every profile's finished downloads on this device, from the one database they share.
     pub fn downloads_by_profile(&self) -> crate::Result<Vec<ProfileDownloads>> {
         let c = self.db.lock();
-        let mut st = c.prepare_cached("SELECT server, id FROM downloads WHERE done=1 ORDER BY server, ts DESC")?;
-        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut st = c.prepare_cached("SELECT server, CASE WHEN server IN (SELECT server FROM temp.sources) THEN server END, id FROM downloads WHERE done=1 ORDER BY server, ts DESC")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, crate::db::key_of(r, 1)?)))?;
         let mut out: Vec<ProfileDownloads> = Vec::new();
         for (profile, id) in rows.filter_map(|r| r.ok()) {
             match out.last_mut() {
@@ -59,8 +60,10 @@ impl Core {
         Ok(out)
     }
 
-    /// Queues `songs` for download; see [`DownloadQueued`].
+    /// Queues `songs` for download, each in the rows of its source; see [`DownloadQueued`]. A song whose
+    /// source's rules keep no downloads is left out.
     pub fn download_queue(&self, songs: Vec<crate::Song>) -> crate::Result<DownloadQueued> {
+        let songs: Vec<crate::Song> = songs.into_iter().filter(|s| self.rules_of(&s.source).is_some_and(|r| r.downloads)).collect();
         self.downloads.with(|t| {
             t.follow_quality(self.download_kbps());
             t.know(&songs);
@@ -72,10 +75,11 @@ impl Core {
     /// as [`Client::kept_playlists_sync`] finds them, and those leaving it go when keeping it brought them.
     /// Removing all its downloads stops keeping it.
     pub fn download_playlist(&self, id: String, songs: Vec<crate::Song>) -> crate::Result<KeptChange> {
-        let held: Vec<String> = songs.iter().map(|s| s.id.clone()).collect();
+        let held: Vec<String> = songs.iter().filter(|s| s.source.is_none()).map(|s| s.id.clone()).collect();
         let queued = self.download_queue(songs)?;
-        let gone = nori_transfers::kept::keep(&mut self.db.lock(), &id, &held, &queued.fresh)?;
-        Ok(KeptChange { queued, gone })
+        let brought: Vec<String> = queued.fresh.iter().filter(|k| k.source.is_none()).map(|k| k.id.clone()).collect();
+        let gone = nori_transfers::kept::keep(&mut self.db.lock(), &id, &held, &brought)?;
+        Ok(KeptChange { queued, gone: gone.into_iter().map(ItemKey::own).collect() })
     }
 
     /// Queues every indexed song, in index order ([`Core::download_queue`]).
@@ -91,7 +95,7 @@ impl Core {
     }
 
     /// Downloaded songs lacking a current analysis or, with AutoMix on, the beat model's read, newest first.
-    pub fn download_unanalysed(&self) -> crate::Result<Vec<String>> {
+    pub fn download_unanalysed(&self) -> crate::Result<Vec<ItemKey>> {
         let (ids, analyses, beats) = self.download_lacking()?;
         Ok(ids.into_iter().filter(|id| analyses.contains(id) || beats.contains(id)).collect())
     }
@@ -102,28 +106,28 @@ impl Core {
     }
 
     /// Records settled downloads in order: finished, or removed (`finished` false). One transaction.
-    pub fn download_settle(&self, ids: Vec<String>, finished: Vec<bool>) -> crate::Result<()> {
+    pub fn download_settle(&self, ids: Vec<ItemKey>, finished: Vec<bool>) -> crate::Result<()> {
         // Read first: the in-memory table is asked per list row and must not wait for the statements.
-        let mut state: HashMap<&str, HeldState> = {
+        let mut state: HashMap<&ItemKey, HeldState> = {
             let held = self.downloads.held();
-            ids.iter().map(|id| (id.as_str(), held.state(id))).collect()
+            ids.iter().map(|id| (id, held.state(id))).collect()
         };
         {
             let mut c = self.db.lock();
             let tx = c.transaction()?;
             {
-                let mut done = tx.prepare_cached("UPDATE downloads SET done=1 WHERE server=sid() AND id=?1")?;
-                let mut delete = tx.prepare_cached("DELETE FROM downloads WHERE server=sid() AND id=?1")?;
+                let mut done = tx.prepare_cached(concat!("UPDATE downloads SET done=1 WHERE ", crate::db::of_key!()))?;
+                let mut delete = tx.prepare_cached(concat!("DELETE FROM downloads WHERE ", crate::db::of_key!()))?;
                 for (id, f) in ids.iter().zip(&finished) {
-                    let now = state.get_mut(id.as_str()).expect("read above");
+                    let now = state.get_mut(id).expect("read above");
                     match (*now, *f) {
                         (HeldState::Absent, _) | (HeldState::Done, true) => {}
                         (_, true) => {
-                            done.execute([id])?;
+                            done.execute(crate::db::key_params(id))?;
                             *now = HeldState::Done;
                         }
                         (_, false) => {
-                            delete.execute([id])?;
+                            delete.execute(crate::db::key_params(id))?;
                             *now = HeldState::Absent;
                         }
                     }
@@ -146,20 +150,20 @@ impl Core {
 impl Core {
 
     /// The songs being or waiting to be downloaded (not failed), by id, without reading the songs.
-    pub fn download_waiting(&self) -> crate::Result<std::collections::HashSet<String>> {
+    pub fn download_waiting(&self) -> crate::Result<std::collections::HashSet<ItemKey>> {
         let [active, queued, _, _] = self.download_id_sections()?;
         Ok(active.into_iter().chain(queued).collect())
     }
 
     /// [`Core::download_sections`] as ids.
-    fn download_id_sections(&self) -> crate::Result<[Vec<String>; 4]> {
+    fn download_id_sections(&self) -> crate::Result<[Vec<ItemKey>; 4]> {
         let pending = self.download_ids(false)?;
         let recent = self.downloads.with(|t| t.saved_ids());
-        let done: Vec<String> = {
+        let done: Vec<ItemKey> = {
             let held = self.downloads.held();
             recent.into_iter().filter(|id| held.state(id) == HeldState::Done).collect()
         };
-        Ok(self.downloads.with(|t| t.sections(&pending, &done, |id: &String| id.as_str())))
+        Ok(self.downloads.with(|t| t.sections(&pending, &done, ItemKey::clone)))
     }
 
     fn download_kbps(&self) -> i32 {
@@ -167,9 +171,9 @@ impl Core {
     }
 
     /// The analysable downloads, newest first; those lacking a current analysis; and, with AutoMix on, those
-    /// with one that the beat model has not read.
-    pub(crate) fn download_lacking(&self) -> crate::Result<(Vec<String>, HashSet<String>, HashSet<String>)> {
-        let ids: Vec<String> = self.download_ids(true)?.into_iter().filter(|id| crate::queue::analysable(id)).collect();
+    /// with one that the beat model has not read. Each is looked up in its source's rows.
+    pub(crate) fn download_lacking(&self) -> crate::Result<(Vec<ItemKey>, HashSet<ItemKey>, HashSet<ItemKey>)> {
+        let ids: Vec<ItemKey> = self.download_ids(true)?.into_iter().filter(|id| crate::queue::analysable(&id.id)).collect();
         let analyses = self.analysis_missing(ids.clone())?.into_iter().collect();
         let beats = if self.download_beats() { self.analysis_neural_missing(ids.clone())?.into_iter().collect() } else { HashSet::new() };
         Ok((ids, analyses, beats))
@@ -217,15 +221,15 @@ impl Core {
     }
 
     /// Removes all unfinished downloads and their marks; returns their ids for the platform to stop.
-    pub fn download_cancel_all(&self) -> crate::Result<Vec<String>> {
-        let ids: Vec<String> = {
+    pub fn download_cancel_all(&self) -> crate::Result<Vec<ItemKey>> {
+        let ids: Vec<ItemKey> = {
             let c = self.db.lock();
-            let ids: Vec<String> = {
-                let mut st = c.prepare_cached("SELECT id FROM downloads WHERE server=sid() AND done=0")?;
-                let rows = st.query_map([], |r| r.get(0))?;
+            let ids: Vec<ItemKey> = {
+                let mut st = c.prepare_cached(concat!("SELECT nullif(server, sid()), id FROM downloads WHERE server ", crate::db::in_profile!(), " AND done=0"))?;
+                let rows = st.query_map([], |r| crate::db::key_of(r, 0))?;
                 rows.filter_map(|r| r.ok()).collect()
             };
-            c.execute("DELETE FROM downloads WHERE server=sid() AND done=0", [])?;
+            c.execute(concat!("DELETE FROM downloads WHERE server ", crate::db::in_profile!(), " AND done=0"), [])?;
             let mut held = self.downloads.held();
             ids.iter().for_each(|id| held.removed(id));
             ids
@@ -248,7 +252,7 @@ impl Core {
             t.follow_quality(self.download_kbps());
             t.know(&pending);
         });
-        let pending: Vec<String> = pending.into_iter().map(|s| s.id).collect();
+        let pending: Vec<ItemKey> = pending.iter().map(Keyed::key).collect();
         let (mut r, failed) = recovery(&pending, &known);
         self.download_settle(r.finished.clone(), vec![true; r.finished.len()])?;
         r.failed = self.downloads.with(|t| failed.into_iter().map(|(id, length, bytes)| DownloadFailed { progress: t.failed_before(&id, length, bytes), id }).collect());
@@ -262,10 +266,10 @@ impl Core {
         let recent = self.downloads.with(|t| t.saved_ids());
         let done: Vec<crate::Song> = {
             let c = self.db.lock();
-            let mut st = c.prepare_cached(&format!("SELECT {} FROM downloads i WHERE server=sid() AND id=?1 AND done=1", crate::db::items::SONG))?;
-            recent.iter().filter_map(|id| st.query_row([id], |r| crate::db::items::song(r, 0)).ok()).collect()
+            let mut st = c.prepare_cached(&format!(concat!("SELECT {} FROM downloads i WHERE ", crate::db::of_key!(), " AND done=1"), crate::db::items::SONG))?;
+            recent.iter().filter_map(|id| st.query_row(crate::db::key_params(id), |r| crate::db::items::song(r, 0)).ok()).collect()
         };
-        let [active, queued, failed, finished] = self.downloads.with(|t| t.sections(&pending, &done, |s: &crate::Song| s.id.as_str()));
+        let [active, queued, failed, finished] = self.downloads.with(|t| t.sections(&pending, &done, Keyed::key));
         Ok(DownloadSections { active, queued, failed, finished })
     }
 
@@ -311,7 +315,7 @@ impl Client {
                 let Ok(songs) = self.playlist_songs_of(id.clone()).await else { continue };
                 change.add(self.core.download_playlist(id, songs)?);
             } else {
-                change.gone.extend(nori_transfers::kept::vanished(&mut self.core.db.lock(), &id)?);
+                change.gone.extend(nori_transfers::kept::vanished(&mut self.core.db.lock(), &id)?.into_iter().map(ItemKey::own));
             }
         }
         Ok(change)
@@ -327,7 +331,7 @@ impl Client {
             return Ok(KeptChange::default());
         }
         if matches!(w, Write::DeletePlaylist { .. }) {
-            return Ok(KeptChange { gone: nori_transfers::kept::vanished(&mut self.core.db.lock(), id)?, ..Default::default() });
+            return Ok(KeptChange { gone: nori_transfers::kept::vanished(&mut self.core.db.lock(), id)?.into_iter().map(ItemKey::own).collect(), ..Default::default() });
         }
         let songs = self.playlist_songs_of(id.clone()).await?;
         Ok(self.core.download_playlist(id.clone(), songs)?)
@@ -337,6 +341,8 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::keys;
+    use crate::ItemKey;
     use crate::Song;
 
     fn song(id: &str) -> Song {
@@ -355,7 +361,7 @@ mod tests {
             ..Default::default()
         }).to_vec();
         c.download_queue(songs).unwrap();
-        c.download_settle(vec!["one".into(), "other".into()], vec![true, true]).unwrap();
+        c.download_settle(vec![ItemKey::own("one"), ItemKey::own("other")], vec![true, true]).unwrap();
         let album = c.downloaded_album("a".into()).unwrap().unwrap();
         assert_eq!(album.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["one"]);
         assert_eq!(album.album.song_count, 1);
@@ -369,14 +375,14 @@ mod tests {
         let home = Core::new(path.clone(), "home".into(), Default::default()).unwrap();
         let away = Core::new(path, "away".into(), Default::default()).unwrap();
         home.download_queue(["h1", "h2", "pending"].map(song).to_vec()).unwrap();
-        home.download_settle(vec!["h1".into(), "h2".into()], vec![true, true]).unwrap();
+        home.download_settle(vec![ItemKey::own("h1"), ItemKey::own("h2")], vec![true, true]).unwrap();
         away.download_queue(vec![song("a1")]).unwrap();
-        away.download_settle(vec!["a1".into()], vec![true]).unwrap();
+        away.download_settle(vec![ItemKey::own("a1")], vec![true]).unwrap();
         let mut listed = home.downloads_by_profile().unwrap();
         listed.iter_mut().for_each(|p| p.ids.sort());
         assert_eq!(listed, [
-            ProfileDownloads { profile: "away".into(), ids: vec!["a1".into()] },
-            ProfileDownloads { profile: "home".into(), ids: vec!["h1".into(), "h2".into()] },
+            ProfileDownloads { profile: "away".into(), ids: keys(&["a1"]) },
+            ProfileDownloads { profile: "home".into(), ids: keys(&["h1", "h2"]) },
         ]);
         assert_eq!(away.downloads_by_profile().unwrap().len(), 2, "either profile sees both");
     }
@@ -390,8 +396,8 @@ mod tests {
         let downloads = core.downloads.clone();
         std::thread::spawn(move || {
             tx.send(downloads.with(|t| {
-                t.followed("busy", QUEUED, 0);
-                t.start_fraction("busy")
+                t.followed(&ItemKey::own("busy"), QUEUED, 0);
+                t.start_fraction(&ItemKey::own("busy"))
             }))
             .unwrap();
         });
@@ -405,11 +411,11 @@ mod tests {
         {
             let core = core();
             let q = core.download_queue(vec![song("a"), song("b"), song("a")]).unwrap();
-            assert_eq!((q.fresh, q.again), (vec!["a".to_string(), "b".into()], vec![]));
-            core.download_done("a".into()).unwrap();
+            assert_eq!((q.fresh, q.again), (keys(&["a", "b"]), vec![]));
+            core.download_done(ItemKey::own("a")).unwrap();
             let q = core.download_queue(vec![song("a"), song("b"), song("c")]).unwrap();
-            assert_eq!(q.fresh, ["c"]);
-            assert_eq!(q.again, ["b"]);
+            assert_eq!(q.fresh, keys(&["c"]));
+            assert_eq!(q.again, keys(&["b"]));
             // Listed newest first.
             let pending: Vec<String> = core.downloads(false).unwrap().into_iter().rev().map(|s| s.id).collect();
             assert_eq!(pending, ["b", "c"]);
@@ -422,7 +428,7 @@ mod tests {
             crate::db::index(&mut core.db.lock(), &[], &[], &songs).unwrap();
             core.download_queue(vec![songs[1].clone()]).unwrap();
             let q = core.download_queue_library().unwrap();
-            assert_eq!((q.fresh, q.again), (vec!["x".to_string(), "z".into()], vec!["y".to_string()]));
+            assert_eq!((q.fresh, q.again), (keys(&["x", "z"]), keys(&["y"])));
             assert_eq!(core.downloads(false).unwrap().len(), 3);
         }
     }
@@ -430,23 +436,23 @@ mod tests {
     #[test]
     fn restart() {
         {
-            let known = |id: &str, state| DownloadKnown { id: id.into(), state, length: 100, bytes: 50 };
-            let pending = ["lost", "removing", "done", "failed", "queued"].map(String::from);
+            let known = |id: &str, state| DownloadKnown { id: ItemKey::own(id), state, length: 100, bytes: 50 };
+            let pending = keys(&["lost", "removing", "done", "failed", "queued"]);
             let all = [known("removing", REMOVING), known("done", COMPLETED), known("failed", FAILED), known("queued", QUEUED), known("other", COMPLETED)];
             let (r, failed) = recovery(&pending, &all);
-            assert_eq!(r.lost, ["lost", "removing"]);
-            assert_eq!(r.finished, ["done"]);
-            assert_eq!(failed, [("failed".to_string(), 100, 50)]);
+            assert_eq!(r.lost, keys(&["lost", "removing"]));
+            assert_eq!(r.finished, keys(&["done"]));
+            assert_eq!(failed, [(ItemKey::own("failed"), 100, 50)]);
             assert!(r.unfinished);
             assert!(!recovery(&pending[..1], &[]).0.unfinished);
 
             let core = core();
             core.download_queue(vec![song("a"), song("b")]).unwrap();
             let r = core.download_recover(vec![known("a", COMPLETED), known("b", FAILED)]).unwrap();
-            assert_eq!(r.finished, ["a"]);
-            assert_eq!(r.failed, [DownloadFailed { id: "b".into(), progress: 0.5 }]);
+            assert_eq!(r.finished, keys(&["a"]));
+            assert_eq!(r.failed, [DownloadFailed { id: ItemKey::own("b"), progress: 0.5 }]);
             assert_eq!(core.downloads(true).unwrap().len(), 1);
-            assert_eq!(core.downloads.with(|t| t.phase("b")), Some(nori_model::DownloadPhase::Failed));
+            assert_eq!(core.downloads.with(|t| t.phase(&ItemKey::own("b"))), Some(nori_model::DownloadPhase::Failed));
         }
 
         // Restart failure wakes downloads.
@@ -467,7 +473,7 @@ mod tests {
             let waker = std::task::Waker::from(woke.clone());
             let mut moved = std::pin::pin!(core.downloads.marks_moved());
             assert!(moved.as_mut().poll(&mut std::task::Context::from_waker(&waker)).is_pending());
-            core.download_recover(vec![DownloadKnown { id: "a".into(), state: FAILED, length: 100, bytes: 50 }]).unwrap();
+            core.download_recover(vec![DownloadKnown { id: ItemKey::own("a"), state: FAILED, length: 100, bytes: 50 }]).unwrap();
             assert!(woke.0.load(Ordering::SeqCst));
         }
     }
@@ -477,15 +483,15 @@ mod tests {
         let core = core();
         core.download_queue(["a", "b", "c", "d", "e"].map(song).to_vec()).unwrap();
         core.downloads.with(|t| {
-            t.followed("a", DOWNLOADING, 0);
-            t.followed("b", FAILED, 0);
-            t.followed("e", COMPLETED, 0);
+            t.followed(&ItemKey::own("a"), DOWNLOADING, 0);
+            t.followed(&ItemKey::own("b"), FAILED, 0);
+            t.followed(&ItemKey::own("e"), COMPLETED, 0);
         });
-        core.download_settle(vec!["e".into()], vec![true]).unwrap();
+        core.download_settle(vec![ItemKey::own("e")], vec![true]).unwrap();
         let s = core.download_sections().unwrap();
         let counts = core.download_queue_counts().unwrap();
         assert_eq!(counts, DownloadQueueCounts { waiting: (s.active.len() + s.queued.len()) as u32, failed: s.failed.len() as u32 });
-        assert_eq!(core.download_waiting().unwrap(), s.active.iter().chain(&s.queued).map(|s| s.id.clone()).collect());
+        assert_eq!(core.download_waiting().unwrap(), s.active.iter().chain(&s.queued).map(crate::Keyed::key).collect());
         // "a" downloading, "e" saved and processed, "c" and "d" queued.
         assert_eq!(counts, DownloadQueueCounts { waiting: 4, failed: 1 });
     }
@@ -493,12 +499,12 @@ mod tests {
     #[test]
     fn held_state_tracks_settle_and_cancel() {
         let core = core();
-        let state = |id: &str| core.downloads.held().state(id);
+        let state = |id: &str| core.downloads.held().state(&ItemKey::own(id));
         core.download_queue(vec![song("a"), song("b"), song("c"), song("d")]).unwrap();
         let v0 = core.download_counts();
         assert_eq!((v0.done, v0.pending, state("a"), state("x")), (0, 4, HeldState::Pending, HeldState::Absent));
         // "b" finishes then goes; "x" never existed.
-        let ids = ["a", "b", "b", "x"].map(String::from).to_vec();
+        let ids = keys(&["a", "b", "b", "x"]);
         core.download_settle(ids, vec![true, true, false, false]).unwrap();
         let v1 = core.download_counts();
         assert_eq!((v1.done, v1.pending, state("a"), state("b")), (1, 2, HeldState::Done, HeldState::Absent));
@@ -507,7 +513,7 @@ mod tests {
 
         let mut gone = core.download_cancel_all().unwrap();
         gone.sort();
-        assert_eq!(gone, ["c", "d"]);
+        assert_eq!(gone, keys(&["c", "d"]));
         assert_eq!((core.download_counts().pending, core.downloads(false).unwrap().len(), state("a")), (0, 0, HeldState::Done), "finished songs stay");
         let reloaded = Downloads::load(&core.db).unwrap();
         assert_eq!(reloaded.held().counts().done, 1, "the table agrees");

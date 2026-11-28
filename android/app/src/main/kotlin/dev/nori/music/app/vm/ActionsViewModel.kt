@@ -23,7 +23,9 @@ import dev.nori.music.ffi.model.OriginKind
 import dev.nori.music.ffi.model.PageOrigin
 import dev.nori.music.ffi.model.Playlist
 import dev.nori.music.ffi.library.PlaylistChoice
+import dev.nori.music.ffi.model.ItemKey
 import dev.nori.music.ffi.model.Song
+import dev.nori.music.data.key
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,7 +96,7 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
 
     // ---- selection mode: long-press a song anywhere, then act on the whole selection ----
 
-    private val picked = Selection<Song> { it.id }
+    private val picked = Selection<Song> { it.key }
     val selection: StateFlow<List<Song>> = picked.items
     /** A jam guest has nothing to do with a selection: a long press selects nothing. */
     fun toggleSelected(song: Song) { if (!nori.rules.asks) picked.toggle(song) }
@@ -146,19 +148,20 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     val swipes: Pair<SwipeAction, SwipeAction> get() = nori.settings.effective.value.let { it.swipeRight to it.swipeLeft }
 
     // By id: the core has the artist's albums from reading the page, so they need not be handed back.
-    fun playArtist(artistId: String, shuffle: Boolean = false) = attempt(null) {
-        start(nori.library.artistSongs(artistId), shuffle = shuffle, from = PageOrigin(OriginKind.ARTIST, artistId))
+    /** Artist [artist]'s songs, from the source it comes from. */
+    fun playArtist(artist: Artist, shuffle: Boolean = false) = attempt(null) {
+        start(nori.library.artistSongs(artist.id, artist.source), shuffle = shuffle, from = PageOrigin(OriginKind.ARTIST, artist.id))
     }
-    fun queueArtist(artistId: String) = attempt(null) { enqueue(nori.library.artistSongs(artistId)) }
-    fun downloadArtist(artistId: String) = attempt(null) { download(nori.library.artistSongs(artistId)) }
+    fun queueArtist(artist: Artist) = attempt(null) { enqueue(nori.library.artistSongs(artist.id, artist.source)) }
+    fun downloadArtist(artist: Artist) = attempt(null) { download(nori.library.artistSongs(artist.id, artist.source)) }
 
     /** An album, playlist, artist or mix [CardMenu] opened on, played or queued whole. */
     fun play(c: CardItem) = attempt(null) { start(songsOf(c), from = originOf(c)) }
     fun queue(c: CardItem, next: Boolean) = attempt(null) { songsOf(c).let { if (next) playNext(it) else enqueue(it) } }
     private suspend fun songsOf(c: CardItem): List<Song> = when (c) {
-        is CardItem.OfAlbum -> nori.library.albumSongs(c.album.id)
-        is CardItem.OfPlaylist -> nori.library.playlistSongs(c.playlist.id)
-        is CardItem.OfArtist -> nori.library.artistSongs(c.artist.id)
+        is CardItem.OfAlbum -> nori.library.albumSongs(c.album.id, c.album.source)
+        is CardItem.OfPlaylist -> nori.library.playlistSongs(c.playlist)
+        is CardItem.OfArtist -> nori.library.artistSongs(c.artist.id, c.artist.source)
         is CardItem.OfMix -> MixStore.songs(nori, c.mix.id)
     }
     private fun originOf(c: CardItem) = when (c) {
@@ -183,14 +186,14 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         }
     }
 
-    suspend fun excludedFromMixes(song: Song): Boolean = song.id in nori.library.excludedFromMixes()
+    suspend fun excludedFromMixes(song: Song): Boolean = song.key in nori.library.excludedFromMixes()
 
-    fun excludeFromMixes(song: Song, on: Boolean) = attempt(if (on) say.excludedFromMixes else say.backInMixes) { nori.library.excludeFromMixes(song.id, on) }
+    fun excludeFromMixes(song: Song, on: Boolean) = attempt(if (on) say.excludedFromMixes else say.backInMixes) { nori.library.excludeFromMixes(song.key, on) }
 
     /** Creates a server playlist from an M3U file; tracks that are not in the index are reported, not guessed. */
     fun importM3u(name: String, text: String) = attempt(null) {
         val imported = withContext(Dispatchers.IO) { nori.core.m3uImport(text) }
-        if (imported.songIds.isNotEmpty()) nori.library.createPlaylist(name, imported.songIds)
+        if (imported.songIds.isNotEmpty()) nori.library.createPlaylistOfIds(name, imported.songIds)
         _messages.send(say.m3uImported(imported.songIds.size, imported.entries.toInt(), name))
     }
     /** [songs] added by hand. */
@@ -216,20 +219,20 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
      * octo-fiesta downloads a provider item into the library when it is starred: a song on its own, an album
      * or playlist in full, on the server, without streaming it to the phone.
      */
-    fun addToLibrary(id: String, isAlbum: Boolean) = attempt(say.serverDownloading) {
-        nori.library.star(if (isAlbum) StarKind.ALBUM else StarKind.SONG, id, true)
+    fun addToLibrary(key: dev.nori.music.ffi.model.ItemKey, isAlbum: Boolean) = attempt(say.serverDownloading) {
+        nori.library.star(if (isAlbum) StarKind.ALBUM else StarKind.SONG, key.id, true, key.source)
     }
 
     fun star(song: Song, on: Boolean) = attempt(null) {
-        if (!nori.remotes.starWherePlaying(song.id, on)) nori.library.star(StarKind.SONG, song.id, on)
+        if (!nori.remotes.starWherePlaying(song.key, on)) nori.library.star(StarKind.SONG, song.id, on, song.source)
     }
-    fun starAlbum(id: String, on: Boolean) = attempt(null) { nori.library.star(StarKind.ALBUM, id, on) }
-    fun starArtist(id: String, on: Boolean) = attempt(null) { nori.library.star(StarKind.ARTIST, id, on) }
+    fun starAlbum(album: Album, on: Boolean) = attempt(null) { nori.library.star(StarKind.ALBUM, album.id, on, album.source) }
+    fun starArtist(artist: Artist, on: Boolean) = attempt(null) { nori.library.star(StarKind.ARTIST, artist.id, on, artist.source) }
 
     private val _shares = Channel<String>(Channel.BUFFERED)
     /** Links ready to hand to the system share sheet. */
     val shares = _shares.receiveAsFlow()
-    fun share(id: String) = attempt(null) { _shares.send(nori.library.share(id)) }
+    fun share(key: dev.nori.music.ffi.model.ItemKey) = attempt(null) { _shares.send(nori.library.share(key)) }
 
     private val _mobileDownload = MutableStateFlow<List<Song>?>(null)
     /** Songs asked for on mobile data, waiting for a yes before they download. */
@@ -282,12 +285,12 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         for (url in nori.core.downloadCoverUrls(songs.mapNotNull { it.coverArt })) loader.warm(url)
     }
 
-    private val _removal = MutableStateFlow<List<String>?>(null)
+    private val _removal = MutableStateFlow<List<ItemKey>?>(null)
     /** Downloads asked to be removed, waiting for a yes. */
-    val removal: StateFlow<List<String>?> = _removal.asStateFlow()
+    val removal: StateFlow<List<ItemKey>?> = _removal.asStateFlow()
 
     /** Gives the downloads back after a yes: the same menu entry that offered them should be able to take them away. */
-    fun undownload(songs: List<Song>) { _removal.value = songs.map { it.id } }
+    fun undownload(songs: List<Song>) { _removal.value = songs.map { it.key } }
 
     /** The answer to removing [removal]. */
     fun removeAsked(yes: Boolean) {
@@ -297,10 +300,10 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         removeDownloads(ids)
         _messages.trySend(say.downloadsRemoved(ids.size))
     }
-    fun removeDownloads(ids: List<String>) = nori.downloads.remove(ids)
+    fun removeDownloads(ids: List<ItemKey>) = nori.downloads.remove(ids)
 
     /** What each download this session touched is doing; see [dev.nori.music.downloads.Downloads.marks]. */
-    val downloadMarks: StateFlow<Map<String, DownloadMark>> = nori.downloads.marks
+    val downloadMarks: StateFlow<Map<ItemKey, DownloadMark>> = nori.downloads.marks
 
     /** The table or any song's phase changed. */
     private val phaseChanges = combine(nori.downloads.state, nori.downloads.marks) { _, _ -> }
@@ -332,24 +335,42 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         readOnDownloadChange(nori.downloads.state) { nori.core.downloadedLibrary() }
 
     fun retryDownloads(songs: List<Song>) = nori.downloads.retry(songs)
-    fun cancelDownloads(songs: List<Song>) = nori.downloads.cancel(songs.map { it.id })
+    fun cancelDownloads(songs: List<Song>) = nori.downloads.cancel(songs.map { it.key })
     fun cancelAllDownloads() = nori.downloads.cancelAll()
 
     /** The server's answer when the stored one is stale: the first is the stored one, which a playlist just made is not in yet. */
     suspend fun playlists(): List<Playlist> = runCatching { nori.library.playlists().last() }.getOrDefault(emptyList())
     /** Where [songs] can be added, each playlist with what it already has of them; empty when they cannot be read. */
-    suspend fun playlistChoices(songs: List<Song>): List<PlaylistChoice> = runCatching { nori.library.playlistChoices(songs.map { it.id }) }.getOrDefault(emptyList())
-    /** Adds what [c] lacks of the songs it was offered for. */
-    fun addToPlaylist(c: PlaylistChoice) = attempt(say.addedToPlaylist(c.playlist.name)) { nori.library.addToPlaylist(c.playlist.id, c.adds) }
+    suspend fun playlistChoices(songs: List<Song>): List<PlaylistChoice> = runCatching { nori.library.playlistChoices(songs) }.getOrDefault(emptyList())
+    /** Adds what [c] lacks of the songs it was offered for; a source's playlist that takes only its own songs says so. */
+    fun addToPlaylist(c: PlaylistChoice) = attempt(null) {
+        val changed = nori.library.playlistChange(c.playlist, dev.nori.music.ffi.PlaylistChange.Add(c.adds))
+        _messages.send(when (changed) {
+            is dev.nori.music.ffi.PlaylistChanged.Done -> say.addedToPlaylist(c.playlist.name)
+            is dev.nori.music.ffi.PlaylistChanged.Refused -> refusal(c.playlist, changed.why)
+        })
+    }
+
+    /** Why [playlist] does not take some songs, in words. */
+    private fun refusal(playlist: Playlist, why: dev.nori.music.ffi.library.PlaylistRefusal): String = when (why) {
+        is dev.nori.music.ffi.library.PlaylistRefusal.OtherSource -> say.takesOnlyItsSongs(playlist.name, sourceName(why.source))
+    }
+
+    /** What the profile's source [source] is called (null: the profile's own). */
+    private fun sourceName(source: String?): String = sourceProfile(source)?.let { sourceName(it, nori.plugins.names.value) }.orEmpty()
+
+    /** The saved profile the profile's source [source] is (null: the profile's own). */
+    private fun sourceProfile(source: String?): dev.nori.music.ffi.settings.SavedServer? =
+        nori.settings.value.let { p -> dev.nori.music.ffi.settings.sourceProfile(p.servers, p.activeServerId, source) }
     /** Keeps a mix as a playlist on the account, named by the core (`saved_mix_name`) so a second save does not repeat a name. */
-    /** Whether [p] is the account's own, to change or delete (the core's `playlist_editable`). */
-    fun editable(p: Playlist): Boolean = dev.nori.music.ffi.library.playlistEditable(p, nori.settings.value.server?.user.orEmpty(), nori.rules.playlists)
+    /** Whether the profile may change [p]: nori's own always, a source's as that source's account (the core's `playlist_editable_in`). */
+    fun editable(p: Playlist): Boolean = nori.client.playlistEditableIn(p, sourceProfile(p.source)?.user.orEmpty())
 
-    fun deletePlaylist(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) } }
+    fun deletePlaylist(p: Playlist) = viewModelScope.launch { runCatching { nori.library.playlistChange(p, dev.nori.music.ffi.PlaylistChange.Delete) } }
 
-    fun renamePlaylist(id: String, name: String) {
+    fun renamePlaylist(p: Playlist, name: String) {
         val named = name.trim()
-        if (named.isNotEmpty()) viewModelScope.launch { runCatching { nori.library.renamePlaylist(id, named) } }
+        if (named.isNotEmpty()) viewModelScope.launch { runCatching { nori.library.playlistChange(p, dev.nori.music.ffi.PlaylistChange.Rename(named)) } }
     }
 
     /** What row [at] of [playlist], which holds [songs], offers to change (the core's `playlist_edits`); null for nothing. */
@@ -357,19 +378,18 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         val edits = dev.nori.music.ffi.library.playlistEdits(at.toUInt(), songs.size.toUInt(), editable(playlist))
         if (edits.isEmpty()) return null
         return RowEdits(edits) { edit ->
-            val w = dev.nori.music.ffi.library.playlistEditWrite(playlist.id, songs.map { it.id }, at.toUInt(), edit)
-            if (w != null) viewModelScope.launch { runCatching { nori.library.editPlaylist(w) } }
+            viewModelScope.launch { runCatching { nori.library.playlistChange(playlist, dev.nori.music.ffi.PlaylistChange.Edit(songs.map { it.id }, at.toUInt(), edit)) } }
         }
     }
 
     fun saveAsPlaylist(title: String, songs: List<Song>) = viewModelScope.launch {
         try {
             val name = dev.nori.music.ffi.library.savedMixName(title, playlists().map { it.name })
-            nori.library.createPlaylist(name, songs.map { it.id })
+            nori.library.createPlaylist(name, songs)
             _messages.send(say.playlistCreated(name))
         } catch (e: Exception) { _messages.send(e.said ?: say.saidFailed) }
     }
-    fun addToNewPlaylist(name: String, songs: List<Song>) = attempt(say.playlistCreated(name)) { nori.library.createPlaylist(name, songs.map { it.id }) }
+    fun addToNewPlaylist(name: String, songs: List<Song>) = attempt(say.playlistCreated(name)) { nori.library.createPlaylist(name, songs) }
 }
 
 /** An album's, playlist's, artist's or mix's card, row or page head, which a long press opens a menu on. */

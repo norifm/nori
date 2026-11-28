@@ -241,12 +241,13 @@ internal class Recorder(private val app: Application) : PerfHooks.Recorder, Play
             underruns(t)
             val nori = Nori.get(app)
             // A song the queue does not know comes back with its id only.
-            val s = nori.session.queueSongs(listOf(id)).firstOrNull()
+            val key = dev.nori.music.ffi.model.itemKeysOf(listOf(id)).single()
+            val s = nori.session.queueSongs(listOf(key)).firstOrNull()
             val copy = if (s != null) runCatching { nori.sources.streamCopy(id) }.getOrNull() else null
             val song = PerfSong(
                 id = id, title = s?.title?.ifEmpty { null } ?: id, artist = s?.artist.orEmpty(), suffix = s?.suffix.orEmpty(),
                 bitRate = s?.bitRate?.toInt() ?: 0, samplingRate = s?.samplingRate?.toInt() ?: 0, bitDepth = s?.bitDepth?.toInt() ?: 0,
-                channels = s?.channelCount?.toInt() ?: 0, downloaded = s != null && nori.sources.isDownloaded(id),
+                channels = s?.channelCount?.toInt() ?: 0, downloaded = s != null && nori.sources.isDownloaded(key),
                 cacheKey = copy?.first.orEmpty(), cachedWhole = copy?.second == true,
             )
             note(t, PerfNote.Song(song))

@@ -16,12 +16,15 @@ fun list(xs: List<Any?>): String = if (xs.isEmpty()) "_" else xs.joinToString(",
 
 fun row(vararg f: Any?) = println(f.joinToString("\t"))
 
-// ---- core/.../data/Library.kt: coverUrl, with the prefix the core signs handed in ----
+// ---- core/.../data/Library.kt: coverUrl, with the prefixes the core signs handed in by source (null:
+// the profile's own) and the rules' source mark; null where the app asks the core instead ----
 
-fun coverUrl(urlPrefix: String, id: String?, size: Int): String? {
+fun coverUrl(prefixes: Map<String?, String>, sourceMark: String, id: String?, size: Int): String? {
     if (id == null) return null
-    val prefix = urlPrefix + "&id="
-    return prefix + uriEncode(id) + "&size=" + size
+    val mark = id.indexOf(sourceMark)
+    val source = if (mark < 0) null else id.substring(mark + sourceMark.length)
+    val prefix = prefixes[source]?.plus("&id=") ?: return null
+    return prefix + uriEncode(if (mark < 0) id else id.substring(0, mark)) + "&size=" + size
 }
 
 // android.net.Uri.encode(String), AOSP frameworks/base/core/java/android/net/Uri.java, with allow = null.
@@ -116,7 +119,11 @@ fun trim(order: List<Pair<String, Long>>, max: Long): List<String> {
 fun main() {
     val prefix = "https://m.example/rest/getCoverArt.view?u=admin&t=26719a1196d2a940705a59634eb18eab&s=c19b2d&f=json&v=1.16.1&c=nori"
     for (id in listOf("al-123", "a b/c?d&e=f", "!'()*~._-", "Ünïcödé", "日本語", "note 🎵 end", "", "%41", "+plus", "tab\there", "x\u007f\u0080")) {
-        for (size in listOf(320, 800, 0, -1)) row("cover_url", hx(prefix), hx(id), size, hx(coverUrl(prefix, id, size)))
+        for (size in listOf(320, 800, 0, -1)) row("cover_url", hx(prefix), hx(id), size, hx(coverUrl(mapOf(null to prefix), "\u001f", id, size)))
+    }
+    val second = "https://two.example/rest/getCoverArt.view?u=v&t=0cc175b9c0f1b6a831c399e269772661&s=a1b2c3&f=json&v=1.16.1&c=nori"
+    for (id in listOf("al-1", "al-1\u001facct2", "a b/c\u001facct2", "al-1\u001fgone", "\u001facct2", "日本\u001facct2")) {
+        row("cover_url_source", hx(prefix), hx("acct2"), hx(second), hx(id), 320, hx(coverUrl(mapOf(null to prefix, "acct2" to second), "\u001f", id, 320)))
     }
 
     for (q in listOf("", " ", "\t\n\r", "\u000b\u000c", "\u001c\u001d\u001e\u001f", "\u0085", " ", " ", " ", "​", "　", "﻿", "    ", "a", " a ", "日本")) {

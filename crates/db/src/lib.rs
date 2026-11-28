@@ -61,8 +61,56 @@ CREATE TABLE IF NOT EXISTS kept_songs(server TEXT NOT NULL, playlist TEXT NOT NU
 CREATE INDEX IF NOT EXISTS kept_songs_song ON kept_songs(server, song);
 CREATE TABLE IF NOT EXISTS kept_brought(server TEXT NOT NULL, song TEXT NOT NULL, PRIMARY KEY(server, song)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS local_files(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL, modified INTEGER NOT NULL, fingerprint INTEGER, added INTEGER NOT NULL, tags TEXT, UNIQUE(server, path));
+CREATE TABLE IF NOT EXISTS mixed_playlists(server TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, changed_ms INTEGER NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS mixed_playlist_songs(server TEXT NOT NULL, playlist TEXT NOT NULL, at INTEGER NOT NULL, song TEXT NOT NULL, PRIMARY KEY(server, playlist, at)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS scrobbles_waiting(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, account TEXT NOT NULL, artist TEXT NOT NULL, title TEXT NOT NULL, album TEXT NOT NULL, duration INTEGER NOT NULL, track INTEGER NOT NULL, at_ms INTEGER NOT NULL);
 ";
+
+/// The profile's other sources, whose rows it reads with its own ([`IN_PROFILE`]), and whether each
+/// takes part in its mixes; this connection's alone.
+const SOURCES: &str = "CREATE TEMP TABLE IF NOT EXISTS sources(server TEXT PRIMARY KEY, mixes INTEGER NOT NULL) WITHOUT ROWID;";
+
+/// [`IN_PROFILE`], for `concat!`.
+#[macro_export]
+macro_rules! in_profile {
+    () => {
+        "IN (SELECT sid() UNION ALL SELECT server FROM temp.sources)"
+    };
+}
+
+/// [`IN_MIXES`], for `concat!`.
+#[macro_export]
+macro_rules! in_mixes {
+    () => {
+        "IN (SELECT sid() UNION ALL SELECT server FROM temp.sources WHERE mixes)"
+    };
+}
+
+/// Where a `server` column is one of the profile's: its own rows (`sid()`) or one of its other sources'.
+pub const IN_PROFILE: &str = in_profile!();
+
+/// Where a row is item `?2` of source `?1` (NULL: the profile's own), as [`key_params`] gives them;
+/// for `concat!`.
+#[macro_export]
+macro_rules! of_key {
+    () => {
+        "server=coalesce(?1, sid()) AND id=?2"
+    };
+}
+
+/// [`of_key!`]'s parameters for `key`.
+pub fn key_params(key: &nori_model::ItemKey) -> (Option<&str>, &str) {
+    (key.source.as_deref(), &key.id)
+}
+
+/// The key of a row read as `nullif(server, sid()), id` from column `at`.
+pub fn key_of(r: &rusqlite::Row, at: usize) -> rusqlite::Result<nori_model::ItemKey> {
+    Ok(nori_model::ItemKey { source: r.get(at)?, id: r.get(at + 1)? })
+}
+
+/// Where a `server` column is one of the profile's whose songs its mixes draw from: its own, and the
+/// sources whose rules have mixes.
+pub const IN_MIXES: &str = in_mixes!();
 
 /// The app-wide tables.
 const APP_SCHEMA: &str = "
@@ -72,9 +120,9 @@ CREATE TABLE IF NOT EXISTS profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, o
 ";
 
 /// Per-server tables, cleared when a profile is removed.
-const SERVER_TABLES: [&str; 20] = [
+const SERVER_TABLES: [&str; 22] = [
     "items", "cache", "kv", "pending", "downloads", "searches", "plays", "song_stats", "server_plays", "mix_excluded", "autofill_picks", "smart_playlists", "track_analysis",
-    "vocal_curve", "favorites_here", "kept_playlists", "kept_songs", "kept_brought", "scrobbles_waiting", "local_files",
+    "vocal_curve", "favorites_here", "kept_playlists", "kept_songs", "kept_brought", "scrobbles_waiting", "local_files", "mixed_playlists", "mixed_playlist_songs",
 ];
 
 /// Opens the database for `server`'s rows (in memory for an empty `path`).
@@ -98,6 +146,7 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
 
     c.execute_batch(items::DOWNLOADS)?;
     c.execute_batch(SCHEMA)?;
+    c.execute_batch(SOURCES)?;
     c.execute_batch(favorites::TABLE)?;
     add_pending_tries(&c)?;
     update_analysis_columns(&c)?;
@@ -247,24 +296,54 @@ pub fn open_app(path: &str) -> rusqlite::Result<Connection> {
     Ok(c)
 }
 
-/// The profile's database in use, for the planner and the queue; replaced when another core opens.
-/// Weak: the core owns it.
+/// The profile's database in use, for the planner and the queue, and the connections of its other
+/// sources; replaced when another core opens. Weak: the cores own them.
 #[derive(Default)]
-pub struct Profile(Mutex<Weak<Mutex<Connection>>>);
+pub struct Profile {
+    own: Mutex<Weak<Mutex<Connection>>>,
+    /// By source id ([`Profile::source_opened`]).
+    sources: Mutex<std::collections::HashMap<String, Weak<Mutex<Connection>>>>,
+}
 
 impl Profile {
     pub fn set(&self, db: &Arc<Mutex<Connection>>) {
-        *self.0.lock() = Arc::downgrade(db);
+        *self.own.lock() = Arc::downgrade(db);
+        self.sources.lock().clear();
     }
 
     /// The database, if its core is alive.
     pub fn get(&self) -> Option<Arc<Mutex<Connection>>> {
-        self.0.lock().upgrade()
+        self.own.lock().upgrade()
     }
 
     pub fn weak(&self) -> Weak<Mutex<Connection>> {
-        self.0.lock().clone()
+        self.own.lock().clone()
     }
+
+    /// The profile's other source `id` keeps its rows through `db`, that source's own profile.
+    pub fn source_opened(&self, id: String, db: &Profile) {
+        self.sources.lock().insert(id, db.weak());
+    }
+
+    /// The connection whose rows are an item's of `source` (None: the profile's own); none for a
+    /// source the profile does not have.
+    pub fn rows_weak(&self, source: &Option<String>) -> Weak<Mutex<Connection>> {
+        match source {
+            None => self.weak(),
+            Some(id) => self.sources.lock().get(id).cloned().unwrap_or_default(),
+        }
+    }
+
+    /// [`Profile::rows_weak`], if its core is alive.
+    pub fn rows(&self, source: &Option<String>) -> Option<Arc<Mutex<Connection>>> {
+        self.rows_weak(source).upgrade()
+    }
+}
+
+/// The rows of the profile's other source `server` read with this connection's own ([`IN_PROFILE`]), and
+/// in its mixes where `mixes` ([`IN_MIXES`]).
+pub fn source_read(c: &Connection, server: &str, mixes: bool) -> rusqlite::Result<()> {
+    c.prepare_cached("INSERT OR REPLACE INTO temp.sources(server, mixes) VALUES(?1, ?2)")?.execute(params![server, mixes]).map(drop)
 }
 
 /// The database file name.
@@ -512,6 +591,51 @@ mod tests {
         assert_eq!(indexes, ["items_title_key"]);
     }
 
+    /// A profile reads its other sources' rows with its own once told of them, each row saying its source;
+    /// a profile of one source reads only its own.
+    #[test]
+    fn a_profile_reads_its_sources_rows_with_their_source() {
+        let dir = nori_testdir::TempDir::new("db-sources");
+        let path = dir.join("nori.db").display().to_string();
+        let (mut home, mut yt) = (open(&path, "home").unwrap(), open(&path, "yt").unwrap());
+        song(&mut home, "a", "Airbag");
+        song(&mut yt, "b", "Bones");
+        let read = |c: &Connection| -> Vec<(String, Option<String>)> {
+            let sql = format!("SELECT {} FROM items i WHERE i.server {IN_PROFILE} AND i.kind=2 ORDER BY i.id", items::SONG);
+            c.prepare(&sql).unwrap().query_map([], |r| items::song(r, 0)).unwrap().map(|s| s.map(|s| (s.id, s.source)).unwrap()).collect()
+        };
+        assert_eq!(read(&home), [("a".to_string(), None)]);
+        source_read(&home, "yt", false).unwrap();
+        assert_eq!(read(&home), [("a".to_string(), None), ("b".to_string(), Some("yt".to_string()))]);
+        assert_eq!(read(&yt), [("b".to_string(), None)], "the source's own connection reads its rows as its own");
+    }
+
+    /// A source's song read by the profile has a cover that names the source, the profile's own keeps
+    /// its cover's id, and a download of the source's song keeps the cover's own id in its row and
+    /// reads back as it was written.
+    #[test]
+    fn a_sources_cover_names_the_source_and_its_row_keeps_the_id() {
+        let dir = nori_testdir::TempDir::new("db-source-covers");
+        let path = dir.join("nori.db").display().to_string();
+        let (mut home, mut yt) = (open(&path, "home").unwrap(), open(&path, "yt").unwrap());
+        let covered = |id: &str| -> Song { serde_json::from_str(&format!(r#"{{"id":"{id}","title":"{id}","coverArt":"al-1"}}"#)).unwrap() };
+        index(&mut home, &[], &[], &[covered("a")]).unwrap();
+        index(&mut yt, &[], &[], &[covered("b")]).unwrap();
+        source_read(&home, "yt", false).unwrap();
+        let read = |sql: String| -> Vec<(String, Option<String>)> {
+            home.prepare(&sql).unwrap().query_map([], |r| items::song(r, 0)).unwrap().map(|s| s.map(|s| (s.id, s.cover_art)).unwrap()).collect()
+        };
+        let theirs = Some(format!("al-1{}yt", nori_model::ItemKey::SOURCE_MARK));
+        let indexed = read(format!("SELECT {} FROM items i WHERE i.server {IN_PROFILE} AND i.kind=2 ORDER BY i.id", items::SONG));
+        assert_eq!(indexed, [("a".to_string(), Some("al-1".to_string())), ("b".to_string(), theirs.clone())]);
+
+        let song = home.prepare(&format!("SELECT {} FROM items i WHERE i.id='b'", items::SONG)).unwrap().query_row([], |r| items::song(r, 0)).unwrap();
+        home.execute(&items::add_download_sql(), rusqlite::params_from_iter(items::download_params(&song, 1))).unwrap();
+        let kept: String = home.query_row("SELECT cover_art FROM downloads WHERE server='yt' AND id='b'", [], |r| r.get(0)).unwrap();
+        assert_eq!(kept, "al-1", "the row keeps the cover's own id");
+        assert_eq!(read(format!("SELECT {} FROM downloads i", items::SONG)), [("b".to_string(), theirs)]);
+    }
+
     #[test]
     fn servers_isolated_and_forgotten() {
         let dir = nori_testdir::TempDir::new("one-db");
@@ -595,7 +719,7 @@ mod tests {
     }
 
     fn full_artist() -> Artist {
-        Artist { id: "ar1".into(), name: "Massive Attack".into(), cover_art: Some("c".into()), artist_image_url: Some("u".into()), album_count: Some(5), starred: true, is_external: false }
+        Artist { id: "ar1".into(), name: "Massive Attack".into(), cover_art: Some("c".into()), artist_image_url: Some("u".into()), album_count: Some(5), starred: true, is_external: false, source: None, source_marked: false }
     }
 
     #[test]

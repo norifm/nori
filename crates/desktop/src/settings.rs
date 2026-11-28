@@ -604,10 +604,19 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             let sv = p.servers.get(index as usize)?;
             let active = sv.id == p.active_server_id;
             let words = crate::words::provider_of(kinds, &sv.kind);
-            let mut detail = if sv.user.is_empty() { words.no_user.to_string() } else { sv.user.clone() };
-            if !sv.alt_url.trim().is_empty() {
-                detail.push_str(" · second address");
+            let who = if sv.user.is_empty() { words.no_user.to_string() } else { sv.user.clone() };
+            let mut parts: Vec<String> = Vec::new();
+            if !who.is_empty() {
+                parts.push(who);
             }
+            let sources = nori_core::settings::profile_sources(p.servers.clone(), sv.clone());
+            if !sources.is_empty() {
+                parts.push(format!("+ {}", sources.iter().map(|s| words::profile_label(s, kinds)).collect::<Vec<_>>().join(", ")));
+            }
+            if !sv.alt_url.trim().is_empty() {
+                parts.push("second address".into());
+            }
+            let detail = parts.join(" · ");
             let title = crate::words::profile_label(sv, kinds);
             let mark = profile_mark(plugged, sv, &title);
             // A jam guest switches between the profiles; changing them is not its to do.
@@ -650,6 +659,17 @@ pub enum ProfilePart {
     Scrobbler(String),
     RemoveScrobbler(String),
     AddScrobbler,
+    /// Opens the dialog adding a source (saved profiles or signing in to a new one).
+    OpenAddSource,
+    /// A saved profile taken as one more source.
+    AddSource(String),
+    /// A source moved one place earlier or later.
+    SourceEarlier(String),
+    SourceLater(String),
+    /// A source given back its own profile.
+    RemoveSource(String),
+    /// A new source signed in to here: the first screen, its profile then this one's source.
+    NewSource,
 }
 
 impl ProfilePart {
@@ -660,10 +680,17 @@ impl ProfilePart {
         if let Some(id) = name.strip_prefix("scrobbler:") {
             return Some(ProfilePart::Scrobbler(id.to_string()));
         }
+        for (prefix, part) in [("source-add:", ProfilePart::AddSource as fn(String) -> ProfilePart), ("source-earlier:", ProfilePart::SourceEarlier), ("source-later:", ProfilePart::SourceLater), ("source-remove:", ProfilePart::RemoveSource)] {
+            if let Some(id) = name.strip_prefix(prefix) {
+                return Some(part(id.to_string()));
+            }
+        }
         match name {
             "profile-account" => Some(ProfilePart::Account),
             "scrobble-server" => Some(ProfilePart::ServerScrobbles),
             "scrobbler-add" => Some(ProfilePart::AddScrobbler),
+            "source-open" => Some(ProfilePart::OpenAddSource),
+            "source-new" => Some(ProfilePart::NewSource),
             _ => None,
         }
     }
@@ -675,14 +702,21 @@ impl ProfilePart {
             ProfilePart::Scrobbler(id) => format!("scrobbler:{id}"),
             ProfilePart::RemoveScrobbler(id) => format!("scrobbler-remove:{id}"),
             ProfilePart::AddScrobbler => "scrobbler-add".into(),
+            ProfilePart::OpenAddSource => "source-open".into(),
+            ProfilePart::AddSource(id) => format!("source-add:{id}"),
+            ProfilePart::SourceEarlier(id) => format!("source-earlier:{id}"),
+            ProfilePart::SourceLater(id) => format!("source-later:{id}"),
+            ProfilePart::RemoveSource(id) => format!("source-remove:{id}"),
+            ProfilePart::NewSource => "source-new".into(),
         }
     }
 }
 
 /// The rows of profile `sv`'s Edit page under its form, as Android's: its account where its provider signs
 /// in to one, then where its plays go: its own server first where it takes them (`itself`, the core's
-/// rules), each scrobbling account with its switch and a menu removing it, then adding one.
-pub fn profile_rows(kinds: &Kinds, sv: &SavedServer, itself: bool, p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+/// rules), each scrobbling account with its switch and a menu removing it, then adding one; then its
+/// other sources (unless it is itself a source of another profile).
+pub fn profile_rows(kinds: &Kinds, plugged: &Plugged, sv: &SavedServer, itself: bool, p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
     let mut groups = Vec::new();
     if kinds.providers().into_iter().any(|i| i.kind == sv.kind && !i.sign_in.is_empty()) {
         let signed = !sv.user.is_empty();
@@ -715,7 +749,53 @@ pub fn profile_rows(kinds: &Kinds, sv: &SavedServer, itself: bool, p: &StoredPre
     let hint = if sv.scrobblers.is_empty() && !itself { words::SCROBBLING_HINT } else { "" };
     rows.push(Row { kind: BUTTON, name: ProfilePart::AddScrobbler.name(), title: words::ADD_SCROBBLER.into(), detail: hint.into(), enabled: true, ..Default::default() });
     groups.push((words::SCROBBLING.to_string(), rows));
+    // A profile that is itself a source has no sources of its own (matching Android's SourcesPart).
+    if p.servers.is_empty() || nori_core::settings::servers_shown(p.servers.clone()).iter().any(|s| s.id == sv.id) {
+        groups.push((words::SOURCES.to_string(), source_rows(kinds, plugged, sv, p)));
+    }
     model(groups, p, f, today)
+}
+
+/// The Sources group of profile `sv`'s Edit page, matching Android's `SourcesPart`: each other source
+/// with its mark and menu moving or removing it, then a row opening the Add source dialog.
+fn source_rows(kinds: &Kinds, plugged: &Plugged, sv: &SavedServer, p: &StoredPrefs) -> Vec<Row> {
+    let sources = nori_core::settings::profile_sources(p.servers.clone(), sv.clone());
+    let last = sources.len().saturating_sub(1);
+    let mut rows: Vec<Row> = sources
+        .iter()
+        .enumerate()
+        .map(|(at, s)| {
+            let title = words::profile_label(s, kinds);
+            let words = words::provider_of(kinds, &s.kind);
+            let detail = if s.user.is_empty() { words.name } else { s.user.clone() };
+            let mark = profile_mark(plugged, s, &title);
+            let mut options = Vec::new();
+            if at > 0 {
+                options.push((words::MOVE_UP.to_string(), ProfilePart::SourceEarlier(s.id.clone()).name()));
+            }
+            if at < last {
+                options.push((words::MOVE_DOWN.to_string(), ProfilePart::SourceLater(s.id.clone()).name()));
+            }
+            options.push((words::REMOVE.to_string(), ProfilePart::RemoveSource(s.id.clone()).name()));
+            Row { kind: INFO, name: s.id.clone(), title, detail, enabled: true, options, icon: mark.icon, letter: mark.letter.into(), glyph: mark.glyph, picture: mark.picture, ..Default::default() }
+        })
+        .collect();
+    rows.push(Row { kind: BUTTON, name: ProfilePart::OpenAddSource.name(), title: words::ADD_SOURCE.into(), enabled: true, ..Default::default() });
+    rows
+}
+
+/// The saved profiles `sv` can take as one more source, for the Add source dialog.
+pub fn source_offered(p: &Plugged, prefs: &StoredPrefs, sv: &SavedServer, kinds: &Kinds) -> Vec<crate::ProfileItem> {
+    nori_core::providers::sources_offered(prefs.servers.clone(), sv.clone())
+        .iter()
+        .map(|s| {
+            let (who, where_) = words::profile_lines(s, kinds);
+            let title = words::profile_label(s, kinds);
+            let mark = profile_mark(p, s, &title);
+            let detail = if who == title { where_ } else { who };
+            crate::ProfileItem { name: s.id.as_str().into(), title: title.into(), detail: detail.into(), mark, on: false }
+        })
+        .collect()
 }
 
 /// The ask sheet's name for removing profile `id`, once confirmed.
@@ -1518,16 +1598,22 @@ pub fn profile_mark(p: &Plugged, sv: &SavedServer, label: &str) -> Mark {
     Mark { glyph, ..Default::default() }
 }
 
-/// The profiles menu's lines: every profile in its saved order, the one in use marked where it stands.
+/// The profiles menu's lines: every profile in its saved order (a source inside its profile), the one in
+/// use marked where it stands.
 pub fn profile_items(p: &Plugged, prefs: &StoredPrefs, kinds: &Kinds) -> Vec<crate::ProfileItem> {
-    prefs
-        .servers
+    nori_core::settings::servers_shown(prefs.servers.clone())
         .iter()
         .map(|sv| {
             let (who, where_) = words::profile_lines(sv, kinds);
             let title = words::profile_label(sv, kinds);
             let mark = profile_mark(p, sv, &title);
-            let detail = if who == title { where_ } else { who };
+            let base = if who == title { where_ } else { who };
+            let sources = nori_core::settings::profile_sources(prefs.servers.clone(), sv.clone());
+            let detail = match (base.is_empty(), sources.is_empty()) {
+                (_, true) => base,
+                (true, false) => format!("+ {}", sources.iter().map(|s| words::profile_label(s, kinds)).collect::<Vec<_>>().join(", ")),
+                (false, false) => format!("{base} · + {}", sources.iter().map(|s| words::profile_label(s, kinds)).collect::<Vec<_>>().join(", ")),
+            };
             crate::ProfileItem { name: sv.id.as_str().into(), title: title.into(), detail: detail.into(), mark, on: sv.id == prefs.active_server_id }
         })
         .collect()
@@ -2079,21 +2165,43 @@ mod tests {
         let account = SavedScrobbler { id: "a".into(), kind: ScrobblerKind::ListenBrainz, on: true, user: "me".into(), ..Default::default() };
         let sv = SavedServer { id: "p".into(), scrobblers: vec![account], scrobble_off: true, ..Default::default() };
         let shown = |sv: &SavedServer, itself: bool| -> Vec<(i32, String, bool, Vec<String>, String)> {
-            profile_rows(&kinds, sv, itself, &StoredPrefs::default(), &Facts::default(), OCTOBER)
+            profile_rows(&kinds, &Plugged::default(), sv, itself, &StoredPrefs::default(), &Facts::default(), OCTOBER)
                 .iter()
                 .map(|r| (r.kind, r.name.to_string(), r.on, r.values.iter().map(|v| v.to_string()).collect(), r.detail.to_string()))
                 .collect()
         };
         let rows = shown(&sv, true);
         let names: Vec<&str> = rows.iter().map(|r| r.1.as_str()).collect();
-        assert_eq!(names, ["", "scrobble-server", "scrobbler:a", "scrobbler-add"], "a server signs in with the form, so no account row");
+        assert_eq!(names, ["", "scrobble-server", "scrobbler:a", "scrobbler-add", "", "source-open"], "a server signs in with the form, so no account row; then Sources with Add source");
         assert!(!rows[1].2, "the server's switch is off where its plays are off");
         assert_eq!(rows[2].3, ["scrobbler-remove:a"]);
         assert_eq!(rows[3].4, "", "accounts take the plays");
         let alone = shown(&SavedServer { scrobblers: Vec::new(), ..sv }, false);
-        assert_eq!(alone.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), ["", "scrobbler-add"]);
+        assert_eq!(alone.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), ["", "scrobbler-add", "", "source-open"]);
         assert_eq!(alone[1].4, crate::words::SCROBBLING_HINT, "nothing takes the plays yet");
-        for part in [ProfilePart::Account, ProfilePart::ServerScrobbles, ProfilePart::Scrobbler("a".into()), ProfilePart::RemoveScrobbler("a".into()), ProfilePart::AddScrobbler] {
+        for part in [ProfilePart::Account, ProfilePart::ServerScrobbles, ProfilePart::Scrobbler("a".into()), ProfilePart::RemoveScrobbler("a".into()), ProfilePart::AddScrobbler, ProfilePart::OpenAddSource, ProfilePart::NewSource] {
+            assert_eq!(ProfilePart::of(&part.name()), Some(part.clone()));
+        }
+    }
+
+    /// A profile's Sources: each other source with its menu moving or removing it, then Add source;
+    /// offered saved profiles live in the Add source dialog, and a profile that is itself a source has none.
+    #[test]
+    fn a_profiles_edit_rows_list_its_sources() {
+        let kinds = Kinds::builtin();
+        let plugged = Plugged::default();
+        let saved = |id: &str, sources: &[&str]| SavedServer { id: id.into(), name: id.into(), sources: sources.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+        let home = saved("home", &["a", "b"]);
+        let a = saved("a", &[]);
+        let prefs = StoredPrefs { servers: vec![home.clone(), a.clone(), saved("b", &[]), saved("c", &[])], ..Default::default() };
+        let rows: Vec<(String, String, Vec<String>)> = source_rows(&kinds, &plugged, &home, &prefs).iter().map(|r| (r.name.clone(), r.title.clone(), r.options.iter().map(|o| o.1.clone()).collect())).collect();
+        let row = |name: &str, title: &str, options: &[&str]| (name.to_string(), title.to_string(), options.iter().map(|o| o.to_string()).collect::<Vec<_>>());
+        assert_eq!(rows, [row("a", "a", &["source-later:a", "source-remove:a"]), row("b", "b", &["source-earlier:b", "source-remove:b"]), row("source-open", words::ADD_SOURCE, &[])]);
+        let offered: Vec<String> = source_offered(&plugged, &prefs, &home, &kinds).into_iter().map(|o| o.name.to_string()).collect();
+        assert_eq!(offered, ["c"]);
+        let child_rows: Vec<String> = profile_rows(&kinds, &plugged, &a, true, &prefs, &Facts::default(), OCTOBER).iter().map(|r| r.name.to_string()).collect();
+        assert!(!child_rows.iter().any(|n| n == "source-open"), "a profile that is itself a source shows no Sources group: {child_rows:?}");
+        for part in [ProfilePart::OpenAddSource, ProfilePart::AddSource("c".into()), ProfilePart::SourceEarlier("b".into()), ProfilePart::SourceLater("a".into()), ProfilePart::RemoveSource("a".into())] {
             assert_eq!(ProfilePart::of(&part.name()), Some(part.clone()));
         }
     }

@@ -129,16 +129,16 @@ class Player {
   }
 
   /** An album, a playlist, or everything an artist has in the library. */
-  async playWhole(kind: Whole, id: string, shuffle: boolean) {
+  async playWhole(kind: Whole, id: string, shuffle: boolean, source?: string | null, mixed = false) {
     await this.soundCard();
-    if ((await ask<number>("play_whole", kind, id, shuffle)) === 0) ui.say(W.nothingToPlay);
+    if ((await ask<number>("play_whole", kind, id, shuffle, source ?? null, mixed)) === 0) ui.say(W.nothingToPlay);
     await this.refresh();
   }
 
   /** An album, a playlist, or everything an artist has, after the song playing (`next`) or at the end. */
-  async queueWhole(kind: Whole, id: string, next: boolean) {
+  async queueWhole(kind: Whole, id: string, next: boolean, source?: string | null, mixed = false) {
     await this.soundCard();
-    if ((await ask<number>("queue_whole", kind, id, next)) === 0) ui.say(W.nothingToPlay);
+    if ((await ask<number>("queue_whole", kind, id, next, source ?? null, mixed)) === 0) ui.say(W.nothingToPlay);
     await this.refresh();
   }
 
@@ -159,11 +159,11 @@ class Player {
   }
 
   /** Takes song `q` out of the queue and offers its undo for as long as the core keeps it. */
-  async remove(q: { index: number; id?: string; title?: string }) {
+  async remove(q: { index: number; id?: string; key?: string; title?: string }) {
     if (!rpc.player) return;
     const ms = await ask<number>("remove", q.index);
     await this.refresh();
-    if (q.id) ui.offerUndo(W.removed(q.title ?? q.id), q.id, ms);
+    if (q.key) ui.offerUndo(W.removed(q.title ?? q.id ?? ""), q.key, ms);
   }
 
   /** Takes the `count` songs after the one heard out of the queue and offers their undo. */
@@ -229,7 +229,7 @@ class Player {
 
   /** Tells the session the song heard, while a lyrics view is in sight. */
   lyricsHeard() {
-    if (this.lyricsViews > 0 && rpc.player) void ask("lyrics_heard", this.song?.id ?? null).catch(unlessElsewhere);
+    if (this.lyricsViews > 0 && rpc.player) void ask("lyrics_heard", this.song?.key ?? null).catch(unlessElsewhere);
   }
 
   /** Tells the session the song heard and whether a lyrics view is in sight. */

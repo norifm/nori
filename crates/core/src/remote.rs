@@ -517,8 +517,8 @@ pub struct Lead {
     pub playing: bool,
     pub speed: f32,
     pub pitch: f32,
-    /// (outgoing song id, its plan).
-    pub mix: Option<(String, Plan)>,
+    /// (outgoing song, its plan).
+    pub mix: Option<(crate::ItemKey, Plan)>,
     pub mix_place: Option<(usize, f64, f64)>,
 }
 
@@ -1790,9 +1790,9 @@ impl Remote {
         Remote::with_tasks(client, me, player, shown, discovery, tasks)
     }
 
-    /// Current library favorites, including changes received from nearby devices.
+    /// The profile's marks ([`Core::star_marks`]), with changes received from nearby devices.
     pub fn star_marks(&self) -> crate::stars::StarMarks {
-        self.client.core.stars.lock().clone()
+        self.client.core.star_marks()
     }
 
     /// Whether the server relays remote control and jams; the screens offer jams and far devices only then.
@@ -2028,10 +2028,12 @@ impl Remote {
         true
     }
 
-    /// A heart pressed for song `id` while another device plays: sent there when its queue has the song
+    /// A heart pressed for song `key` while another device plays: sent there when its queue has the song
     /// (that device stars it on the server and shows it), so the server hears it once. False when this
-    /// device stars it itself: nothing is mirrored, or the song is not in that queue.
-    pub fn star_where_playing(self: Arc<Self>, id: String, on: bool) -> bool {
+    /// device stars it itself: nothing is mirrored, the song is not in that queue, or it is another
+    /// source's, which that queue never holds.
+    pub fn star_where_playing(self: Arc<Self>, key: crate::ItemKey, on: bool) -> bool {
+        let Some(id) = key.own_id().map(String::from) else { return false };
         let device = self.inner.lock().active.mirror().filter(|m| m.rows().iter().any(|e| e.id == id)).map(|m| m.id.clone());
         let Some(device) = device else { return false };
         self.clone().send(device, Op::Star { id: id.clone(), on });
@@ -2101,7 +2103,7 @@ impl Remote {
             invite: String,
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if self.client.core.serverless() { return self.open_lan_jam(); }
+        if self.client.core.lan_only() { return self.open_lan_jam(); }
         if self.relay() == RelaySupport::Unsupported {
             return Err(NetError::Http { status: 404 });
         }
@@ -2291,7 +2293,7 @@ impl Remote {
         }
         if !on || self.me.kind == DeviceKind::Guest {
             JamStart::Unavailable
-        } else if i.relay == RelaySupport::Unsupported && !self.client.core.serverless() {
+        } else if i.relay == RelaySupport::Unsupported && !self.client.core.lan_only() {
             JamStart::Unsupported
         } else {
             JamStart::Offered
@@ -2738,7 +2740,7 @@ async fn deliver(client: &Client, who: &[(String, String)], o: Out) {
                     let url = format!("{base}{}", lan::signed(&secret, "POST", &format!("/rest/noriRemote.send?dev={dev}"), json.as_bytes(), db::now_ms()));
                     // A time exchange measures the door itself; anything else may go by the relay.
                     let timing = matches!(&outgoing.body, Some(Body::Command { op, .. }) if matches!(**op, Op::Clock { .. })) || matches!(outgoing.body, Some(Body::Clock { .. }));
-                    let relayed = (!timing && !client.core.serverless()).then(|| relay(&json));
+                    let relayed = (!timing && !client.core.lan_only()).then(|| relay(&json));
                     (url, Some(json), DOOR_TIMEOUT_MS, relayed)
                 }
             }
@@ -2791,7 +2793,7 @@ impl Remote {
         let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), #[cfg(not(target_arch = "wasm32"))] sends: sends.clone(), running: Arc::default(), follower: Mutex::default() });
         remote.tasks.spawn(Box::pin(send_all(sends, remote.client.clone(), remote.who())));
         *remote.client.core.remote.lock() = Arc::downgrade(&remote);
-        if remote.client.core.serverless() && remote.client.core.lan_jam.read().is_none() {
+        if remote.client.core.lan_only() && remote.client.core.lan_jam.read().is_none() {
             remote.inner.lock().relay = RelaySupport::Unsupported;
         } else { remote.probe(); }
         remote
@@ -2888,7 +2890,7 @@ impl Remote {
         let session = &self.client.core.session;
         let id = session.playlist(|p| p.ids().get(index? as usize).cloned())?;
         let service = nori_lyrics::race::chosen_service(&*self.client.core, &session.song(&id)?)?;
-        Some(JamLyrics { song: id, service })
+        Some(JamLyrics { song: id.id, service })
     }
 
     /// The lyrics shown here changed: the state says them.
@@ -2927,7 +2929,7 @@ impl Remote {
         let core = &self.client.core;
         let song = core.session.playlist(|p| p.ids().get(index as usize).cloned())?;
         let pick = core.lyrics_here(&song)?;
-        Some(SongLyrics { song, origin: pick.origin.name(), timing: pick.lyrics.timing, lyrics: pick.lyrics })
+        Some(SongLyrics { song: song.id, origin: pick.origin.name(), timing: pick.lyrics.timing, lyrics: pick.lyrics })
     }
 
     /// The lyrics service the host of the jam joined chose for song `id`.
@@ -3080,16 +3082,7 @@ impl Remote {
         if !self.client.core.session.settings.with_effective(|p| p.remote_control).unwrap_or(false) {
             return;
         }
-        let on = {
-            let marks = self.client.core.stars.lock();
-            let map = match kind {
-                crate::client::Starrable::Song => &marks.songs,
-                crate::client::Starrable::Album => &marks.albums,
-                crate::client::Starrable::Artist => &marks.artists,
-            };
-            map.get(&id).copied()
-        };
-        let Some(on) = on else { return };
+        let Some(on) = self.client.core.stars.lock().get(kind, &id) else { return };
         let (command, peers) = {
             let mut i = self.inner.lock();
             if i.stopped { return }
@@ -3185,7 +3178,7 @@ impl Remote {
                 page.ok_or(lan::Unanswered::Failed)?.map(|p| lan::Told::Page(Box::new(p))).map_err(failed)
             }
             lan::Ask::Source { id, kbps, anew } => {
-                let plays = self.inner.lock().hosts_along() && self.client.core.session.playlist(|p| p.ids().contains(&id));
+                let plays = self.inner.lock().hosts_along() && self.client.core.session.playlist(|p| p.ids().iter().any(|k| k.own_id() == Some(id.as_str())));
                 if !plays {
                     return Err(lan::Unanswered::NotAllowed);
                 }
@@ -3221,7 +3214,7 @@ impl Remote {
     /// Asks whether the server relays: the relay poller's first poll, which is not held. Polls side by
     /// side could reach the relay out of order, a late one saying this device does not serve.
     fn probe(self: &Arc<Self>) {
-        if self.client.core.serverless() && self.client.core.lan_jam.read().is_none() { return; }
+        if self.client.core.lan_only() && self.client.core.lan_jam.read().is_none() { return; }
         let poller = {
             let mut i = self.inner.lock();
             i.probes_asked += 1;
@@ -3946,14 +3939,14 @@ impl Remote {
                 let transfer = (to == from).then_some(id);
                 self.transfer(via, from, to, transfer, listen_handoff);
             }
-            Op::LyricsTiming { song, dir } => self.client.core.lyrics_retime(song, dir),
+            Op::LyricsTiming { song, dir } => self.client.core.lyrics_retime(crate::ItemKey::own(song), dir),
             op => {
                 // A queue sent here plays here: this is the active device.
                 if let Op::Replace { listen, songs, mix, .. } = &op {
                     // Before the song starts: its ending mixes by the plan it came with.
                     if let Some(m) = mix {
                         if let (Some(from), Ok(plan)) = (songs.get(m.from as usize), serde_json::from_str::<TransitionPlan>(&m.plan)) {
-                            self.client.core.session.planner.handed(&from.id, &m.into, &plan);
+                            self.client.core.session.planner.handed(&crate::Keyed::key(from), &crate::ItemKey::own(&m.into), &plan);
                         }
                     }
                     self.client.core.session.receive_listen(listen.clone());
@@ -3971,8 +3964,10 @@ impl Remote {
 
     /// Sends `op` to device `device` as command `id`.
     fn command(self: Arc<Self>, id: u64, device: String, op: Op) {
-        if matches!(op, Op::Add { .. } | Op::Replace { .. }) && self.refuse_other_source(&device) {
-            return;
+        if let Op::Add { songs, .. } | Op::Replace { songs, .. } = &op {
+            if self.refuse_other_source(&device) || self.refuse_sources_songs(&device, songs) {
+                return;
+            }
         }
         let mut foreseen = false;
         let link = {
@@ -4037,6 +4032,17 @@ impl Remote {
         refused.is_some()
     }
 
+    /// Whether `songs` hold a song of one of the profile's other sources, which device `id` does not
+    /// have: refused here, as songs of another source are.
+    fn refuse_sources_songs(&self, id: &str, songs: &[Song]) -> bool {
+        let other = songs.iter().any(|s| s.source.is_some());
+        if other {
+            self.inner.lock().refused.insert(id.to_string(), Refusal::OtherSource);
+            self.shown.changed();
+        }
+        other
+    }
+
     fn pull(self: &Arc<Self>, from: String) {
         if self.refuse_other_source(&from) {
             return;
@@ -4085,6 +4091,10 @@ impl Remote {
         // A weighted shuffle's list is already in play order: shown shuffled, it goes as that order.
         let (ids, index, order, shuffle, repeat) = session.playlist(|p| (p.ids().to_vec(), p.current(), p.lit().then(|| p.play_order().map(|i| i as u32).collect()), p.lit(), p.repeat()));
         let Some(current) = index else { return };
+        let songs: Vec<Song> = ids.iter().map(|id| session.song(id).unwrap_or_else(|| Song::only_key(id.clone()))).collect();
+        if to != from && self.refuse_sources_songs(&to, &songs) {
+            return;
+        }
         let (playing, index, position_ms, mix, handed) = {
             let mut i = self.inner.lock();
             i.handed_to = Some(to.clone());
@@ -4100,7 +4110,6 @@ impl Remote {
             };
             (i.playing.playing, index, position_ms, mix, shown)
         };
-        let songs = ids.into_iter().map(|id| session.song(&id).unwrap_or_else(|| Song::only_id(id))).collect();
         let accepts_listen = (to == from && listen_handoff) || {
             let i = self.inner.lock();
             i.peers.iter().map(|p| &p.member).chain(i.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members))
@@ -4144,10 +4153,10 @@ impl Remote {
                     .zip(r.start..)
                     .map(|(i, turn)| {
                         let id = &p.ids()[i];
-                        let by = jam.and_then(|j| j.added_by(id));
+                        let by = jam.and_then(|j| j.added_by(&id.id));
                         match s.songs.get(id) {
                             Some((song, _)) => Entry::of(i as u32, turn as u32, song, by),
-                            None => Entry::of(i as u32, turn as u32, &Song::only_id(id.clone()), by),
+                            None => Entry::of(i as u32, turn as u32, &Song::only_key(id.clone()), by),
                         }
                     })
                     .collect()
@@ -4262,16 +4271,16 @@ fn lyrics_pick(l: &SongLyrics) -> Option<LyricsPick> {
 
 /// The transition planned out of list index `from`, as a jam's guests get it.
 fn mix_of(from: u32, plan: &Plan) -> Option<Mix> {
-    Some(Mix { from, into: plan.incoming_id.clone(), plan: serde_json::to_string(&plan.mixer).ok()? ,
+    Some(Mix { from, into: plan.incoming_id.id.clone(), plan: serde_json::to_string(&plan.mixer).ok()? ,
         position_ms: None,
         rate: None})
 }
 
 /// A guest's transition out of the song `mix` names in the host's `entries`: (its id, the plan).
-fn plan_of(mix: &Mix, entries: &[Entry]) -> Option<(String, Plan)> {
+fn plan_of(mix: &Mix, entries: &[Entry]) -> Option<(crate::ItemKey, Plan)> {
     let from = entries.iter().find(|e| e.index == mix.from)?;
     let plan: TransitionPlan = serde_json::from_str(&mix.plan).ok()?;
-    Some((from.id.clone(), engine_plan(&plan, &mix.into)?))
+    Some((crate::ItemKey::own(&from.id), engine_plan(&plan, &crate::ItemKey::own(&mix.into))?))
 }
 
 /// Event `body` from device `from` arrived at `received` (this device's clock): an answer, a page or a
@@ -4420,6 +4429,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::ItemKey;
 
     struct Quiet;
     impl RemotePlayer for Quiet { fn apply(&self, _: Op) {} }
@@ -4643,6 +4653,9 @@ mod tests {
         }
         remote.pull("youtube".into());
         assert_eq!(remote.inner.lock().refused.get("youtube").copied(), Some(Refusal::OtherSource), "nor are its songs taken here");
+        let theirs = Op::Add { songs: vec![Song { id: "s".into(), ..Default::default() }, Song { id: "y".into(), source: Some("yt".into()), ..Default::default() }], next: false };
+        remote.clone().command(1, "same".into(), theirs);
+        assert_eq!(remote.inner.lock().refused.get("same").copied(), Some(Refusal::OtherSource), "a song of the profile's other source");
     }
 
     #[test]
@@ -4768,7 +4781,7 @@ mod tests {
     #[test]
     fn published_state_uses_one_player_report() {
         let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
-        client.core.session.set(vec!["a".into(), "b".into()], Some(0), false, None);
+        client.core.session.set(vec![ItemKey::own("a"), ItemKey::own("b")], Some(0), false, None);
         let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
         remote.inner.lock().playing = Playing { index: Some(0), volume: Some(0), ..Default::default() };
         let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -4989,7 +5002,7 @@ mod tests {
         prefs.crossfade_sec = 4;
         session.settings.put(prefs);
         session.set(
-            vec!["a".into(), "b".into(), "c".into()],
+            vec![ItemKey::own("a"), ItemKey::own("b"), ItemKey::own("c")],
             Some(0),
             false,
             None,
@@ -4998,15 +5011,15 @@ mod tests {
             ["a", "b", "c"]
                 .into_iter()
                 .map(|id| nori_player::transitions::WindowSong {
-                    id: id.into(),
+                    id: ItemKey::own(id),
                     duration_ms: 30_000,
                     ..Default::default()
                 })
                 .collect(),
             false,
         );
-        let a = session.planner.plan_for("a").unwrap();
-        session.planner.plan_for("b").unwrap();
+        let a = session.planner.plan_for(&ItemKey::own("a")).unwrap();
+        session.planner.plan_for(&ItemKey::own("b")).unwrap();
         let remote = Remote::new(
             client,
             RemoteMe {
@@ -5044,7 +5057,7 @@ mod tests {
     fn a_mirrored_mix_runs_on_without_extra_publications() {
         let plan = engine_plan(
             &nori_player::automix::plan::plan(None, None, 30_000, 30_000, &Default::default()),
-            "b",
+            &ItemKey::own("b"),
         )
         .unwrap();
         let mut mix = mix_of(0, &plan).unwrap();
@@ -5133,11 +5146,11 @@ mod tests {
         let mut t = nori_player::automix::plan::plan(None, None, 200_000, 180_000, &settings);
         t.tempo_ratio = 1.03;
         t.tempo_ramp_ms = 2_500;
-        let plan = engine_plan(&t, "s2").expect("a mix");
+        let plan = engine_plan(&t, &ItemKey::own("s2")).expect("a mix");
         let entries = [Entry { index: 4, id: "s1".into(), ..Default::default() }, Entry { index: 5, id: "s2".into(), ..Default::default() }];
         let mix = mix_of(4, &plan).unwrap();
         let wire: Mix = serde_json::from_str(&serde_json::to_string(&mix).unwrap()).unwrap();
-        assert_eq!(plan_of(&wire, &entries), Some(("s1".to_string(), plan)));
+        assert_eq!(plan_of(&wire, &entries), Some((ItemKey::own("s1"), plan)));
         assert_eq!(plan_of(&Mix { from: 9, ..wire }, &entries), None, "not in the queue window");
     }
 

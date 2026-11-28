@@ -4,6 +4,7 @@
 
 mod common;
 
+use nori_core::ItemKey;
 use nori_engine::core::{Analyses, CoreLibrary, Downloader, Measurer, Shelf, Whole};
 use nori_engine::{Body, ByteSource, Library, Source, Store};
 use nori_core::client::{Client, NetProfile};
@@ -64,7 +65,8 @@ struct Disk {
 struct OnDisk(Arc<Disk>);
 
 impl Shelf for OnDisk {
-    fn whole(&self, id: &str) -> Option<Whole> {
+    fn whole(&self, id_key: &ItemKey) -> Option<Whole> {
+        let id = id_key.id.as_str();
         self.0.asked.lock().push(id.to_string());
         let files = self.0.whole.lock().get(id).cloned()?;
         Some(Whole { files, hint: Some("wav".into()) })
@@ -81,7 +83,7 @@ fn webm_arrivals_keep_analysis_and_voice() {
     let (core, client) = common::own_core(&dir, |p| p.auto_mix = nori_core::settings::AutoMixMode::Smooth);
     let songs: Vec<Song> = ["yt-a", "yt-b"].map(|id| Song { id: id.into(), duration: 40, ..Default::default() }).into();
     core.session.register(songs.clone());
-    core.session.set(songs.iter().map(|s| s.id.clone()).collect(), Some(0), false, None);
+    core.session.set(songs.iter().map(nori_core::Keyed::key).collect(), Some(0), false, None);
     let input = dir.join("beat.wav");
     let output = dir.join("beat.webm");
     std::fs::write(&input, beat_wav()).unwrap();
@@ -91,17 +93,17 @@ fn webm_arrivals_keep_analysis_and_voice() {
     let bytes = std::fs::read(output).unwrap();
     let analyses = Analyses::new(move || Some(client.clone()));
     for song in &songs {
-        let mut listening = analyses.measure_as_it_comes(&song.id, None, true).expect("measuring the playback bytes");
+        let mut listening = analyses.measure_as_it_comes(&nori_core::Keyed::key(song), None, true).expect("measuring the playback bytes");
         for piece in bytes.chunks(256 << 10) { listening.take(piece); }
         listening.end(true);
         analyses.wait_arrivals();
-        let found = core.analysis_get(song.id.clone()).unwrap().expect("a whole WebM song is analyzed");
+        let found = core.analysis_get(ItemKey::own(song.id.clone())).unwrap().expect("a whole WebM song is analyzed");
         assert!((found.duration_ms - 40_000).abs() < 100, "{} ms", found.duration_ms);
         assert!(nori_core::race::LyricsCache::voice(&*core, song).is_some(), "the same pass keeps the vocal curve for lyrics sync");
     }
     core.session.window();
-    let plan = core.session.planner.plan_for("yt-a").expect("a transition from the two analyses");
-    assert_eq!(plan.incoming_id, "yt-b");
+    let plan = core.session.planner.plan_for(&ItemKey::own("yt-a")).expect("a transition from the two analyses");
+    assert_eq!(plan.incoming_id, ItemKey::own("yt-b"));
     assert!(plan.mixer.duration_ms > 0);
 }
 
@@ -114,16 +116,16 @@ fn a_song_measured_as_it_arrives_is_not_measured_again_as_it_plays() {
     let (core, client) = common::own_core(&dir, |p| p.auto_mix = nori_core::settings::AutoMixMode::Smooth);
     let song = Song { id: "a".into(), duration: 5, ..Default::default() };
     core.session.register(vec![song.clone()]);
-    core.session.set(vec![song.id.clone()], Some(0), false, None);
+    core.session.set(vec![ItemKey::own(song.id.clone())], Some(0), false, None);
     let analyses = Analyses::new(move || Some(client.clone()));
     let mut app = nori_engine::core::CoreApp::new(core.session.clone(), analyses.clone());
-    assert!(app.wants_analysis("a").is_some(), "unmeasured, it is measured as it plays");
-    let mut listening = analyses.measure_as_it_comes("a", Some("wav"), true).expect("measured as it arrives");
-    assert_eq!(app.wants_analysis("a"), None, "not while it is measured as it arrives");
+    assert!(app.wants_analysis(&ItemKey::own("a")).is_some(), "unmeasured, it is measured as it plays");
+    let mut listening = analyses.measure_as_it_comes(&ItemKey::own("a"), Some("wav"), true).expect("measured as it arrives");
+    assert_eq!(app.wants_analysis(&ItemKey::own("a")), None, "not while it is measured as it arrives");
     listening.take(&beat_wav()[..1000]);
     listening.end(false);
     analyses.wait_arrivals();
-    assert!(app.wants_analysis("a").is_some(), "its bytes not all come, it is measured as it plays");
+    assert!(app.wants_analysis(&ItemKey::own("a")).is_some(), "its bytes not all come, it is measured as it plays");
 }
 
 #[test]
@@ -151,21 +153,21 @@ fn downloads_and_measuring_over_core() {
     d.start(2);
     d.wait();
 
-    let path = store.downloaded("dl-1").expect("downloaded");
-    let url = client.resolve("dl-1".into(), true, false).url;
+    let path = store.downloaded(&ItemKey::own("dl-1")).expect("downloaded");
+    let url = client.resolve(ItemKey::own("dl-1"), true, false).unwrap().url;
     assert_eq!(std::fs::read(&path).unwrap(), bytes_of(&url), "the whole song, byte for byte");
     let asked: Vec<u64> = audio.requests.lock().iter().map(|r| r.1).collect();
     assert_eq!(asked, [0, LEN as u64 / 2], "taken up where the connection broke");
-    assert_eq!(core.transfers().held().state("dl-1"), nori_core::transfers::HeldState::Done, "the core has it as finished");
-    assert_eq!(core.transfers().with(|t| t.phase("dl-1")), Some(nori_core::DownloadPhase::Done));
+    assert_eq!(core.transfers().held().state(&ItemKey::own("dl-1")), nori_core::transfers::HeldState::Done, "the core has it as finished");
+    assert_eq!(core.transfers().with(|t| t.phase(&ItemKey::own("dl-1"))), Some(nori_core::DownloadPhase::Done));
 
     core.session.register(vec![song]);
     let mut library = CoreLibrary { client: client.clone(), bytes: audio.clone(), store: Some(store.clone()), analyses: analyses.clone() };
-    match library.locate("dl-1").unwrap().source {
+    match library.locate(&ItemKey::own("dl-1")).unwrap().source {
         Source::File(p) => assert_eq!(p, [path], "the download, not the network"),
         _ => panic!("a downloaded song is read from the disk"),
     }
-    match library.locate("other").unwrap().source {
+    match library.locate(&ItemKey::own("other")).unwrap().source {
         Source::Cached { key, .. } => assert_eq!(key, "other:0", "streamed, and kept in the cache"),
         _ => panic!("a song that is not downloaded streams"),
     }
@@ -180,27 +182,27 @@ fn downloads_and_measuring_over_core() {
     let on_disk = Song { id: "m-1".into(), title: "Beat".into(), duration: 40, suffix: "wav".into(), ..Default::default() };
     let elsewhere = Song { id: "m-2".into(), title: "Not here".into(), duration: 40, suffix: "wav".into(), ..Default::default() };
     core.download_queue(vec![on_disk.clone()]).unwrap();
-    core.download_settle(vec!["m-1".into()], vec![true]).unwrap();
-    std::fs::write(store.download_path("m-1"), beat_wav()).unwrap();
+    core.download_settle(vec![ItemKey::own("m-1")], vec![true]).unwrap();
+    std::fs::write(store.download_path(&ItemKey::own("m-1")), beat_wav()).unwrap();
     core.session.register(vec![on_disk, elsewhere]);
-    core.session.set(vec!["m-1".into(), "m-2".into(), "ext-3".into()], Some(0), false, None);
+    core.session.set(vec![ItemKey::own("m-1"), ItemKey::own("m-2"), ItemKey::own("ext-3")], Some(0), false, None);
     let ahead = core.session.measure();
-    assert!(ahead.contains(&"ext-3".to_string()), "a provider's song is measured once on the disk: {ahead:?}");
+    assert!(ahead.contains(&ItemKey::own("ext-3")), "a provider's song is measured once on the disk: {ahead:?}");
     let measurer = Measurer::new(analyses.clone(), store.clone());
     measurer.update(ahead, std::thread::current());
     measurer.wait();
-    let a = core.analysis_get("m-1".into()).unwrap().expect("m-1 was measured");
+    let a = core.analysis_get(ItemKey::own("m-1")).unwrap().expect("m-1 was measured");
     assert!((a.bpm - 120.0).abs() < 2.0 || (a.bpm - 60.0).abs() < 1.0 || (a.bpm - 240.0).abs() < 4.0, "the beat heard: {}", a.bpm);
-    assert!(core.analysis_get("m-2".into()).unwrap().is_none(), "not on the disk: left for later");
+    assert!(core.analysis_get(ItemKey::own("m-2")).unwrap().is_none(), "not on the disk: left for later");
     assert!(audio.requests.lock().iter().all(|(u, _)| !u.contains("m-2") && !u.contains("ext-3")), "and never fetched for it");
     // Fetched by the player: measured once whole.
-    let key = client.resolve("m-2".into(), false, client.metered()).key;
+    let key = client.resolve(ItemKey::own("m-2"), false, client.metered()).unwrap().key;
     let beat = beat_wav();
     let mut w = store.writer(&key).unwrap();
     assert!(w.write(0, &beat));
     assert!(w.finish(beat.len() as u64));
     measurer.wait();
-    assert!(core.analysis_get("m-2".into()).unwrap().is_some(), "m-2 was measured once it was whole in the cache");
+    assert!(core.analysis_get(ItemKey::own("m-2")).unwrap().is_some(), "m-2 was measured once it was whole in the cache");
     drop(measurer);
 
     // From a client's disk in pieces: decoded once when whole; a failure is not retried per look.
@@ -219,7 +221,7 @@ fn downloads_and_measuring_over_core() {
     disk.whole.lock().insert("m-5".into(), broken);
     let songs: Vec<Song> = ["m-3", "m-4", "m-5"].iter().map(|id| Song { id: id.to_string(), title: id.to_string(), duration: 40, suffix: "wav".into(), ..Default::default() }).collect();
     core.session.register(songs);
-    core.session.set(vec!["m-3".into(), "m-4".into(), "m-5".into()], Some(0), false, None);
+    core.session.set(vec![ItemKey::own("m-3"), ItemKey::own("m-4"), ItemKey::own("m-5")], Some(0), false, None);
     let told = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let heard = told.clone();
     let measurer = Measurer::on_shelf(analyses.clone(), Box::new(OnDisk(disk.clone())), Some(Box::new(move || {
@@ -228,8 +230,8 @@ fn downloads_and_measuring_over_core() {
     let settle = |m: &Measurer| m.wait();
     measurer.ask(core.session.measure());
     settle(&measurer);
-    assert!(core.analysis_get("m-3".into()).unwrap().is_some(), "a song whole in two pieces is measured");
-    assert!(core.analysis_get("m-4".into()).unwrap().is_none(), "one still coming is not");
+    assert!(core.analysis_get(ItemKey::own("m-3")).unwrap().is_some(), "a song whole in two pieces is measured");
+    assert!(core.analysis_get(ItemKey::own("m-4")).unwrap().is_none(), "one still coming is not");
     assert_eq!(measurer.decoded(), 2, "m-3, and m-5 which could not be");
     let looked = disk.asked.lock().len();
     // Repeated asks with nothing changed run nothing.
@@ -246,7 +248,7 @@ fn downloads_and_measuring_over_core() {
     disk.whole.lock().insert("m-4".into(), vec![put("m-4.0", &beat)]);
     measurer.arrived();
     settle(&measurer);
-    assert!(core.analysis_get("m-4".into()).unwrap().is_some(), "measured as soon as it is whole");
+    assert!(core.analysis_get(ItemKey::own("m-4")).unwrap().is_some(), "measured as soon as it is whole");
     assert_eq!(measurer.decoded(), 3, "once");
     assert_eq!(told.load(std::sync::atomic::Ordering::Relaxed), 2, "told of each song stored, to plan again");
     measurer.ask(Vec::new());
@@ -331,11 +333,11 @@ fn download_quality(core: &Core, bit_rate: i32, format: &str) {
 /// often it breaks, and a song being fetched stays "downloading" when the queue is started again.
 fn downloads_take_up_rightly(core: &Arc<Core>, client: &Arc<Client>, store: &Arc<Store>, analyses: &Arc<Analyses>) {
     use nori_core::DownloadPhase;
-    let download_phase = |id: String| core.transfers().with(|t| t.phase(&id));
+    let download_phase = |id: String| core.transfers().with(|t| t.phase(&ItemKey::own(id)));
     let net = Arc::new(Flaky::default());
     let d = Downloader::new(client.clone(), net.clone(), store.clone(), analyses.clone());
     let queue = |id: &str| core.download_queue(vec![Song { id: id.into(), title: id.into(), duration: 3, suffix: "mp3".into(), ..Default::default() }]).unwrap();
-    let url = |id: &str| client.resolve(id.into(), true, false).url;
+    let url = |id: &str| client.resolve(ItemKey::own(id), true, false).unwrap().url;
 
     // Half of it at 320 kbps MP3, then the network gone.
     download_quality(core, 320, "mp3");
@@ -351,7 +353,7 @@ fn downloads_take_up_rightly(core: &Arc<Core>, client: &Arc<Client>, store: &Arc
     d.start(1);
     d.wait();
     assert_eq!(*net.requests.lock(), [(opus.clone(), 0)], "another quality starts over");
-    assert!(std::fs::read(store.downloaded("q-1").expect("downloaded")).unwrap() == bytes_of(&opus), "one encoding, whole");
+    assert!(std::fs::read(store.downloaded(&ItemKey::own("q-1")).expect("downloaded")).unwrap() == bytes_of(&opus), "one encoding, whole");
 
     // Breaking every fifth of the song, and brought whole.
     queue("r-1");
@@ -361,7 +363,7 @@ fn downloads_take_up_rightly(core: &Arc<Core>, client: &Arc<Client>, store: &Arc
     d.wait();
     let asked: Vec<u64> = net.requests.lock().iter().map(|r| r.1).collect();
     assert_eq!(asked, [0, fifth, 2 * fifth, 3 * fifth, 4 * fifth], "taken up where each break left it");
-    assert!(std::fs::read(store.downloaded("r-1").expect("downloaded")).unwrap() == bytes_of(&url("r-1")));
+    assert!(std::fs::read(store.downloaded(&ItemKey::own("r-1")).expect("downloaded")).unwrap() == bytes_of(&url("r-1")));
     // Started again while fetching.
     queue("b-1");
     net.answer(&[]);
@@ -400,38 +402,38 @@ fn downloads_take_up_rightly(core: &Arc<Core>, client: &Arc<Client>, store: &Arc
 /// a provider's song's too; the analysis offer's yes does the same for existing ones (`db`: the core's file).
 fn downloads_read_back(core: &Arc<Core>, db: &std::path::Path, net: &NoApi, store: &Arc<Store>, analyses: &Arc<Analyses>) {
     use nori_core::transfers::COMPLETED;
-    let download_phase = |id: String| core.transfers().with(|t| t.phase(&id));
+    let download_phase = |id: String| core.transfers().with(|t| t.phase(&ItemKey::own(id)));
     assert!(!core.session.settings.prefs(|p| p.auto_mix.on()), "AutoMix is off");
     let ids = ["rb-1", "ext-rb-2"];
     let songs: Vec<Song> = ids.iter().map(|id| Song { id: id.to_string(), title: id.to_string(), duration: 40, suffix: "wav".into(), ..Default::default() }).collect();
     core.download_queue(songs).unwrap();
     for id in ids {
-        std::fs::write(store.download_path(id), beat_wav()).unwrap();
+        std::fs::write(store.download_path(&ItemKey::own(id)), beat_wav()).unwrap();
     }
-    core.download_settle(ids.map(String::from).into(), vec![true, true]).unwrap();
+    core.download_settle(ids.map(ItemKey::own).into(), vec![true, true]).unwrap();
     for id in ids {
-        core.transfers().with(|t| t.followed(id, COMPLETED, 0));
+        core.transfers().with(|t| t.followed(&ItemKey::own(id), COMPLETED, 0));
         assert_eq!(download_phase(id.into()), Some(nori_core::DownloadPhase::FindingLyrics));
     }
-    analyses.saved(ids.map(String::from).into());
+    analyses.saved(ids.map(ItemKey::own).into());
     analyses.wait();
     for id in ids {
-        let a = core.analysis_get(id.into()).unwrap().expect("analysed from the disk");
+        let a = core.analysis_get(ItemKey::own(id)).unwrap().expect("analysed from the disk");
         assert!((a.bpm - 120.0).abs() < 2.0 || (a.bpm - 60.0).abs() < 1.0 || (a.bpm - 240.0).abs() < 4.0, "the beat heard: {}", a.bpm);
         assert!(nori_core::race::LyricsCache::voice(&**core, &Song { id: id.into(), ..Default::default() }).is_some(), "{id}: its vocal curve, for the lyrics' timing");
         assert!(net.asked.lock().iter().any(|u| u.contains("getLyricsBySongId") && u.contains(&format!("id={id}&"))), "{id}: its lyrics looked up");
         assert_eq!(download_phase(id.into()), Some(nori_core::DownloadPhase::Done), "done with it");
     }
     // Already analysed: nothing to read back.
-    assert!(!core.download_unanalysed().unwrap().iter().any(|id| ids.contains(&id.as_str())));
+    assert!(!core.download_unanalysed().unwrap().iter().any(|id| ids.contains(&id.id.as_str())));
     // Measured by an older analysis version: read back again.
     nori_core::db::open(&db.to_string_lossy(), "").unwrap().execute("UPDATE track_analysis SET analysis_version = analysis_version - 1", []).unwrap();
-    let again: Vec<String> = core.download_unanalysed().unwrap().into_iter().filter(|id| ids.contains(&id.as_str())).collect();
+    let again: Vec<ItemKey> = core.download_unanalysed().unwrap().into_iter().filter(|id| ids.contains(&id.id.as_str())).collect();
     assert_eq!(again.len(), 2);
     assert_eq!(analyses.analyse(again), 2);
     analyses.wait();
     for id in ids {
-        assert!(core.analysis_get(id.into()).unwrap().is_some());
+        assert!(core.analysis_get(ItemKey::own(id)).unwrap().is_some());
         assert_eq!(download_phase(id.into()), Some(nori_core::DownloadPhase::Done));
     }
     assert!(core.transfers().with(|t| t.processing_at(0)).is_none_or(|p| p.analysing == 0), "nothing left waiting");
@@ -457,7 +459,7 @@ fn metered_and_ahead(client: &Arc<Client>, network: &NoApi, store: &Arc<Store>, 
     use nori_player::pipeline::Songs;
     let songs: Vec<Song> = (1..=6).map(|i| Song { id: format!("p-{i}"), title: format!("P{i}"), duration: 3, suffix: "mp3".into(), ..Default::default() }).collect();
     client.session().register(songs);
-    let ids: Vec<String> = (1..=6).map(|i| format!("p-{i}")).collect();
+    let ids: Vec<ItemKey> = (1..=6).map(|i| ItemKey::own(format!("p-{i}"))).collect();
     client.session().set(ids, Some(0), false, None);
 
     let net = Arc::new(Plain::default());
@@ -466,8 +468,8 @@ fn metered_and_ahead(client: &Arc<Client>, network: &NoApi, store: &Arc<Store>, 
     let mut sources = nori_engine::Sources::new(library, load, Default::default(), Default::default(), std::thread::current(), Default::default());
     let q = client.streaming_quality(client.metered());
     assert_eq!((q.bit_rate, q.format.as_str()), (0, ""), "the original file on Wi-Fi");
-    let _playing = sources.open("p-1", 0).unwrap();
-    sources.upcoming("p-2");
+    let _playing = sources.open(&ItemKey::own("p-1"), 0).unwrap();
+    sources.upcoming(&ItemKey::own("p-2"));
     store.wait_ahead();
     assert!(store.peek("p-3:0").is_some() && store.peek("p-4:0").is_some(), "the songs after the next, fetched whole ahead");
     assert!(store.peek("p-5:0").is_none(), "three ahead on Wi-Fi: the next (the engine's own) and these two");
@@ -479,13 +481,13 @@ fn metered_and_ahead(client: &Arc<Client>, network: &NoApi, store: &Arc<Store>, 
     let q = client.streaming_quality(client.metered());
     assert_eq!((q.bit_rate, q.format.as_str()), (192, "opus"), "the settings' quality for mobile data");
     let asked = net.0.lock().len();
-    let _seek = sources.open("p-1", 1_000).unwrap();
-    let _next = sources.open("p-2", 0).unwrap();
+    let _seek = sources.open(&ItemKey::own("p-1"), 1_000).unwrap();
+    let _next = sources.open(&ItemKey::own("p-2"), 0).unwrap();
     assert!(net.0.lock()[asked..].iter().all(|u| !u.contains("format=opus")), "the song playing and the one on its way keep theirs: {:?}", &net.0.lock()[asked..]);
     client.session().moved_to(1);
-    sources.upcoming("p-3");
+    sources.upcoming(&ItemKey::own("p-3"));
     store.wait_ahead();
-    let _after = sources.open("p-5", 0).unwrap();
+    let _after = sources.open(&ItemKey::own("p-5"), 0).unwrap();
     let mut asked_for = net.0.lock();
     while !asked_for.iter().any(|u| u.contains("&id=p-5")) {
         net.1.wait(&mut asked_for);
@@ -503,12 +505,12 @@ fn provider_next_fetched_ahead(client: &Arc<Client>, store: &Arc<Store>, analyse
     use nori_player::pipeline::Songs;
     let ids = ["q-1", "ext-deezer-song-2"];
     client.session().register(ids.iter().map(|id| Song { id: (*id).into(), title: (*id).into(), duration: 3, suffix: "mp3".into(), ..Default::default() }).collect());
-    client.session().set(ids.iter().map(|id| id.to_string()).collect(), Some(0), false, None);
+    client.session().set(ids.iter().map(|id| id.to_string()).map(ItemKey::own).collect(), Some(0), false, None);
     let net = Arc::new(Plain::default());
     let library = CoreLibrary { client: client.clone(), bytes: net.clone(), store: Some(store.clone()), analyses: analyses.clone() };
     let mut sources = nori_engine::Sources::new(library, nori_player::transport::load_control(256), Default::default(), Default::default(), std::thread::current(), Default::default());
-    let _playing = sources.open("q-1", 0).unwrap();
-    sources.upcoming(ids[1]);
+    let _playing = sources.open(&ItemKey::own("q-1"), 0).unwrap();
+    sources.upcoming(&ItemKey::own(ids[1]));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut asked = net.0.lock();
     while !asked.iter().any(|u| u.contains(&format!("&id={}", ids[1]))) && !net.1.wait_until(&mut asked, deadline).timed_out() {}
@@ -566,7 +568,7 @@ fn listens_with_a_real_model(core: &Arc<Core>, current: &Mutex<Arc<Client>>, dir
         let a = core.analysis_get(id.into()).unwrap().unwrap();
         assert!(a.intro_grid_source >= GRID_CHECKED && a.outro_grid_source >= GRID_CHECKED, "{id}: both ends read");
     }
-    assert!(core.analysis_neural_missing(vec!["m-3".into(), "m-4".into()]).unwrap().is_empty());
+    assert!(core.analysis_neural_missing(vec![ItemKey::own("m-3"), ItemKey::own("m-4")]).unwrap().is_empty());
 
     // A changed file is refused.
     let mut bytes = std::fs::read(&kept).unwrap();
@@ -601,7 +603,7 @@ fn a_guest_queues_the_host_songs_once() {
     assert_eq!(nori_engine::core::queued_for(s, &lead(&["a", "b", "c", "d"], 1)), (1, false));
     // A song put next there: queued anew.
     assert_eq!(nori_engine::core::queued_for(s, &lead(&["b", "x", "c"], 0)), (0, true));
-    assert_eq!(s.playlist(|p| p.ids().to_vec()), ["b", "x", "c"]);
+    assert_eq!(s.playlist(|p| p.ids().iter().map(|k| k.id.clone()).collect::<Vec<_>>()), ["b", "x", "c"]);
 
     let mut mixing = lead(&["a", "b", "x", "c"], 1);
     mixing.mix_place = Some((0, 29_000.0, 1.0));
@@ -610,7 +612,7 @@ fn a_guest_queues_the_host_songs_once() {
         (1, true),
         "joining the mix needs its outgoing entry too"
     );
-    assert_eq!(s.playlist(|p| p.ids().to_vec()), ["a", "b", "x", "c"]);
+    assert_eq!(s.playlist(|p| p.ids().iter().map(|k| k.id.clone()).collect::<Vec<_>>()), ["a", "b", "x", "c"]);
     // Near its end, autofill on here: the host's queue is the host's to fill.
     s.moved_to(1);
     assert!(!s.song_arrived().fill, "nothing fetched for it here");
@@ -955,7 +957,7 @@ fn a_local_song_plays_from_its_file() {
     let song = core.songs_page("title".into(), false, false, 0, 0, 0).unwrap().songs.remove(0);
     let session = client.session().clone();
     session.register(vec![song.clone()]);
-    session.set(vec![song.id.clone()], Some(0), false, None);
+    session.set(vec![nori_core::Keyed::key(&song)], Some(0), false, None);
     let net = Arc::new(Plain::default());
     let analyses = Analyses::new({
         let client = client.clone();

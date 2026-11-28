@@ -14,7 +14,7 @@ use crate::transfers::DownloadQueued;
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct KeptChange {
     pub queued: DownloadQueued,
-    pub gone: Vec<String>,
+    pub gone: Vec<nori_model::ItemKey>,
 }
 
 impl KeptChange {

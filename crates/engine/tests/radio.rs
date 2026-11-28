@@ -3,6 +3,7 @@
 //! are measured by zero crossings; a real HE-AAC capture (`testdata`) is compared with ffmpeg's decode.
 //! Tests needing ffmpeg pass trivially without it.
 
+use nori_player::key::ItemKey;
 use crate::common;
 
 use std::io::Read;
@@ -169,14 +170,16 @@ impl ByteSource for Unmarked {
 struct Radio(Vec<(String, Arc<dyn ByteSource>)>);
 
 impl Library for Radio {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         let bytes = self.0.iter().find(|(i, _)| i == id).map(|(_, b)| b.clone()).ok_or("no such station")?;
         // No hint for a station, as on Android.
         Ok(Located { source: Source::Live { url: id.into(), bytes }, hint: None, duration_ms: None, estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
-        WindowSong { id: id.into(), title: id.into(), radio: true, ..Default::default() }
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
+        WindowSong { id: ItemKey::own(id), title: id.into(), radio: true, ..Default::default() }
     }
 }
 
@@ -202,7 +205,7 @@ impl Rig {
     /// [`Rig::new`] with each station's own source, on `clock`, the engine set up as `config` says.
     fn on(clock: Virtual, stations: Vec<(&str, Arc<dyn ByteSource>)>, config: Config) -> Rig {
         let queue = SharedQueue::default();
-        queue.0.lock().set(stations.iter().map(|s| s.0.to_string()).collect(), Some(0), false, 0);
+        queue.0.lock().set(stations.iter().map(|s| s.0.to_string()).map(ItemKey::own).collect(), Some(0), false, 0);
         let card = Card::new();
         let radio = Radio(stations.into_iter().map(|(id, b)| (id.to_string(), b)).collect());
         let engine = common::Running(Engine::start_on(radio, app(), queue, Box::new(card.clone()), None, config, clock.clone(), |_| {}));

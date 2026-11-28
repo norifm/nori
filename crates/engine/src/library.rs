@@ -1,4 +1,4 @@
-//! Where songs come from: the client locates each id as a file, a URL (through a [`ByteSource`],
+//! Where songs come from: the client locates each song (its key) as a file, a URL (through a [`ByteSource`],
 //! optionally via the stream cache) or a live stream. The engine opens it, keeps its bytes while it
 //! plays, and fetches the next song in the same network wake.
 
@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::thread::Thread;
 
 use nori_player::decode::Platform;
+use nori_player::key::ItemKey;
 use nori_player::pcm::Encoding;
 use nori_player::pipeline::Songs;
 use nori_player::transitions::WindowSong;
@@ -58,26 +59,49 @@ pub struct FromSecond {
 
 /// The client's side of the songs.
 pub trait Library: Send + 'static {
-    fn locate(&mut self, id: &str) -> Result<Located, String>;
+    fn locate(&mut self, id: &ItemKey) -> Result<Located, String>;
     /// Length, album and track number of `id`, for the planner and seek bar.
-    fn about(&self, id: &str) -> WindowSong;
+    fn about(&self, id: &ItemKey) -> WindowSong;
     /// `next` is being fetched (a song started, or the queue changed): the moment to fetch later songs
     /// to disk in the same network wake ([`crate::ahead`]).
-    fn ahead(&mut self, _next: &str) {}
+    fn ahead(&mut self, _next: &ItemKey) {}
 
     /// What hears `id`'s bytes as it is fetched ahead (AutoMix measuring). Must not block the fetch
     /// (`Listening`'s `wait` off): the song may play meanwhile.
-    fn taker(&self, _id: &str, _hint: Option<&str>) -> Option<Listening> {
+    fn taker(&self, _id: &ItemKey, _hint: Option<&str>) -> Option<Listening> {
         None
     }
 
     /// `id` played nothing and is restarted: drop its stream cache entry (a download stays).
-    fn forget(&mut self, _id: &str) {}
+    fn forget(&mut self, _id: &ItemKey) {}
 }
 
 /// Songs whose bytes are kept: the current and the next. The previous one is on disk by then, and
 /// keeping it cost a whole song of memory for a rarely pressed button.
 const KEPT: usize = 2;
+
+/// What a kept loader holds: a song's bytes from its start, or from a whole second on (a transcode
+/// opened mid-way, [`FromSecond`]), kept apart from them.
+struct Held {
+    song: ItemKey,
+    from_second: Option<i64>,
+}
+
+impl Held {
+    /// The bytes of song `id` from its start.
+    fn is(&self, id: &ItemKey) -> bool {
+        self.from_second.is_none() && self.song == *id
+    }
+}
+
+impl std::fmt::Display for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.from_second {
+            None => write!(f, "{}", self.song),
+            Some(secs) => write!(f, "{} from {secs} s", self.song),
+        }
+    }
+}
 
 /// The engine's [`Songs`]: the library's songs, their loaders kept while needed.
 pub struct Sources<L: Library> {
@@ -88,7 +112,7 @@ pub struct Sources<L: Library> {
     load: [i64; 5],
     waits: Waits,
     engine: Thread,
-    loaders: Vec<(String, Arc<Loader>)>,
+    loaders: Vec<(Held, Arc<Loader>)>,
     fetching: Arc<Fetching>,
 }
 
@@ -102,10 +126,10 @@ impl<L: Library> Sources<L> {
     /// The loader of `id`, started if needed (writing `keep`'s cache entry, fed to `taker`), holding at
     /// most `budget` bytes (None: its window's cap).
     #[allow(clippy::too_many_arguments)]
-    fn loader(&mut self, id: &str, url: &str, bytes: &Arc<dyn ByteSource>, duration_ms: Option<i64>, keep: Option<(&Arc<Store>, &str)>, budget: Option<u64>, taker: impl FnOnce() -> Option<Listening>) -> Arc<Loader> {
+    fn loader(&mut self, id: &ItemKey, url: &str, bytes: &Arc<dyn ByteSource>, duration_ms: Option<i64>, keep: Option<(&Arc<Store>, &str)>, budget: Option<u64>, taker: impl FnOnce() -> Option<Listening>) -> Arc<Loader> {
         // A failed loader is replaced: the network may be back.
-        self.loaders.retain(|(i, l)| i != id || l.error().is_none());
-        if let Some(k) = self.loaders.iter().position(|(i, _)| i == id) {
+        self.loaders.retain(|(i, l)| !i.is(id) || l.error().is_none());
+        if let Some(k) = self.loaders.iter().position(|(i, _)| i.is(id)) {
             let l = self.loaders.remove(k);
             let loader = l.1.clone();
             self.loaders.push(l);
@@ -118,19 +142,19 @@ impl<L: Library> Sources<L> {
             Box::new(move || store.writer_for_player(&key)) as Keep
         });
         let loader = Loader::start_within(&self.fetching, bytes.clone(), url.to_string(), self.load, duration_ms, keep, budget, taker(), self.waits);
-        self.keep(id, loader)
+        self.keep(Held { song: id.clone(), from_second: None }, loader)
     }
 
     /// A live stream's loader, new on each open: what an earlier connection held is past.
-    fn live(&mut self, id: &str, url: &str, bytes: &Arc<dyn ByteSource>) -> Arc<Loader> {
-        self.loaders.retain(|(i, _)| i != id);
+    fn live(&mut self, id: &ItemKey, url: &str, bytes: &Arc<dyn ByteSource>) -> Arc<Loader> {
+        self.loaders.retain(|(i, _)| !i.is(id));
         let loader = Loader::live(&self.fetching, bytes.clone(), url.to_string(), self.waits);
-        self.keep(id, loader)
+        self.keep(Held { song: id.clone(), from_second: None }, loader)
     }
 
     /// Keeps `loader` as the most recent, dropping the oldest past [`KEPT`].
-    fn keep(&mut self, id: &str, loader: Arc<Loader>) -> Arc<Loader> {
-        self.loaders.push((id.to_string(), loader.clone()));
+    fn keep(&mut self, held: Held, loader: Arc<Loader>) -> Arc<Loader> {
+        self.loaders.push((held, loader.clone()));
         if self.loaders.len() > KEPT {
             self.loaders.remove(0);
         }
@@ -139,12 +163,12 @@ impl<L: Library> Sources<L> {
 
     /// Song `id` from `from_ms` as undecoded packets; not for a live stream. `ahead`: only probed while
     /// another song plays, so it gets what that one leaves of the cap.
-    pub fn open_packets(&mut self, id: &str, from_ms: i64, ahead: bool) -> Result<Demuxed, String> {
+    pub fn open_packets(&mut self, id: &ItemKey, from_ms: i64, ahead: bool) -> Result<Demuxed, String> {
         self.open_as(id, from_ms, Some(ahead))
     }
 
     /// Song `id` from `from_ms`, decoded, or as packets (`Some(ahead)`, see [`Sources::open_packets`]).
-    fn open_as(&mut self, id: &str, from_ms: i64, packets: Option<bool>) -> Result<Demuxed, String> {
+    fn open_as(&mut self, id: &ItemKey, from_ms: i64, packets: Option<bool>) -> Result<Demuxed, String> {
         let at = self.library.locate(id)?;
         let (encoding, platform, engine) = (self.encoding, self.platform, self.engine.clone());
         let opened = |source: Box<dyn MediaSource>, hint: Option<String>| match packets {
@@ -168,7 +192,7 @@ impl<L: Library> Sources<L> {
             if secs > 0 {
                 let duration_ms = at.duration_ms.map(|d| d - secs * 1000);
                 let loader = Loader::start_within(&self.fetching, f.bytes.clone(), format!("{}&timeOffset={secs}", f.url), self.load, duration_ms, None, None, None, self.waits);
-                let loader = self.keep(&format!("{id} from {secs} s"), loader);
+                let loader = self.keep(Held { song: id.clone(), from_second: Some(secs) }, loader);
                 return Ok(Demuxed::load_from(loader, engine, at.hint.as_deref(), from_ms, secs * 1000, at.duration_ms, at.estimated, encoding, platform));
             }
         }
@@ -202,8 +226,8 @@ impl<L: Library> Sources<L> {
     }
 
     /// Drops `id`'s bytes in memory and its cache entry ([`Library::forget`]).
-    pub fn forget(&mut self, id: &str) {
-        self.loaders.retain(|(i, _)| i != id);
+    pub fn forget(&mut self, id: &ItemKey) {
+        self.loaders.retain(|(i, _)| !i.is(id));
         self.library.forget(id);
     }
 
@@ -216,20 +240,20 @@ impl<L: Library> Sources<L> {
     }
 
     /// The loader of `id`, if kept.
-    pub fn loading(&self, id: &str) -> Option<&Arc<Loader>> {
-        self.loaders.iter().find(|(i, _)| i == id).map(|(_, l)| l)
+    pub fn loading(&self, id: &ItemKey) -> Option<&Arc<Loader>> {
+        self.loaders.iter().find(|(i, _)| i.is(id)).map(|(_, l)| l)
     }
 
     /// The library's taker for `id`, asked only when a new loader starts.
-    fn taker(&self, id: &str, hint: Option<&str>) -> Option<Listening> {
+    fn taker(&self, id: &ItemKey, hint: Option<&str>) -> Option<Listening> {
         self.loading(id).is_none().then(|| self.library.taker(id, hint)).flatten()
     }
 
     /// What the other kept songs leave of the memory cap for `id`, fetched ahead. At least a sixth of
     /// it, so a mix into `id` has its start at hand.
-    fn left_for(&self, id: &str) -> u64 {
+    fn left_for(&self, id: &ItemKey) -> u64 {
         let cap = self.load[4].max(1) as u64;
-        let others: u64 = self.loaders.iter().filter(|(i, _)| i != id).map(|(_, l)| l.holding()).sum();
+        let others: u64 = self.loaders.iter().filter(|(i, _)| !i.is(id)).map(|(_, l)| l.holding()).sum();
         cap.saturating_sub(others).max(cap / 6)
     }
 }
@@ -237,15 +261,15 @@ impl<L: Library> Sources<L> {
 impl<L: Library> Songs for Sources<L> {
     type Reading = Demuxed;
 
-    fn open(&mut self, id: &str, from_ms: i64) -> Result<Demuxed, String> {
+    fn open(&mut self, id: &ItemKey, from_ms: i64) -> Result<Demuxed, String> {
         self.open_as(id, from_ms, None)
     }
 
-    fn about(&self, id: &str) -> WindowSong {
+    fn about(&self, id: &ItemKey) -> WindowSong {
         self.library.about(id)
     }
 
-    fn upcoming(&mut self, id: &str) {
+    fn upcoming(&mut self, id: &ItemKey) {
         self.library.ahead(id);
         match self.library.locate(id) {
             Ok(Located { source: Source::Url { url, bytes }, duration_ms, hint, .. }) => {

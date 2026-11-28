@@ -1282,6 +1282,7 @@ fn turn<R: Ring>(w: &mut Writer<R>, shared: &Shared) -> Option<Option<u64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nori_core::ItemKey;
     use nori_engine::testing::Stepper;
     use nori_player::burst::LOW_US as RING_LOW_US;
     use std::collections::VecDeque;
@@ -2224,7 +2225,7 @@ mod tests {
             std::fs::hard_link(&first, files.dir.join(format!("{id}.wav"))).expect("the song under another name");
         }
         let queue = nori_engine::SharedQueue::default();
-        queue.0.lock().set(ids.clone(), Some(0), false, 0);
+        queue.0.lock().set(ids.iter().map(ItemKey::own).collect(), Some(0), false, 0);
         let mut app = nori_player::sim::App::new();
         app.prefs = nori_player::transitions::TransitionPrefs { auto_mix: true, keep_albums: false, ..nori_player::sim::prefs_off() };
         // Pre-measured, so the simulated app doesn't analyse on the engine thread.
@@ -2621,11 +2622,13 @@ mod tests {
     }
 
     impl nori_engine::Library for Songs {
-        fn locate(&mut self, id: &str) -> Result<nori_engine::Located, String> {
+        fn locate(&mut self, id_key: &ItemKey) -> Result<nori_engine::Located, String> {
+            let id = id_key.id.as_str();
             Ok(nori_engine::Located { source: nori_engine::Source::Url { url: id.to_string(), bytes: self.0.clone() }, hint: Some("wav".into()), duration_ms: Some(self.ms(id)), estimated: false, from_second: None })
         }
-        fn about(&self, id: &str) -> nori_player::transitions::WindowSong {
-            nori_player::transitions::WindowSong { id: id.to_string(), title: id.to_string(), duration_ms: self.ms(id), ..Default::default() }
+        fn about(&self, id_key: &ItemKey) -> nori_player::transitions::WindowSong {
+            let id = id_key.id.as_str();
+            nori_player::transitions::WindowSong { id: ItemKey::own(id), title: id.to_string(), duration_ms: self.ms(id), ..Default::default() }
         }
     }
 
@@ -2720,7 +2723,7 @@ mod tests {
         let songs = [tone(3, 440.0), tone(3, 660.0)];
         let wavs = Arc::new(Wavs(vec![("a".into(), Arc::new(wav(&songs[0]))), ("b".into(), Arc::new(wav(&songs[1])))]));
         let queue = nori_engine::SharedQueue::default();
-        queue.0.lock().set(vec!["a".into(), "b".into()], Some(0), false, 0);
+        queue.0.lock().set(vec![ItemKey::own("a"), ItemKey::own("b")], Some(0), false, 0);
         let mut app = nori_player::sim::App::new();
         app.prefs = nori_player::sim::prefs_off();
         let settings = nori_engine::Settings { fade_ms: 200, ..Default::default() };
@@ -2780,7 +2783,7 @@ mod tests {
     fn paused_and_played_at_once_plays_on() {
         let wavs = Arc::new(Wavs(vec![("a".into(), Arc::new(wav(&tone(60, 440.0))))]));
         let queue = nori_engine::SharedQueue::default();
-        queue.0.lock().set(vec!["a".into()], Some(0), false, 0);
+        queue.0.lock().set(vec![ItemKey::own("a")], Some(0), false, 0);
         let mut app = nori_player::sim::App::new();
         app.prefs = nori_player::sim::prefs_off();
         let (engine, time, live) = on_a_phone(Songs(wavs), app, queue, nori_engine::Config::default(), Live::new);
@@ -2806,7 +2809,7 @@ mod tests {
                 for wait_ms in [100, 3_000, 6 * 60_000] {
                     let wavs = Arc::new(Wavs(vec![("a".into(), Arc::new(wav(&tone(60, 440.0))))]));
                     let queue = nori_engine::SharedQueue::default();
-                    queue.0.lock().set(vec!["a".into()], Some(0), false, 0);
+                    queue.0.lock().set(vec![ItemKey::own("a")], Some(0), false, 0);
                     let mut app = nori_player::sim::App::new();
                     app.prefs = nori_player::sim::prefs_off();
                     let config = nori_engine::Config { settings: nori_engine::Settings { fade_ms, ..Default::default() }, ..Default::default() };
@@ -2850,7 +2853,7 @@ mod tests {
         let songs = [tone(30, 440.0), tone(30, 660.0)];
         let wavs = Arc::new(Wavs(vec![("a".into(), Arc::new(wav(&songs[0]))), ("b".into(), Arc::new(wav(&songs[1])))]));
         let queue = nori_engine::SharedQueue::default();
-        queue.0.lock().set(vec!["a".into(), "b".into()], Some(0), false, 0);
+        queue.0.lock().set(vec![ItemKey::own("a"), ItemKey::own("b")], Some(0), false, 0);
         let mut app = nori_player::sim::App::new();
         app.prefs = nori_player::transitions::TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, ..nori_player::sim::prefs_off() };
         // Measured only as given: measuring ahead on the engine's thread would measure the songs whose
@@ -2929,11 +2932,13 @@ mod tests {
     struct OnDisk(Arc<Files>);
 
     impl nori_engine::Library for OnDisk {
-        fn locate(&mut self, id: &str) -> Result<nori_engine::Located, String> {
+        fn locate(&mut self, id_key: &ItemKey) -> Result<nori_engine::Located, String> {
+            let id = id_key.id.as_str();
             Ok(nori_engine::Located { source: nori_engine::Source::File(vec![self.0.dir.join(format!("{id}.wav"))]), hint: Some("wav".into()), duration_ms: Some(self.0.ms), estimated: false, from_second: None })
         }
-        fn about(&self, id: &str) -> nori_player::transitions::WindowSong {
-            nori_player::transitions::WindowSong { id: id.to_string(), title: id.to_string(), duration_ms: self.0.ms, ..Default::default() }
+        fn about(&self, id_key: &ItemKey) -> nori_player::transitions::WindowSong {
+            let id = id_key.id.as_str();
+            nori_player::transitions::WindowSong { id: ItemKey::own(id), title: id.to_string(), duration_ms: self.0.ms, ..Default::default() }
         }
     }
 

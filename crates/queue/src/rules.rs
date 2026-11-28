@@ -6,6 +6,7 @@ use nori_player::queue::{self as q, ErrorRun};
 use nori_player::transport as t;
 
 use crate::Session;
+use nori_model::ItemKey;
 
 // Public so the uniffi scaffolding can name them.
 pub use nori_model::model::PlaybackError;
@@ -51,7 +52,7 @@ const UPCOMING: usize = 8;
 
 impl Session {
     /// The upcoming ids to prefetch on this network (`nori_player::queue::precache_range`).
-    pub fn precache(&self, metered: bool) -> Vec<String> {
+    pub fn precache(&self, metered: bool) -> Vec<ItemKey> {
         let (count, mixing) = self.settings.in_effect(|p| {
             (q::precache_count(metered, p.songs_ahead_wifi, p.songs_ahead_mobile), q::mixing(self.planner.transitions_off(), p.crossfade_sec, p.auto_mix.on()))
         });
@@ -63,7 +64,7 @@ impl Session {
 
     /// The prefetchable ids of `ids` ([`Session::precache`]'s output) that are not already being
     /// downloaded; a download would otherwise be cached twice.
-    pub fn precache_list(&self, ids: Vec<String>, downloading: impl Fn(&str) -> bool) -> Vec<String> {
+    pub fn precache_list(&self, ids: Vec<ItemKey>, downloading: impl Fn(&ItemKey) -> bool) -> Vec<ItemKey> {
         let mut ids = self.fetchable(ids);
         ids.retain(|id| !downloading(id));
         ids
@@ -72,10 +73,10 @@ impl Session {
     /// The upcoming analysable ids to analyse, for AutoMix and the lyrics' timing: the song playing and
     /// as many after it as are prepared ahead on either network (only those on the device are measured);
     /// empty when the profile measures nothing.
-    pub fn measure(&self) -> Vec<String> {
+    pub fn measure(&self) -> Vec<ItemKey> {
         let ahead = self.settings.in_effect(|p| p.songs_ahead_wifi.max(p.songs_ahead_mobile).max(0) as usize);
         let n = if self.planner.measures() { 1 + ahead } else { 0 };
-        self.playlist(|p| p.upcoming().take(UPCOMING).take(n).map(|i| &p.ids()[i]).filter(|id| crate::queue::analysable(id)).cloned().collect())
+        self.playlist(|p| p.upcoming().take(UPCOMING).take(n).map(|i| &p.ids()[i]).filter(|id| crate::queue::analysable(&id.id)).cloned().collect())
     }
 
     /// A song failed to play: what to do (`nori_player::queue::on_error`). `bridge_ready`: the platform
@@ -142,14 +143,14 @@ impl Session {
 impl Session {
     /// Upcoming queue entries whose lyrics are warmed on this network, as many as the songs prepared
     /// ahead; provider tracks have no work.
-    pub fn lyrics_ahead(&self, metered: bool) -> Vec<(u64, String)> {
+    pub fn lyrics_ahead(&self, metered: bool) -> Vec<(u64, ItemKey)> {
         let count = self.settings.in_effect(|p| q::precache_count(metered, p.songs_ahead_wifi, p.songs_ahead_mobile));
         self.playlist(|p| {
             let repeat = crate::playlist::walk_repeat(p);
             std::iter::successors(p.next(), |&i| p.next_of(i, repeat))
                 .take_while(|&i| Some(i) != p.current())
                 .take(count)
-                .filter(|&i| !nori_model::model::is_provider_id(&p.ids()[i]))
+                .filter(|&i| !nori_model::model::is_provider_id(&p.ids()[i].id))
                 .map(|i| (p.seqs()[i], p.ids()[i].clone()))
                 .collect()
         })
@@ -290,23 +291,22 @@ pub fn volume_fraction(step: i32, max: i32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::playlist::tests::session;
+    use crate::playlist::tests::{ids, plain, session};
 
     #[test]
     fn precache_choice() {
         let s = session(&["pc1", "pc2", "pc3", "pc4", "ext-5"], 0);
         // Three ahead on Wi-Fi, one on metered; the player buffers the next song itself.
-        assert_eq!(s.precache(false), ["pc3", "pc4"], "never a provider's");
+        assert_eq!(plain(s.precache(false)), ["pc3", "pc4"], "never a provider's");
         assert!(s.precache(true).is_empty());
-        assert_eq!(s.measure(), ["pc1", "pc2", "pc3", "pc4"], "AutoMix off too: the current song and the songs prepared ahead");
+        assert_eq!(plain(s.measure()), ["pc1", "pc2", "pc3", "pc4"], "AutoMix off too: the current song and the songs prepared ahead");
         s.planner.set_measures(false);
         assert!(s.measure().is_empty(), "a profile that measures nothing");
 
         // Precache list skips downloads and providers.
-        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let s = Session::default();
-        assert_eq!(s.precache_list(ids(&["1", "2", "ext-3", "4"]), |id| id == "2"), ["1", "4"]);
-        assert_eq!(s.precache_list(ids(&["1", "2"]), |_| false), ["1", "2"]);
+        assert_eq!(plain(s.precache_list(ids(&["1", "2", "ext-3", "4"]), |id| id.id == "2")), ["1", "4"]);
+        assert_eq!(plain(s.precache_list(ids(&["1", "2"]), |_| false)), ["1", "2"]);
     }
 
     #[test]
@@ -320,16 +320,16 @@ mod tests {
             (5, 2, true, &["sa3"], &["sa2", "sa3"]),
         ] {
             let (_dir, s) = crate::playlist::tests::opened(|p| (p.songs_ahead_wifi, p.songs_ahead_mobile) = (wifi, mobile));
-            s.set(queue.iter().map(|id| id.to_string()).collect(), Some(0), false, None);
-            assert_eq!(s.precache(metered), audio, "{wifi}/{mobile} metered {metered}");
-            let warmed: Vec<String> = s.lyrics_ahead(metered).into_iter().map(|(_, id)| id).collect();
+            s.set(ids(&queue), Some(0), false, None);
+            assert_eq!(plain(s.precache(metered)), audio, "{wifi}/{mobile} metered {metered}");
+            let warmed: Vec<String> = s.lyrics_ahead(metered).into_iter().map(|(_, id)| id.id).collect();
             assert_eq!(warmed, lyrics, "{wifi}/{mobile} metered {metered}");
         }
         // Repeat-all wraps to the start but never warms the playing song.
         let (_dir, s) = crate::playlist::tests::opened(|p| p.songs_ahead_wifi = 5);
-        s.set(vec!["r1".into(), "r2".into(), "r3".into()], Some(1), false, None);
+        s.set(vec![ItemKey::own("r1"), ItemKey::own("r2"), ItemKey::own("r3")], Some(1), false, None);
         s.repeat(REPEAT_ALL);
-        assert_eq!(s.lyrics_ahead(false).into_iter().map(|(_, id)| id).collect::<Vec<_>>(), ["r3", "r1"]);
+        assert_eq!(s.lyrics_ahead(false).into_iter().map(|(_, id)| id.id).collect::<Vec<_>>(), ["r3", "r1"]);
     }
 
     #[test]

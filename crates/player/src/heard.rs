@@ -39,7 +39,7 @@ pub type Lookup<'a> = &'a dyn Fn(StreamAt) -> Option<(usize, i64)>;
 /// The queue's songs for [`Playhead`], and the audible stream. Called every frame; allocates nothing.
 #[derive(Debug, Default)]
 pub struct HeardTracker {
-    queue: Vec<(String, i64)>,
+    queue: Vec<(crate::key::ItemKey, i64)>,
     /// (serial mixed out of, ms, at ms, the player's stream then): the stream after it stays shown after
     /// the engine lets go.
     carry: Option<(u64, i64, i64, Option<u64>)>,
@@ -70,7 +70,7 @@ impl HeardTracker {
     }
 
     /// The queue as (id, length ms), for [`HeardTracker::differs`].
-    pub fn set_queue<I: IntoIterator<Item = (String, i64)>>(&mut self, songs: I) {
+    pub fn set_queue<I: IntoIterator<Item = (crate::key::ItemKey, i64)>>(&mut self, songs: I) {
         self.queue.clear();
         self.queue.extend(songs);
     }
@@ -291,7 +291,7 @@ mod tests {
 
     fn tracker() -> HeardTracker {
         let mut t = HeardTracker::new();
-        t.set_queue([("a".to_string(), 200_000), ("b".to_string(), 180_000)]);
+        t.set_queue([(crate::key::ItemKey::own("a"), 200_000), (crate::key::ItemKey::own("b"), 180_000)]);
         t
     }
 
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn bar_holds_while_page_behind() {
         let mut t = HeardTracker::new();
-        t.set_queue([("a".to_string(), 200_000), ("b".to_string(), 180_000), ("a".to_string(), 200_000)]);
+        t.set_queue([(crate::key::ItemKey::own("a"), 200_000), (crate::key::ItemKey::own("b"), 180_000), (crate::key::ItemKey::own("a"), 200_000)]);
         let mut p = Playhead::new();
         let seen = |index, ms| Seen { index, ms, changed: false };
         assert_eq!(p.show(&t, seen(None, 5_000), Some(A), 100), 5_000, "the player's own word");
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn mid_mix_page_shows_player() {
         let mut t = HeardTracker::new();
-        t.set_queue([("a".to_string(), 200_000), ("b".to_string(), 180_000)]);
+        t.set_queue([(crate::key::ItemKey::own("a"), 200_000), (crate::key::ItemKey::own("b"), 180_000)]);
         let mut p = Playhead::new();
         let seen = |index, ms| Seen { index, ms, changed: false };
         // The bar last drawn on a, 150 s in; the screen goes away.
@@ -594,7 +594,7 @@ mod away {
 
     fn clock() -> HeardTracker {
         let mut t = HeardTracker::new();
-        t.set_queue([("a".to_string(), SONG_MS)]);
+        t.set_queue([(crate::key::ItemKey::own("a"), SONG_MS)]);
         t
     }
 

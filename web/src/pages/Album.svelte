@@ -8,7 +8,7 @@
   import { addToPlaylist, itemMark } from "../state/menus";
   import { player } from "../state/player.svelte";
   import { remote } from "../state/remote.svelte";
-  import { href } from "../state/route.svelte";
+  import { itemHref } from "../state/route.svelte";
   import type { Album, Song } from "../state/types";
   import { W } from "../words";
   import Hero from "../ui/Hero.svelte";
@@ -19,10 +19,10 @@
   import Seal from "../ui/Seal.svelte";
   import SongList from "../ui/SongList.svelte";
 
-  let { id }: { id: string } = $props();
+  let { id, source }: { id: string; source?: string } = $props();
   type Disc = { disc: number; headed: boolean; title: string; songs: number[]; lines: string[] };
   const page = reading("album", async () => {
-    const d = await read<{ album: Album; songs: Song[]; seconds: number; discs: Disc[]; quality: string | null }>({ kind: "album", id });
+    const d = await read<{ album: Album; songs: Song[]; seconds: number; discs: Disc[]; quality: string | null }>({ kind: "album", id, source });
     return { ...d, tools: JSON.parse(await ask<string>("page_actions", "Album", d.songs.length)) as string[] };
   });
   // The answer while it is this page's: the page stays mounted when another album opens over it.
@@ -42,9 +42,9 @@
 <Page back narrow sketch="Album" ready={!!a} error={page.error}>
   {#if a}
     <Hero cover={a.cover} title={a.name} {label} item={itemMark("album", a.id, { title: a.name, line: a.artist, cover: a.cover })} playable={!!data} onplay={(shuffle) => void player.play(songs, 0, shuffle, "Album", a.id)}>
-      {#snippet by()}{#if a.artistId}<a href={href("artist", a.artistId)}>{a.artist}</a>{:else}{a.artist}{/if}{/snippet}
+      {#snippet by()}{#if a.artistId}<a href={itemHref("artist", a.artistId, a.source ?? source)}>{a.artist}</a>{:else}{a.artist}{/if}{/snippet}
       {#snippet actions()}
-        {#if !remote.jam?.guest}<Seal what="album" id={a.id} on={!!a.starred} />{/if}
+        {#if !remote.jam?.guest}<Seal what="album" id={a.id} source={a.source ?? source} on={!!a.starred} />{/if}
         {#if data}
           <PageTools tools={data.tools} {songs} />
           <button class="glyph" aria-label={W.more} title={W.more} onclick={() => void addToPlaylist(songs)}><Icon name="more-horiz" /></button>

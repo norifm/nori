@@ -198,8 +198,9 @@ enum SongMenu {
         pickPlaylist(from: host, add: { nori_ios_queue_playlist_add($0) }, create: { nori_ios_queue_playlist_create($0) })
     }
 
-    /// The playlists, a new one first: `add` puts what was asked about into the playlist whose id it is
-    /// given, `create` into a new one of the name it is given; each answers 1 when done.
+    /// The playlists, a new one first: `add` puts what was asked about into the playlist whose `ref` it is
+    /// given (answering 2 when that playlist takes only its own source's songs), `create` into a new one
+    /// of the name it is given; each answers 1 when done.
     private static func pickPlaylist(from host: UIViewController, add: @escaping (UnsafePointer<CChar>) -> Int32, create: @escaping (UnsafePointer<CChar>) -> Int32) {
         var asked: UInt64 = 0
         asked = Core.shared.read(NORI_PAGE_PLAYLISTS) { a in
@@ -210,8 +211,8 @@ enum SongMenu {
             sheet.add(Say.newPlaylist) { newPlaylist(from: host, create: create) }
             for p in playlists {
                 sheet.add(p.title) {
-                    off({ p.id.withCString { add($0) } }) { done in
-                        Toast.show(done == 1 ? Say.addedToPlaylist(p.title) : Say.failed)
+                    off({ p.ref.withCString { add($0) } }) { done in
+                        Toast.show(done == 1 ? Say.addedToPlaylist(p.title) : done == 2 ? Say.takesOnlyItsSongs(p.title, on: p.on) : Say.failed)
                     }
                 }
             }

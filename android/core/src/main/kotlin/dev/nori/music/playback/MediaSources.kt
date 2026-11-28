@@ -23,6 +23,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import dalvik.annotation.optimization.CriticalNative
 import dev.nori.music.downloads.DownloadsJni
 import dev.nori.music.ffi.Client
+import dev.nori.music.ffi.model.ItemKey
 import dev.nori.music.ffi.net.StreamQuality
 import dev.nori.music.net.Http
 import dev.nori.music.settings.Settings
@@ -41,7 +42,7 @@ internal object StreamCacheJni {
     /** The next key to drop, forgotten by the core as it is handed out; null when there is none. */
     @JvmStatic @FastNative external fun next(h: Long): String?
     /** A song's streamed copies, forgotten by the core as they are handed out. */
-    @JvmStatic external fun copies(h: Long, id: String): Array<String>
+    @JvmStatic external fun copies(h: Long, source: String?, id: String): Array<String>
     @JvmStatic @CriticalNative external fun clear(h: Long)
 }
 
@@ -105,7 +106,7 @@ class ResizableEvictor(
     }
 
     /** A song's streamed copies, forgotten as they are handed out. */
-    fun copies(id: String): Array<String> = StreamCacheJni.copies(order, id)
+    fun copies(id: ItemKey): Array<String> = StreamCacheJni.copies(order, id.source, id.id)
 
     /** The core forgets every key: the cache was emptied, and whatever it still holds is told again. */
     fun forget() {
@@ -153,7 +154,7 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
     }
 
     /** Whether [id]'s download is complete, from the core's memory of its downloads table. */
-    fun isDownloaded(id: String): Boolean = DownloadsJni.held(DownloadsJni.h, id) == DownloadsJni.DONE
+    fun isDownloaded(id: ItemKey): Boolean = DownloadsJni.held(DownloadsJni.h, id.source, id.id) == DownloadsJni.DONE
 
     /**
      * The stream cache's copy of [id] (a whole one first) by its key, and whether it is whole; none. For the
@@ -326,14 +327,15 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
         return source to (every ?: 0)
     }
 
-    /** The key [resolve] would give a song that is not downloaded, without building its URL. */
-    fun streamKey(id: String): String = settings.effective.value.let { client.streamKey(id, http.metered, it.wifi.ffi(), it.mobile.ffi()) }
+    /** The key [resolve] would give a song that is not downloaded, without building its URL; null for a source not in the profile. */
+    fun streamKey(id: ItemKey): String? = settings.effective.value.let { client.streamKey(id, http.metered, it.wifi.ffi(), it.mobile.ffi()) }
 
     private fun SavedQuality.ffi() = StreamQuality(bitRate.coerceAtLeast(0).toUInt(), format)
 
-    fun downloadKey(id: String) = dev.nori.music.ffi.net.downloadKey(id)
+    fun downloadKey(id: ItemKey) = dev.nori.music.ffi.net.downloadKey(id)
 
-    fun downloadUrl(id: String): String = client.downloadTarget(id, settings.effective.value.download.ffi()).url
+    /** Null for a source not in the profile. */
+    fun downloadUrl(id: ItemKey): String? = client.downloadTarget(id, settings.effective.value.download.ffi())?.url
 
     /**
      * The limit follows the setting without a restart; checked whenever a track is opened, so the
@@ -355,14 +357,14 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
     fun downloadBytes(): Long = runCatching { downloadCache.cacheSpace }.getOrDefault(0L)
 
     /** What the downloads of songs [ids] hold in the download cache. */
-    fun downloadBytes(ids: Collection<String>): Long =
+    fun downloadBytes(ids: Collection<ItemKey>): Long =
         ids.sumOf { runCatching { downloadCache.getCachedBytes(downloadKey(it), 0, Long.MAX_VALUE) }.getOrDefault(0L) }
 
     /**
      * Forgets every streamed copy of [id], whatever quality it was fetched at. A finished download is
      * the permanent copy; the streamed one is the same bytes twice. Call off the main thread.
      */
-    fun dropStreamCopies(id: String) {
+    fun dropStreamCopies(id: ItemKey) {
         runCatching { streamEvictor.seed(streamCache) }
         // The key grammar is the core's, and so is the list of keys: it names this song's copies.
         for (key in streamEvictor.copies(id)) runCatching { streamCache.removeResource(key) }

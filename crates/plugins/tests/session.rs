@@ -1,6 +1,7 @@
 //! The session a plugin reaches, its hooks, timers, cache, assets, wakes and commands, over the test
 //! plugin (fixture/src/hooked.rs) on a simulated clock.
 
+use nori_model::ItemKey;
 use std::sync::{Arc, Condvar, Mutex};
 
 use nori_model::Song;
@@ -110,6 +111,9 @@ impl Library for Shelf {
     fn songs(&self, ids: &[String]) -> Result<Vec<Song>, t::Error> {
         Ok(ids.iter().map(|i| song(i)).collect())
     }
+    fn queued(&self, key: &nori_model::ItemKey) -> Option<Song> {
+        Some(song(&key.id))
+    }
     fn search(&self, query: &str, _: u32) -> Result<Vec<Found>, t::Error> {
         Ok(vec![Found::Song(Box::new(song(query)))])
     }
@@ -210,7 +214,7 @@ impl Rig {
 #[test]
 fn the_session_reads_the_player_and_library_and_controls_through_the_client() {
     let r = Rig::on("plugins-session");
-    r.plugins.played(Moment { playing: true, index: Some(2), song: Some("c".into()), position_ms: 1000, ..Default::default() });
+    r.plugins.played(Moment { playing: true, index: Some(2), song: Some(ItemKey::own("c")), position_ms: 1000, ..Default::default() });
     r.clock.pass(Duration::from_millis(500));
     r.act("now");
     assert_eq!(r.client.said("now"), ["C Some(2) true 1500 5"], "the position runs on while it plays");
@@ -249,7 +253,7 @@ fn events_are_built_only_for_what_an_enabled_plugin_hears() {
     assert!(r.plugins.hears(Hook::SongChanged) && r.plugins.follows());
     assert!(!r.plugins.hears(Hook::MediaButton) && !r.plugins.hears(Hook::SettingChanged), "only what its manifest names");
 
-    let at = |song: &str, playing: bool| Moment { playing, index: Some(0), song: Some(song.into()), ..Default::default() };
+    let at = |song: &str, playing: bool| Moment { playing, index: Some(0), song: Some(ItemKey::own(song)), ..Default::default() };
     r.plugins.played(at("a", true));
     r.settle();
     assert_eq!(r.heard(), ["started", "song A"]);
@@ -270,7 +274,7 @@ fn events_are_built_only_for_what_an_enabled_plugin_hears() {
 #[test]
 fn lyric_lines_wake_as_they_are_reached_while_the_song_plays() {
     let r = Rig::on("plugins-lyrics");
-    r.plugins.played(Moment { playing: true, index: Some(2), song: Some("c".into()), position_ms: 0, ..Default::default() });
+    r.plugins.played(Moment { playing: true, index: Some(2), song: Some(ItemKey::own("c")), position_ms: 0, ..Default::default() });
     // The lyrics come on a thread of their own; the clock stands still meanwhile.
     r.until_heard("lyric 0 one");
     assert_eq!(r.heard(), ["started", "song C", "lyric 0 one"]);
@@ -278,12 +282,12 @@ fn lyric_lines_wake_as_they_are_reached_while_the_song_plays() {
     assert!(r.heard().is_empty());
     r.pass(1);
     assert_eq!(r.heard(), ["lyric 1 two"]);
-    r.plugins.played(Moment { playing: false, index: Some(2), song: Some("c".into()), position_ms: 1200, ..Default::default() });
+    r.plugins.played(Moment { playing: false, index: Some(2), song: Some(ItemKey::own("c")), position_ms: 1200, ..Default::default() });
     r.clock.settle();
     assert!(r.clock.waits().is_empty(), "paused, no wake is left for the next line");
     r.pass(5000);
     assert_eq!(r.heard(), ["paused"]);
-    r.plugins.played(Moment { playing: true, index: Some(2), song: Some("c".into()), position_ms: 2000, ..Default::default() });
+    r.plugins.played(Moment { playing: true, index: Some(2), song: Some(ItemKey::own("c")), position_ms: 2000, ..Default::default() });
     r.pass(500);
     assert_eq!(r.heard(), ["started", "lyric 2 three"], "from where it plays again");
 }
@@ -292,8 +296,8 @@ fn lyric_lines_wake_as_they_are_reached_while_the_song_plays() {
 fn lyric_lines_wake_after_a_seek_made_while_their_lyrics_came() {
     let r = Rig::on("plugins-lyrics-seek");
     *r.shelf.lyrics_held.lock().unwrap() = true;
-    r.plugins.played(Moment { playing: true, index: Some(2), song: Some("c".into()), position_ms: 0, ..Default::default() });
-    r.plugins.played(Moment { playing: true, index: Some(2), song: Some("c".into()), position_ms: 1000, ..Default::default() });
+    r.plugins.played(Moment { playing: true, index: Some(2), song: Some(ItemKey::own("c")), position_ms: 0, ..Default::default() });
+    r.plugins.played(Moment { playing: true, index: Some(2), song: Some(ItemKey::own("c")), position_ms: 1000, ..Default::default() });
     r.shelf.give_lyrics();
     r.until_heard("lyric 1 two");
     assert_eq!(r.heard(), ["started", "song C", "lyric 1 two"], "from where it was sought to");

@@ -92,7 +92,7 @@ fn a_long_playlist_fills_in_and_its_queue_takes_the_rest() {
     assert_eq!(pages.recv_timeout(WAIT).expect("the first page, shown before the second came"), (titles(&["first"]), true));
     assert_eq!(requests.recv_timeout(WAIT).unwrap(), "https://allowed.example/second");
 
-    let ids = vec!["test-first".to_string()];
+    let ids = vec![nori_core::ItemKey::own("test-first")];
     let started = client.session().set(ids, Some(0), false, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Playlist, "test-long")));
     assert!(started.follows, "played from the first page");
     let following = {

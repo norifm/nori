@@ -6,8 +6,8 @@ use super::Session;
 impl Session {
     /// The session before this one stopped `position_ms` into `song`, playing or not: when the queue
     /// opened here stands on that song, it goes on from there as it was.
-    pub fn carry_on(&self, song: &str, position_ms: i64, playing: bool) {
-        let Some(at) = self.core.session.playlist(|p| p.current().filter(|&i| p.ids()[i] == song)) else { return };
+    pub fn carry_on(&self, song: &nori_core::ItemKey, position_ms: i64, playing: bool) {
+        let Some(at) = self.core.session.playlist(|p| p.current().filter(|&i| p.ids()[i] == *song)) else { return };
         if playing {
             self.engine.play_at(at, position_ms);
         } else {
@@ -43,20 +43,20 @@ mod tests {
             let s = Session::open_on(Open { offline: true, ..test_open(queue, dir.path(), profile, Box::new(card.clone())) }, clock).unwrap();
             let songs: Vec<Song> = ["a", "b", "c"].map(|id| Song { id: id.into(), duration: 4, suffix: "wav".into(), ..Default::default() }).into();
             s.core.download_queue(songs.clone()).unwrap();
-            s.core.download_settle(songs.iter().map(|s| s.id.clone()).collect(), vec![true; songs.len()]).unwrap();
+            s.core.download_settle(songs.iter().map(nori_core::Keyed::key).collect(), vec![true; songs.len()]).unwrap();
             for song in &songs {
-                let path = s.store.as_ref().expect("a store").download_path(&song.id);
+                let path = s.store.as_ref().expect("a store").download_path(&nori_core::Keyed::key(song));
                 std::fs::create_dir_all(path.parent().unwrap()).unwrap();
                 std::fs::write(path, wav(44_100, &sine(44_100, 440.0, 4.0, 16_000.0))).unwrap();
             }
             s.core.session.register(songs.clone());
-            s.core.session.set(songs.iter().map(|s| s.id.clone()).collect(), Some(1), false, None);
+            s.core.session.set(songs.iter().map(nori_core::Keyed::key).collect(), Some(1), false, None);
             s.engine.queue_changed();
             s.engine.go_to(1, 0);
             time.clock.settle();
             let before = s.engine.status().state;
 
-            s.carry_on(song, 2_500, playing);
+            s.carry_on(&ItemKey::own(song), 2_500, playing);
             let (want, from) = match (song, playing) {
                 ("b", true) => (State::Playing, 2_500),
                 ("b", false) => (before, 2_500),

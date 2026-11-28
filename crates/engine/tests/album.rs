@@ -2,6 +2,7 @@
 //! gapless however its plans came about; other joins (another album, shuffle) still mix. Runs over the
 //! test's own core.
 
+use nori_core::ItemKey;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
@@ -126,7 +127,7 @@ impl Rig {
             if measured == Measured::Before {
                 let mut a = nori_player::automix::analysis::Analyzer::new(RATE as u32, SECS as u64 * 1000);
                 a.feed_interleaved(pcm, 2, |v: i16| v as f32 / 32768.0);
-                assert!(core.analysis_finish(s.0, a).unwrap().is_some(), "{} is measured", s.0);
+                assert!(core.analysis_finish(&ItemKey::own(s.0), a).unwrap().is_some(), "{} is measured", s.0);
             }
         }
         core.session.register(listed.clone());
@@ -183,7 +184,7 @@ impl Rig {
         let ended = self.until(SECS as u64 * (self.songs.len() as u64 + 2), |r| {
             let s = r.engine.status();
             mixed |= s.mixing;
-            if let Some(id) = s.id.filter(|id| order.last() != Some(id)) {
+            if let Some(id) = s.id.map(|k| k.id).filter(|id| order.last() != Some(id)) {
                 order.push(id);
             }
             s.state == State::Ended
@@ -242,7 +243,7 @@ impl Rig {
                             ms(sf),
                             ms(len),
                             ms(hf),
-                            self.core.session.planner.transition_note(id)
+                            self.core.session.planner.transition_note(&ItemKey::own(id))
                         )
                     };
                     let (back, expect) = (hf + DIP_MAX, sf + DIP_MAX);
@@ -308,7 +309,7 @@ enum Queued {
 /// Queues `songs` (shuffled if `shuffle`) as `how` says.
 fn queue(q: &nori_core::queue::Session, songs: &[S], shuffle: bool, how: Queued) {
     use nori_core::playlist::Hand;
-    let ids = |s: &[S]| s.iter().map(|s| s.0.to_string()).collect::<Vec<_>>();
+    let ids = |s: &[S]| s.iter().map(|s| ItemKey::own(s.0)).collect::<Vec<_>>();
     let album = |s: &S| Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, s.1));
     let len = || q.playlist(|p| p.len()) as u32;
     match how {
@@ -376,7 +377,7 @@ fn gapless_measured_while_playing() {
     rig.engine.play_at(0, 0);
     let (mixed, order) = rig.to_the_end();
     for (s, _) in &rig.songs {
-        assert!(rig.core.analysis_get(s.0.into()).unwrap().is_some(), "{} was measured", s.0);
+        assert!(rig.core.analysis_get(ItemKey::own(s.0)).unwrap().is_some(), "{} was measured", s.0);
     }
     rig.heard_as(&order, 0, 0, &[true, true], 0);
     assert!(!mixed, "nothing mixed");
@@ -411,7 +412,7 @@ fn keep_albums_switched_on_at(at_ms: i64) {
     // a1 is planned as a mix, then albums are kept gapless.
     assert!(rig.until(40, |r| r.engine.status().position_ms >= at_ms), "{:?}", rig.engine.status());
     assert!(!rig.engine.status().mixing, "switched at {} ms, before the mix is heard", rig.engine.status().position_ms);
-    assert!(rig.core.session.planner.transition_note("a1").is_some_and(|n| n.kind != nori_player::types::TransitionKind::Gapless), "a1 is planned as a mix first: {:?}", rig.core.session.planner.transition_note("a1"));
+    assert!(rig.core.session.planner.transition_note(&ItemKey::own("a1")).is_some_and(|n| n.kind != nori_player::types::TransitionKind::Gapless), "a1 is planned as a mix first: {:?}", rig.core.session.planner.transition_note(&ItemKey::own("a1")));
     rig.set("crossfadeKeepAlbums", "true");
     let (mixed, order) = rig.to_the_end();
     rig.heard_as(&order, 0, 0, &[true, true], 1);
@@ -439,7 +440,7 @@ fn gapless_however_queued() {
         let (mixed, order) = rig.to_the_end();
         assert!(mixed, "the albums are mixed into each other");
         for (id, kept) in [("m1", true), ("m2", false), ("n1", true)] {
-            let gapless = rig.core.session.planner.transition_note(id).is_some_and(|n| n.kind == nori_player::types::TransitionKind::Gapless);
+            let gapless = rig.core.session.planner.transition_note(&ItemKey::own(id)).is_some_and(|n| n.kind == nori_player::types::TransitionKind::Gapless);
             assert_eq!(gapless, kept, "{id} gapless into the next");
         }
         rig.heard_as(&order, 0, 0, &[true, false, true], 0);
@@ -454,7 +455,7 @@ fn album_apart_mixes() {
     let (mixed, order) = rig.to_the_end();
     assert!(mixed, "a shuffled album is mixed");
     for id in &order[..order.len() - 1] {
-        let note = rig.core.session.planner.transition_note(id);
+        let note = rig.core.session.planner.transition_note(&ItemKey::own(id));
         assert!(note.as_ref().is_some_and(|n| n.kind != nori_player::types::TransitionKind::Gapless), "{id} mixes into the next: {note:?}");
     }
 }

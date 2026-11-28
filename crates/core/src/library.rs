@@ -28,43 +28,9 @@ impl Client {
         self.read_each(read, |p| shown.show(p)).await
     }
 
-    /// Stars or unstars: the mark is shown at once via `marked`, then the write is sent (queued offline),
-    /// or, where the account can't keep favorites or has nowhere for one of this kind, the item is kept
-    /// on this device (favorites.rs). An item kept here from before is unstarred here, and on the account
-    /// only when it lists it. A refusal restores the previous mark and returns the error.
+    /// [`Client::star_marked`] of an item of this client's own source, its marks handed to `marked`.
     pub async fn star(&self, kind: Starrable, id: String, on: bool, marked: Arc<dyn StarsShown>) -> NetResult<()> {
-        let m = self.core.stars.lock().mark(kind, id.clone(), on);
-        marked.marks(m.marks);
-        let provider = self.core.provider();
-        let nowhere = || provider.favorites_here() && !provider.keeps_favorites(kind);
-        let sent = if self.core.rules().stars_here || nowhere() {
-            self.star_here(kind, &id, on).await
-        } else if !on && self.core.here.lock().has(kind, &id) {
-            let listed = self.core.listed.lock().has(kind, &id);
-            match self.star_here(kind, &id, false).await {
-                Ok(()) if listed => self.write(Write::Star { kind, id: id.clone(), on }).await,
-                done => done,
-            }
-        } else {
-            match self.write(Write::Star { kind, id: id.clone(), on }).await {
-                // The account said only now that it has nowhere for one of this kind.
-                Err(_) if nowhere() => self.star_here(kind, &id, on).await,
-                sent => sent,
-            }
-        };
-        if sent.is_err() {
-            let restored = self.core.stars.lock().restore(kind, id.clone(), on, m.previous);
-            marked.marks(restored);
-        }
-        #[cfg(feature = "plugins")]
-        if let (Ok(()), Some(p)) = (&sent, self.core.kinds.read().plugins()) {
-            p.favorite_changed(id.clone(), on);
-        }
-        let remote = self.core.remote.lock().upgrade();
-        if let Some(remote) = remote {
-            remote.sync_mark(kind, id);
-        }
-        sent
+        self.star_marked(kind, id, on, || marked.marks(self.core.star_marks())).await
     }
 
     /// Hands the cached starred songs (with session marks) to the mixes; the cached half of the read.
@@ -106,10 +72,88 @@ impl Client {
         })
     }
 
-    /// The playlists the signed-in account may add `song_ids` to, each with the ones it lacks
-    /// ([`crate::menus::playlist_choices`]). Each page is the stored one while fresh, else asked, the
-    /// playlists' together.
-    pub async fn playlist_choices(&self, song_ids: Vec<String>) -> NetResult<Vec<crate::menus::PlaylistChoice>> {
+    /// The playlists `songs` may be added to, each with the ones it lacks ([`crate::menus::playlist_choices`]):
+    /// in a profile of several sources nori's own first, then the playlists of each source the account
+    /// may change, those that take the songs first ([`crate::menus::playlist_refusal`]). Each page is
+    /// the stored one while fresh, else asked, the playlists' together.
+    pub async fn playlist_choices(self: Arc<Self>, songs: Vec<Song>) -> NetResult<Vec<crate::menus::PlaylistChoice>> {
+        let mut held = Vec::new();
+        if !self.core.others().is_empty() {
+            let mine = self.core.mixed_playlists()?;
+            held.extend(mine.into_iter().map(|p| {
+                let songs = self.core.mixed_playlist(p.id.clone()).ok().flatten().map(|d| d.songs);
+                (p, songs)
+            }));
+        }
+        let sources = std::iter::once((None, self.clone())).chain(self.core.others().into_iter().map(|(id, c)| (Some(id), c)));
+        let mut refused = Vec::new();
+        for (source, c) in sources {
+            let takes = songs.iter().all(|s| s.source == source);
+            // Those that can't take the songs show only to say so: one that can't be read is left out.
+            let listed = match c.own_playlists_held(takes).await {
+                Err(_) if !takes => Vec::new(),
+                listed => listed?,
+            };
+            let theirs = listed.into_iter().map(|(mut p, held)| {
+                if let Some(source) = &source {
+                    crate::Keyed::of_source(&mut p, source);
+                }
+                (p, held.map(|v| crate::sources::songs_of_source(v, &source)))
+            });
+            if takes { held.extend(theirs) } else { refused.extend(theirs) }
+        }
+        held.extend(refused);
+        // A playlist beside a look-alike of another source shows its source's mark, as in every list.
+        let playlists = crate::merged::marked(held.iter().map(|(p, _)| p.clone()).collect());
+        let held = held.into_iter().zip(playlists).map(|((_, songs), p)| (p, songs)).collect();
+        Ok(crate::menus::playlist_choices(held, &songs))
+    }
+}
+
+impl Client {
+    /// Stars or unstars an item of this client's source: the mark is shown at once (`marked` is called
+    /// once the marks moved), then the write is sent (queued offline), or, where the account can't keep
+    /// favorites or has nowhere for one of this kind, the item is kept on this device (favorites.rs). An
+    /// item kept here from before is unstarred here, and on the account only when it lists it. A refusal
+    /// restores the previous mark and returns the error.
+    pub(crate) async fn star_marked(&self, kind: Starrable, id: String, on: bool, marked: impl Fn()) -> NetResult<()> {
+        let previous = self.core.stars.lock().insert(kind, id.clone(), on);
+        marked();
+        let provider = self.core.provider();
+        let nowhere = || provider.favorites_here() && !provider.keeps_favorites(kind);
+        let sent = if self.core.rules().stars_here || nowhere() {
+            self.star_here(kind, &id, on).await
+        } else if !on && self.core.here.lock().has(kind, &id) {
+            let listed = self.core.listed.lock().has(kind, &id);
+            match self.star_here(kind, &id, false).await {
+                Ok(()) if listed => self.write(Write::Star { kind, id: id.clone(), on }).await,
+                done => done,
+            }
+        } else {
+            match self.write(Write::Star { kind, id: id.clone(), on }).await {
+                // The account said only now that it has nowhere for one of this kind.
+                Err(_) if nowhere() => self.star_here(kind, &id, on).await,
+                sent => sent,
+            }
+        };
+        if sent.is_err() {
+            self.core.stars.lock().restore(kind, id.clone(), on, previous);
+            marked();
+        }
+        #[cfg(feature = "plugins")]
+        if let (Ok(()), Some(p)) = (&sent, self.core.kinds.read().plugins()) {
+            p.favorite_changed(id.clone(), on);
+        }
+        let remote = self.core.remote.lock().upgrade();
+        if let Some(remote) = remote {
+            remote.sync_mark(kind, id);
+        }
+        sent
+    }
+
+    /// The playlists of this client's own source that the signed-in account may change, each with its
+    /// songs when `read` (None: not read, or they could not be).
+    async fn own_playlists_held(&self, read: bool) -> NetResult<Vec<(crate::Playlist, Option<Vec<Song>>)>> {
         let playlists = self.core.rules().playlists;
         if !playlists {
             return Ok(Vec::new());
@@ -118,13 +162,20 @@ impl Client {
         let user = self.core.account.read().as_ref().map(|a| a.user.clone()).unwrap_or_default();
         let Some(Page::Playlists { v }) = self.cached_or_fetched(Read::PlaylistList).await? else { return Ok(Vec::new()) };
         let mine: Vec<_> = v.into_iter().filter(|p| crate::menus::playlist_editable(p, &user, playlists)).collect();
+        if !read {
+            return Ok(mine.into_iter().map(|p| (p, None)).collect());
+        }
         let pages = futures_util::future::join_all(mine.iter().map(|p| self.cached_or_fetched(Read::PlaylistById { id: p.id.clone() }))).await;
         let held = pages.into_iter().map(|page| match page {
-            Ok(Some(Page::PlaylistPage { v })) => Some(v.songs.into_iter().map(|s| s.id).collect()),
+            Ok(Some(Page::PlaylistPage { v })) => Some(v.songs),
             _ => None,
         });
-        Ok(crate::menus::playlist_choices(mine.into_iter().zip(held).collect(), &song_ids))
+        Ok(mine.into_iter().zip(held).collect())
     }
+}
+
+#[cfg_attr(feature = "ffi", uniffi::export)]
+impl Client {
 
     /// What playing playlist `id` plays, asked of the server now.
     pub async fn playlist_songs_of(&self, id: String) -> NetResult<Vec<Song>> {
@@ -162,7 +213,7 @@ impl Client {
     /// while it controls one), else the queue's, or the one saved for the next start when the player has
     /// not taken that up yet. Never asked with the offer switched off, nor for a profile without an
     /// account's things (a jam guest's, whose Home is the host's).
-    pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> NetResult<Option<QueueOffer>> {
+    pub async fn queue_offer(&self, playing: bool, shown: Option<crate::ItemKey>) -> NetResult<Option<QueueOffer>> {
         if !self.offers(playing) {
             return Ok(None);
         }
@@ -175,7 +226,7 @@ impl Client {
     }
 
     /// [`Client::queue_offer`] as the server last answered, without asking it: at once.
-    pub fn queue_offer_kept(&self, playing: bool, shown: Option<String>) -> NetResult<Option<QueueOffer>> {
+    pub fn queue_offer_kept(&self, playing: bool, shown: Option<crate::ItemKey>) -> NetResult<Option<QueueOffer>> {
         if !self.offers(playing) {
             return Ok(None);
         }
@@ -246,6 +297,10 @@ impl Client {
 
     /// [`Client::read_cached`] with a closure.
     pub async fn read_each(&self, read: Read, mut each: impl FnMut(Page)) -> NetResult<()> {
+        let others = self.others_for(&read);
+        if !others.is_empty() {
+            return self.read_each_merged(read, others, each).await;
+        }
         let stored = self.read_stored(read.clone())?;
         let digest = stored.digest;
         let shown = stored.page.is_some();
@@ -329,13 +384,13 @@ impl Client {
 
     /// The offer the server's queue `page` makes against the song shown here (else the queue's, else the one
     /// saved for the next start).
-    fn offer_of(&self, page: Option<Page>, playing: bool, shown: Option<String>) -> Option<QueueOffer> {
+    fn offer_of(&self, page: Option<Page>, playing: bool, shown: Option<crate::ItemKey>) -> Option<QueueOffer> {
         let Some(Page::Queue { v, by }) = page else { return None };
         let here = shown.or_else(|| self.core.session.snapshot().0).or_else(|| {
             let saved = self.core.load_queue().ok()?;
-            saved.songs.get(saved.index as usize).map(|s| s.id.clone())
+            saved.songs.get(saved.index as usize).map(crate::Keyed::key)
         });
-        queue_offer(v, &by, here.as_deref(), playing, self.queue_place(QUEUE_PUSHED).as_ref(), self.queue_place(QUEUE_SEEN).as_ref())
+        queue_offer(v, &by, here.as_ref(), playing, self.queue_place(QUEUE_PUSHED).as_ref(), self.queue_place(QUEUE_SEEN).as_ref())
     }
 
     fn queue_place(&self, key: &str) -> Option<QueuePlace> {
@@ -353,6 +408,7 @@ impl Client {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::ItemKey;
     use crate::client::tests::{block, client};
     use crate::client::NetProfile;
 
@@ -369,7 +425,7 @@ pub(crate) mod tests {
 
     impl StarsShown for Marks {
         fn marks(&self, m: crate::stars::StarMarks) {
-            self.0.lock().push((m.songs.get("lib-refused").copied(), self.1.stars.try_lock().is_some()));
+            self.0.lock().push((m.songs.get(&ItemKey::own("lib-refused")).copied(), self.1.stars.try_lock().is_some()));
         }
     }
 
@@ -393,20 +449,20 @@ pub(crate) mod tests {
         assert_eq!(block(c.queue_offer(false, None)).unwrap(), None, "its song was offered, played on since");
 
         // What this device handed the server comes back as its own.
-        c.core.session.set(vec!["a".into(), "b".into()], Some(1), false, None);
+        c.core.session.set(vec![ItemKey::own("a"), ItemKey::own("b")], Some(1), false, None);
         fake.answer(r#"{"subsonic-response":{"status":"ok"}}"#);
-        block(c.playlist_push(Some("a".into()), 3000)).unwrap();
+        block(c.playlist_push(Some(ItemKey::own("a")), 3000)).unwrap();
         saved("nori", "a", 3000);
         assert_eq!(block(c.queue_offer(false, None)).unwrap(), None, "pushed from here");
         saved("nori", "a", 9000);
         assert_eq!(block(c.queue_offer(false, None)).unwrap().map(|o| o.by), Some(QueueBy::Nori), "moved on elsewhere");
-        c.core.session.set(vec!["a".into(), "b".into()], Some(0), false, None);
+        c.core.session.set(vec![ItemKey::own("a"), ItemKey::own("b")], Some(0), false, None);
         saved("nori", "a", 9000);
         assert_eq!(block(c.queue_offer(false, None)).unwrap(), None, "its song is the one here");
         // The player shows another device it controls, paused on the saved queue's song: that song is here too.
-        c.core.session.set(vec!["a".into(), "b".into()], Some(1), false, None);
+        c.core.session.set(vec![ItemKey::own("a"), ItemKey::own("b")], Some(1), false, None);
         saved("nori", "a", 9000);
-        assert_eq!(block(c.queue_offer(false, Some("a".into()))).unwrap(), None, "the device shown here holds its song");
+        assert_eq!(block(c.queue_offer(false, Some(ItemKey::own("a")))).unwrap(), None, "the device shown here holds its song");
 
         // Before the player has taken up the queue saved for this start, that queue is what is here.
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
@@ -443,7 +499,7 @@ pub(crate) mod tests {
         fake.answer(r#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"no"}}}"#);
         assert!(block(c.star(Starrable::Song, "lib-refused".into(), false, seen.clone())).is_err());
         assert_eq!(*seen.0.lock(), [(Some(true), true), (Some(false), true), (Some(true), true)]);
-        assert_eq!(c.core.stars.lock().songs.get("lib-refused"), Some(&true));
+        assert_eq!(c.core.stars.lock().get(Starrable::Song, "lib-refused"), Some(true));
     }
 
     #[test]
@@ -457,8 +513,8 @@ pub(crate) mod tests {
             let entry: Vec<String> = ids.iter().map(|s| format!(r#"{{"id":"{s}","title":"{s}","isDir":false}}"#)).collect();
             format!(r#"{{"subsonic-response":{{"status":"ok","playlist":{{"id":"{id}","name":"p","entry":[{}]}}}}}}"#, entry.join(","))
         };
-        let seen = |c: &Client| -> Vec<(String, Vec<String>, u32)> {
-            block(c.playlist_choices(vec!["s1".into(), "s2".into()])).unwrap().into_iter().map(|p| (p.playlist.name, p.adds, p.holds)).collect()
+        let seen = |c: &Arc<Client>| -> Vec<(String, Vec<String>, u32)> {
+            block(c.clone().playlist_choices(vec![Song::only_id("s1".into()), Song::only_id("s2".into())])).unwrap().into_iter().map(|p| (p.playlist.name, p.adds.into_iter().map(|s| s.id).collect(), p.holds)).collect()
         };
         fake.answer(&list(&format!("{road},{theirs}")));
         fake.answer(&songs("1", &["s1"]));

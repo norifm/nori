@@ -8,6 +8,7 @@ use std::sync::Arc;
 use futures_util::future::{AbortHandle, Abortable};
 use nori_core::lyrics_follow::{LyricsEnd, LyricsHeard, LyricsNow};
 use nori_core::race::{LyricsPick, LyricsShown};
+use nori_core::ItemKey;
 
 use crate::session::{Handle, Out, Said};
 
@@ -17,12 +18,12 @@ pub(crate) struct Lyrics {
     heard: Arc<LyricsHeard>,
     viewed: AtomicBool,
     /// The lookup running, for its song: it follows changes from other devices until let go.
-    lookup: parking_lot::Mutex<Option<(String, AbortHandle)>>,
+    lookup: parking_lot::Mutex<Option<(ItemKey, AbortHandle)>>,
 }
 
 /// A lookup's answers, handed to what is shown.
 struct Answers {
-    song: String,
+    song: ItemKey,
     heard: Arc<LyricsHeard>,
     out: Out,
 }
@@ -38,7 +39,7 @@ impl LyricsShown for Answers {
 impl Handle {
     /// `song` is the one the player shows: what its lyrics view shows now. Later changes come as
     /// [`Said::Lyrics`].
-    pub fn lyrics_heard(&self, song: Option<String>) -> LyricsNow {
+    pub fn lyrics_heard(&self, song: Option<ItemKey>) -> LyricsNow {
         if self.lyrics.lookup.lock().as_ref().is_some_and(|(of, _)| song.as_ref() != Some(of)) {
             self.lyrics_stop();
         }
@@ -99,7 +100,7 @@ impl Handle {
         }
     }
 
-    fn lyrics_look_up(&self, song: String) {
+    fn lyrics_look_up(&self, song: ItemKey) {
         let (client, heard, out) = (self.client.clone(), self.lyrics.heard.clone(), self.out.clone());
         let (stop, stopped) = AbortHandle::new_pair();
         if let Some((_, before)) = self.lyrics.lookup.lock().replace((song.clone(), stop)) {
@@ -127,6 +128,7 @@ mod tests {
     use nori_core::settings::SavedServer;
 
     use super::*;
+    use nori_core::ItemKey;
     use crate::session::{test_open, Open, Session};
 
     #[test]
@@ -142,10 +144,10 @@ mod tests {
         });
         let card = Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0));
         let s = Session::open(Open { offline: true, out, ..test_open(queue, dir.path(), profile, card) }).unwrap();
-        assert_eq!(s.lyrics_heard(Some("a".into())), LyricsNow::Looking { song: "a".into() });
+        assert_eq!(s.lyrics_heard(Some(ItemKey::own("a"))), LyricsNow::Looking { song: ItemKey::own("a") });
         s.lyrics_view(true);
         let now = rx.recv_timeout(Duration::from_secs(10)).expect("the lookup ends");
-        assert_eq!(now.song(), Some("a"));
+        assert_eq!(now.song(), Some(&ItemKey::own("a")));
         assert!(!matches!(now, LyricsNow::Looking { .. }), "{now:?}");
         s.close();
     }

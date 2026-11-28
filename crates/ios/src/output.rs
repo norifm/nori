@@ -853,6 +853,7 @@ pub(crate) mod sim {
 mod tests {
     use super::sim::Sim;
     use super::*;
+    use nori_core::ItemKey;
     use std::sync::atomic::AtomicU64;
     use std::time::Duration;
 
@@ -1052,7 +1053,8 @@ mod tests {
     struct Songs(Arc<Wavs>);
 
     impl nori_engine::Library for Songs {
-        fn locate(&mut self, id: &str) -> Result<nori_engine::Located, String> {
+        fn locate(&mut self, id_key: &ItemKey) -> Result<nori_engine::Located, String> {
+            let id = id_key.id.as_str();
             Ok(nori_engine::Located {
                 source: nori_engine::Source::Url { url: id.to_string(), bytes: self.0.clone() },
                 hint: Some("wav".into()),
@@ -1062,8 +1064,9 @@ mod tests {
             })
         }
 
-        fn about(&self, id: &str) -> nori_player::transitions::WindowSong {
-            nori_player::transitions::WindowSong { id: id.to_string(), duration_ms: 60_000, ..Default::default() }
+        fn about(&self, id_key: &ItemKey) -> nori_player::transitions::WindowSong {
+            let id = id_key.id.as_str();
+            nori_player::transitions::WindowSong { id: ItemKey::own(id), duration_ms: 60_000, ..Default::default() }
         }
     }
 
@@ -1103,7 +1106,7 @@ mod tests {
         out.device = true;
         let wavs = Arc::new(Wavs(vec![("a".into(), Arc::new(sim::wav(60)))]));
         let queue = nori_engine::SharedQueue::default();
-        queue.0.lock().set(vec!["a".into()], Some(0), false, 0);
+        queue.0.lock().set(vec![ItemKey::own("a")], Some(0), false, 0);
         let mut app = nori_player::sim::App::new();
         app.prefs = nori_player::sim::prefs_off();
         let engine = nori_engine::Engine::start_on(Songs(wavs), app, queue, Box::new(out), None, nori_engine::Config::default(), clock.clone(), |_| {});
@@ -1129,7 +1132,7 @@ mod tests {
         let render = out.render.clone();
         let wavs = Arc::new(Wavs(vec![("a".into(), Arc::new(sim::wav(60)))]));
         let queue = nori_engine::SharedQueue::default();
-        queue.0.lock().set(vec!["a".into()], Some(0), false, 0);
+        queue.0.lock().set(vec![ItemKey::own("a")], Some(0), false, 0);
         let mut app = nori_player::sim::App::new();
         app.prefs = nori_player::sim::prefs_off();
         let engine = nori_engine::Engine::start_on(Songs(wavs), app, queue, Box::new(out), None, nori_engine::Config::default(), clock.clone(), |_| {});

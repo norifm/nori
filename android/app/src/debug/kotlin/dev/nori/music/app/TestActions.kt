@@ -1,5 +1,6 @@
 package dev.nori.music.app
 
+import dev.nori.music.data.key
 import android.content.Context
 import androidx.lifecycle.viewModelScope
 import dev.nori.music.Nori
@@ -90,7 +91,7 @@ object TestActions {
     fun playByRef(context: Context, actions: ActionsViewModel, ref: String) = actions.attempt(null) {
         val nori = Nori.get(context)
         if (ref == "home") {
-            val shelf = nori.library.homeFeed().first().firstOrNull { it.songs.isNotEmpty() } ?: return@attempt
+            val shelf = (nori.library.homeFeedRefreshed() ?: nori.library.homeFeedKept()).orEmpty().firstOrNull { it.songs.isNotEmpty() } ?: return@attempt
             dev.nori.music.NoriLog.i("test home: ${shelf.title}, ${shelf.songs.size} songs")
             nori.player.play(shelf.songs, 0)
             return@attempt
@@ -202,10 +203,10 @@ object TestActions {
             }
             "download" -> actions.download(songs)
             // "undownload <ref>": the song menu's "Remove download(s)", so a check can download the same album again.
-            "undownload" -> actions.removeDownloads(songs.map { it.id })
+            "undownload" -> actions.removeDownloads(songs.map { it.key })
             // Everything not yet downloaded is dropped; finished downloads stay.
             "canceldownloads" -> actions.cancelAllDownloads()
-            "star" -> songs.firstOrNull()?.let { actions.star(it, !nori.library.isStarred(dev.nori.music.data.StarKind.SONG, it.id, it.starred)) }
+            "star" -> songs.firstOrNull()?.let { actions.star(it, !nori.library.isStarred(dev.nori.music.data.StarKind.SONG, it.key, it.starred)) }
             // "notification favourite" / "notification shuffle" / "notification plugin": the session command the
             // notification's button sends, the seal's as it shows now (filled: unfavourite), a plugin's first.
             "notification" -> nori.player.pressSessionButton(
@@ -230,7 +231,7 @@ object TestActions {
                 val name = ref.substringBefore('|')
                 val pick = ref.substringAfter('|', "")
                 val tracks = (testRef(pick) as? TestRef.Search)?.let { songsOf(nori, it) }.orEmpty()
-                nori.library.createPlaylist(name, tracks.map { it.id })
+                nori.library.createPlaylist(name, tracks)
             }
         }
     }

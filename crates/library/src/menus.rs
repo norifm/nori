@@ -2,7 +2,7 @@
 //! download entry offer; the client draws and words each action.
 
 use nori_model::model::ArtistRef;
-use nori_model::{is_provider_id, DownloadPhase, OriginKind, PageOrigin, Playlist, Song};
+use nori_model::{is_provider_id, DownloadPhase, Keyed, OriginKind, PageOrigin, Playlist, Song};
 use nori_settings::settings::SwipeAction;
 
 /// Something the song menu can do.
@@ -477,28 +477,45 @@ pub fn queue_actions(songs: u32, upcoming: u32, playlists: bool, guest: bool) ->
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct PlaylistChoice {
     pub playlist: Playlist,
-    /// The songs it lacks, in the order asked: what adding to it sends. Empty when it has them all.
-    pub adds: Vec<String>,
+    /// The songs it lacks, in the order asked: what adding to it adds. Empty when it has them all.
+    pub adds: Vec<Song>,
     /// How many of the songs it has already.
     pub holds: u32,
+    /// Why it takes none of them ([`playlist_refusal`]); None when it takes them.
+    pub refused: Option<PlaylistRefusal>,
 }
 
-/// Each playlist with what adding `songs` to it sends: the ones it lacks, each once. `held` is a
-/// playlist's song ids, None when they could not be read: it is offered taking every song then.
-pub fn playlist_choices(playlists: Vec<(Playlist, Option<Vec<String>>)>, songs: &[String]) -> Vec<PlaylistChoice> {
-    let mut asked: Vec<&str> = Vec::with_capacity(songs.len());
-    for id in songs {
-        if !asked.contains(&id.as_str()) {
-            asked.push(id);
+/// Why a playlist does not take some songs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum PlaylistRefusal {
+    /// It is the playlist of one source (None: the profile's own) and takes only that source's songs.
+    OtherSource { source: Option<String> },
+}
+
+/// Why `playlist` does not take `songs`: nori's own takes songs of any source, a source's only its own.
+pub fn playlist_refusal(playlist: &Playlist, songs: &[Song]) -> Option<PlaylistRefusal> {
+    (!playlist.mixed && songs.iter().any(|s| s.source != playlist.source)).then(|| PlaylistRefusal::OtherSource { source: playlist.source.clone() })
+}
+
+/// Each playlist with what adding `songs` to it adds: the ones it lacks, each once, a song told apart
+/// by its source and id. `held` is a playlist's songs, None when they could not be read: it is offered
+/// taking every song then.
+pub fn playlist_choices(playlists: Vec<(Playlist, Option<Vec<Song>>)>, songs: &[Song]) -> Vec<PlaylistChoice> {
+    let mut asked: Vec<&Song> = Vec::with_capacity(songs.len());
+    for s in songs {
+        if !asked.iter().any(|a| a.key() == s.key()) {
+            asked.push(s);
         }
     }
     playlists
         .into_iter()
         .map(|(playlist, held)| {
-            let has = |id: &str| held.as_ref().is_some_and(|h| h.iter().any(|x| x == id));
-            let adds: Vec<String> = asked.iter().filter(|id| !has(id)).map(|id| id.to_string()).collect();
+            let has = |s: &Song| held.as_ref().is_some_and(|h| h.iter().any(|x| x.key() == s.key()));
+            let adds: Vec<Song> = asked.iter().filter(|s| !has(s)).map(|s| (*s).clone()).collect();
             let holds = (asked.len() - adds.len()) as u32;
-            PlaylistChoice { playlist, adds, holds }
+            let refused = playlist_refusal(&playlist, songs);
+            PlaylistChoice { playlist, adds, holds, refused }
         })
         .collect()
 }
@@ -613,14 +630,32 @@ mod tests {
     #[test]
     fn a_playlist_choice_adds_only_the_songs_it_lacks() {
         let list = |id: &str| Playlist { id: id.into(), ..Playlist::default() };
-        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let asked = ids(&["a", "b", "a", "c"]);
+        let songs = |v: &[&str]| v.iter().map(|s| Song::only_id(s.to_string())).collect::<Vec<_>>();
+        let ids = |v: &[Song]| v.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+        let asked = songs(&["a", "b", "a", "c"]);
         let got = playlist_choices(
-            vec![(list("has-none"), Some(ids(&["x"]))), (list("has-some"), Some(ids(&["c", "a"]))), (list("has-all"), Some(ids(&["c", "b", "a"]))), (list("unread"), None)],
+            vec![(list("has-none"), Some(songs(&["x"]))), (list("has-some"), Some(songs(&["c", "a"]))), (list("has-all"), Some(songs(&["c", "b", "a"]))), (list("unread"), None)],
             &asked,
         );
-        let seen: Vec<(&str, Vec<String>, u32)> = got.iter().map(|c| (c.playlist.id.as_str(), c.adds.clone(), c.holds)).collect();
-        assert_eq!(seen, [("has-none", ids(&["a", "b", "c"]), 0), ("has-some", ids(&["b"]), 2), ("has-all", vec![], 3), ("unread", ids(&["a", "b", "c"]), 0)]);
+        let seen: Vec<(&str, Vec<String>, u32)> = got.iter().map(|c| (c.playlist.id.as_str(), ids(&c.adds), c.holds)).collect();
+        let want = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(seen, [("has-none", want(&["a", "b", "c"]), 0), ("has-some", want(&["b"]), 2), ("has-all", vec![], 3), ("unread", want(&["a", "b", "c"]), 0)]);
+    }
+
+    /// A source's playlist takes only its own source's songs, telling one song from another source's of
+    /// the same id; nori's own takes songs of any source.
+    #[test]
+    fn a_sources_playlist_takes_only_its_songs() {
+        let song = |id: &str, source: Option<&str>| Song { id: id.into(), source: source.map(String::from), ..Song::default() };
+        let theirs = Playlist { id: "p".into(), source: Some("yt".into()), ..Playlist::default() };
+        let mixed = Playlist { id: "m".into(), mixed: true, ..Playlist::default() };
+        let asked = [song("1", None), song("1", Some("yt"))];
+        let got = playlist_choices(vec![(theirs.clone(), Some(vec![song("1", Some("yt"))])), (mixed, Some(vec![song("1", Some("yt"))]))], &asked);
+        let seen: Vec<(Vec<Option<String>>, u32, Option<PlaylistRefusal>)> = got.into_iter().map(|c| (c.adds.into_iter().map(|s| s.source).collect(), c.holds, c.refused)).collect();
+        let refused = Some(PlaylistRefusal::OtherSource { source: Some("yt".into()) });
+        assert_eq!(seen, [(vec![None], 1, refused.clone()), (vec![None], 1, None)], "the same id of two sources is two songs");
+        assert_eq!(playlist_refusal(&theirs, &asked[1..]), None);
+        assert_eq!(playlist_refusal(&Playlist::default(), &asked[1..]), Some(PlaylistRefusal::OtherSource { source: None }), "the profile's own takes only its own");
     }
 
     #[test]

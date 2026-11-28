@@ -1,6 +1,7 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.ui.layout.boundsInWindow
+import dev.nori.music.settings.label
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onPlaced
 import dev.nori.music.app.R
@@ -78,7 +79,9 @@ import androidx.compose.ui.unit.sp
 import dev.nori.music.app.vm.ActionsViewModel
 import dev.nori.music.app.vm.Load
 import dev.nori.music.ffi.model.Album
+import dev.nori.music.ffi.model.ItemKey
 import dev.nori.music.ffi.model.Song
+import dev.nori.music.data.key
 import dev.nori.music.look.CoverLook
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
@@ -120,7 +123,17 @@ object CoverSize {
  * whatever is behind it (a mix tile's colour), and a missing one simply leaves that showing.
  */
 @Composable
-fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Radius.cover, plate: Boolean = true, standIns: List<String?> = emptyList()) {
+fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Radius.cover, plate: Boolean = true, standIns: List<String?> = emptyList(), mark: Marked? = null) {
+    val profile = mark?.let { LocalSources.current[it.source] } ?: return CoverPicture(url, size, modifier, radius, plate, standIns)
+    // Over the picture, which draws over the cover's own content; inside the cover's corner.
+    Box((if (size > 0.dp) modifier.size(size) else modifier).clip(androidx.compose.foundation.shape.RoundedCornerShape(radius))) {
+        CoverPicture(url, size, if (size > 0.dp) Modifier else Modifier.matchParentSize(), radius, plate, standIns)
+        SourceCorner(profile, radius, round = size > 0.dp && radius * 2 >= size)
+    }
+}
+
+@Composable
+private fun CoverPicture(url: String?, size: Dp, modifier: Modifier, radius: Dp, plate: Boolean, standIns: List<String?>) {
     val px = with(LocalDensity.current) { size.roundToPx() }
     val cover = rememberCover(url, px, px, standIns)
     // Sized by its layout: asked for from layout, where the size is known, rather than through a state
@@ -177,6 +190,40 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Ra
             ) { look.color(CoverLook.ON_22) }
         }
     }
+}
+
+/**
+ * What tells an item apart in a list, as the core's `ItemKey` does: the profile's source it comes from and
+ * its id, for two sources may use one id. The profile's own keep their id alone.
+ */
+private fun rowKey(source: String?, id: String): String = if (source == null) id else "$source\u001f$id"
+val dev.nori.music.ffi.model.Song.rowKey: String get() = rowKey(source, id)
+val dev.nori.music.ffi.model.Album.rowKey: String get() = rowKey(source, id)
+val dev.nori.music.ffi.model.Artist.rowKey: String get() = rowKey(source, id)
+val dev.nori.music.ffi.model.Playlist.rowKey: String get() = if (mixed) "mixed\u001f$id" else rowKey(source, id)
+
+/** An item the core marks beside a look-alike of another source (`source_marked`): the source it comes from (null: the profile's own). */
+@androidx.compose.runtime.Immutable
+data class Marked(val source: String?)
+
+/** [marked] and [source] as a cover's [Marked]: null for an item that shows no mark. */
+fun marked(marked: Boolean, source: String?): Marked? = if (marked) Marked(source) else null
+
+/**
+ * A source's mark in a cover's bottom corner: its profile's circle on a plate of the page's paper, centred on
+ * the corner's arc so its edge follows the corner (outer radius = the cover's); on a round cover, inside its
+ * edge. Never the accent.
+ */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.SourceCorner(profile: dev.nori.music.ffi.settings.SavedServer, radius: Dp, round: Boolean) {
+    val plate = if (round) 22.dp else maxOf(radius * 2, 20.dp)
+    val inset = if (round) 0.dp else maxOf(radius - plate / 2, 0.dp)
+    Box(
+        Modifier.align(Alignment.BottomEnd)
+            .then(if (round) Modifier.padding(end = 4.dp, bottom = 4.dp) else Modifier.padding(end = inset, bottom = inset))
+            .size(plate).background(MaterialTheme.colorScheme.background, androidx.compose.foundation.shape.CircleShape),
+        Alignment.Center,
+    ) { ProfileMark(profile, profile.label, plate - 4.dp) }
 }
 
 /**
@@ -453,7 +500,7 @@ fun SongRow(
                     if (number > 0) "$number" else "", textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant,
                 )
-            } else Cover(coverUrl, 44.dp, radius = Radius.cover)
+            } else Cover(coverUrl, 44.dp, radius = Radius.cover, mark = marked(song.sourceMarked, song.source))
             Column(Modifier.weight(1f).padding(start = if (number != null) 14.dp else 12.dp, end = 8.dp)) {
                 // With no second line (an album's own tracks) the cloud leads the title rather than standing alone under it.
                 RemoteLine(
@@ -470,9 +517,9 @@ fun SongRow(
             // No row has its time: a song's info says how long it is.
             // A jam guest's seals would be the host's: none are shown.
             val rules = LocalRules.current
-            val sealed = rules.stars && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)
+            val sealed = rules.stars && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.key, song.starred)
             // As wide as its mark, which grows in and shrinks away by itself; nothing when there is none.
-            Box(Modifier.padding(start = 4.dp), Alignment.Center) { DownloadSlot(song.id, downloaded, tint, pageWhole) }
+            Box(Modifier.padding(start = 4.dp), Alignment.Center) { DownloadSlot(song.key, downloaded, tint, pageWhole) }
             if (sealed) Icon(Kanji.Sealed, say.favourite, Modifier.padding(start = MARK_GAP).size(MARK), LocalLook.current.color(CoverLook.ACCENT))
             // A song a jam guest asked for says so by the ⋯ until the host decides.
             if (rules.asks && song.id in LocalAsked.current.value) Text(
@@ -576,15 +623,15 @@ private val RESTING = floatArrayOf(0.532f, 0.856f, 0.64f, 0.748f)
 
 /** What every song list draws its rows with: the song playing, the songs downloaded and selected, and the row's menu. */
 @androidx.compose.runtime.Immutable
-data class SongListState(val playingId: String?, val downloaded: Set<String>, val selected: Set<String>, val menu: (Song) -> Unit, val rowMenu: (Song, dev.nori.music.app.vm.RowEdits) -> Unit)
+data class SongListState(val playing: ItemKey?, val downloaded: Set<ItemKey>, val selected: Set<ItemKey>, val menu: (Song) -> Unit, val rowMenu: (Song, dev.nori.music.app.vm.RowEdits) -> Unit)
 
 @Composable
 fun rememberSongListState(actions: ActionsViewModel): SongListState {
     val player: dev.nori.music.app.vm.PlayerViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    val playing by player.currentId.collectAsStateWithLifecycle()
+    val playing by player.currentKey.collectAsStateWithLifecycle()
     val done = actions.downloads.collectAsState().value.doneIds
     val selection by actions.selection.collectAsStateWithLifecycle()
-    val selected = remember(selection) { selection.mapTo(HashSet()) { it.id } }
+    val selected = remember(selection) { selection.mapTo(HashSet()) { it.key } }
     val menu = LocalSongMenu.current
     val rowMenu = LocalSongRowMenu.current
     return remember(playing, done, selected, menu, rowMenu) { SongListState(playing, done, selected, menu, rowMenu) }
@@ -610,7 +657,7 @@ fun LazyListScope.songRows(
      */
     lines: List<String>? = null,
     /**
-     * Rows keyed by song alone (the ids must be unique) that fade and slide when the list changes under
+     * Rows keyed by song alone (each once in the list) that fade and slide when the list changes under
      * them - a favourite unstarred, a mix drawn again - instead of the rows below jumping up in one frame.
      */
     animated: Boolean = false,
@@ -632,7 +679,7 @@ fun LazyListScope.songRows(
     edits: ((Int) -> dev.nori.music.app.vm.RowEdits?)? = null,
 ) {
     val (onRight, onLeft) = actions.swipes
-    val (playingId, downloaded, selected, menu, rowMenu) = list
+    val (playingKey, downloaded, selected, menu, rowMenu) = list
     val count = rows?.size ?: songs.size
     items(
         count,
@@ -640,24 +687,25 @@ fun LazyListScope.songRows(
             val at = rows?.get(k)?.toInt() ?: k
             when {
                 keys != null -> keyPrefix + keys[at]
-                animated -> keyPrefix + songs[at].id
-                else -> "$keyPrefix$at-${songs[at].id}"
+                animated -> keyPrefix + songs[at].rowKey
+                else -> "$keyPrefix$at-${songs[at].rowKey}"
             }
         },
         contentType = { "song" },
     ) { k ->
         val at = rows?.get(k)?.toInt() ?: k
         val s = songs[at]
+        val key = s.key
         val moving = animated || appear || keys != null
         val sheet = LocalPlayerSheet.current
         val modifier = if (moving) itemMotion() else Modifier
         val opened = { edits?.invoke(at)?.let { rowMenu(s, it) } ?: menu(s) }
         SongRow(
             s, if (numbered) null else remember(s) { cover(s) },
-            onClick = { if (actions.tap(songs, at, from, playing = s.id == playingId)) sheet.open() }, onMenu = opened,
+            onClick = { if (actions.tap(songs, at, from, playing = key == playingKey)) sheet.open() }, onMenu = opened,
             modifier = if (arrival != null) modifier.arriving(arrival) else modifier,
-            number = if (numbered) s.track.toInt() else null, playing = s.id == playingId, downloaded = s.id in downloaded,
-            selected = s.id in selected, onLongClick = opened,
+            number = if (numbered) s.track.toInt() else null, playing = key == playingKey, downloaded = key in downloaded,
+            selected = key in selected, onLongClick = opened,
             swipeRight = rowSwipe(onRight, s, actions), swipeLeft = rowSwipe(onLeft, s, actions),
             line = lines?.getOrNull(k) ?: s.line, pageWhole = pageWhole,
         )
@@ -666,15 +714,15 @@ fun LazyListScope.songRows(
 
 /** Whether every one of [songs] is downloaded, so the page head's download mark speaks for their rows. */
 @Composable
-fun rememberPageWhole(songs: List<Song>, done: Set<String>): Boolean {
+fun rememberPageWhole(songs: List<Song>, done: Set<ItemKey>): Boolean {
     val downloads = LocalRules.current.downloads
-    return remember(songs, done, downloads) { downloads && songs.isNotEmpty() && songs.all { it.id in done } }
+    return remember(songs, done, downloads) { downloads && songs.isNotEmpty() && songs.all { it.key in done } }
 }
 
 /** The icon and words a swipe setting uncovers under [song]'s row, and the action; null when that side does nothing. */
 @Composable
 internal fun rowSwipe(action: SwipeAction, song: Song, actions: ActionsViewModel): RowSwipe? {
-    val starred = action == SwipeAction.FAVOURITE && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)
+    val starred = action == SwipeAction.FAVOURITE && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.key, song.starred)
     // What it does is nori-core's (`row_swipe`); there are twenty answers in all, so each is asked once.
     // What it says is one of Say's words, read once per locale: a row allocates no text.
     val rules = LocalRules.current
@@ -713,11 +761,11 @@ private object SwipeActs {
 @OptIn(ExperimentalFoundationApi::class)
 fun CoverCard(
     title: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier,
-    fill: Boolean = false, remote: Boolean = false, onLongClick: (() -> Unit)? = null,
+    fill: Boolean = false, remote: Boolean = false, onLongClick: (() -> Unit)? = null, mark: Marked? = null,
 ) {
     Column((if (fill) modifier else modifier.width(size)).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
-        if (fill) Cover(coverUrl, 0.dp, Modifier.fillMaxWidth().aspectRatio(1f), radius = Radius.card)
-        else Cover(coverUrl, size, radius = Radius.card)
+        if (fill) Cover(coverUrl, 0.dp, Modifier.fillMaxWidth().aspectRatio(1f), radius = Radius.card, mark = mark)
+        else Cover(coverUrl, size, radius = Radius.card, mark = mark)
         Text(
             title, maxLines = 1, overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, fontWeight = FontWeight.Medium),
@@ -749,9 +797,9 @@ fun RemoteLine(
 
 /** A round portrait, for artists; [remote] leads the line under it with the cloud, as a [CoverCard]'s. */
 @Composable
-fun ArtistCard(name: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, remote: Boolean = false, onLongClick: (() -> Unit)? = null) {
+fun ArtistCard(name: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, remote: Boolean = false, onLongClick: (() -> Unit)? = null, mark: Marked? = null) {
     Column(modifier.width(size).combinedClickable(onClick = onClick, onLongClick = onLongClick), horizontalAlignment = Alignment.CenterHorizontally) {
-        Cover(coverUrl, size, radius = size / 2)
+        Cover(coverUrl, size, radius = size / 2, mark = mark)
         // Two lines: names that start alike ("Aphex Twin", "Aphex Twin & …") are told apart by how they end.
         Text(
             name, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
@@ -770,6 +818,7 @@ fun AlbumCard(album: Album, coverUrl: String?, size: Dp, onClick: () -> Unit, mo
         album.subtitle,
         coverUrl, size, onClick, modifier, fill, remote = album.isExternal,
         onLongClick = if (menu) { { open(dev.nori.music.app.vm.CardItem.OfAlbum(album)) } } else null,
+        mark = marked(album.sourceMarked, album.source),
     )
 }
 

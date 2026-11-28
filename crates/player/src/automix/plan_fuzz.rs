@@ -101,7 +101,7 @@ fn planned(how: Rows, seed: u64, n: usize) {
         let (told1, told2) = (pick(&mut r, &[d1, d1 + 2000, 0]), pick(&mut r, &[d2, d2 - 2000, 0]));
         let made = std::panic::catch_unwind(|| {
             let t = plan(Some(&a), Some(&b), told1, told2, &s);
-            engine_plan(&t, "y")
+            engine_plan(&t, &crate::key::ItemKey::own("y"))
         });
         if let Err(e) = made {
             let what = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();

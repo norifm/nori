@@ -352,9 +352,9 @@ impl Plugins {
                 })
                 .collect();
             let songs = self.songs.clone();
-            let find: prepare::Songs = Arc::new(move |id: &str| {
+            let find: prepare::Songs = Arc::new(move |id: &nori_model::ItemKey| {
                 let found = songs.lock().expect("not poisoned").as_ref().and_then(|f| f(id));
-                Some(found.unwrap_or_else(|| nori_model::Song::only_id(id.to_string())))
+                Some(found.unwrap_or_else(|| nori_model::Song::only_key(id.clone())))
             });
             *made = Some(prepare::Preparation::start(hearers, find));
         }

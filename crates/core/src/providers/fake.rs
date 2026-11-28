@@ -10,7 +10,7 @@ use crate::browse::{profile_rules, ProfileRules};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
 use crate::settings::{SavedServer, ServerKind};
-use crate::stream::{StreamQuality, StreamTarget};
+use crate::stream::{Stream, StreamQuality};
 use crate::transport::Transport;
 use crate::{Album, AlbumDetail, Core, SearchResult, Song};
 
@@ -39,7 +39,11 @@ fn rules(signed_in: bool) -> ProfileRules {
 }
 
 fn song(id: &str, title: &str) -> Song {
-    Song { id: id.into(), title: title.into(), album: "Fakes".into(), album_id: Some("f-al".into()), duration: 60, ..Default::default() }.dressed()
+    Song { id: id.into(), title: title.into(), artist: "Fay".into(), album: "Fakes".into(), album_id: Some("f-al".into()), duration: 60, ..Default::default() }.dressed()
+}
+
+fn album_songs() -> Vec<Song> {
+    album().songs
 }
 
 fn album() -> AlbumDetail {
@@ -93,7 +97,16 @@ impl Provider for Fake {
                 let hearts = self.hearts.lock();
                 Some(Page::StarredPage { v: crate::Starred::new(Vec::new(), Vec::new(), album().songs.into_iter().filter(|s| hearts.contains(&s.id)).collect()) })
             }
-            Read::Search { query, .. } => Some(Page::Found { v: SearchResult { songs: album().songs.into_iter().filter(|s| s.title.to_lowercase().contains(&query)).collect(), ..Default::default() } }),
+            Read::Search { query, .. } => {
+                let songs = album().songs.into_iter().filter(|s| s.title.to_lowercase().contains(&query)).collect();
+                let artists = ["Fay"].into_iter().filter(|n| n.to_lowercase().contains(&query.to_lowercase())).map(|n| crate::Artist { id: "f-ar".into(), name: n.into(), ..Default::default() }).collect();
+                Some(Page::Found { v: SearchResult { songs, artists, ..Default::default() } })
+            }
+            // Its artist: Fay, with its two albums.
+            Read::ArtistById { id } if id == "f-ar" => {
+                let album = |id: &str, name: &str| crate::Album { id: id.into(), name: name.into(), artist: "Fay".into(), ..Default::default() };
+                Some(Page::ArtistPage { v: crate::ArtistDetail::new(crate::Artist { id, name: "Fay".into(), ..Default::default() }, vec![album("f-b", "Bravo"), album("f-al", "Fakes")], album_songs()) })
+            }
             Read::AlbumById { id } if id == "f-al" => {
                 *self.albums_read.lock() += 1;
                 let mut v = album();
@@ -105,6 +118,11 @@ impl Provider for Fake {
             Read::PlaylistById { id } if id == "f-long" => {
                 *self.long_reads.lock() += 1;
                 Some(long(3))
+            }
+            // Two albums, by name, a page at a time.
+            Read::AlbumList { size, offset, .. } => {
+                let album = |id: &str, name: &str| crate::Album { id: id.into(), name: name.into(), artist: "Fay".into(), ..Default::default() };
+                Some(Page::Albums { v: [album("f-b", "Bravo"), album("f-al", "Fakes")].into_iter().skip(offset.max(0) as usize).take(size.max(0) as usize).collect() })
             }
             // Its own playlist names no owner; one it follows names who made it.
             Read::PlaylistList => {
@@ -152,8 +170,8 @@ impl Provider for Fake {
         }
     }
 
-    fn stream(&self, _: &Client, id: String, _: StreamQuality) -> StreamTarget {
-        StreamTarget { url: format!("fake:{id}"), key: format!("{id}:0") }
+    fn stream(&self, _: &Client, id: String, _: StreamQuality) -> Stream {
+        Stream { url: format!("fake:{id}"), quality: "0".into() }
     }
 
     fn ahead(&self) -> Option<usize> {
@@ -223,19 +241,31 @@ impl ResolveStream for Opens {
     fn refused(&self, _: &str) {}
 }
 
+/// A client over the fake provider, as a profile's other source `id` in the database at `db` (empty: one
+/// in memory).
+pub(crate) fn source(db: String, id: &str) -> Arc<Client> {
+    tests::fake_in(db, id).0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ItemKey;
     use crate::client::tests::{block, Fake as Wire};
 
     /// A client over the fake provider, its network a scripted transport no test answers.
-    fn fake() -> (Arc<Client>, Arc<Fake>) {
+    pub(super) fn fake() -> (Arc<Client>, Arc<Fake>) {
         fake_at(String::new())
     }
 
     /// [`fake`] over the database at `db` (empty: one in memory).
     fn fake_at(db: String) -> (Arc<Client>, Arc<Fake>) {
-        let core = Core::new(db, "fake".into(), Default::default()).unwrap();
+        fake_in(db, "fake")
+    }
+
+    /// [`fake_at`], its rows those of server `id`.
+    pub(crate) fn fake_in(db: String, id: &str) -> (Arc<Client>, Arc<Fake>) {
+        let core = Core::new(db, id.into(), Default::default()).unwrap();
         let provider = Arc::new(Fake::default());
         core.install(ServerKind::default(), provider.clone());
         core.configure_profile(SavedServer::default()).unwrap();
@@ -382,7 +412,7 @@ mod tests {
         let part = pages.recv_timeout(wait).unwrap();
         assert!(part.filling && part.songs.len() == 1, "the first part, marked");
         c.session().register(part.songs.clone());
-        let started = c.session().set(part.songs.iter().map(|s| s.id.clone()).collect(), Some(0), false, Some(part.queue.origin()));
+        let started = c.session().set(part.songs.iter().map(crate::Keyed::key).collect(), Some(0), false, Some(part.queue.origin()));
         assert!(started.follows);
         let following = {
             let c = c.clone();
@@ -394,7 +424,7 @@ mod tests {
         assert!(!whole.filling && whole.songs.len() == 3);
         let followed = following.join().unwrap().expect("the rest joined");
         assert_eq!(followed.edit.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["f-2", "f-3"]);
-        assert_eq!(c.session().playlist(|p| p.ids().to_vec()), ["f-1", "f-2", "f-3"]);
+        assert_eq!(c.session().playlist(|p| p.ids().iter().map(|k| k.id.clone()).collect::<Vec<_>>()), ["f-1", "f-2", "f-3"]);
         assert_eq!(*fake.long_reads.lock(), 1, "the page's own read, not another");
     }
 
@@ -416,14 +446,14 @@ mod tests {
     #[test]
     fn songs_play_from_the_providers_addresses() {
         let (c, _) = fake();
-        let t = c.resolve("f-1".into(), false, false);
+        let t = c.resolve(ItemKey::own("f-1"), false, false).unwrap();
         assert_eq!((t.url.as_str(), t.key.as_str()), ("fake:f-1", "f-1:0"));
         let opens = c.stream_resolver().unwrap();
         assert_eq!(opens.resolve(&t.url).unwrap().unwrap(), "https://fake.example/f-1");
         c.session().register(album().songs);
-        c.session().set(vec!["f-1".into(), "f-2".into()], Some(0), false, None);
+        c.session().set(vec![ItemKey::own("f-1"), ItemKey::own("f-2")], Some(0), false, None);
         assert!(c.precache_targets(false).is_empty(), "nothing past the next song");
-        assert_eq!(c.core.cover_address("f-al".into(), 300), "https://fake.example/cover/f-al/300");
+        assert_eq!(c.core.cover_address("f-al".into(), 300).unwrap(), "https://fake.example/cover/f-al/300");
     }
 
     /// A cover that is an address already is filled with the smallest size its image server keeps ready
@@ -433,8 +463,8 @@ mod tests {
         let (c, _) = fake();
         let art = "https://img.example/a=w{size}-h{size}";
         let at = |px: u32| format!("https://img.example/a=w{px}-h{px}");
-        assert_eq!(c.core.cover_addresses(art, 160), (at(544), Vec::new()));
-        assert_eq!(c.core.cover_addresses(art, 1080), (at(1200), vec![at(544)]));
+        assert_eq!(c.core.cover_addresses(art, 160), Some((at(544), Vec::new())));
+        assert_eq!(c.core.cover_addresses(art, 1080), Some((at(1200), vec![at(544)])));
         assert_eq!(c.core.download_cover_urls(vec![art.into()]), [at(544), at(1200)]);
     }
 
@@ -524,7 +554,7 @@ mod tests {
     #[test]
     fn songs_go_to_the_accounts_own_playlists() {
         let (c, _) = fake();
-        let choices = |c: &Client| -> Vec<(String, Vec<String>, u32)> { block(c.playlist_choices(vec!["f-1".into(), "f-2".into()])).unwrap().into_iter().map(|p| (p.playlist.id, p.adds, p.holds)).collect() };
+        let choices = |c: &Arc<Client>| -> Vec<(String, Vec<String>, u32)> { block(c.clone().playlist_choices(vec![Song::only_id("f-1".into()), Song::only_id("f-2".into())])).unwrap().into_iter().map(|p| (p.playlist.id, p.adds.into_iter().map(|s| s.id).collect(), p.holds)).collect() };
         assert!(choices(&c).is_empty(), "signed out");
         block(c.sign_in("let me in".into()));
         assert_eq!(choices(&c), [("f-own".to_string(), vec!["f-2".to_string()], 1)]);

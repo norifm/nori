@@ -1,5 +1,6 @@
 package dev.nori.music.app.widget
 
+import dev.nori.music.data.key
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
@@ -43,7 +44,7 @@ abstract class NoriWidget : AppWidgetProvider() {
 data class Playing(
     val title: String? = null,
     val artist: String? = null,
-    val id: String? = null,
+    val song: dev.nori.music.ffi.model.ItemKey? = null,
     val cover: String? = null,
     val playing: Boolean = false,
     val positionMs: Long = 0,
@@ -79,7 +80,8 @@ object Widgets {
     fun heard(intent: Intent) {
         playing = Playing(
             intent.getStringExtra(PlaybackService.EXTRA_TITLE), intent.getStringExtra(PlaybackService.EXTRA_ARTIST),
-            intent.getStringExtra(PlaybackService.EXTRA_ID), intent.getStringExtra(PlaybackService.EXTRA_COVER),
+            intent.getStringExtra(PlaybackService.EXTRA_ID)?.let { dev.nori.music.ffi.model.ItemKey(intent.getStringExtra(PlaybackService.EXTRA_SOURCE), it) },
+            intent.getStringExtra(PlaybackService.EXTRA_COVER),
             intent.getBooleanExtra(PlaybackService.EXTRA_PLAYING, false), intent.getLongExtra(PlaybackService.EXTRA_POSITION, 0),
             intent.getLongExtra(PlaybackService.EXTRA_AT, SystemClock.elapsedRealtime()), intent.getFloatExtra(PlaybackService.EXTRA_SPEED, 1f),
         )
@@ -90,11 +92,11 @@ object Widgets {
      * the song the app's queue was put back on. Main thread.
      */
     fun now(context: Context): Playing {
-        if (playing.id != null) return playing
+        if (playing.song != null) return playing
         val nori = Nori.get(context)
         val s = runCatching { nori.player.state.value.current }.getOrNull() ?: return playing
         return Playing(
-            s.title, s.artist, s.id, runCatching { nori.library.coverUrl(s.coverArt, dev.nori.music.playback.NOTIFICATION_ART) }.getOrNull(),
+            s.title, s.artist, s.key, runCatching { nori.library.coverUrl(s.coverArt, dev.nori.music.playback.NOTIFICATION_ART) }.getOrNull(),
             false, runCatching { nori.player.positionMs }.getOrDefault(0L), SystemClock.elapsedRealtime(),
         )
     }
@@ -228,7 +230,7 @@ object Widgets {
         val nori = Nori.get(context)
         val songs = when (origin.kind) {
             OriginKind.ALBUM -> nori.library.album(origin.id).first().songs
-            OriginKind.PLAYLIST -> nori.library.playlist(origin.id).first().songs
+            OriginKind.PLAYLIST -> nori.library.playlist(origin.id, dev.nori.music.ffi.PlaylistAt.Source(null)).first().songs
             OriginKind.MIX -> dev.nori.music.app.vm.MixStore.songs(nori, origin.id)
             else -> emptyList()
         }

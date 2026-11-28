@@ -480,12 +480,12 @@ fn a_subsonic_session() {
 
     t.step("streams, downloads and covers");
     for id in ["s1", "al 1"] {
-        let r = c.resolve(id.into(), false, false);
+        let r = c.resolve(crate::ItemKey::own(id), false, false).expect("its own source");
         t.line(format!("stream {id}: {} {}", r.url.split_once("/rest/").map_or(r.url.as_str(), |x| x.1), r.key));
-        let d = c.download_target(id.into(), crate::stream::StreamQuality { bit_rate: 192, format: "mp3".into() });
+        let d = c.download_target(crate::ItemKey::own(id), crate::stream::StreamQuality { bit_rate: 192, format: "mp3".into() }).expect("its own source");
         t.line(format!("download {id}: {} {}", d.url.split_once("/rest/").map_or(d.url.as_str(), |x| x.1), d.key));
     }
-    t.line(format!("cover {}", c.core.cover_address("al 1".into(), 320).split_once("/rest/").unwrap().1));
+    t.line(format!("cover {}", c.core.cover_address("al 1".into(), 320).unwrap().split_once("/rest/").unwrap().1));
     t.line(format!("cover prefix {:?}", c.core.cover_prefix().map(|p| p.split_once("/rest/").unwrap().1.to_string())));
     t.line(format!("download covers {:?}", c.core.download_cover_urls(vec!["al 1".into()]).iter().map(|u| u.split_once("/rest/").map_or(u.clone(), |x| x.1.to_string())).collect::<Vec<_>>()));
 

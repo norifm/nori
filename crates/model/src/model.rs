@@ -179,10 +179,20 @@ pub struct Song {
     pub music_brainz_id: Option<String>,
     pub bpm: u32,
     pub comment: Option<String>,
+    /// The profile's other source it comes from, by that source's saved id; None for the profile's
+    /// own. Set where sources are merged, never by a source itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub source: Option<String>,
     /// Row subtitle ([`crate::lines::song_line`]), filled when read.
     #[serde(skip)]
     #[cfg_attr(feature = "ffi", uniffi(default))]
     pub line: String,
+    /// Shown with its source's mark: the list it came in has a look-alike of another source
+    /// (`merged::source_marks`). Set where sources are merged; never stored.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub source_marked: bool,
 }
 
 /// Lossless file formats, by suffix.
@@ -223,6 +233,64 @@ pub fn analysable(id: &str) -> bool {
     !is_radio(id)
 }
 
+pub use nori_player::key::ItemKey;
+
+#[cfg(feature = "ffi")]
+#[uniffi::remote(Record)]
+pub struct ItemKey {
+    pub source: Option<String>,
+    pub id: String,
+}
+
+/// `keys` as one string each ([`ItemKey::text`]), for a platform player whose items carry a string id.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn item_key_texts(keys: Vec<ItemKey>) -> Vec<String> {
+    keys.iter().map(|k| k.text().into_owned()).collect()
+}
+
+/// The keys [`item_key_texts`] wrote.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn item_keys_of(texts: Vec<String>) -> Vec<ItemKey> {
+    texts.iter().map(|t| ItemKey::from_text(t)).collect()
+}
+
+/// An item a profile's sources list.
+pub trait Keyed {
+    fn key(&self) -> ItemKey;
+    /// Whether this is the item `key` names.
+    fn is(&self, key: &ItemKey) -> bool;
+    /// The item as the profile has it from other source `source`: it says so, and its cover is the
+    /// cover's key in that source ([`ItemKey::text`]), so the cover's id names its source wherever it
+    /// goes alone (a mix's tiles, the car's art). The profile's own items keep their covers' ids.
+    fn of_source(&mut self, source: &str);
+}
+
+/// The id cover `cover` (an item's [`Keyed::of_source`] cover) has in its own source.
+pub fn cover_id(cover: &str) -> String {
+    ItemKey::from_text(cover).id
+}
+
+macro_rules! keyed {
+    ($($t:ty),*) => {$(
+        impl Keyed for $t {
+            fn key(&self) -> ItemKey {
+                ItemKey { source: self.source.clone(), id: self.id.clone() }
+            }
+
+            fn is(&self, key: &ItemKey) -> bool {
+                self.id == key.id && self.source == key.source
+            }
+
+            fn of_source(&mut self, source: &str) {
+                self.source = Some(source.to_string());
+                self.cover_art = self.cover_art.take().map(|id| ItemKey { source: Some(source.to_string()), id }.text().into_owned());
+            }
+        }
+    )*};
+}
+
+keyed!(Song, Album, Artist, Playlist);
+
 impl Song {
     /// A provider's song, not yet in the library.
     pub fn is_provider(&self) -> bool {
@@ -238,6 +306,11 @@ impl Song {
         let mut s = Song { id, ..Default::default() };
         s.dress();
         s
+    }
+
+    /// A song with only its source and id (and derived fields) set.
+    pub fn only_key(key: ItemKey) -> Self {
+        Song { source: key.source, ..Song::only_id(key.id) }
     }
 
     /// `self` with derived fields filled, as a read returns it.
@@ -297,10 +370,20 @@ pub struct Album {
     #[serde(deserialize_with = "item_date")]
     #[cfg_attr(feature = "ffi", uniffi(default))]
     pub original_release_date: Option<ReleaseDate>,
+    /// The profile's other source it comes from, by that source's saved id; None for the profile's
+    /// own. Set where sources are merged, never by a source itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub source: Option<String>,
     /// Card subtitle ([`crate::lines::album_subtitle`]), filled when read.
     #[serde(skip)]
     #[cfg_attr(feature = "ffi", uniffi(default))]
     pub subtitle: String,
+    /// Shown with its source's mark: the list it came in has a look-alike of another source
+    /// (`merged::source_marks`). Set where sources are merged; never stored.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub source_marked: bool,
 }
 
 impl Album {
@@ -369,6 +452,16 @@ pub struct Artist {
     pub starred: bool,
     /// Set by octo-fiesta for provider items that are not in the library yet.
     pub is_external: bool,
+    /// The profile's other source it comes from, by that source's saved id; None for the profile's
+    /// own. Set where sources are merged, never by a source itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub source: Option<String>,
+    /// Shown with its source's mark: the list it came in has a look-alike of another source
+    /// (`merged::source_marks`). Set where sources are merged; never stored.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub source_marked: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -385,6 +478,21 @@ pub struct Playlist {
     pub duration: u32,
     #[serde(deserialize_with = "opt_id")]
     pub cover_art: Option<String>,
+    /// The profile's other source it comes from, by that source's saved id; None for the profile's
+    /// own. Set where sources are merged, never by a source itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub source: Option<String>,
+    /// nori's own playlist, kept on this device: its songs may come from any of the profile's sources,
+    /// so no source keeps it.
+    #[serde(skip_serializing_if = "core::ops::Not::not")]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub mixed: bool,
+    /// Shown with its source's mark: the list it came in has a look-alike of another source
+    /// (`merged::source_marks`). Set where sources are merged; never stored.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub source_marked: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -960,10 +1068,10 @@ pub use nori_player::transitions::{TransitionPrefs, WindowSong};
 #[cfg(feature = "ffi")]
 #[uniffi::remote(Record)]
 pub struct WindowSong {
-    pub id: String,
+    pub id: ItemKey,
     pub title: String,
     pub duration_ms: i64,
-    pub album_id: Option<String>,
+    pub album_id: Option<ItemKey>,
     pub disc: i32,
     pub track: i32,
     pub tag_bpm: f32,
@@ -1045,6 +1153,15 @@ mod tests {
             let kept: Song = serde_json::from_str(&serde_json::to_string(&song).unwrap()).unwrap();
             assert_eq!(kept.explicit_status, status, "{wire} stored and read back");
         }
+    }
+
+    /// A song of the profile's own source is stored as before; another source's keeps its source.
+    #[test]
+    fn a_song_keeps_its_source_when_it_has_another() {
+        let own = Song { id: "1".into(), ..Default::default() };
+        assert!(!serde_json::to_string(&own).unwrap().contains("source"));
+        let other = Song { source: Some("yt".into()), ..own };
+        assert_eq!(serde_json::from_str::<Song>(&serde_json::to_string(&other).unwrap()).unwrap().source.as_deref(), Some("yt"));
     }
 
     #[test]

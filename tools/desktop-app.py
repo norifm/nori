@@ -7,7 +7,7 @@ import socket
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--socket", default=os.environ.get("NORI_DESKTOP_SOCKET"))
-parser.add_argument("command", choices=["state", "open", "do", "panel", "play_album", "tab", "shot", "profiles", "login", "setup_answer", "setup_back", "appearance", "click", "welcome_pick", "welcome_continue"])
+parser.add_argument("command", choices=["state", "open", "do", "panel", "play_album", "find", "new_playlist", "tab", "shot", "profiles", "login", "setup_answer", "setup_back", "appearance", "click", "welcome_pick", "welcome_continue"])
 parser.add_argument("arg", nargs="*")
 args = parser.parse_args()
 if not args.socket:

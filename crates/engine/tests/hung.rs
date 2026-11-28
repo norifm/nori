@@ -3,6 +3,7 @@
 //! request holds its slot until cancelled, so an engine that leaks hung requests starves later songs
 //! (what a phone did). Hung requests let the virtual clock move (`Virtual::hang_while`).
 
+use nori_player::key::ItemKey;
 use crate::common;
 
 use std::io::{Cursor, Read};
@@ -170,13 +171,15 @@ impl ByteSource for Net {
 struct Songs(Arc<Server>);
 
 impl Library for Songs {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id_key: &ItemKey) -> Result<Located, String> {
+        let id = id_key.id.as_str();
         let bytes: Arc<dyn ByteSource> = Arc::new(Net(self.0.clone()));
         Ok(Located { source: Source::Url { url: id.to_string(), bytes }, hint: Some("wav".into()), duration_ms: Some(SECS as i64 * 1000), estimated: false, from_second: None })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
-        WindowSong { id: id.into(), title: id.into(), duration_ms: SECS as i64 * 1000, ..Default::default() }
+    fn about(&self, id_key: &ItemKey) -> WindowSong {
+        let id = id_key.id.as_str();
+        WindowSong { id: ItemKey::own(id), title: id.into(), duration_ms: SECS as i64 * 1000, ..Default::default() }
     }
 }
 
@@ -199,7 +202,7 @@ fn rig(hang: Hang, hung: usize, fine: usize) -> Rig {
     let files = album.iter().chain(&playlist).enumerate().map(|(k, id)| (id.clone(), wav(220.0 + 40.0 * k as f64))).collect();
     let server = Arc::new(Server { clock: clock.clone(), files, hang, running: Mutex::new(0), hung: AtomicU64::new(0), cancelled: AtomicU64::new(0), called_off: AtomicU64::new(0) });
     let queue = SharedQueue::default();
-    queue.0.lock().set(album.clone(), Some(0), false, 0);
+    queue.0.lock().set(album.iter().map(ItemKey::own).collect(), Some(0), false, 0);
     let card = Card::new();
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = events.clone();
@@ -213,7 +216,7 @@ fn rig(hang: Hang, hung: usize, fine: usize) -> Rig {
 
 impl Rig {
     fn heard_since(&self, from: usize, id: &str) -> bool {
-        self.events.lock().iter().skip(from).any(|e| matches!(e, Event::Song { id: i, .. } if i == id))
+        self.events.lock().iter().skip(from).any(|e| matches!(e, Event::Song { id: i, .. } if i.id == id))
     }
 
     /// Plays the album and presses next through it.
@@ -242,7 +245,7 @@ impl Rig {
     fn playlist_plays(&self, index: usize) {
         let id = self.playlist[index].clone();
         let seen = self.events.lock().len();
-        self.queue.0.lock().set(self.playlist.clone(), Some(index), false, 0);
+        self.queue.0.lock().set(self.playlist.iter().map(ItemKey::own).collect(), Some(index), false, 0);
         self.engine.queue_changed();
         self.engine.play_at(index, 0);
         self.card.heard.lock().clear();

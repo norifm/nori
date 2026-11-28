@@ -102,6 +102,14 @@ class Nori private constructor(private val context: Context) {
                 })
                 _reportedRules.value = key to core.rules()
                 dev.nori.music.downloads.DownloadsJni.use(core)
+                // Its other sources, browsed with its own as one library; one that can't open here (its
+                // plugin off) is left out until the profile opens again.
+                p?.let { profile ->
+                    val db = File(context.filesDir, dev.nori.music.ffi.db.dbFileName()).path
+                    dev.nori.music.ffi.settings.profileSources(settings.value.servers, profile).forEach { source ->
+                        runCatching { core.openSource(db, source, transport, coverNet) }.onFailure { NoriLog.w("source ${source.id} not opened: ${it.message}") }
+                    }
+                }
                 Opened(key, id, core, Client(core, transport, coverNet).also { c -> p?.let { c.setProfile(it.net()) }; currentClient.set(c); plugins.openClient(c) })
             }.also { opened = it }
         }
@@ -274,7 +282,19 @@ class Nori private constructor(private val context: Context) {
      * app comes to the front and as a profile opens. Only files new or changed are read; nothing polls.
      */
     fun rescan() {
-        if (settings.value.loggedIn) pluginScope.launch { if (rules.rescans) runCatching { library.sync() } }
+        if (settings.value.loggedIn) pluginScope.launch { if (core.anyRescans()) runCatching { library.sync() } }
+    }
+
+    /**
+     * The saved profiles as [list] has them after a change to a profile's sources (the core's
+     * `servers_source_added`, `profile_source_placed`, `profile_source_removed`). The profile in use opens
+     * again with its sources as they are now.
+     */
+    fun sourcesChanged(list: dev.nori.music.ffi.settings.ServerList) {
+        val before = settings.value.server
+        settings.update { p -> p.withServers(list) }
+        val now = settings.value.server ?: return
+        if (before?.id != now.id || before.sources != now.sources) activate(now)
     }
 
     /** Settings that do not need the server asked again: headers, Wi-Fi only, music folder, name. */

@@ -4,8 +4,13 @@ use nori_automix::beats::{EndGrid, MixEnd};
 use nori_automix::analysis::Analyzer;
 use nori_automix::store::{get, get_voice, measure, missing, neural_missing, put, put_finished, AnalysisStream};
 
+use std::sync::Arc;
+
+use parking_lot::Mutex;
+use rusqlite::Connection;
+
 use crate::settings::AutoMixMode;
-use crate::{Core, Result, TrackAnalysis};
+use crate::{Core, ItemKey, Result, TrackAnalysis};
 
 pub use nori_automix::*;
 
@@ -44,8 +49,10 @@ const OFFERED_KEY: &str = "analysis_offered";
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
-    pub fn analysis_get(&self, song_id: String) -> Result<Option<TrackAnalysis>> {
-        Ok(get(&self.db.lock(), &song_id)?)
+    pub fn analysis_get(&self, song_id: ItemKey) -> Result<Option<TrackAnalysis>> {
+        let Some(db) = self.rows(&song_id.source) else { return Ok(None) };
+        let found = get(&db.lock(), &song_id.id)?;
+        Ok(found)
     }
 
     /// AutoMix went from `before` to `after`: the downloads to offer an analysis when it was turned on and
@@ -85,15 +92,36 @@ impl Core {
 }
 
 impl Core {
-    /// The analysable ids of `song_ids` lacking a current analysis.
-    pub fn analysis_missing(&self, song_ids: Vec<String>) -> Result<Vec<String>> {
-        let song_ids: Vec<String> = song_ids.into_iter().filter(|id| crate::queue::analysable(id)).collect();
-        Ok(missing(&self.db.lock(), &song_ids)?)
+    /// The rows of the profile's `source` (None: its own): where its songs' analyses are kept. None for a
+    /// source the profile does not have.
+    pub(crate) fn rows(&self, source: &Option<String>) -> Option<Arc<Mutex<Connection>>> {
+        match source {
+            None => Some(self.db.clone()),
+            Some(_) => self.session.db.rows(source),
+        }
+    }
+
+    /// `ids` of each source asked of its rows by `ask`, in their order, each answer keyed again.
+    fn in_rows(&self, ids: Vec<ItemKey>, ask: impl Fn(&Connection, &[String]) -> rusqlite::Result<Vec<String>>) -> Result<Vec<ItemKey>> {
+        let sources: std::collections::BTreeSet<&Option<String>> = ids.iter().map(|k| &k.source).collect();
+        let mut found = Vec::new();
+        for source in sources {
+            let Some(db) = self.rows(source) else { continue };
+            let plain: Vec<String> = ids.iter().filter(|k| k.source == *source).map(|k| k.id.clone()).collect();
+            found.extend(ask(&db.lock(), &plain)?.into_iter().map(|id| ItemKey { source: source.clone(), id }));
+        }
+        Ok(ids.into_iter().filter(|k| found.contains(k)).collect())
+    }
+
+    /// The analysable songs of `song_ids` lacking a current analysis.
+    pub fn analysis_missing(&self, song_ids: Vec<ItemKey>) -> Result<Vec<ItemKey>> {
+        let song_ids = song_ids.into_iter().filter(|id| crate::queue::analysable(&id.id)).collect();
+        self.in_rows(song_ids, missing)
     }
 
     /// Finishes `stream` (one whole song from its start) into the store; dropped unless its length matches
     /// `expected_ms` (0: unknown).
-    pub fn analysis_finish_whole(&self, song_id: &str, stream: AnalysisStream, expected_ms: i64) -> Result<Option<TrackAnalysis>> {
+    pub fn analysis_finish_whole(&self, song_id: &ItemKey, stream: AnalysisStream, expected_ms: i64) -> Result<Option<TrackAnalysis>> {
         let a = stream.into_analyzer();
         let heard_ms = (a.samples() as f64 * 1000.0 / a.rate()) as i64;
         if !nori_player::transitions::whole_song(heard_ms, expected_ms) {
@@ -103,25 +131,28 @@ impl Core {
     }
 
     /// Finishes an analyser fed one whole song and stores the result; None under 30 s.
-    pub fn analysis_finish(&self, song_id: &str, mut a: Analyzer) -> Result<Option<TrackAnalysis>> {
+    pub fn analysis_finish(&self, song_id: &ItemKey, mut a: Analyzer) -> Result<Option<TrackAnalysis>> {
         if a.samples() < (a.rate() * 30.0) as u64 {
             return Ok(None);
         }
-        let (track, curve) = measure(song_id, &a.take_features());
-        let track = self.session.planner.refined(track);
-        let stored = put_finished(&self.db.lock(), track, &curve)?;
+        let Some(db) = self.rows(&song_id.source) else { return Ok(None) };
+        let (track, curve) = measure(&song_id.id, &a.take_features());
+        let track = self.session.planner.refined(song_id, track);
+        let stored = put_finished(&db.lock(), track, &curve)?;
         self.session.planner.analyses_changed();
         Ok(Some(stored))
     }
 
     /// The song's vocal activity curve (checked against synced lyrics).
-    pub(crate) fn analysis_voice(&self, song_id: &str) -> Result<Option<nori_player::automix::vocal::VocalCurve>> {
-        Ok(get_voice(&self.db.lock(), song_id)?)
+    pub(crate) fn analysis_voice(&self, song_id: &ItemKey) -> Result<Option<nori_player::automix::vocal::VocalCurve>> {
+        let Some(db) = self.rows(&song_id.source) else { return Ok(None) };
+        let found = get_voice(&db.lock(), &song_id.id)?;
+        Ok(found)
     }
 
     /// Keeps where `lyrics` of song `song_id`, as shown, are sung, for AutoMix to mix around; only when their timing
     /// was heard to fit the voice. Server lyrics are shown unchecked, so they are checked here.
-    pub(crate) fn analysis_sung(&self, song_id: &str, lyrics: &crate::Lyrics) {
+    pub(crate) fn analysis_sung(&self, song_id: &ItemKey, lyrics: &crate::Lyrics) {
         let timing = match lyrics.timing {
             nori_model::LyricsTiming::NotChecked if lyrics.synced => match self.analysis_voice(song_id).ok().flatten() {
                 Some(voice) => nori_lyrics::sync::timing_against(lyrics, &voice),
@@ -130,7 +161,9 @@ impl Core {
             timing => timing,
         };
         let Some(span) = nori_lyrics::sync::sung_span(lyrics, timing) else { return };
-        match nori_automix::store::put_sung(&self.db.lock(), song_id, span) {
+        let Some(db) = self.rows(&song_id.source) else { return };
+        let kept = nori_automix::store::put_sung(&db.lock(), &song_id.id, span);
+        match kept {
             Ok(true) => self.session.planner.analyses_changed(),
             Ok(false) => {}
             Err(e) => crate::alog::info(&format!("lyrics: where {song_id} is sung not kept: {e}")),
@@ -139,7 +172,7 @@ impl Core {
 
     /// The song's vocal curve once it is measured; None once it will not be while it plays (a profile
     /// that measures nothing, an analysis without a curve, or out of the play window).
-    pub(crate) async fn voice_measured(&self, song_id: &str) -> Option<nori_player::automix::vocal::VocalCurve> {
+    pub(crate) async fn voice_measured(&self, song_id: &ItemKey) -> Option<nori_player::automix::vocal::VocalCurve> {
         let planner = &self.session.planner;
         loop {
             let changed = planner.changed.notified();
@@ -153,17 +186,18 @@ impl Core {
         }
     }
 
-    /// The ids of `song_ids` with a current analysis that has an end the beat model has not checked.
-    pub fn analysis_neural_missing(&self, song_ids: Vec<String>) -> Result<Vec<String>> {
-        let song_ids: Vec<String> = song_ids.into_iter().filter(|id| crate::queue::analysable(id)).collect();
-        Ok(neural_missing(&self.db.lock(), &song_ids)?)
+    /// The songs of `song_ids` with a current analysis that has an end the beat model has not checked.
+    pub fn analysis_neural_missing(&self, song_ids: Vec<ItemKey>) -> Result<Vec<ItemKey>> {
+        let song_ids = song_ids.into_iter().filter(|id| crate::queue::analysable(&id.id)).collect();
+        self.in_rows(song_ids, neural_missing)
     }
 
     /// Stores the beat model's `grid` for `end` (adopted if confident) and marks the end checked. Returns
     /// whether it was adopted; false without an analysis.
-    pub fn analysis_neural_store(&self, song_id: &str, end: MixEnd, grid: Option<EndGrid>) -> Result<bool> {
-        let c = self.db.lock();
-        let Some(mut row) = get(&c, song_id)? else { return Ok(false) };
+    pub fn analysis_neural_store(&self, song_id: &ItemKey, end: MixEnd, grid: Option<EndGrid>) -> Result<bool> {
+        let Some(db) = self.rows(&song_id.source) else { return Ok(false) };
+        let c = db.lock();
+        let Some(mut row) = get(&c, &song_id.id)? else { return Ok(false) };
         let adopted = nori_automix::beats::merge(&mut row, end, grid);
         put(&c, &row)?;
         if adopted {

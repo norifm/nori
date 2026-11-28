@@ -158,7 +158,7 @@ pub enum Row {
     /// A saved profile: enter switches to it; K J move it to place `up` or `down` where it can go, and e
     /// renames it from `name` where it may be (a jam guest's profiles stay as they are).
     /// `name` and `scrobbling` are set when the profile may be changed here.
-    Server { id: String, label: String, detail: String, active: bool, up: Option<u32>, down: Option<u32>, name: Option<String>, scrobbling: Option<Scrobbling> },
+    Server { id: String, label: String, detail: String, active: bool, up: Option<u32>, down: Option<u32>, name: Option<String>, scrobbling: Option<Scrobbling>, sources: Option<Sources> },
     Button { title: String, action: Act },
     /// A lyrics service in the ranked list: enter switches it, ← → move it, `key` adds or changes its key.
     /// `asks_key`: switching it on asks for its key.
@@ -182,7 +182,7 @@ pub struct Page {
 fn profile_name(p: &StoredPrefs, kinds: &Kinds, profile: &str) -> String {
     p.servers.iter().find(|sv| nori_core::settings::server_db_id(&sv.id) == profile).map_or_else(
         || "a removed profile".into(),
-        |sv| Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| text::provider_of(kinds, &sv.kind).name),
+        |sv| text::profile_label(sv, kinds),
     )
 }
 
@@ -265,6 +265,13 @@ impl Alone {
 pub struct Scrobbling {
     pub itself: Option<(String, bool)>,
     pub accounts: Vec<nori_core::settings::SavedScrobbler>,
+}
+
+/// A profile's merged sources: those it plays from (`(id, label)` in order) and saved profiles it can take.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sources {
+    pub sources: Vec<(String, String)>,
+    pub offered: Vec<(String, String)>,
 }
 
 /// What the page shows beyond the settings: the terminal's own state, the kinds of profile and the
@@ -628,6 +635,27 @@ impl SettingsView {
         options.extend(accounts.iter().map(|a| (format!("Remove {}", text::scrobbler_name(a)), format!("remove:{}", a.id))));
         options.push(("Add scrobbler".to_string(), "add".to_string()));
         Some(Overlay::Picker { title: format!("Scrobbling for {label}"), options, sel: Sel::default(), target: Target::Scrobbling(id.clone()) })
+    }
+
+    /// The selected profile's merged sources: move or remove each one, add a saved profile, or sign in to a new one.
+    pub fn sources_menu(&self) -> Option<Overlay> {
+        let Some(Row::Server { id, label, sources: Some(Sources { sources, offered }), .. }) = self.selected() else { return None };
+        let last = sources.len().saturating_sub(1);
+        let mut options: Vec<(String, String)> = Vec::new();
+        for (i, (sid, name)) in sources.iter().enumerate() {
+            if i > 0 {
+                options.push((format!("Move up {name}"), format!("earlier:{sid}")));
+            }
+            if i < last {
+                options.push((format!("Move down {name}"), format!("later:{sid}")));
+            }
+            options.push((format!("Remove {name}"), format!("remove:{sid}")));
+        }
+        for (oid, name) in offered {
+            options.push((format!("Add {name}"), format!("add:{oid}")));
+        }
+        options.push(("Sign in to a new one".to_string(), "new".to_string()));
+        Some(Overlay::Picker { title: format!("Sources for {label}"), options, sel: Sel::default(), target: Target::Sources(id.clone()) })
     }
 
     pub fn plugin_menu(&self) -> Option<Overlay> {
@@ -1503,12 +1531,20 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             let active = sv.id == p.active_server_id;
             let words = text::provider_of(kinds, &sv.kind);
             let who = if sv.user.is_empty() { words.no_user } else { sv.user.as_str() };
-            let mut parts = vec![who, if active { "in use" } else { "not in use" }];
+            let mut parts: Vec<String> = Vec::new();
+            if !who.is_empty() {
+                parts.push(who.to_string());
+            }
+            let merged = nori_core::settings::profile_sources(p.servers.clone(), sv.clone());
+            if !merged.is_empty() {
+                parts.push(format!("+ {}", merged.iter().map(|s| profile_name(p, kinds, &s.id)).collect::<Vec<_>>().join(", ")));
+            }
+            parts.push(if active { "in use" } else { "not in use" }.to_string());
             if sv.wifi_only {
-                parts.push("Wi-Fi only");
+                parts.push("Wi-Fi only".to_string());
             }
             if !sv.alt_url.trim().is_empty() {
-                parts.push("second address");
+                parts.push("second address".to_string());
             }
             let label = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.clone());
             let movable = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
@@ -1519,7 +1555,11 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
                 let takes = if active { f.rules.scrobbles } else { kinds.rules_of(sv.clone(), false).scrobbles };
                 Scrobbling { itself: takes.then(|| (words.name.clone(), !sv.scrobble_off)), accounts: sv.scrobblers.clone() }
             });
-            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active, up, down, name: movable.then(|| sv.name.clone()), scrobbling }
+            let sources = (movable && nori_core::settings::servers_shown(p.servers.clone()).iter().any(|s| s.id == sv.id)).then(|| Sources {
+                sources: merged.iter().map(|s| (s.id.clone(), profile_name(p, kinds, &s.id))).collect(),
+                offered: nori_core::providers::sources_offered(p.servers.clone(), sv.clone()).into_iter().map(|s| (s.id.clone(), profile_name(p, kinds, &s.id))).collect(),
+            });
+            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active, up, down, name: movable.then(|| sv.name.clone()), scrobbling, sources }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             Row::Toggle { switch: Switch::Stores("musicFolders".into(), tapped), title: f.folders.get(index as usize)?.name.clone(), detail: String::new(), on, enabled }

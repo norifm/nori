@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::task::{Poll, Waker};
 use nori_time::Instant;
 
-use nori_model::{alog, DownloadPhase, Song};
+use nori_model::{alog, DownloadPhase, ItemKey, Keyed, Song};
 use parking_lot::{Mutex, MutexGuard};
 use rusqlite::{Connection, OptionalExtension};
 
@@ -186,7 +186,7 @@ struct Info {
 
 #[derive(Debug, Clone)]
 struct Slot {
-    id: String,
+    id: ItemKey,
     estimate: i64,
     length: i64,
     bytes: i64,
@@ -202,9 +202,9 @@ struct Slot {
 /// Everything queued since the queue was last empty. Its total stays fixed while songs finish ("12 of 49").
 #[derive(Debug, Default)]
 struct Batch {
-    open: HashSet<String>,
-    failed_ids: HashSet<String>,
-    labels: HashMap<String, String>,
+    open: HashSet<ItemKey>,
+    failed_ids: HashSet<ItemKey>,
+    labels: HashMap<ItemKey, String>,
     total: i32,
     done: i32,
     failed: i32,
@@ -219,7 +219,7 @@ impl Batch {
     }
 
     /// A song queued; true when it starts a new batch. A failed song queued again is not counted twice.
-    fn queued(&mut self, id: &str, label: &str) -> bool {
+    fn queued(&mut self, id: &ItemKey, label: &str) -> bool {
         if self.open.contains(id) {
             return false;
         }
@@ -232,28 +232,28 @@ impl Batch {
         } else {
             self.total += 1;
         }
-        self.open.insert(id.to_string());
+        self.open.insert(id.clone());
         if !label.trim().is_empty() {
-            self.labels.insert(id.to_string(), label.to_string());
+            self.labels.insert(id.clone(), label.to_string());
         }
         fresh
     }
 
-    fn completed(&mut self, id: &str) {
+    fn completed(&mut self, id: &ItemKey) {
         if self.open.remove(id) {
             self.done += 1;
         }
     }
 
-    fn failed(&mut self, id: &str) {
+    fn failed(&mut self, id: &ItemKey) {
         if self.open.remove(id) {
             self.failed += 1;
-            self.failed_ids.insert(id.to_string());
+            self.failed_ids.insert(id.clone());
         }
     }
 
     /// Cancelled or a failure given up on: no longer counted.
-    fn removed(&mut self, id: &str) {
+    fn removed(&mut self, id: &ItemKey) {
         if self.open.remove(id) {
             self.total -= 1;
         } else if self.failed_ids.remove(id) {
@@ -396,7 +396,7 @@ impl Pace {
 /// One lane: the running step (song, work, start) and when the lane last moved.
 #[derive(Debug, Default)]
 struct Lane {
-    step: Option<(String, Work, i64)>,
+    step: Option<(ItemKey, Work, i64)>,
     since: i64,
 }
 
@@ -582,7 +582,7 @@ pub struct Summary {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct DownloadMarks {
-    pub ids: Vec<String>,
+    pub ids: Vec<ItemKey>,
     pub phases: Vec<Option<DownloadPhase>>,
     pub at: Vec<i64>,
 }
@@ -595,12 +595,12 @@ pub struct Tracker {
     /// Each download transferring by its slot ([`Tracker::open`]); a closed one's is free.
     slots: Vec<Option<Slot>>,
     batch: Batch,
-    marks: HashMap<String, (Phase, i64)>,
+    marks: HashMap<ItemKey, (Phase, i64)>,
     /// Songs whose mark changed since [`Tracker::marks_changed`].
-    changed: HashSet<String>,
-    info: HashMap<String, Info>,
+    changed: HashSet<ItemKey>,
+    info: HashMap<ItemKey, Info>,
     /// Songs being analysed as their bytes arrive.
-    analysing: HashSet<String>,
+    analysing: HashSet<ItemKey>,
     /// The beat model reads downloads once saved, as the batch was queued ([`Tracker::set_beats_ahead`]).
     beats_ahead: bool,
     /// Waiters on mark changes, woken after the lock is released when `wake` is set.
@@ -637,7 +637,7 @@ pub struct Tracker {
 impl Tracker {
     /// The queued `songs`' titles and sizes, so reports about them never wait for the database.
     pub fn know(&mut self, songs: &[Song]) {
-        songs.iter().for_each(|s| self.keep_info(&s.id, Some(s)));
+        songs.iter().for_each(|s| self.keep_info(&s.key(), Some(s)));
     }
 
     /// Follows the download bitrate setting for size estimates; a change drops the cached estimates.
@@ -651,18 +651,18 @@ impl Tracker {
 
     /// What [`Tracker::know`] was told about `id`, else what the database says when it is free: callers
     /// include the main thread and `@CriticalNative` doors, which must not wait. None while it is busy.
-    fn info(&mut self, id: &str) -> Option<&Info> {
+    fn info(&mut self, id: &ItemKey) -> Option<&Info> {
         if !self.info.contains_key(id) {
             let c = self.db.as_ref()?.try_lock()?;
-            let sql = format!("SELECT {} FROM downloads i WHERE server=sid() AND id=?1", nori_db::items::SONG);
-            let song = c.prepare_cached(&sql).and_then(|mut st| st.query_row([id], |r| nori_db::items::song(r, 0))).ok();
+            let sql = format!(concat!("SELECT {} FROM downloads i WHERE ", nori_db::of_key!()), nori_db::items::SONG);
+            let song = c.prepare_cached(&sql).and_then(|mut st| st.query_row(nori_db::key_params(id), |r| nori_db::items::song(r, 0))).ok();
             drop(c);
             self.keep_info(id, song.as_ref());
         }
         self.info.get(id)
     }
 
-    fn keep_info(&mut self, id: &str, found: Option<&Song>) {
+    fn keep_info(&mut self, id: &ItemKey, found: Option<&Song>) {
         let info = found.map_or_else(Info::default, |s| Info {
             estimate: expected_bytes(s.size as i64, s.duration as i64, self.download_kbps),
             title: s.title.replace('\n', " "),
@@ -670,11 +670,11 @@ impl Tracker {
             artist: s.artist.replace('\n', " "),
             cover: s.cover_art.clone().unwrap_or_default(),
         });
-        self.info.insert(id.to_string(), info);
+        self.info.insert(id.clone(), info);
     }
 
-    fn slot_of(&self, id: &str) -> Option<usize> {
-        self.slots.iter().position(|s| s.as_ref().is_some_and(|s| s.id == id))
+    fn slot_of(&self, id: &ItemKey) -> Option<usize> {
+        self.slots.iter().position(|s| s.as_ref().is_some_and(|s| s.id == *id))
     }
 
     /// The downloads transferring.
@@ -682,18 +682,18 @@ impl Tracker {
         self.slots.iter().flatten()
     }
 
-    fn close(&mut self, id: &str) {
+    fn close(&mut self, id: &ItemKey) {
         if let Some(i) = self.slot_of(id) {
             self.slots[i] = None;
         }
     }
 
-    fn mark(&mut self, id: &str, phase: Phase, now: i64) -> bool {
+    fn mark(&mut self, id: &ItemKey, phase: Phase, now: i64) -> bool {
         if phase == Phase::Downloading && self.marks.get(id).is_some_and(|m| m.0 == phase) {
             return false;
         }
-        self.marks.insert(id.to_string(), (phase, now));
-        self.changed.insert(id.to_string());
+        self.marks.insert(id.clone(), (phase, now));
+        self.changed.insert(id.clone());
         self.wake = true;
         if phase == Phase::Done {
             self.recent_only();
@@ -701,10 +701,10 @@ impl Tracker {
         true
     }
 
-    fn unmark(&mut self, id: &str) -> bool {
+    fn unmark(&mut self, id: &ItemKey) -> bool {
         let had = self.marks.remove(id).is_some();
         if had {
-            self.changed.insert(id.to_string());
+            self.changed.insert(id.clone());
             self.wake = true;
         }
         had
@@ -712,7 +712,7 @@ impl Tracker {
 
     /// Drops finished marks beyond the latest [`RECENT`].
     fn recent_only(&mut self) {
-        let mut done: Vec<(i64, String)> = self.marks.iter().filter(|(_, m)| m.0 == Phase::Done).map(|(id, m)| (m.1, id.clone())).collect();
+        let mut done: Vec<(i64, ItemKey)> = self.marks.iter().filter(|(_, m)| m.0 == Phase::Done).map(|(id, m)| (m.1, id.clone())).collect();
         if done.len() > RECENT {
             done.sort();
             for (_, id) in &done[..done.len() - RECENT] {
@@ -721,12 +721,12 @@ impl Tracker {
         }
     }
 
-    pub fn phase(&self, id: &str) -> Option<DownloadPhase> {
+    pub fn phase(&self, id: &ItemKey) -> Option<DownloadPhase> {
         self.marks.get(id).map(|m| m.0.shown())
     }
 
     /// Songs marked finished or processing this session.
-    pub fn saved_ids(&self) -> Vec<String> {
+    pub fn saved_ids(&self) -> Vec<ItemKey> {
         self.marks.iter().filter(|(_, m)| matches!(m.0, Phase::Done | Phase::Processing(_))).map(|(id, _)| id.clone()).collect()
     }
 
@@ -769,7 +769,7 @@ impl Tracker {
 
     /// The platform reported `id` in `state` at its clock's `now`. Returns [`NEW_BATCH`], [`DRAINED`]
     /// and [`MARKS`] flags.
-    pub fn followed(&mut self, id: &str, state: i32, now: i64) -> i32 {
+    pub fn followed(&mut self, id: &ItemKey, state: i32, now: i64) -> i32 {
         self.saw(now);
         let was_open = self.batch.open.contains(id);
         let mut flags = 0;
@@ -870,13 +870,13 @@ impl Tracker {
     }
 
     /// `id` is being analysed as it downloads, until [`Tracker::analysing_ended`].
-    pub fn analysing_began(&mut self, id: &str) {
-        self.analysing.insert(id.to_string());
+    pub fn analysing_began(&mut self, id: &ItemKey) {
+        self.analysing.insert(id.clone());
     }
 
     /// The streaming analysis of `id` ended. If `stored`, the song no longer waits for an analysis;
     /// otherwise it waits for one from disk.
-    pub fn analysing_ended(&mut self, id: &str, stored: bool) {
+    pub fn analysing_ended(&mut self, id: &ItemKey, stored: bool) {
         self.analysing.remove(id);
         if stored {
             self.work_done_at(id, Work::Analysis, mono_ms());
@@ -884,12 +884,12 @@ impl Tracker {
     }
 
     /// `id`'s step of `work` starts; its lane is busy and timed until [`Tracker::work_done`].
-    pub fn working(&mut self, id: &str, work: Work) {
+    pub fn working(&mut self, id: &ItemKey, work: Work) {
         self.working_at(id, work, mono_ms());
     }
 
-    fn working_at(&mut self, id: &str, work: Work, now: i64) {
-        self.lanes[work.lane()] = Lane { step: Some((id.to_string(), work, now)), since: now };
+    fn working_at(&mut self, id: &ItemKey, work: Work, now: i64) {
+        self.lanes[work.lane()] = Lane { step: Some((id.clone(), work, now)), since: now };
     }
 
     /// Stores the paces when the database is free; a later step stores what this one missed.
@@ -908,16 +908,16 @@ impl Tracker {
     }
 
     /// Whether saved song `id` still waits for `work`.
-    pub fn waits(&self, id: &str, work: Work) -> bool {
+    pub fn waits(&self, id: &ItemKey, work: Work) -> bool {
         self.marks.get(id).is_some_and(|m| m.0.waits(work))
     }
 
     /// `work` ended for `id` (succeeded or not); true when its phase changed.
-    pub fn work_done(&mut self, id: &str, work: Work) -> bool {
+    pub fn work_done(&mut self, id: &ItemKey, work: Work) -> bool {
         self.work_done_at(id, work, mono_ms())
     }
 
-    fn work_done_at(&mut self, id: &str, work: Work, now: i64) -> bool {
+    fn work_done_at(&mut self, id: &ItemKey, work: Work, now: i64) -> bool {
         let lane = &mut self.lanes[work.lane()];
         let timed = match &lane.step {
             Some((s, w, at)) if s == id && *w == work => Some(now - at),
@@ -940,11 +940,11 @@ impl Tracker {
 
     /// Adds `needs` to saved song `id`'s processing. `saved`: Some(from_disk) for a fresh download (teaches
     /// the from-disk share), None for a song reprocessed later.
-    pub fn plan(&mut self, id: &str, needs: Needs, saved: Option<bool>) -> bool {
+    pub fn plan(&mut self, id: &ItemKey, needs: Needs, saved: Option<bool>) -> bool {
         self.plan_at(id, needs, saved, mono_ms())
     }
 
-    fn plan_at(&mut self, id: &str, needs: Needs, saved: Option<bool>, mono: i64) -> bool {
+    fn plan_at(&mut self, id: &ItemKey, needs: Needs, saved: Option<bool>, mono: i64) -> bool {
         if let Some(from_disk) = saved {
             self.saved += 1;
             self.from_disk += from_disk as i64;
@@ -970,7 +970,7 @@ impl Tracker {
         let mut next: Option<i64> = None;
         for lane in 0..2 {
             let works = Work::ALL.into_iter().filter(|w| w.lane() == lane);
-            let waiting: Vec<(String, Work)> = self.marks.iter().flat_map(|(id, m)| works.clone().filter(|w| m.0.waits(*w)).map(|w| (id.clone(), w))).collect();
+            let waiting: Vec<(ItemKey, Work)> = self.marks.iter().flat_map(|(id, m)| works.clone().filter(|w| m.0.waits(*w)).map(|w| (id.clone(), w))).collect();
             if waiting.is_empty() {
                 self.lanes[lane].step = None;
                 continue;
@@ -1045,7 +1045,7 @@ impl Tracker {
 
     /// An earlier process left `id` failed: marked so, unless this one already marked it. Returns its
     /// progress from the platform's `length` and `bytes`.
-    pub fn failed_before(&mut self, id: &str, length: i64, bytes: i64) -> f32 {
+    pub fn failed_before(&mut self, id: &ItemKey, length: i64, bytes: i64) -> f32 {
         let estimate = self.info(id).map_or(0, |i| i.estimate);
         if !self.marks.contains_key(id) {
             self.mark(id, Phase::Failed, 0);
@@ -1054,7 +1054,7 @@ impl Tracker {
     }
 
     /// `id` left the queue for good. Returns flags as [`Tracker::followed`].
-    pub fn removed(&mut self, id: &str) -> i32 {
+    pub fn removed(&mut self, id: &ItemKey) -> i32 {
         let was_open = self.batch.open.contains(id);
         self.batch.removed(id);
         self.info.remove(id);
@@ -1062,18 +1062,18 @@ impl Tracker {
     }
 
     /// Forgets `id`'s mark and slot (requeued or cancelled); [`MARKS`] when it had a mark.
-    pub fn forget(&mut self, id: &str) -> i32 {
+    pub fn forget(&mut self, id: &ItemKey) -> i32 {
         self.close(id);
         if self.unmark(id) { MARKS } else { 0 }
     }
 
     /// Initial progress: 0, or -1 when the size is unknown.
-    pub fn start_fraction(&mut self, id: &str) -> f32 {
+    pub fn start_fraction(&mut self, id: &ItemKey) -> f32 {
         if self.info(id).is_some_and(|i| i.estimate > 0) { 0.0 } else { -1.0 }
     }
 
     /// A download starts transferring; returns the slot for [`Tracker::note`].
-    pub fn open(&mut self, id: &str, now: i64) -> i32 {
+    pub fn open(&mut self, id: &ItemKey, now: i64) -> i32 {
         // A resumed download replaces its old slot.
         self.close(id);
         // After an idle stretch, measure speed from now.
@@ -1081,7 +1081,7 @@ impl Tracker {
             self.rate.restart(now, self.received);
         }
         let estimate = self.info(id).map_or(0, |i| i.estimate);
-        let slot = Slot { id: id.to_string(), estimate, length: 0, bytes: 0, started_at: now, gate_value: f32::NAN, gate_at: 0, speed_bytes: 0, speed_at: now, rate: 0.0 };
+        let slot = Slot { id: id.clone(), estimate, length: 0, bytes: 0, started_at: now, gate_value: f32::NAN, gate_at: 0, speed_bytes: 0, speed_at: now, rate: 0.0 };
         match self.slots.iter().position(Option::is_none) {
             Some(i) => {
                 self.slots[i] = Some(slot);
@@ -1256,7 +1256,7 @@ impl Tracker {
 
     /// A downloads screen row: the song's artist (empty when unknown; never blocks on the database) and
     /// its facts while running.
-    pub fn row(&mut self, id: &str) -> (&str, Option<RowFacts>) {
+    pub fn row(&mut self, id: &ItemKey) -> (&str, Option<RowFacts>) {
         let facts = row_facts(&self.slots, id);
         (self.info(id).map_or("", |i| i.artist.as_str()), facts)
     }
@@ -1264,13 +1264,13 @@ impl Tracker {
     /// The downloads screen's lists: `pending` (newest first) split into active, queued and failed in queue
     /// order (oldest first), and this session's finished songs newest first, found in `pending` or `done`
     /// so a just-finished song shows before the index catches up.
-    pub fn sections<T: Clone>(&self, pending: &[T], done: &[T], id: impl Fn(&T) -> &str) -> [Vec<T>; 4] {
+    pub fn sections<T: Clone>(&self, pending: &[T], done: &[T], id: impl Fn(&T) -> ItemKey) -> [Vec<T>; 4] {
         sections(pending, done, &self.marks, id)
     }
 }
 
-fn row_facts(slots: &[Option<Slot>], id: &str) -> Option<RowFacts> {
-    let s = slots.iter().flatten().find(|s| s.id == id)?;
+fn row_facts(slots: &[Option<Slot>], id: &ItemKey) -> Option<RowFacts> {
+    let s = slots.iter().flatten().find(|s| s.id == *id)?;
     let f = fraction(s.length, s.bytes, s.estimate);
     let total = if s.length > 0 { s.length } else { s.estimate };
     let speed = s.rate as i64;
@@ -1278,8 +1278,8 @@ fn row_facts(slots: &[Option<Slot>], id: &str) -> Option<RowFacts> {
     Some(RowFacts { percent: if f >= 0.0 { (f * 100.0).round() as i32 } else { -1 }, speed_bps: speed, eta_s: eta })
 }
 
-fn sections<T: Clone>(pending: &[T], done: &[T], marks: &HashMap<String, (Phase, i64)>, id: impl Fn(&T) -> &str) -> [Vec<T>; 4] {
-    let phase = |song: &T| marks.get(id(song)).copied();
+fn sections<T: Clone>(pending: &[T], done: &[T], marks: &HashMap<ItemKey, (Phase, i64)>, id: impl Fn(&T) -> ItemKey) -> [Vec<T>; 4] {
+    let phase = |song: &T| marks.get(&id(song)).copied();
     // Saved songs still processing come first.
     let mut active: Vec<T> = done.iter().filter(|s| matches!(phase(s), Some((Phase::Processing(_), _)))).cloned().collect();
     let (mut queued, mut failed) = (Vec::new(), Vec::new());
@@ -1294,7 +1294,7 @@ fn sections<T: Clone>(pending: &[T], done: &[T], marks: &HashMap<String, (Phase,
     let mut finished: Vec<(i64, &T)> = pending.iter().chain(done).filter_map(|s| phase(s).filter(|m| m.0 == Phase::Done).map(|m| (m.1, s))).collect();
     finished.sort_by_key(|f| std::cmp::Reverse(f.0));
     let mut seen = HashSet::new();
-    let finished = finished.into_iter().filter(|(_, s)| seen.insert(id(s).to_string())).map(|(_, s)| s.clone()).collect();
+    let finished = finished.into_iter().filter(|(_, s)| seen.insert(id(s))).map(|(_, s)| s.clone()).collect();
     [active, queued, failed, finished]
 }
 
@@ -1302,7 +1302,7 @@ fn sections<T: Clone>(pending: &[T], done: &[T], marks: &HashMap<String, (Phase,
 /// the database. Every table write updates it.
 #[derive(Debug, Default)]
 pub struct Held {
-    ids: HashMap<String, bool>,
+    ids: HashMap<ItemKey, bool>,
     done: u32,
     /// Bumped on every change, so the platform sees changed counts.
     version: u64,
@@ -1335,13 +1335,13 @@ pub struct DownloadCounts {
 
 impl Held {
     fn load(c: &Connection) -> nori_model::Result<Held> {
-        let mut st = c.prepare("SELECT id, done FROM downloads WHERE server=sid()")?;
-        let ids: HashMap<String, bool> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.filter_map(|r| r.ok()).collect();
+        let mut st = c.prepare(concat!("SELECT nullif(server, sid()), id, done FROM downloads WHERE server ", nori_db::in_profile!(), ""))?;
+        let ids: HashMap<ItemKey, bool> = st.query_map([], |r| Ok((nori_db::key_of(r, 0)?, r.get(2)?)))?.filter_map(|r| r.ok()).collect();
         let done = ids.values().filter(|d| **d).count() as u32;
         Ok(Held { ids, done, version: 0 })
     }
 
-    pub fn state(&self, id: &str) -> HeldState {
+    pub fn state(&self, id: &ItemKey) -> HeldState {
         self.ids.get(id).map_or(HeldState::Absent, |d| if *d { HeldState::Done } else { HeldState::Pending })
     }
 
@@ -1349,14 +1349,14 @@ impl Held {
         DownloadCounts { done: self.done, pending: self.ids.len() as u32 - self.done, version: self.version }
     }
 
-    pub fn queued(&mut self, id: &str) {
+    pub fn queued(&mut self, id: &ItemKey) {
         if !self.ids.contains_key(id) {
-            self.ids.insert(id.to_string(), false);
+            self.ids.insert(id.clone(), false);
             self.version += 1;
         }
     }
 
-    pub fn finished(&mut self, id: &str) {
+    pub fn finished(&mut self, id: &ItemKey) {
         if let Some(d) = self.ids.get_mut(id).filter(|d| !**d) {
             *d = true;
             self.done += 1;
@@ -1364,7 +1364,7 @@ impl Held {
         }
     }
 
-    pub fn removed(&mut self, id: &str) {
+    pub fn removed(&mut self, id: &ItemKey) {
         if let Some(d) = self.ids.remove(id) {
             self.done -= d as u32;
             self.version += 1;
@@ -1434,15 +1434,15 @@ impl Downloads {
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct DownloadQueued {
-    pub fresh: Vec<String>,
-    pub again: Vec<String>,
+    pub fresh: Vec<ItemKey>,
+    pub again: Vec<ItemKey>,
 }
 
 /// A download in the platform's queue: media3 state, length (-1 unknown) and bytes.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct DownloadKnown {
-    pub id: String,
+    pub id: ItemKey,
     pub state: i32,
     pub length: i64,
     pub bytes: i64,
@@ -1452,7 +1452,7 @@ pub struct DownloadKnown {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct DownloadFailed {
-    pub id: String,
+    pub id: ItemKey,
     pub progress: f32,
 }
 
@@ -1461,11 +1461,11 @@ pub struct DownloadFailed {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct DownloadRecovery {
     /// Never reached the platform's queue: request again.
-    pub lost: Vec<String>,
+    pub lost: Vec<ItemKey>,
     /// Failed there: marked failed here.
     pub failed: Vec<DownloadFailed>,
     /// Finished there but not recorded here: recorded now (their streamed copies can go).
-    pub finished: Vec<String>,
+    pub finished: Vec<ItemKey>,
     /// Some are queued or interrupted: the platform's queue must be started.
     pub unfinished: bool,
 }
@@ -1496,19 +1496,20 @@ pub fn queue_rows(c: &mut Connection, songs: impl IntoIterator<Item = Song>) -> 
     let mut out = DownloadQueued::default();
     {
         // The queue is ordered by `ts`; counting on from the newest keeps order even if the clock goes back.
-        let newest: i64 = tx.query_row("SELECT coalesce(max(ts), 0) FROM downloads WHERE server=sid()", [], |r| r.get(0))?;
+        let newest: i64 = tx.query_row(concat!("SELECT coalesce(max(ts), 0) FROM downloads WHERE server ", nori_db::in_profile!(), ""), [], |r| r.get(0))?;
         let mut ts = newest.max(nori_db::now_ms());
-        let mut done = tx.prepare_cached("SELECT done FROM downloads WHERE server=sid() AND id=?1")?;
+        let mut done = tx.prepare_cached(concat!("SELECT done FROM downloads WHERE ", nori_db::of_key!()))?;
         let mut add = tx.prepare_cached(&nori_db::items::add_download_sql())?;
         let mut seen = HashSet::new();
-        for song in songs.into_iter().filter(|s| seen.insert(s.id.clone())) {
-            match done.query_row([&song.id], |r| r.get::<_, bool>(0)).optional()? {
+        for song in songs.into_iter().filter(|s| seen.insert(s.key())) {
+            let key = song.key();
+            match done.query_row(nori_db::key_params(&key), |r| r.get::<_, bool>(0)).optional()? {
                 None => {
                     ts += 1;
                     add.execute(rusqlite::params_from_iter(nori_db::items::download_params(&song, ts)))?;
-                    out.fresh.push(song.id);
+                    out.fresh.push(key);
                 }
-                Some(false) => out.again.push(song.id),
+                Some(false) => out.again.push(key),
                 Some(true) => {}
             }
         }
@@ -1518,12 +1519,12 @@ pub fn queue_rows(c: &mut Connection, songs: impl IntoIterator<Item = Song>) -> 
 }
 
 /// Sorts `pending` by the platform queue's states; failed ones are returned with length and bytes.
-pub fn recovery(pending: &[String], known: &[DownloadKnown]) -> (DownloadRecovery, Vec<(String, i64, i64)>) {
-    let by_id: HashMap<&str, &DownloadKnown> = known.iter().map(|k| (k.id.as_str(), k)).collect();
+pub fn recovery(pending: &[ItemKey], known: &[DownloadKnown]) -> (DownloadRecovery, Vec<(ItemKey, i64, i64)>) {
+    let by_id: HashMap<&ItemKey, &DownloadKnown> = known.iter().map(|k| (&k.id, k)).collect();
     let mut r = DownloadRecovery::default();
     let mut failed = Vec::new();
     for id in pending {
-        match by_id.get(id.as_str()) {
+        match by_id.get(id) {
             None => r.lost.push(id.clone()),
             Some(k) => match k.state {
                 REMOVING => r.lost.push(id.clone()),
@@ -1579,47 +1580,47 @@ mod tests {
 
         // Unstarted songs are sized by finished ones: estimates scaled by actual/estimate, else the average.
         let mut t = tracker(&["ext-w-a", "ext-w-b"], 4_000_000);
-        t.info.insert("ext-w-c".into(), Info::default());
+        t.info.insert(ItemKey::own("ext-w-c"), Info::default());
         for id in ["ext-w-a", "ext-w-b", "ext-w-c"] {
-            t.followed(id, QUEUED, 0);
+            t.followed(&ItemKey::own(id), QUEUED, 0);
         }
-        t.followed("ext-w-a", DOWNLOADING, 0);
-        let a = t.open("ext-w-a", 0);
+        t.followed(&ItemKey::own("ext-w-a"), DOWNLOADING, 0);
+        let a = t.open(&ItemKey::own("ext-w-a"), 0);
         t.note(a, 5_000_000, 0, 0);
         t.note(a, 5_000_000, 5_000_000, 10_000);
-        t.followed("ext-w-a", COMPLETED, 10_000);
+        t.followed(&ItemKey::own("ext-w-a"), COMPLETED, 10_000);
         // b was estimated at 4 MB, and a, estimated the same, weighed 5; c has no estimate: the average.
         assert_eq!(t.to_come(3, 2).bytes as i64, 5_000_000 + 5_000_000);
 
         // Batch counts.
         let mut b = Batch::default();
-        assert!(b.queued("a", "Blue"), "the first song starts a batch");
-        assert!(!b.queued("a", "Blue"), "counted once");
+        assert!(b.queued(&ItemKey::own("a"), "Blue"), "the first song starts a batch");
+        assert!(!b.queued(&ItemKey::own("a"), "Blue"), "counted once");
         for id in ["b", "c", "d"] {
-            b.queued(id, "Blue");
+            b.queued(&ItemKey::own(id), "Blue");
         }
         assert_eq!(b.label(), Some("Blue"));
-        b.completed("a");
+        b.completed(&ItemKey::own("a"));
         assert!((b.fraction(0.5) - 0.375).abs() < 1e-6);
-        b.failed("b");
+        b.failed(&ItemKey::own("b"));
         assert!((b.fraction(1.0) - 0.75).abs() < 1e-6);
-        b.queued("b", "Blue");
+        b.queued(&ItemKey::own("b"), "Blue");
         assert_eq!((b.total, b.done, b.failed), (4, 1, 0), "a retry is the same song");
-        b.failed("b");
-        b.removed("b");
-        b.removed("c");
-        b.removed("x");
+        b.failed(&ItemKey::own("b"));
+        b.removed(&ItemKey::own("b"));
+        b.removed(&ItemKey::own("c"));
+        b.removed(&ItemKey::own("x"));
         assert_eq!((b.total, b.failed), (2, 0), "cancelled songs leave the count");
-        b.queued("e", "");
+        b.queued(&ItemKey::own("e"), "");
         assert_eq!(b.label(), None, "a song without an album name");
-        b.completed("d");
-        b.completed("e");
-        assert!(b.queued("f", "Red"), "a drained batch starts over");
+        b.completed(&ItemKey::own("d"));
+        b.completed(&ItemKey::own("e"));
+        assert!(b.queued(&ItemKey::own("f"), "Red"), "a drained batch starts over");
         assert_eq!((b.total, b.done, b.label()), (1, 0, Some("Red")));
     }
 
-    fn marks(list: &[(&str, Phase, i64)]) -> HashMap<String, (Phase, i64)> {
-        list.iter().map(|&(id, p, at)| (id.to_string(), (p, at))).collect()
+    fn marks(list: &[(&str, Phase, i64)]) -> HashMap<ItemKey, (Phase, i64)> {
+        list.iter().map(|&(id, p, at)| (ItemKey::own(id), (p, at))).collect()
     }
 
     #[test]
@@ -1627,7 +1628,7 @@ mod tests {
         let pending = ["e", "d", "c", "b", "a"].map(String::from);
         let done = ["x", "y", "old"].map(String::from);
         let m = marks(&[("a", Phase::Downloading, 0), ("c", Phase::Downloading, 0), ("b", Phase::Failed, 0), ("x", Phase::Done, 5), ("y", Phase::Done, 9)]);
-        let [active, queued, failed, finished] = sections(&pending, &done, &m, |s: &String| s.as_str());
+        let [active, queued, failed, finished] = sections(&pending, &done, &m, |s: &String| ItemKey::own(s.as_str()));
         assert_eq!(active, ["a", "c"]);
         assert_eq!(queued, ["d", "e"], "a failure does not hold up the songs behind it");
         assert_eq!(failed, ["b"]);
@@ -1635,62 +1636,62 @@ mod tests {
 
         // Just finished song listed.
         let pending = ["b", "a"].map(String::from);
-        let [_, queued, _, finished] = sections(&pending, &[], &marks(&[("a", Phase::Done, 0)]), |s: &String| s.as_str());
+        let [_, queued, _, finished] = sections(&pending, &[], &marks(&[("a", Phase::Done, 0)]), |s: &String| ItemKey::own(s.as_str()));
         assert_eq!((queued, finished), (vec!["b".to_string()], vec!["a".to_string()]));
     }
 
     #[test]
     fn processing_marks() {
         let mut t = Tracker::default();
-        t.analysing_began("a");
-        t.followed("a", DOWNLOADING, 0);
-        assert_eq!(t.phase("a"), Some(DownloadPhase::Downloading));
-        t.followed("a", COMPLETED, 1_000);
-        assert_eq!(t.marks["a"], (Phase::Processing([true, true, false]), 1_000));
-        assert!(t.plan("a", Needs { analysis: true, beats: true }, Some(false)));
-        assert_eq!(t.phase("a"), Some(DownloadPhase::FindingLyrics));
-        assert!(t.work_done("a", Work::Lyrics));
-        assert_eq!(t.phase("a"), Some(DownloadPhase::Analysing));
+        t.analysing_began(&ItemKey::own("a"));
+        t.followed(&ItemKey::own("a"), DOWNLOADING, 0);
+        assert_eq!(t.phase(&ItemKey::own("a")), Some(DownloadPhase::Downloading));
+        t.followed(&ItemKey::own("a"), COMPLETED, 1_000);
+        assert_eq!(t.marks[&ItemKey::own("a")], (Phase::Processing([true, true, false]), 1_000));
+        assert!(t.plan(&ItemKey::own("a"), Needs { analysis: true, beats: true }, Some(false)));
+        assert_eq!(t.phase(&ItemKey::own("a")), Some(DownloadPhase::FindingLyrics));
+        assert!(t.work_done(&ItemKey::own("a"), Work::Lyrics));
+        assert_eq!(t.phase(&ItemKey::own("a")), Some(DownloadPhase::Analysing));
         // The streaming analysis was not stored: it waits for one from disk.
-        t.analysing_ended("a", false);
-        assert!(t.waits("a", Work::Analysis));
-        assert!(t.work_done("a", Work::Analysis));
-        assert_eq!(t.phase("a"), Some(DownloadPhase::DetectingBeats));
-        assert!(t.work_done("a", Work::Beats));
-        assert_eq!(t.marks["a"], (Phase::Done, 1_000), "done, at its saved time");
-        assert!(!t.work_done("a", Work::Lyrics), "done stays done");
+        t.analysing_ended(&ItemKey::own("a"), false);
+        assert!(t.waits(&ItemKey::own("a"), Work::Analysis));
+        assert!(t.work_done(&ItemKey::own("a"), Work::Analysis));
+        assert_eq!(t.phase(&ItemKey::own("a")), Some(DownloadPhase::DetectingBeats));
+        assert!(t.work_done(&ItemKey::own("a"), Work::Beats));
+        assert_eq!(t.marks[&ItemKey::own("a")], (Phase::Done, 1_000), "done, at its saved time");
+        assert!(!t.work_done(&ItemKey::own("a"), Work::Lyrics), "done stays done");
 
-        t.followed("ext-b", COMPLETED, 0);
-        assert_eq!(t.phase("ext-b"), Some(DownloadPhase::FindingLyrics), "a provider's song downloaded gets its lyrics too");
+        t.followed(&ItemKey::own("ext-b"), COMPLETED, 0);
+        assert_eq!(t.phase(&ItemKey::own("ext-b")), Some(DownloadPhase::FindingLyrics), "a provider's song downloaded gets its lyrics too");
 
         // A stored streaming analysis leaves nothing to analyse.
-        t.analysing_began("c");
-        t.followed("c", COMPLETED, 0);
-        t.analysing_ended("c", true);
-        assert!(!t.waits("c", Work::Analysis));
-        assert_eq!(t.phase("c"), Some(DownloadPhase::FindingLyrics));
-        assert_eq!(t.sections(&[], &["c".to_string()], |s: &String| s.as_str())[0], ["c"], "listed as active");
+        t.analysing_began(&ItemKey::own("c"));
+        t.followed(&ItemKey::own("c"), COMPLETED, 0);
+        t.analysing_ended(&ItemKey::own("c"), true);
+        assert!(!t.waits(&ItemKey::own("c"), Work::Analysis));
+        assert_eq!(t.phase(&ItemKey::own("c")), Some(DownloadPhase::FindingLyrics));
+        assert_eq!(t.sections(&[], &["c".to_string()], |s: &String| ItemKey::own(s.as_str()))[0], ["c"], "listed as active");
 
         // A downloaded song reprocessed later: no lyrics step.
-        assert!(t.plan("d", Needs { analysis: true, beats: false }, None));
-        assert_eq!(t.phase("d"), Some(DownloadPhase::Analysing));
-        assert!(!t.plan("e", Needs::default(), None), "nothing to do: no mark");
-        assert_eq!(t.phase("e"), None);
+        assert!(t.plan(&ItemKey::own("d"), Needs { analysis: true, beats: false }, None));
+        assert_eq!(t.phase(&ItemKey::own("d")), Some(DownloadPhase::Analysing));
+        assert!(!t.plan(&ItemKey::own("e"), Needs::default(), None), "nothing to do: no mark");
+        assert_eq!(t.phase(&ItemKey::own("e")), None);
 
         // After the bytes, the time left follows each lane's work, and step times are learned (instant
         // lyrics lookups pull the lyrics estimate towards zero).
         let mut t = tracker(&["ly-a", "ly-b"], 1_000_000);
         for id in ["ly-a", "ly-b"] {
-            t.followed(id, DOWNLOADING, 0);
-            let slot = t.open(id, 0);
+            t.followed(&ItemKey::own(id), DOWNLOADING, 0);
+            let slot = t.open(&ItemKey::own(id), 0);
             t.note(slot, 1_000_000, 0, 0);
             t.note(slot, 1_000_000, 1_000_000, 2_000);
         }
         t.notice(2, false, 2_000);
         for id in ["ly-a", "ly-b"] {
-            t.followed(id, COMPLETED, 2_000);
+            t.followed(&ItemKey::own(id), COMPLETED, 2_000);
             // Neither was measured as it came; both are wanted by the beat model.
-            t.plan_at(id, Needs { analysis: true, beats: true }, Some(true), 0);
+            t.plan_at(&ItemKey::own(id), Needs { analysis: true, beats: true }, Some(true), 0);
         }
         assert_eq!((t.saved, t.from_disk), (2, 2));
         let s = t.summary().unwrap();
@@ -1702,19 +1703,19 @@ mod tests {
         // Song by song: each lookup takes 4 s, each analysis 2 s, each model run 20 s.
         let mut clock = 0;
         let mut step = |t: &mut Tracker, id: &str, w: Work, ms: i64| {
-            t.working_at(id, w, clock);
+            t.working_at(&ItemKey::own(id), w, clock);
             clock += ms;
-            assert!(t.work_done_at(id, w, clock));
+            assert!(t.work_done_at(&ItemKey::own(id), w, clock));
         };
         step(&mut t, "ly-a", Work::Lyrics, 4_000);
         step(&mut t, "ly-a", Work::Analysis, 2_000);
         assert_eq!(t.processing(), [1, 1, 2], "the counts go down song by song");
         step(&mut t, "ly-a", Work::Beats, 20_000);
-        assert_eq!(t.marks["ly-a"].0, Phase::Done);
+        assert_eq!(t.marks[&ItemKey::own("ly-a")].0, Phase::Done);
         step(&mut t, "ly-b", Work::Lyrics, 4_000);
         step(&mut t, "ly-b", Work::Analysis, 2_000);
         assert_eq!(t.processing(), [0, 0, 1]);
-        assert_eq!(t.phase("ly-b"), Some(DownloadPhase::DetectingBeats), "detecting beats");
+        assert_eq!(t.phase(&ItemKey::own("ly-b")), Some(DownloadPhase::DetectingBeats), "detecting beats");
         step(&mut t, "ly-b", Work::Beats, 20_000);
         assert_eq!(t.processing(), [0, 0, 0]);
         // Learned: 8 s over two lookups, 4 s over two analyses, 40 s over two model runs, each with its guess.
@@ -1723,48 +1724,48 @@ mod tests {
         assert!((per(&t, Work::Analysis) - (4.0 + 2.0 * 5.0) / 4.0).abs() < 1e-9);
         assert!((per(&t, Work::Beats) - (40.0 + 2.0 * 40.0) / 4.0).abs() < 1e-9);
         // The next batch's allowance is the learned one.
-        t.followed("ly-c", COMPLETED, 60_000);
-        t.plan("ly-c", Needs { analysis: true, beats: true }, Some(true));
+        t.followed(&ItemKey::own("ly-c"), COMPLETED, 60_000);
+        t.plan(&ItemKey::own("ly-c"), Needs { analysis: true, beats: true }, Some(true));
         let a = t.after(0, 0, false);
         assert_eq!(a.waiting, [1.0, 1.0, 1.0]);
         assert!((time_left(Some(0.0), &a) - (per(&t, Work::Analysis) + per(&t, Work::Beats))).abs() < 1e-9);
         for w in Work::ALL {
-            t.work_done("ly-c", w);
+            t.work_done(&ItemKey::own("ly-c"), w);
         }
         let before = per(&t, Work::Lyrics);
         for i in 0..20 {
             let id = format!("ly-d{i}");
-            t.marks.insert(id.clone(), (Phase::Processing([true, false, false]), 0));
-            t.work_done(&id, Work::Lyrics);
+            t.marks.insert(ItemKey::own(id.clone()), (Phase::Processing([true, false, false]), 0));
+            t.work_done(&ItemKey::own(id), Work::Lyrics);
         }
         assert!(per(&t, Work::Lyrics) < before / 4.0, "lookups ended at once weigh it down: {}", per(&t, Work::Lyrics));
         // An analysis found done without a step (measured as it came) says nothing of how long one takes.
         let analysis = per(&t, Work::Analysis);
-        t.marks.insert("ly-e".into(), (Phase::Processing([false, true, false]), 0));
-        t.work_done("ly-e", Work::Analysis);
+        t.marks.insert(ItemKey::own("ly-e"), (Phase::Processing([false, true, false]), 0));
+        t.work_done(&ItemKey::own("ly-e"), Work::Analysis);
         assert_eq!(per(&t, Work::Analysis), analysis);
 
         // Processing facts follow the marks.
         let mut t = Tracker::default();
         assert!(t.processing_at(0).is_none());
-        t.plan("a", Needs { analysis: true, beats: true }, None);
-        t.plan("b", Needs { analysis: false, beats: true }, None);
+        t.plan(&ItemKey::own("a"), Needs { analysis: true, beats: true }, None);
+        t.plan(&ItemKey::own("b"), Needs { analysis: false, beats: true }, None);
         let p = t.processing_at(1_000).unwrap();
         assert_eq!((p.lyrics, p.analysing, p.beats), (0, 1, 2));
         assert!(p.eta_s > 0);
         assert_eq!(p.permille, 0, "nothing done yet");
         let moved = t.marks_changed();
-        let b = moved.ids.iter().position(|i| i == "b").unwrap();
-        assert!(moved.ids.contains(&"a".to_string()) && moved.phases[b] == Some(DownloadPhase::DetectingBeats));
-        t.work_done("a", Work::Analysis);
+        let b = moved.ids.iter().position(|i| i.id == "b").unwrap();
+        assert!(moved.ids.contains(&ItemKey::own("a")) && moved.phases[b] == Some(DownloadPhase::DetectingBeats));
+        t.work_done(&ItemKey::own("a"), Work::Analysis);
         assert_eq!(t.processing_at(1_500).unwrap().permille, 333, "one of three steps done");
-        t.work_done("a", Work::Beats);
-        t.work_done("b", Work::Analysis);
-        t.work_done("b", Work::Beats);
-        assert_eq!(t.marks["b"].0, Phase::Done);
+        t.work_done(&ItemKey::own("a"), Work::Beats);
+        t.work_done(&ItemKey::own("b"), Work::Analysis);
+        t.work_done(&ItemKey::own("b"), Work::Beats);
+        assert_eq!(t.marks[&ItemKey::own("b")].0, Phase::Done);
         assert!(t.processing_at(2_000).is_none());
         // The next run's bar starts empty.
-        t.plan("c", Needs { analysis: true, beats: false }, None);
+        t.plan(&ItemKey::own("c"), Needs { analysis: true, beats: false }, None);
         assert_eq!(t.processing_at(3_000).unwrap().permille, 0);
     }
 
@@ -1786,70 +1787,70 @@ mod tests {
         // A timed-out step is given up; an idle lane is released; a slow live step finishes and is timed.
         let mut t = Tracker::default();
         for id in ["ex-a", "ex-b"] {
-            t.followed(id, COMPLETED, 0);
-            t.plan_at(id, Needs { analysis: true, beats: id == "ex-a" }, Some(true), 0);
+            t.followed(&ItemKey::own(id), COMPLETED, 0);
+            t.plan_at(&ItemKey::own(id), Needs { analysis: true, beats: id == "ex-a" }, Some(true), 0);
         }
         assert_eq!(t.processing(), [2, 2, 1]);
         // A lookup that never answers, and an analysis that runs.
-        t.working_at("ex-a", Work::Lyrics, 0);
-        t.working_at("ex-a", Work::Analysis, 0);
+        t.working_at(&ItemKey::own("ex-a"), Work::Lyrics, 0);
+        t.working_at(&ItemKey::own("ex-a"), Work::Analysis, 0);
         let lyrics_ms = Work::Lyrics.limit_ms();
         assert_eq!(t.expire(20_000), lyrics_ms - 20_000, "the lookup's deadline comes first");
         t.expire(lyrics_ms);
-        assert!(!t.waits("ex-a", Work::Lyrics), "the lookup is given up");
-        assert!(t.waits("ex-a", Work::Analysis), "the analysis runs on");
-        assert!(t.waits("ex-b", Work::Lyrics), "the next lookup waits its turn");
+        assert!(!t.waits(&ItemKey::own("ex-a"), Work::Lyrics), "the lookup is given up");
+        assert!(t.waits(&ItemKey::own("ex-a"), Work::Analysis), "the analysis runs on");
+        assert!(t.waits(&ItemKey::own("ex-b"), Work::Lyrics), "the next lookup waits its turn");
         // The analysis is slow but alive: it ends well past the lookup's time, within its own.
-        assert!(t.work_done_at("ex-a", Work::Analysis, 100_000));
-        t.working_at("ex-a", Work::Beats, 100_000);
+        assert!(t.work_done_at(&ItemKey::own("ex-a"), Work::Analysis, 100_000));
+        t.working_at(&ItemKey::own("ex-a"), Work::Beats, 100_000);
         assert!((t.paces[Work::Analysis as usize].per_song_s(Work::Analysis) - (100.0 + 2.0 * 5.0) / 3.0).abs() < 1e-9, "learned from the step");
         // The lyrics lane moved on to nothing for its whole spell: what waits there is let go.
         t.expire(100_000);
-        assert!(!t.waits("ex-b", Work::Lyrics));
-        assert!(t.waits("ex-b", Work::Analysis), "the measuring lane is busy with ex-a's beats, not stuck");
+        assert!(!t.waits(&ItemKey::own("ex-b"), Work::Lyrics));
+        assert!(t.waits(&ItemKey::own("ex-b"), Work::Analysis), "the measuring lane is busy with ex-a's beats, not stuck");
         // The beat model's run ends; ex-b's analysis follows.
-        assert!(t.work_done_at("ex-a", Work::Beats, 160_000));
-        assert_eq!(t.marks["ex-a"].0, Phase::Done);
-        t.working_at("ex-b", Work::Analysis, 160_000);
+        assert!(t.work_done_at(&ItemKey::own("ex-a"), Work::Beats, 160_000));
+        assert_eq!(t.marks[&ItemKey::own("ex-a")].0, Phase::Done);
+        t.working_at(&ItemKey::own("ex-b"), Work::Analysis, 160_000);
         assert_eq!(t.expire(160_000 + Work::Analysis.limit_ms()), -1, "given up at its time: nothing is left processing");
-        assert_eq!(t.marks["ex-b"].0, Phase::Done);
+        assert_eq!(t.marks[&ItemKey::own("ex-b")].0, Phase::Done);
     }
 
     #[test]
     fn mark_changes() {
         let mut t = Tracker::default();
-        t.mark("a", Phase::Downloading, 1);
-        t.mark("b", Phase::Failed, 2);
-        let mine = |m: &DownloadMarks, id: &str| m.ids.iter().position(|i| i == id).map(|i| m.phases[i]);
+        t.mark(&ItemKey::own("a"), Phase::Downloading, 1);
+        t.mark(&ItemKey::own("b"), Phase::Failed, 2);
+        let mine = |m: &DownloadMarks, id: &str| m.ids.iter().position(|i| i.id == id).map(|i| m.phases[i]);
         let m = t.marks_changed();
         assert_eq!((mine(&m, "a"), mine(&m, "b")), (Some(Some(DownloadPhase::Downloading)), Some(Some(DownloadPhase::Failed))));
-        t.unmark("a");
+        t.unmark(&ItemKey::own("a"));
         let m = t.marks_changed();
         assert_eq!((mine(&m, "a"), mine(&m, "b")), (Some(None), None), "removed, and b did not move");
 
         // The notification's title, the last song settling the batch, and the finished marks kept.
         let mut t = tracker(&["ext-a", "ext-b"], 1_000_000);
-        t.info.get_mut("ext-a").unwrap().title = "Song".into();
-        assert_eq!((t.start_fraction("ext-a"), t.start_fraction("ext-x")), (0.0, -1.0));
-        assert_eq!(t.followed("ext-a", QUEUED, 0), NEW_BATCH);
-        t.open("ext-a", 0);
+        t.info.get_mut(&ItemKey::own("ext-a")).unwrap().title = "Song".into();
+        assert_eq!((t.start_fraction(&ItemKey::own("ext-a")), t.start_fraction(&ItemKey::own("ext-x"))), (0.0, -1.0));
+        assert_eq!(t.followed(&ItemKey::own("ext-a"), QUEUED, 0), NEW_BATCH);
+        t.open(&ItemKey::own("ext-a"), 0);
         t.notice(1, false, 0);
         assert_eq!(t.notice.kind, NoticeKind::OneNamed);
         t.notice(1, true, 500);
         assert_eq!(t.notice.kind, NoticeKind::Waiting);
-        t.followed("ext-b", QUEUED, 0);
+        t.followed(&ItemKey::own("ext-b"), QUEUED, 0);
         t.notice(2, false, 1_000);
         assert_eq!((t.notice.kind, t.notice.total), (NoticeKind::Many, 2));
-        assert_eq!(t.removed("ext-b"), 0, "one still open");
-        t.followed("ext-a", DOWNLOADING, 0);
-        assert_eq!(t.removed("ext-a"), MARKS | DRAINED);
-        assert_eq!(t.forget("ext-a"), 0);
+        assert_eq!(t.removed(&ItemKey::own("ext-b")), 0, "one still open");
+        t.followed(&ItemKey::own("ext-a"), DOWNLOADING, 0);
+        assert_eq!(t.removed(&ItemKey::own("ext-a")), MARKS | DRAINED);
+        assert_eq!(t.forget(&ItemKey::own("ext-a")), 0);
         for i in 0..RECENT as i64 + 2 {
-            t.followed(&format!("ext-d{i}"), COMPLETED, i);
-            t.work_done(&format!("ext-d{i}"), Work::Lyrics);
+            t.followed(&ItemKey::own(format!("ext-d{i}")), COMPLETED, i);
+            t.work_done(&ItemKey::own(format!("ext-d{i}")), Work::Lyrics);
         }
         assert_eq!(t.marks.len(), RECENT, "only the latest finished marks stay");
-        assert!(!t.marks.contains_key("ext-d0") && t.marks.contains_key("ext-d2"));
+        assert!(!t.marks.contains_key(&ItemKey::own("ext-d0")) && t.marks.contains_key(&ItemKey::own("ext-d2")));
 
         // Downloads let go (a server switch) wake the platform's waiter, so it waits on the new core's marks.
         use std::future::Future;
@@ -1871,9 +1872,9 @@ mod tests {
 
     #[test]
     fn rows_and_lanes() {
-        let slot = Some(Slot { id: "r".into(), estimate: 0, length: 1000, bytes: 450, started_at: 0, gate_value: 0.0, gate_at: 0, speed_bytes: 0, speed_at: 0, rate: 0.0 });
-        assert_eq!(row_facts(std::slice::from_ref(&slot), "r"), Some(RowFacts { percent: 45, speed_bps: 0, eta_s: -1 }));
-        assert_eq!(row_facts(std::slice::from_ref(&slot), "other"), None);
+        let slot = Some(Slot { id: ItemKey::own("r"), estimate: 0, length: 1000, bytes: 450, started_at: 0, gate_value: 0.0, gate_at: 0, speed_bytes: 0, speed_at: 0, rate: 0.0 });
+        assert_eq!(row_facts(std::slice::from_ref(&slot), &ItemKey::own("r")), Some(RowFacts { percent: 45, speed_bps: 0, eta_s: -1 }));
+        assert_eq!(row_facts(std::slice::from_ref(&slot), &ItemKey::own("other")), None);
 
         // Time left lanes.
         let per = [3.0, 5.0, 40.0];
@@ -1894,7 +1895,7 @@ mod tests {
 
         // No slot notes nothing.
         let mut t = Tracker::default();
-        let slot = t.open("a", 0);
+        let slot = t.open(&ItemKey::own("a"), 0);
         assert!(t.note(-1, 1000, 500, 10).is_nan());
         assert_eq!(t.slots[slot as usize].as_ref().map(|s| s.bytes), Some(0));
     }
@@ -1903,7 +1904,7 @@ mod tests {
     fn tracker(ids: &[&str], size: i64) -> Tracker {
         let mut t = Tracker::default();
         for id in ids {
-            t.info.insert(id.to_string(), Info { estimate: size, ..Info::default() });
+            t.info.insert(ItemKey::own(*id), Info { estimate: size, ..Info::default() });
         }
         t
     }
@@ -1911,9 +1912,9 @@ mod tests {
     #[test]
     fn the_notice_names_the_song_in_flight() {
         let mut t = tracker(&["ext-n"], 1_000_000);
-        t.info.get_mut("ext-n").unwrap().clone_from(&Info { title: "Blue".into(), artist: "Ada".into(), cover: "al-7".into(), estimate: 1_000_000, ..Info::default() });
-        t.followed("ext-n", QUEUED, 0);
-        t.open("ext-n", 0);
+        t.info.get_mut(&ItemKey::own("ext-n")).unwrap().clone_from(&Info { title: "Blue".into(), artist: "Ada".into(), cover: "al-7".into(), estimate: 1_000_000, ..Info::default() });
+        t.followed(&ItemKey::own("ext-n"), QUEUED, 0);
+        t.open(&ItemKey::own("ext-n"), 0);
         assert_eq!(t.notice(1, false, 0), NoticeChange::Changed);
         let n = t.notice_facts();
         assert_eq!((n.kind, n.current.as_str(), n.artist.as_str(), n.cover.as_str()), (NoticeKind::OneNamed, "Blue", "Ada", "al-7"));
@@ -1922,27 +1923,27 @@ mod tests {
     #[test]
     fn progress_is_the_bytes_then_the_work_after_them() {
         let mut t = tracker(&["ext-p"], 1_000_000);
-        t.info.get_mut("ext-p").unwrap().title = "Blue".into();
+        t.info.get_mut(&ItemKey::own("ext-p")).unwrap().title = "Blue".into();
         assert_eq!(t.progress(0, false, 0), None);
-        t.followed("ext-p", QUEUED, 0);
-        t.open("ext-p", 0);
+        t.followed(&ItemKey::own("ext-p"), QUEUED, 0);
+        t.open(&ItemKey::own("ext-p"), 0);
         assert!(matches!(t.progress(0, false, 0), Some(Progress::Fetching(n)) if n.current == "Blue"));
-        t.followed("ext-p", COMPLETED, 1_000);
+        t.followed(&ItemKey::own("ext-p"), COMPLETED, 1_000);
         let Some(Progress::Processing { work, after_fetching: true }) = t.progress(0, false, 1_000) else { panic!("its lyrics follow the bytes") };
         assert_eq!(work.lyrics, 1);
-        t.work_done("ext-p", Work::Lyrics);
+        t.work_done(&ItemKey::own("ext-p"), Work::Lyrics);
         assert_eq!(t.progress(0, false, 2_000), None);
         // Measuring the downloads again, nothing downloads first.
-        t.plan("ext-p", Needs { analysis: true, beats: false }, None);
+        t.plan(&ItemKey::own("ext-p"), Needs { analysis: true, beats: false }, None);
         assert!(matches!(t.progress(0, false, 3_000), Some(Progress::Processing { after_fetching: false, .. })));
     }
 
     #[test]
     fn speed_holds_between_songs() {
         let mut t = tracker(&["ext-a", "ext-b"], 1_000_000);
-        t.followed("ext-a", QUEUED, 0);
-        t.followed("ext-b", QUEUED, 0);
-        let slot = t.open("ext-a", 0);
+        t.followed(&ItemKey::own("ext-a"), QUEUED, 0);
+        t.followed(&ItemKey::own("ext-b"), QUEUED, 0);
+        let slot = t.open(&ItemKey::own("ext-a"), 0);
         t.note(slot, 1_000_000, 0, 0);
         assert_eq!(Tracker::default().notice(0, false, 0), NoticeChange::BatchOver);
         assert_eq!(t.notice(2, false, 0), NoticeChange::Changed);
@@ -1951,7 +1952,7 @@ mod tests {
         t.notice(2, false, 1_000);
         assert!(t.speed_bps > 0);
         t.note(slot, 1_000_000, 1_000_000, 1_500);
-        t.followed("ext-a", COMPLETED, 1_600);
+        t.followed(&ItemKey::own("ext-a"), COMPLETED, 1_600);
         t.notice(2, false, 2_000);
         assert!(t.speed_bps > 0, "the bytes came this second: the next song is not open yet, the batch still moves");
     }
@@ -1978,9 +1979,9 @@ mod tests {
         {
             let mut t = tracker(&["ext-sp-a", "ext-sp-b"], 1_000_000);
             for id in ["ext-sp-a", "ext-sp-b"] {
-                t.followed(id, DOWNLOADING, 0);
+                t.followed(&ItemKey::own(id), DOWNLOADING, 0);
             }
-            let (a, b) = (t.open("ext-sp-a", 0), t.open("ext-sp-b", 0));
+            let (a, b) = (t.open(&ItemKey::own("ext-sp-a"), 0), t.open(&ItemKey::own("ext-sp-b"), 0));
             for k in 0..=4i64 {
                 t.note(a, 1_000_000, k * 100_000, k * 500);
                 t.note(b, 1_000_000, k * 50_000, k * 500);
@@ -2005,15 +2006,15 @@ mod tests {
                 t.paces[w as usize] = Pace { took_ms: 0, done: 1_000 };
             }
             for id in &names {
-                t.followed(id, QUEUED, 0);
+                t.followed(&ItemKey::own(*id), QUEUED, 0);
             }
             let mut next = 0;
             // (song, slot, bytes)
             let mut running: Vec<(usize, i32, i64)> = Vec::new();
             let mut start = |t: &mut Tracker, running: &mut Vec<(usize, i32, i64)>, now: i64| {
                 if next < names.len() {
-                    t.followed(names[next], DOWNLOADING, now);
-                    let slot = t.open(names[next], now);
+                    t.followed(&ItemKey::own(names[next]), DOWNLOADING, now);
+                    let slot = t.open(&ItemKey::own(names[next]), now);
                     t.note(slot, 2_000_000, 0, now);
                     running.push((next, slot, 0));
                     next += 1;
@@ -2030,7 +2031,7 @@ mod tests {
                 }
                 while let Some(i) = running.iter().position(|r| r.2 >= 2_000_000) {
                     let (song, _, _) = running.remove(i);
-                    t.followed(names[song], COMPLETED, now);
+                    t.followed(&ItemKey::own(names[song]), COMPLETED, now);
                     start(&mut t, &mut running, now);
                 }
                 if now % 1_000 == 0 && !running.is_empty() {
@@ -2053,15 +2054,15 @@ mod tests {
         // Resumed download no speed burst.
         {
             let mut t = tracker(&["ext-r"], 8_000_000);
-            t.followed("ext-r", DOWNLOADING, 0);
-            let slot = t.open("ext-r", 0);
+            t.followed(&ItemKey::own("ext-r"), DOWNLOADING, 0);
+            let slot = t.open(&ItemKey::own("ext-r"), 0);
             for k in 0..=6i64 {
                 t.note(slot, 8_000_000, 3_000_000 + k * 100_000, k * 500);
             }
             t.notice(1, false, 3_000);
             assert!((190_000..=210_000).contains(&t.speed_bps), "{} B/s", t.speed_bps);
             // Asked for again after it stopped: one slot, not two.
-            t.open("ext-r", 3_000);
+            t.open(&ItemKey::own("ext-r"), 3_000);
             assert_eq!(t.open_slots().count(), 1);
         }
 
@@ -2069,15 +2070,15 @@ mod tests {
         {
             let mut t = tracker(&["af-a", "af-b"], 1_000_000);
             for id in ["af-a", "af-b"] {
-                t.followed(id, DOWNLOADING, 0);
-                let slot = t.open(id, 0);
+                t.followed(&ItemKey::own(id), DOWNLOADING, 0);
+                let slot = t.open(&ItemKey::own(id), 0);
                 t.note(slot, 1_000_000, 0, 0);
                 t.note(slot, 1_000_000, 1_000_000, 2_000);
             }
             t.notice(2, false, 2_000);
             assert!(t.speed_bps > 0);
             for id in ["af-a", "af-b"] {
-                t.followed(id, COMPLETED, 2_000);
+                t.followed(&ItemKey::own(id), COMPLETED, 2_000);
             }
             // The platform's last notice, asked after the bytes were in.
             t.notice(0, false, 2_500);
@@ -2086,10 +2087,10 @@ mod tests {
             let (speed, first) = t.speed_eta_at(3_000);
             assert_eq!((speed, first), (0, 6));
             assert_eq!(t.speed_eta_at(4_000), (0, 5));
-            t.work_done("af-a", Work::Lyrics);
+            t.work_done(&ItemKey::own("af-a"), Work::Lyrics);
             let (_, one_left) = t.speed_eta_at(5_000);
             assert!((1..=4).contains(&one_left), "one lookup left: {one_left}");
-            t.work_done("af-b", Work::Lyrics);
+            t.work_done(&ItemKey::own("af-b"), Work::Lyrics);
             assert_eq!(t.speed_eta_at(6_000), (0, -1), "all processed");
             assert_eq!(t.speed_eta_at(60_000), (0, -1), "and it stays so");
         }

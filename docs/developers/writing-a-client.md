@@ -373,8 +373,10 @@ These rules hold behind the answers:
   on All. A client draws the layout and keeps no order of its own.
 - **An undo lasts `UNDO_MS`.** A client that offers the undo shows it for that long. After that,
   `playlist_restore` refuses.
-- **A favorite marks at once.** `Client::star` puts the old mark back if the server refuses. Where the
-  account cannot keep favorites, the core keeps them on this device ([Providers](providers.md)).
+- **A favorite marks at once.** `Client::star_in` hands the client the profile's marks before it asks
+  the item's source, and puts the old mark back if the source refuses. A client looks a seal up by the
+  item's key (`StarMarks::starred`). Where the account cannot keep favorites, the core keeps them on this
+  device ([Providers](providers.md)).
 - **Only the device that plays looks lyrics up.** It hears the song to time them against. A device that
   shows another device's playback shows the lyrics that device sends.
 - **Keeping a playlist deletes only what keeping brought.** A song that no kept playlist holds, and that

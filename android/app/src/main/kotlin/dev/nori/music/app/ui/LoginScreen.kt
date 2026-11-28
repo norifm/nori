@@ -1,5 +1,7 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.foundation.layout.windowInsetsPadding
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -315,6 +317,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, kind: Serve
             if (info != null && info.signIn.isNotEmpty() && !adding) AccountPart(vm, info, p.id) { name -> p = p.copy(user = name) }
             val saved = vm.prefs.collectAsStateWithLifecycle().value.servers.firstOrNull { it.id == p.id }?.takeIf { !adding }
             if (saved != null) ScrobblingPart(vm, saved)
+            if (saved != null) SourcesPart(vm, saved)
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -518,12 +521,61 @@ fun WaitingProfile(vm: SettingsViewModel, wait: dev.nori.music.ffi.ProfileWait) 
             // This profile too, unavailable, so the list is the one the user knows.
             GroupLabel(say.profiles)
             GroupCard {
-                prefs.servers.forEach { saved ->
+                remember(prefs.servers) { dev.nori.music.ffi.settings.serversShown(prefs.servers) }.forEach { saved ->
                     val active = saved.id == profile.id
                     ProfileLine(vm, saved, active, divider = true, onClick = if (active) null else ({ vm.switchServer(saved) }))
                 }
                 GroupRow(say.addProfile, { adding = true }, icon = Iconoir.Plus, divider = false)
             }
         }
+    }
+}
+
+/**
+ * The other saved profiles this profile plays from, browsed with its own as one library: each with its
+ * mark, moved earlier or later or taken out from its menu; then a row adding one, from the saved profiles
+ * that can be one or by signing in to a new one here. The profile in use opens again with them. A profile
+ * that is itself a source has none.
+ */
+@Composable
+private fun SourcesPart(vm: SettingsViewModel, profile: SavedServer) {
+    val prefs by vm.prefs.collectAsStateWithLifecycle()
+    val ui by androidx.compose.runtime.produceState<SettingsViewModel.SourcesUi?>(null, prefs.servers, profile.id) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { vm.sourcesUi(profile.id) }
+    }
+    val shown = ui ?: return
+    var picking by remember { mutableStateOf(false) }
+    var signingIn by remember { mutableStateOf(false) }
+    GroupLabel(say.sources)
+    GroupCard {
+        shown.sources.forEachIndexed { i, s ->
+            val moves = listOfNotNull(
+                (say.sourceEarlier to { vm.moveSource(profile.id, s.id, -1) }).takeIf { i > 0 },
+                (say.sourceLater to { vm.moveSource(profile.id, s.id, 1) }).takeIf { i < shown.sources.lastIndex },
+                say.remove to { vm.removeSource(profile.id, s.id) },
+            )
+            ProfileLine(vm, s, active = false, divider = true, Modifier.testTag("source-${s.id}"), trailing = { MoreButton(moves) }, onClick = null)
+        }
+        GroupRow(say.addSource, { picking = true }, Modifier.testTag("add-source"), icon = Iconoir.Plus, divider = false)
+    }
+    NoriSheet(picking, { picking = false }) {
+        Column(Modifier.windowInsetsPadding(gestureBarRoom)) {
+            SheetTitle(say.addSource)
+            GroupCard(Modifier.padding(bottom = 16.dp)) {
+                shown.offered.forEach { o ->
+                    ProfileLine(vm, o, active = false, divider = true, Modifier.testTag("offered-${o.id}")) { vm.addSource(profile.id, o); picking = false }
+                }
+                GroupRow(say.sourceSignIn, { picking = false; signingIn = true }, Modifier.testTag("source-sign-in"), icon = Iconoir.Plus, divider = false)
+            }
+        }
+    }
+    NoriDialog(signingIn, { signingIn = false }, DialogStyle.Page) {
+        // A new profile's flow from its start, not the edited profile's form.
+        androidx.compose.runtime.DisposableEffect(profile.id) {
+            vm.addOn(dev.nori.music.ffi.AddEvent.Start)
+            vm.signInAsSourceOf(profile.id)
+            onDispose { vm.signInAsSourceOf(null) }
+        }
+        LoginScreen(vm) { signingIn = false }
     }
 }

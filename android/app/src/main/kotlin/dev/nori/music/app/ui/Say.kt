@@ -676,6 +676,11 @@ class Say(private val r: Resources) {
         },
     )
     val scrobbling: String = r.getString(R.string.scrobbling)
+    val sources: String = r.getString(R.string.sources)
+    val addSource: String = r.getString(R.string.add_source)
+    val sourceSignIn: String = r.getString(R.string.source_sign_in)
+    val sourceEarlier: String = r.getString(R.string.source_earlier)
+    val sourceLater: String = r.getString(R.string.source_later)
     val scrobblingHint: String = r.getString(R.string.scrobbling_hint)
     fun scrobbler(k: dev.nori.music.ffi.settings.ScrobblerKind): String = r.getString(
         when (k) {
@@ -1217,6 +1222,10 @@ class Say(private val r: Resources) {
     // ---- confirmations ----
 
     fun addedToPlaylist(name: String): String = r.getString(R.string.said_added_to_playlist, name)
+    /** A playlist of source [source], which takes only that source's songs. */
+    fun takesOnlyItsSongs(name: String, source: String): String = r.getString(R.string.said_takes_only_its_songs, name, source)
+    /** A playlist offered for songs of another source: it takes only [source]'s. */
+    fun onlySongsFrom(source: String): String = r.getString(R.string.only_songs_from, source)
     fun playlistCreated(name: String): String = r.getString(R.string.said_playlist_created, name)
     val playingNext: String get() = r.getString(R.string.said_playing_next)
     val addedToQueue: String get() = r.getString(R.string.said_added_to_queue)

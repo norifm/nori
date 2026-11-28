@@ -71,7 +71,9 @@ import dev.nori.music.downloads.processing
 import dev.nori.music.downloads.DownloadLines
 import androidx.compose.ui.platform.LocalContext
 import dev.nori.music.downloads.DownloadState
+import dev.nori.music.ffi.model.ItemKey
 import dev.nori.music.ffi.model.Song
+import dev.nori.music.data.key
 import dev.nori.music.ffi.transfers.DownloadSections
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.roundToInt
@@ -84,7 +86,7 @@ import kotlin.math.roundToInt
  * nothing else, and a percent moving recomposes one ring.
  */
 @Stable
-class DownloadMarks(val state: State<DownloadState>, val marks: State<Map<String, DownloadMark>>, val plain: State<Boolean>)
+class DownloadMarks(val state: State<DownloadState>, val marks: State<Map<ItemKey, DownloadMark>>, val plain: State<Boolean>)
 
 val LocalDownloadMarks = staticCompositionLocalOf<DownloadMarks?> { null }
 
@@ -124,7 +126,7 @@ val MARK_GAP = 8.dp
  * screen grows in, and one that goes shrinks away, so nothing snaps into place.
  */
 @Composable
-fun DownloadSlot(id: String, downloaded: Boolean, tint: Color, pageWhole: Boolean = false) {
+fun DownloadSlot(id: ItemKey, downloaded: Boolean, tint: Color, pageWhole: Boolean = false) {
     val all = LocalDownloadMarks.current
     if (all == null) {
         if (downloaded && !pageWhole) Icon(Iconoir.CheckCircle, say.downloaded, Modifier.size(MARK), tint)
@@ -296,9 +298,9 @@ fun DownloadsScreen(actions: ActionsViewModel) {
             fun LazyListScope.section(key: String, title: String, songs: List<Song>, section: DownloadPhase, action: (@Composable RowScope.() -> Unit)? = null) {
                 if (songs.isEmpty()) return
                 item(key = "h-$key", contentType = "header") { SectionHeader(title, itemMotion(), action = action) }
-                itemsIndexed(songs, key = { _, song -> song.id }, contentType = { _, _ -> "download" }) { i, song ->
+                itemsIndexed(songs, key = { _, song -> song.rowKey }, contentType = { _, _ -> "download" }) { i, song ->
                     // A saved song still being processed is listed with the downloading ones and says what it waits for.
-                    val phase = LocalDownloadMarks.current?.marks?.value?.get(song.id)?.phase?.takeIf { section == DownloadPhase.DOWNLOADING && it.processing } ?: section
+                    val phase = LocalDownloadMarks.current?.marks?.value?.get(song.key)?.phase?.takeIf { section == DownloadPhase.DOWNLOADING && it.processing } ?: section
                     DownloadRow(
                         song, cover(song.coverArt), phase, i < songs.lastIndex, itemMotion(),
                         sub = if (phase == DownloadPhase.DOWNLOADING) activeSub(song) else null,
@@ -360,9 +362,9 @@ fun DownloadsScreen(actions: ActionsViewModel) {
 @Composable
 private fun activeSub(song: Song): String {
     val all = LocalDownloadMarks.current
-    val progress = all?.marks?.value?.get(song.id)
+    val progress = all?.marks?.value?.get(song.key)
         ?.takeIf { it.phase == DownloadPhase.DOWNLOADING }?.progress?.collectAsStateWithLifecycle()?.value
-    return progress.let { _ -> DownloadLines.row(LocalContext.current.resources, song.id) }
+    return progress.let { _ -> DownloadLines.row(LocalContext.current.resources, song.key) }
 }
 
 /** A song on the downloads screen: the same proportions as a row in any song list. */
@@ -413,7 +415,7 @@ private fun DownloadRow(
 @Composable
 private fun StopControl(song: Song, plain: Boolean, stoppable: Boolean, onStop: () -> Unit) {
     val all = LocalDownloadMarks.current
-    val mark = all?.marks?.value?.get(song.id)
+    val mark = all?.marks?.value?.get(song.key)
     val scheme = MaterialTheme.colorScheme
     // A saved song being processed has nothing to stop: its ring turns and the square fades away.
     val square by animateFloatAsState(if (stoppable) 1f else 0f, AppMotion.fadeIn(), label = "stop")

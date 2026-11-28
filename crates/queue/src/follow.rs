@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use nori_model::{PageOrigin, Song};
+use nori_model::{Keyed, PageOrigin, Song};
 
 use crate::playlist::QueueEdit;
 use crate::Session;
@@ -82,7 +82,7 @@ impl Session {
         }
         self.register(rest.clone());
         let after = q.list.play_order().last().map(|at| q.list.seqs()[at]);
-        let at = q.list.extend(rest.iter().map(|s| s.id.clone()).collect(), crate::playlist::seed());
+        let at = q.list.extend(rest.iter().map(Keyed::key).collect(), crate::playlist::seed());
         let shuffled = q.list.shuffle_order().is_some();
         Some(Followed { edit: QueueEdit { remove: Vec::new(), at: at as u32, songs: rest, seek: None, shuffled }, after })
     }
@@ -105,12 +105,12 @@ mod tests {
         ids.iter().map(|id| Song::only_id(id.to_string())).collect()
     }
 
-    fn ids(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
+    fn ids(v: &[&str]) -> Vec<nori_model::ItemKey> {
+        v.iter().map(|s| nori_model::ItemKey::own(*s)).collect()
     }
 
     fn list(s: &Session) -> Vec<String> {
-        s.playlist(|p| p.ids().to_vec())
+        s.playlist(|p| p.ids().iter().map(|k| k.id.clone()).collect())
     }
 
     fn page() -> PageOrigin {

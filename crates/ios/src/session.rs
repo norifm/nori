@@ -236,7 +236,7 @@ fn pack(said: &Said) -> Packed {
         Said::Engine(e) => pack_event(&mut p, e),
         Said::Lyrics(now) => {
             p.kind = REPORT_LYRICS;
-            p.id = c(now.song().unwrap_or_default());
+            p.id = c(&now.song().map(|k| k.text().into_owned()).unwrap_or_default());
         }
         Said::Search(view) => {
             p.kind = REPORT_SEARCH;
@@ -299,7 +299,7 @@ fn pack_event(p: &mut Packed, e: &Event) {
             p.kind = REPORT_SONG;
             p.index = ix(*index);
             p.jumps = *jumps;
-            p.id = c(id);
+            p.id = c(&id.text());
         }
         Event::Looped {
             index, id, jumps, ..
@@ -307,7 +307,7 @@ fn pack_event(p: &mut Packed, e: &Event) {
             p.kind = REPORT_LOOPED;
             p.index = ix(*index);
             p.jumps = *jumps;
-            p.id = c(id);
+            p.id = c(&id.text());
         }
         Event::Position { index, ms, jumps } => {
             p.kind = REPORT_POSITION;
@@ -317,7 +317,7 @@ fn pack_event(p: &mut Packed, e: &Event) {
         }
         Event::Error { id, message } => {
             p.kind = REPORT_ERROR;
-            p.id = c(id);
+            p.id = c(&id.as_ref().map(|k| k.text().into_owned()).unwrap_or_default());
             p.text = c(message);
         }
         Event::Output { name } => {
@@ -769,7 +769,7 @@ pub unsafe extern "C" fn nori_ios_put_back(id: *const c_char) {
     let Some(id) = text(id).filter(|s| !s.is_empty()) else {
         return;
     };
-    with_session(|s| s.put_back(&id));
+    with_session(|s| s.put_back(&nori_core::ItemKey::from_text(&id)));
 }
 
 /// How long the undo of a song taken out of the queue is offered, ms (`nori_queue::undo::UNDO_MS`).
@@ -979,10 +979,10 @@ mod tests {
         let s = h.session.lock().unwrap();
         s.core.download_queue(songs.to_vec()).unwrap();
         s.core
-            .download_settle(songs.iter().map(|s| s.id.clone()).collect(), vec![true; songs.len()])
+            .download_settle(songs.iter().map(nori_core::Keyed::key).collect(), vec![true; songs.len()])
             .unwrap();
         for song in songs {
-            let path = s.store.as_ref().expect("a store").download_path(&song.id);
+            let path = s.store.as_ref().expect("a store").download_path(&nori_core::Keyed::key(song));
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, &bytes).unwrap();
         }
@@ -1081,7 +1081,7 @@ mod tests {
         let stored = r#"{"subsonic-response":{"status":"ok","album":{"id":"album","name":"Offline album","song":[{"id":"a","title":"a"},{"id":"b","title":"b"},{"id":"c","title":"c"}]}}}"#;
         super::with_session(|s| {
             s.core.cache_put("page:album/album".into(), stored.into()).unwrap();
-            songs.iter().for_each(|song| s.download_remove(&song.id));
+            songs.iter().for_each(|song| s.download_remove(&nori_core::Keyed::key(song)));
         });
         let album = CString::new("album").unwrap();
         unsafe { nori_ios_read(81, PAGE_DOWNLOADED_ALBUM, album.as_ptr()); }
@@ -1181,7 +1181,7 @@ mod tests {
             let s = h.session.lock().unwrap();
             assert_eq!(s.core.session.playlist(|p| p.len()), 1);
         }
-        let back = CString::new(first).unwrap();
+        let back = CString::new(first.text().into_owned()).unwrap();
         unsafe { super::nori_ios_put_back(back.as_ptr()) };
         super::nori_ios_move(0, 1);
         let ids = {
@@ -1196,7 +1196,7 @@ mod tests {
             let h = super::held().unwrap();
             let s = h.session.lock().unwrap();
             let saved = s.core.load_queue().unwrap();
-            let saved_ids: Vec<_> = saved.songs.iter().map(|song| song.id.clone()).collect();
+            let saved_ids: Vec<_> = saved.songs.iter().map(nori_core::Keyed::key).collect();
             assert_eq!(saved_ids, ids);
         }
 

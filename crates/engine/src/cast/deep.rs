@@ -13,6 +13,7 @@
 //! While nothing touches the samples and the device decodes the song's codec, the engine's offload path
 //! sends the file's own packets instead ([`CastOffload`], the same connection and counts).
 
+use nori_player::key::ItemKey;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread::{JoinHandle, Thread};
@@ -42,10 +43,10 @@ pub type NowUs = Arc<dyn Fn() -> i64 + Send + Sync>;
 
 /// What a device shows of the songs, from the client's library.
 pub trait Shows: Send + Sync {
-    fn now(&self, id: &str) -> Option<Shown>;
+    fn now(&self, id: &ItemKey) -> Option<Shown>;
     /// Song `id`'s cover at `size` px square, as JPEG, and what tells it from other songs' (an album's
     /// share one). Called on the pump's thread, or the engine's while offloaded: from the cover cache.
-    fn cover(&self, id: &str, size: u32) -> Option<(String, Vec<u8>)>;
+    fn cover(&self, id: &ItemKey, size: u32) -> Option<(String, Vec<u8>)>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -139,7 +140,7 @@ struct State {
     format: Option<Format>,
     format_due: bool,
     /// Song starts by ring frame ([`AudioOutput::song_at`]).
-    marks: VecDeque<(u64, String, i64)>,
+    marks: VecDeque<(u64, ItemKey, i64)>,
     // What was told the device.
     told_playing: bool,
     told_depth: Option<u32>,
@@ -209,7 +210,7 @@ struct Offloaded {
     /// The device's count when the track was opened or flushed: the offload path counts from it.
     base: u64,
     /// The next song's start, to send before its first packet: its id, gain and where in it (ms).
-    song: Option<(String, f32, i64)>,
+    song: Option<(ItemKey, f32, i64)>,
     header: Option<Vec<u8>>,
 }
 
@@ -376,7 +377,7 @@ impl Shared {
 
     /// Song `id`'s start, `at_ms` into it, onto `out`: its cover once (if the device shows covers), then
     /// `Now`. Called without the state's lock.
-    fn now_playing(&self, id: &str, at_ms: i64, out: &mut Vec<u8>) {
+    fn now_playing(&self, id: &ItemKey, at_ms: i64, out: &mut Vec<u8>) {
         let Some(shows) = &self.shows else { return };
         let shown = shows.now(id).unwrap_or_default();
         let cover = self.deep.caps.cover.and_then(|size| shows.cover(id, size));
@@ -758,7 +759,7 @@ impl AudioOutput for DeepOutput {
         self.shared.shows.is_some()
     }
 
-    fn shows(&mut self, id: &str, at_ms: i64) {
+    fn shows(&mut self, id: &ItemKey, at_ms: i64) {
         if self.shared.shows.is_none() || self.shared.st.lock().sent > 0 {
             return;
         }
@@ -768,10 +769,10 @@ impl AudioOutput for DeepOutput {
         self.shared.send(&out);
     }
 
-    fn song_at(&mut self, frame: u64, id: &str, at_ms: i64) {
+    fn song_at(&mut self, frame: u64, id: &ItemKey, at_ms: i64) {
         self.tell(|st| {
             st.marks.retain(|m| m.0 < frame);
-            st.marks.push_back((frame, id.to_string(), at_ms));
+            st.marks.push_back((frame, id.clone(), at_ms));
         });
     }
 
@@ -962,11 +963,11 @@ impl OffloadOutput for CastOffload {
         true
     }
 
-    fn song(&mut self, song: &CodedSong, id: &str, level: f32) -> bool {
+    fn song(&mut self, song: &CodedSong, id: &ItemKey, level: f32) -> bool {
         let mut st = self.lock();
         let Some(o) = st.offloaded.as_mut() else { return true };
         let at_ms = song.from_frame * 1000 / song.coded.rate.max(1) as i64;
-        o.song = Some((id.to_string(), level, at_ms));
+        o.song = Some((id.clone(), level, at_ms));
         o.header = (song.coded.coding == Coding::Flac).then(|| song.setup.as_deref().map(flac_head)).flatten();
         true
     }

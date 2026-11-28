@@ -12,7 +12,7 @@ use nori_core::remote::{JamControls, Mirror, MirrorRow, Playing, Press, Reach, R
 #[cfg(feature = "desktop")]
 use nori_core::remote::{Announcement, Discovery};
 use nori_core::playlist::PlaylistView;
-use nori_core::Song;
+use nori_core::{ItemKey, Song};
 use nori_engine::{Engine, Status};
 use nori_remote::wire::Op;
 use parking_lot::Mutex;
@@ -187,14 +187,16 @@ impl Elsewhere {
         self.row().map(|r| &r.song)
     }
 
-    /// Whether the song `id` is starred as the device shows it; None when it is not in its queue.
-    pub(crate) fn starred(&self, id: &str) -> Option<bool> {
+    /// Whether song `key` is starred as the device shows it; None when it is not in its queue, which
+    /// holds the profile's own songs alone.
+    pub(crate) fn starred(&self, key: &ItemKey) -> Option<bool> {
+        let id = key.own_id()?;
         self.mirror.rows.iter().find(|r| r.song.id == id).map(|r| r.song.starred)
     }
 
-    /// Stars song `id` there when its queue has it ([`Remote::star_where_playing`]); false otherwise.
-    pub fn star(&self, id: &str, on: bool) -> bool {
-        self.remote.clone().star_where_playing(id.to_string(), on)
+    /// Stars song `key` there when its queue has it ([`Remote::star_where_playing`]); false otherwise.
+    pub fn star(&self, key: &ItemKey, on: bool) -> bool {
+        self.remote.clone().star_where_playing(key.clone(), on)
     }
 
     pub(crate) fn row(&self) -> Option<&MirrorRow> {
@@ -337,7 +339,7 @@ impl NowCover {
             return shown.file.clone();
         }
         *shown = CoverShown { id: id.to_string(), file: None };
-        let url = self.core.cover_address(id.to_string(), nori_core::covers::cover_rendition(NOW_COVER_PX));
+        let url = self.core.cover_address(id.to_string(), nori_core::covers::cover_rendition(NOW_COVER_PX))?;
         let (slot, media, id) = (self.shown.clone(), self.media.clone(), id.to_string());
         crate::spawn("nori-now-cover", move || {
             let Some(file) = read_cover(&covers, &url) else { return };
@@ -603,7 +605,9 @@ pub(crate) mod tests {
         assert_eq!(e.view().index, -1);
         assert_eq!(e.volume(), Some(0.4));
         e.mirror.rows[2].song.starred = true;
-        assert_eq!((e.starred("c"), e.starred("a"), e.starred("x")), (Some(true), Some(false), None), "hearts of its queue only");
+        let own = |id: &str| e.starred(&ItemKey::own(id));
+        assert_eq!((own("c"), own("a"), own("x")), (Some(true), Some(false), None), "hearts of its queue only");
+        assert_eq!(e.starred(&ItemKey { source: Some("acct2".into()), id: "c".into() }), None, "another source's song of the same id");
     }
 
     #[test]

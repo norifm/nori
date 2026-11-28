@@ -2,6 +2,7 @@
 //! store and settings drive the engine; songs stream through the client's [`ByteSource`] or play from
 //! downloads and the stream cache. Downloads and measuring ahead run here too.
 
+use nori_player::key::ItemKey;
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -69,7 +70,7 @@ pub struct CoreApp {
     /// The client has an offline bridge.
     bridge: bool,
     /// ReplayGain levels already logged.
-    gains_said: Vec<(String, f32)>,
+    gains_said: Vec<(ItemKey, f32)>,
 }
 
 impl CoreApp {
@@ -109,19 +110,19 @@ impl CoreApp {
 }
 
 impl Host for CoreApp {
-    fn plan_for(&mut self, outgoing_id: &str) -> Option<Plan> {
+    fn plan_for(&mut self, outgoing_id: &ItemKey) -> Option<Plan> {
         self.session.planner.plan_for(outgoing_id)
     }
 
     /// Not a song being measured as it arrives: that measure ends sooner, with the song's bytes.
-    fn wants_analysis(&mut self, song_id: &str) -> Option<u64> {
+    fn wants_analysis(&mut self, song_id: &ItemKey) -> Option<u64> {
         if self.analyses.arrivals.lock().has(song_id) {
             return None;
         }
         self.session.planner.wants_analysis(song_id)
     }
 
-    fn analysed(&mut self, song_id: &str, analyzer: Analyzer, _channels: usize, frames: u64, rate: u32) {
+    fn analysed(&mut self, song_id: &ItemKey, analyzer: Analyzer, _channels: usize, frames: u64, rate: u32) {
         self.session.planner.analysed(song_id, analyzer, frames, rate);
     }
 
@@ -145,7 +146,7 @@ impl App for CoreApp {
     }
 
     /// The session picks the songs (`Session::measure`); the measurer takes those on disk.
-    fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, _songs: &mut S, _ids: &[String]) {
+    fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, _songs: &mut S, _ids: &[ItemKey]) {
         if let Some(m) = &self.measurer {
             m.update(self.session.measure(), std::thread::current());
         }
@@ -179,7 +180,7 @@ impl App for CoreApp {
     }
 
     /// The core keeps the window itself.
-    fn window<S: nori_player::pipeline::Songs>(&mut self, _songs: &S, _ids: &[String], _shuffling: bool) {
+    fn window<S: nori_player::pipeline::Songs>(&mut self, _songs: &S, _ids: &[ItemKey], _shuffling: bool) {
         self.session.window();
     }
 
@@ -204,7 +205,7 @@ impl App for CoreApp {
         self.session.listened_along()
     }
 
-    fn loudness(&mut self, id: &str) -> Option<f32> {
+    fn loudness(&mut self, id: &ItemKey) -> Option<f32> {
         self.session.loudness(id)
     }
 
@@ -218,7 +219,7 @@ impl App for CoreApp {
             if self.gains_said.len() >= 16 {
                 self.gains_said.remove(0);
             }
-            self.gains_said.push((id.to_string(), g));
+            self.gains_said.push((id.clone(), g));
             nori_core::alog::info(&format!("ReplayGain: {id} at {:+.2} dB", 20.0 * g.max(1e-6).log10()));
         }
         g
@@ -242,7 +243,7 @@ pub fn key_format(key: &str) -> Option<String> {
 }
 
 impl Library for CoreLibrary {
-    fn locate(&mut self, id: &str) -> Result<Located, String> {
+    fn locate(&mut self, id: &ItemKey) -> Result<Located, String> {
         let song = self.client.session().song(id);
         let duration_ms = song.as_ref().map(|s| s.duration as i64 * 1000).filter(|&d| d > 0);
         // A download may be transcoded: the file says what it is.
@@ -253,8 +254,8 @@ impl Library for CoreLibrary {
         if let Some(file) = self.client.file_of(id) {
             return Ok(Located { hint: Some(file.extension()), source: Source::Opened(Arc::new(move || file.open())), duration_ms, estimated: false, from_second: None });
         }
-        let target = self.client.resolve(id.to_string(), false, self.client.metered());
-        if nori_core::queue::is_radio(id) {
+        let target = self.client.resolve(id.clone(), false, self.client.metered()).ok_or_else(|| format!("{id}: its source is not the profile's"))?;
+        if nori_core::queue::is_radio(&id.id) {
             return Ok(Located { source: Source::Live { url: target.url, bytes: self.bytes.clone() }, hint: None, duration_ms: None, estimated: false, from_second: None });
         }
         let hint = key_format(&target.key).or_else(|| song.as_ref().map(|s| s.suffix.clone())).filter(|s| !s.is_empty());
@@ -268,23 +269,23 @@ impl Library for CoreLibrary {
         Ok(Located { source, hint, duration_ms, estimated: false, from_second })
     }
 
-    fn about(&self, id: &str) -> WindowSong {
+    fn about(&self, id: &ItemKey) -> WindowSong {
         about(self.client.session(), id)
     }
 
     /// Fetches the core's precache targets except `next` into the store.
-    fn ahead(&mut self, next: &str) {
+    fn ahead(&mut self, next: &ItemKey) {
         let Some(store) = &self.store else { return };
         store.fetch_ahead(self.bytes.clone(), ahead_songs(self.client.precache_targets(self.client.metered()), next), Some(measuring_ahead(&self.analyses, self.client.session().clone())));
     }
 
-    fn taker(&self, id: &str, hint: Option<&str>) -> Option<Listening> {
+    fn taker(&self, id: &ItemKey, hint: Option<&str>) -> Option<Listening> {
         self.analyses.measure_as_it_comes(id, hint, false)
     }
 
-    fn forget(&mut self, id: &str) {
+    fn forget(&mut self, id: &ItemKey) {
         let Some(store) = &self.store else { return };
-        let target = self.client.resolve(id.to_string(), false, self.client.metered());
+        let Some(target) = self.client.resolve(id.clone(), false, self.client.metered()) else { return };
         if store.peek(&target.key).is_some() {
             nori_core::alog::info(&format!("{id} is fetched anew: its stream cache entry {} goes", target.key));
             store.drop_cached(&[target.key]);
@@ -498,8 +499,8 @@ impl std::io::Read for Parts {
 }
 
 /// The songs of `fetch` to fetch ahead, less `next` (the engine's loader fetches it).
-pub fn ahead_songs(fetch: Vec<nori_core::stream::Fetch>, next: &str) -> Vec<AheadSong> {
-    fetch.into_iter().filter(|f| f.id != next).map(|f| AheadSong { id: f.id, url: f.url, key: f.key }).collect()
+pub fn ahead_songs(fetch: Vec<nori_core::stream::Fetch>, next: &ItemKey) -> Vec<AheadSong> {
+    fetch.into_iter().filter(|f| f.id != *next).map(|f| AheadSong { id: f.id, url: f.url, key: f.key }).collect()
 }
 
 /// Measures each song fetched ahead as it arrives ([`Analyses::measure_as_it_comes`]); the fetch may wait
@@ -510,7 +511,7 @@ pub fn measuring_ahead(analyses: &Arc<Analyses>, session: Arc<Session>) -> Taker
 }
 
 /// What the planner and seek bar know of `id`, from `session`'s songs.
-pub fn about(session: &Session, id: &str) -> WindowSong {
+pub fn about(session: &Session, id: &ItemKey) -> WindowSong {
     nori_core::queue::window_song_of(session.song(id).as_ref(), id)
 }
 
@@ -529,8 +530,8 @@ pub struct Downloader {
 struct Work {
     running: usize,
     /// Being fetched, and failed this run (tried again only when asked again).
-    busy: HashSet<String>,
-    failed: HashSet<String>,
+    busy: HashSet<ItemKey>,
+    failed: HashSet<ItemKey>,
     threads: Vec<JoinHandle<()>>,
 }
 
@@ -588,13 +589,13 @@ impl Downloader {
     }
 
     /// Unfinished downloads, oldest first.
-    fn pending(&self) -> Vec<String> {
+    fn pending(&self) -> Vec<ItemKey> {
         let mut ids = self.core().download_ids(false).unwrap_or_default();
         ids.reverse();
         ids
     }
 
-    fn take(&self) -> Option<String> {
+    fn take(&self) -> Option<ItemKey> {
         let pending = self.pending();
         let mut w = self.work.lock();
         let id = pending.into_iter().find(|id| !w.busy.contains(id) && !w.failed.contains(id));
@@ -631,7 +632,7 @@ impl Downloader {
     /// Fetches `id` whole into the store at the download quality. A broken connection is taken up at
     /// once where it broke, until [`DOWNLOAD_TRIES`] in a row bring nothing; a refused one fails the
     /// download until the next [`Downloader::start`].
-    fn fetch(&self, id: &str) -> bool {
+    fn fetch(&self, id: &ItemKey) -> bool {
         let now = nori_core::db::now_ms();
         let core = self.core().clone();
         let slot = core.transfers().with(|t| {
@@ -640,7 +641,7 @@ impl Downloader {
         });
         let quality = core.session.settings.in_effect(|p| nori_core::stream::StreamQuality { bit_rate: p.download.bit_rate.max(0) as u32, format: p.download.format.clone() });
         let part = self.store.download_part(id, &format!("{}{}", quality.bit_rate, quality.format));
-        let url = self.client.download_target(id.to_string(), quality).url;
+        let Some(url) = self.client.download_target(id.clone(), quality).map(|t| t.url) else { return false };
         let mut chunk = vec![0u8; DOWNLOAD_CHUNK];
         let size = || std::fs::metadata(&part).map_or(0, |m| m.len());
         // Measured as it downloads from the first byte; one taken up is measured from the disk later.
@@ -700,7 +701,7 @@ impl Downloader {
 /// Where whole songs are on disk: a client's downloads and stream cache.
 pub trait Shelf: Send + Sync {
     /// The files holding all of `id`, in order; None while anything is missing.
-    fn whole(&self, id: &str) -> Option<Whole>;
+    fn whole(&self, id: &ItemKey) -> Option<Whole>;
 }
 
 /// A song whole on disk: its files in order, and a container hint when the file alone should not
@@ -718,7 +719,7 @@ struct StoreShelf {
 }
 
 impl Shelf for StoreShelf {
-    fn whole(&self, id: &str) -> Option<Whole> {
+    fn whole(&self, id: &ItemKey) -> Option<Whole> {
         let client = self.analyses.upgrade()?.client()?;
         if client.core().transfers().held().state(id) == transfers::HeldState::Done {
             if let Some(p) = self.store.downloaded(id) {
@@ -728,7 +729,7 @@ impl Shelf for StoreShelf {
         // The current network's quality first, then the other's.
         let metered = client.metered();
         let (key, path) = [metered, !metered].into_iter().find_map(|m| {
-            let key = client.resolve(id.to_string(), false, m).key;
+            let key = client.resolve(id.clone(), false, m)?.key;
             self.store.peek(&key).map(|p| (key, p))
         })?;
         let hint = key_format(&key).or_else(|| client.session().song(id).map(|s| s.suffix)).filter(|s| !s.is_empty());
@@ -764,7 +765,7 @@ pub struct Measurer {
 /// When the measurer looks and at what, apart from threads and the disk.
 #[derive(Default)]
 struct Schedule {
-    ids: Vec<String>,
+    ids: Vec<ItemKey>,
     /// Bumped on news: a new list, or a song arrived.
     news: u64,
     /// The news last looked at.
@@ -772,7 +773,7 @@ struct Schedule {
     running: bool,
     engine: Option<std::thread::Thread>,
     /// Songs tried, with their bytes on disk then and whether the beat model had them.
-    tried: HashMap<String, (u64, bool)>,
+    tried: HashMap<ItemKey, (u64, bool)>,
 }
 
 /// Tried songs remembered before those no longer asked for are dropped.
@@ -780,7 +781,7 @@ const TRIED_KEPT: usize = 256;
 
 impl Schedule {
     /// The songs to measure are `ids`; returns whether a thread should start.
-    fn ask(&mut self, ids: Vec<String>) -> bool {
+    fn ask(&mut self, ids: Vec<ItemKey>) -> bool {
         if ids != self.ids {
             self.ids = ids;
             self.news += 1;
@@ -807,7 +808,7 @@ impl Schedule {
     }
 
     /// The songs to look at, once per news; None ends the thread.
-    fn next(&mut self) -> Option<Vec<String>> {
+    fn next(&mut self) -> Option<Vec<ItemKey>> {
         if self.ids.is_empty() || self.news == self.seen {
             self.running = false;
             return None;
@@ -817,16 +818,16 @@ impl Schedule {
     }
 
     /// Whether `id` is asked for and untried with `bytes`, or needs the beat model (`listen`) it did not get.
-    fn worth(&self, id: &str, bytes: u64, listen: bool) -> bool {
+    fn worth(&self, id: &ItemKey, bytes: u64, listen: bool) -> bool {
         self.asks(id) && self.tried.get(id).is_none_or(|&(had, heard)| bytes > had || (listen && !heard))
     }
 
-    fn asks(&self, id: &str) -> bool {
+    fn asks(&self, id: &ItemKey) -> bool {
         self.ids.iter().any(|i| i == id)
     }
 
-    fn tried(&mut self, id: &str, bytes: u64, heard: bool) {
-        self.tried.insert(id.to_string(), (bytes, heard));
+    fn tried(&mut self, id: &ItemKey, bytes: u64, heard: bool) {
+        self.tried.insert(id.clone(), (bytes, heard));
     }
 }
 
@@ -864,13 +865,13 @@ impl Measurer {
     }
 
     /// Measures `ids` from now on; `engine` is woken when something is stored.
-    pub fn update(self: &Arc<Self>, ids: Vec<String>, engine: std::thread::Thread) {
+    pub fn update(self: &Arc<Self>, ids: Vec<ItemKey>, engine: std::thread::Thread) {
         self.plan.lock().engine = Some(engine);
         self.ask(ids);
     }
 
     /// Measures `ids` (current song first), replacing the old list; an empty one stops.
-    pub fn ask(self: &Arc<Self>, ids: Vec<String>) {
+    pub fn ask(self: &Arc<Self>, ids: Vec<ItemKey>) {
         let mut plan = self.plan.lock();
         if ids != plan.ids {
             self.asked.fetch_add(1, Ordering::AcqRel);
@@ -928,7 +929,7 @@ impl Measurer {
             let core = client.core();
             let missing = core.analysis_missing(ids.clone()).unwrap_or_default();
             let near = listen_to(core, &ids, &missing);
-            let todo: Vec<&String> = ids.iter().filter(|id| missing.contains(id) || near.contains(id)).collect();
+            let todo: Vec<&ItemKey> = ids.iter().filter(|id| missing.contains(id) || near.contains(id)).collect();
             let mut waiting = 0;
             for id in todo {
                 // Measured as it arrives: that decode's end is news here.
@@ -976,7 +977,7 @@ impl Measurer {
 
     /// Decodes `id` for the analyser and/or the beat model and stores the results. Returns whether
     /// anything was stored, or None if abandoned (no longer asked for).
-    fn measure(&self, core: &Core, id: &str, pieces: crate::pieces::Pieces, hint: Option<&str>, job: Job<'_, '_>) -> Option<bool> {
+    fn measure(&self, core: &Core, id: &ItemKey, pieces: crate::pieces::Pieces, hint: Option<&str>, job: Job<'_, '_>) -> Option<bool> {
         let expected_ms = core.session.song(id).map_or(0, |s| s.duration as i64 * 1000);
         let mut asked = self.asked.load(Ordering::Acquire);
         let Decoded { stream, ends } = decode(id, "measuring ahead", pieces, hint, expected_ms, job.classical, job.model.is_some(), || {
@@ -1003,7 +1004,7 @@ impl Measurer {
     }
 
     /// Stores the analysis of all of `id`; returns whether it was stored.
-    fn finish(&self, core: &Core, id: &str, stream: nori_core::automix::store::AnalysisStream, expected_ms: i64) -> bool {
+    fn finish(&self, core: &Core, id: &ItemKey, stream: nori_core::automix::store::AnalysisStream, expected_ms: i64) -> bool {
         let a = core.analysis_finish_whole(id, stream, expected_ms).ok().flatten();
         nori_core::alog::info(&match &a {
             Some(t) => format!("analysed {id} ahead: {:.2} bpm (conf {:.2}, stab {:.2})", t.bpm, t.bpm_confidence, t.stability),
@@ -1022,7 +1023,7 @@ pub(crate) struct Decoded {
 /// Decodes `id` whole from `pieces` for the analyser (`classical`) and the beat model (`ends`) while
 /// `go_on` (asked per buffer); None when abandoned. `what` names the work in the log.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn decode(id: &str, what: &str, pieces: crate::pieces::Pieces, hint: Option<&str>, expected_ms: i64, classical: bool, ends: bool, mut go_on: impl FnMut() -> bool) -> Option<Decoded> {
+pub(crate) fn decode(id: &ItemKey, what: &str, pieces: crate::pieces::Pieces, hint: Option<&str>, expected_ms: i64, classical: bool, ends: bool, mut go_on: impl FnMut() -> bool) -> Option<Decoded> {
     let mut left = false;
     let mut stream = None;
     let mut kept = None;
@@ -1060,27 +1061,27 @@ pub(crate) fn decode(id: &str, what: &str, pieces: crate::pieces::Pieces, hint: 
 /// The songs being measured as they arrive, and the measurers told when one is stored (or not).
 #[derive(Default)]
 pub(crate) struct Arrivals {
-    songs: Vec<String>,
+    songs: Vec<ItemKey>,
     measurers: Vec<std::sync::Weak<Measurer>>,
     /// Songs measured as they arrived and stored.
     stored: u64,
 }
 
 impl Arrivals {
-    pub(crate) fn has(&self, id: &str) -> bool {
+    pub(crate) fn has(&self, id: &ItemKey) -> bool {
         self.songs.iter().any(|i| i == id)
     }
 
     /// Takes `id` on; false when it is being measured already.
-    fn begin(&mut self, id: &str) -> bool {
+    fn begin(&mut self, id: &ItemKey) -> bool {
         if self.has(id) {
             return false;
         }
-        self.songs.push(id.to_string());
+        self.songs.push(id.clone());
         true
     }
 
-    fn end(&mut self, id: &str) {
+    fn end(&mut self, id: &ItemKey) {
         self.songs.retain(|i| i != id);
     }
 
@@ -1163,7 +1164,7 @@ impl Analyses {
     /// Measures `id` as its bytes arrive (`crate::arriving`), if the profile measures songs, it is unanalysed, its
     /// container allows it (`hint`: not MP4) and it is not already being measured. `wait`: the fetch may
     /// block on the decoder (not for a loader the player reads).
-    pub fn measure_as_it_comes(self: &Arc<Self>, id: &str, hint: Option<&str>, wait: bool) -> Option<Listening> {
+    pub fn measure_as_it_comes(self: &Arc<Self>, id: &ItemKey, hint: Option<&str>, wait: bool) -> Option<Listening> {
         let client = self.client()?;
         if !client.session().planner.measures() {
             return None;
@@ -1173,22 +1174,22 @@ impl Analyses {
 
     /// [`Analyses::measure_as_it_comes`] for a download, whatever the profile says: every download is
     /// analysed once (`nori_core::transfers::needs`).
-    pub fn measure_download_as_it_comes(self: &Arc<Self>, id: &str, hint: Option<&str>) -> Option<Listening> {
+    pub fn measure_download_as_it_comes(self: &Arc<Self>, id: &ItemKey, hint: Option<&str>) -> Option<Listening> {
         self.listen_as_it_comes(self.client()?.core().clone(), id, hint, true)
     }
 
-    fn listen_as_it_comes(self: &Arc<Self>, core: Arc<Core>, id: &str, hint: Option<&str>, wait: bool) -> Option<Listening> {
-        if !nori_core::queue::analysable(id) || !crate::demux::decodes_as_it_comes(hint) {
+    fn listen_as_it_comes(self: &Arc<Self>, core: Arc<Core>, id: &ItemKey, hint: Option<&str>, wait: bool) -> Option<Listening> {
+        if !nori_core::queue::analysable(&id.id) || !crate::demux::decodes_as_it_comes(hint) {
             return None;
         }
-        if core.analysis_missing(vec![id.to_string()]).ok()?.is_empty() {
+        if core.analysis_missing(vec![id.clone()]).ok()?.is_empty() {
             return None;
         }
         if !self.arrivals.lock().begin(id) {
             return None;
         }
         let expected_ms = core.session.song(id).map_or(0, |s| s.duration as i64 * 1000);
-        let heard = AsItComes { id: id.to_string(), core: core.clone(), analyses: self.clone(), expected_ms, stream: None, cpu_from: None };
+        let heard = AsItComes { id: id.clone(), core: core.clone(), analyses: self.clone(), expected_ms, stream: None, cpu_from: None };
         let listening = match &self.steps {
             Some(steps) => Some(Listening::on_turns(hint.map(str::to_string), Box::new(heard), steps)),
             None => Listening::start(hint.map(str::to_string), wait, Box::new(heard)),
@@ -1209,7 +1210,7 @@ impl Analyses {
 
 /// Feeds decoded samples into the analyser; stores it once the whole song came.
 struct AsItComes {
-    id: String,
+    id: ItemKey,
     core: Arc<Core>,
     analyses: Arc<Analyses>,
     expected_ms: i64,
@@ -1272,7 +1273,7 @@ impl Heard for AsItComes {
 const LISTEN_AHEAD: usize = 2;
 
 /// The songs of `ids` for the beat model; none when it is off or not built.
-fn listen_to(core: &Core, ids: &[String], missing: &[String]) -> Vec<String> {
+fn listen_to(core: &Core, ids: &[ItemKey], missing: &[ItemKey]) -> Vec<ItemKey> {
     let wanted = beats::AVAILABLE && core.session.settings.with_effective(|p| p.auto_mix.on()).unwrap_or(false);
     if !wanted {
         return Vec::new();
@@ -1293,9 +1294,9 @@ struct Job<'m, 'a> {
 }
 
 /// Runs Beat This! over each unread end of `id`; returns whether a grid was stored.
-pub(crate) fn listen(core: &Core, id: &str, model: &Model, ends: &mut Ends) -> bool {
+pub(crate) fn listen(core: &Core, id: &ItemKey, model: &Model, ends: &mut Ends) -> bool {
     let Some(beats_model) = model.model() else { return false };
-    let Ok(Some(row)) = core.analysis_get(id.to_string()) else { return false };
+    let Ok(Some(row)) = core.analysis_get(id.clone()) else { return false };
     let _one = model.models.running.lock();
     let rate = ends.rate();
     let mut adopted = false;
@@ -1495,7 +1496,7 @@ pub fn playing(s: &crate::Status, volume: Option<u8>) -> nori_core::remote::Play
 /// the queue was set to the host's songs for it. The queue is set anew only when those two are not in it
 /// in a row already, so the song playing here and the one read ahead stay as they are.
 pub fn queued_for(session: &Session, l: &nori_core::remote::Lead) -> (usize, bool) {
-    let ids: Vec<String> = l.songs.iter().map(|s| s.id.clone()).collect();
+    let ids: Vec<ItemKey> = l.songs.iter().map(nori_core::Keyed::key).collect();
     let (at, next) = (&ids[l.index], ids.get(l.index + 1));
     let found = session.playlist(|p| {
         let here = p.ids();
@@ -1568,7 +1569,8 @@ pub fn settings(stored: &StoredPrefs, layer: Layer) -> Settings {
 }
 
 /// What a cast's device shows of the queue's songs ([`crate::cast::Shows`]): their lines as the queue
-/// has them, and their covers by `cover` (the cover art id at a size, as the file the cache holds).
+/// has them, and their covers by `cover` (a song's cover art id, which names its source, at a size, as
+/// the file the cache holds).
 #[cfg(feature = "plugins")]
 pub struct QueueShows {
     pub queue: Arc<Session>,
@@ -1581,13 +1583,13 @@ pub type CoverFile = Box<dyn Fn(&str, u32) -> Option<Vec<u8>> + Send + Sync>;
 
 #[cfg(feature = "plugins")]
 impl crate::cast::Shows for QueueShows {
-    fn now(&self, id: &str) -> Option<crate::cast::Shown> {
+    fn now(&self, id: &ItemKey) -> Option<crate::cast::Shown> {
         let s = self.queue.song(id)?;
         Some(crate::cast::Shown { title: s.title, artist: s.artist, album: s.album, duration_ms: s.duration.saturating_mul(1000) })
     }
 
     /// JPEG only: the server's renditions are; another is left out rather than encoded here.
-    fn cover(&self, id: &str, size: u32) -> Option<(String, Vec<u8>)> {
+    fn cover(&self, id: &ItemKey, size: u32) -> Option<(String, Vec<u8>)> {
         let art = self.queue.cover_art(id)?;
         let bytes = (self.cover.as_ref()?)(&art, size)?;
         bytes.starts_with(&[0xff, 0xd8]).then_some((art, bytes))
@@ -1598,8 +1600,8 @@ impl crate::cast::Shows for QueueShows {
 mod tests {
     use super::*;
 
-    fn ids(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
+    fn ids(v: &[&str]) -> Vec<ItemKey> {
+        v.iter().map(|s| ItemKey::own(*s)).collect()
     }
 
     #[test]
@@ -1671,23 +1673,23 @@ mod tests {
     fn song_retried_only_with_more_bytes() {
         let mut s = Schedule::default();
         s.ask(ids(&["a", "b"]));
-        assert!(s.worth("a", 1000, false));
-        s.tried("a", 1000, true);
-        assert!(!s.worth("a", 1000, false), "tried with these bytes: not again, however often it is looked at");
-        assert!(s.worth("a", 5000, false), "more of it has come since: once more");
-        assert!(!s.worth("z", 1000, false), "not asked for");
+        assert!(s.worth(&ItemKey::own("a"), 1000, false));
+        s.tried(&ItemKey::own("a"), 1000, true);
+        assert!(!s.worth(&ItemKey::own("a"), 1000, false), "tried with these bytes: not again, however often it is looked at");
+        assert!(s.worth(&ItemKey::own("a"), 5000, false), "more of it has come since: once more");
+        assert!(!s.worth(&ItemKey::own("z"), 1000, false), "not asked for");
         s.ask(ids(&["b"]));
-        assert!(!s.worth("a", 5000, false), "no longer asked for");
+        assert!(!s.worth(&ItemKey::own("a"), 5000, false), "no longer asked for");
     }
 
     #[test]
     fn measured_song_decoded_for_model() {
         let mut s = Schedule::default();
         s.ask(ids(&["a", "b"]));
-        s.tried("a", 1000, false);
-        assert!(!s.worth("a", 1000, false));
-        assert!(s.worth("a", 1000, true), "the model has not heard it");
-        s.tried("a", 1000, true);
-        assert!(!s.worth("a", 1000, true), "heard: never again");
+        s.tried(&ItemKey::own("a"), 1000, false);
+        assert!(!s.worth(&ItemKey::own("a"), 1000, false));
+        assert!(s.worth(&ItemKey::own("a"), 1000, true), "the model has not heard it");
+        s.tried(&ItemKey::own("a"), 1000, true);
+        assert!(!s.worth(&ItemKey::own("a"), 1000, true), "heard: never again");
     }
 }
