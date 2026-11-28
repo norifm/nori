@@ -727,8 +727,11 @@ pub struct App {
     /// The songs the playlist picker is open for (one whose menu asked, or the queue's), and the playlists
     /// offered for them.
     picking: Vec<Song>,
-    /// The profile whose Edit page asked for a new source: the profile signed in to next is its source.
-    source_for: Option<String>,
+    /// The profile whose `Sources` or `Merge with…` dialog is open from the Profiles list.
+    source_target: Option<String>,
+    /// The profile asking for a new source (`(profile_id, return_to_edit)`): the profile signed in to next
+    /// becomes its source.
+    source_for: Option<(String, bool)>,
     /// The downloads asked to be removed, waiting for the ask sheet's yes.
     removing: Vec<nori_core::ItemKey>,
     picker: Vec<nori_core::menus::PlaylistChoice>,
@@ -1104,6 +1107,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             jam_link: String::new(),
             jam_hosting: false,
             picking: Vec::new(),
+            source_target: None,
             source_for: None,
             removing: Vec::new(),
             picker: Vec::new(),
@@ -1589,9 +1593,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_folder_removed, h, |a, at| a.on_form(|f, ui, _| f.folder_removed(ui, at.max(0) as usize)));
     // Back from a profile's Edit page goes to Settings, where it was opened.
     on!(ui.on_cancel_login, h, |a| {
-        // Leaving the first screen opened for a new source goes back to the profile's Edit page.
-        if let Some(to) = a.source_for.take() {
-            return a.edit_profile(to);
+        // Leaving the first screen opened for a new source goes back to where it was opened.
+        if let Some((to, edit)) = a.source_for.take() {
+            return if edit { a.edit_profile(to) } else { a.go(View::Settings) };
         }
         let back = if a.editing.is_some() { View::Settings } else { View::Home };
         a.edited();
@@ -3990,6 +3994,9 @@ impl App {
             .collect();
         ui.set_scrobbler_kinds(ModelRc::new(VecModel::from(kinds)));
         ui.set_scrobbler_step(0);
+        ui.set_source_list_open(false);
+        ui.set_source_add_open(false);
+        self.source_target = None;
         self.editing = Some(id);
         self.profile_parts_shown();
         self.go(View::Login);
@@ -4001,10 +4008,70 @@ impl App {
         self.ui().set_login_editing(false);
     }
 
-    /// What a row of the Edit page under its form does: `on` is a switch's new state.
+    /// Opens the dialog picking a saved profile (or signing in to a new one) to merge into profile `id`.
+    fn open_merge_dialog(&mut self, id: String, title: &str) {
+        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
+        let offered = crate::settings::source_offered(&self.plugged, &prefs, &profile, self.kinds());
+        let ui = self.ui();
+        self.source_target = Some(id);
+        ui.set_source_list_open(false);
+        ui.set_source_offered(ModelRc::new(VecModel::from(offered)));
+        ui.set_source_add_title(title.into());
+        ui.set_source_add_open(true);
+    }
+
+    /// Opens the `Sources` dialog for merged profile `id` (from its row menu on Settings -> Profiles).
+    fn open_sources_dialog(&mut self, id: String) {
+        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
+        let rows = crate::settings::source_list_rows(self.kinds(), &self.plugged, &profile, &prefs, &self.facts, crate::look::Today::now());
+        let offered = crate::settings::source_offered(&self.plugged, &prefs, &profile, self.kinds());
+        let ui = self.ui();
+        self.source_target = Some(id);
+        ui.set_source_list_rows(rows);
+        ui.set_source_offered(ModelRc::new(VecModel::from(offered)));
+        ui.set_source_list_open(true);
+    }
+
+    /// Refreshes the open `Sources` dialog for profile `id`, closing it if its last source was removed.
+    fn refresh_source_dialogs(&mut self, id: &str) {
+        let ui = self.ui();
+        if !ui.get_source_list_open() {
+            return;
+        }
+        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else {
+            return ui.set_source_list_open(false);
+        };
+        if nori_core::settings::profile_sources(prefs.servers.clone(), profile.clone()).is_empty() {
+            ui.set_source_list_open(false);
+            return;
+        }
+        let rows = crate::settings::source_list_rows(self.kinds(), &self.plugged, &profile, &prefs, &self.facts, crate::look::Today::now());
+        let offered = crate::settings::source_offered(&self.plugged, &prefs, &profile, self.kinds());
+        ui.set_source_list_rows(rows);
+        ui.set_source_offered(ModelRc::new(VecModel::from(offered)));
+    }
+
+    /// What a row of the Edit page under its form (or a profile's Sources/Merge dialog) does: `on` is a switch's new state.
     fn profile_part(&mut self, part: crate::settings::ProfilePart, on: bool) {
         use crate::settings::ProfilePart;
-        let Some(id) = self.editing.clone() else { return };
+        let is_source_part = matches!(
+            part,
+            ProfilePart::OpenAddSource
+                | ProfilePart::AddSource(_)
+                | ProfilePart::SourceEarlier(_)
+                | ProfilePart::SourceLater(_)
+                | ProfilePart::RemoveSource(_)
+                | ProfilePart::NewSource
+        );
+        let id = if is_source_part {
+            self.source_target.clone().or_else(|| self.editing.clone())
+        } else {
+            self.editing.clone()
+        };
+        let Some(id) = id else { return };
         let settings = &self.root.app.settings;
         match part.clone() {
             ProfilePart::Account => {
@@ -4016,13 +4083,17 @@ impl App {
             ProfilePart::Scrobbler(account) => nori_host::scrobbler_switched(settings, &id, &account, on),
             ProfilePart::RemoveScrobbler(account) => nori_host::scrobbler_removed(settings, &id, &account),
             ProfilePart::AddScrobbler => return self.ui().set_scrobbler_step(1),
-            ProfilePart::OpenAddSource => return self.ui().set_source_add_open(true),
+            ProfilePart::OpenAddSource => return self.open_merge_dialog(id, words::ADD_SOURCE),
             ProfilePart::AddSource(source) => nori_host::source_added(settings, &id, &source),
             ProfilePart::SourceEarlier(source) => nori_host::source_moved(settings, &id, &source, -1),
             ProfilePart::SourceLater(source) => nori_host::source_moved(settings, &id, &source, 1),
             ProfilePart::RemoveSource(source) => nori_host::source_removed(settings, &id, &source),
             ProfilePart::NewSource => {
-                self.source_for = Some(id);
+                let from_edit = self.editing.is_some();
+                self.source_for = Some((id, from_edit));
+                self.source_target = None;
+                self.ui().set_source_list_open(false);
+                self.ui().set_source_add_open(false);
                 self.edited();
                 return self.choose_provider();
             }
@@ -4034,6 +4105,7 @@ impl App {
             }
             self.profiles_shown();
             self.settings_shown();
+            self.refresh_source_dialogs(&id);
         }
         self.profile_parts_shown();
     }
@@ -5384,11 +5456,15 @@ impl App {
                     };
                     self.edited();
                     self.ui().set_login_password("".into());
-                    // A source signed in to from a profile's Edit page: that profile opens with it, on its page.
-                    if let Some(to) = self.source_for.take() {
+                    // A source signed in to from a profile's Merge/Sources flow: add it and return where it started.
+                    if let Some((to, edit)) = self.source_for.take() {
                         nori_host::source_added(&self.root.app.settings, &to, &p.id);
-                        self.reopen();
-                        return self.edit_profile(to);
+                        if self.root.app.settings.current().is_some_and(|prefs| prefs.active_server_id == to) {
+                            self.reopen();
+                        }
+                        self.profiles_shown();
+                        self.settings_shown();
+                        return if edit { self.edit_profile(to) } else { self.go(View::Settings) };
                     }
                     let kind = p.kind.clone();
                     self.open(p, added);
@@ -6424,6 +6500,8 @@ impl App {
                 self.open(p, None);
             }
             Some(Act::Edit(id)) => self.edit_profile(id),
+            Some(Act::Merge(id)) => self.open_merge_dialog(id, words::MERGE_WITH),
+            Some(Act::Sources(id)) => self.open_sources_dialog(id),
             Some(Act::Remove(id)) => {
                 let prefs = self.root.app.settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return };
@@ -11386,8 +11464,8 @@ pub(crate) mod tests {
         assert_eq!(*typed.borrow(), ["m"]);
     }
 
-    /// A profile's Edit page shows its merged sources with profile marks and opens the Add source dialog
-    /// with offered saved profiles and Sign in to a new one.
+    /// Singular profiles show no Sources group on Edit and offer `Merge with…`; merged profiles show Sources
+    /// in their Sources dialog and on Edit, and open `Add source` / `Merge with…` with offered profiles.
     #[test]
     fn a_profiles_edit_sources_and_add_source_dialog() {
         use nori_core::settings::StoredPrefs;
@@ -11405,7 +11483,7 @@ pub(crate) mod tests {
         let local = SavedServer { id: "local".into(), name: "Local Music".into(), kind: nori_core::settings::ServerKind::Local, ..Default::default() };
         let work = SavedServer { id: "work".into(), name: "Work".into(), url: "https://work.example".into(), user: "bob".into(), ..Default::default() };
         let extra = SavedServer { id: "extra".into(), name: "Archive".into(), url: "https://archive.example".into(), user: "carol".into(), ..Default::default() };
-        let prefs = StoredPrefs { servers: vec![home.clone(), local, work, extra], active_server_id: "home".into(), ..StoredPrefs::default() };
+        let prefs = StoredPrefs { servers: vec![home.clone(), local, work, extra.clone()], active_server_id: "home".into(), ..StoredPrefs::default() };
         let facts = crate::settings::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
         let today = crate::look::Today { month: 10, day: 15, southern: false };
 
@@ -11418,11 +11496,28 @@ pub(crate) mod tests {
         settled(&ui);
         keep_shot(&ui.window().take_snapshot().unwrap(), "profiles-list");
 
-        // 2. Profile Edit shows Home's form, Scrobbling, and Sources (Local Music, Work, + Add source).
+        // 2. Sources dialog for merged profile Home lists Local Music, Work, and + Add source.
+        ui.set_source_list_rows(crate::settings::source_list_rows(&kinds, &plugged, &home, &prefs, &facts, today));
+        ui.set_source_list_open(true);
+        settled(&ui);
+        assert!(middle(&ui, "Local Music").is_some() && middle(&ui, "Work").is_some() && middle(&ui, "Add source").is_some());
+        keep_shot(&ui.window().take_snapshot().unwrap(), "profile-sources-dialog");
+        ui.set_source_list_open(false);
+
+        // 3. Singular profile Edit (Archive) shows NO Sources section at all.
         ui.set_view(View::Login);
         ui.set_login_editing(true);
         ui.set_login_choosing(false);
         ui.set_login_adding(false);
+        ui.set_login_name("Archive".into());
+        ui.set_login_url("https://archive.example".into());
+        ui.set_login_user("carol".into());
+        ui.set_profile_rows(crate::settings::profile_rows(&kinds, &plugged, &extra, true, &prefs, &facts, today));
+        settled(&ui);
+        assert!(middle(&ui, "SOURCES").is_none() && middle(&ui, "Add source").is_none(), "singular profile Edit must not show Sources");
+        keep_shot(&ui.window().take_snapshot().unwrap(), "profile-edit-singular");
+
+        // 4. Merged profile Edit (Home) shows Home's form, Scrobbling, and Sources (Local Music, Work, + Add source).
         ui.set_login_name("Home".into());
         ui.set_login_url("https://music.example".into());
         ui.set_login_user("ann".into());
@@ -11434,12 +11529,13 @@ pub(crate) mod tests {
         settled(&ui);
         keep_shot(&ui.window().take_snapshot().unwrap(), "profile-edit-sources");
 
-        // 3. Add source dialog lists Archive (offered) and Sign in to a new one; clicking Archive sends source-add:extra.
+        // 5. Merge with… / Add source dialog lists Archive (offered) and Sign in to a new one; clicking Archive sends source-add:extra.
+        ui.set_source_add_title(words::MERGE_WITH.into());
         ui.set_source_add_open(true);
         settled(&ui);
-        keep_shot(&ui.window().take_snapshot().unwrap(), "profile-add-source-dialog");
-        let archive = middle(&ui, "Archive").expect("Archive offered in Add source dialog");
-        assert!(middle(&ui, "Sign in to a new one").is_some());
+        keep_shot(&ui.window().take_snapshot().unwrap(), "profile-merge-dialog");
+        let archive = middle(&ui, "Archive").expect("Archive offered in Merge with… dialog");
+        assert!(middle(&ui, "Merge with…").is_some() && middle(&ui, "Sign in to a new one").is_some());
         press(ui.window(), archive.0, archive.1, slint::platform::PointerEventButton::Left);
         settled(&ui);
         assert!(!ui.get_source_add_open(), "dialog closed after picking a source");

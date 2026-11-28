@@ -677,6 +677,7 @@ class Say(private val r: Resources) {
     )
     val scrobbling: String = r.getString(R.string.scrobbling)
     val sources: String = r.getString(R.string.sources)
+    val mergeWith: String = r.getString(R.string.merge_with)
     val addSource: String = r.getString(R.string.add_source)
     val sourceSignIn: String = r.getString(R.string.source_sign_in)
     val sourceEarlier: String = r.getString(R.string.source_earlier)

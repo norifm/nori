@@ -1152,7 +1152,8 @@ pub mod hints {
     pub const PLUGIN_BROWSER: Hints = &[("enter", "open"), ("/", "search"), ("← →", "repo"), ("esc", "back"), ("?", "keys")];
     pub const PLUGIN_REPOS: Hints = &[("enter", "add"), ("e", "rename"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];
-    pub const PROFILE_ROW: Hints = &[("enter", "switch"), ("e", "rename"), ("a", "sources"), ("m", "scrobbling"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
+    pub const PROFILE_ROW: Hints = &[("enter", "switch"), ("e", "rename"), ("a", "merge"), ("m", "scrobbling"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
+    pub const PROFILE_ROW_MERGED: Hints = &[("enter", "switch"), ("e", "rename"), ("a", "sources"), ("m", "scrobbling"), ("K J", "move"), ("[ ]", "group"), ("?", "keys")];
     pub const SUPPORT: Hints = &[("↑ ↓", "choose"), ("← →", "change"), ("enter", "type, pick or give"), ("R", "ask again"), ("esc", "back"), ("?", "keys")];
     pub const EQUALIZER: Hints = &[("← →", "choose"), ("↑ ↓", "change"), ("enter", "switch"), ("d", "remove a band"), ("?", "keys")];
     pub const DOWNLOADS: Hints = &[("enter", "play"), ("d", "remove"), ("esc", "back"), ("?", "keys")];

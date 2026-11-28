@@ -792,8 +792,10 @@ fn over_saved(info: &ProviderInfo, saved: &SavedServer, form: SavedServer) -> Sa
 pub async fn log_in(kinds: &Kinds, transport: Arc<dyn Transport>, settings: &crate::settings_store::Settings, form: SavedServer) -> NetResult<SavedServer> {
     let draft = settings.prefs(|p| kinds.login_profile(ServerList { servers: p.servers.clone(), active_server_id: p.active_server_id.clone() }, form));
     let profile = kinds.check_profile(transport, draft).await?;
-    settings.put(profile_activated(settings.current().unwrap_or_default(), profile.clone()));
-    Ok(profile)
+    let activated = profile_activated(settings.current().unwrap_or_default(), profile.clone());
+    let opened = activated.active_server().cloned().unwrap_or(profile);
+    settings.put(activated);
+    Ok(opened)
 }
 
 /// `prefs` with `profile` the active profile, in place of the saved one with its id or added

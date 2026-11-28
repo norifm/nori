@@ -553,6 +553,7 @@ impl SettingsView {
         match (self.own.stack.last(), self.selected()) {
             (_, Some(Row::Plugin { .. })) => h::PLUGIN_ROW,
             (_, Some(Row::Flags { .. })) => h::FLAGS_ROW,
+            (_, Some(Row::Server { name: Some(_), sources: Some(s), .. })) if !s.sources.is_empty() => h::PROFILE_ROW_MERGED,
             (_, Some(Row::Server { name: Some(_), .. })) => h::PROFILE_ROW,
             (Some((PluginPage::Browser, _)), _) => h::PLUGIN_BROWSER,
             (Some((PluginPage::Plugin(_), _)), _) => h::PLUGIN_PAGE,
@@ -637,25 +638,34 @@ impl SettingsView {
         Some(Overlay::Picker { title: format!("Scrobbling for {label}"), options, sel: Sel::default(), target: Target::Scrobbling(id.clone()) })
     }
 
-    /// The selected profile's merged sources: move or remove each one, add a saved profile, or sign in to a new one.
+    /// The selected profile's merged sources: on a singular profile, picking another profile to merge with
+    /// (or signing in to a new one); on a merged profile, moving or removing its sources or adding another.
     pub fn sources_menu(&self) -> Option<Overlay> {
         let Some(Row::Server { id, label, sources: Some(Sources { sources, offered }), .. }) = self.selected() else { return None };
-        let last = sources.len().saturating_sub(1);
         let mut options: Vec<(String, String)> = Vec::new();
-        for (i, (sid, name)) in sources.iter().enumerate() {
-            if i > 0 {
-                options.push((format!("Move up {name}"), format!("earlier:{sid}")));
+        let title = if sources.is_empty() {
+            for (oid, name) in offered {
+                options.push((name.clone(), format!("add:{oid}")));
             }
-            if i < last {
-                options.push((format!("Move down {name}"), format!("later:{sid}")));
+            format!("Merge {label} with…")
+        } else {
+            let last = sources.len().saturating_sub(1);
+            for (i, (sid, name)) in sources.iter().enumerate() {
+                if i > 0 {
+                    options.push((format!("Move up {name}"), format!("earlier:{sid}")));
+                }
+                if i < last {
+                    options.push((format!("Move down {name}"), format!("later:{sid}")));
+                }
+                options.push((format!("Remove {name}"), format!("remove:{sid}")));
             }
-            options.push((format!("Remove {name}"), format!("remove:{sid}")));
-        }
-        for (oid, name) in offered {
-            options.push((format!("Add {name}"), format!("add:{oid}")));
-        }
+            for (oid, name) in offered {
+                options.push((format!("Add {name}"), format!("add:{oid}")));
+            }
+            format!("Sources for {label}")
+        };
         options.push(("Sign in to a new one".to_string(), "new".to_string()));
-        Some(Overlay::Picker { title: format!("Sources for {label}"), options, sel: Sel::default(), target: Target::Sources(id.clone()) })
+        Some(Overlay::Picker { title, options, sel: Sel::default(), target: Target::Sources(id.clone()) })
     }
 
     pub fn plugin_menu(&self) -> Option<Overlay> {

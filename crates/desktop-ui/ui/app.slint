@@ -9253,7 +9253,7 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.source-add-open || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open || root.login-proxy-open || root.login-cert-open || root.login-folders-open;
+    out property <bool> dialog-open: root.ask-open || root.analysis-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.profile-renaming != "" || root.scrobbler-step > 0 || root.source-list-open || root.source-add-open || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open || root.device-open || root.login-proxy-open || root.login-cert-open || root.login-folders-open;
     // Closes every dialog but the two app.rs keeps state for (a device's, the sign-in), which it closes itself.
     public function close-dialogs() {
         root.ask-open = false;
@@ -9265,6 +9265,7 @@ export component AppWindow inherits Window {
         root.rename-open = false;
         root.profile-renaming = "";
         root.scrobbler-step = 0;
+        root.source-list-open = false;
         root.source-add-open = false;
         root.delete-open = false;
         root.join-open = false;
@@ -9346,8 +9347,11 @@ export component AppWindow inherits Window {
     callback scrobbler-add(int);
     callback scrobbler-help-opened();
     callback scrobbler-sign-in();
-    // Adding a source to the profile the Edit page shows: saved profiles it can take, or signing in to a new one.
+    // Managing a merged profile's sources (`source-list-open`), or picking another profile to merge/add (`source-add-open`).
+    in-out property <bool> source-list-open;
+    in property <[SettingRow]> source-list-rows;
     in-out property <bool> source-add-open;
+    in property <string> source-add-title: "Add source";
     in property <[ProfileItem]> source-offered;
     // Deleting a playlist, asked first.
     in-out property <bool> delete-open;
@@ -14007,8 +14011,30 @@ export component AppWindow inherits Window {
             }
         }
 
+        if root.source-list-open: Dialog {
+            title: "Sources";
+            sheet-width: 460px;
+            dismissed => { root.source-list-open = false; }
+            VerticalLayout {
+                spacing: 12px;
+                VerticalLayout {
+                    for r in root.source-list-rows: SettingLine {
+                        item: r;
+                        action(name) => { root.setting-action(name); }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    SmallButton {
+                        text: "Done";
+                        clicked => { root.source-list-open = false; }
+                    }
+                }
+            }
+        }
+
         if root.source-add-open: Dialog {
-            title: "Add source";
+            title: root.source-add-title;
             sheet-width: 460px;
             dismissed => { root.source-add-open = false; }
             VerticalLayout {

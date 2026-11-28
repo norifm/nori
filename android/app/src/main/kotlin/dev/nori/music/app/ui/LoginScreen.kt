@@ -532,10 +532,9 @@ fun WaitingProfile(vm: SettingsViewModel, wait: dev.nori.music.ffi.ProfileWait) 
 }
 
 /**
- * The other saved profiles this profile plays from, browsed with its own as one library: each with its
- * mark, moved earlier or later or taken out from its menu; then a row adding one, from the saved profiles
- * that can be one or by signing in to a new one here. The profile in use opens again with them. A profile
- * that is itself a source has none.
+ * The other saved profiles this profile plays from, browsed with its own as one library: shown only once
+ * this profile has merged sources, keeping Edit uncluttered for a singular profile. Each source has its
+ * mark and a menu editing, moving, or removing it, followed by a row adding another.
  */
 @Composable
 private fun SourcesPart(vm: SettingsViewModel, profile: SavedServer) {
@@ -543,39 +542,105 @@ private fun SourcesPart(vm: SettingsViewModel, profile: SavedServer) {
     val ui by androidx.compose.runtime.produceState<SettingsViewModel.SourcesUi?>(null, prefs.servers, profile.id) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { vm.sourcesUi(profile.id) }
     }
-    val shown = ui ?: return
+    val shown = ui?.takeIf { it.sources.isNotEmpty() } ?: return
     var picking by remember { mutableStateOf(false) }
-    var signingIn by remember { mutableStateOf(false) }
+    var editingSource by remember { mutableStateOf<SavedServer?>(null) }
     GroupLabel(say.sources)
-    GroupCard {
-        shown.sources.forEachIndexed { i, s ->
+    SourcesListCard(vm, profile.id, shown.sources, onEdit = { editingSource = it.also(vm::openLogin) }, onAdd = { picking = true })
+    SourcePickerSheet(vm, profile.id, shown.offered, say.addSource, picking) { picking = false }
+    NoriDialog(editingSource, { editingSource = null }, DialogStyle.Page) { s -> LoginScreen(vm, s) { editingSource = null } }
+}
+
+@Composable
+private fun SourcesListCard(
+    vm: SettingsViewModel,
+    profileId: String,
+    sources: List<SavedServer>,
+    onEdit: (SavedServer) -> Unit,
+    onAdd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    GroupCard(modifier) {
+        sources.forEachIndexed { i, s ->
             val moves = listOfNotNull(
-                (say.sourceEarlier to { vm.moveSource(profile.id, s.id, -1) }).takeIf { i > 0 },
-                (say.sourceLater to { vm.moveSource(profile.id, s.id, 1) }).takeIf { i < shown.sources.lastIndex },
-                say.remove to { vm.removeSource(profile.id, s.id) },
+                say.edit to { onEdit(s) },
+                (say.sourceEarlier to { vm.moveSource(profileId, s.id, -1) }).takeIf { i > 0 },
+                (say.sourceLater to { vm.moveSource(profileId, s.id, 1) }).takeIf { i < sources.lastIndex },
+                say.remove to { vm.removeSource(profileId, s.id) },
             )
             ProfileLine(vm, s, active = false, divider = true, Modifier.testTag("source-${s.id}"), trailing = { MoreButton(moves) }, onClick = null)
         }
-        GroupRow(say.addSource, { picking = true }, Modifier.testTag("add-source"), icon = Iconoir.Plus, divider = false)
+        GroupRow(say.addSource, onAdd, Modifier.testTag("add-source"), icon = Iconoir.Plus, divider = false)
     }
-    NoriSheet(picking, { picking = false }) {
+}
+
+/** Sheet picking another saved profile to merge into [profileId], or signing in to a new one. */
+@Composable
+internal fun SourcePickerSheet(
+    vm: SettingsViewModel,
+    profileId: String,
+    offered: List<SavedServer>,
+    title: String,
+    open: Boolean,
+    onDismiss: () -> Unit,
+) {
+    var signingIn by remember(profileId) { mutableStateOf(false) }
+    NoriSheet(open, onDismiss) {
         Column(Modifier.windowInsetsPadding(gestureBarRoom)) {
-            SheetTitle(say.addSource)
+            SheetTitle(title)
             GroupCard(Modifier.padding(bottom = 16.dp)) {
-                shown.offered.forEach { o ->
-                    ProfileLine(vm, o, active = false, divider = true, Modifier.testTag("offered-${o.id}")) { vm.addSource(profile.id, o); picking = false }
+                offered.forEach { o ->
+                    ProfileLine(vm, o, active = false, divider = true, Modifier.testTag("offered-${o.id}")) { vm.addSource(profileId, o); onDismiss() }
                 }
-                GroupRow(say.sourceSignIn, { picking = false; signingIn = true }, Modifier.testTag("source-sign-in"), icon = Iconoir.Plus, divider = false)
+                GroupRow(say.sourceSignIn, { onDismiss(); signingIn = true }, Modifier.testTag("source-sign-in"), icon = Iconoir.Plus, divider = false)
             }
         }
     }
     NoriDialog(signingIn, { signingIn = false }, DialogStyle.Page) {
         // A new profile's flow from its start, not the edited profile's form.
-        androidx.compose.runtime.DisposableEffect(profile.id) {
+        androidx.compose.runtime.DisposableEffect(profileId) {
             vm.addOn(dev.nori.music.ffi.AddEvent.Start)
-            vm.signInAsSourceOf(profile.id)
+            vm.signInAsSourceOf(profileId)
             onDispose { vm.signInAsSourceOf(null) }
         }
         LoginScreen(vm) { signingIn = false }
     }
+}
+
+/** Sheet opened from a singular profile's `Merge with…` menu item. */
+@Composable
+internal fun MergeProfileSheet(vm: SettingsViewModel, profileId: String, open: Boolean, onDismiss: () -> Unit) {
+    val prefs by vm.prefs.collectAsStateWithLifecycle()
+    val ui by androidx.compose.runtime.produceState<SettingsViewModel.SourcesUi?>(null, prefs.servers, profileId, open) {
+        value = if (open) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { vm.sourcesUi(profileId) } else null
+    }
+    SourcePickerSheet(vm, profileId, ui?.offered.orEmpty(), say.mergeWith, open && ui != null, onDismiss)
+}
+
+/** Sheet opened from a merged profile's `Sources` menu item: edit, reorder, remove, or add sources. */
+@Composable
+internal fun ProfileSourcesSheet(
+    vm: SettingsViewModel,
+    profileId: String,
+    open: Boolean,
+    onDismiss: () -> Unit,
+    onEdit: (SavedServer) -> Unit,
+) {
+    val prefs by vm.prefs.collectAsStateWithLifecycle()
+    val ui by androidx.compose.runtime.produceState<SettingsViewModel.SourcesUi?>(null, prefs.servers, profileId, open) {
+        value = if (open) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { vm.sourcesUi(profileId) } else null
+    }
+    var picking by remember(profileId) { mutableStateOf(false) }
+    val shown = ui
+    // Removing the last source turns the profile back into a plain singular one.
+    LaunchedEffect(open, shown?.sources?.isEmpty()) {
+        if (open && shown != null && shown.sources.isEmpty()) onDismiss()
+    }
+    NoriSheet(open && shown != null && shown.sources.isNotEmpty(), onDismiss) {
+        Column(Modifier.windowInsetsPadding(gestureBarRoom)) {
+            SheetTitle(say.sources)
+            SourcesListCard(vm, profileId, shown?.sources.orEmpty(), onEdit = onEdit, onAdd = { onDismiss(); picking = true }, modifier = Modifier.padding(bottom = 16.dp))
+        }
+    }
+    SourcePickerSheet(vm, profileId, shown?.offered.orEmpty(), say.addSource, picking) { picking = false }
 }

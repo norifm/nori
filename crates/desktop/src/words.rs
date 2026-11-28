@@ -125,8 +125,9 @@ pub const NOT_SIGNED_IN: &str = "Not signed in";
 pub const SIGN_IN: &str = "Sign in";
 pub const MANAGE: &str = "Manage";
 pub const SCROBBLING: &str = "Scrobbling";
-/// A profile's Edit page: what it plays from, browsed as one library.
+/// A profile's merged sources: what it plays from, browsed as one library.
 pub const SOURCES: &str = "Sources";
+pub const MERGE_WITH: &str = "Merge with…";
 pub const BUILT_IN: &str = "Built in";
 pub const ADD_SCROBBLER: &str = "Add scrobbler";
 pub const ADD_SOURCE: &str = "Add source";

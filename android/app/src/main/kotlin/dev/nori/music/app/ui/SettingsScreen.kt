@@ -635,7 +635,15 @@ internal fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection
                     var removing by remember(row.id) { mutableStateOf(false) }
                     var picking by remember(row.id) { mutableStateOf(false) }
                     var renaming by remember(row.id) { mutableStateOf(false) }
+                    var merging by remember(row.id) { mutableStateOf(false) }
+                    var managingSources by remember(row.id) { mutableStateOf(false) }
+                    val merged = remember(p.servers, profile) { dev.nori.music.ffi.settings.profileSources(p.servers, profile).isNotEmpty() }
                     ProfileIconPicker(vm, profile.takeIf { picking }) { picking = false }
+                    MergeProfileSheet(vm, profile.id, merging) { merging = false }
+                    ProfileSourcesSheet(vm, profile.id, managingSources, { managingSources = false }) { s ->
+                        managingSources = false
+                        editing = s.also(vm::openLogin)
+                    }
                     NoriDialog(renaming, { renaming = false }) { RenameDialog(profile.name, profileLabel(vm, profile), { renaming = false }) { renaming = false; vm.renameProfile(profile, it) } }
                     NoriDialog(removing, { removing = false }) {
                         AlertCard(
@@ -649,7 +657,14 @@ internal fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection
                         ProfileLine(
                             vm, profile, row.active, divider = divider && row.libraries.isEmpty(), pickUp, detail = row.detail,
                             onMark = if (options) ({ picking = true }) else null,
-                            trailing = { if (options) MoreButton(listOf(say.rename to { renaming = true }, say.edit to { editing = profile.also(vm::openLogin) }, say.remove to { removing = true })) },
+                            trailing = {
+                                if (options) MoreButton(listOf(
+                                    say.rename to { renaming = true },
+                                    say.edit to { editing = profile.also(vm::openLogin) },
+                                    (if (merged) say.sources else say.mergeWith) to { if (merged) managingSources = true else merging = true },
+                                    say.remove to { removing = true },
+                                ))
+                            },
                             onClick = if (row.active) null else ({ vm.switchServer(profile) }),
                         )
                         // The server's own libraries, under it: which of them the app shows.

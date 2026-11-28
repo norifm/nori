@@ -269,7 +269,7 @@ class Nori private constructor(private val context: Context) {
         // The old core is dropped, not closed: a request may still be using it, and the cleaner frees it.
         synchronized(lock) { opened = null }
         settings.update { p -> p.withServers(dev.nori.music.ffi.settings.serversActivated(p.serverList(), profile)) }
-        http.configure(profile)
+        http.configure(settings.value.server ?: profile)
         library.onServerChanged()
         library.onProfileChanged()
         remotes.refresh()

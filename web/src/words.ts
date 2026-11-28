@@ -267,6 +267,7 @@ export const W = {
   removeProfileLine: "What nori keeps for it on this device goes with it.",
   scrobbling: "Scrobbling",
   sources: "Sources",
+  mergeWith: "Merge with…",
   addSource: "Add source",
   sourceSignIn: "Sign in to a new one",
   scrobblingNote: "Plays go to each one that's on, whatever this profile plays from",

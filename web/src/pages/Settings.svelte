@@ -15,7 +15,7 @@
   import { route, href } from "../state/route.svelte";
   import { refreshTheme, worn } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
-  import type { MusicFolderSwitch, Profile, ProfileIcon, Profiles, SettingRow, SettingsSection } from "../state/types";
+  import type { MusicFolderSwitch, Profile, ProfileIcon, Profiles, ProfileSources, SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
   import About from "../ui/About.svelte";
   import AddProfile from "../ui/AddProfile.svelte";
@@ -27,6 +27,7 @@
   import ProfileEdit from "../ui/ProfileEdit.svelte";
   import ProfileIconPicker from "../ui/ProfileIconPicker.svelte";
   import ProfileMark from "../ui/ProfileMark.svelte";
+  import SourcePickerDialog from "../ui/SourcePickerDialog.svelte";
 
   const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "quote-message", Library: "album-list", Data: "cloud-download", Servers: "server", Plugins: "view-grid", About: "info-circle" };
   let rev = $state(0);
@@ -70,6 +71,32 @@
   }
   /** A profile being added. */
   let adding = $state(false);
+  /** A profile whose `Merge with…` / `Add source` picker or `Sources` dialog is open. */
+  let sourceState = $state<{ id: string; mode: "merge" | "sources" | "add"; data: ProfileSources } | null>(null);
+  let signingInSourceFor = $state<string | null>(null);
+  let sourcesDialog = $state<HTMLDialogElement>();
+  $effect(() => {
+    if (sourceState?.mode === "sources") sourcesDialog?.showModal();
+  });
+
+  const sourceDetail = (p: Profile) => p.user || (p.kind === "local" ? W.local : p.host || W.subsonic);
+
+  async function openSources(p: Profile, mode: "merge" | "sources" | "add") {
+    const data = JSON.parse(await ask<string>("profile_sources", p.id)) as ProfileSources;
+    sourceState = { id: p.id, mode, data };
+  }
+
+  async function sourceChange(profileId: string, call: string, ...args: unknown[]) {
+    await ask(call, profileId, ...args);
+    opened();
+    if (sourceState?.id === profileId && sourceState.mode === "sources") {
+      const data = JSON.parse(await ask<string>("profile_sources", profileId)) as ProfileSources;
+      // Removing the last source turns the profile back into a plain singular one.
+      sourceState = data.sources.length ? { id: profileId, mode: "sources", data } : null;
+    } else {
+      sourceState = null;
+    }
+  }
 
   /** The library and the player are another profile's now. */
   function opened() {
@@ -100,6 +127,7 @@
         },
       },
       { label: W.edit, run: () => (location.hash = `${href("settings", "Servers")}/${encodeURIComponent(p.id)}`) },
+      { label: p.sources?.length ? W.sources : W.mergeWith, run: () => void openSources(p, p.sources?.length ? "sources" : "merge") },
       { label: W.remove, run: () => remove(p) },
     ]);
 
@@ -206,6 +234,75 @@
   {/if}
   {#if adding}<AddProfile close={() => (adding = false)} added={() => ((adding = false), opened())} />{/if}
   {#if picking && profiles}{@const p = picking}<ProfileIconPicker profile={p} icons={profiles.icons} pick={(icon) => void pickIcon(p, icon)} close={() => (picking = null)} />{/if}
+  {#if sourceState && (sourceState.mode === "merge" || sourceState.mode === "add")}
+    {@const st = sourceState}
+    <SourcePickerDialog
+      title={st.mode === "merge" ? W.mergeWith : W.addSource}
+      offered={st.data.offered}
+      pick={(oid) => void sourceChange(st.id, "source_add", oid)}
+      signIn={() => {
+        sourceState = null;
+        signingInSourceFor = st.id;
+      }}
+      close={() => (sourceState = null)}
+    />
+  {/if}
+  {#if sourceState?.mode === "sources"}
+    {@const st = sourceState}
+    <dialog class="menu card" id="profile-sources-dialog" bind:this={sourcesDialog} onclose={() => (sourceState = null)}>
+      <div class="body">
+        <h2>{W.sources}</h2>
+        <div class="group">
+          {#each st.data.sources as s, i (s.id)}
+            <div class="group-row" data-source={s.id}>
+              <ProfileMark icon={s.icon} letter={s.letter} kind={s.kind} />
+              <span class="words"><span>{named(s)}</span><span class="sub">{sourceDetail(s)}</span></span>
+              <button
+                class="glyph"
+                aria-label={W.more}
+                title={W.more}
+                onclick={(e) =>
+                  ui.drop(e, [
+                    {
+                      label: W.edit,
+                      run: () => {
+                        sourceState = null;
+                        location.hash = `${href("settings", "Servers")}/${encodeURIComponent(s.id)}`;
+                      },
+                    },
+                    ...(i > 0 ? [{ label: W.moveUp, run: () => sourceChange(st.id, "source_move", s.id, -1) }] : []),
+                    ...(i < st.data.sources.length - 1 ? [{ label: W.moveDown, run: () => sourceChange(st.id, "source_move", s.id, 1) }] : []),
+                    { label: W.remove, run: () => sourceChange(st.id, "source_remove", s.id) },
+                  ])}><Icon name="more-horiz" /></button
+              >
+            </div>
+          {/each}
+          <button
+            class="group-row"
+            id="add-source-row"
+            onclick={() => {
+              sourceState = { ...st, mode: "add" };
+            }}
+          >
+            <Icon name="plus" />
+            <span class="words">{W.addSource}</span>
+          </button>
+        </div>
+        <div class="end"><button type="button" class="text-action" onclick={() => (sourceState = null)}>{W.done}</button></div>
+      </div>
+    </dialog>
+  {/if}
+  {#if signingInSourceFor}
+    {@const target = signingInSourceFor}
+    <AddProfile
+      forProfile={target}
+      close={() => (signingInSourceFor = null)}
+      added={() => {
+        signingInSourceFor = null;
+        opened();
+      }}
+    />
+  {/if}
 {/snippet}
 
 {#snippet settingsPage()}

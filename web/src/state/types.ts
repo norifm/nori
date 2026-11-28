@@ -164,8 +164,8 @@ export type Profile = { id: string; kind: string; label: string; user: string; h
 /** The saved profiles in their order, the icons a circle can show in the picker's order, and whether they may
  * be changed here (a jam guest's are its host's). */
 export type Profiles = { picks: boolean; icons: ProfileIcon[]; list: Profile[] };
-/** A profile's merged sources (`profile_sources`): those it plays from, and saved profiles it can take. */
-export type ProfileSources = { shown: boolean; sources: Profile[]; offered: Profile[] };
+/** A profile's metadata and merged sources (`profile_sources`): those it plays from, and saved profiles it can take. */
+export type ProfileSources = { profile: Profile; shown: boolean; sources: Profile[]; offered: Profile[] };
 /** One of the active server's music libraries (`music_folders`): whether it is shown, and the
  * `musicFolders` value switching it stores. */
 export type MusicFolderSwitch = { id: string; name: string; on: boolean; tapped: string };

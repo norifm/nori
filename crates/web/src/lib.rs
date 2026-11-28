@@ -215,8 +215,8 @@ impl Nori {
         json!({ "picks": self.changes_profile(), "icons": icons, "list": list }).to_string()
     }
 
-    /// Profile `id`'s merged sources and the saved profiles it can take: `{ shown, sources, offered }`,
-    /// `shown` false when `id` is itself a source of another profile.
+    /// Profile `id`'s metadata, merged sources, and saved profiles it can take:
+    /// `{ profile, shown, sources, offered }`, `shown` false when `id` is itself a source of another profile.
     pub fn profile_sources(&self, id: String) -> Result<String, JsValue> {
         use nori_core::settings::{label, profile_letter, profile_sources, servers_shown};
         let prefs = self.app.settings.current().unwrap_or_default();
@@ -227,9 +227,10 @@ impl Nori {
             let letter = profile_letter(p.clone(), named.clone());
             json!({ "id": p.id, "kind": p.kind.id(), "label": named, "user": p.user, "host": label("", &p.url), "icon": format!("{:?}", p.icon), "letter": letter, "on": false })
         };
+        let self_row = row(&profile);
         let sources: Vec<Value> = if shown { profile_sources(prefs.servers.clone(), profile.clone()).iter().map(row).collect() } else { Vec::new() };
         let offered: Vec<Value> = if shown { nori_core::providers::sources_offered(prefs.servers, profile).iter().map(row).collect() } else { Vec::new() };
-        Ok(json!({ "shown": shown, "sources": sources, "offered": offered }).to_string())
+        Ok(json!({ "profile": self_row, "shown": shown, "sources": sources, "offered": offered }).to_string())
     }
 
     /// Adds saved profile `source_id` as a merged source of profile `id`.

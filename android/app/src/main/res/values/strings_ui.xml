@@ -413,6 +413,7 @@
     <string name="cert_unsupported">This certificate is encrypted in a way nori doesn’t read.</string>
     <string name="scrobbling">Scrobbling</string>
     <string name="sources">Sources</string>
+    <string name="merge_with">Merge with…</string>
     <string name="add_source">Add source</string>
     <string name="source_sign_in">Sign in to a new one</string>
     <string name="source_earlier">Move up</string>

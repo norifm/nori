@@ -2149,6 +2149,8 @@ pub struct ServerList {
 }
 
 /// `profile` made active: it replaces the saved one with its id where that one stands, or is appended.
+/// When `profile` is a merged source of another profile, that profile stays active so a source never
+/// opens alone outside its group.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn servers_activated(list: ServerList, profile: SavedServer) -> ServerList {
     let id = profile.id.clone();
@@ -2157,7 +2159,8 @@ pub fn servers_activated(list: ServerList, profile: SavedServer) -> ServerList {
         Some(saved) => *saved = profile,
         None => servers.push(profile),
     }
-    ServerList { servers, active_server_id: id }
+    let active_server_id = servers.iter().find(|s| s.id != id && s.sources.contains(&id)).map_or(id, |owner| owner.id.clone());
+    ServerList { servers, active_server_id }
 }
 
 /// Profile `id` moved to place `to` (past the end is last); the one in use stays in use.
@@ -3165,6 +3168,16 @@ mod tests {
     fn storage_index_files_match_db() {
         let names = ["nori.db", "nori.db-wal", "nori.db-shm", "nori.db-journal", "certs", "other.db", "nori.db.bak"].map(String::from).to_vec();
         assert_eq!(storage_index_files(names), [0, 1, 2]);
+    }
+
+    #[test]
+    fn activating_a_merged_member_source_keeps_its_owner_active() {
+        let home = SavedServer { id: "home".into(), name: "Home".into(), sources: vec!["work".into()], ..Default::default() };
+        let work = SavedServer { id: "work".into(), name: "Work".into(), url: "https://old.example".into(), ..Default::default() };
+        let list = ServerList { servers: vec![home, work.clone()], active_server_id: "home".into() };
+        let updated = servers_activated(list, SavedServer { url: "https://new.example".into(), ..work });
+        assert_eq!(updated.active_server_id, "home", "a merged member source never opens alone outside its group");
+        assert_eq!(updated.servers[1].url, "https://new.example", "the member source itself is still updated in place");
     }
 
 }

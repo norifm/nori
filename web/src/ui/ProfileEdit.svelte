@@ -8,7 +8,8 @@
   import { folder } from "../state/folder.svelte";
   import { reading } from "../state/library.svelte";
   import { remote } from "../state/remote.svelte";
-  import type { Profile, Profiles, ProfileSources, Scrobbling, ScrobblerKindForm } from "../state/types";
+  import { href } from "../state/route.svelte";
+  import type { Profile, ProfileSources, Scrobbling, ScrobblerKindForm } from "../state/types";
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
   import AddProfile from "./AddProfile.svelte";
@@ -16,17 +17,17 @@
   import Icon from "./Icon.svelte";
   import Page from "./Page.svelte";
   import ProfileMark from "./ProfileMark.svelte";
+  import SourcePickerDialog from "./SourcePickerDialog.svelte";
 
   let { id }: { id: string } = $props();
   let rev = $state(0);
   const page = reading("settings", async () => {
     void rev;
-    // Fails for a profile that is not saved.
+    // Fails for a profile that is not saved; reads profile metadata from profile_sources so merged member sources open too.
     const scrobbling = JSON.parse(await ask<string>("scrobblers", id)) as Scrobbling;
-    const profile = (JSON.parse(await ask<string>("profiles")) as Profiles).list.find((p) => p.id === id)!;
     const kinds = JSON.parse(await ask<string>("scrobbler_kinds")) as ScrobblerKindForm[];
     const sources = JSON.parse(await ask<string>("profile_sources", id)) as ProfileSources;
-    return { profile, scrobbling, kinds, sources };
+    return { profile: sources.profile, scrobbling, kinds, sources };
   });
 
   /** The form as it stands; filled from the saved profile once it is read. */
@@ -76,10 +77,6 @@
   /** Picking a saved profile (or signing in to a new one) to merge as a source. */
   let pickingSource = $state(false);
   let addingSource = $state(false);
-  let sourceDialog = $state<HTMLDialogElement>();
-  $effect(() => {
-    if (pickingSource) sourceDialog?.showModal();
-  });
 </script>
 
 <Page title={page.data?.profile ? sourceLabel(page.data.profile) : W.subsonic} back narrow ready={!!page.data} error={page.error}>
@@ -118,7 +115,7 @@
         <span class="words"><span>{W.addScrobblerAccount}</span>{#if !s.list.length && !s.itself}<span class="sub">{W.scrobblingNote}</span>{/if}</span>
       </button>
     </div>
-    {#if page.data.sources.shown}
+    {#if page.data.sources.shown && page.data.sources.sources.length > 0}
       {@const src = page.data.sources}
       <div class="group-label">{W.sources}</div>
       <div class="group" id="profile-sources">
@@ -132,6 +129,7 @@
               title={W.more}
               onclick={(e) =>
                 ui.drop(e, [
+                  { label: W.edit, run: () => (location.hash = `${href("settings", "Servers")}/${encodeURIComponent(p.id)}`) },
                   ...(i > 0 ? [{ label: W.moveUp, run: () => sourceChange("source_move", p.id, -1) }] : []),
                   ...(i < src.sources.length - 1 ? [{ label: W.moveDown, run: () => sourceChange("source_move", p.id, 1) }] : []),
                   { label: W.remove, run: () => sourceChange("source_remove", p.id) },
@@ -145,38 +143,19 @@
         </button>
       </div>
       {#if pickingSource}
-        <dialog class="menu card" id="add-source" bind:this={sourceDialog} onclose={() => (pickingSource = false)}>
-          <div class="body">
-            <h2>{W.addSource}</h2>
-            <div class="group">
-              {#each src.offered as o (o.id)}
-                <button
-                  class="group-row"
-                  data-offered={o.id}
-                  onclick={() => {
-                    pickingSource = false;
-                    void sourceChange("source_add", o.id);
-                  }}
-                >
-                  <ProfileMark icon={o.icon} letter={o.letter} kind={o.kind} />
-                  <span class="words"><span>{sourceLabel(o)}</span><span class="sub">{sourceDetail(o)}</span></span>
-                </button>
-              {/each}
-              <button
-                class="group-row"
-                id="source-sign-in"
-                onclick={() => {
-                  pickingSource = false;
-                  addingSource = true;
-                }}
-              >
-                <Icon name="plus" />
-                <span class="words">{W.sourceSignIn}</span>
-              </button>
-            </div>
-            <div class="end"><button type="button" class="text-action" onclick={() => (pickingSource = false)}>{W.cancel}</button></div>
-          </div>
-        </dialog>
+        <SourcePickerDialog
+          title={W.addSource}
+          offered={src.offered}
+          pick={(oid) => {
+            pickingSource = false;
+            void sourceChange("source_add", oid);
+          }}
+          signIn={() => {
+            pickingSource = false;
+            addingSource = true;
+          }}
+          close={() => (pickingSource = false)}
+        />
       {/if}
       {#if addingSource}
         <AddProfile

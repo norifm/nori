@@ -3720,8 +3720,8 @@ fn a_profile_moves_with_k_and_j() {
     assert!(!draw(&mut a, 140, 40).contains("K J move"));
 }
 
-/// A profile's `a` opens its merged sources menu: moving/removing its sources, adding offered saved
-/// profiles, or opening the provider choice to sign in to a new one; merged sources show in its detail.
+/// A singular profile's `a` opens "Merge … with…" (hint `a merge`), while a merged profile's `a` opens
+/// "Sources for …" (hint `a sources`) to move, remove, add offered profiles, or sign in to a new one.
 #[test]
 fn a_profiles_sources_are_added_moved_and_removed() {
     use crate::app::SourceChange;
@@ -3732,9 +3732,19 @@ fn a_profiles_sources_are_added_moved_and_removed() {
         sources: sources.iter().map(|s| s.to_string()).collect(),
         ..Default::default()
     };
-    let mut a = App::new(StoredPrefs { servers: vec![sv("home", "Home", &["s1", "s2"]), sv("s1", "One", &[]), sv("s2", "Two", &[]), sv("extra", "Extra", &[])], active_server_id: "home".into(), ..StoredPrefs::default() });
+    let mut a = App::new(StoredPrefs { servers: vec![sv("home", "Home", &["s1", "s2"]), sv("s1", "One", &[]), sv("s2", "Two", &[]), sv("extra", "Extra", &[]), sv("solo", "Solo", &[])], active_server_id: "home".into(), ..StoredPrefs::default() });
     a.go(View::Settings);
     a.settings.set_facts(crate::settings_view::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() });
+    // Singular profile: hint says `a merge` and menu offers profiles to merge with.
+    select_row(&mut a, |r| matches!(r, Row::Server { id, .. } if id == "extra"));
+    let singular = draw(&mut a, 140, 40);
+    assert!(singular.contains("a merge") && !singular.contains("a sources"), "singular profile shows merge hint:\n{singular}");
+    key(&mut a, KeyCode::Char('a'));
+    let merge_menu = draw(&mut a, 140, 40);
+    assert!(merge_menu.contains("Merge Extra with…") && merge_menu.contains("Solo") && merge_menu.contains("Sign in to a new one") && !merge_menu.contains("Sources for"), "{merge_menu}");
+    key(&mut a, KeyCode::Esc);
+
+    // Merged profile: hint says `a sources` and menu manages its sources.
     select_row(&mut a, |r| matches!(r, Row::Server { id, .. } if id == "home"));
     let s = draw(&mut a, 140, 40);
     assert!(s.contains("+ One, Two") && s.contains("a sources"), "merged sources in detail and hint:\n{s}");
@@ -3750,14 +3760,14 @@ fn a_profiles_sources_are_added_moved_and_removed() {
     let menu = draw(&mut a, 140, 40);
     assert!(menu.contains("Sources for Home") && menu.contains("Move down One") && menu.contains("Remove One") && menu.contains("Move up Two") && menu.contains("Remove Two") && menu.contains("Add Extra") && menu.contains("Sign in to a new one"), "{menu}");
     key(&mut a, KeyCode::Esc);
-    // 0: Move down One, 1: Remove One, 2: Move up Two, 3: Remove Two, 4: Add Extra, 5: Sign in to a new one
+    // 0: Move down One, 1: Remove One, 2: Move up Two, 3: Remove Two, 4: Add Extra, 5: Add Solo, 6: Sign in to a new one
     pick(&mut a, 0);
     assert_eq!(a.cmds.pop(), Some(Cmd::Source { profile: "home".into(), change: SourceChange::Move { id: "s1".into(), by: 1 } }));
     pick(&mut a, 1);
     assert_eq!(a.cmds.pop(), Some(Cmd::Source { profile: "home".into(), change: SourceChange::Remove("s1".into()) }));
     pick(&mut a, 4);
     assert_eq!(a.cmds.pop(), Some(Cmd::Source { profile: "home".into(), change: SourceChange::Add("extra".into()) }));
-    pick(&mut a, 5);
+    pick(&mut a, 6);
     assert_eq!(a.view, View::Login);
     assert_eq!(a.login.source_for.as_deref(), Some("home"));
     key(&mut a, KeyCode::Esc);

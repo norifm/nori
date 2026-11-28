@@ -182,6 +182,10 @@ pub enum Act {
     AddServer,
     /// A server row's Edit: the profile's page, its form, account and scrobbling.
     Edit(String),
+    /// A singular server row's Merge with…: picks another saved profile (or a new sign-in) to merge in.
+    Merge(String),
+    /// A merged server row's Sources: opens the dialog editing, reordering, removing or adding its sources.
+    Sources(String),
     /// A server row's Rename: its name asked for.
     Rename(String),
     /// A server row's Remove: asked first ([`REMOVE_PROFILE`]).
@@ -204,6 +208,12 @@ impl Act {
         }
         if let Some(id) = name.strip_prefix("edit:") {
             return Some(Act::Edit(id.to_string()));
+        }
+        if let Some(id) = name.strip_prefix("merge:") {
+            return Some(Act::Merge(id.to_string()));
+        }
+        if let Some(id) = name.strip_prefix("sources:") {
+            return Some(Act::Sources(id.to_string()));
         }
         if let Some(id) = name.strip_prefix("rename:") {
             return Some(Act::Rename(id.to_string()));
@@ -622,7 +632,17 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             // A jam guest switches between the profiles; changing them is not its to do.
             let edits = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
             let menu = if edits {
-                vec![("Rename".to_string(), format!("rename:{}", sv.id)), ("Edit".to_string(), format!("edit:{}", sv.id)), ("Remove".to_string(), format!("remove:{}", sv.id))]
+                let sources_item = if sources.is_empty() {
+                    (words::MERGE_WITH.to_string(), format!("merge:{}", sv.id))
+                } else {
+                    (words::SOURCES.to_string(), format!("sources:{}", sv.id))
+                };
+                vec![
+                    ("Rename".to_string(), format!("rename:{}", sv.id)),
+                    ("Edit".to_string(), format!("edit:{}", sv.id)),
+                    sources_item,
+                    ("Remove".to_string(), format!("remove:{}", sv.id)),
+                ]
             } else {
                 Vec::new()
             };
@@ -749,15 +769,24 @@ pub fn profile_rows(kinds: &Kinds, plugged: &Plugged, sv: &SavedServer, itself: 
     let hint = if sv.scrobblers.is_empty() && !itself { words::SCROBBLING_HINT } else { "" };
     rows.push(Row { kind: BUTTON, name: ProfilePart::AddScrobbler.name(), title: words::ADD_SCROBBLER.into(), detail: hint.into(), enabled: true, ..Default::default() });
     groups.push((words::SCROBBLING.to_string(), rows));
-    // A profile that is itself a source has no sources of its own (matching Android's SourcesPart).
-    if p.servers.is_empty() || nori_core::settings::servers_shown(p.servers.clone()).iter().any(|s| s.id == sv.id) {
+    // Shown only once the profile has merged sources; singular profiles and member sources show no Sources group.
+    if !nori_core::settings::profile_sources(p.servers.clone(), sv.clone()).is_empty()
+        && nori_core::settings::servers_shown(p.servers.clone()).iter().any(|s| s.id == sv.id)
+    {
         groups.push((words::SOURCES.to_string(), source_rows(kinds, plugged, sv, p)));
     }
     model(groups, p, f, today)
 }
 
-/// The Sources group of profile `sv`'s Edit page, matching Android's `SourcesPart`: each other source
-/// with its mark and menu moving or removing it, then a row opening the Add source dialog.
+/// The rows of a merged profile's `Sources` dialog (without a group heading): each source with Edit, Move
+/// up/down, and Remove, followed by `+ Add source`.
+pub fn source_list_rows(kinds: &Kinds, plugged: &Plugged, sv: &SavedServer, p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    let rows: Vec<SettingRow> = lines(vec![(String::new(), source_rows(kinds, plugged, sv, p))], p, f, today).into_iter().skip(1).collect();
+    ModelRc::new(VecModel::from(rows))
+}
+
+/// The Sources rows for merged profile `sv`, matching Android's `SourcesPart`: each other source with its
+/// mark and menu editing, moving, or removing it, then a row opening the Add source dialog.
 fn source_rows(kinds: &Kinds, plugged: &Plugged, sv: &SavedServer, p: &StoredPrefs) -> Vec<Row> {
     let sources = nori_core::settings::profile_sources(p.servers.clone(), sv.clone());
     let last = sources.len().saturating_sub(1);
@@ -769,7 +798,7 @@ fn source_rows(kinds: &Kinds, plugged: &Plugged, sv: &SavedServer, p: &StoredPre
             let words = words::provider_of(kinds, &s.kind);
             let detail = if s.user.is_empty() { words.name } else { s.user.clone() };
             let mark = profile_mark(plugged, s, &title);
-            let mut options = Vec::new();
+            let mut options = vec![("Edit".to_string(), format!("edit:{}", s.id))];
             if at > 0 {
                 options.push((words::MOVE_UP.to_string(), ProfilePart::SourceEarlier(s.id.clone()).name()));
             }
@@ -2172,20 +2201,21 @@ mod tests {
         };
         let rows = shown(&sv, true);
         let names: Vec<&str> = rows.iter().map(|r| r.1.as_str()).collect();
-        assert_eq!(names, ["", "scrobble-server", "scrobbler:a", "scrobbler-add", "", "source-open"], "a server signs in with the form, so no account row; then Sources with Add source");
+        assert_eq!(names, ["", "scrobble-server", "scrobbler:a", "scrobbler-add"], "a singular profile shows no Sources group on Edit");
         assert!(!rows[1].2, "the server's switch is off where its plays are off");
         assert_eq!(rows[2].3, ["scrobbler-remove:a"]);
         assert_eq!(rows[3].4, "", "accounts take the plays");
         let alone = shown(&SavedServer { scrobblers: Vec::new(), ..sv }, false);
-        assert_eq!(alone.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), ["", "scrobbler-add", "", "source-open"]);
+        assert_eq!(alone.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), ["", "scrobbler-add"]);
         assert_eq!(alone[1].4, crate::words::SCROBBLING_HINT, "nothing takes the plays yet");
         for part in [ProfilePart::Account, ProfilePart::ServerScrobbles, ProfilePart::Scrobbler("a".into()), ProfilePart::RemoveScrobbler("a".into()), ProfilePart::AddScrobbler, ProfilePart::OpenAddSource, ProfilePart::NewSource] {
             assert_eq!(ProfilePart::of(&part.name()), Some(part.clone()));
         }
     }
 
-    /// A profile's Sources: each other source with its menu moving or removing it, then Add source;
-    /// offered saved profiles live in the Add source dialog, and a profile that is itself a source has none.
+    /// Merged profiles show a Sources section on Edit (with Edit, Move up/down, Remove, Add source) and
+    /// `Sources` in their list menu; singular profiles show `Merge with…` in their list menu and NO Sources
+    /// group on Edit; member sources show no Sources group either.
     #[test]
     fn a_profiles_edit_rows_list_its_sources() {
         let kinds = Kinds::builtin();
@@ -2193,17 +2223,39 @@ mod tests {
         let saved = |id: &str, sources: &[&str]| SavedServer { id: id.into(), name: id.into(), sources: sources.iter().map(|s| s.to_string()).collect(), ..Default::default() };
         let home = saved("home", &["a", "b"]);
         let a = saved("a", &[]);
-        let prefs = StoredPrefs { servers: vec![home.clone(), a.clone(), saved("b", &[]), saved("c", &[])], ..Default::default() };
+        let c = saved("c", &[]);
+        let prefs = StoredPrefs { servers: vec![home.clone(), a.clone(), saved("b", &[]), c.clone()], ..Default::default() };
         let rows: Vec<(String, String, Vec<String>)> = source_rows(&kinds, &plugged, &home, &prefs).iter().map(|r| (r.name.clone(), r.title.clone(), r.options.iter().map(|o| o.1.clone()).collect())).collect();
         let row = |name: &str, title: &str, options: &[&str]| (name.to_string(), title.to_string(), options.iter().map(|o| o.to_string()).collect::<Vec<_>>());
-        assert_eq!(rows, [row("a", "a", &["source-later:a", "source-remove:a"]), row("b", "b", &["source-earlier:b", "source-remove:b"]), row("source-open", words::ADD_SOURCE, &[])]);
+        assert_eq!(rows, [row("a", "a", &["edit:a", "source-later:a", "source-remove:a"]), row("b", "b", &["edit:b", "source-earlier:b", "source-remove:b"]), row("source-open", words::ADD_SOURCE, &[])]);
         let offered: Vec<String> = source_offered(&plugged, &prefs, &home, &kinds).into_iter().map(|o| o.name.to_string()).collect();
         assert_eq!(offered, ["c"]);
+        let home_rows: Vec<String> = profile_rows(&kinds, &plugged, &home, true, &prefs, &Facts::default(), OCTOBER).iter().map(|r| r.name.to_string()).collect();
+        assert!(home_rows.iter().any(|n| n == "source-open"), "merged profile shows Sources on Edit: {home_rows:?}");
+        let singular_rows: Vec<String> = profile_rows(&kinds, &plugged, &c, true, &prefs, &Facts::default(), OCTOBER).iter().map(|r| r.name.to_string()).collect();
+        assert!(!singular_rows.iter().any(|n| n == "source-open"), "singular profile shows no Sources group on Edit: {singular_rows:?}");
         let child_rows: Vec<String> = profile_rows(&kinds, &plugged, &a, true, &prefs, &Facts::default(), OCTOBER).iter().map(|r| r.name.to_string()).collect();
         assert!(!child_rows.iter().any(|n| n == "source-open"), "a profile that is itself a source shows no Sources group: {child_rows:?}");
+        // List menus: merged profile offers Sources, singular profile offers Merge with….
+        let facts = Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
+        let server_menus: Vec<(String, Vec<String>)> = groups(&Default::default(), &prefs, &facts, &kinds, &plugged, SettingsPage::Servers, OCTOBER)
+            .into_iter()
+            .flat_map(|(_, rs)| rs)
+            .filter(|r| r.kind == SERVER)
+            .map(|r| (r.name, r.options.into_iter().map(|(_, v)| v).collect()))
+            .collect();
+        assert_eq!(
+            server_menus,
+            [
+                ("home".into(), vec!["rename:home".into(), "edit:home".into(), "sources:home".into(), "remove:home".into()]),
+                ("c".into(), vec!["rename:c".into(), "edit:c".into(), "merge:c".into(), "remove:c".into()]),
+            ]
+        );
         for part in [ProfilePart::OpenAddSource, ProfilePart::AddSource("c".into()), ProfilePart::SourceEarlier("b".into()), ProfilePart::SourceLater("a".into()), ProfilePart::RemoveSource("a".into())] {
             assert_eq!(ProfilePart::of(&part.name()), Some(part.clone()));
         }
+        assert_eq!(Act::of("merge:c"), Some(Act::Merge("c".into())));
+        assert_eq!(Act::of("sources:home"), Some(Act::Sources("home".into())));
     }
 
     /// The device played through is Sound's, last in its Output group, and nowhere on Appearance.
